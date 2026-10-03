@@ -1,21 +1,39 @@
-//! Page builders: GitHub's pages (repository, file, issue, profile, search,
-//! lists, home) as [`Page`]s. Every link is the github.com URL of what it
-//! points at.
+//! Page builders: GitHub's pages (repository, file, lists, issue, pull
+//! request, profile, search, home) as [`Page`]s, laid out the way GitHub
+//! lays them out: boxes for file lists, READMEs, lists and comments, and a
+//! sidebar when there's room. Every link is the github.com URL of what it
+//! points at; `ghtui:` links are actions (star, load more, filter...).
 
 use ghtui_api::browse::{
-    EntryKind, IssueDetail, IssueState, IssueSummary, PrActivity, Profile, RepoOverview,
+    Blob, EntryKind, IssueDetail, IssueState, IssueSummary, PrActivity, Profile, RepoOverview,
     RepoSummary, Results, SearchKind, SearchResults, TreeEntry, UserSummary,
 };
 use ghtui_api::model::{
-    ChecksState, Inbox, Label, PrDetail, PrRef, PrState, PrSummary, RepoId, ReviewDecision,
+    ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
+    ReviewDecision,
 };
 use ghtui_theme::Bg;
 
 use crate::markdown::{self, LinkBase};
-use crate::page::{Page, PageLine, Role, Seg, Surface};
+use crate::page::{ASIDE_GAP, Frame, Page, PageLine, Role, Seg, Tone};
 use crate::{Icons, time};
 
+/// Load the next page of a list.
 pub const MORE: &str = "ghtui:more";
+/// Star or unstar the repository.
+pub const STAR: &str = "ghtui:star";
+/// Write a comment.
+pub const COMMENT: &str = "ghtui:comment";
+/// Edit the list's filter.
+pub const FILTER: &str = "ghtui:filter";
+/// Change the list's sort.
+pub const SORT: &str = "ghtui:sort";
+/// Show the list's open or closed items: `ghtui:state:open`.
+pub const STATE: &str = "ghtui:state:";
+/// Switch branches.
+pub const BRANCH: &str = "ghtui:branch";
+/// Find a file in the repository.
+pub const FIND_FILE: &str = "ghtui:files";
 
 // ---- URLs ----------------------------------------------------------------------
 
@@ -59,6 +77,7 @@ pub mod url {
         let kind = match kind {
             SearchKind::Repos => "repositories",
             SearchKind::Issues => "issues",
+            SearchKind::Pulls => "pullrequests",
             SearchKind::Users => "users",
         };
         format!("{BASE}/search?q={}&type={kind}", encode(query))
@@ -114,7 +133,7 @@ fn size(bytes: u64) -> String {
 }
 
 fn plural(n: u64, word: &str) -> String {
-    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
+    format!("{} {word}{}", compact(n), if n == 1 { "" } else { "s" })
 }
 
 fn chip(text: impl Into<String>, bg: Bg) -> Seg {
@@ -137,95 +156,34 @@ fn labels(segs: &mut Vec<Seg>, labels: &[Label]) {
 
 fn link_seg(page: &mut Page, text: impl Into<String>, url: impl Into<String>, role: Role) -> Seg {
     let link = page.link(url);
-    Seg {
-        text: text.into(),
-        role,
-        link: Some(link),
-    }
+    Seg::linked(text, role, link)
 }
 
-/// A row of tabs; `active` is filled. Each tab is a link.
-fn tabs(page: &mut Page, items: &[(String, String, Option<u64>)], active: usize) {
-    let mut segs = Vec::new();
-    for (i, (label, url, count)) in items.iter().enumerate() {
-        if i > 0 {
-            segs.push(Seg::new("   ", Role::Body));
-        }
-        let text = format!("{} {label}", i + 1);
-        let mut seg = link_seg(
-            page,
-            text,
-            url.clone(),
-            if i == active {
-                Role::Chip(Bg::SecondaryContainer)
-            } else {
-                Role::Body
-            },
-        );
-        if i == active {
-            seg.text = format!(" {} ", seg.text);
-        }
-        segs.push(seg);
-        if let Some(n) = count {
-            segs.push(Seg::new(format!(" {}", compact(*n)), Role::Meta));
-        }
-    }
-    page.line(segs);
-    page.blank();
+/// A button: ` label ` on a raised tone.
+fn button(page: &mut Page, text: impl Into<String>, url: impl Into<String>) -> Seg {
+    link_seg(
+        page,
+        format!(" {} ", text.into()),
+        url,
+        Role::Chip(Bg::ContainerHigh),
+    )
 }
 
-/// `prefix` then `segs` wrapped, with continuation lines aligned after the
-/// prefix.
-fn hanging(page: &mut Page, prefix: Seg, segs: Vec<Seg>) {
+/// A box's empty state.
+fn empty_row(page: &mut Page, text: &str) {
+    page.box_line(vec![Seg::new(text, Role::Meta)], Vec::new(), 0);
+}
+
+/// `prefix` then `segs` wrapped inside a box, continuation lines aligned
+/// after the prefix.
+fn hanging(page: &mut Page, prefix: Seg, segs: Vec<Seg>, frame: Frame) {
     let width = crate::text::width(&prefix.text) as u16;
     let start = page.lines.len();
-    page.wrapped(segs, width, Surface::Page);
+    page.wrapped(segs, width, frame);
     if let Some(first) = page.lines.get_mut(start) {
         first.indent = 0;
         first.segs.insert(0, prefix);
     }
-}
-
-fn card_blank(page: &mut Page) {
-    page.push(PageLine {
-        surface: Surface::Card,
-        ..PageLine::default()
-    });
-}
-
-/// A comment card: author and time, then the Markdown body.
-fn comment_card(
-    page: &mut Page,
-    author: &str,
-    verb: &str,
-    when: &str,
-    body: &str,
-    base: Option<&LinkBase>,
-    now: u64,
-) {
-    let author_seg = link_seg(page, author.to_owned(), url::user(author), Role::Strong);
-    page.push(PageLine {
-        segs: vec![
-            author_seg,
-            Seg::new(format!(" {verb} {}", time::ago_iso(when, now)), Role::Meta),
-        ],
-        surface: Surface::Card,
-        indent: 1,
-        right: Vec::new(),
-    });
-    card_blank(page);
-    if body.trim().is_empty() {
-        page.push(PageLine {
-            segs: vec![Seg::new("No description provided.", Role::Meta)],
-            surface: Surface::Card,
-            indent: 1,
-            right: Vec::new(),
-        });
-    } else {
-        markdown::render(page, body, base, 1, Surface::Card);
-    }
-    card_blank(page);
-    page.blank();
 }
 
 fn issue_icon(icons: Icons, state: IssueState, is_pr: bool) -> (String, Role) {
@@ -241,18 +199,20 @@ fn issue_icon(icons: Icons, state: IssueState, is_pr: bool) -> (String, Role) {
     }
 }
 
-fn state_chip(state: IssueState, is_pr: bool) -> Seg {
-    match state {
-        IssueState::Open => chip("Open", Bg::SuccessContainer),
-        IssueState::Draft => chip("Draft", Bg::SecondaryContainer),
-        IssueState::Merged => chip("Merged", Bg::TertiaryContainer),
-        IssueState::NotPlanned => chip("Closed as not planned", Bg::SecondaryContainer),
-        IssueState::Closed if is_pr => chip("Closed", Bg::ErrorContainer),
-        IssueState::Closed => chip("Closed", Bg::TertiaryContainer),
-    }
+pub fn state_chip(state: IssueState, is_pr: bool, icons: Icons) -> Seg {
+    let (icon, _) = issue_icon(icons, state, is_pr);
+    let (text, bg) = match state {
+        IssueState::Open => ("Open", Bg::SuccessContainer),
+        IssueState::Draft => ("Draft", Bg::SecondaryContainer),
+        IssueState::Merged => ("Merged", Bg::TertiaryContainer),
+        IssueState::NotPlanned => ("Closed as not planned", Bg::SecondaryContainer),
+        IssueState::Closed if is_pr => ("Closed", Bg::ErrorContainer),
+        IssueState::Closed => ("Closed", Bg::TertiaryContainer),
+    };
+    chip(format!("{icon} {text}"), bg)
 }
 
-fn pr_state(s: PrState) -> IssueState {
+pub fn pr_state(s: PrState) -> IssueState {
     match s {
         PrState::Open => IssueState::Open,
         PrState::Draft => IssueState::Draft,
@@ -261,88 +221,238 @@ fn pr_state(s: PrState) -> IssueState {
     }
 }
 
-// ---- repository ---------------------------------------------------------------------
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RepoTab {
-    Code,
-    Issues,
-    Pulls,
+/// `2026-10-01T…` → "Oct 1, 2026".
+fn day(iso: &str) -> String {
+    let parts: Vec<&str> = iso.get(..10).unwrap_or(iso).split('-').collect();
+    match parts.as_slice() {
+        [y, m, d] => {
+            let month = m
+                .parse::<usize>()
+                .ok()
+                .and_then(|m| MONTHS.get(m.wrapping_sub(1)))
+                .copied()
+                .unwrap_or("?");
+            format!("{month} {}, {y}", d.trim_start_matches('0'))
+        }
+        _ => iso.to_owned(),
+    }
 }
 
-/// The repository header: name, badges, description, stats and tabs.
-pub fn repo_header(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview>, tab: RepoTab) {
+/// Keys shown on the page where GitHub shows buttons.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Keys<'a> {
+    pub comment: &'a str,
+    pub find_file: &'a str,
+    pub branch: &'a str,
+    pub filter: &'a str,
+    pub star: &'a str,
+}
+
+/// Width of a sidebar for a page `total` columns wide, if there's room.
+pub fn aside_width(total: u16) -> Option<u16> {
+    (total >= 104).then_some(30)
+}
+
+/// The main column's width beside an aside of `aside` columns.
+pub fn main_width(total: u16, aside: Option<u16>) -> u16 {
+    match aside {
+        Some(a) => total.saturating_sub(a + ASIDE_GAP),
+        None => total,
+    }
+}
+
+fn aside_heading(page: &mut Page, text: &str) {
+    page.blank();
+    page.line(vec![Seg::new(text, Role::Strong)]);
+}
+
+// ---- repository ---------------------------------------------------------------------
+
+/// The repository's title: `owner / name  Public` with Star, Fork and Watch
+/// buttons on the right, as on GitHub.
+pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview>, keys: Keys<'_>) {
     let owner = link_seg(page, repo.owner.clone(), url::user(&repo.owner), Role::Link);
     let name = link_seg(page, repo.name.clone(), url::repo(repo), Role::Title);
     let mut segs = vec![owner, Seg::new(" / ", Role::Meta), name];
+    let mut right = Vec::new();
     if let Some(o) = overview {
         let s = &o.summary;
         segs.push(Seg::new("  ", Role::Body));
-        segs.push(chip(
-            if s.private { "Private" } else { "Public" },
-            Bg::SecondaryContainer,
+        segs.push(Seg::new(
+            if s.private { " Private " } else { " Public " },
+            Role::Chip(Bg::SecondaryContainer),
         ));
         if s.archived {
             segs.push(space());
             segs.push(chip("Archived", Bg::TertiaryContainer));
         }
+        let star = if o.starred { "★ Starred" } else { "☆ Star" };
+        right.push(button(
+            page,
+            format!("{star} {}  {}", compact(s.stars), keys.star),
+            STAR,
+        ));
+        right.push(space());
+        right.push(button(
+            page,
+            format!("⑂ Fork {}", compact(s.forks)),
+            format!("{}/forks", url::repo(repo)),
+        ));
+        right.push(space());
+        right.push(button(
+            page,
+            format!("◉ Watch {}", compact(o.watchers)),
+            format!("{}/watchers", url::repo(repo)),
+        ));
     }
-    page.line(segs);
-    let Some(o) = overview else {
-        page.blank();
-        return;
-    };
-    if let Some(parent) = &o.parent {
-        let parent_repo = RepoId::parse(parent);
-        let link = parent_repo.as_ref().map(url::repo).unwrap_or_default();
-        let segs = vec![
-            Seg::new("forked from ", Role::Meta),
-            link_seg(page, parent.clone(), link, Role::Link),
-        ];
-        page.line(segs);
+    page.push(PageLine {
+        segs,
+        right,
+        ..PageLine::default()
+    });
+    if let Some(parent) = overview.and_then(|o| o.parent.as_deref()) {
+        let link = RepoId::parse(parent)
+            .map(|r| url::repo(&r))
+            .unwrap_or_default();
+        let parent = link_seg(page, parent.to_owned(), link, Role::Link);
+        page.line(vec![Seg::new("forked from ", Role::Meta), parent]);
     }
-    if let Some(d) = &o.summary.description {
-        page.wrapped(vec![Seg::new(d.clone(), Role::Body)], 0, Surface::Page);
-    }
-    let mut stats = vec![
-        Seg::new(
-            if o.starred { "★ " } else { "☆ " },
-            if o.starred { Role::Accent } else { Role::Meta },
-        ),
-        Seg::new(compact(o.summary.stars), Role::Strong),
-        Seg::new(" stars   ", Role::Meta),
-        Seg::new("⑂ ", Role::Meta),
-        Seg::new(compact(o.summary.forks), Role::Strong),
-        Seg::new(" forks   ", Role::Meta),
-        Seg::new("◉ ", Role::Meta),
-        Seg::new(compact(o.watchers), Role::Strong),
-        Seg::new(" watching", Role::Meta),
-    ];
-    if let Some(home) = &o.homepage {
-        stats.push(Seg::new("   ", Role::Body));
-        stats.push(link_seg(page, home.clone(), home.clone(), Role::Link));
-    }
-    page.line(stats);
     page.blank();
-    let mut items = vec![("Code".to_owned(), url::repo(repo), None)];
-    if o.has_issues {
-        items.push(("Issues".to_owned(), url::issues(repo), Some(o.open_issues)));
-    }
-    items.push((
-        "Pull requests".to_owned(),
-        url::pulls(repo),
-        Some(o.open_prs),
-    ));
-    let active = match tab {
-        RepoTab::Code => 0,
-        RepoTab::Issues => 1,
-        RepoTab::Pulls => items.len() - 1,
-    };
-    tabs(page, &items, active);
 }
 
-/// Breadcrumbs `repo / dir / sub /` with each part a link.
-fn breadcrumbs(page: &mut Page, repo: &RepoId, rev: &str, path: &str, last_is_file: bool) {
+/// The About facts: description, homepage, topics, counts.
+fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_layout: bool) {
+    if !compact_layout {
+        page.line(vec![Seg::new("About", Role::Strong)]);
+        page.blank();
+    }
+    match &o.summary.description {
+        Some(d) => page.wrapped(vec![Seg::new(d.clone(), Role::Body)], 0, Frame::None),
+        None if !compact_layout => page.line(vec![Seg::new(
+            "No description, website, or topics provided.",
+            Role::Meta,
+        )]),
+        None => {}
+    }
+    if let Some(home) = &o.homepage {
+        let link = link_seg(page, home.clone(), home.clone(), Role::Link);
+        page.line(vec![Seg::new("↗ ", Role::Meta), link]);
+    }
+    if !o.topics.is_empty() {
+        let mut topics = Vec::new();
+        for t in &o.topics {
+            let topic = link_seg(
+                page,
+                format!(" {t} "),
+                url::search(SearchKind::Repos, &format!("topic:{t}")),
+                Role::Chip(Bg::PrimaryContainer),
+            );
+            topics.push(topic);
+            topics.push(space());
+        }
+        page.blank();
+        page.wrapped(topics, 0, Frame::None);
+    }
+    let facts: Vec<(String, Option<String>)> = vec![
+        (
+            o.license
+                .clone()
+                .map(|l| format!("⚖ {l} license"))
+                .unwrap_or_default(),
+            None,
+        ),
+        (
+            format!("☆ {} stars", compact(o.summary.stars)),
+            Some(format!("{}/stargazers", url::repo(repo))),
+        ),
+        (
+            format!("◉ {} watching", compact(o.watchers)),
+            Some(format!("{}/watchers", url::repo(repo))),
+        ),
+        (
+            format!("⑂ {} forks", compact(o.summary.forks)),
+            Some(format!("{}/forks", url::repo(repo))),
+        ),
+        (
+            o.summary
+                .language
+                .clone()
+                .map(|l| format!("● {l}"))
+                .unwrap_or_default(),
+            None,
+        ),
+    ];
+    page.blank();
+    if compact_layout {
+        let mut segs = Vec::new();
+        for (text, link) in facts.into_iter().filter(|(t, _)| !t.is_empty()) {
+            if !segs.is_empty() {
+                segs.push(Seg::new("   ", Role::Meta));
+            }
+            segs.push(match link {
+                Some(l) => link_seg(page, text, l, Role::Meta),
+                None => Seg::new(text, Role::Meta),
+            });
+        }
+        page.wrapped(segs, 0, Frame::None);
+    } else {
+        for (text, link) in facts.into_iter().filter(|(t, _)| !t.is_empty()) {
+            let seg = match link {
+                Some(l) => link_seg(page, text, l, Role::Meta),
+                None => Seg::new(text, Role::Meta),
+            };
+            page.line(vec![seg]);
+        }
+    }
+}
+
+/// `⎇ main ▾   ⌕ Go to file  t` above the file list.
+fn code_toolbar(
+    page: &mut Page,
+    repo: &RepoId,
+    rev: &str,
+    path: &str,
+    commits: u64,
+    keys: Keys<'_>,
+) {
+    let mut segs = vec![
+        button(page, format!("⎇ {rev} ▾  {}", keys.branch), BRANCH),
+        Seg::new("  ", Role::Body),
+    ];
+    if !path.is_empty() {
+        segs.extend(crumbs(page, repo, rev, path, false));
+        segs.push(Seg::new("  ", Role::Body));
+    }
+    let mut right = vec![button(
+        page,
+        format!("⌕ Go to file  {}", keys.find_file),
+        FIND_FILE,
+    )];
+    if commits > 0 {
+        right.insert(0, space());
+        right.insert(
+            0,
+            link_seg(
+                page,
+                format!("◷ {}", plural(commits, "commit")),
+                format!("{}/commits/{rev}", url::repo(repo)),
+                Role::Meta,
+            ),
+        );
+    }
+    page.push(PageLine {
+        segs,
+        right,
+        ..PageLine::default()
+    });
+}
+
+/// `repo / dir / sub /` with each part a link.
+fn crumbs(page: &mut Page, repo: &RepoId, rev: &str, path: &str, last_is_file: bool) -> Vec<Seg> {
     let mut segs = vec![link_seg(
         page,
         repo.name.clone(),
@@ -352,13 +462,13 @@ fn breadcrumbs(page: &mut Page, repo: &RepoId, rev: &str, path: &str, last_is_fi
     let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
     for (i, part) in parts.iter().enumerate() {
         segs.push(Seg::new(" / ", Role::Meta));
-        let sub = parts[..=i].join("/");
         if i + 1 == parts.len() {
             segs.push(Seg::new(*part, Role::Strong));
             if !last_is_file {
                 segs.push(Seg::new(" /", Role::Meta));
             }
         } else {
+            let sub = parts[..=i].join("/");
             segs.push(link_seg(
                 page,
                 *part,
@@ -367,110 +477,114 @@ fn breadcrumbs(page: &mut Page, repo: &RepoId, rev: &str, path: &str, last_is_fi
             ));
         }
     }
-    let mut line = PageLine {
-        segs,
-        ..PageLine::default()
-    };
-    line.right = vec![Seg::new(format!("⎇ {rev}"), Role::Meta)];
-    page.push(line);
-    page.blank();
+    segs
 }
 
-fn entry_lines(page: &mut Page, repo: &RepoId, rev: &str, path: &str, entries: &[TreeEntry]) {
+/// The file list box.
+fn file_box(
+    page: &mut Page,
+    repo: &RepoId,
+    rev: &str,
+    path: &str,
+    entries: Option<&[TreeEntry]>,
+    title: (Vec<Seg>, Vec<Seg>),
+    icons: Icons,
+) {
+    page.box_top(title.0, title.1);
     if !path.is_empty() {
         let parent = path.rsplit_once('/').map_or("", |(p, _)| p);
-        page.link_line("..", url::tree(repo, rev, parent), Role::Link, 2);
+        let start = page.lines.len();
+        let link = page.link(url::tree(repo, rev, parent));
+        page.box_line(vec![Seg::linked("..", Role::Link, link)], Vec::new(), 2);
+        page.item(start, link);
     }
-    for e in entries {
-        let (icon, url) = match e.kind {
-            EntryKind::Dir => ("▸ ", url::tree(repo, rev, &e.path)),
-            EntryKind::File => ("  ", url::blob(repo, rev, &e.path)),
-            EntryKind::Symlink => ("↪ ", url::blob(repo, rev, &e.path)),
-            EntryKind::Submodule => ("⊙ ", url::tree(repo, rev, &e.path)),
-        };
-        let name_role = if e.kind == EntryKind::Dir {
-            Role::Strong
-        } else {
-            Role::Body
-        };
-        let name = link_seg(page, e.name.clone(), url, name_role);
-        let mut line = PageLine {
-            segs: vec![Seg::new(icon, Role::Accent), name],
-            indent: 2,
-            ..PageLine::default()
-        };
-        if let Some(bytes) = e.size {
-            line.right = vec![Seg::new(size(bytes), Role::Meta)];
+    match entries {
+        Some([]) => empty_row(page, "This directory is empty."),
+        None => empty_row(page, "Loading…"),
+        Some(entries) => {
+            for e in entries {
+                let (icon, target, role) = match e.kind {
+                    EntryKind::Dir => (icons.folder(), url::tree(repo, rev, &e.path), Role::Link),
+                    EntryKind::Submodule => ("⊙", url::tree(repo, rev, &e.path), Role::Link),
+                    EntryKind::Symlink => ("↪", url::blob(repo, rev, &e.path), Role::Body),
+                    EntryKind::File => (icons.file(), url::blob(repo, rev, &e.path), Role::Body),
+                };
+                let start = page.lines.len();
+                let link = page.link(target);
+                let right = e
+                    .size
+                    .map(|b| vec![Seg::new(size(b), Role::Meta)])
+                    .unwrap_or_default();
+                let icon_role = if e.kind == EntryKind::Dir {
+                    Role::Accent
+                } else {
+                    Role::Meta
+                };
+                page.box_line(
+                    vec![
+                        Seg::new(format!("{icon} "), icon_role),
+                        Seg::linked(e.name.clone(), role, link),
+                    ],
+                    right,
+                    0,
+                );
+                page.item(start, link);
+            }
         }
-        page.push(line);
     }
-    page.blank();
+    page.box_bottom();
 }
 
-/// The Code tab at the repository root: about, last commit, files, README.
-pub fn repo_code(page: &mut Page, repo: &RepoId, overview: &RepoOverview, now: u64) {
-    let rev = overview
-        .default_branch
-        .clone()
-        .unwrap_or_else(|| "HEAD".into());
-    // About: topics, language, license.
-    let mut about = Vec::new();
-    for t in &overview.topics {
-        about.push(chip(t.clone(), Bg::PrimaryContainer));
-        about.push(space());
-    }
-    if !about.is_empty() {
-        page.wrapped(about, 0, Surface::Page);
-    }
-    let mut facts = Vec::new();
-    if let Some(lang) = &overview.summary.language {
-        facts.push(Seg::new("● ", Role::Accent));
-        facts.push(Seg::new(format!("{lang}   "), Role::Body));
-    }
-    if let Some(license) = &overview.license {
-        facts.push(Seg::new(format!("⚖ {license}   "), Role::Meta));
-    }
-    if overview.commits > 0 {
-        facts.push(Seg::new(
-            format!("{} on ", plural(overview.commits, "commit")),
-            Role::Meta,
-        ));
-        facts.push(Seg::new(rev.clone(), Role::Code));
-    }
-    if !facts.is_empty() {
-        page.line(facts);
+/// The Code tab at the repository root: files, README, About.
+pub fn repo_code(
+    page: &mut Page,
+    repo: &RepoId,
+    o: &RepoOverview,
+    icons: Icons,
+    keys: Keys<'_>,
+    aside: Option<u16>,
+    now: u64,
+) {
+    if aside.is_none() {
+        about(page, repo, o, true);
         page.blank();
     }
-
-    if overview.entries.is_empty() && overview.default_branch.is_none() {
-        page.line(vec![Seg::new("This repository is empty.", Role::Meta)]);
+    if o.entries.is_empty() && o.default_branch.is_none() {
+        page.box_top(
+            vec![Seg::new("This repository is empty.", Role::Strong)],
+            Vec::new(),
+        );
+        empty_row(page, "Nothing has been pushed yet.");
+        page.box_bottom();
         return;
     }
-    if let Some(c) = &overview.last_commit {
-        let author = link_seg(page, c.author.clone(), url::user(&c.author), Role::Strong);
-        let headline = link_seg(
-            page,
-            c.headline.clone(),
-            url::commit(repo, &c.oid),
-            Role::Body,
-        );
-        page.push(PageLine {
-            segs: vec![author, Seg::new("  ", Role::Body), headline],
-            surface: Surface::Card,
-            indent: 1,
-            right: vec![Seg::new(
-                format!(
-                    "{} · {}",
-                    &c.oid[..7.min(c.oid.len())],
-                    time::ago_iso(&c.date, now)
-                ),
-                Role::Meta,
-            )],
-        });
-        page.blank();
-    }
-    entry_lines(page, repo, &rev, "", &overview.entries);
-    if let Some(readme) = &overview.readme {
+    let rev = o.default_branch.clone().unwrap_or_else(|| "HEAD".into());
+    code_toolbar(page, repo, &rev, "", o.commits, keys);
+    let title = match &o.last_commit {
+        Some(c) => {
+            let author = link_seg(page, c.author.clone(), url::user(&c.author), Role::Strong);
+            let headline = link_seg(
+                page,
+                c.headline.clone(),
+                url::commit(repo, &c.oid),
+                Role::Body,
+            );
+            (
+                vec![author, Seg::new("  ", Role::Body), headline],
+                vec![Seg::new(
+                    format!(
+                        "{} · {}",
+                        &c.oid[..7.min(c.oid.len())],
+                        time::ago_iso(&c.date, now)
+                    ),
+                    Role::Meta,
+                )],
+            )
+        }
+        None => (vec![Seg::new("Files", Role::Strong)], Vec::new()),
+    };
+    file_box(page, repo, &rev, "", Some(&o.entries), title, icons);
+    if let Some(readme) = &o.readme {
         let dir = readme
             .path
             .rsplit_once('/')
@@ -478,74 +592,94 @@ pub fn repo_code(page: &mut Page, repo: &RepoId, overview: &RepoOverview, now: u
             .to_owned();
         let name = link_seg(
             page,
-            readme.path.clone(),
+            format!("☰ {}", readme.path),
             url::blob(repo, &rev, &readme.path),
-            Role::Title,
+            Role::Strong,
         );
-        page.push(PageLine {
-            segs: vec![Seg::new("☰ ", Role::Meta), name],
-            surface: Surface::Card,
-            indent: 1,
-            right: Vec::new(),
-        });
-        card_blank(page);
+        page.box_top(vec![name], Vec::new());
         let base = LinkBase {
             repo: repo.to_string(),
             rev,
             dir,
         };
-        markdown::render(page, &readme.text, Some(&base), 1, Surface::Card);
-        card_blank(page);
+        markdown::render(page, &readme.text, Some(&base), 0, Frame::Body);
+        page.box_bottom();
+    }
+    if let Some(width) = aside {
+        page.build_aside(width, |a| about(a, repo, o, false));
     }
 }
 
-/// A directory below the root.
+/// A directory below the root (or the root at another branch).
 pub fn repo_dir(
     page: &mut Page,
     repo: &RepoId,
     rev: &str,
     path: &str,
     entries: Option<&[TreeEntry]>,
+    icons: Icons,
+    keys: Keys<'_>,
 ) {
-    breadcrumbs(page, repo, rev, path, false);
-    match entries {
-        Some(entries) => entry_lines(page, repo, rev, path, entries),
-        None => page.line(vec![Seg::new("Loading…", Role::Meta)]),
-    }
+    code_toolbar(page, repo, rev, path, 0, keys);
+    let title = if path.is_empty() {
+        format!("Files on {rev}")
+    } else {
+        path.rsplit('/').next().unwrap_or(path).to_owned()
+    };
+    file_box(
+        page,
+        repo,
+        rev,
+        path,
+        entries,
+        (vec![Seg::new(title, Role::Strong)], Vec::new()),
+        icons,
+    );
 }
 
 /// A file: highlighted with line numbers, or Markdown rendered.
-pub fn file(page: &mut Page, repo: &RepoId, rev: &str, path: &str, blob: &ghtui_api::browse::Blob) {
-    breadcrumbs(page, repo, rev, path, true);
+pub fn file(page: &mut Page, repo: &RepoId, rev: &str, path: &str, blob: &Blob, keys: Keys<'_>) {
+    let mut segs = vec![
+        button(page, format!("⎇ {rev} ▾  {}", keys.branch), BRANCH),
+        Seg::new("  ", Role::Body),
+    ];
+    segs.extend(crumbs(page, repo, rev, path, true));
+    let right = vec![button(
+        page,
+        format!("⌕ Go to file  {}", keys.find_file),
+        FIND_FILE,
+    )];
+    page.push(PageLine {
+        segs,
+        right,
+        ..PageLine::default()
+    });
     let Some(text) = &blob.text else {
-        page.line(vec![Seg::new(
-            format!(
-                "Binary file ({}). Press o to view it on GitHub.",
-                size(blob.size)
-            ),
-            Role::Meta,
-        )]);
+        page.box_top(vec![Seg::new(size(blob.size), Role::Meta)], Vec::new());
+        empty_row(page, "Binary file not shown. o opens it on GitHub.");
+        page.box_bottom();
         return;
     };
-    let lines = text.lines().count();
-    page.line(vec![Seg::new(
-        format!("{} · {}", plural(lines as u64, "line"), size(blob.size)),
-        Role::Meta,
-    )]);
+    let lines = text.lines().count() as u64;
+    let mut info = format!("{} · {}", plural(lines, "line"), size(blob.size));
     if blob.truncated {
-        page.line(vec![Seg::new(
-            "Large file: only the beginning is shown.",
-            Role::Meta,
-        )]);
+        info.push_str(" · only the beginning is shown");
     }
-    page.blank();
+    let raw = link_seg(
+        page,
+        "Raw",
+        format!("https://raw.githubusercontent.com/{repo}/{rev}/{path}"),
+        Role::Link,
+    );
+    page.box_top(vec![Seg::new(info, Role::Meta)], vec![raw]);
     if path.to_ascii_lowercase().ends_with(".md") {
         let base = LinkBase {
             repo: repo.to_string(),
             rev: rev.to_owned(),
             dir: path.rsplit_once('/').map_or("", |(d, _)| d).to_owned(),
         };
-        markdown::render(page, text, Some(&base), 0, Surface::Page);
+        markdown::render(page, text, Some(&base), 0, Frame::Body);
+        page.box_bottom();
         return;
     }
     let source = ghtui_diff::text::Text::new(text.as_bytes());
@@ -580,174 +714,278 @@ pub fn file(page: &mut Page, repo: &RepoId, rev: &str, path: &str, blob: &ghtui_
         }
         page.push(PageLine {
             segs,
-            surface: Surface::Code,
+            frame: Frame::Body,
+            tone: Tone::Code,
             ..PageLine::default()
         });
     }
+    page.box_bottom();
 }
 
 // ---- lists --------------------------------------------------------------------------
 
-pub fn repo_rows(page: &mut Page, repos: &[RepoSummary], now: u64) {
-    for r in repos {
-        let mut segs = vec![link_seg(
-            page,
-            r.repo.to_string(),
-            url::repo(&r.repo),
-            Role::Title,
-        )];
-        if r.private {
+fn repo_row(page: &mut Page, r: &RepoSummary, now: u64, show_owner: bool) {
+    let start = page.lines.len();
+    let name = if show_owner {
+        r.repo.to_string()
+    } else {
+        r.repo.name.clone()
+    };
+    let link = page.link(url::repo(&r.repo));
+    let mut segs = vec![Seg::linked(name, Role::Link, link)];
+    for (on, text) in [
+        (r.private, "Private"),
+        (r.fork, "Fork"),
+        (r.archived, "Archived"),
+    ] {
+        if on {
             segs.push(space());
-            segs.push(chip("Private", Bg::SecondaryContainer));
+            segs.push(chip(text, Bg::SecondaryContainer));
         }
-        if r.fork {
-            segs.push(space());
-            segs.push(chip("Fork", Bg::SecondaryContainer));
-        }
-        if r.archived {
-            segs.push(space());
-            segs.push(chip("Archived", Bg::TertiaryContainer));
-        }
-        page.line(segs);
-        if let Some(d) = &r.description {
-            page.wrapped(vec![Seg::new(d.clone(), Role::Body)], 2, Surface::Page);
-        }
-        let mut meta = Vec::new();
-        if let Some(lang) = &r.language {
-            meta.push(Seg::new("● ", Role::Accent));
-            meta.push(Seg::new(format!("{lang}   "), Role::Meta));
-        }
+    }
+    let right = vec![Seg::new(format!("☆ {}", compact(r.stars)), Role::Meta)];
+    page.box_line(segs, right, 0);
+    if let Some(d) = &r.description {
+        page.wrapped(vec![Seg::new(d.clone(), Role::Body)], 0, Frame::Body);
+    }
+    let mut meta = Vec::new();
+    if let Some(lang) = &r.language {
+        meta.push(Seg::new("● ", Role::Accent));
+        meta.push(Seg::new(format!("{lang}   "), Role::Meta));
+    }
+    meta.push(Seg::new(format!("⑂ {}", compact(r.forks)), Role::Meta));
+    if let Some(p) = &r.pushed_at {
         meta.push(Seg::new(
-            format!("★ {}   ⑂ {}", compact(r.stars), compact(r.forks)),
+            format!("   Updated {}", time::ago_iso(p, now)),
             Role::Meta,
         ));
-        if let Some(p) = &r.pushed_at {
-            meta.push(Seg::new(
-                format!("   updated {}", time::ago_iso(p, now)),
-                Role::Meta,
-            ));
-        }
-        page.push(PageLine {
-            segs: meta,
-            indent: 2,
-            ..PageLine::default()
-        });
-        page.blank();
     }
+    page.box_line(meta, Vec::new(), 0);
+    page.item(start, link);
 }
 
-pub fn issue_rows(
+/// A box of repositories.
+pub fn repo_box(
     page: &mut Page,
-    issues: &[IssueSummary],
-    show_repo: bool,
-    icons: Icons,
+    title: Vec<Seg>,
+    right: Vec<Seg>,
+    repos: &[RepoSummary],
+    empty: &str,
+    show_owner: bool,
     now: u64,
 ) {
-    for i in issues {
-        let (icon, role) = issue_icon(icons, i.state, i.is_pr);
-        let target = if i.is_pr {
-            url::pull(&PrRef {
-                repo: i.repo.clone(),
-                number: i.number,
-            })
-        } else {
-            url::issue(&i.repo, i.number)
-        };
-        let mut segs = vec![link_seg(page, i.title.clone(), target, Role::Strong)];
-        labels(&mut segs, &i.labels);
-        hanging(page, Seg::new(format!("{icon} "), role), segs);
-        let place = if show_repo {
-            format!("{}#{}", i.repo, i.number)
-        } else {
-            format!("#{}", i.number)
-        };
-        let mut line = PageLine {
-            segs: vec![Seg::new(
-                format!(
-                    "{place} · {} · updated {}",
-                    i.author,
-                    time::ago_iso(&i.updated_at, now)
-                ),
-                Role::Meta,
-            )],
-            indent: 2,
-            ..PageLine::default()
-        };
-        if i.comments > 0 {
-            line.right = vec![Seg::new(format!("💬 {}", i.comments), Role::Meta)];
-        }
-        page.push(line);
+    page.box_top(title, right);
+    if repos.is_empty() {
+        empty_row(page, empty);
     }
+    for (i, r) in repos.iter().enumerate() {
+        if i > 0 {
+            page.box_rule();
+        }
+        repo_row(page, r, now, show_owner);
+    }
+    page.box_bottom();
 }
 
-pub fn user_rows(page: &mut Page, users: &[UserSummary]) {
-    for u in users {
-        let mut segs = vec![link_seg(
-            page,
-            u.login.clone(),
-            url::user(&u.login),
-            Role::Title,
-        )];
-        if let Some(name) = &u.name {
-            segs.push(Seg::new(format!("  {name}"), Role::Meta));
-        }
-        if u.is_org {
-            segs.push(space());
-            segs.push(chip("Organization", Bg::SecondaryContainer));
-        }
-        page.line(segs);
-        if let Some(bio) = &u.bio {
-            page.wrapped(vec![Seg::new(bio.clone(), Role::Body)], 2, Surface::Page);
-        }
-        page.blank();
-    }
+fn issue_row(page: &mut Page, i: &IssueSummary, show_repo: bool, icons: Icons, now: u64) {
+    let (icon, role) = issue_icon(icons, i.state, i.is_pr);
+    let target = if i.is_pr {
+        url::pull(&PrRef {
+            repo: i.repo.clone(),
+            number: i.number,
+        })
+    } else {
+        url::issue(&i.repo, i.number)
+    };
+    let start = page.lines.len();
+    let link = page.link(target);
+    let mut segs = vec![Seg::linked(i.title.clone(), Role::Strong, link)];
+    labels(&mut segs, &i.labels);
+    hanging(page, Seg::new(format!("{icon} "), role), segs, Frame::Body);
+    let place = if show_repo {
+        format!("{}#{}", i.repo, i.number)
+    } else {
+        format!("#{}", i.number)
+    };
+    let right = if i.comments > 0 {
+        vec![Seg::new(format!("💬 {}", i.comments), Role::Meta)]
+    } else {
+        Vec::new()
+    };
+    page.box_line(
+        vec![Seg::new(
+            format!(
+                "{place} · {} · updated {}",
+                i.author,
+                time::ago_iso(&i.updated_at, now)
+            ),
+            Role::Meta,
+        )],
+        right,
+        2,
+    );
+    page.item(start, link);
 }
 
-fn more(page: &mut Page, next: bool, shown: usize, total: u64) {
+fn user_row(page: &mut Page, u: &UserSummary) {
+    let start = page.lines.len();
+    let link = page.link(url::user(&u.login));
+    let mut segs = vec![Seg::linked(u.login.clone(), Role::Link, link)];
+    if let Some(name) = &u.name {
+        segs.push(Seg::new(format!("  {name}"), Role::Strong));
+    }
+    if u.is_org {
+        segs.push(space());
+        segs.push(chip("Organization", Bg::SecondaryContainer));
+    }
+    page.box_line(segs, Vec::new(), 0);
+    if let Some(bio) = &u.bio {
+        page.wrapped(vec![Seg::new(bio.clone(), Role::Meta)], 0, Frame::Body);
+    }
+    page.item(start, link);
+}
+
+fn more_row(page: &mut Page, next: bool, shown: usize, total: u64) {
     if next {
-        page.blank();
-        page.link_line(
-            format!("Load more ({shown} of {})", compact(total)),
-            MORE,
-            Role::Link,
+        page.box_rule();
+        let start = page.lines.len();
+        let link = page.link(MORE);
+        page.box_line(
+            vec![Seg::linked(
+                format!("Load more  ({shown} of {})", compact(total)),
+                Role::Link,
+                link,
+            )],
+            Vec::new(),
             0,
         );
+        page.item(start, link);
     }
 }
 
-/// An issue or pull-request list (a repo tab, or search results).
+/// The filter field above a list: `⌕ is:open label:bug`.
+pub fn filter_field(page: &mut Page, query: &str, keys: Keys<'_>) {
+    let width = usize::from(page.room(Frame::None, 0));
+    let hint = format!("{} to filter ", keys.filter);
+    let text = format!(" ⌕ {query}");
+    let pad = width.saturating_sub(crate::text::width(&text) + crate::text::width(&hint));
+    let link = page.link(FILTER);
+    page.line(vec![
+        Seg::linked(
+            format!("{text}{}", " ".repeat(pad)),
+            Role::Chip(Bg::ContainerHigh),
+            link,
+        ),
+        Seg::linked(hint, Role::Chip(Bg::ContainerHigh), link),
+    ]);
+}
+
+/// Which list state a query shows.
+pub fn list_state(query: &str) -> &'static str {
+    if query
+        .split_whitespace()
+        .any(|w| w == "is:closed" || w == "state:closed")
+    {
+        "closed"
+    } else if query
+        .split_whitespace()
+        .any(|w| w == "is:open" || w == "state:open")
+    {
+        "open"
+    } else {
+        "all"
+    }
+}
+
+/// The sort a query asks for, by name.
+pub fn sort_label(query: &str) -> &'static str {
+    let sort = query
+        .split_whitespace()
+        .find_map(|w| w.strip_prefix("sort:"))
+        .unwrap_or("created-desc");
+    SORTS
+        .iter()
+        .find(|(q, _)| *q == sort)
+        .map_or("Best match", |(_, l)| l)
+}
+
+/// GitHub's sorts: `(qualifier, label)`.
+pub const SORTS: [(&str, &str); 5] = [
+    ("created-desc", "Newest"),
+    ("created-asc", "Oldest"),
+    ("comments-desc", "Most commented"),
+    ("updated-desc", "Recently updated"),
+    ("reactions-desc", "Most reactions"),
+];
+
+/// A repository's issue or pull request list.
+#[allow(clippy::too_many_arguments)]
 pub fn issue_list(
     page: &mut Page,
     query: &str,
+    counts: Option<(u64, u64)>,
+    is_pr: bool,
     results: Option<&Results<IssueSummary>>,
-    show_repo: bool,
-    filter_key: &str,
     icons: Icons,
+    keys: Keys<'_>,
     now: u64,
 ) {
-    page.line(vec![
-        Seg::new("Filter: ", Role::Meta),
-        Seg::new(query.to_owned(), Role::Code),
-        Seg::new(format!("   {filter_key} to change"), Role::Meta),
-    ]);
-    page.blank();
-    let Some(results) = results else {
-        page.line(vec![Seg::new("Loading…", Role::Meta)]);
-        return;
-    };
-    if results.items.is_empty() {
-        page.line(vec![Seg::new("Nothing matches.", Role::Meta)]);
-        return;
-    }
-    page.line(vec![Seg::new(plural(results.total, "result"), Role::Meta)]);
-    page.blank();
-    issue_rows(page, &results.items, show_repo, icons, now);
-    more(
-        page,
-        results.next.is_some(),
-        results.items.len(),
-        results.total,
+    filter_field(page, query, keys);
+    let state = list_state(query);
+    let mut title = Vec::new();
+    let (open_icon, _) = issue_icon(icons, IssueState::Open, is_pr);
+    let (closed_icon, _) = issue_icon(
+        icons,
+        if is_pr {
+            IssueState::Merged
+        } else {
+            IssueState::Closed
+        },
+        is_pr,
     );
+    let (open, closed) = counts.unwrap_or_default();
+    for (name, icon, n, label) in [
+        ("open", open_icon, open, "Open"),
+        ("closed", closed_icon, closed, "Closed"),
+    ] {
+        let role = if state == name {
+            Role::Strong
+        } else {
+            Role::Meta
+        };
+        let text = match counts {
+            Some(_) => format!("{icon} {} {label}", compact(n)),
+            None => format!("{icon} {label}"),
+        };
+        let link = page.link(format!("{STATE}{name}"));
+        if !title.is_empty() {
+            title.push(Seg::new("   ", Role::Body));
+        }
+        title.push(Seg::linked(text, role, link));
+    }
+    let sort = link_seg(
+        page,
+        format!("Sort: {} ▾", sort_label(query)),
+        SORT,
+        Role::Meta,
+    );
+    page.box_top(title, vec![sort]);
+    match results {
+        None => empty_row(page, "Loading…"),
+        Some(r) if r.items.is_empty() => {
+            empty_row(page, "No results matched your search.");
+        }
+        Some(r) => {
+            for (n, i) in r.items.iter().enumerate() {
+                if n > 0 {
+                    page.box_rule();
+                }
+                issue_row(page, i, false, icons, now);
+            }
+            more_row(page, r.next.is_some(), r.items.len(), r.total);
+        }
+    }
+    page.box_bottom();
 }
 
 // ---- search -------------------------------------------------------------------------
@@ -758,38 +996,19 @@ pub fn search(
     query: &str,
     results: Option<&SearchResults>,
     icons: Icons,
+    keys: Keys<'_>,
     now: u64,
 ) {
-    page.line(vec![
-        Seg::new("Search ", Role::Title),
-        Seg::new(query.to_owned(), Role::Code),
-    ]);
-    page.blank();
-    let items = [
-        (
-            "Repositories".to_owned(),
-            url::search(SearchKind::Repos, query),
-            None,
-        ),
-        (
-            "Issues & pull requests".to_owned(),
-            url::search(SearchKind::Issues, query),
-            None,
-        ),
-        (
-            "Users".to_owned(),
-            url::search(SearchKind::Users, query),
-            None,
-        ),
-    ];
-    let active = match kind {
-        SearchKind::Repos => 0,
-        SearchKind::Issues => 1,
-        SearchKind::Users => 2,
+    filter_field(page, query, keys);
+    let noun = match kind {
+        SearchKind::Repos => "repository",
+        SearchKind::Issues => "issue",
+        SearchKind::Pulls => "pull request",
+        SearchKind::Users => "user",
     };
-    tabs(page, &items, active);
     let Some(results) = results else {
-        page.line(vec![Seg::new("Searching…", Role::Meta)]);
+        page.box_top(vec![Seg::new("Searching…", Role::Meta)], Vec::new());
+        page.box_bottom();
         return;
     };
     let (total, shown, next) = match results {
@@ -797,31 +1016,181 @@ pub fn search(
         SearchResults::Issues(r) => (r.total, r.items.len(), r.next.is_some()),
         SearchResults::Users(r) => (r.total, r.items.len(), r.next.is_some()),
     };
-    page.line(vec![Seg::new(plural(total, "result"), Role::Meta)]);
-    page.blank();
-    match results {
-        SearchResults::Repos(r) => repo_rows(page, &r.items, now),
-        SearchResults::Issues(r) => issue_rows(page, &r.items, true, icons, now),
-        SearchResults::Users(r) => user_rows(page, &r.items),
+    page.box_top(
+        vec![Seg::new(
+            format!("{} {noun} results", compact(total)),
+            Role::Strong,
+        )],
+        Vec::new(),
+    );
+    if shown == 0 {
+        empty_row(page, "Your search did not match anything.");
     }
-    more(page, next, shown, total);
+    match results {
+        SearchResults::Repos(r) => {
+            for (n, item) in r.items.iter().enumerate() {
+                if n > 0 {
+                    page.box_rule();
+                }
+                repo_row(page, item, now, true);
+            }
+        }
+        SearchResults::Issues(r) => {
+            for (n, item) in r.items.iter().enumerate() {
+                if n > 0 {
+                    page.box_rule();
+                }
+                issue_row(page, item, true, icons, now);
+            }
+        }
+        SearchResults::Users(r) => {
+            for (n, item) in r.items.iter().enumerate() {
+                if n > 0 {
+                    page.box_rule();
+                }
+                user_row(page, item);
+            }
+        }
+    }
+    more_row(page, next, shown, total);
+    page.box_bottom();
 }
 
-// ---- issue ---------------------------------------------------------------------------
+// ---- conversations --------------------------------------------------------------------
 
-pub fn issue(page: &mut Page, d: &IssueDetail, comment_key: &str, now: u64) {
-    repo_line(page, &d.repo);
+/// A comment box: `╭─ author commented 3d ago ─── Author ─╮`, the Markdown
+/// body, `╰──╯`.
+#[allow(clippy::too_many_arguments)]
+fn comment_box(
+    page: &mut Page,
+    author: &str,
+    verb: &str,
+    when: &str,
+    body: &str,
+    badge: Option<&str>,
+    base: Option<&LinkBase>,
+    now: u64,
+) {
+    let who = link_seg(page, author.to_owned(), url::user(author), Role::Strong);
+    let right = badge
+        .map(|b| {
+            vec![Seg::new(
+                format!(" {b} "),
+                Role::Chip(Bg::SecondaryContainer),
+            )]
+        })
+        .unwrap_or_default();
+    page.box_top(
+        vec![
+            who,
+            Seg::new(format!(" {verb} {}", time::ago_iso(when, now)), Role::Meta),
+        ],
+        right,
+    );
+    if body.trim().is_empty() {
+        empty_row(page, "No description provided.");
+    } else {
+        markdown::render(page, body, base, 0, Frame::Body);
+    }
+    page.box_bottom();
+}
+
+/// The line between timeline entries.
+fn connector(page: &mut Page) {
+    page.push(PageLine {
+        segs: vec![Seg::new("│", Role::Meta)],
+        indent: 3,
+        ..PageLine::default()
+    });
+}
+
+/// A timeline event: `● author approved these changes 1d ago`.
+fn event(
+    page: &mut Page,
+    icon: &str,
+    icon_role: Role,
+    author: &str,
+    what: &str,
+    when: &str,
+    now: u64,
+) {
+    let who = link_seg(page, author.to_owned(), url::user(author), Role::Strong);
+    page.push(PageLine {
+        segs: vec![
+            Seg::new(format!("{icon}  "), icon_role),
+            who,
+            Seg::new(format!(" {what} {}", time::ago_iso(when, now)), Role::Meta),
+        ],
+        indent: 2,
+        ..PageLine::default()
+    });
+}
+
+/// The comment box at the end of a conversation.
+fn add_comment(page: &mut Page, keys: Keys<'_>) {
+    connector(page);
+    let start = page.lines.len();
+    let link = page.link(COMMENT);
+    page.box_top(
+        vec![Seg::linked("Add a comment", Role::Strong, link)],
+        Vec::new(),
+    );
+    page.box_line(
+        vec![Seg::linked(
+            format!(
+                "Press {} to write a comment (Markdown; $EDITOR with <C-e>)",
+                keys.comment
+            ),
+            Role::Meta,
+            link,
+        )],
+        Vec::new(),
+        0,
+    );
+    page.box_bottom();
+    page.item(start, link);
+}
+
+fn people(page: &mut Page, heading: &str, logins: &[String], none: &str) {
+    aside_heading(page, heading);
+    if logins.is_empty() {
+        page.line(vec![Seg::new(none, Role::Meta)]);
+    }
+    for login in logins {
+        page.link_line(login.clone(), url::user(login), Role::Link, 0);
+    }
+}
+
+fn label_list(page: &mut Page, l: &[Label]) {
+    aside_heading(page, "Labels");
+    if l.is_empty() {
+        page.line(vec![Seg::new("None yet", Role::Meta)]);
+    } else {
+        let mut segs = Vec::new();
+        labels(&mut segs, l);
+        page.wrapped(segs, 0, Frame::None);
+    }
+}
+
+pub fn issue(
+    page: &mut Page,
+    d: &IssueDetail,
+    icons: Icons,
+    keys: Keys<'_>,
+    aside: Option<u16>,
+    now: u64,
+) {
     page.wrapped(
         vec![
             Seg::new(d.title.clone(), Role::Title),
             Seg::new(format!("  #{}", d.number), Role::Meta),
         ],
         0,
-        Surface::Page,
+        Frame::None,
     );
     let author = link_seg(page, d.author.clone(), url::user(&d.author), Role::Strong);
     let mut segs = vec![
-        state_chip(d.state, false),
+        state_chip(d.state, false, icons),
         Seg::new("  ", Role::Body),
         author,
         Seg::new(
@@ -833,9 +1202,11 @@ pub fn issue(page: &mut Page, d: &IssueDetail, comment_key: &str, now: u64) {
             Role::Meta,
         ),
     ];
-    labels(&mut segs, &d.labels);
-    page.wrapped(segs, 0, Surface::Page);
-    if !d.assignees.is_empty() {
+    if aside.is_none() {
+        labels(&mut segs, &d.labels);
+    }
+    page.wrapped(segs, 0, Frame::None);
+    if aside.is_none() && !d.assignees.is_empty() {
         let mut segs = vec![Seg::new("Assignees: ", Role::Meta)];
         for (i, a) in d.assignees.iter().enumerate() {
             if i > 0 {
@@ -845,43 +1216,49 @@ pub fn issue(page: &mut Page, d: &IssueDetail, comment_key: &str, now: u64) {
         }
         page.line(segs);
     }
-    page.blank();
     let base = LinkBase {
         repo: d.repo.to_string(),
         rev: "HEAD".into(),
         dir: String::new(),
     };
-    comment_card(
+    comment_box(
         page,
         &d.author,
-        "commented",
+        "opened",
         &d.created_at,
         &d.body,
+        Some("Author"),
         Some(&base),
         now,
     );
     for c in &d.comments {
-        comment_card(
+        connector(page);
+        let badge = (c.author == d.author).then_some("Author");
+        comment_box(
             page,
             &c.author,
             "commented",
             &c.created_at,
             &c.body,
+            badge,
             Some(&base),
             now,
         );
     }
-    page.line(vec![Seg::new(
-        format!("{comment_key} to comment · o to open on GitHub"),
-        Role::Meta,
-    )]);
-}
-
-fn repo_line(page: &mut Page, repo: &RepoId) {
-    let owner = link_seg(page, repo.owner.clone(), url::user(&repo.owner), Role::Link);
-    let name = link_seg(page, repo.name.clone(), url::repo(repo), Role::Link);
-    page.line(vec![owner, Seg::new(" / ", Role::Meta), name]);
-    page.blank();
+    add_comment(page, keys);
+    if let Some(width) = aside {
+        let mut participants: Vec<String> = Vec::new();
+        for who in std::iter::once(&d.author).chain(d.comments.iter().map(|c| &c.author)) {
+            if !participants.contains(who) {
+                participants.push(who.clone());
+            }
+        }
+        page.build_aside(width, |a| {
+            people(a, "Assignees", &d.assignees, "No one assigned");
+            label_list(a, &d.labels);
+            people(a, "Participants", &participants, "");
+        });
+    }
 }
 
 // ---- pull request -------------------------------------------------------------------------
@@ -892,24 +1269,9 @@ pub enum PrTab {
     Commits,
 }
 
-fn pr_header(
-    page: &mut Page,
-    pr: &PrRef,
-    d: &PrDetail,
-    activity: Option<&PrActivity>,
-    tab: Option<PrTab>,
-    now: u64,
-) {
-    repo_line(page, &pr.repo);
+/// The line under a PR's title: state, branches, size.
+fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons, now: u64) {
     let s = &d.summary;
-    page.wrapped(
-        vec![
-            Seg::new(s.title.clone(), Role::Title),
-            Seg::new(format!("  #{}", pr.number), Role::Meta),
-        ],
-        0,
-        Surface::Page,
-    );
     let author = link_seg(page, s.author.clone(), url::user(&s.author), Role::Strong);
     let head = match &d.head_repo {
         Some(repo) if *repo != pr.repo.to_string() => {
@@ -917,44 +1279,20 @@ fn pr_header(
         }
         _ => d.head_ref.clone(),
     };
-    let mut segs = vec![
-        state_chip(pr_state(s.state), true),
-        Seg::new("  ", Role::Body),
+    // The state is in the sticky title above.
+    let _ = icons;
+    let segs = vec![
         author,
         Seg::new(" wants to merge into ", Role::Meta),
-        Seg::new(d.base_ref.clone(), Role::Code),
+        Seg::new(
+            format!(" {} ", d.base_ref),
+            Role::Chip(Bg::PrimaryContainer),
+        ),
         Seg::new(" from ", Role::Meta),
-        Seg::new(head, Role::Code),
+        Seg::new(format!(" {head} "), Role::Chip(Bg::PrimaryContainer)),
     ];
-    match s.review {
-        Some(ReviewDecision::Approved) => {
-            segs.push(space());
-            segs.push(chip("Approved", Bg::SuccessContainer));
-        }
-        Some(ReviewDecision::ChangesRequested) => {
-            segs.push(space());
-            segs.push(chip("Changes requested", Bg::ErrorContainer));
-        }
-        _ => {}
-    }
-    match s.checks {
-        Some(ChecksState::Passing) => {
-            segs.push(space());
-            segs.push(chip("✓ Checks", Bg::SuccessContainer));
-        }
-        Some(ChecksState::Failing) => {
-            segs.push(space());
-            segs.push(chip("✗ Checks", Bg::ErrorContainer));
-        }
-        Some(ChecksState::Pending) => {
-            segs.push(space());
-            segs.push(chip("● Checks", Bg::SecondaryContainer));
-        }
-        None => {}
-    }
-    labels(&mut segs, &d.labels);
-    page.wrapped(segs, 0, Surface::Page);
-    page.line(vec![
+    page.wrapped(segs, 0, Frame::None);
+    let mut meta = vec![
         Seg::new(format!("+{}", s.additions), Role::Added),
         Seg::new(" ", Role::Body),
         Seg::new(format!("−{}", s.deletions), Role::Removed),
@@ -966,125 +1304,195 @@ fn pr_header(
             ),
             Role::Meta,
         ),
-    ]);
-    page.blank();
-    if let Some(tab) = tab {
-        let commits = activity.map(|a| a.commits.len() as u64);
-        tabs(
-            page,
-            &[
-                (
-                    "Conversation".to_owned(),
-                    url::pull(pr),
-                    activity.map(|a| a.comments.len() as u64),
-                ),
-                ("Commits".to_owned(), url::pull_tab(pr, "commits"), commits),
-                (
-                    "Files changed".to_owned(),
-                    url::pull_tab(pr, "files"),
-                    Some(d.changed_files),
-                ),
-            ],
-            match tab {
-                PrTab::Conversation => 0,
-                PrTab::Commits => 1,
-            },
-        );
-    }
+    ];
+    labels(&mut meta, &d.labels);
+    page.wrapped(meta, 0, Frame::None);
 }
 
+/// GitHub's merge box: checks, reviews, conflicts.
+fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
+    let s = &d.summary;
+    if matches!(s.state, PrState::Merged | PrState::Closed) {
+        return;
+    }
+    connector(page);
+    let (headline, role) = match (s.checks, d.mergeable) {
+        (_, Mergeable::Conflicting) => (
+            "This branch has conflicts that must be resolved",
+            Role::Error,
+        ),
+        (Some(ChecksState::Failing), _) => ("Some checks were not successful", Role::Error),
+        (Some(ChecksState::Pending), _) => ("Some checks haven't completed yet", Role::Accent),
+        _ => match s.review {
+            Some(ReviewDecision::ChangesRequested) => ("Changes requested", Role::Error),
+            Some(ReviewDecision::ReviewRequired) => ("Review required", Role::Accent),
+            _ => ("This branch can be merged", Role::Success),
+        },
+    };
+    page.box_top(vec![Seg::new(headline, role)], Vec::new());
+    let row = |page: &mut Page, ok: Option<bool>, text: &str| {
+        let (icon, role) = match ok {
+            Some(true) => ("✓", Role::Success),
+            Some(false) => ("✗", Role::Error),
+            None => ("●", Role::Accent),
+        };
+        page.box_line(
+            vec![
+                Seg::new(format!("{icon}  "), role),
+                Seg::new(text, Role::Body),
+            ],
+            Vec::new(),
+            0,
+        );
+    };
+    match s.review {
+        Some(ReviewDecision::Approved) => row(page, Some(true), "Changes approved"),
+        Some(ReviewDecision::ChangesRequested) => row(page, Some(false), "Changes requested"),
+        Some(ReviewDecision::ReviewRequired) => row(page, None, "Review required"),
+        None => {}
+    }
+    match s.checks {
+        Some(ChecksState::Passing) => row(page, Some(true), "All checks have passed"),
+        Some(ChecksState::Failing) => row(page, Some(false), "Some checks were not successful"),
+        Some(ChecksState::Pending) => row(page, None, "Some checks haven't completed yet"),
+        None => {}
+    }
+    match d.mergeable {
+        Mergeable::Yes => row(page, Some(true), "No conflicts with the base branch"),
+        Mergeable::Conflicting => row(page, Some(false), "This branch has conflicts"),
+        Mergeable::Unknown => row(page, None, "Checking for conflicts…"),
+    }
+    let start = page.lines.len();
+    let link = page.link(url::pull_tab(pr, "files"));
+    page.box_rule();
+    page.box_line(
+        vec![
+            Seg::new(format!("{}  ", icons.external()), Role::Meta),
+            Seg::linked(
+                format!("Review the {} changed files", d.changed_files),
+                Role::Link,
+                link,
+            ),
+        ],
+        Vec::new(),
+        0,
+    );
+    page.item(start + 1, link);
+    page.box_bottom();
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn pr_conversation(
     page: &mut Page,
     pr: &PrRef,
     d: &PrDetail,
     activity: Option<&PrActivity>,
-    comment_key: &str,
+    icons: Icons,
+    keys: Keys<'_>,
+    aside: Option<u16>,
     now: u64,
 ) {
-    pr_header(page, pr, d, activity, Some(PrTab::Conversation), now);
+    pr_summary(page, pr, d, icons, now);
     let base = LinkBase {
         repo: pr.repo.to_string(),
         rev: d.head_oid.clone(),
         dir: String::new(),
     };
-    comment_card(
+    comment_box(
         page,
         &d.summary.author,
-        "commented",
+        "opened",
         &d.created_at,
         &d.body,
+        Some("Author"),
         Some(&base),
         now,
     );
     let Some(a) = activity else {
-        page.line(vec![Seg::new("Loading the conversation…", Role::Meta)]);
+        connector(page);
+        page.line(vec![Seg::new("   Loading the conversation…", Role::Meta)]);
         return;
     };
     // Comments and reviews in time order.
-    enum Item<'a> {
+    enum Entry<'a> {
         Comment(&'a ghtui_api::browse::Comment),
         Review(&'a ghtui_api::browse::ReviewSummary),
     }
-    let mut items: Vec<(&str, Item<'_>)> = a
+    let mut entries: Vec<(&str, Entry<'_>)> = a
         .comments
         .iter()
-        .map(|c| (c.created_at.as_str(), Item::Comment(c)))
+        .map(|c| (c.created_at.as_str(), Entry::Comment(c)))
         .chain(
             a.reviews
                 .iter()
-                .map(|r| (r.submitted_at.as_str(), Item::Review(r))),
+                .map(|r| (r.submitted_at.as_str(), Entry::Review(r))),
         )
         .collect();
-    items.sort_by(|x, y| x.0.cmp(y.0));
-    for (_, item) in items {
-        match item {
-            Item::Comment(c) => comment_card(
-                page,
-                &c.author,
-                "commented",
-                &c.created_at,
-                &c.body,
-                Some(&base),
-                now,
-            ),
-            Item::Review(r) if r.body.trim().is_empty() => {
-                let author = link_seg(page, r.author.clone(), url::user(&r.author), Role::Strong);
-                let role = match r.state.as_str() {
-                    "approved" => Role::Success,
-                    "requested changes" => Role::Error,
-                    _ => Role::Meta,
-                };
-                page.line(vec![
-                    Seg::new("● ", role),
-                    author,
-                    Seg::new(
-                        format!(" {} {}", r.state, time::ago_iso(&r.submitted_at, now)),
-                        Role::Meta,
-                    ),
-                ]);
-                page.blank();
+    entries.sort_by(|x, y| x.0.cmp(y.0));
+    for (_, entry) in entries {
+        connector(page);
+        match entry {
+            Entry::Comment(c) => {
+                let badge = (c.author == d.summary.author).then_some("Author");
+                comment_box(
+                    page,
+                    &c.author,
+                    "commented",
+                    &c.created_at,
+                    &c.body,
+                    badge,
+                    Some(&base),
+                    now,
+                )
             }
-            Item::Review(r) => comment_card(
-                page,
-                &r.author,
-                &r.state,
-                &r.submitted_at,
-                &r.body,
-                Some(&base),
-                now,
-            ),
+            Entry::Review(r) => {
+                let (icon, role, what) = match r.state.as_str() {
+                    "approved" => ("✓", Role::Success, "approved these changes"),
+                    "requested changes" => ("✗", Role::Error, "requested changes"),
+                    "dismissed" => ("○", Role::Meta, "had a review dismissed"),
+                    _ => ("◉", Role::Meta, "reviewed"),
+                };
+                event(page, icon, role, &r.author, what, &r.submitted_at, now);
+                if !r.body.trim().is_empty() {
+                    connector(page);
+                    comment_box(
+                        page,
+                        &r.author,
+                        "commented",
+                        &r.submitted_at,
+                        &r.body,
+                        None,
+                        Some(&base),
+                        now,
+                    );
+                }
+            }
         }
     }
-    let files = link_seg(
-        page,
-        format!("Files changed ({})", d.changed_files),
-        url::pull_tab(pr, "files"),
-        Role::Link,
-    );
-    page.line(vec![
-        files,
-        Seg::new(format!("   {comment_key} to comment"), Role::Meta),
-    ]);
+    merge_box(page, pr, d, icons);
+    add_comment(page, keys);
+    if let Some(width) = aside {
+        let mut reviewers: Vec<String> = Vec::new();
+        for r in &a.reviews {
+            if !reviewers.contains(&r.author) {
+                reviewers.push(r.author.clone());
+            }
+        }
+        page.build_aside(width, |side| {
+            people(side, "Reviewers", &reviewers, "No reviews");
+            label_list(side, &d.labels);
+            aside_heading(side, "Size");
+            side.line(vec![
+                Seg::new(format!("+{}", d.summary.additions), Role::Added),
+                Seg::new(" ", Role::Body),
+                Seg::new(format!("−{}", d.summary.deletions), Role::Removed),
+                Seg::new(
+                    format!(" in {}", plural(d.changed_files, "file")),
+                    Role::Meta,
+                ),
+            ]);
+        });
+    }
 }
 
 pub fn pr_commits(
@@ -1092,40 +1500,63 @@ pub fn pr_commits(
     pr: &PrRef,
     d: &PrDetail,
     activity: Option<&PrActivity>,
+    icons: Icons,
     now: u64,
 ) {
-    pr_header(page, pr, d, activity, Some(PrTab::Commits), now);
+    pr_summary(page, pr, d, icons, now);
     let Some(a) = activity else {
+        page.blank();
         page.line(vec![Seg::new("Loading commits…", Role::Meta)]);
         return;
     };
+    let mut current_day = String::new();
     for c in &a.commits {
-        let headline = link_seg(
-            page,
-            c.headline.clone(),
-            url::commit(&pr.repo, &c.oid),
-            Role::Strong,
+        let date = day(&c.date);
+        if date != current_day {
+            if !current_day.is_empty() {
+                page.box_bottom();
+            }
+            page.box_top(
+                vec![Seg::new(format!("◷ Commits on {date}"), Role::Meta)],
+                Vec::new(),
+            );
+            current_day = date;
+        } else {
+            page.box_rule();
+        }
+        let start = page.lines.len();
+        let link = page.link(url::commit(&pr.repo, &c.oid));
+        page.box_line(
+            vec![Seg::linked(c.headline.clone(), Role::Strong, link)],
+            vec![Seg::new(c.oid[..7.min(c.oid.len())].to_owned(), Role::Code)],
+            0,
         );
-        let mut line = PageLine {
-            segs: vec![Seg::new("● ", Role::Meta), headline],
-            ..PageLine::default()
-        };
-        line.right = vec![Seg::new(c.oid[..7.min(c.oid.len())].to_owned(), Role::Code)];
-        page.push(line);
-        page.push(PageLine {
-            segs: vec![Seg::new(
+        page.box_line(
+            vec![Seg::new(
                 format!("{} committed {}", c.author, time::ago_iso(&c.date, now)),
                 Role::Meta,
             )],
-            indent: 2,
-            ..PageLine::default()
-        });
+            Vec::new(),
+            0,
+        );
+        page.item(start, link);
+    }
+    if !current_day.is_empty() {
+        page.box_bottom();
     }
 }
 
 // ---- profile -------------------------------------------------------------------------------
 
-pub fn profile(page: &mut Page, p: &Profile, now: u64) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ProfileTab {
+    #[default]
+    Overview,
+    Repositories,
+    Stars,
+}
+
+pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, now: u64) {
     let mut segs = Vec::new();
     match &p.name {
         Some(name) => {
@@ -1140,13 +1571,13 @@ pub fn profile(page: &mut Page, p: &Profile, now: u64) {
     }
     page.line(segs);
     if let Some(bio) = &p.bio {
-        page.wrapped(vec![Seg::new(bio.clone(), Role::Body)], 0, Surface::Page);
+        page.wrapped(vec![Seg::new(bio.clone(), Role::Body)], 0, Frame::None);
     }
     let mut facts = Vec::new();
     if let (Some(followers), Some(following)) = (p.followers, p.following) {
         facts.push(Seg::new(
             format!(
-                "{} followers · {} following",
+                "⚇ {} followers · {} following",
                 compact(followers),
                 compact(following)
             ),
@@ -1159,24 +1590,64 @@ pub fn profile(page: &mut Page, p: &Profile, now: u64) {
         }
     }
     if let Some(site) = &p.website {
-        facts.push(Seg::new("   ", Role::Meta));
+        facts.push(Seg::new("   ↗ ", Role::Meta));
         facts.push(link_seg(page, site.clone(), site.clone(), Role::Link));
     }
     if !facts.is_empty() {
-        page.wrapped(facts, 0, Surface::Page);
+        page.wrapped(facts, 0, Frame::None);
     }
-    page.blank();
-    if !p.pinned.is_empty() {
-        page.line(vec![Seg::new("Pinned", Role::Title)]);
-        page.blank();
-        repo_rows(page, &p.pinned, now);
+    match tab {
+        ProfileTab::Overview => {
+            if p.pinned.is_empty() {
+                let mut popular = p.repos.clone();
+                popular.sort_by_key(|r| std::cmp::Reverse(r.stars));
+                popular.truncate(6);
+                repo_box(
+                    page,
+                    vec![Seg::new("Popular repositories", Role::Strong)],
+                    Vec::new(),
+                    &popular,
+                    "No public repositories yet.",
+                    false,
+                    now,
+                );
+            } else {
+                repo_box(
+                    page,
+                    vec![Seg::new("Pinned", Role::Strong)],
+                    Vec::new(),
+                    &p.pinned,
+                    "",
+                    true,
+                    now,
+                );
+            }
+        }
+        ProfileTab::Repositories => repo_box(
+            page,
+            vec![Seg::new(
+                format!("Repositories  {}", compact(p.repo_count)),
+                Role::Strong,
+            )],
+            vec![Seg::new("Sort: Last updated", Role::Meta)],
+            &p.repos,
+            "No public repositories yet.",
+            false,
+            now,
+        ),
+        ProfileTab::Stars => repo_box(
+            page,
+            vec![Seg::new(
+                format!("Starred  {}", compact(p.star_count)),
+                Role::Strong,
+            )],
+            vec![Seg::new("Sort: Recently starred", Role::Meta)],
+            &p.stars,
+            "Nothing starred yet.",
+            true,
+            now,
+        ),
     }
-    page.line(vec![
-        Seg::new("Repositories", Role::Title),
-        Seg::new(format!("  {}", compact(p.repo_count)), Role::Meta),
-    ]);
-    page.blank();
-    repo_rows(page, &p.repos, now);
 }
 
 // ---- home -----------------------------------------------------------------------------------
@@ -1189,98 +1660,94 @@ pub fn home(
     icons: Icons,
     now: u64,
 ) {
-    let pr_rows = |page: &mut Page, prs: &[PrSummary]| {
-        for p in prs {
-            let summary = IssueSummary {
-                repo: p.pr.repo.clone(),
-                number: p.pr.number,
-                title: p.title.clone(),
-                is_pr: true,
-                state: pr_state(p.state),
-                author: p.author.clone(),
-                updated_at: p.updated_at.clone(),
-                comments: p.comments,
-                labels: Vec::new(),
-            };
-            issue_rows(page, std::slice::from_ref(&summary), true, icons, now);
-        }
-    };
+    let pr_box =
+        |page: &mut Page, title: &str, total: u64, prs: &[PrSummary], query: &str, empty: &str| {
+            let all = link_seg(
+                page,
+                "View all",
+                url::search(SearchKind::Pulls, query),
+                Role::Link,
+            );
+            page.box_top(
+                vec![
+                    Seg::new(title.to_owned(), Role::Strong),
+                    Seg::new(format!("  {}", compact(total)), Role::Meta),
+                ],
+                vec![all],
+            );
+            if prs.is_empty() {
+                empty_row(page, empty);
+            }
+            for (n, p) in prs.iter().enumerate() {
+                if n > 0 {
+                    page.box_rule();
+                }
+                let summary = IssueSummary {
+                    repo: p.pr.repo.clone(),
+                    number: p.pr.number,
+                    title: p.title.clone(),
+                    is_pr: true,
+                    state: pr_state(p.state),
+                    author: p.author.clone(),
+                    updated_at: p.updated_at.clone(),
+                    comments: p.comments,
+                    labels: Vec::new(),
+                };
+                issue_row(page, &summary, true, icons, now);
+            }
+            page.box_bottom();
+        };
     match inbox {
         Some(inbox) => {
-            let all = link_seg(
+            pr_box(
                 page,
-                "see all",
-                url::search(
-                    SearchKind::Issues,
-                    "is:open is:pr review-requested:@me archived:false",
-                ),
-                Role::Link,
+                "Review requests",
+                inbox
+                    .review_requested_total
+                    .max(inbox.review_requested.len() as u64),
+                &inbox.review_requested,
+                "is:open is:pr review-requested:@me archived:false",
+                "Nothing is waiting for your review.",
             );
-            page.line(vec![
-                Seg::new("Review requested", Role::Title),
-                Seg::new(
-                    format!(
-                        "  {}   ",
-                        inbox
-                            .review_requested_total
-                            .max(inbox.review_requested.len() as u64)
-                    ),
-                    Role::Meta,
-                ),
-                all,
-            ]);
-            page.blank();
-            if inbox.review_requested.is_empty() {
-                page.line(vec![Seg::new(
-                    "Nothing is waiting for your review.",
-                    Role::Meta,
-                )]);
-            }
-            pr_rows(page, &inbox.review_requested);
-            page.blank();
-            let all = link_seg(
+            pr_box(
                 page,
-                "see all",
-                url::search(
-                    SearchKind::Issues,
-                    "is:open is:pr author:@me archived:false",
-                ),
-                Role::Link,
+                "Your pull requests",
+                inbox.authored_total.max(inbox.authored.len() as u64),
+                &inbox.authored,
+                "is:open is:pr author:@me archived:false",
+                "You have no open pull requests.",
             );
-            page.line(vec![
-                Seg::new("Your pull requests", Role::Title),
-                Seg::new(
-                    format!(
-                        "  {}   ",
-                        inbox.authored_total.max(inbox.authored.len() as u64)
-                    ),
-                    Role::Meta,
-                ),
-                all,
-            ]);
-            page.blank();
-            if inbox.authored.is_empty() {
-                page.line(vec![Seg::new(
-                    "You have no open pull requests.",
-                    Role::Meta,
-                )]);
-            }
-            pr_rows(page, &inbox.authored);
-            page.blank();
         }
-        None => page.line(vec![Seg::new("Loading your pull requests…", Role::Meta)]),
+        None => {
+            page.box_top(vec![Seg::new("Review requests", Role::Strong)], Vec::new());
+            empty_row(page, "Loading…");
+            page.box_bottom();
+        }
     }
-    page.blank();
-    let mut title = vec![Seg::new("Your repositories", Role::Title)];
-    if let Some(login) = viewer {
-        title.push(Seg::new("   ", Role::Body));
-        title.push(link_seg(page, "see all", url::user(login), Role::Link));
-    }
-    page.line(title);
-    page.blank();
+    let all = viewer.map(|login| {
+        link_seg(
+            page,
+            "View all",
+            format!("{}?tab=repositories", url::user(login)),
+            Role::Link,
+        )
+    });
+    let title = vec![Seg::new("Your repositories", Role::Strong)];
     match repos {
-        Some(repos) => repo_rows(page, repos, now),
-        None => page.line(vec![Seg::new("Loading…", Role::Meta)]),
+        Some(repos) => repo_box(
+            page,
+            title,
+            all.into_iter().collect(),
+            repos,
+            "You don't have any repositories yet.",
+            true,
+            now,
+        ),
+        None => {
+            page.box_top(title, Vec::new());
+            empty_row(page, "Loading…");
+            page.box_bottom();
+        }
     }
 }
 
@@ -1333,6 +1800,8 @@ mod tests {
             watchers: 5,
             open_issues: 3,
             open_prs: 1,
+            closed_issues: 9,
+            closed_prs: 4,
             license: Some("MIT".into()),
             topics: vec!["tui".into()],
             default_branch: Some("main".into()),
@@ -1362,14 +1831,23 @@ mod tests {
             }),
         };
         let mut page = Page::new(80);
-        repo_header(&mut page, &repo, Some(&overview), RepoTab::Code);
-        repo_code(&mut page, &repo, &overview, 0);
+        repo_title(&mut page, &repo, Some(&overview), Keys::default());
+        repo_code(
+            &mut page,
+            &repo,
+            &overview,
+            Icons::default(),
+            Keys::default(),
+            None,
+            0,
+        );
         for url in [
             "https://github.com/o/r/tree/main/src",
             "https://github.com/o/r/blob/main/README.md",
             "https://github.com/o/r/blob/main/docs/intro.md",
-            "https://github.com/o/r/issues",
             "https://github.com/o",
+            STAR,
+            FIND_FILE,
         ] {
             assert!(
                 page.links.iter().any(|l| l == url),
@@ -1379,6 +1857,35 @@ mod tests {
         }
         let text: Vec<String> = page.lines.iter().map(PageLine::text).collect();
         assert!(text.iter().any(|l| l.contains("1.2k stars")), "{text:?}");
-        assert!(text.iter().any(|l| l.contains("# Hello")), "{text:?}");
+        assert!(text.iter().any(|l| l == "Hello"), "{text:?}");
+        // Files and the `..`-less root list are items, in order.
+        let opened: Vec<&str> = page
+            .items
+            .iter()
+            .map(|i| page.links[i.link as usize].as_str())
+            .collect();
+        assert_eq!(
+            opened,
+            [
+                "https://github.com/o/r/tree/main/src",
+                "https://github.com/o/r/blob/main/README.md"
+            ]
+        );
+    }
+
+    #[test]
+    fn wide_pages_get_an_about_sidebar() {
+        assert_eq!(aside_width(90), None);
+        assert_eq!(main_width(120, aside_width(120)), 120 - 30 - ASIDE_GAP);
+    }
+
+    #[test]
+    fn list_queries_name_their_state_and_sort() {
+        assert_eq!(list_state("is:open label:bug"), "open");
+        assert_eq!(list_state("is:closed"), "closed");
+        assert_eq!(list_state("label:bug"), "all");
+        assert_eq!(sort_label("is:open sort:comments-desc"), "Most commented");
+        assert_eq!(sort_label("is:open"), "Newest");
+        assert_eq!(day("2026-10-01T12:00:00Z"), "Oct 1, 2026");
     }
 }

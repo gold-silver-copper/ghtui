@@ -54,40 +54,73 @@ ghtui --theme light                     # override the color scheme
 
 ## Browsing
 
-Every page is a document of lines, and links in it are github.com URLs. Move
-the cursor with `j`/`k` (or jump between links with `<Tab>`) and press
-`<Enter>` to follow a link. If a line has several links, you choose one. On a
-card's second line (an issue's number, a repository's description), `<Enter>`
-follows the card's title. History works like a browser: `<Esc>` goes back,
-and the top bar shows the latest pages.
+ghtui is laid out like the website:
+- **The header** shows where you are (`owner / repo`), a search field ("Type /
+  to search"), your review requests and your account.
+- **Tabs** sit under the header, with the active tab underlined: Code, Issues,
+  Pull requests and Actions on a repository; Conversation, Commits, Checks and
+  Files changed on a pull request; Overview, Repositories and Stars on a
+  profile.
+- **The content** is in GitHub's boxes: the file list under the latest
+  commit, the README, issue lists, and comments joined into a timeline. Wide
+  terminals also get the sidebar (About, Assignees, Labels, Reviewers).
+- **The status bar** names the keys that do something here.
 
-- **Home**: review requests, your open pull requests, and your recently
-  pushed repositories, each section linking to the full list.
-- **Repository**: owner and name, visibility, description, stars, forks and
-  watchers, then tabs: `1` Code, `2` Issues, `3` Pull requests. Code shows
-  topics, language, license, the latest commit, the root directory, and the
-  README rendered from Markdown. Relative links resolve as they do on GitHub.
-  Directories and files open in place. Files are syntax-highlighted with line
-  numbers, and `.md` files are rendered.
-- **Issues and pull requests**: newest first, with labels and comment counts.
-  `f` edits the filter, which takes GitHub search syntax (`is:closed
-  label:bug author:octocat`). Long lists end in "Load more".
-- **Issue**: state, labels, assignees, and the conversation rendered from
-  Markdown. Issue numbers that are pull requests redirect, as on GitHub.
-- **Pull request**: tabs `1` Conversation (description, comments and reviews in
-  order), `2` Commits, and `3` Files changed, which is the diff viewer below. In
-  the diff, `1` and `2` go back to the other tabs.
-- **Profile**: users and organizations, with pinned and recent repositories.
-- **Search**: `/` searches GitHub, and on a repository's pages it starts as
-  `repo:owner/name`. Results come in tabs: `1` Repositories, `2` Issues & pull
-  requests, `3` Users. Queries with qualifiers such as `is:`, `repo:` or
-  `label:` start on issues.
-- **Writing**: `c` comments on the issue or pull request on screen, posted
-  when you press `<C-s>`. `*` stars or unstars the repository.
+**Moving.** `j`/`k` move between rows: files, issues, repositories, "Load
+more". Where a page is text (a README, a conversation), they scroll through it
+instead. `<Enter>` opens the selected row. `f` puts letters on every link on
+screen; type a link's letters to follow it. `F` does the same but opens the
+link in the browser. History works like a browser's: `<Esc>` (or `H`) goes
+back and `L` goes forward. The mouse works too: click a link, a row, a tab or
+the search field, and scroll with the wheel.
 
-Links ghtui doesn't show itself (Actions, wikis, releases, external sites) open
-in your browser. Pages show cached data first and refresh in the background.
-Pages are at most 120 columns wide and centered, as on GitHub.
+**Quick ways around.**
+- `/` opens the search field. It suggests pages you've visited and your
+  repositories as you type, plus live repository matches. It can also search
+  this repository, all repositories, issues, pull requests or users. On a list,
+  `/` edits the list's filter instead, with quick filters such as "assigned to
+  you".
+- `t` is GitHub's "Go to file" (fuzzy, across the whole repository) and `w`
+  switches branches or tags.
+- `gc` `gi` `gp` go to the repository's code, issues and pull requests, and
+  `gh` goes home. Pressing `g` shows what can follow it.
+- `1`–`4` pick a tab and `<Tab>` cycles through them.
+- `.` lists everything you can do here, with each action's key (right-click
+  opens it too).
+- `y` copies the link of the selection or the page.
+- `:` (or `<C-k>`) is the command palette. It also takes `owner/repo`,
+  `owner/repo#123`, `@user`, or a URL.
+
+**The pages.**
+- **Home** shows review requests, your open pull requests and your
+  repositories.
+- **Repository** has the Code tab:
+  - A title with Star, Fork and Watch.
+  - About.
+  - The branch and "Go to file" buttons.
+  - The file list.
+  - The README rendered from Markdown, with relative links resolved as on
+    GitHub.
+- **Directories and files** open in place. Files are syntax-highlighted with
+  line numbers, and `.md` files are rendered.
+- **Issues and pull requests** lists are newest first, under a filter field,
+  with Open/Closed counts (`S` cycles them) and a sort (`O` cycles it). Long
+  lists end in "Load more".
+- **Issue** shows the conversation as a timeline of comment boxes. Issue
+  numbers that are pull requests redirect, as on GitHub.
+- **Pull request**:
+  - A sticky title.
+  - Conversation, with a merge box for checks, reviews and conflicts.
+  - Commits, grouped by day.
+  - Files changed, which is the diff viewer below.
+- **Profile** has its Overview (pinned repositories), Repositories and Stars.
+- **Search** has tabs for repositories, issues, pull requests and users.
+- **Writing**: `c` comments on the issue or pull request on screen, and the
+  "Add a comment" box at the end does the same. `*` stars or unstars.
+
+Links ghtui doesn't show itself (Actions, wikis, releases, external sites)
+open in your browser. Pages show cached data first and refresh in the
+background. Pages are at most 140 columns wide and centered.
 
 ## Authentication
 
@@ -119,33 +152,38 @@ unless you set your own `GIT_SSH_COMMAND`.
 All keys can be rebound (see [Configuration](#configuration)). Press `?` in the
 app for this list, generated from your actual keymap.
 
-| Keys            | Action                                                                        |
-| --------------- | ----------------------------------------------------------------------------- |
-| `j` `<Down>`    | Move down                                                                     |
-| `k` `<Up>`      | Move up                                                                       |
-| `<C-d>` `<C-u>` | Half page down / up                                                           |
-| `gg` `G`        | Go to top / bottom                                                            |
-| `<Enter>`       | Follow the link (in the diff: open a file from the tree, a collapsed file)    |
-| `<Esc>` `<BS>`  | Back                                                                          |
-| `q`             | Close the page (quits from the first)                                         |
-| `<C-c>`         | Quit                                                                          |
-| `r`             | Refresh (on the diff: fetch and recompute)                                    |
-| `o`             | Open on GitHub in the browser                                                 |
-| `:`             | Command palette                                                               |
-| `?`             | Keyboard shortcuts                                                            |
-| `gh`            | Home                                                                          |
-| `gi` `gp`       | The repository's issues / pull requests                                       |
-| `1` `2` `3`     | Tabs (Code, Issues, Pull requests; Conversation, Commits, Files changed)      |
-| `/`             | Search GitHub (in the diff: search the diff)                                  |
-| `c`             | Comment on the issue or pull request (in the diff: on the line or selection)  |
+| Keys              | Action                                                                      |
+| ----------------- | --------------------------------------------------------------------------- |
+| `j` `k`           | Next / previous row (in text: scroll)                                       |
+| `J` `K`           | Scroll a line (pages)                                                       |
+| `<C-d>` `<C-u>`   | Half page down / up (`<Space>` pages down on pages)                         |
+| `gg` `G`          | Go to top / bottom                                                          |
+| `<Enter>`         | Open the selection (in the diff: open a file from the tree, a collapsed file) |
+| `<Esc>` `H`       | Back                                                                        |
+| `L`               | Forward                                                                     |
+| `q` `<C-c>`       | Quit                                                                        |
+| `/`               | Search GitHub, or filter the list (in the diff: search the diff)            |
+| `t`               | Go to file (in the diff: among the PR's files)                              |
+| `gh` `gc` `gi` `gp` | Home; the repository's code, issues, pull requests                        |
+| `1`–`4`           | Tabs                                                                        |
+| `y`               | Copy the link (selection, or the page)                                      |
+| `o`               | Open on GitHub in the browser                                               |
+| `c`               | Comment (on the issue or pull request; in the diff: on the line)            |
+| `r`               | Refresh (on the diff: fetch and recompute)                                  |
+| `:` `<C-k>`       | Command palette                                                             |
+| `?`               | Keyboard shortcuts                                                          |
 
 On pages:
 
-| Keys            | Action                                                                        |
-| --------------- | ----------------------------------------------------------------------------- |
-| `<Tab>` `<S-Tab>` | Next / previous link                                                        |
-| `f`             | Filter the list (GitHub search syntax)                                        |
-| `*`             | Star or unstar the repository                                                 |
+| Keys              | Action                                                                      |
+| ----------------- | --------------------------------------------------------------------------- |
+| `f` `F`           | Follow a link by its letters (`F`: in the browser)                          |
+| `.`               | Everything you can do here (also right-click)                               |
+| `<Tab>` `<S-Tab>` | Next / previous tab                                                         |
+| `w`               | Switch branches or tags                                                     |
+| `S`               | Show open, closed or all (lists)                                            |
+| `O`               | Change the sort (lists)                                                     |
+| `*`               | Star or unstar the repository                                               |
 
 In the diff (keys may mean something else on pages):
 
@@ -163,7 +201,6 @@ In the diff (keys may mean something else on pages):
 | `v`             | Mark the file viewed / unviewed, synced with GitHub; viewed files collapse    |
 | `m`             | Mark the change under the cursor reviewed (local, survives restarts)          |
 | `n` `N`         | Next / previous search match (smart case)                                     |
-| `gf`            | Find a file by fuzzy path                                                     |
 | `]c` `[c`       | Next / previous unresolved thread                                             |
 | `<Enter>`       | On a thread: open or collapse it. On a draft: edit it                         |
 | `V`             | Start or end a visual line selection (for multi-line comments)                |
@@ -188,6 +225,9 @@ The command palette fuzzy-matches action names and descriptions. It also goes
 places: `owner/repo`, `owner/repo#123`, `@user`, or a github.com URL. On a
 repository's pages, a bare `#42` opens that issue or pull request. Anything
 else can be searched on GitHub.
+
+`y` copies with OSC 52, which most terminals support; in tmux, `set -g
+set-clipboard on`.
 
 ## Configuration
 
@@ -453,8 +493,11 @@ Performance targets, as timing tests
 - Actions, wikis, discussions, releases, notifications and code search
   aren't pages yet; their links open in the browser. Repositories open on
   their default branch, with no branch or tag picker yet.
-- Profiles list the 30 most recently pushed repositories; profile READMEs
-  aren't shown.
+- Profiles list the 30 most recently pushed (and starred) repositories;
+  profile READMEs and the contribution graph aren't shown.
+- "Go to file" lists what GitHub's tree API returns in one request; for very
+  large repositories GitHub cuts it short, and ghtui says so.
+- Live search suggestions use GitHub's search, which can take a second or two.
 - Markdown is rendered for the terminal: images show their alt text (badges
   without it are left out), and HTML is reduced to its text, links and
   structure.

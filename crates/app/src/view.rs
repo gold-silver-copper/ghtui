@@ -1,14 +1,15 @@
 //! The view: a pure function of [`State`] (plus the current time).
 
 use ghtui_theme::Bg;
-use ghtui_ui::bars::{Banner, StatusBar, TopBar};
+use ghtui_ui::bars::{Banner, StatusBar};
+use ghtui_ui::chrome::{Header, KeyPanel, SearchPanel, TabBar, TitleBar, header_layout};
 use ghtui_ui::overlays::{Help, Palette};
 use ghtui_ui::page::PageView;
 use ghtui_ui::{Ctx, PAD_X, PAD_Y, fill};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use ghtui_ui::diff_view::{DiffView, Keys};
@@ -34,45 +35,59 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
         fill(buf, area, ctx.theme, Bg::Surface);
         return;
     }
-    let top = Rect { height: 1, ..area };
-    let status = Rect {
-        y: area.bottom() - 1,
-        height: 1,
-        ..area
-    };
-    let content = Rect {
-        y: area.y + 1,
-        height: area.height - 2,
-        ..area
-    };
+    let lay = state.layout();
+    let chrome = state.chrome();
+    let status = lay.status;
 
-    let tabs = state.tabs();
-    TopBar {
+    // Header: where you are, the search field, you.
+    let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
+    let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
+    let search_input = match &state.overlay {
+        Some(Overlay::Search(sb)) => Some(&sb.input),
+        _ => None,
+    };
+    let placeholder = format!("Type {} to search", state.first_key(Action::Search));
+    Header {
         ctx,
-        tabs: &tabs,
-        active: tabs.len() - 1,
-        login: state.viewer.as_deref(),
+        crumbs: &crumbs,
+        right: &right,
+        input: search_input,
+        placeholder: &placeholder,
     }
-    .render(top, buf);
+    .render(lay.header, buf);
+    if let (Some(rect), Some(pr)) = (lay.title, &chrome.title) {
+        TitleBar {
+            ctx,
+            line: pr_title(state, pr),
+        }
+        .render(rect, buf);
+    }
+    if let Some(rect) = lay.tabs {
+        let tabs: Vec<_> = chrome.tabs.iter().map(|(t, _)| t.clone()).collect();
+        TabBar {
+            ctx,
+            tabs: &tabs,
+            active: chrome.active,
+        }
+        .render(rect, buf);
+    }
 
+    let content = lay.content;
     match state.screen() {
         Screen::Page(p) => {
             fill(buf, content, ctx.theme, PANE);
-            // Pages are at most MAX_WIDTH wide, centered.
-            let width = (state.page_width() + 2 * PAD_X).min(content.width);
-            let area = Rect {
-                x: content.x + (content.width - width) / 2,
-                y: content.y + PAD_Y.min(content.height),
-                width,
-                height: content.height.saturating_sub(2 * PAD_Y),
+            let hints = match &state.overlay {
+                Some(Overlay::Hints(h)) => h.shown(),
+                _ => Vec::new(),
             };
             PageView {
                 ctx,
                 page: &p.page,
-                cursor: p.cursor,
                 scroll: p.scroll,
+                selected: p.selected,
+                hints: &hints,
             }
-            .render(area, buf);
+            .render(state.page_area(), buf);
         }
         Screen::Diff(screen) => render_diff(state, ctx, content, buf, screen),
     }
@@ -90,8 +105,29 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
         notice: state.notice.as_ref(),
         pending_keys: &pending,
         rate_limit,
+        hints: &state.key_hints(),
     }
     .render(status, buf);
+
+    // Which keys can follow a prefix.
+    let next_keys = state.continuations();
+    if !next_keys.is_empty() {
+        let title = format!("{} …", pending);
+        KeyPanel {
+            ctx,
+            title: &title,
+            rows: &next_keys,
+            selected: None,
+            help: "esc cancels",
+        }
+        .render(
+            Rect {
+                height: area.height,
+                ..area
+            },
+            buf,
+        );
+    }
 
     match &state.overlay {
         Some(Overlay::Help) => {
@@ -204,37 +240,50 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
             }
             .render(area, buf);
         }
-        Some(Overlay::Links(picker)) => {
-            let items: Vec<_> = picker.items.iter().map(|(_, item)| item.clone()).collect();
+        Some(Overlay::Finder(f)) => {
+            let items: Vec<_> = state
+                .finder_rows(f)
+                .into_iter()
+                .map(|(item, _)| item)
+                .collect();
             Palette {
                 ctx,
-                prompt: "Open",
-                input: &picker.input,
+                prompt: f.title(),
+                input: &f.input,
                 items: &items,
-                selected: picker.selected,
+                selected: f.selected,
             }
             .render(area, buf);
         }
-        Some(Overlay::Prompt(prompt)) => {
-            fill(buf, status, ctx.theme, Bg::Container);
-            let row = Rect {
-                x: status.x + PAD_X,
-                width: status.width.saturating_sub(2 * PAD_X),
-                ..status
-            };
-            let label = prompt.label();
-            Span::styled(label, ctx.theme.accent(Bg::Container)).render(row, buf);
-            let w = label.chars().count() as u16;
-            prompt.input.render(
-                Rect {
-                    x: row.x + w,
-                    width: row.width.saturating_sub(w),
-                    ..row
-                },
-                buf,
-            );
+        Some(Overlay::Menu(menu)) => {
+            let rows = state.menu_rows(menu);
+            KeyPanel {
+                ctx,
+                title: "Here you can",
+                rows: &rows,
+                selected: Some(menu.selected),
+                help: "enter or a row's key runs it · esc closes",
+            }
+            .render(area, buf);
         }
-        Some(Overlay::Search(input)) => {
+        Some(Overlay::Search(sb)) => {
+            let rows: Vec<_> = state.suggestions(sb).into_iter().map(|(r, _)| r).collect();
+            let field = header_layout(lay.header, &crumbs, &right).search;
+            SearchPanel {
+                ctx,
+                rows: &rows,
+                selected: sb.selected,
+                field,
+                help: if sb.filter {
+                    "enter filters · ↑↓ choose · esc closes"
+                } else {
+                    "enter goes · ↑↓ choose · esc closes"
+                },
+            }
+            .render(area, buf);
+        }
+        Some(Overlay::Hints(_)) => {}
+        Some(Overlay::DiffSearch(input)) => {
             // The prompt replaces the status bar.
             fill(buf, status, ctx.theme, Bg::Container);
             let row = Rect {
@@ -381,4 +430,29 @@ fn separate_collapsed_tones(ctx: Ctx<'_>, content: Rect, buf: &mut Buffer) {
             }
         }
     }
+}
+
+/// A pull request's sticky title: state, title, number.
+fn pr_title<'a>(state: &'a State, pr: &ghtui_api::model::PrRef) -> Line<'a> {
+    let theme = &state.theme;
+    let bar = Bg::Container;
+    let Some(d) = state.prs.get(pr).and_then(|r| r.data.as_ref()) else {
+        return Line::from(Span::styled(pr.to_string(), theme.title(bar)));
+    };
+    let s = &d.summary;
+    let (text, bg) = match s.state {
+        ghtui_api::model::PrState::Open => ("Open", Bg::SuccessContainer),
+        ghtui_api::model::PrState::Draft => ("Draft", Bg::SecondaryContainer),
+        ghtui_api::model::PrState::Merged => ("Merged", Bg::TertiaryContainer),
+        ghtui_api::model::PrState::Closed => ("Closed", Bg::ErrorContainer),
+    };
+    Line::from(vec![
+        Span::styled(
+            format!(" {} {text} ", state.icons.pr_state(s.state)),
+            theme.fill(bg),
+        ),
+        Span::styled("  ", theme.body(bar)),
+        Span::styled(s.title.clone(), theme.title(bar)),
+        Span::styled(format!("  #{}", pr.number), theme.meta(bar)),
+    ])
 }

@@ -60,6 +60,10 @@ pub struct RepoOverview {
     pub watchers: u64,
     pub open_issues: u64,
     pub open_prs: u64,
+    #[serde(default)]
+    pub closed_issues: u64,
+    #[serde(default)]
+    pub closed_prs: u64,
     pub license: Option<String>,
     pub topics: Vec<String>,
     pub default_branch: Option<String>,
@@ -136,7 +140,10 @@ pub struct Results<T> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SearchKind {
     Repos,
+    /// Issues and pull requests (unless the query says `is:issue` or `is:pr`).
     Issues,
+    /// Pull requests only.
+    Pulls,
     Users,
 }
 
@@ -204,6 +211,10 @@ pub struct Profile {
     pub pinned: Vec<RepoSummary>,
     pub repos: Vec<RepoSummary>,
     pub repo_count: u64,
+    #[serde(default)]
+    pub stars: Vec<RepoSummary>,
+    #[serde(default)]
+    pub star_count: u64,
 }
 
 // ---- wire types: shared fragments ---------------------------------------------
@@ -285,6 +296,12 @@ pub struct RepoFull {
     pub issues: IssueCount,
     #[arguments(states: [OPEN])]
     pub pull_requests: PrCount,
+    #[cynic(rename = "issues", alias)]
+    #[arguments(states: [CLOSED])]
+    pub closed_issues: IssueCount,
+    #[cynic(rename = "pullRequests", alias)]
+    #[arguments(states: [CLOSED, MERGED])]
+    pub closed_pull_requests: PrCount,
     pub license_info: Option<License>,
     #[arguments(first: 20)]
     pub repository_topics: Topics,
@@ -758,6 +775,15 @@ pub struct UserFull {
     pub pinned_items: Pinned,
     #[arguments(first: 30, orderBy: { field: PUSHED_AT, direction: DESC }, ownerAffiliations: [OWNER])]
     pub repositories: RepoList,
+    #[arguments(first: 30, orderBy: { field: STARRED_AT, direction: DESC })]
+    pub starred_repositories: StarList,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "StarredRepositoryConnection", schema_module = "schema")]
+pub struct StarList {
+    pub total_count: i32,
+    pub nodes: Option<Vec<Option<RepoCard>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -805,6 +831,71 @@ pub enum PinnedItem {
 pub struct RepoList {
     pub total_count: i32,
     pub nodes: Option<Vec<Option<RepoCard>>>,
+}
+
+// ---- branches ------------------------------------------------------------------------------
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct BranchesVariables {
+    pub owner: String,
+    pub name: String,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "BranchesVariables"
+)]
+pub struct BranchesQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepoBranches>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Repository", schema_module = "schema")]
+pub struct RepoBranches {
+    #[arguments(refPrefix: "refs/heads/", first: 100, orderBy: { field: TAG_COMMIT_DATE, direction: DESC })]
+    pub refs: Option<RefNames>,
+    #[cynic(rename = "refs", alias)]
+    #[arguments(refPrefix: "refs/tags/", first: 50, orderBy: { field: TAG_COMMIT_DATE, direction: DESC })]
+    pub tags: Option<RefNames>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "RefConnection", schema_module = "schema")]
+pub struct RefNames {
+    pub nodes: Option<Vec<Option<RefName>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Ref", schema_module = "schema")]
+pub struct RefName {
+    pub name: String,
+}
+
+/// A repository's branches and tags, newest first.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Refs {
+    pub branches: Vec<String>,
+    pub tags: Vec<String>,
+}
+
+impl RepoBranches {
+    pub(crate) fn into_refs(self) -> Refs {
+        let names = |r: Option<RefNames>| -> Vec<String> {
+            r.and_then(|r| r.nodes)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|n| n.name)
+                .collect()
+        };
+        Refs {
+            branches: names(self.refs),
+            tags: names(self.tags),
+        }
+    }
 }
 
 // ---- the viewer's repositories ---------------------------------------------------------
@@ -916,6 +1007,13 @@ pub mod keys {
     pub fn profile(login: &str) -> String {
         format!("profile:{}", login.to_lowercase())
     }
+    pub fn files(repo: &RepoId, rev: &str) -> String {
+        format!("files:{repo}:{rev}")
+    }
+    pub fn refs(repo: &RepoId) -> String {
+        format!("refs:{repo}")
+    }
+    pub const VISITS: &str = "visits";
     pub const VIEWER_REPOS: &str = "viewer-repos";
 }
 
@@ -1049,6 +1147,8 @@ impl RepoFull {
             watchers: count(self.watchers.total_count),
             open_issues: count(self.issues.total_count),
             open_prs: count(self.pull_requests.total_count),
+            closed_issues: count(self.closed_issues.total_count),
+            closed_prs: count(self.closed_pull_requests.total_count),
             license: self
                 .license_info
                 .map(|l| l.spdx_id.filter(|s| s != "NOASSERTION").unwrap_or(l.name)),
@@ -1248,6 +1348,15 @@ impl ProfileQuery {
                 pinned: pinned(u.pinned_items),
                 repos,
                 repo_count,
+                star_count: count(u.starred_repositories.total_count),
+                stars: u
+                    .starred_repositories
+                    .nodes
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter_map(RepoCard::into_summary)
+                    .collect(),
             });
         }
         let o = self.organization?;
@@ -1265,6 +1374,8 @@ impl ProfileQuery {
             pinned: pinned(o.pinned_items),
             repos,
             repo_count,
+            stars: Vec::new(),
+            star_count: 0,
         })
     }
 }

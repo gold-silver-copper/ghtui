@@ -1,12 +1,14 @@
 //! `ghtui`: a keyboard-driven terminal client for GitHub.
 
 mod browse;
+mod chrome;
 mod config;
 mod diff_job;
 mod diff_screen;
 #[cfg(test)]
 mod fixtures;
 mod keymap;
+mod nav;
 mod review;
 mod route;
 mod runtime;
@@ -148,12 +150,18 @@ async fn run(started: Instant) -> Result<()> {
         cmds = vec![state::Cmd::FetchViewer];
         cmds.extend(state.go(target));
     }
+    state.visits = gh
+        .cached::<Vec<nav::Visit>>(ghtui_api::browse::keys::VISITS)
+        .map(|c| c.value)
+        .unwrap_or_default();
     state.data_gen += 1;
     state.sync_page();
 
     install_panic_logging();
     let mut terminal = ratatui::init();
+    set_mouse(true);
     let result = runtime::run(&mut terminal, state, gh, git, cmds, started).await;
+    set_mouse(false);
     ratatui::restore();
     if let Err(err) = &result {
         tracing::error!("{err:#}");
@@ -279,11 +287,27 @@ fn init_logging(
     Some(guard)
 }
 
+/// Clicks and the wheel go to ghtui while it runs.
+pub fn set_mouse(on: bool) {
+    use crossterm::ExecutableCommand;
+    use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+    let mut out = std::io::stdout();
+    let result = if on {
+        out.execute(EnableMouseCapture).map(drop)
+    } else {
+        out.execute(DisableMouseCapture).map(drop)
+    };
+    if let Err(err) = result {
+        tracing::warn!(%err, "mouse capture");
+    }
+}
+
 /// Logs panics. `ratatui::init` wraps this hook with one that restores the
 /// terminal first, so the message lands on a usable screen.
 fn install_panic_logging() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        set_mouse(false);
         tracing::error!("panic: {info}");
         previous(info);
     }));

@@ -90,6 +90,9 @@ pub struct StatusBar<'a> {
     pub pending_keys: &'a str,
     /// `(label, remaining, limit)` for the tightest rate-limit bucket.
     pub rate_limit: Option<(&'a str, u64, u64)>,
+    /// `(keys, what they do)` here, most useful first; shown when there's no
+    /// notice, as many as fit.
+    pub hints: &'a [(String, String)],
 }
 
 impl Widget for StatusBar<'_> {
@@ -138,8 +141,34 @@ impl Widget for StatusBar<'_> {
             right.push(Span::styled(format!("{label} {remaining}/{limit}"), style));
             right.push(Span::styled("   ", theme.body(BAR)));
         }
-        right.push(Span::styled("?", theme.accent(BAR)));
-        right.push(Span::styled(" help", theme.meta(BAR)));
+        if self.notice.is_none() {
+            // As many hints as fit, whole.
+            let right_w: usize = right.iter().map(Span::width).sum();
+            let mut room = usize::from(area.width.saturating_sub(2 * PAD_X))
+                .saturating_sub(right_w + 1 + left.iter().map(Span::width).sum::<usize>());
+            for (i, (keys, what)) in self.hints.iter().enumerate() {
+                let gap = if i == 0 { 0 } else { 3 };
+                let w = gap + text::width(keys) + 1 + text::width(what);
+                if w > room {
+                    break;
+                }
+                room -= w;
+                if gap > 0 {
+                    left.push(Span::styled("   ", theme.body(BAR)));
+                }
+                left.push(Span::styled(
+                    keys.clone(),
+                    theme.accent(BAR).add_modifier(Modifier::BOLD),
+                ));
+                left.push(Span::styled(format!(" {what}"), theme.meta(BAR)));
+            }
+        }
+        while right
+            .last()
+            .is_some_and(|s: &Span<'_>| s.content.trim().is_empty())
+        {
+            right.pop();
+        }
         render_split(area, buf, left, right);
     }
 }

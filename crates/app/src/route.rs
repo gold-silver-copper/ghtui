@@ -2,8 +2,8 @@
 
 use ghtui_api::browse::SearchKind;
 use ghtui_api::model::{PrRef, RepoId};
-use ghtui_ui::pages::PrTab;
 use ghtui_ui::pages::url as links;
+use ghtui_ui::pages::{PrTab, ProfileTab};
 
 /// The default filter of a repository's issue and pull request lists.
 pub const OPEN: &str = "is:open";
@@ -41,7 +41,10 @@ pub enum Route {
         pr: PrRef,
         tab: PrTab,
     },
-    User(String),
+    User {
+        login: String,
+        tab: ProfileTab,
+    },
     Search {
         kind: SearchKind,
         query: String,
@@ -59,6 +62,14 @@ pub enum Target {
 }
 
 impl Route {
+    /// A profile's overview.
+    pub fn user(login: &str) -> Route {
+        Route::User {
+            login: login.to_owned(),
+            tab: ProfileTab::Overview,
+        }
+    }
+
     pub fn url(&self) -> String {
         match self {
             Route::Home => format!("{}/", links::BASE),
@@ -72,7 +83,11 @@ impl Route {
                 PrTab::Conversation => links::pull(pr),
                 PrTab::Commits => links::pull_tab(pr, "commits"),
             },
-            Route::User(login) => links::user(login),
+            Route::User { login, tab } => match tab {
+                ProfileTab::Overview => links::user(login),
+                ProfileTab::Repositories => format!("{}?tab=repositories", links::user(login)),
+                ProfileTab::Stars => format!("{}?tab=stars", links::user(login)),
+            },
             Route::Search { kind, query } => links::search(*kind, query),
         }
     }
@@ -90,7 +105,7 @@ impl Route {
             Route::Pulls { repo, .. } => format!("{repo} · Pull requests"),
             Route::Issue { repo, number } => format!("{repo}#{number}"),
             Route::Pr { pr, .. } => pr.to_string(),
-            Route::User(login) => format!("@{login}"),
+            Route::User { login, .. } => format!("@{login}"),
             Route::Search { query, .. } => format!("Search “{query}”"),
         }
     }
@@ -105,7 +120,7 @@ impl Route {
             | Route::Pulls { repo, .. }
             | Route::Issue { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
-            Route::Home | Route::User(_) | Route::Search { .. } => None,
+            Route::Home | Route::User { .. } | Route::Search { .. } => None,
         }
     }
 
@@ -167,6 +182,10 @@ impl Target {
             .query_pairs()
             .find(|(k, _)| k == "type")
             .map(|(_, v)| v.into_owned());
+        let tab = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "tab")
+            .map(|(_, v)| v.into_owned());
         let segments: Vec<String> = parsed
             .path_segments()
             .map(|s| s.filter(|p| !p.is_empty()).map(decode).collect())
@@ -177,14 +196,22 @@ impl Target {
             [] | ["dashboard"] => Route::Home,
             ["search"] => Route::Search {
                 kind: match kind.as_deref().map(str::to_ascii_lowercase).as_deref() {
-                    Some("issues" | "pullrequests") => SearchKind::Issues,
+                    Some("issues") => SearchKind::Issues,
+                    Some("pullrequests") => SearchKind::Pulls,
                     Some("users") => SearchKind::Users,
                     _ => SearchKind::Repos,
                 },
                 query: query.unwrap_or_default(),
             },
-            ["orgs", login] => Route::User((*login).to_owned()),
-            [login] if !RESERVED.contains(login) => Route::User((*login).to_owned()),
+            ["orgs", login] => Route::user(login),
+            [login] if !RESERVED.contains(login) => Route::User {
+                login: (*login).to_owned(),
+                tab: match tab.as_deref() {
+                    Some("repositories") => ProfileTab::Repositories,
+                    Some("stars") => ProfileTab::Stars,
+                    _ => ProfileTab::Overview,
+                },
+            },
             [o, r] => match repo(o, r) {
                 Some(repo) => Route::Repo(repo),
                 None => return external(),
@@ -304,7 +331,7 @@ pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Target> {
         };
     }
     if let Some(login) = input.strip_prefix('@') {
-        return valid_login(login).then(|| Target::Page(Route::User(login.to_owned())));
+        return valid_login(login).then(|| Target::Page(Route::user(login)));
     }
     let issue = |repo: RepoId, n: &str| {
         let number = n.trim_start_matches('#').parse().ok()?;
@@ -347,10 +374,7 @@ mod tests {
     fn parses_github_urls() {
         let repo = RepoId::new("o", "r");
         assert_eq!(page("https://github.com/"), Route::Home);
-        assert_eq!(
-            page("https://github.com/octocat"),
-            Route::User("octocat".into())
-        );
+        assert_eq!(page("https://github.com/octocat"), Route::user("octocat"));
         assert_eq!(page("https://github.com/o/r"), Route::Repo(repo.clone()));
         assert_eq!(
             page("https://github.com/o/r/tree/main/src/ui"),
@@ -449,10 +473,18 @@ mod tests {
                 repo: repo.clone(),
                 number: 3,
             },
-            Route::User("octocat".into()),
+            Route::user("octocat"),
             Route::Search {
                 kind: SearchKind::Users,
                 query: "linus".into(),
+            },
+            Route::Search {
+                kind: SearchKind::Pulls,
+                query: "author:linus".into(),
+            },
+            Route::User {
+                login: "octocat".into(),
+                tab: ProfileTab::Stars,
             },
         ] {
             assert_eq!(page(&route.url()), route);
@@ -468,7 +500,7 @@ mod tests {
         );
         assert_eq!(
             parse_input("@octocat", None),
-            Some(Target::Page(Route::User("octocat".into())))
+            Some(Target::Page(Route::user("octocat")))
         );
         assert_eq!(
             parse_input("#12", Some(&repo)),

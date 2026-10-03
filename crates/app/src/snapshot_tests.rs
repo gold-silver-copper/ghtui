@@ -224,10 +224,10 @@ fn home_dark_256() {
 }
 
 #[test]
-fn home_cursor_on_a_pr_light() {
+fn home_third_row_selected_light() {
     let mut state = with_inbox(Mode::Light, ColorDepth::TrueColor);
-    update(&mut state, Msg::Key(key(KeyCode::Tab)));
-    update(&mut state, Msg::Key(key(KeyCode::Tab)));
+    update(&mut state, Msg::Key(key(KeyCode::Char('j'))));
+    update(&mut state, Msg::Key(key(KeyCode::Char('j'))));
     insta::assert_snapshot!(render(&state));
 }
 
@@ -355,7 +355,7 @@ fn pr_refresh_error_dark() {
 #[test]
 fn profile_light() {
     let mut state = state(Mode::Light, ColorDepth::TrueColor);
-    state.push(Route::User("octocat".into()));
+    state.push(Route::user("octocat"));
     fetched(
         &mut state,
         DataKey::Profile("octocat".into()),
@@ -399,13 +399,81 @@ fn search_users_light() {
 }
 
 #[test]
-fn search_prompt_and_link_picker_dark() {
+fn quick_ways_around_dark() {
     let mut state = with_repo(Mode::Dark, ColorDepth::TrueColor);
-    update(&mut state, Msg::Key(key(KeyCode::Enter)));
-    insta::assert_snapshot!("link_picker_dark", render(&state));
+    state.visits = vec![crate::nav::Visit {
+        url: "https://github.com/octocat".into(),
+        title: "@octocat".into(),
+        count: 3,
+        last: NOW - 600,
+    }];
+    update(&mut state, Msg::Key(key(KeyCode::Char('f'))));
+    insta::assert_snapshot!("hints_dark", render(&state));
     update(&mut state, Msg::Key(key(KeyCode::Esc)));
     update(&mut state, Msg::Key(key(KeyCode::Char('/'))));
-    insta::assert_snapshot!("search_prompt_dark", render(&state));
+    insta::assert_snapshot!("search_empty_dark", render(&state));
+    for c in "oct".chars() {
+        update(&mut state, Msg::Key(key(KeyCode::Char(c))));
+    }
+    insta::assert_snapshot!("search_typed_dark", render(&state));
+    update(&mut state, Msg::Key(key(KeyCode::Esc)));
+    update(&mut state, Msg::Key(key(KeyCode::Char('.'))));
+    insta::assert_snapshot!("menu_dark", render(&state));
+    update(&mut state, Msg::Key(key(KeyCode::Esc)));
+    update(&mut state, Msg::Key(key(KeyCode::Char('g'))));
+    insta::assert_snapshot!("which_key_dark", render(&state));
+}
+
+#[test]
+fn go_to_file_light() {
+    let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
+    update(&mut state, Msg::Key(key(KeyCode::Char('t'))));
+    fetched(
+        &mut state,
+        DataKey::Files(ghtui(), "main".into()),
+        Data::Files(
+            std::sync::Arc::new(vec![
+                "src/main.rs".into(),
+                "crates/app/src/main.rs".into(),
+                "crates/ui/src/page.rs".into(),
+            ]),
+            false,
+        ),
+    );
+    for c in "main".chars() {
+        update(&mut state, Msg::Key(key(KeyCode::Char(c))));
+    }
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn list_filter_light() {
+    let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
+    update(&mut state, Msg::Key(key(KeyCode::Char('2'))));
+    update(&mut state, Msg::Key(key(KeyCode::Char('/'))));
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn profile_stars_dark() {
+    let mut state = state(Mode::Dark, ColorDepth::TrueColor);
+    state.push(Route::User {
+        login: "octocat".into(),
+        tab: ghtui_ui::pages::ProfileTab::Stars,
+    });
+    fetched(
+        &mut state,
+        DataKey::Profile("octocat".into()),
+        Data::Profile(Box::new(fixtures::profile())),
+    );
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn repo_wide_with_about_dark() {
+    let mut state = with_repo(Mode::Dark, ColorDepth::TrueColor);
+    update(&mut state, Msg::Resize(150, 36));
+    insta::assert_snapshot!(render(&state));
 }
 
 #[test]

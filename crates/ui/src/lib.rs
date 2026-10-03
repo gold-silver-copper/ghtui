@@ -4,6 +4,7 @@
 pub mod annotations;
 pub mod bars;
 pub mod chips;
+pub mod chrome;
 pub mod diff_doc;
 pub mod diff_view;
 pub mod file_tree;

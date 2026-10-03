@@ -33,6 +33,14 @@ impl Icons {
         }
     }
 
+    pub fn folder(self) -> &'static str {
+        if self.nerd_font { "\u{f07b}" } else { "▸" }
+    }
+
+    pub fn file(self) -> &'static str {
+        if self.nerd_font { "\u{f15b}" } else { "·" }
+    }
+
     pub fn external(self) -> &'static str {
         if self.nerd_font { "\u{f465}" } else { "↗" }
     }

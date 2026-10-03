@@ -7,7 +7,7 @@ use ghtui_diff::text::Text;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::diff_view::syntax_role;
-use crate::page::{Page, PageLine, Role, Seg, Surface};
+use crate::page::{Frame, Page, PageLine, Role, Seg, Tone};
 
 /// Where relative links point: a repository, revision and directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,7 +92,7 @@ struct Renderer<'a> {
     page: &'a mut Page,
     base: Option<&'a LinkBase>,
     indent: u16,
-    surface: Surface,
+    frame: Frame,
     /// Inline content of the current block.
     inline: Vec<Seg>,
     /// Style stack for inline content.
@@ -145,7 +145,7 @@ impl Renderer<'_> {
             segs.insert(0, Seg::new(quote, Role::Meta));
             indent = indent.saturating_sub(0);
         }
-        self.page.wrapped(segs, indent, self.surface);
+        self.page.wrapped(segs, indent, self.frame);
     }
 
     fn html(&mut self, html: &str) {
@@ -298,12 +298,12 @@ impl Renderer<'_> {
             Event::HardBreak => self.text("\n"),
             Event::Rule => {
                 self.flush();
-                let width = usize::from(self.page.width.saturating_sub(self.indent)).min(80);
+                let width = usize::from(self.page.room(self.frame, self.indent));
                 self.page.push(PageLine {
                     segs: vec![Seg::new("─".repeat(width), Role::Meta)],
                     indent: self.indent,
-                    surface: self.surface,
-                    right: Vec::new(),
+                    frame: self.frame,
+                    ..PageLine::default()
                 });
             }
             Event::TaskListMarker(done) => {
@@ -407,12 +407,18 @@ impl Renderer<'_> {
             }
             TagEnd::Heading(_) => {
                 self.roles.pop();
-                if let Some(level) = self.heading.take() {
-                    let prefix = "#".repeat(level as usize);
-                    self.inline
-                        .insert(0, Seg::new(format!("{prefix} "), Role::Meta));
-                }
+                let level = self.heading.take();
                 self.flush();
+                // h1 and h2 are underlined, as on GitHub.
+                if level.is_some_and(|l| l <= HeadingLevel::H2) {
+                    let width = usize::from(self.page.room(self.frame, self.indent));
+                    self.page.push(PageLine {
+                        segs: vec![Seg::new("─".repeat(width), Role::Meta)],
+                        indent: self.indent,
+                        frame: self.frame,
+                        ..PageLine::default()
+                    });
+                }
                 self.page_blank();
             }
             TagEnd::BlockQuote(_) => {
@@ -465,14 +471,9 @@ impl Renderer<'_> {
         if self.quote_depth > 0 {
             return;
         }
-        if self.surface == Surface::Page {
-            self.page.blank();
-        } else if self.page.lines.last().is_some_and(|l| !l.is_blank()) {
-            // Inside a card, the gap keeps the card's background.
-            self.page.push(PageLine {
-                surface: self.surface,
-                ..PageLine::default()
-            });
+        match self.frame {
+            Frame::None => self.page.blank(),
+            _ => self.page.box_gap(),
         }
     }
 
@@ -483,8 +484,10 @@ impl Renderer<'_> {
         let text = Text::new(code.as_bytes());
         let spans = highlight(lang, &text);
         let indent = self.indent;
+        let frame = self.frame;
         self.page.push(PageLine {
-            surface: Surface::Code,
+            tone: Tone::Code,
+            frame,
             indent,
             ..PageLine::default()
         });
@@ -515,13 +518,15 @@ impl Renderer<'_> {
             );
             self.page.push(PageLine {
                 segs,
-                surface: Surface::Code,
+                tone: Tone::Code,
+                frame,
                 indent,
                 right: Vec::new(),
             });
         }
         self.page.push(PageLine {
-            surface: Surface::Code,
+            tone: Tone::Code,
+            frame,
             indent,
             ..PageLine::default()
         });
@@ -565,16 +570,16 @@ impl Renderer<'_> {
             self.page.push(PageLine {
                 segs,
                 indent: self.indent,
-                surface: self.surface,
-                right: Vec::new(),
+                frame: self.frame,
+                ..PageLine::default()
             });
             if r == 0 {
                 let rule: Vec<String> = widths.iter().map(|w| "─".repeat(*w)).collect();
                 self.page.push(PageLine {
                     segs: vec![Seg::new(rule.join("─┼─"), Role::Meta)],
                     indent: self.indent,
-                    surface: self.surface,
-                    right: Vec::new(),
+                    frame: self.frame,
+                    ..PageLine::default()
                 });
             }
         }
@@ -603,14 +608,9 @@ fn decode_entities(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
-/// Renders `markdown` into `page`, `indent` columns in, on `surface`.
-pub fn render(
-    page: &mut Page,
-    markdown: &str,
-    base: Option<&LinkBase>,
-    indent: u16,
-    surface: Surface,
-) {
+/// Renders `markdown` into `page`, `indent` columns in, inside a box when
+/// `frame` is [`Frame::Body`].
+pub fn render(page: &mut Page, markdown: &str, base: Option<&LinkBase>, indent: u16, frame: Frame) {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
@@ -619,7 +619,7 @@ pub fn render(
         page,
         base,
         indent,
-        surface,
+        frame,
         inline: Vec::new(),
         roles: Vec::new(),
         link: None,
@@ -637,18 +637,15 @@ pub fn render(
         r.event(event);
     }
     r.flush();
-    // Trailing blank lines inside cards waste space.
-    while page_tail_blank(r.page, surface) {
-        r.page.lines.pop();
-    }
-}
-
-fn page_tail_blank(page: &Page, surface: Surface) -> bool {
-    surface != Surface::Page
-        && page
+    // Trailing blank lines inside boxes waste space.
+    while frame != Frame::None
+        && r.page
             .lines
             .last()
-            .is_some_and(|l| l.is_blank() && l.surface == surface)
+            .is_some_and(|l| l.is_blank() && l.frame == frame && l.tone == Tone::Plain)
+    {
+        r.page.lines.pop();
+    }
 }
 
 #[cfg(test)]
@@ -657,14 +654,15 @@ mod tests {
 
     fn lines(md: &str) -> Vec<String> {
         let mut page = Page::new(40);
-        render(&mut page, md, None, 0, Surface::Page);
+        render(&mut page, md, None, 0, Frame::None);
         page.lines.iter().map(PageLine::text).collect()
     }
 
     #[test]
     fn headings_paragraphs_and_lists() {
         let out = lines("# Title\n\nSome *text* here.\n\n- one\n- two\n  1. nested\n");
-        assert_eq!(out[0], "# Title");
+        assert_eq!(out[0], "Title", "no `#`, as on GitHub");
+        assert!(out[1].starts_with("────"), "h1 is underlined: {out:?}");
         assert!(out.contains(&"Some text here.".to_owned()), "{out:?}");
         assert!(out.contains(&"• one".to_owned()), "{out:?}");
         assert!(out.iter().any(|l| l == "1. nested"), "{out:?}");
@@ -678,13 +676,9 @@ mod tests {
             "```rust\nfn main() {}\n```\n",
             None,
             0,
-            Surface::Page,
+            Frame::None,
         );
-        let code: Vec<&PageLine> = page
-            .lines
-            .iter()
-            .filter(|l| l.surface == Surface::Code)
-            .collect();
+        let code: Vec<&PageLine> = page.lines.iter().filter(|l| l.tone == Tone::Code).collect();
         assert!(code.iter().any(|l| l.text().contains("fn main()")));
         assert!(
             code.iter()
@@ -721,7 +715,7 @@ mod tests {
             "See [the guide](guide.md).",
             Some(&base),
             0,
-            Surface::Page,
+            Frame::None,
         );
         assert_eq!(
             page.links,

@@ -1,0 +1,302 @@
+//! The chrome around every screen, after GitHub's: where you are (the
+//! header's crumbs), the tabs of the thing you're looking at, and a sticky
+//! title for pull requests. Both the view and mouse handling use
+//! [`State::layout`], so clicks land where things are drawn.
+
+use ghtui_api::browse::SearchKind;
+use ghtui_api::model::{PrRef, RepoId};
+use ghtui_ui::chrome::{Crumb, Tab};
+use ghtui_ui::pages::{PrTab, ProfileTab};
+use ratatui::layout::Rect;
+
+use crate::route::{OPEN, Route, Target};
+use crate::state::{Screen, State};
+
+/// What the chrome shows.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Chrome {
+    pub crumbs: Vec<(Crumb, Option<Target>)>,
+    pub right: Vec<(String, Target)>,
+    pub tabs: Vec<(Tab, Target)>,
+    pub active: Option<usize>,
+    /// A pull request whose title stays at the top.
+    pub title: Option<PrRef>,
+}
+
+/// Where the chrome and the content go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Layout {
+    pub header: Rect,
+    pub title: Option<Rect>,
+    /// Two rows: labels and the underline.
+    pub tabs: Option<Rect>,
+    pub content: Rect,
+    pub status: Rect,
+}
+
+/// The search behind your review requests.
+pub const REVIEW_REQUESTS: &str = "is:open is:pr review-requested:@me archived:false";
+
+fn new_tab(icon: &'static str, label: &str, count: Option<u64>) -> Tab {
+    Tab {
+        icon,
+        label: label.to_owned(),
+        count,
+        external: false,
+    }
+}
+
+impl State {
+    pub fn chrome(&self) -> Chrome {
+        let mut c = Chrome::default();
+        // Right: review requests and you.
+        if let Some(inbox) = &self.inbox.data {
+            let n = inbox
+                .review_requested_total
+                .max(inbox.review_requested.len() as u64);
+            if n > 0 {
+                c.right.push((
+                    format!("⇄ {n} to review"),
+                    Target::Page(Route::Search {
+                        kind: SearchKind::Pulls,
+                        query: REVIEW_REQUESTS.into(),
+                    }),
+                ));
+            }
+        }
+        if let Some(login) = &self.viewer {
+            c.right
+                .push((format!("@{login}"), Target::Page(Route::user(login))));
+        }
+        match self.screen() {
+            Screen::Page(p) => self.page_chrome(&p.route, &mut c),
+            Screen::Diff(d) => {
+                repo_crumbs(&d.pr.repo, &mut c);
+                self.pr_tabs(&d.pr, &mut c);
+                // The tab says which changes are shown.
+                let diff = self.diffs.get(&d.pr);
+                let label = match diff.and_then(|d| d.range.as_ref()) {
+                    Some(range) => Some(format!("Files · {}", range.label)),
+                    None if diff.is_some_and(|d| d.doc.since_active) => {
+                        Some("Files · since your review".to_owned())
+                    }
+                    None => None,
+                };
+                if let (Some(label), Some((tab, _))) = (label, c.tabs.get_mut(3)) {
+                    tab.label = label;
+                }
+                c.active = Some(3);
+                c.title = Some(d.pr.clone());
+            }
+        }
+        c
+    }
+
+    fn page_chrome(&self, route: &Route, c: &mut Chrome) {
+        match route {
+            Route::Home => c.crumbs.push((
+                Crumb {
+                    text: "Home".into(),
+                    current: true,
+                },
+                None,
+            )),
+            Route::Repo(repo)
+            | Route::Tree { repo, .. }
+            | Route::Blob { repo, .. }
+            | Route::Issues { repo, .. }
+            | Route::Pulls { repo, .. }
+            | Route::Issue { repo, .. } => {
+                repo_crumbs(repo, c);
+                self.repo_tabs(repo, c);
+                let pulls = c.tabs.len() - 2;
+                c.active = Some(match route {
+                    Route::Issues { .. } | Route::Issue { .. } => 1,
+                    Route::Pulls { .. } => pulls,
+                    _ => 0,
+                });
+            }
+            Route::Pr { pr, tab } => {
+                repo_crumbs(&pr.repo, c);
+                self.pr_tabs(pr, c);
+                c.active = Some(match tab {
+                    PrTab::Conversation => 0,
+                    PrTab::Commits => 1,
+                });
+                c.title = Some(pr.clone());
+            }
+            Route::User { login, tab } => {
+                c.crumbs.push((
+                    Crumb {
+                        text: login.clone(),
+                        current: true,
+                    },
+                    None,
+                ));
+                let profile = self.profile(login);
+                let user = |tab| {
+                    Target::Page(Route::User {
+                        login: login.clone(),
+                        tab,
+                    })
+                };
+                c.tabs
+                    .push((new_tab("◫", "Overview", None), user(ProfileTab::Overview)));
+                c.tabs.push((
+                    new_tab("▤", "Repositories", profile.map(|p| p.repo_count)),
+                    user(ProfileTab::Repositories),
+                ));
+                if !profile.is_some_and(|p| p.is_org) {
+                    c.tabs.push((
+                        new_tab("☆", "Stars", profile.map(|p| p.star_count)),
+                        user(ProfileTab::Stars),
+                    ));
+                }
+                c.active = Some(match tab {
+                    ProfileTab::Overview => 0,
+                    ProfileTab::Repositories => 1,
+                    ProfileTab::Stars => 2,
+                });
+            }
+            Route::Search { kind, query } => {
+                c.crumbs.push((
+                    Crumb {
+                        text: "Search".into(),
+                        current: true,
+                    },
+                    None,
+                ));
+                let total = self.search_results(route).map(|r| match r {
+                    ghtui_api::browse::SearchResults::Repos(r) => r.total,
+                    ghtui_api::browse::SearchResults::Issues(r) => r.total,
+                    ghtui_api::browse::SearchResults::Users(r) => r.total,
+                });
+                let kinds = [
+                    (SearchKind::Repos, "▤", "Repositories"),
+                    (SearchKind::Issues, "◉", "Issues"),
+                    (SearchKind::Pulls, "⇄", "Pull requests"),
+                    (SearchKind::Users, "⚇", "Users"),
+                ];
+                for (i, (k, icon, label)) in kinds.into_iter().enumerate() {
+                    if k == *kind {
+                        c.active = Some(i);
+                    }
+                    let count = (k == *kind).then_some(total).flatten();
+                    c.tabs.push((
+                        new_tab(icon, label, count),
+                        Target::Page(Route::Search {
+                            kind: k,
+                            query: query.clone(),
+                        }),
+                    ));
+                }
+            }
+        }
+    }
+
+    fn repo_tabs(&self, repo: &RepoId, c: &mut Chrome) {
+        let o = self.overview(repo);
+        c.tabs.push((
+            new_tab("<>", "Code", None),
+            Target::Page(Route::Repo(repo.clone())),
+        ));
+        if o.is_none_or(|o| o.has_issues) {
+            c.tabs.push((
+                new_tab("◉", "Issues", o.map(|o| o.open_issues)),
+                Target::Page(Route::Issues {
+                    repo: repo.clone(),
+                    query: OPEN.into(),
+                }),
+            ));
+        }
+        c.tabs.push((
+            new_tab("⇄", "Pull requests", o.map(|o| o.open_prs)),
+            Target::Page(Route::Pulls {
+                repo: repo.clone(),
+                query: OPEN.into(),
+            }),
+        ));
+        let mut actions = new_tab("▶", "Actions", None);
+        actions.external = true;
+        c.tabs.push((
+            actions,
+            Target::External(format!("https://github.com/{repo}/actions")),
+        ));
+    }
+
+    fn pr_tabs(&self, pr: &PrRef, c: &mut Chrome) {
+        let activity = self.activity(pr);
+        let detail = self.prs.get(pr).and_then(|r| r.data.as_ref());
+        c.tabs.push((
+            new_tab(
+                "◌",
+                "Conversation",
+                activity.map(|a| a.comments.len() as u64),
+            ),
+            Target::Page(Route::Pr {
+                pr: pr.clone(),
+                tab: PrTab::Conversation,
+            }),
+        ));
+        c.tabs.push((
+            new_tab("◷", "Commits", activity.map(|a| a.commits.len() as u64)),
+            Target::Page(Route::Pr {
+                pr: pr.clone(),
+                tab: PrTab::Commits,
+            }),
+        ));
+        let mut checks = new_tab("✓", "Checks", None);
+        checks.external = true;
+        c.tabs
+            .push((checks, Target::External(format!("{}/checks", pr.url()))));
+        c.tabs.push((
+            new_tab("±", "Files changed", detail.map(|d| d.changed_files)),
+            Target::Files(pr.clone()),
+        ));
+    }
+
+    /// Where everything goes on screen.
+    pub fn layout(&self) -> Layout {
+        let (w, h) = self.size;
+        let chrome = self.chrome();
+        let mut y = 0;
+        let row = |y: u16, height: u16| Rect::new(0, y, w, height.min(h.saturating_sub(y)));
+        let header = row(y, 1);
+        y += 1;
+        let title = chrome.title.as_ref().map(|_| {
+            let r = row(y, 1);
+            y += 1;
+            r
+        });
+        let tabs = (!chrome.tabs.is_empty()).then(|| {
+            let r = row(y, 2);
+            y += 2;
+            r
+        });
+        let status_y = h.saturating_sub(1);
+        Layout {
+            header,
+            title: title.filter(|r| r.height > 0 && r.y < status_y),
+            tabs: tabs.filter(|r| r.height > 0 && r.y < status_y),
+            content: Rect::new(0, y.min(status_y), w, status_y.saturating_sub(y)),
+            status: row(status_y, 1),
+        }
+    }
+}
+
+fn repo_crumbs(repo: &RepoId, c: &mut Chrome) {
+    c.crumbs.push((
+        Crumb {
+            text: repo.owner.clone(),
+            current: false,
+        },
+        Some(Target::Page(Route::user(&repo.owner))),
+    ));
+    c.crumbs.push((
+        Crumb {
+            text: repo.name.clone(),
+            current: true,
+        },
+        Some(Target::Page(Route::Repo(repo.clone()))),
+    ));
+}

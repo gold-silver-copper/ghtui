@@ -733,11 +733,24 @@ impl GitHub {
     ) -> Result<browse::SearchResults, ApiError> {
         use cynic::QueryBuilder;
         let first_page = after.is_none();
+        // GitHub's issue search covers both; the tabs separate them.
+        let typed = |is: &str| {
+            if query.contains("is:issue") || query.contains("is:pr") {
+                query.to_owned()
+            } else {
+                format!("{query} {is}")
+            }
+        };
+        let api_query = match kind {
+            browse::SearchKind::Issues => typed("is:issue"),
+            browse::SearchKind::Pulls => typed("is:pr"),
+            _ => query.to_owned(),
+        };
         let op = browse::BrowseSearch::build(browse::BrowseSearchVariables {
-            query: query.to_owned(),
+            query: api_query,
             kind: match kind {
                 browse::SearchKind::Repos => browse::SearchType::Repository,
-                browse::SearchKind::Issues => browse::SearchType::Issue,
+                browse::SearchKind::Issues | browse::SearchKind::Pulls => browse::SearchType::Issue,
                 browse::SearchKind::Users => browse::SearchType::User,
             },
             first: 30,
@@ -761,11 +774,13 @@ impl GitHub {
                     .collect(),
                 next,
             }),
-            browse::SearchKind::Issues => browse::SearchResults::Issues(browse::Results {
-                total: count(conn.issue_count),
-                items: items.filter_map(browse::BrowseItem::into_issue).collect(),
-                next,
-            }),
+            browse::SearchKind::Issues | browse::SearchKind::Pulls => {
+                browse::SearchResults::Issues(browse::Results {
+                    total: count(conn.issue_count),
+                    items: items.filter_map(browse::BrowseItem::into_issue).collect(),
+                    next,
+                })
+            }
             browse::SearchKind::Users => browse::SearchResults::Users(browse::Results {
                 total: count(conn.user_count),
                 items: items.filter_map(browse::BrowseItem::into_user).collect(),
@@ -845,6 +860,66 @@ impl GitHub {
         Ok(profile)
     }
 
+    /// Every file path at `rev` (GitHub's "Go to file"), and whether GitHub
+    /// cut the list short.
+    pub async fn file_list(
+        &self,
+        repo: &RepoId,
+        rev: &str,
+    ) -> Result<(Vec<String>, bool), ApiError> {
+        #[derive(serde::Deserialize)]
+        struct Entry {
+            path: String,
+            #[serde(rename = "type")]
+            kind: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Wire {
+            tree: Vec<Entry>,
+            #[serde(default)]
+            truncated: bool,
+        }
+        let body = self
+            .rest_get(&format!(
+                "/repos/{}/{}/git/trees/{}?recursive=1",
+                repo.owner,
+                repo.name,
+                encode_path(rev)
+            ))
+            .await?;
+        let wire: Wire =
+            serde_json::from_str(&body).map_err(|e| ApiError::Decode(e.to_string()))?;
+        let files: Vec<String> = wire
+            .tree
+            .into_iter()
+            .filter(|e| e.kind == "blob")
+            .map(|e| e.path)
+            .collect();
+        Ok((files, wire.truncated))
+    }
+
+    /// Branches and tags, most recently committed first.
+    pub async fn refs(&self, repo: &RepoId) -> Result<browse::Refs, ApiError> {
+        use cynic::QueryBuilder;
+        let op = browse::BranchesQuery::build(browse::BranchesVariables {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+        });
+        let refs = self
+            .graphql(op)
+            .await?
+            .repository
+            .map(browse::RepoBranches::into_refs)
+            .ok_or_else(|| ApiError::NotFound(repo.to_string()))?;
+        self.put_query(browse::keys::refs(repo), refs.clone()).await;
+        Ok(refs)
+    }
+
+    /// Saves a small value in the cache (e.g. recently visited pages).
+    pub async fn remember<T: Serialize + Send + 'static>(&self, key: &str, value: T) {
+        self.put_query(key.to_owned(), value).await;
+    }
+
     /// Repositories you own or contribute to, most recently pushed first.
     pub async fn viewer_repos(&self) -> Result<Vec<browse::RepoSummary>, ApiError> {
         use cynic::QueryBuilder;
@@ -881,6 +956,20 @@ impl GitHub {
         let store = self.store.clone();
         spawn_store(move || store.query_put(&key, &value)).await;
     }
+}
+
+/// Percent-encodes a ref for a URL path (branch names may contain `/`).
+fn encode_path(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            b => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 fn build_client(token: String, base_uri: Option<&str>) -> Result<Octocrab, ApiError> {

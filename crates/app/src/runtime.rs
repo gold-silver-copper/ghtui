@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
-use crossterm::event::{Event, EventStream, KeyEventKind};
+use crossterm::event::{Event, EventStream, KeyEventKind, MouseEventKind};
 use futures::StreamExt;
 use ghtui_api::model::{PrRef, ReviewEvent};
 use ghtui_api::{ApiError, GitHub};
@@ -64,6 +64,10 @@ pub async fn run(
             event = events.next() => match event {
                 Some(Ok(Event::Key(key))) if key.kind != KeyEventKind::Release => Msg::Key(key),
                 Some(Ok(Event::Resize(w, h))) => Msg::Resize(w, h),
+                Some(Ok(Event::Mouse(m))) if matches!(
+                    m.kind,
+                    MouseEventKind::Down(_) | MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
+                ) => Msg::Mouse(m),
                 Some(Ok(_)) => continue,
                 Some(Err(err)) => return Err(err.into()),
                 None => return Ok(()),
@@ -83,6 +87,8 @@ pub async fn run(
                     events = stream;
                     let _ = tx.send(Msg::Edited(purpose, result));
                 }
+                // Clipboard writes go to the terminal: also handled here.
+                Cmd::Copy(text) => copy_to_clipboard(&text),
                 cmd => effects.run(cmd),
             }
         }
@@ -269,6 +275,26 @@ fn spawn(cmd: Cmd, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
                 repo,
                 starred,
             },
+            Cmd::SuggestLater(q) => {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                Msg::SuggestDue(q)
+            }
+            Cmd::Suggest(q) => {
+                let result = gh
+                    .search(ghtui_api::browse::SearchKind::Repos, &q, None)
+                    .await
+                    .map(|r| match r {
+                        ghtui_api::browse::SearchResults::Repos(r) => {
+                            r.items.into_iter().take(6).collect()
+                        }
+                        _ => Vec::new(),
+                    });
+                Msg::Suggested(q, result)
+            }
+            Cmd::SaveVisits(visits) => {
+                gh.remember(ghtui_api::browse::keys::VISITS, visits).await;
+                return;
+            }
             Cmd::OpenUrl(url) => match open_url(&url).await {
                 Ok(()) => return,
                 Err(err) => Msg::Notice(Notice::Error(format!("Couldn't open browser: {err}"))),
@@ -358,6 +384,7 @@ fn spawn(cmd: Cmd, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
             | Cmd::Prioritize(..)
             | Cmd::MapOutdated { .. }
             | Cmd::Edit { .. }
+            | Cmd::Copy(_)
             | Cmd::DetectMoves(..)
             | Cmd::SinceReview { .. }
             | Cmd::ListCommits(..) => {
@@ -388,8 +415,9 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<Data> {
         }
         DataKey::Profile(login) => Data::Profile(Box::new(gh.cached(&keys::profile(login))?.value)),
         DataKey::ViewerRepos => Data::Repos(gh.cached(keys::VIEWER_REPOS)?.value),
+        DataKey::Refs(repo) => Data::Refs(Box::new(gh.cached(&keys::refs(repo))?.value)),
         // Files aren't cached; they can be large.
-        DataKey::Blob(..) => return None,
+        DataKey::Blob(..) | DataKey::Files(..) => return None,
     })
 }
 
@@ -405,7 +433,28 @@ async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> {
         DataKey::PrActivity(pr) => Data::PrActivity(Box::new(gh.pr_activity(pr).await?)),
         DataKey::Profile(login) => Data::Profile(Box::new(gh.profile(login).await?)),
         DataKey::ViewerRepos => Data::Repos(gh.viewer_repos().await?),
+        DataKey::Files(repo, rev) => {
+            let (files, truncated) = gh.file_list(repo, rev).await?;
+            Data::Files(std::sync::Arc::new(files), truncated)
+        }
+        DataKey::Refs(repo) => Data::Refs(Box::new(gh.refs(repo).await?)),
     })
+}
+
+/// Puts `text` on the clipboard with OSC 52 (through tmux too, when its
+/// `set-clipboard` allows).
+fn copy_to_clipboard(text: &str) {
+    use base64::Engine;
+    use std::io::Write;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(text);
+    let sequence = if std::env::var_os("TMUX").is_some() {
+        format!("\x1bPtmux;\x1b\x1b]52;c;{encoded}\x07\x1b\\")
+    } else {
+        format!("\x1b]52;c;{encoded}\x07")
+    };
+    let mut out = std::io::stdout();
+    let _ = out.write_all(sequence.as_bytes());
+    let _ = out.flush();
 }
 
 async fn open_url(url: &str) -> std::io::Result<()> {
@@ -522,6 +571,7 @@ async fn edit_externally(
     ));
     let result = async {
         std::fs::write(&path, text).map_err(|e| e.to_string())?;
+        crate::set_mouse(false);
         ratatui::restore();
         let editor = std::env::var("VISUAL")
             .or_else(|_| std::env::var("EDITOR"))
@@ -541,6 +591,7 @@ async fn edit_externally(
                     .map(drop)
             })
             .and_then(|()| terminal.clear());
+        crate::set_mouse(true);
         if let Err(err) = restored {
             tracing::error!(%err, "couldn't restore the terminal after the editor");
         }

@@ -13,6 +13,7 @@ ghtui-git.workspace = true
 ghtui-theme.workspace = true
 ghtui-ui.workspace = true
 anyhow.workspace = true
+base64.workspace = true
 clap.workspace = true
 crossterm = { workspace = true, features = ["event-stream"] }
 etcetera.workspace = true

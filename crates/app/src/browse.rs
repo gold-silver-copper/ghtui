@@ -3,19 +3,19 @@
 use std::sync::Arc;
 
 use ghtui_api::browse::{
-    Blob, IssueDetail, PrActivity, Profile, RepoOverview, RepoSummary, Results, SearchKind,
+    Blob, IssueDetail, PrActivity, Profile, Refs, RepoOverview, RepoSummary, Results, SearchKind,
     SearchResults, TreeEntry,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::page::{Page, PageLine, Role, Seg};
-use ghtui_ui::pages::{self, PrTab, RepoTab};
+use ghtui_ui::pages::{self, Keys, PrTab};
 
 use crate::keymap::Action;
-use crate::route::{OPEN, Route, Target};
-use crate::state::{Remote, State};
+use crate::route::Route;
+use crate::state::State;
 
 /// Widest a page gets; wider terminals center it, as GitHub does.
-pub const MAX_WIDTH: u16 = 120;
+pub const MAX_WIDTH: u16 = 140;
 
 /// One piece of GitHub data a page shows.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -28,6 +28,10 @@ pub enum DataKey {
     PrActivity(PrRef),
     Profile(String),
     ViewerRepos,
+    /// Every file path at a revision ("Go to file").
+    Files(RepoId, String),
+    /// Branches and tags.
+    Refs(RepoId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +45,9 @@ pub enum Data {
     PrActivity(Box<PrActivity>),
     Profile(Box<Profile>),
     Repos(Vec<RepoSummary>),
+    /// Paths, and whether GitHub cut the list short.
+    Files(Arc<Vec<String>>, bool),
+    Refs(Box<Refs>),
 }
 
 /// What a page needs fetched.
@@ -73,78 +80,58 @@ pub fn needs(route: &Route) -> Vec<Need> {
             let (kind, query) = route.search().expect("a search");
             vec![Need::Data(K::Search(kind, query))]
         }
-        Route::Issue { repo, number } => vec![Need::Data(K::Issue(repo.clone(), *number))],
+        Route::Issue { repo, number } => {
+            vec![header(repo), Need::Data(K::Issue(repo.clone(), *number))]
+        }
         Route::Pr { pr, .. } => vec![Need::Pr(pr.clone()), Need::Data(K::PrActivity(pr.clone()))],
-        Route::User(login) => vec![Need::Data(K::Profile(login.to_lowercase()))],
+        Route::User { login, .. } => vec![Need::Data(K::Profile(login.to_lowercase()))],
     }
 }
 
-/// The screen of one page: where it is, and the page as last built.
+/// Whether `need` is a repository's header on one of its other pages
+/// (fetched only when missing).
+pub fn is_header(route: &Route, need: &Need) -> bool {
+    matches!(need, Need::Data(DataKey::Repo(_))) && !matches!(route, Route::Repo(_))
+}
+
+/// The screen of one page: where it is, what's selected, and the page as
+/// last built.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageScreen {
     pub route: Route,
-    pub cursor: usize,
+    /// The top row shown.
     pub scroll: usize,
+    /// The selected item, if one is.
+    pub selected: Option<usize>,
     pub page: Arc<Page>,
     /// The data generation and width `page` was built for.
     pub built: Option<(u64, u16)>,
+    /// Nothing has been selected or scrolled yet: select the first visible
+    /// item once the page has items.
+    pub fresh: bool,
 }
 
 impl PageScreen {
     pub fn new(route: Route) -> Self {
         Self {
             route,
-            cursor: 0,
             scroll: 0,
+            selected: None,
             page: Arc::new(Page::default()),
             built: None,
+            fresh: true,
         }
     }
 
-    /// Distinct links on the cursor line, or failing that on the lines above
-    /// it in the same block (a card's title links the whole card).
-    pub fn links_at_cursor(&self) -> Vec<(String, String)> {
-        let lines = &self.page.lines;
-        let mut at = self.cursor.min(lines.len().saturating_sub(1));
-        for _ in 0..4 {
-            let Some(line) = lines.get(at) else {
-                return Vec::new();
-            };
-            if line.is_blank() {
-                return Vec::new();
-            }
-            let links = line_links(&self.page, line);
-            if !links.is_empty() {
-                return links;
-            }
-            let Some(prev) = at.checked_sub(1) else {
-                return Vec::new();
-            };
-            at = prev;
-        }
-        Vec::new()
+    /// The selected item's link.
+    pub fn selected_url(&self) -> Option<&str> {
+        let item = self.page.items.get(self.selected?)?;
+        self.page.links.get(item.link as usize).map(String::as_str)
     }
-}
-
-fn line_links(page: &Page, line: &PageLine) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = Vec::new();
-    for seg in line.segs.iter().chain(&line.right) {
-        let Some(link) = seg.link else { continue };
-        let url = page.links[link as usize].clone();
-        match out.iter_mut().find(|(u, _)| *u == url) {
-            Some((_, text)) => text.push_str(&seg.text),
-            None => out.push((url, seg.text.trim().to_owned())),
-        }
-    }
-    out
 }
 
 impl State {
-    pub fn remote(&self, key: &DataKey) -> Option<&Remote<Data>> {
-        self.data.get(key)
-    }
-
-    fn get(&self, key: &DataKey) -> Option<&Data> {
+    pub fn get(&self, key: &DataKey) -> Option<&Data> {
         self.data.get(key).and_then(|r| r.data.as_ref())
     }
 
@@ -155,10 +142,24 @@ impl State {
         }
     }
 
-    fn search_results(&self, route: &Route) -> Option<&SearchResults> {
+    pub fn search_results(&self, route: &Route) -> Option<&SearchResults> {
         let (kind, query) = route.search()?;
         match self.get(&DataKey::Search(kind, query))? {
             Data::Search(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    pub fn activity(&self, pr: &PrRef) -> Option<&PrActivity> {
+        match self.get(&DataKey::PrActivity(pr.clone()))? {
+            Data::PrActivity(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    pub fn profile(&self, login: &str) -> Option<&Profile> {
+        match self.get(&DataKey::Profile(login.to_lowercase()))? {
+            Data::Profile(p) => Some(p),
             _ => None,
         }
     }
@@ -191,6 +192,7 @@ impl State {
         })
     }
 
+    /// The first key bound to `action`, for hints.
     pub fn first_key(&self, action: Action) -> String {
         self.keymap
             .keys_for(action)
@@ -199,13 +201,34 @@ impl State {
             .unwrap_or_else(|| format!(":{}", action.name()))
     }
 
-    /// Builds the page for `route`.
+    /// Builds the page for `route`, `width` columns wide in all.
     pub fn build_page(&self, route: &Route, width: u16, now: u64) -> Page {
-        let mut page = Page::new(width);
         let icons = self.icons;
         let error = self.page_error(route);
-        let comment = self.first_key(Action::Comment);
-        let filter = self.first_key(Action::Filter);
+        let (comment, find_file, branch, filter, star) = (
+            self.first_key(Action::Comment),
+            self.first_key(Action::FindFile),
+            self.first_key(Action::Branch),
+            self.first_key(Action::Search),
+            self.first_key(Action::Star),
+        );
+        let keys = Keys {
+            comment: &comment,
+            find_file: &find_file,
+            branch: &branch,
+            filter: &filter,
+            star: &star,
+        };
+        let aside = match route {
+            Route::Repo(_)
+            | Route::Issue { .. }
+            | Route::Pr {
+                tab: PrTab::Conversation,
+                ..
+            } => pages::aside_width(width),
+            _ => None,
+        };
+        let mut page = Page::new(pages::main_width(width, aside));
         let missing = |page: &mut Page, what: &str| match &error {
             Some((err, false)) => {
                 page.line(vec![Seg::new(
@@ -233,40 +256,39 @@ impl State {
             }
             Route::Repo(repo) => {
                 let overview = self.overview(repo);
-                pages::repo_header(&mut page, repo, overview, RepoTab::Code);
+                pages::repo_title(&mut page, repo, overview, keys);
                 match overview {
-                    Some(o) => pages::repo_code(&mut page, repo, o, now),
+                    Some(o) => pages::repo_code(&mut page, repo, o, icons, keys, aside, now),
                     None => missing(&mut page, "the repository"),
                 }
             }
             Route::Tree { repo, rev, path } => {
-                pages::repo_header(&mut page, repo, self.overview(repo), RepoTab::Code);
                 let key = DataKey::Tree(repo.clone(), rev.clone(), path.clone());
-                match self.get(&key) {
-                    Some(Data::Tree(entries)) => {
-                        pages::repo_dir(&mut page, repo, rev, path, Some(entries))
-                    }
-                    _ => {
-                        pages::repo_dir(&mut page, repo, rev, path, Some(&[]));
-                        missing(&mut page, "the directory");
-                    }
+                let entries = match self.get(&key) {
+                    Some(Data::Tree(entries)) => Some(entries.as_slice()),
+                    _ => None,
+                };
+                pages::repo_dir(&mut page, repo, rev, path, entries, icons, keys);
+                if entries.is_none() && matches!(error, Some((_, false))) {
+                    missing(&mut page, "the directory");
                 }
             }
             Route::Blob { repo, rev, path } => {
-                pages::repo_header(&mut page, repo, self.overview(repo), RepoTab::Code);
                 let key = DataKey::Blob(repo.clone(), rev.clone(), path.clone());
                 match self.get(&key) {
-                    Some(Data::Blob(blob)) => pages::file(&mut page, repo, rev, path, blob),
+                    Some(Data::Blob(blob)) => pages::file(&mut page, repo, rev, path, blob, keys),
                     _ => missing(&mut page, "the file"),
                 }
             }
             Route::Issues { repo, query } | Route::Pulls { repo, query } => {
-                let tab = if matches!(route, Route::Issues { .. }) {
-                    RepoTab::Issues
-                } else {
-                    RepoTab::Pulls
-                };
-                pages::repo_header(&mut page, repo, self.overview(repo), tab);
+                let is_pr = matches!(route, Route::Pulls { .. });
+                let counts = self.overview(repo).map(|o| {
+                    if is_pr {
+                        (o.open_prs, o.closed_prs)
+                    } else {
+                        (o.open_issues, o.closed_issues)
+                    }
+                });
                 let results = match self.search_results(route) {
                     Some(SearchResults::Issues(r)) => Some(r),
                     _ => None,
@@ -274,43 +296,41 @@ impl State {
                 if results.is_none() && matches!(error, Some((_, false))) {
                     missing(&mut page, "the list");
                 } else {
-                    pages::issue_list(&mut page, query, results, false, &filter, icons, now);
+                    pages::issue_list(&mut page, query, counts, is_pr, results, icons, keys, now);
                 }
             }
             Route::Search { kind, query } => {
                 let results = self.search_results(route);
                 if results.is_none() && matches!(error, Some((_, false))) {
-                    pages::search(&mut page, *kind, query, None, icons, now);
-                    page.lines.pop();
                     missing(&mut page, "results");
                 } else {
-                    pages::search(&mut page, *kind, query, results, icons, now);
+                    pages::search(&mut page, *kind, query, results, icons, keys, now);
                 }
             }
-            Route::Issue { repo, number } => {
-                match self.get(&DataKey::Issue(repo.clone(), *number)) {
-                    Some(Data::Issue(Some(issue))) => pages::issue(&mut page, issue, &comment, now),
-                    // Redirecting to the pull request.
-                    Some(Data::Issue(None)) => page.line(vec![Seg::new("Loading…", Role::Meta)]),
-                    _ => missing(&mut page, &format!("{repo}#{number}")),
+            Route::Issue { repo, number } => match self.get(&DataKey::Issue(repo.clone(), *number))
+            {
+                Some(Data::Issue(Some(issue))) => {
+                    pages::issue(&mut page, issue, icons, keys, aside, now)
                 }
-            }
+                // Redirecting to the pull request.
+                Some(Data::Issue(None)) => page.line(vec![Seg::new("Loading…", Role::Meta)]),
+                _ => missing(&mut page, &format!("{repo}#{number}")),
+            },
             Route::Pr { pr, tab } => {
                 let detail = self.prs.get(pr).and_then(|r| r.data.as_ref());
-                let activity = match self.get(&DataKey::PrActivity(pr.clone())) {
-                    Some(Data::PrActivity(a)) => Some(&**a),
-                    _ => None,
-                };
+                let activity = self.activity(pr);
                 match (detail, tab) {
                     (Some(d), PrTab::Conversation) => {
-                        pages::pr_conversation(&mut page, pr, d, activity, &comment, now)
+                        pages::pr_conversation(&mut page, pr, d, activity, icons, keys, aside, now)
                     }
-                    (Some(d), PrTab::Commits) => pages::pr_commits(&mut page, pr, d, activity, now),
+                    (Some(d), PrTab::Commits) => {
+                        pages::pr_commits(&mut page, pr, d, activity, icons, now)
+                    }
                     (None, _) => missing(&mut page, &pr.to_string()),
                 }
             }
-            Route::User(login) => match self.get(&DataKey::Profile(login.to_lowercase())) {
-                Some(Data::Profile(p)) => pages::profile(&mut page, p, now),
+            Route::User { login, tab } => match self.profile(login) {
+                Some(p) => pages::profile(&mut page, p, *tab, now),
                 _ => missing(&mut page, &format!("@{login}")),
             },
         }
@@ -322,57 +342,12 @@ impl State {
                     ..PageLine::default()
                 },
             );
+            for item in &mut page.items {
+                item.start += 1;
+                item.end += 1;
+            }
         }
         page
-    }
-
-    /// Where the page's numbered tab `n` (1-based) leads.
-    pub fn tab_target(&self, route: &Route, n: usize) -> Option<Target> {
-        let page = |route| Some(Target::Page(route));
-        match route {
-            Route::Repo(repo)
-            | Route::Tree { repo, .. }
-            | Route::Blob { repo, .. }
-            | Route::Issues { repo, .. }
-            | Route::Pulls { repo, .. } => {
-                let has_issues = self.overview(repo).is_none_or(|o| o.has_issues);
-                let issues = Route::Issues {
-                    repo: repo.clone(),
-                    query: OPEN.into(),
-                };
-                let pulls = Route::Pulls {
-                    repo: repo.clone(),
-                    query: OPEN.into(),
-                };
-                let tabs: Vec<Route> = if has_issues {
-                    vec![Route::Repo(repo.clone()), issues, pulls]
-                } else {
-                    vec![Route::Repo(repo.clone()), pulls]
-                };
-                tabs.into_iter().nth(n.checked_sub(1)?).map(Target::Page)
-            }
-            Route::Pr { pr, .. } => match n {
-                1 => page(Route::Pr {
-                    pr: pr.clone(),
-                    tab: PrTab::Conversation,
-                }),
-                2 => page(Route::Pr {
-                    pr: pr.clone(),
-                    tab: PrTab::Commits,
-                }),
-                3 => Some(Target::Files(pr.clone())),
-                _ => None,
-            },
-            Route::Search { query, .. } => {
-                let kind = [SearchKind::Repos, SearchKind::Issues, SearchKind::Users]
-                    .get(n.checked_sub(1)?)?;
-                page(Route::Search {
-                    kind: *kind,
-                    query: query.clone(),
-                })
-            }
-            Route::Home | Route::Issue { .. } | Route::User(_) => None,
-        }
     }
 }
 

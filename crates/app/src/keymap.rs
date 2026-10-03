@@ -51,16 +51,28 @@ pub enum Action {
     ToggleSinceReview,
     JumpMove,
     PickCommits,
-    NextLink,
-    PrevLink,
+    NextTab,
+    PrevTab,
     GoHome,
+    GoCode,
     GoIssues,
     GoPulls,
     Tab1,
     Tab2,
     Tab3,
+    Tab4,
     Star,
-    Filter,
+    Hints,
+    HintsBrowser,
+    Forward,
+    Copy,
+    Menu,
+    Branch,
+    ToggleState,
+    Sort,
+    ScrollDown,
+    ScrollUp,
+    PageDown,
 }
 
 /// Where a binding applies. Diff and page bindings may share keys.
@@ -78,7 +90,7 @@ impl Scope {
 }
 
 impl Action {
-    pub const ALL: [Action; 54] = [
+    pub const ALL: [Action; 66] = [
         Action::Down,
         Action::Up,
         Action::HalfPageDown,
@@ -123,16 +135,28 @@ impl Action {
         Action::ToggleSinceReview,
         Action::JumpMove,
         Action::PickCommits,
-        Action::NextLink,
-        Action::PrevLink,
+        Action::NextTab,
+        Action::PrevTab,
         Action::GoHome,
+        Action::GoCode,
         Action::GoIssues,
         Action::GoPulls,
         Action::Tab1,
         Action::Tab2,
         Action::Tab3,
+        Action::Tab4,
         Action::Star,
-        Action::Filter,
+        Action::Hints,
+        Action::HintsBrowser,
+        Action::Forward,
+        Action::Copy,
+        Action::Menu,
+        Action::Branch,
+        Action::ToggleState,
+        Action::Sort,
+        Action::ScrollDown,
+        Action::ScrollUp,
+        Action::PageDown,
     ];
 
     pub fn scope(self) -> Scope {
@@ -153,13 +177,29 @@ impl Action {
             | Action::Help
             | Action::Search
             | Action::Comment
+            | Action::FindFile
             | Action::GoHome
             | Action::GoIssues
             | Action::GoPulls
             | Action::Tab1
             | Action::Tab2
-            | Action::Tab3 => Scope::Global,
-            Action::NextLink | Action::PrevLink | Action::Star | Action::Filter => Scope::Page,
+            | Action::Tab3
+            | Action::Tab4
+            | Action::Forward
+            | Action::Copy => Scope::Global,
+            Action::NextTab
+            | Action::PrevTab
+            | Action::GoCode
+            | Action::Star
+            | Action::Hints
+            | Action::HintsBrowser
+            | Action::Menu
+            | Action::Branch
+            | Action::ToggleState
+            | Action::Sort
+            | Action::ScrollDown
+            | Action::ScrollUp
+            | Action::PageDown => Scope::Page,
             _ => Scope::Diff,
         }
     }
@@ -211,16 +251,28 @@ impl Action {
             Action::ToggleSinceReview => "since_review",
             Action::JumpMove => "jump_move",
             Action::PickCommits => "pick_commits",
-            Action::NextLink => "next_link",
-            Action::PrevLink => "prev_link",
+            Action::NextTab => "next_tab",
+            Action::PrevTab => "prev_tab",
             Action::GoHome => "go_home",
+            Action::GoCode => "go_code",
             Action::GoIssues => "go_issues",
             Action::GoPulls => "go_pulls",
             Action::Tab1 => "tab_1",
             Action::Tab2 => "tab_2",
             Action::Tab3 => "tab_3",
+            Action::Tab4 => "tab_4",
             Action::Star => "star",
-            Action::Filter => "filter",
+            Action::Hints => "hints",
+            Action::HintsBrowser => "hints_browser",
+            Action::Forward => "forward",
+            Action::Copy => "copy_link",
+            Action::Menu => "actions_menu",
+            Action::Branch => "branch",
+            Action::ToggleState => "toggle_state",
+            Action::Sort => "sort",
+            Action::ScrollDown => "scroll_down",
+            Action::ScrollUp => "scroll_up",
+            Action::PageDown => "page_down",
         }
     }
 
@@ -232,9 +284,9 @@ impl Action {
             Action::HalfPageUp => "Half page up",
             Action::Top => "Go to top",
             Action::Bottom => "Go to bottom",
-            Action::Open => "Follow the link (or open the file, expand)",
+            Action::Open => "Open the selection",
             Action::Back => "Back",
-            Action::Close => "Close the page (quits from the first)",
+            Action::Close => "Close the page",
             Action::Quit => "Quit",
             Action::Refresh => "Refresh",
             Action::OpenInBrowser => "Open on GitHub",
@@ -253,10 +305,10 @@ impl Action {
             Action::ToggleViewed => "Toggle file viewed (syncs)",
             Action::NextUnviewed => "Next unviewed file",
             Action::MarkReviewed => "Toggle change reviewed",
-            Action::Search => "Search GitHub (in a diff: search the diff)",
+            Action::Search => "Search GitHub, or filter the list (in a diff: search it)",
             Action::SearchNext => "Next search match",
             Action::SearchPrev => "Previous search match",
-            Action::FindFile => "Find a file",
+            Action::FindFile => "Go to file",
             Action::Comment => "Comment (on the issue, PR, or diff line)",
             Action::VisualLines => "Select lines (for multi-line comments)",
             Action::Suggest => "Suggest a change (opens $EDITOR)",
@@ -270,16 +322,28 @@ impl Action {
             Action::ToggleSinceReview => "Show only changes since your last review",
             Action::JumpMove => "Jump to the other end of moved code",
             Action::PickCommits => "Choose commits to view",
-            Action::NextLink => "Next link",
-            Action::PrevLink => "Previous link",
+            Action::NextTab => "Next tab",
+            Action::PrevTab => "Previous tab",
             Action::GoHome => "Go home",
+            Action::GoCode => "Go to the repository's code",
             Action::GoIssues => "Go to the repository's issues",
             Action::GoPulls => "Go to the repository's pull requests",
-            Action::Tab1 => "First tab (Code, Conversation, Repositories)",
-            Action::Tab2 => "Second tab (Issues, Commits)",
-            Action::Tab3 => "Third tab (Pull requests, Files changed)",
+            Action::Tab1 => "First tab",
+            Action::Tab2 => "Second tab",
+            Action::Tab3 => "Third tab",
+            Action::Tab4 => "Fourth tab",
             Action::Star => "Star or unstar the repository",
-            Action::Filter => "Filter the list",
+            Action::Hints => "Follow a link by its letters",
+            Action::HintsBrowser => "Open a link in the browser by its letters",
+            Action::Forward => "Forward (after going back)",
+            Action::Copy => "Copy the link (selected item, or the page)",
+            Action::Menu => "Everything you can do here",
+            Action::Branch => "Switch branches or tags",
+            Action::ToggleState => "Show open, closed or all",
+            Action::Sort => "Change the sort",
+            Action::ScrollDown => "Scroll down a line",
+            Action::ScrollUp => "Scroll up a line",
+            Action::PageDown => "Page down",
         }
     }
 
@@ -292,12 +356,12 @@ impl Action {
             Action::Top => &["gg"],
             Action::Bottom => &["G"],
             Action::Open => &["<Enter>"],
-            Action::Back => &["<Esc>", "<BS>"],
-            Action::Close => &["q"],
-            Action::Quit => &["<C-c>"],
+            Action::Back => &["<Esc>", "<BS>", "H"],
+            Action::Close => &[],
+            Action::Quit => &["q", "<C-c>"],
             Action::Refresh => &["r"],
             Action::OpenInBrowser => &["o"],
-            Action::CommandPalette => &[":"],
+            Action::CommandPalette => &[":", "<C-k>"],
             Action::Help => &["?"],
             Action::NextHunk => &["]h"],
             Action::PrevHunk => &["[h"],
@@ -315,7 +379,7 @@ impl Action {
             Action::Search => &["/"],
             Action::SearchNext => &["n"],
             Action::SearchPrev => &["N"],
-            Action::FindFile => &["gf"],
+            Action::FindFile => &["t", "gf"],
             Action::Comment => &["c"],
             Action::VisualLines => &["V"],
             Action::Suggest => &["S"],
@@ -329,16 +393,28 @@ impl Action {
             Action::ToggleSinceReview => &["gl"],
             Action::JumpMove => &["gm"],
             Action::PickCommits => &["gc"],
-            Action::NextLink => &["<Tab>"],
-            Action::PrevLink => &["<S-Tab>"],
+            Action::NextTab => &["<Tab>"],
+            Action::PrevTab => &["<S-Tab>"],
             Action::GoHome => &["gh"],
+            Action::GoCode => &["gc"],
             Action::GoIssues => &["gi"],
             Action::GoPulls => &["gp"],
             Action::Tab1 => &["1"],
             Action::Tab2 => &["2"],
             Action::Tab3 => &["3"],
+            Action::Tab4 => &["4"],
             Action::Star => &["*"],
-            Action::Filter => &["f"],
+            Action::Hints => &["f"],
+            Action::HintsBrowser => &["F"],
+            Action::Forward => &["L"],
+            Action::Copy => &["y"],
+            Action::Menu => &["."],
+            Action::Branch => &["w"],
+            Action::ToggleState => &["S"],
+            Action::Sort => &["O"],
+            Action::ScrollDown => &["J"],
+            Action::ScrollUp => &["K"],
+            Action::PageDown => &["<Space>", "<PageDown>"],
         }
     }
 
@@ -566,6 +642,20 @@ impl Keymap {
         }
     }
 
+    /// Bindings that start with `keys` in `scope`: the keys still to type,
+    /// and the action.
+    pub fn continuations(&self, keys: &[Key], scope: Scope) -> Vec<(Vec<Key>, Action)> {
+        self.bindings
+            .iter()
+            .filter(|(binding, action)| {
+                action.scope().overlaps(scope)
+                    && binding.len() > keys.len()
+                    && binding.starts_with(keys)
+            })
+            .map(|(binding, action)| (binding[keys.len()..].to_vec(), *action))
+            .collect()
+    }
+
     pub fn keys_for(&self, action: Action) -> Vec<String> {
         self.bindings
             .iter()
@@ -647,7 +737,7 @@ mod tests {
         let keymap = Keymap::default();
         assert_eq!(
             keymap.resolve(&[key('f')], Scope::Page),
-            Resolution::Action(Action::Filter)
+            Resolution::Action(Action::Hints)
         );
         assert_eq!(
             keymap.resolve(&[key('f')], Scope::Diff),

@@ -44,6 +44,8 @@ pub fn overview() -> RepoOverview {
         watchers: 18,
         open_issues: 7,
         open_prs: 3,
+        closed_issues: 41,
+        closed_prs: 112,
         license: Some("MIT".into()),
         topics: vec!["tui".into(), "github".into(), "rust".into()],
         default_branch: Some("main".into()),
@@ -204,6 +206,8 @@ pub fn profile() -> Profile {
             repo_summary("octocat/linguist", 640),
         ],
         repo_count: 8,
+        stars: vec![repo_summary("ratatui/ratatui", 22_900)],
+        star_count: 120,
     }
 }
 
