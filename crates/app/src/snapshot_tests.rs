@@ -3,8 +3,11 @@
 //! show up in review. Rendering also exercises the theme's debug assertion
 //! that every fg/bg pair used is declared (and therefore contrast-tested).
 
+use crossterm::event::KeyCode;
+use ghtui_api::browse::SearchKind;
 use ghtui_api::model::{
-    ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, ReviewDecision,
+    ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
+    ReviewDecision,
 };
 use ghtui_api::rate_limit::{Bucket, RateLimits};
 use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
@@ -12,8 +15,13 @@ use ghtui_ui::Icons;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
+use ghtui_ui::pages::PrTab;
+
+use crate::browse::{Data, DataKey};
+use crate::fixtures;
 use crate::keymap::Keymap;
-use crate::state::{Msg, Overlay, Remote, State, new_palette, update};
+use crate::route::{OPEN, Route};
+use crate::state::{Msg, Overlay, State, new_palette, update};
 use crate::view::view;
 
 /// 2026-10-03T12:00:00Z
@@ -125,6 +133,7 @@ fn state(mode: Mode, depth: ColorDepth) -> State {
         (100, 30),
     );
     state.viewer = Some("octocat".into());
+    state.clock = || NOW;
     state.rate_limits = RateLimits {
         graphql: Some(Bucket {
             remaining: 4987,
@@ -139,15 +148,56 @@ fn state(mode: Mode, depth: ColorDepth) -> State {
 fn with_inbox(mode: Mode, depth: ColorDepth) -> State {
     let mut state = state(mode, depth);
     update(&mut state, Msg::Inbox(Ok(inbox())));
+    fetched(
+        &mut state,
+        DataKey::ViewerRepos,
+        Data::Repos(vec![
+            fixtures::repo_summary("gold-silver-copper/ghtui", 1234),
+            fixtures::repo_summary("gold-silver-copper/fux", 87),
+        ]),
+    );
     state
 }
 
 fn with_pr(mode: Mode) -> State {
     let mut state = with_inbox(mode, ColorDepth::TrueColor);
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    state.prs.insert(pr.clone(), Remote::cached(Some(detail())));
-    state.open_pr(pr.clone());
-    update(&mut state, Msg::Pr(pr, Box::new(Ok(detail()))));
+    state.push(Route::Pr {
+        pr: pr.clone(),
+        tab: PrTab::Conversation,
+    });
+    update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail()))));
+    fetched(
+        &mut state,
+        DataKey::PrActivity(pr),
+        Data::PrActivity(Box::new(fixtures::activity())),
+    );
+    state
+}
+
+fn fetched(state: &mut State, key: DataKey, data: Data) {
+    update(
+        state,
+        Msg::Fetched {
+            key,
+            result: Ok(data),
+            fresh: true,
+        },
+    );
+}
+
+fn ghtui() -> RepoId {
+    RepoId::new("gold-silver-copper", "ghtui")
+}
+
+fn with_repo(mode: Mode, depth: ColorDepth) -> State {
+    let mut state = state(mode, depth);
+    state.push(Route::Repo(ghtui()));
+    fetched(
+        &mut state,
+        DataKey::Repo(ghtui()),
+        Data::Repo(Box::new(fixtures::overview())),
+    );
     state
 }
 
@@ -159,39 +209,37 @@ fn render(state: &State) -> String {
 }
 
 #[test]
-fn inbox_dark() {
+fn home_dark() {
     insta::assert_snapshot!(render(&with_inbox(Mode::Dark, ColorDepth::TrueColor)));
 }
 
 #[test]
-fn inbox_light() {
+fn home_light() {
     insta::assert_snapshot!(render(&with_inbox(Mode::Light, ColorDepth::TrueColor)));
 }
 
 #[test]
-fn inbox_dark_256() {
+fn home_dark_256() {
     insta::assert_snapshot!(render(&with_inbox(Mode::Dark, ColorDepth::Ansi256)));
 }
 
 #[test]
-fn inbox_second_row_selected_light() {
+fn home_cursor_on_a_pr_light() {
     let mut state = with_inbox(Mode::Light, ColorDepth::TrueColor);
-    state.screens[0] = crate::state::Screen::Inbox {
-        selected: 1,
-        scroll: 0,
-    };
+    update(&mut state, Msg::Key(key(KeyCode::Tab)));
+    update(&mut state, Msg::Key(key(KeyCode::Tab)));
     insta::assert_snapshot!(render(&state));
 }
 
 #[test]
-fn inbox_loading_dark() {
+fn home_loading_dark() {
     let mut state = state(Mode::Dark, ColorDepth::TrueColor);
     state.load_visible(false);
     insta::assert_snapshot!(render(&state));
 }
 
 #[test]
-fn inbox_error_light() {
+fn home_error_light() {
     let mut state = state(Mode::Light, ColorDepth::TrueColor);
     state.load_visible(false);
     update(
@@ -199,6 +247,79 @@ fn inbox_error_light() {
         Msg::Inbox(Err(ghtui_api::ApiError::Network(
             "connection refused".into(),
         ))),
+    );
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn repo_dark() {
+    insta::assert_snapshot!(render(&with_repo(Mode::Dark, ColorDepth::TrueColor)));
+}
+
+#[test]
+fn repo_light() {
+    insta::assert_snapshot!(render(&with_repo(Mode::Light, ColorDepth::TrueColor)));
+}
+
+#[test]
+fn repo_readme_dark_256() {
+    let mut state = with_repo(Mode::Dark, ColorDepth::Ansi256);
+    update(&mut state, Msg::Key(key(KeyCode::Char('G'))));
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn repo_wide_terminal_centers_light() {
+    let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
+    update(&mut state, Msg::Resize(160, 30));
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn file_light() {
+    let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
+    let (rev, path) = ("main".to_owned(), "src/main.rs".to_owned());
+    state.push(Route::Blob {
+        repo: ghtui(),
+        rev: rev.clone(),
+        path: path.clone(),
+    });
+    fetched(
+        &mut state,
+        DataKey::Blob(ghtui(), rev, path),
+        Data::Blob(Box::new(fixtures::blob())),
+    );
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn issues_dark() {
+    let mut state = with_repo(Mode::Dark, ColorDepth::TrueColor);
+    let route = Route::Issues {
+        repo: ghtui(),
+        query: OPEN.into(),
+    };
+    let (kind, query) = route.search().unwrap();
+    state.push(route);
+    fetched(
+        &mut state,
+        DataKey::Search(kind, query),
+        Data::Search(Box::new(fixtures::issue_results(Some("c1")))),
+    );
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn issue_light() {
+    let mut state = state(Mode::Light, ColorDepth::TrueColor);
+    state.push(Route::Issue {
+        repo: ghtui(),
+        number: 14,
+    });
+    fetched(
+        &mut state,
+        DataKey::Issue(ghtui(), 14),
+        Data::Issue(Some(Box::new(fixtures::issue()))),
     );
     insta::assert_snapshot!(render(&state));
 }
@@ -214,6 +335,13 @@ fn pr_light() {
 }
 
 #[test]
+fn pr_commits_dark() {
+    let mut state = with_pr(Mode::Dark);
+    update(&mut state, Msg::Key(key(KeyCode::Char('2'))));
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
 fn pr_refresh_error_dark() {
     let mut state = with_pr(Mode::Dark);
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
@@ -222,6 +350,62 @@ fn pr_refresh_error_dark() {
         Msg::Pr(pr, Box::new(Err(ghtui_api::ApiError::RateLimited(42)))),
     );
     insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn profile_light() {
+    let mut state = state(Mode::Light, ColorDepth::TrueColor);
+    state.push(Route::User("octocat".into()));
+    fetched(
+        &mut state,
+        DataKey::Profile("octocat".into()),
+        Data::Profile(Box::new(fixtures::profile())),
+    );
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn search_dark() {
+    let mut state = state(Mode::Dark, ColorDepth::TrueColor);
+    let route = Route::Search {
+        kind: SearchKind::Repos,
+        query: "terminal file manager".into(),
+    };
+    let (kind, query) = route.search().unwrap();
+    state.push(route);
+    fetched(
+        &mut state,
+        DataKey::Search(kind, query),
+        Data::Search(Box::new(fixtures::repo_results())),
+    );
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn search_users_light() {
+    let mut state = state(Mode::Light, ColorDepth::TrueColor);
+    let route = Route::Search {
+        kind: SearchKind::Users,
+        query: "octocat".into(),
+    };
+    let (kind, query) = route.search().unwrap();
+    state.push(route);
+    fetched(
+        &mut state,
+        DataKey::Search(kind, query),
+        Data::Search(Box::new(fixtures::user_results())),
+    );
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn search_prompt_and_link_picker_dark() {
+    let mut state = with_repo(Mode::Dark, ColorDepth::TrueColor);
+    update(&mut state, Msg::Key(key(KeyCode::Enter)));
+    insta::assert_snapshot!("link_picker_dark", render(&state));
+    update(&mut state, Msg::Key(key(KeyCode::Esc)));
+    update(&mut state, Msg::Key(key(KeyCode::Char('/'))));
+    insta::assert_snapshot!("search_prompt_dark", render(&state));
 }
 
 #[test]
@@ -235,7 +419,7 @@ fn help_overlay_dark() {
 fn palette_light() {
     let mut state = with_inbox(Mode::Light, ColorDepth::TrueColor);
     let mut palette = new_palette(&state.theme);
-    palette.input.insert_str("op");
+    palette.input.insert_str("ratatui");
     state.overlay = Some(Overlay::Palette(Box::new(palette)));
     insta::assert_snapshot!(render(&state));
 }
@@ -245,14 +429,22 @@ fn narrow_terminal_does_not_panic() {
     for (w, h) in [(1, 1), (9, 2), (20, 5), (40, 10)] {
         for mode in [Mode::Light, Mode::Dark] {
             let mut state = with_pr(mode);
-            state.size = (w, h);
+            update(&mut state, Msg::Resize(w, h));
             render(&state);
             state.screens.truncate(1);
+            update(&mut state, Msg::Resize(w, h));
             render(&state);
             state.overlay = Some(Overlay::Help);
             render(&state);
+            let mut state = with_repo(mode, ColorDepth::TrueColor);
+            update(&mut state, Msg::Resize(w, h));
+            render(&state);
         }
     }
+}
+
+fn key(code: KeyCode) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
 }
 
 // ---- diff screen -----------------------------------------------------------

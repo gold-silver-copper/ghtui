@@ -5,8 +5,12 @@ replace the GitHub website for daily use, built around a pull request diff
 viewer that's better than GitHub's. The look is flat Material 3 adapted to
 the terminal.
 
-**Status: milestones M0–M4.** You can browse your open pull requests and
-review requests, open any pull request's overview, and review its diff. The
+**Status: milestones M0–M4, plus browsing.** You can browse GitHub much as you
+would on the website. That covers your home page (review requests, your pull
+requests, your repositories), any repository, issue and pull request lists,
+issues, pull requests, profiles, and search. Repository pages show files, stats
+and the rendered README. You can also comment and star. Reviewing a pull
+request's diff is where ghtui goes furthest. The
 diff is computed locally from git and syntax-highlighted, unified or split,
 with expandable context, a full-file mode, whitespace-insensitive comparison,
 search, a fuzzy file finder, "viewed" synced with GitHub, and local per-change
@@ -16,8 +20,8 @@ Comment, Approve or Request changes. Beyond what GitHub shows, ghtui
 highlights changed tokens within lines, marks moved code, folds
 formatting-only changes, shows only what changed since your last review
 (even across force-pushes and rebases), and lets you view any commit or
-commit range. M5 (structural diffs, code navigation, the rest of GitHub) is
-planned but not started.
+commit range. M5 (structural diffs, code navigation, Actions, wikis and the
+rest of GitHub) is planned but not started.
 
 ## Install
 
@@ -36,13 +40,54 @@ That installs the `ghtui` binary.
 ## Usage
 
 ```sh
-ghtui                                   # inbox: review requests and your open PRs
+ghtui                                   # home: review requests, your PRs and repositories
+ghtui ratatui/ratatui                   # a repository
+ghtui ratatui/ratatui#1820              # an issue or pull request
+ghtui @octocat                          # a profile
+ghtui https://github.com/o/r/tree/main  # most github.com URLs
 ghtui pr ratatui/ratatui#1820           # open a pull request
 ghtui pr https://github.com/o/r/pull/7  # PR URLs work too, including /files etc.
 ghtui pr 1820                           # inside a clone: uses the `upstream` remote,
                                         # then `origin`, then any github.com remote
 ghtui --theme light                     # override the color scheme
 ```
+
+## Browsing
+
+Every page is a document of lines, and links in it are github.com URLs. Move
+the cursor with `j`/`k` (or jump between links with `<Tab>`) and press
+`<Enter>` to follow a link. If a line has several links, you choose one. On a
+card's second line (an issue's number, a repository's description), `<Enter>`
+follows the card's title. History works like a browser: `<Esc>` goes back,
+and the top bar shows the latest pages.
+
+- **Home**: review requests, your open pull requests, and your recently
+  pushed repositories, each section linking to the full list.
+- **Repository**: owner and name, visibility, description, stars, forks and
+  watchers, then tabs: `1` Code, `2` Issues, `3` Pull requests. Code shows
+  topics, language, license, the latest commit, the root directory, and the
+  README rendered from Markdown. Relative links resolve as they do on GitHub.
+  Directories and files open in place. Files are syntax-highlighted with line
+  numbers, and `.md` files are rendered.
+- **Issues and pull requests**: newest first, with labels and comment counts.
+  `f` edits the filter, which takes GitHub search syntax (`is:closed
+  label:bug author:octocat`). Long lists end in "Load more".
+- **Issue**: state, labels, assignees, and the conversation rendered from
+  Markdown. Issue numbers that are pull requests redirect, as on GitHub.
+- **Pull request**: tabs `1` Conversation (description, comments and reviews in
+  order), `2` Commits, and `3` Files changed, which is the diff viewer below. In
+  the diff, `1` and `2` go back to the other tabs.
+- **Profile**: users and organizations, with pinned and recent repositories.
+- **Search**: `/` searches GitHub, and on a repository's pages it starts as
+  `repo:owner/name`. Results come in tabs: `1` Repositories, `2` Issues & pull
+  requests, `3` Users. Queries with qualifiers such as `is:`, `repo:` or
+  `label:` start on issues.
+- **Writing**: `c` comments on the issue or pull request on screen, posted
+  when you press `<C-s>`. `*` stars or unstars the repository.
+
+Links ghtui doesn't show itself (Actions, wikis, releases, external sites) open
+in your browser. Pages show cached data first and refresh in the background.
+Pages are at most 120 columns wide and centered, as on GitHub.
 
 ## Authentication
 
@@ -80,14 +125,32 @@ app for this list, generated from your actual keymap.
 | `k` `<Up>`      | Move up                                                                       |
 | `<C-d>` `<C-u>` | Half page down / up                                                           |
 | `gg` `G`        | Go to top / bottom                                                            |
-| `<Enter>`       | Open: the selected PR, a PR's diff, a file from the tree, a collapsed file    |
+| `<Enter>`       | Follow the link (in the diff: open a file from the tree, a collapsed file)    |
 | `<Esc>` `<BS>`  | Back                                                                          |
-| `q`             | Close the view (quits from inbox)                                             |
+| `q`             | Close the page (quits from the first)                                         |
 | `<C-c>`         | Quit                                                                          |
 | `r`             | Refresh (on the diff: fetch and recompute)                                    |
 | `o`             | Open on GitHub in the browser                                                 |
 | `:`             | Command palette                                                               |
 | `?`             | Keyboard shortcuts                                                            |
+| `gh`            | Home                                                                          |
+| `gi` `gp`       | The repository's issues / pull requests                                       |
+| `1` `2` `3`     | Tabs (Code, Issues, Pull requests; Conversation, Commits, Files changed)      |
+| `/`             | Search GitHub (in the diff: search the diff)                                  |
+| `c`             | Comment on the issue or pull request (in the diff: on the line or selection)  |
+
+On pages:
+
+| Keys            | Action                                                                        |
+| --------------- | ----------------------------------------------------------------------------- |
+| `<Tab>` `<S-Tab>` | Next / previous link                                                        |
+| `f`             | Filter the list (GitHub search syntax)                                        |
+| `*`             | Star or unstar the repository                                                 |
+
+In the diff (keys may mean something else on pages):
+
+| Keys            | Action                                                                        |
+| --------------- | ----------------------------------------------------------------------------- |
 | `]h` `[h`       | Next / previous hunk                                                          |
 | `]f` `[f`       | Next / previous file                                                          |
 | `]u`            | Next file not marked viewed                                                   |
@@ -99,12 +162,11 @@ app for this list, generated from your actual keymap.
 | `F`             | Show the whole file, changes marked                                           |
 | `v`             | Mark the file viewed / unviewed, synced with GitHub; viewed files collapse    |
 | `m`             | Mark the change under the cursor reviewed (local, survives restarts)          |
-| `/` `n` `N`     | Search the diff (smart case), next / previous match                           |
+| `n` `N`         | Next / previous search match (smart case)                                     |
 | `gf`            | Find a file by fuzzy path                                                     |
 | `]c` `[c`       | Next / previous unresolved thread                                             |
 | `<Enter>`       | On a thread: open or collapse it. On a draft: edit it                         |
 | `V`             | Start or end a visual line selection (for multi-line comments)                |
-| `c`             | Comment on the line or selection                                              |
 | `S`             | Suggest a change to the line or selection, in `$EDITOR`                       |
 | `f`             | Comment on the whole file; on a rejected draft, make it a file comment        |
 | `a`             | Reply to the thread (posts immediately)                                       |
@@ -116,15 +178,16 @@ app for this list, generated from your actual keymap.
 | `gc`            | Choose commits: all changes, since your review, one commit, or a range        |
 
 In the comment editor: `<C-s>` adds the comment to your review (or posts a
-reply), `<C-e>` continues in `$EDITOR`, and `Esc` cancels (press it twice if
+reply or a conversation comment), `<C-e>` continues in `$EDITOR`, and `Esc` cancels (press it twice if
 there's text).
 
 In the file tree, moving the selection scrolls the diff to that file;
 `<Enter>` returns focus to the diff.
 
-The command palette fuzzy-matches action names and descriptions. Type
-`owner/repo#123` or a PR URL to open a pull request. On a PR screen, a bare
-number like `42` opens that PR in the same repository.
+The command palette fuzzy-matches action names and descriptions. It also goes
+places: `owner/repo`, `owner/repo#123`, `@user`, or a github.com URL. On a
+repository's pages, a bare `#42` opens that issue or pull request. Anything
+else can be searched on GitHub.
 
 ## Configuration
 
@@ -195,8 +258,8 @@ work runs in tokio tasks, so the UI task never waits on them.
 
 | Crate    | Role                                                                     |
 | -------- | ------------------------------------------------------------------------ |
-| `app`    | Binary: CLI, config, keymap, state/update, view, runtime loop            |
-| `ui`     | Ratatui widgets (bars, chips, PR list, PR overview, overlays); pure      |
+| `app`    | Binary: CLI, config, keymap, routes, state/update, view, runtime loop    |
+| `ui`     | Widgets and pages (Markdown, repository, issue, PR, profile...); pure    |
 | `theme`  | Scheme generation, semantic roles, quantization, contrast, detection     |
 | `api`    | Auth, GraphQL (cynic) and REST over one octocrab client, retries, limits |
 | `schema` | GitHub's GraphQL schema compiled once (see below)                        |
@@ -382,15 +445,23 @@ Performance targets, as timing tests
 ## Known limitations
 
 - github.com only; GitHub Enterprise Server isn't supported yet.
-- The inbox shows the 25 most recently updated PRs per section, with GitHub's
-  total count. Larger pages that include check status make GitHub's search
+- The home page shows the 25 most recently updated PRs per section, with
+  GitHub's total count (the "see all" links list them all). Larger pages that include check status make GitHub's search
   time out (HTTP 502) for busy accounts.
 - The cache isn't separated per GitHub account. After switching accounts, the
-  previous account's cached inbox shows until the first refresh completes.
-- PR descriptions are shown as wrapped plain text; Markdown isn't rendered.
+  previous account's cached pages show until the first refresh completes.
+- Actions, wikis, discussions, releases, notifications and code search
+  aren't pages yet; their links open in the browser. Repositories open on
+  their default branch, with no branch or tag picker yet.
+- Profiles list the 30 most recently pushed repositories; profile READMEs
+  aren't shown.
+- Markdown is rendered for the terminal: images show their alt text (badges
+  without it are left out), and HTML is reduced to its text, links and
+  structure.
+- Relative times on pages ("3h ago") update when the page's data does.
 - Long diff lines are cut at the pane edge (marked `…`); there's no
   horizontal scrolling or wrapping yet.
-- Comment text is shown as plain wrapped Markdown, not rendered.
+- Comments in diff threads are shown as plain wrapped Markdown, not rendered.
 - Suggestions apply to new-side lines only (as on GitHub). Threads on
   deleted lines aren't mapped forward when outdated.
 - Replies, resolve and submit go to GitHub immediately; there's no undo
@@ -411,4 +482,3 @@ Performance targets, as timing tests
 - A cold `cargo clippy` takes about 8½ minutes, almost all of it linting the
   generated GitHub schema module. A cold `cargo build` takes about 1 minute,
   and incremental builds 1–2s. CI caches build output with `rust-cache`.
-- No reviews or comments yet (M3).

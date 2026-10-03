@@ -51,10 +51,34 @@ pub enum Action {
     ToggleSinceReview,
     JumpMove,
     PickCommits,
+    NextLink,
+    PrevLink,
+    GoHome,
+    GoIssues,
+    GoPulls,
+    Tab1,
+    Tab2,
+    Tab3,
+    Star,
+    Filter,
+}
+
+/// Where a binding applies. Diff and page bindings may share keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    Global,
+    Diff,
+    Page,
+}
+
+impl Scope {
+    fn overlaps(self, other: Scope) -> bool {
+        self == Scope::Global || other == Scope::Global || self == other
+    }
 }
 
 impl Action {
-    pub const ALL: [Action; 44] = [
+    pub const ALL: [Action; 54] = [
         Action::Down,
         Action::Up,
         Action::HalfPageDown,
@@ -99,7 +123,46 @@ impl Action {
         Action::ToggleSinceReview,
         Action::JumpMove,
         Action::PickCommits,
+        Action::NextLink,
+        Action::PrevLink,
+        Action::GoHome,
+        Action::GoIssues,
+        Action::GoPulls,
+        Action::Tab1,
+        Action::Tab2,
+        Action::Tab3,
+        Action::Star,
+        Action::Filter,
     ];
+
+    pub fn scope(self) -> Scope {
+        match self {
+            Action::Down
+            | Action::Up
+            | Action::HalfPageDown
+            | Action::HalfPageUp
+            | Action::Top
+            | Action::Bottom
+            | Action::Open
+            | Action::Back
+            | Action::Close
+            | Action::Quit
+            | Action::Refresh
+            | Action::OpenInBrowser
+            | Action::CommandPalette
+            | Action::Help
+            | Action::Search
+            | Action::Comment
+            | Action::GoHome
+            | Action::GoIssues
+            | Action::GoPulls
+            | Action::Tab1
+            | Action::Tab2
+            | Action::Tab3 => Scope::Global,
+            Action::NextLink | Action::PrevLink | Action::Star | Action::Filter => Scope::Page,
+            _ => Scope::Diff,
+        }
+    }
 
     /// The name used in the `[keys]` config table.
     pub fn name(self) -> &'static str {
@@ -148,6 +211,16 @@ impl Action {
             Action::ToggleSinceReview => "since_review",
             Action::JumpMove => "jump_move",
             Action::PickCommits => "pick_commits",
+            Action::NextLink => "next_link",
+            Action::PrevLink => "prev_link",
+            Action::GoHome => "go_home",
+            Action::GoIssues => "go_issues",
+            Action::GoPulls => "go_pulls",
+            Action::Tab1 => "tab_1",
+            Action::Tab2 => "tab_2",
+            Action::Tab3 => "tab_3",
+            Action::Star => "star",
+            Action::Filter => "filter",
         }
     }
 
@@ -159,9 +232,9 @@ impl Action {
             Action::HalfPageUp => "Half page up",
             Action::Top => "Go to top",
             Action::Bottom => "Go to bottom",
-            Action::Open => "Open (PR, diff, file, collapsed file)",
+            Action::Open => "Follow the link (or open the file, expand)",
             Action::Back => "Back",
-            Action::Close => "Close view (quits from inbox)",
+            Action::Close => "Close the page (quits from the first)",
             Action::Quit => "Quit",
             Action::Refresh => "Refresh",
             Action::OpenInBrowser => "Open on GitHub",
@@ -180,11 +253,11 @@ impl Action {
             Action::ToggleViewed => "Toggle file viewed (syncs)",
             Action::NextUnviewed => "Next unviewed file",
             Action::MarkReviewed => "Toggle change reviewed",
-            Action::Search => "Search the diff",
+            Action::Search => "Search GitHub (in a diff: search the diff)",
             Action::SearchNext => "Next search match",
             Action::SearchPrev => "Previous search match",
             Action::FindFile => "Find a file",
-            Action::Comment => "Comment on the line or selection",
+            Action::Comment => "Comment (on the issue, PR, or diff line)",
             Action::VisualLines => "Select lines (for multi-line comments)",
             Action::Suggest => "Suggest a change (opens $EDITOR)",
             Action::ReplyThread => "Reply to the thread",
@@ -197,6 +270,16 @@ impl Action {
             Action::ToggleSinceReview => "Show only changes since your last review",
             Action::JumpMove => "Jump to the other end of moved code",
             Action::PickCommits => "Choose commits to view",
+            Action::NextLink => "Next link",
+            Action::PrevLink => "Previous link",
+            Action::GoHome => "Go home",
+            Action::GoIssues => "Go to the repository's issues",
+            Action::GoPulls => "Go to the repository's pull requests",
+            Action::Tab1 => "First tab (Code, Conversation, Repositories)",
+            Action::Tab2 => "Second tab (Issues, Commits)",
+            Action::Tab3 => "Third tab (Pull requests, Files changed)",
+            Action::Star => "Star or unstar the repository",
+            Action::Filter => "Filter the list",
         }
     }
 
@@ -246,6 +329,16 @@ impl Action {
             Action::ToggleSinceReview => &["gl"],
             Action::JumpMove => &["gm"],
             Action::PickCommits => &["gc"],
+            Action::NextLink => &["<Tab>"],
+            Action::PrevLink => &["<S-Tab>"],
+            Action::GoHome => &["gh"],
+            Action::GoIssues => &["gi"],
+            Action::GoPulls => &["gp"],
+            Action::Tab1 => &["1"],
+            Action::Tab2 => &["2"],
+            Action::Tab3 => &["3"],
+            Action::Star => &["*"],
+            Action::Filter => &["f"],
         }
     }
 
@@ -438,7 +531,7 @@ impl Keymap {
         for (i, (a, action_a)) in self.bindings.iter().enumerate() {
             for (b, action_b) in &self.bindings[i + 1..] {
                 let shorter = a.len().min(b.len());
-                if a[..shorter] == b[..shorter] {
+                if a[..shorter] == b[..shorter] && action_a.scope().overlaps(action_b.scope()) {
                     return Err(format!(
                         "key `{}` ({}) conflicts with `{}` ({})",
                         format_sequence(a),
@@ -452,9 +545,13 @@ impl Keymap {
         Ok(())
     }
 
-    pub fn resolve(&self, keys: &[Key]) -> Resolution {
+    /// The action `keys` trigger in `scope`.
+    pub fn resolve(&self, keys: &[Key], scope: Scope) -> Resolution {
         let mut pending = false;
         for (binding, action) in &self.bindings {
+            if !action.scope().overlaps(scope) {
+                continue;
+            }
             if binding.as_slice() == keys {
                 return Resolution::Action(*action);
             }
@@ -528,15 +625,41 @@ mod tests {
     fn resolves_sequences() {
         let keymap = Keymap::default();
         assert_eq!(
-            keymap.resolve(&[key('j')]),
+            keymap.resolve(&[key('j')], Scope::Page),
             Resolution::Action(Action::Down)
         );
-        assert_eq!(keymap.resolve(&[key('g')]), Resolution::Pending);
         assert_eq!(
-            keymap.resolve(&[key('g'), key('g')]),
+            keymap.resolve(&[key('g')], Scope::Page),
+            Resolution::Pending
+        );
+        assert_eq!(
+            keymap.resolve(&[key('g'), key('g')], Scope::Page),
             Resolution::Action(Action::Top)
         );
-        assert_eq!(keymap.resolve(&[key('z')]), Resolution::Unbound);
+        assert_eq!(
+            keymap.resolve(&[key('z')], Scope::Page),
+            Resolution::Unbound
+        );
+    }
+
+    #[test]
+    fn scopes_share_keys() {
+        let keymap = Keymap::default();
+        assert_eq!(
+            keymap.resolve(&[key('f')], Scope::Page),
+            Resolution::Action(Action::Filter)
+        );
+        assert_eq!(
+            keymap.resolve(&[key('f')], Scope::Diff),
+            Resolution::Action(Action::FileComment)
+        );
+        // A page key can't shadow a global one.
+        let clash = HashMap::from([("star".to_owned(), vec!["q".to_owned()])]);
+        assert!(
+            Keymap::with_overrides(&clash)
+                .unwrap_err()
+                .contains("conflicts")
+        );
     }
 
     #[test]
@@ -544,10 +667,13 @@ mod tests {
         let overrides = HashMap::from([("down".to_owned(), vec!["e".to_owned()])]);
         let keymap = Keymap::with_overrides(&overrides).unwrap();
         assert_eq!(
-            keymap.resolve(&[key('e')]),
+            keymap.resolve(&[key('e')], Scope::Page),
             Resolution::Action(Action::Down)
         );
-        assert_eq!(keymap.resolve(&[key('j')]), Resolution::Unbound);
+        assert_eq!(
+            keymap.resolve(&[key('j')], Scope::Page),
+            Resolution::Unbound
+        );
         assert_eq!(keymap.keys_for(Action::Down), ["e"]);
     }
 

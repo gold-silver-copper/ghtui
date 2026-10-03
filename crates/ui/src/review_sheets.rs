@@ -23,7 +23,8 @@ pub struct ComposeSheet<'a> {
     pub note: Option<&'a str>,
     pub error: Option<&'a str>,
     pub sending: bool,
-    pub is_reply: bool,
+    /// What `<C-s>` does: "post reply", "add to review"…
+    pub save: &'a str,
 }
 
 impl Widget for ComposeSheet<'_> {
@@ -143,11 +144,7 @@ impl Widget for ComposeSheet<'_> {
         } else {
             vec![
                 key("<C-s>"),
-                meta(if self.is_reply {
-                    " post reply · "
-                } else {
-                    " add to review · "
-                }),
+                meta(&format!(" {} · ", self.save)),
                 key("<C-e>"),
                 meta(" open in $EDITOR · "),
                 key("Esc"),

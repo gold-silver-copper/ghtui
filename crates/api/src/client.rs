@@ -12,9 +12,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::auth::Token;
+use crate::browse;
 use crate::model::{
-    Inbox, NewThread, PatchFile, PrDetail, PrRef, PrSummary, ReviewEvent, ReviewThread, Side,
-    ViewedFiles, ViewedState,
+    Inbox, NewThread, PatchFile, PrDetail, PrRef, PrSummary, RepoId, ReviewEvent, ReviewThread,
+    Side, ViewedFiles, ViewedState,
 };
 use crate::queries;
 use crate::rate_limit::{RateLimits, retry_after};
@@ -611,6 +612,268 @@ impl GitHub {
             self.mutate(queries::Resolve::build(vars)).await.map(drop)
         } else {
             self.mutate(queries::Unresolve::build(vars)).await.map(drop)
+        }
+    }
+
+    // ---- browsing ----------------------------------------------------------
+
+    /// A cached page, by one of the keys in [`crate::browse::keys`].
+    pub fn cached<T: DeserializeOwned>(&self, key: &str) -> Option<ghtui_store::Cached<T>> {
+        self.store.query_get(key)
+    }
+
+    /// A repository's overview: stats, root directory, last commit, README.
+    pub async fn repo(&self, repo: &RepoId) -> Result<browse::RepoOverview, ApiError> {
+        use cynic::QueryBuilder;
+        let op = browse::RepoQuery::build(browse::RepoVariables {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+            expression: "HEAD:".into(),
+        });
+        let (data, readme) = tokio::join!(self.graphql(op), self.readme(repo));
+        let readme = readme.unwrap_or_else(|err| {
+            tracing::debug!(%repo, %err, "no readme");
+            None
+        });
+        let overview = data?
+            .repository
+            .and_then(|r| r.into_overview(readme))
+            .ok_or_else(|| ApiError::NotFound(repo.to_string()))?;
+        self.put_query(browse::keys::repo(repo), overview.clone())
+            .await;
+        Ok(overview)
+    }
+
+    /// The README GitHub shows for the repository root.
+    pub async fn readme(&self, repo: &RepoId) -> Result<Option<browse::Readme>, ApiError> {
+        use base64::Engine;
+        #[derive(serde::Deserialize)]
+        struct Wire {
+            path: String,
+            content: String,
+        }
+        let body = match self
+            .rest_get(&format!("/repos/{}/{}/readme", repo.owner, repo.name))
+            .await
+        {
+            Ok(body) => body,
+            Err(ApiError::NotFound(_)) => return Ok(None),
+            Err(err) => return Err(err),
+        };
+        let wire: Wire =
+            serde_json::from_str(&body).map_err(|e| ApiError::Decode(e.to_string()))?;
+        let compact: String = wire.content.split_whitespace().collect();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(compact)
+            .map_err(|e| ApiError::Decode(e.to_string()))?;
+        Ok(Some(browse::Readme {
+            path: wire.path,
+            text: String::from_utf8_lossy(&bytes).into_owned(),
+        }))
+    }
+
+    /// A directory at `rev:path`.
+    pub async fn tree(
+        &self,
+        repo: &RepoId,
+        rev: &str,
+        path: &str,
+    ) -> Result<Vec<browse::TreeEntry>, ApiError> {
+        use cynic::QueryBuilder;
+        let op = browse::ObjectQuery::build(browse::RepoVariables {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+            expression: format!("{rev}:{path}"),
+        });
+        match self.graphql(op).await?.repository.and_then(|r| r.object) {
+            Some(browse::GitObject::Tree(t)) => {
+                let entries = browse::entries(t);
+                self.put_query(browse::keys::tree(repo, rev, path), entries.clone())
+                    .await;
+                Ok(entries)
+            }
+            _ => Err(ApiError::NotFound(format!("{repo}/{path}"))),
+        }
+    }
+
+    /// A file at `rev:path`.
+    pub async fn blob(
+        &self,
+        repo: &RepoId,
+        rev: &str,
+        path: &str,
+    ) -> Result<browse::Blob, ApiError> {
+        use cynic::QueryBuilder;
+        let op = browse::ObjectQuery::build(browse::RepoVariables {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+            expression: format!("{rev}:{path}"),
+        });
+        match self.graphql(op).await?.repository.and_then(|r| r.object) {
+            Some(browse::GitObject::Blob(b)) => Ok(browse::Blob {
+                path: path.to_owned(),
+                text: if b.is_binary.unwrap_or(false) {
+                    None
+                } else {
+                    b.text
+                },
+                size: u64::try_from(b.byte_size).unwrap_or(0),
+                truncated: b.is_truncated,
+            }),
+            _ => Err(ApiError::NotFound(format!("{repo}/{path}"))),
+        }
+    }
+
+    /// One page of search results (30 per page).
+    pub async fn search(
+        &self,
+        kind: browse::SearchKind,
+        query: &str,
+        after: Option<String>,
+    ) -> Result<browse::SearchResults, ApiError> {
+        use cynic::QueryBuilder;
+        let first_page = after.is_none();
+        let op = browse::BrowseSearch::build(browse::BrowseSearchVariables {
+            query: query.to_owned(),
+            kind: match kind {
+                browse::SearchKind::Repos => browse::SearchType::Repository,
+                browse::SearchKind::Issues => browse::SearchType::Issue,
+                browse::SearchKind::Users => browse::SearchType::User,
+            },
+            first: 30,
+            after,
+        });
+        let conn = self.graphql(op).await?.search;
+        let next = conn
+            .page_info
+            .end_cursor
+            .filter(|_| conn.page_info.has_next_page);
+        let items = conn.nodes.into_iter().flatten().flatten();
+        let count = |n: i32| u64::try_from(n).unwrap_or(0);
+        let results = match kind {
+            browse::SearchKind::Repos => browse::SearchResults::Repos(browse::Results {
+                total: count(conn.repository_count),
+                items: items
+                    .filter_map(|i| match i {
+                        browse::BrowseItem::Repository(r) => r.into_summary(),
+                        _ => None,
+                    })
+                    .collect(),
+                next,
+            }),
+            browse::SearchKind::Issues => browse::SearchResults::Issues(browse::Results {
+                total: count(conn.issue_count),
+                items: items.filter_map(browse::BrowseItem::into_issue).collect(),
+                next,
+            }),
+            browse::SearchKind::Users => browse::SearchResults::Users(browse::Results {
+                total: count(conn.user_count),
+                items: items.filter_map(browse::BrowseItem::into_user).collect(),
+                next,
+            }),
+        };
+        if first_page {
+            self.put_query(browse::keys::search(kind, query), results.clone())
+                .await;
+        }
+        Ok(results)
+    }
+
+    /// An issue; `None` when the number is a pull request (GitHub redirects
+    /// those).
+    pub async fn issue(
+        &self,
+        repo: &RepoId,
+        number: u64,
+    ) -> Result<Option<browse::IssueDetail>, ApiError> {
+        use cynic::QueryBuilder;
+        let op = browse::IssueQuery::build(browse::IssueVariables {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+            number: i32::try_from(number)
+                .map_err(|_| ApiError::NotFound(format!("{repo}#{number}")))?,
+        });
+        let issue = match self
+            .graphql(op)
+            .await?
+            .repository
+            .and_then(|r| r.issue_or_pull_request)
+        {
+            Some(browse::IssueOrPr::Issue(issue)) => issue.into_detail(),
+            Some(browse::IssueOrPr::PullRequest(_)) => return Ok(None),
+            _ => None,
+        }
+        .ok_or_else(|| ApiError::NotFound(format!("{repo}#{number}")))?;
+        self.put_query(browse::keys::issue(repo, number), issue.clone())
+            .await;
+        Ok(Some(issue))
+    }
+
+    /// Comments, reviews and commits of a pull request.
+    pub async fn pr_activity(&self, pr: &PrRef) -> Result<browse::PrActivity, ApiError> {
+        use cynic::QueryBuilder;
+        let op = browse::PrActivityQuery::build(browse::IssueVariables {
+            owner: pr.repo.owner.clone(),
+            name: pr.repo.name.clone(),
+            number: pr_number(pr)?,
+        });
+        let activity = self
+            .graphql(op)
+            .await?
+            .repository
+            .and_then(|r| r.pull_request)
+            .map(browse::WirePrActivity::into_activity)
+            .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
+        self.put_query(browse::keys::pr_activity(pr), activity.clone())
+            .await;
+        Ok(activity)
+    }
+
+    /// A user's or organization's profile.
+    pub async fn profile(&self, login: &str) -> Result<browse::Profile, ApiError> {
+        use cynic::QueryBuilder;
+        let op = browse::ProfileQuery::build(browse::ProfileVariables {
+            login: login.to_owned(),
+        });
+        let profile = self
+            .graphql(op)
+            .await?
+            .into_profile()
+            .ok_or_else(|| ApiError::NotFound(login.to_owned()))?;
+        self.put_query(browse::keys::profile(login), profile.clone())
+            .await;
+        Ok(profile)
+    }
+
+    /// Repositories you own or contribute to, most recently pushed first.
+    pub async fn viewer_repos(&self) -> Result<Vec<browse::RepoSummary>, ApiError> {
+        use cynic::QueryBuilder;
+        let data = self.graphql(browse::ViewerReposQuery::build(())).await?;
+        let (repos, _) = browse::repo_list(data.viewer.repositories);
+        self.put_query(browse::keys::VIEWER_REPOS.to_owned(), repos.clone())
+            .await;
+        Ok(repos)
+    }
+
+    /// Comments on an issue or pull request (by node ID).
+    pub async fn add_comment(&self, subject_id: &str, body: &str) -> Result<(), ApiError> {
+        use cynic::MutationBuilder;
+        let op = browse::AddComment::build(browse::AddCommentVariables {
+            subject: cynic::Id::new(subject_id),
+            body: body.to_owned(),
+        });
+        self.mutate(op).await.map(drop)
+    }
+
+    pub async fn set_starred(&self, repo_id: &str, starred: bool) -> Result<(), ApiError> {
+        use cynic::MutationBuilder;
+        let vars = browse::StarVariables {
+            starrable: cynic::Id::new(repo_id),
+        };
+        if starred {
+            self.mutate(browse::AddStar::build(vars)).await.map(drop)
+        } else {
+            self.mutate(browse::RemoveStar::build(vars)).await.map(drop)
         }
     }
 

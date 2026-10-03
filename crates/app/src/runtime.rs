@@ -15,6 +15,7 @@ use ghtui_ui::bars::Notice;
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 
+use crate::browse::{Data, DataKey};
 use crate::diff_job::{self, GitContext, JobControl};
 use crate::review::{self, SubmitOutcome};
 use crate::state::{Cmd, Msg, State, update};
@@ -228,6 +229,46 @@ fn spawn(cmd: Cmd, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
                 let result = gh.pull_request(&pr).await;
                 Msg::Pr(pr, Box::new(result))
             }
+            Cmd::Fetch { key, cached } => {
+                if cached {
+                    let (gh, lookup) = (gh.clone(), key.clone());
+                    if let Ok(Some(data)) =
+                        tokio::task::spawn_blocking(move || cached_data(&gh, &lookup)).await
+                    {
+                        let _ = tx.send(Msg::Fetched {
+                            key: key.clone(),
+                            result: Ok(data),
+                            fresh: false,
+                        });
+                    }
+                }
+                let result = fetch(&gh, &key).await;
+                Msg::Fetched {
+                    key,
+                    result,
+                    fresh: true,
+                }
+            }
+            Cmd::FetchMore { key, after } => {
+                let result = match &key {
+                    DataKey::Search(kind, query) => gh
+                        .search(*kind, query, Some(after))
+                        .await
+                        .map(|r| Data::Search(Box::new(r))),
+                    other => Err(ApiError::NotFound(format!("more of {other:?}"))),
+                };
+                Msg::FetchedMore(key, result)
+            }
+            Cmd::AddComment {
+                subject_id,
+                body,
+                refresh,
+            } => Msg::Commented(refresh, gh.add_comment(&subject_id, &body).await),
+            Cmd::SetStarred { repo, id, starred } => Msg::Starred {
+                result: gh.set_starred(&id, starred).await,
+                repo,
+                starred,
+            },
             Cmd::OpenUrl(url) => match open_url(&url).await {
                 Ok(()) => return,
                 Err(err) => Msg::Notice(Notice::Error(format!("Couldn't open browser: {err}"))),
@@ -326,6 +367,45 @@ fn spawn(cmd: Cmd, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
         let _ = tx.send(msg);
         let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
     });
+}
+
+/// What the cache has for a page.
+fn cached_data(gh: &GitHub, key: &DataKey) -> Option<Data> {
+    use ghtui_api::browse::keys;
+    Some(match key {
+        DataKey::Repo(repo) => Data::Repo(Box::new(gh.cached(&keys::repo(repo))?.value)),
+        DataKey::Tree(repo, rev, path) => {
+            Data::Tree(gh.cached(&keys::tree(repo, rev, path))?.value)
+        }
+        DataKey::Search(kind, query) => {
+            Data::Search(Box::new(gh.cached(&keys::search(*kind, query))?.value))
+        }
+        DataKey::Issue(repo, number) => Data::Issue(Some(Box::new(
+            gh.cached(&keys::issue(repo, *number))?.value,
+        ))),
+        DataKey::PrActivity(pr) => {
+            Data::PrActivity(Box::new(gh.cached(&keys::pr_activity(pr))?.value))
+        }
+        DataKey::Profile(login) => Data::Profile(Box::new(gh.cached(&keys::profile(login))?.value)),
+        DataKey::ViewerRepos => Data::Repos(gh.cached(keys::VIEWER_REPOS)?.value),
+        // Files aren't cached; they can be large.
+        DataKey::Blob(..) => return None,
+    })
+}
+
+async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> {
+    Ok(match key {
+        DataKey::Repo(repo) => Data::Repo(Box::new(gh.repo(repo).await?)),
+        DataKey::Tree(repo, rev, path) => Data::Tree(gh.tree(repo, rev, path).await?),
+        DataKey::Blob(repo, rev, path) => Data::Blob(Box::new(gh.blob(repo, rev, path).await?)),
+        DataKey::Search(kind, query) => {
+            Data::Search(Box::new(gh.search(*kind, query, None).await?))
+        }
+        DataKey::Issue(repo, number) => Data::Issue(gh.issue(repo, *number).await?.map(Box::new)),
+        DataKey::PrActivity(pr) => Data::PrActivity(Box::new(gh.pr_activity(pr).await?)),
+        DataKey::Profile(login) => Data::Profile(Box::new(gh.profile(login).await?)),
+        DataKey::ViewerRepos => Data::Repos(gh.viewer_repos().await?),
+    })
 }
 
 async fn open_url(url: &str) -> std::io::Result<()> {

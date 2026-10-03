@@ -1,10 +1,14 @@
 //! `ghtui`: a keyboard-driven terminal client for GitHub.
 
+mod browse;
 mod config;
 mod diff_job;
 mod diff_screen;
+#[cfg(test)]
+mod fixtures;
 mod keymap;
 mod review;
+mod route;
 mod runtime;
 #[cfg(test)]
 mod snapshot_tests;
@@ -25,16 +29,24 @@ use ghtui_ui::Icons;
 use crate::config::{Config, DepthSetting, ModeSetting};
 use crate::diff_job::GitContext;
 use crate::keymap::Keymap;
+use crate::route::{Route, Target};
 use crate::state::{Remote, State};
 
 /// How long to wait for the terminal to report its background color.
 const BACKGROUND_QUERY_TIMEOUT: Duration = Duration::from_millis(100);
 
 #[derive(Parser)]
-#[command(version, about = "A keyboard-driven terminal client for GitHub")]
+#[command(
+    version,
+    about = "A keyboard-driven terminal client for GitHub",
+    args_conflicts_with_subcommands = true
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+    /// What to open: owner/repo, owner/repo#123, @user, a github.com URL, or
+    /// #123 inside a clone. Without it, ghtui opens your home page.
+    target: Option<String>,
     /// Config file (default: ~/.config/ghtui/config.toml).
     #[arg(long, global = true)]
     config: Option<PathBuf>,
@@ -95,9 +107,13 @@ async fn run(started: Instant) -> Result<()> {
     let _log_guard = init_logging(&cache_dir);
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting");
 
-    let target = match &cli.command {
-        Some(Command::Pr { target }) => Some(resolve_target(target).await?),
-        None => None,
+    let target = match (&cli.command, &cli.target) {
+        (Some(Command::Pr { target }), _) => Some(Target::Page(Route::Pr {
+            pr: resolve_target(target).await?,
+            tab: ghtui_ui::pages::PrTab::Conversation,
+        })),
+        (None, Some(target)) => Some(resolve_open(target).await?),
+        (None, None) => None,
     };
 
     let theme = build_theme(&config, cli.theme)?;
@@ -121,14 +137,19 @@ async fn run(started: Instant) -> Result<()> {
     let mut state = State::new(theme, icons, keymap, size);
     state.inbox = Remote::cached(gh.cached_inbox().map(|c| c.value));
     let mut cmds = state.load_visible(true);
-    if let Some(pr) = target {
-        state.prs.insert(
-            pr.clone(),
-            Remote::cached(gh.cached_pull_request(&pr).map(|c| c.value)),
-        );
+    if let Some(target) = target {
+        if let Target::Page(Route::Pr { pr, .. }) | Target::Files(pr) = &target {
+            state.prs.insert(
+                pr.clone(),
+                Remote::cached(gh.cached_pull_request(pr).map(|c| c.value)),
+            );
+        }
+        // The home page stays underneath (Esc goes there) but loads later.
         cmds = vec![state::Cmd::FetchViewer];
-        cmds.extend(state.open_pr(pr));
+        cmds.extend(state.go(target));
     }
+    state.data_gen += 1;
+    state.sync_page();
 
     install_panic_logging();
     let mut terminal = ratatui::init();
@@ -193,6 +214,24 @@ async fn resolve_target(target: &str) -> Result<PrRef> {
         repo: RepoId::new(repo.owner, repo.name),
         number,
     })
+}
+
+/// The page to open from the command line.
+async fn resolve_open(target: &str) -> Result<Target> {
+    let number = target.trim_start_matches('#');
+    if !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) {
+        let pr = resolve_target(number).await?;
+        return Ok(Target::Page(Route::Issue {
+            repo: pr.repo,
+            number: pr.number,
+        }));
+    }
+    match route::parse_input(target, None) {
+        Some(Target::External(_)) | None => bail!(
+            "can't open `{target}`; use owner/repo, owner/repo#123, @user, or a github.com URL"
+        ),
+        Some(target) => Ok(target),
+    }
 }
 
 fn build_theme(config: &Config, cli_mode: Option<ThemeArg>) -> Result<Theme> {

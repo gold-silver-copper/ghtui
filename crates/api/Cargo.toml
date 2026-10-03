@@ -9,6 +9,7 @@ license.workspace = true
 ghtui-schema.workspace = true
 ghtui-store.workspace = true
 cynic.workspace = true
+base64.workspace = true
 octocrab.workspace = true
 rustls.workspace = true
 http.workspace = true

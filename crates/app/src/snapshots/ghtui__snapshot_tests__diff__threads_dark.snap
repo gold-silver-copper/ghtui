@@ -5,7 +5,7 @@ expression: "render(&with_threads(Mode::Dark))"
 Buffer {
     area: Rect { x: 0, y: 0, width: 110, height: 34 },
     content: [
-        "  ghtui   Inbox   Files                                                                             @octocat  ",
+        "  ghtui   Home   Files                                                                              @octocat  ",
         "                             src/point.rs                                                              +5 −1  ",
         " Files  8  +8 −4                         carol · 4h ago   File                                                ",
         "                                         Please add tests for this file.                                      ",
@@ -45,9 +45,9 @@ Buffer {
         x: 2, y: 0, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
         x: 7, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 9, y: 0, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 16, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 17, y: 0, fg: Rgb(217, 227, 249), bg: Rgb(62, 71, 88), underline: Reset, modifier: BOLD,
-        x: 24, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 15, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 16, y: 0, fg: Rgb(217, 227, 249), bg: Rgb(62, 71, 88), underline: Reset, modifier: BOLD,
+        x: 23, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 100, y: 0, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 108, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 0, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,

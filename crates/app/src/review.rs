@@ -29,6 +29,13 @@ pub enum ComposeTarget {
     Reply { thread_id: String },
     /// Editing an existing draft.
     Draft { id: u64 },
+    /// A comment on an issue or pull request's conversation, posted right
+    /// away; `refresh` is the page data to reload after.
+    Conversation {
+        subject_id: String,
+        name: String,
+        refresh: crate::browse::DataKey,
+    },
 }
 
 /// A suggested change and what it replaces.
@@ -84,6 +91,7 @@ impl Compose {
             ComposeTarget::File { path, .. } => format!("Comment on the file {path}"),
             ComposeTarget::Reply { .. } => "Reply".to_owned(),
             ComposeTarget::Draft { .. } => "Edit draft".to_owned(),
+            ComposeTarget::Conversation { name, .. } => format!("Comment on {name}"),
         }
     }
 }
@@ -241,7 +249,9 @@ pub fn draft(target: &ComposeTarget, body: String, id: u64, commit: &str) -> Opt
             })
         }
         ComposeTarget::File { path, .. } => Some(base(path)),
-        ComposeTarget::Reply { .. } | ComposeTarget::Draft { .. } => None,
+        ComposeTarget::Reply { .. }
+        | ComposeTarget::Draft { .. }
+        | ComposeTarget::Conversation { .. } => None,
     }
 }
 

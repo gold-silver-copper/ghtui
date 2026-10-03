@@ -3,8 +3,7 @@
 use ghtui_theme::Bg;
 use ghtui_ui::bars::{Banner, StatusBar, TopBar};
 use ghtui_ui::overlays::{Help, Palette};
-use ghtui_ui::pr_list::{self, PrList};
-use ghtui_ui::pr_view::PrView;
+use ghtui_ui::page::PageView;
 use ghtui_ui::{Ctx, PAD_X, PAD_Y, fill};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
@@ -57,23 +56,23 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
     .render(top, buf);
 
     match state.screen() {
-        Screen::Inbox { selected, scroll } => {
-            render_inbox(state, ctx, content, buf, *selected, *scroll)
-        }
-        Screen::Pr { pr, scroll } => {
-            let remote = state.prs.get(pr);
-            PrView {
+        Screen::Page(p) => {
+            fill(buf, content, ctx.theme, PANE);
+            // Pages are at most MAX_WIDTH wide, centered.
+            let width = (state.page_width() + 2 * PAD_X).min(content.width);
+            let area = Rect {
+                x: content.x + (content.width - width) / 2,
+                y: content.y + PAD_Y.min(content.height),
+                width,
+                height: content.height.saturating_sub(2 * PAD_Y),
+            };
+            PageView {
                 ctx,
-                pr,
-                detail: remote.and_then(|r| r.data.as_ref()),
-                loading: remote.is_some_and(|r| r.loading),
-                error: remote.and_then(|r| r.error.as_deref()),
-                scroll: *scroll,
-                bg: PANE,
-                diff_key: &first_key(state, Action::Open),
-                browser_key: &first_key(state, Action::OpenInBrowser),
+                page: &p.page,
+                cursor: p.cursor,
+                scroll: p.scroll,
             }
-            .render(content, buf);
+            .render(area, buf);
         }
         Screen::Diff(screen) => render_diff(state, ctx, content, buf, screen),
     }
@@ -155,7 +154,11 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
                 note,
                 error: compose.error.as_deref(),
                 sending: compose.sending,
-                is_reply: matches!(compose.target, crate::review::ComposeTarget::Reply { .. }),
+                save: match compose.target {
+                    crate::review::ComposeTarget::Reply { .. } => "post reply",
+                    crate::review::ComposeTarget::Conversation { .. } => "post comment",
+                    _ => "add to review",
+                },
             }
             .render(
                 Rect {
@@ -200,6 +203,36 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
                 selected: picker.selected,
             }
             .render(area, buf);
+        }
+        Some(Overlay::Links(picker)) => {
+            let items: Vec<_> = picker.items.iter().map(|(_, item)| item.clone()).collect();
+            Palette {
+                ctx,
+                prompt: "Open",
+                input: &picker.input,
+                items: &items,
+                selected: picker.selected,
+            }
+            .render(area, buf);
+        }
+        Some(Overlay::Prompt(prompt)) => {
+            fill(buf, status, ctx.theme, Bg::Container);
+            let row = Rect {
+                x: status.x + PAD_X,
+                width: status.width.saturating_sub(2 * PAD_X),
+                ..status
+            };
+            let label = prompt.label();
+            Span::styled(label, ctx.theme.accent(Bg::Container)).render(row, buf);
+            let w = label.chars().count() as u16;
+            prompt.input.render(
+                Rect {
+                    x: row.x + w,
+                    width: row.width.saturating_sub(w),
+                    ..row
+                },
+                buf,
+            );
         }
         Some(Overlay::Search(input)) => {
             // The prompt replaces the status bar.
@@ -322,79 +355,6 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
             }
         }
     }
-}
-
-fn render_inbox(
-    state: &State,
-    ctx: Ctx<'_>,
-    content: Rect,
-    buf: &mut Buffer,
-    selected: usize,
-    scroll: u16,
-) {
-    let theme = ctx.theme;
-    fill(buf, content, theme, PANE);
-    let Some(inbox) = &state.inbox.data else {
-        let inner = Rect {
-            x: content.x + PAD_X,
-            y: content.y + PAD_Y,
-            width: content.width.saturating_sub(2 * PAD_X),
-            height: 1,
-        };
-        match &state.inbox.error {
-            Some(err) if !state.inbox.loading => {
-                let text = format!("Couldn't load pull requests: {err}");
-                Banner {
-                    ctx,
-                    text: &text,
-                    hint: Some("r retry"),
-                    error: true,
-                }
-                .render(
-                    Rect {
-                        height: 1,
-                        ..content
-                    },
-                    buf,
-                );
-            }
-            _ => Span::styled("Loading your pull requests…", theme.meta(PANE)).render(inner, buf),
-        }
-        return;
-    };
-    let mut list_area = Rect {
-        y: content.y + PAD_Y,
-        height: content.height.saturating_sub(2 * PAD_Y),
-        ..content
-    };
-    if let Some(err) = &state.inbox.error {
-        let text = format!("Couldn't refresh: {err}");
-        Banner {
-            ctx,
-            text: &text,
-            hint: Some("r retry"),
-            error: true,
-        }
-        .render(
-            Rect {
-                height: 1,
-                ..content
-            },
-            buf,
-        );
-        list_area.y += 1;
-        list_area.height = list_area.height.saturating_sub(1);
-    }
-    let rows = pr_list::rows(inbox);
-    PrList {
-        ctx,
-        rows: &rows,
-        selected: (!pr_list::flat_prs(inbox).is_empty()).then_some(selected),
-        scroll,
-        bg: PANE,
-        selected_bg: Bg::Selected,
-    }
-    .render(list_area, buf);
 }
 
 /// Where the pane and the bars quantize to the same color (256-color

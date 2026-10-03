@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ghtui_api::ApiError;
-use ghtui_api::model::{Inbox, PrDetail, PrRef, ViewedFiles};
+use ghtui_api::model::{Inbox, PrDetail, PrRef, RepoId, ViewedFiles};
 use ghtui_api::rate_limit::RateLimits;
 use ghtui_diff::FileDiff;
 use ghtui_store::ReviewState;
@@ -15,17 +15,19 @@ use ghtui_theme::{Bg, Theme};
 use ghtui_ui::bars::Notice;
 use ghtui_ui::diff_doc::{Doc, Pos, Viewed};
 use ghtui_ui::overlays::{HelpEntry, PaletteItem};
-use ghtui_ui::pr_view::PrView;
-use ghtui_ui::{Ctx, Icons, PAD_Y, pr_list};
+use ghtui_ui::pages::{self, PrTab};
+use ghtui_ui::{Ctx, Icons, PAD_X, PAD_Y};
 use ratatui::layout::Rect;
 use ratatui_textarea::TextArea;
 
+use crate::browse::{self, Data, DataKey, Need, PageScreen};
 use crate::diff_job::DiffFiles;
 use crate::diff_screen::{self, DiffScreen, DiffState};
-use crate::keymap::{Action, Key, Keymap, Resolution};
+use crate::keymap::{Action, Key, Keymap, Resolution, Scope};
 use crate::review::{
     self, Compose, ComposeTarget, EditPurpose, Preview, SubmitDialog, SubmitOutcome,
 };
+use crate::route::{self, OPEN, Route, Target};
 use ghtui_api::model::{PatchFile, ReviewEvent, ReviewThread};
 use ghtui_store::DraftComment;
 use ghtui_ui::annotations::AnnotationKey;
@@ -37,6 +39,20 @@ pub enum Msg {
     Viewer(Result<String, ApiError>),
     Inbox(Result<Inbox, ApiError>),
     Pr(PrRef, Box<Result<PrDetail, ApiError>>),
+    /// Page data; `fresh: false` is the cached copy shown while fetching.
+    Fetched {
+        key: DataKey,
+        result: Result<Data, ApiError>,
+        fresh: bool,
+    },
+    /// The next page of a list.
+    FetchedMore(DataKey, Result<Data, ApiError>),
+    Commented(DataKey, Result<(), ApiError>),
+    Starred {
+        repo: RepoId,
+        starred: bool,
+        result: Result<(), ApiError>,
+    },
     RateLimits(RateLimits),
     Notice(Notice),
     DiffProgress(PrRef, String),
@@ -79,6 +95,27 @@ pub enum Cmd {
     FetchViewer,
     FetchInbox,
     FetchPr(PrRef),
+    /// Fetch page data; with `cached`, first send what the cache has.
+    Fetch {
+        key: DataKey,
+        cached: bool,
+    },
+    /// The next page of a search, after the cursor.
+    FetchMore {
+        key: DataKey,
+        after: String,
+    },
+    /// Comment on an issue or pull request, then refresh `refresh`.
+    AddComment {
+        subject_id: String,
+        body: String,
+        refresh: DataKey,
+    },
+    SetStarred {
+        repo: RepoId,
+        id: String,
+        starred: bool,
+    },
     OpenUrl(String),
     /// Start (or restart) the diff job for a PR.
     /// With `range`, diff `(from, to)` instead of the whole PR.
@@ -188,8 +225,10 @@ impl<T> Remote<T> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Screen {
-    Inbox { selected: usize, scroll: u16 },
-    Pr { pr: PrRef, scroll: u16 },
+    /// A GitHub page: home, repository, file, list, issue, PR, profile,
+    /// search.
+    Page(Box<PageScreen>),
+    /// A pull request's files.
     Diff(Box<DiffScreen>),
 }
 
@@ -198,6 +237,10 @@ pub enum Overlay {
     Palette(Box<Palette>),
     /// `/` prompt on the diff screen.
     Search(Box<TextArea<'static>>),
+    /// A one-line prompt on a page (GitHub search, list filter).
+    Prompt(Box<Prompt>),
+    /// Choosing among the links on a line.
+    Links(Box<LinkPicker>),
     /// `gf` file finder on the diff screen.
     FindFile(Box<Palette>),
     /// Writing a comment, reply or suggestion.
@@ -206,6 +249,34 @@ pub enum Overlay {
     Submit(Box<SubmitDialog>),
     /// Choosing commits to view.
     Commits(Box<CommitPicker>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptKind {
+    Search,
+    Filter,
+}
+
+pub struct Prompt {
+    pub kind: PromptKind,
+    pub input: TextArea<'static>,
+}
+
+impl Prompt {
+    pub fn label(&self) -> &'static str {
+        match self.kind {
+            PromptKind::Search => "Search GitHub ",
+            PromptKind::Filter => "Filter ",
+        }
+    }
+}
+
+pub struct LinkPicker {
+    /// `(url, item)`.
+    pub items: Vec<(String, PaletteItem)>,
+    pub selected: usize,
+    /// Shown as the picker's (read-only) prompt line.
+    pub input: TextArea<'static>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,14 +303,19 @@ pub struct Palette {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaletteCommand {
     Action(Action),
-    OpenPr(PrRef),
+    Go(Target),
+    Search(String),
 }
 
 pub struct State {
-    /// Navigation stack; never empty, and `screens[0]` is the inbox.
+    /// Navigation history, like a browser's; never empty.
     pub screens: Vec<Screen>,
     pub inbox: Remote<Inbox>,
     pub prs: HashMap<PrRef, Remote<PrDetail>>,
+    /// Everything else pages show.
+    pub data: HashMap<DataKey, Remote<Data>>,
+    /// Bumped whenever data changes, so pages know to rebuild.
+    pub data_gen: u64,
     pub diffs: HashMap<PrRef, DiffState>,
     pub viewer: Option<String>,
     pub rate_limits: RateLimits,
@@ -251,18 +327,19 @@ pub struct State {
     pub keymap: Keymap,
     pub theme: Theme,
     pub icons: Icons,
+    /// Unix seconds; pages show relative times.
+    pub clock: fn() -> u64,
     pub quit: bool,
 }
 
 impl State {
     pub fn new(theme: Theme, icons: Icons, keymap: Keymap, size: (u16, u16)) -> Self {
-        Self {
-            screens: vec![Screen::Inbox {
-                selected: 0,
-                scroll: 0,
-            }],
+        let mut state = Self {
+            screens: vec![Screen::Page(Box::new(PageScreen::new(Route::Home)))],
             inbox: Remote::default(),
             prs: HashMap::new(),
+            data: HashMap::new(),
+            data_gen: 0,
             diffs: HashMap::new(),
             viewer: None,
             rate_limits: RateLimits::default(),
@@ -273,8 +350,11 @@ impl State {
             keymap,
             theme,
             icons,
+            clock: ghtui_store::now,
             quit: false,
-        }
+        };
+        state.sync_page();
+        state
     }
 
     pub fn screen(&self) -> &Screen {
@@ -306,21 +386,143 @@ impl State {
         }
     }
 
-    /// Height available to the inbox list.
-    pub fn list_viewport(&self) -> u16 {
-        let banner = u16::from(self.inbox.data.is_some() && self.inbox.error.is_some());
-        self.content_area()
-            .height
-            .saturating_sub(2 * PAD_Y + banner)
+    /// Which keymap applies.
+    pub fn scope(&self) -> Scope {
+        match self.screen() {
+            Screen::Page(_) => Scope::Page,
+            Screen::Diff(_) => Scope::Diff,
+        }
     }
 
-    /// Opens a PR on top of the stack (returns the fetch to run).
-    pub fn open_pr(&mut self, pr: PrRef) -> Vec<Cmd> {
-        self.screens.push(Screen::Pr {
-            pr: pr.clone(),
-            scroll: 0,
-        });
-        self.ensure_pr(&pr, true)
+    /// The page on screen, if it is one.
+    pub fn route(&self) -> Option<&Route> {
+        match self.screen() {
+            Screen::Page(p) => Some(&p.route),
+            Screen::Diff(_) => None,
+        }
+    }
+
+    /// The repository on screen.
+    fn context_repo(&self) -> Option<&RepoId> {
+        match self.screen() {
+            Screen::Page(p) => p.route.repo(),
+            Screen::Diff(d) => Some(&d.pr.repo),
+        }
+    }
+
+    /// Columns pages wrap to.
+    pub fn page_width(&self) -> u16 {
+        self.size.0.saturating_sub(2 * PAD_X).min(browse::MAX_WIDTH)
+    }
+
+    /// Rows a page shows.
+    pub fn page_height(&self) -> usize {
+        usize::from(self.content_area().height.saturating_sub(2 * PAD_Y)).max(1)
+    }
+
+    /// Rebuilds the page on screen if its data or the width changed.
+    pub fn sync_page(&mut self) {
+        let width = self.page_width();
+        let generation = self.data_gen;
+        let route = match self.screen() {
+            Screen::Page(p) if p.built != Some((generation, width)) => p.route.clone(),
+            _ => return,
+        };
+        let page = self.build_page(&route, width, (self.clock)());
+        let height = self.page_height();
+        if let Screen::Page(p) = self.screen_mut() {
+            p.page = Arc::new(page);
+            p.built = Some((generation, width));
+            clamp_page(p, height);
+        }
+    }
+
+    /// Navigates to a page, keeping the current one in history.
+    pub fn push(&mut self, route: Route) -> Vec<Cmd> {
+        self.screens
+            .push(Screen::Page(Box::new(PageScreen::new(route.clone()))));
+        self.ensure_route(&route, true)
+    }
+
+    /// Replaces the page on screen (switching tabs, changing a filter).
+    fn replace(&mut self, route: Route, force: bool) -> Vec<Cmd> {
+        match self.screen_mut() {
+            Screen::Page(p) => **p = PageScreen::new(route.clone()),
+            Screen::Diff(_) => return self.push(route),
+        }
+        self.ensure_route(&route, force)
+    }
+
+    /// Follows a link.
+    pub fn go(&mut self, target: Target) -> Vec<Cmd> {
+        match target {
+            Target::Page(route) => self.push(route),
+            Target::Files(pr) => {
+                let mut cmds = self.ensure_pr(&pr, false);
+                cmds.extend(self.open_diff(pr));
+                cmds
+            }
+            Target::External(url) => {
+                self.notice = Some(Notice::Info(format!("Opened {url} in the browser")));
+                vec![Cmd::OpenUrl(url)]
+            }
+        }
+    }
+
+    fn follow(&mut self, url: &str) -> Vec<Cmd> {
+        if url == pages::MORE {
+            return self.load_more();
+        }
+        self.go(Target::from_url(url))
+    }
+
+    fn load_more(&mut self) -> Vec<Cmd> {
+        let Some((kind, query)) = self.route().and_then(Route::search) else {
+            return Vec::new();
+        };
+        let key = DataKey::Search(kind, query);
+        let Some(remote) = self.data.get_mut(&key) else {
+            return Vec::new();
+        };
+        let after = match &remote.data {
+            Some(Data::Search(results)) if !remote.loading => browse::next_cursor(results),
+            _ => None,
+        };
+        let Some(after) = after.map(str::to_owned) else {
+            return Vec::new();
+        };
+        remote.start();
+        vec![Cmd::FetchMore { key, after }]
+    }
+
+    /// Fetches a page's data. The repository header shared by a repo's
+    /// pages is only fetched when missing.
+    fn ensure_route(&mut self, route: &Route, force: bool) -> Vec<Cmd> {
+        let mut cmds = Vec::new();
+        for need in browse::needs(route) {
+            let header =
+                matches!(need, Need::Data(DataKey::Repo(_))) && !matches!(route, Route::Repo(_));
+            cmds.extend(self.ensure(need, force && !header));
+        }
+        cmds
+    }
+
+    fn ensure(&mut self, need: Need, force: bool) -> Vec<Cmd> {
+        match need {
+            Need::Inbox => self.ensure_inbox(force),
+            Need::Pr(pr) => self.ensure_pr(&pr, force),
+            Need::Data(key) => {
+                let remote = self.data.entry(key.clone()).or_default();
+                if remote.loading || (!force && remote.data.is_some() && remote.error.is_none()) {
+                    return Vec::new();
+                }
+                remote.start();
+                vec![Cmd::Fetch {
+                    cached: remote.data.is_none(),
+                    key,
+                }]
+            }
+        }
     }
 
     fn ensure_pr(&mut self, pr: &PrRef, force: bool) -> Vec<Cmd> {
@@ -349,9 +551,9 @@ impl State {
             cmds.push(Cmd::FetchViewer);
         }
         match self.screen().clone() {
-            Screen::Inbox { .. } => cmds.extend(self.ensure_inbox(force)),
-            Screen::Pr { pr, .. } => cmds.extend(self.ensure_pr(&pr, force)),
+            Screen::Page(p) => cmds.extend(self.ensure_route(&p.route, force)),
             Screen::Diff(screen) => {
+                cmds.extend(self.ensure_pr(&screen.pr, false));
                 if force || !self.diffs.contains_key(&screen.pr) {
                     cmds.extend(self.start_diff(&screen.pr));
                 }
@@ -360,7 +562,7 @@ impl State {
         cmds
     }
 
-    /// Opens the diff of a PR whose metadata we have.
+    /// Opens the diff of a PR (it starts once the PR's metadata is in).
     pub fn open_diff(&mut self, pr: PrRef) -> Vec<Cmd> {
         self.screens.push(Screen::Diff(Box::new(DiffScreen::new(
             pr.clone(),
@@ -450,25 +652,23 @@ impl State {
     /// What's loading on the visible screen, for the status bar.
     pub fn busy(&self) -> Option<String> {
         match self.screen() {
-            Screen::Inbox { .. } if self.inbox.loading => Some(if self.inbox.data.is_some() {
-                "Refreshing".to_owned()
-            } else {
-                "Loading pull requests".to_owned()
-            }),
-            Screen::Pr { pr, .. } if self.prs.get(pr).is_some_and(|r| r.loading) => {
-                Some(format!("Loading {pr}"))
-            }
-            Screen::Diff(screen) => self.diffs.get(&screen.pr).and_then(DiffState::status),
-            _ => None,
+            Screen::Page(p) if self.page_loading(&p.route) => Some("Loading".to_owned()),
+            Screen::Page(_) => None,
+            Screen::Diff(screen) => match self.diffs.get(&screen.pr) {
+                Some(diff) => diff.status(),
+                None => Some(format!("Loading {}", screen.pr)),
+            },
         }
     }
 
+    /// Top-bar titles of the latest screens (older ones fold into "…").
     pub fn tabs(&self) -> Vec<String> {
-        self.screens
+        const SHOWN: usize = 4;
+        let skip = self.screens.len().saturating_sub(SHOWN);
+        let mut tabs: Vec<String> = self.screens[skip..]
             .iter()
             .map(|s| match s {
-                Screen::Inbox { .. } => "Inbox".to_owned(),
-                Screen::Pr { pr, .. } => pr.to_string(),
+                Screen::Page(p) => p.route.title(),
                 Screen::Diff(screen) => {
                     let diff = self.diffs.get(&screen.pr);
                     match diff.and_then(|d| d.range.as_ref()) {
@@ -480,12 +680,18 @@ impl State {
                     }
                 }
             })
-            .collect()
+            .collect();
+        if skip > 0 {
+            tabs.insert(0, "…".to_owned());
+        }
+        tabs
     }
 
     pub fn help_entries(&self) -> Vec<HelpEntry> {
+        let scope = self.scope();
         Action::ALL
             .into_iter()
+            .filter(|a| a.scope() == Scope::Global || a.scope() == scope)
             .filter_map(|action| {
                 let keys = self.keymap.keys_for(action);
                 (!keys.is_empty()).then(|| HelpEntry {
@@ -500,26 +706,16 @@ impl State {
     pub fn palette_commands(&self, input: &str) -> Vec<(PaletteCommand, PaletteItem)> {
         let input = input.trim();
         let mut out = Vec::new();
-        let pr = PrRef::parse(input).or_else(|| {
-            // A bare number opens a PR in the repo currently on screen.
-            let number: u64 = input.trim_start_matches('#').parse().ok()?;
-            match self.screen() {
-                Screen::Pr { pr, .. } => Some(PrRef {
-                    repo: pr.repo.clone(),
-                    number,
-                }),
-                Screen::Diff(screen) => Some(PrRef {
-                    repo: screen.pr.repo.clone(),
-                    number,
-                }),
-                Screen::Inbox { .. } => None,
-            }
-        });
-        if let Some(pr) = pr {
+        if let Some(target) = route::parse_input(input, self.context_repo()) {
+            let label = match &target {
+                Target::Page(route) => format!("Go to {}", route.title()),
+                Target::Files(pr) => format!("Files changed in {pr}"),
+                Target::External(url) => format!("Open {url}"),
+            };
             out.push((
-                PaletteCommand::OpenPr(pr.clone()),
+                PaletteCommand::Go(target),
                 PaletteItem {
-                    label: format!("Open {pr}"),
+                    label,
                     hint: String::new(),
                 },
             ));
@@ -538,17 +734,65 @@ impl State {
             })
             .collect();
         actions.sort_by_key(|(score, _)| *score);
-        for (_, action) in actions {
-            out.push((
+        let search = (!input.is_empty()).then(|| {
+            (
+                PaletteCommand::Search(input.to_owned()),
+                PaletteItem {
+                    label: format!("Search GitHub for “{input}”"),
+                    hint: String::new(),
+                },
+            )
+        });
+        // Good action matches first, then searching; scattered matches after.
+        let (close, far): (Vec<_>, Vec<_>) = actions.into_iter().partition(|(s, _)| *s < 1000);
+        let item = |action: Action| {
+            (
                 PaletteCommand::Action(action),
                 PaletteItem {
                     label: action.description().to_owned(),
                     hint: self.keymap.keys_for(action).join(" "),
                 },
-            ));
-        }
+            )
+        };
+        out.extend(close.into_iter().map(|(_, a)| item(a)));
+        out.extend(search);
+        out.extend(far.into_iter().map(|(_, a)| item(a)));
         out
     }
+}
+
+/// Keeps a page's cursor on the page and in view.
+fn clamp_page(p: &mut PageScreen, height: usize) {
+    let total = p.page.lines.len();
+    p.cursor = p.cursor.min(total.saturating_sub(1));
+    p.scroll = ghtui_ui::page::scroll_to(p.cursor, p.scroll, height, total);
+}
+
+/// Moves a page's cursor by `delta` lines, skipping blank lines.
+fn move_cursor(p: &mut PageScreen, delta: i64, height: usize) {
+    let lines = &p.page.lines;
+    if lines.is_empty() {
+        return;
+    }
+    let last = lines.len() as i64 - 1;
+    let step = if delta >= 0 { 1 } else { -1 };
+    let at = (p.cursor as i64).saturating_add(delta).clamp(0, last);
+    // The nearest non-blank line onward, else back toward the cursor.
+    let blank = |i: i64| lines[i as usize].is_blank();
+    let mut ahead = at;
+    while blank(ahead) && (0..=last).contains(&(ahead + step)) {
+        ahead += step;
+    }
+    let mut behind = at;
+    while blank(behind) && (0..=last).contains(&(behind - step)) {
+        behind -= step;
+    }
+    if !blank(ahead) {
+        p.cursor = ahead as usize;
+    } else if !blank(behind) {
+        p.cursor = behind as usize;
+    }
+    clamp_page(p, height);
 }
 
 /// Case-insensitive subsequence match; lower is better. Substring matches
@@ -572,6 +816,15 @@ fn fuzzy_score(needle: &str, haystack: &str) -> Option<usize> {
 }
 
 pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
+    if !matches!(msg, Msg::Key(_)) {
+        state.data_gen += 1;
+    }
+    let cmds = handle(state, msg);
+    state.sync_page();
+    cmds
+}
+
+fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Key(key) => on_key(state, key),
         Msg::Resize(w, h) => {
@@ -600,8 +853,98 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             if let Err(err) = result.as_ref() {
                 tracing::warn!(%pr, %err, "PR fetch failed");
             }
-            state.prs.entry(pr).or_default().finish(*result);
-            clamp_scroll(state)
+            state.prs.entry(pr.clone()).or_default().finish(*result);
+            // The diff was opened before the PR's metadata arrived.
+            let mut cmds = Vec::new();
+            if let Screen::Diff(screen) = state.screen()
+                && screen.pr == pr
+                && !state.diffs.contains_key(&pr)
+            {
+                cmds = state.start_diff(&pr);
+            }
+            cmds.extend(clamp_scroll(state));
+            cmds
+        }
+        Msg::Fetched { key, result, fresh } => {
+            if let Err(err) = &result {
+                tracing::warn!(?key, %err, "fetch failed");
+            }
+            let is_pr = matches!(result, Ok(Data::Issue(None)));
+            let remote = state.data.entry(key.clone()).or_default();
+            if fresh {
+                remote.finish(result);
+            } else if remote.data.is_none()
+                && let Ok(data) = result
+            {
+                remote.data = Some(data);
+            }
+            // GitHub redirects an issue number that's a pull request.
+            if is_pr
+                && let DataKey::Issue(repo, number) = key
+                && state.route()
+                    == Some(&Route::Issue {
+                        repo: repo.clone(),
+                        number,
+                    })
+            {
+                return state.replace(
+                    Route::Pr {
+                        pr: PrRef { repo, number },
+                        tab: PrTab::Conversation,
+                    },
+                    true,
+                );
+            }
+            Vec::new()
+        }
+        Msg::FetchedMore(key, result) => {
+            let Some(remote) = state.data.get_mut(&key) else {
+                return Vec::new();
+            };
+            remote.loading = false;
+            match result {
+                Ok(Data::Search(more)) => {
+                    if let Some(Data::Search(results)) = &mut remote.data {
+                        browse::append(results, *more);
+                    }
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    state.notice = Some(Notice::Error(format!("Couldn't load more: {err}")));
+                }
+            }
+            Vec::new()
+        }
+        Msg::Commented(key, result) => match result {
+            Ok(()) => {
+                state.overlay = None;
+                state.notice = Some(Notice::Info("Comment posted".into()));
+                state.ensure(Need::Data(key), true)
+            }
+            Err(err) => {
+                if let Some(Overlay::Compose(compose)) = &mut state.overlay {
+                    compose.sending = false;
+                    compose.error = Some(err.to_string());
+                }
+                Vec::new()
+            }
+        },
+        Msg::Starred {
+            repo,
+            starred,
+            result,
+        } => {
+            match result {
+                Ok(()) => {
+                    let verb = if starred { "Starred" } else { "Unstarred" };
+                    state.notice = Some(Notice::Info(format!("{verb} {repo}")));
+                }
+                Err(err) => {
+                    set_starred(state, &repo, !starred);
+                    state.notice = Some(Notice::Error(format!("GitHub didn't save that: {err}")));
+                }
+            }
+            Vec::new()
         }
         Msg::RateLimits(limits) => {
             state.rate_limits = limits;
@@ -954,6 +1297,8 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         }
         Some(Overlay::Palette(_)) => return on_palette_key(state, key),
         Some(Overlay::Search(_)) => return on_search_key(state, key),
+        Some(Overlay::Prompt(_)) => return on_prompt_key(state, key),
+        Some(Overlay::Links(_)) => return on_links_key(state, key),
         Some(Overlay::FindFile(_)) => return on_finder_key(state, key),
         Some(Overlay::Compose(_)) => return on_compose_key(state, key),
         Some(Overlay::Submit(_)) => return on_submit_key(state, key),
@@ -963,7 +1308,7 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     // Any keypress dismisses the last notice.
     state.notice = None;
     state.pending.push(Key::from(key));
-    match state.keymap.resolve(&state.pending) {
+    match state.keymap.resolve(&state.pending, state.scope()) {
         Resolution::Action(action) => {
             state.pending.clear();
             apply(state, action)
@@ -1015,7 +1360,8 @@ fn on_palette_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             state.overlay = None;
             match command {
                 Some(PaletteCommand::Action(action)) => apply(state, action),
-                Some(PaletteCommand::OpenPr(pr)) => state.open_pr(pr),
+                Some(PaletteCommand::Go(target)) => state.go(target),
+                Some(PaletteCommand::Search(query)) => state.push(search_route(&query)),
                 None => Vec::new(),
             }
         }
@@ -1107,6 +1453,97 @@ fn on_finder_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     Vec::new()
 }
 
+fn on_prompt_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+    let Some(Overlay::Prompt(prompt)) = &mut state.overlay else {
+        return Vec::new();
+    };
+    match key.code {
+        KeyCode::Esc => {
+            state.overlay = None;
+            Vec::new()
+        }
+        KeyCode::Enter => {
+            let query = prompt.input.lines().join("").trim().to_owned();
+            let kind = prompt.kind;
+            state.overlay = None;
+            if query.is_empty() {
+                return Vec::new();
+            }
+            match (kind, state.route().cloned()) {
+                (PromptKind::Search, _) => state.push(search_route(&query)),
+                (PromptKind::Filter, Some(Route::Issues { repo, .. })) => {
+                    state.replace(Route::Issues { repo, query }, true)
+                }
+                (PromptKind::Filter, Some(Route::Pulls { repo, .. })) => {
+                    state.replace(Route::Pulls { repo, query }, true)
+                }
+                (PromptKind::Filter, Some(Route::Search { kind, .. })) => {
+                    state.replace(Route::Search { kind, query }, true)
+                }
+                (PromptKind::Filter, _) => Vec::new(),
+            }
+        }
+        _ => {
+            prompt.input.input(key);
+            Vec::new()
+        }
+    }
+}
+
+fn on_links_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+    let Some(Overlay::Links(picker)) = &mut state.overlay else {
+        return Vec::new();
+    };
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let last = picker.items.len().saturating_sub(1);
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => state.overlay = None,
+        KeyCode::Down | KeyCode::Tab | KeyCode::Char('j') => {
+            picker.selected = (picker.selected + 1).min(last)
+        }
+        KeyCode::Char('n') if ctrl => picker.selected = (picker.selected + 1).min(last),
+        KeyCode::Up | KeyCode::BackTab | KeyCode::Char('k') => {
+            picker.selected = picker.selected.saturating_sub(1)
+        }
+        KeyCode::Char('p') if ctrl => picker.selected = picker.selected.saturating_sub(1),
+        KeyCode::Enter => {
+            let url = picker.items.get(picker.selected).map(|(u, _)| u.clone());
+            state.overlay = None;
+            if let Some(url) = url {
+                return state.follow(&url);
+            }
+        }
+        _ => {}
+    }
+    Vec::new()
+}
+
+/// A GitHub search: issues when the query looks like it's about them,
+/// otherwise repositories (GitHub's default).
+fn search_route(query: &str) -> Route {
+    let issues = query.split_whitespace().any(|w| {
+        [
+            "repo:",
+            "is:",
+            "author:",
+            "assignee:",
+            "label:",
+            "involves:",
+            "mentions:",
+        ]
+        .iter()
+        .any(|p| w.starts_with(p))
+    });
+    Route::Search {
+        kind: if issues {
+            ghtui_api::browse::SearchKind::Issues
+        } else {
+            ghtui_api::browse::SearchKind::Repos
+        },
+        query: query.to_owned(),
+    }
+}
+
 pub fn new_search_input(theme: &Theme) -> TextArea<'static> {
     let mut input = TextArea::default();
     input.set_style(theme.body(Bg::Container));
@@ -1131,13 +1568,12 @@ pub fn new_palette(theme: &Theme) -> Palette {
     input.set_style(theme.body(Bg::ContainerHigh));
     input.set_cursor_line_style(theme.body(Bg::ContainerHigh));
     input.set_cursor_style(theme.fill(Bg::Primary));
-    input.set_placeholder_text("Type a command or owner/repo#123");
+    input.set_placeholder_text("A command, owner/repo, owner/repo#123, @user, a URL, or a search");
     input.set_placeholder_style(theme.meta(Bg::ContainerHigh));
     Palette { input, selected: 0 }
 }
 
 fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
-    let half_page = (state.content_area().height / 2).max(1);
     let content = state.content_area();
     if let Some(cmds) = review_action(state, action) {
         return cmds;
@@ -1155,6 +1591,9 @@ fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         {
             return cmds;
         }
+    }
+    if let Some(cmds) = page_action(state, action) {
+        return cmds;
     }
     match action {
         Action::Quit => state.quit = true,
@@ -1177,28 +1616,13 @@ fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::Refresh => return state.load_visible(true),
         Action::OpenInBrowser => {
-            if let Some(pr) = current_pr(state) {
-                state.notice = Some(Notice::Info(format!("Opened {pr} in the browser")));
-                let url = match state.screen() {
-                    Screen::Diff(_) => format!("{}/files", pr.url()),
-                    _ => pr.url(),
-                };
-                return vec![Cmd::OpenUrl(url)];
-            }
+            let url = match state.screen() {
+                Screen::Page(p) => p.route.url(),
+                Screen::Diff(screen) => format!("{}/files", screen.pr.url()),
+            };
+            state.notice = Some(Notice::Info(format!("Opened {url} in the browser")));
+            return vec![Cmd::OpenUrl(url)];
         }
-        Action::Open => match state.screen().clone() {
-            Screen::Inbox { .. } => {
-                if let Some(pr) = current_pr(state) {
-                    return state.open_pr(pr);
-                }
-            }
-            Screen::Pr { pr, .. } => {
-                if state.prs.get(&pr).is_some_and(|r| r.data.is_some()) {
-                    return state.open_diff(pr);
-                }
-            }
-            Screen::Diff(_) => {}
-        },
         Action::Search => {
             if let Screen::Diff(_) = state.screen() {
                 state.overlay = Some(Overlay::Search(Box::new(new_search_input(&state.theme))));
@@ -1211,114 +1635,260 @@ fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
                 state.overlay = Some(Overlay::FindFile(Box::new(finder)));
             }
         }
-        // Diff-only actions elsewhere do nothing.
-        Action::NextHunk
-        | Action::PrevHunk
-        | Action::NextFile
-        | Action::PrevFile
-        | Action::ToggleTree
-        | Action::SwitchPane
-        | Action::ToggleSplit
-        | Action::IgnoreWhitespace
-        | Action::ExpandContext
-        | Action::FullFile
-        | Action::ToggleViewed
-        | Action::NextUnviewed
-        | Action::MarkReviewed
-        | Action::SearchNext
-        | Action::SearchPrev
-        | Action::Comment
-        | Action::VisualLines
-        | Action::Suggest
-        | Action::ReplyThread
-        | Action::ResolveThread
-        | Action::DeleteDraft
-        | Action::FileComment
-        | Action::SubmitReview
-        | Action::NextThread
-        | Action::PrevThread
-        | Action::ToggleSinceReview
-        | Action::JumpMove
-        | Action::PickCommits => {}
-        Action::Down => move_by(state, 1, 1),
-        Action::Up => move_by(state, -1, -1),
-        Action::HalfPageDown => move_by(state, i64::from(half_page / 2), i64::from(half_page)),
-        Action::HalfPageUp => move_by(state, -i64::from(half_page / 2), -i64::from(half_page)),
-        Action::Top => move_by(state, i64::MIN / 2, i64::MIN / 2),
-        Action::Bottom => move_by(state, i64::MAX / 2, i64::MAX / 2),
+        Action::GoHome => {
+            if state.route() != Some(&Route::Home) {
+                return state.push(Route::Home);
+            }
+        }
+        Action::GoIssues | Action::GoPulls => {
+            let Some(repo) = state.context_repo().cloned() else {
+                state.notice = Some(Notice::Info("Open a repository first".into()));
+                return Vec::new();
+            };
+            let query = OPEN.to_owned();
+            let route = if action == Action::GoIssues {
+                Route::Issues { repo, query }
+            } else {
+                Route::Pulls { repo, query }
+            };
+            if state.route() != Some(&route) {
+                return state.push(route);
+            }
+        }
+        Action::Tab1 => return switch_tab(state, 1),
+        Action::Tab2 => return switch_tab(state, 2),
+        Action::Tab3 => return switch_tab(state, 3),
+        // Diff and page actions elsewhere do nothing.
+        _ => {}
     }
     Vec::new()
 }
 
-/// The PR under the cursor (inbox) or on screen.
-fn current_pr(state: &State) -> Option<PrRef> {
-    match state.screen() {
-        Screen::Inbox { selected, .. } => {
-            let inbox = state.inbox.data.as_ref()?;
-            pr_list::flat_prs(inbox)
-                .get(*selected)
-                .map(|p| p.pr.clone())
+/// Actions on a page screen.
+fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
+    let height = state.page_height();
+    let half = (height / 2).max(1) as i64;
+    let Screen::Page(p) = state.screen_mut() else {
+        return None;
+    };
+    let delta = match action {
+        Action::Down => Some(1),
+        Action::Up => Some(-1),
+        Action::HalfPageDown => Some(half),
+        Action::HalfPageUp => Some(-half),
+        Action::Top => Some(i64::MIN / 2),
+        Action::Bottom => Some(i64::MAX / 2),
+        _ => None,
+    };
+    if let Some(delta) = delta {
+        move_cursor(p, delta, height);
+        return Some(Vec::new());
+    }
+    if matches!(action, Action::NextLink | Action::PrevLink) {
+        let target = if action == Action::NextLink {
+            p.page.link_line_from(p.cursor + 1, true)
+        } else {
+            p.cursor
+                .checked_sub(1)
+                .and_then(|from| p.page.link_line_from(from, false))
+        };
+        if let Some(line) = target {
+            p.cursor = line;
+            clamp_page(p, height);
         }
-        Screen::Pr { pr, .. } => Some(pr.clone()),
-        Screen::Diff(screen) => Some(screen.pr.clone()),
+        return Some(Vec::new());
+    }
+    let route = p.route.clone();
+    let links = if action == Action::Open {
+        p.links_at_cursor()
+    } else {
+        Vec::new()
+    };
+    let cmds = match action {
+        Action::Open => match links.as_slice() {
+            [] => Vec::new(),
+            [(url, _)] => {
+                let url = url.clone();
+                state.follow(&url)
+            }
+            _ => {
+                state.overlay = Some(Overlay::Links(Box::new(link_picker(&state.theme, links))));
+                Vec::new()
+            }
+        },
+        Action::Search => {
+            let mut input = new_search_input(&state.theme);
+            if let Some(repo) = route.repo() {
+                input.insert_str(format!("repo:{repo} "));
+            }
+            state.overlay = Some(Overlay::Prompt(Box::new(Prompt {
+                kind: PromptKind::Search,
+                input,
+            })));
+            Vec::new()
+        }
+        Action::Filter => {
+            let (Route::Issues { query, .. }
+            | Route::Pulls { query, .. }
+            | Route::Search { query, .. }) = &route
+            else {
+                state.notice = Some(Notice::Info("Only lists can be filtered".into()));
+                return Some(Vec::new());
+            };
+            let mut input = new_search_input(&state.theme);
+            input.insert_str(query);
+            state.overlay = Some(Overlay::Prompt(Box::new(Prompt {
+                kind: PromptKind::Filter,
+                input,
+            })));
+            Vec::new()
+        }
+        Action::Star => star(state, &route),
+        Action::Comment => comment(state, &route),
+        _ => return None,
+    };
+    Some(cmds)
+}
+
+fn link_picker(theme: &Theme, links: Vec<(String, String)>) -> LinkPicker {
+    let mut input = new_palette(theme).input;
+    input.set_placeholder_text("Which link?");
+    let items = links
+        .into_iter()
+        .map(|(url, text)| {
+            let hint = url
+                .strip_prefix("https://github.com/")
+                .unwrap_or(&url)
+                .to_owned();
+            (url, PaletteItem { label: text, hint })
+        })
+        .collect();
+    LinkPicker {
+        items,
+        selected: 0,
+        input,
     }
 }
 
-/// Moves the inbox selection by `rows` or scrolls the PR view by `lines`.
-fn move_by(state: &mut State, rows: i64, lines: i64) {
-    match state.screen_mut() {
-        Screen::Inbox { selected, .. } => {
-            *selected = (*selected as i64).saturating_add(rows).max(0) as usize;
-        }
-        Screen::Pr { scroll, .. } => {
-            *scroll = (i64::from(*scroll))
-                .saturating_add(lines)
-                .clamp(0, i64::from(u16::MAX)) as u16;
-        }
-        Screen::Diff(_) => {}
-    }
-    clamp_scroll(state);
-}
-
-/// Keeps the selection in range and visible, and scrolling in bounds.
-fn clamp_scroll(state: &mut State) -> Vec<Cmd> {
-    let viewport = state.list_viewport();
-    let content = state.content_area();
+/// Switches to the page's numbered tab. From the diff, 1 and 2 return to
+/// the pull request's conversation and commits.
+fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
     match state.screen().clone() {
-        Screen::Inbox { selected, scroll } => {
-            let (selected, scroll) = match &state.inbox.data {
-                Some(inbox) => {
-                    let count = pr_list::flat_prs(inbox).len();
-                    let selected = selected.min(count.saturating_sub(1));
-                    let rows = pr_list::rows(inbox);
-                    (
-                        selected,
-                        pr_list::scroll_to_selection(&rows, selected, scroll, viewport),
-                    )
-                }
-                None => (0, 0),
+        Screen::Page(p) => match state.tab_target(&p.route, n) {
+            Some(Target::Page(route)) if route != p.route => state.replace(route, false),
+            Some(Target::Files(pr)) => state.go(Target::Files(pr)),
+            _ => Vec::new(),
+        },
+        Screen::Diff(screen) => {
+            let tab = match n {
+                1 => PrTab::Conversation,
+                2 => PrTab::Commits,
+                _ => return Vec::new(),
             };
-            *state.screen_mut() = Screen::Inbox { selected, scroll };
-        }
-        Screen::Pr { pr, scroll } => {
-            let remote = state.prs.get(&pr);
-            let view = PrView {
-                ctx: state.ctx(0),
-                pr: &pr,
-                detail: remote.and_then(|r| r.data.as_ref()),
-                loading: remote.is_some_and(|r| r.loading),
-                error: remote.and_then(|r| r.error.as_deref()),
-                scroll,
-                bg: Bg::ContainerLow,
-                diff_key: "",
-                browser_key: "",
+            state.screens.pop();
+            let route = Route::Pr {
+                pr: screen.pr.clone(),
+                tab,
             };
-            let scroll = scroll.min(view.max_scroll(content));
-            *state.screen_mut() = Screen::Pr { pr, scroll };
+            if state.screens.is_empty() {
+                state
+                    .screens
+                    .push(Screen::Page(Box::new(PageScreen::new(route.clone()))));
+                return state.ensure_route(&route, false);
+            }
+            match state.route() {
+                Some(Route::Pr { pr, .. }) if *pr == screen.pr => state.replace(route, false),
+                _ => state.push(route),
+            }
         }
-        Screen::Diff(_) => return state.settle_diff(),
     }
+}
+
+fn star(state: &mut State, route: &Route) -> Vec<Cmd> {
+    let Some(repo) = route.repo().cloned() else {
+        state.notice = Some(Notice::Info("Open a repository to star it".into()));
+        return Vec::new();
+    };
+    let Some(overview) = state.overview(&repo) else {
+        state.notice = Some(Notice::Info("The repository hasn't loaded yet".into()));
+        return Vec::new();
+    };
+    let (id, starred) = (overview.id.clone(), !overview.starred);
+    set_starred(state, &repo, starred);
+    vec![Cmd::SetStarred { repo, id, starred }]
+}
+
+/// Shows a repository as starred or not (optimistically, before GitHub
+/// confirms).
+fn set_starred(state: &mut State, repo: &RepoId, starred: bool) {
+    if let Some(Remote {
+        data: Some(Data::Repo(o)),
+        ..
+    }) = state.data.get_mut(&DataKey::Repo(repo.clone()))
+        && o.starred != starred
+    {
+        o.starred = starred;
+        o.summary.stars = if starred {
+            o.summary.stars + 1
+        } else {
+            o.summary.stars.saturating_sub(1)
+        };
+    }
+    state.data_gen += 1;
+}
+
+fn comment(state: &mut State, route: &Route) -> Vec<Cmd> {
+    let target = match route {
+        Route::Issue { repo, number } => {
+            let key = DataKey::Issue(repo.clone(), *number);
+            match state.remote(&key).and_then(|r| r.data.as_ref()) {
+                Some(Data::Issue(Some(issue))) => {
+                    Some((issue.id.clone(), format!("{repo}#{number}"), key))
+                }
+                _ => None,
+            }
+        }
+        Route::Pr { pr, .. } => {
+            let key = DataKey::PrActivity(pr.clone());
+            match state.remote(&key).and_then(|r| r.data.as_ref()) {
+                Some(Data::PrActivity(a)) => Some((a.id.clone(), pr.to_string(), key)),
+                _ => None,
+            }
+        }
+        _ => {
+            state.notice = Some(Notice::Info(
+                "Comments go on issues and pull requests".into(),
+            ));
+            return Vec::new();
+        }
+    };
+    let Some((subject_id, name, refresh)) = target else {
+        state.notice = Some(Notice::Info("Still loading".into()));
+        return Vec::new();
+    };
+    let compose = Compose::new(
+        &state.theme,
+        ComposeTarget::Conversation {
+            subject_id,
+            name,
+            refresh,
+        },
+        "",
+    );
+    state.overlay = Some(Overlay::Compose(Box::new(compose)));
     Vec::new()
+}
+
+/// Keeps the page cursor (or the diff) in bounds after a change.
+fn clamp_scroll(state: &mut State) -> Vec<Cmd> {
+    let height = state.page_height();
+    match state.screen_mut() {
+        Screen::Page(p) => {
+            clamp_page(p, height);
+            Vec::new()
+        }
+        Screen::Diff(_) => state.settle_diff(),
+    }
 }
 
 // ---- reviewing ---------------------------------------------------------------
@@ -1843,6 +2413,21 @@ fn save_compose(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     }
     let target = compose.target.clone();
+    if let ComposeTarget::Conversation {
+        subject_id,
+        refresh,
+        ..
+    } = target
+    {
+        if let Some(Overlay::Compose(compose)) = &mut state.overlay {
+            compose.sending = true;
+        }
+        return vec![Cmd::AddComment {
+            subject_id,
+            body,
+            refresh,
+        }];
+    }
     let Some((screen, diff)) = state.diff_parts() else {
         return Vec::new();
     };
@@ -1868,6 +2453,7 @@ fn save_compose(state: &mut State) -> Vec<Cmd> {
             state.overlay = None;
             vec![save]
         }
+        ComposeTarget::Conversation { .. } => Vec::new(),
         target @ (ComposeTarget::Line { .. } | ComposeTarget::File { .. }) => {
             let head = diff
                 .refs
@@ -1960,6 +2546,7 @@ fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ghtui_api::browse::SearchResults;
     use ghtui_api::model::{PrState, PrSummary};
     use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode};
     use ghtui_ui::overlays::PALETTE_ROWS;
@@ -2009,61 +2596,152 @@ mod tests {
         cmds
     }
 
-    fn selected(state: &State) -> usize {
+    fn page(state: &State) -> &PageScreen {
         match state.screen() {
-            Screen::Inbox { selected, .. } => *selected,
-            _ => panic!("not on inbox"),
+            Screen::Page(p) => p,
+            Screen::Diff(_) => panic!("not on a page"),
         }
     }
 
-    #[test]
-    fn navigates_the_inbox() {
-        let mut state = with_inbox(5);
-        press(&mut state, "jj");
-        assert_eq!(selected(&state), 2);
-        press(&mut state, "G");
-        assert_eq!(selected(&state), 4);
-        press(&mut state, "j");
-        assert_eq!(selected(&state), 4, "clamped at the end");
-        press(&mut state, "gg");
-        assert_eq!(selected(&state), 0);
-        press(&mut state, "k");
-        assert_eq!(selected(&state), 0);
+    fn route(state: &State) -> Route {
+        page(state).route.clone()
+    }
+
+    fn cursor_text(state: &State) -> String {
+        let p = page(state);
+        p.page.lines[p.cursor].text()
+    }
+
+    fn fetched(state: &mut State, key: DataKey, data: Data) -> Vec<Cmd> {
+        update(
+            state,
+            Msg::Fetched {
+                key,
+                result: Ok(data),
+                fresh: true,
+            },
+        )
+    }
+
+    fn repo() -> RepoId {
+        RepoId::new("gold-silver-copper", "ghtui")
+    }
+
+    fn with_repo() -> State {
+        let mut state = state();
+        state.push(Route::Repo(repo()));
+        fetched(
+            &mut state,
+            DataKey::Repo(repo()),
+            Data::Repo(Box::new(crate::fixtures::overview())),
+        );
+        state
     }
 
     #[test]
-    fn opening_a_pr_fetches_it_and_back_returns() {
+    fn home_moves_and_follows_links() {
         let mut state = with_inbox(3);
+        assert_eq!(route(&state), Route::Home);
+        // Past the section headers' "see all" links to the first PR.
+        press(&mut state, "<Tab><Tab>");
+        assert!(
+            cursor_text(&state).contains("PR 1"),
+            "{}",
+            cursor_text(&state)
+        );
         press(&mut state, "j");
+        assert!(
+            cursor_text(&state).contains("o/r#1"),
+            "the PR's second line"
+        );
         let cmds = press(&mut state, "<Enter>");
-        let pr = PrRef::parse("o/r#2").unwrap();
-        assert_eq!(cmds, vec![Cmd::FetchPr(pr.clone())]);
-        assert_eq!(state.tabs(), ["Inbox", "o/r#2"]);
-        assert_eq!(state.busy().as_deref(), Some("Loading o/r#2"));
+        let pr = PrRef::parse("o/r#1").unwrap();
+        assert_eq!(
+            cmds,
+            vec![
+                Cmd::FetchPr(pr.clone()),
+                Cmd::Fetch {
+                    key: DataKey::PrActivity(pr.clone()),
+                    cached: true
+                }
+            ],
+            "Enter on a card's second line follows its title"
+        );
+        assert_eq!(state.tabs(), ["Home", "o/r#1"]);
+        assert_eq!(state.busy().as_deref(), Some("Loading"));
 
         update(
             &mut state,
             Msg::Pr(pr.clone(), Box::new(Err(ApiError::Network("down".into())))),
         );
-        assert_eq!(state.prs[&pr].error.as_deref(), Some("network error: down"));
+        let text: Vec<String> = page(&state).page.lines.iter().map(|l| l.text()).collect();
+        assert!(
+            text.iter().any(|l| l.contains("network error: down")),
+            "{text:?}"
+        );
         assert_eq!(
             press(&mut state, "r"),
-            vec![Cmd::FetchViewer, Cmd::FetchPr(pr)]
+            vec![Cmd::FetchViewer, Cmd::FetchPr(pr)],
+            "the activity is still loading"
         );
 
         press(&mut state, "<Esc>");
-        assert_eq!(state.tabs(), ["Inbox"]);
-        assert_eq!(selected(&state), 1, "selection survives");
+        assert_eq!(state.tabs(), ["Home"]);
+        assert!(cursor_text(&state).contains("o/r#1"), "the cursor survives");
         assert!(!state.quit);
         press(&mut state, "q");
         assert!(state.quit);
     }
 
     #[test]
+    fn the_cursor_skips_blank_lines_and_stays_on_the_page() {
+        let mut state = with_inbox(3);
+        press(&mut state, "G");
+        let p = page(&state);
+        assert!(!p.page.lines[p.cursor].is_blank());
+        assert_eq!(
+            p.cursor,
+            p.page.lines.iter().rposition(|l| !l.is_blank()).unwrap()
+        );
+        press(&mut state, "gg");
+        assert_eq!(page(&state).cursor, 0);
+        press(&mut state, "k<C-u>");
+        assert_eq!(page(&state).cursor, 0);
+        press(&mut state, "<C-d><C-d><C-d><C-d>");
+        let p = page(&state);
+        assert!(p.cursor < p.page.lines.len());
+    }
+
+    #[test]
     fn duplicate_fetches_are_suppressed() {
         let mut state = state();
-        assert_eq!(state.load_visible(false), vec![Cmd::FetchInbox]);
+        assert_eq!(
+            state.load_visible(false),
+            vec![
+                Cmd::FetchInbox,
+                Cmd::Fetch {
+                    key: DataKey::ViewerRepos,
+                    cached: true
+                }
+            ]
+        );
         assert_eq!(state.load_visible(true), vec![Cmd::FetchViewer]);
+    }
+
+    #[test]
+    fn cached_data_shows_while_fetching() {
+        let mut state = state();
+        state.push(Route::User("octocat".into()));
+        update(
+            &mut state,
+            Msg::Fetched {
+                key: DataKey::Profile("octocat".into()),
+                result: Ok(Data::Profile(Box::new(crate::fixtures::profile()))),
+                fresh: false,
+            },
+        );
+        assert!(cursor_text(&state).contains("The Octocat"));
+        assert_eq!(state.busy().as_deref(), Some("Loading"), "still refreshing");
     }
 
     #[test]
@@ -2072,13 +2750,10 @@ mod tests {
         state.load_visible(true);
         update(&mut state, Msg::Inbox(Err(ApiError::RateLimited(30))));
         assert_eq!(state.inbox.data.as_ref().unwrap().authored.len(), 2);
+        let first = page(&state).page.lines[0].text();
         assert!(
-            state
-                .inbox
-                .error
-                .as_deref()
-                .unwrap()
-                .contains("rate limited")
+            first.contains("Couldn't refresh") && first.contains("rate limited"),
+            "{first}"
         );
     }
 
@@ -2087,27 +2762,82 @@ mod tests {
         let mut state = with_inbox(1);
         assert_eq!(
             press(&mut state, "o"),
-            vec![Cmd::OpenUrl("https://github.com/o/r/pull/1".into())]
+            vec![Cmd::OpenUrl("https://github.com/".into())]
+        );
+        state.push(Route::Issues {
+            repo: repo(),
+            query: "is:closed".into(),
+        });
+        assert_eq!(
+            press(&mut state, "o"),
+            vec![Cmd::OpenUrl(
+                "https://github.com/gold-silver-copper/ghtui/issues?q=is:closed".into()
+            )]
         );
     }
 
     #[test]
-    fn palette_opens_prs_and_runs_actions() {
+    fn palette_goes_places_and_runs_actions() {
         let mut state = with_inbox(1);
         press(&mut state, ":");
         assert!(matches!(state.overlay, Some(Overlay::Palette(_))));
         let cmds = press(&mut state, "a/b#9<Enter>");
-        assert_eq!(cmds, vec![Cmd::FetchPr(PrRef::parse("a/b#9").unwrap())]);
+        let key = DataKey::Issue(RepoId::new("a", "b"), 9);
+        assert_eq!(
+            cmds,
+            vec![Cmd::Fetch {
+                key: key.clone(),
+                cached: true
+            }]
+        );
         assert!(state.overlay.is_none());
+
+        // The number is a pull request: GitHub's redirect.
+        let cmds = update(
+            &mut state,
+            Msg::Fetched {
+                key,
+                result: Ok(Data::Issue(None)),
+                fresh: true,
+            },
+        );
+        let pr = PrRef::parse("a/b#9").unwrap();
+        assert_eq!(
+            route(&state),
+            Route::Pr {
+                pr: pr.clone(),
+                tab: PrTab::Conversation
+            }
+        );
+        assert_eq!(cmds[0], Cmd::FetchPr(pr));
+        assert_eq!(state.tabs(), ["Home", "a/b#9"], "replaced, not pushed");
 
         // A bare number resolves against the repo on screen.
         press(&mut state, ":12<Enter>");
         assert_eq!(state.tabs().last().unwrap(), "a/b#12");
 
+        press(&mut state, ":@octocat<Enter>");
+        assert_eq!(route(&state), Route::User("octocat".into()));
+
         press(&mut state, ":help<Enter>");
         assert!(matches!(state.overlay, Some(Overlay::Help)));
         press(&mut state, "<Esc>");
         assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn palette_searches_github() {
+        let state = state();
+        let commands: Vec<PaletteCommand> = state
+            .palette_commands("ratatui widgets")
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+        assert!(commands.contains(&PaletteCommand::Search("ratatui widgets".into())));
+        assert_eq!(
+            state.palette_commands("ratatui/ratatui")[0].0,
+            PaletteCommand::Go(Target::Page(Route::Repo(RepoId::new("ratatui", "ratatui"))))
+        );
     }
 
     #[test]
@@ -2133,18 +2863,6 @@ mod tests {
     }
 
     #[test]
-    fn pr_scroll_is_bounded() {
-        let mut state = state();
-        let pr = PrRef::parse("o/r#1").unwrap();
-        state.open_pr(pr.clone());
-        press(&mut state, "<C-d><C-d><C-d>");
-        let Screen::Pr { scroll, .. } = state.screen() else {
-            panic!()
-        };
-        assert_eq!(*scroll, 0, "nothing to scroll while loading");
-    }
-
-    #[test]
     fn palette_list_stays_in_bounds() {
         let mut state = state();
         press(&mut state, ":");
@@ -2155,6 +2873,254 @@ mod tests {
             panic!()
         };
         assert_eq!(palette.selected, state.palette_commands("").len() - 1);
+    }
+
+    #[test]
+    fn repo_tabs_filter_and_star() {
+        let mut state = with_repo();
+        let cmds = press(&mut state, "2");
+        let issues = Route::Issues {
+            repo: repo(),
+            query: OPEN.into(),
+        };
+        assert_eq!(route(&state), issues);
+        let (kind, query) = issues.search().unwrap();
+        assert_eq!(
+            cmds,
+            vec![Cmd::Fetch {
+                key: DataKey::Search(kind, query),
+                cached: true
+            }],
+            "the header isn't fetched again"
+        );
+        assert_eq!(state.tabs(), ["Home", "gold-silver-copper/ghtui · Issues"]);
+
+        press(&mut state, "f");
+        let Some(Overlay::Prompt(prompt)) = &state.overlay else {
+            panic!("no filter prompt")
+        };
+        assert_eq!(prompt.input.lines().join(""), OPEN);
+        press(&mut state, " label:bug<Enter>");
+        assert_eq!(
+            route(&state),
+            Route::Issues {
+                repo: repo(),
+                query: "is:open label:bug".into()
+            }
+        );
+
+        press(&mut state, "3");
+        assert!(matches!(route(&state), Route::Pulls { .. }));
+        press(&mut state, "1");
+        assert_eq!(route(&state), Route::Repo(repo()));
+
+        let cmds = press(&mut state, "*");
+        assert_eq!(
+            cmds,
+            vec![Cmd::SetStarred {
+                repo: repo(),
+                id: "R_ghtui".into(),
+                starred: true
+            }]
+        );
+        assert!(state.overview(&repo()).unwrap().starred);
+        assert_eq!(state.overview(&repo()).unwrap().summary.stars, 1235);
+        update(
+            &mut state,
+            Msg::Starred {
+                repo: repo(),
+                starred: true,
+                result: Err(ApiError::Network("down".into())),
+            },
+        );
+        assert!(!state.overview(&repo()).unwrap().starred, "rolled back");
+        assert_eq!(state.overview(&repo()).unwrap().summary.stars, 1234);
+    }
+
+    #[test]
+    fn several_links_on_a_line_ask_which() {
+        let mut state = with_repo();
+        // The first line: "owner / name".
+        press(&mut state, "gg<Enter>");
+        let Some(Overlay::Links(picker)) = &state.overlay else {
+            panic!("no link picker")
+        };
+        assert_eq!(picker.items.len(), 2);
+        press(&mut state, "<Enter>");
+        assert_eq!(route(&state), Route::User("gold-silver-copper".into()));
+    }
+
+    #[test]
+    fn directories_and_files_open_from_the_repo() {
+        let mut state = with_repo();
+        while !cursor_text(&state).contains("crates") {
+            press(&mut state, "<Tab>");
+        }
+        let cmds = press(&mut state, "<Enter>");
+        let tree = DataKey::Tree(repo(), "main".into(), "crates".into());
+        assert_eq!(
+            cmds,
+            vec![Cmd::Fetch {
+                key: tree.clone(),
+                cached: true
+            }]
+        );
+        fetched(&mut state, tree, Data::Tree(crate::fixtures::tree()));
+        while !cursor_text(&state).contains("README.md") {
+            press(&mut state, "<Tab>");
+        }
+        press(&mut state, "<Enter>");
+        assert_eq!(
+            route(&state),
+            Route::Blob {
+                repo: repo(),
+                rev: "main".into(),
+                path: "crates/README.md".into()
+            }
+        );
+    }
+
+    #[test]
+    fn issue_comments_post_and_refresh() {
+        let mut state = state();
+        state.push(Route::Issue {
+            repo: repo(),
+            number: 14,
+        });
+        let key = DataKey::Issue(repo(), 14);
+        press(&mut state, "c");
+        assert!(state.overlay.is_none(), "nothing to comment on yet");
+        fetched(
+            &mut state,
+            key.clone(),
+            Data::Issue(Some(Box::new(crate::fixtures::issue()))),
+        );
+        press(&mut state, "c");
+        let Some(Overlay::Compose(compose)) = &state.overlay else {
+            panic!("no composer")
+        };
+        assert_eq!(compose.title(), "Comment on gold-silver-copper/ghtui#14");
+        press(&mut state, "Thanks!");
+        let cmds = update(
+            &mut state,
+            Msg::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
+        );
+        assert_eq!(
+            cmds,
+            vec![Cmd::AddComment {
+                subject_id: "I_14".into(),
+                body: "Thanks!".into(),
+                refresh: key.clone()
+            }]
+        );
+        let cmds = update(&mut state, Msg::Commented(key.clone(), Ok(())));
+        assert!(state.overlay.is_none());
+        assert_eq!(cmds, vec![Cmd::Fetch { key, cached: false }]);
+    }
+
+    #[test]
+    fn search_loads_more() {
+        let mut state = state();
+        press(&mut state, "/");
+        press(&mut state, "is:open label:bug<Enter>");
+        let route = route(&state);
+        let (kind, query) = route.search().unwrap();
+        assert_eq!(
+            kind,
+            ghtui_api::browse::SearchKind::Issues,
+            "issue-ish query"
+        );
+        let key = DataKey::Search(kind, query);
+        fetched(
+            &mut state,
+            key.clone(),
+            Data::Search(Box::new(crate::fixtures::issue_results(Some("c1")))),
+        );
+        press(&mut state, "G");
+        assert!(cursor_text(&state).starts_with("Load more"));
+        let cmds = press(&mut state, "<Enter>");
+        assert_eq!(
+            cmds,
+            vec![Cmd::FetchMore {
+                key: key.clone(),
+                after: "c1".into()
+            }]
+        );
+        update(
+            &mut state,
+            Msg::FetchedMore(
+                key.clone(),
+                Ok(Data::Search(Box::new(crate::fixtures::issue_results(None)))),
+            ),
+        );
+        let Some(Data::Search(results)) = state.remote(&key).and_then(|r| r.data.as_ref()) else {
+            panic!()
+        };
+        assert_eq!(browse::next_cursor(results), None);
+        let SearchResults::Issues(r) = &**results else {
+            panic!()
+        };
+        assert_eq!(r.items.len(), 6);
+    }
+
+    #[test]
+    fn files_tab_opens_the_diff_once_the_pr_loads() {
+        let mut state = state();
+        let pr = PrRef::parse("o/r#1").unwrap();
+        state.push(Route::Pr {
+            pr: pr.clone(),
+            tab: PrTab::Conversation,
+        });
+        assert!(press(&mut state, "3").is_empty(), "waits for the PR");
+        assert!(matches!(state.screen(), Screen::Diff(_)));
+        assert_eq!(state.busy().as_deref(), Some("Loading o/r#1"));
+        let cmds = update(
+            &mut state,
+            Msg::Pr(pr.clone(), Box::new(Ok(crate::snapshot_tests::pr_detail()))),
+        );
+        assert!(
+            cmds.iter().any(|c| matches!(c, Cmd::LoadDiff { .. })),
+            "{cmds:?}"
+        );
+        press(&mut state, "2");
+        assert_eq!(
+            route(&state),
+            Route::Pr {
+                pr,
+                tab: PrTab::Commits
+            }
+        );
+        assert_eq!(state.tabs(), ["Home", "o/r#1"]);
+    }
+
+    #[test]
+    fn history_folds_in_the_top_bar() {
+        let mut state = state();
+        for login in ["a", "b", "c", "d", "e"] {
+            state.push(Route::User(login.into()));
+        }
+        assert_eq!(state.tabs(), ["…", "@b", "@c", "@d", "@e"]);
+    }
+
+    #[test]
+    fn key_scopes_follow_the_screen() {
+        let mut state = state();
+        state.push(Route::Issues {
+            repo: repo(),
+            query: OPEN.into(),
+        });
+        press(&mut state, "f");
+        assert!(
+            matches!(state.overlay, Some(Overlay::Prompt(_))),
+            "f filters on a page"
+        );
+        let help = state.help_entries();
+        assert!(help.iter().any(|h| h.description == "Filter the list"));
+        assert!(
+            !help
+                .iter()
+                .any(|h| h.description == "Comment on the whole file")
+        );
     }
 
     mod diff {
