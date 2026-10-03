@@ -64,6 +64,14 @@ pub enum Msg {
     ReviewSubmitted(PrRef, SubmitOutcome),
     /// `$EDITOR` finished (or failed to start).
     Edited(EditPurpose, Result<String, String>),
+    MovesDetected(PrRef, Vec<ghtui_diff::moves::Move>),
+    LastReview(PrRef, Result<Option<String>, ApiError>),
+    SinceReady(
+        PrRef,
+        String,
+        Result<std::collections::HashSet<String>, String>,
+    ),
+    CommitsListed(PrRef, Result<Vec<(String, String)>, String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,9 +81,11 @@ pub enum Cmd {
     FetchPr(PrRef),
     OpenUrl(String),
     /// Start (or restart) the diff job for a PR.
+    /// With `range`, diff `(from, to)` instead of the whole PR.
     LoadDiff {
         pr: PrRef,
         base_ref: String,
+        range: Option<(String, String)>,
     },
     /// Diff these files next.
     Prioritize(PrRef, Vec<usize>),
@@ -120,6 +130,17 @@ pub enum Cmd {
         purpose: EditPurpose,
         text: String,
     },
+    DetectMoves(PrRef, Vec<(usize, Arc<FileDiff>)>),
+    FetchLastReview {
+        pr: PrRef,
+        login: String,
+    },
+    /// Block hashes of the diff at `old_head`, for "since my last review".
+    SinceReview {
+        pr: PrRef,
+        old_head: String,
+    },
+    ListCommits(PrRef),
 }
 
 /// Data that comes from GitHub: what we have (possibly cached), whether a
@@ -183,6 +204,24 @@ pub enum Overlay {
     Compose(Box<Compose>),
     /// Submitting the review.
     Submit(Box<SubmitDialog>),
+    /// Choosing commits to view.
+    Commits(Box<CommitPicker>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PickItem {
+    All,
+    SinceReview,
+    Commit(usize),
+}
+
+pub struct CommitPicker {
+    pub items: Vec<(PickItem, PaletteItem)>,
+    pub selected: usize,
+    /// Start of a range (index into `items`).
+    pub mark: Option<usize>,
+    /// Shown as the picker's (read-only) prompt line.
+    pub input: TextArea<'static>,
 }
 
 pub struct Palette {
@@ -349,6 +388,7 @@ impl State {
             Cmd::LoadDiff {
                 pr: pr.clone(),
                 base_ref,
+                range: None,
             },
             Cmd::FetchViewed(pr.clone()),
             Cmd::LoadReview(pr.clone()),
@@ -429,7 +469,16 @@ impl State {
             .map(|s| match s {
                 Screen::Inbox { .. } => "Inbox".to_owned(),
                 Screen::Pr { pr, .. } => pr.to_string(),
-                Screen::Diff(_) => "Files".to_owned(),
+                Screen::Diff(screen) => {
+                    let diff = self.diffs.get(&screen.pr);
+                    match diff.and_then(|d| d.range.as_ref()) {
+                        Some(range) => format!("Files · {}", range.label),
+                        None if diff.is_some_and(|d| d.doc.since_active) => {
+                            "Files · since your review".to_owned()
+                        }
+                        None => "Files".to_owned(),
+                    }
+                }
             })
             .collect()
     }
@@ -580,14 +629,102 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 generated,
             } = *files;
             diff.set_files(refs, Doc::new(files, &generated));
-            state.settle_diff()
+            // "Since my last review" chosen while switching ranges.
+            let resume_since = diff.since_requested;
+            let mut cmds = state.settle_diff();
+            if resume_since {
+                if let Some((_, diff)) = state.diff_parts() {
+                    diff.since_requested = false;
+                }
+                cmds.extend(review_action(state, Action::ToggleSinceReview).unwrap_or_default());
+            }
+            cmds
         }
         Msg::FileDiff(pr, index, file) => {
+            let mut cmds = Vec::new();
             if let Some(diff) = state.diffs.get_mut(&pr) {
                 diff.set_file(index, file);
+                if let Some(inputs) = diff.take_move_inputs() {
+                    cmds.push(Cmd::DetectMoves(pr.clone(), inputs));
+                }
+            }
+            cmds.extend(state.settle_diff());
+            cmds
+        }
+        Msg::MovesDetected(pr, moves) => {
+            match state.diff_parts() {
+                Some((screen, diff)) if screen.pr == pr => {
+                    let (cursor, top) =
+                        (diff.doc.anchor(screen.cursor), diff.doc.anchor(screen.top));
+                    diff.doc.set_moves(moves);
+                    screen.cursor = diff.doc.locate(cursor);
+                    screen.top = diff.doc.locate(top);
+                }
+                _ => {
+                    if let Some(diff) = state.diffs.get_mut(&pr) {
+                        diff.doc.set_moves(moves);
+                    }
+                }
             }
             state.settle_diff()
         }
+        Msg::LastReview(pr, result) => {
+            let commit = result.unwrap_or_else(|err| {
+                tracing::warn!(%pr, %err, "last review lookup failed");
+                None
+            });
+            let Some(diff) = state.diffs.get_mut(&pr) else {
+                return Vec::new();
+            };
+            diff.last_review = Some(commit);
+            if diff.since_requested {
+                return start_since_review(state);
+            }
+            Vec::new()
+        }
+        Msg::SinceReady(pr, old_head, result) => {
+            match result {
+                Ok(hashes) => {
+                    if let Some((screen, diff)) = state.diff_parts()
+                        && screen.pr == pr
+                    {
+                        diff.since_requested = false;
+                        let (cursor, top) =
+                            (diff.doc.anchor(screen.cursor), diff.doc.anchor(screen.top));
+                        diff.doc.set_since(Some(hashes), true);
+                        screen.cursor = diff.doc.locate(cursor);
+                        screen.top = diff.doc.locate(top);
+                        state.notice = Some(Notice::Info(format!(
+                            "Showing changes since your review of {}",
+                            &old_head[..7.min(old_head.len())]
+                        )));
+                    }
+                }
+                Err(err) => {
+                    if let Some(diff) = state.diffs.get_mut(&pr) {
+                        diff.since_requested = false;
+                    }
+                    state.notice = Some(Notice::Error(format!(
+                        "Couldn't compare with your last review: {err}"
+                    )));
+                }
+            }
+            state.settle_diff()
+        }
+        Msg::CommitsListed(pr, result) => match result {
+            Ok(commits) => {
+                if let Some(diff) = state.diffs.get_mut(&pr) {
+                    diff.commits = commits;
+                }
+                state.notice = None;
+                open_commit_picker(state);
+                Vec::new()
+            }
+            Err(err) => {
+                state.notice = Some(Notice::Error(format!("Couldn't list commits: {err}")));
+                Vec::new()
+            }
+        },
         Msg::DiffFailed(pr, error) => {
             if let Some(diff) = state.diffs.get_mut(&pr) {
                 diff.progress = None;
@@ -820,6 +957,7 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         Some(Overlay::FindFile(_)) => return on_finder_key(state, key),
         Some(Overlay::Compose(_)) => return on_compose_key(state, key),
         Some(Overlay::Submit(_)) => return on_submit_key(state, key),
+        Some(Overlay::Commits(_)) => return on_commits_key(state, key),
         None => {}
     }
     // Any keypress dismisses the last notice.
@@ -1098,7 +1236,10 @@ fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         | Action::FileComment
         | Action::SubmitReview
         | Action::NextThread
-        | Action::PrevThread => {}
+        | Action::PrevThread
+        | Action::ToggleSinceReview
+        | Action::JumpMove
+        | Action::PickCommits => {}
         Action::Down => move_by(state, 1, 1),
         Action::Up => move_by(state, -1, -1),
         Action::HalfPageDown => move_by(state, i64::from(half_page / 2), i64::from(half_page)),
@@ -1231,7 +1372,60 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
         state.notice = Some(n);
         Some(Vec::new())
     };
+    let in_range = diff.range.is_some();
+    if in_range
+        && matches!(
+            action,
+            Action::Comment | Action::Suggest | Action::FileComment | Action::SubmitReview
+        )
+    {
+        return notice(
+            state,
+            Notice::Error(
+                "Comments anchor to the whole PR: pick “All changes” (gc) to comment".into(),
+            ),
+        );
+    }
     match action {
+        Action::ToggleSinceReview => {
+            if in_range {
+                return notice(state, Notice::Error("Pick “All changes” (gc) first".into()));
+            }
+            if diff.doc.since.is_some() {
+                let active = !diff.doc.since_active;
+                let (c, t) = (diff.doc.anchor(screen.cursor), diff.doc.anchor(screen.top));
+                let hashes = diff.doc.since.clone();
+                diff.doc.set_since(hashes, active);
+                screen.cursor = diff.doc.locate(c);
+                screen.top = diff.doc.locate(t);
+                state.notice = Some(Notice::Info(
+                    if active {
+                        "Showing changes since your last review"
+                    } else {
+                        "Showing all changes"
+                    }
+                    .into(),
+                ));
+                return Some(state.settle_diff());
+            }
+            diff.since_requested = true;
+            if diff.last_review.is_none() {
+                let Some(login) = state.viewer.clone() else {
+                    return Some(start_since_review_local(state));
+                };
+                state.notice = Some(Notice::Info("Looking up your last review…".into()));
+                return Some(vec![Cmd::FetchLastReview { pr, login }]);
+            }
+            Some(start_since_review(state))
+        }
+        Action::PickCommits => {
+            if diff.commits.is_empty() {
+                state.notice = Some(Notice::Info("Listing commits…".into()));
+                return Some(vec![Cmd::ListCommits(pr)]);
+            }
+            open_commit_picker(state);
+            Some(Vec::new())
+        }
         Action::Back if screen.selection.is_some() => {
             screen.selection = None;
             Some(Vec::new())
@@ -1393,6 +1587,214 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
         }
         _ => None,
     }
+}
+
+/// Compares with the head of your last review, once known.
+fn start_since_review(state: &mut State) -> Vec<Cmd> {
+    let Some((screen, diff)) = state.diff_parts() else {
+        return Vec::new();
+    };
+    let pr = screen.pr.clone();
+    let old = diff
+        .last_review
+        .clone()
+        .flatten()
+        .or_else(|| diff.review.last_reviewed_head.clone());
+    let head = diff.refs.as_ref().map(|r| r.head.clone());
+    let problem = match (&old, &head) {
+        (None, _) => Some("You haven't reviewed this PR yet"),
+        (_, None) => Some("The diff hasn't loaded yet"),
+        (Some(old), Some(head)) if old == head => {
+            Some("Nothing new: you reviewed the current head")
+        }
+        _ => None,
+    };
+    if let Some(message) = problem {
+        diff.since_requested = false;
+        state.notice = Some(Notice::Info(message.into()));
+        return Vec::new();
+    }
+    state.notice = Some(Notice::Info("Comparing with your last review…".into()));
+    vec![Cmd::SinceReview {
+        pr,
+        old_head: old.unwrap_or_default(),
+    }]
+}
+
+/// Without a GitHub login, only the locally remembered review is known.
+fn start_since_review_local(state: &mut State) -> Vec<Cmd> {
+    if let Some((_, diff)) = state.diff_parts() {
+        diff.last_review = Some(None);
+    }
+    start_since_review(state)
+}
+
+fn open_commit_picker(state: &mut State) {
+    let theme = state.theme.clone();
+    let Some((_, diff)) = state.diff_parts() else {
+        return;
+    };
+    let current = |on: bool| {
+        if on {
+            "current".to_owned()
+        } else {
+            String::new()
+        }
+    };
+    let mut items = vec![
+        (
+            PickItem::All,
+            PaletteItem {
+                label: "All changes".into(),
+                hint: current(diff.range.is_none() && !diff.doc.since_active),
+            },
+        ),
+        (
+            PickItem::SinceReview,
+            PaletteItem {
+                label: "Changes since your last review".into(),
+                hint: current(diff.range.is_none() && diff.doc.since_active),
+            },
+        ),
+    ];
+    for (i, (sha, subject)) in diff.commits.iter().enumerate() {
+        items.push((
+            PickItem::Commit(i),
+            PaletteItem {
+                label: format!("{} {subject}", &sha[..7.min(sha.len())]),
+                hint: String::new(),
+            },
+        ));
+    }
+    let mut input = TextArea::default();
+    input.set_style(theme.body(Bg::ContainerHigh));
+    input.set_cursor_style(theme.body(Bg::ContainerHigh));
+    input.set_placeholder_text("Space marks a range start · Enter views · Esc cancels");
+    input.set_placeholder_style(theme.meta(Bg::ContainerHigh));
+    state.overlay = Some(Overlay::Commits(Box::new(CommitPicker {
+        items,
+        selected: 0,
+        mark: None,
+        input,
+    })));
+}
+
+fn on_commits_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+    let Some(Overlay::Commits(picker)) = &mut state.overlay else {
+        return Vec::new();
+    };
+    match key.code {
+        KeyCode::Esc => {
+            state.overlay = None;
+            Vec::new()
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            picker.selected = (picker.selected + 1).min(picker.items.len() - 1);
+            Vec::new()
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            picker.selected = picker.selected.saturating_sub(1);
+            Vec::new()
+        }
+        KeyCode::Char(' ') => {
+            let i = picker.selected;
+            if matches!(picker.items[i].0, PickItem::Commit(_)) {
+                picker.mark = if picker.mark == Some(i) {
+                    None
+                } else {
+                    Some(i)
+                };
+                for (j, (_, item)) in picker.items.iter_mut().enumerate() {
+                    if Some(j) == picker.mark {
+                        item.hint = "range start".into();
+                    } else if item.hint == "range start" {
+                        item.hint.clear();
+                    }
+                }
+            }
+            Vec::new()
+        }
+        KeyCode::Enter => {
+            let choice = picker.items[picker.selected].0.clone();
+            let mark = picker.mark.map(|m| picker.items[m].0.clone());
+            state.overlay = None;
+            apply_commit_choice(state, choice, mark)
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn apply_commit_choice(state: &mut State, choice: PickItem, mark: Option<PickItem>) -> Vec<Cmd> {
+    let width = state.size.0;
+    let pr = match state.screen() {
+        Screen::Diff(screen) => screen.pr.clone(),
+        _ => return Vec::new(),
+    };
+    let Some(base_ref) = state
+        .prs
+        .get(&pr)
+        .and_then(|r| r.data.as_ref())
+        .map(|d| d.base_ref.clone())
+    else {
+        return Vec::new();
+    };
+    let Some((screen, diff)) = state.diff_parts() else {
+        return Vec::new();
+    };
+    let range = match choice {
+        PickItem::SinceReview if diff.range.is_none() => {
+            if diff.doc.since_active {
+                return Vec::new();
+            }
+            return review_action(state, Action::ToggleSinceReview).unwrap_or_default();
+        }
+        PickItem::SinceReview => {
+            // Back to the whole PR first, then compare once it's loaded.
+            diff.restart(None);
+            diff.since_requested = true;
+            *screen = DiffScreen::new(pr.clone(), width);
+            return vec![Cmd::LoadDiff {
+                pr,
+                base_ref,
+                range: None,
+            }];
+        }
+        PickItem::All if diff.range.is_none() => {
+            if diff.doc.since_active {
+                return review_action(state, Action::ToggleSinceReview).unwrap_or_default();
+            }
+            return Vec::new();
+        }
+        PickItem::All => None,
+        PickItem::Commit(i) => {
+            let j = match mark {
+                Some(PickItem::Commit(m)) => m,
+                _ => i,
+            };
+            let (first, last) = (i.min(j), i.max(j));
+            let (from, _) = &diff.commits[first];
+            let (to, _) = &diff.commits[last];
+            let short = |sha: &str| sha[..7.min(sha.len())].to_owned();
+            let label = if first == last {
+                short(to)
+            } else {
+                format!("{}..{}", short(from), short(to))
+            };
+            Some(diff_screen::RangeView {
+                label,
+                from: format!("{from}^"),
+                to: to.clone(),
+            })
+        }
+    };
+    let cmd_range = range.as_ref().map(|r| (r.from.clone(), r.to.clone()));
+    diff.restart(range);
+    *screen = DiffScreen::new(pr.clone(), width);
+    vec![Cmd::LoadDiff {
+        pr,
+        base_ref,
+        range: cmd_range,
+    }]
 }
 
 fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
@@ -1906,6 +2308,129 @@ mod tests {
             );
             press(&mut s, "x");
         }
+        mod better {
+            use super::*;
+
+            #[test]
+            fn moves_are_detected_when_every_file_is_diffed() {
+                let (mut s, pr) = diff_state(120);
+                // The fixture has a loading file; finishing it triggers detection.
+                let pending = s.diffs[&pr]
+                    .doc
+                    .files
+                    .iter()
+                    .position(|f| f.diff.is_none())
+                    .unwrap();
+                let cmds = update(
+                    &mut s,
+                    Msg::FileDiff(
+                        pr.clone(),
+                        pending,
+                        Arc::new(FileDiff::compute(
+                            "zz/pending.rs",
+                            Some(b"a\n"),
+                            Some(b"b\n"),
+                        )),
+                    ),
+                );
+                assert!(cmds.iter().any(
+                    |c| matches!(c, Cmd::DetectMoves(p, files) if *p == pr && files.len() == 8)
+                ));
+                // Only once.
+                let again = update(&mut s, Msg::MovesDetected(pr.clone(), Vec::new()));
+                assert!(!again.iter().any(|c| matches!(c, Cmd::DetectMoves(..))));
+                assert!(press(&mut s, "gm").is_empty());
+                assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("moved")));
+            }
+
+            #[test]
+            fn since_review_asks_github_then_compares() {
+                let (mut s, pr) = diff_state(120);
+                s.viewer = Some("me".into());
+                let cmds = press(&mut s, "gl");
+                assert!(matches!(&cmds[..], [Cmd::FetchLastReview { login, .. }] if login == "me"));
+                let cmds = update(&mut s, Msg::LastReview(pr.clone(), Ok(Some("old".into()))));
+                assert!(
+                    matches!(&cmds[..], [Cmd::SinceReview { old_head, .. }] if old_head == "old")
+                );
+
+                // Nothing in the old diff matched: everything is new.
+                update(
+                    &mut s,
+                    Msg::SinceReady(pr.clone(), "old".into(), Ok(Default::default())),
+                );
+                assert!(s.diffs[&pr].doc.since_active);
+                assert_eq!(s.tabs().last().unwrap(), "Files · since your review");
+                // Toggling back needs no new lookups.
+                assert!(
+                    press(&mut s, "gl")
+                        .iter()
+                        .all(|c| matches!(c, Cmd::Prioritize(..)))
+                );
+                assert!(!s.diffs[&pr].doc.since_active);
+            }
+
+            #[test]
+            fn since_review_without_a_review_says_so() {
+                let (mut s, pr) = diff_state(120);
+                s.viewer = Some("me".into());
+                press(&mut s, "gl");
+                update(&mut s, Msg::LastReview(pr.clone(), Ok(None)));
+                assert!(
+                    matches!(&s.notice, Some(Notice::Info(m)) if m.contains("haven't reviewed"))
+                );
+                // Reviewing the current head means nothing's new.
+                s.diffs.get_mut(&pr).unwrap().since_requested = true;
+                update(&mut s, Msg::LastReview(pr.clone(), Ok(Some("h".into()))));
+                assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("current head")));
+            }
+
+            #[test]
+            fn commit_picker_loads_a_range_and_blocks_comments() {
+                let (mut s, pr) = diff_state(120);
+                // `ghtui pr` would have loaded metadata; the picker needs the base.
+                s.prs.insert(
+                    pr.clone(),
+                    Remote::cached(Some(crate::snapshot_tests::pr_detail())),
+                );
+                assert!(matches!(&press(&mut s, "gc")[..], [Cmd::ListCommits(_)]));
+                update(
+                    &mut s,
+                    Msg::CommitsListed(
+                        pr.clone(),
+                        Ok(vec![
+                            ("a".repeat(40), "first".into()),
+                            ("b".repeat(40), "second".into()),
+                        ]),
+                    ),
+                );
+                assert!(matches!(s.overlay, Some(Overlay::Commits(_))));
+                // Mark the first commit, select the second: a range.
+                press(&mut s, "jj<Space>j");
+                let cmds = press(&mut s, "<Enter>");
+                let [
+                    Cmd::LoadDiff {
+                        range: Some((from, to)),
+                        ..
+                    },
+                ] = &cmds[..]
+                else {
+                    panic!("{cmds:?}")
+                };
+                assert_eq!(from, &format!("{}^", "a".repeat(40)));
+                assert_eq!(to, &"b".repeat(40));
+                assert_eq!(s.tabs().last().unwrap(), "Files · aaaaaaa..bbbbbbb");
+                // Commenting needs the whole PR.
+                press(&mut s, "c");
+                assert!(s.overlay.is_none());
+                assert!(matches!(&s.notice, Some(Notice::Error(m)) if m.contains("All changes")));
+                // Back to everything.
+                press(&mut s, "gc");
+                let cmds = press(&mut s, "<Enter>");
+                assert!(matches!(&cmds[..], [Cmd::LoadDiff { range: None, .. }]));
+            }
+        }
+
         mod review {
             use super::*;
             use crate::review::{ComposeTarget, EditPurpose, SubmitOutcome};

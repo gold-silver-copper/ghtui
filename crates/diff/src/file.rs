@@ -3,6 +3,7 @@
 use crate::anchor::{Commentable, HunkRange};
 use crate::highlight::{Language, Span, highlight};
 use crate::hunks::{Algorithm, DiffLine, LineKind, Whitespace, align};
+use crate::intraline::{IntraLine, intraline};
 use crate::text::{Text, is_binary};
 
 /// Context lines around changes.
@@ -43,6 +44,9 @@ pub struct TextDiff {
     /// GitHub-style commentable ranges (Myers, 3 lines of context), used when
     /// GitHub's own patch isn't available.
     pub local_ranges: Vec<HunkRange>,
+    /// Changed token ranges on paired lines, for each alignment.
+    pub intraline: IntraLine,
+    pub intraline_ignoring_whitespace: IntraLine,
 }
 
 impl TextDiff {
@@ -50,6 +54,13 @@ impl TextDiff {
         match whitespace {
             Whitespace::Exact => &self.lines,
             Whitespace::Ignore => &self.lines_ignoring_whitespace,
+        }
+    }
+
+    pub fn intraline(&self, whitespace: Whitespace) -> &IntraLine {
+        match whitespace {
+            Whitespace::Exact => &self.intraline,
+            Whitespace::Ignore => &self.intraline_ignoring_whitespace,
         }
     }
 
@@ -119,6 +130,16 @@ impl FileDiff {
     /// Diffs two blob contents (`None` for an absent side). `path` picks the
     /// highlighting language.
     pub fn compute(path: &str, old: Option<&[u8]>, new: Option<&[u8]>) -> Self {
+        Self::compute_with(path, old, new, true)
+    }
+
+    /// Alignments only: no highlighting or intra-line diffs (for comparing
+    /// against an earlier version, never rendered).
+    pub fn compute_plain(path: &str, old: Option<&[u8]>, new: Option<&[u8]>) -> Self {
+        Self::compute_with(path, old, new, false)
+    }
+
+    fn compute_with(path: &str, old: Option<&[u8]>, new: Option<&[u8]>, rich: bool) -> Self {
         let sizes = (old.map(<[u8]>::len), new.map(<[u8]>::len));
         if old.is_some_and(|b| b.len() > MAX_DIFF_BYTES)
             || new.is_some_and(|b| b.len() > MAX_DIFF_BYTES)
@@ -151,28 +172,35 @@ impl FileDiff {
         } else {
             align(&old, &new, Algorithm::Histogram, Whitespace::Ignore)
         };
-        let local_ranges = if additions + deletions == 0 {
+        let local_ranges = if additions + deletions == 0 || !rich {
             Vec::new()
         } else {
             Commentable::local(&old, &new).ranges
         };
         let lang = Language::from_path(path);
         // Only highlight files with changes to show.
-        let (old_spans, new_spans) = if additions + deletions == 0 {
+        let (old_spans, new_spans) = if additions + deletions == 0 || !rich {
             (Vec::new(), Vec::new())
         } else {
             (highlight(lang, &old), highlight(lang, &new))
         };
+        let mut text = TextDiff {
+            old,
+            new,
+            old_spans,
+            new_spans,
+            lines,
+            lines_ignoring_whitespace,
+            local_ranges,
+            intraline: IntraLine::new(),
+            intraline_ignoring_whitespace: IntraLine::new(),
+        };
+        if rich {
+            text.intraline = intraline(&text, &text.lines);
+            text.intraline_ignoring_whitespace = intraline(&text, &text.lines_ignoring_whitespace);
+        }
         Self {
-            content: Content::Text(Box::new(TextDiff {
-                old,
-                new,
-                old_spans,
-                new_spans,
-                lines,
-                lines_ignoring_whitespace,
-                local_ranges,
-            })),
+            content: Content::Text(Box::new(text)),
             additions,
             deletions,
         }

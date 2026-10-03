@@ -541,3 +541,24 @@ async fn review_submission_calls() {
             .contains("resolveReviewThread")
     );
 }
+
+#[tokio::test]
+async fn last_review_commit_skips_pending_reviews() {
+    let (base, seen) = serve(vec![Reply::new(
+        200,
+        r#"{"data":{"repository":{"pullRequest":{"reviews":{"nodes":[
+            {"state":"COMMENTED","commit":{"oid":"old"}},
+            {"state":"APPROVED","commit":{"oid":"newer"}},
+            {"state":"PENDING","commit":{"oid":"draft"}}]}}}}}"#,
+    )])
+    .await;
+    let gh = client(&base, Store::disabled());
+    let commit = gh
+        .last_review_commit(&PrRef::parse("o/r#7").unwrap(), "me")
+        .await
+        .unwrap();
+    assert_eq!(commit.as_deref(), Some("newer"));
+    let seen = seen.lock().unwrap();
+    let body: serde_json::Value = serde_json::from_str(&seen[0].body).unwrap();
+    assert_eq!(body["variables"]["login"], "me");
+}

@@ -116,6 +116,8 @@ Buffer {
         x: 39, y: 6, fg: Rgb(0, 95, 64), bg: Rgb(222, 247, 230), underline: Reset, modifier: BOLD,
         x: 40, y: 6, fg: Rgb(25, 28, 32), bg: Rgb(222, 247, 230), underline: Reset, modifier: NONE,
         x: 41, y: 6, fg: Rgb(67, 71, 78), bg: Rgb(222, 247, 230), underline: Reset, modifier: ITALIC,
+        x: 52, y: 6, fg: Rgb(67, 71, 78), bg: Rgb(171, 228, 197), underline: Reset, modifier: ITALIC,
+        x: 58, y: 6, fg: Rgb(67, 71, 78), bg: Rgb(222, 247, 230), underline: Reset, modifier: ITALIC,
         x: 59, y: 6, fg: Rgb(25, 28, 32), bg: Rgb(222, 247, 230), underline: Reset, modifier: NONE,
         x: 0, y: 7, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 3, y: 7, fg: Rgb(98, 74, 105), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,

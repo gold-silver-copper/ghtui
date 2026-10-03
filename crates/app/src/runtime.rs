@@ -95,7 +95,11 @@ pub async fn run(
 impl Effects {
     fn run(&mut self, cmd: Cmd) {
         match cmd {
-            Cmd::LoadDiff { pr, base_ref } => {
+            Cmd::LoadDiff {
+                pr,
+                base_ref,
+                range,
+            } => {
                 if let Some((_, handle)) = self.jobs.running.remove(&pr) {
                     handle.abort();
                 }
@@ -104,6 +108,7 @@ impl Effects {
                     self.git.clone(),
                     pr.clone(),
                     base_ref,
+                    range,
                     self.tx.clone(),
                     control.clone(),
                 ));
@@ -113,6 +118,64 @@ impl Effects {
                 if let Some((control, _)) = self.jobs.running.get(&pr) {
                     control.prioritize(&files);
                 }
+            }
+            Cmd::DetectMoves(pr, files) => {
+                let tx = self.tx.clone();
+                tokio::task::spawn_blocking(move || {
+                    let inputs: Vec<_> = files
+                        .iter()
+                        .filter_map(|(i, d)| match &d.content {
+                            ghtui_diff::Content::Text(t) => {
+                                Some((*i, &**t, t.lines(ghtui_diff::Whitespace::Exact)))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    let moves = ghtui_diff::moves::detect_moves(&inputs);
+                    let _ = tx.send(Msg::MovesDetected(pr, moves));
+                });
+            }
+            Cmd::SinceReview { pr, old_head } => {
+                let tx = self.tx.clone();
+                let Some(git) = self.job_git(&pr) else {
+                    let _ = tx.send(Msg::SinceReady(
+                        pr,
+                        old_head,
+                        Err("the diff isn't ready".into()),
+                    ));
+                    return;
+                };
+                tokio::spawn(async move {
+                    let (repo, reader) = git;
+                    let result =
+                        diff_job::since_review_hashes(&repo, &reader, pr.number, &old_head)
+                            .await
+                            .map_err(|e| e.to_string());
+                    let _ = tx.send(Msg::SinceReady(pr, old_head, result));
+                });
+            }
+            Cmd::ListCommits(pr) => {
+                let tx = self.tx.clone();
+                let Some(git) = self.job_git(&pr) else {
+                    let _ = tx.send(Msg::CommitsListed(pr, Err("the diff isn't ready".into())));
+                    return;
+                };
+                tokio::spawn(async move {
+                    let (repo, _) = git;
+                    let result = async {
+                        let head = repo
+                            .rev_parse(&format!("refs/ghtui/pr/{}/head", pr.number))
+                            .await?;
+                        let base = repo
+                            .rev_parse(&format!("refs/ghtui/pr/{}/base", pr.number))
+                            .await?;
+                        let merge_base = repo.merge_base(&base, &head).await?;
+                        repo.commits(&merge_base, &head).await
+                    }
+                    .await
+                    .map_err(|e| e.to_string());
+                    let _ = tx.send(Msg::CommitsListed(pr, result));
+                });
             }
             Cmd::MapOutdated { pr, head, items } => {
                 let Some(git) = self
@@ -138,6 +201,19 @@ impl Effects {
             }
             cmd => spawn(cmd, &self.gh, &self.tx),
         }
+    }
+
+    fn job_git(
+        &self,
+        pr: &PrRef,
+    ) -> Option<(
+        Arc<ghtui_git::repo::Repo>,
+        Arc<ghtui_git::blobs::BlobReader>,
+    )> {
+        self.jobs
+            .running
+            .get(pr)
+            .and_then(|(control, _)| control.git())
     }
 }
 
@@ -233,10 +309,17 @@ fn spawn(cmd: Cmd, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
                 let outcome = submit_review(&gh, &pr, &head, drafts, event, &body).await;
                 Msg::ReviewSubmitted(pr, outcome)
             }
+            Cmd::FetchLastReview { pr, login } => {
+                let result = gh.last_review_commit(&pr, &login).await;
+                Msg::LastReview(pr, result)
+            }
             Cmd::LoadDiff { .. }
             | Cmd::Prioritize(..)
             | Cmd::MapOutdated { .. }
-            | Cmd::Edit { .. } => {
+            | Cmd::Edit { .. }
+            | Cmd::DetectMoves(..)
+            | Cmd::SinceReview { .. }
+            | Cmd::ListCommits(..) => {
                 unreachable!("handled by the runtime loop")
             }
         };

@@ -190,6 +190,17 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
             }
             .render(area, buf);
         }
+        Some(Overlay::Commits(picker)) => {
+            let items: Vec<_> = picker.items.iter().map(|(_, item)| item.clone()).collect();
+            Palette {
+                ctx,
+                prompt: "Commits",
+                input: &picker.input,
+                items: &items,
+                selected: picker.selected,
+            }
+            .render(area, buf);
+        }
         Some(Overlay::Search(input)) => {
             // The prompt replaces the status bar.
             fill(buf, status, ctx.theme, Bg::Container);
@@ -262,6 +273,7 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
         return;
     }
     let key = |a| first_key(state, a);
+    let jump = key(Action::JumpMove);
     let (show, expand, viewed, reply, resolve, delete, file_comment) = (
         key(Action::Open),
         key(Action::ExpandContext),
@@ -278,6 +290,7 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
         top: screen.top,
         keys: Keys {
             show: &show,
+            jump: &jump,
             expand: &expand,
             viewed: &viewed,
             reply: &reply,

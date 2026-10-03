@@ -79,6 +79,10 @@ fn inbox() -> Inbox {
     }
 }
 
+pub(crate) fn pr_detail() -> PrDetail {
+    detail()
+}
+
 fn detail() -> PrDetail {
     PrDetail {
         summary: summary(
@@ -593,6 +597,89 @@ pub(crate) mod diff {
         dialog.input.insert_str("Nice work overall.");
         s.overlay = Some(crate::state::Overlay::Submit(Box::new(dialog)));
         insta::assert_snapshot!(render(&s));
+    }
+
+    /// Intra-line emphasis, code moved between files, and a
+    /// formatting-only change folded away.
+    fn better_than_github(mode: Mode) -> crate::state::State {
+        let regular = (0o100644, 0o100644);
+        let files = vec![
+            file(
+                FileStatus::Modified,
+                Some("src/math.rs"),
+                Some("src/math.rs"),
+                regular,
+            ),
+            file(
+                FileStatus::Modified,
+                Some("src/util.rs"),
+                Some("src/util.rs"),
+                regular,
+            ),
+        ];
+        let helper = "pub fn clamp(value: i32, low: i32, high: i32) -> i32 {\n    value.max(low).min(high)\n}\n";
+        let math_old = format!(
+            "pub fn area(width: u32, height: u32) -> u32 {{\n    width * height\n}}\n\n{helper}\nlet total = compute(alpha, beta);\n// a\n// b\n// c\n// d\ncall(\n    one,\n    two\n);\n"
+        );
+        let math_new = "pub fn area(width: u32, height: u32) -> u32 {\n    width * height\n}\n\nlet total = compute(alpha, gamma);\n// a\n// b\n// c\n// d\ncall(one, two);\n";
+        let util_old = "// helpers\n";
+        let util_new = format!("// helpers\n{helper}");
+        let mut doc = Doc::new(files, &HashSet::new());
+        doc.set_diff(
+            0,
+            Arc::new(FileDiff::compute(
+                "src/math.rs",
+                Some(math_old.as_bytes()),
+                Some(math_new.as_bytes()),
+            )),
+        );
+        doc.set_diff(
+            1,
+            Arc::new(FileDiff::compute(
+                "src/util.rs",
+                Some(util_old.as_bytes()),
+                Some(util_new.as_bytes()),
+            )),
+        );
+        let texts: Vec<_> = doc
+            .files
+            .iter()
+            .map(|f| f.text().unwrap().clone())
+            .collect();
+        let moves = ghtui_diff::moves::detect_moves(&[
+            (0, &texts[0], texts[0].lines(ghtui_diff::Whitespace::Exact)),
+            (1, &texts[1], texts[1].lines(ghtui_diff::Whitespace::Exact)),
+        ]);
+        assert_eq!(moves.len(), 1);
+        doc.set_moves(moves);
+        let mut diff = DiffState::loading();
+        diff.set_files(
+            PrRefs {
+                head: "h".into(),
+                base: "b".into(),
+                merge_base: "m".into(),
+            },
+            doc,
+        );
+        let mut s = state(mode, ColorDepth::TrueColor);
+        s.size = (110, 30);
+        let pr = PrRef::parse("o/r#7").unwrap();
+        s.diffs.insert(pr.clone(), diff);
+        let mut screen = DiffScreen::new(pr, 110);
+        screen.cursor = Pos { file: 0, row: 0 };
+        s.screens.push(Screen::Diff(Box::new(screen)));
+        settle(&mut s);
+        s
+    }
+
+    #[test]
+    fn better_than_github_dark() {
+        insta::assert_snapshot!(render(&better_than_github(Mode::Dark)));
+    }
+
+    #[test]
+    fn better_than_github_light() {
+        insta::assert_snapshot!(render(&better_than_github(Mode::Light)));
     }
 
     #[test]

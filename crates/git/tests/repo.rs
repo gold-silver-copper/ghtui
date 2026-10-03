@@ -409,3 +409,13 @@ async fn fetches_force_pushed_commits_by_sha() {
         .unwrap();
     assert!(String::from_utf8(lib).unwrap().contains("line_five"));
 }
+
+#[tokio::test]
+async fn lists_pr_commits_oldest_first() {
+    let f = fixture();
+    let repo = cache_repo(&f).await;
+    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
+    let commits = repo.commits(&refs.merge_base, &refs.head).await.unwrap();
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0], (refs.head.clone(), "feature".to_owned()));
+}

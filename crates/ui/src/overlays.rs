@@ -114,6 +114,7 @@ impl Widget for Help<'_> {
 }
 
 /// A palette entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaletteItem {
     pub label: String,
     /// Right-aligned hint, e.g. the bound keys.

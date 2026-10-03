@@ -15,8 +15,10 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use ghtui_diff::anchor::{Commentable, LinePos, RangeSource, Side};
+use ghtui_diff::blocks::{ChangeBlock, change_blocks};
+use ghtui_diff::moves::Move;
 use ghtui_diff::{
-    CONTEXT, Content, DiffLine, FileDiff, LineKind, TextDiff, Whitespace, counts, hunk, segments,
+    CONTEXT, Content, DiffLine, FileDiff, LineKind, TextDiff, Whitespace, counts, hunk, segments_by,
 };
 use ghtui_git::files::{ChangedFile, is_lockfile};
 
@@ -40,7 +42,18 @@ pub enum Note {
     TooLarge,
     Submodule,
     NoChanges,
+    /// "Since my last review" is on and nothing in the file is new.
+    NothingNew,
     Error,
+}
+
+/// Why a change block is folded into one row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FoldReason {
+    /// Differs only in whitespace and line breaks.
+    Formatting,
+    /// Already in the diff at your last review.
+    Seen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +81,17 @@ pub enum Row {
     /// A line of a review thread or draft (index into the file's thread
     /// rows).
     Thread(u32),
+    /// A folded change block (index into the file's blocks).
+    Fold {
+        block: u32,
+        reason: FoldReason,
+    },
+    /// "Moved from/to …" after the first line of a moved block (index into
+    /// the document's moves).
+    Moved {
+        mv: u32,
+        from: bool,
+    },
     Spacer,
 }
 
@@ -88,12 +112,21 @@ pub struct ViewOptions {
     pub wrap: u16,
 }
 
-/// A maximal run of changed lines: the unit marked "reviewed".
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Block {
-    pub entries: Range<u32>,
-    /// Content hash (path and changed lines), stable across line moves.
-    pub hash: String,
+/// A maximal run of changed lines: the unit marked "reviewed", folded when
+/// formatting-only, and compared for "since my last review".
+pub type Block = ChangeBlock;
+
+/// A stretch of a segment: plain lines, or a folded block `(index, why)`.
+type Piece = (Range<usize>, Option<(u32, FoldReason)>);
+
+/// Inputs for rebuilding one file's rows besides the file itself.
+struct Extras<'a> {
+    anns: &'a [(u32, &'a Annotation)],
+    open: &'a dyn Fn(&Annotation) -> bool,
+    /// Block hashes from the diff at your last review, when that mode is on.
+    since: Option<&'a HashSet<String>>,
+    /// `(move index, entries, is the removed side)` in this file.
+    moves: &'a [(u32, Range<u32>, bool)],
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +146,8 @@ pub struct DocFile {
     /// `@@` text per visible segment.
     headers: Vec<String>,
     blocks: Vec<Block>,
+    /// Folded blocks the user opened (by first entry).
+    pub unfolded: HashSet<u32>,
     thread_rows: Vec<ThreadRow>,
     /// Line annotations by anchor.
     by_line: HashMap<(Side, u32), Vec<u32>>,
@@ -231,12 +266,8 @@ impl DocFile {
         self.thread_rows.push(ThreadRow { ann, kind, text });
     }
 
-    fn rebuild(
-        &mut self,
-        opts: ViewOptions,
-        anns: &[(u32, &Annotation)],
-        open: &dyn Fn(&Annotation) -> bool,
-    ) {
+    fn rebuild(&mut self, opts: ViewOptions, extras: &Extras<'_>) {
+        let (anns, open) = (extras.anns, extras.open);
         self.rows.clear();
         self.headers.clear();
         self.blocks.clear();
@@ -291,7 +322,43 @@ impl DocFile {
             unreachable!("checked above")
         };
         let lines = text.lines(opts.whitespace);
-        self.blocks = blocks(self.meta.path(), text, lines);
+        self.blocks = change_blocks(self.meta.path(), text, lines);
+        let fold_of: Vec<Option<FoldReason>> = self
+            .blocks
+            .iter()
+            .map(|b| {
+                if self.unfolded.contains(&b.entries.start) {
+                    None
+                } else if extras.since.is_some_and(|s| s.contains(&b.hash)) {
+                    Some(FoldReason::Seen)
+                } else if b.formatting_only {
+                    Some(FoldReason::Formatting)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        // With "since my last review", changes you'd already seen don't
+        // anchor context; they only show (folded) when near new ones.
+        let mut seen_entry = vec![false; lines.len()];
+        if extras.since.is_some() {
+            for (b, fold) in self.blocks.iter().zip(&fold_of) {
+                if *fold == Some(FoldReason::Seen) {
+                    for e in b.entries.clone() {
+                        seen_entry[e as usize] = true;
+                    }
+                }
+            }
+            let anything_new = lines
+                .iter()
+                .enumerate()
+                .any(|(e, l)| l.kind != LineKind::Context && !seen_entry[e]);
+            if !anything_new && !self.full {
+                self.rows.push(Row::Note(Note::NothingNew));
+                self.rows.push(Row::Spacer);
+                return;
+            }
+        }
 
         // Commented lines are always visible.
         let mut windows = self.windows.clone();
@@ -308,7 +375,13 @@ impl DocFile {
                 }
             }
         }
-        let segs = segments(lines, CONTEXT, &windows, self.full);
+        let segs = segments_by(
+            lines.len(),
+            |e| lines[e].kind != LineKind::Context && !seen_entry[e],
+            CONTEXT,
+            &windows,
+            self.full,
+        );
         let (mut seen, mut before) = (0usize, (0u32, 0u32));
         let mut next_hidden = 0u32;
         for (s, seg) in segs.iter().enumerate() {
@@ -324,18 +397,48 @@ impl DocFile {
             self.headers.push(hunk(lines, seg.clone(), before).header());
             self.rows.push(Row::Hunk { seg: s as u32 });
             let first_new_row = self.rows.len();
-            if opts.split {
-                push_split_rows(&mut self.rows, text, lines, seg.clone());
-            } else {
-                for e in seg.clone() {
-                    self.rows.push(Row::Line(e as u32));
-                    if ends_without_newline(text, &lines[e]) {
-                        self.rows.push(Row::NoNewline);
+            // Split the segment around folded blocks.
+            let mut at = seg.start;
+            let folds: Vec<(usize, &Block, FoldReason)> = self
+                .blocks
+                .iter()
+                .enumerate()
+                .filter_map(|(i, b)| fold_of[i].map(|r| (i, b, r)))
+                .filter(|(_, b, _)| {
+                    (b.entries.start as usize) < seg.end && b.entries.end as usize > seg.start
+                })
+                .collect();
+            let mut pieces: Vec<Piece> = Vec::new();
+            for (i, b, reason) in folds {
+                let (bs, be) = (
+                    (b.entries.start as usize).max(seg.start),
+                    (b.entries.end as usize).min(seg.end),
+                );
+                if bs > at {
+                    pieces.push((at..bs, None));
+                }
+                pieces.push((bs..be, Some((i as u32, reason))));
+                at = be;
+            }
+            if at < seg.end {
+                pieces.push((at..seg.end, None));
+            }
+            for (range, fold) in pieces {
+                if let Some((block, reason)) = fold {
+                    self.rows.push(Row::Fold { block, reason });
+                } else if opts.split {
+                    push_split_rows(&mut self.rows, text, lines, range);
+                } else {
+                    for e in range {
+                        self.rows.push(Row::Line(e as u32));
+                        if ends_without_newline(text, &lines[e]) {
+                            self.rows.push(Row::NoNewline);
+                        }
                     }
                 }
             }
-            if !self.by_line.is_empty() {
-                self.insert_threads(first_new_row, anns, open, wrap, opts.whitespace);
+            if !self.by_line.is_empty() || !extras.moves.is_empty() {
+                self.insert_extras(first_new_row, extras, wrap, opts.whitespace);
             }
             next_hidden = seg.end as u32;
         }
@@ -348,16 +451,17 @@ impl DocFile {
         self.rows.push(Row::Spacer);
     }
 
-    /// Inserts open line annotations after the rows (from `from`) showing
-    /// their lines.
-    fn insert_threads(
+    /// After the rows from `from`: inserts "moved from/to" rows after the
+    /// first line of each moved block, and open line annotations after the
+    /// rows showing their lines.
+    fn insert_extras(
         &mut self,
         from: usize,
-        anns: &[(u32, &Annotation)],
-        open: &dyn Fn(&Annotation) -> bool,
+        extras: &Extras<'_>,
         wrap: usize,
         whitespace: Whitespace,
     ) {
+        let (anns, open) = (extras.anns, extras.open);
         let tail = self.rows.split_off(from);
         for row in tail {
             self.rows.push(row);
@@ -366,6 +470,14 @@ impl DocFile {
                 Row::Split { left, right } => left.into_iter().chain(right).collect(),
                 _ => continue,
             };
+            for (mv, range, is_from) in extras.moves {
+                if entries.contains(&range.start) {
+                    self.rows.push(Row::Moved {
+                        mv: *mv,
+                        from: *is_from,
+                    });
+                }
+            }
             let mut here: Vec<u32> = Vec::new();
             for e in entries {
                 for pos in self.entry_lines(e, whitespace) {
@@ -473,53 +585,6 @@ fn push_split_rows(rows: &mut Vec<Row>, text: &TextDiff, lines: &[DiffLine], seg
     }
 }
 
-/// Change blocks with content hashes.
-fn blocks(path: &str, text: &TextDiff, lines: &[DiffLine]) -> Vec<Block> {
-    let mut out = Vec::new();
-    let mut e = 0;
-    while e < lines.len() {
-        if lines[e].kind == LineKind::Context {
-            e += 1;
-            continue;
-        }
-        let start = e;
-        let mut hasher = Fnv::new();
-        hasher.write(path.as_bytes());
-        while e < lines.len() && lines[e].kind != LineKind::Context {
-            let sign: &[u8] = if lines[e].kind == LineKind::Added {
-                b"\n+"
-            } else {
-                b"\n-"
-            };
-            hasher.write(sign);
-            hasher.write(text.text(&lines[e]).trim_end().as_bytes());
-            e += 1;
-        }
-        out.push(Block {
-            entries: start as u32..e as u32,
-            hash: format!("{:016x}", hasher.0),
-        });
-    }
-    out
-}
-
-/// FNV-1a: stable across builds and platforms (unlike `DefaultHasher`),
-/// which matters because these hashes are persisted.
-struct Fnv(u64);
-
-impl Fnv {
-    fn new() -> Self {
-        Self(0xcbf2_9ce4_8422_2325)
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        for b in bytes {
-            self.0 ^= u64::from(*b);
-            self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
-        }
-    }
-}
-
 /// A position in the document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Pos {
@@ -547,6 +612,12 @@ pub struct Doc {
     thread_open: HashMap<AnnotationKey, bool>,
     /// Commentable ranges from GitHub's patches, by path.
     patches: HashMap<String, Commentable>,
+    /// Moved blocks (computed on the exact alignment).
+    pub moves: Vec<Move>,
+    /// Block hashes of the diff at your last review.
+    pub since: Option<HashSet<String>>,
+    /// Show only what changed since your last review.
+    pub since_active: bool,
     starts: Vec<usize>,
     total: usize,
 }
@@ -568,6 +639,7 @@ impl Doc {
                     rows: Vec::new(),
                     headers: Vec::new(),
                     blocks: Vec::new(),
+                    unfolded: HashSet::new(),
                     thread_rows: Vec::new(),
                     by_line: HashMap::new(),
                     local_commentable: None,
@@ -602,10 +674,27 @@ impl Doc {
             opts,
             annotations,
             thread_open,
+            moves,
+            since,
+            since_active,
             ..
         } = self;
         let file = &mut files[index];
         let path = file.meta.path().to_owned();
+        // Moves index the exact alignment.
+        let file_moves: Vec<(u32, Range<u32>, bool)> = if opts.whitespace == Whitespace::Exact {
+            moves
+                .iter()
+                .enumerate()
+                .flat_map(|(i, m)| {
+                    let from = (m.from.0 == index).then(|| (i as u32, m.from.1.clone(), true));
+                    let to = (m.to.0 == index).then(|| (i as u32, m.to.1.clone(), false));
+                    from.into_iter().chain(to)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let anns: Vec<(u32, &Annotation)> = annotations
             .iter()
             .enumerate()
@@ -618,7 +707,94 @@ impl Doc {
                 .copied()
                 .unwrap_or_else(|| a.open_by_default())
         };
-        file.rebuild(*opts, &anns, &open);
+        let extras = Extras {
+            anns: &anns,
+            open: &open,
+            since: since.as_ref().filter(|_| *since_active),
+            moves: &file_moves,
+        };
+        file.rebuild(*opts, &extras);
+    }
+
+    pub fn set_moves(&mut self, moves: Vec<Move>) {
+        self.moves = moves;
+        self.rebuild_all();
+    }
+
+    /// The move covering alignment entry `e` of `file`: `(index, removed side)`.
+    pub fn move_at_entry(&self, file: usize, e: u32) -> Option<(u32, bool)> {
+        if self.opts.whitespace != Whitespace::Exact {
+            return None;
+        }
+        self.moves.iter().enumerate().find_map(|(i, m)| {
+            if m.from.0 == file && m.from.1.contains(&e) {
+                Some((i as u32, true))
+            } else if m.to.0 == file && m.to.1.contains(&e) {
+                Some((i as u32, false))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// The move under the cursor: on a "moved" row or inside a moved block.
+    pub fn move_at(&self, pos: Pos) -> Option<(u32, bool)> {
+        match self.row(pos)? {
+            Row::Moved { mv, from } => Some((mv, from)),
+            Row::Line(e) => self.move_at_entry(pos.file, e),
+            Row::Split { left, right } => left
+                .and_then(|e| self.move_at_entry(pos.file, e))
+                .or_else(|| right.and_then(|e| self.move_at_entry(pos.file, e))),
+            _ => None,
+        }
+    }
+
+    /// The first row of the other end of move `mv`.
+    pub fn move_target(&self, mv: u32, from_side: bool) -> Option<Pos> {
+        let m = self.moves.get(mv as usize)?;
+        let (file, entries) = if from_side { &m.to } else { &m.from };
+        let rows = self.files.get(*file)?.rows();
+        let row = rows.iter().position(|r| match r {
+            Row::Line(e) => *e == entries.start,
+            Row::Split { left, right } => {
+                *left == Some(entries.start) || *right == Some(entries.start)
+            }
+            _ => false,
+        })?;
+        Some(Pos { file: *file, row })
+    }
+
+    /// Enables or disables "since my last review" (once hashes are known).
+    pub fn set_since(&mut self, hashes: Option<HashSet<String>>, active: bool) {
+        self.since = hashes;
+        self.since_active = active && self.since.is_some();
+        self.rebuild_all();
+    }
+
+    /// Opens a folded block (formatting-only or seen).
+    pub fn unfold(&mut self, pos: Pos) -> bool {
+        let Some(Row::Fold { block, .. }) = self.row(pos) else {
+            return false;
+        };
+        let Some(file) = self.files.get_mut(pos.file) else {
+            return false;
+        };
+        let Some(start) = file.blocks.get(block as usize).map(|b| b.entries.start) else {
+            return false;
+        };
+        file.unfolded.insert(start);
+        self.rebuild(pos.file);
+        true
+    }
+
+    /// Whether the file has changes not in the diff at your last review.
+    pub fn has_new_changes(&self, file: usize) -> bool {
+        let Some(since) = &self.since else {
+            return true;
+        };
+        self.files
+            .get(file)
+            .is_some_and(|f| f.blocks.iter().any(|b| !since.contains(&b.hash)))
     }
 
     pub fn set_annotations(&mut self, annotations: Vec<Annotation>) {
@@ -1188,6 +1364,8 @@ mod tests {
                 Row::Split { .. } => 'S',
                 Row::NoNewline => '\\',
                 Row::Thread(_) => 'T',
+                Row::Fold { .. } => 'F',
+                Row::Moved { .. } => 'M',
                 Row::Spacer => '_',
             })
             .collect()
@@ -1585,6 +1763,143 @@ mod tests {
             );
             let c = doc.commentable(0).unwrap();
             assert!(c.is_commentable(pos));
+        }
+    }
+
+    mod better {
+        use super::*;
+        use ghtui_diff::moves::detect_moves;
+
+        #[test]
+        fn formatting_only_blocks_fold_and_unfold() {
+            let mut doc = Doc::new(vec![changed("x.rs")], &HashSet::new());
+            doc.set_diff(
+                0,
+                compute(
+                    "x.rs",
+                    "a\nfoo(\n    x,\n    y\n);\nb\n",
+                    "a\nfoo(x, y);\nb\n",
+                ),
+            );
+            assert_eq!(
+                kinds(&doc.files[0]),
+                "H@LF L_".replace(' ', "L").replace("LFLL", "LFL")
+            );
+            let fold = doc.files[0]
+                .rows()
+                .iter()
+                .position(|r| {
+                    matches!(
+                        r,
+                        Row::Fold {
+                            reason: FoldReason::Formatting,
+                            ..
+                        }
+                    )
+                })
+                .unwrap();
+            assert!(doc.unfold(Pos { file: 0, row: fold }));
+            assert!(!kinds(&doc.files[0]).contains('F'));
+        }
+
+        #[test]
+        fn since_review_shows_only_new_changes() {
+            let mut doc = doc();
+            // At the last review, only the change at line 5 existed.
+            let mut old = Doc::new(vec![changed("a.txt")], &HashSet::new());
+            let base = numbered(60);
+            old.set_diff(
+                0,
+                compute("a.txt", &base, &base.replace("line 5\n", "five\n")),
+            );
+            let seen: HashSet<String> = old.files[0]
+                .blocks()
+                .iter()
+                .map(|b| b.hash.clone())
+                .collect();
+
+            doc.set_since(Some(seen), true);
+            let rows = kinds(&doc.files[0]);
+            // The old change (line 5) is gone from view; the new one (45) shows.
+            let text = doc.files[0].text().unwrap().clone();
+            let shows = |n: u32| {
+                doc.files[0]
+                    .rows()
+                    .iter()
+                    .any(|r| matches!(r, Row::Line(e) if text.lines[*e as usize].new == Some(n)))
+            };
+            assert!(shows(45), "{rows}");
+            assert!(!shows(5), "{rows}");
+            assert!(doc.has_new_changes(0));
+
+            // A file with only seen changes says so.
+            let only_seen = old.files[0]
+                .blocks()
+                .iter()
+                .map(|b| b.hash.clone())
+                .collect();
+            let mut same = Doc::new(vec![changed("a.txt")], &HashSet::new());
+            same.set_diff(
+                0,
+                compute("a.txt", &base, &base.replace("line 5\n", "five\n")),
+            );
+            same.set_since(Some(only_seen), true);
+            assert_eq!(same.files[0].rows()[1], Row::Note(Note::NothingNew));
+            same.set_since(same.since.clone(), false);
+            assert_ne!(same.files[0].rows()[1], Row::Note(Note::NothingNew));
+        }
+
+        #[test]
+        fn moved_blocks_get_rows_and_jump_targets() {
+            let block = "fn helper(x: u32) -> u32 {\n    let y = x * 2;\n    y + 1\n}\n";
+            let mut doc = Doc::new(vec![changed("a.rs"), changed("b.rs")], &HashSet::new());
+            doc.set_diff(
+                0,
+                compute(
+                    "a.rs",
+                    &format!("fn main() {{}}\n{block}"),
+                    "fn main() {}\n",
+                ),
+            );
+            doc.set_diff(1, compute("b.rs", "// b\n", &format!("// b\n{block}")));
+            let moves = {
+                let texts: Vec<_> = doc
+                    .files
+                    .iter()
+                    .map(|f| f.text().unwrap().clone())
+                    .collect();
+                detect_moves(&[
+                    (0, &texts[0], texts[0].lines(Whitespace::Exact)),
+                    (1, &texts[1], texts[1].lines(Whitespace::Exact)),
+                ])
+            };
+            assert_eq!(moves.len(), 1);
+            doc.set_moves(moves);
+            let moved_from = doc.files[0]
+                .rows()
+                .iter()
+                .position(|r| matches!(r, Row::Moved { from: true, .. }))
+                .unwrap();
+            let moved_to = doc.files[1]
+                .rows()
+                .iter()
+                .position(|r| matches!(r, Row::Moved { from: false, .. }))
+                .unwrap();
+            let (mv, from) = doc
+                .move_at(Pos {
+                    file: 0,
+                    row: moved_from,
+                })
+                .unwrap();
+            let target = doc.move_target(mv, from).unwrap();
+            assert_eq!(target.file, 1);
+            assert_eq!(target.row + 1, moved_to, "lands on the block's first line");
+            // In whitespace-insensitive mode moves don't apply.
+            doc.set_options(ViewOptions {
+                whitespace: Whitespace::Ignore,
+                ..ViewOptions::default()
+            });
+            assert!(!kinds(&doc.files[0]).contains('M'));
         }
     }
 }

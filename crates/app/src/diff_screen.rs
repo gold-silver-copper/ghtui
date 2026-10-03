@@ -78,6 +78,14 @@ impl DiffScreen {
     }
 }
 
+/// A commit range being viewed: label, from (exclusive), to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RangeView {
+    pub label: String,
+    pub from: String,
+    pub to: String,
+}
+
 /// Everything known about one PR's diff.
 #[derive(Debug, Default)]
 pub struct DiffState {
@@ -99,6 +107,17 @@ pub struct DiffState {
     pub mapped: HashMap<String, Option<u32>>,
     /// Outdated-thread mapping was requested.
     pub mapping_requested: bool,
+    /// Move detection was requested (once every file is diffed).
+    pub moves_requested: bool,
+    /// Head of your last submitted review on GitHub: `None` until asked,
+    /// `Some(None)` if there isn't one.
+    pub last_review: Option<Option<String>>,
+    /// "Since my last review" was asked for and is waiting on data.
+    pub since_requested: bool,
+    /// The PR's commits, oldest first: `(sha, subject)`.
+    pub commits: Vec<(String, String)>,
+    /// Showing a sub-range of commits instead of the whole PR.
+    pub range: Option<RangeView>,
     /// Files we've already asked the job to prioritize.
     requested: HashSet<usize>,
 }
@@ -130,6 +149,40 @@ impl DiffState {
         if self.doc.ready_count() == self.doc.files.len() {
             self.progress = None;
         }
+    }
+
+    /// Starts over for a different commit range, keeping threads, drafts,
+    /// viewed state and commits.
+    pub fn restart(&mut self, range: Option<RangeView>) {
+        let doc = Doc::default();
+        self.doc = doc;
+        self.tree.clear();
+        self.refs = None;
+        self.progress = Some("Preparing".into());
+        self.error = None;
+        self.listed = false;
+        self.requested.clear();
+        self.moves_requested = false;
+        self.mapping_requested = false;
+        self.since_requested = false;
+        self.range = range;
+    }
+
+    /// Every file's diff, once all have arrived and moves haven't been
+    /// looked for yet.
+    pub fn take_move_inputs(&mut self) -> Option<Vec<(usize, Arc<FileDiff>)>> {
+        if self.moves_requested || !self.listed || self.doc.ready_count() < self.doc.files.len() {
+            return None;
+        }
+        self.moves_requested = true;
+        Some(
+            self.doc
+                .files
+                .iter()
+                .enumerate()
+                .filter_map(|(i, f)| f.diff.clone().map(|d| (i, d)))
+                .collect(),
+        )
     }
 
     pub fn set_viewed_states(&mut self, viewed: ViewedFiles) {
@@ -378,7 +431,21 @@ pub fn apply(
             let file = screen.cursor.file;
             preserving_position(screen, &mut state.doc, |doc| doc.toggle_full(file));
         }
+        Action::JumpMove => match state.doc.move_at(screen.cursor) {
+            Some((mv, from)) => {
+                if let Some(pos) = state.doc.move_target(mv, from) {
+                    screen.cursor = pos;
+                }
+            }
+            None => *notice = Some(Notice::Info("Not on moved code".into())),
+        },
         Action::Open => match state.doc.row(screen.cursor) {
+            Some(Row::Fold { .. }) => {
+                let pos = screen.cursor;
+                preserving_position(screen, &mut state.doc, |doc| {
+                    doc.unfold(pos);
+                });
+            }
             Some(Row::Gap { .. }) => {
                 let pos = screen.cursor;
                 preserving_position(screen, &mut state.doc, |doc| doc.expand(pos));

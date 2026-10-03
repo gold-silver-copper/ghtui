@@ -5,15 +5,19 @@ replace the GitHub website for daily use, built around a pull request diff
 viewer that's better than GitHub's. The look is flat Material 3 adapted to
 the terminal.
 
-**Status: milestones M0–M3.** You can browse your open pull requests and
+**Status: milestones M0–M4.** You can browse your open pull requests and
 review requests, open any pull request's overview, and review its diff. The
 diff is computed locally from git and syntax-highlighted, unified or split,
 with expandable context, a full-file mode, whitespace-insensitive comparison,
 search, a fuzzy file finder, "viewed" synced with GitHub, and local per-change
 "reviewed" marks. Review threads show inline. You can reply, resolve, write
 single- and multi-line comments and suggested changes, and submit a review as
-Comment, Approve or Request changes. Next: the "better than GitHub" features
-(M4).
+Comment, Approve or Request changes. Beyond what GitHub shows, ghtui
+highlights changed tokens within lines, marks moved code, folds
+formatting-only changes, shows only what changed since your last review
+(even across force-pushes and rebases), and lets you view any commit or
+commit range. M5 (structural diffs, code navigation, the rest of GitHub) is
+planned but not started.
 
 ## Install
 
@@ -107,6 +111,9 @@ app for this list, generated from your actual keymap.
 | `R`             | Resolve / unresolve the thread                                                |
 | `D`             | Delete the draft comment                                                      |
 | `gr`            | Submit your review (Comment / Approve / Request changes)                      |
+| `gl`            | Only changes since your last review (toggle)                                  |
+| `gm`            | Jump to the other end of moved code                                           |
+| `gc`            | Choose commits: all changes, since your review, one commit, or a range        |
 
 In the comment editor: `<C-s>` adds the comment to your review (or posts a
 reply), `<C-e>` continues in `$EDITOR`, and `Esc` cancels (press it twice if
@@ -149,7 +156,7 @@ Action names: `down`, `up`, `half_page_down`, `half_page_up`, `top`,
 `next_unviewed`, `mark_reviewed`, `search`, `search_next`, `search_prev`,
 `find_file`, `comment`, `visual_lines`, `suggest`, `reply`, `resolve`,
 `delete_draft`, `file_comment`, `submit_review`, `next_thread`,
-`prev_thread`. A binding that duplicates another, or is a prefix
+`prev_thread`, `since_review`, `jump_move`, `pick_commits`. A binding that duplicates another, or is a prefix
 of another (`g` next to `gg`), is rejected at startup.
 
 ## Theming
@@ -260,6 +267,32 @@ maximal run of changed lines). They're stored in the cache, keyed by a hash of
 the file path and the block's changed lines, so a mark follows its change when
 line numbers shift and clears when the change is edited.
 
+## Beyond GitHub's diff
+
+- **Changed tokens within lines** get a stronger tint. Lines are split at
+  word and syntax-token boundaries and diffed token by token. A removed line
+  is paired with the most similar added line in its block (character-bigram
+  similarity, in order), so an edit finds its counterpart even when lines
+  were added or removed around it. Lines that mostly changed get no emphasis.
+- **Moved code** (like `git diff --color-moved`): a run of at least 3
+  removed lines (30+ characters) that reappears as added lines, in the same
+  file or another, ignoring indentation. It's shown in the tertiary tint, with
+  "moved to/from path:line" and `gm` to jump between the two ends.
+- **Formatting-only changes** (removed and added text identical once
+  whitespace and line breaks are ignored) fold into one row. `<Enter>` shows
+  them.
+- **Changes since your last review** (`gl`). The reviewed head comes from
+  your latest submitted review on GitHub, or ghtui's own record. ghtui
+  rebuilds the PR's diff as it was at that head (fetching the commit by SHA
+  if it was force-pushed away) and compares change blocks by content hash.
+  A change you already saw stays hidden however lines shifted, and changes
+  that came from rebasing onto a newer base were never in either diff, so
+  they don't show up. Seen blocks next to new ones fold into one row; files
+  with nothing new say so.
+- **Commits** (`gc`): view one commit, or mark a start with Space and pick
+  an end for a range. Comments need the whole PR (their line numbers anchor
+  there), so commenting is off in a range view.
+
 ## Reviewing
 
 - **Anchoring.** Comments are anchored by file path, line number and side
@@ -366,6 +399,10 @@ Performance targets, as timing tests
   matched characters.
 - Expansion windows reset when you toggle whitespace mode, because they
   index the alignment that changed.
+- Moved code is detected on the exact comparison only, not while ignoring
+  whitespace.
+- "Since your last review" compares change blocks. If a block you reviewed
+  was later edited, the whole block counts as new, not just the edited line.
 - Markdown highlighting covers block structure only (no inline emphasis or
   code fences).
 - First paint from cache is about 85ms on macOS, measured in tmux. About 40–80ms of that is

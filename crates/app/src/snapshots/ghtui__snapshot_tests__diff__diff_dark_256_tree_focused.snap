@@ -115,6 +115,8 @@ Buffer {
         x: 39, y: 6, fg: Indexed(86), bg: Indexed(235), underline: Reset, modifier: BOLD,
         x: 40, y: 6, fg: Indexed(254), bg: Indexed(235), underline: Reset, modifier: NONE,
         x: 41, y: 6, fg: Indexed(252), bg: Indexed(235), underline: Reset, modifier: ITALIC,
+        x: 52, y: 6, fg: Indexed(252), bg: Indexed(237), underline: Reset, modifier: ITALIC,
+        x: 58, y: 6, fg: Indexed(252), bg: Indexed(235), underline: Reset, modifier: ITALIC,
         x: 59, y: 6, fg: Indexed(254), bg: Indexed(235), underline: Reset, modifier: NONE,
         x: 0, y: 7, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 3, y: 7, fg: Indexed(189), bg: Indexed(234), underline: Reset, modifier: NONE,

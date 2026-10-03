@@ -219,6 +219,27 @@ impl Repo {
         })
     }
 
+    pub async fn merge_base(&self, a: &str, b: &str) -> Result<String, GitError> {
+        Ok(self.run(&["merge-base", a, b]).await?.trim().to_owned())
+    }
+
+    /// Commits in `from..to`, oldest first: `(sha, subject)`.
+    pub async fn commits(&self, from: &str, to: &str) -> Result<Vec<(String, String)>, GitError> {
+        let out = self
+            .run(&[
+                "log",
+                "--reverse",
+                "--format=%H%x1f%s",
+                &format!("{from}..{to}"),
+            ])
+            .await?;
+        Ok(out
+            .lines()
+            .filter_map(|l| l.split_once('\u{1f}'))
+            .map(|(sha, subject)| (sha.to_owned(), subject.to_owned()))
+            .collect())
+    }
+
     pub async fn rev_parse(&self, rev: &str) -> Result<String, GitError> {
         Ok(self
             .run(&[

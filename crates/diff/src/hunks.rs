@@ -126,35 +126,53 @@ pub fn segments(
     windows: &[std::ops::Range<u32>],
     full: bool,
 ) -> Vec<std::ops::Range<usize>> {
-    if lines.is_empty() {
+    segments_by(
+        lines.len(),
+        |i| lines[i].kind != LineKind::Context,
+        context,
+        windows,
+        full,
+    )
+}
+
+/// [`segments`] with the caller deciding which lines count as changes
+/// (e.g. only changes made since a previous review).
+#[allow(clippy::single_range_in_vec_init, reason = "a list of one range")]
+pub fn segments_by(
+    len: usize,
+    is_change: impl Fn(usize) -> bool,
+    context: u32,
+    windows: &[std::ops::Range<u32>],
+    full: bool,
+) -> Vec<std::ops::Range<usize>> {
+    if len == 0 {
         return Vec::new();
     }
     if full {
-        return vec![0..lines.len()];
+        return vec![0..len];
     }
     let context = context as usize;
-    let mut visible = vec![false; lines.len()];
-    // Distance to the nearest change, from both directions.
+    let mut visible = vec![false; len];
     let mut since_change = usize::MAX;
-    for (i, line) in lines.iter().enumerate() {
-        since_change = if line.kind == LineKind::Context {
-            since_change.saturating_add(1)
-        } else {
+    for (i, v) in visible.iter_mut().enumerate() {
+        since_change = if is_change(i) {
             0
+        } else {
+            since_change.saturating_add(1)
         };
-        visible[i] = since_change <= context;
+        *v = since_change <= context;
     }
     let mut until_change = usize::MAX;
-    for (i, line) in lines.iter().enumerate().rev() {
-        until_change = if line.kind == LineKind::Context {
-            until_change.saturating_add(1)
-        } else {
+    for i in (0..len).rev() {
+        until_change = if is_change(i) {
             0
+        } else {
+            until_change.saturating_add(1)
         };
         visible[i] |= until_change <= context;
     }
     for window in windows {
-        let end = (window.end as usize).min(lines.len());
+        let end = (window.end as usize).min(len);
         for v in &mut visible[(window.start as usize).min(end)..end] {
             *v = true;
         }
@@ -172,7 +190,7 @@ pub fn segments(
         }
     }
     if let Some(s) = start {
-        out.push(s..lines.len());
+        out.push(s..len);
     }
     out
 }

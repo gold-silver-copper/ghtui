@@ -48,10 +48,13 @@ pub enum Action {
     SubmitReview,
     NextThread,
     PrevThread,
+    ToggleSinceReview,
+    JumpMove,
+    PickCommits,
 }
 
 impl Action {
-    pub const ALL: [Action; 41] = [
+    pub const ALL: [Action; 44] = [
         Action::Down,
         Action::Up,
         Action::HalfPageDown,
@@ -93,6 +96,9 @@ impl Action {
         Action::SubmitReview,
         Action::NextThread,
         Action::PrevThread,
+        Action::ToggleSinceReview,
+        Action::JumpMove,
+        Action::PickCommits,
     ];
 
     /// The name used in the `[keys]` config table.
@@ -139,6 +145,9 @@ impl Action {
             Action::SubmitReview => "submit_review",
             Action::NextThread => "next_thread",
             Action::PrevThread => "prev_thread",
+            Action::ToggleSinceReview => "since_review",
+            Action::JumpMove => "jump_move",
+            Action::PickCommits => "pick_commits",
         }
     }
 
@@ -185,6 +194,9 @@ impl Action {
             Action::SubmitReview => "Submit your review",
             Action::NextThread => "Next unresolved thread",
             Action::PrevThread => "Previous unresolved thread",
+            Action::ToggleSinceReview => "Show only changes since your last review",
+            Action::JumpMove => "Jump to the other end of moved code",
+            Action::PickCommits => "Choose commits to view",
         }
     }
 
@@ -231,6 +243,9 @@ impl Action {
             Action::SubmitReview => &["gr"],
             Action::NextThread => &["]c"],
             Action::PrevThread => &["[c"],
+            Action::ToggleSinceReview => &["gl"],
+            Action::JumpMove => &["gm"],
+            Action::PickCommits => &["gc"],
         }
     }
 

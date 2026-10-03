@@ -486,6 +486,36 @@ impl GitHub {
         Ok((pr_node.id.into_inner(), review))
     }
 
+    /// The head commit of `login`'s latest submitted review, if any.
+    pub async fn last_review_commit(
+        &self,
+        pr: &PrRef,
+        login: &str,
+    ) -> Result<Option<String>, ApiError> {
+        use cynic::QueryBuilder;
+        let op = queries::LastReviewQuery::build(queries::LastReviewVariables {
+            owner: pr.repo.owner.clone(),
+            name: pr.repo.name.clone(),
+            number: pr_number(pr)?,
+            login: login.to_owned(),
+        });
+        let reviews = self
+            .graphql(op)
+            .await?
+            .repository
+            .and_then(|r| r.pull_request)
+            .and_then(|p| p.reviews)
+            .and_then(|r| r.nodes)
+            .unwrap_or_default();
+        Ok(reviews
+            .into_iter()
+            .flatten()
+            .rev()
+            .find(|r| r.state != queries::ReviewState::Pending)
+            .and_then(|r| r.commit)
+            .map(|c| c.oid.0))
+    }
+
     /// Starts a pending review on `commit`.
     pub async fn start_review(
         &self,

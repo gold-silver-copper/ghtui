@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthChar;
 use ghtui_diff::anchor::LinePos;
 
 use crate::annotations::{Annotation, ThreadRowKind};
-use crate::diff_doc::{Doc, DocFile, Note, Pos, Row, Viewed};
+use crate::diff_doc::{Doc, DocFile, FoldReason, Note, Pos, Row, Viewed};
 use crate::{Ctx, PAD_X, chips, fill, text, time};
 
 const PANE: Bg = Bg::Surface;
@@ -41,6 +41,7 @@ pub fn syntax_role(kind: TokenKind) -> Syntax {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Keys<'a> {
     pub show: &'a str,
+    pub jump: &'a str,
     pub expand: &'a str,
     pub viewed: &'a str,
     pub reply: &'a str,
@@ -110,9 +111,14 @@ impl DiffView<'_> {
                 Line::from(vec![
                     Span::styled(
                         format!(
-                            "{}⋯ {n} unchanged line{} · ",
+                            "{}⋯ {n} {} · ",
                             " ".repeat(indent),
-                            if n == 1 { "" } else { "s" }
+                            match (self.doc.since_active, n == 1) {
+                                (true, true) => "line without new changes",
+                                (true, false) => "lines without new changes",
+                                (false, true) => "unchanged line",
+                                (false, false) => "unchanged lines",
+                            }
                         ),
                         theme.meta(quiet_bg),
                     ),
@@ -138,6 +144,45 @@ impl DiffView<'_> {
                 self.split(pos.file, file, left, right, cursor, area, buf)
             }
             Row::Thread(t) => self.thread_row(file, t, cursor, area, buf),
+            Row::Fold { block, reason } => {
+                fill(buf, area, theme, quiet_bg);
+                let lines = file
+                    .blocks()
+                    .get(block as usize)
+                    .map_or(0, |b| b.entries.len());
+                let what = match reason {
+                    FoldReason::Formatting => "Formatting-only change",
+                    FoldReason::Seen => "Unchanged since your review",
+                };
+                Line::from(vec![
+                    Span::styled(
+                        format!("{}⋯ {what}, {lines} lines · ", " ".repeat(indent)),
+                        theme.meta(quiet_bg),
+                    ),
+                    Span::styled(
+                        self.keys.show.to_owned(),
+                        theme.accent(quiet_bg).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" to show", theme.meta(quiet_bg)),
+                ])
+                .render(area, buf);
+            }
+            Row::Moved { mv, from } => {
+                fill(buf, area, theme, quiet_bg);
+                let text = self.move_label(mv, from);
+                Line::from(vec![
+                    Span::styled(
+                        format!("{}↳ {text} · ", " ".repeat(indent)),
+                        theme.style(Fg::Tertiary, quiet_bg),
+                    ),
+                    Span::styled(
+                        self.keys.jump.to_owned(),
+                        theme.accent(quiet_bg).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" to jump", theme.meta(quiet_bg)),
+                ])
+                .render(area, buf);
+            }
             Row::NoNewline => {
                 fill(buf, area, theme, quiet_bg);
                 Span::styled(
@@ -204,6 +249,18 @@ impl DiffView<'_> {
         }
         if file.generated {
             chip("Generated".into(), Bg::SecondaryContainer);
+        }
+        if self.doc.since_active
+            && file.diff.is_some()
+            && self.doc.has_new_changes(
+                self.doc
+                    .files
+                    .iter()
+                    .position(|f| std::ptr::eq(f, file))
+                    .unwrap_or(0),
+            )
+        {
+            chip("New since your review".into(), Bg::PrimaryContainer);
         }
         if file.full {
             chip("Full file".into(), Bg::SecondaryContainer);
@@ -289,6 +346,10 @@ impl DiffView<'_> {
             (Note::Error, Some(Content::Error(message))) => {
                 (format!("Couldn't load this file: {message}"), Fg::Error)
             }
+            (Note::NothingNew, _) => (
+                "Nothing new since your last review.".to_owned(),
+                Fg::OnSurfaceVariant,
+            ),
             (Note::NoChanges, _) => {
                 let meta = &file.meta;
                 let whitespace_only = file
@@ -320,6 +381,30 @@ impl DiffView<'_> {
             theme.style(fg, bg),
         )
         .render(inner, buf);
+    }
+
+    /// "moved from path:line" / "moved to path:line".
+    fn move_label(&self, mv: u32, from: bool) -> String {
+        let Some(m) = self.doc.moves.get(mv as usize) else {
+            return String::new();
+        };
+        let (file, entries) = if from { &m.to } else { &m.from };
+        let Some(f) = self.doc.files.get(*file) else {
+            return String::new();
+        };
+        let line = f.text().and_then(|t| {
+            let l = t.lines.get(entries.start as usize)?;
+            if from { l.new } else { l.old }
+        });
+        let place = match line {
+            Some(n) => format!("{}:{n}", f.meta.path()),
+            None => f.meta.path().to_owned(),
+        };
+        if from {
+            format!("moved to {place}")
+        } else {
+            format!("moved from {place}")
+        }
     }
 
     fn selected(&self, pos: Pos) -> bool {
@@ -388,7 +473,13 @@ impl DiffView<'_> {
         let Some(line) = text.lines(self.doc.opts.whitespace).get(e as usize) else {
             return;
         };
-        let diff_bg = diff_bg(line.kind);
+        let moved = self.doc.move_at_entry(file_index, e).is_some();
+        let diff_bg = if moved {
+            DiffBg::Moved
+        } else {
+            diff_bg(line.kind)
+        };
+        let emphasis = self.emphasis(text, e, moved);
         let bg = line_bg(diff_bg, cursor);
         fill(buf, area, theme, bg);
         let width = file.number_width();
@@ -418,8 +509,19 @@ impl DiffView<'_> {
         ];
         let used: usize = spans.iter().map(Span::width).sum();
         let room = usize::from(area.width).saturating_sub(used + 1);
-        spans.extend(self.code(text, line, diff_bg, cursor, room));
+        spans.extend(self.code(text, line, diff_bg, cursor, room, emphasis));
         Line::from(spans).render(area, buf);
+    }
+
+    /// Changed-token ranges for entry `e` (none on moved lines: the whole
+    /// block is the change).
+    fn emphasis<'t>(&self, text: &'t TextDiff, e: u32, moved: bool) -> &'t [(u32, u32)] {
+        if moved {
+            return &[];
+        }
+        text.intraline(self.doc.opts.whitespace)
+            .get(&e)
+            .map_or(&[], Vec::as_slice)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -440,7 +542,7 @@ impl DiffView<'_> {
         let half = area.width.saturating_sub(1) / 2;
         let halves = [
             (
-                left.and_then(|e| lines.get(e as usize)),
+                left.and_then(|e| lines.get(e as usize).map(|l| (e, l))),
                 Rect {
                     width: half,
                     ..area
@@ -448,7 +550,7 @@ impl DiffView<'_> {
                 true,
             ),
             (
-                right.and_then(|e| lines.get(e as usize)),
+                right.and_then(|e| lines.get(e as usize).map(|l| (e, l))),
                 Rect {
                     x: area.x + half + 1,
                     width: area.width.saturating_sub(half + 1),
@@ -458,8 +560,15 @@ impl DiffView<'_> {
             ),
         ];
         fill(buf, area, theme, line_bg(DiffBg::Context, cursor));
-        for (line, half_area, is_left) in halves {
-            let diff_bg = line.map_or(DiffBg::Context, |l| diff_bg(l.kind));
+        for (entry, half_area, is_left) in halves {
+            let moved = entry.is_some_and(|(e, _)| self.doc.move_at_entry(file_index, e).is_some());
+            let line = entry.map(|(_, l)| l);
+            let diff_bg = match line {
+                Some(_) if moved => DiffBg::Moved,
+                Some(l) => diff_bg(l.kind),
+                None => DiffBg::Context,
+            };
+            let emphasis = entry.map_or(&[][..], |(e, _)| self.emphasis(text, e, moved));
             let bg = line_bg(diff_bg, cursor);
             fill(buf, half_area, theme, bg);
             let mut spans = Vec::new();
@@ -487,7 +596,7 @@ impl DiffView<'_> {
             spans.push(Span::styled("  ", theme.body(bg)));
             let used: usize = spans.iter().map(Span::width).sum();
             let room = usize::from(half_area.width).saturating_sub(used + 1);
-            spans.extend(self.code(text, line, diff_bg, cursor, room));
+            spans.extend(self.code(text, line, diff_bg, cursor, room, emphasis));
             Line::from(spans).render(half_area, buf);
         }
     }
@@ -674,6 +783,7 @@ impl DiffView<'_> {
         diff_bg: DiffBg,
         cursor: bool,
         room: usize,
+        emphasis: &[(u32, u32)],
     ) -> Vec<Span<'static>> {
         let theme = self.ctx.theme;
         let bg = line_bg(diff_bg, cursor);
@@ -704,6 +814,7 @@ impl DiffView<'_> {
             diff_bg,
             cursor,
             room.saturating_sub(2),
+            emphasis,
         ));
         // Line endings only matter where they changed.
         if source.crlf[i] && line.kind != LineKind::Context {
@@ -742,6 +853,7 @@ fn number(n: Option<u32>, width: usize) -> String {
 
 /// Styled code, with tabs expanded and control characters made visible,
 /// cut to `room` columns.
+#[allow(clippy::too_many_arguments)]
 fn code_spans(
     ctx: Ctx<'_>,
     content: &str,
@@ -749,12 +861,19 @@ fn code_spans(
     diff_bg: DiffBg,
     cursor: bool,
     room: usize,
+    emphasis: &[(u32, u32)],
 ) -> Vec<Span<'static>> {
     let theme = ctx.theme;
     let bg = line_bg(diff_bg, cursor);
-    let style_for = |kind: Option<TokenKind>| -> Style {
+    // Changed tokens within a changed line get the stronger tint.
+    let strong = match diff_bg {
+        DiffBg::Added => line_bg(DiffBg::AddedToken, cursor),
+        DiffBg::Removed => line_bg(DiffBg::RemovedToken, cursor),
+        _ => bg,
+    };
+    let style_for = |kind: Option<TokenKind>, emphasized: bool| -> Style {
         let role = kind.map_or(Syntax::Default, syntax_role);
-        let style = theme.style(Fg::Syntax(role), bg);
+        let style = theme.style(Fg::Syntax(role), if emphasized { strong } else { bg });
         if role == Syntax::Comment {
             style.add_modifier(Modifier::ITALIC)
         } else {
@@ -779,10 +898,30 @@ fn code_spans(
     if at < content.len() {
         segments.push((at, content.len(), None));
     }
+    // Cut segments at emphasis boundaries.
+    let mut cut: Vec<(usize, usize, Option<TokenKind>, bool)> = Vec::new();
+    for (s, e, kind) in segments {
+        let mut bounds: Vec<usize> = vec![s, e];
+        for (a, b) in emphasis {
+            for x in [*a as usize, *b as usize] {
+                if x > s && x < e {
+                    bounds.push(x);
+                }
+            }
+        }
+        bounds.sort_unstable();
+        bounds.dedup();
+        for w in bounds.windows(2) {
+            let emph = emphasis
+                .iter()
+                .any(|(a, b)| (*a as usize) <= w[0] && w[1] <= (*b as usize));
+            cut.push((w[0], w[1], kind, emph));
+        }
+    }
 
     let mut out = Vec::new();
     let mut used = 0usize;
-    for (s, e, kind) in segments {
+    for (s, e, kind, emphasized) in cut {
         let Some(slice) = content.get(s..e) else {
             continue;
         };
@@ -805,7 +944,7 @@ fn code_spans(
             used += w;
         }
         if !piece.is_empty() {
-            out.push(Span::styled(piece, style_for(kind)));
+            out.push(Span::styled(piece, style_for(kind, emphasized)));
         }
         if truncated {
             out.push(Span::styled("…", theme.meta(bg)));

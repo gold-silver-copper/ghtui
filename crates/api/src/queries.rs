@@ -732,6 +732,72 @@ pub struct UnresolvePayload {
     pub thread: Option<ThreadId>,
 }
 
+// ---- the viewer's last review --------------------------------------------------
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct LastReviewVariables {
+    pub owner: String,
+    pub name: String,
+    pub number: i32,
+    pub login: String,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "LastReviewVariables"
+)]
+pub struct LastReviewQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepositoryWithReviews>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Repository",
+    schema_module = "schema",
+    variables = "LastReviewVariables"
+)]
+pub struct RepositoryWithReviews {
+    #[arguments(number: $number)]
+    pub pull_request: Option<PrReviews>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "PullRequest",
+    schema_module = "schema",
+    variables = "LastReviewVariables"
+)]
+pub struct PrReviews {
+    #[arguments(author: $login, last: 20)]
+    pub reviews: Option<ReviewCommitConnection>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestReviewConnection", schema_module = "schema")]
+pub struct ReviewCommitConnection {
+    pub nodes: Option<Vec<Option<ReviewCommit>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
+pub struct ReviewCommit {
+    pub state: ReviewState,
+    pub commit: Option<CommitOid>,
+}
+
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[cynic(graphql_type = "PullRequestReviewState", schema_module = "schema")]
+pub enum ReviewState {
+    Approved,
+    ChangesRequested,
+    Commented,
+    Dismissed,
+    Pending,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
