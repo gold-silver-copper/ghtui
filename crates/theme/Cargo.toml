@@ -1,0 +1,13 @@
+[package]
+name = "ghtui-theme"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+material-colors.workspace = true
+ratatui.workspace = true
+serde.workspace = true
+terminal-colorsaurus.workspace = true
+tracing.workspace = true

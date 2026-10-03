@@ -1,0 +1,70 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/gold-silver-copper/ghtui"
+
+[workspace.dependencies]
+ghtui-api = { path = "crates/api" }
+ghtui-schema = { path = "crates/schema" }
+ghtui-store = { path = "crates/store" }
+ghtui-git = { path = "crates/git" }
+ghtui-diff = { path = "crates/diff" }
+ghtui-theme = { path = "crates/theme" }
+ghtui-ui = { path = "crates/ui" }
+
+anyhow = "1.0.104"
+thiserror = "2.0.21"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "fs"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
+toml = "1.1.6"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2.5"
+clap = { version = "4.6.7", features = ["derive"] }
+url = "2.5.8"
+tempfile = "3.27.0"
+etcetera = "0.11.0"
+
+ratatui = "0.30.2"
+crossterm = "0.29.0"
+ratatui-textarea = "0.9.2"
+
+cynic = { version = "3.14.0", features = ["rkyv"] }
+cynic-codegen = { version = "3.14.0", features = ["rkyv"] }
+octocrab = { version = "0.54.2", default-features = false, features = ["follow-redirect", "retry", "rustls", "rustls-ring", "timeout", "tracing", "default-client", "jwt-rust-crypto"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
+http = "1"
+
+redb = "4.3.0"
+material-colors = "0.5.0"
+terminal-colorsaurus = "1.0.3"
+
+insta = "1.49.0"
+
+imara-diff = "0.2.0"
+tree-sitter = "0.27.0"
+tree-sitter-highlight = "0.27.0"
+tree-sitter-rust = "0.24.2"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-python = "0.25.0"
+tree-sitter-go = "0.25.0"
+tree-sitter-json = "0.24.8"
+tree-sitter-yaml = "0.7.2"
+tree-sitter-toml-ng = "0.7.0"
+tree-sitter-md = "0.5.3"
+tree-sitter-bash = "0.25.1"
+
+[profile.dev.package."*"]
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

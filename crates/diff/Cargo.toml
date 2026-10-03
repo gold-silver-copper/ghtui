@@ -1,0 +1,35 @@
+[package]
+name = "ghtui-diff"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+imara-diff.workspace = true
+tracing.workspace = true
+tree-sitter.workspace = true
+tree-sitter-highlight.workspace = true
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-javascript = { workspace = true, optional = true }
+tree-sitter-python = { workspace = true, optional = true }
+tree-sitter-go = { workspace = true, optional = true }
+tree-sitter-json = { workspace = true, optional = true }
+tree-sitter-yaml = { workspace = true, optional = true }
+tree-sitter-toml-ng = { workspace = true, optional = true }
+tree-sitter-md = { workspace = true, optional = true }
+tree-sitter-bash = { workspace = true, optional = true }
+
+[features]
+default = ["lang-rust", "lang-typescript", "lang-javascript", "lang-python", "lang-go", "lang-json", "lang-yaml", "lang-toml", "lang-markdown", "lang-bash"]
+lang-rust = ["dep:tree-sitter-rust"]
+lang-typescript = ["dep:tree-sitter-typescript"]
+lang-javascript = ["dep:tree-sitter-javascript"]
+lang-python = ["dep:tree-sitter-python"]
+lang-go = ["dep:tree-sitter-go"]
+lang-json = ["dep:tree-sitter-json"]
+lang-yaml = ["dep:tree-sitter-yaml"]
+lang-toml = ["dep:tree-sitter-toml-ng"]
+lang-markdown = ["dep:tree-sitter-md"]
+lang-bash = ["dep:tree-sitter-bash"]

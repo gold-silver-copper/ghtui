@@ -1,0 +1,16 @@
+[package]
+name = "ghtui-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ghtui-theme.workspace = true
+ghtui-api.workspace = true
+ghtui-diff.workspace = true
+ghtui-git.workspace = true
+ratatui.workspace = true
+ratatui-textarea.workspace = true
+unicode-width = "0.2"
+

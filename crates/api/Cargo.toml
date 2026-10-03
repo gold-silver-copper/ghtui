@@ -1,0 +1,28 @@
+[package]
+name = "ghtui-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ghtui-schema.workspace = true
+ghtui-store.workspace = true
+cynic.workspace = true
+octocrab.workspace = true
+rustls.workspace = true
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[build-dependencies]
+cynic-codegen.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["net"] }
+serde_json.workspace = true
