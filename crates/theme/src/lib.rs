@@ -260,6 +260,8 @@ pub fn requirement(fg: Fg, bg: Bg) -> Option<Requirement> {
     match fg {
         Fg::OnSurface | Fg::OnSurfaceVariant if bg.is_neutral() || bg.is_diff() => Some(Text),
         Fg::Primary | Fg::Tertiary | Fg::Error | Fg::Success if bg.is_neutral() => Some(Text),
+        // Reviewed marks in the diff gutter.
+        Fg::Success if bg.is_diff() => Some(Text),
         Fg::DiffAddedSign | Fg::DiffRemovedSign if bg.is_neutral() || bg.is_diff() => Some(Text),
         Fg::Syntax(_) if bg.is_diff() => Some(Text),
         Fg::Disabled if bg.is_neutral() => Some(Exempt),

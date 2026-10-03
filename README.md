@@ -5,11 +5,12 @@ replace the GitHub website for daily use, built around a pull request diff
 viewer that's better than GitHub's. The look is flat Material 3 adapted to
 the terminal.
 
-**Status: milestones M0, M1 and M2a.** You can browse your open pull requests
-and review requests, open any pull request's overview, and read its diff. The
-diff is computed locally from git, syntax-highlighted, and shown next to a
-file tree. Still to come: split view, viewed sync and the rest of the diff
-viewer (M2b), then reviews and comments (M3).
+**Status: milestones M0–M2.** You can browse your open pull requests and
+review requests, open any pull request's overview, and review its diff. The
+diff is computed locally from git and syntax-highlighted, unified or split,
+with expandable context, a full-file mode, whitespace-insensitive comparison,
+search, a fuzzy file finder, "viewed" synced with GitHub, and local per-change
+"reviewed" marks. Next: review threads and comments (M3).
 
 ## Install
 
@@ -82,8 +83,17 @@ app for this list, generated from your actual keymap.
 | `?`             | Keyboard shortcuts                                                            |
 | `]h` `[h`       | Next / previous hunk                                                          |
 | `]f` `[f`       | Next / previous file                                                          |
+| `]u`            | Next file not marked viewed                                                   |
 | `<Tab>`         | Show or hide the file tree                                                    |
 | `<C-w>`         | Switch focus between the file tree and the diff                               |
+| `s`             | Split or unified (automatic: split when the diff pane is 160+ columns wide)   |
+| `w`             | Ignore whitespace changes (like `git diff -w`)                                |
+| `x`             | Show 20 more lines of context (on a `⋯` gap: open it; in a hunk: widen it)    |
+| `F`             | Show the whole file, changes marked                                           |
+| `v`             | Mark the file viewed / unviewed, synced with GitHub; viewed files collapse    |
+| `m`             | Mark the change under the cursor reviewed (local, survives restarts)          |
+| `/` `n` `N`     | Search the diff (smart case), next / previous match                           |
+| `gf`            | Find a file by fuzzy path                                                     |
 
 In the file tree, moving the selection scrolls the diff to that file;
 `<Enter>` returns focus to the diff.
@@ -117,7 +127,10 @@ up = ["k", "<Up>", "<C-p>"]
 Action names: `down`, `up`, `half_page_down`, `half_page_up`, `top`,
 `bottom`, `open`, `back`, `close`, `quit`, `refresh`, `open_in_browser`,
 `command_palette`, `help`, `next_hunk`, `prev_hunk`, `next_file`,
-`prev_file`, `toggle_tree`, `switch_pane`. A binding that duplicates another, or is a prefix
+`prev_file`, `toggle_tree`, `switch_pane`, `toggle_split`,
+`ignore_whitespace`, `expand_context`, `full_file`, `toggle_viewed`,
+`next_unviewed`, `mark_reviewed`, `search`, `search_next`, `search_prev`,
+`find_file`. A binding that duplicates another, or is a prefix
 of another (`g` next to `gg`), is rejected at startup.
 
 ## Theming
@@ -214,6 +227,20 @@ Notes:
    tree-sitter. Per-file work is done by a small worker pool, starting with
    the files on screen.
 
+6. **View.** Each file keeps its full line alignment, both exact and
+   whitespace-insensitive. Rows are rebuilt from it when you switch between
+   split and unified, toggle whitespace, expand context or show the full file.
+   An anchor keeps the cursor on the same source line through every change.
+
+**Viewed and reviewed.** "Viewed" is GitHub's per-file state, read with
+`viewerViewedState` and changed with `markFileAsViewed` /
+`unmarkFileAsViewed`. A toggle shows immediately and is rolled back with an
+error if GitHub refuses it. A file that changed after you viewed it shows
+"Changed since viewed". "Reviewed" marks are local, per change block (a
+maximal run of changed lines). They're stored in the cache, keyed by a hash of
+the file path and the block's changed lines, so a mark follows its change when
+line numbers shift and clears when the change is edited.
+
 **Bundled grammars** (each behind a `lang-*` cargo feature of `ghtui-diff`):
 Rust, TypeScript/TSX, JavaScript/JSX, Python, Go, JSON, YAML, TOML, Markdown
 and shell. Other files, and files over 1 MiB, are shown as plain text. Binary
@@ -243,10 +270,15 @@ tests cover partial clones, prefetch, lazy fetch, every file status, and a
 check that your clone only gains `refs/ghtui/*`. Neither suite needs network
 access.
 
-Scrolling performance on a synthetic 500-file PR with 20k+ changed lines:
-`cargo test --release -p ghtui -- --ignored scroll_timing --nocapture`. It
-currently takes about 0.6ms per frame (update + render), against a target of
-8ms.
+Performance targets, as timing tests
+(`cargo test --release -p ghtui -- --ignored --nocapture`):
+
+| Target                                             | Budget  | Measured |
+| -------------------------------------------------- | ------- | -------- |
+| Scroll a 500-file PR with 20k+ changed lines       | 8ms     | ~0.5ms per frame |
+| 50k-line file: diff + first screen                 | 100ms   | ~32ms (31ms diff on a worker, <1ms render) |
+| 50k-line file: toggle full-file view               | 100ms   | <1ms     |
+| First paint from cache (measured in the log)       | 200ms   | ~85ms    |
 
 ## Crate substitutions
 
@@ -269,8 +301,12 @@ currently takes about 0.6ms per frame (update + render), against a target of
 - PR descriptions are shown as wrapped plain text; Markdown isn't rendered.
 - Long diff lines are cut at the pane edge (marked `…`); there's no
   horizontal scrolling or wrapping yet.
-- Split view, context expansion, full-file view, ignore-whitespace, search,
-  the fuzzy file finder, `]u`, and viewed sync with GitHub are M2b.
+- `]c` / `[c` (next/previous unresolved thread) arrive with review threads in
+  M3.
+- Search highlights the matching line (the cursor moves to it), not the
+  matched characters.
+- Expansion windows reset when you toggle whitespace mode, because they
+  index the alignment that changed.
 - Markdown highlighting covers block structure only (no inline emphasis or
   code fences).
 - First paint from cache is about 85ms on macOS, measured in tmux. About 40–80ms of that is

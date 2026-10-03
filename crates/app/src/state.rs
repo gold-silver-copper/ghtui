@@ -7,12 +7,13 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ghtui_api::ApiError;
-use ghtui_api::model::{Inbox, PrDetail, PrRef};
+use ghtui_api::model::{Inbox, PrDetail, PrRef, ViewedFiles};
 use ghtui_api::rate_limit::RateLimits;
 use ghtui_diff::FileDiff;
+use ghtui_store::ReviewState;
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::bars::Notice;
-use ghtui_ui::diff_doc::Doc;
+use ghtui_ui::diff_doc::{Doc, Pos, Viewed};
 use ghtui_ui::overlays::{HelpEntry, PaletteItem};
 use ghtui_ui::pr_view::PrView;
 use ghtui_ui::{Ctx, Icons, PAD_Y, pr_list};
@@ -36,6 +37,14 @@ pub enum Msg {
     DiffFiles(PrRef, Box<DiffFiles>),
     FileDiff(PrRef, usize, Arc<FileDiff>),
     DiffFailed(PrRef, String),
+    ViewedLoaded(PrRef, Box<Result<ViewedFiles, ApiError>>),
+    ViewedSaved {
+        pr: PrRef,
+        file: usize,
+        previous: Viewed,
+        result: Result<(), ApiError>,
+    },
+    ReviewLoaded(PrRef, ReviewState),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +60,17 @@ pub enum Cmd {
     },
     /// Diff these files next.
     Prioritize(PrRef, Vec<usize>),
+    FetchViewed(PrRef),
+    SetViewed {
+        pr: PrRef,
+        pull_request_id: String,
+        path: String,
+        file: usize,
+        viewed: bool,
+        previous: Viewed,
+    },
+    LoadReview(PrRef),
+    SaveReview(PrRef, ReviewState),
 }
 
 /// Data that comes from GitHub: what we have (possibly cached), whether a
@@ -106,6 +126,10 @@ pub enum Screen {
 pub enum Overlay {
     Help,
     Palette(Box<Palette>),
+    /// `/` prompt on the diff screen.
+    Search(Box<TextArea<'static>>),
+    /// `gf` file finder on the diff screen.
+    FindFile(Box<Palette>),
 }
 
 pub struct Palette {
@@ -268,10 +292,51 @@ impl State {
             return Vec::new();
         };
         self.diffs.insert(pr.clone(), DiffState::loading());
-        vec![Cmd::LoadDiff {
-            pr: pr.clone(),
-            base_ref,
-        }]
+        vec![
+            Cmd::LoadDiff {
+                pr: pr.clone(),
+                base_ref,
+            },
+            Cmd::FetchViewed(pr.clone()),
+            Cmd::LoadReview(pr.clone()),
+        ]
+    }
+
+    /// Files matching the finder input, best first.
+    pub fn finder_items(&self, input: &str) -> Vec<(usize, PaletteItem)> {
+        let Screen::Diff(screen) = self.screen() else {
+            return Vec::new();
+        };
+        let Some(diff) = self.diffs.get(&screen.pr) else {
+            return Vec::new();
+        };
+        let mut items: Vec<(usize, usize, PaletteItem)> = diff
+            .doc
+            .files
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f)| {
+                let path = f.meta.path();
+                fuzzy_score(input.trim(), path).map(|score| {
+                    let (adds, dels) = diff.doc.file_counts(f);
+                    let hint = if f.diff.is_some() {
+                        format!("+{adds} −{dels}")
+                    } else {
+                        String::new()
+                    };
+                    (
+                        score,
+                        i,
+                        PaletteItem {
+                            label: path.to_owned(),
+                            hint,
+                        },
+                    )
+                })
+            })
+            .collect();
+        items.sort_by_key(|(score, i, _)| (*score, *i));
+        items.into_iter().map(|(_, i, item)| (i, item)).collect()
     }
 
     /// Re-runs the diff screen's clamping and prioritization.
@@ -475,6 +540,42 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             }
             Vec::new()
         }
+        Msg::ViewedLoaded(pr, result) => {
+            match *result {
+                Ok(viewed) => {
+                    if let Some(diff) = state.diffs.get_mut(&pr) {
+                        diff.set_viewed_states(viewed);
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(%pr, %err, "viewed state fetch failed");
+                    state.notice =
+                        Some(Notice::Error(format!("Couldn't load viewed files: {err}")));
+                }
+            }
+            state.settle_diff()
+        }
+        Msg::ViewedSaved {
+            pr,
+            file,
+            previous,
+            result,
+        } => {
+            if let Err(err) = result {
+                tracing::warn!(%pr, %err, "viewed state update failed");
+                if let Some(diff) = state.diffs.get_mut(&pr) {
+                    diff.doc.set_viewed(file, previous);
+                }
+                state.notice = Some(Notice::Error(format!("GitHub didn't save “viewed”: {err}")));
+            }
+            state.settle_diff()
+        }
+        Msg::ReviewLoaded(pr, review) => {
+            if let Some(diff) = state.diffs.get_mut(&pr) {
+                diff.set_review(review);
+            }
+            Vec::new()
+        }
     }
 }
 
@@ -494,6 +595,8 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             return Vec::new();
         }
         Some(Overlay::Palette(_)) => return on_palette_key(state, key),
+        Some(Overlay::Search(_)) => return on_search_key(state, key),
+        Some(Overlay::FindFile(_)) => return on_finder_key(state, key),
         None => {}
     }
     // Any keypress dismisses the last notice.
@@ -563,6 +666,94 @@ fn on_palette_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     }
 }
 
+fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+    let Some(Overlay::Search(input)) = &mut state.overlay else {
+        return Vec::new();
+    };
+    match key.code {
+        KeyCode::Esc => {
+            state.overlay = None;
+            Vec::new()
+        }
+        KeyCode::Enter => {
+            let query = input.lines().join("");
+            state.overlay = None;
+            if query.is_empty() {
+                return Vec::new();
+            }
+            let content = state.content_area();
+            let State {
+                screens,
+                diffs,
+                notice,
+                ..
+            } = state;
+            let Some(Screen::Diff(screen)) = screens.last_mut() else {
+                return Vec::new();
+            };
+            let Some(diff) = diffs.get_mut(&screen.pr) else {
+                return Vec::new();
+            };
+            let (cmds, found) = diff_screen::search(screen, diff, query, content);
+            *notice = Some(found);
+            cmds
+        }
+        _ => {
+            input.input(key);
+            Vec::new()
+        }
+    }
+}
+
+fn on_finder_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+    let Some(Overlay::FindFile(finder)) = &mut state.overlay else {
+        return Vec::new();
+    };
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Esc => state.overlay = None,
+        KeyCode::Down | KeyCode::Tab => finder.selected += 1,
+        KeyCode::Char('n') if ctrl => finder.selected += 1,
+        KeyCode::Up | KeyCode::BackTab => finder.selected = finder.selected.saturating_sub(1),
+        KeyCode::Char('p') if ctrl => finder.selected = finder.selected.saturating_sub(1),
+        KeyCode::Enter => {
+            let input = finder.input.lines().join("");
+            let selected = finder.selected;
+            let target = state.finder_items(&input).get(selected).map(|(i, _)| *i);
+            state.overlay = None;
+            if let Some(file) = target
+                && let Screen::Diff(screen) = state.screen_mut()
+            {
+                screen.cursor = Pos { file, row: 0 };
+                screen.top = screen.cursor;
+                return state.settle_diff();
+            }
+            return Vec::new();
+        }
+        _ => {
+            finder.input.input(key);
+            finder.selected = 0;
+        }
+    }
+    // Keep the selection on an existing item.
+    let count = match &state.overlay {
+        Some(Overlay::FindFile(finder)) => state.finder_items(&finder.input.lines().join("")).len(),
+        _ => 0,
+    };
+    if let Some(Overlay::FindFile(finder)) = &mut state.overlay {
+        finder.selected = finder.selected.min(count.saturating_sub(1));
+    }
+    Vec::new()
+}
+
+pub fn new_search_input(theme: &Theme) -> TextArea<'static> {
+    let mut input = TextArea::default();
+    input.set_style(theme.body(Bg::Container));
+    input.set_cursor_line_style(theme.body(Bg::Container));
+    input.set_cursor_style(theme.fill(Bg::Primary));
+    input
+}
+
 fn clamp_palette(state: &mut State) {
     let Some(Overlay::Palette(palette)) = &state.overlay else {
         return;
@@ -588,10 +779,15 @@ fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
     let half_page = (state.content_area().height / 2).max(1);
     let content = state.content_area();
     {
-        let State { screens, diffs, .. } = &mut *state;
+        let State {
+            screens,
+            diffs,
+            notice,
+            ..
+        } = &mut *state;
         if let Some(Screen::Diff(screen)) = screens.last_mut()
             && let Some(diff) = diffs.get_mut(&screen.pr)
-            && let Some(cmds) = diff_screen::apply(screen, diff, action, content)
+            && let Some(cmds) = diff_screen::apply(screen, diff, action, content, notice)
         {
             return cmds;
         }
@@ -639,13 +835,34 @@ fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             }
             Screen::Diff(_) => {}
         },
+        Action::Search => {
+            if let Screen::Diff(_) = state.screen() {
+                state.overlay = Some(Overlay::Search(Box::new(new_search_input(&state.theme))));
+            }
+        }
+        Action::FindFile => {
+            if let Screen::Diff(_) = state.screen() {
+                let mut finder = new_palette(&state.theme);
+                finder.input.set_placeholder_text("File path");
+                state.overlay = Some(Overlay::FindFile(Box::new(finder)));
+            }
+        }
         // Diff-only actions elsewhere do nothing.
         Action::NextHunk
         | Action::PrevHunk
         | Action::NextFile
         | Action::PrevFile
         | Action::ToggleTree
-        | Action::SwitchPane => {}
+        | Action::SwitchPane
+        | Action::ToggleSplit
+        | Action::IgnoreWhitespace
+        | Action::ExpandContext
+        | Action::FullFile
+        | Action::ToggleViewed
+        | Action::NextUnviewed
+        | Action::MarkReviewed
+        | Action::SearchNext
+        | Action::SearchPrev => {}
         Action::Down => move_by(state, 1, 1),
         Action::Up => move_by(state, -1, -1),
         Action::HalfPageDown => move_by(state, i64::from(half_page / 2), i64::from(half_page)),
@@ -925,5 +1142,158 @@ mod tests {
             panic!()
         };
         assert_eq!(palette.selected, state.palette_commands("").len() - 1);
+    }
+
+    mod diff {
+        use super::*;
+        use crate::diff_screen::DiffScreen;
+        use ghtui_api::model::{ViewedFiles, ViewedState};
+        use ghtui_ui::diff_doc::Viewed;
+
+        /// A diff screen on o/r#7 built from the snapshot fixture.
+        fn diff_state(width: u16) -> (State, PrRef) {
+            let mut s = state();
+            s.size = (width, 40);
+            let pr = PrRef::parse("o/r#7").unwrap();
+            s.diffs
+                .insert(pr.clone(), crate::snapshot_tests::diff_fixture());
+            s.screens
+                .push(Screen::Diff(Box::new(DiffScreen::new(pr.clone(), width))));
+            let _ = s.settle_diff();
+            (s, pr)
+        }
+
+        fn screen(s: &State) -> &DiffScreen {
+            match s.screen() {
+                Screen::Diff(screen) => screen,
+                _ => panic!("not on the diff"),
+            }
+        }
+
+        fn viewed_files(pr_id: &str) -> ViewedFiles {
+            ViewedFiles {
+                pull_request_id: pr_id.into(),
+                states: [("src/point.rs".to_owned(), ViewedState::Viewed)].into(),
+            }
+        }
+
+        #[test]
+        fn split_is_automatic_by_width_and_toggles() {
+            let (mut narrow, _) = diff_state(120);
+            assert!(!narrow.diffs.values().next().unwrap().doc.opts.split);
+            press(&mut narrow, "s");
+            assert!(narrow.diffs.values().next().unwrap().doc.opts.split);
+            let (wide, _) = diff_state(220);
+            assert!(wide.diffs.values().next().unwrap().doc.opts.split);
+        }
+
+        #[test]
+        fn viewed_state_applies_and_rolls_back_on_failure() {
+            let (mut s, pr) = diff_state(120);
+            // Before GitHub's state arrives, toggling explains why not.
+            assert!(press(&mut s, "v").is_empty());
+            assert!(matches!(s.notice, Some(Notice::Error(_))));
+
+            update(
+                &mut s,
+                Msg::ViewedLoaded(pr.clone(), Box::new(Ok(viewed_files("PR_1")))),
+            );
+            assert_eq!(s.diffs[&pr].doc.files[0].viewed, Viewed::Viewed);
+            assert!(
+                s.diffs[&pr].doc.files[0].collapsed(),
+                "viewed files collapse"
+            );
+
+            // ]u skips the viewed file.
+            press(&mut s, "gg]u");
+            assert_eq!(screen(&s).cursor.file, 1);
+
+            // Toggle file 1 viewed: optimistic, then GitHub refuses.
+            let cmds = press(&mut s, "v");
+            assert!(cmds.iter().any(|c| matches!(
+                c,
+                Cmd::SetViewed { file: 1, viewed: true, previous: Viewed::Unviewed, pull_request_id, .. }
+                    if pull_request_id == "PR_1"
+            )));
+            assert_eq!(s.diffs[&pr].doc.files[1].viewed, Viewed::Viewed);
+            update(
+                &mut s,
+                Msg::ViewedSaved {
+                    pr: pr.clone(),
+                    file: 1,
+                    previous: Viewed::Unviewed,
+                    result: Err(ApiError::Network("offline".into())),
+                },
+            );
+            assert_eq!(s.diffs[&pr].doc.files[1].viewed, Viewed::Unviewed);
+            assert!(matches!(s.notice, Some(Notice::Error(_))));
+        }
+
+        #[test]
+        fn review_marks_toggle_and_persist() {
+            let (mut s, pr) = diff_state(120);
+            // Off a changed line: nothing to mark.
+            assert!(press(&mut s, "gg").is_empty());
+            assert!(press(&mut s, "m").is_empty());
+            // Onto the first change.
+            press(&mut s, "]hjjj");
+            let cmds = press(&mut s, "m");
+            let Some(Cmd::SaveReview(saved_pr, review)) = cmds.first() else {
+                panic!("{cmds:?}")
+            };
+            assert_eq!(saved_pr, &pr);
+            assert_eq!(review.reviewed_hunks.len(), 1);
+            assert_eq!(s.diffs[&pr].doc.reviewed.len(), 1);
+            let cmds = press(&mut s, "m");
+            let Some(Cmd::SaveReview(_, review)) = cmds.first() else {
+                panic!()
+            };
+            assert!(review.reviewed_hunks.is_empty());
+        }
+
+        #[test]
+        fn search_and_repeat() {
+            let (mut s, pr) = diff_state(120);
+            press(&mut s, "/");
+            assert!(matches!(s.overlay, Some(Overlay::Search(_))));
+            press(&mut s, "origin<Enter>");
+            assert!(s.overlay.is_none());
+            let cursor = screen(&s).cursor;
+            assert!(s.diffs[&pr].doc.row_text(cursor).contains("origin"));
+            assert!(matches!(s.notice, Some(Notice::Info(ref m)) if m.contains("1 line")));
+            press(&mut s, "n");
+            assert_eq!(screen(&s).cursor, cursor, "single match wraps to itself");
+            press(&mut s, "/");
+            press(&mut s, "zzzz<Enter>");
+            assert!(matches!(s.notice, Some(Notice::Error(_))));
+        }
+
+        #[test]
+        fn file_finder_jumps_to_files() {
+            let (mut s, _) = diff_state(120);
+            press(&mut s, "gf");
+            assert!(matches!(s.overlay, Some(Overlay::FindFile(_))));
+            assert_eq!(s.finder_items("gone")[0].1.label, "gone.py");
+            press(&mut s, "gone<Enter>");
+            assert!(s.overlay.is_none());
+            assert_eq!(screen(&s).cursor.file, 3);
+            assert_eq!(screen(&s).cursor.row, 0);
+        }
+
+        #[test]
+        fn whitespace_and_full_file_keep_the_cursor_line() {
+            let (mut s, pr) = diff_state(120);
+            press(&mut s, "]hjjj");
+            let text = s.diffs[&pr].doc.row_text(screen(&s).cursor);
+            press(&mut s, "F");
+            assert!(s.diffs[&pr].doc.files[0].full);
+            assert_eq!(s.diffs[&pr].doc.row_text(screen(&s).cursor), text);
+            press(&mut s, "w");
+            assert_eq!(
+                s.diffs[&pr].doc.opts.whitespace,
+                ghtui_diff::Whitespace::Ignore
+            );
+            press(&mut s, "x");
+        }
     }
 }

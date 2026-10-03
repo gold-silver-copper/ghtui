@@ -171,6 +171,22 @@ pub struct PrDetail {
     pub labels: Vec<Label>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ViewedState {
+    Unviewed,
+    Viewed,
+    /// Viewed, but the file changed since.
+    Dismissed,
+}
+
+/// Per-file viewed state for one PR, and the PR's node ID (needed to change
+/// it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViewedFiles {
+    pub pull_request_id: String,
+    pub states: std::collections::HashMap<String, ViewedState>,
+}
+
 // ---- conversions from the wire types ---------------------------------------
 
 fn state(state: q::PullRequestState, draft: bool) -> PrState {

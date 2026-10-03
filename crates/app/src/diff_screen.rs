@@ -1,17 +1,22 @@
-//! The diff screen: file tree plus unified diff, and its key handling.
+//! The diff screen: file tree plus diff, and its key handling.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use ghtui_api::model::PrRef;
-use ghtui_diff::FileDiff;
+use ghtui_api::model::{PrRef, ViewedFiles, ViewedState};
+use ghtui_diff::{FileDiff, Whitespace};
 use ghtui_git::repo::PrRefs;
-use ghtui_ui::diff_doc::{Doc, Note, Pos, Row};
+use ghtui_store::ReviewState;
+use ghtui_ui::bars::Notice;
+use ghtui_ui::diff_doc::{Doc, Note, Pos, Row, ViewOptions, Viewed};
 use ghtui_ui::file_tree::{TreeRow, row_of_file, tree_rows};
 use ratatui::layout::Rect;
 
 use crate::keymap::Action;
 use crate::state::Cmd;
+
+/// Split view turns on automatically from this diff-pane width.
+pub const SPLIT_MIN_WIDTH: u16 = 160;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
@@ -28,6 +33,11 @@ pub struct DiffScreen {
     pub focus: Pane,
     pub tree_selected: usize,
     pub tree_scroll: usize,
+    /// `None` picks split or unified by width.
+    pub split_override: Option<bool>,
+    pub ignore_whitespace: bool,
+    /// The last search query, for `n` / `N`.
+    pub search: Option<String>,
 }
 
 impl DiffScreen {
@@ -40,6 +50,24 @@ impl DiffScreen {
             focus: Pane::Diff,
             tree_selected: 0,
             tree_scroll: 0,
+            split_override: None,
+            ignore_whitespace: false,
+            search: None,
+        }
+    }
+
+    /// The view options this screen wants at `content` size.
+    pub fn options(&self, content: Rect) -> ViewOptions {
+        let lay = layout(content, self.tree_visible);
+        ViewOptions {
+            split: self
+                .split_override
+                .unwrap_or(lay.diff.width >= SPLIT_MIN_WIDTH),
+            whitespace: if self.ignore_whitespace {
+                Whitespace::Ignore
+            } else {
+                Whitespace::Exact
+            },
         }
     }
 }
@@ -55,6 +83,10 @@ pub struct DiffState {
     pub error: Option<String>,
     /// The file list has arrived.
     pub listed: bool,
+    /// GitHub's viewed state and the PR's node ID.
+    pub viewed: Option<ViewedFiles>,
+    /// Locally persisted review marks.
+    pub review: ReviewState,
     /// Files we've already asked the job to prioritize.
     requested: HashSet<usize>,
 }
@@ -77,6 +109,8 @@ impl DiffState {
         } else {
             Some("Computing diffs".into())
         };
+        self.apply_viewed();
+        self.apply_review();
     }
 
     pub fn set_file(&mut self, index: usize, diff: Arc<FileDiff>) {
@@ -84,6 +118,43 @@ impl DiffState {
         if self.doc.ready_count() == self.doc.files.len() {
             self.progress = None;
         }
+    }
+
+    pub fn set_viewed_states(&mut self, viewed: ViewedFiles) {
+        self.viewed = Some(viewed);
+        self.apply_viewed();
+    }
+
+    pub fn set_review(&mut self, review: ReviewState) {
+        self.review = review;
+        self.apply_review();
+    }
+
+    fn apply_viewed(&mut self) {
+        let Some(viewed) = &self.viewed else { return };
+        let states: &HashMap<String, ViewedState> = &viewed.states;
+        let updates: Vec<(usize, Viewed)> = self
+            .doc
+            .files
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let state = match states.get(f.meta.path()) {
+                    Some(ViewedState::Viewed) => Viewed::Viewed,
+                    Some(ViewedState::Dismissed) => Viewed::Dismissed,
+                    _ => Viewed::Unviewed,
+                };
+                (i, state)
+            })
+            .filter(|(i, state)| self.doc.files[*i].viewed != *state)
+            .collect();
+        for (i, state) in updates {
+            self.doc.set_viewed(i, state);
+        }
+    }
+
+    fn apply_review(&mut self) {
+        self.doc.reviewed = self.review.reviewed_hunks.iter().cloned().collect();
     }
 
     pub fn status(&self) -> Option<String> {
@@ -130,6 +201,16 @@ fn tree_list_height(tree: Rect) -> usize {
     usize::from(tree.height.saturating_sub(3))
 }
 
+/// Runs `change` on the document, keeping the cursor and the top of the
+/// view on the same source lines.
+fn preserving_position(screen: &mut DiffScreen, doc: &mut Doc, change: impl FnOnce(&mut Doc)) {
+    let cursor = doc.anchor(screen.cursor);
+    let top = doc.anchor(screen.top);
+    change(doc);
+    screen.cursor = doc.locate(cursor);
+    screen.top = doc.locate(top);
+}
+
 /// Handles `action` on the diff screen. `None` means it isn't a diff-screen
 /// action (the caller handles it).
 pub fn apply(
@@ -137,10 +218,11 @@ pub fn apply(
     state: &mut DiffState,
     action: Action,
     content: Rect,
+    notice: &mut Option<Notice>,
 ) -> Option<Vec<Cmd>> {
     let lay = layout(content, screen.tree_visible);
-    let doc = &state.doc;
     let half = (usize::from(lay.diff.height) / 2).max(1) as isize;
+    let mut cmds = Vec::new();
     match action {
         Action::ToggleTree => {
             screen.tree_visible = !screen.tree_visible;
@@ -155,6 +237,20 @@ pub fn apply(
                     Pane::Diff => Pane::Tree,
                 };
             }
+        }
+        Action::ToggleSplit => {
+            screen.split_override = Some(!screen.options(content).split);
+        }
+        Action::IgnoreWhitespace => {
+            screen.ignore_whitespace = !screen.ignore_whitespace;
+            *notice = Some(Notice::Info(
+                if screen.ignore_whitespace {
+                    "Ignoring whitespace changes"
+                } else {
+                    "Showing whitespace changes"
+                }
+                .into(),
+            ));
         }
         _ if screen.focus == Pane::Tree && lay.tree.is_some() => {
             let tree_half = (tree_list_height(lay.tree.unwrap_or_default()) / 2).max(1) as isize;
@@ -177,75 +273,200 @@ pub fn apply(
                 .clamp(0, last) as usize;
             // The diff follows the tree selection.
             if let Some(TreeRow::File { index, .. }) = state.tree.get(screen.tree_selected) {
-                screen.cursor = Pos {
-                    file: *index,
-                    row: 0,
-                };
-                screen.top = screen.cursor;
+                jump(
+                    screen,
+                    Pos {
+                        file: *index,
+                        row: 0,
+                    },
+                );
             }
         }
-        Action::Down => screen.cursor = doc.offset(screen.cursor, 1),
-        Action::Up => screen.cursor = doc.offset(screen.cursor, -1),
+        Action::Down => screen.cursor = state.doc.offset(screen.cursor, 1),
+        Action::Up => screen.cursor = state.doc.offset(screen.cursor, -1),
         Action::HalfPageDown => {
-            screen.cursor = doc.offset(screen.cursor, half);
-            screen.top = doc.offset(screen.top, half);
+            screen.cursor = state.doc.offset(screen.cursor, half);
+            screen.top = state.doc.offset(screen.top, half);
         }
         Action::HalfPageUp => {
-            screen.cursor = doc.offset(screen.cursor, -half);
-            screen.top = doc.offset(screen.top, -half);
+            screen.cursor = state.doc.offset(screen.cursor, -half);
+            screen.top = state.doc.offset(screen.top, -half);
         }
         Action::Top => screen.cursor = Pos::default(),
-        Action::Bottom => screen.cursor = doc.last(),
+        Action::Bottom => screen.cursor = state.doc.last(),
         Action::NextHunk => {
-            if let Some(pos) = doc.next_hunk(screen.cursor) {
+            if let Some(pos) = state.doc.next_hunk(screen.cursor) {
                 screen.cursor = pos;
             }
         }
         Action::PrevHunk => {
-            if let Some(pos) = doc.prev_hunk(screen.cursor) {
+            if let Some(pos) = state.doc.prev_hunk(screen.cursor) {
                 screen.cursor = pos;
             }
         }
         Action::NextFile => {
-            if let Some(pos) = doc.next_file(screen.cursor) {
-                screen.cursor = pos;
-                screen.top = pos;
+            if let Some(pos) = state.doc.next_file(screen.cursor) {
+                jump(screen, pos);
             }
         }
         Action::PrevFile => {
-            if let Some(pos) = doc.prev_file(screen.cursor) {
-                screen.cursor = pos;
-                screen.top = pos;
+            if let Some(pos) = state.doc.prev_file(screen.cursor) {
+                jump(screen, pos);
             }
         }
-        Action::Open => {
-            let on_collapsed = matches!(
-                doc.row(screen.cursor),
-                Some(Row::Header | Row::Note(Note::Collapsed))
-            ) && doc
-                .files
-                .get(screen.cursor.file)
-                .is_some_and(|f| f.generated);
-            if !on_collapsed {
-                return Some(Vec::new());
-            }
+        Action::NextUnviewed => match state.doc.next_unviewed(screen.cursor) {
+            Some(pos) => jump(screen, pos),
+            None => *notice = Some(Notice::Info("Every file is viewed".into())),
+        },
+        Action::ExpandContext => {
+            let pos = screen.cursor;
+            preserving_position(screen, &mut state.doc, |doc| doc.expand(pos));
+        }
+        Action::FullFile => {
             let file = screen.cursor.file;
-            state.doc.toggle_expanded(file);
-            // Expanded files are diffed on demand.
-            state.requested.remove(&file);
+            preserving_position(screen, &mut state.doc, |doc| doc.toggle_full(file));
+        }
+        Action::Open => match state.doc.row(screen.cursor) {
+            Some(Row::Gap { .. }) => {
+                let pos = screen.cursor;
+                preserving_position(screen, &mut state.doc, |doc| doc.expand(pos));
+            }
+            Some(Row::Header | Row::Note(Note::Collapsed | Note::Viewed))
+                if state
+                    .doc
+                    .files
+                    .get(screen.cursor.file)
+                    .is_some_and(|f| f.collapsed() || f.expanded) =>
+            {
+                let file = screen.cursor.file;
+                state.doc.toggle_expanded(file);
+                // Expanded files are diffed on demand.
+                state.requested.remove(&file);
+                screen.cursor.row = 0;
+            }
+            _ => return Some(Vec::new()),
+        },
+        Action::ToggleViewed => cmds.extend(toggle_viewed(screen, state, notice)),
+        Action::MarkReviewed => cmds.extend(toggle_reviewed(screen, state, notice)),
+        Action::SearchNext | Action::SearchPrev => {
+            let Some(query) = screen.search.clone() else {
+                *notice = Some(Notice::Info("No search yet".into()));
+                return Some(Vec::new());
+            };
+            match state
+                .doc
+                .search(&query, screen.cursor, action == Action::SearchNext)
+            {
+                Some(pos) => screen.cursor = pos,
+                None => *notice = Some(Notice::Error(format!("No match for “{query}”"))),
+            }
         }
         _ => return None,
     }
-    Some(settle(screen, state, content))
+    cmds.extend(settle(screen, state, content));
+    Some(cmds)
 }
 
-/// Clamps positions, keeps the cursor visible (clear of the sticky header),
-/// syncs the tree with the diff, and asks the job to prioritize files that
-/// are on screen but not diffed yet.
+/// Puts `pos` at the top of the view with the cursor on it.
+fn jump(screen: &mut DiffScreen, pos: Pos) {
+    screen.cursor = pos;
+    screen.top = pos;
+}
+
+/// Starts a search from the cursor.
+pub fn search(
+    screen: &mut DiffScreen,
+    state: &mut DiffState,
+    query: String,
+    content: Rect,
+) -> (Vec<Cmd>, Notice) {
+    let notice = match state.doc.search(&query, screen.cursor, true) {
+        Some(pos) => {
+            screen.cursor = pos;
+            let n = state.doc.count_matches(&query);
+            Notice::Info(format!(
+                "{n} line{} match “{query}”",
+                if n == 1 { "" } else { "s" }
+            ))
+        }
+        None => Notice::Error(format!("No match for “{query}”")),
+    };
+    screen.search = Some(query);
+    (settle(screen, state, content), notice)
+}
+
+fn toggle_viewed(
+    screen: &mut DiffScreen,
+    state: &mut DiffState,
+    notice: &mut Option<Notice>,
+) -> Vec<Cmd> {
+    let Some(viewed) = &state.viewed else {
+        *notice = Some(Notice::Error(
+            "Viewed state hasn't loaded from GitHub yet".into(),
+        ));
+        return Vec::new();
+    };
+    let index = screen.cursor.file;
+    let Some(file) = state.doc.files.get(index) else {
+        return Vec::new();
+    };
+    let previous = file.viewed;
+    let now = if previous == Viewed::Viewed {
+        Viewed::Unviewed
+    } else {
+        Viewed::Viewed
+    };
+    let cmd = Cmd::SetViewed {
+        pr: screen.pr.clone(),
+        pull_request_id: viewed.pull_request_id.clone(),
+        path: file.meta.path().to_owned(),
+        file: index,
+        viewed: now == Viewed::Viewed,
+        previous,
+    };
+    // Optimistic: show it now, roll back if GitHub refuses.
+    state.doc.set_viewed(index, now);
+    screen.cursor = Pos {
+        file: index,
+        row: 0,
+    };
+    vec![cmd]
+}
+
+fn toggle_reviewed(
+    screen: &mut DiffScreen,
+    state: &mut DiffState,
+    notice: &mut Option<Notice>,
+) -> Vec<Cmd> {
+    let Some(block) = state.doc.block_at(screen.cursor) else {
+        *notice = Some(Notice::Info(
+            "Move to a changed line to mark it reviewed".into(),
+        ));
+        return Vec::new();
+    };
+    let hash = block.hash.clone();
+    let hunks = &mut state.review.reviewed_hunks;
+    if let Some(i) = hunks.iter().position(|h| *h == hash) {
+        hunks.remove(i);
+    } else {
+        hunks.push(hash);
+        hunks.sort();
+    }
+    state.doc.reviewed = hunks.iter().cloned().collect();
+    vec![Cmd::SaveReview(screen.pr.clone(), state.review.clone())]
+}
+
+/// Applies view options, clamps positions, keeps the cursor visible (clear
+/// of the sticky header), syncs the tree with the diff, and asks the job to
+/// prioritize files that are on screen but not diffed yet.
 pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> Vec<Cmd> {
     let lay = layout(content, screen.tree_visible);
     if lay.tree.is_none() {
         screen.focus = Pane::Diff;
+    }
+    let opts = screen.options(content);
+    if state.doc.opts != opts {
+        preserving_position(screen, &mut state.doc, |doc| doc.set_options(opts));
     }
     let doc = &state.doc;
     if doc.is_empty() {

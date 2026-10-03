@@ -249,6 +249,122 @@ pub struct Label {
     pub color: String,
 }
 
+// ---- viewed files ------------------------------------------------------------
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct PrFilesVariables {
+    pub owner: String,
+    pub name: String,
+    pub number: i32,
+    pub after: Option<String>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "PrFilesVariables"
+)]
+pub struct PrFilesQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepositoryWithPrFiles>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Repository",
+    schema_module = "schema",
+    variables = "PrFilesVariables"
+)]
+pub struct RepositoryWithPrFiles {
+    #[arguments(number: $number)]
+    pub pull_request: Option<PrFiles>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "PullRequest",
+    schema_module = "schema",
+    variables = "PrFilesVariables"
+)]
+pub struct PrFiles {
+    pub id: cynic::Id,
+    #[arguments(first: 100, after: $after)]
+    pub files: Option<PrChangedFiles>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "PullRequestChangedFileConnection",
+    schema_module = "schema"
+)]
+pub struct PrChangedFiles {
+    pub page_info: PageInfo,
+    pub nodes: Option<Vec<Option<PrChangedFile>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PageInfo", schema_module = "schema")]
+pub struct PageInfo {
+    pub has_next_page: bool,
+    pub end_cursor: Option<String>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestChangedFile", schema_module = "schema")]
+pub struct PrChangedFile {
+    pub path: String,
+    pub viewer_viewed_state: FileViewedState,
+}
+
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[cynic(graphql_type = "FileViewedState", schema_module = "schema")]
+pub enum FileViewedState {
+    Dismissed,
+    Unviewed,
+    Viewed,
+}
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct ViewedVariables {
+    pub pull_request_id: cynic::Id,
+    pub path: String,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "ViewedVariables"
+)]
+pub struct MarkFileAsViewed {
+    #[arguments(input: { pullRequestId: $pull_request_id, path: $path })]
+    pub mark_file_as_viewed: Option<MarkFileAsViewedPayload>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "MarkFileAsViewedPayload", schema_module = "schema")]
+pub struct MarkFileAsViewedPayload {
+    pub client_mutation_id: Option<String>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "ViewedVariables"
+)]
+pub struct UnmarkFileAsViewed {
+    #[arguments(input: { pullRequestId: $pull_request_id, path: $path })]
+    pub unmark_file_as_viewed: Option<UnmarkFileAsViewedPayload>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "UnmarkFileAsViewedPayload", schema_module = "schema")]
+pub struct UnmarkFileAsViewedPayload {
+    pub client_mutation_id: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,6 +383,28 @@ mod tests {
             op.query
         );
         assert!(op.query.contains("rateLimit"), "{}", op.query);
+    }
+
+    #[test]
+    fn viewed_mutations_shape() {
+        use cynic::MutationBuilder;
+        let op = MarkFileAsViewed::build(ViewedVariables {
+            pull_request_id: cynic::Id::new("PR_1"),
+            path: "a.rs".into(),
+        });
+        assert!(
+            op.query
+                .contains("markFileAsViewed(input: {pullRequestId: $pullRequestId, path: $path})"),
+            "{}",
+            op.query
+        );
+        let files = PrFilesQuery::build(PrFilesVariables {
+            owner: "o".into(),
+            name: "r".into(),
+            number: 1,
+            after: None,
+        });
+        assert!(files.query.contains("viewerViewedState"), "{}", files.query);
     }
 
     #[test]

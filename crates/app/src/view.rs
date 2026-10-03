@@ -12,7 +12,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Span;
 use ratatui::widgets::Widget;
 
-use ghtui_ui::diff_view::DiffView;
+use ghtui_ui::diff_view::{DiffView, Keys};
 use ghtui_ui::file_tree::{FileTree, TREE_BG};
 
 use crate::diff_screen::{self, DiffScreen, Pane};
@@ -111,11 +111,46 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
                 .collect();
             Palette {
                 ctx,
+                prompt: ":",
                 input: &palette.input,
                 items: &items,
                 selected: palette.selected,
             }
             .render(area, buf);
+        }
+        Some(Overlay::FindFile(finder)) => {
+            let input = finder.input.lines().join("");
+            let items: Vec<_> = state
+                .finder_items(&input)
+                .into_iter()
+                .map(|(_, item)| item)
+                .collect();
+            Palette {
+                ctx,
+                prompt: "Find file",
+                input: &finder.input,
+                items: &items,
+                selected: finder.selected,
+            }
+            .render(area, buf);
+        }
+        Some(Overlay::Search(input)) => {
+            // The prompt replaces the status bar.
+            fill(buf, status, ctx.theme, Bg::Container);
+            let row = Rect {
+                x: status.x + PAD_X,
+                width: status.width.saturating_sub(2 * PAD_X),
+                ..status
+            };
+            Span::styled("/", ctx.theme.accent(Bg::Container)).render(row, buf);
+            input.render(
+                Rect {
+                    x: row.x + 1,
+                    width: row.width.saturating_sub(1),
+                    ..row
+                },
+                buf,
+            );
         }
         None => {}
     }
@@ -170,13 +205,21 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
         Span::styled("No changed files.", theme.meta(Bg::Surface)).render(message_area, buf);
         return;
     }
-    let expand_key = first_key(state, Action::Open);
+    let (show, expand, viewed) = (
+        first_key(state, Action::Open),
+        first_key(state, Action::ExpandContext),
+        first_key(state, Action::ToggleViewed),
+    );
     DiffView {
         ctx,
         doc: &diff.doc,
         cursor: screen.cursor,
         top: screen.top,
-        expand_key: &expand_key,
+        keys: Keys {
+            show: &show,
+            expand: &expand,
+            viewed: &viewed,
+        },
     }
     .render(area, buf);
 

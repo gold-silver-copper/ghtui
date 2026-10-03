@@ -124,6 +124,44 @@ fn spawn(cmd: Cmd, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
                 Ok(()) => return,
                 Err(err) => Msg::Notice(Notice::Error(format!("Couldn't open browser: {err}"))),
             },
+            Cmd::FetchViewed(pr) => {
+                let result = gh.viewed_files(&pr).await;
+                Msg::ViewedLoaded(pr, Box::new(result))
+            }
+            Cmd::SetViewed {
+                pr,
+                pull_request_id,
+                path,
+                file,
+                viewed,
+                previous,
+            } => {
+                let result = gh.set_viewed(&pull_request_id, &path, viewed).await;
+                Msg::ViewedSaved {
+                    pr,
+                    file,
+                    previous,
+                    result,
+                }
+            }
+            Cmd::LoadReview(pr) => {
+                let store = gh.store().clone();
+                let key = pr.to_string();
+                let review = tokio::task::spawn_blocking(move || store.review_get(&key))
+                    .await
+                    .unwrap_or_default();
+                Msg::ReviewLoaded(pr, review)
+            }
+            Cmd::SaveReview(pr, review) => {
+                let store = gh.store().clone();
+                let key = pr.to_string();
+                if let Err(err) =
+                    tokio::task::spawn_blocking(move || store.review_put(&key, &review)).await
+                {
+                    tracing::warn!(%pr, %err, "saving review marks failed");
+                }
+                return;
+            }
             Cmd::LoadDiff { .. } | Cmd::Prioritize(..) => unreachable!("handled by Effects::run"),
         };
         let _ = tx.send(msg);

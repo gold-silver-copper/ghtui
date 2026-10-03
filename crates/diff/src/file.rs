@@ -1,7 +1,7 @@
 //! A computed file diff, ready to render.
 
 use crate::highlight::{Language, Span, highlight};
-use crate::hunks::{Algorithm, Hunk, LineKind, diff_lines};
+use crate::hunks::{Algorithm, DiffLine, LineKind, Whitespace, align};
 use crate::text::{Text, is_binary};
 
 /// Context lines around changes.
@@ -35,10 +35,35 @@ pub struct TextDiff {
     /// Per-line spans; empty when unhighlighted.
     pub old_spans: Vec<Vec<Span>>,
     pub new_spans: Vec<Vec<Span>>,
-    pub hunks: Vec<Hunk>,
+    /// Full alignment comparing lines exactly.
+    pub lines: Vec<DiffLine>,
+    /// Full alignment ignoring whitespace.
+    pub lines_ignoring_whitespace: Vec<DiffLine>,
 }
 
 impl TextDiff {
+    pub fn lines(&self, whitespace: Whitespace) -> &[DiffLine] {
+        match whitespace {
+            Whitespace::Exact => &self.lines,
+            Whitespace::Ignore => &self.lines_ignoring_whitespace,
+        }
+    }
+
+    pub fn has_changes(&self, whitespace: Whitespace) -> bool {
+        self.lines(whitespace)
+            .iter()
+            .any(|l| l.kind != LineKind::Context)
+    }
+
+    /// The text of an alignment entry (the old side for removed lines).
+    pub fn text(&self, line: &DiffLine) -> &str {
+        match (line.kind, line.old, line.new) {
+            (LineKind::Removed, Some(o), _) => self.old.line(o as usize - 1),
+            (_, _, Some(n)) => self.new.line(n as usize - 1),
+            _ => "",
+        }
+    }
+
     pub fn old_spans(&self, line: u32) -> &[Span] {
         spans_at(&self.old_spans, line)
     }
@@ -59,6 +84,15 @@ pub struct FileDiff {
     pub content: Content,
     pub additions: u32,
     pub deletions: u32,
+}
+
+/// Added and removed line counts of an alignment.
+pub fn counts(lines: &[DiffLine]) -> (u32, u32) {
+    lines.iter().fold((0, 0), |(a, d), l| match l.kind {
+        LineKind::Added => (a + 1, d),
+        LineKind::Removed => (a, d + 1),
+        LineKind::Context => (a, d),
+    })
 }
 
 impl FileDiff {
@@ -106,18 +140,16 @@ impl FileDiff {
         }
         let old = Text::new(old.unwrap_or_default());
         let new = Text::new(new.unwrap_or_default());
-        let hunks = diff_lines(&old, &new, Algorithm::Histogram, CONTEXT);
-        let (mut additions, mut deletions) = (0, 0);
-        for line in hunks.iter().flat_map(|h| &h.lines) {
-            match line.kind {
-                LineKind::Added => additions += 1,
-                LineKind::Removed => deletions += 1,
-                LineKind::Context => {}
-            }
-        }
+        let lines = align(&old, &new, Algorithm::Histogram, Whitespace::Exact);
+        let (additions, deletions) = counts(&lines);
+        let lines_ignoring_whitespace = if additions + deletions == 0 {
+            lines.clone()
+        } else {
+            align(&old, &new, Algorithm::Histogram, Whitespace::Ignore)
+        };
         let lang = Language::from_path(path);
-        // Only highlight sides that have changes to show.
-        let (old_spans, new_spans) = if hunks.is_empty() {
+        // Only highlight files with changes to show.
+        let (old_spans, new_spans) = if additions + deletions == 0 {
             (Vec::new(), Vec::new())
         } else {
             (highlight(lang, &old), highlight(lang, &new))
@@ -128,7 +160,8 @@ impl FileDiff {
                 new,
                 old_spans,
                 new_spans,
-                hunks,
+                lines,
+                lines_ignoring_whitespace,
             }),
             additions,
             deletions,
@@ -151,7 +184,7 @@ mod tests {
         let Content::Text(text) = &diff.content else {
             panic!("{diff:?}")
         };
-        assert_eq!(text.hunks.len(), 1);
+        assert!(text.has_changes(Whitespace::Exact));
         assert!(!text.new_spans(1).is_empty());
         assert!(text.new_spans(99).is_empty());
     }

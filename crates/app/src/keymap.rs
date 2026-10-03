@@ -27,10 +27,21 @@ pub enum Action {
     PrevFile,
     ToggleTree,
     SwitchPane,
+    ToggleSplit,
+    IgnoreWhitespace,
+    ExpandContext,
+    FullFile,
+    ToggleViewed,
+    NextUnviewed,
+    MarkReviewed,
+    Search,
+    SearchNext,
+    SearchPrev,
+    FindFile,
 }
 
 impl Action {
-    pub const ALL: [Action; 20] = [
+    pub const ALL: [Action; 31] = [
         Action::Down,
         Action::Up,
         Action::HalfPageDown,
@@ -51,6 +62,17 @@ impl Action {
         Action::PrevFile,
         Action::ToggleTree,
         Action::SwitchPane,
+        Action::ToggleSplit,
+        Action::IgnoreWhitespace,
+        Action::ExpandContext,
+        Action::FullFile,
+        Action::ToggleViewed,
+        Action::NextUnviewed,
+        Action::MarkReviewed,
+        Action::Search,
+        Action::SearchNext,
+        Action::SearchPrev,
+        Action::FindFile,
     ];
 
     /// The name used in the `[keys]` config table.
@@ -76,6 +98,17 @@ impl Action {
             Action::PrevFile => "prev_file",
             Action::ToggleTree => "toggle_tree",
             Action::SwitchPane => "switch_pane",
+            Action::ToggleSplit => "toggle_split",
+            Action::IgnoreWhitespace => "ignore_whitespace",
+            Action::ExpandContext => "expand_context",
+            Action::FullFile => "full_file",
+            Action::ToggleViewed => "toggle_viewed",
+            Action::NextUnviewed => "next_unviewed",
+            Action::MarkReviewed => "mark_reviewed",
+            Action::Search => "search",
+            Action::SearchNext => "search_next",
+            Action::SearchPrev => "search_prev",
+            Action::FindFile => "find_file",
         }
     }
 
@@ -87,9 +120,9 @@ impl Action {
             Action::HalfPageUp => "Half page up",
             Action::Top => "Go to top",
             Action::Bottom => "Go to bottom",
-            Action::Open => "Open: pull request, its diff, a file, or a collapsed file",
+            Action::Open => "Open (PR, diff, file, collapsed file)",
             Action::Back => "Back",
-            Action::Close => "Close view (quit from the inbox)",
+            Action::Close => "Close view (quits from inbox)",
             Action::Quit => "Quit",
             Action::Refresh => "Refresh",
             Action::OpenInBrowser => "Open on GitHub",
@@ -99,8 +132,19 @@ impl Action {
             Action::PrevHunk => "Previous hunk",
             Action::NextFile => "Next file",
             Action::PrevFile => "Previous file",
-            Action::ToggleTree => "Show or hide the file tree",
-            Action::SwitchPane => "Switch between file tree and diff",
+            Action::ToggleTree => "Toggle file tree",
+            Action::SwitchPane => "Switch pane",
+            Action::ToggleSplit => "Split or unified view",
+            Action::IgnoreWhitespace => "Ignore whitespace changes",
+            Action::ExpandContext => "Show more context",
+            Action::FullFile => "Show the whole file",
+            Action::ToggleViewed => "Toggle file viewed (syncs)",
+            Action::NextUnviewed => "Next unviewed file",
+            Action::MarkReviewed => "Toggle change reviewed",
+            Action::Search => "Search the diff",
+            Action::SearchNext => "Next search match",
+            Action::SearchPrev => "Previous search match",
+            Action::FindFile => "Find a file",
         }
     }
 
@@ -126,6 +170,17 @@ impl Action {
             Action::PrevFile => &["[f"],
             Action::ToggleTree => &["<Tab>"],
             Action::SwitchPane => &["<C-w>"],
+            Action::ToggleSplit => &["s"],
+            Action::IgnoreWhitespace => &["w"],
+            Action::ExpandContext => &["x"],
+            Action::FullFile => &["F"],
+            Action::ToggleViewed => &["v"],
+            Action::NextUnviewed => &["]u"],
+            Action::MarkReviewed => &["m"],
+            Action::Search => &["/"],
+            Action::SearchNext => &["n"],
+            Action::SearchPrev => &["N"],
+            Action::FindFile => &["gf"],
         }
     }
 
@@ -421,14 +476,14 @@ mod tests {
 
     #[test]
     fn overrides_replace_defaults() {
-        let overrides = HashMap::from([("down".to_owned(), vec!["n".to_owned()])]);
+        let overrides = HashMap::from([("down".to_owned(), vec!["e".to_owned()])]);
         let keymap = Keymap::with_overrides(&overrides).unwrap();
         assert_eq!(
-            keymap.resolve(&[key('n')]),
+            keymap.resolve(&[key('e')]),
             Resolution::Action(Action::Down)
         );
         assert_eq!(keymap.resolve(&[key('j')]), Resolution::Unbound);
-        assert_eq!(keymap.keys_for(Action::Down), ["n"]);
+        assert_eq!(keymap.keys_for(Action::Down), ["e"]);
     }
 
     #[test]

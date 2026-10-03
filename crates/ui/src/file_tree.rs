@@ -9,7 +9,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
-use crate::diff_doc::Doc;
+use crate::diff_doc::{Doc, Viewed};
 use crate::{Ctx, PAD_Y, fill, text};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,6 +125,13 @@ impl Widget for FileTree<'_> {
             Span::styled("Files", theme.title(TREE_BG)),
             Span::styled(format!("  {}", self.doc.files.len()), theme.meta(TREE_BG)),
             Span::styled(
+                match self.doc.viewed_count() {
+                    0 => String::new(),
+                    n => format!("  {n} viewed"),
+                },
+                theme.style(Fg::Success, TREE_BG),
+            ),
+            Span::styled(
                 format!("  +{adds}"),
                 theme.style(Fg::DiffAddedSign, TREE_BG),
             ),
@@ -195,14 +202,12 @@ impl FileTree<'_> {
                     FileStatus::TypeChanged => ("T", Fg::OnSurfaceVariant),
                     FileStatus::Modified => ("M", Fg::OnSurfaceVariant),
                 };
+                let counts = self.doc.file_counts(file);
                 let right = match file.diff.as_deref() {
-                    Some(d) => vec![
+                    Some(_) => vec![
+                        Span::styled(format!("+{}", counts.0), theme.style(Fg::DiffAddedSign, bg)),
                         Span::styled(
-                            format!("+{}", d.additions),
-                            theme.style(Fg::DiffAddedSign, bg),
-                        ),
-                        Span::styled(
-                            format!(" −{}", d.deletions),
+                            format!(" −{}", counts.1),
                             theme.style(Fg::DiffRemovedSign, bg),
                         ),
                     ],
@@ -212,18 +217,25 @@ impl FileTree<'_> {
                 let indent = " ".repeat(usize::from(*depth) * 2);
                 let room =
                     usize::from(area.width).saturating_sub(indent.len() + 2 + right_width + 1);
-                let name_style = if file.generated {
+                let viewed = file.viewed == Viewed::Viewed;
+                let name_style = if file.generated || viewed {
                     theme.meta(bg)
                 } else {
                     theme.body(bg)
                 };
-                Line::from(vec![
+                let mut spans = vec![
                     Span::styled(indent, theme.body(bg)),
                     Span::styled(mark, theme.style(mark_fg, bg)),
                     Span::styled(" ", theme.body(bg)),
-                    Span::styled(text::truncate(name, room), name_style),
-                ])
-                .render(area, buf);
+                ];
+                let room = if viewed {
+                    spans.push(Span::styled("✓ ", theme.style(Fg::Success, bg)));
+                    room.saturating_sub(2)
+                } else {
+                    room
+                };
+                spans.push(Span::styled(text::truncate(name, room), name_style));
+                Line::from(spans).render(area, buf);
                 let rw = (right_width as u16).min(area.width);
                 Line::from(right).render(
                     Rect {

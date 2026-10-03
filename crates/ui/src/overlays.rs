@@ -23,23 +23,47 @@ pub struct Help<'a> {
     pub entries: &'a [HelpEntry],
 }
 
+/// Gap between help columns.
+const HELP_GUTTER: u16 = 4;
+
 impl Help<'_> {
-    pub fn area(&self, screen: Rect) -> Rect {
-        let keys_width = self
-            .entries
+    fn key_width(&self) -> usize {
+        self.entries
             .iter()
             .map(|e| text::width(&e.keys))
             .max()
-            .unwrap_or(0);
-        let desc_width = self
-            .entries
+            .unwrap_or(0)
+    }
+
+    /// Width of the column holding `entries`.
+    fn column_width(&self, entries: &[HelpEntry]) -> u16 {
+        let desc = entries
             .iter()
             .map(|e| text::width(e.description))
             .max()
             .unwrap_or(0);
-        let width = (keys_width + 3 + desc_width) as u16 + 2 * PAD_X;
-        let height = self.entries.len() as u16 + 2 + 2 * PAD_Y;
-        let height = height.min(screen.height.saturating_sub(2));
+        (self.key_width() + 3 + desc) as u16
+    }
+
+    fn columns(&self, screen: Rect) -> Vec<&[HelpEntry]> {
+        self.entries.chunks(self.rows_per_column(screen)).collect()
+    }
+
+    /// Entry rows per column: as many as fit, flowing into more columns
+    /// when the screen is short.
+    fn rows_per_column(&self, screen: Rect) -> usize {
+        let room = usize::from(screen.height.saturating_sub(2 + 2 * PAD_Y + 2)).max(1);
+        let columns = self.entries.len().div_ceil(room).max(1);
+        self.entries.len().div_ceil(columns).max(1)
+    }
+
+    pub fn area(&self, screen: Rect) -> Rect {
+        let rows = self.rows_per_column(screen);
+        let columns = self.columns(screen);
+        let width = columns.iter().map(|c| self.column_width(c)).sum::<u16>()
+            + (columns.len().max(1) as u16 - 1) * HELP_GUTTER
+            + 2 * PAD_X;
+        let height = (rows as u16 + 2 + 2 * PAD_Y).min(screen.height.saturating_sub(2));
         let top = screen.height.saturating_sub(height) / 2;
         centered(screen, width.max(32), height, top)
     }
@@ -51,40 +75,40 @@ impl Widget for Help<'_> {
         let area = self.area(screen);
         fill(buf, area, theme, POPUP);
         let inner = padded(area);
-        let keys_width = self
-            .entries
-            .iter()
-            .map(|e| text::width(&e.keys))
-            .max()
-            .unwrap_or(0);
-        let mut lines = vec![
-            Line::from(Span::styled("Keyboard shortcuts", theme.title(POPUP))),
-            Line::default(),
-        ];
-        for entry in self.entries {
-            let pad = keys_width.saturating_sub(text::width(&entry.keys));
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{}{}", entry.keys, " ".repeat(pad)),
-                    theme.accent(POPUP).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("   ", theme.body(POPUP)),
-                Span::styled(entry.description, theme.body(POPUP)),
-            ]));
+        if inner.height == 0 {
+            return;
         }
-        for (i, line) in lines
-            .into_iter()
-            .take(usize::from(inner.height))
-            .enumerate()
-        {
-            line.render(
-                Rect {
-                    y: inner.y + i as u16,
-                    height: 1,
-                    ..inner
-                },
-                buf,
-            );
+        Span::styled("Keyboard shortcuts", theme.title(POPUP))
+            .render(Rect { height: 1, ..inner }, buf);
+        let key_width = self.key_width();
+        let mut x = inner.x;
+        for column in self.columns(screen) {
+            let column_width = self.column_width(column);
+            for (row, entry) in column.iter().enumerate() {
+                let y = inner.y + 2 + row as u16;
+                if y >= inner.bottom() || x >= inner.right() {
+                    continue;
+                }
+                let pad = key_width.saturating_sub(text::width(&entry.keys));
+                Line::from(vec![
+                    Span::styled(
+                        format!("{}{}", entry.keys, " ".repeat(pad)),
+                        theme.accent(POPUP).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("   ", theme.body(POPUP)),
+                    Span::styled(entry.description, theme.body(POPUP)),
+                ])
+                .render(
+                    Rect {
+                        x,
+                        y,
+                        width: column_width.min(inner.right() - x),
+                        height: 1,
+                    },
+                    buf,
+                );
+            }
+            x = x.saturating_add(column_width + HELP_GUTTER);
         }
     }
 }
@@ -98,6 +122,8 @@ pub struct PaletteItem {
 
 pub struct Palette<'a> {
     pub ctx: Ctx<'a>,
+    /// Shown before the input, e.g. ":".
+    pub prompt: &'a str,
     pub input: &'a TextArea<'static>,
     pub items: &'a [PaletteItem],
     pub selected: usize,
@@ -115,11 +141,16 @@ impl Widget for Palette<'_> {
         let inner = padded(area);
 
         let prompt = Rect { height: 1, ..inner };
-        Span::styled(":", theme.accent(POPUP).add_modifier(Modifier::BOLD)).render(prompt, buf);
+        Span::styled(
+            self.prompt.to_owned(),
+            theme.accent(POPUP).add_modifier(Modifier::BOLD),
+        )
+        .render(prompt, buf);
+        let offset = (text::width(self.prompt) as u16 + 1).min(prompt.width);
         self.input.render(
             Rect {
-                x: prompt.x + 2,
-                width: prompt.width.saturating_sub(2),
+                x: prompt.x + offset,
+                width: prompt.width - offset,
                 ..prompt
             },
             buf,

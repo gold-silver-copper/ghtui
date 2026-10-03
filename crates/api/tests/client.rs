@@ -297,3 +297,87 @@ async fn graphql_errors_without_data_are_errors() {
         other => panic!("{other:?}"),
     }
 }
+
+#[tokio::test]
+async fn viewed_files_paginate() {
+    use ghtui_api::model::ViewedState;
+    let page = |nodes: &str, next: Option<&str>| {
+        format!(
+            r#"{{"data":{{"repository":{{"pullRequest":{{"id":"PR_kw1","files":{{
+                "pageInfo":{{"hasNextPage":{},"endCursor":{}}},
+                "nodes":[{nodes}]}}}}}}}}}}"#,
+            next.is_some(),
+            next.map_or("null".to_owned(), |c| format!("\"{c}\""))
+        )
+    };
+    let (base, seen) = serve(vec![
+        Reply::new(
+            200,
+            page(
+                r#"{"path":"a.rs","viewerViewedState":"VIEWED"},{"path":"b.rs","viewerViewedState":"UNVIEWED"}"#,
+                Some("c1"),
+            ),
+        ),
+        Reply::new(
+            200,
+            page(r#"{"path":"c.rs","viewerViewedState":"DISMISSED"}"#, None),
+        ),
+    ])
+    .await;
+    let gh = client(&base, Store::disabled());
+    let viewed = gh
+        .viewed_files(&PrRef::parse("o/r#3").unwrap())
+        .await
+        .unwrap();
+    assert_eq!(viewed.pull_request_id, "PR_kw1");
+    assert_eq!(viewed.states["a.rs"], ViewedState::Viewed);
+    assert_eq!(viewed.states["b.rs"], ViewedState::Unviewed);
+    assert_eq!(viewed.states["c.rs"], ViewedState::Dismissed);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    let second: serde_json::Value = serde_json::from_str(&seen[1].body).unwrap();
+    assert_eq!(second["variables"]["after"], "c1");
+}
+
+#[tokio::test]
+async fn set_viewed_sends_the_right_mutation() {
+    let (base, seen) = serve(vec![
+        Reply::new(
+            200,
+            r#"{"data":{"markFileAsViewed":{"clientMutationId":null}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"unmarkFileAsViewed":{"clientMutationId":null}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"errors":[{"message":"Could not resolve to a node"}]}"#,
+        ),
+    ])
+    .await;
+    let gh = client(&base, Store::disabled());
+    gh.set_viewed("PR_kw1", "src/a.rs", true).await.unwrap();
+    gh.set_viewed("PR_kw1", "src/a.rs", false).await.unwrap();
+    assert!(matches!(
+        gh.set_viewed("bad", "x", true).await,
+        Err(ApiError::GraphQl(_))
+    ));
+    let seen = seen.lock().unwrap();
+    let first: serde_json::Value = serde_json::from_str(&seen[0].body).unwrap();
+    assert!(
+        first["query"]
+            .as_str()
+            .unwrap()
+            .contains("markFileAsViewed")
+    );
+    assert_eq!(first["variables"]["pullRequestId"], "PR_kw1");
+    assert_eq!(first["variables"]["path"], "src/a.rs");
+    let second: serde_json::Value = serde_json::from_str(&seen[1].body).unwrap();
+    assert!(
+        second["query"]
+            .as_str()
+            .unwrap()
+            .contains("unmarkFileAsViewed")
+    );
+}

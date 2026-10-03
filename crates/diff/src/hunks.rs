@@ -46,11 +46,37 @@ impl Hunk {
     }
 }
 
-/// Diffs `old` against `new` and groups changes into hunks with `context`
-/// lines around them (hunks whose context would overlap are merged).
-pub fn diff_lines(old: &Text, new: &Text, algorithm: Algorithm, context: u32) -> Vec<Hunk> {
-    let before: Vec<String> = (0..old.len()).map(|i| old.token(i)).collect();
-    let after: Vec<String> = (0..new.len()).map(|i| new.token(i)).collect();
+/// How lines are compared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Whitespace {
+    /// Byte-exact, including line endings (like `git diff`).
+    #[default]
+    Exact,
+    /// All whitespace ignored, including CR (like `git diff -w`).
+    Ignore,
+}
+
+/// The full alignment of `old` and `new`: every line of both files, in
+/// order, as context (present in both), removed or added. Within a change,
+/// removed lines come before added ones.
+pub fn align(
+    old: &Text,
+    new: &Text,
+    algorithm: Algorithm,
+    whitespace: Whitespace,
+) -> Vec<DiffLine> {
+    let key = |text: &Text, i: usize| -> String {
+        match whitespace {
+            Whitespace::Exact => text.token(i),
+            Whitespace::Ignore => text
+                .line(i)
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect(),
+        }
+    };
+    let before: Vec<String> = (0..old.len()).map(|i| key(old, i)).collect();
+    let after: Vec<String> = (0..new.len()).map(|i| key(new, i)).collect();
     let mut input = InternedInput::default();
     input.update_before(before.iter().map(String::as_str));
     input.update_after(after.iter().map(String::as_str));
@@ -61,75 +87,136 @@ pub fn diff_lines(old: &Text, new: &Text, algorithm: Algorithm, context: u32) ->
     let mut diff = Diff::compute(algorithm, &input);
     diff.postprocess_lines(&input);
 
-    let changes: Vec<imara_diff::Hunk> = diff.hunks().collect();
-    let old_total = old.len() as u32;
-    let new_total = new.len() as u32;
-
-    let mut hunks = Vec::new();
-    let mut i = 0;
-    while i < changes.len() {
-        // Extend the group while the next change is within 2*context lines.
-        let mut j = i;
-        while j + 1 < changes.len()
-            && changes[j + 1].before.start - changes[j].before.end <= 2 * context
-        {
-            j += 1;
-        }
-        let first = &changes[i];
-        let last = &changes[j];
-        let old_from = first.before.start.saturating_sub(context);
-        let new_from = first.after.start - (first.before.start - old_from);
-        let old_to = (last.before.end + context).min(old_total);
-        let new_to = (last.after.end + (old_to - last.before.end)).min(new_total);
-
-        let mut lines = Vec::new();
-        let (mut o, mut n) = (old_from, new_from);
-        for change in &changes[i..=j] {
-            while o < change.before.start {
-                lines.push(context_line(o, n));
-                o += 1;
-                n += 1;
-            }
-            for k in change.before.clone() {
-                lines.push(DiffLine {
-                    kind: LineKind::Removed,
-                    old: Some(k + 1),
-                    new: None,
-                });
-            }
-            for k in change.after.clone() {
-                lines.push(DiffLine {
-                    kind: LineKind::Added,
-                    old: None,
-                    new: Some(k + 1),
-                });
-            }
-            o = change.before.end;
-            n = change.after.end;
-        }
-        while o < old_to && n < new_to {
+    let mut lines = Vec::with_capacity(old.len().max(new.len()));
+    let (mut o, mut n) = (0u32, 0u32);
+    for change in diff.hunks() {
+        while o < change.before.start {
             lines.push(context_line(o, n));
             o += 1;
             n += 1;
         }
-        hunks.push(Hunk {
-            old_start: if old_to > old_from {
-                old_from + 1
-            } else {
-                old_from
-            },
-            old_len: old_to - old_from,
-            new_start: if new_to > new_from {
-                new_from + 1
-            } else {
-                new_from
-            },
-            new_len: new_to - new_from,
-            lines,
-        });
-        i = j + 1;
+        lines.extend(change.before.clone().map(|k| DiffLine {
+            kind: LineKind::Removed,
+            old: Some(k + 1),
+            new: None,
+        }));
+        lines.extend(change.after.clone().map(|k| DiffLine {
+            kind: LineKind::Added,
+            old: None,
+            new: Some(k + 1),
+        }));
+        o = change.before.end;
+        n = change.after.end;
     }
-    hunks
+    while (o as usize) < old.len() {
+        lines.push(context_line(o, n));
+        o += 1;
+        n += 1;
+    }
+    lines
+}
+
+/// Ranges of `lines` to show: everything within `context` lines of a
+/// change, plus any `windows`, or everything when `full`. Adjacent visible
+/// lines form one range, so changes closer than `2 * context` share a hunk.
+#[allow(clippy::single_range_in_vec_init, reason = "a list of one range")]
+pub fn segments(
+    lines: &[DiffLine],
+    context: u32,
+    windows: &[std::ops::Range<u32>],
+    full: bool,
+) -> Vec<std::ops::Range<usize>> {
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    if full {
+        return vec![0..lines.len()];
+    }
+    let context = context as usize;
+    let mut visible = vec![false; lines.len()];
+    // Distance to the nearest change, from both directions.
+    let mut since_change = usize::MAX;
+    for (i, line) in lines.iter().enumerate() {
+        since_change = if line.kind == LineKind::Context {
+            since_change.saturating_add(1)
+        } else {
+            0
+        };
+        visible[i] = since_change <= context;
+    }
+    let mut until_change = usize::MAX;
+    for (i, line) in lines.iter().enumerate().rev() {
+        until_change = if line.kind == LineKind::Context {
+            until_change.saturating_add(1)
+        } else {
+            0
+        };
+        visible[i] |= until_change <= context;
+    }
+    for window in windows {
+        let end = (window.end as usize).min(lines.len());
+        for v in &mut visible[(window.start as usize).min(end)..end] {
+            *v = true;
+        }
+    }
+    let mut out = Vec::new();
+    let mut start = None;
+    for (i, v) in visible.iter().enumerate() {
+        match (v, start) {
+            (true, None) => start = Some(i),
+            (false, Some(s)) => {
+                out.push(s..i);
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        out.push(s..lines.len());
+    }
+    out
+}
+
+/// Old and new lines that come before `index` in the alignment.
+pub fn counts_before(lines: &[DiffLine], index: usize) -> (u32, u32) {
+    lines[..index].iter().fold((0, 0), |(o, n), l| {
+        (
+            o + u32::from(l.old.is_some()),
+            n + u32::from(l.new.is_some()),
+        )
+    })
+}
+
+/// The hunk for `range`, given how many old/new lines precede it.
+pub fn hunk(lines: &[DiffLine], range: std::ops::Range<usize>, before: (u32, u32)) -> Hunk {
+    let lines = lines[range].to_vec();
+    let old_len = lines.iter().filter(|l| l.old.is_some()).count() as u32;
+    let new_len = lines.iter().filter(|l| l.new.is_some()).count() as u32;
+    let start = |seen: u32, len: u32| if len > 0 { seen + 1 } else { seen };
+    Hunk {
+        old_start: start(before.0, old_len),
+        old_len,
+        new_start: start(before.1, new_len),
+        new_len,
+        lines,
+    }
+}
+
+/// Diffs `old` against `new` and groups changes into hunks with `context`
+/// lines around them, as `git diff -U<context>` does.
+pub fn diff_lines(old: &Text, new: &Text, algorithm: Algorithm, context: u32) -> Vec<Hunk> {
+    let lines = align(old, new, algorithm, Whitespace::Exact);
+    let mut seen = 0;
+    let mut counts = (0, 0);
+    segments(&lines, context, &[], false)
+        .into_iter()
+        .map(|range| {
+            let (o, n) = counts_before(&lines[seen..range.start], range.start - seen);
+            counts = (counts.0 + o, counts.1 + n);
+            seen = range.start;
+            hunk(&lines, range, counts)
+        })
+        .collect()
 }
 
 fn context_line(o: u32, n: u32) -> DiffLine {
@@ -141,6 +228,7 @@ fn context_line(o: u32, n: u32) -> DiffLine {
 }
 
 #[cfg(test)]
+#[allow(clippy::single_range_in_vec_init, reason = "lists of ranges")]
 mod tests {
     use super::*;
 
@@ -305,5 +393,57 @@ mod tests {
             assert_eq!(actual, expected, "case {i}");
         }
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn kinds(lines: &[DiffLine]) -> String {
+        lines
+            .iter()
+            .map(|l| match l.kind {
+                LineKind::Context => ' ',
+                LineKind::Removed => '-',
+                LineKind::Added => '+',
+            })
+            .collect()
+    }
+
+    #[test]
+    fn alignment_covers_every_line() {
+        let old = Text::new(b"a\nb\nc\n");
+        let new = Text::new(b"a\nB\nc\nd\n");
+        let lines = align(&old, &new, Algorithm::Histogram, Whitespace::Exact);
+        assert_eq!(kinds(&lines), " -+ +");
+        assert_eq!(lines.iter().filter(|l| l.old.is_some()).count(), 3);
+        assert_eq!(lines.iter().filter(|l| l.new.is_some()).count(), 4);
+    }
+
+    #[test]
+    fn ignoring_whitespace() {
+        let old = Text::new(b"fn f() {\n  x();\n}\nend\n");
+        let new = Text::new(b"fn f() {\n\tx( );\r\n}\nEND\n");
+        assert_eq!(
+            kinds(&align(&old, &new, Algorithm::Histogram, Whitespace::Exact)),
+            " -+ -+"
+        );
+        assert_eq!(
+            kinds(&align(&old, &new, Algorithm::Histogram, Whitespace::Ignore)),
+            "   -+"
+        );
+    }
+
+    #[test]
+    fn segments_with_windows_and_full() {
+        let old = numbered(40);
+        let new = old.replace("line 20\n", "x\n");
+        let lines = align(
+            &Text::new(old.as_bytes()),
+            &Text::new(new.as_bytes()),
+            Algorithm::Histogram,
+            Whitespace::Exact,
+        );
+        assert_eq!(segments(&lines, 3, &[], false), [16..24]);
+        assert_eq!(segments(&lines, 3, &[0..2], false), [0..2, 16..24]);
+        assert_eq!(segments(&lines, 3, &[10..16], false), [10..24]);
+        assert_eq!(segments(&lines, 3, &[], true), [0..41]);
+        assert!(segments(&[], 3, &[], false).is_empty());
     }
 }

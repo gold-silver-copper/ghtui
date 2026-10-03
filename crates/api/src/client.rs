@@ -12,7 +12,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::auth::Token;
-use crate::model::{Inbox, PrDetail, PrRef, PrSummary};
+use crate::model::{Inbox, PrDetail, PrRef, PrSummary, ViewedFiles, ViewedState};
 use crate::queries;
 use crate::rate_limit::{RateLimits, retry_after};
 
@@ -315,6 +315,66 @@ impl GitHub {
             .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
         self.put_query(pr_key(pr), detail.clone()).await;
         Ok(detail)
+    }
+
+    /// Viewed state of every file in the PR (paginated, 100 per page).
+    pub async fn viewed_files(&self, pr: &PrRef) -> Result<ViewedFiles, ApiError> {
+        use cynic::QueryBuilder;
+        let number = i32::try_from(pr.number).map_err(|_| ApiError::NotFound(pr.to_string()))?;
+        let mut after = None;
+        let mut out = ViewedFiles {
+            pull_request_id: String::new(),
+            states: std::collections::HashMap::new(),
+        };
+        loop {
+            let op = queries::PrFilesQuery::build(queries::PrFilesVariables {
+                owner: pr.repo.owner.clone(),
+                name: pr.repo.name.clone(),
+                number,
+                after: after.take(),
+            });
+            let data = self.graphql(op).await?;
+            let files = data
+                .repository
+                .and_then(|r| r.pull_request)
+                .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
+            out.pull_request_id = files.id.into_inner();
+            let Some(page) = files.files else { break };
+            for file in page.nodes.into_iter().flatten().flatten() {
+                let state = match file.viewer_viewed_state {
+                    queries::FileViewedState::Viewed => ViewedState::Viewed,
+                    queries::FileViewedState::Dismissed => ViewedState::Dismissed,
+                    queries::FileViewedState::Unviewed => ViewedState::Unviewed,
+                };
+                out.states.insert(file.path, state);
+            }
+            match page.page_info.end_cursor {
+                Some(cursor) if page.page_info.has_next_page => after = Some(cursor),
+                _ => break,
+            }
+        }
+        Ok(out)
+    }
+
+    /// Marks (or unmarks) a file as viewed on GitHub.
+    pub async fn set_viewed(
+        &self,
+        pull_request_id: &str,
+        path: &str,
+        viewed: bool,
+    ) -> Result<(), ApiError> {
+        use cynic::MutationBuilder;
+        let vars = queries::ViewedVariables {
+            pull_request_id: cynic::Id::new(pull_request_id),
+            path: path.to_owned(),
+        };
+        if viewed {
+            self.graphql(queries::MarkFileAsViewed::build(vars)).await?;
+        } else {
+            self.graphql(queries::UnmarkFileAsViewed::build(vars))
+                .await?;
+        }
+        Ok(())
     }
 
     async fn put_query<T: Serialize + Send + 'static>(&self, key: String, value: T) {

@@ -1,7 +1,7 @@
-//! Unified diff rendering. Only the visible rows are laid out, so cost per
-//! frame depends on the terminal height, not the size of the PR.
+//! Diff rendering, unified or split. Only the visible rows are laid out, so
+//! cost per frame depends on the terminal height, not the size of the PR.
 
-use ghtui_diff::{Content, LineKind, Span as TokenSpan, TokenKind};
+use ghtui_diff::{Content, DiffLine, LineKind, Span as TokenSpan, TextDiff, TokenKind};
 use ghtui_git::files::{FileStatus, MODE_SUBMODULE, MODE_SYMLINK};
 use ghtui_theme::{Bg, DiffBg, Fg, Syntax};
 use ratatui::buffer::Buffer;
@@ -11,7 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthChar;
 
-use crate::diff_doc::{Doc, DocFile, Note, Pos, Row};
+use crate::diff_doc::{Doc, DocFile, Note, Pos, Row, Viewed};
 use crate::{Ctx, PAD_X, chips, fill, text};
 
 const PANE: Bg = Bg::Surface;
@@ -34,14 +34,21 @@ pub fn syntax_role(kind: TokenKind) -> Syntax {
     }
 }
 
+/// Keys named in hints, from the active keymap.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Keys<'a> {
+    pub show: &'a str,
+    pub expand: &'a str,
+    pub viewed: &'a str,
+}
+
 pub struct DiffView<'a> {
     pub ctx: Ctx<'a>,
     pub doc: &'a Doc,
     pub cursor: Pos,
     /// First visible row.
     pub top: Pos,
-    /// Shown on collapsed files, e.g. "<Enter>".
-    pub expand_key: &'a str,
+    pub keys: Keys<'a>,
 }
 
 impl Widget for DiffView<'_> {
@@ -82,24 +89,54 @@ impl DiffView<'_> {
         let Some(row) = self.doc.row(pos) else { return };
         let file = &self.doc.files[pos.file];
         let cursor = pos == self.doc.clamp(self.cursor);
+        let theme = self.ctx.theme;
+        let quiet_bg = if cursor { Bg::SelectedInactive } else { PANE };
+        let indent = usize::from(PAD_X) + 2 * file.number_width() + 2;
         match row {
             Row::Header => self.header(file, cursor, area, buf),
-            Row::Note(note) => self.note(file, note, cursor, area, buf),
-            Row::Hunk(h) => self.hunk_header(file, h, cursor, area, buf),
-            Row::Line { hunk, line } => self.line(file, hunk, line, cursor, area, buf),
-            Row::NoNewline => {
-                let bg = if cursor { Bg::SelectedInactive } else { PANE };
-                fill(buf, area, self.ctx.theme, bg);
-                let indent = PAD_X as usize + 2 * file.number_width() + 4;
+            Row::Note(note) => self.note(file, note, quiet_bg, area, buf),
+            Row::Gap { start, end } => {
+                fill(buf, area, theme, quiet_bg);
+                let n = end - start;
+                Line::from(vec![
+                    Span::styled(
+                        format!(
+                            "{}⋯ {n} unchanged line{} · ",
+                            " ".repeat(indent),
+                            if n == 1 { "" } else { "s" }
+                        ),
+                        theme.meta(quiet_bg),
+                    ),
+                    Span::styled(
+                        self.keys.expand.to_owned(),
+                        theme.accent(quiet_bg).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" to expand", theme.meta(quiet_bg)),
+                ])
+                .render(area, buf);
+            }
+            Row::Hunk { seg } => {
+                fill(buf, area, theme, quiet_bg);
+                let header = file.headers().get(seg as usize).map_or("", String::as_str);
                 Span::styled(
-                    format!("{}\\ No newline at end of file", " ".repeat(indent)),
-                    self.ctx.theme.meta(bg).add_modifier(Modifier::ITALIC),
+                    format!("{}{header}", " ".repeat(indent)),
+                    theme.meta(quiet_bg),
+                )
+                .render(area, buf);
+            }
+            Row::Line(e) => self.unified(file, e, cursor, area, buf),
+            Row::Split { left, right } => self.split(file, left, right, cursor, area, buf),
+            Row::NoNewline => {
+                fill(buf, area, theme, quiet_bg);
+                Span::styled(
+                    format!("{}\\ No newline at end of file", " ".repeat(indent + 2)),
+                    theme.meta(quiet_bg).add_modifier(Modifier::ITALIC),
                 )
                 .render(area, buf);
             }
             Row::Spacer => {
                 if cursor {
-                    fill(buf, area, self.ctx.theme, Bg::SelectedInactive);
+                    fill(buf, area, theme, Bg::SelectedInactive);
                 }
             }
         }
@@ -117,6 +154,17 @@ impl DiffView<'_> {
             left.extend(chips::chip(ctx, text, theme.fill(chip_bg), bg));
             left.push(Span::styled(" ", theme.body(bg)));
         };
+        match file.viewed {
+            Viewed::Viewed => chip(
+                format!(
+                    "{} Viewed",
+                    ctx.icons.checks(ghtui_api::model::ChecksState::Passing)
+                ),
+                Bg::SuccessContainer,
+            ),
+            Viewed::Dismissed => chip("Changed since viewed".into(), Bg::TertiaryContainer),
+            Viewed::Unviewed => {}
+        }
         match meta.status {
             FileStatus::Added => chip("Added".into(), Bg::SuccessContainer),
             FileStatus::Deleted => chip("Deleted".into(), Bg::ErrorContainer),
@@ -145,6 +193,9 @@ impl DiffView<'_> {
         if file.generated {
             chip("Generated".into(), Bg::SecondaryContainer);
         }
+        if file.full {
+            chip("Full file".into(), Bg::SecondaryContainer);
+        }
         if let Some(old) = meta.old_path.as_deref()
             && matches!(meta.status, FileStatus::Renamed | FileStatus::Copied)
         {
@@ -158,34 +209,48 @@ impl DiffView<'_> {
             ));
         }
 
-        let right = match file.diff.as_deref() {
-            Some(diff) => vec![
-                Span::styled(
-                    format!("+{}", diff.additions),
-                    theme.style(Fg::DiffAddedSign, bg),
-                ),
-                Span::styled(" ", theme.body(bg)),
-                Span::styled(
-                    format!("−{}", diff.deletions),
-                    theme.style(Fg::DiffRemovedSign, bg),
-                ),
-            ],
-            None => Vec::new(),
-        };
+        let mut right = Vec::new();
+        let blocks = file.blocks();
+        let reviewed = blocks
+            .iter()
+            .filter(|b| self.doc.reviewed.contains(&b.hash))
+            .count();
+        if reviewed > 0 {
+            right.push(Span::styled(
+                format!("{reviewed}/{} reviewed   ", blocks.len()),
+                theme.style(Fg::Success, bg),
+            ));
+        }
+        if file.diff.is_some() {
+            let (adds, dels) = self.doc.file_counts(file);
+            right.push(Span::styled(
+                format!("+{adds}"),
+                theme.style(Fg::DiffAddedSign, bg),
+            ));
+            right.push(Span::styled(" ", theme.body(bg)));
+            right.push(Span::styled(
+                format!("−{dels}"),
+                theme.style(Fg::DiffRemovedSign, bg),
+            ));
+        }
         split_line(area, buf, left, right);
     }
 
-    fn note(&self, file: &DocFile, note: Note, cursor: bool, area: Rect, buf: &mut Buffer) {
+    fn note(&self, file: &DocFile, note: Note, bg: Bg, area: Rect, buf: &mut Buffer) {
         let theme = self.ctx.theme;
-        let bg = if cursor { Bg::SelectedInactive } else { PANE };
         fill(buf, area, theme, bg);
         let content = file.diff.as_deref().map(|d| &d.content);
+        let keys = self.keys;
         let (text, fg) = match (note, content) {
             (Note::Loading, _) => ("Loading diff…".to_owned(), Fg::OnSurfaceVariant),
             (Note::Collapsed, _) => (
+                format!("Generated file, collapsed. Press {} to show it.", keys.show),
+                Fg::OnSurfaceVariant,
+            ),
+            (Note::Viewed, _) => (
                 format!(
-                    "Generated file, collapsed. Press {} to show it.",
-                    self.expand_key
+                    "Viewed. Press {} to show it, or {} to mark it unviewed.",
+                    keys.show, keys.viewed
                 ),
                 Fg::OnSurfaceVariant,
             ),
@@ -214,7 +279,12 @@ impl DiffView<'_> {
             }
             (Note::NoChanges, _) => {
                 let meta = &file.meta;
-                let text = if meta.status == FileStatus::Renamed {
+                let whitespace_only = file
+                    .text()
+                    .is_some_and(|t| t.has_changes(ghtui_diff::Whitespace::Exact));
+                let text = if whitespace_only {
+                    "Only whitespace changed (whitespace is being ignored).".to_owned()
+                } else if meta.status == FileStatus::Renamed {
                     "Renamed without content changes.".to_owned()
                 } else if meta.mode_changed() {
                     format!(
@@ -240,105 +310,184 @@ impl DiffView<'_> {
         .render(inner, buf);
     }
 
-    fn hunk_header(&self, file: &DocFile, h: u32, cursor: bool, area: Rect, buf: &mut Buffer) {
-        let theme = self.ctx.theme;
-        let bg = if cursor { Bg::SelectedInactive } else { PANE };
-        fill(buf, area, theme, bg);
-        let Some(Content::Text(text)) = file.diff.as_deref().map(|d| &d.content) else {
-            return;
-        };
-        let Some(hunk) = text.hunks.get(h as usize) else {
-            return;
-        };
-        let indent = PAD_X as usize + 2 * file.number_width() + 2;
-        Span::styled(
-            format!("{}{}", " ".repeat(indent), hunk.header()),
-            theme.meta(bg),
-        )
-        .render(area, buf);
+    /// The reviewed mark column (1 cell).
+    fn mark(&self, file: &DocFile, entry: Option<u32>, bg: Bg) -> Span<'static> {
+        let reviewed = entry
+            .and_then(|e| file.block_of(e))
+            .is_some_and(|b| self.doc.reviewed.contains(&b.hash));
+        if reviewed {
+            Span::styled("✓", self.ctx.theme.style(Fg::Success, bg))
+        } else {
+            Span::styled(" ", self.ctx.theme.body(bg))
+        }
     }
 
-    fn line(&self, file: &DocFile, h: u32, l: u32, cursor: bool, area: Rect, buf: &mut Buffer) {
-        let ctx = self.ctx;
-        let theme = ctx.theme;
-        let Some(Content::Text(text)) = file.diff.as_deref().map(|d| &d.content) else {
+    fn unified(&self, file: &DocFile, e: u32, cursor: bool, area: Rect, buf: &mut Buffer) {
+        let theme = self.ctx.theme;
+        let Some(text) = file.text() else { return };
+        let Some(line) = text.lines(self.doc.opts.whitespace).get(e as usize) else {
             return;
         };
-        let Some(line) = text
-            .hunks
-            .get(h as usize)
-            .and_then(|hunk| hunk.lines.get(l as usize))
-        else {
-            return;
-        };
-        let diff_bg = match line.kind {
-            LineKind::Context => DiffBg::Context,
-            LineKind::Added => DiffBg::Added,
-            LineKind::Removed => DiffBg::Removed,
-        };
-        let bg = if cursor {
-            Bg::DiffSelected(diff_bg)
-        } else {
-            Bg::Diff(diff_bg)
-        };
+        let diff_bg = diff_bg(line.kind);
+        let bg = line_bg(diff_bg, cursor);
         fill(buf, area, theme, bg);
-
         let width = file.number_width();
-        let number =
-            |n: Option<u32>| n.map_or_else(|| " ".repeat(width), |n| format!("{n:>width$}"));
+        let mut spans = vec![
+            Span::styled(" ", theme.body(bg)),
+            self.mark(file, Some(e), bg),
+            Span::styled(
+                number(line.old, width),
+                theme.style(self.gutter_fg(line.kind), bg),
+            ),
+            Span::styled(" ", theme.body(bg)),
+            Span::styled(
+                number(line.new, width),
+                theme.style(self.gutter_fg(line.kind), bg),
+            ),
+            Span::styled("  ", theme.body(bg)),
+        ];
+        let used: usize = spans.iter().map(Span::width).sum();
+        let room = usize::from(area.width).saturating_sub(used + 1);
+        spans.extend(self.code(text, line, diff_bg, cursor, room));
+        Line::from(spans).render(area, buf);
+    }
+
+    fn split(
+        &self,
+        file: &DocFile,
+        left: Option<u32>,
+        right: Option<u32>,
+        cursor: bool,
+        area: Rect,
+        buf: &mut Buffer,
+    ) {
+        let theme = self.ctx.theme;
+        let Some(text) = file.text() else { return };
+        let lines = text.lines(self.doc.opts.whitespace);
+        let width = file.number_width();
+        let half = area.width.saturating_sub(1) / 2;
+        let halves = [
+            (
+                left.and_then(|e| lines.get(e as usize)),
+                Rect {
+                    width: half,
+                    ..area
+                },
+                true,
+            ),
+            (
+                right.and_then(|e| lines.get(e as usize)),
+                Rect {
+                    x: area.x + half + 1,
+                    width: area.width.saturating_sub(half + 1),
+                    ..area
+                },
+                false,
+            ),
+        ];
+        fill(buf, area, theme, line_bg(DiffBg::Context, cursor));
+        for (line, half_area, is_left) in halves {
+            let diff_bg = line.map_or(DiffBg::Context, |l| diff_bg(l.kind));
+            let bg = line_bg(diff_bg, cursor);
+            fill(buf, half_area, theme, bg);
+            let mut spans = Vec::new();
+            if is_left {
+                spans.push(Span::styled(" ", theme.body(bg)));
+                spans.push(self.mark(file, left.or(right), bg));
+            }
+            let Some(line) = line else {
+                Line::from(spans).render(half_area, buf);
+                continue;
+            };
+            let n = if is_left { line.old } else { line.new };
+            spans.push(Span::styled(
+                number(n, width),
+                theme.style(self.gutter_fg(line.kind), bg),
+            ));
+            spans.push(Span::styled("  ", theme.body(bg)));
+            let used: usize = spans.iter().map(Span::width).sum();
+            let room = usize::from(half_area.width).saturating_sub(used + 1);
+            spans.extend(self.code(text, line, diff_bg, cursor, room));
+            Line::from(spans).render(half_area, buf);
+        }
+    }
+
+    fn gutter_fg(&self, kind: LineKind) -> Fg {
         // When tints are indistinguishable (some 256-color palettes), carry
         // the change in the gutter instead.
-        let marked = theme.diff_tints_collapse() && line.kind != LineKind::Context;
-        let gutter_fg = match line.kind {
+        let marked = self.ctx.theme.diff_tints_collapse();
+        match kind {
             LineKind::Added if marked => Fg::DiffAddedSign,
             LineKind::Removed if marked => Fg::DiffRemovedSign,
             _ => Fg::OnSurfaceVariant,
-        };
+        }
+    }
+
+    /// Sign, code and line-ending marker for one alignment entry.
+    fn code(
+        &self,
+        text: &TextDiff,
+        line: &DiffLine,
+        diff_bg: DiffBg,
+        cursor: bool,
+        room: usize,
+    ) -> Vec<Span<'static>> {
+        let theme = self.ctx.theme;
+        let bg = line_bg(diff_bg, cursor);
         let (sign, sign_fg) = match line.kind {
             LineKind::Context => (" ", Fg::OnSurfaceVariant),
             LineKind::Added => ("+", Fg::DiffAddedSign),
             LineKind::Removed => ("-", Fg::DiffRemovedSign),
         };
         let mut spans = vec![
-            Span::styled(" ".repeat(usize::from(PAD_X)), theme.body(bg)),
-            Span::styled(number(line.old), theme.style(gutter_fg, bg)),
-            Span::styled(" ", theme.body(bg)),
-            Span::styled(number(line.new), theme.style(gutter_fg, bg)),
-            Span::styled("  ", theme.body(bg)),
             Span::styled(sign, theme.style(sign_fg, bg).add_modifier(Modifier::BOLD)),
             Span::styled(" ", theme.body(bg)),
         ];
-        let used: usize = spans.iter().map(Span::width).sum();
-        let room = usize::from(area.width).saturating_sub(used + 1);
-
-        let (source, number, tokens, crlf) = match line.kind {
+        let (source, n, tokens) = match line.kind {
             LineKind::Removed => {
                 let n = line.old.unwrap_or(1);
-                (
-                    &text.old,
-                    n,
-                    text.old_spans(n),
-                    text.old.crlf[n as usize - 1],
-                )
+                (&text.old, n, text.old_spans(n))
             }
             _ => {
                 let n = line.new.unwrap_or(1);
-                (
-                    &text.new,
-                    n,
-                    text.new_spans(n),
-                    text.new.crlf[n as usize - 1],
-                )
+                (&text.new, n, text.new_spans(n))
             }
         };
-        let content = source.line(number as usize - 1);
-        spans.extend(code_spans(ctx, content, tokens, diff_bg, cursor, room));
+        let i = n as usize - 1;
+        spans.extend(code_spans(
+            self.ctx,
+            source.line(i),
+            tokens,
+            diff_bg,
+            cursor,
+            room.saturating_sub(2),
+        ));
         // Line endings only matter where they changed.
-        if crlf && line.kind != LineKind::Context {
+        if source.crlf[i] && line.kind != LineKind::Context {
             spans.push(Span::styled("␍", theme.meta(bg)));
         }
-        Line::from(spans).render(area, buf);
+        spans
     }
+}
+
+fn diff_bg(kind: LineKind) -> DiffBg {
+    match kind {
+        LineKind::Context => DiffBg::Context,
+        LineKind::Added => DiffBg::Added,
+        LineKind::Removed => DiffBg::Removed,
+    }
+}
+
+fn line_bg(diff_bg: DiffBg, cursor: bool) -> Bg {
+    if cursor {
+        Bg::DiffSelected(diff_bg)
+    } else {
+        Bg::Diff(diff_bg)
+    }
+}
+
+fn number(n: Option<u32>, width: usize) -> String {
+    n.map_or_else(|| " ".repeat(width), |n| format!("{n:>width$}"))
 }
 
 /// Styled code, with tabs expanded and control characters made visible,
@@ -352,11 +501,7 @@ fn code_spans(
     room: usize,
 ) -> Vec<Span<'static>> {
     let theme = ctx.theme;
-    let bg = if cursor {
-        Bg::DiffSelected(diff_bg)
-    } else {
-        Bg::Diff(diff_bg)
-    };
+    let bg = line_bg(diff_bg, cursor);
     let style_for = |kind: Option<TokenKind>| -> Style {
         let role = kind.map_or(Syntax::Default, syntax_role);
         let style = theme.style(Fg::Syntax(role), bg);

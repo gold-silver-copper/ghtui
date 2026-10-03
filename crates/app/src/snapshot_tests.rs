@@ -253,7 +253,11 @@ fn narrow_terminal_does_not_panic() {
 
 // ---- diff screen -----------------------------------------------------------
 
-mod diff {
+pub(crate) fn diff_fixture() -> crate::diff_screen::DiffState {
+    diff::diff_state()
+}
+
+pub(crate) mod diff {
     use std::collections::HashSet;
     use std::sync::Arc;
 
@@ -293,7 +297,7 @@ mod diff {
     const OLD_RS: &str = "use std::fmt;\n\n/// A point.\npub struct Point {\n    x: i32,\n    y: i32,\n}\n\nimpl Point {\n    pub fn new(x: i32, y: i32) -> Self {\n        Point { x, y }\n    }\n}\n";
     const NEW_RS: &str = "use std::fmt;\n\n/// A point in 2D.\npub struct Point {\n    x: i32,\n    y: i32,\n}\n\nimpl Point {\n    pub fn new(x: i32, y: i32) -> Self {\n        Point { x, y }\n    }\n\n    pub fn origin() -> Self {\n        Self::new(0, \"0\".len() as i32 - 1)\n    }\n}\n";
 
-    pub(super) fn diff_state() -> DiffState {
+    pub(crate) fn diff_state() -> DiffState {
         let regular = (0o100644, 0o100644);
         let files = vec![
             file(
@@ -431,6 +435,47 @@ mod diff {
     }
 
     #[test]
+    fn diff_split_wide_light() {
+        let mut s = screen_state(
+            Mode::Light,
+            ColorDepth::TrueColor,
+            Pos { file: 0, row: 6 },
+            Pane::Diff,
+        );
+        s.size = (200, 30);
+        settle(&mut s);
+        insta::assert_snapshot!(render(&s));
+    }
+
+    #[test]
+    fn diff_viewed_and_reviewed_dark() {
+        let mut s = screen_state(
+            Mode::Dark,
+            ColorDepth::TrueColor,
+            Pos { file: 0, row: 3 },
+            Pane::Diff,
+        );
+        let pr = PrRef::parse("o/r#7").unwrap();
+        let diff = s.diffs.get_mut(&pr).unwrap();
+        let hash = diff.doc.files[0].blocks()[0].hash.clone();
+        diff.set_review(ghtui_store::ReviewState {
+            last_reviewed_head: None,
+            reviewed_hunks: vec![hash],
+        });
+        diff.doc.set_viewed(1, ghtui_ui::diff_doc::Viewed::Viewed);
+        settle(&mut s);
+        insta::assert_snapshot!(render(&s));
+    }
+
+    fn settle(s: &mut crate::state::State) {
+        let content = s.content_area();
+        let crate::state::State { screens, diffs, .. } = s;
+        if let Some(Screen::Diff(screen)) = screens.last_mut() {
+            crate::diff_screen::settle(screen, diffs.get_mut(&screen.pr).unwrap(), content);
+        }
+    }
+
+    #[test]
     fn diff_loading_dark() {
         let mut s = state(Mode::Dark, ColorDepth::TrueColor);
         let pr = PrRef::parse("o/r#7").unwrap();
@@ -533,4 +578,94 @@ fn scroll_timing_on_500_files_20k_lines() {
         per_frame < std::time::Duration::from_millis(8),
         "{per_frame:?} per frame"
     );
+}
+
+/// A single 50k-line file: diffing and highlighting run on the diff job's
+/// workers (never the UI task); once its result arrives, the first screen
+/// must be ready within 100ms. This measures the worker's compute plus the
+/// UI's update and first render.
+/// Run with `cargo test --release -p ghtui -- --ignored big_file_timing`.
+#[test]
+#[ignore = "timing; run in release"]
+fn big_file_timing_50k_lines() {
+    use std::collections::HashSet;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use ghtui_api::model::PrRef;
+    use ghtui_diff::FileDiff;
+    use ghtui_git::files::{ChangedFile, FileStatus};
+    use ghtui_git::repo::PrRefs;
+    use ghtui_ui::diff_doc::Doc;
+
+    use crate::diff_screen::{DiffScreen, DiffState};
+    use crate::state::{Screen, update};
+
+    let old: String = (0..50_000)
+        .map(|i| format!("    let value_{i} = compute({i}, \"label\");\n"))
+        .collect();
+    let new = old
+        .replace("compute(100,", "compute_fast(100,")
+        .replace("compute(25000,", "compute_fast(25000,")
+        .replace("compute(49999,", "compute_fast(49999,");
+
+    let start = Instant::now();
+    let diff = Arc::new(FileDiff::compute(
+        "big.rs",
+        Some(old.as_bytes()),
+        Some(new.as_bytes()),
+    ));
+    let compute = start.elapsed();
+
+    let file = ChangedFile {
+        status: FileStatus::Modified,
+        old_path: Some("big.rs".into()),
+        new_path: Some("big.rs".into()),
+        old_mode: 0o100644,
+        new_mode: 0o100644,
+        old_oid: "1".repeat(40),
+        new_oid: "2".repeat(40),
+        similarity: None,
+    };
+    let mut s = state(Mode::Dark, ColorDepth::TrueColor);
+    s.size = (160, 50);
+    let pr = PrRef::parse("o/r#1").unwrap();
+    let mut diff_state = DiffState::loading();
+    diff_state.set_files(
+        PrRefs {
+            head: "h".into(),
+            base: "b".into(),
+            merge_base: "m".into(),
+        },
+        Doc::new(vec![file], &HashSet::new()),
+    );
+    s.diffs.insert(pr.clone(), diff_state);
+    s.screens
+        .push(Screen::Diff(Box::new(DiffScreen::new(pr.clone(), 160))));
+    let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
+
+    let start = Instant::now();
+    update(&mut s, Msg::FileDiff(pr.clone(), 0, diff));
+    terminal.draw(|frame| view(&s, frame, NOW)).unwrap();
+    let first_screen = start.elapsed();
+
+    // Full-file mode on 50k lines must stay interactive too.
+    let start = Instant::now();
+    update(
+        &mut s,
+        Msg::Key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('F'),
+            crossterm::event::KeyModifiers::NONE,
+        )),
+    );
+    terminal.draw(|frame| view(&s, frame, NOW)).unwrap();
+    let full_file = start.elapsed();
+
+    eprintln!("compute {compute:?}, first screen {first_screen:?}, full file {full_file:?}");
+    assert!(
+        compute + first_screen < Duration::from_millis(100),
+        "{:?}",
+        compute + first_screen
+    );
+    assert!(full_file < Duration::from_millis(100), "{full_file:?}");
 }
