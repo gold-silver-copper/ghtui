@@ -380,3 +380,32 @@ async fn failed_clone_leaves_nothing_behind() {
         .unwrap_or_default();
     assert!(leftovers.is_empty(), "{leftovers:?}");
 }
+
+#[tokio::test]
+async fn fetches_force_pushed_commits_by_sha() {
+    let f = fixture();
+    let repo = cache_repo(&f).await;
+    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
+    // Rewrite the PR so its old head is unreferenced on the server.
+    let old_head = refs.head.clone();
+    git(&f.origin, &["checkout", "-q", "feature"]);
+    git(&f.origin, &["commit", "-q", "--amend", "-m", "rewritten"]);
+    git(&f.origin, &["update-ref", "refs/pull/7/head", "feature"]);
+    git(&f.origin, &["checkout", "-q", "main"]);
+    let new = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
+    assert_ne!(new.head, old_head);
+    // Still local thanks to the earlier fetch: `has` sees it without fetching.
+    assert!(repo.has(&old_head).await);
+    assert!(!repo.has("0123456789012345678901234567890123456789").await);
+    assert!(repo.fetch_commit("not-a-sha").await.is_err());
+    // Fetching a known commit by SHA works (the server allows any SHA here),
+    // and its files read through the blob reader (blobs fetch lazily).
+    repo.fetch_commit(&old_head).await.unwrap();
+    let reader = repo.blob_reader().unwrap();
+    let lib = reader
+        .read(&format!("{old_head}:src/lib.rs"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(String::from_utf8(lib).unwrap().contains("line_five"));
+}

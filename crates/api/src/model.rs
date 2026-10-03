@@ -187,6 +187,80 @@ pub struct ViewedFiles {
     pub states: std::collections::HashMap<String, ViewedState>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Side {
+    /// Base (old) lines.
+    Left,
+    /// Head (new) lines.
+    Right,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewComment {
+    pub id: String,
+    pub author: String,
+    pub body: String,
+    /// ISO 8601.
+    pub created_at: String,
+    pub url: String,
+    /// The commit the comment was originally made on.
+    pub original_commit: Option<String>,
+    /// Part of the viewer's unsubmitted review on GitHub.
+    pub pending: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewThread {
+    pub id: String,
+    pub path: String,
+    pub side: Side,
+    pub start_side: Option<Side>,
+    /// Current line; `None` when the thread is outdated.
+    pub line: Option<u32>,
+    pub start_line: Option<u32>,
+    /// Line on the comment's original commit.
+    pub original_line: Option<u32>,
+    pub original_start_line: Option<u32>,
+    pub outdated: bool,
+    pub resolved: bool,
+    /// A comment on the whole file rather than a line.
+    pub file_level: bool,
+    pub can_reply: bool,
+    pub can_resolve: bool,
+    pub can_unresolve: bool,
+    pub comments: Vec<ReviewComment>,
+}
+
+/// GitHub's patch for one file (from REST `pulls/{n}/files`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PatchFile {
+    pub filename: String,
+    #[serde(default)]
+    pub previous_filename: Option<String>,
+    /// Missing for binary and very large diffs.
+    #[serde(default)]
+    pub patch: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewEvent {
+    Comment,
+    Approve,
+    RequestChanges,
+}
+
+/// A new thread in a pending review.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewThread {
+    pub path: String,
+    pub body: String,
+    /// `None` for a file-level comment.
+    pub line: Option<u32>,
+    pub side: Side,
+    pub start_line: Option<u32>,
+    pub start_side: Option<Side>,
+}
+
 // ---- conversions from the wire types ---------------------------------------
 
 fn state(state: q::PullRequestState, draft: bool) -> PrState {
@@ -314,6 +388,48 @@ impl PrDetail {
                 })
                 .collect(),
         })
+    }
+}
+
+impl ReviewThread {
+    pub(crate) fn from_wire(t: q::ReviewThread) -> Self {
+        let side = |s: q::DiffSide| match s {
+            q::DiffSide::Left => Side::Left,
+            q::DiffSide::Right => Side::Right,
+        };
+        let line = |n: Option<i32>| n.and_then(|n| u32::try_from(n).ok());
+        Self {
+            id: t.id.into_inner(),
+            path: t.path,
+            side: side(t.diff_side),
+            start_side: t.start_diff_side.map(side),
+            line: line(t.line),
+            start_line: line(t.start_line),
+            original_line: line(t.original_line),
+            original_start_line: line(t.original_start_line),
+            outdated: t.is_outdated,
+            resolved: t.is_resolved,
+            file_level: t.subject_type == q::ThreadSubjectType::File,
+            can_reply: t.viewer_can_reply,
+            can_resolve: t.viewer_can_resolve,
+            can_unresolve: t.viewer_can_unresolve,
+            comments: t
+                .comments
+                .nodes
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|c| ReviewComment {
+                    id: c.id.into_inner(),
+                    author: author(&c.author),
+                    body: c.body,
+                    created_at: c.created_at.0,
+                    url: c.url.0,
+                    original_commit: c.original_commit.map(|o| o.oid.0),
+                    pending: c.state == q::ReviewCommentState::Pending,
+                })
+                .collect(),
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 //! A computed file diff, ready to render.
 
+use crate::anchor::{Commentable, HunkRange};
 use crate::highlight::{Language, Span, highlight};
 use crate::hunks::{Algorithm, DiffLine, LineKind, Whitespace, align};
 use crate::text::{Text, is_binary};
@@ -11,7 +12,7 @@ pub const MAX_DIFF_BYTES: usize = 16 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Content {
-    Text(TextDiff),
+    Text(Box<TextDiff>),
     Binary {
         old_size: Option<usize>,
         new_size: Option<usize>,
@@ -39,6 +40,9 @@ pub struct TextDiff {
     pub lines: Vec<DiffLine>,
     /// Full alignment ignoring whitespace.
     pub lines_ignoring_whitespace: Vec<DiffLine>,
+    /// GitHub-style commentable ranges (Myers, 3 lines of context), used when
+    /// GitHub's own patch isn't available.
+    pub local_ranges: Vec<HunkRange>,
 }
 
 impl TextDiff {
@@ -147,6 +151,11 @@ impl FileDiff {
         } else {
             align(&old, &new, Algorithm::Histogram, Whitespace::Ignore)
         };
+        let local_ranges = if additions + deletions == 0 {
+            Vec::new()
+        } else {
+            Commentable::local(&old, &new).ranges
+        };
         let lang = Language::from_path(path);
         // Only highlight files with changes to show.
         let (old_spans, new_spans) = if additions + deletions == 0 {
@@ -155,14 +164,15 @@ impl FileDiff {
             (highlight(lang, &old), highlight(lang, &new))
         };
         Self {
-            content: Content::Text(TextDiff {
+            content: Content::Text(Box::new(TextDiff {
                 old,
                 new,
                 old_spans,
                 new_spans,
                 lines,
                 lines_ignoring_whitespace,
-            }),
+                local_ranges,
+            })),
             additions,
             deletions,
         }

@@ -38,10 +38,20 @@ pub enum Action {
     SearchNext,
     SearchPrev,
     FindFile,
+    Comment,
+    VisualLines,
+    Suggest,
+    ReplyThread,
+    ResolveThread,
+    DeleteDraft,
+    FileComment,
+    SubmitReview,
+    NextThread,
+    PrevThread,
 }
 
 impl Action {
-    pub const ALL: [Action; 31] = [
+    pub const ALL: [Action; 41] = [
         Action::Down,
         Action::Up,
         Action::HalfPageDown,
@@ -73,6 +83,16 @@ impl Action {
         Action::SearchNext,
         Action::SearchPrev,
         Action::FindFile,
+        Action::Comment,
+        Action::VisualLines,
+        Action::Suggest,
+        Action::ReplyThread,
+        Action::ResolveThread,
+        Action::DeleteDraft,
+        Action::FileComment,
+        Action::SubmitReview,
+        Action::NextThread,
+        Action::PrevThread,
     ];
 
     /// The name used in the `[keys]` config table.
@@ -109,6 +129,16 @@ impl Action {
             Action::SearchNext => "search_next",
             Action::SearchPrev => "search_prev",
             Action::FindFile => "find_file",
+            Action::Comment => "comment",
+            Action::VisualLines => "visual_lines",
+            Action::Suggest => "suggest",
+            Action::ReplyThread => "reply",
+            Action::ResolveThread => "resolve",
+            Action::DeleteDraft => "delete_draft",
+            Action::FileComment => "file_comment",
+            Action::SubmitReview => "submit_review",
+            Action::NextThread => "next_thread",
+            Action::PrevThread => "prev_thread",
         }
     }
 
@@ -145,6 +175,16 @@ impl Action {
             Action::SearchNext => "Next search match",
             Action::SearchPrev => "Previous search match",
             Action::FindFile => "Find a file",
+            Action::Comment => "Comment on the line or selection",
+            Action::VisualLines => "Select lines (for multi-line comments)",
+            Action::Suggest => "Suggest a change (opens $EDITOR)",
+            Action::ReplyThread => "Reply to the thread",
+            Action::ResolveThread => "Resolve or unresolve the thread",
+            Action::DeleteDraft => "Delete the draft comment",
+            Action::FileComment => "Comment on the whole file",
+            Action::SubmitReview => "Submit your review",
+            Action::NextThread => "Next unresolved thread",
+            Action::PrevThread => "Previous unresolved thread",
         }
     }
 
@@ -181,6 +221,16 @@ impl Action {
             Action::SearchNext => &["n"],
             Action::SearchPrev => &["N"],
             Action::FindFile => &["gf"],
+            Action::Comment => &["c"],
+            Action::VisualLines => &["V"],
+            Action::Suggest => &["S"],
+            Action::ReplyThread => &["a"],
+            Action::ResolveThread => &["R"],
+            Action::DeleteDraft => &["D"],
+            Action::FileComment => &["f"],
+            Action::SubmitReview => &["gr"],
+            Action::NextThread => &["]c"],
+            Action::PrevThread => &["[c"],
         }
     }
 

@@ -10,14 +10,21 @@
 //! are rebuilt (view changes), [`Doc::anchor`] and [`Doc::locate`] keep the
 //! cursor on the same source line.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
+use ghtui_diff::anchor::{Commentable, LinePos, RangeSource, Side};
 use ghtui_diff::{
     CONTEXT, Content, DiffLine, FileDiff, LineKind, TextDiff, Whitespace, counts, hunk, segments,
 };
 use ghtui_git::files::{ChangedFile, is_lockfile};
+
+use crate::annotations::{Annotation, AnnotationKey, ThreadRow, ThreadRowKind};
+use crate::text;
+
+/// Thread text wraps at this width unless the view says otherwise.
+const DEFAULT_WRAP: u16 = 72;
 
 /// Lines revealed per expansion step.
 pub const EXPAND_STEP: u32 = 20;
@@ -58,6 +65,9 @@ pub enum Row {
     },
     /// "No newline at end of file" after the preceding line.
     NoNewline,
+    /// A line of a review thread or draft (index into the file's thread
+    /// rows).
+    Thread(u32),
     Spacer,
 }
 
@@ -74,6 +84,8 @@ pub enum Viewed {
 pub struct ViewOptions {
     pub split: bool,
     pub whitespace: Whitespace,
+    /// Columns for comment text; 0 for the default.
+    pub wrap: u16,
 }
 
 /// A maximal run of changed lines: the unit marked "reviewed".
@@ -101,6 +113,11 @@ pub struct DocFile {
     /// `@@` text per visible segment.
     headers: Vec<String>,
     blocks: Vec<Block>,
+    thread_rows: Vec<ThreadRow>,
+    /// Line annotations by anchor.
+    by_line: HashMap<(Side, u32), Vec<u32>>,
+    /// Commentable ranges reconstructed locally.
+    local_commentable: Option<Commentable>,
 }
 
 impl DocFile {
@@ -132,11 +149,117 @@ impl DocFile {
         self.blocks.iter().find(|b| b.entries.contains(&entry))
     }
 
-    fn rebuild(&mut self, opts: ViewOptions) {
+    pub fn thread_row(&self, i: u32) -> Option<&ThreadRow> {
+        self.thread_rows.get(i as usize)
+    }
+
+    /// Annotations (indices into `Doc::annotations`) anchored at a line.
+    pub fn annotations_at(&self, pos: LinePos) -> &[u32] {
+        self.by_line
+            .get(&(pos.side, pos.line))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// The lines an alignment entry shows: removed lines are on the left,
+    /// added on the right, context on both.
+    pub fn entry_lines(&self, entry: u32, whitespace: Whitespace) -> Vec<LinePos> {
+        let Some(line) = self
+            .text()
+            .and_then(|t| t.lines(whitespace).get(entry as usize))
+        else {
+            return Vec::new();
+        };
+        let left = line.old.map(|l| LinePos {
+            side: Side::Left,
+            line: l,
+        });
+        let right = line.new.map(|l| LinePos {
+            side: Side::Right,
+            line: l,
+        });
+        match line.kind {
+            LineKind::Removed => left.into_iter().collect(),
+            LineKind::Added => right.into_iter().collect(),
+            LineKind::Context => left.into_iter().chain(right).collect(),
+        }
+    }
+
+    fn push_annotation(&mut self, index: u32, ann: &Annotation, open: bool, wrap: usize) {
+        if !open {
+            let first = ann
+                .comments
+                .first()
+                .map(|c| {
+                    format!(
+                        "{}: {}",
+                        c.author,
+                        c.body.lines().next().unwrap_or_default()
+                    )
+                })
+                .unwrap_or_default();
+            self.push_thread_row(index, ThreadRowKind::Summary, first);
+            return;
+        }
+        for (c, comment) in ann.comments.iter().enumerate() {
+            self.push_thread_row(
+                index,
+                ThreadRowKind::Head {
+                    comment: c,
+                    first: c == 0,
+                },
+                comment.author.clone(),
+            );
+            let body = if comment.body.trim().is_empty() {
+                "(no text)".to_owned()
+            } else {
+                comment.body.replace("\r\n", "\n")
+            };
+            for line in text::wrap(&body, wrap) {
+                self.push_thread_row(index, ThreadRowKind::Body, line);
+            }
+        }
+        if let Some(error) = &ann.error {
+            for line in text::wrap(&format!("GitHub rejected this: {error}"), wrap) {
+                self.push_thread_row(index, ThreadRowKind::Error, line);
+            }
+        }
+        self.push_thread_row(index, ThreadRowKind::Footer, String::new());
+    }
+
+    fn push_thread_row(&mut self, ann: u32, kind: ThreadRowKind, text: String) {
+        self.rows.push(Row::Thread(self.thread_rows.len() as u32));
+        self.thread_rows.push(ThreadRow { ann, kind, text });
+    }
+
+    fn rebuild(
+        &mut self,
+        opts: ViewOptions,
+        anns: &[(u32, &Annotation)],
+        open: &dyn Fn(&Annotation) -> bool,
+    ) {
         self.rows.clear();
         self.headers.clear();
         self.blocks.clear();
+        self.thread_rows.clear();
+        self.by_line.clear();
+        let wrap = usize::from(if opts.wrap == 0 {
+            DEFAULT_WRAP
+        } else {
+            opts.wrap
+        });
+        for (i, ann) in anns {
+            if let Some(line) = ann.on_line() {
+                self.by_line.entry((ann.side, line)).or_default().push(*i);
+            }
+        }
         self.rows.push(Row::Header);
+        // File-level comments, and outdated threads that can't be placed,
+        // sit under the header.
+        for (i, ann) in anns {
+            if ann.on_line().is_none() {
+                self.push_annotation(*i, ann, open(ann), wrap);
+            }
+        }
         if self.collapsed() {
             let note = if self.viewed == Viewed::Viewed {
                 Note::Viewed
@@ -170,7 +293,22 @@ impl DocFile {
         let lines = text.lines(opts.whitespace);
         self.blocks = blocks(self.meta.path(), text, lines);
 
-        let segs = segments(lines, CONTEXT, &self.windows, self.full);
+        // Commented lines are always visible.
+        let mut windows = self.windows.clone();
+        if !self.by_line.is_empty() {
+            for (e, line) in lines.iter().enumerate() {
+                let left = line
+                    .old
+                    .is_some_and(|l| self.by_line.contains_key(&(Side::Left, l)));
+                let right = line
+                    .new
+                    .is_some_and(|l| self.by_line.contains_key(&(Side::Right, l)));
+                if left || right {
+                    windows.push(e as u32..e as u32 + 1);
+                }
+            }
+        }
+        let segs = segments(lines, CONTEXT, &windows, self.full);
         let (mut seen, mut before) = (0usize, (0u32, 0u32));
         let mut next_hidden = 0u32;
         for (s, seg) in segs.iter().enumerate() {
@@ -185,6 +323,7 @@ impl DocFile {
             seen = seg.start;
             self.headers.push(hunk(lines, seg.clone(), before).header());
             self.rows.push(Row::Hunk { seg: s as u32 });
+            let first_new_row = self.rows.len();
             if opts.split {
                 push_split_rows(&mut self.rows, text, lines, seg.clone());
             } else {
@@ -195,6 +334,9 @@ impl DocFile {
                     }
                 }
             }
+            if !self.by_line.is_empty() {
+                self.insert_threads(first_new_row, anns, open, wrap, opts.whitespace);
+            }
             next_hidden = seg.end as u32;
         }
         if (next_hidden as usize) < lines.len() {
@@ -204,6 +346,44 @@ impl DocFile {
             });
         }
         self.rows.push(Row::Spacer);
+    }
+
+    /// Inserts open line annotations after the rows (from `from`) showing
+    /// their lines.
+    fn insert_threads(
+        &mut self,
+        from: usize,
+        anns: &[(u32, &Annotation)],
+        open: &dyn Fn(&Annotation) -> bool,
+        wrap: usize,
+        whitespace: Whitespace,
+    ) {
+        let tail = self.rows.split_off(from);
+        for row in tail {
+            self.rows.push(row);
+            let entries: Vec<u32> = match row {
+                Row::Line(e) => vec![e],
+                Row::Split { left, right } => left.into_iter().chain(right).collect(),
+                _ => continue,
+            };
+            let mut here: Vec<u32> = Vec::new();
+            for e in entries {
+                for pos in self.entry_lines(e, whitespace) {
+                    for i in self.annotations_at(pos) {
+                        if !here.contains(i) {
+                            here.push(*i);
+                        }
+                    }
+                }
+            }
+            for i in here {
+                if let Some((_, ann)) = anns.iter().find(|(j, _)| *j == i)
+                    && open(ann)
+                {
+                    self.push_annotation(i, ann, true, wrap);
+                }
+            }
+        }
     }
 
     /// Columns for line numbers in this file (at least 3).
@@ -361,6 +541,12 @@ pub struct Doc {
     pub opts: ViewOptions,
     /// Hashes of blocks marked reviewed.
     pub reviewed: HashSet<String>,
+    /// Review threads and drafts.
+    pub annotations: Vec<Annotation>,
+    /// Threads opened or closed by the user (others use their default).
+    thread_open: HashMap<AnnotationKey, bool>,
+    /// Commentable ranges from GitHub's patches, by path.
+    patches: HashMap<String, Commentable>,
     starts: Vec<usize>,
     total: usize,
 }
@@ -382,6 +568,9 @@ impl Doc {
                     rows: Vec::new(),
                     headers: Vec::new(),
                     blocks: Vec::new(),
+                    thread_rows: Vec::new(),
+                    by_line: HashMap::new(),
+                    local_commentable: None,
                 }
             })
             .collect();
@@ -394,19 +583,173 @@ impl Doc {
     }
 
     fn rebuild_all(&mut self) {
-        let opts = self.opts;
-        for file in &mut self.files {
-            file.rebuild(opts);
+        for index in 0..self.files.len() {
+            self.rebuild_file(index);
         }
         self.reindex();
     }
 
     fn rebuild(&mut self, index: usize) {
-        let opts = self.opts;
-        if let Some(file) = self.files.get_mut(index) {
-            file.rebuild(opts);
+        if index < self.files.len() {
+            self.rebuild_file(index);
             self.reindex();
         }
+    }
+
+    fn rebuild_file(&mut self, index: usize) {
+        let Doc {
+            files,
+            opts,
+            annotations,
+            thread_open,
+            ..
+        } = self;
+        let file = &mut files[index];
+        let path = file.meta.path().to_owned();
+        let anns: Vec<(u32, &Annotation)> = annotations
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.path == path)
+            .map(|(i, a)| (i as u32, a))
+            .collect();
+        let open = |a: &Annotation| {
+            thread_open
+                .get(&a.key)
+                .copied()
+                .unwrap_or_else(|| a.open_by_default())
+        };
+        file.rebuild(*opts, &anns, &open);
+    }
+
+    pub fn set_annotations(&mut self, annotations: Vec<Annotation>) {
+        self.annotations = annotations;
+        self.rebuild_all();
+    }
+
+    /// Opens or closes a thread.
+    pub fn toggle_thread(&mut self, index: u32) {
+        let Some(ann) = self.annotations.get(index as usize) else {
+            return;
+        };
+        let open = self
+            .thread_open
+            .get(&ann.key)
+            .copied()
+            .unwrap_or_else(|| ann.open_by_default());
+        self.thread_open.insert(ann.key.clone(), !open);
+        if let Some(file) = self.files.iter().position(|f| f.meta.path() == ann.path) {
+            self.rebuild(file);
+        }
+    }
+
+    pub fn set_patches(&mut self, patches: HashMap<String, Commentable>) {
+        self.patches = patches;
+    }
+
+    /// Where comments on `file` can go: GitHub's patch if we have it,
+    /// otherwise the local reconstruction.
+    pub fn commentable(&self, file: usize) -> Option<&Commentable> {
+        let f = self.files.get(file)?;
+        self.patches
+            .get(f.meta.path())
+            .or(f.local_commentable.as_ref())
+    }
+
+    /// The line a row comments on: removed lines on the left, everything
+    /// else on the right (in split view, the right half unless empty).
+    pub fn line_at(&self, pos: Pos) -> Option<LinePos> {
+        let file = self.files.get(pos.file)?;
+        let text = file.text()?;
+        let lines = text.lines(self.opts.whitespace);
+        let at = |e: u32| -> Option<LinePos> {
+            let l = lines.get(e as usize)?;
+            match l.kind {
+                LineKind::Removed => l.old.map(|line| LinePos {
+                    side: Side::Left,
+                    line,
+                }),
+                _ => l.new.map(|line| LinePos {
+                    side: Side::Right,
+                    line,
+                }),
+            }
+        };
+        match self.row(pos)? {
+            Row::Line(e) => at(e),
+            Row::Split { left, right } => right.or(left).and_then(at),
+            _ => None,
+        }
+    }
+
+    /// The annotation a row belongs to: a thread row's own, or the first
+    /// one anchored on a line row.
+    pub fn annotation_at(&self, pos: Pos) -> Option<u32> {
+        let file = self.files.get(pos.file)?;
+        match self.row(pos)? {
+            Row::Thread(t) => file.thread_row(t).map(|r| r.ann),
+            Row::Line(e) => self.entry_annotations(file, &[e]).first().copied(),
+            Row::Split { left, right } => {
+                let entries: Vec<u32> = left.into_iter().chain(right).collect();
+                self.entry_annotations(file, &entries).first().copied()
+            }
+            _ => None,
+        }
+    }
+
+    fn entry_annotations(&self, file: &DocFile, entries: &[u32]) -> Vec<u32> {
+        entries
+            .iter()
+            .flat_map(|e| file.entry_lines(*e, self.opts.whitespace))
+            .flat_map(|pos| file.annotations_at(pos).to_vec())
+            .collect()
+    }
+
+    /// Whether a row is where an unresolved thread starts: its first row,
+    /// or the line of a collapsed one.
+    fn is_open_thread_start(&self, pos: Pos) -> bool {
+        let Some(file) = self.files.get(pos.file) else {
+            return false;
+        };
+        let unresolved = |i: u32| {
+            self.annotations
+                .get(i as usize)
+                .is_some_and(|a| !a.resolved)
+        };
+        match self.row(pos) {
+            Some(Row::Thread(t)) => file.thread_row(t).is_some_and(|r| {
+                matches!(
+                    r.kind,
+                    ThreadRowKind::Summary | ThreadRowKind::Head { first: true, .. }
+                ) && unresolved(r.ann)
+            }),
+            Some(Row::Line(_) | Row::Split { .. }) => {
+                // Collapsed threads only show as a gutter marker.
+                let next_is_thread = matches!(
+                    self.row(Pos {
+                        file: pos.file,
+                        row: pos.row + 1
+                    }),
+                    Some(Row::Thread(_))
+                );
+                !next_is_thread && self.annotation_at(pos).is_some_and(unresolved)
+            }
+            _ => false,
+        }
+    }
+
+    pub fn next_thread(&self, pos: Pos) -> Option<Pos> {
+        let start = self.to_global(pos) + 1;
+        (start..self.total)
+            .map(|g| self.to_pos(g))
+            .find(|p| self.is_open_thread_start(*p))
+    }
+
+    pub fn prev_thread(&self, pos: Pos) -> Option<Pos> {
+        let start = self.to_global(pos);
+        (0..start)
+            .rev()
+            .map(|g| self.to_pos(g))
+            .find(|p| self.is_open_thread_start(*p))
     }
 
     fn reindex(&mut self) {
@@ -421,6 +764,13 @@ impl Doc {
 
     pub fn set_diff(&mut self, index: usize, diff: Arc<FileDiff>) {
         if let Some(file) = self.files.get_mut(index) {
+            file.local_commentable = match &diff.content {
+                Content::Text(t) => Some(Commentable {
+                    ranges: t.local_ranges.clone(),
+                    source: RangeSource::LocalFallback,
+                }),
+                _ => None,
+            };
             file.diff = Some(diff);
             self.rebuild(index);
         }
@@ -837,6 +1187,7 @@ mod tests {
                 Row::Line(_) => 'L',
                 Row::Split { .. } => 'S',
                 Row::NoNewline => '\\',
+                Row::Thread(_) => 'T',
                 Row::Spacer => '_',
             })
             .collect()
@@ -947,6 +1298,7 @@ mod tests {
         doc.set_options(ViewOptions {
             split: true,
             whitespace: Whitespace::Exact,
+            wrap: 0,
         });
         let rows: Vec<Row> = doc.files[0]
             .rows()
@@ -983,6 +1335,7 @@ mod tests {
         doc.set_options(ViewOptions {
             split: false,
             whitespace: Whitespace::Ignore,
+            wrap: 0,
         });
         assert_eq!(doc.totals(), (0, 0));
         assert_eq!(doc.files[0].rows()[1], Row::Note(Note::NoChanges));
@@ -1001,6 +1354,7 @@ mod tests {
         doc.set_options(ViewOptions {
             split: true,
             whitespace: Whitespace::Exact,
+            wrap: 0,
         });
         let pos = doc.locate(anchor);
         assert!(
@@ -1063,6 +1417,7 @@ mod tests {
         doc.set_options(ViewOptions {
             split: true,
             whitespace: Whitespace::Exact,
+            wrap: 0,
         });
         assert_eq!(count(&doc), 1);
     }
@@ -1072,5 +1427,164 @@ mod tests {
         let doc = doc();
         assert_eq!(doc.loading_in_view(Pos::default(), 1000), [2]);
         assert!(doc.loading_in_view(Pos::default(), 3).is_empty());
+    }
+
+    mod annotations {
+        use super::*;
+        use crate::annotations::{Annotation, AnnotationComment, AnnotationKey};
+
+        fn ann(key: &str, side: Side, line: Option<u32>) -> Annotation {
+            Annotation {
+                key: AnnotationKey::Thread(key.into()),
+                path: "a.txt".into(),
+                side,
+                line,
+                start_line: None,
+                original_line: line,
+                resolved: false,
+                outdated: false,
+                moved: false,
+                file_level: line.is_none(),
+                comments: vec![AnnotationComment {
+                    author: "alice".into(),
+                    body: "Is this right?\nSecond line.".into(),
+                    created_at: String::new(),
+                    pending: false,
+                }],
+                error: None,
+                can_reply: true,
+                can_resolve: true,
+                can_unresolve: false,
+            }
+        }
+
+        fn rows_of(doc: &Doc) -> String {
+            kinds(&doc.files[0])
+        }
+
+        #[test]
+        fn threads_sit_under_their_line_or_the_header() {
+            let mut doc = doc();
+            doc.set_annotations(vec![
+                ann("line", Side::Right, Some(5)),
+                ann("file", Side::Right, None),
+            ]);
+            let file = &doc.files[0];
+            // File-level thread right after the header (head, 2 body, footer).
+            assert!(rows_of(&doc).starts_with("HTTTT"), "{}", rows_of(&doc));
+            // The line thread follows the row showing new line 5.
+            let line_row = file
+                .rows()
+                .iter()
+                .position(|r| matches!(r, Row::Line(e) if file.text().unwrap().lines[*e as usize].new == Some(5)))
+                .unwrap();
+            assert!(matches!(file.rows()[line_row + 1], Row::Thread(_)));
+            assert_eq!(
+                doc.annotation_at(Pos {
+                    file: 0,
+                    row: line_row
+                }),
+                Some(0)
+            );
+        }
+
+        #[test]
+        fn commented_lines_are_always_visible() {
+            let mut doc = doc();
+            // Line 30 is far from both changes (5 and 45): normally hidden.
+            let visible = |doc: &Doc| {
+                let f = &doc.files[0];
+                f.rows().iter().any(|r| matches!(r, Row::Line(e) if f.text().unwrap().lines[*e as usize].new == Some(30)))
+            };
+            assert!(!visible(&doc));
+            doc.set_annotations(vec![ann("far", Side::Right, Some(30))]);
+            assert!(visible(&doc));
+        }
+
+        #[test]
+        fn resolved_threads_start_collapsed_and_toggle() {
+            let mut doc = doc();
+            let mut resolved = ann("r", Side::Right, Some(5));
+            resolved.resolved = true;
+            doc.set_annotations(vec![resolved]);
+            assert!(!rows_of(&doc).contains('T'), "collapsed: marker only");
+            doc.toggle_thread(0);
+            assert!(rows_of(&doc).contains("TTTT"));
+            doc.toggle_thread(0);
+            assert!(!rows_of(&doc).contains('T'));
+        }
+
+        #[test]
+        fn next_thread_skips_resolved_ones() {
+            let mut doc = doc();
+            let mut resolved = ann("r", Side::Right, Some(5));
+            resolved.resolved = true;
+            doc.set_annotations(vec![resolved, ann("open", Side::Right, Some(45))]);
+            let first = doc.next_thread(Pos::default()).unwrap();
+            assert_eq!(
+                doc.files[0]
+                    .thread_row(match doc.row(first) {
+                        Some(Row::Thread(t)) => t,
+                        other => panic!("{other:?}"),
+                    })
+                    .unwrap()
+                    .ann,
+                1
+            );
+            assert_eq!(doc.next_thread(first), None);
+            assert_eq!(doc.prev_thread(doc.last()), Some(first));
+        }
+
+        #[test]
+        fn left_side_threads_attach_to_removed_lines_in_split_view() {
+            let mut doc = doc();
+            doc.set_options(ViewOptions {
+                split: true,
+                whitespace: Whitespace::Exact,
+                wrap: 40,
+            });
+            doc.set_annotations(vec![ann("old", Side::Left, Some(5))]);
+            let file = &doc.files[0];
+            let at = file
+                .rows()
+                .iter()
+                .position(|r| matches!(r, Row::Split { left: Some(e), .. } if file.text().unwrap().lines[*e as usize].old == Some(5)))
+                .unwrap();
+            assert!(matches!(file.rows()[at + 1], Row::Thread(_)));
+        }
+
+        #[test]
+        fn line_positions_for_comments() {
+            let doc = doc();
+            let file = &doc.files[0];
+            let removed = file
+                .rows()
+                .iter()
+                .position(|r| matches!(r, Row::Line(e) if file.text().unwrap().lines[*e as usize].kind == LineKind::Removed))
+                .unwrap();
+            let pos = doc
+                .line_at(Pos {
+                    file: 0,
+                    row: removed,
+                })
+                .unwrap();
+            assert_eq!((pos.side, pos.line), (Side::Left, 5));
+            assert_eq!(
+                doc.line_at(Pos {
+                    file: 0,
+                    row: removed + 1
+                })
+                .unwrap()
+                .side,
+                Side::Right
+            );
+            assert_eq!(
+                doc.line_at(Pos { file: 0, row: 0 }),
+                None,
+                "headers aren't lines"
+            );
+            let c = doc.commentable(0).unwrap();
+            assert!(c.is_commentable(pos));
+        }
     }
 }

@@ -4,6 +4,7 @@ mod config;
 mod diff_job;
 mod diff_screen;
 mod keymap;
+mod review;
 mod runtime;
 #[cfg(test)]
 mod snapshot_tests;

@@ -260,11 +260,12 @@ pub fn requirement(fg: Fg, bg: Bg) -> Option<Requirement> {
     match fg {
         Fg::OnSurface | Fg::OnSurfaceVariant if bg.is_neutral() || bg.is_diff() => Some(Text),
         Fg::Primary | Fg::Tertiary | Fg::Error | Fg::Success if bg.is_neutral() => Some(Text),
-        // Reviewed marks in the diff gutter.
-        Fg::Success if bg.is_diff() => Some(Text),
+        // Reviewed and comment-thread marks in the diff gutter.
+        Fg::Success | Fg::Primary | Fg::Tertiary if bg.is_diff() => Some(Text),
         Fg::DiffAddedSign | Fg::DiffRemovedSign if bg.is_neutral() || bg.is_diff() => Some(Text),
         Fg::Syntax(_) if bg.is_diff() => Some(Text),
-        Fg::Disabled if bg.is_neutral() => Some(Exempt),
+        // Also line numbers GitHub won't accept comments on.
+        Fg::Disabled if bg.is_neutral() || bg.is_diff() => Some(Exempt),
         Fg::OutlineVariant if bg.is_neutral() => Some(Decorative),
         Fg::OnPrimary if bg == Bg::Primary => Some(Text),
         Fg::OnPrimaryContainer if bg == Bg::PrimaryContainer => Some(Text),

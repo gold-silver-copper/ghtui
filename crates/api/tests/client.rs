@@ -381,3 +381,163 @@ async fn set_viewed_sends_the_right_mutation() {
             .contains("unmarkFileAsViewed")
     );
 }
+
+const THREADS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
+  "pageInfo":{"hasNextPage":false,"endCursor":null},
+  "nodes":[
+    {"id":"T1","path":"src/a.rs","diffSide":"RIGHT","startDiffSide":"RIGHT","line":12,"startLine":10,
+     "originalLine":12,"originalStartLine":10,"isOutdated":false,"isResolved":false,"subjectType":"LINE",
+     "viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":false,
+     "comments":{"nodes":[
+       {"id":"C1","author":{"login":"alice"},"body":"Why?","createdAt":"2026-10-01T00:00:00Z",
+        "url":"https://github.com/o/r/pull/7#discussion_r1","originalCommit":{"oid":"abc"},"state":"SUBMITTED"},
+       {"id":"C2","author":null,"body":"Because.","createdAt":"2026-10-02T00:00:00Z",
+        "url":"https://github.com/o/r/pull/7#discussion_r2","originalCommit":{"oid":"abc"},"state":"PENDING"}]}},
+    {"id":"T2","path":"src/b.rs","diffSide":"LEFT","startDiffSide":null,"line":null,"startLine":null,
+     "originalLine":5,"originalStartLine":null,"isOutdated":true,"isResolved":true,"subjectType":"LINE",
+     "viewerCanReply":true,"viewerCanResolve":false,"viewerCanUnresolve":true,"comments":{"nodes":[]}},
+    {"id":"T3","path":"README.md","diffSide":"RIGHT","startDiffSide":null,"line":null,"startLine":null,
+     "originalLine":null,"originalStartLine":null,"isOutdated":false,"isResolved":false,"subjectType":"FILE",
+     "viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":false,"comments":{"nodes":[]}}
+  ]}}}}}"#;
+
+#[tokio::test]
+async fn decodes_review_threads() {
+    use ghtui_api::model::Side;
+    let (base, _) = serve(vec![Reply::new(200, THREADS)]).await;
+    let gh = client(&base, Store::disabled());
+    let threads = gh
+        .review_threads(&PrRef::parse("o/r#7").unwrap())
+        .await
+        .unwrap();
+    assert_eq!(threads.len(), 3);
+    let t1 = &threads[0];
+    assert_eq!(
+        (t1.side, t1.line, t1.start_line),
+        (Side::Right, Some(12), Some(10))
+    );
+    assert_eq!(t1.comments.len(), 2);
+    assert_eq!(t1.comments[1].author, "ghost");
+    assert!(t1.comments[1].pending);
+    assert_eq!(t1.comments[0].original_commit.as_deref(), Some("abc"));
+    let t2 = &threads[1];
+    assert!(t2.outdated && t2.resolved);
+    assert_eq!(
+        (t2.side, t2.line, t2.original_line),
+        (Side::Left, None, Some(5))
+    );
+    assert!(threads[2].file_level);
+}
+
+#[tokio::test]
+async fn patches_paginate_until_a_short_page() {
+    let full: Vec<String> = (0..100)
+        .map(|i| format!(r#"{{"filename":"f{i}.rs","patch":"@@ -1 +1 @@\n-a\n+b"}}"#))
+        .collect();
+    let (base, seen) = serve(vec![
+        Reply::new(200, format!("[{}]", full.join(","))),
+        Reply::new(
+            200,
+            r#"[{"filename":"img.png"},{"filename":"new.rs","previous_filename":"old.rs","patch":"@@ -1,2 +1,2 @@"}]"#,
+        ),
+    ])
+    .await;
+    let gh = client(&base, Store::disabled());
+    let files = gh
+        .pr_patches(&PrRef::parse("o/r#7").unwrap())
+        .await
+        .unwrap();
+    assert_eq!(files.len(), 102);
+    assert_eq!(files[100].patch, None, "binary files have no patch");
+    assert_eq!(files[101].previous_filename.as_deref(), Some("old.rs"));
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .contains("/repos/o/r/pulls/7/files?per_page=100&page=1")
+    );
+    assert!(seen[1].request_line.contains("page=2"));
+}
+
+#[tokio::test]
+async fn review_submission_calls() {
+    use ghtui_api::model::{NewThread, ReviewEvent, Side};
+    let (base, seen) = serve(vec![
+        Reply::new(200, r#"{"data":{"repository":{"pullRequest":{"id":"PR_1","reviews":{"nodes":[]}}}}}"#),
+        Reply::new(200, r#"{"data":{"addPullRequestReview":{"pullRequestReview":{"id":"R_1"}}}}"#),
+        Reply::new(200, r#"{"data":{"addPullRequestReviewThread":{"thread":{"id":"T_9"}}}}"#),
+        Reply::new(200, r#"{"data":{"addPullRequestReviewThread":{"thread":{"id":"T_10"}}}}"#),
+        Reply::new(
+            200,
+            r#"{"data":{"addPullRequestReviewThread":null},"errors":[{"message":"pull_request_review_thread.line must be part of the diff"}]}"#,
+        ),
+        Reply::new(200, r#"{"data":{"submitPullRequestReview":{"pullRequestReview":{"id":"R_1"}}}}"#),
+        Reply::new(200, r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"C_1"}}}}"#),
+        Reply::new(200, r#"{"data":{"resolveReviewThread":{"thread":{"id":"T_9"}}}}"#),
+    ])
+    .await;
+    let gh = client(&base, Store::disabled());
+    let pr = PrRef::parse("o/r#7").unwrap();
+    let (pr_id, pending) = gh.pending_review(&pr).await.unwrap();
+    assert_eq!((pr_id.as_str(), pending), ("PR_1", None));
+    let review = gh.start_review(&pr_id, "deadbeef").await.unwrap();
+    assert_eq!(review, "R_1");
+
+    let range = NewThread {
+        path: "src/a.rs".into(),
+        body: "Rename this".into(),
+        line: Some(12),
+        side: Side::Right,
+        start_line: Some(10),
+        start_side: Some(Side::Right),
+    };
+    assert_eq!(gh.add_review_thread(&review, &range).await.unwrap(), "T_9");
+    let file_level = NewThread {
+        line: None,
+        start_line: None,
+        start_side: None,
+        ..range.clone()
+    };
+    assert_eq!(
+        gh.add_review_thread(&review, &file_level).await.unwrap(),
+        "T_10"
+    );
+    match gh.add_review_thread(&review, &range).await {
+        Err(ApiError::GraphQl(errors)) => assert!(errors[0].contains("part of the diff")),
+        other => panic!("{other:?}"),
+    }
+    gh.submit_review(&review, ReviewEvent::RequestChanges, "Needs work")
+        .await
+        .unwrap();
+    gh.reply("T_9", "Done").await.unwrap();
+    gh.set_resolved("T_9", true).await.unwrap();
+
+    let seen = seen.lock().unwrap();
+    let body = |i: usize| serde_json::from_str::<serde_json::Value>(&seen[i].body).unwrap();
+    assert_eq!(body(1)["variables"]["commit"], "deadbeef");
+    let line = &body(2)["variables"]["input"];
+    assert_eq!(line["line"], 12);
+    assert_eq!(line["startLine"], 10);
+    assert_eq!(line["side"], "RIGHT");
+    assert_eq!(line["subjectType"], "LINE");
+    let file = &body(3)["variables"]["input"];
+    assert_eq!(file["subjectType"], "FILE");
+    assert!(
+        file.get("line").is_none(),
+        "file comments have no line: {file}"
+    );
+    assert_eq!(body(5)["variables"]["event"], "REQUEST_CHANGES");
+    assert_eq!(body(5)["variables"]["body"], "Needs work");
+    assert!(
+        body(6)["query"]
+            .as_str()
+            .unwrap()
+            .contains("addPullRequestReviewThreadReply")
+    );
+    assert!(
+        body(7)["query"]
+            .as_str()
+            .unwrap()
+            .contains("resolveReviewThread")
+    );
+}

@@ -1,6 +1,7 @@
 //! Ratatui widgets. Every widget is a pure function of the props it's given
 //! (the app maps its state to props); all colors come from theme roles.
 
+pub mod annotations;
 pub mod bars;
 pub mod chips;
 pub mod diff_doc;
@@ -10,6 +11,7 @@ pub mod icons;
 pub mod overlays;
 pub mod pr_list;
 pub mod pr_view;
+pub mod review_sheets;
 pub mod text;
 pub mod time;
 

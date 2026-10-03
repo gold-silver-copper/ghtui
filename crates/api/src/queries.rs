@@ -365,6 +365,373 @@ pub struct UnmarkFileAsViewedPayload {
     pub client_mutation_id: Option<String>,
 }
 
+// ---- review threads ----------------------------------------------------------
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct ThreadsVariables {
+    pub owner: String,
+    pub name: String,
+    pub number: i32,
+    pub after: Option<String>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "ThreadsVariables"
+)]
+pub struct ThreadsQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepositoryWithThreads>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Repository",
+    schema_module = "schema",
+    variables = "ThreadsVariables"
+)]
+pub struct RepositoryWithThreads {
+    #[arguments(number: $number)]
+    pub pull_request: Option<PrThreads>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "PullRequest",
+    schema_module = "schema",
+    variables = "ThreadsVariables"
+)]
+pub struct PrThreads {
+    #[arguments(first: 100, after: $after)]
+    pub review_threads: ThreadConnection,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "PullRequestReviewThreadConnection",
+    schema_module = "schema"
+)]
+pub struct ThreadConnection {
+    pub page_info: PageInfo,
+    pub nodes: Option<Vec<Option<ReviewThread>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestReviewThread", schema_module = "schema")]
+pub struct ReviewThread {
+    pub id: cynic::Id,
+    pub path: String,
+    pub diff_side: DiffSide,
+    pub start_diff_side: Option<DiffSide>,
+    pub line: Option<i32>,
+    pub start_line: Option<i32>,
+    pub original_line: Option<i32>,
+    pub original_start_line: Option<i32>,
+    pub is_outdated: bool,
+    pub is_resolved: bool,
+    pub subject_type: ThreadSubjectType,
+    pub viewer_can_reply: bool,
+    pub viewer_can_resolve: bool,
+    pub viewer_can_unresolve: bool,
+    #[arguments(first: 100)]
+    pub comments: ReviewCommentConnection,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "PullRequestReviewCommentConnection",
+    schema_module = "schema"
+)]
+pub struct ReviewCommentConnection {
+    pub nodes: Option<Vec<Option<ReviewComment>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestReviewComment", schema_module = "schema")]
+pub struct ReviewComment {
+    pub id: cynic::Id,
+    pub author: Option<Actor>,
+    pub body: String,
+    pub created_at: DateTime,
+    pub url: Uri,
+    pub original_commit: Option<CommitOid>,
+    pub state: ReviewCommentState,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Commit", schema_module = "schema")]
+pub struct CommitOid {
+    pub oid: GitObjectId,
+}
+
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[cynic(
+    graphql_type = "PullRequestReviewCommentState",
+    schema_module = "schema"
+)]
+pub enum ReviewCommentState {
+    Pending,
+    Submitted,
+}
+
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[cynic(graphql_type = "DiffSide", schema_module = "schema")]
+pub enum DiffSide {
+    Left,
+    Right,
+}
+
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[cynic(
+    graphql_type = "PullRequestReviewThreadSubjectType",
+    schema_module = "schema"
+)]
+pub enum ThreadSubjectType {
+    File,
+    Line,
+}
+
+// ---- pending review ---------------------------------------------------------
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct PendingReviewVariables {
+    pub owner: String,
+    pub name: String,
+    pub number: i32,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "PendingReviewVariables"
+)]
+pub struct PendingReviewQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepositoryWithPendingReview>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Repository",
+    schema_module = "schema",
+    variables = "PendingReviewVariables"
+)]
+pub struct RepositoryWithPendingReview {
+    #[arguments(number: $number)]
+    pub pull_request: Option<PrPendingReview>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequest", schema_module = "schema")]
+pub struct PrPendingReview {
+    pub id: cynic::Id,
+    /// Only the viewer's own pending review is visible.
+    #[arguments(states: [PENDING], first: 1)]
+    pub reviews: Option<ReviewIdConnection>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestReviewConnection", schema_module = "schema")]
+pub struct ReviewIdConnection {
+    pub nodes: Option<Vec<Option<ReviewId>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
+pub struct ReviewId {
+    pub id: cynic::Id,
+}
+
+// ---- review mutations --------------------------------------------------------
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct StartReviewVariables {
+    pub pull_request_id: cynic::Id,
+    pub commit: GitObjectId,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "StartReviewVariables"
+)]
+pub struct StartReview {
+    #[arguments(input: { pullRequestId: $pull_request_id, commitOID: $commit })]
+    pub add_pull_request_review: Option<StartReviewPayload>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "AddPullRequestReviewPayload", schema_module = "schema")]
+pub struct StartReviewPayload {
+    pub pull_request_review: Option<ReviewId>,
+}
+
+#[derive(cynic::InputObject, Debug)]
+#[cynic(
+    graphql_type = "AddPullRequestReviewThreadInput",
+    schema_module = "schema",
+    rename_all = "camelCase"
+)]
+pub struct AddThreadInput {
+    pub pull_request_review_id: Option<cynic::Id>,
+    pub path: Option<String>,
+    pub body: String,
+    #[cynic(skip_serializing_if = "Option::is_none")]
+    pub line: Option<i32>,
+    #[cynic(skip_serializing_if = "Option::is_none")]
+    pub side: Option<DiffSide>,
+    #[cynic(skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<i32>,
+    #[cynic(skip_serializing_if = "Option::is_none")]
+    pub start_side: Option<DiffSide>,
+    pub subject_type: Option<ThreadSubjectType>,
+}
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct AddThreadVariables {
+    pub input: AddThreadInput,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "AddThreadVariables"
+)]
+pub struct AddThread {
+    #[arguments(input: $input)]
+    pub add_pull_request_review_thread: Option<ThreadPayload>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "AddPullRequestReviewThreadPayload",
+    schema_module = "schema"
+)]
+pub struct ThreadPayload {
+    pub thread: Option<ThreadId>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestReviewThread", schema_module = "schema")]
+pub struct ThreadId {
+    pub id: cynic::Id,
+}
+
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[cynic(graphql_type = "PullRequestReviewEvent", schema_module = "schema")]
+pub enum ReviewEvent {
+    Approve,
+    Comment,
+    Dismiss,
+    RequestChanges,
+}
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct SubmitReviewVariables {
+    pub review_id: cynic::Id,
+    pub event: ReviewEvent,
+    pub body: Option<String>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "SubmitReviewVariables"
+)]
+pub struct SubmitReview {
+    #[arguments(input: { pullRequestReviewId: $review_id, event: $event, body: $body })]
+    pub submit_pull_request_review: Option<SubmitReviewPayload>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "SubmitPullRequestReviewPayload",
+    schema_module = "schema"
+)]
+pub struct SubmitReviewPayload {
+    pub pull_request_review: Option<ReviewId>,
+}
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct ReplyVariables {
+    pub thread_id: cynic::Id,
+    pub body: String,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "ReplyVariables"
+)]
+pub struct Reply {
+    #[arguments(input: { pullRequestReviewThreadId: $thread_id, body: $body })]
+    pub add_pull_request_review_thread_reply: Option<ReplyPayload>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "AddPullRequestReviewThreadReplyPayload",
+    schema_module = "schema"
+)]
+pub struct ReplyPayload {
+    pub comment: Option<CommentId>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestReviewComment", schema_module = "schema")]
+pub struct CommentId {
+    pub id: cynic::Id,
+}
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct ThreadIdVariables {
+    pub thread_id: cynic::Id,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "ThreadIdVariables"
+)]
+pub struct Resolve {
+    #[arguments(input: { threadId: $thread_id })]
+    pub resolve_review_thread: Option<ResolvePayload>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "ResolveReviewThreadPayload", schema_module = "schema")]
+pub struct ResolvePayload {
+    pub thread: Option<ThreadId>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "ThreadIdVariables"
+)]
+pub struct Unresolve {
+    #[arguments(input: { threadId: $thread_id })]
+    pub unresolve_review_thread: Option<UnresolvePayload>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "UnresolveReviewThreadPayload",
+    schema_module = "schema"
+)]
+pub struct UnresolvePayload {
+    pub thread: Option<ThreadId>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

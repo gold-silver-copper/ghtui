@@ -1,8 +1,9 @@
 //! Diff computation and syntax highlighting. Pure logic, no UI, no I/O.
 //!
-//! Moved-code detection, intra-line token diffs and comment anchoring arrive
-//! in later milestones.
+//! Also comment anchoring ([`anchor`]). Moved-code detection and intra-line
+//! token diffs arrive in M4.
 
+pub mod anchor;
 pub mod file;
 pub mod highlight;
 pub mod hunks;

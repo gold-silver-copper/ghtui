@@ -1125,6 +1125,7 @@ name = "ghtui-diff"
 version = "0.1.0"
 dependencies = [
  "imara-diff",
+ "thiserror 2.0.21",
  "tracing",
  "tree-sitter",
  "tree-sitter-bash",

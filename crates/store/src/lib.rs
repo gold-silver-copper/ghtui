@@ -80,9 +80,46 @@ struct QueryEntry {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewState {
     /// Head SHA at the time of my last submitted review.
+    #[serde(default)]
     pub last_reviewed_head: Option<String>,
     /// Content hashes of hunks I've marked reviewed.
+    #[serde(default)]
     pub reviewed_hunks: Vec<String>,
+    /// Comments written but not yet submitted to GitHub.
+    #[serde(default)]
+    pub pending: Vec<DraftComment>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DraftSide {
+    Left,
+    Right,
+}
+
+/// An unsubmitted review comment, anchored by file line numbers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DraftComment {
+    /// Local identifier, unique within the PR.
+    pub id: u64,
+    pub path: String,
+    pub body: String,
+    pub side: DraftSide,
+    /// `None` for a file-level comment.
+    pub line: Option<u32>,
+    pub start_line: Option<u32>,
+    pub start_side: Option<DraftSide>,
+    /// Head commit the comment was written against.
+    pub commit: String,
+    /// GitHub's reason for rejecting it on the last submit.
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl ReviewState {
+    /// An ID not used by any pending comment.
+    pub fn next_draft_id(&self) -> u64 {
+        self.pending.iter().map(|d| d.id).max().map_or(1, |m| m + 1)
+    }
 }
 
 /// Cheap to clone; all clones share one database.
@@ -305,6 +342,7 @@ mod tests {
             let state = ReviewState {
                 last_reviewed_head: Some("abc".into()),
                 reviewed_hunks: vec!["h1".into()],
+                pending: Vec::new(),
             };
             store.review_put("o/r#1", &state);
         }
@@ -358,6 +396,37 @@ mod tests {
         assert!(second.query_get::<i32>("k").is_none());
         // The first holder's data survives.
         assert_eq!(first.query_get::<i32>("k").unwrap().value, 1);
+    }
+
+    #[test]
+    fn pending_comments_persist_and_old_entries_still_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("cache.redb"));
+        let mut state = ReviewState::default();
+        assert_eq!(state.next_draft_id(), 1);
+        state.pending.push(DraftComment {
+            id: 1,
+            path: "a.rs".into(),
+            body: "nit".into(),
+            side: DraftSide::Right,
+            line: Some(3),
+            start_line: None,
+            start_side: None,
+            commit: "abc".into(),
+            error: None,
+        });
+        assert_eq!(state.next_draft_id(), 2);
+        store.review_put("o/r#1", &state);
+        assert_eq!(store.review_get("o/r#1"), state);
+
+        // An entry written before `pending` existed still decodes.
+        store.write_json(
+            REVIEW,
+            "o/r#2",
+            &serde_json::json!({"reviewed_hunks": ["h"]}),
+        );
+        assert_eq!(store.review_get("o/r#2").reviewed_hunks, ["h"]);
+        assert!(store.review_get("o/r#2").pending.is_empty());
     }
 
     #[test]

@@ -8,13 +8,15 @@ use std::time::Instant;
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::StreamExt;
-use ghtui_api::GitHub;
-use ghtui_api::model::PrRef;
+use ghtui_api::model::{PrRef, ReviewEvent};
+use ghtui_api::{ApiError, GitHub};
+use ghtui_store::DraftComment;
 use ghtui_ui::bars::Notice;
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 
 use crate::diff_job::{self, GitContext, JobControl};
+use crate::review::{self, SubmitOutcome};
 use crate::state::{Cmd, Msg, State, update};
 
 /// Running diff jobs by PR.
@@ -73,7 +75,15 @@ pub async fn run(
             cmds.extend(update(&mut state, msg));
         }
         for cmd in cmds {
-            effects.run(cmd);
+            match cmd {
+                // The editor needs the terminal: handled here, not spawned.
+                Cmd::Edit { purpose, text } => {
+                    let (stream, result) = edit_externally(terminal, events, &text).await;
+                    events = stream;
+                    let _ = tx.send(Msg::Edited(purpose, result));
+                }
+                cmd => effects.run(cmd),
+            }
         }
         if state.quit {
             return Ok(());
@@ -103,6 +113,28 @@ impl Effects {
                 if let Some((control, _)) = self.jobs.running.get(&pr) {
                     control.prioritize(&files);
                 }
+            }
+            Cmd::MapOutdated { pr, head, items } => {
+                let Some(git) = self
+                    .jobs
+                    .running
+                    .get(&pr)
+                    .and_then(|(control, _)| control.git())
+                else {
+                    return;
+                };
+                let tx = self.tx.clone();
+                tokio::spawn(async move {
+                    let (repo, reader) = git;
+                    let mut mapped = Vec::new();
+                    for (thread, path, commit, line) in items {
+                        let to =
+                            diff_job::map_outdated(&repo, &reader, &head, &path, &commit, line)
+                                .await;
+                        mapped.push((thread, to));
+                    }
+                    let _ = tx.send(Msg::OutdatedMapped(pr, mapped));
+                });
             }
             cmd => spawn(cmd, &self.gh, &self.tx),
         }
@@ -162,7 +194,51 @@ fn spawn(cmd: Cmd, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
                 }
                 return;
             }
-            Cmd::LoadDiff { .. } | Cmd::Prioritize(..) => unreachable!("handled by Effects::run"),
+            Cmd::FetchThreads(pr) => {
+                let result = gh.review_threads(&pr).await;
+                Msg::ThreadsLoaded(pr, result)
+            }
+            Cmd::FetchPatches(pr) => {
+                let result = gh.pr_patches(&pr).await;
+                Msg::PatchesLoaded(pr, result)
+            }
+            Cmd::Reply {
+                pr,
+                thread_id,
+                body,
+            } => {
+                let result = gh.reply(&thread_id, &body).await;
+                Msg::Replied(pr, result)
+            }
+            Cmd::SetResolved {
+                pr,
+                thread_id,
+                resolved,
+            } => {
+                let result = gh.set_resolved(&thread_id, resolved).await;
+                Msg::ResolvedSet {
+                    pr,
+                    thread_id,
+                    resolved,
+                    result,
+                }
+            }
+            Cmd::SubmitReview {
+                pr,
+                head,
+                drafts,
+                event,
+                body,
+            } => {
+                let outcome = submit_review(&gh, &pr, &head, drafts, event, &body).await;
+                Msg::ReviewSubmitted(pr, outcome)
+            }
+            Cmd::LoadDiff { .. }
+            | Cmd::Prioritize(..)
+            | Cmd::MapOutdated { .. }
+            | Cmd::Edit { .. } => {
+                unreachable!("handled by the runtime loop")
+            }
         };
         let _ = tx.send(msg);
         let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
@@ -211,4 +287,109 @@ fn check_git(tx: mpsc::UnboundedSender<Msg>) {
         tracing::warn!("{problem}");
         let _ = tx.send(Msg::Notice(Notice::Error(problem)));
     });
+}
+
+fn api_message(err: &ApiError) -> String {
+    match err {
+        ApiError::GraphQl(messages) => messages.join("; "),
+        err => err.to_string(),
+    }
+}
+
+/// Submits a review: reuses the viewer's pending review on GitHub (or
+/// starts one on `head`), adds each draft as a thread, and submits only if
+/// GitHub accepted every draft. Each draft's fate is reported, so rejected
+/// ones keep their text.
+async fn submit_review(
+    gh: &GitHub,
+    pr: &PrRef,
+    head: &str,
+    drafts: Vec<DraftComment>,
+    event: ReviewEvent,
+    body: &str,
+) -> SubmitOutcome {
+    let mut outcome = SubmitOutcome::default();
+    let review_id = match gh.pending_review(pr).await {
+        Ok((_, Some(existing))) => existing,
+        Ok((pr_id, None)) => match gh.start_review(&pr_id, head).await {
+            Ok(id) => id,
+            Err(err) => {
+                outcome.error = Some(format!("Couldn't start the review: {}", api_message(&err)));
+                return outcome;
+            }
+        },
+        Err(err) => {
+            outcome.error = Some(format!("Couldn't reach the PR: {}", api_message(&err)));
+            return outcome;
+        }
+    };
+    for draft in drafts {
+        match gh
+            .add_review_thread(&review_id, &review::new_thread(&draft))
+            .await
+        {
+            Ok(_) => outcome.accepted.push(draft.id),
+            Err(err) => outcome.rejected.push((draft.id, api_message(&err))),
+        }
+    }
+    if !outcome.rejected.is_empty() {
+        return outcome;
+    }
+    match gh.submit_review(&review_id, event, body).await {
+        Ok(()) => outcome.submitted = true,
+        Err(err) => outcome.error = Some(format!("Couldn't submit: {}", api_message(&err))),
+    }
+    outcome
+}
+
+/// Suspends the TUI and edits `text` in `$VISUAL`/`$EDITOR` (default `vi`).
+/// Terminal input is released for the editor and taken back after.
+async fn edit_externally(
+    terminal: &mut DefaultTerminal,
+    events: EventStream,
+    text: &str,
+) -> (EventStream, Result<String, String>) {
+    use crossterm::ExecutableCommand;
+    // Stop reading keys so the editor gets them.
+    drop(events);
+    let path = std::env::temp_dir().join(format!(
+        "ghtui-{}-{}.md",
+        std::process::id(),
+        ghtui_store::now()
+    ));
+    let result = async {
+        std::fs::write(&path, text).map_err(|e| e.to_string())?;
+        ratatui::restore();
+        let editor = std::env::var("VISUAL")
+            .or_else(|_| std::env::var("EDITOR"))
+            .unwrap_or_else(|_| "vi".into());
+        // Through the shell, so EDITOR may carry arguments ("code --wait").
+        let status = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{editor} \"$1\""))
+            .arg("sh")
+            .arg(&path)
+            .status()
+            .await;
+        let restored = crossterm::terminal::enable_raw_mode()
+            .and_then(|()| {
+                std::io::stdout()
+                    .execute(crossterm::terminal::EnterAlternateScreen)
+                    .map(drop)
+            })
+            .and_then(|()| terminal.clear());
+        if let Err(err) = restored {
+            tracing::error!(%err, "couldn't restore the terminal after the editor");
+        }
+        match status {
+            Ok(status) if status.success() => {
+                std::fs::read_to_string(&path).map_err(|e| e.to_string())
+            }
+            Ok(status) => Err(format!("{editor} exited with {status}")),
+            Err(err) => Err(format!("couldn't start {editor}: {err}")),
+        }
+    }
+    .await;
+    let _ = std::fs::remove_file(&path);
+    (EventStream::new(), result)
 }

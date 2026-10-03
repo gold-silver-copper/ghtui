@@ -5,12 +5,15 @@ replace the GitHub website for daily use, built around a pull request diff
 viewer that's better than GitHub's. The look is flat Material 3 adapted to
 the terminal.
 
-**Status: milestones M0–M2.** You can browse your open pull requests and
+**Status: milestones M0–M3.** You can browse your open pull requests and
 review requests, open any pull request's overview, and review its diff. The
 diff is computed locally from git and syntax-highlighted, unified or split,
 with expandable context, a full-file mode, whitespace-insensitive comparison,
 search, a fuzzy file finder, "viewed" synced with GitHub, and local per-change
-"reviewed" marks. Next: review threads and comments (M3).
+"reviewed" marks. Review threads show inline. You can reply, resolve, write
+single- and multi-line comments and suggested changes, and submit a review as
+Comment, Approve or Request changes. Next: the "better than GitHub" features
+(M4).
 
 ## Install
 
@@ -94,6 +97,20 @@ app for this list, generated from your actual keymap.
 | `m`             | Mark the change under the cursor reviewed (local, survives restarts)          |
 | `/` `n` `N`     | Search the diff (smart case), next / previous match                           |
 | `gf`            | Find a file by fuzzy path                                                     |
+| `]c` `[c`       | Next / previous unresolved thread                                             |
+| `<Enter>`       | On a thread: open or collapse it. On a draft: edit it                         |
+| `V`             | Start or end a visual line selection (for multi-line comments)                |
+| `c`             | Comment on the line or selection                                              |
+| `S`             | Suggest a change to the line or selection, in `$EDITOR`                       |
+| `f`             | Comment on the whole file; on a rejected draft, make it a file comment        |
+| `a`             | Reply to the thread (posts immediately)                                       |
+| `R`             | Resolve / unresolve the thread                                                |
+| `D`             | Delete the draft comment                                                      |
+| `gr`            | Submit your review (Comment / Approve / Request changes)                      |
+
+In the comment editor: `<C-s>` adds the comment to your review (or posts a
+reply), `<C-e>` continues in `$EDITOR`, and `Esc` cancels (press it twice if
+there's text).
 
 In the file tree, moving the selection scrolls the diff to that file;
 `<Enter>` returns focus to the diff.
@@ -130,7 +147,9 @@ Action names: `down`, `up`, `half_page_down`, `half_page_up`, `top`,
 `prev_file`, `toggle_tree`, `switch_pane`, `toggle_split`,
 `ignore_whitespace`, `expand_context`, `full_file`, `toggle_viewed`,
 `next_unviewed`, `mark_reviewed`, `search`, `search_next`, `search_prev`,
-`find_file`. A binding that duplicates another, or is a prefix
+`find_file`, `comment`, `visual_lines`, `suggest`, `reply`, `resolve`,
+`delete_draft`, `file_comment`, `submit_review`, `next_thread`,
+`prev_thread`. A binding that duplicates another, or is a prefix
 of another (`g` next to `gg`), is rejected at startup.
 
 ## Theming
@@ -241,6 +260,43 @@ maximal run of changed lines). They're stored in the cache, keyed by a hash of
 the file path and the block's changed lines, so a mark follows its change when
 line numbers shift and clears when the change is edited.
 
+## Reviewing
+
+- **Anchoring.** Comments are anchored by file path, line number and side
+  (plus start line and side for ranges) on the head commit, never by
+  position on screen. GitHub only accepts line comments inside the hunks of
+  *its* diff, which can differ from ghtui's. Commentable ranges therefore
+  come from GitHub's per-file `patch` (REST `pulls/{n}/files`). When GitHub
+  omits the patch (large or binary files, or past its file cap), ghtui
+  reconstructs GitHub's view with a Myers diff and 3 lines of context. Line
+  numbers outside those ranges are dimmed.
+- **Where comments go.** Commenting on a line GitHub won't accept offers a
+  file-level comment instead, and says why. A selection that crosses two of
+  GitHub's hunks is refused with an explanation.
+- **Pending comments** are kept locally (in the cache, so a crash or quit
+  doesn't lose them) until you submit. On submit, ghtui reuses your pending
+  review on GitHub (or starts one on the head commit), adds each comment as
+  its own thread, and submits only if GitHub accepted every comment. A
+  rejected comment keeps its text, shows GitHub's reason, and can be turned
+  into a file comment with `f`. Accepted ones stay in GitHub's pending review
+  until the next submit.
+- **Threads.** Threads show inline, with resolved and outdated state. Open
+  threads are expanded and resolved ones collapse to a gutter marker (◆ open,
+  ◇ resolved, ✎ draft). Lines with threads are always shown, even outside the
+  normal context. File-level comments sit under the file header.
+- **Outdated threads.** GitHub has no current line for these. ghtui reads the
+  file at the thread's original commit (fetching the commit by SHA if it was
+  force-pushed away), diffs it against the head, and moves the thread to its
+  line if that line survived unchanged. Otherwise the thread stays outdated
+  under the file header. Left-side (deleted-line) threads aren't mapped.
+- **Suggestions** open the selected lines in `$EDITOR`. The result becomes a
+  ```` ```suggestion ```` block, with a preview of the change before you add
+  it.
+- **The editor.** `$VISUAL` or `$EDITOR` (default `vi`) runs through `sh`, so
+  it may include arguments. ghtui stops reading the keyboard, leaves the
+  alternate screen and raw mode, waits for the editor, then restores the
+  screen and redraws fully.
+
 **Bundled grammars** (each behind a `lang-*` cargo feature of `ghtui-diff`):
 Rust, TypeScript/TSX, JavaScript/JSX, Python, Go, JSON, YAML, TOML, Markdown
 and shell. Other files, and files over 1 MiB, are shown as plain text. Binary
@@ -301,8 +357,11 @@ Performance targets, as timing tests
 - PR descriptions are shown as wrapped plain text; Markdown isn't rendered.
 - Long diff lines are cut at the pane edge (marked `…`); there's no
   horizontal scrolling or wrapping yet.
-- `]c` / `[c` (next/previous unresolved thread) arrive with review threads in
-  M3.
+- Comment text is shown as plain wrapped Markdown, not rendered.
+- Suggestions apply to new-side lines only (as on GitHub). Threads on
+  deleted lines aren't mapped forward when outdated.
+- Replies, resolve and submit go to GitHub immediately; there's no undo
+  beyond GitHub's own (edit or delete on the web).
 - Search highlights the matching line (the cursor moves to it), not the
   matched characters.
 - Expansion windows reset when you toggle whitespace mode, because they

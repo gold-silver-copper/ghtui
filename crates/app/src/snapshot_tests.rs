@@ -459,8 +459,8 @@ pub(crate) mod diff {
         let diff = s.diffs.get_mut(&pr).unwrap();
         let hash = diff.doc.files[0].blocks()[0].hash.clone();
         diff.set_review(ghtui_store::ReviewState {
-            last_reviewed_head: None,
             reviewed_hunks: vec![hash],
+            ..Default::default()
         });
         diff.doc.set_viewed(1, ghtui_ui::diff_doc::Viewed::Viewed);
         settle(&mut s);
@@ -473,6 +473,126 @@ pub(crate) mod diff {
         if let Some(Screen::Diff(screen)) = screens.last_mut() {
             crate::diff_screen::settle(screen, diffs.get_mut(&screen.pr).unwrap(), content);
         }
+    }
+
+    fn with_threads(mode: Mode) -> crate::state::State {
+        use ghtui_api::model::{ReviewComment, ReviewThread, Side};
+        let mut s = screen_state(
+            mode,
+            ColorDepth::TrueColor,
+            Pos { file: 0, row: 0 },
+            Pane::Diff,
+        );
+        let pr = PrRef::parse("o/r#7").unwrap();
+        let comment = |id: &str, author: &str, body: &str, pending: bool| ReviewComment {
+            id: id.into(),
+            author: author.into(),
+            body: body.into(),
+            created_at: "2026-10-03T08:00:00Z".into(),
+            url: String::new(),
+            original_commit: Some("abc".into()),
+            pending,
+        };
+        let thread = |id: &str, line: Option<u32>, resolved: bool, file_level: bool, comments| {
+            ReviewThread {
+                id: id.into(),
+                path: "src/point.rs".into(),
+                side: Side::Right,
+                start_side: None,
+                line,
+                start_line: None,
+                original_line: line,
+                original_start_line: None,
+                outdated: false,
+                resolved,
+                file_level,
+                can_reply: true,
+                can_resolve: true,
+                can_unresolve: true,
+                comments,
+            }
+        };
+        let diff = s.diffs.get_mut(&pr).unwrap();
+        diff.set_threads(vec![
+            thread(
+                "t1",
+                Some(3),
+                false,
+                false,
+                vec![
+                    comment("c1", "alice", "Should this say \"2D\" or \"two-dimensional\"? The rest of the docs spell it out.", false),
+                    comment("c2", "octocat", "Good point, I'll spell it out.", true),
+                ],
+            ),
+            thread("t2", Some(10), true, false, vec![comment("c3", "bob", "Looks fine now.", false)]),
+            thread("t3", None, false, true, vec![comment("c4", "carol", "Please add tests for this file.", false)]),
+        ]);
+        diff.set_review(ghtui_store::ReviewState {
+            pending: vec![ghtui_store::DraftComment {
+                id: 1,
+                path: "src/point.rs".into(),
+                body: "Prefer `Self::default()` here.".into(),
+                side: ghtui_store::DraftSide::Right,
+                line: Some(15),
+                start_line: None,
+                start_side: None,
+                commit: "h".into(),
+                error: Some("pull_request_review_thread.line must be part of the diff".into()),
+            }],
+            ..Default::default()
+        });
+        settle(&mut s);
+        s
+    }
+
+    #[test]
+    fn threads_dark() {
+        insta::assert_snapshot!(render(&with_threads(Mode::Dark)));
+    }
+
+    #[test]
+    fn threads_light() {
+        insta::assert_snapshot!(render(&with_threads(Mode::Light)));
+    }
+
+    #[test]
+    fn compose_suggestion_dark() {
+        use crate::review::{Compose, ComposeTarget, Preview};
+        use ghtui_diff::anchor::{LinePos, Side};
+        let mut s = with_threads(Mode::Dark);
+        let target = ComposeTarget::Line {
+            path: "src/point.rs".into(),
+            start: LinePos {
+                side: Side::Right,
+                line: 14,
+            },
+            end: LinePos {
+                side: Side::Right,
+                line: 14,
+            },
+        };
+        let mut compose = Compose::new(
+            &s.theme,
+            target,
+            "```suggestion\n    pub fn zero() -> Self {\n```",
+        );
+        compose.preview = Some(Preview {
+            start_line: 14,
+            original: vec!["    pub fn origin() -> Self {".into()],
+            suggested: vec!["    pub fn zero() -> Self {".into()],
+        });
+        s.overlay = Some(crate::state::Overlay::Compose(Box::new(compose)));
+        insta::assert_snapshot!(render(&s));
+    }
+
+    #[test]
+    fn submit_dialog_light() {
+        let mut s = with_threads(Mode::Light);
+        let mut dialog = crate::review::SubmitDialog::new(&s.theme);
+        dialog.cycle(true);
+        dialog.input.insert_str("Nice work overall.");
+        s.overlay = Some(crate::state::Overlay::Submit(Box::new(dialog)));
+        insta::assert_snapshot!(render(&s));
     }
 
     #[test]

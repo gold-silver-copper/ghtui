@@ -38,7 +38,7 @@ Buffer {
     ],
     styles: [
         x: 0, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 2, y: 0, fg: Rgb(60, 93, 141), bg: Rgb(237, 237, 244), underline: Reset, modifier: BOLD,
+        x: 2, y: 0, fg: Rgb(50, 83, 131), bg: Rgb(237, 237, 244), underline: Reset, modifier: BOLD,
         x: 7, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 9, y: 0, fg: Rgb(62, 71, 88), bg: Rgb(217, 227, 249), underline: Reset, modifier: BOLD,
         x: 16, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
@@ -113,7 +113,7 @@ Buffer {
         x: 0, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 76, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 89, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 92, y: 29, fg: Rgb(60, 93, 141), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 92, y: 29, fg: Rgb(50, 83, 131), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 93, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 98, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
     ]

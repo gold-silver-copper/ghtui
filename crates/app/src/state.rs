@@ -23,6 +23,12 @@ use ratatui_textarea::TextArea;
 use crate::diff_job::DiffFiles;
 use crate::diff_screen::{self, DiffScreen, DiffState};
 use crate::keymap::{Action, Key, Keymap, Resolution};
+use crate::review::{
+    self, Compose, ComposeTarget, EditPurpose, Preview, SubmitDialog, SubmitOutcome,
+};
+use ghtui_api::model::{PatchFile, ReviewEvent, ReviewThread};
+use ghtui_store::DraftComment;
+use ghtui_ui::annotations::AnnotationKey;
 
 #[derive(Debug)]
 pub enum Msg {
@@ -45,6 +51,19 @@ pub enum Msg {
         result: Result<(), ApiError>,
     },
     ReviewLoaded(PrRef, ReviewState),
+    ThreadsLoaded(PrRef, Result<Vec<ReviewThread>, ApiError>),
+    PatchesLoaded(PrRef, Result<Vec<PatchFile>, ApiError>),
+    OutdatedMapped(PrRef, Vec<(String, Option<u32>)>),
+    Replied(PrRef, Result<(), ApiError>),
+    ResolvedSet {
+        pr: PrRef,
+        thread_id: String,
+        resolved: bool,
+        result: Result<(), ApiError>,
+    },
+    ReviewSubmitted(PrRef, SubmitOutcome),
+    /// `$EDITOR` finished (or failed to start).
+    Edited(EditPurpose, Result<String, String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +90,36 @@ pub enum Cmd {
     },
     LoadReview(PrRef),
     SaveReview(PrRef, ReviewState),
+    FetchThreads(PrRef),
+    FetchPatches(PrRef),
+    MapOutdated {
+        pr: PrRef,
+        head: String,
+        /// `(thread, path, original commit, original line)`.
+        items: Vec<(String, String, String, u32)>,
+    },
+    Reply {
+        pr: PrRef,
+        thread_id: String,
+        body: String,
+    },
+    SetResolved {
+        pr: PrRef,
+        thread_id: String,
+        resolved: bool,
+    },
+    SubmitReview {
+        pr: PrRef,
+        head: String,
+        drafts: Vec<DraftComment>,
+        event: ReviewEvent,
+        body: String,
+    },
+    /// Suspend the TUI and edit `text` in `$EDITOR`.
+    Edit {
+        purpose: EditPurpose,
+        text: String,
+    },
 }
 
 /// Data that comes from GitHub: what we have (possibly cached), whether a
@@ -130,6 +179,10 @@ pub enum Overlay {
     Search(Box<TextArea<'static>>),
     /// `gf` file finder on the diff screen.
     FindFile(Box<Palette>),
+    /// Writing a comment, reply or suggestion.
+    Compose(Box<Compose>),
+    /// Submitting the review.
+    Submit(Box<SubmitDialog>),
 }
 
 pub struct Palette {
@@ -299,6 +352,8 @@ impl State {
             },
             Cmd::FetchViewed(pr.clone()),
             Cmd::LoadReview(pr.clone()),
+            Cmd::FetchThreads(pr.clone()),
+            Cmd::FetchPatches(pr.clone()),
         ]
     }
 
@@ -574,9 +629,175 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             if let Some(diff) = state.diffs.get_mut(&pr) {
                 diff.set_review(review);
             }
+            state.settle_diff()
+        }
+        Msg::ThreadsLoaded(pr, result) => {
+            match result {
+                Ok(threads) => {
+                    if let Some(diff) = state.diffs.get_mut(&pr) {
+                        diff.set_threads(threads);
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(%pr, %err, "review threads fetch failed");
+                    state.notice = Some(Notice::Error(format!(
+                        "Couldn't load review threads: {err}"
+                    )));
+                }
+            }
+            let mut cmds = state.map_outdated(&pr);
+            cmds.extend(state.settle_diff());
+            cmds
+        }
+        Msg::PatchesLoaded(pr, result) => {
+            match result {
+                Ok(patches) => {
+                    if let Some(diff) = state.diffs.get_mut(&pr) {
+                        diff.set_patches(patches);
+                    }
+                }
+                // The local fallback covers commenting; just note it.
+                Err(err) => {
+                    tracing::warn!(%pr, %err, "GitHub patches unavailable; using local hunks")
+                }
+            }
             Vec::new()
         }
+        Msg::OutdatedMapped(pr, mapped) => {
+            if let Some(diff) = state.diffs.get_mut(&pr) {
+                diff.mapped.extend(mapped);
+                diff.refresh_annotations();
+            }
+            state.settle_diff()
+        }
+        Msg::Replied(pr, result) => {
+            match result {
+                Ok(()) => {
+                    state.overlay = None;
+                    state.notice = Some(Notice::Info("Reply posted".into()));
+                    return vec![Cmd::FetchThreads(pr)];
+                }
+                Err(err) => {
+                    if let Some(Overlay::Compose(compose)) = &mut state.overlay {
+                        compose.sending = false;
+                        compose.error = Some(err.to_string());
+                    }
+                }
+            }
+            Vec::new()
+        }
+        Msg::ResolvedSet {
+            pr,
+            thread_id,
+            resolved,
+            result,
+        } => {
+            if let Err(err) = result {
+                if let Some(diff) = state.diffs.get_mut(&pr) {
+                    if let Some(t) = diff.threads.iter_mut().find(|t| t.id == thread_id) {
+                        t.resolved = !resolved;
+                    }
+                    diff.refresh_annotations();
+                }
+                state.notice = Some(Notice::Error(format!("GitHub didn't save that: {err}")));
+            }
+            state.settle_diff()
+        }
+        Msg::ReviewSubmitted(pr, outcome) => on_submitted(state, pr, outcome),
+        Msg::Edited(purpose, result) => on_edited(state, purpose, result),
     }
+}
+
+/// Applies the result of submitting a review: accepted drafts leave the
+/// local queue, rejected ones keep their text and GitHub's reason.
+fn on_submitted(state: &mut State, pr: PrRef, outcome: SubmitOutcome) -> Vec<Cmd> {
+    let mut cmds = vec![Cmd::FetchThreads(pr.clone())];
+    if let Some(diff) = state.diffs.get_mut(&pr) {
+        diff.review
+            .pending
+            .retain(|d| !outcome.accepted.contains(&d.id));
+        for draft in &mut diff.review.pending {
+            draft.error = outcome
+                .rejected
+                .iter()
+                .find(|(id, _)| *id == draft.id)
+                .map(|(_, reason)| reason.clone());
+        }
+        if outcome.submitted {
+            diff.review.last_reviewed_head = diff.refs.as_ref().map(|r| r.head.clone());
+        }
+        diff.refresh_annotations();
+        cmds.push(Cmd::SaveReview(pr.clone(), diff.review.clone()));
+    }
+    if outcome.submitted {
+        state.overlay = None;
+        state.notice = Some(Notice::Info("Review submitted".into()));
+    } else if let Some(Overlay::Submit(dialog)) = &mut state.overlay {
+        dialog.sending = false;
+        dialog.error = Some(match (&outcome.error, outcome.rejected.len()) {
+            (Some(err), _) => err.clone(),
+            (None, n) => format!(
+                "GitHub rejected {n} comment{}; they're marked in the diff. The review stays pending on GitHub until you submit again.",
+                if n == 1 { "" } else { "s" }
+            ),
+        });
+    }
+    cmds.extend(state.settle_diff());
+    cmds
+}
+
+fn on_edited(state: &mut State, purpose: EditPurpose, result: Result<String, String>) -> Vec<Cmd> {
+    let text = match result {
+        Ok(text) => text,
+        Err(err) => {
+            state.notice = Some(Notice::Error(format!("Couldn't run the editor: {err}")));
+            return Vec::new();
+        }
+    };
+    let theme = state.theme.clone();
+    match purpose {
+        EditPurpose::Compose => {
+            if let Some(Overlay::Compose(compose)) = &mut state.overlay {
+                let target = compose.target.clone();
+                let preview = compose.preview.clone();
+                **compose = Compose::new(&theme, target, &text);
+                compose.preview = preview;
+            }
+        }
+        EditPurpose::Summary => {
+            if let Some(Overlay::Submit(dialog)) = &mut state.overlay {
+                let event = dialog.event;
+                **dialog = SubmitDialog::new(&theme);
+                dialog.event = event;
+                dialog.input.insert_str(text.trim_end());
+            }
+        }
+        EditPurpose::Suggest {
+            path,
+            start,
+            end,
+            original,
+        } => {
+            let suggested: Vec<String> = text
+                .trim_end_matches('\n')
+                .lines()
+                .map(str::to_owned)
+                .collect();
+            if suggested == original {
+                state.notice = Some(Notice::Info("No change suggested".into()));
+                return Vec::new();
+            }
+            let body = review::suggestion_body(&suggested.join("\n"));
+            let mut compose = Compose::new(&theme, ComposeTarget::Line { path, start, end }, &body);
+            compose.preview = Some(Preview {
+                start_line: start.line,
+                original,
+                suggested,
+            });
+            state.overlay = Some(Overlay::Compose(Box::new(compose)));
+        }
+    }
+    Vec::new()
 }
 
 fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
@@ -597,6 +818,8 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         Some(Overlay::Palette(_)) => return on_palette_key(state, key),
         Some(Overlay::Search(_)) => return on_search_key(state, key),
         Some(Overlay::FindFile(_)) => return on_finder_key(state, key),
+        Some(Overlay::Compose(_)) => return on_compose_key(state, key),
+        Some(Overlay::Submit(_)) => return on_submit_key(state, key),
         None => {}
     }
     // Any keypress dismisses the last notice.
@@ -778,6 +1001,9 @@ pub fn new_palette(theme: &Theme) -> Palette {
 fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
     let half_page = (state.content_area().height / 2).max(1);
     let content = state.content_area();
+    if let Some(cmds) = review_action(state, action) {
+        return cmds;
+    }
     {
         let State {
             screens,
@@ -862,7 +1088,17 @@ fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         | Action::NextUnviewed
         | Action::MarkReviewed
         | Action::SearchNext
-        | Action::SearchPrev => {}
+        | Action::SearchPrev
+        | Action::Comment
+        | Action::VisualLines
+        | Action::Suggest
+        | Action::ReplyThread
+        | Action::ResolveThread
+        | Action::DeleteDraft
+        | Action::FileComment
+        | Action::SubmitReview
+        | Action::NextThread
+        | Action::PrevThread => {}
         Action::Down => move_by(state, 1, 1),
         Action::Up => move_by(state, -1, -1),
         Action::HalfPageDown => move_by(state, i64::from(half_page / 2), i64::from(half_page)),
@@ -942,6 +1178,381 @@ fn clamp_scroll(state: &mut State) -> Vec<Cmd> {
         Screen::Diff(_) => return state.settle_diff(),
     }
     Vec::new()
+}
+
+// ---- reviewing ---------------------------------------------------------------
+
+impl State {
+    /// Asks the diff job to map outdated threads, once both the threads and
+    /// the diff's head are known.
+    fn map_outdated(&mut self, pr: &PrRef) -> Vec<Cmd> {
+        let Some(diff) = self.diffs.get_mut(pr) else {
+            return Vec::new();
+        };
+        let Some(head) = diff.refs.as_ref().map(|r| r.head.clone()) else {
+            return Vec::new();
+        };
+        if diff.mapping_requested {
+            return Vec::new();
+        }
+        let items = review::outdated_to_map(&diff.threads);
+        if items.is_empty() {
+            return Vec::new();
+        }
+        diff.mapping_requested = true;
+        vec![Cmd::MapOutdated {
+            pr: pr.clone(),
+            head,
+            items,
+        }]
+    }
+
+    fn diff_parts(&mut self) -> Option<(&mut DiffScreen, &mut DiffState)> {
+        let State { screens, diffs, .. } = self;
+        let Some(Screen::Diff(screen)) = screens.last_mut() else {
+            return None;
+        };
+        let diff = diffs.get_mut(&screen.pr)?;
+        Some((screen, diff))
+    }
+}
+
+/// Review actions on the diff screen. `None` lets other handlers try.
+fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
+    let theme = state.theme.clone();
+    let (screen, diff) = state.diff_parts()?;
+    let pr = screen.pr.clone();
+    let cursor = screen.cursor;
+    let annotation = diff
+        .doc
+        .annotation_at(cursor)
+        .and_then(|i| diff.doc.annotations.get(i as usize).cloned());
+    let notice = |state: &mut State, n: Notice| {
+        state.notice = Some(n);
+        Some(Vec::new())
+    };
+    match action {
+        Action::Back if screen.selection.is_some() => {
+            screen.selection = None;
+            Some(Vec::new())
+        }
+        Action::Comment => {
+            let selection = screen.selection.take();
+            match review::target(&diff.doc, cursor, selection) {
+                Ok(target) => {
+                    let reason = match &target {
+                        ComposeTarget::File { reason, .. } => reason.clone(),
+                        _ => None,
+                    };
+                    state.overlay =
+                        Some(Overlay::Compose(Box::new(Compose::new(&theme, target, ""))));
+                    if let Some(reason) = reason {
+                        state.notice = Some(Notice::Info(reason));
+                    }
+                    Some(Vec::new())
+                }
+                Err(err) => notice(state, Notice::Error(err)),
+            }
+        }
+        Action::FileComment => {
+            // On a draft: turn it into a file comment (e.g. after GitHub
+            // rejected its line). Elsewhere: comment on the file.
+            if let Some(ann) = &annotation
+                && let AnnotationKey::Draft(id) = ann.key
+            {
+                if let Some(d) = diff.review.pending.iter_mut().find(|d| d.id == id) {
+                    d.line = None;
+                    d.start_line = None;
+                    d.start_side = None;
+                    d.error = None;
+                }
+                diff.refresh_annotations();
+                let save = Cmd::SaveReview(pr, diff.review.clone());
+                state.notice = Some(Notice::Info("Now a comment on the file".into()));
+                return Some(vec![save]);
+            }
+            let path = diff.doc.files.get(cursor.file)?.meta.path().to_owned();
+            state.overlay = Some(Overlay::Compose(Box::new(Compose::new(
+                &theme,
+                ComposeTarget::File { path, reason: None },
+                "",
+            ))));
+            Some(Vec::new())
+        }
+        Action::Suggest => {
+            let selection = screen.selection.take();
+            let target = match review::target(&diff.doc, cursor, selection) {
+                Ok(target) => target,
+                Err(err) => return notice(state, Notice::Error(err)),
+            };
+            let ComposeTarget::Line { path, start, end } = target else {
+                return notice(
+                    state,
+                    Notice::Error("Suggestions need lines GitHub can comment on".into()),
+                );
+            };
+            if start.side != ghtui_diff::anchor::Side::Right
+                || end.side != ghtui_diff::anchor::Side::Right
+            {
+                return notice(
+                    state,
+                    Notice::Error("Suggestions apply to new lines (not deleted ones)".into()),
+                );
+            }
+            let text = diff.doc.files.get(cursor.file)?.text()?;
+            let original: Vec<String> = (start.line..=end.line)
+                .map(|n| text.new.line(n as usize - 1).to_owned())
+                .collect();
+            Some(vec![Cmd::Edit {
+                text: original.join("\n") + "\n",
+                purpose: EditPurpose::Suggest {
+                    path,
+                    start,
+                    end,
+                    original,
+                },
+            }])
+        }
+        Action::ReplyThread => match annotation {
+            Some(ann) if ann.can_reply => {
+                let AnnotationKey::Thread(thread_id) = ann.key else {
+                    return Some(Vec::new());
+                };
+                state.overlay = Some(Overlay::Compose(Box::new(Compose::new(
+                    &theme,
+                    ComposeTarget::Reply { thread_id },
+                    "",
+                ))));
+                Some(Vec::new())
+            }
+            Some(_) => notice(state, Notice::Info("You can't reply to this one".into())),
+            None => notice(state, Notice::Info("Move to a thread to reply".into())),
+        },
+        Action::ResolveThread => {
+            let Some(ann) = annotation else {
+                return notice(state, Notice::Info("Move to a thread to resolve it".into()));
+            };
+            let AnnotationKey::Thread(thread_id) = ann.key else {
+                return notice(state, Notice::Info("Drafts can't be resolved".into()));
+            };
+            let resolved = !ann.resolved;
+            if (resolved && !ann.can_resolve) || (!resolved && !ann.can_unresolve) {
+                return notice(state, Notice::Info("You can't change this thread".into()));
+            }
+            // Optimistic; rolled back if GitHub refuses.
+            if let Some(t) = diff.threads.iter_mut().find(|t| t.id == thread_id) {
+                t.resolved = resolved;
+            }
+            diff.refresh_annotations();
+            Some(vec![Cmd::SetResolved {
+                pr,
+                thread_id,
+                resolved,
+            }])
+        }
+        Action::DeleteDraft => {
+            let Some(AnnotationKey::Draft(id)) = annotation.map(|a| a.key) else {
+                return notice(
+                    state,
+                    Notice::Info("Move to a draft comment to delete it".into()),
+                );
+            };
+            diff.review.pending.retain(|d| d.id != id);
+            diff.refresh_annotations();
+            let save = Cmd::SaveReview(pr, diff.review.clone());
+            state.notice = Some(Notice::Info("Draft deleted".into()));
+            Some(vec![save])
+        }
+        Action::Open => {
+            let ann_index = diff.doc.annotation_at(cursor)?;
+            let ann = diff.doc.annotations.get(ann_index as usize)?.clone();
+            if let AnnotationKey::Draft(id) = ann.key {
+                let body = diff
+                    .review
+                    .pending
+                    .iter()
+                    .find(|d| d.id == id)?
+                    .body
+                    .clone();
+                state.overlay = Some(Overlay::Compose(Box::new(Compose::new(
+                    &theme,
+                    ComposeTarget::Draft { id },
+                    &body,
+                ))));
+                return Some(Vec::new());
+            }
+            diff.doc.toggle_thread(ann_index);
+            Some(state.settle_diff())
+        }
+        Action::SubmitReview => {
+            if diff.refs.is_none() {
+                return notice(state, Notice::Error("The diff hasn't loaded yet".into()));
+            }
+            state.overlay = Some(Overlay::Submit(Box::new(SubmitDialog::new(&theme))));
+            Some(Vec::new())
+        }
+        _ => None,
+    }
+}
+
+fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+    let Some(Overlay::Compose(compose)) = &mut state.overlay else {
+        return Vec::new();
+    };
+    if compose.sending {
+        return Vec::new();
+    }
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Esc if compose.text().trim().is_empty() || compose.confirm_discard => {
+            state.overlay = None;
+            Vec::new()
+        }
+        KeyCode::Esc => {
+            compose.confirm_discard = true;
+            compose.error = Some("Press Esc again to discard this comment".into());
+            Vec::new()
+        }
+        KeyCode::Char('e') if ctrl => vec![Cmd::Edit {
+            purpose: EditPurpose::Compose,
+            text: compose.text(),
+        }],
+        KeyCode::Char('s') if ctrl => save_compose(state),
+        _ => {
+            compose.confirm_discard = false;
+            compose.error = None;
+            compose.input.input(key);
+            Vec::new()
+        }
+    }
+}
+
+/// `<C-s>` in the composer: drafts join the pending review (and are saved);
+/// replies post right away.
+fn save_compose(state: &mut State) -> Vec<Cmd> {
+    let Some(Overlay::Compose(compose)) = &state.overlay else {
+        return Vec::new();
+    };
+    let body = compose.text();
+    if body.trim().is_empty() {
+        if let Some(Overlay::Compose(compose)) = &mut state.overlay {
+            compose.error = Some("Write something first".into());
+        }
+        return Vec::new();
+    }
+    let target = compose.target.clone();
+    let Some((screen, diff)) = state.diff_parts() else {
+        return Vec::new();
+    };
+    let pr = screen.pr.clone();
+    match target {
+        ComposeTarget::Reply { thread_id } => {
+            if let Some(Overlay::Compose(compose)) = &mut state.overlay {
+                compose.sending = true;
+            }
+            vec![Cmd::Reply {
+                pr,
+                thread_id,
+                body,
+            }]
+        }
+        ComposeTarget::Draft { id } => {
+            if let Some(d) = diff.review.pending.iter_mut().find(|d| d.id == id) {
+                d.body = body;
+                d.error = None;
+            }
+            diff.refresh_annotations();
+            let save = Cmd::SaveReview(pr, diff.review.clone());
+            state.overlay = None;
+            vec![save]
+        }
+        target @ (ComposeTarget::Line { .. } | ComposeTarget::File { .. }) => {
+            let head = diff
+                .refs
+                .as_ref()
+                .map(|r| r.head.clone())
+                .unwrap_or_default();
+            let id = diff.review.next_draft_id();
+            let Some(draft) = review::draft(&target, body, id, &head) else {
+                return Vec::new();
+            };
+            diff.review.pending.push(draft);
+            diff.refresh_annotations();
+            let save = Cmd::SaveReview(pr, diff.review.clone());
+            let count = diff.review.pending.len();
+            state.overlay = None;
+            state.notice = Some(Notice::Info(format!(
+                "Added to your review ({count} pending). Submit with {}",
+                state
+                    .keymap
+                    .keys_for(Action::SubmitReview)
+                    .first()
+                    .cloned()
+                    .unwrap_or_default()
+            )));
+            let mut cmds = vec![save];
+            cmds.extend(state.settle_diff());
+            cmds
+        }
+    }
+}
+
+fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+    let Some(Overlay::Submit(dialog)) = &mut state.overlay else {
+        return Vec::new();
+    };
+    if dialog.sending {
+        return Vec::new();
+    }
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Esc => {
+            state.overlay = None;
+            Vec::new()
+        }
+        KeyCode::Tab => {
+            dialog.cycle(true);
+            Vec::new()
+        }
+        KeyCode::BackTab => {
+            dialog.cycle(false);
+            Vec::new()
+        }
+        KeyCode::Char('e') if ctrl => vec![Cmd::Edit {
+            purpose: EditPurpose::Summary,
+            text: dialog.input.lines().join("\n"),
+        }],
+        KeyCode::Char('s') if ctrl => {
+            let event = dialog.event;
+            let body = dialog.input.lines().join("\n");
+            if event == ReviewEvent::RequestChanges && body.trim().is_empty() {
+                dialog.error = Some("Requesting changes needs a summary".into());
+                return Vec::new();
+            }
+            dialog.sending = true;
+            dialog.error = None;
+            let Some((screen, diff)) = state.diff_parts() else {
+                return Vec::new();
+            };
+            let head = diff
+                .refs
+                .as_ref()
+                .map(|r| r.head.clone())
+                .unwrap_or_default();
+            vec![Cmd::SubmitReview {
+                pr: screen.pr.clone(),
+                head,
+                drafts: diff.review.pending.clone(),
+                event,
+                body,
+            }]
+        }
+        _ => {
+            dialog.error = None;
+            dialog.input.input(key);
+            Vec::new()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1135,7 +1746,7 @@ mod tests {
     fn palette_list_stays_in_bounds() {
         let mut state = state();
         press(&mut state, ":");
-        for _ in 0..(PALETTE_ROWS * 3) {
+        for _ in 0..(state.palette_commands("").len() + PALETTE_ROWS) {
             press(&mut state, "<Down>");
         }
         let Some(Overlay::Palette(palette)) = &state.overlay else {
@@ -1294,6 +1905,336 @@ mod tests {
                 ghtui_diff::Whitespace::Ignore
             );
             press(&mut s, "x");
+        }
+        mod review {
+            use super::*;
+            use crate::review::{ComposeTarget, EditPurpose, SubmitOutcome};
+            use ghtui_api::model::{PatchFile, ReviewComment, ReviewEvent, ReviewThread, Side};
+
+            fn thread(id: &str, line: Option<u32>, resolved: bool, outdated: bool) -> ReviewThread {
+                ReviewThread {
+                    id: id.into(),
+                    path: "src/point.rs".into(),
+                    side: Side::Right,
+                    start_side: None,
+                    line,
+                    start_line: None,
+                    original_line: Some(3),
+                    original_start_line: None,
+                    outdated,
+                    resolved,
+                    file_level: false,
+                    can_reply: true,
+                    can_resolve: true,
+                    can_unresolve: true,
+                    comments: vec![ReviewComment {
+                        id: format!("{id}-c"),
+                        author: "alice".into(),
+                        body: format!("Thread {id}"),
+                        created_at: "2026-10-03T09:00:00Z".into(),
+                        url: String::new(),
+                        original_commit: Some("abc".into()),
+                        pending: false,
+                    }],
+                }
+            }
+
+            fn type_text(s: &mut State, text: &str) {
+                for c in text.chars() {
+                    update(
+                        s,
+                        Msg::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)),
+                    );
+                }
+            }
+
+            fn ctrl(s: &mut State, c: char) -> Vec<Cmd> {
+                update(
+                    s,
+                    Msg::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)),
+                )
+            }
+
+            fn to_line(s: &mut State, text: &str) {
+                press(s, "/");
+                press(s, &format!("{text}<Enter>"));
+            }
+
+            #[test]
+            fn threads_show_navigate_and_resolve() {
+                let (mut s, pr) = diff_state(120);
+                update(
+                    &mut s,
+                    Msg::ThreadsLoaded(
+                        pr.clone(),
+                        Ok(vec![
+                            thread("done", Some(1), true, false),
+                            thread("open", Some(14), false, false),
+                        ]),
+                    ),
+                );
+                assert_eq!(s.diffs[&pr].doc.annotations.len(), 2);
+                press(&mut s, "gg]c");
+                let at = s.diffs[&pr].doc.annotation_at(screen(&s).cursor).unwrap();
+                assert_eq!(
+                    s.diffs[&pr].doc.annotations[at as usize].key,
+                    AnnotationKey::Thread("open".into())
+                );
+
+                // Resolve: optimistic, rolled back on failure.
+                let cmds = press(&mut s, "R");
+                assert!(matches!(
+                    &cmds[..],
+                    [Cmd::SetResolved { resolved: true, .. }, ..]
+                ));
+                assert!(s.diffs[&pr].threads[1].resolved);
+                update(
+                    &mut s,
+                    Msg::ResolvedSet {
+                        pr: pr.clone(),
+                        thread_id: "open".into(),
+                        resolved: true,
+                        result: Err(ApiError::Network("down".into())),
+                    },
+                );
+                assert!(!s.diffs[&pr].threads[1].resolved);
+                assert!(matches!(s.notice, Some(Notice::Error(_))));
+            }
+
+            #[test]
+            fn comment_draft_edit_and_delete() {
+                let (mut s, pr) = diff_state(120);
+                to_line(&mut s, "origin");
+                press(&mut s, "c");
+                let Some(Overlay::Compose(compose)) = &s.overlay else {
+                    panic!("no composer")
+                };
+                assert!(matches!(compose.target, ComposeTarget::Line { .. }));
+                type_text(&mut s, "Use a constant");
+                let cmds = ctrl(&mut s, 's');
+                assert!(s.overlay.is_none());
+                let Some(Cmd::SaveReview(_, review)) = cmds.first() else {
+                    panic!("{cmds:?}")
+                };
+                assert_eq!(review.pending.len(), 1);
+                let draft = &review.pending[0];
+                assert_eq!((draft.line, draft.commit.as_str()), (Some(14), "h"));
+                assert!(s.diffs[&pr].doc.annotations.iter().any(|a| a.is_draft()));
+
+                // The cursor is on the commented line; Enter edits the draft.
+                press(&mut s, "<Enter>");
+                assert!(
+                    matches!(&s.overlay, Some(Overlay::Compose(c)) if matches!(c.target, ComposeTarget::Draft { .. }))
+                );
+                type_text(&mut s, "!");
+                ctrl(&mut s, 's');
+                assert_eq!(s.diffs[&pr].review.pending[0].body, "Use a constant!");
+
+                let cmds = press(&mut s, "D");
+                assert!(matches!(&cmds[..], [Cmd::SaveReview(_, r)] if r.pending.is_empty()));
+            }
+
+            #[test]
+            fn lines_outside_githubs_diff_become_file_comments() {
+                let (mut s, pr) = diff_state(120);
+                // GitHub's diff only covers line 1.
+                update(
+                    &mut s,
+                    Msg::PatchesLoaded(
+                        pr.clone(),
+                        Ok(vec![PatchFile {
+                            filename: "src/point.rs".into(),
+                            previous_filename: None,
+                            patch: Some("@@ -1 +1 @@\n-a\n+b".into()),
+                        }]),
+                    ),
+                );
+                to_line(&mut s, "origin");
+                press(&mut s, "c");
+                let Some(Overlay::Compose(compose)) = &s.overlay else {
+                    panic!()
+                };
+                assert!(matches!(
+                    &compose.target,
+                    ComposeTarget::File {
+                        reason: Some(_),
+                        ..
+                    }
+                ));
+            }
+
+            #[test]
+            fn selections_across_hunks_are_refused() {
+                let (mut s, pr) = diff_state(120);
+                update(
+                    &mut s,
+                    Msg::PatchesLoaded(
+                        pr.clone(),
+                        Ok(vec![PatchFile {
+                            filename: "src/point.rs".into(),
+                            previous_filename: None,
+                            patch: Some("@@ -1,6 +1,6 @@\n@@ -10,4 +10,8 @@".into()),
+                        }]),
+                    ),
+                );
+                to_line(&mut s, "A point in 2D");
+                press(&mut s, "V");
+                to_line(&mut s, "origin");
+                press(&mut s, "c");
+                assert!(s.overlay.is_none());
+                assert!(
+                    matches!(&s.notice, Some(Notice::Error(m)) if m.contains("one hunk")),
+                    "{:?}",
+                    s.notice
+                );
+            }
+
+            #[test]
+            fn submit_with_rejection_then_fix_and_resubmit() {
+                let (mut s, pr) = diff_state(120);
+                to_line(&mut s, "origin");
+                press(&mut s, "c");
+                type_text(&mut s, "nit");
+                ctrl(&mut s, 's');
+                let id = s.diffs[&pr].review.pending[0].id;
+
+                press(&mut s, "gr");
+                assert!(matches!(s.overlay, Some(Overlay::Submit(_))));
+                press(&mut s, "<Tab>");
+                let cmds = ctrl(&mut s, 's');
+                let Some(Cmd::SubmitReview { drafts, event, .. }) = cmds.first() else {
+                    panic!("{cmds:?}")
+                };
+                assert_eq!((drafts.len(), *event), (1, ReviewEvent::Approve));
+
+                update(
+                    &mut s,
+                    Msg::ReviewSubmitted(
+                        pr.clone(),
+                        SubmitOutcome {
+                            rejected: vec![(id, "line must be part of the diff".into())],
+                            ..SubmitOutcome::default()
+                        },
+                    ),
+                );
+                assert!(
+                    matches!(&s.overlay, Some(Overlay::Submit(d)) if d.error.is_some() && !d.sending)
+                );
+                assert_eq!(
+                    s.diffs[&pr].review.pending[0].error.as_deref(),
+                    Some("line must be part of the diff")
+                );
+
+                // Make it a file comment and submit again.
+                press(&mut s, "<Esc>");
+                press(&mut s, "f");
+                assert_eq!(s.diffs[&pr].review.pending[0].line, None);
+                press(&mut s, "gr");
+                ctrl(&mut s, 's');
+                update(
+                    &mut s,
+                    Msg::ReviewSubmitted(
+                        pr.clone(),
+                        SubmitOutcome {
+                            accepted: vec![id],
+                            submitted: true,
+                            ..SubmitOutcome::default()
+                        },
+                    ),
+                );
+                assert!(s.overlay.is_none());
+                assert!(s.diffs[&pr].review.pending.is_empty());
+                assert_eq!(s.diffs[&pr].review.last_reviewed_head.as_deref(), Some("h"));
+            }
+
+            #[test]
+            fn request_changes_needs_a_summary() {
+                let (mut s, _) = diff_state(120);
+                press(&mut s, "gr");
+                press(&mut s, "<Tab><Tab>");
+                assert!(ctrl(&mut s, 's').is_empty());
+                assert!(matches!(&s.overlay, Some(Overlay::Submit(d)) if d.error.is_some()));
+            }
+
+            #[test]
+            fn replies_post_right_away() {
+                let (mut s, pr) = diff_state(120);
+                update(
+                    &mut s,
+                    Msg::ThreadsLoaded(pr.clone(), Ok(vec![thread("t", Some(14), false, false)])),
+                );
+                press(&mut s, "gg]c");
+                press(&mut s, "a");
+                type_text(&mut s, "Fixed");
+                let cmds = ctrl(&mut s, 's');
+                assert!(matches!(&cmds[..], [Cmd::Reply { body, .. }] if body == "Fixed"));
+                update(
+                    &mut s,
+                    Msg::Replied(pr.clone(), Err(ApiError::Network("down".into()))),
+                );
+                assert!(
+                    matches!(&s.overlay, Some(Overlay::Compose(c)) if c.error.is_some() && c.text() == "Fixed")
+                );
+                let cmds = update(&mut s, Msg::Replied(pr.clone(), Ok(())));
+                assert!(s.overlay.is_none());
+                assert_eq!(cmds, vec![Cmd::FetchThreads(pr)]);
+            }
+
+            #[test]
+            fn suggestions_go_through_the_editor_with_a_preview() {
+                let (mut s, _) = diff_state(120);
+                to_line(&mut s, "origin");
+                let cmds = press(&mut s, "S");
+                let Some(Cmd::Edit { purpose, text }) = cmds.into_iter().next() else {
+                    panic!()
+                };
+                assert!(text.contains("pub fn origin()"));
+                update(
+                    &mut s,
+                    Msg::Edited(purpose, Ok("    pub fn zero() -> Self {\n".into())),
+                );
+                let Some(Overlay::Compose(compose)) = &s.overlay else {
+                    panic!()
+                };
+                assert!(
+                    compose
+                        .text()
+                        .starts_with("```suggestion\n    pub fn zero()")
+                );
+                let preview = compose.preview.as_ref().unwrap();
+                assert_eq!(preview.suggested, ["    pub fn zero() -> Self {"]);
+                assert_eq!(preview.original, ["    pub fn origin() -> Self {"]);
+                // Unchanged text isn't a suggestion.
+                s.overlay = None;
+                let cmds = press(&mut s, "S");
+                let Some(Cmd::Edit { purpose, text }) = cmds.into_iter().next() else {
+                    panic!()
+                };
+                update(&mut s, Msg::Edited(purpose, Ok(text)));
+                assert!(s.overlay.is_none());
+                let _ = EditPurpose::Compose;
+            }
+
+            #[test]
+            fn outdated_threads_are_mapped_forward() {
+                let (mut s, pr) = diff_state(120);
+                let cmds = update(
+                    &mut s,
+                    Msg::ThreadsLoaded(pr.clone(), Ok(vec![thread("old", None, false, true)])),
+                );
+                assert!(cmds.iter().any(|c| matches!(c, Cmd::MapOutdated { items, head, .. } if items.len() == 1 && head == "h")));
+                let ann = &s.diffs[&pr].doc.annotations[0];
+                assert!(
+                    ann.outdated && ann.on_line().is_none(),
+                    "unplaced until mapped"
+                );
+                update(
+                    &mut s,
+                    Msg::OutdatedMapped(pr.clone(), vec![("old".into(), Some(4))]),
+                );
+                let ann = &s.diffs[&pr].doc.annotations[0];
+                assert_eq!((ann.on_line(), ann.moved), (Some(4), true));
+            }
         }
     }
 }

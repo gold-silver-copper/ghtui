@@ -239,6 +239,36 @@ impl Repo {
         self.run(&["update-ref", &name, sha]).await.map(drop)
     }
 
+    /// Whether `rev` (e.g. `<sha>:<path>`) resolves locally, without lazy
+    /// fetching.
+    pub async fn has(&self, rev: &str) -> bool {
+        self.cmd()
+            .env("GIT_NO_LAZY_FETCH", "1")
+            .args(["cat-file", "-e", rev])
+            .status()
+            .await
+            .is_ok_and(|s| s.success())
+    }
+
+    /// Fetches one commit by SHA (e.g. a head that was force-pushed away).
+    /// GitHub serves commits it still has even when no ref points at them.
+    pub async fn fetch_commit(&self, sha: &str) -> Result<(), GitError> {
+        if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(GitError::Parse(format!("not a commit id: {sha}")));
+        }
+        let lock = repo_lock(&self.path);
+        let _guard = lock.lock().await;
+        self.run(&[
+            "fetch",
+            "--no-tags",
+            "--no-write-fetch-head",
+            &self.remote,
+            sha,
+        ])
+        .await
+        .map(drop)
+    }
+
     /// Files changed from `from` to `to`, with rename detection. In a
     /// partial clone git fetches the blobs rename detection needs in one
     /// batch.

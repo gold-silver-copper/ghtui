@@ -12,7 +12,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::auth::Token;
-use crate::model::{Inbox, PrDetail, PrRef, PrSummary, ViewedFiles, ViewedState};
+use crate::model::{
+    Inbox, NewThread, PatchFile, PrDetail, PrRef, PrSummary, ReviewEvent, ReviewThread, Side,
+    ViewedFiles, ViewedState,
+};
 use crate::queries;
 use crate::rate_limit::{RateLimits, retry_after};
 
@@ -185,9 +188,44 @@ impl GitHub {
         }
     }
 
-    /// Runs a GraphQL operation. Partial results are accepted (and their
-    /// errors logged); a response without data is an error.
+    /// Runs a GraphQL query. Partial results are accepted (and their errors
+    /// logged); a response without data is an error.
     pub async fn graphql<Q, V>(&self, op: cynic::Operation<Q, V>) -> Result<Q, ApiError>
+    where
+        Q: DeserializeOwned + 'static,
+        V: Serialize,
+    {
+        let (data, errors) = self.graphql_raw(op).await?;
+        match data {
+            Some(data) => {
+                if !errors.is_empty() {
+                    tracing::warn!(?errors, "partial GraphQL result");
+                }
+                Ok(data)
+            }
+            None if errors.is_empty() => Err(ApiError::Decode("no data".into())),
+            None => Err(ApiError::GraphQl(errors)),
+        }
+    }
+
+    /// Runs a GraphQL mutation. Any error fails it, with GitHub's messages:
+    /// a rejected mutation comes back as data with a null field plus errors.
+    async fn mutate<Q, V>(&self, op: cynic::Operation<Q, V>) -> Result<Q, ApiError>
+    where
+        Q: DeserializeOwned + 'static,
+        V: Serialize,
+    {
+        match self.graphql_raw(op).await? {
+            (_, errors) if !errors.is_empty() => Err(ApiError::GraphQl(errors)),
+            (Some(data), _) => Ok(data),
+            (None, _) => Err(ApiError::Decode("no data".into())),
+        }
+    }
+
+    async fn graphql_raw<Q, V>(
+        &self,
+        op: cynic::Operation<Q, V>,
+    ) -> Result<(Option<Q>, Vec<String>), ApiError>
     where
         Q: DeserializeOwned + 'static,
         V: Serialize,
@@ -202,22 +240,13 @@ impl GitHub {
         check_status(&response)?;
         let parsed: cynic::GraphQlResponse<Q> =
             serde_json::from_str(&response.body).map_err(|e| ApiError::Decode(e.to_string()))?;
-        let errors: Vec<String> = parsed
+        let errors = parsed
             .errors
             .unwrap_or_default()
             .into_iter()
             .map(|e| e.message)
             .collect();
-        match parsed.data {
-            Some(data) => {
-                if !errors.is_empty() {
-                    tracing::warn!(?errors, "partial GraphQL result");
-                }
-                Ok(data)
-            }
-            None if errors.is_empty() => Err(ApiError::Decode("no data".into())),
-            None => Err(ApiError::GraphQl(errors)),
-        }
+        Ok((parsed.data, errors))
     }
 
     /// GETs a REST path, revalidating with the cached ETag. A 304 serves the
@@ -369,12 +398,190 @@ impl GitHub {
             path: path.to_owned(),
         };
         if viewed {
-            self.graphql(queries::MarkFileAsViewed::build(vars)).await?;
+            self.mutate(queries::MarkFileAsViewed::build(vars)).await?;
         } else {
-            self.graphql(queries::UnmarkFileAsViewed::build(vars))
+            self.mutate(queries::UnmarkFileAsViewed::build(vars))
                 .await?;
         }
         Ok(())
+    }
+
+    /// All review threads of a PR, with up to 100 comments each.
+    pub async fn review_threads(&self, pr: &PrRef) -> Result<Vec<ReviewThread>, ApiError> {
+        use cynic::QueryBuilder;
+        let number = pr_number(pr)?;
+        let mut after = None;
+        let mut threads = Vec::new();
+        loop {
+            let op = queries::ThreadsQuery::build(queries::ThreadsVariables {
+                owner: pr.repo.owner.clone(),
+                name: pr.repo.name.clone(),
+                number,
+                after: after.take(),
+            });
+            let data = self.graphql(op).await?;
+            let page = data
+                .repository
+                .and_then(|r| r.pull_request)
+                .ok_or_else(|| ApiError::NotFound(pr.to_string()))?
+                .review_threads;
+            threads.extend(
+                page.nodes
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(ReviewThread::from_wire),
+            );
+            match page.page_info.end_cursor {
+                Some(cursor) if page.page_info.has_next_page => after = Some(cursor),
+                _ => break,
+            }
+        }
+        Ok(threads)
+    }
+
+    /// GitHub's per-file patches, for commentable ranges. Paginated (100 per
+    /// page) and capped by GitHub at 3000 files.
+    pub async fn pr_patches(&self, pr: &PrRef) -> Result<Vec<PatchFile>, ApiError> {
+        let mut files = Vec::new();
+        for page in 1..=30 {
+            let path = format!(
+                "/repos/{}/{}/pulls/{}/files?per_page=100&page={page}",
+                pr.repo.owner, pr.repo.name, pr.number
+            );
+            let body = self.rest_get(&path).await?;
+            let batch: Vec<PatchFile> =
+                serde_json::from_str(&body).map_err(|e| ApiError::Decode(e.to_string()))?;
+            let done = batch.len() < 100;
+            files.extend(batch);
+            if done {
+                break;
+            }
+        }
+        Ok(files)
+    }
+
+    /// The PR's node ID and the viewer's pending review on it, if any.
+    pub async fn pending_review(&self, pr: &PrRef) -> Result<(String, Option<String>), ApiError> {
+        use cynic::QueryBuilder;
+        let op = queries::PendingReviewQuery::build(queries::PendingReviewVariables {
+            owner: pr.repo.owner.clone(),
+            name: pr.repo.name.clone(),
+            number: pr_number(pr)?,
+        });
+        let pr_node = self
+            .graphql(op)
+            .await?
+            .repository
+            .and_then(|r| r.pull_request)
+            .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
+        let review = pr_node
+            .reviews
+            .and_then(|r| r.nodes)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .next()
+            .map(|r| r.id.into_inner());
+        Ok((pr_node.id.into_inner(), review))
+    }
+
+    /// Starts a pending review on `commit`.
+    pub async fn start_review(
+        &self,
+        pull_request_id: &str,
+        commit: &str,
+    ) -> Result<String, ApiError> {
+        use cynic::MutationBuilder;
+        let op = queries::StartReview::build(queries::StartReviewVariables {
+            pull_request_id: cynic::Id::new(pull_request_id),
+            commit: queries::GitObjectId(commit.to_owned()),
+        });
+        self.mutate(op)
+            .await?
+            .add_pull_request_review
+            .and_then(|p| p.pull_request_review)
+            .map(|r| r.id.into_inner())
+            .ok_or_else(|| ApiError::Decode("no review in response".into()))
+    }
+
+    /// Adds a thread to a pending review. Fails (with GitHub's message) if
+    /// the anchor isn't part of GitHub's diff.
+    pub async fn add_review_thread(
+        &self,
+        review_id: &str,
+        thread: &NewThread,
+    ) -> Result<String, ApiError> {
+        use cynic::MutationBuilder;
+        let side = |s: Side| match s {
+            Side::Left => queries::DiffSide::Left,
+            Side::Right => queries::DiffSide::Right,
+        };
+        let line = |n: Option<u32>| n.and_then(|n| i32::try_from(n).ok());
+        let input = queries::AddThreadInput {
+            pull_request_review_id: Some(cynic::Id::new(review_id)),
+            path: Some(thread.path.clone()),
+            body: thread.body.clone(),
+            line: line(thread.line),
+            side: thread.line.map(|_| side(thread.side)),
+            start_line: line(thread.start_line),
+            start_side: thread.start_line.and(thread.start_side).map(side),
+            subject_type: Some(if thread.line.is_some() {
+                queries::ThreadSubjectType::Line
+            } else {
+                queries::ThreadSubjectType::File
+            }),
+        };
+        self.mutate(queries::AddThread::build(queries::AddThreadVariables {
+            input,
+        }))
+        .await?
+        .add_pull_request_review_thread
+        .and_then(|p| p.thread)
+        .map(|t| t.id.into_inner())
+        .ok_or_else(|| ApiError::Decode("no thread in response".into()))
+    }
+
+    pub async fn submit_review(
+        &self,
+        review_id: &str,
+        event: ReviewEvent,
+        body: &str,
+    ) -> Result<(), ApiError> {
+        use cynic::MutationBuilder;
+        let event = match event {
+            ReviewEvent::Comment => queries::ReviewEvent::Comment,
+            ReviewEvent::Approve => queries::ReviewEvent::Approve,
+            ReviewEvent::RequestChanges => queries::ReviewEvent::RequestChanges,
+        };
+        let op = queries::SubmitReview::build(queries::SubmitReviewVariables {
+            review_id: cynic::Id::new(review_id),
+            event,
+            body: (!body.trim().is_empty()).then(|| body.to_owned()),
+        });
+        self.mutate(op).await.map(drop)
+    }
+
+    /// Replies to a thread right away (outside any pending review).
+    pub async fn reply(&self, thread_id: &str, body: &str) -> Result<(), ApiError> {
+        use cynic::MutationBuilder;
+        let op = queries::Reply::build(queries::ReplyVariables {
+            thread_id: cynic::Id::new(thread_id),
+            body: body.to_owned(),
+        });
+        self.mutate(op).await.map(drop)
+    }
+
+    pub async fn set_resolved(&self, thread_id: &str, resolved: bool) -> Result<(), ApiError> {
+        use cynic::MutationBuilder;
+        let vars = queries::ThreadIdVariables {
+            thread_id: cynic::Id::new(thread_id),
+        };
+        if resolved {
+            self.mutate(queries::Resolve::build(vars)).await.map(drop)
+        } else {
+            self.mutate(queries::Unresolve::build(vars)).await.map(drop)
+        }
     }
 
     async fn put_query<T: Serialize + Send + 'static>(&self, key: String, value: T) {
@@ -399,6 +606,10 @@ fn build_client(token: String, base_uri: Option<&str>) -> Result<Octocrab, ApiEr
 }
 
 const INBOX_KEY: &str = "inbox";
+
+fn pr_number(pr: &PrRef) -> Result<i32, ApiError> {
+    i32::try_from(pr.number).map_err(|_| ApiError::NotFound(pr.to_string()))
+}
 
 fn pr_key(pr: &PrRef) -> String {
     format!("pr:{pr}")

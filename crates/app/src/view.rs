@@ -14,6 +14,7 @@ use ratatui::widgets::Widget;
 
 use ghtui_ui::diff_view::{DiffView, Keys};
 use ghtui_ui::file_tree::{FileTree, TREE_BG};
+use ghtui_ui::review_sheets::{ComposeSheet, SubmitSheet};
 
 use crate::diff_screen::{self, DiffScreen, Pane};
 use crate::keymap::{Action, format_sequence};
@@ -134,6 +135,61 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
             }
             .render(area, buf);
         }
+        Some(Overlay::Compose(compose)) => {
+            let title = compose.title();
+            let note = match &compose.target {
+                crate::review::ComposeTarget::File {
+                    reason: Some(reason),
+                    ..
+                } => Some(reason.as_str()),
+                _ => None,
+            };
+            ComposeSheet {
+                ctx,
+                title: &title,
+                input: &compose.input,
+                preview: compose
+                    .preview
+                    .as_ref()
+                    .map(|p| (p.start_line, p.original.as_slice(), p.suggested.as_slice())),
+                note,
+                error: compose.error.as_deref(),
+                sending: compose.sending,
+                is_reply: matches!(compose.target, crate::review::ComposeTarget::Reply { .. }),
+            }
+            .render(
+                Rect {
+                    height: area.height.saturating_sub(1),
+                    ..area
+                },
+                buf,
+            );
+        }
+        Some(Overlay::Submit(dialog)) => {
+            let (pending, rejected) = match state.screen() {
+                Screen::Diff(screen) => state.diffs.get(&screen.pr).map_or((0, 0), |d| {
+                    (
+                        d.review.pending.len(),
+                        d.review
+                            .pending
+                            .iter()
+                            .filter(|p| p.error.is_some())
+                            .count(),
+                    )
+                }),
+                _ => (0, 0),
+            };
+            SubmitSheet {
+                ctx,
+                event: dialog.event,
+                input: &dialog.input,
+                pending,
+                rejected,
+                error: dialog.error.as_deref(),
+                sending: dialog.sending,
+            }
+            .render(area, buf);
+        }
         Some(Overlay::Search(input)) => {
             // The prompt replaces the status bar.
             fill(buf, status, ctx.theme, Bg::Container);
@@ -205,10 +261,15 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
         Span::styled("No changed files.", theme.meta(Bg::Surface)).render(message_area, buf);
         return;
     }
-    let (show, expand, viewed) = (
-        first_key(state, Action::Open),
-        first_key(state, Action::ExpandContext),
-        first_key(state, Action::ToggleViewed),
+    let key = |a| first_key(state, a);
+    let (show, expand, viewed, reply, resolve, delete, file_comment) = (
+        key(Action::Open),
+        key(Action::ExpandContext),
+        key(Action::ToggleViewed),
+        key(Action::ReplyThread),
+        key(Action::ResolveThread),
+        key(Action::DeleteDraft),
+        key(Action::FileComment),
     );
     DiffView {
         ctx,
@@ -219,7 +280,12 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
             show: &show,
             expand: &expand,
             viewed: &viewed,
+            reply: &reply,
+            resolve: &resolve,
+            delete: &delete,
+            file_comment: &file_comment,
         },
+        selection: screen.selection.map(|anchor| (anchor, screen.cursor)),
     }
     .render(area, buf);
 

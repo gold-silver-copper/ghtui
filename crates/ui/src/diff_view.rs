@@ -11,8 +11,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthChar;
 
+use ghtui_diff::anchor::LinePos;
+
+use crate::annotations::{Annotation, ThreadRowKind};
 use crate::diff_doc::{Doc, DocFile, Note, Pos, Row, Viewed};
-use crate::{Ctx, PAD_X, chips, fill, text};
+use crate::{Ctx, PAD_X, chips, fill, text, time};
 
 const PANE: Bg = Bg::Surface;
 const HEADER: Bg = Bg::ContainerHigh;
@@ -40,6 +43,10 @@ pub struct Keys<'a> {
     pub show: &'a str,
     pub expand: &'a str,
     pub viewed: &'a str,
+    pub reply: &'a str,
+    pub resolve: &'a str,
+    pub delete: &'a str,
+    pub file_comment: &'a str,
 }
 
 pub struct DiffView<'a> {
@@ -49,6 +56,8 @@ pub struct DiffView<'a> {
     /// First visible row.
     pub top: Pos,
     pub keys: Keys<'a>,
+    /// Visual line selection (anchor and cursor, either order).
+    pub selection: Option<(Pos, Pos)>,
 }
 
 impl Widget for DiffView<'_> {
@@ -88,10 +97,10 @@ impl DiffView<'_> {
     fn render_row(&self, pos: Pos, area: Rect, buf: &mut Buffer) {
         let Some(row) = self.doc.row(pos) else { return };
         let file = &self.doc.files[pos.file];
-        let cursor = pos == self.doc.clamp(self.cursor);
+        let cursor = pos == self.doc.clamp(self.cursor) || self.selected(pos);
         let theme = self.ctx.theme;
         let quiet_bg = if cursor { Bg::SelectedInactive } else { PANE };
-        let indent = usize::from(PAD_X) + 2 * file.number_width() + 2;
+        let indent = sign_column(file);
         match row {
             Row::Header => self.header(file, cursor, area, buf),
             Row::Note(note) => self.note(file, note, quiet_bg, area, buf),
@@ -124,8 +133,11 @@ impl DiffView<'_> {
                 )
                 .render(area, buf);
             }
-            Row::Line(e) => self.unified(file, e, cursor, area, buf),
-            Row::Split { left, right } => self.split(file, left, right, cursor, area, buf),
+            Row::Line(e) => self.unified(pos.file, file, e, cursor, area, buf),
+            Row::Split { left, right } => {
+                self.split(pos.file, file, left, right, cursor, area, buf)
+            }
+            Row::Thread(t) => self.thread_row(file, t, cursor, area, buf),
             Row::NoNewline => {
                 fill(buf, area, theme, quiet_bg);
                 Span::styled(
@@ -310,19 +322,67 @@ impl DiffView<'_> {
         .render(inner, buf);
     }
 
-    /// The reviewed mark column (1 cell).
-    fn mark(&self, file: &DocFile, entry: Option<u32>, bg: Bg) -> Span<'static> {
-        let reviewed = entry
-            .and_then(|e| file.block_of(e))
-            .is_some_and(|b| self.doc.reviewed.contains(&b.hash));
-        if reviewed {
-            Span::styled("✓", self.ctx.theme.style(Fg::Success, bg))
+    fn selected(&self, pos: Pos) -> bool {
+        let Some((a, b)) = self.selection else {
+            return false;
+        };
+        let (a, b) = (self.doc.to_global(a), self.doc.to_global(b));
+        let g = self.doc.to_global(pos);
+        (a.min(b)..=a.max(b)).contains(&g)
+    }
+
+    /// The two marker cells before line numbers: reviewed, and threads.
+    fn marks(&self, file: &DocFile, entries: &[u32], bg: Bg) -> [Span<'static>; 2] {
+        let theme = self.ctx.theme;
+        let reviewed = entries
+            .iter()
+            .filter_map(|e| file.block_of(*e))
+            .any(|b| self.doc.reviewed.contains(&b.hash));
+        let reviewed = if reviewed {
+            Span::styled("✓", theme.style(Fg::Success, bg))
         } else {
-            Span::styled(" ", self.ctx.theme.body(bg))
+            Span::styled(" ", theme.body(bg))
+        };
+        let anns: Vec<&Annotation> = entries
+            .iter()
+            .flat_map(|e| file.entry_lines(*e, self.doc.opts.whitespace))
+            .flat_map(|pos| file.annotations_at(pos).to_vec())
+            .filter_map(|i| self.doc.annotations.get(i as usize))
+            .collect();
+        let thread = if anns.iter().any(|a| a.is_draft()) {
+            Span::styled("✎", theme.style(Fg::Tertiary, bg))
+        } else if anns.iter().any(|a| !a.resolved) {
+            Span::styled("◆", theme.style(Fg::Primary, bg))
+        } else if !anns.is_empty() {
+            Span::styled("◇", theme.meta(bg))
+        } else {
+            Span::styled(" ", theme.body(bg))
+        };
+        [reviewed, thread]
+    }
+
+    /// Line numbers GitHub won't accept comments on are dimmed.
+    fn number_fg(&self, file_index: usize, pos: Option<LinePos>, kind: LineKind) -> Fg {
+        let commentable = match (pos, self.doc.commentable(file_index)) {
+            (Some(pos), Some(c)) => c.is_commentable(pos),
+            _ => true,
+        };
+        if commentable {
+            self.gutter_fg(kind)
+        } else {
+            Fg::Disabled
         }
     }
 
-    fn unified(&self, file: &DocFile, e: u32, cursor: bool, area: Rect, buf: &mut Buffer) {
+    fn unified(
+        &self,
+        file_index: usize,
+        file: &DocFile,
+        e: u32,
+        cursor: bool,
+        area: Rect,
+        buf: &mut Buffer,
+    ) {
         let theme = self.ctx.theme;
         let Some(text) = file.text() else { return };
         let Some(line) = text.lines(self.doc.opts.whitespace).get(e as usize) else {
@@ -332,17 +392,27 @@ impl DiffView<'_> {
         let bg = line_bg(diff_bg, cursor);
         fill(buf, area, theme, bg);
         let width = file.number_width();
+        let left = line.old.map(|l| LinePos {
+            side: ghtui_diff::anchor::Side::Left,
+            line: l,
+        });
+        let right = line.new.map(|l| LinePos {
+            side: ghtui_diff::anchor::Side::Right,
+            line: l,
+        });
+        let [reviewed, thread] = self.marks(file, &[e], bg);
         let mut spans = vec![
             Span::styled(" ", theme.body(bg)),
-            self.mark(file, Some(e), bg),
+            reviewed,
+            thread,
             Span::styled(
                 number(line.old, width),
-                theme.style(self.gutter_fg(line.kind), bg),
+                theme.style(self.number_fg(file_index, left, line.kind), bg),
             ),
             Span::styled(" ", theme.body(bg)),
             Span::styled(
                 number(line.new, width),
-                theme.style(self.gutter_fg(line.kind), bg),
+                theme.style(self.number_fg(file_index, right, line.kind), bg),
             ),
             Span::styled("  ", theme.body(bg)),
         ];
@@ -352,8 +422,10 @@ impl DiffView<'_> {
         Line::from(spans).render(area, buf);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn split(
         &self,
+        file_index: usize,
         file: &DocFile,
         left: Option<u32>,
         right: Option<u32>,
@@ -392,17 +464,25 @@ impl DiffView<'_> {
             fill(buf, half_area, theme, bg);
             let mut spans = Vec::new();
             if is_left {
+                let entries: Vec<u32> = left.into_iter().chain(right).collect();
+                let [reviewed, thread] = self.marks(file, &entries, bg);
                 spans.push(Span::styled(" ", theme.body(bg)));
-                spans.push(self.mark(file, left.or(right), bg));
+                spans.push(reviewed);
+                spans.push(thread);
             }
             let Some(line) = line else {
                 Line::from(spans).render(half_area, buf);
                 continue;
             };
-            let n = if is_left { line.old } else { line.new };
+            let (n, side) = if is_left {
+                (line.old, ghtui_diff::anchor::Side::Left)
+            } else {
+                (line.new, ghtui_diff::anchor::Side::Right)
+            };
+            let pos = n.map(|line| LinePos { side, line });
             spans.push(Span::styled(
                 number(n, width),
-                theme.style(self.gutter_fg(line.kind), bg),
+                theme.style(self.number_fg(file_index, pos, line.kind), bg),
             ));
             spans.push(Span::styled("  ", theme.body(bg)));
             let used: usize = spans.iter().map(Span::width).sum();
@@ -410,6 +490,169 @@ impl DiffView<'_> {
             spans.extend(self.code(text, line, diff_bg, cursor, room));
             Line::from(spans).render(half_area, buf);
         }
+    }
+
+    fn thread_row(&self, file: &DocFile, t: u32, cursor: bool, area: Rect, buf: &mut Buffer) {
+        let ctx = self.ctx;
+        let theme = ctx.theme;
+        let Some(row) = file.thread_row(t) else {
+            return;
+        };
+        let Some(ann) = self.doc.annotations.get(row.ann as usize) else {
+            return;
+        };
+        fill(buf, area, theme, PANE);
+        let indent = (sign_column(file) as u16).min(area.width);
+        let card = Rect {
+            x: area.x + indent,
+            width: area.width.saturating_sub(indent + PAD_X),
+            ..area
+        };
+        let bg = if cursor {
+            Bg::Selected
+        } else {
+            Bg::ContainerLow
+        };
+        fill(buf, card, theme, bg);
+        let inner = Rect {
+            x: card.x + 2,
+            width: card.width.saturating_sub(4),
+            ..card
+        };
+        let room = usize::from(inner.width);
+        let keys = self.keys;
+        let key =
+            |k: &str| Span::styled(k.to_owned(), theme.accent(bg).add_modifier(Modifier::BOLD));
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        match &row.kind {
+            ThreadRowKind::Summary => {
+                let (mark, fg) = if ann.resolved {
+                    ("◇", Fg::OnSurfaceVariant)
+                } else {
+                    ("◆", Fg::Primary)
+                };
+                spans.push(Span::styled(format!("{mark} "), theme.style(fg, bg)));
+                spans.extend(self.state_chips(ann, bg));
+                let n = ann.comments.len();
+                let tail = format!("  {n} comment{}", if n == 1 { "" } else { "s" });
+                let used: usize = spans.iter().map(Span::width).sum();
+                let text_room = room.saturating_sub(used + text::width(&tail));
+                spans.push(Span::styled(
+                    text::truncate(&row.text, text_room),
+                    theme.body(bg),
+                ));
+                spans.push(Span::styled(tail, theme.meta(bg)));
+            }
+            ThreadRowKind::Head { comment, first } => {
+                let c = &ann.comments[*comment];
+                spans.push(Span::styled(c.author.clone(), theme.title(bg)));
+                if !c.created_at.is_empty() {
+                    spans.push(Span::styled(
+                        format!(" · {}", time::ago_iso(&c.created_at, ctx.now)),
+                        theme.meta(bg),
+                    ));
+                }
+                if *first {
+                    spans.push(Span::styled("  ", theme.body(bg)));
+                    spans.extend(self.state_chips(ann, bg));
+                    if let (Some(start), Some(end)) = (ann.start_line, ann.line)
+                        && start != end
+                    {
+                        spans.push(Span::styled(format!("lines {start}–{end}"), theme.meta(bg)));
+                    }
+                    if ann.outdated
+                        && let Some(line) = ann.original_line
+                    {
+                        spans.push(Span::styled(
+                            format!("line {line} of an earlier commit"),
+                            theme.meta(bg),
+                        ));
+                    }
+                }
+                if c.pending {
+                    spans.push(Span::styled("  ", theme.body(bg)));
+                    spans.extend(chips::chip(
+                        ctx,
+                        "Pending",
+                        theme.fill(Bg::SecondaryContainer),
+                        bg,
+                    ));
+                }
+            }
+            ThreadRowKind::Error => {
+                spans.push(Span::styled(
+                    text::truncate(&row.text, room),
+                    theme.error(bg),
+                ));
+            }
+            ThreadRowKind::Body => {
+                spans.push(Span::styled(
+                    text::truncate(&row.text, room),
+                    theme.body(bg),
+                ));
+            }
+            ThreadRowKind::Footer => {
+                if ann.is_draft() {
+                    if ann.error.is_some() {
+                        spans.push(key(keys.file_comment));
+                        spans.push(Span::styled(" post as a file comment · ", theme.meta(bg)));
+                    }
+                    spans.push(key(keys.show));
+                    spans.push(Span::styled(" edit · ", theme.meta(bg)));
+                    spans.push(key(keys.delete));
+                    spans.push(Span::styled(" delete", theme.meta(bg)));
+                } else {
+                    spans.push(key(keys.show));
+                    spans.push(Span::styled(" collapse", theme.meta(bg)));
+                    if ann.can_reply {
+                        spans.push(Span::styled(" · ", theme.meta(bg)));
+                        spans.push(key(keys.reply));
+                        spans.push(Span::styled(" reply", theme.meta(bg)));
+                    }
+                    if (ann.resolved && ann.can_unresolve) || (!ann.resolved && ann.can_resolve) {
+                        spans.push(Span::styled(" · ", theme.meta(bg)));
+                        spans.push(key(keys.resolve));
+                        spans.push(Span::styled(
+                            if ann.resolved {
+                                " unresolve"
+                            } else {
+                                " resolve"
+                            },
+                            theme.meta(bg),
+                        ));
+                    }
+                }
+            }
+        }
+        Line::from(spans).render(inner, buf);
+    }
+
+    fn state_chips(&self, ann: &Annotation, bg: Bg) -> Vec<Span<'static>> {
+        let ctx = self.ctx;
+        let theme = ctx.theme;
+        let mut out = Vec::new();
+        let mut chip = |text: &str, chip_bg: Bg| {
+            out.extend(chips::chip(ctx, text.to_owned(), theme.fill(chip_bg), bg));
+            out.push(Span::styled(" ", theme.body(bg)));
+        };
+        if ann.is_draft() {
+            chip("Draft", Bg::TertiaryContainer);
+            if ann.error.is_some() {
+                chip("Rejected", Bg::ErrorContainer);
+            }
+        }
+        if ann.file_level {
+            chip("File", Bg::SecondaryContainer);
+        }
+        if ann.resolved {
+            chip("Resolved", Bg::SuccessContainer);
+        }
+        if ann.outdated {
+            chip("Outdated", Bg::SecondaryContainer);
+        } else if ann.moved {
+            chip("Outdated, moved", Bg::SecondaryContainer);
+        }
+        out
     }
 
     fn gutter_fg(&self, kind: LineKind) -> Fg {
@@ -468,6 +711,13 @@ impl DiffView<'_> {
         }
         spans
     }
+}
+
+/// Column of the +/- sign: hunk headers and gap text align to it, thread
+/// cards start there.
+fn sign_column(file: &DocFile) -> usize {
+    // pad, reviewed mark, thread mark, old number, space, new number, 2 spaces
+    3 + 2 * file.number_width() + 3
 }
 
 fn diff_bg(kind: LineKind) -> DiffBg {

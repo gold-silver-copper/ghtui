@@ -3,7 +3,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use ghtui_api::model::{PrRef, ViewedFiles, ViewedState};
+use ghtui_api::model::{PatchFile, PrRef, ReviewThread, ViewedFiles, ViewedState};
+use ghtui_diff::anchor::Commentable;
 use ghtui_diff::{FileDiff, Whitespace};
 use ghtui_git::repo::PrRefs;
 use ghtui_store::ReviewState;
@@ -38,6 +39,8 @@ pub struct DiffScreen {
     pub ignore_whitespace: bool,
     /// The last search query, for `n` / `N`.
     pub search: Option<String>,
+    /// Where a visual line selection started.
+    pub selection: Option<Pos>,
 }
 
 impl DiffScreen {
@@ -53,6 +56,7 @@ impl DiffScreen {
             split_override: None,
             ignore_whitespace: false,
             search: None,
+            selection: None,
         }
     }
 
@@ -68,6 +72,8 @@ impl DiffScreen {
             } else {
                 Whitespace::Exact
             },
+            // Thread cards start after the gutter; keep comments readable.
+            wrap: lay.diff.width.saturating_sub(24).clamp(20, 100),
         }
     }
 }
@@ -85,8 +91,14 @@ pub struct DiffState {
     pub listed: bool,
     /// GitHub's viewed state and the PR's node ID.
     pub viewed: Option<ViewedFiles>,
-    /// Locally persisted review marks.
+    /// Locally persisted review marks and draft comments.
     pub review: ReviewState,
+    /// Review threads from GitHub.
+    pub threads: Vec<ReviewThread>,
+    /// Outdated threads mapped onto the current diff (`None`: can't be).
+    pub mapped: HashMap<String, Option<u32>>,
+    /// Outdated-thread mapping was requested.
+    pub mapping_requested: bool,
     /// Files we've already asked the job to prioritize.
     requested: HashSet<usize>,
 }
@@ -155,6 +167,29 @@ impl DiffState {
 
     fn apply_review(&mut self) {
         self.doc.reviewed = self.review.reviewed_hunks.iter().cloned().collect();
+        self.refresh_annotations();
+    }
+
+    pub fn set_threads(&mut self, threads: Vec<ReviewThread>) {
+        self.threads = threads;
+        self.refresh_annotations();
+    }
+
+    pub fn set_patches(&mut self, patches: Vec<PatchFile>) {
+        let map = patches
+            .into_iter()
+            .filter_map(|f| Some((f.filename, Commentable::from_patch(&f.patch?))))
+            .collect();
+        self.doc.set_patches(map);
+    }
+
+    /// Rebuilds thread and draft annotations from current data.
+    pub fn refresh_annotations(&mut self) {
+        let annotations =
+            crate::review::annotations(&self.threads, &self.mapped, &self.review.pending, "");
+        if annotations != self.doc.annotations {
+            self.doc.set_annotations(annotations);
+        }
     }
 
     pub fn status(&self) -> Option<String> {
@@ -313,6 +348,23 @@ pub fn apply(
             if let Some(pos) = state.doc.prev_file(screen.cursor) {
                 jump(screen, pos);
             }
+        }
+        Action::NextThread | Action::PrevThread => {
+            let found = if action == Action::NextThread {
+                state.doc.next_thread(screen.cursor)
+            } else {
+                state.doc.prev_thread(screen.cursor)
+            };
+            match found {
+                Some(pos) => screen.cursor = pos,
+                None => *notice = Some(Notice::Info("No more unresolved threads".into())),
+            }
+        }
+        Action::VisualLines => {
+            screen.selection = match screen.selection {
+                Some(_) => None,
+                None => Some(screen.cursor),
+            };
         }
         Action::NextUnviewed => match state.doc.next_unviewed(screen.cursor) {
             Some(pos) => jump(screen, pos),

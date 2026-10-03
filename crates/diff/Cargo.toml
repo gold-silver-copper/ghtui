@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 imara-diff.workspace = true
 tracing.workspace = true
+thiserror.workspace = true
 tree-sitter.workspace = true
 tree-sitter-highlight.workspace = true
 tree-sitter-rust = { workspace = true, optional = true }

@@ -9,7 +9,7 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use ghtui_api::model::PrRef;
 use ghtui_diff::FileDiff;
@@ -38,10 +38,12 @@ pub struct DiffFiles {
     pub generated: HashSet<String>,
 }
 
-/// Shared between the job's workers and the UI (for prioritizing).
+/// Shared between the job's workers and the UI (for prioritizing, and for
+/// later work on the same repository such as mapping outdated comments).
 #[derive(Default)]
 pub struct JobControl {
     queue: Mutex<VecDeque<usize>>,
+    git: OnceLock<(Arc<Repo>, Arc<BlobReader>)>,
 }
 
 impl JobControl {
@@ -67,6 +69,11 @@ impl JobControl {
         let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
         queue.clear();
         queue.extend(files);
+    }
+
+    /// The repository and blob reader, once the job has set them up.
+    pub fn git(&self) -> Option<(Arc<Repo>, Arc<BlobReader>)> {
+        self.git.get().cloned()
     }
 
     fn front(&self) -> Option<usize> {
@@ -186,6 +193,7 @@ async fn run_inner(
     }
 
     let reader = Arc::new(repo.blob_reader()?);
+    let _ = control.git.set((repo.clone(), reader.clone()));
     let workers = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(2, 4));
     let mut handles = Vec::new();
     for _ in 0..workers {
@@ -244,6 +252,34 @@ async fn diff_file(reader: &BlobReader, file: &ChangedFile) -> FileDiff {
     tokio::task::spawn_blocking(move || FileDiff::compute(&path, old.as_deref(), new.as_deref()))
         .await
         .unwrap_or_else(|err| FileDiff::error(format!("diff failed: {err}")))
+}
+
+/// Where an outdated thread's line is now: reads the file at the thread's
+/// original commit and at `head`, and maps the line if it survived
+/// unchanged. Fetches the original commit by SHA if it isn't local.
+pub async fn map_outdated(
+    repo: &Repo,
+    reader: &BlobReader,
+    head: &str,
+    path: &str,
+    original_commit: &str,
+    original_line: u32,
+) -> Option<u32> {
+    let original = format!("{original_commit}:{path}");
+    if !repo.has(original_commit).await
+        && let Err(err) = repo.fetch_commit(original_commit).await
+    {
+        tracing::info!(%err, original_commit, "original commit unavailable");
+        return None;
+    }
+    let old = reader.read(&original).await.ok().flatten()?;
+    let new = reader
+        .read(&format!("{head}:{path}"))
+        .await
+        .ok()
+        .flatten()?;
+    let (old, new) = (ghtui_diff::Text::new(&old), ghtui_diff::Text::new(&new));
+    ghtui_diff::anchor::map_line(&old, &new, original_line)
 }
 
 #[cfg(test)]
