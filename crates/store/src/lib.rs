@@ -6,7 +6,7 @@
 //! the lock, the disk is read-only, ...) the store runs disabled: reads miss
 //! and writes are dropped, so the app keeps working without a cache.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -58,8 +58,6 @@ from_redb!(
 pub struct HttpEntry {
     pub etag: String,
     pub body: String,
-    /// Unix seconds.
-    pub fetched_at: u64,
 }
 
 /// A cached value with the time it was stored.
@@ -126,13 +124,11 @@ impl ReviewState {
 #[derive(Clone)]
 pub struct Store {
     db: Option<Arc<Database>>,
-    path: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for Store {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Store")
-            .field("path", &self.path)
             .field("enabled", &self.db.is_some())
             .finish()
     }
@@ -145,7 +141,6 @@ impl Store {
         match open_versioned(path) {
             Ok(db) => Self {
                 db: Some(Arc::new(db)),
-                path: Some(path.to_owned()),
             },
             Err(err) => {
                 tracing::warn!(path = %path.display(), %err, "cache disabled");
@@ -156,18 +151,11 @@ impl Store {
 
     /// A store that never hits and drops all writes.
     pub fn disabled() -> Self {
-        Self {
-            db: None,
-            path: None,
-        }
+        Self { db: None }
     }
 
     pub fn is_enabled(&self) -> bool {
         self.db.is_some()
-    }
-
-    pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
     }
 
     pub fn http_get(&self, key: &str) -> Option<HttpEntry> {
@@ -326,7 +314,6 @@ mod tests {
         let entry = HttpEntry {
             etag: "W/\"abc\"".into(),
             body: "{}".into(),
-            fetched_at: 7,
         };
         store.http_put("/user", &entry);
         assert_eq!(store.http_get("/user"), Some(entry));

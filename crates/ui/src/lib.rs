@@ -20,6 +20,9 @@ pub mod time;
 use ghtui_theme::{Bg, Theme};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Clear, Widget};
 
 pub use icons::Icons;
 
@@ -36,16 +39,44 @@ pub struct Ctx<'a> {
     pub now: u64,
 }
 
-/// Paints `area` with a surface tone.
+/// Paints `area` with a surface tone, clearing whatever was drawn there
+/// (modifiers included).
 pub fn fill(buf: &mut Buffer, area: Rect, theme: &Theme, bg: Bg) {
+    Clear.render(area, buf);
     buf.set_style(area, theme.fill(bg));
-    for y in area.top()..area.bottom() {
-        for x in area.left()..area.right() {
-            if let Some(cell) = buf.cell_mut((x, y)) {
-                cell.set_symbol(" ");
-            }
+}
+
+/// Renders `left` and `right` on one line, at least `gap` columns apart,
+/// truncating the left side first when they don't fit.
+fn render_split(area: Rect, buf: &mut Buffer, left: Vec<Span<'_>>, right: Vec<Span<'_>>, gap: u16) {
+    let right_width = (right.iter().map(Span::width).sum::<usize>() as u16).min(area.width);
+    let left_area = Rect {
+        width: area.width.saturating_sub(right_width + gap),
+        ..area
+    };
+    let right_area = Rect {
+        x: area.right() - right_width,
+        width: right_width,
+        ..area
+    };
+    Line::from(left).render(left_area, buf);
+    Line::from(right).render(right_area, buf);
+}
+
+/// `key what · key what`: keys in bold accent, what they do in meta.
+fn key_hints(theme: &Theme, bg: Bg, hints: &[(&str, &str)]) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (i, (key, what)) in hints.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", theme.meta(bg)));
         }
+        spans.push(Span::styled(
+            key.to_string(),
+            theme.accent(bg).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(format!(" {what}"), theme.meta(bg)));
     }
+    spans
 }
 
 /// `area` shrunk by the standard padding.

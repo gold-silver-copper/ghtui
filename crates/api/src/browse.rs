@@ -6,8 +6,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Label, RepoId};
-use crate::queries::{Actor, DateTime, GitObjectId, PageInfo, Uri};
+use crate::model::{Label, RepoId, author, count, labels};
+use crate::queries::{
+    Actor, AddCommentPayload, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount,
+    GitObjectId, IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount,
+    RepositoryName, StarPayload, UnstarPayload, Uri, UserCount, nodes,
+};
 use ghtui_schema::schema;
 
 // ---- models ------------------------------------------------------------------
@@ -248,18 +252,6 @@ pub struct Language {
     pub color: Option<String>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "LabelConnection", schema_module = "schema")]
-pub struct Labels {
-    pub nodes: Option<Vec<Option<crate::queries::Label>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "IssueCommentConnection", schema_module = "schema")]
-pub struct CommentCount {
-    pub total_count: i32,
-}
-
 // ---- repository ---------------------------------------------------------------------
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -289,15 +281,8 @@ pub struct RepoQuery {
 )]
 pub struct RepoFull {
     pub id: cynic::Id,
-    pub name_with_owner: String,
-    pub description: Option<String>,
-    pub stargazer_count: i32,
-    pub fork_count: i32,
-    pub primary_language: Option<Language>,
-    pub pushed_at: Option<DateTime>,
-    pub is_private: bool,
-    pub is_fork: bool,
-    pub is_archived: bool,
+    #[cynic(spread)]
+    pub card: RepoCard,
     pub homepage_url: Option<Uri>,
     pub watchers: UserCount,
     #[arguments(states: [OPEN])]
@@ -314,29 +299,11 @@ pub struct RepoFull {
     #[arguments(first: 20)]
     pub repository_topics: Topics,
     pub default_branch_ref: Option<BranchRef>,
-    pub parent: Option<RepoName>,
+    pub parent: Option<RepositoryName>,
     pub viewer_has_starred: bool,
     pub has_issues_enabled: bool,
     #[arguments(expression: $expression)]
     pub object: Option<GitObject>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "UserConnection", schema_module = "schema")]
-pub struct UserCount {
-    pub total_count: i32,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "IssueConnection", schema_module = "schema")]
-pub struct IssueCount {
-    pub total_count: i32,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestConnection", schema_module = "schema")]
-pub struct PrCount {
-    pub total_count: i32,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -365,12 +332,6 @@ pub struct Topic {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", schema_module = "schema")]
-pub struct RepoName {
-    pub name_with_owner: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Ref", schema_module = "schema")]
 pub struct BranchRef {
     pub name: String,
@@ -388,18 +349,10 @@ pub enum RefTarget {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Commit", schema_module = "schema")]
 pub struct HeadCommit {
-    pub oid: GitObjectId,
-    pub message_headline: String,
-    pub committed_date: DateTime,
-    pub author: Option<GitActor>,
+    #[cynic(spread)]
+    pub commit: CommitCard,
     #[arguments(first: 0)]
     pub history: CommitCount,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CommitHistoryConnection", schema_module = "schema")]
-pub struct CommitCount {
-    pub total_count: i32,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -540,8 +493,8 @@ pub struct IssueCard {
     pub updated_at: DateTime,
     pub comments: CommentCount,
     #[arguments(first: 6)]
-    pub labels: Option<Labels>,
-    pub repository: RepoName,
+    pub labels: Option<LabelConnection>,
+    pub repository: RepositoryName,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -557,8 +510,8 @@ pub struct PrCard {
     pub review_decision: Option<crate::queries::PullRequestReviewDecision>,
     pub comments: CommentCount,
     #[arguments(first: 6)]
-    pub labels: Option<Labels>,
-    pub repository: RepoName,
+    pub labels: Option<LabelConnection>,
+    pub repository: RepositoryName,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -595,18 +548,11 @@ pub enum StateReason {
 
 // ---- issue ------------------------------------------------------------------------
 
-#[derive(cynic::QueryVariables, Debug)]
-pub struct IssueVariables {
-    pub owner: String,
-    pub name: String,
-    pub number: i32,
-}
-
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(
     graphql_type = "Query",
     schema_module = "schema",
-    variables = "IssueVariables"
+    variables = "NumberVariables"
 )]
 pub struct IssueQuery {
     #[arguments(owner: $owner, name: $name)]
@@ -617,7 +563,7 @@ pub struct IssueQuery {
 #[cynic(
     graphql_type = "Repository",
     schema_module = "schema",
-    variables = "IssueVariables"
+    variables = "NumberVariables"
 )]
 pub struct RepoIssue {
     #[arguments(number: $number)]
@@ -651,12 +597,12 @@ pub struct IssueFull {
     pub author: Option<Actor>,
     pub created_at: DateTime,
     #[arguments(first: 20)]
-    pub labels: Option<Labels>,
+    pub labels: Option<LabelConnection>,
     #[arguments(first: 10)]
     pub assignees: Assignees,
     #[arguments(first: 100)]
     pub comments: IssueComments,
-    pub repository: RepoName,
+    pub repository: RepositoryName,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -685,7 +631,7 @@ pub struct WireComment {
 #[cynic(
     graphql_type = "Query",
     schema_module = "schema",
-    variables = "IssueVariables"
+    variables = "NumberVariables"
 )]
 pub struct PrActivityQuery {
     #[arguments(owner: $owner, name: $name)]
@@ -696,7 +642,7 @@ pub struct PrActivityQuery {
 #[cynic(
     graphql_type = "Repository",
     schema_module = "schema",
-    variables = "IssueVariables"
+    variables = "NumberVariables"
 )]
 pub struct RepoPrActivity {
     #[arguments(number: $number)]
@@ -746,7 +692,8 @@ pub struct PrCommitNode {
 #[cynic(graphql_type = "Commit", schema_module = "schema")]
 pub struct CommitCard {
     pub oid: GitObjectId,
-    pub message_headline: String,
+    /// The whole message: GitHub cuts `messageHeadline` at 72 columns.
+    pub message: String,
     pub committed_date: DateTime,
     pub author: Option<GitActor>,
 }
@@ -809,18 +756,6 @@ pub struct OrgFull {
     pub pinned_items: Pinned,
     #[arguments(first: 30, orderBy: { field: PUSHED_AT, direction: DESC })]
     pub repositories: RepoList,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "FollowerConnection", schema_module = "schema")]
-pub struct FollowCount {
-    pub total_count: i32,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "FollowingConnection", schema_module = "schema")]
-pub struct FollowingCount {
-    pub total_count: i32,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -895,12 +830,7 @@ pub struct Refs {
 impl RepoBranches {
     pub(crate) fn into_refs(self) -> Refs {
         let names = |r: Option<RefNames>| -> Vec<String> {
-            r.and_then(|r| r.nodes)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|n| n.name)
-                .collect()
+            nodes(r.and_then(|r| r.nodes)).map(|n| n.name).collect()
         };
         Refs {
             branches: names(self.refs),
@@ -948,12 +878,6 @@ pub struct AddComment {
     pub add_comment: Option<AddCommentPayload>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "AddCommentPayload", schema_module = "schema")]
-pub struct AddCommentPayload {
-    pub client_mutation_id: Option<String>,
-}
-
 // ---- starring -----------------------------------------------------------------------------
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -983,18 +907,6 @@ pub struct RemoveStar {
     pub remove_star: Option<UnstarPayload>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "AddStarPayload", schema_module = "schema")]
-pub struct StarPayload {
-    pub client_mutation_id: Option<String>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "RemoveStarPayload", schema_module = "schema")]
-pub struct UnstarPayload {
-    pub client_mutation_id: Option<String>,
-}
-
 /// Cache keys for browsed pages.
 pub mod keys {
     use super::SearchKind;
@@ -1018,9 +930,6 @@ pub mod keys {
     pub fn profile(login: &str) -> String {
         format!("profile:{}", login.to_lowercase())
     }
-    pub fn files(repo: &RepoId, rev: &str) -> String {
-        format!("files:{repo}:{rev}")
-    }
     pub fn last_commits(repo: &RepoId, rev: &str, path: &str) -> String {
         format!("last-commits:{repo}:{rev}:{path}")
     }
@@ -1032,28 +941,6 @@ pub mod keys {
 }
 
 // ---- conversions ---------------------------------------------------------------------
-
-fn count(n: i32) -> u64 {
-    u64::try_from(n).unwrap_or(0)
-}
-
-fn login(actor: &Option<Actor>) -> String {
-    actor
-        .as_ref()
-        .map_or_else(|| "ghost".to_owned(), |a| a.login.clone())
-}
-
-fn labels(l: Option<Labels>) -> Vec<Label> {
-    l.and_then(|l| l.nodes)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|l| Label {
-            name: l.name,
-            color: l.color,
-        })
-        .collect()
-}
 
 fn issue_state(state: WireIssueState, reason: Option<StateReason>) -> IssueState {
     match (state, reason) {
@@ -1074,6 +961,17 @@ fn git_author(a: &Option<GitActor>) -> String {
                 .or_else(|| a.name.clone())
         })
         .unwrap_or_else(|| "unknown".into())
+}
+
+impl CommitCard {
+    fn into_info(self) -> CommitInfo {
+        CommitInfo {
+            author: git_author(&self.author),
+            oid: self.oid.0,
+            headline: self.message.lines().next().unwrap_or_default().to_owned(),
+            date: self.committed_date.0,
+        }
+    }
 }
 
 impl RepoCard {
@@ -1128,12 +1026,7 @@ impl RepoFull {
             Some(r) => match r.target {
                 Some(RefTarget::Commit(c)) => (
                     Some(r.name),
-                    Some(CommitInfo {
-                        author: git_author(&c.author),
-                        oid: c.oid.0,
-                        headline: c.message_headline,
-                        date: c.committed_date.0,
-                    }),
+                    Some(c.commit.into_info()),
                     count(c.history.total_count),
                 ),
                 _ => (Some(r.name), None, 0),
@@ -1145,18 +1038,7 @@ impl RepoFull {
             _ => Vec::new(),
         };
         Some(RepoOverview {
-            summary: RepoCard {
-                name_with_owner: self.name_with_owner,
-                description: self.description,
-                stargazer_count: self.stargazer_count,
-                fork_count: self.fork_count,
-                primary_language: self.primary_language,
-                pushed_at: self.pushed_at,
-                is_private: self.is_private,
-                is_fork: self.is_fork,
-                is_archived: self.is_archived,
-            }
-            .into_summary()?,
+            summary: self.card.into_summary()?,
             homepage: self.homepage_url.map(|u| u.0).filter(|u| !u.is_empty()),
             watchers: count(self.watchers.total_count),
             open_issues: count(self.issues.total_count),
@@ -1166,12 +1048,7 @@ impl RepoFull {
             license: self
                 .license_info
                 .map(|l| l.spdx_id.filter(|s| s != "NOASSERTION").unwrap_or(l.name)),
-            topics: self
-                .repository_topics
-                .nodes
-                .into_iter()
-                .flatten()
-                .flatten()
+            topics: nodes(self.repository_topics.nodes)
                 .map(|t| t.topic.name)
                 .collect(),
             default_branch,
@@ -1196,7 +1073,7 @@ impl BrowseItem {
                 title: i.title,
                 is_pr: false,
                 state: issue_state(i.state, i.state_reason),
-                author: login(&i.author),
+                author: author(i.author),
                 updated_at: i.updated_at.0,
                 comments: count(i.comments.total_count),
                 labels: labels(i.labels),
@@ -1215,7 +1092,7 @@ impl BrowseItem {
                     crate::queries::PullRequestState::Closed => IssueState::Closed,
                     crate::queries::PullRequestState::Merged => IssueState::Merged,
                 },
-                author: login(&p.author),
+                author: author(p.author),
                 updated_at: p.updated_at.0,
                 comments: count(p.comments.total_count),
                 labels: labels(p.labels),
@@ -1254,17 +1131,10 @@ impl IssueFull {
             title: self.title,
             body: self.body,
             state: issue_state(self.state, self.state_reason),
-            author: login(&self.author),
+            author: author(self.author),
             created_at: self.created_at.0,
             labels: labels(self.labels),
-            assignees: self
-                .assignees
-                .nodes
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|u| u.login)
-                .collect(),
+            assignees: nodes(self.assignees.nodes).map(|u| u.login).collect(),
             comments: comments(self.comments),
             id: self.id.into_inner(),
         })
@@ -1272,12 +1142,9 @@ impl IssueFull {
 }
 
 fn comments(c: IssueComments) -> Vec<Comment> {
-    c.nodes
-        .into_iter()
-        .flatten()
-        .flatten()
+    nodes(c.nodes)
         .map(|c| Comment {
-            author: login(&c.author),
+            author: author(c.author),
             body: c.body,
             created_at: c.created_at.0,
         })
@@ -1289,15 +1156,10 @@ impl WirePrActivity {
         PrActivity {
             id: self.id.into_inner(),
             comments: comments(self.comments),
-            reviews: self
-                .reviews
-                .and_then(|r| r.nodes)
-                .into_iter()
-                .flatten()
-                .flatten()
+            reviews: nodes(self.reviews.and_then(|r| r.nodes))
                 .filter(|r| r.state != crate::queries::ReviewState::Pending)
                 .map(|r| ReviewSummary {
-                    author: login(&r.author),
+                    author: author(r.author),
                     state: match r.state {
                         crate::queries::ReviewState::Approved => "approved",
                         crate::queries::ReviewState::ChangesRequested => "requested changes",
@@ -1310,28 +1172,15 @@ impl WirePrActivity {
                     submitted_at: r.submitted_at.map(|d| d.0).unwrap_or_default(),
                 })
                 .collect(),
-            commits: self
-                .commits
-                .nodes
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|n| CommitInfo {
-                    author: git_author(&n.commit.author),
-                    oid: n.commit.oid.0,
-                    headline: n.commit.message_headline,
-                    date: n.commit.committed_date.0,
-                })
+            commits: nodes(self.commits.nodes)
+                .map(|n| n.commit.into_info())
                 .collect(),
         }
     }
 }
 
 fn pinned(p: Pinned) -> Vec<RepoSummary> {
-    p.nodes
-        .into_iter()
-        .flatten()
-        .flatten()
+    nodes(p.nodes)
         .filter_map(|i| match i {
             PinnedItem::Repository(r) => r.into_summary(),
             PinnedItem::Other => None,
@@ -1341,11 +1190,7 @@ fn pinned(p: Pinned) -> Vec<RepoSummary> {
 
 pub(crate) fn repo_list(list: RepoList) -> (Vec<RepoSummary>, u64) {
     let total = count(list.total_count);
-    let repos = list
-        .nodes
-        .into_iter()
-        .flatten()
-        .flatten()
+    let repos = nodes(list.nodes)
         .filter_map(RepoCard::into_summary)
         .collect();
     (repos, total)
@@ -1369,12 +1214,7 @@ impl ProfileQuery {
                 repos,
                 repo_count,
                 star_count: count(u.starred_repositories.total_count),
-                stars: u
-                    .starred_repositories
-                    .nodes
-                    .into_iter()
-                    .flatten()
-                    .flatten()
+                stars: nodes(u.starred_repositories.nodes)
                     .filter_map(RepoCard::into_summary)
                     .collect(),
             });

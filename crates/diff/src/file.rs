@@ -111,20 +111,21 @@ pub fn counts(lines: &[DiffLine]) -> (u32, u32) {
 }
 
 impl FileDiff {
-    pub fn submodule(old: Option<String>, new: Option<String>) -> Self {
+    /// A diff without line changes.
+    fn empty(content: Content) -> Self {
         Self {
-            content: Content::Submodule { old, new },
+            content,
             additions: 0,
             deletions: 0,
         }
     }
 
+    pub fn submodule(old: Option<String>, new: Option<String>) -> Self {
+        Self::empty(Content::Submodule { old, new })
+    }
+
     pub fn error(message: impl Into<String>) -> Self {
-        Self {
-            content: Content::Error(message.into()),
-            additions: 0,
-            deletions: 0,
-        }
+        Self::empty(Content::Error(message.into()))
     }
 
     /// Diffs two blob contents (`None` for an absent side). `path` picks the
@@ -140,28 +141,12 @@ impl FileDiff {
     }
 
     fn compute_with(path: &str, old: Option<&[u8]>, new: Option<&[u8]>, rich: bool) -> Self {
-        let sizes = (old.map(<[u8]>::len), new.map(<[u8]>::len));
-        if old.is_some_and(|b| b.len() > MAX_DIFF_BYTES)
-            || new.is_some_and(|b| b.len() > MAX_DIFF_BYTES)
-        {
-            return Self {
-                content: Content::TooLarge {
-                    old_size: sizes.0,
-                    new_size: sizes.1,
-                },
-                additions: 0,
-                deletions: 0,
-            };
+        let (old_size, new_size) = (old.map(<[u8]>::len), new.map(<[u8]>::len));
+        if old_size.max(new_size) > Some(MAX_DIFF_BYTES) {
+            return Self::empty(Content::TooLarge { old_size, new_size });
         }
         if old.is_some_and(is_binary) || new.is_some_and(is_binary) {
-            return Self {
-                content: Content::Binary {
-                    old_size: sizes.0,
-                    new_size: sizes.1,
-                },
-                additions: 0,
-                deletions: 0,
-            };
+            return Self::empty(Content::Binary { old_size, new_size });
         }
         let old = Text::new(old.unwrap_or_default());
         let new = Text::new(new.unwrap_or_default());

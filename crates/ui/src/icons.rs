@@ -53,9 +53,4 @@ impl Icons {
     pub fn chip_caps(self) -> Option<(&'static str, &'static str)> {
         self.nerd_font.then_some(("\u{e0b6}", "\u{e0b4}"))
     }
-
-    /// The inline progress indicator. Static: no animation, no redraws.
-    pub fn busy(self) -> &'static str {
-        if self.nerd_font { "\u{f110}" } else { "↻" }
-    }
 }

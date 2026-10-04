@@ -277,7 +277,6 @@ pub fn annotations(
     threads: &[ReviewThread],
     mapped: &HashMap<String, Option<u32>>,
     drafts: &[DraftComment],
-    viewer: &str,
 ) -> Vec<Annotation> {
     let mut out: Vec<Annotation> = threads
         .iter()
@@ -332,11 +331,7 @@ pub fn annotations(
         moved: false,
         file_level: d.line.is_none(),
         comments: vec![AnnotationComment {
-            author: if viewer.is_empty() {
-                "You".into()
-            } else {
-                viewer.to_owned()
-            },
+            author: "You".into(),
             body: d.body.clone(),
             created_at: String::new(),
             pending: false,
@@ -402,7 +397,7 @@ mod tests {
             thread("lost", true, None),
         ];
         let mapped = HashMap::from([("mapped".to_owned(), Some(12)), ("lost".to_owned(), None)]);
-        let anns = annotations(&threads, &mapped, &[], "me");
+        let anns = annotations(&threads, &mapped, &[]);
         assert_eq!((anns[0].line, anns[0].outdated), (Some(3), false));
         assert_eq!(
             (anns[1].line, anns[1].moved, anns[1].outdated),
@@ -460,7 +455,7 @@ mod tests {
             .is_none()
         );
 
-        let anns = annotations(&[], &HashMap::new(), &[d_with_error()], "me");
+        let anns = annotations(&[], &HashMap::new(), &[d_with_error()]);
         assert!(anns[0].is_draft());
         assert_eq!(anns[0].error.as_deref(), Some("nope"));
     }

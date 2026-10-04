@@ -239,7 +239,7 @@ impl DiffState {
     /// Rebuilds thread and draft annotations from current data.
     pub fn refresh_annotations(&mut self) {
         let annotations =
-            crate::review::annotations(&self.threads, &self.mapped, &self.review.pending, "");
+            crate::review::annotations(&self.threads, &self.mapped, &self.review.pending);
         if annotations != self.doc.annotations {
             self.doc.set_annotations(annotations);
         }
@@ -291,7 +291,7 @@ fn tree_list_height(tree: Rect) -> usize {
 
 /// Runs `change` on the document, keeping the cursor and the top of the
 /// view on the same source lines.
-fn preserving_position(screen: &mut DiffScreen, doc: &mut Doc, change: impl FnOnce(&mut Doc)) {
+pub fn preserving_position(screen: &mut DiffScreen, doc: &mut Doc, change: impl FnOnce(&mut Doc)) {
     let cursor = doc.anchor(screen.cursor);
     let top = doc.anchor(screen.top);
     change(doc);

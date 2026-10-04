@@ -9,6 +9,7 @@ mod diff_screen;
 mod fixtures;
 mod keymap;
 mod nav;
+mod picker;
 mod review;
 mod route;
 mod runtime;
@@ -21,7 +22,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use ghtui_api::GitHub;
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_store::Store;
@@ -54,7 +55,7 @@ struct Cli {
     config: Option<PathBuf>,
     /// Color scheme; overrides the config file.
     #[arg(long, global = true, value_enum)]
-    theme: Option<ThemeArg>,
+    theme: Option<ModeSetting>,
 }
 
 #[derive(Subcommand)]
@@ -64,13 +65,6 @@ enum Command {
         /// `owner/repo#123`, a pull request URL, or `123` inside a clone.
         target: String,
     },
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum ThemeArg {
-    Auto,
-    Light,
-    Dark,
 }
 
 fn main() -> std::process::ExitCode {
@@ -243,20 +237,14 @@ async fn resolve_open(target: &str) -> Result<Target> {
     }
 }
 
-fn build_theme(config: &Config, cli_mode: Option<ThemeArg>) -> Result<Theme> {
+fn build_theme(config: &Config, cli_mode: Option<ModeSetting>) -> Result<Theme> {
     let seed = config.seed()?;
     let depth = match config.theme.color_depth {
         DepthSetting::Auto => ghtui_theme::detect_color_depth(|k| std::env::var(k).ok()),
         DepthSetting::TrueColor => ColorDepth::TrueColor,
         DepthSetting::Ansi256 => ColorDepth::Ansi256,
     };
-    let setting = match cli_mode {
-        Some(ThemeArg::Auto) => ModeSetting::Auto,
-        Some(ThemeArg::Light) => ModeSetting::Light,
-        Some(ThemeArg::Dark) => ModeSetting::Dark,
-        None => config.theme.mode,
-    };
-    let mode = match setting {
+    let mode = match cli_mode.unwrap_or(config.theme.mode) {
         ModeSetting::Light => Mode::Light,
         ModeSetting::Dark => Mode::Dark,
         // Must happen before the alternate screen and raw mode.

@@ -8,7 +8,7 @@ use std::process::Command;
 
 use ghtui_git::credentials::Credentials;
 use ghtui_git::files::{ChangedFile, FileStatus, MODE_EXECUTABLE, MODE_SUBMODULE, MODE_SYMLINK};
-use ghtui_git::repo::{Repo, RepoKind};
+use ghtui_git::repo::Repo;
 
 /// Runs git for fixture setup, isolated from the user's configuration.
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -154,7 +154,6 @@ fn find<'a>(files: &'a [ChangedFile], path: &str) -> &'a ChangedFile {
 async fn partial_cache_clone_fetches_pr_with_three_dot_base() {
     let f = fixture();
     let repo = cache_repo(&f).await;
-    assert_eq!(repo.kind, RepoKind::Cache);
     assert!(repo.partial);
     assert!(repo.path.ends_with("repos/owner/repo.git"));
 
@@ -334,7 +333,6 @@ async fn users_clone_only_gains_ghtui_refs() {
     let status_before = git(&local, &["status", "--porcelain"]);
 
     let repo = Repo::open_local(&local, "upstream").await.unwrap();
-    assert_eq!(repo.kind, RepoKind::Local);
     assert!(!repo.partial);
     let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
     assert_eq!(refs.merge_base, f.branch_point);

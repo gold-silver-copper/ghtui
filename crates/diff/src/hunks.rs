@@ -1,15 +1,9 @@
 //! Line diffs with context, as hunks.
 
-use imara_diff::{Algorithm as ImaraAlgorithm, Diff, InternedInput};
+pub use imara_diff::Algorithm;
+use imara_diff::{Diff, InternedInput};
 
 use crate::text::Text;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Algorithm {
-    #[default]
-    Histogram,
-    Myers,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineKind {
@@ -80,10 +74,6 @@ pub fn align(
     let mut input = InternedInput::default();
     input.update_before(before.iter().map(String::as_str));
     input.update_after(after.iter().map(String::as_str));
-    let algorithm = match algorithm {
-        Algorithm::Histogram => ImaraAlgorithm::Histogram,
-        Algorithm::Myers => ImaraAlgorithm::Myers,
-    };
     let mut diff = Diff::compute(algorithm, &input);
     diff.postprocess_lines(&input);
 

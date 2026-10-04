@@ -125,6 +125,32 @@ impl Route {
     }
 
     /// The search behind a list page.
+    /// A list's filter: issues, pull requests, search results.
+    pub fn list_query(&self) -> Option<&str> {
+        match self {
+            Route::Issues { query, .. }
+            | Route::Pulls { query, .. }
+            | Route::Search { query, .. } => Some(query),
+            _ => None,
+        }
+    }
+
+    /// The same list with another filter.
+    pub fn with_query(&self, query: String) -> Option<Route> {
+        Some(match self {
+            Route::Issues { repo, .. } => Route::Issues {
+                repo: repo.clone(),
+                query,
+            },
+            Route::Pulls { repo, .. } => Route::Pulls {
+                repo: repo.clone(),
+                query,
+            },
+            Route::Search { kind, .. } => Route::Search { kind: *kind, query },
+            _ => return None,
+        })
+    }
+
     pub fn search(&self) -> Option<(SearchKind, String)> {
         match self {
             Route::Issues { repo, query } => {

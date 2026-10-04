@@ -242,19 +242,15 @@ impl State {
     pub fn build_page(&self, route: &Route, width: u16, now: u64) -> Page {
         let icons = self.icons;
         let error = self.page_error(route);
-        let (comment, find_file, branch, filter, star) = (
+        let (comment, find_file, filter) = (
             self.first_key(Action::Comment),
             self.first_key(Action::FindFile),
-            self.first_key(Action::Branch),
             self.first_key(Action::Search),
-            self.first_key(Action::Star),
         );
         let keys = Keys {
             comment: &comment,
             find_file: &find_file,
-            branch: &branch,
             filter: &filter,
-            star: &star,
         };
         let aside = match route {
             Route::Repo(_)
@@ -272,14 +268,9 @@ impl State {
                 pages::flash(
                     page,
                     &format!("Couldn't load {what}: {err}. {retry} tries again."),
-                    ghtui_theme::Bg::ErrorContainer,
                 );
             }
-            _ => {
-                page.box_top(vec![Seg::new("Loading…", Role::Meta)], Vec::new());
-                pages::skeleton(page);
-                page.box_bottom();
-            }
+            _ => pages::loading_box(page, vec![Seg::new("Loading…", Role::Meta)]),
         };
         match route {
             Route::Home => {
@@ -298,7 +289,7 @@ impl State {
             }
             Route::Repo(repo) => {
                 let overview = self.overview(repo);
-                pages::repo_title(&mut page, repo, overview, keys);
+                pages::repo_title(&mut page, repo, overview);
                 match overview {
                     Some(o) => {
                         let commits = self.last_commits(repo, "HEAD", "");
@@ -371,9 +362,7 @@ impl State {
                     (Some(d), PrTab::Conversation) => {
                         pages::pr_conversation(&mut page, pr, d, activity, icons, keys, aside, now)
                     }
-                    (Some(d), PrTab::Commits) => {
-                        pages::pr_commits(&mut page, pr, d, activity, icons, now)
-                    }
+                    (Some(d), PrTab::Commits) => pages::pr_commits(&mut page, pr, d, activity, now),
                     (None, _) => missing(&mut page, &pr.to_string()),
                 }
             }
@@ -388,7 +377,6 @@ impl State {
             pages::flash(
                 &mut banner,
                 &format!("Couldn't refresh: {err}. Showing what was loaded before."),
-                ghtui_theme::Bg::ErrorContainer,
             );
             banner.blank();
             let n = banner.lines.len();

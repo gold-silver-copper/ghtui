@@ -313,8 +313,6 @@ pub struct SearchPanel<'a> {
     /// Index among the item rows.
     pub selected: usize,
     pub field: Rect,
-    /// A dim line at the bottom ("enter go · tab next · esc close").
-    pub help: &'a str,
 }
 
 impl SearchPanel<'_> {
@@ -325,8 +323,29 @@ impl SearchPanel<'_> {
             .x
             .min(screen.right().saturating_sub(width))
             .max(screen.x);
-        let height = (self.rows.len() as u16 + 3).min(screen.height.saturating_sub(2));
+        let height = (self.rows.len() as u16 + 2).min(screen.height.saturating_sub(2));
         Rect::new(x, self.field.y + 1, width, height)
+    }
+
+    /// The first row shown, keeping the selection in view, and the
+    /// selection's row.
+    fn scroll(&self, area: Rect) -> (usize, usize) {
+        let rows = usize::from(area.height.saturating_sub(2));
+        let selected_row = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| matches!(r, SuggestRow::Item { .. }))
+            .nth(self.selected)
+            .map_or(0, |(i, _)| i);
+        ((selected_row + 1).saturating_sub(rows), selected_row)
+    }
+
+    /// The row drawn at screen row `y`, if any.
+    pub fn row_at(&self, screen: Rect, y: u16) -> Option<usize> {
+        let area = self.area(screen);
+        let n = usize::from(y.checked_sub(area.y + 1)?);
+        (n < usize::from(area.height.saturating_sub(2))).then(|| self.scroll(area).0 + n)
     }
 }
 
@@ -336,16 +355,8 @@ impl Widget for SearchPanel<'_> {
         let area = self.area(screen);
         fill(buf, area, theme, PANEL);
         let inner_w = area.width.saturating_sub(4);
-        let rows = usize::from(area.height.saturating_sub(3));
-        // Keep the selection in view.
-        let selected_row = self
-            .rows
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| matches!(r, SuggestRow::Item { .. }))
-            .nth(self.selected)
-            .map_or(0, |(i, _)| i);
-        let skip = (selected_row + 1).saturating_sub(rows);
+        let rows = usize::from(area.height.saturating_sub(2));
+        let (skip, selected_row) = self.scroll(area);
         for (n, row) in self.rows.iter().enumerate().skip(skip).take(rows) {
             let y = area.y + 1 + (n - skip) as u16;
             let line = Rect::new(area.x + 2, y, inner_w, 1);
@@ -387,12 +398,6 @@ impl Widget for SearchPanel<'_> {
                 }
             }
         }
-        let help_y = area.bottom().saturating_sub(1);
-        Span::styled(
-            text::truncate(self.help, usize::from(inner_w)),
-            theme.meta(PANEL),
-        )
-        .render(Rect::new(area.x + 2, help_y, inner_w, 1), buf);
     }
 }
 
@@ -402,8 +407,28 @@ impl Widget for SearchPanel<'_> {
 pub struct KeyRow {
     pub key: String,
     pub label: String,
-    /// Why it can't run now, if it can't (shown dim).
-    pub unavailable: Option<String>,
+    /// Can't run now.
+    pub dim: bool,
+    /// A section heading rather than a key.
+    pub heading: bool,
+}
+
+impl KeyRow {
+    pub fn key(key: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            label: label.into(),
+            dim: false,
+            heading: false,
+        }
+    }
+
+    pub fn heading(label: impl Into<String>) -> Self {
+        Self {
+            heading: true,
+            ..Self::key("", label)
+        }
+    }
 }
 
 /// A panel of keys at the bottom right, above the status bar: which keys
@@ -413,28 +438,27 @@ pub struct KeyPanel<'a> {
     pub title: &'a str,
     pub rows: &'a [KeyRow],
     pub selected: Option<usize>,
-    pub help: &'a str,
 }
 
 impl KeyPanel<'_> {
-    pub fn area(&self, screen: Rect) -> Rect {
-        let key_w = self
-            .rows
+    fn key_width(&self) -> usize {
+        self.rows
             .iter()
             .map(|r| text::width(&r.key))
             .max()
-            .unwrap_or(0);
+            .unwrap_or(0)
+    }
+
+    pub fn area(&self, screen: Rect) -> Rect {
         let label_w = self
             .rows
             .iter()
             .map(|r| text::width(&r.label))
             .max()
             .unwrap_or(0);
-        let width = ((key_w + 3 + label_w + 4)
-            .max(text::width(self.help) + 4)
-            .max(text::width(self.title) + 4) as u16)
+        let width = ((self.key_width() + 3 + label_w + 4).max(text::width(self.title) + 4) as u16)
             .min(screen.width);
-        let height = (self.rows.len() as u16 + 4).min(screen.height.saturating_sub(1));
+        let height = (self.rows.len() as u16 + 3).min(screen.height.saturating_sub(1));
         Rect::new(
             screen.right().saturating_sub(width + 1),
             screen.bottom().saturating_sub(height + 1),
@@ -449,16 +473,11 @@ impl Widget for KeyPanel<'_> {
         let theme = self.ctx.theme;
         let area = self.area(screen);
         fill(buf, area, theme, PANEL);
-        let key_w = self
-            .rows
-            .iter()
-            .map(|r| text::width(&r.key))
-            .max()
-            .unwrap_or(0);
+        let key_w = self.key_width();
         let inner_w = area.width.saturating_sub(4);
         Span::styled(self.title, theme.title(PANEL))
             .render(Rect::new(area.x + 2, area.y, inner_w, 1), buf);
-        let rows = usize::from(area.height.saturating_sub(4));
+        let rows = usize::from(area.height.saturating_sub(3));
         let skip = self.selected.map_or(0, |s| (s + 1).saturating_sub(rows));
         for (n, row) in self.rows.iter().enumerate().skip(skip).take(rows) {
             let y = area.y + 2 + (n - skip) as u16;
@@ -468,7 +487,15 @@ impl Widget for KeyPanel<'_> {
                 fill(buf, Rect::new(area.x, y, area.width, 1), theme, bg);
                 buf.set_string(area.x, y, "▌", theme.accent(bg));
             }
-            let (key_style, label_style) = if row.unavailable.is_some() {
+            if row.heading {
+                Span::styled(
+                    row.label.clone(),
+                    theme.meta(PANEL).add_modifier(Modifier::BOLD),
+                )
+                .render(Rect::new(area.x + 2, y, inner_w, 1), buf);
+                continue;
+            }
+            let (key_style, label_style) = if row.dim {
                 (theme.meta(bg), theme.meta(bg))
             } else {
                 (
@@ -484,13 +511,5 @@ impl Widget for KeyPanel<'_> {
             ])
             .render(Rect::new(area.x + 2, y, inner_w, 1), buf);
         }
-        Span::styled(
-            text::truncate(self.help, usize::from(inner_w)),
-            theme.meta(PANEL),
-        )
-        .render(
-            Rect::new(area.x + 2, area.bottom().saturating_sub(1), inner_w, 1),
-            buf,
-        );
     }
 }

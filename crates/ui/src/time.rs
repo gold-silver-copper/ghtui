@@ -1,7 +1,7 @@
 //! Relative times from GitHub's ISO 8601 timestamps, without a date library.
 
 /// Parses `YYYY-MM-DDTHH:MM:SSZ` (GitHub always returns UTC) to Unix seconds.
-pub fn parse_iso8601(s: &str) -> Option<u64> {
+fn parse_iso8601(s: &str) -> Option<u64> {
     let b = s.as_bytes();
     if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' {
         return None;

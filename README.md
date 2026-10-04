@@ -68,7 +68,7 @@ ghtui is laid out like the website:
 
 **Moving.** Arrows move, `Enter` opens, `Esc` goes back, and each letter is
 one verb that means the same thing on every screen. The status bar always
-shows the keys that do something here, and `Space` lists everything you can
+shows the keys that do something here, and `Space` (or `?`) lists everything you can
 do.
 - `↑`/`↓` (or `j`/`k`) move the selection. On lists that's row by row; in a
   conversation it's comment by comment, and a long comment scrolls before
@@ -89,7 +89,7 @@ do.
 - `c` comments (on a review thread, it replies); `s` stars.
 - `o` opens in the browser; `y` copies the link.
 - `l` puts letters on every link on screen; type them to follow one.
-- `h` goes home; `r` refreshes; `q` quits; `?` lists every key.
+- `h` goes home; `r` refreshes; `q` quits.
 - `:` (or `ctrl-k`) is the command palette. It also takes `owner/repo`,
   `owner/repo#123`, `@user`, or a URL.
 
@@ -166,7 +166,7 @@ never does something else. Less common actions have no key: they're in the
 | `PgUp` `PgDn`         | Page up / down                                                |
 | `Home` `End` (`g` `G`) | Top / bottom                                                 |
 | `1`–`4`               | Tab by number                                                 |
-| `Space`               | Everything you can do here                                    |
+| `Space` `?`           | Everything you can do here, with its keys                     |
 | `/`                   | Search (on a list: filter it; in the diff: search the diff)   |
 | `f`                   | Find a file                                                   |
 | `b`                   | Switch branches or tags                                       |
@@ -179,7 +179,6 @@ never does something else. Less common actions have no key: they're in the
 | `h`                   | Home                                                          |
 | `r`                   | Refresh                                                       |
 | `:` `ctrl-k`          | Command palette                                               |
-| `?`                   | Keyboard shortcuts                                            |
 | `q` `ctrl-c`          | Quit                                                          |
 
 Reviewing, in a pull request's Files changed tab:
@@ -240,22 +239,12 @@ nerd_font = false     # Nerd Font icons and rounded chip ends
 # to pages or the diff. Actions without a default key can be bound here.
 down = ["j", "<Down>", "<C-n>"]
 up = ["k", "<Up>", "<C-p>"]
-go_issues = ["I"]
+sort = ["S"]
 ```
 
-Action names: `down`, `up`, `half_page_down`, `half_page_up`, `top`, `bottom`,
-`open`, `back`, `close`, `quit`, `refresh`, `open_in_browser`,
-`command_palette`, `help`, `next_hunk`, `prev_hunk`, `next_file`, `prev_file`,
-`toggle_tree`, `switch_pane`, `toggle_split`, `ignore_whitespace`,
-`expand_context`, `full_file`, `toggle_viewed`, `next_unviewed`,
-`mark_reviewed`, `search`, `search_next`, `search_prev`, `find_file`,
-`comment`, `visual_lines`, `suggest`, `reply`, `resolve`, `delete_draft`,
-`file_comment`, `submit_review`, `next_thread`, `prev_thread`, `since_review`,
-`jump_move`, `pick_commits`, `next_tab`, `prev_tab`, `go_home`, `go_code`,
-`go_issues`, `go_pulls`, `tab_1`, `tab_2`, `tab_3`, `tab_4`, `star`, `hints`,
-`hints_browser`, `forward`, `copy_link`, `actions_menu`, `branch`,
-`toggle_state`, `sort`, `scroll_down`, `scroll_up`, `page_down`, `page_up`,
-`up_level`.
+Action names are listed in the `actions!` table in
+[`crates/app/src/keymap.rs`](crates/app/src/keymap.rs), with their default keys;
+an unknown name in `[keys]` is an error that lists them all.
 
 ## Theming
 

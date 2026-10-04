@@ -15,13 +15,13 @@ use ghtui_diff::anchor::LinePos;
 
 use crate::annotations::{Annotation, ThreadRowKind};
 use crate::diff_doc::{Doc, DocFile, FoldReason, Note, Pos, Row, Viewed};
-use crate::{Ctx, PAD_X, chips, fill, text, time};
+use crate::{Ctx, PAD_X, chips, fill, inset, key_hints, render_split, text, time};
 
 const PANE: Bg = Bg::Surface;
 const HEADER: Bg = Bg::ContainerHigh;
 const TAB_WIDTH: usize = 4;
 
-pub fn syntax_role(kind: TokenKind) -> Syntax {
+pub(crate) fn syntax_role(kind: TokenKind) -> Syntax {
     match kind {
         TokenKind::Keyword => Syntax::Keyword,
         TokenKind::String => Syntax::String,
@@ -102,42 +102,32 @@ impl DiffView<'_> {
         let theme = self.ctx.theme;
         let quiet_bg = if cursor { Bg::SelectedInactive } else { PANE };
         let indent = sign_column(file);
+        let pad = " ".repeat(indent);
+        // `⋯ what · KEY to verb`, aligned with the code.
+        let action = |buf: &mut Buffer, what: Span<'static>, key: &str, verb: &str| {
+            fill(buf, area, theme, quiet_bg);
+            let mut spans = vec![what];
+            spans.extend(key_hints(theme, quiet_bg, &[(key, verb)]));
+            Line::from(spans).render(area, buf);
+        };
         match row {
             Row::Header => self.header(file, cursor, area, buf),
             Row::Note(note) => self.note(file, note, quiet_bg, area, buf),
             Row::Gap { start, end } => {
-                fill(buf, area, theme, quiet_bg);
                 let n = end - start;
-                Line::from(vec![
-                    Span::styled(
-                        format!(
-                            "{}⋯ {n} {} · ",
-                            " ".repeat(indent),
-                            match (self.doc.since_active, n == 1) {
-                                (true, true) => "line without new changes",
-                                (true, false) => "lines without new changes",
-                                (false, true) => "unchanged line",
-                                (false, false) => "unchanged lines",
-                            }
-                        ),
-                        theme.meta(quiet_bg),
-                    ),
-                    Span::styled(
-                        self.keys.expand.to_owned(),
-                        theme.accent(quiet_bg).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(" to expand", theme.meta(quiet_bg)),
-                ])
-                .render(area, buf);
+                let what = match (self.doc.since_active, n == 1) {
+                    (true, true) => "line without new changes",
+                    (true, false) => "lines without new changes",
+                    (false, true) => "unchanged line",
+                    (false, false) => "unchanged lines",
+                };
+                let what = Span::styled(format!("{pad}⋯ {n} {what} · "), theme.meta(quiet_bg));
+                action(buf, what, self.keys.expand, "to expand");
             }
             Row::Hunk { seg } => {
                 fill(buf, area, theme, quiet_bg);
                 let header = file.headers().get(seg as usize).map_or("", String::as_str);
-                Span::styled(
-                    format!("{}{header}", " ".repeat(indent)),
-                    theme.meta(quiet_bg),
-                )
-                .render(area, buf);
+                Span::styled(format!("{pad}{header}"), theme.meta(quiet_bg)).render(area, buf);
             }
             Row::Line(e) => self.unified(pos.file, file, e, cursor, area, buf),
             Row::Split { left, right } => {
@@ -145,7 +135,6 @@ impl DiffView<'_> {
             }
             Row::Thread(t) => self.thread_row(file, t, cursor, area, buf),
             Row::Fold { block, reason } => {
-                fill(buf, area, theme, quiet_bg);
                 let lines = file
                     .blocks()
                     .get(block as usize)
@@ -154,39 +143,23 @@ impl DiffView<'_> {
                     FoldReason::Formatting => "Formatting-only change",
                     FoldReason::Seen => "Unchanged since your review",
                 };
-                Line::from(vec![
-                    Span::styled(
-                        format!("{}⋯ {what}, {lines} lines · ", " ".repeat(indent)),
-                        theme.meta(quiet_bg),
-                    ),
-                    Span::styled(
-                        self.keys.show.to_owned(),
-                        theme.accent(quiet_bg).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(" to show", theme.meta(quiet_bg)),
-                ])
-                .render(area, buf);
+                let what = Span::styled(
+                    format!("{pad}⋯ {what}, {lines} lines · "),
+                    theme.meta(quiet_bg),
+                );
+                action(buf, what, self.keys.show, "to show");
             }
             Row::Moved { mv, from } => {
-                fill(buf, area, theme, quiet_bg);
-                let text = self.move_label(mv, from);
-                Line::from(vec![
-                    Span::styled(
-                        format!("{}↳ {text} · ", " ".repeat(indent)),
-                        theme.style(Fg::Tertiary, quiet_bg),
-                    ),
-                    Span::styled(
-                        self.keys.jump.to_owned(),
-                        theme.accent(quiet_bg).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(" to jump", theme.meta(quiet_bg)),
-                ])
-                .render(area, buf);
+                let what = Span::styled(
+                    format!("{pad}↳ {} · ", self.move_label(mv, from)),
+                    theme.style(Fg::Tertiary, quiet_bg),
+                );
+                action(buf, what, self.keys.jump, "to jump");
             }
             Row::NoNewline => {
                 fill(buf, area, theme, quiet_bg);
                 Span::styled(
-                    format!("{}\\ No newline at end of file", " ".repeat(indent + 2)),
+                    format!("{pad}  \\ No newline at end of file"),
                     theme.meta(quiet_bg).add_modifier(Modifier::ITALIC),
                 )
                 .render(area, buf);
@@ -302,7 +275,7 @@ impl DiffView<'_> {
                 theme.style(Fg::DiffRemovedSign, bg),
             ));
         }
-        split_line(area, buf, left, right);
+        render_split(inset(area, PAD_X, 0), buf, left, right, 2);
     }
 
     fn note(&self, file: &DocFile, note: Note, bg: Bg, area: Rect, buf: &mut Buffer) {
@@ -371,11 +344,7 @@ impl DiffView<'_> {
             }
             _ => (String::new(), Fg::OnSurfaceVariant),
         };
-        let inner = Rect {
-            x: area.x + PAD_X,
-            width: area.width.saturating_sub(2 * PAD_X),
-            ..area
-        };
+        let inner = inset(area, PAD_X, 0);
         Span::styled(
             text::truncate(&text, usize::from(inner.width)),
             theme.style(fg, bg),
@@ -623,15 +592,9 @@ impl DiffView<'_> {
             Bg::ContainerLow
         };
         fill(buf, card, theme, bg);
-        let inner = Rect {
-            x: card.x + 2,
-            width: card.width.saturating_sub(4),
-            ..card
-        };
+        let inner = inset(card, PAD_X, 0);
         let room = usize::from(inner.width);
         let keys = self.keys;
-        let key =
-            |k: &str| Span::styled(k.to_owned(), theme.accent(bg).add_modifier(Modifier::BOLD));
         let mut spans: Vec<Span<'static>> = Vec::new();
         match &row.kind {
             ThreadRowKind::Summary => {
@@ -701,36 +664,24 @@ impl DiffView<'_> {
                 ));
             }
             ThreadRowKind::Footer => {
+                let mut hints = Vec::new();
                 if ann.is_draft() {
                     if ann.error.is_some() {
-                        spans.push(key(keys.file_comment));
-                        spans.push(Span::styled(" post as a file comment · ", theme.meta(bg)));
+                        hints.push((keys.file_comment, "post as a file comment"));
                     }
-                    spans.push(key(keys.show));
-                    spans.push(Span::styled(" edit · ", theme.meta(bg)));
-                    spans.push(key(keys.delete));
-                    spans.push(Span::styled(" delete", theme.meta(bg)));
+                    hints.extend([(keys.show, "edit"), (keys.delete, "delete")]);
                 } else {
-                    spans.push(key(keys.show));
-                    spans.push(Span::styled(" collapse", theme.meta(bg)));
+                    hints.push((keys.show, "collapse"));
                     if ann.can_reply {
-                        spans.push(Span::styled(" · ", theme.meta(bg)));
-                        spans.push(key(keys.reply));
-                        spans.push(Span::styled(" reply", theme.meta(bg)));
+                        hints.push((keys.reply, "reply"));
                     }
-                    if (ann.resolved && ann.can_unresolve) || (!ann.resolved && ann.can_resolve) {
-                        spans.push(Span::styled(" · ", theme.meta(bg)));
-                        spans.push(key(keys.resolve));
-                        spans.push(Span::styled(
-                            if ann.resolved {
-                                " unresolve"
-                            } else {
-                                " resolve"
-                            },
-                            theme.meta(bg),
-                        ));
+                    if ann.resolved && ann.can_unresolve {
+                        hints.push((keys.resolve, "unresolve"));
+                    } else if !ann.resolved && ann.can_resolve {
+                        hints.push((keys.resolve, "resolve"));
                     }
                 }
+                spans = key_hints(theme, bg, &hints);
             }
         }
         Line::from(spans).render(inner, buf);
@@ -954,39 +905,10 @@ fn code_spans(
     out
 }
 
-fn split_line(area: Rect, buf: &mut Buffer, left: Vec<Span<'_>>, right: Vec<Span<'_>>) {
-    let inner = Rect {
-        x: area.x + PAD_X.min(area.width / 2),
-        width: area.width.saturating_sub(2 * PAD_X),
-        ..area
-    };
-    let right_width = (right.iter().map(Span::width).sum::<usize>() as u16).min(inner.width);
-    Line::from(left).render(
-        Rect {
-            width: inner.width.saturating_sub(right_width + 2),
-            ..inner
-        },
-        buf,
-    );
-    Line::from(right).render(
-        Rect {
-            x: inner.right() - right_width,
-            width: right_width,
-            ..inner
-        },
-        buf,
-    );
-}
-
 fn size(bytes: Option<usize>) -> String {
-    match bytes {
-        None => "none".into(),
-        Some(b) if b < 1024 => format!("{b} B"),
-        Some(b) if b < 1024 * 1024 => format!("{:.1} KB", b as f64 / 1024.0),
-        Some(b) => format!("{:.1} MB", b as f64 / (1024.0 * 1024.0)),
-    }
+    bytes.map_or_else(|| "none".into(), |b| text::size(b as u64))
 }
 
 fn short(oid: Option<&str>) -> &str {
-    oid.map_or("none", |o| o.get(..7).unwrap_or(o))
+    oid.map_or("none", text::short_sha)
 }

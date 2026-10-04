@@ -26,14 +26,6 @@ const NO_LAZY_FETCH_VERSION: Version = Version(2, 44, 0);
 /// repositories).
 const CHECK_ATTR_SOURCE_VERSION: Version = Version(2, 40, 0);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RepoKind {
-    /// The user's clone.
-    Local,
-    /// ghtui's bare partial clone in the cache.
-    Cache,
-}
-
 /// Progress lines from long-running git commands (clone, fetch).
 pub type Progress<'a> = &'a (dyn Fn(String) + Send + Sync);
 
@@ -41,7 +33,6 @@ pub type Progress<'a> = &'a (dyn Fn(String) + Send + Sync);
 pub struct Repo {
     pub path: PathBuf,
     pub remote: String,
-    pub kind: RepoKind,
     /// A promisor (partial clone) remote: blobs may be missing locally.
     pub partial: bool,
     version: Version,
@@ -93,7 +84,6 @@ impl Repo {
         let mut repo = Repo {
             path: top.to_owned(),
             remote: remote.to_owned(),
-            kind: RepoKind::Local,
             partial: false,
             version: crate::version().await?,
             credentials: Credentials::Ambient,
@@ -142,7 +132,6 @@ impl Repo {
         let mut repo = Repo {
             path,
             remote: "origin".to_owned(),
-            kind: RepoKind::Cache,
             partial: true,
             version,
             credentials,

@@ -5,78 +5,6 @@ use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Action {
-    Down,
-    Up,
-    HalfPageDown,
-    HalfPageUp,
-    Top,
-    Bottom,
-    Open,
-    Back,
-    Close,
-    Quit,
-    Refresh,
-    OpenInBrowser,
-    CommandPalette,
-    Help,
-    NextHunk,
-    PrevHunk,
-    NextFile,
-    PrevFile,
-    ToggleTree,
-    SwitchPane,
-    ToggleSplit,
-    IgnoreWhitespace,
-    ExpandContext,
-    FullFile,
-    ToggleViewed,
-    NextUnviewed,
-    MarkReviewed,
-    Search,
-    SearchNext,
-    SearchPrev,
-    FindFile,
-    Comment,
-    VisualLines,
-    Suggest,
-    ReplyThread,
-    ResolveThread,
-    DeleteDraft,
-    FileComment,
-    SubmitReview,
-    NextThread,
-    PrevThread,
-    ToggleSinceReview,
-    JumpMove,
-    PickCommits,
-    NextTab,
-    PrevTab,
-    GoHome,
-    GoCode,
-    GoIssues,
-    GoPulls,
-    Tab1,
-    Tab2,
-    Tab3,
-    Tab4,
-    Star,
-    Hints,
-    HintsBrowser,
-    Forward,
-    Copy,
-    Menu,
-    Branch,
-    ToggleState,
-    Sort,
-    ScrollDown,
-    ScrollUp,
-    PageDown,
-    PageUp,
-    UpLevel,
-}
-
 /// Where a binding applies. Diff and page bindings may share keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
@@ -86,352 +14,119 @@ pub enum Scope {
 }
 
 impl Scope {
-    fn overlaps(self, other: Scope) -> bool {
+    pub fn overlaps(self, other: Scope) -> bool {
         self == Scope::Global || other == Scope::Global || self == other
     }
 }
 
+/// Declares [`Action`] from one table: config name, default keys, scope
+/// and description.
+macro_rules! actions {
+    ($($action:ident $name:literal [$($key:literal),*] $scope:ident $description:literal;)*) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum Action {
+            $($action,)*
+        }
+
+        impl Action {
+            pub const ALL: &[Action] = &[$(Action::$action),*];
+
+            /// The name used in the `[keys]` config table.
+            pub fn name(self) -> &'static str {
+                match self {
+                    $(Action::$action => $name,)*
+                }
+            }
+
+            pub fn description(self) -> &'static str {
+                match self {
+                    $(Action::$action => $description,)*
+                }
+            }
+
+            pub fn scope(self) -> Scope {
+                match self {
+                    $(Action::$action => Scope::$scope,)*
+                }
+            }
+
+            fn defaults(self) -> &'static [&'static str] {
+                match self {
+                    $(Action::$action => &[$($key),*],)*
+                }
+            }
+        }
+    };
+}
+
+actions! {
+    Down              "down"              ["<Down>", "j"]      Global "Move down";
+    Up                "up"                ["<Up>", "k"]        Global "Move up";
+    HalfPageDown      "half_page_down"    ["<C-d>"]            Global "Half page down";
+    HalfPageUp        "half_page_up"      ["<C-u>"]            Global "Half page up";
+    PageDown          "page_down"         ["<PageDown>"]       Global "Page down";
+    PageUp            "page_up"           ["<PageUp>"]         Global "Page up";
+    Top               "top"               ["<Home>", "g"]      Global "Go to top";
+    Bottom            "bottom"            ["<End>", "G"]       Global "Go to bottom";
+    Open              "open"              ["<Enter>"]          Global "Open the selection";
+    Back              "back"              ["<Esc>", "<BS>"]    Global "Back";
+    Forward           "forward"           []                   Global "Forward";
+    UpLevel           "up_level"          ["u"]                Global "Up a level";
+    NextTab           "next_tab"          ["<Right>"]          Global "Next tab";
+    PrevTab           "prev_tab"          ["<Left>"]           Global "Previous tab";
+    Tab1              "tab_1"             ["1"]                Global "First tab";
+    Tab2              "tab_2"             ["2"]                Global "Second tab";
+    Tab3              "tab_3"             ["3"]                Global "Third tab";
+    Tab4              "tab_4"             ["4"]                Global "Fourth tab";
+    GoHome            "go_home"           ["h"]                Global "Go home";
+    Search            "search"            ["/"]                Global "Search (on a list: filter it)";
+    FindFile          "find_file"         ["f"]                Global "Go to file";
+    Comment           "comment"           ["c"]                Global "Comment (on a thread: reply)";
+    Copy              "copy_link"         ["y"]                Global "Copy the link";
+    OpenInBrowser     "open_in_browser"   ["o"]                Global "Open on GitHub";
+    Refresh           "refresh"           ["r"]                Global "Refresh";
+    Menu              "actions_menu"      ["<Space>", "?"]     Global "Everything you can do here";
+    CommandPalette    "command_palette"   [":", "<C-k>"]       Global "Command palette";
+    Quit              "quit"              ["q", "<C-c>"]       Global "Quit";
+
+    Star              "star"              ["s"]                Page   "Star / unstar";
+    Branch            "branch"            ["b"]                Page   "Switch branches or tags";
+    Hints             "hints"             ["l"]                Page   "Follow a link by its letters";
+    HintsBrowser      "hints_browser"     []                   Page   "Follow a link, in the browser";
+    ToggleState       "toggle_state"      []                   Page   "Open / closed / all";
+    Sort              "sort"              []                   Page   "Change the sort";
+
+    NextHunk          "next_hunk"         ["n"]                Diff   "Next change";
+    PrevHunk          "prev_hunk"         ["p"]                Diff   "Previous change";
+    NextFile          "next_file"         ["<S-Down>"]         Diff   "Next file";
+    PrevFile          "prev_file"         ["<S-Up>"]           Diff   "Previous file";
+    NextUnviewed      "next_unviewed"     []                   Diff   "Next unviewed file";
+    NextThread        "next_thread"       []                   Diff   "Next unresolved thread";
+    PrevThread        "prev_thread"       []                   Diff   "Previous unresolved thread";
+    JumpMove          "jump_move"         []                   Diff   "Jump to the other end of moved code";
+    SearchNext        "search_next"       []                   Diff   "Next search match";
+    SearchPrev        "search_prev"       []                   Diff   "Previous search match";
+    SwitchPane        "switch_pane"       ["<Tab>"]            Diff   "Switch between the file tree and the diff";
+    ToggleTree        "toggle_tree"       []                   Diff   "Show or hide the file tree";
+    ToggleSplit       "toggle_split"      []                   Diff   "Split or unified view";
+    IgnoreWhitespace  "ignore_whitespace" ["w"]                Diff   "Ignore whitespace changes";
+    ExpandContext     "expand_context"    ["e"]                Diff   "Show more context";
+    FullFile          "full_file"         []                   Diff   "Show the whole file";
+    ToggleSinceReview "since_review"      []                   Diff   "Show only changes since your last review";
+    PickCommits       "pick_commits"      []                   Diff   "Choose commits to view";
+    ToggleViewed      "toggle_viewed"     ["v"]                Diff   "Mark the file viewed (syncs with GitHub)";
+    MarkReviewed      "mark_reviewed"     ["m"]                Diff   "Mark the change reviewed";
+    VisualLines       "visual_lines"      ["x"]                Diff   "Select lines (for multi-line comments)";
+    Suggest           "suggest"           []                   Diff   "Suggest a change (opens $EDITOR)";
+    FileComment       "file_comment"      []                   Diff   "Comment on the whole file";
+    ResolveThread     "resolve"           []                   Diff   "Resolve or unresolve the thread";
+    DeleteDraft       "delete_draft"      ["<Delete>"]         Diff   "Delete the draft comment";
+    SubmitReview      "submit_review"     ["a"]                Diff   "Submit your review";
+}
+
 impl Action {
-    pub const ALL: [Action; 68] = [
-        Action::Down,
-        Action::Up,
-        Action::HalfPageDown,
-        Action::HalfPageUp,
-        Action::Top,
-        Action::Bottom,
-        Action::Open,
-        Action::Back,
-        Action::Close,
-        Action::Quit,
-        Action::Refresh,
-        Action::OpenInBrowser,
-        Action::CommandPalette,
-        Action::Help,
-        Action::NextHunk,
-        Action::PrevHunk,
-        Action::NextFile,
-        Action::PrevFile,
-        Action::ToggleTree,
-        Action::SwitchPane,
-        Action::ToggleSplit,
-        Action::IgnoreWhitespace,
-        Action::ExpandContext,
-        Action::FullFile,
-        Action::ToggleViewed,
-        Action::NextUnviewed,
-        Action::MarkReviewed,
-        Action::Search,
-        Action::SearchNext,
-        Action::SearchPrev,
-        Action::FindFile,
-        Action::Comment,
-        Action::VisualLines,
-        Action::Suggest,
-        Action::ReplyThread,
-        Action::ResolveThread,
-        Action::DeleteDraft,
-        Action::FileComment,
-        Action::SubmitReview,
-        Action::NextThread,
-        Action::PrevThread,
-        Action::ToggleSinceReview,
-        Action::JumpMove,
-        Action::PickCommits,
-        Action::NextTab,
-        Action::PrevTab,
-        Action::GoHome,
-        Action::GoCode,
-        Action::GoIssues,
-        Action::GoPulls,
-        Action::Tab1,
-        Action::Tab2,
-        Action::Tab3,
-        Action::Tab4,
-        Action::Star,
-        Action::Hints,
-        Action::HintsBrowser,
-        Action::Forward,
-        Action::Copy,
-        Action::Menu,
-        Action::Branch,
-        Action::ToggleState,
-        Action::Sort,
-        Action::ScrollDown,
-        Action::ScrollUp,
-        Action::PageDown,
-        Action::PageUp,
-        Action::UpLevel,
-    ];
-
-    pub fn scope(self) -> Scope {
-        match self {
-            Action::Down
-            | Action::Up
-            | Action::HalfPageDown
-            | Action::HalfPageUp
-            | Action::Top
-            | Action::Bottom
-            | Action::Open
-            | Action::Back
-            | Action::Close
-            | Action::Quit
-            | Action::Refresh
-            | Action::OpenInBrowser
-            | Action::CommandPalette
-            | Action::Help
-            | Action::Search
-            | Action::Comment
-            | Action::FindFile
-            | Action::GoHome
-            | Action::GoIssues
-            | Action::GoPulls
-            | Action::Tab1
-            | Action::Tab2
-            | Action::Tab3
-            | Action::Tab4
-            | Action::Forward
-            | Action::Copy
-            | Action::Menu
-            | Action::NextTab
-            | Action::PrevTab
-            | Action::PageDown
-            | Action::PageUp
-            | Action::UpLevel => Scope::Global,
-            Action::GoCode
-            | Action::Star
-            | Action::Hints
-            | Action::HintsBrowser
-            | Action::Branch
-            | Action::ToggleState
-            | Action::Sort
-            | Action::ScrollDown
-            | Action::ScrollUp => Scope::Page,
-            _ => Scope::Diff,
-        }
-    }
-
-    /// The name used in the `[keys]` config table.
-    pub fn name(self) -> &'static str {
-        match self {
-            Action::Down => "down",
-            Action::Up => "up",
-            Action::HalfPageDown => "half_page_down",
-            Action::HalfPageUp => "half_page_up",
-            Action::Top => "top",
-            Action::Bottom => "bottom",
-            Action::Open => "open",
-            Action::Back => "back",
-            Action::Close => "close",
-            Action::Quit => "quit",
-            Action::Refresh => "refresh",
-            Action::OpenInBrowser => "open_in_browser",
-            Action::CommandPalette => "command_palette",
-            Action::Help => "help",
-            Action::NextHunk => "next_hunk",
-            Action::PrevHunk => "prev_hunk",
-            Action::NextFile => "next_file",
-            Action::PrevFile => "prev_file",
-            Action::ToggleTree => "toggle_tree",
-            Action::SwitchPane => "switch_pane",
-            Action::ToggleSplit => "toggle_split",
-            Action::IgnoreWhitespace => "ignore_whitespace",
-            Action::ExpandContext => "expand_context",
-            Action::FullFile => "full_file",
-            Action::ToggleViewed => "toggle_viewed",
-            Action::NextUnviewed => "next_unviewed",
-            Action::MarkReviewed => "mark_reviewed",
-            Action::Search => "search",
-            Action::SearchNext => "search_next",
-            Action::SearchPrev => "search_prev",
-            Action::FindFile => "find_file",
-            Action::Comment => "comment",
-            Action::VisualLines => "visual_lines",
-            Action::Suggest => "suggest",
-            Action::ReplyThread => "reply",
-            Action::ResolveThread => "resolve",
-            Action::DeleteDraft => "delete_draft",
-            Action::FileComment => "file_comment",
-            Action::SubmitReview => "submit_review",
-            Action::NextThread => "next_thread",
-            Action::PrevThread => "prev_thread",
-            Action::ToggleSinceReview => "since_review",
-            Action::JumpMove => "jump_move",
-            Action::PickCommits => "pick_commits",
-            Action::NextTab => "next_tab",
-            Action::PrevTab => "prev_tab",
-            Action::GoHome => "go_home",
-            Action::GoCode => "go_code",
-            Action::GoIssues => "go_issues",
-            Action::GoPulls => "go_pulls",
-            Action::Tab1 => "tab_1",
-            Action::Tab2 => "tab_2",
-            Action::Tab3 => "tab_3",
-            Action::Tab4 => "tab_4",
-            Action::Star => "star",
-            Action::Hints => "hints",
-            Action::HintsBrowser => "hints_browser",
-            Action::Forward => "forward",
-            Action::Copy => "copy_link",
-            Action::Menu => "actions_menu",
-            Action::Branch => "branch",
-            Action::ToggleState => "toggle_state",
-            Action::Sort => "sort",
-            Action::ScrollDown => "scroll_down",
-            Action::ScrollUp => "scroll_up",
-            Action::PageDown => "page_down",
-            Action::PageUp => "page_up",
-            Action::UpLevel => "up_level",
-        }
-    }
-
-    pub fn description(self) -> &'static str {
-        match self {
-            Action::Down => "Move down",
-            Action::Up => "Move up",
-            Action::HalfPageDown => "Half page down",
-            Action::HalfPageUp => "Half page up",
-            Action::Top => "Go to top",
-            Action::Bottom => "Go to bottom",
-            Action::Open => "Open the selection",
-            Action::Back => "Back",
-            Action::Close => "Close the page",
-            Action::Quit => "Quit",
-            Action::Refresh => "Refresh",
-            Action::OpenInBrowser => "Open on GitHub",
-            Action::CommandPalette => "Command palette",
-            Action::Help => "Keyboard shortcuts",
-            Action::NextHunk => "Next hunk",
-            Action::PrevHunk => "Previous hunk",
-            Action::NextFile => "Next file",
-            Action::PrevFile => "Previous file",
-            Action::ToggleTree => "Toggle file tree",
-            Action::SwitchPane => "Switch pane",
-            Action::ToggleSplit => "Split or unified view",
-            Action::IgnoreWhitespace => "Ignore whitespace changes",
-            Action::ExpandContext => "Show more context",
-            Action::FullFile => "Show the whole file",
-            Action::ToggleViewed => "Toggle file viewed (syncs)",
-            Action::NextUnviewed => "Next unviewed file",
-            Action::MarkReviewed => "Toggle change reviewed",
-            Action::Search => "Search (on a list: filter it)",
-            Action::SearchNext => "Next search match",
-            Action::SearchPrev => "Previous search match",
-            Action::FindFile => "Go to file",
-            Action::Comment => "Comment",
-            Action::VisualLines => "Select lines (for multi-line comments)",
-            Action::Suggest => "Suggest a change (opens $EDITOR)",
-            Action::ReplyThread => "Reply to the thread",
-            Action::ResolveThread => "Resolve or unresolve the thread",
-            Action::DeleteDraft => "Delete the draft comment",
-            Action::FileComment => "Comment on the whole file",
-            Action::SubmitReview => "Submit your review",
-            Action::NextThread => "Next unresolved thread",
-            Action::PrevThread => "Previous unresolved thread",
-            Action::ToggleSinceReview => "Show only changes since your last review",
-            Action::JumpMove => "Jump to the other end of moved code",
-            Action::PickCommits => "Choose commits to view",
-            Action::NextTab => "Next tab",
-            Action::PrevTab => "Previous tab",
-            Action::GoHome => "Go home",
-            Action::GoCode => "Go to the repository's code",
-            Action::GoIssues => "Go to the repository's issues",
-            Action::GoPulls => "Go to the repository's pull requests",
-            Action::Tab1 => "First tab",
-            Action::Tab2 => "Second tab",
-            Action::Tab3 => "Third tab",
-            Action::Tab4 => "Fourth tab",
-            Action::Star => "Star / unstar",
-            Action::Hints => "Follow a link by its letters",
-            Action::HintsBrowser => "Follow a link, in the browser",
-            Action::Forward => "Forward",
-            Action::Copy => "Copy the link",
-            Action::Menu => "Everything you can do here",
-            Action::Branch => "Switch branches or tags",
-            Action::ToggleState => "Open / closed / all",
-            Action::Sort => "Change the sort",
-            Action::ScrollDown => "Scroll down a line",
-            Action::ScrollUp => "Scroll up a line",
-            Action::PageDown => "Page down",
-            Action::PageUp => "Page up",
-            Action::UpLevel => "Up a level",
-        }
-    }
-
-    fn defaults(self) -> &'static [&'static str] {
-        match self {
-            Action::Down => &["<Down>", "j"],
-            Action::Up => &["<Up>", "k"],
-            Action::HalfPageDown => &["<C-d>"],
-            Action::HalfPageUp => &["<C-u>"],
-            Action::Top => &["<Home>", "g"],
-            Action::Bottom => &["<End>", "G"],
-            Action::Open => &["<Enter>"],
-            Action::Back => &["<Esc>", "<BS>"],
-            Action::Close => &[],
-            Action::Quit => &["q", "<C-c>"],
-            Action::Refresh => &["r"],
-            Action::OpenInBrowser => &["o"],
-            Action::CommandPalette => &[":", "<C-k>"],
-            Action::Help => &["?"],
-            Action::NextHunk => &["n"],
-            Action::PrevHunk => &["p"],
-            Action::NextFile => &["<S-Down>"],
-            Action::PrevFile => &["<S-Up>"],
-            Action::ToggleTree => &[],
-            Action::SwitchPane => &["<Tab>"],
-            Action::ToggleSplit => &[],
-            Action::IgnoreWhitespace => &["w"],
-            Action::ExpandContext => &["e"],
-            Action::FullFile => &[],
-            Action::ToggleViewed => &["v"],
-            Action::NextUnviewed => &[],
-            Action::MarkReviewed => &["m"],
-            Action::Search => &["/"],
-            Action::SearchNext => &[],
-            Action::SearchPrev => &[],
-            Action::FindFile => &["f"],
-            Action::Comment => &["c"],
-            Action::VisualLines => &["x"],
-            Action::Suggest => &[],
-            Action::ReplyThread => &[],
-            Action::ResolveThread => &[],
-            Action::DeleteDraft => &["<Delete>"],
-            Action::FileComment => &[],
-            Action::SubmitReview => &["a"],
-            Action::NextThread => &[],
-            Action::PrevThread => &[],
-            Action::ToggleSinceReview => &[],
-            Action::JumpMove => &[],
-            Action::PickCommits => &[],
-            Action::NextTab => &["<Right>"],
-            Action::PrevTab => &["<Left>"],
-            Action::GoHome => &["h"],
-            Action::GoCode => &[],
-            Action::GoIssues => &[],
-            Action::GoPulls => &[],
-            Action::Tab1 => &["1"],
-            Action::Tab2 => &["2"],
-            Action::Tab3 => &["3"],
-            Action::Tab4 => &["4"],
-            Action::Star => &["s"],
-            Action::Hints => &["l"],
-            Action::HintsBrowser => &[],
-            Action::Forward => &[],
-            Action::Copy => &["y"],
-            Action::Menu => &["<Space>"],
-            Action::Branch => &["b"],
-            Action::ToggleState => &[],
-            Action::Sort => &[],
-            Action::ScrollDown => &[],
-            Action::ScrollUp => &[],
-            Action::PageDown => &["<PageDown>"],
-            Action::PageUp => &["<PageUp>"],
-            Action::UpLevel => &["u"],
-        }
-    }
-
     pub fn from_name(name: &str) -> Option<Action> {
-        Action::ALL.into_iter().find(|a| a.name() == name)
+        Action::ALL.iter().copied().find(|a| a.name() == name)
     }
 }
 
@@ -612,7 +307,7 @@ impl Keymap {
             }
         }
         let mut bindings = Vec::new();
-        for action in Action::ALL {
+        for &action in Action::ALL {
             let sequences: Vec<String> = match overrides.get(action.name()) {
                 Some(list) => list.clone(),
                 None => action.defaults().iter().map(|s| (*s).to_owned()).collect(),
@@ -812,15 +507,15 @@ mod tests {
 
     #[test]
     fn sequences_still_work_when_configured() {
-        let overrides = HashMap::from([("go_issues".to_owned(), vec!["zi".to_owned()])]);
+        let overrides = HashMap::from([("sort".to_owned(), vec!["zs".to_owned()])]);
         let keymap = Keymap::with_overrides(&overrides).unwrap();
         assert_eq!(
             keymap.resolve(&[key('z')], Scope::Page),
             Resolution::Pending
         );
         assert_eq!(
-            keymap.resolve(&[key('z'), key('i')], Scope::Page),
-            Resolution::Action(Action::GoIssues)
+            keymap.resolve(&[key('z'), key('s')], Scope::Page),
+            Resolution::Action(Action::Sort)
         );
     }
 

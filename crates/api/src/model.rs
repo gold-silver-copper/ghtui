@@ -2,9 +2,10 @@
 //! These are what get cached, so changing them requires bumping
 //! `ghtui_store::SCHEMA_VERSION`.
 
+use ghtui_schema::schema;
 use serde::{Deserialize, Serialize};
 
-use crate::queries as q;
+use crate::queries::{self as q, nodes};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RepoId {
@@ -171,7 +172,8 @@ pub struct PrDetail {
     pub labels: Vec<Label>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[cynic(graphql_type = "FileViewedState", schema_module = "schema")]
 pub enum ViewedState {
     Unviewed,
     Viewed,
@@ -187,7 +189,8 @@ pub struct ViewedFiles {
     pub states: std::collections::HashMap<String, ViewedState>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cynic(graphql_type = "DiffSide", schema_module = "schema")]
 pub enum Side {
     /// Base (old) lines.
     Left,
@@ -297,10 +300,17 @@ fn checks(commits: &q::CommitRollupConnection) -> Option<ChecksState> {
     })
 }
 
-fn author(actor: &Option<q::Actor>) -> String {
-    actor
-        .as_ref()
-        .map_or_else(|| "ghost".to_owned(), |a| a.login.clone())
+pub(crate) fn author(actor: Option<q::Actor>) -> String {
+    actor.map_or_else(|| "ghost".to_owned(), |a| a.login)
+}
+
+pub(crate) fn labels(labels: Option<q::LabelConnection>) -> Vec<Label> {
+    nodes(labels.and_then(|l| l.nodes))
+        .map(|l| Label {
+            name: l.name,
+            color: l.color,
+        })
+        .collect()
 }
 
 fn pr_ref(name_with_owner: &str, number: i32) -> Option<PrRef> {
@@ -310,18 +320,18 @@ fn pr_ref(name_with_owner: &str, number: i32) -> Option<PrRef> {
     })
 }
 
-fn count(n: i32) -> u64 {
+pub(crate) fn count(n: i32) -> u64 {
     u64::try_from(n).unwrap_or(0)
 }
 
 impl PrSummary {
-    pub(crate) fn from_wire(pr: &q::PrSummary) -> Option<Self> {
+    pub(crate) fn from_wire(pr: q::PrSummary) -> Option<Self> {
         Some(Self {
             pr: pr_ref(&pr.repository.name_with_owner, pr.number)?,
-            title: pr.title.clone(),
-            author: author(&pr.author),
+            title: pr.title,
+            author: author(pr.author),
             state: state(pr.state, pr.is_draft),
-            updated_at: pr.updated_at.0.clone(),
+            updated_at: pr.updated_at.0,
             additions: count(pr.additions),
             deletions: count(pr.deletions),
             comments: count(pr.comments.total_count),
@@ -332,12 +342,8 @@ impl PrSummary {
 }
 
 /// PRs from one search, and GitHub's total match count.
-pub(crate) fn search_results(conn: &q::SearchConnection) -> (Vec<PrSummary>, u64) {
-    let prs = conn
-        .nodes
-        .iter()
-        .flatten()
-        .flatten()
+pub(crate) fn search_results(conn: q::SearchConnection) -> (Vec<PrSummary>, u64) {
+    let prs = nodes(conn.nodes)
         .filter_map(|item| match item {
             q::SearchItem::PullRequest(pr) => PrSummary::from_wire(pr),
             q::SearchItem::Other => None,
@@ -347,62 +353,35 @@ pub(crate) fn search_results(conn: &q::SearchConnection) -> (Vec<PrSummary>, u64
 }
 
 impl PrDetail {
-    pub(crate) fn from_wire(pr: &q::PrDetail) -> Option<Self> {
-        let summary = PrSummary {
-            pr: pr_ref(&pr.repository.name_with_owner, pr.number)?,
-            title: pr.title.clone(),
-            author: author(&pr.author),
-            state: state(pr.state, pr.is_draft),
-            updated_at: pr.updated_at.0.clone(),
-            additions: count(pr.additions),
-            deletions: count(pr.deletions),
-            comments: count(pr.comments.total_count),
-            review: review(pr.review_decision),
-            checks: checks(&pr.commits),
-        };
+    pub(crate) fn from_wire(pr: q::PrDetail) -> Option<Self> {
         Some(Self {
-            summary,
-            body: pr.body.clone(),
-            created_at: pr.created_at.0.clone(),
-            base_ref: pr.base_ref_name.clone(),
-            head_ref: pr.head_ref_name.clone(),
-            base_oid: pr.base_ref_oid.0.clone(),
-            head_oid: pr.head_ref_oid.0.clone(),
-            head_repo: pr
-                .head_repository
-                .as_ref()
-                .map(|r| r.name_with_owner.clone()),
+            summary: PrSummary::from_wire(pr.summary)?,
+            body: pr.body,
+            created_at: pr.created_at.0,
+            base_ref: pr.base_ref_name,
+            head_ref: pr.head_ref_name,
+            base_oid: pr.base_ref_oid.0,
+            head_oid: pr.head_ref_oid.0,
+            head_repo: pr.head_repository.map(|r| r.name_with_owner),
             changed_files: count(pr.changed_files),
             mergeable: match pr.mergeable {
                 q::MergeableState::Mergeable => Mergeable::Yes,
                 q::MergeableState::Conflicting => Mergeable::Conflicting,
                 q::MergeableState::Unknown => Mergeable::Unknown,
             },
-            labels: pr
-                .labels
-                .iter()
-                .flat_map(|c| c.nodes.iter().flatten().flatten())
-                .map(|l| Label {
-                    name: l.name.clone(),
-                    color: l.color.clone(),
-                })
-                .collect(),
+            labels: labels(pr.labels),
         })
     }
 }
 
 impl ReviewThread {
     pub(crate) fn from_wire(t: q::ReviewThread) -> Self {
-        let side = |s: q::DiffSide| match s {
-            q::DiffSide::Left => Side::Left,
-            q::DiffSide::Right => Side::Right,
-        };
         let line = |n: Option<i32>| n.and_then(|n| u32::try_from(n).ok());
         Self {
             id: t.id.into_inner(),
             path: t.path,
-            side: side(t.diff_side),
-            start_side: t.start_diff_side.map(side),
+            side: t.diff_side,
+            start_side: t.start_diff_side,
             line: line(t.line),
             start_line: line(t.start_line),
             original_line: line(t.original_line),
@@ -413,15 +392,10 @@ impl ReviewThread {
             can_reply: t.viewer_can_reply,
             can_resolve: t.viewer_can_resolve,
             can_unresolve: t.viewer_can_unresolve,
-            comments: t
-                .comments
-                .nodes
-                .into_iter()
-                .flatten()
-                .flatten()
+            comments: nodes(t.comments.nodes)
                 .map(|c| ReviewComment {
                     id: c.id.into_inner(),
-                    author: author(&c.author),
+                    author: author(c.author),
                     body: c.body,
                     created_at: c.created_at.0,
                     url: c.url.0,

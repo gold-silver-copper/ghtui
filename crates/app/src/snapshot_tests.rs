@@ -21,7 +21,7 @@ use crate::browse::{Data, DataKey};
 use crate::fixtures;
 use crate::keymap::Keymap;
 use crate::route::{OPEN, Route};
-use crate::state::{Msg, Overlay, State, new_palette, update};
+use crate::state::{Msg, Overlay, State, update};
 use crate::view::view;
 
 /// 2026-10-03T12:00:00Z
@@ -477,18 +477,19 @@ fn repo_wide_with_about_dark() {
 }
 
 #[test]
-fn help_overlay_dark() {
+fn menu_overlay_dark() {
     let mut state = with_inbox(Mode::Dark, ColorDepth::TrueColor);
-    state.overlay = Some(Overlay::Help);
+    crate::nav::open_menu(&mut state);
     insta::assert_snapshot!(render(&state));
 }
 
 #[test]
 fn palette_light() {
     let mut state = with_inbox(Mode::Light, ColorDepth::TrueColor);
-    let mut palette = new_palette(&state.theme);
-    palette.input.insert_str("ratatui");
-    state.overlay = Some(Overlay::Palette(Box::new(palette)));
+    state.open_picker(crate::picker::Kind::Commands);
+    if let Some(Overlay::Picker(p)) = &mut state.overlay {
+        p.input.insert_str("ratatui");
+    }
     insta::assert_snapshot!(render(&state));
 }
 
@@ -502,7 +503,7 @@ fn narrow_terminal_does_not_panic() {
             state.screens.truncate(1);
             update(&mut state, Msg::Resize(w, h));
             render(&state);
-            state.overlay = Some(Overlay::Help);
+            crate::nav::open_menu(&mut state);
             render(&state);
             let mut state = with_repo(mode, ColorDepth::TrueColor);
             update(&mut state, Msg::Resize(w, h));

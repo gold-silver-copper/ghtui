@@ -301,22 +301,148 @@ impl Pair {
 pub struct Theme {
     pub mode: Mode,
     pub depth: ColorDepth,
-    pub seed: Rgb,
     bg: HashMap<Bg, Rgb>,
     fg: HashMap<Fg, Rgb>,
 }
 
 impl Theme {
     pub fn new(seed: Rgb, mode: Mode, depth: ColorDepth) -> Self {
-        Builder::new(seed, mode, depth).build()
+        let material = ThemeBuilder::with_source(seed.into())
+            .variant(Variant::TonalSpot)
+            .build();
+        let scheme = match mode {
+            Mode::Light => material.schemes.light,
+            Mode::Dark => material.schemes.dark,
+        };
+        let dark = mode == Mode::Dark;
+        let rgb = |c: material_colors::color::Rgb| Rgb::from(c);
+        let seed_mc: material_colors::color::Rgb = seed.into();
+        let hue_of = |hex: u32| {
+            Rgb::from(harmonize(
+                material_colors::color::Rgb::from_u32(hex),
+                seed_mc,
+            ))
+            .to_hct()
+            .get_hue()
+        };
+        let green = hue_of(0x2da44e);
+        let red = hue_of(0xcf222e);
+        let orange = hue_of(0xd18616);
+        let primary_hue = rgb(scheme.primary).to_hct().get_hue();
+        let tertiary_hue = rgb(scheme.tertiary).to_hct().get_hue();
+
+        // Tones for "colored text on this scheme's surfaces" and for tinted
+        // backgrounds that stay close to the surface.
+        let text_tone = if dark { 80.0 } else { 40.0 };
+        let container_tone = if dark { 30.0 } else { 90.0 };
+        let on_container_tone = if dark { 90.0 } else { 10.0 };
+        let (diff_tone, diff_token_tone) = if dark { (14.0, 24.0) } else { (95.0, 86.0) };
+        let hct = |hue: f64, chroma: f64, tone: f64| Rgb::from_hct(hue, chroma, tone);
+
+        let mut bg = HashMap::new();
+        let surface = rgb(scheme.surface);
+        bg.insert(Bg::Surface, surface);
+        bg.insert(Bg::ContainerLowest, rgb(scheme.surface_container_lowest));
+        bg.insert(Bg::ContainerLow, rgb(scheme.surface_container_low));
+        bg.insert(Bg::Container, rgb(scheme.surface_container));
+        bg.insert(Bg::ContainerHigh, rgb(scheme.surface_container_high));
+        bg.insert(Bg::ContainerHighest, rgb(scheme.surface_container_highest));
+        bg.insert(Bg::Primary, rgb(scheme.primary));
+        bg.insert(Bg::PrimaryContainer, rgb(scheme.primary_container));
+        bg.insert(Bg::SecondaryContainer, rgb(scheme.secondary_container));
+        bg.insert(Bg::TertiaryContainer, rgb(scheme.tertiary_container));
+        bg.insert(Bg::ErrorContainer, rgb(scheme.error_container));
+        bg.insert(Bg::SuccessContainer, hct(green, 36.0, container_tone));
+
+        bg.insert(Bg::Diff(DiffBg::Context), surface);
+        bg.insert(Bg::Diff(DiffBg::Added), hct(green, 16.0, diff_tone));
+        bg.insert(Bg::Diff(DiffBg::Removed), hct(red, 16.0, diff_tone));
+        bg.insert(
+            Bg::Diff(DiffBg::AddedToken),
+            hct(green, 30.0, diff_token_tone),
+        );
+        bg.insert(
+            Bg::Diff(DiffBg::RemovedToken),
+            hct(red, 30.0, diff_token_tone),
+        );
+        bg.insert(Bg::Diff(DiffBg::Moved), hct(tertiary_hue, 16.0, diff_tone));
+
+        // State layers: primary composited over the base surface. In 256-color
+        // mode, raise the opacity until the selection is actually visible.
+        let primary = rgb(scheme.primary);
+        let layer = |base: Rgb, opacity: f64| -> Rgb {
+            let mut opacity = opacity;
+            loop {
+                let c = base.blend(primary, opacity);
+                if opacity >= 0.4 || displayed(depth, c) != displayed(depth, base) {
+                    return c;
+                }
+                opacity += 0.02;
+            }
+        };
+        bg.insert(Bg::Selected, layer(bg[&Bg::ContainerLow], 0.12));
+        bg.insert(Bg::SelectedInactive, layer(surface, 0.08));
+        bg.insert(Bg::SelectedHigh, layer(bg[&Bg::ContainerHigh], 0.14));
+        for d in DiffBg::ALL {
+            bg.insert(Bg::DiffSelected(d), layer(bg[&Bg::Diff(d)], 0.14));
+        }
+
+        let mut fg = HashMap::new();
+        let on_surface = rgb(scheme.on_surface);
+        let on_surface_variant = rgb(scheme.on_surface_variant);
+        fg.insert(Fg::OnSurface, on_surface);
+        fg.insert(Fg::OnSurfaceVariant, on_surface_variant);
+        fg.insert(Fg::Primary, primary);
+        fg.insert(Fg::Tertiary, rgb(scheme.tertiary));
+        fg.insert(Fg::Error, rgb(scheme.error));
+        fg.insert(Fg::Success, hct(green, 48.0, text_tone));
+        fg.insert(Fg::Disabled, surface.blend(on_surface, 0.38));
+        fg.insert(Fg::OutlineVariant, rgb(scheme.outline_variant));
+        fg.insert(Fg::OnPrimary, rgb(scheme.on_primary));
+        fg.insert(Fg::OnPrimaryContainer, rgb(scheme.on_primary_container));
+        fg.insert(Fg::OnSecondaryContainer, rgb(scheme.on_secondary_container));
+        fg.insert(Fg::OnTertiaryContainer, rgb(scheme.on_tertiary_container));
+        fg.insert(Fg::OnErrorContainer, rgb(scheme.on_error_container));
+        fg.insert(Fg::OnSuccessContainer, hct(green, 36.0, on_container_tone));
+        fg.insert(Fg::DiffAddedSign, hct(green, 48.0, text_tone));
+        fg.insert(Fg::DiffRemovedSign, hct(red, 48.0, text_tone));
+
+        // Syntax: keywords primary, strings tertiary, comments and
+        // punctuation on-surface-variant, the rest spread around the seed.
+        let syntax = [
+            (Syntax::Default, on_surface),
+            (Syntax::Keyword, hct(primary_hue, 52.0, text_tone)),
+            (Syntax::String, hct(tertiary_hue, 40.0, text_tone)),
+            (Syntax::Comment, on_surface_variant),
+            (Syntax::Function, hct(primary_hue - 50.0, 36.0, text_tone)),
+            (Syntax::Type, hct(tertiary_hue + 50.0, 36.0, text_tone)),
+            (Syntax::Number, hct(orange, 48.0, text_tone)),
+            (Syntax::Constant, hct(orange, 40.0, text_tone)),
+            (Syntax::Operator, on_surface_variant),
+            (Syntax::Punctuation, on_surface_variant),
+            (Syntax::Attribute, hct(primary_hue + 180.0, 32.0, text_tone)),
+            (Syntax::Property, hct(primary_hue, 16.0, text_tone)),
+        ];
+        for (role, c) in syntax {
+            fg.insert(Fg::Syntax(role), c);
+        }
+
+        let mut theme = Theme {
+            mode,
+            depth,
+            bg,
+            fg,
+        };
+        for role in Fg::all() {
+            let adjusted = enforce_contrast(&theme, role);
+            theme.fg.insert(role, adjusted);
+        }
+        theme
     }
 
     /// The color shown on screen for a design color, after quantization.
     pub fn displayed(&self, c: Rgb) -> Rgb {
-        match self.depth {
-            ColorDepth::TrueColor => c,
-            ColorDepth::Ansi256 => color::xterm_color(color::nearest_xterm(c)),
-        }
+        displayed(self.depth, c)
     }
 
     fn term_color(&self, c: Rgb) -> Color {
@@ -395,15 +521,6 @@ impl Theme {
         self.style(Fg::OutlineVariant, bg)
     }
 
-    pub fn syntax(&self, role: Syntax, bg: DiffBg) -> Style {
-        let style = self.style(Fg::Syntax(role), Bg::Diff(bg));
-        if role == Syntax::Comment {
-            style.add_modifier(Modifier::ITALIC)
-        } else {
-            style
-        }
-    }
-
     /// Whether two background roles render identically at this color depth,
     /// meaning a boundary between them needs an outline instead of tone.
     pub fn tones_collapse(&self, a: Bg, b: Bg) -> bool {
@@ -451,157 +568,10 @@ impl Theme {
     }
 }
 
-struct Builder {
-    seed: Rgb,
-    mode: Mode,
-    depth: ColorDepth,
-}
-
-impl Builder {
-    fn new(seed: Rgb, mode: Mode, depth: ColorDepth) -> Self {
-        Self { seed, mode, depth }
-    }
-
-    fn build(self) -> Theme {
-        let material = ThemeBuilder::with_source(self.seed.into())
-            .variant(Variant::TonalSpot)
-            .build();
-        let scheme = match self.mode {
-            Mode::Light => material.schemes.light,
-            Mode::Dark => material.schemes.dark,
-        };
-        let dark = self.mode == Mode::Dark;
-        let rgb = |c: material_colors::color::Rgb| Rgb::from(c);
-        let seed_mc: material_colors::color::Rgb = self.seed.into();
-        let hue_of = |hex: u32| {
-            Rgb::from(harmonize(
-                material_colors::color::Rgb::from_u32(hex),
-                seed_mc,
-            ))
-            .to_hct()
-            .get_hue()
-        };
-        let green = hue_of(0x2da44e);
-        let red = hue_of(0xcf222e);
-        let orange = hue_of(0xd18616);
-        let primary_hue = rgb(scheme.primary).to_hct().get_hue();
-        let tertiary_hue = rgb(scheme.tertiary).to_hct().get_hue();
-
-        // Tones for "colored text on this scheme's surfaces" and for tinted
-        // backgrounds that stay close to the surface.
-        let text_tone = if dark { 80.0 } else { 40.0 };
-        let container_tone = if dark { 30.0 } else { 90.0 };
-        let on_container_tone = if dark { 90.0 } else { 10.0 };
-        let (diff_tone, diff_token_tone) = if dark { (14.0, 24.0) } else { (95.0, 86.0) };
-        let hct = |hue: f64, chroma: f64, tone: f64| Rgb::from_hct(hue, chroma, tone);
-
-        let mut bg = HashMap::new();
-        let surface = rgb(scheme.surface);
-        bg.insert(Bg::Surface, surface);
-        bg.insert(Bg::ContainerLowest, rgb(scheme.surface_container_lowest));
-        bg.insert(Bg::ContainerLow, rgb(scheme.surface_container_low));
-        bg.insert(Bg::Container, rgb(scheme.surface_container));
-        bg.insert(Bg::ContainerHigh, rgb(scheme.surface_container_high));
-        bg.insert(Bg::ContainerHighest, rgb(scheme.surface_container_highest));
-        bg.insert(Bg::Primary, rgb(scheme.primary));
-        bg.insert(Bg::PrimaryContainer, rgb(scheme.primary_container));
-        bg.insert(Bg::SecondaryContainer, rgb(scheme.secondary_container));
-        bg.insert(Bg::TertiaryContainer, rgb(scheme.tertiary_container));
-        bg.insert(Bg::ErrorContainer, rgb(scheme.error_container));
-        bg.insert(Bg::SuccessContainer, hct(green, 36.0, container_tone));
-
-        bg.insert(Bg::Diff(DiffBg::Context), surface);
-        bg.insert(Bg::Diff(DiffBg::Added), hct(green, 16.0, diff_tone));
-        bg.insert(Bg::Diff(DiffBg::Removed), hct(red, 16.0, diff_tone));
-        bg.insert(
-            Bg::Diff(DiffBg::AddedToken),
-            hct(green, 30.0, diff_token_tone),
-        );
-        bg.insert(
-            Bg::Diff(DiffBg::RemovedToken),
-            hct(red, 30.0, diff_token_tone),
-        );
-        bg.insert(Bg::Diff(DiffBg::Moved), hct(tertiary_hue, 16.0, diff_tone));
-
-        // State layers: primary composited over the base surface. In 256-color
-        // mode, raise the opacity until the selection is actually visible.
-        let primary = rgb(scheme.primary);
-        let layer = |base: Rgb, opacity: f64| -> Rgb {
-            let mut opacity = opacity;
-            loop {
-                let c = base.blend(primary, opacity);
-                if opacity >= 0.4 || self.displayed(c) != self.displayed(base) {
-                    return c;
-                }
-                opacity += 0.02;
-            }
-        };
-        bg.insert(Bg::Selected, layer(bg[&Bg::ContainerLow], 0.12));
-        bg.insert(Bg::SelectedInactive, layer(surface, 0.08));
-        bg.insert(Bg::SelectedHigh, layer(bg[&Bg::ContainerHigh], 0.14));
-        for d in DiffBg::ALL {
-            bg.insert(Bg::DiffSelected(d), layer(bg[&Bg::Diff(d)], 0.14));
-        }
-
-        let mut fg = HashMap::new();
-        let on_surface = rgb(scheme.on_surface);
-        let on_surface_variant = rgb(scheme.on_surface_variant);
-        fg.insert(Fg::OnSurface, on_surface);
-        fg.insert(Fg::OnSurfaceVariant, on_surface_variant);
-        fg.insert(Fg::Primary, primary);
-        fg.insert(Fg::Tertiary, rgb(scheme.tertiary));
-        fg.insert(Fg::Error, rgb(scheme.error));
-        fg.insert(Fg::Success, hct(green, 48.0, text_tone));
-        fg.insert(Fg::Disabled, surface.blend(on_surface, 0.38));
-        fg.insert(Fg::OutlineVariant, rgb(scheme.outline_variant));
-        fg.insert(Fg::OnPrimary, rgb(scheme.on_primary));
-        fg.insert(Fg::OnPrimaryContainer, rgb(scheme.on_primary_container));
-        fg.insert(Fg::OnSecondaryContainer, rgb(scheme.on_secondary_container));
-        fg.insert(Fg::OnTertiaryContainer, rgb(scheme.on_tertiary_container));
-        fg.insert(Fg::OnErrorContainer, rgb(scheme.on_error_container));
-        fg.insert(Fg::OnSuccessContainer, hct(green, 36.0, on_container_tone));
-        fg.insert(Fg::DiffAddedSign, hct(green, 48.0, text_tone));
-        fg.insert(Fg::DiffRemovedSign, hct(red, 48.0, text_tone));
-
-        // Syntax: keywords primary, strings tertiary, comments and
-        // punctuation on-surface-variant, the rest spread around the seed.
-        let syntax = [
-            (Syntax::Default, on_surface),
-            (Syntax::Keyword, hct(primary_hue, 52.0, text_tone)),
-            (Syntax::String, hct(tertiary_hue, 40.0, text_tone)),
-            (Syntax::Comment, on_surface_variant),
-            (Syntax::Function, hct(primary_hue - 50.0, 36.0, text_tone)),
-            (Syntax::Type, hct(tertiary_hue + 50.0, 36.0, text_tone)),
-            (Syntax::Number, hct(orange, 48.0, text_tone)),
-            (Syntax::Constant, hct(orange, 40.0, text_tone)),
-            (Syntax::Operator, on_surface_variant),
-            (Syntax::Punctuation, on_surface_variant),
-            (Syntax::Attribute, hct(primary_hue + 180.0, 32.0, text_tone)),
-            (Syntax::Property, hct(primary_hue, 16.0, text_tone)),
-        ];
-        for (role, c) in syntax {
-            fg.insert(Fg::Syntax(role), c);
-        }
-
-        let mut theme = Theme {
-            mode: self.mode,
-            depth: self.depth,
-            seed: self.seed,
-            bg,
-            fg,
-        };
-        for role in Fg::all() {
-            let adjusted = enforce_contrast(&theme, role);
-            theme.fg.insert(role, adjusted);
-        }
-        theme
-    }
-
-    fn displayed(&self, c: Rgb) -> Rgb {
-        match self.depth {
-            ColorDepth::TrueColor => c,
-            ColorDepth::Ansi256 => color::xterm_color(color::nearest_xterm(c)),
-        }
+fn displayed(depth: ColorDepth, c: Rgb) -> Rgb {
+    match depth {
+        ColorDepth::TrueColor => c,
+        ColorDepth::Ansi256 => color::xterm_color(color::nearest_xterm(c)),
     }
 }
 

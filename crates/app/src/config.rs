@@ -31,7 +31,7 @@ pub struct ThemeConfig {
     pub color_depth: DepthSetting,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum ModeSetting {
     #[default]

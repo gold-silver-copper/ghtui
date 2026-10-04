@@ -1,78 +1,16 @@
-//! Top bar (title and tabs) and status bar: flat filled bars on
-//! surface-container with left- and right-aligned content.
+//! Status bar and banners: flat filled bars with left- and right-aligned
+//! content.
 
 use ghtui_theme::Bg;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Span;
 use ratatui::widgets::Widget;
 
-use crate::{Ctx, PAD_X, chips, fill, text};
+use crate::{Ctx, PAD_X, fill, inset, key_hints, render_split, text};
 
 const BAR: Bg = Bg::Container;
-
-/// Renders `left` and `right` on one padded line, truncating the left side
-/// first when they don't fit.
-fn render_split(area: Rect, buf: &mut Buffer, left: Vec<Span<'_>>, right: Vec<Span<'_>>) {
-    let inner = Rect {
-        x: area.x + PAD_X.min(area.width / 2),
-        width: area.width.saturating_sub(2 * PAD_X),
-        ..area
-    };
-    let right_width = right.iter().map(Span::width).sum::<usize>() as u16;
-    let right_width = right_width.min(inner.width);
-    let left_area = Rect {
-        width: inner.width.saturating_sub(right_width + 1),
-        ..inner
-    };
-    let right_area = Rect {
-        x: inner.right() - right_width,
-        width: right_width,
-        ..inner
-    };
-    Line::from(left).render(left_area, buf);
-    Line::from(right).render(right_area, buf);
-}
-
-pub struct TopBar<'a> {
-    pub ctx: Ctx<'a>,
-    pub tabs: &'a [String],
-    pub active: usize,
-    /// Signed-in user, if known.
-    pub login: Option<&'a str>,
-}
-
-impl Widget for TopBar<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let theme = self.ctx.theme;
-        fill(buf, area, theme, BAR);
-        let mut left = vec![
-            Span::styled("ghtui", theme.accent(BAR).add_modifier(Modifier::BOLD)),
-            Span::styled("  ", theme.body(BAR)),
-        ];
-        for (i, tab) in self.tabs.iter().enumerate() {
-            if i == self.active {
-                left.extend(chips::chip(
-                    self.ctx,
-                    tab.clone(),
-                    theme
-                        .fill(Bg::SecondaryContainer)
-                        .add_modifier(Modifier::BOLD),
-                    BAR,
-                ));
-            } else {
-                left.push(Span::styled(format!(" {tab} "), theme.meta(BAR)));
-            }
-            left.push(Span::styled(" ", theme.body(BAR)));
-        }
-        let right = match self.login {
-            Some(login) => vec![Span::styled(format!("@{login}"), theme.meta(BAR))],
-            None => Vec::new(),
-        };
-        render_split(area, buf, left, right);
-    }
-}
 
 /// Transient message shown at the left of the status bar.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,11 +95,7 @@ impl Widget for StatusBar<'_> {
                 if gap > 0 {
                     left.push(Span::styled("   ", theme.body(BAR)));
                 }
-                left.push(Span::styled(
-                    keys.clone(),
-                    theme.accent(BAR).add_modifier(Modifier::BOLD),
-                ));
-                left.push(Span::styled(format!(" {what}"), theme.meta(BAR)));
+                left.extend(key_hints(theme, BAR, &[(keys.as_str(), what.as_str())]));
             }
         }
         while right
@@ -170,7 +104,7 @@ impl Widget for StatusBar<'_> {
         {
             right.pop();
         }
-        render_split(area, buf, left, right);
+        render_split(inset(area, PAD_X, 0), buf, left, right, 1);
     }
 }
 
@@ -199,6 +133,6 @@ impl Widget for Banner<'_> {
             hint.to_owned(),
             style.add_modifier(Modifier::BOLD),
         )];
-        render_split(area, buf, left, right);
+        render_split(inset(area, PAD_X, 0), buf, left, right, 1);
     }
 }

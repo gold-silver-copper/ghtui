@@ -29,7 +29,7 @@ use crate::text;
 const DEFAULT_WRAP: u16 = 72;
 
 /// Lines revealed per expansion step.
-pub const EXPAND_STEP: u32 = 20;
+const EXPAND_STEP: u32 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Note {
@@ -93,6 +93,18 @@ pub enum Row {
         from: bool,
     },
     Spacer,
+}
+
+impl Row {
+    /// The alignment entries a line row shows (none for other rows).
+    pub fn entries(self) -> impl Iterator<Item = u32> {
+        let (a, b) = match self {
+            Row::Line(e) => (Some(e), None),
+            Row::Split { left, right } => (left, right),
+            _ => (None, None),
+        };
+        a.into_iter().chain(b)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -465,11 +477,7 @@ impl DocFile {
         let tail = self.rows.split_off(from);
         for row in tail {
             self.rows.push(row);
-            let entries: Vec<u32> = match row {
-                Row::Line(e) => vec![e],
-                Row::Split { left, right } => left.into_iter().chain(right).collect(),
-                _ => continue,
-            };
+            let entries: Vec<u32> = row.entries().collect();
             for (mv, range, is_from) in extras.moves {
                 if entries.contains(&range.start) {
                     self.rows.push(Row::Moved {
@@ -523,6 +531,14 @@ impl DocFile {
             _ => None,
         }
     }
+}
+
+/// Whether a thread is expanded: as the user left it, or by default.
+fn is_open(thread_open: &HashMap<AnnotationKey, bool>, ann: &Annotation) -> bool {
+    thread_open
+        .get(&ann.key)
+        .copied()
+        .unwrap_or_else(|| ann.open_by_default())
 }
 
 fn counts_in(lines: &[DiffLine]) -> (u32, u32) {
@@ -701,12 +717,7 @@ impl Doc {
             .filter(|(_, a)| a.path == path)
             .map(|(i, a)| (i as u32, a))
             .collect();
-        let open = |a: &Annotation| {
-            thread_open
-                .get(&a.key)
-                .copied()
-                .unwrap_or_else(|| a.open_by_default())
-        };
+        let open = |a: &Annotation| is_open(thread_open, a);
         let extras = Extras {
             anns: &anns,
             open: &open,
@@ -741,11 +752,7 @@ impl Doc {
     pub fn move_at(&self, pos: Pos) -> Option<(u32, bool)> {
         match self.row(pos)? {
             Row::Moved { mv, from } => Some((mv, from)),
-            Row::Line(e) => self.move_at_entry(pos.file, e),
-            Row::Split { left, right } => left
-                .and_then(|e| self.move_at_entry(pos.file, e))
-                .or_else(|| right.and_then(|e| self.move_at_entry(pos.file, e))),
-            _ => None,
+            row => row.entries().find_map(|e| self.move_at_entry(pos.file, e)),
         }
     }
 
@@ -754,13 +761,9 @@ impl Doc {
         let m = self.moves.get(mv as usize)?;
         let (file, entries) = if from_side { &m.to } else { &m.from };
         let rows = self.files.get(*file)?.rows();
-        let row = rows.iter().position(|r| match r {
-            Row::Line(e) => *e == entries.start,
-            Row::Split { left, right } => {
-                *left == Some(entries.start) || *right == Some(entries.start)
-            }
-            _ => false,
-        })?;
+        let row = rows
+            .iter()
+            .position(|r| r.entries().any(|e| e == entries.start))?;
         Some(Pos { file: *file, row })
     }
 
@@ -807,11 +810,7 @@ impl Doc {
         let Some(ann) = self.annotations.get(index as usize) else {
             return;
         };
-        let open = self
-            .thread_open
-            .get(&ann.key)
-            .copied()
-            .unwrap_or_else(|| ann.open_by_default());
+        let open = is_open(&self.thread_open, ann);
         self.thread_open.insert(ann.key.clone(), !open);
         if let Some(file) = self.files.iter().position(|f| f.meta.path() == ann.path) {
             self.rebuild(file);
@@ -863,21 +862,11 @@ impl Doc {
         let file = self.files.get(pos.file)?;
         match self.row(pos)? {
             Row::Thread(t) => file.thread_row(t).map(|r| r.ann),
-            Row::Line(e) => self.entry_annotations(file, &[e]).first().copied(),
-            Row::Split { left, right } => {
-                let entries: Vec<u32> = left.into_iter().chain(right).collect();
-                self.entry_annotations(file, &entries).first().copied()
-            }
-            _ => None,
+            row => row
+                .entries()
+                .flat_map(|e| file.entry_lines(e, self.opts.whitespace))
+                .find_map(|pos| file.annotations_at(pos).first().copied()),
         }
-    }
-
-    fn entry_annotations(&self, file: &DocFile, entries: &[u32]) -> Vec<u32> {
-        entries
-            .iter()
-            .flat_map(|e| file.entry_lines(*e, self.opts.whitespace))
-            .flat_map(|pos| file.annotations_at(pos).to_vec())
-            .collect()
     }
 
     /// Whether a row is where an unresolved thread starts: its first row,
@@ -914,18 +903,11 @@ impl Doc {
     }
 
     pub fn next_thread(&self, pos: Pos) -> Option<Pos> {
-        let start = self.to_global(pos) + 1;
-        (start..self.total)
-            .map(|g| self.to_pos(g))
-            .find(|p| self.is_open_thread_start(*p))
+        self.find_after(pos, |p| self.is_open_thread_start(p))
     }
 
     pub fn prev_thread(&self, pos: Pos) -> Option<Pos> {
-        let start = self.to_global(pos);
-        (0..start)
-            .rev()
-            .map(|g| self.to_pos(g))
-            .find(|p| self.is_open_thread_start(*p))
+        self.find_before(pos, |p| self.is_open_thread_start(p))
     }
 
     fn reindex(&mut self) {
@@ -1005,11 +987,6 @@ impl Doc {
             Row::Gap { start, end } => vec![start..start + step, end - step..end],
             _ => {
                 let rows = &file.rows;
-                let entry_of = |r: &Row| match r {
-                    Row::Line(e) => Some(*e),
-                    Row::Split { left, right } => left.or(*right),
-                    _ => None,
-                };
                 // Rows of the segment around `pos`.
                 let begin = rows[..=pos.row]
                     .iter()
@@ -1019,7 +996,10 @@ impl Doc {
                     .iter()
                     .position(|r| matches!(r, Row::Gap { .. } | Row::Spacer | Row::Hunk { .. }))
                     .map_or(rows.len(), |p| p + begin + 1);
-                let entries: Vec<u32> = rows[begin..end].iter().filter_map(entry_of).collect();
+                let entries: Vec<u32> = rows[begin..end]
+                    .iter()
+                    .filter_map(|r| r.entries().next())
+                    .collect();
                 let (Some(first), Some(last)) = (entries.iter().min(), entries.iter().max()) else {
                     return;
                 };
@@ -1132,27 +1112,24 @@ impl Doc {
         self.to_pos(self.total.saturating_sub(1))
     }
 
-    fn find_after(&self, pos: Pos, pred: impl Fn(Row) -> bool) -> Option<Pos> {
+    fn find_after(&self, pos: Pos, pred: impl Fn(Pos) -> bool) -> Option<Pos> {
         let start = self.to_global(pos) + 1;
         (start..self.total)
             .map(|g| self.to_pos(g))
-            .find(|p| self.row(*p).is_some_and(&pred))
+            .find(|p| pred(*p))
     }
 
-    fn find_before(&self, pos: Pos, pred: impl Fn(Row) -> bool) -> Option<Pos> {
+    fn find_before(&self, pos: Pos, pred: impl Fn(Pos) -> bool) -> Option<Pos> {
         let start = self.to_global(pos);
-        (0..start)
-            .rev()
-            .map(|g| self.to_pos(g))
-            .find(|p| self.row(*p).is_some_and(&pred))
+        (0..start).rev().map(|g| self.to_pos(g)).find(|p| pred(*p))
     }
 
     pub fn next_hunk(&self, pos: Pos) -> Option<Pos> {
-        self.find_after(pos, |r| matches!(r, Row::Hunk { .. }))
+        self.find_after(pos, |p| matches!(self.row(p), Some(Row::Hunk { .. })))
     }
 
     pub fn prev_hunk(&self, pos: Pos) -> Option<Pos> {
-        self.find_before(pos, |r| matches!(r, Row::Hunk { .. }))
+        self.find_before(pos, |p| matches!(self.row(p), Some(Row::Hunk { .. })))
     }
 
     pub fn next_file(&self, pos: Pos) -> Option<Pos> {
@@ -1226,12 +1203,7 @@ impl Doc {
     /// The block under `pos`, if it's on a changed line.
     pub fn block_at(&self, pos: Pos) -> Option<&Block> {
         let file = self.files.get(pos.file)?;
-        let entry = match self.row(pos)? {
-            Row::Line(e) => e,
-            Row::Split { left, right } => left.or(right)?,
-            _ => return None,
-        };
-        file.block_of(entry)
+        file.block_of(self.row(pos)?.entries().next()?)
     }
 
     /// Searchable text of a row.
@@ -1257,12 +1229,21 @@ impl Doc {
         }
     }
 
-    fn matches(&self, pos: Pos, needle: &str, smart_case: bool) -> bool {
-        let text = self.row_text(pos);
-        if smart_case {
-            text.contains(needle)
+    /// Whether a row's text contains `query`, as [`Doc::search`] matches.
+    fn matcher(&self, query: &str) -> impl Fn(Pos) -> bool {
+        let smart_case = query.chars().any(char::is_uppercase);
+        let needle = if smart_case {
+            query.to_owned()
         } else {
-            text.to_lowercase().contains(needle)
+            query.to_lowercase()
+        };
+        move |pos| {
+            let text = self.row_text(pos);
+            if smart_case {
+                text.contains(&needle)
+            } else {
+                text.to_lowercase().contains(&needle)
+            }
         }
     }
 
@@ -1272,12 +1253,7 @@ impl Doc {
         if query.is_empty() || self.total == 0 {
             return None;
         }
-        let smart_case = query.chars().any(char::is_uppercase);
-        let needle = if smart_case {
-            query.to_owned()
-        } else {
-            query.to_lowercase()
-        };
+        let matches = self.matcher(query);
         let start = self.to_global(from);
         let n = self.total;
         (1..=n)
@@ -1289,7 +1265,7 @@ impl Doc {
                 }
             })
             .map(|g| self.to_pos(g))
-            .find(|p| self.matches(*p, &needle, smart_case))
+            .find(|p| matches(*p))
     }
 
     /// How many rows match `query`.
@@ -1297,15 +1273,8 @@ impl Doc {
         if query.is_empty() {
             return 0;
         }
-        let smart_case = query.chars().any(char::is_uppercase);
-        let needle = if smart_case {
-            query.to_owned()
-        } else {
-            query.to_lowercase()
-        };
-        (0..self.total)
-            .filter(|g| self.matches(self.to_pos(*g), &needle, smart_case))
-            .count()
+        let matches = self.matcher(query);
+        (0..self.total).filter(|g| matches(self.to_pos(*g))).count()
     }
 }
 

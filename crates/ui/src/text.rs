@@ -28,6 +28,20 @@ pub fn truncate(s: &str, max: usize) -> String {
     out
 }
 
+/// A commit id cut to GitHub's seven characters.
+pub fn short_sha(oid: &str) -> &str {
+    oid.get(..7).unwrap_or(oid)
+}
+
+/// 1536 → "1.5 KB".
+pub fn size(bytes: u64) -> String {
+    match bytes {
+        0..1024 => format!("{bytes} B"),
+        1024..1_048_576 => format!("{:.1} KB", bytes as f64 / 1024.0),
+        _ => format!("{:.1} MB", bytes as f64 / 1_048_576.0),
+    }
+}
+
 /// Greedy word wrap to `max` columns. Keeps blank lines (paragraph breaks)
 /// and hard-breaks words longer than a line.
 pub fn wrap(text: &str, max: usize) -> Vec<String> {

@@ -4,6 +4,7 @@
 
 use ghtui_diff::highlight::{Language, highlight};
 use ghtui_diff::text::Text;
+use ghtui_theme::Syntax;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::diff_view::syntax_role;
@@ -18,13 +19,7 @@ pub struct LinkBase {
     pub dir: String,
 }
 
-impl LinkBase {
-    /// Resolves a link the way github.com does for a document in a repo.
-    pub fn resolve(&self, url: &str) -> String {
-        resolve(Some(self), url)
-    }
-}
-
+/// Resolves a link the way github.com does for a document in a repo.
 pub fn resolve(base: Option<&LinkBase>, url: &str) -> String {
     let url = url.trim();
     if url.contains("://") || url.starts_with("mailto:") || url.starts_with('#') {
@@ -136,16 +131,14 @@ impl Renderer<'_> {
         if segs.iter().all(|s| s.text.trim().is_empty()) && self.pending_marker.is_none() {
             return;
         }
-        let quote = "│ ".repeat(usize::from(self.quote_depth));
-        let mut indent = self.indent;
         if let Some(marker) = self.pending_marker.take() {
             segs.insert(0, Seg::new(marker, Role::Meta));
         }
-        if !quote.is_empty() {
+        if self.quote_depth > 0 {
+            let quote = "│ ".repeat(usize::from(self.quote_depth));
             segs.insert(0, Seg::new(quote, Role::Meta));
-            indent = indent.saturating_sub(0);
         }
-        self.page.wrapped(segs, indent, self.frame);
+        self.page.wrapped(segs, self.indent, self.frame);
     }
 
     fn html(&mut self, html: &str) {
@@ -298,13 +291,7 @@ impl Renderer<'_> {
             Event::HardBreak => self.text("\n"),
             Event::Rule => {
                 self.flush();
-                let width = usize::from(self.page.room(self.frame, self.indent));
-                self.page.push(PageLine {
-                    segs: vec![Seg::new("─".repeat(width), Role::Meta)],
-                    indent: self.indent,
-                    frame: self.frame,
-                    ..PageLine::default()
-                });
+                self.page.rule(self.indent, self.frame);
             }
             Event::TaskListMarker(done) => {
                 // A checkbox replaces the bullet, as on GitHub.
@@ -411,13 +398,7 @@ impl Renderer<'_> {
                 self.flush();
                 // h1 and h2 are underlined, as on GitHub.
                 if level.is_some_and(|l| l <= HeadingLevel::H2) {
-                    let width = usize::from(self.page.room(self.frame, self.indent));
-                    self.page.push(PageLine {
-                        segs: vec![Seg::new("─".repeat(width), Role::Meta)],
-                        indent: self.indent,
-                        frame: self.frame,
-                        ..PageLine::default()
-                    });
+                    self.page.rule(self.indent, self.frame);
                 }
                 self.page_blank();
             }
@@ -481,55 +462,20 @@ impl Renderer<'_> {
         let Some((lang, code)) = self.code.take() else {
             return;
         };
-        let text = Text::new(code.as_bytes());
-        let spans = highlight(lang, &text);
-        let indent = self.indent;
-        let frame = self.frame;
-        self.page.push(PageLine {
+        let (indent, frame) = (self.indent, self.frame);
+        let line = |segs| PageLine {
+            segs,
             tone: Tone::Code,
             frame,
             indent,
-            ..PageLine::default()
-        });
-        for i in 0..text.len() {
-            let line = text.line(i);
-            let mut segs = Vec::new();
-            let mut at = 0usize;
-            for s in spans.get(i).map_or(&[][..], Vec::as_slice) {
-                let (a, b) = (s.start as usize, s.end as usize);
-                if a > at {
-                    segs.push(Seg::new(
-                        &line[at..a],
-                        Role::Syntax(ghtui_theme::Syntax::Default),
-                    ));
-                }
-                segs.push(Seg::new(&line[a..b], Role::Syntax(syntax_role(s.kind))));
-                at = b;
-            }
-            if at < line.len() {
-                segs.push(Seg::new(
-                    &line[at..],
-                    Role::Syntax(ghtui_theme::Syntax::Default),
-                ));
-            }
-            segs.insert(
-                0,
-                Seg::new("  ", Role::Syntax(ghtui_theme::Syntax::Default)),
-            );
-            self.page.push(PageLine {
-                segs,
-                tone: Tone::Code,
-                frame,
-                indent,
-                right: Vec::new(),
-            });
+            right: Vec::new(),
+        };
+        self.page.push(line(Vec::new()));
+        for mut segs in highlighted(&code, lang) {
+            segs.insert(0, Seg::new("  ", Role::Syntax(Syntax::Default)));
+            self.page.push(line(segs));
         }
-        self.page.push(PageLine {
-            tone: Tone::Code,
-            frame,
-            indent,
-            ..PageLine::default()
-        });
+        self.page.push(line(Vec::new()));
         self.page_blank();
     }
 
@@ -599,6 +545,32 @@ fn attr(tag: &str, name: &str) -> Option<String> {
     Some(rest[..end].to_owned())
 }
 
+/// `code`'s lines as highlighted segments.
+pub(crate) fn highlighted(code: &str, lang: Option<Language>) -> Vec<Vec<Seg>> {
+    let text = Text::new(code.as_bytes());
+    let spans = highlight(lang, &text);
+    let plain = |s: &str| Seg::new(s, Role::Syntax(Syntax::Default));
+    (0..text.len())
+        .map(|i| {
+            let line = text.line(i);
+            let mut segs = Vec::new();
+            let mut at = 0usize;
+            for s in spans.get(i).map_or(&[][..], Vec::as_slice) {
+                let (a, b) = (s.start as usize, s.end as usize);
+                if a > at {
+                    segs.push(plain(&line[at..a]));
+                }
+                segs.push(Seg::new(&line[a..b], Role::Syntax(syntax_role(s.kind))));
+                at = b;
+            }
+            if at < line.len() {
+                segs.push(plain(&line[at..]));
+            }
+            segs
+        })
+        .collect()
+}
+
 fn decode_entities(s: &str) -> String {
     s.replace("&nbsp;", " ")
         .replace("&lt;", "<")
@@ -608,9 +580,9 @@ fn decode_entities(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
-/// Renders `markdown` into `page`, `indent` columns in, inside a box when
-/// `frame` is [`Frame::Body`].
-pub fn render(page: &mut Page, markdown: &str, base: Option<&LinkBase>, indent: u16, frame: Frame) {
+/// Renders `markdown` into `page`, inside a box when `frame` is
+/// [`Frame::Body`].
+pub fn render(page: &mut Page, markdown: &str, base: Option<&LinkBase>, frame: Frame) {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
@@ -618,7 +590,7 @@ pub fn render(page: &mut Page, markdown: &str, base: Option<&LinkBase>, indent: 
     let mut r = Renderer {
         page,
         base,
-        indent,
+        indent: 0,
         frame,
         inline: Vec::new(),
         roles: Vec::new(),
@@ -654,7 +626,7 @@ mod tests {
 
     fn lines(md: &str) -> Vec<String> {
         let mut page = Page::new(40);
-        render(&mut page, md, None, 0, Frame::None);
+        render(&mut page, md, None, Frame::None);
         page.lines.iter().map(PageLine::text).collect()
     }
 
@@ -671,19 +643,13 @@ mod tests {
     #[test]
     fn code_blocks_are_highlighted() {
         let mut page = Page::new(40);
-        render(
-            &mut page,
-            "```rust\nfn main() {}\n```\n",
-            None,
-            0,
-            Frame::None,
-        );
+        render(&mut page, "```rust\nfn main() {}\n```\n", None, Frame::None);
         let code: Vec<&PageLine> = page.lines.iter().filter(|l| l.tone == Tone::Code).collect();
         assert!(code.iter().any(|l| l.text().contains("fn main()")));
         assert!(
             code.iter()
                 .flat_map(|l| &l.segs)
-                .any(|s| s.role == Role::Syntax(ghtui_theme::Syntax::Keyword))
+                .any(|s| s.role == Role::Syntax(Syntax::Keyword))
         );
     }
 
@@ -694,27 +660,24 @@ mod tests {
             rev: "main".into(),
             dir: "docs".into(),
         };
+        let resolved = |url| resolve(Some(&base), url);
         assert_eq!(
-            base.resolve("guide.md"),
+            resolved("guide.md"),
             "https://github.com/o/r/blob/main/docs/guide.md"
         );
+        assert_eq!(resolved("../src/"), "https://github.com/o/r/tree/main/src");
         assert_eq!(
-            base.resolve("../src/"),
-            "https://github.com/o/r/tree/main/src"
-        );
-        assert_eq!(
-            base.resolve("/LICENSE"),
+            resolved("/LICENSE"),
             "https://github.com/o/r/blob/main/LICENSE"
         );
-        assert_eq!(base.resolve("https://x.dev/a"), "https://x.dev/a");
-        assert_eq!(base.resolve("#install"), "#install");
+        assert_eq!(resolved("https://x.dev/a"), "https://x.dev/a");
+        assert_eq!(resolved("#install"), "#install");
 
         let mut page = Page::new(60);
         render(
             &mut page,
             "See [the guide](guide.md).",
             Some(&base),
-            0,
             Frame::None,
         );
         assert_eq!(

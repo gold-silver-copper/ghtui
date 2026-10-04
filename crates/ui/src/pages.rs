@@ -14,7 +14,7 @@ use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
     ReviewDecision,
 };
-use ghtui_theme::Bg;
+use ghtui_theme::{Bg, Syntax};
 
 use crate::markdown::{self, LinkBase};
 use crate::page::{ASIDE_GAP, Frame, Page, PageLine, Role, Seg, Tone};
@@ -128,14 +128,6 @@ fn trim_zero(s: String) -> String {
     s.replace(".0k", "k").replace(".0m", "m")
 }
 
-fn size(bytes: u64) -> String {
-    match bytes {
-        0..1024 => format!("{bytes} B"),
-        1024..1_048_576 => format!("{:.1} KB", bytes as f64 / 1024.0),
-        _ => format!("{:.1} MB", bytes as f64 / 1_048_576.0),
-    }
-}
-
 fn plural(n: u64, word: &str) -> String {
     format!("{} {word}{}", compact(n), if n == 1 { "" } else { "s" })
 }
@@ -186,14 +178,17 @@ fn go_to_file(page: &mut Page, keys: Keys<'_>) -> Vec<Seg> {
     ]
 }
 
-/// A thin rule across the page (GitHub's header borders).
-fn rule(page: &mut Page) {
-    let width = usize::from(page.room(Frame::None, 0));
-    page.line(vec![Seg::new("─".repeat(width), Role::Meta)]);
+/// `+12 −3`.
+fn changes(additions: u64, deletions: u64) -> [Seg; 3] {
+    [
+        Seg::new(format!("+{additions}"), Role::Added),
+        space(),
+        Seg::new(format!("−{deletions}"), Role::Removed),
+    ]
 }
 
 /// Gray bars where rows are still loading, as GitHub draws them.
-pub fn skeleton(page: &mut Page) {
+fn skeleton(page: &mut Page) {
     let room = usize::from(page.room(Frame::Body, 0));
     for (i, share) in [60, 40, 52, 34].into_iter().enumerate() {
         if i > 0 {
@@ -208,15 +203,22 @@ pub fn skeleton(page: &mut Page) {
     }
 }
 
+/// A box of rows still loading.
+pub fn loading_box(page: &mut Page, title: Vec<Seg>) {
+    page.box_top(title, Vec::new());
+    skeleton(page);
+    page.box_bottom();
+}
+
 /// A flash banner across the page (errors), like GitHub's.
-pub fn flash(page: &mut Page, text: &str, bg: Bg) {
+pub fn flash(page: &mut Page, text: &str) {
     let width = usize::from(page.room(Frame::None, 0));
     for line in crate::page::wrap_segs(vec![Seg::new(text, Role::Body)], width.saturating_sub(4)) {
         let text: String = line.iter().map(|s| s.text.as_str()).collect();
         let pad = width.saturating_sub(crate::text::width(&text) + 2);
         page.line(vec![Seg::new(
             format!("  {text}{}", " ".repeat(pad)),
-            Role::Chip(bg),
+            Role::Chip(Bg::ErrorContainer),
         )]);
     }
 }
@@ -224,6 +226,16 @@ pub fn flash(page: &mut Page, text: &str, bg: Bg) {
 /// A box's empty state.
 fn empty_row(page: &mut Page, text: &str) {
     page.box_line(vec![Seg::new(text, Role::Meta)], Vec::new(), 0);
+}
+
+/// One row per item, ruled apart.
+fn box_rows<T>(page: &mut Page, items: &[T], mut row: impl FnMut(&mut Page, &T)) {
+    for (n, item) in items.iter().enumerate() {
+        if n > 0 {
+            page.box_rule();
+        }
+        row(page, item);
+    }
 }
 
 /// `prefix` then `segs` wrapped inside a box, continuation lines aligned
@@ -251,7 +263,7 @@ fn issue_icon(icons: Icons, state: IssueState, is_pr: bool) -> (String, Role) {
     }
 }
 
-pub fn state_chip(state: IssueState, is_pr: bool, icons: Icons) -> Seg {
+fn state_chip(state: IssueState, is_pr: bool, icons: Icons) -> Seg {
     let (icon, _) = issue_icon(icons, state, is_pr);
     let (text, bg) = match state {
         IssueState::Open => ("Open", Bg::SuccessContainer),
@@ -264,7 +276,7 @@ pub fn state_chip(state: IssueState, is_pr: bool, icons: Icons) -> Seg {
     chip(format!("{icon} {text}"), bg)
 }
 
-pub fn pr_state(s: PrState) -> IssueState {
+fn pr_state(s: PrState) -> IssueState {
     match s {
         PrState::Open => IssueState::Open,
         PrState::Draft => IssueState::Draft,
@@ -299,9 +311,7 @@ fn day(iso: &str) -> String {
 pub struct Keys<'a> {
     pub comment: &'a str,
     pub find_file: &'a str,
-    pub branch: &'a str,
     pub filter: &'a str,
-    pub star: &'a str,
 }
 
 /// Width of a sidebar for a page `total` columns wide, if there's room.
@@ -326,7 +336,7 @@ fn aside_heading(page: &mut Page, text: &str) {
 
 /// The repository's title: `owner / name  Public` with Star, Fork and Watch
 /// buttons on the right, as on GitHub.
-pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview>, keys: Keys<'_>) {
+pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview>) {
     let owner = link_seg(page, repo.owner.clone(), url::user(&repo.owner), Role::Link);
     let name = link_seg(page, repo.name.clone(), url::repo(repo), Role::Title);
     let mut segs = vec![owner, Seg::new(" / ", Role::Meta), name];
@@ -343,7 +353,6 @@ pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview
             segs.push(chip("Archived", Bg::TertiaryContainer));
         }
         let star = if o.starred { "★ Starred" } else { "☆ Star" };
-        let _ = keys;
         right.push(button(page, format!("{star}  {}", compact(s.stars)), STAR));
         right.push(space());
         right.push(button(
@@ -435,36 +444,38 @@ fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_layout: bool)
             None,
         ),
     ];
+    let facts: Vec<Seg> = facts
+        .into_iter()
+        .filter(|(t, _)| !t.is_empty())
+        .map(|(text, link)| match link {
+            Some(l) => link_seg(page, text, l, Role::Meta),
+            None => Seg::new(text, Role::Meta),
+        })
+        .collect();
     page.blank();
     if compact_layout {
         let mut segs = Vec::new();
-        for (text, link) in facts.into_iter().filter(|(t, _)| !t.is_empty()) {
+        for fact in facts {
             if !segs.is_empty() {
                 segs.push(Seg::new("   ", Role::Meta));
             }
-            segs.push(match link {
-                Some(l) => link_seg(page, text, l, Role::Meta),
-                None => Seg::new(text, Role::Meta),
-            });
+            segs.push(fact);
         }
         page.wrapped(segs, 0, Frame::None);
     } else {
-        for (text, link) in facts.into_iter().filter(|(t, _)| !t.is_empty()) {
-            let seg = match link {
-                Some(l) => link_seg(page, text, l, Role::Meta),
-                None => Seg::new(text, Role::Meta),
-            };
-            page.line(vec![seg]);
+        for fact in facts {
+            page.line(vec![fact]);
         }
     }
 }
 
-/// `⎇ main ▾   ⌕ Go to file  t` above the file list.
+/// `⎇ main ▾   ⌕ Go to file  t` above the file list or file.
 fn code_toolbar(
     page: &mut Page,
     repo: &RepoId,
     rev: &str,
     path: &str,
+    is_file: bool,
     commits: u64,
     keys: Keys<'_>,
 ) {
@@ -472,7 +483,9 @@ fn code_toolbar(
         button(page, format!("⎇ {rev} ▾"), BRANCH),
         Seg::new("  ", Role::Body),
     ];
-    if !path.is_empty() {
+    if is_file {
+        segs.extend(crumbs(page, repo, rev, path, true));
+    } else if !path.is_empty() {
         segs.extend(crumbs(page, repo, rev, path, false));
         segs.push(Seg::new("  ", Role::Body));
     }
@@ -620,7 +633,7 @@ pub fn repo_code(
         return;
     }
     let rev = o.default_branch.clone().unwrap_or_else(|| "HEAD".into());
-    code_toolbar(page, repo, &rev, "", o.commits, keys);
+    code_toolbar(page, repo, &rev, "", false, o.commits, keys);
     let title = match &o.last_commit {
         Some(c) => {
             let author = link_seg(page, c.author.clone(), url::user(&c.author), Role::Strong);
@@ -635,7 +648,7 @@ pub fn repo_code(
                 vec![Seg::new(
                     format!(
                         "{} · {}",
-                        &c.oid[..7.min(c.oid.len())],
+                        crate::text::short_sha(&c.oid),
                         time::ago_iso(&c.date, now)
                     ),
                     Role::Meta,
@@ -673,7 +686,7 @@ pub fn repo_code(
             rev,
             dir,
         };
-        markdown::render(page, &readme.text, Some(&base), 0, Frame::Body);
+        markdown::render(page, &readme.text, Some(&base), Frame::Body);
         page.box_bottom();
     }
     if let Some(width) = aside {
@@ -694,7 +707,7 @@ pub fn repo_dir(
     keys: Keys<'_>,
     now: u64,
 ) {
-    code_toolbar(page, repo, rev, path, 0, keys);
+    code_toolbar(page, repo, rev, path, false, 0, keys);
     let title = if path.is_empty() {
         format!("Files on {rev}")
     } else {
@@ -715,25 +728,16 @@ pub fn repo_dir(
 
 /// A file: highlighted with line numbers, or Markdown rendered.
 pub fn file(page: &mut Page, repo: &RepoId, rev: &str, path: &str, blob: &Blob, keys: Keys<'_>) {
-    let mut segs = vec![
-        button(page, format!("⎇ {rev} ▾"), BRANCH),
-        Seg::new("  ", Role::Body),
-    ];
-    segs.extend(crumbs(page, repo, rev, path, true));
-    let right = go_to_file(page, keys);
-    page.push(PageLine {
-        segs,
-        right,
-        ..PageLine::default()
-    });
+    code_toolbar(page, repo, rev, path, true, 0, keys);
+    let size = crate::text::size(blob.size);
     let Some(text) = &blob.text else {
-        page.box_top(vec![Seg::new(size(blob.size), Role::Meta)], Vec::new());
+        page.box_top(vec![Seg::new(size, Role::Meta)], Vec::new());
         empty_row(page, "Binary file not shown. o opens it on GitHub.");
         page.box_bottom();
         return;
     };
     let lines = text.lines().count() as u64;
-    let mut info = format!("{} · {}", plural(lines, "line"), size(blob.size));
+    let mut info = format!("{} · {size}", plural(lines, "line"));
     if blob.truncated {
         info.push_str(" · only the beginning is shown");
     }
@@ -750,40 +754,15 @@ pub fn file(page: &mut Page, repo: &RepoId, rev: &str, path: &str, blob: &Blob, 
             rev: rev.to_owned(),
             dir: path.rsplit_once('/').map_or("", |(d, _)| d).to_owned(),
         };
-        markdown::render(page, text, Some(&base), 0, Frame::Body);
+        markdown::render(page, text, Some(&base), Frame::Body);
         page.box_bottom();
         return;
     }
-    let source = ghtui_diff::text::Text::new(text.as_bytes());
-    let spans = ghtui_diff::highlight(ghtui_diff::Language::from_path(path), &source);
-    let width = source.len().to_string().len();
-    for i in 0..source.len() {
-        let line = source.line(i);
-        let mut segs = vec![Seg::new(
-            format!("{:>width$}  ", i + 1),
-            Role::Syntax(ghtui_theme::Syntax::Comment),
-        )];
-        let mut at = 0usize;
-        for s in spans.get(i).map_or(&[][..], Vec::as_slice) {
-            let (a, b) = (s.start as usize, s.end as usize);
-            if a > at {
-                segs.push(Seg::new(
-                    &line[at..a],
-                    Role::Syntax(ghtui_theme::Syntax::Default),
-                ));
-            }
-            segs.push(Seg::new(
-                &line[a..b],
-                Role::Syntax(crate::diff_view::syntax_role(s.kind)),
-            ));
-            at = b;
-        }
-        if at < line.len() {
-            segs.push(Seg::new(
-                &line[at..],
-                Role::Syntax(ghtui_theme::Syntax::Default),
-            ));
-        }
+    let lines = markdown::highlighted(text, ghtui_diff::Language::from_path(path));
+    let width = lines.len().to_string().len();
+    for (i, mut segs) in lines.into_iter().enumerate() {
+        let number = format!("{:>width$}  ", i + 1);
+        segs.insert(0, Seg::new(number, Role::Syntax(Syntax::Comment)));
         page.push(PageLine {
             segs,
             frame: Frame::Body,
@@ -837,7 +816,7 @@ fn repo_row(page: &mut Page, r: &RepoSummary, now: u64, show_owner: bool) {
 }
 
 /// A box of repositories.
-pub fn repo_box(
+fn repo_box(
     page: &mut Page,
     title: Vec<Seg>,
     right: Vec<Seg>,
@@ -850,12 +829,7 @@ pub fn repo_box(
     if repos.is_empty() {
         empty_row(page, empty);
     }
-    for (i, r) in repos.iter().enumerate() {
-        if i > 0 {
-            page.box_rule();
-        }
-        repo_row(page, r, now, show_owner);
-    }
+    box_rows(page, repos, |page, r| repo_row(page, r, now, show_owner));
     page.box_bottom();
 }
 
@@ -894,35 +868,22 @@ fn issue_row(page: &mut Page, i: &IssueSummary, show_repo: bool, icons: Icons, n
         )
     };
     let mut meta = vec![Seg::new(format!("{place} {when}"), Role::Meta)];
-    match i.review {
-        Some(ReviewDecision::Approved) => {
-            meta.push(Seg::new(" · ", Role::Meta));
-            meta.push(Seg::new("Approved", Role::Success));
-        }
-        Some(ReviewDecision::ChangesRequested) => {
-            meta.push(Seg::new(" · ", Role::Meta));
-            meta.push(Seg::new("Changes requested", Role::Error));
-        }
-        Some(ReviewDecision::ReviewRequired) => {
-            meta.push(Seg::new(" · Review required", Role::Meta));
-        }
-        None => {}
+    if let Some(review) = i.review {
+        let (text, role) = match review {
+            ReviewDecision::Approved => ("Approved", Role::Success),
+            ReviewDecision::ChangesRequested => ("Changes requested", Role::Error),
+            ReviewDecision::ReviewRequired => ("Review required", Role::Meta),
+        };
+        meta.extend([Seg::new(" · ", Role::Meta), Seg::new(text, role)]);
     }
     let mut right = Vec::new();
-    match i.checks {
-        Some(ChecksState::Passing) => right.push(Seg::new(
-            format!("{}  ", icons.checks(ChecksState::Passing)),
-            Role::Success,
-        )),
-        Some(ChecksState::Failing) => right.push(Seg::new(
-            format!("{}  ", icons.checks(ChecksState::Failing)),
-            Role::Error,
-        )),
-        Some(ChecksState::Pending) => right.push(Seg::new(
-            format!("{}  ", icons.checks(ChecksState::Pending)),
-            Role::Accent,
-        )),
-        None => {}
+    if let Some(checks) = i.checks {
+        let role = match checks {
+            ChecksState::Passing => Role::Success,
+            ChecksState::Failing => Role::Error,
+            ChecksState::Pending => Role::Accent,
+        };
+        right.push(Seg::new(format!("{}  ", icons.checks(checks)), role));
     }
     if i.comments > 0 {
         right.push(Seg::new(
@@ -971,7 +932,7 @@ fn more_row(page: &mut Page, next: bool, shown: usize, total: u64) {
 }
 
 /// The filter field above a list: `⌕ is:open label:bug`.
-pub fn filter_field(page: &mut Page, query: &str, keys: Keys<'_>) {
+fn filter_field(page: &mut Page, query: &str, keys: Keys<'_>) {
     let width = usize::from(page.room(Frame::None, 0));
     let hint = format!("{} to filter ", keys.filter);
     let text = format!(" ⌕ {query}");
@@ -1083,12 +1044,9 @@ pub fn issue_list(
             empty_row(page, "No results matched your search.");
         }
         Some(r) => {
-            for (n, i) in r.items.iter().enumerate() {
-                if n > 0 {
-                    page.box_rule();
-                }
-                issue_row(page, i, false, icons, now);
-            }
+            box_rows(page, &r.items, |page, i| {
+                issue_row(page, i, false, icons, now)
+            });
             more_row(page, r.next.is_some(), r.items.len(), r.total);
         }
     }
@@ -1114,9 +1072,7 @@ pub fn search(
         SearchKind::Users => "user",
     };
     let Some(results) = results else {
-        page.box_top(vec![Seg::new("Searching…", Role::Meta)], Vec::new());
-        skeleton(page);
-        page.box_bottom();
+        loading_box(page, vec![Seg::new("Searching…", Role::Meta)]);
         return;
     };
     let (total, shown, next) = match results {
@@ -1135,30 +1091,11 @@ pub fn search(
         empty_row(page, "Your search did not match anything.");
     }
     match results {
-        SearchResults::Repos(r) => {
-            for (n, item) in r.items.iter().enumerate() {
-                if n > 0 {
-                    page.box_rule();
-                }
-                repo_row(page, item, now, true);
-            }
-        }
-        SearchResults::Issues(r) => {
-            for (n, item) in r.items.iter().enumerate() {
-                if n > 0 {
-                    page.box_rule();
-                }
-                issue_row(page, item, true, icons, now);
-            }
-        }
-        SearchResults::Users(r) => {
-            for (n, item) in r.items.iter().enumerate() {
-                if n > 0 {
-                    page.box_rule();
-                }
-                user_row(page, item);
-            }
-        }
+        SearchResults::Repos(r) => box_rows(page, &r.items, |page, r| repo_row(page, r, now, true)),
+        SearchResults::Issues(r) => box_rows(page, &r.items, |page, i| {
+            issue_row(page, i, true, icons, now)
+        }),
+        SearchResults::Users(r) => box_rows(page, &r.items, user_row),
     }
     more_row(page, next, shown, total);
     page.box_bottom();
@@ -1199,7 +1136,7 @@ fn comment_box(
     if body.trim().is_empty() {
         empty_row(page, "No description provided.");
     } else {
-        markdown::render(page, body, base, 0, Frame::Body);
+        markdown::render(page, body, base, Frame::Body);
     }
     page.box_bottom();
     // The whole comment is a row: Enter quote-replies, as GitHub's `r` does.
@@ -1319,7 +1256,7 @@ pub fn issue(
     }
     page.wrapped(segs, 0, Frame::None);
     if aside.is_some() || d.assignees.is_empty() {
-        rule(page);
+        page.rule(0, Frame::None);
     }
     if aside.is_none() && !d.assignees.is_empty() {
         let mut segs = vec![Seg::new("Assignees: ", Role::Meta)];
@@ -1384,8 +1321,9 @@ pub enum PrTab {
     Commits,
 }
 
-/// The line under a PR's title: state, branches, size.
-fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons, now: u64) {
+/// The lines under a PR's title: branches, size (the state is in the
+/// sticky title above).
+fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
     let s = &d.summary;
     let author = link_seg(page, s.author.clone(), url::user(&s.author), Role::Strong);
     let head = match &d.head_repo {
@@ -1394,8 +1332,6 @@ fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons, now: u64)
         }
         _ => d.head_ref.clone(),
     };
-    // The state is in the sticky title above.
-    let _ = icons;
     let segs = vec![
         author,
         Seg::new(" wants to merge into ", Role::Meta),
@@ -1407,22 +1343,18 @@ fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons, now: u64)
         Seg::new(format!(" {head} "), Role::Chip(Bg::PrimaryContainer)),
     ];
     page.wrapped(segs, 0, Frame::None);
-    let mut meta = vec![
-        Seg::new(format!("+{}", s.additions), Role::Added),
-        Seg::new(" ", Role::Body),
-        Seg::new(format!("−{}", s.deletions), Role::Removed),
-        Seg::new(
-            format!(
-                " · opened {} · updated {}",
-                time::ago_iso(&d.created_at, now),
-                time::ago_iso(&s.updated_at, now)
-            ),
-            Role::Meta,
+    let mut meta = Vec::from(changes(s.additions, s.deletions));
+    meta.push(Seg::new(
+        format!(
+            " · opened {} · updated {}",
+            time::ago_iso(&d.created_at, now),
+            time::ago_iso(&s.updated_at, now)
         ),
-    ];
+        Role::Meta,
+    ));
     labels(&mut meta, &d.labels);
     page.wrapped(meta, 0, Frame::None);
-    rule(page);
+    page.rule(0, Frame::None);
 }
 
 /// GitHub's merge box: checks, reviews, conflicts.
@@ -1508,7 +1440,7 @@ pub fn pr_conversation(
     aside: Option<u16>,
     now: u64,
 ) {
-    pr_summary(page, pr, d, icons, now);
+    pr_summary(page, pr, d, now);
     let base = LinkBase {
         repo: pr.repo.to_string(),
         rev: d.head_oid.clone(),
@@ -1598,15 +1530,12 @@ pub fn pr_conversation(
             people(side, "Reviewers", &reviewers, "No reviews");
             label_list(side, &d.labels);
             aside_heading(side, "Size");
-            side.line(vec![
-                Seg::new(format!("+{}", d.summary.additions), Role::Added),
-                Seg::new(" ", Role::Body),
-                Seg::new(format!("−{}", d.summary.deletions), Role::Removed),
-                Seg::new(
-                    format!(" in {}", plural(d.changed_files, "file")),
-                    Role::Meta,
-                ),
-            ]);
+            let mut size = Vec::from(changes(d.summary.additions, d.summary.deletions));
+            size.push(Seg::new(
+                format!(" in {}", plural(d.changed_files, "file")),
+                Role::Meta,
+            ));
+            side.line(size);
         });
     }
 }
@@ -1616,10 +1545,9 @@ pub fn pr_commits(
     pr: &PrRef,
     d: &PrDetail,
     activity: Option<&PrActivity>,
-    icons: Icons,
     now: u64,
 ) {
-    pr_summary(page, pr, d, icons, now);
+    pr_summary(page, pr, d, now);
     let Some(a) = activity else {
         page.blank();
         page.line(vec![Seg::new("Loading commits…", Role::Meta)]);
@@ -1644,7 +1572,7 @@ pub fn pr_commits(
         let link = page.link(url::commit(&pr.repo, &c.oid));
         page.box_line(
             vec![Seg::linked(c.headline.clone(), Role::Strong, link)],
-            vec![Seg::new(c.oid[..7.min(c.oid.len())].to_owned(), Role::Code)],
+            vec![Seg::new(crate::text::short_sha(&c.oid), Role::Code)],
             0,
         );
         page.box_line(
@@ -1713,32 +1641,29 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, now: u64) {
         page.wrapped(facts, 0, Frame::None);
     }
     match tab {
-        ProfileTab::Overview => {
-            if p.pinned.is_empty() {
-                let mut popular = p.repos.clone();
-                popular.sort_by_key(|r| std::cmp::Reverse(r.stars));
-                popular.truncate(6);
-                repo_box(
-                    page,
-                    vec![Seg::new("Popular repositories", Role::Strong)],
-                    Vec::new(),
-                    &popular,
-                    "No public repositories yet.",
-                    false,
-                    now,
-                );
-            } else {
-                repo_box(
-                    page,
-                    vec![Seg::new("Pinned", Role::Strong)],
-                    Vec::new(),
-                    &p.pinned,
-                    "",
-                    true,
-                    now,
-                );
-            }
+        ProfileTab::Overview if p.pinned.is_empty() => {
+            let mut popular = p.repos.clone();
+            popular.sort_by_key(|r| std::cmp::Reverse(r.stars));
+            popular.truncate(6);
+            repo_box(
+                page,
+                vec![Seg::new("Popular repositories", Role::Strong)],
+                Vec::new(),
+                &popular,
+                "No public repositories yet.",
+                false,
+                now,
+            );
         }
+        ProfileTab::Overview => repo_box(
+            page,
+            vec![Seg::new("Pinned", Role::Strong)],
+            Vec::new(),
+            &p.pinned,
+            "",
+            true,
+            now,
+        ),
         ProfileTab::Repositories => repo_box(
             page,
             vec![Seg::new(
@@ -1794,10 +1719,7 @@ pub fn home(
             if prs.is_empty() {
                 empty_row(page, empty);
             }
-            for (n, p) in prs.iter().enumerate() {
-                if n > 0 {
-                    page.box_rule();
-                }
+            box_rows(page, prs, |page, p| {
                 let summary = IssueSummary {
                     repo: p.pr.repo.clone(),
                     number: p.pr.number,
@@ -1813,7 +1735,7 @@ pub fn home(
                     checks: p.checks,
                 };
                 issue_row(page, &summary, true, icons, now);
-            }
+            });
             page.box_bottom();
         };
     match inbox {
@@ -1837,11 +1759,7 @@ pub fn home(
                 "You have no open pull requests.",
             );
         }
-        None => {
-            page.box_top(vec![Seg::new("Review requests", Role::Strong)], Vec::new());
-            skeleton(page);
-            page.box_bottom();
-        }
+        None => loading_box(page, vec![Seg::new("Review requests", Role::Strong)]),
     }
     let all = viewer.map(|login| {
         link_seg(
@@ -1862,11 +1780,7 @@ pub fn home(
             true,
             now,
         ),
-        None => {
-            page.box_top(title, Vec::new());
-            skeleton(page);
-            page.box_bottom();
-        }
+        None => loading_box(page, title),
     }
 }
 
@@ -1950,7 +1864,7 @@ mod tests {
             }),
         };
         let mut page = Page::new(80);
-        repo_title(&mut page, &repo, Some(&overview), Keys::default());
+        repo_title(&mut page, &repo, Some(&overview));
         repo_code(
             &mut page,
             &repo,

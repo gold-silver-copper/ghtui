@@ -3,7 +3,7 @@
 use ghtui_theme::Bg;
 use ghtui_ui::bars::{Banner, StatusBar};
 use ghtui_ui::chrome::{Header, KeyPanel, SearchPanel, TabBar, TitleBar, header_layout};
-use ghtui_ui::overlays::{Help, Palette};
+use ghtui_ui::overlays::Palette;
 use ghtui_ui::page::PageView;
 use ghtui_ui::{Ctx, PAD_X, PAD_Y, fill};
 use ratatui::Frame;
@@ -17,7 +17,7 @@ use ghtui_ui::file_tree::{FileTree, TREE_BG};
 use ghtui_ui::review_sheets::{ComposeSheet, SubmitSheet};
 
 use crate::diff_screen::{self, DiffScreen, Pane};
-use crate::keymap::{Action, format_sequence};
+use crate::keymap::{Action, pretty};
 use crate::state::{Overlay, Screen, State};
 
 /// The single content pane is focused, so it sits one tone above surface.
@@ -26,10 +26,6 @@ const PANE: Bg = Bg::ContainerLow;
 pub fn view(state: &State, frame: &mut Frame, now: u64) {
     let area = frame.area();
     let buf = frame.buffer_mut();
-    render(state, area, buf, now);
-}
-
-pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
     let ctx = state.ctx(now);
     if area.height < 3 || area.width < 10 {
         fill(buf, area, ctx.theme, Bg::Surface);
@@ -94,7 +90,7 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
     separate_collapsed_tones(ctx, content, buf);
 
     let busy = state.busy();
-    let pending = format_sequence(&state.pending);
+    let pending = pretty(&state.pending);
     let rate_limit = state
         .rate_limits
         .tightest()
@@ -119,7 +115,6 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
             title: &title,
             rows: &next_keys,
             selected: None,
-            help: "esc cancels",
         }
         .render(
             Rect {
@@ -131,43 +126,18 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
     }
 
     match &state.overlay {
-        Some(Overlay::Help) => {
-            let entries = state.help_entries();
-            Help {
-                ctx,
-                entries: &entries,
-            }
-            .render(area, buf);
-        }
-        Some(Overlay::Palette(palette)) => {
-            let input = palette.input.lines().join("");
+        Some(Overlay::Picker(p)) => {
             let items: Vec<_> = state
-                .palette_commands(&input)
+                .picker_rows(p)
                 .into_iter()
-                .map(|(_, item)| item)
+                .map(|(item, _)| item)
                 .collect();
             Palette {
                 ctx,
-                prompt: ":",
-                input: &palette.input,
+                prompt: p.title(),
+                input: &p.input,
                 items: &items,
-                selected: palette.selected,
-            }
-            .render(area, buf);
-        }
-        Some(Overlay::FindFile(finder)) => {
-            let input = finder.input.lines().join("");
-            let items: Vec<_> = state
-                .finder_items(&input)
-                .into_iter()
-                .map(|(_, item)| item)
-                .collect();
-            Palette {
-                ctx,
-                prompt: "Find file",
-                input: &finder.input,
-                items: &items,
-                selected: finder.selected,
+                selected: p.selected,
             }
             .render(area, buf);
         }
@@ -230,40 +200,13 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
             }
             .render(area, buf);
         }
-        Some(Overlay::Commits(picker)) => {
-            let items: Vec<_> = picker.items.iter().map(|(_, item)| item.clone()).collect();
-            Palette {
-                ctx,
-                prompt: "Commits",
-                input: &picker.input,
-                items: &items,
-                selected: picker.selected,
-            }
-            .render(area, buf);
-        }
-        Some(Overlay::Finder(f)) => {
-            let items: Vec<_> = state
-                .finder_rows(f)
-                .into_iter()
-                .map(|(item, _)| item)
-                .collect();
-            Palette {
-                ctx,
-                prompt: f.title(),
-                input: &f.input,
-                items: &items,
-                selected: f.selected,
-            }
-            .render(area, buf);
-        }
         Some(Overlay::Menu(menu)) => {
-            let rows = state.menu_rows(menu);
+            let (rows, selected) = state.menu_rows(menu);
             KeyPanel {
                 ctx,
                 title: "Here you can",
                 rows: &rows,
-                selected: Some(menu.selected),
-                help: "enter or a row's key runs it · esc closes",
+                selected: Some(selected),
             }
             .render(area, buf);
         }
@@ -275,11 +218,6 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
                 rows: &rows,
                 selected: sb.selected,
                 field,
-                help: if sb.filter {
-                    "enter filters · ↑↓ choose · esc closes"
-                } else {
-                    "enter goes · ↑↓ choose · esc closes"
-                },
             }
             .render(area, buf);
         }
@@ -304,15 +242,6 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
         }
         None => {}
     }
-}
-
-fn first_key(state: &State, action: Action) -> String {
-    state
-        .keymap
-        .keys_for(action)
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| format!(":{}", action.name()))
 }
 
 fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, screen: &DiffScreen) {
@@ -355,13 +284,13 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
         Span::styled("No changed files.", theme.meta(Bg::Surface)).render(message_area, buf);
         return;
     }
-    let key = |a| first_key(state, a);
+    let key = |a| state.first_key(a);
     let jump = key(Action::JumpMove);
     let (show, expand, viewed, reply, resolve, delete, file_comment) = (
         key(Action::Open),
         key(Action::ExpandContext),
         key(Action::ToggleViewed),
-        key(Action::ReplyThread),
+        key(Action::Comment),
         key(Action::ResolveThread),
         key(Action::DeleteDraft),
         key(Action::FileComment),

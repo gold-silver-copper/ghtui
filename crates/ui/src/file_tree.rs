@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use crate::diff_doc::{Doc, Viewed};
-use crate::{Ctx, PAD_Y, fill, text};
+use crate::{Ctx, PAD_Y, fill, inset, render_split, text};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeRow {
@@ -113,12 +113,10 @@ impl Widget for FileTree<'_> {
         if area.height <= PAD_Y {
             return;
         }
-        let pad = 1u16;
         let title_area = Rect {
-            x: area.x + pad,
             y: area.y + PAD_Y.min(area.height - 1),
-            width: area.width.saturating_sub(2 * pad),
             height: 1,
+            ..inset(area, 1, 0)
         };
         let (adds, dels) = self.doc.totals();
         Line::from(vec![
@@ -170,12 +168,7 @@ impl Widget for FileTree<'_> {
             if selected {
                 fill(buf, row_area, theme, bg);
             }
-            let inner = Rect {
-                x: area.x + pad,
-                width: area.width.saturating_sub(2 * pad),
-                ..row_area
-            };
-            self.render_row(row, bg, inner, buf);
+            self.render_row(row, bg, inset(row_area, 1, 0), buf);
         }
     }
 }
@@ -235,16 +228,7 @@ impl FileTree<'_> {
                     room
                 };
                 spans.push(Span::styled(text::truncate(name, room), name_style));
-                Line::from(spans).render(area, buf);
-                let rw = (right_width as u16).min(area.width);
-                Line::from(right).render(
-                    Rect {
-                        x: area.right() - rw,
-                        width: rw,
-                        ..area
-                    },
-                    buf,
-                );
+                render_split(area, buf, spans, right, 1);
             }
         }
     }

@@ -13,8 +13,7 @@ use ghtui_diff::FileDiff;
 use ghtui_store::ReviewState;
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::bars::Notice;
-use ghtui_ui::diff_doc::{Doc, Pos, Viewed};
-use ghtui_ui::overlays::{HelpEntry, PaletteItem};
+use ghtui_ui::diff_doc::{Doc, Viewed};
 use ghtui_ui::pages::PrTab;
 use ghtui_ui::{Ctx, Icons};
 use ratatui::layout::Rect;
@@ -24,11 +23,12 @@ use crate::browse::{self, Data, DataKey, Need, PageScreen};
 use crate::diff_job::DiffFiles;
 use crate::diff_screen::{self, DiffScreen, DiffState};
 use crate::keymap::{Action, Key, Keymap, Resolution, Scope};
-use crate::nav::{self, Finder, Hints, Menu, SearchBox, Visit};
+use crate::nav::{self, Hints, Menu, SearchBox, Visit};
+use crate::picker::{self, PickItem, Picker};
 use crate::review::{
     self, Compose, ComposeTarget, EditPurpose, Preview, SubmitDialog, SubmitOutcome,
 };
-use crate::route::{self, OPEN, Route, Target};
+use crate::route::{Route, Target};
 use ghtui_api::model::{PatchFile, ReviewEvent, ReviewThread};
 use ghtui_store::DraftComment;
 use ghtui_ui::annotations::AnnotationKey;
@@ -240,8 +240,14 @@ impl<T> Remote<T> {
         }
     }
 
-    fn start(&mut self) {
+    /// Starts a fetch, unless one is running or (without `force`) the
+    /// data is good.
+    fn begin(&mut self, force: bool) -> bool {
+        if self.loading || (!force && self.data.is_some() && self.error.is_none()) {
+            return false;
+        }
         self.loading = true;
+        true
     }
 
     fn finish(&mut self, result: Result<T, ApiError>) {
@@ -266,8 +272,6 @@ pub enum Screen {
 }
 
 pub enum Overlay {
-    Help,
-    Palette(Box<Palette>),
     /// `/` prompt on the diff screen.
     DiffSearch(Box<TextArea<'static>>),
     /// The header's search box with its suggestions.
@@ -276,44 +280,12 @@ pub enum Overlay {
     Hints(Box<Hints>),
     /// Everything you can do here.
     Menu(Box<Menu>),
-    /// Go to file, switch branches.
-    Finder(Box<Finder>),
-    /// `gf` file finder on the diff screen.
-    FindFile(Box<Palette>),
+    /// The command palette, go to file, branches, commits.
+    Picker(Box<Picker>),
     /// Writing a comment, reply or suggestion.
     Compose(Box<Compose>),
     /// Submitting the review.
     Submit(Box<SubmitDialog>),
-    /// Choosing commits to view.
-    Commits(Box<CommitPicker>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PickItem {
-    All,
-    SinceReview,
-    Commit(usize),
-}
-
-pub struct CommitPicker {
-    pub items: Vec<(PickItem, PaletteItem)>,
-    pub selected: usize,
-    /// Start of a range (index into `items`).
-    pub mark: Option<usize>,
-    /// Shown as the picker's (read-only) prompt line.
-    pub input: TextArea<'static>,
-}
-
-pub struct Palette {
-    pub input: TextArea<'static>,
-    pub selected: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PaletteCommand {
-    Action(Action),
-    Go(Target),
-    Search(String),
 }
 
 pub struct State {
@@ -432,38 +404,28 @@ impl State {
 
     pub fn ensure(&mut self, need: Need, force: bool) -> Vec<Cmd> {
         match need {
-            Need::Inbox => self.ensure_inbox(force),
+            Need::Inbox if self.inbox.begin(force) => vec![Cmd::FetchInbox],
             Need::Pr(pr) => self.ensure_pr(&pr, force),
             Need::Data(key) => {
                 let remote = self.data.entry(key.clone()).or_default();
-                if remote.loading || (!force && remote.data.is_some() && remote.error.is_none()) {
+                if !remote.begin(force) {
                     return Vec::new();
                 }
-                remote.start();
                 vec![Cmd::Fetch {
                     cached: remote.data.is_none(),
                     key,
                 }]
             }
+            Need::Inbox => Vec::new(),
         }
     }
 
     pub fn ensure_pr(&mut self, pr: &PrRef, force: bool) -> Vec<Cmd> {
-        let remote = self.prs.entry(pr.clone()).or_default();
-        if remote.loading || (!force && remote.data.is_some()) {
-            return Vec::new();
+        if self.prs.entry(pr.clone()).or_default().begin(force) {
+            vec![Cmd::FetchPr(pr.clone())]
+        } else {
+            Vec::new()
         }
-        remote.start();
-        vec![Cmd::FetchPr(pr.clone())]
-    }
-
-    fn ensure_inbox(&mut self, force: bool) -> Vec<Cmd> {
-        if self.inbox.loading || (!force && self.inbox.data.is_some() && self.inbox.error.is_none())
-        {
-            return Vec::new();
-        }
-        self.inbox.start();
-        vec![Cmd::FetchInbox]
     }
 
     /// Fetches needed for the visible screen. `force` refreshes data we
@@ -499,13 +461,14 @@ impl State {
         }
     }
 
+    /// The branch the PR merges into, once the PR has loaded.
+    fn base_ref(&self, pr: &PrRef) -> Option<String> {
+        let detail = self.prs.get(pr)?.data.as_ref()?;
+        Some(detail.base_ref.clone())
+    }
+
     fn start_diff(&mut self, pr: &PrRef) -> Vec<Cmd> {
-        let Some(base_ref) = self
-            .prs
-            .get(pr)
-            .and_then(|r| r.data.as_ref())
-            .map(|d| d.base_ref.clone())
-        else {
+        let Some(base_ref) = self.base_ref(pr) else {
             return Vec::new();
         };
         self.diffs.insert(pr.clone(), DiffState::loading());
@@ -522,45 +485,8 @@ impl State {
         ]
     }
 
-    /// Files matching the finder input, best first.
-    pub fn finder_items(&self, input: &str) -> Vec<(usize, PaletteItem)> {
-        let Screen::Diff(screen) = self.screen() else {
-            return Vec::new();
-        };
-        let Some(diff) = self.diffs.get(&screen.pr) else {
-            return Vec::new();
-        };
-        let mut items: Vec<(usize, usize, PaletteItem)> = diff
-            .doc
-            .files
-            .iter()
-            .enumerate()
-            .filter_map(|(i, f)| {
-                let path = f.meta.path();
-                fuzzy_score(input.trim(), path).map(|score| {
-                    let (adds, dels) = diff.doc.file_counts(f);
-                    let hint = if f.diff.is_some() {
-                        format!("+{adds} −{dels}")
-                    } else {
-                        String::new()
-                    };
-                    (
-                        score,
-                        i,
-                        PaletteItem {
-                            label: path.to_owned(),
-                            hint,
-                        },
-                    )
-                })
-            })
-            .collect();
-        items.sort_by_key(|(score, i, _)| (*score, *i));
-        items.into_iter().map(|(_, i, item)| (i, item)).collect()
-    }
-
     /// Re-runs the diff screen's clamping and prioritization.
-    fn settle_diff(&mut self) -> Vec<Cmd> {
+    pub fn settle_diff(&mut self) -> Vec<Cmd> {
         let content = self.content_area();
         let State { screens, diffs, .. } = self;
         let Some(Screen::Diff(screen)) = screens.last_mut() else {
@@ -583,236 +509,6 @@ impl State {
             },
         }
     }
-
-    /// The shortcuts that work here, in sections, keys as people write
-    /// them.
-    pub fn help_entries(&self) -> Vec<HelpEntry> {
-        use Action as A;
-        let scope = self.scope();
-        let sections: &[(&'static str, &[Action])] = match scope {
-            Scope::Diff => &[
-                (
-                    "Moving",
-                    &[
-                        A::Down,
-                        A::Up,
-                        A::Top,
-                        A::Bottom,
-                        A::HalfPageDown,
-                        A::HalfPageUp,
-                        A::NextHunk,
-                        A::PrevHunk,
-                        A::NextFile,
-                        A::PrevFile,
-                        A::NextUnviewed,
-                        A::NextThread,
-                        A::PrevThread,
-                        A::JumpMove,
-                        A::Search,
-                        A::SearchNext,
-                        A::SearchPrev,
-                        A::FindFile,
-                    ],
-                ),
-                (
-                    "Viewing",
-                    &[
-                        A::ToggleTree,
-                        A::SwitchPane,
-                        A::ToggleSplit,
-                        A::IgnoreWhitespace,
-                        A::ExpandContext,
-                        A::FullFile,
-                        A::ToggleSinceReview,
-                        A::PickCommits,
-                    ],
-                ),
-                (
-                    "Reviewing",
-                    &[
-                        A::ToggleViewed,
-                        A::MarkReviewed,
-                        A::Comment,
-                        A::VisualLines,
-                        A::Suggest,
-                        A::FileComment,
-                        A::ReplyThread,
-                        A::ResolveThread,
-                        A::DeleteDraft,
-                        A::SubmitReview,
-                    ],
-                ),
-                (
-                    "Everywhere",
-                    &[
-                        A::Back,
-                        A::Tab1,
-                        A::Menu,
-                        A::Copy,
-                        A::OpenInBrowser,
-                        A::Refresh,
-                        A::CommandPalette,
-                        A::GoHome,
-                        A::Help,
-                        A::Quit,
-                    ],
-                ),
-            ],
-            _ => &[
-                (
-                    "Moving",
-                    &[
-                        A::Down,
-                        A::Up,
-                        A::Top,
-                        A::Bottom,
-                        A::ScrollDown,
-                        A::ScrollUp,
-                        A::PageDown,
-                        A::PageUp,
-                        A::HalfPageDown,
-                        A::HalfPageUp,
-                    ],
-                ),
-                (
-                    "Going places",
-                    &[
-                        A::Open,
-                        A::Back,
-                        A::Forward,
-                        A::UpLevel,
-                        A::Hints,
-                        A::HintsBrowser,
-                        A::Search,
-                        A::FindFile,
-                        A::Branch,
-                        A::Tab1,
-                        A::NextTab,
-                        A::PrevTab,
-                        A::GoHome,
-                        A::CommandPalette,
-                    ],
-                ),
-                (
-                    "Doing",
-                    &[
-                        A::Menu,
-                        A::Comment,
-                        A::Star,
-                        A::ToggleState,
-                        A::Sort,
-                        A::Copy,
-                        A::OpenInBrowser,
-                        A::Refresh,
-                    ],
-                ),
-                ("ghtui", &[A::Help, A::Quit]),
-            ],
-        };
-        let mut out = Vec::new();
-        for (title, actions) in sections {
-            out.push(HelpEntry {
-                keys: String::new(),
-                description: title,
-            });
-            for &action in *actions {
-                let keys: Vec<String> = self
-                    .keymap
-                    .keys_in(action, scope)
-                    .iter()
-                    .map(|k| crate::keymap::pretty(k))
-                    .collect();
-                if keys.is_empty() {
-                    continue;
-                }
-                let (keys, description) = if action == A::Tab1 {
-                    ("1 – 4".to_owned(), "Pick a tab")
-                } else {
-                    (keys.join(" "), action.description())
-                };
-                out.push(HelpEntry { keys, description });
-            }
-        }
-        out
-    }
-
-    /// Palette entries matching the current input.
-    pub fn palette_commands(&self, input: &str) -> Vec<(PaletteCommand, PaletteItem)> {
-        let input = input.trim();
-        let mut out = Vec::new();
-        if let Some(target) = route::parse_input(input, self.context_repo()) {
-            let label = match &target {
-                Target::Page(route) => format!("Go to {}", route.title()),
-                Target::Files(pr) => format!("Files changed in {pr}"),
-                Target::External(url) => format!("Open {url}"),
-            };
-            out.push((
-                PaletteCommand::Go(target),
-                PaletteItem {
-                    label,
-                    hint: String::new(),
-                },
-            ));
-        }
-        let mut actions: Vec<(usize, Action)> = Action::ALL
-            .into_iter()
-            .filter(|a| *a != Action::CommandPalette)
-            .filter_map(|a| {
-                let by_name = fuzzy_score(input, &a.name().replace('_', " "));
-                let by_description = fuzzy_score(input, a.description());
-                by_name
-                    .into_iter()
-                    .chain(by_description)
-                    .min()
-                    .map(|score| (score, a))
-            })
-            .collect();
-        actions.sort_by_key(|(score, _)| *score);
-        let search = (!input.is_empty()).then(|| {
-            (
-                PaletteCommand::Search(input.to_owned()),
-                PaletteItem {
-                    label: format!("Search GitHub for “{input}”"),
-                    hint: String::new(),
-                },
-            )
-        });
-        // Good action matches first, then searching; scattered matches after.
-        let (close, far): (Vec<_>, Vec<_>) = actions.into_iter().partition(|(s, _)| *s < 1000);
-        let item = |action: Action| {
-            (
-                PaletteCommand::Action(action),
-                PaletteItem {
-                    label: action.description().to_owned(),
-                    hint: self.keymap.keys_for(action).join(" "),
-                },
-            )
-        };
-        out.extend(close.into_iter().map(|(_, a)| item(a)));
-        out.extend(search);
-        out.extend(far.into_iter().map(|(_, a)| item(a)));
-        out
-    }
-}
-
-/// Case-insensitive subsequence match; lower is better. Substring matches
-/// rank before scattered ones, earlier before later.
-pub fn fuzzy_score(needle: &str, haystack: &str) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(0);
-    }
-    let needle = needle.to_lowercase();
-    let hay = haystack.to_lowercase();
-    if let Some(pos) = hay.find(&needle) {
-        return Some(pos);
-    }
-    let mut chars = hay.char_indices();
-    let mut last = 0;
-    for n in needle.chars() {
-        let (i, _) = chars.find(|(_, h)| *h == n)?;
-        last = i;
-    }
-    Some(1000 + last)
 }
 
 pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
@@ -852,7 +548,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Key(key) => on_key(state, key),
         Msg::Resize(w, h) => {
             state.size = (w, h);
-            clamp_scroll(state)
+            state.settle_diff()
         }
         Msg::Viewer(Ok(login)) => {
             state.viewer = Some(login);
@@ -870,7 +566,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 tracing::warn!(%err, "inbox fetch failed");
             }
             state.inbox.finish(result);
-            clamp_scroll(state)
+            state.settle_diff()
         }
         Msg::Pr(pr, result) => {
             if let Err(err) = result.as_ref() {
@@ -885,7 +581,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             {
                 cmds = state.start_diff(&pr);
             }
-            cmds.extend(clamp_scroll(state));
+            cmds.extend(state.settle_diff());
             cmds
         }
         Msg::Fetched { key, result, fresh } => {
@@ -1049,11 +745,9 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::MovesDetected(pr, moves) => {
             match state.diff_parts() {
                 Some((screen, diff)) if screen.pr == pr => {
-                    let (cursor, top) =
-                        (diff.doc.anchor(screen.cursor), diff.doc.anchor(screen.top));
-                    diff.doc.set_moves(moves);
-                    screen.cursor = diff.doc.locate(cursor);
-                    screen.top = diff.doc.locate(top);
+                    diff_screen::preserving_position(screen, &mut diff.doc, |doc| {
+                        doc.set_moves(moves)
+                    });
                 }
                 _ => {
                     if let Some(diff) = state.diffs.get_mut(&pr) {
@@ -1084,11 +778,9 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                         && screen.pr == pr
                     {
                         diff.since_requested = false;
-                        let (cursor, top) =
-                            (diff.doc.anchor(screen.cursor), diff.doc.anchor(screen.top));
-                        diff.doc.set_since(Some(hashes), true);
-                        screen.cursor = diff.doc.locate(cursor);
-                        screen.top = diff.doc.locate(top);
+                        diff_screen::preserving_position(screen, &mut diff.doc, |doc| {
+                            doc.set_since(Some(hashes), true)
+                        });
                         state.notice = Some(Notice::Info(format!(
                             "Showing changes since your review of {}",
                             &old_head[..7.min(old_head.len())]
@@ -1112,8 +804,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                     diff.commits = commits;
                 }
                 state.notice = None;
-                open_commit_picker(state);
-                Vec::new()
+                state.open_picker(picker::Kind::Commits { mark: None })
             }
             Err(err) => {
                 state.notice = Some(Notice::Error(format!("Couldn't list commits: {err}")));
@@ -1338,25 +1029,13 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         return Vec::new();
     }
     match &mut state.overlay {
-        Some(Overlay::Help) => {
-            if matches!(
-                key.code,
-                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q' | '?')
-            ) {
-                state.overlay = None;
-            }
-            return Vec::new();
-        }
-        Some(Overlay::Palette(_)) => return on_palette_key(state, key),
+        Some(Overlay::Picker(_)) => return picker::on_key(state, key),
         Some(Overlay::DiffSearch(_)) => return on_search_key(state, key),
         Some(Overlay::Search(_)) => return nav::on_search_box_key(state, key),
         Some(Overlay::Hints(_)) => return nav::on_hints_key(state, key),
         Some(Overlay::Menu(_)) => return nav::on_menu_key(state, key),
-        Some(Overlay::Finder(_)) => return nav::on_finder_key(state, key),
-        Some(Overlay::FindFile(_)) => return on_finder_key(state, key),
         Some(Overlay::Compose(_)) => return on_compose_key(state, key),
         Some(Overlay::Submit(_)) => return on_submit_key(state, key),
-        Some(Overlay::Commits(_)) => return on_commits_key(state, key),
         None => {}
     }
     // Any keypress dismisses the last notice.
@@ -1370,58 +1049,6 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         Resolution::Pending => Vec::new(),
         Resolution::Unbound => {
             state.pending.clear();
-            Vec::new()
-        }
-    }
-}
-
-fn on_palette_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
-    let Some(Overlay::Palette(palette)) = &mut state.overlay else {
-        return Vec::new();
-    };
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    match key.code {
-        KeyCode::Esc => {
-            state.overlay = None;
-            Vec::new()
-        }
-        KeyCode::Down | KeyCode::Tab => {
-            palette.selected += 1;
-            clamp_palette(state);
-            Vec::new()
-        }
-        KeyCode::Char('n') if ctrl => {
-            palette.selected += 1;
-            clamp_palette(state);
-            Vec::new()
-        }
-        KeyCode::Up | KeyCode::BackTab => {
-            palette.selected = palette.selected.saturating_sub(1);
-            Vec::new()
-        }
-        KeyCode::Char('p') if ctrl => {
-            palette.selected = palette.selected.saturating_sub(1);
-            Vec::new()
-        }
-        KeyCode::Enter => {
-            let input = palette.input.lines().join("");
-            let selected = palette.selected;
-            let command = state
-                .palette_commands(&input)
-                .into_iter()
-                .nth(selected)
-                .map(|(c, _)| c);
-            state.overlay = None;
-            match command {
-                Some(PaletteCommand::Action(action)) => apply(state, action),
-                Some(PaletteCommand::Go(target)) => state.go(target),
-                Some(PaletteCommand::Search(query)) => state.push(search_route(&query)),
-                None => Vec::new(),
-            }
-        }
-        _ => {
-            palette.input.input(key);
-            palette.selected = 0;
             Vec::new()
         }
     }
@@ -1464,102 +1091,6 @@ fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             Vec::new()
         }
     }
-}
-
-fn on_finder_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
-    let Some(Overlay::FindFile(finder)) = &mut state.overlay else {
-        return Vec::new();
-    };
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    match key.code {
-        KeyCode::Esc => state.overlay = None,
-        KeyCode::Down | KeyCode::Tab => finder.selected += 1,
-        KeyCode::Char('n') if ctrl => finder.selected += 1,
-        KeyCode::Up | KeyCode::BackTab => finder.selected = finder.selected.saturating_sub(1),
-        KeyCode::Char('p') if ctrl => finder.selected = finder.selected.saturating_sub(1),
-        KeyCode::Enter => {
-            let input = finder.input.lines().join("");
-            let selected = finder.selected;
-            let target = state.finder_items(&input).get(selected).map(|(i, _)| *i);
-            state.overlay = None;
-            if let Some(file) = target
-                && let Screen::Diff(screen) = state.screen_mut()
-            {
-                screen.cursor = Pos { file, row: 0 };
-                screen.top = screen.cursor;
-                return state.settle_diff();
-            }
-            return Vec::new();
-        }
-        _ => {
-            finder.input.input(key);
-            finder.selected = 0;
-        }
-    }
-    // Keep the selection on an existing item.
-    let count = match &state.overlay {
-        Some(Overlay::FindFile(finder)) => state.finder_items(&finder.input.lines().join("")).len(),
-        _ => 0,
-    };
-    if let Some(Overlay::FindFile(finder)) = &mut state.overlay {
-        finder.selected = finder.selected.min(count.saturating_sub(1));
-    }
-    Vec::new()
-}
-
-/// A GitHub search: issues when the query looks like it's about them,
-/// otherwise repositories (GitHub's default).
-fn search_route(query: &str) -> Route {
-    let issues = query.split_whitespace().any(|w| {
-        [
-            "repo:",
-            "is:",
-            "author:",
-            "assignee:",
-            "label:",
-            "involves:",
-            "mentions:",
-        ]
-        .iter()
-        .any(|p| w.starts_with(p))
-    });
-    Route::Search {
-        kind: if issues {
-            ghtui_api::browse::SearchKind::Issues
-        } else {
-            ghtui_api::browse::SearchKind::Repos
-        },
-        query: query.to_owned(),
-    }
-}
-
-pub fn new_search_input(theme: &Theme) -> TextArea<'static> {
-    let mut input = TextArea::default();
-    input.set_style(theme.body(Bg::Container));
-    input.set_cursor_line_style(theme.body(Bg::Container));
-    input.set_cursor_style(theme.fill(Bg::Primary));
-    input
-}
-
-fn clamp_palette(state: &mut State) {
-    let Some(Overlay::Palette(palette)) = &state.overlay else {
-        return;
-    };
-    let input = palette.input.lines().join("");
-    let count = state.palette_commands(&input).len();
-    if let Some(Overlay::Palette(palette)) = &mut state.overlay {
-        palette.selected = palette.selected.min(count.saturating_sub(1));
-    }
-}
-
-pub fn new_palette(theme: &Theme) -> Palette {
-    let mut input = TextArea::default();
-    input.set_style(theme.body(Bg::ContainerHigh));
-    input.set_cursor_line_style(theme.body(Bg::ContainerHigh));
-    input.set_cursor_style(theme.fill(Bg::Primary));
-    input.set_placeholder_text("A command, owner/repo, owner/repo#123, @user, a URL, or a search");
-    input.set_placeholder_style(theme.meta(Bg::ContainerHigh));
-    Palette { input, selected: 0 }
 }
 
 pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
@@ -1616,66 +1147,27 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
     }
     match action {
         Action::Quit => state.quit = true,
-        Action::Close => {
-            if state.screens.len() > 1 {
-                state.screens.pop();
-                return state.load_visible(false);
-            }
-            state.quit = true;
-        }
         Action::Back => return state.back(),
         Action::Forward => return state.go_forward(),
-        Action::Help => state.overlay = Some(Overlay::Help),
         Action::Menu => nav::open_menu(state),
-        Action::CommandPalette => {
-            state.overlay = Some(Overlay::Palette(Box::new(new_palette(&state.theme))));
-        }
+        Action::CommandPalette => return state.open_picker(picker::Kind::Commands),
         Action::Refresh => return state.load_visible(true),
         Action::Copy => return nav::copy_link(state),
-        Action::OpenInBrowser => {
-            let url = match state.screen() {
-                Screen::Page(p) => p
-                    .selected_url()
-                    .filter(|u| u.starts_with("http"))
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| p.route.url()),
-                Screen::Diff(screen) => format!("{}/files", screen.pr.url()),
-            };
-            state.notice = Some(Notice::Info(format!("Opened {url} in the browser")));
-            return vec![Cmd::OpenUrl(url)];
-        }
+        Action::OpenInBrowser => return state.go(Target::External(state.here_url())),
         Action::Search => {
             if let Screen::Diff(_) = state.screen() {
-                state.overlay = Some(Overlay::DiffSearch(Box::new(new_search_input(
-                    &state.theme,
-                ))));
+                let input = nav::new_input(&state.theme, Bg::Container);
+                state.overlay = Some(Overlay::DiffSearch(Box::new(input)));
             }
         }
         Action::FindFile => {
             if let Screen::Diff(_) = state.screen() {
-                let mut finder = new_palette(&state.theme);
-                finder.input.set_placeholder_text("File path");
-                state.overlay = Some(Overlay::FindFile(Box::new(finder)));
+                return state.open_picker(picker::Kind::DiffFiles);
             }
         }
         Action::GoHome => {
             if state.route() != Some(&Route::Home) {
                 return state.push(Route::Home);
-            }
-        }
-        Action::GoIssues | Action::GoPulls => {
-            let Some(repo) = state.context_repo().cloned() else {
-                state.notice = Some(Notice::Info("Open a repository first".into()));
-                return Vec::new();
-            };
-            let query = OPEN.to_owned();
-            let route = if action == Action::GoIssues {
-                Route::Issues { repo, query }
-            } else {
-                Route::Pulls { repo, query }
-            };
-            if state.route() != Some(&route) {
-                return state.push(route);
             }
         }
         Action::Tab1 => return nav::switch_tab(state, 1),
@@ -1692,17 +1184,6 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         _ => {}
     }
     Vec::new()
-}
-
-/// Keeps the page (or the diff) in bounds after a change.
-fn clamp_scroll(state: &mut State) -> Vec<Cmd> {
-    match state.screen() {
-        Screen::Page(_) => {
-            state.sync_page();
-            Vec::new()
-        }
-        Screen::Diff(_) => state.settle_diff(),
-    }
 }
 
 // ---- reviewing ---------------------------------------------------------------
@@ -1745,6 +1226,11 @@ impl State {
 /// Review actions on the diff screen. `None` lets other handlers try.
 fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
     let theme = state.theme.clone();
+    let all_changes = format!(
+        "pick “All changes” ({})",
+        state.first_key(Action::PickCommits)
+    );
+    let viewer = state.viewer.clone();
     let (screen, diff) = state.diff_parts()?;
     let pr = screen.pr.clone();
     let cursor = screen.cursor;
@@ -1756,13 +1242,6 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
         state.notice = Some(n);
         Some(Vec::new())
     };
-    // `c` on a thread replies to it, as you'd expect.
-    let action = match (action, &annotation) {
-        (Action::Comment, Some(ann)) if matches!(ann.key, AnnotationKey::Thread(_)) => {
-            Action::ReplyThread
-        }
-        _ => action,
-    };
     let in_range = diff.range.is_some();
     if in_range
         && matches!(
@@ -1772,23 +1251,21 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
     {
         return notice(
             state,
-            Notice::Error(
-                "Comments anchor to the whole PR: pick “All changes” (gc) to comment".into(),
-            ),
+            Notice::Error(format!(
+                "Comments anchor to the whole PR: {all_changes} to comment"
+            )),
         );
     }
     match action {
         Action::ToggleSinceReview => {
             if in_range {
-                return notice(state, Notice::Error("Pick “All changes” (gc) first".into()));
+                return notice(state, Notice::Error(format!("First {all_changes}")));
             }
             if diff.doc.since.is_some() {
                 let active = !diff.doc.since_active;
-                let (c, t) = (diff.doc.anchor(screen.cursor), diff.doc.anchor(screen.top));
-                let hashes = diff.doc.since.clone();
-                diff.doc.set_since(hashes, active);
-                screen.cursor = diff.doc.locate(c);
-                screen.top = diff.doc.locate(t);
+                diff_screen::preserving_position(screen, &mut diff.doc, |doc| {
+                    doc.set_since(doc.since.clone(), active)
+                });
                 state.notice = Some(Notice::Info(
                     if active {
                         "Showing changes since your last review"
@@ -1801,8 +1278,10 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
             }
             diff.since_requested = true;
             if diff.last_review.is_none() {
-                let Some(login) = state.viewer.clone() else {
-                    return Some(start_since_review_local(state));
+                let Some(login) = viewer else {
+                    // Without a login, only the local record can say.
+                    diff.last_review = Some(None);
+                    return Some(start_since_review(state));
                 };
                 state.notice = Some(Notice::Info("Looking up your last review…".into()));
                 return Some(vec![Cmd::FetchLastReview { pr, login }]);
@@ -1814,11 +1293,30 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
                 state.notice = Some(Notice::Info("Listing commits…".into()));
                 return Some(vec![Cmd::ListCommits(pr)]);
             }
-            open_commit_picker(state);
-            Some(Vec::new())
+            Some(state.open_picker(picker::Kind::Commits { mark: None }))
         }
         Action::Back if screen.selection.is_some() => {
             screen.selection = None;
+            Some(Vec::new())
+        }
+        // `c` on a thread replies to it.
+        Action::Comment
+            if annotation
+                .as_ref()
+                .is_some_and(|a| matches!(a.key, AnnotationKey::Thread(_))) =>
+        {
+            let ann = annotation?;
+            let AnnotationKey::Thread(thread_id) = ann.key else {
+                return None;
+            };
+            if !ann.can_reply {
+                return notice(state, Notice::Info("You can't reply to this one".into()));
+            }
+            state.overlay = Some(Overlay::Compose(Box::new(Compose::new(
+                &theme,
+                ComposeTarget::Reply { thread_id },
+                "",
+            ))));
             Some(Vec::new())
         }
         Action::Comment => {
@@ -1898,21 +1396,6 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
                 },
             }])
         }
-        Action::ReplyThread => match annotation {
-            Some(ann) if ann.can_reply => {
-                let AnnotationKey::Thread(thread_id) = ann.key else {
-                    return Some(Vec::new());
-                };
-                state.overlay = Some(Overlay::Compose(Box::new(Compose::new(
-                    &theme,
-                    ComposeTarget::Reply { thread_id },
-                    "",
-                ))));
-                Some(Vec::new())
-            }
-            Some(_) => notice(state, Notice::Info("You can't reply to this one".into())),
-            None => notice(state, Notice::Info("Move to a thread to reply".into())),
-        },
         Action::ResolveThread => {
             let Some(ann) = annotation else {
                 return notice(state, Notice::Info("Move to a thread to resolve it".into()));
@@ -2013,120 +1496,17 @@ fn start_since_review(state: &mut State) -> Vec<Cmd> {
 }
 
 /// Without a GitHub login, only the locally remembered review is known.
-fn start_since_review_local(state: &mut State) -> Vec<Cmd> {
-    if let Some((_, diff)) = state.diff_parts() {
-        diff.last_review = Some(None);
-    }
-    start_since_review(state)
-}
-
-fn open_commit_picker(state: &mut State) {
-    let theme = state.theme.clone();
-    let Some((_, diff)) = state.diff_parts() else {
-        return;
-    };
-    let current = |on: bool| {
-        if on {
-            "current".to_owned()
-        } else {
-            String::new()
-        }
-    };
-    let mut items = vec![
-        (
-            PickItem::All,
-            PaletteItem {
-                label: "All changes".into(),
-                hint: current(diff.range.is_none() && !diff.doc.since_active),
-            },
-        ),
-        (
-            PickItem::SinceReview,
-            PaletteItem {
-                label: "Changes since your last review".into(),
-                hint: current(diff.range.is_none() && diff.doc.since_active),
-            },
-        ),
-    ];
-    for (i, (sha, subject)) in diff.commits.iter().enumerate() {
-        items.push((
-            PickItem::Commit(i),
-            PaletteItem {
-                label: format!("{} {subject}", &sha[..7.min(sha.len())]),
-                hint: String::new(),
-            },
-        ));
-    }
-    let mut input = TextArea::default();
-    input.set_style(theme.body(Bg::ContainerHigh));
-    input.set_cursor_style(theme.body(Bg::ContainerHigh));
-    input.set_placeholder_text("Space marks a range start · Enter views · Esc cancels");
-    input.set_placeholder_style(theme.meta(Bg::ContainerHigh));
-    state.overlay = Some(Overlay::Commits(Box::new(CommitPicker {
-        items,
-        selected: 0,
-        mark: None,
-        input,
-    })));
-}
-
-fn on_commits_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
-    let Some(Overlay::Commits(picker)) = &mut state.overlay else {
-        return Vec::new();
-    };
-    match key.code {
-        KeyCode::Esc => {
-            state.overlay = None;
-            Vec::new()
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            picker.selected = (picker.selected + 1).min(picker.items.len() - 1);
-            Vec::new()
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            picker.selected = picker.selected.saturating_sub(1);
-            Vec::new()
-        }
-        KeyCode::Char(' ') => {
-            let i = picker.selected;
-            if matches!(picker.items[i].0, PickItem::Commit(_)) {
-                picker.mark = if picker.mark == Some(i) {
-                    None
-                } else {
-                    Some(i)
-                };
-                for (j, (_, item)) in picker.items.iter_mut().enumerate() {
-                    if Some(j) == picker.mark {
-                        item.hint = "range start".into();
-                    } else if item.hint == "range start" {
-                        item.hint.clear();
-                    }
-                }
-            }
-            Vec::new()
-        }
-        KeyCode::Enter => {
-            let choice = picker.items[picker.selected].0.clone();
-            let mark = picker.mark.map(|m| picker.items[m].0.clone());
-            state.overlay = None;
-            apply_commit_choice(state, choice, mark)
-        }
-        _ => Vec::new(),
-    }
-}
-
-fn apply_commit_choice(state: &mut State, choice: PickItem, mark: Option<PickItem>) -> Vec<Cmd> {
+pub fn apply_commit_choice(
+    state: &mut State,
+    choice: PickItem,
+    mark: Option<PickItem>,
+) -> Vec<Cmd> {
     let width = state.size.0;
     let pr = match state.screen() {
         Screen::Diff(screen) => screen.pr.clone(),
         _ => return Vec::new(),
     };
-    let Some(base_ref) = state
-        .prs
-        .get(&pr)
-        .and_then(|r| r.data.as_ref())
-        .map(|d| d.base_ref.clone())
-    else {
+    let Some(base_ref) = state.base_ref(&pr) else {
         return Vec::new();
     };
     let Some((screen, diff)) = state.diff_parts() else {
@@ -2367,6 +1747,8 @@ fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::picker::{Choice, fuzzy_score};
+    use crate::route::OPEN;
     use ghtui_api::browse::SearchResults;
     use ghtui_api::model::{PrState, PrSummary};
     use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode};
@@ -2742,7 +2124,7 @@ mod tests {
     fn palette_goes_places_and_runs_actions() {
         let mut state = with_inbox(1);
         press(&mut state, ":");
-        assert!(matches!(state.overlay, Some(Overlay::Palette(_))));
+        assert!(matches!(state.overlay, Some(Overlay::Picker(_))));
         let cmds = fetches(press(&mut state, "a/b#9<Enter>"));
         let key = DataKey::Issue(RepoId::new("a", "b"), 9);
         assert_eq!(
@@ -2793,13 +2175,13 @@ mod tests {
         press(&mut state, ":@octocat<Enter>");
         assert_eq!(route(&state), Route::user("octocat"));
 
-        press(&mut state, ":help<Enter>");
-        assert!(matches!(state.overlay, Some(Overlay::Help)));
+        press(&mut state, ":actions menu<Enter>");
+        assert!(matches!(state.overlay, Some(Overlay::Menu(_))));
         press(&mut state, "<Esc>");
         assert!(state.overlay.is_none());
         press(&mut state, "<C-k>");
         assert!(
-            matches!(state.overlay, Some(Overlay::Palette(_))),
+            matches!(state.overlay, Some(Overlay::Picker(_))),
             "GitHub's palette key"
         );
     }
@@ -2807,15 +2189,17 @@ mod tests {
     #[test]
     fn palette_searches_github() {
         let state = state();
-        let commands: Vec<PaletteCommand> = state
-            .palette_commands("ratatui widgets")
+        let choices: Vec<Choice> = state
+            .commands("ratatui widgets")
             .into_iter()
-            .map(|(c, _)| c)
+            .filter_map(|(_, c)| c)
             .collect();
-        assert!(commands.contains(&PaletteCommand::Search("ratatui widgets".into())));
+        assert!(choices.contains(&Choice::Search("ratatui widgets".into())));
         assert_eq!(
-            state.palette_commands("ratatui/ratatui")[0].0,
-            PaletteCommand::Go(Target::Page(Route::Repo(RepoId::new("ratatui", "ratatui"))))
+            state.commands("ratatui/ratatui")[0].1,
+            Some(Choice::Go(Target::Page(Route::Repo(RepoId::new(
+                "ratatui", "ratatui"
+            )))))
         );
     }
 
@@ -2823,9 +2207,9 @@ mod tests {
     fn palette_fuzzy_matches() {
         let state = state();
         let labels: Vec<String> = state
-            .palette_commands("open on")
+            .commands("open on")
             .into_iter()
-            .map(|(_, item)| item.label)
+            .map(|(item, _)| item.label)
             .collect();
         assert_eq!(labels.first().map(String::as_str), Some("Open on GitHub"));
         assert!(fuzzy_score("xyz", "Refresh").is_none());
@@ -2837,8 +2221,8 @@ mod tests {
         // Defaults are single keys; sequences only come from config.
         let mut state = with_inbox(1);
         state.keymap = Keymap::with_overrides(&std::collections::HashMap::from([
-            ("go_issues".to_owned(), vec!["zi".to_owned()]),
-            ("go_pulls".to_owned(), vec!["zp".to_owned()]),
+            ("tab_2".to_owned(), vec!["zi".to_owned()]),
+            ("tab_3".to_owned(), vec!["zp".to_owned()]),
         ]))
         .unwrap();
         press(&mut state, "z");
@@ -2854,13 +2238,13 @@ mod tests {
     fn palette_list_stays_in_bounds() {
         let mut state = state();
         press(&mut state, ":");
-        for _ in 0..(state.palette_commands("").len() + PALETTE_ROWS) {
+        for _ in 0..(state.commands("").len() + PALETTE_ROWS) {
             press(&mut state, "<Down>");
         }
-        let Some(Overlay::Palette(palette)) = &state.overlay else {
+        let Some(Overlay::Picker(palette)) = &state.overlay else {
             panic!()
         };
-        assert_eq!(palette.selected, state.palette_commands("").len() - 1);
+        assert_eq!(palette.selected, state.commands("").len() - 1);
     }
 
     #[test]
@@ -3037,11 +2421,11 @@ mod tests {
             ),
         );
         press(&mut state, "main");
-        let Some(Overlay::Finder(f)) = &state.overlay else {
+        let Some(Overlay::Picker(f)) = &state.overlay else {
             panic!("no finder")
         };
         let rows: Vec<String> = state
-            .finder_rows(f)
+            .picker_rows(f)
             .into_iter()
             .map(|(i, _)| i.label)
             .collect();
@@ -3322,7 +2706,7 @@ mod tests {
         assert!(fwd.unavailable.is_some(), "nothing to go forward to");
         // A row's own key runs it.
         let cmds = press(&mut state, "f");
-        assert!(matches!(state.overlay, Some(Overlay::Finder(_))));
+        assert!(matches!(state.overlay, Some(Overlay::Picker(_))));
         assert!(!cmds.is_empty());
     }
 
@@ -3330,8 +2714,8 @@ mod tests {
     fn status_bar_hints_follow_the_context() {
         let mut state = with_repo();
         let hints: Vec<String> = state.key_hints().into_iter().map(|(_, w)| w).collect();
-        assert_eq!(hints.first().map(String::as_str), Some("open"));
-        assert!(hints.contains(&"go to file".to_owned()) && hints.contains(&"keys".to_owned()));
+        assert_eq!(hints[..2], ["menu", "open"]);
+        assert!(hints.contains(&"go to file".to_owned()));
         press(&mut state, "2");
         let hints: Vec<String> = state.key_hints().into_iter().map(|(_, w)| w).collect();
         assert!(
@@ -3348,16 +2732,9 @@ mod tests {
             matches!(state.overlay, Some(Overlay::Hints(_))),
             "l: link letters on a page"
         );
-        let help = state.help_entries();
-        assert!(
-            help.iter()
-                .any(|h| h.description == "Follow a link by its letters")
-        );
-        assert!(
-            !help
-                .iter()
-                .any(|h| h.description == "Comment on the whole file")
-        );
+        let doables = state.doables();
+        assert!(doables.iter().any(|d| d.action == Action::Hints));
+        assert!(!doables.iter().any(|d| d.action == Action::FileComment));
     }
 
     mod diff {
@@ -3505,10 +2882,12 @@ mod tests {
         #[test]
         fn file_finder_jumps_to_files() {
             let (mut s, _) = diff_state(120);
-            press(&mut s, "f");
-            assert!(matches!(s.overlay, Some(Overlay::FindFile(_))));
-            assert_eq!(s.finder_items("gone")[0].1.label, "gone.py");
-            press(&mut s, "gone<Enter>");
+            press(&mut s, "fgone");
+            let Some(Overlay::Picker(p)) = &s.overlay else {
+                panic!("no finder")
+            };
+            assert_eq!(s.picker_rows(p)[0].0.label, "gone.py");
+            press(&mut s, "<Enter>");
             assert!(s.overlay.is_none());
             assert_eq!(screen(&s).cursor.file, 3);
             assert_eq!(screen(&s).cursor.row, 0);
@@ -3628,7 +3007,7 @@ mod tests {
                         ]),
                     ),
                 );
-                assert!(matches!(s.overlay, Some(Overlay::Commits(_))));
+                assert!(matches!(s.overlay, Some(Overlay::Picker(_))));
                 // Mark the first commit, select the second: a range.
                 press(&mut s, "jj<Space>j");
                 let cmds = press(&mut s, "<Enter>");

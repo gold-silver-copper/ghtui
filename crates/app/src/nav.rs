@@ -5,13 +5,12 @@
 
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ghtui_api::browse::{RepoSummary, SearchKind};
 use ghtui_api::model::RepoId;
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::bars::Notice;
 use ghtui_ui::chrome::{self, KeyRow, SuggestRow};
-use ghtui_ui::overlays::PaletteItem;
 use ghtui_ui::page::{self, HintLabel};
 use ghtui_ui::pages::{self, PrTab};
 use ghtui_ui::{PAD_X, PAD_Y};
@@ -20,10 +19,11 @@ use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
 use crate::browse::{self, Data, DataKey, PageScreen};
-use crate::keymap::{Action, Scope};
+use crate::keymap::{Action, Resolution};
+use crate::picker::{fuzzy_score, move_in_list};
 use crate::review::{Compose, ComposeTarget};
 use crate::route::{self, Route, Target};
-use crate::state::{Cmd, Overlay, Remote, Screen, State, apply, fuzzy_score, new_palette};
+use crate::state::{Cmd, Overlay, Remote, Screen, State, apply};
 
 /// Rows `j`/`k` scroll when there's no row to move to nearby.
 const STEP: usize = 3;
@@ -144,11 +144,11 @@ impl State {
         match url {
             pages::MORE => self.load_more(),
             pages::STAR => star(self),
-            pages::COMMENT => comment(self),
+            pages::COMMENT => comment_with(self, ""),
             pages::FILTER => self.open_search(),
             pages::SORT => cycle_sort(self),
-            pages::BRANCH => self.open_finder(FinderKind::Branches),
-            pages::FIND_FILE => self.open_finder(FinderKind::Files),
+            pages::BRANCH => self.open_finder(true),
+            pages::FIND_FILE => self.open_finder(false),
             _ => {
                 if let Some(state) = url.strip_prefix(pages::STATE) {
                     return set_list_state(self, state);
@@ -345,8 +345,6 @@ pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
     match action {
         Action::Down => next(p, height),
         Action::Up => prev(p, height),
-        Action::ScrollDown => scroll_by(p, 1, height),
-        Action::ScrollUp => scroll_by(p, -1, height),
         Action::HalfPageDown => scroll_keep(p, half, height),
         Action::HalfPageUp => scroll_keep(p, -half, height),
         Action::PageDown => scroll_keep(p, height.saturating_sub(2).max(1) as i64, height),
@@ -387,24 +385,14 @@ pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
         }
         Action::Search => return Some(state.open_search()),
         Action::Star => return Some(star(state)),
-        Action::Comment => return Some(comment(state)),
-        Action::FindFile => return Some(state.open_finder(FinderKind::Files)),
-        Action::Branch => return Some(state.open_finder(FinderKind::Branches)),
+        Action::Comment => return Some(comment_with(state, "")),
+        Action::FindFile => return Some(state.open_finder(false)),
+        Action::Branch => return Some(state.open_finder(true)),
         Action::ToggleState => return Some(cycle_state(state)),
         Action::Sort => return Some(cycle_sort(state)),
         Action::Menu => open_menu(state),
         Action::NextTab => return Some(step_tab(state, true)),
         Action::PrevTab => return Some(step_tab(state, false)),
-        Action::GoCode => {
-            let repo = state.context_repo().cloned();
-            return Some(match repo {
-                Some(repo) if state.route() != Some(&Route::Repo(repo.clone())) => {
-                    state.push(Route::Repo(repo))
-                }
-                Some(_) => Vec::new(),
-                None => no_repo(state),
-            });
-        }
         _ => return None,
     }
     Some(Vec::new())
@@ -445,7 +433,7 @@ fn up(state: &State, route: &Route) -> Option<Route> {
     })
 }
 
-fn no_repo(state: &mut State) -> Vec<Cmd> {
+pub fn no_repo(state: &mut State) -> Vec<Cmd> {
     state.notice = Some(Notice::Info("Open a repository first".into()));
     Vec::new()
 }
@@ -636,14 +624,7 @@ pub fn new_input(theme: &Theme, bg: Bg) -> TextArea<'static> {
 impl State {
     /// `/`: GitHub search in the header, or the list's filter on a list.
     pub fn open_search(&mut self) -> Vec<Cmd> {
-        let filter_query = match self.route() {
-            Some(
-                Route::Issues { query, .. }
-                | Route::Pulls { query, .. }
-                | Route::Search { query, .. },
-            ) => Some(query.clone()),
-            _ => None,
-        };
+        let filter_query = self.route().and_then(Route::list_query).map(str::to_owned);
         let mut input = new_input(&self.theme, Bg::ContainerHighest);
         if let Some(q) = &filter_query {
             input.insert_str(q);
@@ -805,48 +786,24 @@ pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let Some(Overlay::Search(sb)) = &state.overlay else {
         return Vec::new();
     };
-    let count = state
+    let picks: Vec<Pick> = state
         .suggestions(sb)
-        .iter()
-        .filter(|(_, p)| p.is_some())
-        .count();
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        .into_iter()
+        .filter_map(|(_, p)| p)
+        .collect();
     let Some(Overlay::Search(sb)) = &mut state.overlay else {
         return Vec::new();
     };
+    if move_in_list(key, &mut sb.selected, picks.len()) {
+        return Vec::new();
+    }
     match key.code {
         KeyCode::Esc => {
             state.overlay = None;
             Vec::new()
         }
-        KeyCode::Down | KeyCode::Tab => {
-            sb.selected = (sb.selected + 1).min(count.saturating_sub(1));
-            Vec::new()
-        }
-        KeyCode::Char('n') if ctrl => {
-            sb.selected = (sb.selected + 1).min(count.saturating_sub(1));
-            Vec::new()
-        }
-        KeyCode::Up | KeyCode::BackTab => {
-            sb.selected = sb.selected.saturating_sub(1);
-            Vec::new()
-        }
-        KeyCode::Char('p') if ctrl => {
-            sb.selected = sb.selected.saturating_sub(1);
-            Vec::new()
-        }
         KeyCode::Enter => {
-            let selected = sb.selected;
-            let pick = {
-                let Some(Overlay::Search(sb)) = &state.overlay else {
-                    return Vec::new();
-                };
-                state
-                    .suggestions(sb)
-                    .into_iter()
-                    .filter_map(|(_, p)| p)
-                    .nth(selected)
-            };
+            let pick = picks.into_iter().nth(sb.selected);
             state.overlay = None;
             pick.map_or_else(Vec::new, |p| choose(state, p))
         }
@@ -867,11 +824,9 @@ fn choose(state: &mut State, pick: Pick) -> Vec<Cmd> {
     match pick {
         Pick::Go(target) => state.go(target),
         Pick::Search(kind, query) => state.push(Route::Search { kind, query }),
-        Pick::Filter(query) => match state.route().cloned() {
-            Some(Route::Issues { repo, .. }) => state.replace(Route::Issues { repo, query }, true),
-            Some(Route::Pulls { repo, .. }) => state.replace(Route::Pulls { repo, query }, true),
-            Some(Route::Search { kind, .. }) => state.replace(Route::Search { kind, query }, true),
-            _ => state.push(Route::Search {
+        Pick::Filter(query) => match state.route().and_then(|r| r.with_query(query.clone())) {
+            Some(route) => state.replace(route, true),
+            None => state.push(Route::Search {
                 kind: SearchKind::Issues,
                 query,
             }),
@@ -898,35 +853,26 @@ fn with_state(query: &str, state: &str) -> String {
     words.join(" ")
 }
 
-fn with_list_query(route: &Route, query: String) -> Option<Route> {
-    Some(match route {
-        Route::Issues { repo, .. } => Route::Issues {
-            repo: repo.clone(),
-            query,
-        },
-        Route::Pulls { repo, .. } => Route::Pulls {
-            repo: repo.clone(),
-            query,
-        },
-        Route::Search { kind, .. } => Route::Search { kind: *kind, query },
-        _ => return None,
-    })
+/// Open → closed → all.
+fn next_list_state(query: &str) -> &'static str {
+    match pages::list_state(query) {
+        "open" => "closed",
+        "closed" => "all",
+        _ => "open",
+    }
 }
 
+/// The list on screen and its filter.
 fn list_query(state: &State) -> Option<(Route, String)> {
-    match state.route()? {
-        r @ (Route::Issues { query, .. }
-        | Route::Pulls { query, .. }
-        | Route::Search { query, .. }) => Some((r.clone(), query.clone())),
-        _ => None,
-    }
+    let route = state.route()?;
+    Some((route.clone(), route.list_query()?.to_owned()))
 }
 
 fn set_list_state(state: &mut State, which: &str) -> Vec<Cmd> {
     let Some((route, query)) = list_query(state) else {
         return Vec::new();
     };
-    match with_list_query(&route, with_state(&query, which)) {
+    match route.with_query(with_state(&query, which)) {
         Some(r) if r != route => state.replace(r, true),
         _ => Vec::new(),
     }
@@ -937,12 +883,7 @@ fn cycle_state(state: &mut State) -> Vec<Cmd> {
         state.notice = Some(Notice::Info("Only lists have open and closed".into()));
         return Vec::new();
     };
-    let next = match pages::list_state(&query) {
-        "open" => "closed",
-        "closed" => "all",
-        _ => "open",
-    };
-    set_list_state(state, next)
+    set_list_state(state, next_list_state(&query))
 }
 
 fn cycle_sort(state: &mut State) -> Vec<Cmd> {
@@ -965,7 +906,7 @@ fn cycle_sort(state: &mut State) -> Vec<Cmd> {
         words.push(&sort);
     }
     state.notice = Some(Notice::Info(format!("Sorted: {label}")));
-    match with_list_query(&route, words.join(" ")) {
+    match route.with_query(words.join(" ")) {
         Some(r) => state.replace(r, true),
         None => Vec::new(),
     }
@@ -1004,10 +945,6 @@ pub fn set_starred(state: &mut State, repo: &RepoId, starred: bool) {
         };
     }
     state.data_gen += 1;
-}
-
-pub fn comment(state: &mut State) -> Vec<Cmd> {
-    comment_with(state, "")
 }
 
 /// Opens the composer on the issue or pull request on screen, starting
@@ -1053,252 +990,28 @@ fn comment_with(state: &mut State, text: &str) -> Vec<Cmd> {
     Vec::new()
 }
 
-// ---- go to file, branches ----------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FinderKind {
-    Files,
-    Branches,
-}
-
-pub struct Finder {
-    pub kind: FinderKind,
-    pub repo: RepoId,
-    /// The revision files are listed at.
-    pub rev: String,
-    /// Where you were, to land on the same path on another branch.
-    pub path: String,
-    pub file: bool,
-    pub input: TextArea<'static>,
-    pub selected: usize,
-}
-
-impl Finder {
-    pub fn title(&self) -> &'static str {
-        match self.kind {
-            FinderKind::Files => "Go to file",
-            FinderKind::Branches => "Switch branches/tags",
-        }
-    }
-}
-
-impl State {
-    /// The repository, revision and path on screen.
-    fn code_context(&self) -> Option<(RepoId, String, String, bool)> {
-        let default = |repo: &RepoId| {
-            self.overview(repo)
-                .and_then(|o| o.default_branch.clone())
-                .unwrap_or_else(|| "HEAD".into())
-        };
-        Some(match self.route()? {
-            Route::Tree { repo, rev, path } => (repo.clone(), rev.clone(), path.clone(), false),
-            Route::Blob { repo, rev, path } => (repo.clone(), rev.clone(), path.clone(), true),
-            route => {
-                let repo = route.repo()?.clone();
-                let rev = default(&repo);
-                (repo, rev, String::new(), false)
-            }
-        })
-    }
-
-    pub fn open_finder(&mut self, kind: FinderKind) -> Vec<Cmd> {
-        let Some((repo, rev, path, file)) = self.code_context() else {
-            return no_repo(self);
-        };
-        let mut input = new_palette(&self.theme).input;
-        input.set_placeholder_text(match kind {
-            FinderKind::Files => "Type a file name",
-            FinderKind::Branches => "Find a branch or tag",
-        });
-        let key = match kind {
-            FinderKind::Files => DataKey::Files(repo.clone(), rev.clone()),
-            FinderKind::Branches => DataKey::Refs(repo.clone()),
-        };
-        self.overlay = Some(Overlay::Finder(Box::new(Finder {
-            kind,
-            repo,
-            rev,
-            path,
-            file,
-            input,
-            selected: 0,
-        })));
-        self.ensure(crate::browse::Need::Data(key), false)
-    }
-
-    /// The finder's rows: what to show and where each leads.
-    pub fn finder_rows(&self, f: &Finder) -> Vec<(PaletteItem, Option<Target>)> {
-        let q = f.input.lines().join("");
-        let q = q.trim();
-        let loading = |what: &str| {
-            vec![(
-                PaletteItem {
-                    label: format!("Loading {what}…"),
-                    hint: String::new(),
-                },
-                None,
-            )]
-        };
-        match f.kind {
-            FinderKind::Files => {
-                let Some(Data::Files(files, truncated)) =
-                    self.get(&DataKey::Files(f.repo.clone(), f.rev.clone()))
-                else {
-                    return loading("files");
-                };
-                let mut hits: Vec<(usize, &String)> = files
-                    .iter()
-                    .filter_map(|p| path_score(q, p).map(|s| (s, p)))
-                    .collect();
-                hits.sort_by_key(|(s, p)| (*s, p.len()));
-                let mut rows: Vec<(PaletteItem, Option<Target>)> = hits
-                    .into_iter()
-                    .take(200)
-                    .map(|(_, p)| {
-                        (
-                            PaletteItem {
-                                label: p.clone(),
-                                hint: String::new(),
-                            },
-                            Some(Target::Page(Route::Blob {
-                                repo: f.repo.clone(),
-                                rev: f.rev.clone(),
-                                path: p.clone(),
-                            })),
-                        )
-                    })
-                    .collect();
-                if *truncated && rows.len() < 200 {
-                    rows.push((
-                        PaletteItem {
-                            label: "GitHub listed only part of this repository".into(),
-                            hint: String::new(),
-                        },
-                        None,
-                    ));
-                }
-                rows
-            }
-            FinderKind::Branches => {
-                let Some(Data::Refs(refs)) = self.get(&DataKey::Refs(f.repo.clone())) else {
-                    return loading("branches");
-                };
-                let default = self
-                    .overview(&f.repo)
-                    .and_then(|o| o.default_branch.clone());
-                let mut rows: Vec<(usize, PaletteItem, Target)> = Vec::new();
-                for (names, what) in [(&refs.branches, "branch"), (&refs.tags, "tag")] {
-                    for name in names {
-                        let Some(score) = fuzzy_score(q, name) else {
-                            continue;
-                        };
-                        let hint = if Some(name) == default.as_ref() {
-                            "default".to_owned()
-                        } else if *name == f.rev {
-                            "current".to_owned()
-                        } else {
-                            what.to_owned()
-                        };
-                        let target = if f.file {
-                            Route::Blob {
-                                repo: f.repo.clone(),
-                                rev: name.clone(),
-                                path: f.path.clone(),
-                            }
-                        } else if f.path.is_empty() && Some(name) == default.as_ref() {
-                            Route::Repo(f.repo.clone())
-                        } else {
-                            Route::Tree {
-                                repo: f.repo.clone(),
-                                rev: name.clone(),
-                                path: f.path.clone(),
-                            }
-                        };
-                        rows.push((
-                            score,
-                            PaletteItem {
-                                label: name.clone(),
-                                hint,
-                            },
-                            Target::Page(target),
-                        ));
-                    }
-                }
-                rows.sort_by_key(|(s, ..)| *s);
-                rows.into_iter().map(|(_, i, t)| (i, Some(t))).collect()
-            }
-        }
-    }
-}
-
-/// Fuzzy file matching that prefers the file name.
-fn path_score(q: &str, path: &str) -> Option<usize> {
-    if q.is_empty() {
-        return Some(path.matches('/').count());
-    }
-    let name = path.rsplit('/').next().unwrap_or(path);
-    match fuzzy_score(q, name) {
-        Some(s) => Some(s),
-        None => fuzzy_score(q, path).map(|s| s + 2000),
-    }
-}
-
-pub fn on_finder_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
-    let Some(Overlay::Finder(f)) = &state.overlay else {
-        return Vec::new();
-    };
-    let count = state.finder_rows(f).len();
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let Some(Overlay::Finder(f)) = &mut state.overlay else {
-        return Vec::new();
-    };
-    let last = count.saturating_sub(1);
-    match key.code {
-        KeyCode::Esc => state.overlay = None,
-        KeyCode::Down | KeyCode::Tab => f.selected = (f.selected + 1).min(last),
-        KeyCode::Char('n') if ctrl => f.selected = (f.selected + 1).min(last),
-        KeyCode::Up | KeyCode::BackTab => f.selected = f.selected.saturating_sub(1),
-        KeyCode::Char('p') if ctrl => f.selected = f.selected.saturating_sub(1),
-        KeyCode::Enter => {
-            let selected = f.selected;
-            let target = {
-                let Some(Overlay::Finder(f)) = &state.overlay else {
-                    return Vec::new();
-                };
-                state
-                    .finder_rows(f)
-                    .into_iter()
-                    .nth(selected)
-                    .and_then(|(_, t)| t)
-            };
-            if let Some(target) = target {
-                state.overlay = None;
-                return state.go(target);
-            }
-        }
-        _ => {
-            f.input.input(key);
-            f.selected = 0;
-        }
-    }
-    Vec::new()
-}
-
 // ---- the actions menu and hints ----------------------------------------------------------------
 
 /// Something you can do here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Doable {
+    pub section: &'static str,
     pub action: Action,
     /// For the menu.
     pub label: String,
-    /// For the status bar.
+    /// For the status bar; empty keeps it out.
     pub short: &'static str,
     pub unavailable: Option<String>,
 }
 
-fn doable(action: Action, label: impl Into<String>, short: &'static str) -> Doable {
+fn doable(
+    section: &'static str,
+    action: Action,
+    label: impl Into<String>,
+    short: &'static str,
+) -> Doable {
     Doable {
+        section,
         action,
         label: label.into(),
         short,
@@ -1306,167 +1019,186 @@ fn doable(action: Action, label: impl Into<String>, short: &'static str) -> Doab
     }
 }
 
+/// The diff's menu, section by section, with the status bar's few.
+const DIFF_DOABLES: &[(&str, &[(Action, &str)])] = {
+    use Action as A;
+    &[
+        (
+            "Move",
+            &[
+                (A::NextHunk, "change"),
+                (A::PrevHunk, ""),
+                (A::NextFile, "file"),
+                (A::PrevFile, ""),
+                (A::NextUnviewed, ""),
+                (A::NextThread, ""),
+                (A::PrevThread, ""),
+                (A::JumpMove, ""),
+                (A::FindFile, ""),
+                (A::SwitchPane, ""),
+            ],
+        ),
+        (
+            "View",
+            &[
+                (A::ToggleTree, ""),
+                (A::ToggleSplit, ""),
+                (A::IgnoreWhitespace, ""),
+                (A::ExpandContext, ""),
+                (A::FullFile, ""),
+                (A::ToggleSinceReview, ""),
+                (A::PickCommits, ""),
+            ],
+        ),
+        (
+            "Review",
+            &[
+                (A::ToggleViewed, "viewed"),
+                (A::MarkReviewed, ""),
+                (A::Comment, "comment"),
+                (A::VisualLines, ""),
+                (A::Suggest, ""),
+                (A::FileComment, ""),
+                (A::ResolveThread, ""),
+                (A::DeleteDraft, ""),
+                (A::SubmitReview, "submit review"),
+            ],
+        ),
+    ]
+};
+
 impl State {
-    /// What you can do on this screen, most useful first.
+    /// What you can do on this screen, in sections, most useful first.
     pub fn doables(&self) -> Vec<Doable> {
         let mut out = Vec::new();
-        match self.screen() {
+        let selected = match self.screen() {
             Screen::Page(p) => {
-                let selected = p
-                    .selected
-                    .and_then(|i| p.page.items.get(i))
-                    .map(|i| &p.page.links[i.link as usize]);
-                let mut open = doable(Action::Open, "Open the selected row", "open");
-                match selected {
-                    Some(url) => open.label = describe(url),
-                    None => open.unavailable = Some("nothing is selected".into()),
-                }
-                out.push(open);
-                if !self.chrome().tabs.is_empty() {
-                    out.push(doable(Action::NextTab, "Next tab", "tabs"));
-                }
-                let route = &p.route;
-                let list = matches!(
-                    route,
-                    Route::Issues { .. } | Route::Pulls { .. } | Route::Search { .. }
-                );
-                out.push(doable(
-                    Action::Search,
-                    if list {
-                        "Filter this list"
-                    } else {
-                        "Search or jump to…"
-                    },
-                    if list { "filter" } else { "search" },
-                ));
-                if list {
-                    let state =
-                        pages::list_state(route.search().map(|(_, q)| q).as_deref().unwrap_or(""));
-                    let next = match state {
-                        "open" => "closed",
-                        "closed" => "all",
-                        _ => "open",
-                    };
-                    out.push(doable(
-                        Action::ToggleState,
-                        format!("Show {next}"),
-                        "open/closed",
-                    ));
-                    out.push(doable(Action::Sort, "Change the sort", "sort"));
-                }
-                if route.repo().is_some() {
-                    out.push(doable(Action::FindFile, "Go to file", "go to file"));
-                    if matches!(
-                        route,
-                        Route::Repo(_) | Route::Tree { .. } | Route::Blob { .. }
-                    ) {
-                        out.push(doable(Action::Branch, "Switch branches or tags", "branch"));
-                        let starred = route
-                            .repo()
-                            .and_then(|r| self.overview(r))
-                            .is_some_and(|o| o.starred);
-                        out.push(doable(
-                            Action::Star,
-                            if starred { "Unstar" } else { "Star" },
-                            "star",
-                        ));
-                    }
-                }
-                if matches!(route, Route::Issue { .. } | Route::Pr { .. }) {
-                    out.push(doable(Action::Comment, "Write a comment", "comment"));
-                }
-                if let Route::Pr { tab, .. } = route {
-                    if *tab == PrTab::Conversation {
-                        out.push(doable(Action::Tab2, "Commits", "commits"));
-                    }
-                    out.push(doable(Action::Tab4, "Files changed (review)", "files"));
-                }
-                out.push(doable(
-                    Action::OpenInBrowser,
-                    if selected.is_some() {
-                        "Open the selection on GitHub"
-                    } else {
-                        "Open this page on GitHub"
-                    },
-                    "browser",
-                ));
-                out.push(doable(
-                    Action::Copy,
-                    if selected.is_some() {
-                        "Copy the selection's link"
-                    } else {
-                        "Copy this page's link"
-                    },
-                    "copy link",
-                ));
-                out.push(doable(
-                    Action::Hints,
-                    "Follow any link by its letters",
-                    "links",
-                ));
-                out.push(doable(Action::UpLevel, "Up a level", ""));
-                out.push(doable(Action::Refresh, "Refresh", "refresh"));
-                let mut back = doable(Action::Back, "Back", "back");
-                if self.screens.len() < 2 {
-                    back.unavailable = Some("this is the first page".into());
-                }
-                out.push(back);
-                let mut fwd = doable(Action::Forward, "Forward", "forward");
-                if self.forward.is_empty() {
-                    fwd.unavailable = Some("nothing to go forward to".into());
-                }
-                out.push(fwd);
-                out.push(doable(Action::GoHome, "Home", "home"));
-                out.push(doable(
-                    Action::CommandPalette,
-                    "Command palette",
-                    "commands",
-                ));
-                out.push(doable(Action::Help, "All keyboard shortcuts", "keys"));
+                self.page_doables(p, &mut out);
+                p.selected_url()
             }
             Screen::Diff(_) => {
-                // The status bar's few, then everything else the diff does.
-                let hinted = [
-                    (Action::NextHunk, "change"),
-                    (Action::NextFile, "file"),
-                    (Action::ToggleViewed, "viewed"),
-                    (Action::Comment, "comment"),
-                    (Action::SubmitReview, "submit review"),
-                    (Action::NextTab, "tabs"),
-                    (Action::FindFile, "go to file"),
-                ];
-                for (action, short) in hinted {
-                    out.push(doable(action, action.description(), short));
-                }
-                for action in Action::ALL {
-                    if action.scope() == Scope::Diff && !hinted.iter().any(|(a, _)| *a == action) {
-                        out.push(doable(action, action.description(), ""));
+                for (section, actions) in DIFF_DOABLES {
+                    for &(action, short) in *actions {
+                        out.push(doable(section, action, action.description(), short));
                     }
                 }
-                out.push(doable(
-                    Action::Tab1,
-                    "Back to the conversation",
-                    "conversation",
-                ));
-                out.push(doable(Action::Help, "All keyboard shortcuts", "keys"));
+                None
             }
+        };
+        let go = "Go";
+        if !self.chrome().tabs.is_empty() {
+            out.push(doable(go, Action::NextTab, "Next tab", "tabs"));
+        }
+        if let Screen::Diff(_) = self.screen() {
+            out.push(doable(go, Action::Tab1, "Back to the conversation", ""));
+        }
+        let (open, copy) = match selected {
+            Some(_) => ("Open the selection on GitHub", "Copy the selection's link"),
+            None => ("Open this page on GitHub", "Copy this page's link"),
+        };
+        out.push(doable(go, Action::OpenInBrowser, open, "browser"));
+        out.push(doable(go, Action::Copy, copy, "copy link"));
+        if let Screen::Page(_) = self.screen() {
+            out.push(doable(
+                go,
+                Action::Hints,
+                "Follow any link by its letters",
+                "links",
+            ));
+            out.push(doable(go, Action::UpLevel, "Up a level", ""));
+        }
+        let mut back = doable(go, Action::Back, "Back", "");
+        if self.screens.len() < 2 {
+            back.unavailable = Some("this is the first page".into());
+        }
+        out.push(back);
+        let mut fwd = doable(go, Action::Forward, "Forward", "");
+        if self.forward.is_empty() {
+            fwd.unavailable = Some("nothing to go forward to".into());
+        }
+        out.push(fwd);
+        out.push(doable(go, Action::GoHome, "Home", ""));
+        out.push(doable(go, Action::Refresh, "Refresh", ""));
+        out.push(doable(go, Action::CommandPalette, "Command palette", ""));
+        for action in [
+            Action::Down,
+            Action::Up,
+            Action::Top,
+            Action::Bottom,
+            Action::PageDown,
+            Action::PageUp,
+            Action::HalfPageDown,
+            Action::HalfPageUp,
+            Action::Quit,
+        ] {
+            out.push(doable("Keys", action, action.description(), ""));
         }
         out
+    }
+
+    fn page_doables(&self, p: &PageScreen, out: &mut Vec<Doable>) {
+        let here = "This page";
+        let mut open = doable(here, Action::Open, "Open the selected row", "open");
+        match p.selected_url() {
+            Some(url) => open.label = describe(url),
+            None => open.unavailable = Some("nothing is selected".into()),
+        }
+        out.push(open);
+        let route = &p.route;
+        let list = route.search().map(|(_, q)| q);
+        out.push(match list {
+            Some(_) => doable(here, Action::Search, "Filter this list", "filter"),
+            None => doable(here, Action::Search, "Search or jump to…", "search"),
+        });
+        if let Some(query) = &list {
+            out.push(doable(
+                here,
+                Action::ToggleState,
+                format!("Show {}", next_list_state(query)),
+                "open/closed",
+            ));
+            out.push(doable(here, Action::Sort, "Change the sort", "sort"));
+        }
+        if let Some(repo) = route.repo() {
+            out.push(doable(here, Action::FindFile, "Go to file", "go to file"));
+            if matches!(
+                route,
+                Route::Repo(_) | Route::Tree { .. } | Route::Blob { .. }
+            ) {
+                out.push(doable(
+                    here,
+                    Action::Branch,
+                    "Switch branches or tags",
+                    "branch",
+                ));
+                let starred = self.overview(repo).is_some_and(|o| o.starred);
+                let label = if starred { "Unstar" } else { "Star" };
+                out.push(doable(here, Action::Star, label, "star"));
+            }
+        }
+        if matches!(route, Route::Issue { .. } | Route::Pr { .. }) {
+            out.push(doable(here, Action::Comment, "Write a comment", "comment"));
+        }
+        if let Route::Pr { tab, .. } = route {
+            if *tab == PrTab::Conversation {
+                out.push(doable(here, Action::Tab2, "Commits", "commits"));
+            }
+            out.push(doable(
+                here,
+                Action::Tab4,
+                "Files changed (review)",
+                "files",
+            ));
+        }
     }
 
     /// The status bar's key hints.
     pub fn key_hints(&self) -> Vec<(String, String)> {
         let pair = |keys: &str, what: &str| (keys.to_owned(), what.to_owned());
         match &self.overlay {
-            Some(Overlay::Search(sb)) if sb.filter => {
-                return vec![
-                    pair("↵", "filter"),
-                    pair("↑↓", "choose"),
-                    pair("esc", "close"),
-                ];
-            }
-            Some(Overlay::Search(_)) => {
-                return vec![pair("↵", "go"), pair("↑↓", "choose"), pair("esc", "close")];
+            Some(Overlay::Search(sb)) => {
+                let enter = if sb.filter { "filter" } else { "go" };
+                return vec![pair("↵", enter), pair("↑↓", "choose"), pair("esc", "close")];
             }
             Some(Overlay::Hints(_)) => {
                 return vec![pair("a-z", "type a link's letters"), pair("esc", "cancel")];
@@ -1478,7 +1210,7 @@ impl State {
                     pair("esc", "close"),
                 ];
             }
-            Some(Overlay::Finder(_) | Overlay::Palette(_)) => {
+            Some(Overlay::Picker(_)) => {
                 return vec![
                     pair("↵", "open"),
                     pair("↑↓", "choose"),
@@ -1488,38 +1220,24 @@ impl State {
             Some(_) => return Vec::new(),
             None => {}
         }
-        let mut out = Vec::new();
-        for d in self.doables() {
-            if d.unavailable.is_some()
-                || matches!(
-                    d.action,
-                    Action::Back
-                        | Action::Forward
-                        | Action::GoHome
-                        | Action::Refresh
-                        | Action::CommandPalette
-                )
-            {
-                continue;
-            }
-            if d.action == Action::Help || d.short.is_empty() {
-                continue;
-            }
-            // Pairs read as one hint.
-            let key = match d.action {
-                Action::NextTab => Some("←→".to_owned()),
-                Action::NextHunk => Some("n/p".to_owned()),
-                Action::NextFile => Some("⇧↓".to_owned()),
-                action => self.key_here(action),
-            };
-            if let Some(key) = key {
-                out.push((key, d.short.to_owned()));
-            }
-        }
-        out.truncate(7);
-        out.push((self.first_key(Action::Menu), "more".into()));
-        out.push((self.first_key(Action::Help), "keys".into()));
-        out
+        // The menu first: everything else is in it, so it must never be
+        // the hint a narrow terminal drops.
+        let menu = (self.first_key(Action::Menu), "menu".to_owned());
+        let hints = self
+            .doables()
+            .into_iter()
+            .filter(|d| d.unavailable.is_none() && !d.short.is_empty())
+            .filter_map(|d| {
+                // Pairs read as one hint.
+                let key = match d.action {
+                    Action::NextTab => Some("←→".to_owned()),
+                    Action::NextHunk => Some("n/p".to_owned()),
+                    action => self.key_here(action),
+                };
+                Some((key?, d.short.to_owned()))
+            })
+            .take(7);
+        std::iter::once(menu).chain(hints).collect()
     }
 
     /// The first key that runs `action` on this screen, if any.
@@ -1538,11 +1256,7 @@ impl State {
         self.keymap
             .continuations(&self.pending, self.scope())
             .into_iter()
-            .map(|(rest, action)| KeyRow {
-                key: crate::keymap::pretty(&rest),
-                label: action.description().to_owned(),
-                unavailable: None,
-            })
+            .map(|(rest, action)| KeyRow::key(crate::keymap::pretty(&rest), action.description()))
             .collect()
     }
 }
@@ -1581,32 +1295,41 @@ pub fn open_menu(state: &mut State) {
 }
 
 impl State {
-    pub fn menu_rows(&self, menu: &Menu) -> Vec<KeyRow> {
-        menu.rows
-            .iter()
-            .map(|d| KeyRow {
-                key: self.key_here(d.action).unwrap_or_default(),
-                label: match &d.unavailable {
-                    Some(why) => format!("{} ({why})", d.label),
-                    None => d.label.clone(),
+    /// The menu's rows under their section headings, and the selected row.
+    pub fn menu_rows(&self, menu: &Menu) -> (Vec<KeyRow>, usize) {
+        let mut rows = Vec::new();
+        let mut selected = 0;
+        for (i, d) in menu.rows.iter().enumerate() {
+            if i == 0 || menu.rows[i - 1].section != d.section {
+                rows.push(KeyRow::heading(d.section));
+            }
+            if i == menu.selected {
+                selected = rows.len();
+            }
+            let key = self.key_here(d.action).unwrap_or_default();
+            rows.push(match &d.unavailable {
+                Some(why) => KeyRow {
+                    dim: true,
+                    ..KeyRow::key(key, format!("{} ({why})", d.label))
                 },
-                unavailable: d.unavailable.clone(),
-            })
-            .collect()
+                None => KeyRow::key(key, &d.label),
+            });
+        }
+        (rows, selected)
     }
 }
 
 pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let scope = state.scope();
+    let pressed = [crate::keymap::Key::from(key)];
+    let toggle = state.keymap.resolve(&pressed, scope) == Resolution::Action(Action::Menu);
     let Some(Overlay::Menu(menu)) = &mut state.overlay else {
         return Vec::new();
     };
     let last = menu.rows.len().saturating_sub(1);
     let run = match key.code {
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('.') | KeyCode::Left => {
-            state.overlay = None;
-            return Vec::new();
-        }
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left => None,
+        _ if toggle => None,
         KeyCode::Down | KeyCode::Char('j') => {
             menu.selected = (menu.selected + 1).min(last);
             return Vec::new();
@@ -1616,22 +1339,23 @@ pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             return Vec::new();
         }
         KeyCode::Enter | KeyCode::Right => menu.rows.get(menu.selected).cloned(),
+        // A row's own key runs it.
         _ => {
-            // A row's own key runs it.
-            let pressed = crate::keymap::Key::from(key);
-            menu.rows
-                .iter()
-                .find(|d| {
-                    state
-                        .keymap
-                        .keys_in(d.action, scope)
-                        .iter()
-                        .any(|k| k.as_slice() == [pressed])
-                })
-                .cloned()
+            let row = menu.rows.iter().find(|d| {
+                state
+                    .keymap
+                    .keys_in(d.action, scope)
+                    .iter()
+                    .any(|k| *k == pressed)
+            });
+            match row {
+                Some(d) => Some(d.clone()),
+                None => return Vec::new(),
+            }
         }
     };
     let Some(d) = run else {
+        state.overlay = None;
         return Vec::new();
     };
     if let Some(why) = d.unavailable {
@@ -1644,16 +1368,22 @@ pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 
 // ---- copying -------------------------------------------------------------------------------------
 
+impl State {
+    /// The link of the selection, or of the page.
+    pub fn here_url(&self) -> String {
+        match self.screen() {
+            Screen::Page(p) => p
+                .selected_url()
+                .filter(|u| u.starts_with("http"))
+                .map_or_else(|| p.route.url(), str::to_owned),
+            Screen::Diff(d) => format!("{}/files", d.pr.url()),
+        }
+    }
+}
+
 /// `y`: the selection's link, or the page's.
 pub fn copy_link(state: &mut State) -> Vec<Cmd> {
-    let url = match state.screen() {
-        Screen::Page(p) => p
-            .selected_url()
-            .filter(|u| u.starts_with("http"))
-            .map(str::to_owned)
-            .unwrap_or_else(|| p.route.url()),
-        Screen::Diff(d) => format!("{}/files", d.pr.url()),
-    };
+    let url = state.here_url();
     state.notice = Some(Notice::Info(format!("Copied {url}")));
     vec![Cmd::Copy(url)]
 }
@@ -1670,7 +1400,9 @@ pub fn on_mouse(state: &mut State, ev: MouseEvent) -> Vec<Cmd> {
             }
             let height = state.page_height();
             match state.screen_mut() {
-                Screen::Page(p) => scroll_by(p, if down { 3 } else { -3 }, height),
+                Screen::Page(p) => {
+                    scroll_by(p, if down { STEP as i64 } else { -(STEP as i64) }, height)
+                }
                 Screen::Diff(_) => {
                     let action = if down { Action::Down } else { Action::Up };
                     let mut cmds = Vec::new();
@@ -1701,17 +1433,16 @@ fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
             let panel = chrome::SearchPanel {
                 ctx: state.ctx(0),
                 rows: &rows.iter().map(|(r, _)| r.clone()).collect::<Vec<_>>(),
-                selected: 0,
+                selected: sb.selected,
                 field,
-                help: "",
-            }
-            .area(Rect::new(0, 0, state.size.0, state.size.1));
+            };
+            let screen = Rect::new(0, 0, state.size.0, state.size.1);
             if inside(field) {
                 return Vec::new();
             }
-            if inside(panel) {
-                let row = usize::from(y - panel.y).saturating_sub(1);
-                if let Some((_, Some(pick))) = rows.get(row).cloned() {
+            if inside(panel.area(screen)) {
+                let row = panel.row_at(screen, y);
+                if let Some((_, Some(pick))) = row.and_then(|r| rows.get(r)).cloned() {
                     state.overlay = None;
                     return choose(state, pick);
                 }
@@ -1841,11 +1572,5 @@ mod tests {
         );
         assert_eq!(with_state("is:closed", "all"), "");
         assert_eq!(with_state("label:bug", "open"), "is:open label:bug");
-    }
-
-    #[test]
-    fn file_matches_prefer_names() {
-        assert!(path_score("main", "src/main.rs") < path_score("main", "maintainers/x.rs"));
-        assert_eq!(path_score("zzz", "src/main.rs"), None);
     }
 }

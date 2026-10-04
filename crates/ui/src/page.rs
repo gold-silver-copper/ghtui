@@ -105,19 +105,6 @@ pub struct PageLine {
 }
 
 impl PageLine {
-    pub fn links(&self) -> impl Iterator<Item = u32> + '_ {
-        let mut seen = Vec::new();
-        self.segs
-            .iter()
-            .chain(&self.right)
-            .filter_map(|s| s.link)
-            .filter(move |l| {
-                let new = !seen.contains(l);
-                seen.push(*l);
-                new
-            })
-    }
-
     /// No text (a gap, or a box border).
     pub fn is_blank(&self) -> bool {
         self.segs.iter().all(|s| s.text.trim().is_empty()) && self.right.is_empty()
@@ -137,7 +124,7 @@ pub struct Item {
 }
 
 /// Columns a box's border and padding take on each side.
-pub const BOX_PAD: u16 = 2;
+const BOX_PAD: u16 = 2;
 /// Columns between the page and its aside.
 pub const ASIDE_GAP: u16 = 3;
 
@@ -223,20 +210,27 @@ impl Page {
 
     /// Word-wraps segments into lines `indent` columns in.
     pub fn wrapped(&mut self, segs: Vec<Seg>, indent: u16, frame: Frame) {
-        self.wrapped_toned(segs, indent, frame, Tone::Plain);
-    }
-
-    pub fn wrapped_toned(&mut self, segs: Vec<Seg>, indent: u16, frame: Frame, tone: Tone) {
         let width = usize::from(self.room(frame, indent));
         for segs in wrap_segs(segs, width) {
             self.lines.push(PageLine {
                 segs,
                 indent,
-                right: Vec::new(),
                 frame,
-                tone,
+                ..PageLine::default()
             });
         }
+    }
+
+    /// A thin rule across the line (GitHub's header borders, Markdown's
+    /// `---`).
+    pub fn rule(&mut self, indent: u16, frame: Frame) {
+        let width = usize::from(self.room(frame, indent));
+        self.lines.push(PageLine {
+            segs: vec![Seg::new("─".repeat(width), Role::Meta)],
+            indent,
+            frame,
+            ..PageLine::default()
+        });
     }
 
     /// Opens a box: `╭─ title ──── right ─╮`.
@@ -346,7 +340,7 @@ impl Page {
 /// Splits segments into lines of at most `width` columns, breaking at
 /// spaces (or mid-word for words longer than a line). Newlines in segment
 /// text force breaks.
-pub fn wrap_segs(segs: Vec<Seg>, width: usize) -> Vec<Vec<Seg>> {
+pub(crate) fn wrap_segs(segs: Vec<Seg>, width: usize) -> Vec<Vec<Seg>> {
     let mut lines: Vec<Vec<Seg>> = vec![Vec::new()];
     let mut used = 0usize;
     let push = |lines: &mut Vec<Vec<Seg>>, seg: &Seg, text: &str| {
@@ -414,7 +408,7 @@ pub fn wrap_segs(segs: Vec<Seg>, width: usize) -> Vec<Vec<Seg>> {
     lines
 }
 
-pub const PAGE_BG: Bg = Bg::ContainerLow;
+const PAGE_BG: Bg = Bg::ContainerLow;
 const CODE_BG: Bg = Bg::Diff(DiffBg::Context);
 
 /// Where a page's columns go in `area`: centered, as on GitHub.

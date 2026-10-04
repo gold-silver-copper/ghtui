@@ -19,20 +19,15 @@ use crate::browse::{Data, DataKey};
 use crate::diff_job::{self, GitContext, JobControl};
 use crate::review::{self, SubmitOutcome};
 use crate::state::{Cmd, Msg, State, timers, update};
-
-/// Running diff jobs by PR.
-#[derive(Default)]
-struct Jobs {
-    running: HashMap<PrRef, (Arc<JobControl>, tokio::task::JoinHandle<()>)>,
-}
+use crate::view::view;
 
 struct Effects {
     gh: GitHub,
     git: GitContext,
     tx: mpsc::UnboundedSender<Msg>,
-    jobs: Jobs,
+    /// Running diff jobs by PR.
+    jobs: HashMap<PrRef, (Arc<JobControl>, tokio::task::JoinHandle<()>)>,
 }
-use crate::view::view;
 
 pub async fn run(
     terminal: &mut DefaultTerminal,
@@ -48,7 +43,7 @@ pub async fn run(
         gh,
         git,
         tx: tx.clone(),
-        jobs: Jobs::default(),
+        jobs: HashMap::new(),
     };
 
     terminal.draw(|frame| view(&state, frame, ghtui_store::now()))?;
@@ -109,7 +104,7 @@ impl Effects {
                 base_ref,
                 range,
             } => {
-                if let Some((_, handle)) = self.jobs.running.remove(&pr) {
+                if let Some((_, handle)) = self.jobs.remove(&pr) {
                     handle.abort();
                 }
                 let control = Arc::new(JobControl::default());
@@ -121,10 +116,10 @@ impl Effects {
                     self.tx.clone(),
                     control.clone(),
                 ));
-                self.jobs.running.insert(pr, (control, handle));
+                self.jobs.insert(pr, (control, handle));
             }
             Cmd::Prioritize(pr, files) => {
-                if let Some((control, _)) = self.jobs.running.get(&pr) {
+                if let Some((control, _)) = self.jobs.get(&pr) {
                     control.prioritize(&files);
                 }
             }
@@ -187,12 +182,7 @@ impl Effects {
                 });
             }
             Cmd::MapOutdated { pr, head, items } => {
-                let Some(git) = self
-                    .jobs
-                    .running
-                    .get(&pr)
-                    .and_then(|(control, _)| control.git())
-                else {
+                let Some(git) = self.job_git(&pr) else {
                     return;
                 };
                 let tx = self.tx.clone();
@@ -219,10 +209,7 @@ impl Effects {
         Arc<ghtui_git::repo::Repo>,
         Arc<ghtui_git::blobs::BlobReader>,
     )> {
-        self.jobs
-            .running
-            .get(pr)
-            .and_then(|(control, _)| control.git())
+        self.jobs.get(pr).and_then(|(control, _)| control.git())
     }
 }
 
@@ -502,7 +489,7 @@ async fn open_url(url: &str) -> std::io::Result<()> {
     }
 }
 
-/// Diffs (next milestone) need a recent git. Check in the background and
+/// Diffs need a recent git. Check in the background and
 /// warn instead of blocking startup.
 fn check_git(tx: mpsc::UnboundedSender<Msg>) {
     tokio::spawn(async move {

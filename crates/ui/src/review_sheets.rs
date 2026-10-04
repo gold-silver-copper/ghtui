@@ -1,7 +1,7 @@
 //! The comment composer (a bottom sheet) and the review submit dialog.
 
 use ghtui_api::model::ReviewEvent;
-use ghtui_theme::{Bg, DiffBg, Fg};
+use ghtui_theme::{Bg, DiffBg, Fg, Theme};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::{Ctx, PAD_Y, centered, chips, fill, padded, text};
+use crate::{Ctx, PAD_Y, centered, chips, fill, key_hints, padded, text};
 
 const SHEET: Bg = Bg::ContainerHigh;
 const INPUT_ROWS: u16 = 8;
@@ -63,24 +63,13 @@ impl Widget for ComposeSheet<'_> {
         }
         y += 1;
         let input_rows = INPUT_ROWS.min(inner.bottom().saturating_sub(y + 2 + preview_rows));
-        fill(
-            buf,
-            Rect {
-                y,
-                height: input_rows,
-                ..inner
-            },
-            theme,
-            SHEET,
-        );
-        self.input.render(
-            Rect {
-                y,
-                height: input_rows,
-                ..inner
-            },
-            buf,
-        );
+        let input_area = Rect {
+            y,
+            height: input_rows,
+            ..inner
+        };
+        fill(buf, input_area, theme, SHEET);
+        self.input.render(input_area, buf);
         y += input_rows + 1;
 
         if let Some((start, original, suggested)) = self.preview {
@@ -126,33 +115,39 @@ impl Widget for ComposeSheet<'_> {
             y += 1;
         }
 
-        let footer = row(inner.bottom().saturating_sub(1).max(y));
-        let key = |k: &str| {
-            Span::styled(
-                k.to_owned(),
-                theme.accent(SHEET).add_modifier(Modifier::BOLD),
-            )
-        };
-        let meta = |t: &str| Span::styled(t.to_owned(), theme.meta(SHEET));
-        let spans = if self.sending {
-            vec![meta("Posting…")]
-        } else if let Some(error) = self.error {
-            vec![Span::styled(
-                text::truncate(error, usize::from(footer.width)),
-                theme.error(SHEET),
-            )]
-        } else {
-            vec![
-                key("<C-s>"),
-                meta(&format!(" {} · ", self.save)),
-                key("<C-e>"),
-                meta(" open in $EDITOR · "),
-                key("Esc"),
-                meta(" cancel"),
-            ]
-        };
-        Line::from(spans).render(footer, buf);
+        footer(
+            theme,
+            row(inner.bottom().saturating_sub(1).max(y)),
+            buf,
+            self.sending.then_some("Posting…"),
+            self.error,
+            &[
+                ("<C-s>", self.save),
+                ("<C-e>", "open in $EDITOR"),
+                ("Esc", "cancel"),
+            ],
+        );
     }
+}
+
+/// A sheet's last line: progress, the error, or its keys.
+fn footer(
+    theme: &Theme,
+    area: Rect,
+    buf: &mut Buffer,
+    busy: Option<&str>,
+    error: Option<&str>,
+    hints: &[(&str, &str)],
+) {
+    let spans = match (busy, error) {
+        (Some(busy), _) => vec![Span::styled(busy.to_owned(), theme.meta(SHEET))],
+        (None, Some(error)) => vec![Span::styled(
+            text::truncate(error, usize::from(area.width)),
+            theme.error(SHEET),
+        )],
+        (None, None) => key_hints(theme, SHEET, hints),
+    };
+    Line::from(spans).render(area, buf);
 }
 
 pub struct SubmitSheet<'a> {
@@ -182,15 +177,12 @@ impl Widget for SubmitSheet<'_> {
         let mut y = inner.y;
         Span::styled("Submit review", theme.title(SHEET)).render(row(y), buf);
         y += 1;
+        let s = if self.pending == 1 { "" } else { "s" };
         let pending = match (self.pending, self.rejected) {
             (0, _) => "No pending comments.".to_owned(),
-            (n, 0) => format!(
-                "{n} pending comment{} will be added.",
-                if n == 1 { "" } else { "s" }
-            ),
+            (n, 0) => format!("{n} pending comment{s} will be added."),
             (n, r) => format!(
-                "{n} pending comment{}, {r} previously rejected (fix or delete those first).",
-                if n == 1 { "" } else { "s" }
+                "{n} pending comment{s}, {r} previously rejected (fix or delete those first)."
             ),
         };
         Span::styled(pending, theme.meta(SHEET)).render(row(y), buf);
@@ -222,33 +214,18 @@ impl Widget for SubmitSheet<'_> {
         fill(buf, input_area, theme, SHEET);
         self.input.render(input_area, buf);
 
-        let footer = row(inner.bottom().saturating_sub(1));
-        let key = |k: &str| {
-            Span::styled(
-                k.to_owned(),
-                theme.accent(SHEET).add_modifier(Modifier::BOLD),
-            )
-        };
-        let meta = |t: &str| Span::styled(t.to_owned(), theme.meta(SHEET));
-        let spans = if self.sending {
-            vec![meta("Submitting…")]
-        } else if let Some(error) = self.error {
-            vec![Span::styled(
-                text::truncate(error, usize::from(footer.width)),
-                theme.error(SHEET),
-            )]
-        } else {
-            vec![
-                key("Tab"),
-                meta(" choose · "),
-                key("<C-s>"),
-                meta(" submit · "),
-                key("<C-e>"),
-                meta(" $EDITOR · "),
-                key("Esc"),
-                meta(" cancel"),
-            ]
-        };
-        Line::from(spans).render(footer, buf);
+        footer(
+            theme,
+            row(inner.bottom().saturating_sub(1)),
+            buf,
+            self.sending.then_some("Submitting…"),
+            self.error,
+            &[
+                ("Tab", "choose"),
+                ("<C-s>", "submit"),
+                ("<C-e>", "$EDITOR"),
+                ("Esc", "cancel"),
+            ],
+        );
     }
 }
