@@ -308,6 +308,12 @@ impl Page {
     /// Marks lines `start..` (to the end so far) as one item opening `link`.
     pub fn item(&mut self, start: usize, link: u32) {
         let end = self.lines.len();
+        // Gaps before a box aren't part of it.
+        let mut start = start;
+        while start < end && self.lines[start].frame == Frame::None && self.lines[start].is_blank()
+        {
+            start += 1;
+        }
         if end > start {
             self.items.push(Item { start, end, link });
         }
@@ -699,7 +705,8 @@ impl PageView<'_> {
             Role::Link => theme.accent(bg),
             Role::Code => match bg {
                 Bg::Diff(_) | Bg::DiffSelected(_) => theme.style(Fg::Syntax(Syntax::String), bg),
-                _ => theme.style(Fg::Tertiary, bg),
+                // GitHub's gray chip.
+                _ => theme.fill(Bg::ContainerHigh),
             },
             Role::Syntax(s) => match bg {
                 Bg::Diff(_) | Bg::DiffSelected(_) => theme.style(Fg::Syntax(*s), bg),

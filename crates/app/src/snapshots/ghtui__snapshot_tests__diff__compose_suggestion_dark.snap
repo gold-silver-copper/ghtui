@@ -38,7 +38,7 @@ Buffer {
         "   <C-s> add to review · <C-e> open in $EDITOR · Esc cancel                                                   ",
         "                                                                                                              ",
         "                                         GitHub rejected this: pull_request_review_thread.line must           ",
-        "  ↻ Diffing 7/8 files                                                                          API 4987/5000  ",
+        "  ⠋ Diffing 7/8 files                                                                          API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,

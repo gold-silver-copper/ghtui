@@ -20,7 +20,7 @@ use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
 use crate::browse::{self, Data, DataKey, PageScreen};
-use crate::keymap::{Action, format_sequence};
+use crate::keymap::{Action, Scope};
 use crate::review::{Compose, ComposeTarget};
 use crate::route::{self, Route, Target};
 use crate::state::{Cmd, Overlay, Remote, Screen, State, apply, fuzzy_score, new_palette};
@@ -330,6 +330,17 @@ pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
         Action::HalfPageDown => scroll_keep(p, half, height),
         Action::HalfPageUp => scroll_keep(p, -half, height),
         Action::PageDown => scroll_keep(p, height.saturating_sub(2).max(1) as i64, height),
+        Action::PageUp => scroll_keep(p, -(height.saturating_sub(2).max(1) as i64), height),
+        Action::UpLevel => {
+            let route = p.route.clone();
+            return Some(match up(state, &route) {
+                Some(parent) => state.push(parent),
+                None => {
+                    state.notice = Some(Notice::Info("Already at the top".into()));
+                    Vec::new()
+                }
+            });
+        }
         Action::Top => {
             scroll_by(p, i64::MIN / 2, height);
             p.selected = (!p.page.items.is_empty() && visible(p, 0, height)).then_some(0);
@@ -377,6 +388,41 @@ pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
         _ => return None,
     }
     Some(Vec::new())
+}
+
+/// The page above this one, like GitHub's breadcrumbs.
+fn up(state: &State, route: &Route) -> Option<Route> {
+    let default = |repo: &RepoId| state.overview(repo).and_then(|o| o.default_branch.clone());
+    let folder = |repo: &RepoId, rev: &str, path: &str| {
+        let parent = path.rsplit_once('/').map_or("", |(p, _)| p);
+        if parent.is_empty() && default(repo).as_deref() == Some(rev) {
+            Route::Repo(repo.clone())
+        } else {
+            Route::Tree {
+                repo: repo.clone(),
+                rev: rev.to_owned(),
+                path: parent.to_owned(),
+            }
+        }
+    };
+    Some(match route {
+        Route::Home => return None,
+        Route::Repo(repo) => Route::user(&repo.owner),
+        Route::Tree { repo, path, .. } if path.is_empty() => Route::Repo(repo.clone()),
+        Route::Tree { repo, rev, path } | Route::Blob { repo, rev, path } => {
+            folder(repo, rev, path)
+        }
+        Route::Issues { repo, .. } | Route::Pulls { repo, .. } => Route::Repo(repo.clone()),
+        Route::Issue { repo, .. } => Route::Issues {
+            repo: repo.clone(),
+            query: crate::route::OPEN.into(),
+        },
+        Route::Pr { pr, .. } => Route::Pulls {
+            repo: pr.repo.clone(),
+            query: crate::route::OPEN.into(),
+        },
+        Route::User { .. } | Route::Search { .. } => Route::Home,
+    })
 }
 
 fn no_repo(state: &mut State) -> Vec<Cmd> {
@@ -1352,17 +1398,28 @@ impl State {
                 out.push(doable(Action::Help, "All keyboard shortcuts", "keys"));
             }
             Screen::Diff(_) => {
-                for (action, short) in [
+                // The status bar's few, then everything else the diff does.
+                let hinted = [
                     (Action::NextHunk, "hunk"),
                     (Action::NextFile, "file"),
                     (Action::ToggleViewed, "viewed"),
                     (Action::Comment, "comment"),
                     (Action::SubmitReview, "submit"),
                     (Action::FindFile, "go to file"),
-                    (Action::Tab1, "conversation"),
-                ] {
+                ];
+                for (action, short) in hinted {
                     out.push(doable(action, action.description(), short));
                 }
+                for action in Action::ALL {
+                    if action.scope() == Scope::Diff && !hinted.iter().any(|(a, _)| *a == action) {
+                        out.push(doable(action, action.description(), ""));
+                    }
+                }
+                out.push(doable(
+                    Action::Tab1,
+                    "Back to the conversation",
+                    "conversation",
+                ));
                 out.push(doable(Action::Help, "All keyboard shortcuts", "keys"));
             }
         }
@@ -1417,20 +1474,13 @@ impl State {
             {
                 continue;
             }
-            let keys = if d.action == Action::Open {
-                "↵".to_owned()
-            } else {
-                self.first_key(d.action)
-            };
-            if d.action == Action::Help {
+            if d.action == Action::Help || d.short.is_empty() {
                 continue;
             }
-            out.push((keys, d.short.to_owned()));
+            out.push((self.first_key(d.action), d.short.to_owned()));
         }
-        if matches!(self.screen(), Screen::Page(_)) {
-            out.truncate(7);
-            out.push((self.first_key(Action::Menu), "more".into()));
-        }
+        out.truncate(7);
+        out.push((self.first_key(Action::Menu), "more".into()));
         out.push((self.first_key(Action::Help), "keys".into()));
         out
     }
@@ -1444,7 +1494,7 @@ impl State {
             .continuations(&self.pending, self.scope())
             .into_iter()
             .map(|(rest, action)| KeyRow {
-                key: format_sequence(&rest),
+                key: crate::keymap::pretty(&rest),
                 label: action.description().to_owned(),
                 unavailable: None,
             })
@@ -1475,7 +1525,7 @@ pub struct Menu {
     pub selected: usize,
 }
 
-fn open_menu(state: &mut State) {
+pub fn open_menu(state: &mut State) {
     let rows = state.doables();
     let selected = rows
         .iter()
@@ -1489,11 +1539,7 @@ impl State {
         menu.rows
             .iter()
             .map(|d| KeyRow {
-                key: if d.action == Action::Open {
-                    "↵".to_owned()
-                } else {
-                    self.first_key(d.action)
-                },
+                key: self.first_key(d.action),
                 label: match &d.unavailable {
                     Some(why) => format!("{} ({why})", d.label),
                     None => d.label.clone(),
@@ -1505,6 +1551,7 @@ impl State {
 }
 
 pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+    let scope = state.scope();
     let Some(Overlay::Menu(menu)) = &mut state.overlay else {
         return Vec::new();
     };
@@ -1529,9 +1576,11 @@ pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             menu.rows
                 .iter()
                 .find(|d| {
-                    state.keymap.keys_for(d.action).first().is_some_and(|k| {
-                        crate::keymap::parse_sequence(k).ok().as_deref() == Some(&[pressed][..])
-                    })
+                    state
+                        .keymap
+                        .keys_in(d.action, scope)
+                        .iter()
+                        .any(|k| k.as_slice() == [pressed])
                 })
                 .cloned()
         }
@@ -1662,7 +1711,10 @@ fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
         && inside(tabs)
     {
         let tab_list: Vec<_> = chrome.tabs.iter().map(|(t, _)| t.clone()).collect();
-        for (i, r) in chrome::tab_layout(tabs, &tab_list).iter().enumerate() {
+        for (i, r) in chrome::tab_layout(tabs, &tab_list, chrome.active)
+            .iter()
+            .enumerate()
+        {
             if x >= r.x && x < r.right() {
                 return switch_tab(state, i + 1);
             }

@@ -147,12 +147,37 @@ pub struct Tab {
     pub external: bool,
 }
 
+/// How much of each tab fits: everything; no counts on inactive tabs;
+/// inactive tabs as icons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Fit {
+    Full,
+    NoCounts,
+    Icons,
+}
+
+fn fit(area: Rect, tabs: &[Tab], active: Option<usize>) -> Fit {
+    let room = area.width.saturating_sub(PAD_X);
+    for level in [Fit::Full, Fit::NoCounts, Fit::Icons] {
+        let total: u16 = tabs
+            .iter()
+            .enumerate()
+            .map(|(i, t)| tab_width(t, level, active == Some(i)) + 1)
+            .sum();
+        if total <= room {
+            return level;
+        }
+    }
+    Fit::Icons
+}
+
 /// Each tab's rectangle on the label row.
-pub fn tab_layout(area: Rect, tabs: &[Tab]) -> Vec<Rect> {
+pub fn tab_layout(area: Rect, tabs: &[Tab], active: Option<usize>) -> Vec<Rect> {
+    let level = fit(area, tabs, active);
     let mut x = area.x + PAD_X.min(area.width);
     let mut out = Vec::new();
-    for tab in tabs {
-        let w = tab_width(tab);
+    for (i, tab) in tabs.iter().enumerate() {
+        let w = tab_width(tab, level, active == Some(i));
         let w = w.min(area.right().saturating_sub(x));
         out.push(Rect::new(x, area.y, w, 1));
         x += w + 1;
@@ -160,12 +185,25 @@ pub fn tab_layout(area: Rect, tabs: &[Tab]) -> Vec<Rect> {
     out
 }
 
-fn tab_width(tab: &Tab) -> u16 {
-    let count = tab
-        .count
-        .map_or(0, |n| text::width(&crate::pages::compact(n)) + 3);
-    let external = if tab.external { 2 } else { 0 };
-    (2 + text::width(tab.icon) + 1 + text::width(&tab.label) + count + external) as u16
+fn tab_width(tab: &Tab, level: Fit, active: bool) -> u16 {
+    let shown = |at: Fit| active || level <= at;
+    let count = if shown(Fit::Full) {
+        tab.count
+            .map_or(0, |n| text::width(&crate::pages::compact(n)) + 3)
+    } else {
+        0
+    };
+    let label = if shown(Fit::NoCounts) {
+        1 + text::width(&tab.label)
+    } else {
+        0
+    };
+    let external = if tab.external && shown(Fit::NoCounts) {
+        2
+    } else {
+        0
+    };
+    (2 + text::width(tab.icon) + label + count + external) as u16
 }
 
 /// Tabs on one row, the active one underlined on the row below (2 rows).
@@ -191,30 +229,32 @@ impl Widget for TabBar<'_> {
                 buf.set_string(x, under.y, "─", theme.separator(BAR));
             }
         }
+        let level = fit(labels, self.tabs, self.active);
         for (i, (tab, r)) in self
             .tabs
             .iter()
-            .zip(tab_layout(labels, self.tabs))
+            .zip(tab_layout(labels, self.tabs, self.active))
             .enumerate()
         {
             let active = self.active == Some(i);
+            let shown = |at: Fit| active || level <= at;
             let label_style = if active {
                 theme.title(BAR)
             } else {
                 theme.body(BAR)
             };
-            let mut spans = vec![
-                Span::styled(format!(" {} ", tab.icon), theme.meta(BAR)),
-                Span::styled(tab.label.clone(), label_style),
-            ];
-            if let Some(n) = tab.count {
+            let mut spans = vec![Span::styled(format!(" {} ", tab.icon), theme.meta(BAR))];
+            if shown(Fit::NoCounts) {
+                spans.push(Span::styled(tab.label.clone(), label_style));
+            }
+            if let Some(n) = tab.count.filter(|_| shown(Fit::Full)) {
                 spans.push(Span::styled(" ", theme.body(BAR)));
                 spans.push(Span::styled(
                     format!(" {} ", crate::pages::compact(n)),
                     theme.fill(Bg::ContainerHighest),
                 ));
             }
-            if tab.external {
+            if tab.external && shown(Fit::NoCounts) {
                 spans.push(Span::styled(
                     format!(" {}", self.ctx.icons.external()),
                     theme.meta(BAR),

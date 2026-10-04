@@ -272,7 +272,7 @@ fn state(state: q::PullRequestState, draft: bool) -> PrState {
     }
 }
 
-fn review(decision: Option<q::PullRequestReviewDecision>) -> Option<ReviewDecision> {
+pub(crate) fn review(decision: Option<q::PullRequestReviewDecision>) -> Option<ReviewDecision> {
     decision.map(|d| match d {
         q::PullRequestReviewDecision::Approved => ReviewDecision::Approved,
         q::PullRequestReviewDecision::ChangesRequested => ReviewDecision::ChangesRequested,

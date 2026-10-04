@@ -4,9 +4,11 @@
 //! sidebar when there's room. Every link is the github.com URL of what it
 //! points at; `ghtui:` links are actions (star, load more, filter...).
 
+use std::collections::HashMap;
+
 use ghtui_api::browse::{
-    Blob, EntryKind, IssueDetail, IssueState, IssueSummary, PrActivity, Profile, RepoOverview,
-    RepoSummary, Results, SearchKind, SearchResults, TreeEntry, UserSummary,
+    Blob, CommitInfo, EntryKind, IssueDetail, IssueState, IssueSummary, PrActivity, Profile,
+    RepoOverview, RepoSummary, Results, SearchKind, SearchResults, TreeEntry, UserSummary,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -169,6 +171,54 @@ fn button(page: &mut Page, text: impl Into<String>, url: impl Into<String>) -> S
     )
 }
 
+/// GitHub's "Go to file" field, with its key.
+fn go_to_file(page: &mut Page, keys: Keys<'_>) -> Vec<Seg> {
+    let link = page.link(FIND_FILE);
+    vec![
+        Seg::linked(" ⌕ Go to file ", Role::Chip(Bg::ContainerHigh), link),
+        Seg::linked(
+            format!(" {} ", keys.find_file),
+            Role::Chip(Bg::ContainerHighest),
+            link,
+        ),
+    ]
+}
+
+/// A thin rule across the page (GitHub's header borders).
+fn rule(page: &mut Page) {
+    let width = usize::from(page.room(Frame::None, 0));
+    page.line(vec![Seg::new("─".repeat(width), Role::Meta)]);
+}
+
+/// Gray bars where rows are still loading, as GitHub draws them.
+pub fn skeleton(page: &mut Page) {
+    let room = usize::from(page.room(Frame::Body, 0));
+    for (i, share) in [60, 40, 52, 34].into_iter().enumerate() {
+        if i > 0 {
+            page.box_gap();
+        }
+        let width = (room * share / 100).max(4);
+        page.box_line(
+            vec![Seg::new(" ".repeat(width), Role::Chip(Bg::ContainerHigh))],
+            Vec::new(),
+            0,
+        );
+    }
+}
+
+/// A flash banner across the page (errors), like GitHub's.
+pub fn flash(page: &mut Page, text: &str, bg: Bg) {
+    let width = usize::from(page.room(Frame::None, 0));
+    for line in crate::page::wrap_segs(vec![Seg::new(text, Role::Body)], width.saturating_sub(4)) {
+        let text: String = line.iter().map(|s| s.text.as_str()).collect();
+        let pad = width.saturating_sub(crate::text::width(&text) + 2);
+        page.line(vec![Seg::new(
+            format!("  {text}{}", " ".repeat(pad)),
+            Role::Chip(bg),
+        )]);
+    }
+}
+
 /// A box's empty state.
 fn empty_row(page: &mut Page, text: &str) {
     page.box_line(vec![Seg::new(text, Role::Meta)], Vec::new(), 0);
@@ -291,11 +341,8 @@ pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview
             segs.push(chip("Archived", Bg::TertiaryContainer));
         }
         let star = if o.starred { "★ Starred" } else { "☆ Star" };
-        right.push(button(
-            page,
-            format!("{star} {}  {}", compact(s.stars), keys.star),
-            STAR,
-        ));
+        let _ = keys;
+        right.push(button(page, format!("{star}  {}", compact(s.stars)), STAR));
         right.push(space());
         right.push(button(
             page,
@@ -420,18 +467,14 @@ fn code_toolbar(
     keys: Keys<'_>,
 ) {
     let mut segs = vec![
-        button(page, format!("⎇ {rev} ▾  {}", keys.branch), BRANCH),
+        button(page, format!("⎇ {rev} ▾"), BRANCH),
         Seg::new("  ", Role::Body),
     ];
     if !path.is_empty() {
         segs.extend(crumbs(page, repo, rev, path, false));
         segs.push(Seg::new("  ", Role::Body));
     }
-    let mut right = vec![button(
-        page,
-        format!("⌕ Go to file  {}", keys.find_file),
-        FIND_FILE,
-    )];
+    let mut right = go_to_file(page, keys);
     if commits > 0 {
         right.insert(0, space());
         right.insert(
@@ -481,16 +524,28 @@ fn crumbs(page: &mut Page, repo: &RepoId, rev: &str, path: &str, last_is_file: b
 }
 
 /// The file list box.
+#[allow(clippy::too_many_arguments)]
 fn file_box(
     page: &mut Page,
     repo: &RepoId,
     rev: &str,
     path: &str,
     entries: Option<&[TreeEntry]>,
+    commits: Option<&HashMap<String, CommitInfo>>,
     title: (Vec<Seg>, Vec<Seg>),
     icons: Icons,
+    now: u64,
 ) {
     page.box_top(title.0, title.1);
+    // GitHub's columns: name, the latest commit's message, its age.
+    let name_w = entries
+        .unwrap_or_default()
+        .iter()
+        .map(|e| crate::text::width(&e.name))
+        .max()
+        .unwrap_or(0)
+        .min(usize::from(page.room(Frame::Body, 0)) / 3)
+        + 4;
     if !path.is_empty() {
         let parent = path.rsplit_once('/').map_or("", |(p, _)| p);
         let start = page.lines.len();
@@ -500,7 +555,7 @@ fn file_box(
     }
     match entries {
         Some([]) => empty_row(page, "This directory is empty."),
-        None => empty_row(page, "Loading…"),
+        None => skeleton(page),
         Some(entries) => {
             for e in entries {
                 let (icon, target, role) = match e.kind {
@@ -511,23 +566,25 @@ fn file_box(
                 };
                 let start = page.lines.len();
                 let link = page.link(target);
-                let right = e
-                    .size
-                    .map(|b| vec![Seg::new(size(b), Role::Meta)])
-                    .unwrap_or_default();
                 let icon_role = if e.kind == EntryKind::Dir {
                     Role::Accent
                 } else {
                     Role::Meta
                 };
-                page.box_line(
-                    vec![
-                        Seg::new(format!("{icon} "), icon_role),
-                        Seg::linked(e.name.clone(), role, link),
-                    ],
-                    right,
-                    0,
-                );
+                let name = crate::text::truncate(&e.name, name_w - 4);
+                let pad = name_w.saturating_sub(crate::text::width(&name) + 2);
+                let mut segs = vec![
+                    Seg::new(format!("{icon} "), icon_role),
+                    Seg::linked(name, role, link),
+                    Seg::new(" ".repeat(pad), Role::Body),
+                ];
+                let mut right = Vec::new();
+                if let Some(c) = commits.and_then(|m| m.get(&e.name)) {
+                    let commit = page.link(url::commit(repo, &c.oid));
+                    segs.push(Seg::linked(c.headline.clone(), Role::Meta, commit));
+                    right.push(Seg::new(time::ago_iso(&c.date, now), Role::Meta));
+                }
+                page.box_line(segs, right, 0);
                 page.item(start, link);
             }
         }
@@ -536,10 +593,12 @@ fn file_box(
 }
 
 /// The Code tab at the repository root: files, README, About.
+#[allow(clippy::too_many_arguments)]
 pub fn repo_code(
     page: &mut Page,
     repo: &RepoId,
     o: &RepoOverview,
+    commits: Option<&HashMap<String, CommitInfo>>,
     icons: Icons,
     keys: Keys<'_>,
     aside: Option<u16>,
@@ -583,7 +642,17 @@ pub fn repo_code(
         }
         None => (vec![Seg::new("Files", Role::Strong)], Vec::new()),
     };
-    file_box(page, repo, &rev, "", Some(&o.entries), title, icons);
+    file_box(
+        page,
+        repo,
+        &rev,
+        "",
+        Some(&o.entries),
+        commits,
+        title,
+        icons,
+        now,
+    );
     if let Some(readme) = &o.readme {
         let dir = readme
             .path
@@ -611,14 +680,17 @@ pub fn repo_code(
 }
 
 /// A directory below the root (or the root at another branch).
+#[allow(clippy::too_many_arguments)]
 pub fn repo_dir(
     page: &mut Page,
     repo: &RepoId,
     rev: &str,
     path: &str,
     entries: Option<&[TreeEntry]>,
+    commits: Option<&HashMap<String, CommitInfo>>,
     icons: Icons,
     keys: Keys<'_>,
+    now: u64,
 ) {
     code_toolbar(page, repo, rev, path, 0, keys);
     let title = if path.is_empty() {
@@ -632,23 +704,21 @@ pub fn repo_dir(
         rev,
         path,
         entries,
+        commits,
         (vec![Seg::new(title, Role::Strong)], Vec::new()),
         icons,
+        now,
     );
 }
 
 /// A file: highlighted with line numbers, or Markdown rendered.
 pub fn file(page: &mut Page, repo: &RepoId, rev: &str, path: &str, blob: &Blob, keys: Keys<'_>) {
     let mut segs = vec![
-        button(page, format!("⎇ {rev} ▾  {}", keys.branch), BRANCH),
+        button(page, format!("⎇ {rev} ▾"), BRANCH),
         Seg::new("  ", Role::Body),
     ];
     segs.extend(crumbs(page, repo, rev, path, true));
-    let right = vec![button(
-        page,
-        format!("⌕ Go to file  {}", keys.find_file),
-        FIND_FILE,
-    )];
+    let right = go_to_file(page, keys);
     page.push(PageLine {
         segs,
         right,
@@ -807,23 +877,58 @@ fn issue_row(page: &mut Page, i: &IssueSummary, show_repo: bool, icons: Icons, n
     } else {
         format!("#{}", i.number)
     };
-    let right = if i.comments > 0 {
-        vec![Seg::new(format!("💬 {}", i.comments), Role::Meta)]
+    // GitHub's second line: `#12 opened 3 days ago by octocat · Approved`.
+    let when = if i.created_at.is_empty() {
+        format!(
+            "updated {} by {}",
+            time::ago_iso(&i.updated_at, now),
+            i.author
+        )
     } else {
-        Vec::new()
+        format!(
+            "opened {} by {}",
+            time::ago_iso(&i.created_at, now),
+            i.author
+        )
     };
-    page.box_line(
-        vec![Seg::new(
-            format!(
-                "{place} · {} · updated {}",
-                i.author,
-                time::ago_iso(&i.updated_at, now)
-            ),
+    let mut meta = vec![Seg::new(format!("{place} {when}"), Role::Meta)];
+    match i.review {
+        Some(ReviewDecision::Approved) => {
+            meta.push(Seg::new(" · ", Role::Meta));
+            meta.push(Seg::new("Approved", Role::Success));
+        }
+        Some(ReviewDecision::ChangesRequested) => {
+            meta.push(Seg::new(" · ", Role::Meta));
+            meta.push(Seg::new("Changes requested", Role::Error));
+        }
+        Some(ReviewDecision::ReviewRequired) => {
+            meta.push(Seg::new(" · Review required", Role::Meta));
+        }
+        None => {}
+    }
+    let mut right = Vec::new();
+    match i.checks {
+        Some(ChecksState::Passing) => right.push(Seg::new(
+            format!("{}  ", icons.checks(ChecksState::Passing)),
+            Role::Success,
+        )),
+        Some(ChecksState::Failing) => right.push(Seg::new(
+            format!("{}  ", icons.checks(ChecksState::Failing)),
+            Role::Error,
+        )),
+        Some(ChecksState::Pending) => right.push(Seg::new(
+            format!("{}  ", icons.checks(ChecksState::Pending)),
+            Role::Accent,
+        )),
+        None => {}
+    }
+    if i.comments > 0 {
+        right.push(Seg::new(
+            format!("{} {}", icons.comment(), i.comments),
             Role::Meta,
-        )],
-        right,
-        2,
-    );
+        ));
+    }
+    page.box_line(meta, right, 2);
     page.item(start, link);
 }
 
@@ -971,7 +1076,7 @@ pub fn issue_list(
     );
     page.box_top(title, vec![sort]);
     match results {
-        None => empty_row(page, "Loading…"),
+        None => skeleton(page),
         Some(r) if r.items.is_empty() => {
             empty_row(page, "No results matched your search.");
         }
@@ -1008,6 +1113,7 @@ pub fn search(
     };
     let Some(results) = results else {
         page.box_top(vec![Seg::new("Searching…", Role::Meta)], Vec::new());
+        skeleton(page);
         page.box_bottom();
         return;
     };
@@ -1206,6 +1312,9 @@ pub fn issue(
         labels(&mut segs, &d.labels);
     }
     page.wrapped(segs, 0, Frame::None);
+    if aside.is_some() || d.assignees.is_empty() {
+        rule(page);
+    }
     if aside.is_none() && !d.assignees.is_empty() {
         let mut segs = vec![Seg::new("Assignees: ", Role::Meta)];
         for (i, a) in d.assignees.iter().enumerate() {
@@ -1307,6 +1416,7 @@ fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons, now: u64)
     ];
     labels(&mut meta, &d.labels);
     page.wrapped(meta, 0, Frame::None);
+    rule(page);
 }
 
 /// GitHub's merge box: checks, reviews, conflicts.
@@ -1692,6 +1802,9 @@ pub fn home(
                     updated_at: p.updated_at.clone(),
                     comments: p.comments,
                     labels: Vec::new(),
+                    created_at: String::new(),
+                    review: p.review,
+                    checks: p.checks,
                 };
                 issue_row(page, &summary, true, icons, now);
             }
@@ -1720,7 +1833,7 @@ pub fn home(
         }
         None => {
             page.box_top(vec![Seg::new("Review requests", Role::Strong)], Vec::new());
-            empty_row(page, "Loading…");
+            skeleton(page);
             page.box_bottom();
         }
     }
@@ -1745,7 +1858,7 @@ pub fn home(
         ),
         None => {
             page.box_top(title, Vec::new());
-            empty_row(page, "Loading…");
+            skeleton(page);
             page.box_bottom();
         }
     }
@@ -1836,6 +1949,7 @@ mod tests {
             &mut page,
             &repo,
             &overview,
+            None,
             Icons::default(),
             Keys::default(),
             None,

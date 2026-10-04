@@ -250,6 +250,35 @@ impl GitHub {
         Ok((parsed.data, errors))
     }
 
+    /// Runs a query built at runtime (fields that depend on data), as JSON.
+    async fn graphql_json(
+        &self,
+        query: &str,
+        variables: serde_json::Value,
+    ) -> Result<serde_json::Value, ApiError> {
+        let body = serde_json::json!({ "query": query, "variables": variables });
+        let response = self
+            .send(&Request::Post {
+                path: "/graphql",
+                body: &body,
+            })
+            .await?;
+        check_status(&response)?;
+        let mut parsed: serde_json::Value =
+            serde_json::from_str(&response.body).map_err(|e| ApiError::Decode(e.to_string()))?;
+        match parsed.get_mut("data").map(serde_json::Value::take) {
+            Some(data) if !data.is_null() => Ok(data),
+            _ => Err(ApiError::GraphQl(
+                parsed["errors"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|e| e["message"].as_str().map(str::to_owned))
+                    .collect(),
+            )),
+        }
+    }
+
     /// GETs a REST path, revalidating with the cached ETag. A 304 serves the
     /// cached body (and doesn't count against the rate limit).
     pub async fn rest_get(&self, path: &str) -> Result<String, ApiError> {
@@ -896,6 +925,67 @@ impl GitHub {
             .map(|e| e.path)
             .collect();
         Ok((files, wire.truncated))
+    }
+
+    /// The latest commit touching each of `names` in `dir` at `rev`, as
+    /// GitHub's file list shows: one query, one `history` per entry.
+    pub async fn last_commits(
+        &self,
+        repo: &RepoId,
+        rev: &str,
+        dir: &str,
+        names: &[String],
+    ) -> Result<std::collections::HashMap<String, browse::CommitInfo>, ApiError> {
+        let quote = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+        let mut fields = String::new();
+        for (i, name) in names.iter().take(100).enumerate() {
+            let path = if dir.is_empty() {
+                name.clone()
+            } else {
+                format!("{dir}/{name}")
+            };
+            fields.push_str(&format!(
+                "e{i}: history(first: 1, path: \"{}\") {{ nodes {{ oid messageHeadline committedDate author {{ name user {{ login }} }} }} }}\n",
+                quote(&path)
+            ));
+        }
+        let query = format!(
+            "query($owner: String!, $name: String!, $rev: String!) {{ repository(owner: $owner, name: $name) {{ object(expression: $rev) {{ ... on Commit {{ {fields} }} }} }} }}"
+        );
+        let data = self
+            .graphql_json(
+                &query,
+                serde_json::json!({ "owner": repo.owner, "name": repo.name, "rev": rev }),
+            )
+            .await?;
+        let commit = &data["repository"]["object"];
+        let mut out = std::collections::HashMap::new();
+        for (i, name) in names.iter().take(100).enumerate() {
+            let node = &commit[format!("e{i}")]["nodes"][0];
+            let (Some(oid), Some(headline), Some(date)) = (
+                node["oid"].as_str(),
+                node["messageHeadline"].as_str(),
+                node["committedDate"].as_str(),
+            ) else {
+                continue;
+            };
+            let author = node["author"]["user"]["login"]
+                .as_str()
+                .or_else(|| node["author"]["name"].as_str())
+                .unwrap_or("someone");
+            out.insert(
+                name.clone(),
+                browse::CommitInfo {
+                    oid: oid.to_owned(),
+                    headline: headline.to_owned(),
+                    author: author.to_owned(),
+                    date: date.to_owned(),
+                },
+            );
+        }
+        self.put_query(browse::keys::last_commits(repo, rev, dir), out.clone())
+            .await;
+        Ok(out)
     }
 
     /// Branches and tags, most recently committed first.

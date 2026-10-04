@@ -66,30 +66,36 @@ ghtui is laid out like the website:
   terminals also get the sidebar (About, Assignees, Labels, Reviewers).
 - **The status bar** names the keys that do something here.
 
-**Moving.** `j`/`k` move between rows: files, issues, repositories, "Load
-more". Where a page is text (a README, a conversation), they scroll through it
-instead. `<Enter>` opens the selected row. `f` puts letters on every link on
-screen; type a link's letters to follow it. `F` does the same but opens the
-link in the browser. History works like a browser's: `<Esc>` (or `H`) goes
-back and `L` goes forward. The mouse works too: click a link, a row, a tab or
-the search field, and scroll with the wheel.
+**Moving.** Every key is a single keystroke, and they're the ones you
+already know: vim and less for moving, a file manager (lf, ranger, yazi) for
+going in and out, and GitHub's own shortcuts.
+- `j`/`k` move between rows: files, issues, repositories, "Load more". Where
+  a page is text (a README, a conversation), they scroll through it instead.
+- `g`/`G` go to the top and bottom; `space`/`b` page down and up.
+- `l`, `→` or `↵` open the selected row; `h`, `←` or `esc` go back; `]`
+  goes forward again.
+- `u` goes up a level: a file to its folder, a pull request to the list, a
+  repository to its owner.
+- `f` puts letters on every link on screen; type a link's letters to follow
+  it. `F` opens the link in the browser instead.
+- The mouse works too: click a link, a row, a tab or the search field;
+  scroll with the wheel; right-click for the actions menu.
 
 **Quick ways around.**
-- `/` opens the search field. It suggests pages you've visited and your
-  repositories as you type, plus live repository matches. It can also search
-  this repository, all repositories, issues, pull requests or users. On a list,
-  `/` edits the list's filter instead, with quick filters such as "assigned to
-  you".
+- `/` (or `s`, as on GitHub) opens the search field. It suggests pages you've
+  visited and your repositories as you type, plus live repository matches.
+  It can also search this repository, all repositories, issues, pull requests
+  or users. On a list, `/` edits the list's filter instead, with quick
+  filters such as "assigned to you".
 - `t` is GitHub's "Go to file" (fuzzy, across the whole repository) and `w`
   switches branches or tags.
-- `gc` `gi` `gp` go to the repository's code, issues and pull requests, and
-  `gh` goes home. Pressing `g` shows what can follow it.
-- `1`–`4` pick a tab and `<Tab>` cycles through them.
-- `.` lists everything you can do here, with each action's key (right-click
-  opens it too).
+- `1`–`4` pick a tab, `⇥` cycles through them, and `H` goes home.
+- `.` lists everything you can do here, with each action's key.
 - `y` copies the link of the selection or the page.
-- `:` (or `<C-k>`) is the command palette. It also takes `owner/repo`,
+- `:` (or `ctrl-k`) is the command palette. It also takes `owner/repo`,
   `owner/repo#123`, `@user`, or a URL.
+- The status bar always names the keys that do something here, and `?`
+  shows them all, grouped.
 
 **The pages.**
 - **Home** shows review requests, your open pull requests and your
@@ -149,70 +155,81 @@ unless you set your own `GIT_SSH_COMMAND`.
 
 ## Keys
 
-All keys can be rebound (see [Configuration](#configuration)). Press `?` in the
-app for this list, generated from your actual keymap.
+Every default is a single key. All keys can be rebound (see
+[Configuration](#configuration)), and `?` in the app lists the keys that work
+on the current screen, from your actual keymap. A key can mean one thing on
+pages and another in the diff (`s` searches on a page and submits your review
+in the diff).
 
-| Keys              | Action                                                                      |
-| ----------------- | --------------------------------------------------------------------------- |
-| `j` `k`           | Next / previous row (in text: scroll)                                       |
-| `J` `K`           | Scroll a line (pages)                                                       |
-| `<C-d>` `<C-u>`   | Half page down / up (`<Space>` pages down on pages)                         |
-| `gg` `G`          | Go to top / bottom                                                          |
-| `<Enter>`         | Open the selection (in the diff: open a file from the tree, a collapsed file) |
-| `<Esc>` `H`       | Back                                                                        |
-| `L`               | Forward                                                                     |
-| `q` `<C-c>`       | Quit                                                                        |
-| `/`               | Search GitHub, or filter the list (in the diff: search the diff)            |
-| `t`               | Go to file (in the diff: among the PR's files)                              |
-| `gh` `gc` `gi` `gp` | Home; the repository's code, issues, pull requests                        |
-| `1`–`4`           | Tabs                                                                        |
-| `y`               | Copy the link (selection, or the page)                                      |
-| `o`               | Open on GitHub in the browser                                               |
-| `c`               | Comment (on the issue or pull request; in the diff: on the line)            |
-| `r`               | Refresh (on the diff: fetch and recompute)                                  |
-| `:` `<C-k>`       | Command palette                                                             |
-| `?`               | Keyboard shortcuts                                                          |
+Everywhere:
+
+| Keys              | Action                                                   |
+| ----------------- | -------------------------------------------------------- |
+| `j` `k` `↓` `↑`   | Next / previous row (in text: scroll)                    |
+| `g` `G`           | Top / bottom                                             |
+| `ctrl-d` `ctrl-u` | Half page down / up                                      |
+| `↵`               | Open the selection                                       |
+| `esc` `⌫`         | Back                                                     |
+| `1`–`4`           | Tabs                                                     |
+| `/`               | Search (on a list: filter; in the diff: search the diff) |
+| `t`               | Go to file                                               |
+| `c`               | Comment                                                  |
+| `.`               | Everything you can do here                               |
+| `y`               | Copy the link                                            |
+| `o`               | Open on GitHub in the browser                            |
+| `H`               | Home                                                     |
+| `r`               | Refresh                                                  |
+| `:` `ctrl-k`      | Command palette                                          |
+| `?`               | Keyboard shortcuts                                       |
+| `q` `ctrl-c`      | Quit                                                     |
 
 On pages:
 
-| Keys              | Action                                                                      |
-| ----------------- | --------------------------------------------------------------------------- |
-| `f` `F`           | Follow a link by its letters (`F`: in the browser)                          |
-| `.`               | Everything you can do here (also right-click)                               |
-| `<Tab>` `<S-Tab>` | Next / previous tab                                                         |
-| `w`               | Switch branches or tags                                                     |
-| `S`               | Show open, closed or all (lists)                                            |
-| `O`               | Change the sort (lists)                                                     |
-| `*`               | Star or unstar the repository                                               |
+| Keys              | Action                                                   |
+| ----------------- | -------------------------------------------------------- |
+| `l` `→`           | Open the selection                                       |
+| `h` `←` `[`       | Back                                                     |
+| `]`               | Forward                                                  |
+| `u`               | Up a level                                               |
+| `space` `b`       | Page down / up                                           |
+| `J` `K`           | Scroll a line                                            |
+| `f` `F`           | Follow a link by its letters (`F`: in the browser)       |
+| `s`               | Search (GitHub's key)                                    |
+| `⇥` `⇧⇥`          | Next / previous tab                                      |
+| `w`               | Switch branches or tags                                  |
+| `S`               | Open / closed / all (lists)                              |
+| `O`               | Change the sort (lists)                                  |
+| `*`               | Star or unstar the repository                            |
 
-In the diff (keys may mean something else on pages):
+In the diff:
 
-| Keys            | Action                                                                        |
-| --------------- | ----------------------------------------------------------------------------- |
-| `]h` `[h`       | Next / previous hunk                                                          |
-| `]f` `[f`       | Next / previous file                                                          |
-| `]u`            | Next file not marked viewed                                                   |
-| `<Tab>`         | Show or hide the file tree                                                    |
-| `<C-w>`         | Switch focus between the file tree and the diff                               |
-| `s`             | Split or unified (automatic: split when the diff pane is 160+ columns wide)   |
-| `w`             | Ignore whitespace changes (like `git diff -w`)                                |
-| `x`             | Show 20 more lines of context (on a `⋯` gap: open it; in a hunk: widen it)    |
-| `F`             | Show the whole file, changes marked                                           |
-| `v`             | Mark the file viewed / unviewed, synced with GitHub; viewed files collapse    |
-| `m`             | Mark the change under the cursor reviewed (local, survives restarts)          |
-| `n` `N`         | Next / previous search match (smart case)                                     |
-| `]c` `[c`       | Next / previous unresolved thread                                             |
-| `<Enter>`       | On a thread: open or collapse it. On a draft: edit it                         |
-| `V`             | Start or end a visual line selection (for multi-line comments)                |
-| `S`             | Suggest a change to the line or selection, in `$EDITOR`                       |
-| `f`             | Comment on the whole file; on a rejected draft, make it a file comment        |
-| `a`             | Reply to the thread (posts immediately)                                       |
-| `R`             | Resolve / unresolve the thread                                                |
-| `D`             | Delete the draft comment                                                      |
-| `gr`            | Submit your review (Comment / Approve / Request changes)                      |
-| `gl`            | Only changes since your last review (toggle)                                  |
-| `gm`            | Jump to the other end of moved code                                           |
-| `gc`            | Choose commits: all changes, since your review, one commit, or a range        |
+| Keys            | Action                                                                      |
+| --------------- | --------------------------------------------------------------------------- |
+| `}` `{`         | Next / previous hunk                                                        |
+| `]` `[`         | Next / previous file                                                        |
+| `u`             | Next file not marked viewed                                                 |
+| `)` `(`         | Next / previous unresolved thread                                           |
+| `n` `N`         | Next / previous search match (smart case)                                   |
+| `M`             | Jump to the other end of moved code                                         |
+| `⇥`             | Switch focus between the file tree and the diff                             |
+| `e`             | Show or hide the file tree                                                  |
+| `\|`            | Split or unified (automatic: split when the diff pane is 160+ columns wide) |
+| `w`             | Ignore whitespace changes (like `git diff -w`)                              |
+| `x`             | Show 20 more lines of context (on a `⋯` gap: open it; in a hunk: widen it)  |
+| `F`             | Show the whole file, changes marked                                         |
+| `L`             | Only changes since your last review (toggle)                                |
+| `p`             | Pick commits: all changes, since your review, one commit, or a range        |
+| `v`             | Mark the file viewed / unviewed, synced with GitHub; viewed files collapse  |
+| `m`             | Mark the change under the cursor reviewed (local, survives restarts)        |
+| `↵`             | On a thread: open or collapse it. On a draft: edit it                       |
+| `c`             | Comment on the line or selection                                            |
+| `V`             | Start or end a visual line selection (for multi-line comments)              |
+| `S`             | Suggest a change to the line or selection, in `$EDITOR`                     |
+| `C`             | Comment on the whole file; on a rejected draft, make it a file comment      |
+| `a`             | Reply to the thread (posts immediately)                                     |
+| `R`             | Resolve / unresolve the thread                                              |
+| `D`             | Delete the draft comment                                                    |
+| `s`             | Submit your review (Comment / Approve / Request changes)                    |
 
 In the comment editor: `<C-s>` adds the comment to your review (or posts a
 reply or a conversation comment), `<C-e>` continues in `$EDITOR`, and `Esc` cancels (press it twice if
@@ -246,21 +263,27 @@ nerd_font = false     # Nerd Font icons and rounded chip ends
 
 [keys]
 # Each action listed here replaces its default bindings. Vim notation:
-# j, G, gg, ]h, <C-d>, <Enter>, <Esc>, <Tab>, <S-Tab>, <BS>, <Up>, <lt> for "<".
+# j, G, <C-d>, <Enter>, <Esc>, <Tab>, <S-Tab>, <BS>, <Up>, <lt> for "<".
+# Sequences such as "gi" work too. "page:" or "diff:" limits a binding to
+# pages or the diff.
 down = ["j", "<Down>", "<C-n>"]
 up = ["k", "<Up>", "<C-p>"]
+go_issues = ["page:gi"]
 ```
 
-Action names: `down`, `up`, `half_page_down`, `half_page_up`, `top`,
-`bottom`, `open`, `back`, `close`, `quit`, `refresh`, `open_in_browser`,
-`command_palette`, `help`, `next_hunk`, `prev_hunk`, `next_file`,
-`prev_file`, `toggle_tree`, `switch_pane`, `toggle_split`,
-`ignore_whitespace`, `expand_context`, `full_file`, `toggle_viewed`,
-`next_unviewed`, `mark_reviewed`, `search`, `search_next`, `search_prev`,
-`find_file`, `comment`, `visual_lines`, `suggest`, `reply`, `resolve`,
-`delete_draft`, `file_comment`, `submit_review`, `next_thread`,
-`prev_thread`, `since_review`, `jump_move`, `pick_commits`. A binding that duplicates another, or is a prefix
-of another (`g` next to `gg`), is rejected at startup.
+Action names: `down`, `up`, `half_page_down`, `half_page_up`, `top`, `bottom`,
+`open`, `back`, `close`, `quit`, `refresh`, `open_in_browser`,
+`command_palette`, `help`, `next_hunk`, `prev_hunk`, `next_file`, `prev_file`,
+`toggle_tree`, `switch_pane`, `toggle_split`, `ignore_whitespace`,
+`expand_context`, `full_file`, `toggle_viewed`, `next_unviewed`,
+`mark_reviewed`, `search`, `search_next`, `search_prev`, `find_file`,
+`comment`, `visual_lines`, `suggest`, `reply`, `resolve`, `delete_draft`,
+`file_comment`, `submit_review`, `next_thread`, `prev_thread`, `since_review`,
+`jump_move`, `pick_commits`, `next_tab`, `prev_tab`, `go_home`, `go_code`,
+`go_issues`, `go_pulls`, `tab_1`, `tab_2`, `tab_3`, `tab_4`, `star`, `hints`,
+`hints_browser`, `forward`, `copy_link`, `actions_menu`, `branch`,
+`toggle_state`, `sort`, `scroll_down`, `scroll_up`, `page_down`, `page_up`,
+`up_level`.
 
 ## Theming
 
@@ -384,7 +407,7 @@ line numbers shift and clears when the change is edited.
 - **Formatting-only changes** (removed and added text identical once
   whitespace and line breaks are ignored) fold into one row. `<Enter>` shows
   them.
-- **Changes since your last review** (`gl`). The reviewed head comes from
+- **Changes since your last review** (`L`). The reviewed head comes from
   your latest submitted review on GitHub, or ghtui's own record. ghtui
   rebuilds the PR's diff as it was at that head (fetching the commit by SHA
   if it was force-pushed away) and compares change blocks by content hash.
@@ -392,7 +415,7 @@ line numbers shift and clears when the change is edited.
   that came from rebasing onto a newer base were never in either diff, so
   they don't show up. Seen blocks next to new ones fold into one row; files
   with nothing new say so.
-- **Commits** (`gc`): view one commit, or mark a start with Space and pick
+- **Commits** (`p`): view one commit, or mark a start with Space and pick
   an end for a range. Comments need the whole PR (their line numbers anchor
   there), so commenting is off in a range view.
 

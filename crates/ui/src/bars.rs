@@ -83,8 +83,9 @@ pub enum Notice {
 
 pub struct StatusBar<'a> {
     pub ctx: Ctx<'a>,
-    /// What's loading, if anything. Shown with a static indicator.
+    /// What's loading, if anything, and the spinner's frame.
     pub busy: Option<&'a str>,
+    pub spinner: &'a str,
     pub notice: Option<&'a Notice>,
     /// Keys typed so far in a multi-key sequence.
     pub pending_keys: &'a str,
@@ -102,7 +103,7 @@ impl Widget for StatusBar<'_> {
         let mut left = Vec::new();
         if let Some(busy) = self.busy {
             left.push(Span::styled(
-                format!("{} {busy}", self.ctx.icons.busy()),
+                format!("{} {busy}", self.spinner),
                 theme.accent(BAR),
             ));
             left.push(Span::styled("   ", theme.body(BAR)));

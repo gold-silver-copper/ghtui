@@ -288,7 +288,7 @@ impl Renderer<'_> {
             Event::Code(c) => {
                 let link = self.link;
                 self.inline.push(Seg {
-                    text: c.to_string(),
+                    text: format!(" {c} "),
                     role: Role::Code,
                     link,
                 });

@@ -89,6 +89,17 @@ impl Widget for Help<'_> {
                 if y >= inner.bottom() || x >= inner.right() {
                     continue;
                 }
+                let row = Rect {
+                    x,
+                    y,
+                    width: column_width.min(inner.right() - x),
+                    height: 1,
+                };
+                if entry.keys.is_empty() {
+                    // A section heading.
+                    Span::styled(entry.description, theme.title(POPUP)).render(row, buf);
+                    continue;
+                }
                 let pad = key_width.saturating_sub(text::width(&entry.keys));
                 Line::from(vec![
                     Span::styled(

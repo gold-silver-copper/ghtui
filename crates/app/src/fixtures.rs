@@ -115,6 +115,9 @@ pub fn issue_summary(number: u64, is_pr: bool, state: IssueState) -> IssueSummar
         } else {
             Vec::new()
         },
+        created_at: "2026-09-29T09:00:00Z".into(),
+        review: None,
+        checks: None,
     }
 }
 

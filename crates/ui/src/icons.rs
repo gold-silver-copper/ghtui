@@ -41,6 +41,10 @@ impl Icons {
         if self.nerd_font { "\u{f15b}" } else { "·" }
     }
 
+    pub fn comment(self) -> &'static str {
+        if self.nerd_font { "\u{f41f}" } else { "💬" }
+    }
+
     pub fn external(self) -> &'static str {
         if self.nerd_font { "\u{f465}" } else { "↗" }
     }

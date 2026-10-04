@@ -154,6 +154,7 @@ async fn run(started: Instant) -> Result<()> {
         .cached::<Vec<nav::Visit>>(ghtui_api::browse::keys::VISITS)
         .map(|c| c.value)
         .unwrap_or_default();
+    cmds.push(state::Cmd::Timer(state::Timer::Minute, 60_000));
     state.data_gen += 1;
     state.sync_page();
 

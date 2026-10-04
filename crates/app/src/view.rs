@@ -102,6 +102,7 @@ pub fn render(state: &State, area: Rect, buf: &mut Buffer, now: u64) {
     StatusBar {
         ctx,
         busy: busy.as_deref(),
+        spinner: crate::state::SPINNER[state.spinner % crate::state::SPINNER.len()],
         notice: state.notice.as_ref(),
         pending_keys: &pending,
         rate_limit,

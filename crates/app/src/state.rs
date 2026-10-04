@@ -55,6 +55,7 @@ pub enum Msg {
         result: Result<(), ApiError>,
     },
     Mouse(MouseEvent),
+    Timer(Timer),
     /// The search box's input settled; fetch live suggestions if it's
     /// still this.
     SuggestDue(String),
@@ -128,6 +129,8 @@ pub enum Cmd {
     OpenUrl(String),
     /// Put text on the clipboard (OSC 52).
     Copy(String),
+    /// Send [`Msg::Timer`] after this many milliseconds.
+    Timer(Timer, u64),
     /// Send [`Msg::SuggestDue`] after a pause.
     SuggestLater(String),
     /// Search repositories for the search box's suggestions.
@@ -195,6 +198,20 @@ pub enum Cmd {
     },
     ListCommits(PrRef),
 }
+
+/// Things that happen later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Timer {
+    /// Clear notice number N, if it's still showing.
+    ExpireNotice(u64),
+    /// The next frame of the loading spinner.
+    Spin,
+    /// Relative times ("3m ago") move on.
+    Minute,
+}
+
+/// Braille spinner frames.
+pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /// Data that comes from GitHub: what we have (possibly cached), whether a
 /// refresh is in flight, and the last refresh error.
@@ -325,6 +342,11 @@ pub struct State {
     pub icons: Icons,
     /// Unix seconds; pages show relative times.
     pub clock: fn() -> u64,
+    /// Which notice is showing, to expire the right one.
+    pub notice_id: u64,
+    /// The spinner's frame, and whether its next frame is scheduled.
+    pub spinner: usize,
+    pub spinning: bool,
     pub quit: bool,
 }
 
@@ -349,6 +371,9 @@ impl State {
             theme,
             icons,
             clock: ghtui_store::now,
+            notice_id: 0,
+            spinner: 0,
+            spinning: false,
             quit: false,
         };
         state.sync_page();
@@ -559,19 +584,156 @@ impl State {
         }
     }
 
+    /// The shortcuts that work here, in sections, keys as people write
+    /// them.
     pub fn help_entries(&self) -> Vec<HelpEntry> {
+        use Action as A;
         let scope = self.scope();
-        Action::ALL
-            .into_iter()
-            .filter(|a| a.scope() == Scope::Global || a.scope() == scope)
-            .filter_map(|action| {
-                let keys = self.keymap.keys_for(action);
-                (!keys.is_empty()).then(|| HelpEntry {
-                    keys: keys.join("  "),
-                    description: action.description(),
-                })
-            })
-            .collect()
+        let sections: &[(&'static str, &[Action])] = match scope {
+            Scope::Diff => &[
+                (
+                    "Moving",
+                    &[
+                        A::Down,
+                        A::Up,
+                        A::Top,
+                        A::Bottom,
+                        A::HalfPageDown,
+                        A::HalfPageUp,
+                        A::NextHunk,
+                        A::PrevHunk,
+                        A::NextFile,
+                        A::PrevFile,
+                        A::NextUnviewed,
+                        A::NextThread,
+                        A::PrevThread,
+                        A::JumpMove,
+                        A::Search,
+                        A::SearchNext,
+                        A::SearchPrev,
+                        A::FindFile,
+                    ],
+                ),
+                (
+                    "Viewing",
+                    &[
+                        A::ToggleTree,
+                        A::SwitchPane,
+                        A::ToggleSplit,
+                        A::IgnoreWhitespace,
+                        A::ExpandContext,
+                        A::FullFile,
+                        A::ToggleSinceReview,
+                        A::PickCommits,
+                    ],
+                ),
+                (
+                    "Reviewing",
+                    &[
+                        A::ToggleViewed,
+                        A::MarkReviewed,
+                        A::Comment,
+                        A::VisualLines,
+                        A::Suggest,
+                        A::FileComment,
+                        A::ReplyThread,
+                        A::ResolveThread,
+                        A::DeleteDraft,
+                        A::SubmitReview,
+                    ],
+                ),
+                (
+                    "Everywhere",
+                    &[
+                        A::Back,
+                        A::Tab1,
+                        A::Menu,
+                        A::Copy,
+                        A::OpenInBrowser,
+                        A::Refresh,
+                        A::CommandPalette,
+                        A::GoHome,
+                        A::Help,
+                        A::Quit,
+                    ],
+                ),
+            ],
+            _ => &[
+                (
+                    "Moving",
+                    &[
+                        A::Down,
+                        A::Up,
+                        A::Top,
+                        A::Bottom,
+                        A::ScrollDown,
+                        A::ScrollUp,
+                        A::PageDown,
+                        A::PageUp,
+                        A::HalfPageDown,
+                        A::HalfPageUp,
+                    ],
+                ),
+                (
+                    "Going places",
+                    &[
+                        A::Open,
+                        A::Back,
+                        A::Forward,
+                        A::UpLevel,
+                        A::Hints,
+                        A::HintsBrowser,
+                        A::Search,
+                        A::FindFile,
+                        A::Branch,
+                        A::Tab1,
+                        A::NextTab,
+                        A::PrevTab,
+                        A::GoHome,
+                        A::CommandPalette,
+                    ],
+                ),
+                (
+                    "Doing",
+                    &[
+                        A::Menu,
+                        A::Comment,
+                        A::Star,
+                        A::ToggleState,
+                        A::Sort,
+                        A::Copy,
+                        A::OpenInBrowser,
+                        A::Refresh,
+                    ],
+                ),
+                ("ghtui", &[A::Help, A::Quit]),
+            ],
+        };
+        let mut out = Vec::new();
+        for (title, actions) in sections {
+            out.push(HelpEntry {
+                keys: String::new(),
+                description: title,
+            });
+            for &action in *actions {
+                let keys: Vec<String> = self
+                    .keymap
+                    .keys_in(action, scope)
+                    .iter()
+                    .map(|k| crate::keymap::pretty(k))
+                    .collect();
+                if keys.is_empty() {
+                    continue;
+                }
+                let (keys, description) = if action == A::Tab1 {
+                    ("1 – 4".to_owned(), "Pick a tab")
+                } else {
+                    (keys.join(" "), action.description())
+                };
+                out.push(HelpEntry { keys, description });
+            }
+        }
+        out
     }
 
     /// Palette entries matching the current input.
@@ -654,11 +816,34 @@ pub fn fuzzy_score(needle: &str, haystack: &str) -> Option<usize> {
 }
 
 pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
-    if !matches!(msg, Msg::Key(_)) {
+    if !matches!(msg, Msg::Key(_) | Msg::Mouse(_) | Msg::Timer(_)) {
         state.data_gen += 1;
     }
     let cmds = handle(state, msg);
     state.sync_page();
+    cmds
+}
+
+/// Timers the screen needs after an update: the notice expiring (errors
+/// stay longer), the spinner's next frame while something loads. The
+/// runtime calls this; `last_notice` is the notice it last saw.
+pub fn timers(state: &mut State, last_notice: &mut Option<Notice>) -> Vec<Cmd> {
+    let mut cmds = Vec::new();
+    if state.notice != *last_notice {
+        if let Some(notice) = &state.notice {
+            state.notice_id += 1;
+            let ms = match notice {
+                Notice::Info(_) => 4_000,
+                Notice::Error(_) => 10_000,
+            };
+            cmds.push(Cmd::Timer(Timer::ExpireNotice(state.notice_id), ms));
+        }
+        *last_notice = state.notice.clone();
+    }
+    if state.busy().is_some() && !state.spinning {
+        state.spinning = true;
+        cmds.push(Cmd::Timer(Timer::Spin, 90));
+    }
     cmds
 }
 
@@ -785,6 +970,21 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             Vec::new()
         }
         Msg::Mouse(ev) => nav::on_mouse(state, ev),
+        Msg::Timer(Timer::ExpireNotice(id)) => {
+            if id == state.notice_id {
+                state.notice = None;
+            }
+            Vec::new()
+        }
+        Msg::Timer(Timer::Spin) => {
+            state.spinning = false;
+            state.spinner = state.spinner.wrapping_add(1);
+            Vec::new()
+        }
+        Msg::Timer(Timer::Minute) => {
+            state.data_gen += 1;
+            vec![Cmd::Timer(Timer::Minute, 60_000)]
+        }
         Msg::SuggestDue(q) => match &state.overlay {
             Some(Overlay::Search(sb)) if sb.input.lines().join("").trim() == q => {
                 vec![Cmd::Suggest(q)]
@@ -1396,6 +1596,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Back => return state.back(),
         Action::Forward => return state.go_forward(),
         Action::Help => state.overlay = Some(Overlay::Help),
+        Action::Menu => nav::open_menu(state),
         Action::CommandPalette => {
             state.overlay = Some(Overlay::Palette(Box::new(new_palette(&state.theme))));
         }
@@ -2304,7 +2505,7 @@ mod tests {
             selected_text(&state).contains("PR 1"),
             "the selection survives"
         );
-        press(&mut state, "L");
+        press(&mut state, "]");
         assert_eq!(
             route(&state),
             Route::Pr {
@@ -2346,9 +2547,33 @@ mod tests {
             press(&mut state, "k");
         }
         assert!(page(&state).selected.is_some());
-        press(&mut state, "gg");
+        press(&mut state, "g");
         assert_eq!(page(&state).scroll, 0);
         assert_eq!(page(&state).selected, Some(0));
+    }
+
+    #[test]
+    fn h_l_and_u_move_like_a_file_manager() {
+        let mut state = with_repo();
+        press(&mut state, "jl");
+        let crates = Route::Tree {
+            repo: repo(),
+            rev: "main".into(),
+            path: "crates".into(),
+        };
+        assert_eq!(route(&state), crates, "l opens");
+        press(&mut state, "u");
+        assert_eq!(route(&state), Route::Repo(repo()), "u: the folder above");
+        press(&mut state, "h");
+        assert_eq!(route(&state), crates, "h: back");
+        press(&mut state, "uu");
+        assert_eq!(
+            route(&state),
+            Route::user("gold-silver-copper"),
+            "up from a repository: its owner"
+        );
+        press(&mut state, "<Left><Left>");
+        assert_eq!(route(&state), crates);
     }
 
     #[test]
@@ -2515,13 +2740,17 @@ mod tests {
 
     #[test]
     fn pending_keys_show_what_can_follow() {
+        // Defaults are single keys; sequences only come from config.
         let mut state = with_inbox(1);
-        press(&mut state, "g");
+        state.keymap = Keymap::with_overrides(&std::collections::HashMap::from([
+            ("go_issues".to_owned(), vec!["zi".to_owned()]),
+            ("go_pulls".to_owned(), vec!["zp".to_owned()]),
+        ]))
+        .unwrap();
+        press(&mut state, "z");
         assert_eq!(state.pending.len(), 1);
         let next: Vec<String> = state.continuations().into_iter().map(|r| r.key).collect();
-        for key in ["g", "h", "i", "p", "c", "f"] {
-            assert!(next.contains(&key.to_owned()), "{key} in {next:?}");
-        }
+        assert_eq!(next, ["i", "p"]);
         press(&mut state, "x");
         assert!(state.pending.is_empty());
         assert!(state.continuations().is_empty());
@@ -2662,10 +2891,17 @@ mod tests {
         let tree = DataKey::Tree(repo(), "main".into(), "crates".into());
         assert_eq!(
             cmds,
-            vec![Cmd::Fetch {
-                key: tree.clone(),
-                cached: true
-            }]
+            vec![
+                Cmd::Fetch {
+                    key: tree.clone(),
+                    cached: true
+                },
+                Cmd::Fetch {
+                    key: DataKey::LastCommits(repo(), "main".into(), "crates".into()),
+                    cached: true
+                }
+            ],
+            "the listing, and each entry's latest commit"
         );
         fetched(&mut state, tree, Data::Tree(crate::fixtures::tree()));
         while !selected_text(&state).contains("README.md") {
@@ -2943,7 +3179,7 @@ mod tests {
         // Tabs.
         let lay = state.layout();
         let tabs: Vec<_> = state.chrome().tabs.into_iter().map(|(t, _)| t).collect();
-        let rects = ghtui_ui::chrome::tab_layout(lay.tabs.unwrap(), &tabs);
+        let rects = ghtui_ui::chrome::tab_layout(lay.tabs.unwrap(), &tabs, state.chrome().active);
         click(&mut state, rects[2].x + 1, rects[2].y);
         assert!(matches!(route(&state), Route::Pulls { .. }));
         // The header's search field.
@@ -3067,7 +3303,7 @@ mod tests {
         fn split_is_automatic_by_width_and_toggles() {
             let (mut narrow, _) = diff_state(120);
             assert!(!narrow.diffs.values().next().unwrap().doc.opts.split);
-            press(&mut narrow, "s");
+            press(&mut narrow, "|");
             assert!(narrow.diffs.values().next().unwrap().doc.opts.split);
             let (wide, _) = diff_state(220);
             assert!(wide.diffs.values().next().unwrap().doc.opts.split);
@@ -3091,7 +3327,7 @@ mod tests {
             );
 
             // ]u skips the viewed file.
-            press(&mut s, "gg]u");
+            press(&mut s, "gu");
             assert_eq!(screen(&s).cursor.file, 1);
 
             // Toggle file 1 viewed: optimistic, then GitHub refuses.
@@ -3119,10 +3355,10 @@ mod tests {
         fn review_marks_toggle_and_persist() {
             let (mut s, pr) = diff_state(120);
             // Off a changed line: nothing to mark.
-            assert!(press(&mut s, "gg").is_empty());
+            assert!(press(&mut s, "g").is_empty());
             assert!(press(&mut s, "m").is_empty());
             // Onto the first change.
-            press(&mut s, "]hjjj");
+            press(&mut s, "}jjj");
             let cmds = press(&mut s, "m");
             let Some(Cmd::SaveReview(saved_pr, review)) = cmds.first() else {
                 panic!("{cmds:?}")
@@ -3157,7 +3393,7 @@ mod tests {
         #[test]
         fn file_finder_jumps_to_files() {
             let (mut s, _) = diff_state(120);
-            press(&mut s, "gf");
+            press(&mut s, "t");
             assert!(matches!(s.overlay, Some(Overlay::FindFile(_))));
             assert_eq!(s.finder_items("gone")[0].1.label, "gone.py");
             press(&mut s, "gone<Enter>");
@@ -3169,7 +3405,7 @@ mod tests {
         #[test]
         fn whitespace_and_full_file_keep_the_cursor_line() {
             let (mut s, pr) = diff_state(120);
-            press(&mut s, "]hjjj");
+            press(&mut s, "}jjj");
             let text = s.diffs[&pr].doc.row_text(screen(&s).cursor);
             press(&mut s, "F");
             assert!(s.diffs[&pr].doc.files[0].full);
@@ -3212,7 +3448,7 @@ mod tests {
                 // Only once.
                 let again = update(&mut s, Msg::MovesDetected(pr.clone(), Vec::new()));
                 assert!(!again.iter().any(|c| matches!(c, Cmd::DetectMoves(..))));
-                assert!(press(&mut s, "gm").is_empty());
+                assert!(press(&mut s, "M").is_empty());
                 assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("moved")));
             }
 
@@ -3220,7 +3456,7 @@ mod tests {
             fn since_review_asks_github_then_compares() {
                 let (mut s, pr) = diff_state(120);
                 s.viewer = Some("me".into());
-                let cmds = press(&mut s, "gl");
+                let cmds = press(&mut s, "L");
                 assert!(matches!(&cmds[..], [Cmd::FetchLastReview { login, .. }] if login == "me"));
                 let cmds = update(&mut s, Msg::LastReview(pr.clone(), Ok(Some("old".into()))));
                 assert!(
@@ -3236,7 +3472,7 @@ mod tests {
                 assert_eq!(s.chrome().tabs[3].0.label, "Files · since your review");
                 // Toggling back needs no new lookups.
                 assert!(
-                    press(&mut s, "gl")
+                    press(&mut s, "L")
                         .iter()
                         .all(|c| matches!(c, Cmd::Prioritize(..)))
                 );
@@ -3247,7 +3483,7 @@ mod tests {
             fn since_review_without_a_review_says_so() {
                 let (mut s, pr) = diff_state(120);
                 s.viewer = Some("me".into());
-                press(&mut s, "gl");
+                press(&mut s, "L");
                 update(&mut s, Msg::LastReview(pr.clone(), Ok(None)));
                 assert!(
                     matches!(&s.notice, Some(Notice::Info(m)) if m.contains("haven't reviewed"))
@@ -3266,7 +3502,7 @@ mod tests {
                     pr.clone(),
                     Remote::cached(Some(crate::snapshot_tests::pr_detail())),
                 );
-                assert!(matches!(&press(&mut s, "gc")[..], [Cmd::ListCommits(_)]));
+                assert!(matches!(&press(&mut s, "p")[..], [Cmd::ListCommits(_)]));
                 update(
                     &mut s,
                     Msg::CommitsListed(
@@ -3298,7 +3534,7 @@ mod tests {
                 assert!(s.overlay.is_none());
                 assert!(matches!(&s.notice, Some(Notice::Error(m)) if m.contains("All changes")));
                 // Back to everything.
-                press(&mut s, "gc");
+                press(&mut s, "p");
                 let cmds = press(&mut s, "<Enter>");
                 assert!(matches!(&cmds[..], [Cmd::LoadDiff { range: None, .. }]));
             }
@@ -3372,7 +3608,7 @@ mod tests {
                     ),
                 );
                 assert_eq!(s.diffs[&pr].doc.annotations.len(), 2);
-                press(&mut s, "gg]c");
+                press(&mut s, "g)");
                 let at = s.diffs[&pr].doc.annotation_at(screen(&s).cursor).unwrap();
                 assert_eq!(
                     s.diffs[&pr].doc.annotations[at as usize].key,
@@ -3496,7 +3732,7 @@ mod tests {
                 ctrl(&mut s, 's');
                 let id = s.diffs[&pr].review.pending[0].id;
 
-                press(&mut s, "gr");
+                press(&mut s, "s");
                 assert!(matches!(s.overlay, Some(Overlay::Submit(_))));
                 press(&mut s, "<Tab>");
                 let cmds = ctrl(&mut s, 's');
@@ -3525,9 +3761,9 @@ mod tests {
 
                 // Make it a file comment and submit again.
                 press(&mut s, "<Esc>");
-                press(&mut s, "f");
+                press(&mut s, "C");
                 assert_eq!(s.diffs[&pr].review.pending[0].line, None);
-                press(&mut s, "gr");
+                press(&mut s, "s");
                 ctrl(&mut s, 's');
                 update(
                     &mut s,
@@ -3548,7 +3784,7 @@ mod tests {
             #[test]
             fn request_changes_needs_a_summary() {
                 let (mut s, _) = diff_state(120);
-                press(&mut s, "gr");
+                press(&mut s, "s");
                 press(&mut s, "<Tab><Tab>");
                 assert!(ctrl(&mut s, 's').is_empty());
                 assert!(matches!(&s.overlay, Some(Overlay::Submit(d)) if d.error.is_some()));
@@ -3561,7 +3797,7 @@ mod tests {
                     &mut s,
                     Msg::ThreadsLoaded(pr.clone(), Ok(vec![thread("t", Some(14), false, false)])),
                 );
-                press(&mut s, "gg]c");
+                press(&mut s, "g)");
                 press(&mut s, "a");
                 type_text(&mut s, "Fixed");
                 let cmds = ctrl(&mut s, 's');

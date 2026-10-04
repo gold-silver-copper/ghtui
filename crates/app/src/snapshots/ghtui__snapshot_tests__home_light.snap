@@ -9,18 +9,18 @@ Buffer {
         "                                                                                                    ",
         "  ╭─ Review requests  2 ───────────────────────────────────────────────────────────── View all ─╮   ",
         "  │▌● Add a virtualized list widget for very long collections                                   │   ",
-        "  │▌  ratatui/ratatui#1820 · octocat · updated 3h ago                                      💬 3 │   ", // hidden by multi-width symbols: [(92, " ")]
+        "  │▌  ratatui/ratatui#1820 updated 3h ago by octocat · Review required                  ✓  💬 3 │   ", // hidden by multi-width symbols: [(92, " ")]
         "  ├─────────────────────────────────────────────────────────────────────────────────────────────┤   ",
         "  │ ○ Fix waker leak in the multi-thread scheduler when tasks are cancelled during shutdown     │   ",
-        "  │   tokio-rs/tokio#7001 · octocat · updated 3h ago                                       💬 3 │   ", // hidden by multi-width symbols: [(92, " ")]
+        "  │   tokio-rs/tokio#7001 updated 3h ago by octocat                                     ●  💬 3 │   ", // hidden by multi-width symbols: [(92, " ")]
         "  ╰─────────────────────────────────────────────────────────────────────────────────────────────╯   ",
         "                                                                                                    ",
         "  ╭─ Your pull requests  31 ───────────────────────────────────────────────────────── View all ─╮   ",
         "  │ ● Theme: generate syntax palette from seed                                                  │   ",
-        "  │   gold-silver-copper/ghtui#12 · octocat · updated 3h ago                               💬 3 │   ", // hidden by multi-width symbols: [(92, " ")]
+        "  │   gold-silver-copper/ghtui#12 updated 3h ago by octocat · Approved                  ✗  💬 3 │   ", // hidden by multi-width symbols: [(92, " ")]
         "  ├─────────────────────────────────────────────────────────────────────────────────────────────┤   ",
         "  │ ● Cache GraphQL responses in redb                                                           │   ",
-        "  │   gold-silver-copper/ghtui#9 · octocat · updated 3h ago                                💬 3 │   ", // hidden by multi-width symbols: [(92, " ")]
+        "  │   gold-silver-copper/ghtui#9 updated 3h ago by octocat · Changes requested             💬 3 │   ", // hidden by multi-width symbols: [(92, " ")]
         "  ╰─────────────────────────────────────────────────────────────────────────────────────────────╯   ",
         "                                                                                                    ",
         "  ╭─ Your repositories ────────────────────────────────────────────────────────────── View all ─╮   ",
@@ -73,7 +73,8 @@ Buffer {
         x: 3, y: 4, fg: Rgb(50, 83, 131), bg: Rgb(221, 225, 237), underline: Reset, modifier: NONE,
         x: 4, y: 4, fg: Rgb(25, 28, 32), bg: Rgb(221, 225, 237), underline: Reset, modifier: NONE,
         x: 6, y: 4, fg: Rgb(67, 71, 78), bg: Rgb(221, 225, 237), underline: Reset, modifier: NONE,
-        x: 53, y: 4, fg: Rgb(25, 28, 32), bg: Rgb(221, 225, 237), underline: Reset, modifier: NONE,
+        x: 70, y: 4, fg: Rgb(25, 28, 32), bg: Rgb(221, 225, 237), underline: Reset, modifier: NONE,
+        x: 88, y: 4, fg: Rgb(0, 95, 64), bg: Rgb(221, 225, 237), underline: Reset, modifier: NONE,
         x: 91, y: 4, fg: Rgb(67, 71, 78), bg: Rgb(221, 225, 237), underline: Reset, modifier: NONE,
         x: 92, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 93, y: 4, fg: Rgb(67, 71, 78), bg: Rgb(221, 225, 237), underline: Reset, modifier: NONE,
@@ -92,7 +93,8 @@ Buffer {
         x: 2, y: 7, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 3, y: 7, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 6, y: 7, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
-        x: 52, y: 7, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 51, y: 7, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 88, y: 7, fg: Rgb(50, 83, 131), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 91, y: 7, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 92, y: 7, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 93, y: 7, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
@@ -122,7 +124,9 @@ Buffer {
         x: 2, y: 12, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 3, y: 12, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 6, y: 12, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
-        x: 60, y: 12, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 62, y: 12, fg: Rgb(0, 95, 64), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 70, y: 12, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 88, y: 12, fg: Rgb(182, 23, 24), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 91, y: 12, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 92, y: 12, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 93, y: 12, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
@@ -141,7 +145,8 @@ Buffer {
         x: 2, y: 15, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 3, y: 15, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 6, y: 15, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
-        x: 59, y: 15, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 61, y: 15, fg: Rgb(182, 23, 24), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 78, y: 15, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 91, y: 15, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 92, y: 15, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 93, y: 15, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,

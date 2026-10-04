@@ -118,6 +118,14 @@ pub struct IssueSummary {
     pub updated_at: String,
     pub comments: u64,
     pub labels: Vec<Label>,
+    #[serde(default)]
+    pub created_at: String,
+    /// Pull requests only.
+    #[serde(default)]
+    pub review: Option<crate::model::ReviewDecision>,
+    /// Pull requests only, where known.
+    #[serde(default)]
+    pub checks: Option<crate::model::ChecksState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -528,6 +536,7 @@ pub struct IssueCard {
     pub state: WireIssueState,
     pub state_reason: Option<StateReason>,
     pub author: Option<Actor>,
+    pub created_at: DateTime,
     pub updated_at: DateTime,
     pub comments: CommentCount,
     #[arguments(first: 6)]
@@ -543,7 +552,9 @@ pub struct PrCard {
     pub state: crate::queries::PullRequestState,
     pub is_draft: bool,
     pub author: Option<Actor>,
+    pub created_at: DateTime,
     pub updated_at: DateTime,
+    pub review_decision: Option<crate::queries::PullRequestReviewDecision>,
     pub comments: CommentCount,
     #[arguments(first: 6)]
     pub labels: Option<Labels>,
@@ -1010,6 +1021,9 @@ pub mod keys {
     pub fn files(repo: &RepoId, rev: &str) -> String {
         format!("files:{repo}:{rev}")
     }
+    pub fn last_commits(repo: &RepoId, rev: &str, path: &str) -> String {
+        format!("last-commits:{repo}:{rev}:{path}")
+    }
     pub fn refs(repo: &RepoId) -> String {
         format!("refs:{repo}")
     }
@@ -1186,6 +1200,9 @@ impl BrowseItem {
                 updated_at: i.updated_at.0,
                 comments: count(i.comments.total_count),
                 labels: labels(i.labels),
+                created_at: i.created_at.0,
+                review: None,
+                checks: None,
             }),
             BrowseItem::PullRequest(p) => Some(IssueSummary {
                 repo: RepoId::parse(&p.repository.name_with_owner)?,
@@ -1202,6 +1219,9 @@ impl BrowseItem {
                 updated_at: p.updated_at.0,
                 comments: count(p.comments.total_count),
                 labels: labels(p.labels),
+                created_at: p.created_at.0,
+                review: crate::model::review(p.review_decision),
+                checks: None,
             }),
             _ => None,
         }

@@ -73,6 +73,8 @@ pub enum Action {
     ScrollDown,
     ScrollUp,
     PageDown,
+    PageUp,
+    UpLevel,
 }
 
 /// Where a binding applies. Diff and page bindings may share keys.
@@ -90,7 +92,7 @@ impl Scope {
 }
 
 impl Action {
-    pub const ALL: [Action; 66] = [
+    pub const ALL: [Action; 68] = [
         Action::Down,
         Action::Up,
         Action::HalfPageDown,
@@ -157,6 +159,8 @@ impl Action {
         Action::ScrollDown,
         Action::ScrollUp,
         Action::PageDown,
+        Action::PageUp,
+        Action::UpLevel,
     ];
 
     pub fn scope(self) -> Scope {
@@ -186,20 +190,22 @@ impl Action {
             | Action::Tab3
             | Action::Tab4
             | Action::Forward
-            | Action::Copy => Scope::Global,
+            | Action::Copy
+            | Action::Menu => Scope::Global,
             Action::NextTab
             | Action::PrevTab
             | Action::GoCode
             | Action::Star
             | Action::Hints
             | Action::HintsBrowser
-            | Action::Menu
             | Action::Branch
             | Action::ToggleState
             | Action::Sort
             | Action::ScrollDown
             | Action::ScrollUp
-            | Action::PageDown => Scope::Page,
+            | Action::PageDown
+            | Action::PageUp
+            | Action::UpLevel => Scope::Page,
             _ => Scope::Diff,
         }
     }
@@ -273,6 +279,8 @@ impl Action {
             Action::ScrollDown => "scroll_down",
             Action::ScrollUp => "scroll_up",
             Action::PageDown => "page_down",
+            Action::PageUp => "page_up",
+            Action::UpLevel => "up_level",
         }
     }
 
@@ -305,11 +313,11 @@ impl Action {
             Action::ToggleViewed => "Toggle file viewed (syncs)",
             Action::NextUnviewed => "Next unviewed file",
             Action::MarkReviewed => "Toggle change reviewed",
-            Action::Search => "Search GitHub, or filter the list (in a diff: search it)",
+            Action::Search => "Search (on a list: filter it)",
             Action::SearchNext => "Next search match",
             Action::SearchPrev => "Previous search match",
             Action::FindFile => "Go to file",
-            Action::Comment => "Comment (on the issue, PR, or diff line)",
+            Action::Comment => "Comment",
             Action::VisualLines => "Select lines (for multi-line comments)",
             Action::Suggest => "Suggest a change (opens $EDITOR)",
             Action::ReplyThread => "Reply to the thread",
@@ -332,18 +340,20 @@ impl Action {
             Action::Tab2 => "Second tab",
             Action::Tab3 => "Third tab",
             Action::Tab4 => "Fourth tab",
-            Action::Star => "Star or unstar the repository",
+            Action::Star => "Star / unstar",
             Action::Hints => "Follow a link by its letters",
-            Action::HintsBrowser => "Open a link in the browser by its letters",
-            Action::Forward => "Forward (after going back)",
-            Action::Copy => "Copy the link (selected item, or the page)",
+            Action::HintsBrowser => "Follow a link, in the browser",
+            Action::Forward => "Forward",
+            Action::Copy => "Copy the link",
             Action::Menu => "Everything you can do here",
             Action::Branch => "Switch branches or tags",
-            Action::ToggleState => "Show open, closed or all",
+            Action::ToggleState => "Open / closed / all",
             Action::Sort => "Change the sort",
             Action::ScrollDown => "Scroll down a line",
             Action::ScrollUp => "Scroll up a line",
             Action::PageDown => "Page down",
+            Action::PageUp => "Page up",
+            Action::UpLevel => "Up a level",
         }
     }
 
@@ -353,52 +363,52 @@ impl Action {
             Action::Up => &["k", "<Up>"],
             Action::HalfPageDown => &["<C-d>"],
             Action::HalfPageUp => &["<C-u>"],
-            Action::Top => &["gg"],
-            Action::Bottom => &["G"],
-            Action::Open => &["<Enter>"],
-            Action::Back => &["<Esc>", "<BS>", "H"],
+            Action::Top => &["g", "<Home>"],
+            Action::Bottom => &["G", "<End>"],
+            Action::Open => &["<Enter>", "page:l", "page:<Right>"],
+            Action::Back => &["<Esc>", "<BS>", "page:h", "page:<Left>", "page:["],
             Action::Close => &[],
             Action::Quit => &["q", "<C-c>"],
-            Action::Refresh => &["r"],
+            Action::Refresh => &["r", "<C-r>"],
             Action::OpenInBrowser => &["o"],
             Action::CommandPalette => &[":", "<C-k>"],
             Action::Help => &["?"],
-            Action::NextHunk => &["]h"],
-            Action::PrevHunk => &["[h"],
-            Action::NextFile => &["]f"],
-            Action::PrevFile => &["[f"],
-            Action::ToggleTree => &["<Tab>"],
-            Action::SwitchPane => &["<C-w>"],
-            Action::ToggleSplit => &["s"],
+            Action::NextHunk => &["}"],
+            Action::PrevHunk => &["{"],
+            Action::NextFile => &["]"],
+            Action::PrevFile => &["["],
+            Action::ToggleTree => &["e"],
+            Action::SwitchPane => &["<Tab>", "<C-w>"],
+            Action::ToggleSplit => &["|"],
             Action::IgnoreWhitespace => &["w"],
             Action::ExpandContext => &["x"],
             Action::FullFile => &["F"],
             Action::ToggleViewed => &["v"],
-            Action::NextUnviewed => &["]u"],
+            Action::NextUnviewed => &["u"],
             Action::MarkReviewed => &["m"],
-            Action::Search => &["/"],
+            Action::Search => &["/", "page:s"],
             Action::SearchNext => &["n"],
             Action::SearchPrev => &["N"],
-            Action::FindFile => &["t", "gf"],
+            Action::FindFile => &["t"],
             Action::Comment => &["c"],
             Action::VisualLines => &["V"],
             Action::Suggest => &["S"],
             Action::ReplyThread => &["a"],
             Action::ResolveThread => &["R"],
             Action::DeleteDraft => &["D"],
-            Action::FileComment => &["f"],
-            Action::SubmitReview => &["gr"],
-            Action::NextThread => &["]c"],
-            Action::PrevThread => &["[c"],
-            Action::ToggleSinceReview => &["gl"],
-            Action::JumpMove => &["gm"],
-            Action::PickCommits => &["gc"],
+            Action::FileComment => &["C"],
+            Action::SubmitReview => &["s"],
+            Action::NextThread => &[")"],
+            Action::PrevThread => &["("],
+            Action::ToggleSinceReview => &["L"],
+            Action::JumpMove => &["M"],
+            Action::PickCommits => &["p"],
             Action::NextTab => &["<Tab>"],
             Action::PrevTab => &["<S-Tab>"],
-            Action::GoHome => &["gh"],
-            Action::GoCode => &["gc"],
-            Action::GoIssues => &["gi"],
-            Action::GoPulls => &["gp"],
+            Action::GoHome => &["H"],
+            Action::GoCode => &[],
+            Action::GoIssues => &[],
+            Action::GoPulls => &[],
             Action::Tab1 => &["1"],
             Action::Tab2 => &["2"],
             Action::Tab3 => &["3"],
@@ -406,7 +416,7 @@ impl Action {
             Action::Star => &["*"],
             Action::Hints => &["f"],
             Action::HintsBrowser => &["F"],
-            Action::Forward => &["L"],
+            Action::Forward => &["page:]"],
             Action::Copy => &["y"],
             Action::Menu => &["."],
             Action::Branch => &["w"],
@@ -415,6 +425,8 @@ impl Action {
             Action::ScrollDown => &["J"],
             Action::ScrollUp => &["K"],
             Action::PageDown => &["<Space>", "<PageDown>"],
+            Action::PageUp => &["b", "<PageUp>"],
+            Action::UpLevel => &["u"],
         }
     }
 
@@ -562,12 +574,25 @@ pub enum Resolution {
 
 #[derive(Debug, Clone)]
 pub struct Keymap {
-    bindings: Vec<(Vec<Key>, Action)>,
+    /// `(keys, action, where)`.
+    bindings: Vec<(Vec<Key>, Action, Scope)>,
 }
 
 impl Default for Keymap {
     fn default() -> Self {
         Self::with_overrides(&HashMap::new()).expect("default keymap is valid")
+    }
+}
+
+/// `page:h` binds `h` on pages only, `diff:s` in the diff only; a plain
+/// sequence applies where its action does.
+fn scoped(seq: &str, action: Action) -> (&str, Scope) {
+    if let Some(rest) = seq.strip_prefix("page:") {
+        (rest, Scope::Page)
+    } else if let Some(rest) = seq.strip_prefix("diff:") {
+        (rest, Scope::Diff)
+    } else {
+        (seq, action.scope())
     }
 }
 
@@ -591,9 +616,10 @@ impl Keymap {
                 None => action.defaults().iter().map(|s| (*s).to_owned()).collect(),
             };
             for seq in sequences {
+                let (seq, scope) = scoped(&seq, action);
                 let keys =
-                    parse_sequence(&seq).map_err(|e| format!("[keys] {}: {e}", action.name()))?;
-                bindings.push((keys, action));
+                    parse_sequence(seq).map_err(|e| format!("[keys] {}: {e}", action.name()))?;
+                bindings.push((keys, action, scope));
             }
         }
         let keymap = Self { bindings };
@@ -604,10 +630,10 @@ impl Keymap {
     /// Rejects duplicate bindings and bindings that are a prefix of another
     /// (the shorter one would make the longer unreachable).
     fn validate(&self) -> Result<(), String> {
-        for (i, (a, action_a)) in self.bindings.iter().enumerate() {
-            for (b, action_b) in &self.bindings[i + 1..] {
+        for (i, (a, action_a, scope_a)) in self.bindings.iter().enumerate() {
+            for (b, action_b, scope_b) in &self.bindings[i + 1..] {
                 let shorter = a.len().min(b.len());
-                if a[..shorter] == b[..shorter] && action_a.scope().overlaps(action_b.scope()) {
+                if a[..shorter] == b[..shorter] && scope_a.overlaps(*scope_b) {
                     return Err(format!(
                         "key `{}` ({}) conflicts with `{}` ({})",
                         format_sequence(a),
@@ -624,8 +650,8 @@ impl Keymap {
     /// The action `keys` trigger in `scope`.
     pub fn resolve(&self, keys: &[Key], scope: Scope) -> Resolution {
         let mut pending = false;
-        for (binding, action) in &self.bindings {
-            if !action.scope().overlaps(scope) {
+        for (binding, action, where_) in &self.bindings {
+            if !where_.overlaps(scope) {
                 continue;
             }
             if binding.as_slice() == keys {
@@ -647,22 +673,64 @@ impl Keymap {
     pub fn continuations(&self, keys: &[Key], scope: Scope) -> Vec<(Vec<Key>, Action)> {
         self.bindings
             .iter()
-            .filter(|(binding, action)| {
-                action.scope().overlaps(scope)
-                    && binding.len() > keys.len()
-                    && binding.starts_with(keys)
+            .filter(|(binding, _, where_)| {
+                where_.overlaps(scope) && binding.len() > keys.len() && binding.starts_with(keys)
             })
-            .map(|(binding, action)| (binding[keys.len()..].to_vec(), *action))
+            .map(|(binding, action, _)| (binding[keys.len()..].to_vec(), *action))
             .collect()
     }
 
+    /// Every sequence bound to `action`, anywhere.
     pub fn keys_for(&self, action: Action) -> Vec<String> {
         self.bindings
             .iter()
-            .filter(|(_, a)| *a == action)
-            .map(|(keys, _)| format_sequence(keys))
+            .filter(|(_, a, _)| *a == action)
+            .map(|(keys, _, _)| format_sequence(keys))
             .collect()
     }
+
+    /// The sequences that run `action` in `scope`, for hints.
+    pub fn keys_in(&self, action: Action, scope: Scope) -> Vec<Vec<Key>> {
+        self.bindings
+            .iter()
+            .filter(|(_, a, where_)| *a == action && where_.overlaps(scope))
+            .map(|(keys, _, _)| keys.clone())
+            .collect()
+    }
+}
+
+/// A key as people write it: `↵`, `esc`, `⇥`, `space`, `ctrl-d`.
+pub fn pretty(keys: &[Key]) -> String {
+    keys.iter()
+        .map(|k| {
+            let base = match k.code {
+                KeyCode::Enter => "↵".to_owned(),
+                KeyCode::Esc => "esc".to_owned(),
+                KeyCode::Tab => "⇥".to_owned(),
+                KeyCode::BackTab => "⇧⇥".to_owned(),
+                KeyCode::Backspace => "⌫".to_owned(),
+                KeyCode::Char(' ') => "space".to_owned(),
+                KeyCode::Up => "↑".to_owned(),
+                KeyCode::Down => "↓".to_owned(),
+                KeyCode::Left => "←".to_owned(),
+                KeyCode::Right => "→".to_owned(),
+                KeyCode::PageUp => "pgup".to_owned(),
+                KeyCode::PageDown => "pgdn".to_owned(),
+                KeyCode::Home => "home".to_owned(),
+                KeyCode::End => "end".to_owned(),
+                KeyCode::F(n) => format!("f{n}"),
+                KeyCode::Char(c) => c.to_string(),
+                code => format!("{code:?}").to_lowercase(),
+            };
+            if k.mods.contains(KeyModifiers::CONTROL) {
+                format!("ctrl-{base}")
+            } else if k.mods.contains(KeyModifiers::ALT) {
+                format!("alt-{base}")
+            } else {
+                base
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -712,23 +780,42 @@ mod tests {
     }
 
     #[test]
-    fn resolves_sequences() {
+    fn every_default_is_one_key() {
         let keymap = Keymap::default();
+        for (keys, action, _) in &keymap.bindings {
+            assert_eq!(
+                keys.len(),
+                1,
+                "{} is bound to {}",
+                action.name(),
+                format_sequence(keys)
+            );
+        }
         assert_eq!(
             keymap.resolve(&[key('j')], Scope::Page),
             Resolution::Action(Action::Down)
         );
         assert_eq!(
             keymap.resolve(&[key('g')], Scope::Page),
-            Resolution::Pending
-        );
-        assert_eq!(
-            keymap.resolve(&[key('g'), key('g')], Scope::Page),
             Resolution::Action(Action::Top)
         );
         assert_eq!(
             keymap.resolve(&[key('z')], Scope::Page),
             Resolution::Unbound
+        );
+    }
+
+    #[test]
+    fn sequences_still_work_when_configured() {
+        let overrides = HashMap::from([("go_issues".to_owned(), vec!["zi".to_owned()])]);
+        let keymap = Keymap::with_overrides(&overrides).unwrap();
+        assert_eq!(
+            keymap.resolve(&[key('z')], Scope::Page),
+            Resolution::Pending
+        );
+        assert_eq!(
+            keymap.resolve(&[key('z'), key('i')], Scope::Page),
+            Resolution::Action(Action::GoIssues)
         );
     }
 
@@ -740,8 +827,21 @@ mod tests {
             Resolution::Action(Action::Hints)
         );
         assert_eq!(
-            keymap.resolve(&[key('f')], Scope::Diff),
-            Resolution::Action(Action::FileComment)
+            keymap.resolve(&[key('s')], Scope::Diff),
+            Resolution::Action(Action::SubmitReview)
+        );
+        assert_eq!(
+            keymap.resolve(&[key('s')], Scope::Page),
+            Resolution::Action(Action::Search),
+            "GitHub's s"
+        );
+        assert_eq!(
+            keymap.resolve(&[key('h')], Scope::Page),
+            Resolution::Action(Action::Back)
+        );
+        assert_eq!(
+            keymap.resolve(&[key('h')], Scope::Diff),
+            Resolution::Unbound
         );
         // A page key can't shadow a global one.
         let clash = HashMap::from([("star".to_owned(), vec!["q".to_owned()])]);
@@ -750,21 +850,32 @@ mod tests {
                 .unwrap_err()
                 .contains("conflicts")
         );
+        // Config can scope a binding too.
+        let scoped = HashMap::from([("star".to_owned(), vec!["page:z".to_owned()])]);
+        assert!(Keymap::with_overrides(&scoped).is_ok());
+    }
+
+    #[test]
+    fn keys_read_like_people_write_them() {
+        assert_eq!(pretty(&parse_sequence("<Enter>").unwrap()), "↵");
+        assert_eq!(pretty(&parse_sequence("<C-d>").unwrap()), "ctrl-d");
+        assert_eq!(pretty(&parse_sequence("<Space>").unwrap()), "space");
+        assert_eq!(pretty(&parse_sequence("G").unwrap()), "G");
     }
 
     #[test]
     fn overrides_replace_defaults() {
-        let overrides = HashMap::from([("down".to_owned(), vec!["e".to_owned()])]);
+        let overrides = HashMap::from([("down".to_owned(), vec!["z".to_owned()])]);
         let keymap = Keymap::with_overrides(&overrides).unwrap();
         assert_eq!(
-            keymap.resolve(&[key('e')], Scope::Page),
+            keymap.resolve(&[key('z')], Scope::Page),
             Resolution::Action(Action::Down)
         );
         assert_eq!(
             keymap.resolve(&[key('j')], Scope::Page),
             Resolution::Unbound
         );
-        assert_eq!(keymap.keys_for(Action::Down), ["e"]);
+        assert_eq!(keymap.keys_for(Action::Down), ["z"]);
     }
 
     #[test]
@@ -781,7 +892,7 @@ mod tests {
                 .unwrap_err()
                 .contains("conflicts")
         );
-        let shadow = HashMap::from([("refresh".to_owned(), vec!["g".to_owned()])]);
+        let shadow = HashMap::from([("refresh".to_owned(), vec!["gx".to_owned()])]);
         assert!(
             Keymap::with_overrides(&shadow)
                 .unwrap_err()

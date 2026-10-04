@@ -2,12 +2,14 @@
 
 use std::sync::Arc;
 
+use std::collections::HashMap;
+
 use ghtui_api::browse::{
-    Blob, IssueDetail, PrActivity, Profile, Refs, RepoOverview, RepoSummary, Results, SearchKind,
-    SearchResults, TreeEntry,
+    Blob, CommitInfo, IssueDetail, PrActivity, Profile, Refs, RepoOverview, RepoSummary, Results,
+    SearchKind, SearchResults, TreeEntry,
 };
 use ghtui_api::model::{PrRef, RepoId};
-use ghtui_ui::page::{Page, PageLine, Role, Seg};
+use ghtui_ui::page::{Page, Role, Seg};
 use ghtui_ui::pages::{self, Keys, PrTab};
 
 use crate::keymap::Action;
@@ -32,6 +34,8 @@ pub enum DataKey {
     Files(RepoId, String),
     /// Branches and tags.
     Refs(RepoId),
+    /// The latest commit of each entry in a directory.
+    LastCommits(RepoId, String, String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +52,7 @@ pub enum Data {
     /// Paths, and whether GitHub cut the list short.
     Files(Arc<Vec<String>>, bool),
     Refs(Box<Refs>),
+    LastCommits(Arc<HashMap<String, CommitInfo>>),
 }
 
 /// What a page needs fetched.
@@ -63,10 +68,14 @@ pub fn needs(route: &Route) -> Vec<Need> {
     let header = |repo: &RepoId| Need::Data(K::Repo(repo.clone()));
     match route {
         Route::Home => vec![Need::Inbox, Need::Data(K::ViewerRepos)],
-        Route::Repo(repo) => vec![header(repo)],
+        Route::Repo(repo) => vec![
+            header(repo),
+            Need::Data(K::LastCommits(repo.clone(), "HEAD".into(), String::new())),
+        ],
         Route::Tree { repo, rev, path } => vec![
             header(repo),
             Need::Data(K::Tree(repo.clone(), rev.clone(), path.clone())),
+            Need::Data(K::LastCommits(repo.clone(), rev.clone(), path.clone())),
         ],
         Route::Blob { repo, rev, path } => vec![
             header(repo),
@@ -113,13 +122,24 @@ pub struct PageScreen {
 
 impl PageScreen {
     pub fn new(route: Route) -> Self {
+        // Lists start on their first row; reading pages (issues, pull
+        // requests, files) start with nothing selected.
+        let list = !matches!(
+            route,
+            Route::Issue { .. }
+                | Route::Blob { .. }
+                | Route::Pr {
+                    tab: PrTab::Conversation,
+                    ..
+                }
+        );
         Self {
             route,
             scroll: 0,
             selected: None,
             page: Arc::new(Page::default()),
             built: None,
-            fresh: true,
+            fresh: list,
         }
     }
 
@@ -153,6 +173,23 @@ impl State {
     pub fn activity(&self, pr: &PrRef) -> Option<&PrActivity> {
         match self.get(&DataKey::PrActivity(pr.clone()))? {
             Data::PrActivity(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// The latest commit of each entry in a directory, once loaded.
+    pub fn last_commits(
+        &self,
+        repo: &RepoId,
+        rev: &str,
+        path: &str,
+    ) -> Option<&HashMap<String, CommitInfo>> {
+        match self.get(&DataKey::LastCommits(
+            repo.clone(),
+            rev.to_owned(),
+            path.to_owned(),
+        ))? {
+            Data::LastCommits(m) => Some(m),
             _ => None,
         }
     }
@@ -192,13 +229,13 @@ impl State {
         })
     }
 
-    /// The first key bound to `action`, for hints.
+    /// The first key that runs `action` here, as people write it.
     pub fn first_key(&self, action: Action) -> String {
         self.keymap
-            .keys_for(action)
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| format!(":{}", action.name()))
+            .keys_in(action, self.scope())
+            .first()
+            .map(|k| crate::keymap::pretty(k))
+            .unwrap_or_else(|| format!(":{}", action.name().replace('_', " ")))
     }
 
     /// Builds the page for `route`, `width` columns wide in all.
@@ -229,15 +266,20 @@ impl State {
             _ => None,
         };
         let mut page = Page::new(pages::main_width(width, aside));
+        let retry = self.first_key(Action::Refresh);
         let missing = |page: &mut Page, what: &str| match &error {
             Some((err, false)) => {
-                page.line(vec![Seg::new(
-                    format!("Couldn't load {what}: {err}"),
-                    Role::Error,
-                )]);
-                page.line(vec![Seg::new("Press r to retry.", Role::Meta)]);
+                pages::flash(
+                    page,
+                    &format!("Couldn't load {what}: {err}. {retry} tries again."),
+                    ghtui_theme::Bg::ErrorContainer,
+                );
             }
-            _ => page.line(vec![Seg::new("Loading…", Role::Meta)]),
+            _ => {
+                page.box_top(vec![Seg::new("Loading…", Role::Meta)], Vec::new());
+                pages::skeleton(page);
+                page.box_bottom();
+            }
         };
         match route {
             Route::Home => {
@@ -258,7 +300,10 @@ impl State {
                 let overview = self.overview(repo);
                 pages::repo_title(&mut page, repo, overview, keys);
                 match overview {
-                    Some(o) => pages::repo_code(&mut page, repo, o, icons, keys, aside, now),
+                    Some(o) => {
+                        let commits = self.last_commits(repo, "HEAD", "");
+                        pages::repo_code(&mut page, repo, o, commits, icons, keys, aside, now)
+                    }
                     None => missing(&mut page, "the repository"),
                 }
             }
@@ -268,7 +313,10 @@ impl State {
                     Some(Data::Tree(entries)) => Some(entries.as_slice()),
                     _ => None,
                 };
-                pages::repo_dir(&mut page, repo, rev, path, entries, icons, keys);
+                let commits = self.last_commits(repo, rev, path);
+                pages::repo_dir(
+                    &mut page, repo, rev, path, entries, commits, icons, keys, now,
+                );
                 if entries.is_none() && matches!(error, Some((_, false))) {
                     missing(&mut page, "the directory");
                 }
@@ -335,16 +383,19 @@ impl State {
             },
         }
         if let Some((err, true)) = error {
-            page.lines.insert(
-                0,
-                PageLine {
-                    segs: vec![Seg::new(format!("Couldn't refresh: {err}"), Role::Error)],
-                    ..PageLine::default()
-                },
+            // A flash banner on top; what's below is the cached copy.
+            let mut banner = Page::new(page.width);
+            pages::flash(
+                &mut banner,
+                &format!("Couldn't refresh: {err}. Showing what was loaded before."),
+                ghtui_theme::Bg::ErrorContainer,
             );
+            banner.blank();
+            let n = banner.lines.len();
+            page.lines.splice(0..0, banner.lines);
             for item in &mut page.items {
-                item.start += 1;
-                item.end += 1;
+                item.start += n;
+                item.end += n;
             }
         }
         page

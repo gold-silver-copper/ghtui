@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use crate::browse::{Data, DataKey};
 use crate::diff_job::{self, GitContext, JobControl};
 use crate::review::{self, SubmitOutcome};
-use crate::state::{Cmd, Msg, State, update};
+use crate::state::{Cmd, Msg, State, timers, update};
 
 /// Running diff jobs by PR.
 #[derive(Default)]
@@ -59,6 +59,7 @@ pub async fn run(
     }
     check_git(tx.clone());
 
+    let mut last_notice = None;
     loop {
         let msg = tokio::select! {
             event = events.next() => match event {
@@ -79,6 +80,7 @@ pub async fn run(
         while let Ok(msg) = rx.try_recv() {
             cmds.extend(update(&mut state, msg));
         }
+        cmds.extend(timers(&mut state, &mut last_notice));
         for cmd in cmds {
             match cmd {
                 // The editor needs the terminal: handled here, not spawned.
@@ -275,6 +277,11 @@ fn spawn(cmd: Cmd, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
                 repo,
                 starred,
             },
+            Cmd::Timer(timer, ms) => {
+                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                let _ = tx.send(Msg::Timer(timer));
+                return;
+            }
             Cmd::SuggestLater(q) => {
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                 Msg::SuggestDue(q)
@@ -416,6 +423,9 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<Data> {
         DataKey::Profile(login) => Data::Profile(Box::new(gh.cached(&keys::profile(login))?.value)),
         DataKey::ViewerRepos => Data::Repos(gh.cached(keys::VIEWER_REPOS)?.value),
         DataKey::Refs(repo) => Data::Refs(Box::new(gh.cached(&keys::refs(repo))?.value)),
+        DataKey::LastCommits(repo, rev, path) => Data::LastCommits(std::sync::Arc::new(
+            gh.cached(&keys::last_commits(repo, rev, path))?.value,
+        )),
         // Files aren't cached; they can be large.
         DataKey::Blob(..) | DataKey::Files(..) => return None,
     })
@@ -438,6 +448,17 @@ async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> {
             Data::Files(std::sync::Arc::new(files), truncated)
         }
         DataKey::Refs(repo) => Data::Refs(Box::new(gh.refs(repo).await?)),
+        DataKey::LastCommits(repo, rev, path) => {
+            let names: Vec<String> = gh
+                .tree(repo, rev, path)
+                .await?
+                .into_iter()
+                .map(|e| e.name)
+                .collect();
+            Data::LastCommits(std::sync::Arc::new(
+                gh.last_commits(repo, rev, path, &names).await?,
+            ))
+        }
     })
 }
 

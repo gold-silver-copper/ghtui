@@ -1136,3 +1136,215 @@ fn big_file_timing_50k_lines() {
     );
     assert!(full_file < Duration::from_millis(100), "{full_file:?}");
 }
+
+// ---- screenshots for design review ----------------------------------------------
+
+/// Writes the main screens as HTML (exact cells and colors) to
+/// `$GHTUI_SHOTS`, for looking at the design in a browser.
+#[test]
+#[ignore = "design review: GHTUI_SHOTS=dir cargo test -p ghtui screenshots -- --ignored"]
+fn screenshots() {
+    let Some(dir) = std::env::var_os("GHTUI_SHOTS") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let shot = |name: &str, state: &State| {
+        let (w, h) = state.size;
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        terminal.draw(|frame| view(state, frame, NOW)).unwrap();
+        std::fs::write(
+            dir.join(format!("{name}.html")),
+            to_html(terminal.backend().buffer()),
+        )
+        .unwrap();
+    };
+    let sized = |mut s: State, w: u16, h: u16| {
+        update(&mut s, Msg::Resize(w, h));
+        s
+    };
+    for (mode, tag) in [(Mode::Dark, "dark"), (Mode::Light, "light")] {
+        shot(
+            &format!("home_{tag}"),
+            &sized(with_inbox(mode, ColorDepth::TrueColor), 120, 36),
+        );
+        let mut repo = sized(with_repo(mode, ColorDepth::TrueColor), 150, 40);
+        let commit = |headline: &str, date: &str| ghtui_api::browse::CommitInfo {
+            oid: "abc1234".into(),
+            headline: headline.into(),
+            author: "octocat".into(),
+            date: date.into(),
+        };
+        fetched(
+            &mut repo,
+            DataKey::LastCommits(ghtui(), "HEAD".into(), String::new()),
+            Data::LastCommits(std::sync::Arc::new(
+                [
+                    (
+                        ".github".to_owned(),
+                        commit("ci: run clippy on stable", "2026-09-20T10:00:00Z"),
+                    ),
+                    (
+                        "crates".to_owned(),
+                        commit("Browse GitHub like the website", "2026-10-03T10:00:00Z"),
+                    ),
+                    (
+                        "Cargo.toml".to_owned(),
+                        commit("Update dependencies", "2026-09-01T10:00:00Z"),
+                    ),
+                    (
+                        "README.md".to_owned(),
+                        commit("Document single-key navigation", "2026-10-02T10:00:00Z"),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            )),
+        );
+        shot(&format!("repo_{tag}"), &repo);
+        shot(
+            &format!("repo_narrow_{tag}"),
+            &sized(with_repo(mode, ColorDepth::TrueColor), 90, 36),
+        );
+        let mut issues = sized(with_repo(mode, ColorDepth::TrueColor), 130, 36);
+        let route = Route::Issues {
+            repo: ghtui(),
+            query: OPEN.into(),
+        };
+        let (kind, query) = route.search().unwrap();
+        issues.push(route);
+        fetched(
+            &mut issues,
+            DataKey::Search(kind, query),
+            Data::Search(Box::new(fixtures::issue_results(Some("c")))),
+        );
+        shot(&format!("issues_{tag}"), &issues);
+        let mut issue = sized(state(mode, ColorDepth::TrueColor), 130, 40);
+        issue.push(Route::Issue {
+            repo: ghtui(),
+            number: 14,
+        });
+        fetched(
+            &mut issue,
+            DataKey::Repo(ghtui()),
+            Data::Repo(Box::new(fixtures::overview())),
+        );
+        fetched(
+            &mut issue,
+            DataKey::Issue(ghtui(), 14),
+            Data::Issue(Some(Box::new(fixtures::issue()))),
+        );
+        shot(&format!("issue_{tag}"), &issue);
+        shot(&format!("pr_{tag}"), &sized(with_pr(mode), 130, 44));
+        let mut commits = sized(with_pr(mode), 120, 30);
+        update(&mut commits, Msg::Key(key(KeyCode::Char('2'))));
+        shot(&format!("pr_commits_{tag}"), &commits);
+        let mut file = sized(with_repo(mode, ColorDepth::TrueColor), 120, 24);
+        file.push(Route::Blob {
+            repo: ghtui(),
+            rev: "main".into(),
+            path: "src/main.rs".into(),
+        });
+        fetched(
+            &mut file,
+            DataKey::Blob(ghtui(), "main".into(), "src/main.rs".into()),
+            Data::Blob(Box::new(fixtures::blob())),
+        );
+        shot(&format!("file_{tag}"), &file);
+        let mut profile = sized(state(mode, ColorDepth::TrueColor), 120, 36);
+        profile.push(Route::user("octocat"));
+        fetched(
+            &mut profile,
+            DataKey::Profile("octocat".into()),
+            Data::Profile(Box::new(fixtures::profile())),
+        );
+        shot(&format!("profile_{tag}"), &profile);
+        let mut search = sized(state(mode, ColorDepth::TrueColor), 120, 30);
+        let route = Route::Search {
+            kind: SearchKind::Repos,
+            query: "terminal file manager".into(),
+        };
+        let (kind, query) = route.search().unwrap();
+        search.push(route);
+        fetched(
+            &mut search,
+            DataKey::Search(kind, query),
+            Data::Search(Box::new(fixtures::repo_results())),
+        );
+        shot(&format!("search_{tag}"), &search);
+        let mut s = sized(with_repo(mode, ColorDepth::TrueColor), 120, 36);
+        s.visits = vec![crate::nav::Visit {
+            url: "https://github.com/octocat".into(),
+            title: "@octocat".into(),
+            count: 3,
+            last: NOW,
+        }];
+        update(&mut s, Msg::Key(key(KeyCode::Char('f'))));
+        shot(&format!("hints_{tag}"), &s);
+        update(&mut s, Msg::Key(key(KeyCode::Esc)));
+        update(&mut s, Msg::Key(key(KeyCode::Char('/'))));
+        for c in "oct".chars() {
+            update(&mut s, Msg::Key(key(KeyCode::Char(c))));
+        }
+        shot(&format!("search_box_{tag}"), &s);
+        update(&mut s, Msg::Key(key(KeyCode::Esc)));
+        update(&mut s, Msg::Key(key(KeyCode::Char('.'))));
+        shot(&format!("menu_{tag}"), &s);
+        update(&mut s, Msg::Key(key(KeyCode::Esc)));
+        update(&mut s, Msg::Key(key(KeyCode::Char('?'))));
+        shot(&format!("help_{tag}"), &s);
+    }
+}
+
+fn to_html(buf: &ratatui::buffer::Buffer) -> String {
+    use ratatui::style::{Color, Modifier};
+    let css = |c: Color, fallback: &str| match c {
+        Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+        _ => fallback.to_owned(),
+    };
+    let mut out = String::from(
+        "<!doctype html><meta charset=utf-8><style>body{margin:0;background:#000}pre{margin:0;font:14px 'JetBrains Mono','SF Mono',Menlo,monospace;letter-spacing:0}div{height:19px;line-height:19px;white-space:pre}span{display:inline-block;height:19px;vertical-align:top}</style><pre>",
+    );
+    let area = buf.area;
+    for y in area.top()..area.bottom() {
+        out.push_str("<div>");
+        let mut skip = 0;
+        for x in area.left()..area.right() {
+            if skip > 0 {
+                skip -= 1;
+                continue;
+            }
+            let cell = &buf[(x, y)];
+            let sym = cell.symbol();
+            let w = ghtui_ui::text::width(sym).max(1);
+            skip = w - 1;
+            let mut style = format!(
+                "color:{};background:{}",
+                css(cell.fg, "#ccc"),
+                css(cell.bg, "#000")
+            );
+            if cell.modifier.contains(Modifier::BOLD) {
+                style.push_str(";font-weight:700");
+            }
+            if cell.modifier.contains(Modifier::ITALIC) {
+                style.push_str(";font-style:italic");
+            }
+            if cell.modifier.contains(Modifier::UNDERLINED) {
+                style.push_str(";text-decoration:underline");
+            }
+            let text = sym
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
+            let width = if w > 1 {
+                format!(";display:inline-block;width:{w}ch")
+            } else {
+                String::new()
+            };
+            out.push_str(&format!("<span style=\"{style}{width}\">{text}</span>"));
+        }
+        out.push_str("</div>");
+    }
+    out.push_str("</pre>");
+    out
+}
