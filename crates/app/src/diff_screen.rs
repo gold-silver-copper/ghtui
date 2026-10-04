@@ -95,8 +95,6 @@ pub struct DiffState {
     /// What the background job is doing, while it works.
     pub progress: Option<String>,
     pub error: Option<String>,
-    /// The file list has arrived.
-    pub listed: bool,
     /// GitHub's viewed state and the PR's node ID.
     pub viewed: Option<ViewedFiles>,
     /// Locally persisted review marks and draft comments.
@@ -123,6 +121,16 @@ pub struct DiffState {
 }
 
 impl DiffState {
+    /// The file list has arrived.
+    pub fn listed(&self) -> bool {
+        self.refs.is_some()
+    }
+
+    /// The head commit the diff was computed at.
+    pub fn head(&self) -> Option<String> {
+        self.refs.as_ref().map(|r| r.head.clone())
+    }
+
     pub fn loading() -> Self {
         Self {
             progress: Some("Preparing".into()),
@@ -134,7 +142,6 @@ impl DiffState {
         self.tree = tree_rows(&doc);
         self.doc = doc;
         self.refs = Some(refs);
-        self.listed = true;
         self.progress = if self.doc.is_empty() {
             None
         } else {
@@ -154,13 +161,11 @@ impl DiffState {
     /// Starts over for a different commit range, keeping threads, drafts,
     /// viewed state and commits.
     pub fn restart(&mut self, range: Option<RangeView>) {
-        let doc = Doc::default();
-        self.doc = doc;
+        self.doc = Doc::default();
         self.tree.clear();
         self.refs = None;
         self.progress = Some("Preparing".into());
         self.error = None;
-        self.listed = false;
         self.requested.clear();
         self.moves_requested = false;
         self.mapping_requested = false;
@@ -171,7 +176,7 @@ impl DiffState {
     /// Every file's diff, once all have arrived and moves haven't been
     /// looked for yet.
     pub fn take_move_inputs(&mut self) -> Option<Vec<(usize, Arc<FileDiff>)>> {
-        if self.moves_requested || !self.listed || self.doc.ready_count() < self.doc.files.len() {
+        if self.moves_requested || !self.listed() || self.doc.ready_count() < self.doc.files.len() {
             return None;
         }
         self.moves_requested = true;
@@ -247,7 +252,7 @@ impl DiffState {
 
     pub fn status(&self) -> Option<String> {
         let progress = self.progress.as_ref()?;
-        if self.listed && !self.doc.is_empty() {
+        if self.listed() && !self.doc.is_empty() {
             Some(format!(
                 "Diffing {}/{} files",
                 self.doc.ready_count(),
@@ -351,7 +356,7 @@ pub fn apply(
                 Action::Bottom => isize::MAX / 2,
                 Action::Open => {
                     screen.focus = Pane::Diff;
-                    return Some(settle(screen, state, content));
+                    return Some(Vec::new());
                 }
                 _ => return None,
             };
@@ -482,7 +487,6 @@ pub fn apply(
         }
         _ => return None,
     }
-    cmds.extend(settle(screen, state, content));
     Some(cmds)
 }
 
@@ -493,12 +497,7 @@ fn jump(screen: &mut DiffScreen, pos: Pos) {
 }
 
 /// Starts a search from the cursor.
-pub fn search(
-    screen: &mut DiffScreen,
-    state: &mut DiffState,
-    query: String,
-    content: Rect,
-) -> (Vec<Cmd>, Notice) {
+pub fn search(screen: &mut DiffScreen, state: &mut DiffState, query: String) -> Notice {
     let notice = match state.doc.search(&query, screen.cursor, true) {
         Some(pos) => {
             screen.cursor = pos;
@@ -511,7 +510,7 @@ pub fn search(
         None => Notice::Error(format!("No match for “{query}”")),
     };
     screen.search = Some(query);
-    (settle(screen, state, content), notice)
+    notice
 }
 
 fn toggle_viewed(

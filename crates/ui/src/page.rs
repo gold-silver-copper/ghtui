@@ -14,7 +14,6 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
-use unicode_width::UnicodeWidthChar;
 
 use crate::{Ctx, fill, text};
 
@@ -379,16 +378,15 @@ pub(crate) fn wrap_segs(segs: Vec<Seg>, width: usize) -> Vec<Vec<Seg>> {
                 if w > width {
                     // Hard-break a long word.
                     let mut chunk = String::new();
-                    for c in word.chars() {
-                        let cw = c.width().unwrap_or(0);
-                        if used + cw > width {
+                    for (g, gw) in text::graphemes(word) {
+                        if used + gw > width {
                             push(&mut lines, seg, &chunk);
                             chunk.clear();
                             lines.push(Vec::new());
                             used = 0;
                         }
-                        chunk.push(c);
-                        used += cw;
+                        chunk.push_str(g);
+                        used += gw;
                     }
                     push(&mut lines, seg, &chunk);
                     continue;
@@ -456,37 +454,38 @@ fn place(line: &PageLine, x: u16, width: u16) -> Vec<(u16, String, &Seg)> {
         Frame::Rule | Frame::Bottom => return Vec::new(),
     };
     let pad = u16::from(line.frame == Frame::Top);
+    // The right side gets at most half when there's a left side too.
+    let right_cap = if line.segs.is_empty() { tw } else { tw / 2 };
     let right_w: u16 = line
         .right
         .iter()
         .map(|s| text::width(&s.text) as u16)
         .sum::<u16>()
-        .min(tw);
+        .min(right_cap);
     let left_w = if right_w > 0 {
         tw.saturating_sub(right_w + 2 + 2 * pad)
     } else {
         tw
     };
     let mut out = Vec::new();
-    let mut at = tx;
-    let mut room = usize::from(left_w);
-    for seg in &line.segs {
+    lay_out(&mut out, &line.segs, tx, left_w);
+    lay_out(&mut out, &line.right, tx + tw - right_w, right_w);
+    out
+}
+
+/// `segs` from `x` on, cut to `room` columns.
+fn lay_out<'a>(out: &mut Vec<(u16, String, &'a Seg)>, segs: &'a [Seg], mut x: u16, room: u16) {
+    let mut room = usize::from(room);
+    for seg in segs {
         if room == 0 {
             break;
         }
         let shown = text::truncate(&seg.text.replace('\t', "    "), room);
         let w = text::width(&shown);
-        room -= w.min(room);
-        out.push((at, shown, seg));
-        at += w as u16;
+        room -= w;
+        out.push((x, shown, seg));
+        x += w as u16;
     }
-    let mut rx = tx + tw - right_w;
-    for seg in &line.right {
-        let w = text::width(&seg.text) as u16;
-        out.push((rx, seg.text.clone(), seg));
-        rx += w;
-    }
-    out
 }
 
 /// Visible links' positions, main column then aside, top to bottom.
@@ -640,11 +639,8 @@ impl PageView<'_> {
         // Borders.
         let border = theme.separator(PAGE_BG);
         let rule = |buf: &mut Buffer, left: &str, right: &str| {
-            buf.set_string(x, y, left, border);
-            for cx in x + 1..x + width.saturating_sub(1) {
-                buf.set_string(cx, y, "─", border);
-            }
-            buf.set_string(x + width.saturating_sub(1), y, right, border);
+            let middle = "─".repeat(usize::from(width.saturating_sub(2)));
+            buf.set_string(x, y, format!("{left}{middle}{right}"), border);
         };
         match line.frame {
             Frame::None => {}

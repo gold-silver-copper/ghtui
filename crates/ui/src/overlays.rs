@@ -8,7 +8,7 @@ use ratatui::text::Span;
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::{Ctx, PAD_Y, centered, fill, padded, text};
+use crate::{Ctx, PAD_Y, centered, fill, label_hint, list_row, padded, text};
 
 const POPUP: Bg = Bg::ContainerHigh;
 
@@ -34,9 +34,11 @@ pub const PALETTE_ROWS: usize = 10;
 impl Widget for Palette<'_> {
     fn render(self, screen: Rect, buf: &mut Buffer) {
         let theme = self.ctx.theme;
-        // Taller on tall screens, wide enough for the longest row.
+        // Taller on tall screens (but never past the bottom), wide enough
+        // for the longest row.
         let max_rows = PALETTE_ROWS.max(usize::from(screen.height / 2));
-        let rows = self.items.len().clamp(1, max_rows);
+        let fits = usize::from(screen.height.saturating_sub(4 + 2 * PAD_Y)).max(1);
+        let rows = self.items.len().clamp(1, max_rows).min(fits);
         let widest = self
             .items
             .iter()
@@ -81,7 +83,7 @@ impl Widget for Palette<'_> {
 
         let list_top = inner.y + 2;
         if self.items.is_empty() {
-            Span::styled("No matching commands", theme.meta(POPUP)).render(
+            Span::styled("No matches", theme.meta(POPUP)).render(
                 Rect {
                     y: list_top,
                     height: 1,
@@ -94,36 +96,13 @@ impl Widget for Palette<'_> {
         let first = (self.selected + 1).saturating_sub(rows);
         for (i, item) in self.items.iter().enumerate().skip(first).take(rows) {
             let y = list_top + (i - first) as u16;
-            if y >= area.bottom() {
-                break;
-            }
-            let selected = i == self.selected;
-            let bg = if selected { Bg::SelectedHigh } else { POPUP };
-            let row = Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: 1,
-            };
-            if selected {
-                fill(buf, row, theme, bg);
-                buf.set_string(row.x, y, "▌", theme.accent(bg));
-            }
-            let row = Rect {
-                x: inner.x,
-                width: inner.width,
-                ..row
-            };
-            let hint_width = text::width(&item.hint) as u16;
-            let label_room = usize::from(row.width.saturating_sub(hint_width + 2));
-            Span::styled(text::truncate(&item.label, label_room), theme.body(bg)).render(row, buf);
-            Span::styled(item.hint.clone(), theme.meta(bg)).render(
-                Rect {
-                    x: row.right().saturating_sub(hint_width),
-                    width: hint_width.min(row.width),
-                    ..row
-                },
+            let (row, bg) = list_row(buf, theme, area, y, i == self.selected, POPUP);
+            let label = Span::styled(item.label.as_str(), theme.body(bg));
+            label_hint(
                 buf,
+                row,
+                &[label],
+                Span::styled(item.hint.as_str(), theme.meta(bg)),
             );
         }
     }

@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthChar;
 use ghtui_diff::anchor::LinePos;
 
 use crate::annotations::{Annotation, ThreadRowKind};
-use crate::diff_doc::{Doc, DocFile, FoldReason, Note, Pos, Row, Viewed};
+use crate::diff_doc::{Doc, DocFile, FoldReason, Note, Pos, Row, Viewed, sides};
 use crate::{Ctx, PAD_X, chips, fill, inset, key_hints, render_split, text, time};
 
 const PANE: Bg = Bg::Surface;
@@ -111,7 +111,7 @@ impl DiffView<'_> {
             Line::from(spans).render(area, buf);
         };
         match row {
-            Row::Header => self.header(file, cursor, area, buf),
+            Row::Header => self.header(pos.file, cursor, area, buf),
             Row::Note(note) => self.note(file, note, quiet_bg, area, buf),
             Row::Gap { start, end } => {
                 let n = end - start;
@@ -172,7 +172,8 @@ impl DiffView<'_> {
         }
     }
 
-    fn header(&self, file: &DocFile, cursor: bool, area: Rect, buf: &mut Buffer) {
+    fn header(&self, file_index: usize, cursor: bool, area: Rect, buf: &mut Buffer) {
+        let file = &self.doc.files[file_index];
         let ctx = self.ctx;
         let theme = ctx.theme;
         let bg = if cursor { Bg::SelectedHigh } else { HEADER };
@@ -223,16 +224,7 @@ impl DiffView<'_> {
         if file.generated {
             chip("Generated".into(), Bg::SecondaryContainer);
         }
-        if self.doc.since_active
-            && file.diff.is_some()
-            && self.doc.has_new_changes(
-                self.doc
-                    .files
-                    .iter()
-                    .position(|f| std::ptr::eq(f, file))
-                    .unwrap_or(0),
-            )
-        {
+        if self.doc.since_active && file.diff.is_some() && self.doc.has_new_changes(file_index) {
             chip("New since your review".into(), Bg::PrimaryContainer);
         }
         if file.full {
@@ -283,52 +275,38 @@ impl DiffView<'_> {
         fill(buf, area, theme, bg);
         let content = file.diff.as_deref().map(|d| &d.content);
         let keys = self.keys;
-        let (text, fg) = match (note, content) {
-            (Note::Loading, _) => ("Loading diff…".to_owned(), Fg::OnSurfaceVariant),
-            (Note::Collapsed, _) => (
-                format!("Generated file, collapsed. Press {} to show it.", keys.show),
-                Fg::OnSurfaceVariant,
+        let text = match (note, content) {
+            (Note::Loading, _) => "Loading diff…".to_owned(),
+            (Note::Collapsed, _) => {
+                format!("Generated file, collapsed. Press {} to show it.", keys.show)
+            }
+            (Note::Viewed, _) => format!(
+                "Viewed. Press {} to show it, or {} to mark it unviewed.",
+                keys.show, keys.viewed
             ),
-            (Note::Viewed, _) => (
-                format!(
-                    "Viewed. Press {} to show it, or {} to mark it unviewed.",
-                    keys.show, keys.viewed
-                ),
-                Fg::OnSurfaceVariant,
+            (Note::Binary, Some(Content::Binary { old_size, new_size })) => {
+                format!("Binary file: {} → {}", size(*old_size), size(*new_size))
+            }
+            (Note::TooLarge, Some(Content::TooLarge { old_size, new_size })) => format!(
+                "Too large to diff: {} → {}",
+                size(*old_size),
+                size(*new_size)
             ),
-            (Note::Binary, Some(Content::Binary { old_size, new_size })) => (
-                format!("Binary file: {} → {}", size(*old_size), size(*new_size)),
-                Fg::OnSurfaceVariant,
-            ),
-            (Note::TooLarge, Some(Content::TooLarge { old_size, new_size })) => (
-                format!(
-                    "Too large to diff: {} → {}",
-                    size(*old_size),
-                    size(*new_size)
-                ),
-                Fg::OnSurfaceVariant,
-            ),
-            (Note::Submodule, Some(Content::Submodule { old, new })) => (
-                format!(
-                    "Submodule {} → {}",
-                    short(old.as_deref()),
-                    short(new.as_deref())
-                ),
-                Fg::OnSurfaceVariant,
+            (Note::Submodule, Some(Content::Submodule { old, new })) => format!(
+                "Submodule {} → {}",
+                short(old.as_deref()),
+                short(new.as_deref())
             ),
             (Note::Error, Some(Content::Error(message))) => {
-                (format!("Couldn't load this file: {message}"), Fg::Error)
+                format!("Couldn't load this file: {message}")
             }
-            (Note::NothingNew, _) => (
-                "Nothing new since your last review.".to_owned(),
-                Fg::OnSurfaceVariant,
-            ),
+            (Note::NothingNew, _) => "Nothing new since your last review.".to_owned(),
             (Note::NoChanges, _) => {
                 let meta = &file.meta;
                 let whitespace_only = file
                     .text()
                     .is_some_and(|t| t.has_changes(ghtui_diff::Whitespace::Exact));
-                let text = if whitespace_only {
+                if whitespace_only {
                     "Only whitespace changed (whitespace is being ignored).".to_owned()
                 } else if meta.status == FileStatus::Renamed {
                     "Renamed without content changes.".to_owned()
@@ -339,10 +317,14 @@ impl DiffView<'_> {
                     )
                 } else {
                     "No content changes.".to_owned()
-                };
-                (text, Fg::OnSurfaceVariant)
+                }
             }
-            _ => (String::new(), Fg::OnSurfaceVariant),
+            _ => String::new(),
+        };
+        let fg = if note == Note::Error {
+            Fg::Error
+        } else {
+            Fg::OnSurfaceVariant
         };
         let inner = inset(area, PAD_X, 0);
         Span::styled(
@@ -452,14 +434,7 @@ impl DiffView<'_> {
         let bg = line_bg(diff_bg, cursor);
         fill(buf, area, theme, bg);
         let width = file.number_width();
-        let left = line.old.map(|l| LinePos {
-            side: ghtui_diff::anchor::Side::Left,
-            line: l,
-        });
-        let right = line.new.map(|l| LinePos {
-            side: ghtui_diff::anchor::Side::Right,
-            line: l,
-        });
+        let (left, right) = sides(line);
         let [reviewed, thread] = self.marks(file, &[e], bg);
         let mut spans = vec![
             Span::styled(" ", theme.body(bg)),
@@ -552,14 +527,10 @@ impl DiffView<'_> {
                 Line::from(spans).render(half_area, buf);
                 continue;
             };
-            let (n, side) = if is_left {
-                (line.old, ghtui_diff::anchor::Side::Left)
-            } else {
-                (line.new, ghtui_diff::anchor::Side::Right)
-            };
-            let pos = n.map(|line| LinePos { side, line });
+            let (old, new) = sides(line);
+            let pos = if is_left { old } else { new };
             spans.push(Span::styled(
-                number(n, width),
+                number(pos.map(|p| p.line), width),
                 theme.style(self.number_fg(file_index, pos, line.kind), bg),
             ));
             spans.push(Span::styled("  ", theme.body(bg)));
@@ -651,17 +622,13 @@ impl DiffView<'_> {
                     ));
                 }
             }
-            ThreadRowKind::Error => {
-                spans.push(Span::styled(
-                    text::truncate(&row.text, room),
-                    theme.error(bg),
-                ));
-            }
-            ThreadRowKind::Body => {
-                spans.push(Span::styled(
-                    text::truncate(&row.text, room),
-                    theme.body(bg),
-                ));
+            ThreadRowKind::Body | ThreadRowKind::Error => {
+                let style = if row.kind == ThreadRowKind::Error {
+                    theme.error(bg)
+                } else {
+                    theme.body(bg)
+                };
+                spans.push(Span::styled(text::truncate(&row.text, room), style));
             }
             ThreadRowKind::Footer => {
                 let mut hints = Vec::new();

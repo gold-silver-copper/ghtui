@@ -129,12 +129,8 @@ impl SubmitDialog {
 }
 
 fn editor(theme: &Theme, text: &str) -> TextArea<'static> {
-    let mut input = TextArea::new(text.lines().map(str::to_owned).collect());
-    input.set_style(theme.body(Bg::ContainerHigh));
-    input.set_cursor_line_style(theme.body(Bg::ContainerHigh));
-    input.set_cursor_style(theme.fill(Bg::Primary));
-    input.move_cursor(ratatui_textarea::CursorMove::Bottom);
-    input.move_cursor(ratatui_textarea::CursorMove::End);
+    let mut input = crate::nav::new_input(theme, Bg::ContainerHigh);
+    input.insert_str(text.trim_end_matches('\n'));
     input
 }
 

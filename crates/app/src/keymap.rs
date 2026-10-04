@@ -377,15 +377,6 @@ impl Keymap {
             .collect()
     }
 
-    /// Every sequence bound to `action`, anywhere.
-    pub fn keys_for(&self, action: Action) -> Vec<String> {
-        self.bindings
-            .iter()
-            .filter(|(_, a, _)| *a == action)
-            .map(|(keys, _, _)| format_sequence(keys))
-            .collect()
-    }
-
     /// The sequences that run `action` in `scope`, for hints.
     pub fn keys_in(&self, action: Action, scope: Scope) -> Vec<Vec<Key>> {
         self.bindings
@@ -573,7 +564,7 @@ mod tests {
             keymap.resolve(&[key('j')], Scope::Page),
             Resolution::Unbound
         );
-        assert_eq!(keymap.keys_for(Action::Down), ["z"]);
+        assert_eq!(keymap.keys_in(Action::Down, Scope::Page), [vec![key('z')]]);
     }
 
     #[test]

@@ -132,18 +132,22 @@ async fn run(started: Instant) -> Result<()> {
     let size = crossterm::terminal::size().unwrap_or((80, 24));
     let mut state = State::new(theme, icons, keymap, size);
     state.inbox = Remote::cached(gh.cached_inbox().map(|c| c.value));
-    let mut cmds = state.load_visible(true);
-    if let Some(target) = target {
-        if let Target::Page(Route::Pr { pr, .. }) | Target::Files(pr) = &target {
-            state.prs.insert(
-                pr.clone(),
-                Remote::cached(gh.cached_pull_request(pr).map(|c| c.value)),
-            );
+    let mut cmds = match target {
+        Some(target) => {
+            if let Target::Page(Route::Pr { pr, .. }) | Target::Files(pr) = &target {
+                state.prs.insert(
+                    pr.clone(),
+                    Remote::cached(gh.cached_pull_request(pr).map(|c| c.value)),
+                );
+            }
+            // The home page stays underneath (Esc goes there) and loads
+            // when you get there.
+            let mut cmds = vec![state::Cmd::FetchViewer];
+            cmds.extend(state.go(target));
+            cmds
         }
-        // The home page stays underneath (Esc goes there) but loads later.
-        cmds = vec![state::Cmd::FetchViewer];
-        cmds.extend(state.go(target));
-    }
+        None => state.load_visible(true),
+    };
     state.visits = gh
         .cached::<Vec<nav::Visit>>(ghtui_api::browse::keys::VISITS)
         .map(|c| c.value)

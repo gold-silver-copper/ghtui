@@ -231,10 +231,7 @@ impl State {
 
     /// The first key that runs `action` here, as people write it.
     pub fn first_key(&self, action: Action) -> String {
-        self.keymap
-            .keys_in(action, self.scope())
-            .first()
-            .map(|k| crate::keymap::pretty(k))
+        self.key_here(action)
             .unwrap_or_else(|| format!(":{}", action.name().replace('_', " ")))
     }
 

@@ -246,7 +246,10 @@ async fn diff_file(reader: &BlobReader, file: &ChangedFile) -> FileDiff {
         }
         match reader.read(&oid).await {
             Ok(Some(bytes)) => Ok(Some(bytes)),
-            Ok(None) => Err(format!("object {} is missing", &oid[..7.min(oid.len())])),
+            Ok(None) => Err(format!(
+                "object {} is missing",
+                ghtui_ui::text::short_sha(&oid)
+            )),
             Err(err) => Err(err.to_string()),
         }
     };

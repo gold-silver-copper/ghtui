@@ -82,10 +82,13 @@ impl State {
                     }
                     None => None,
                 };
-                if let (Some(label), Some((tab, _))) = (label, c.tabs.get_mut(3)) {
-                    tab.label = label;
+                c.active = c
+                    .tabs
+                    .iter()
+                    .position(|(_, t)| matches!(t, Target::Files(_)));
+                if let (Some(label), Some(i)) = (label, c.active) {
+                    c.tabs[i].0.label = label;
                 }
-                c.active = Some(3);
                 c.title = Some(d.pr.clone());
             }
         }
@@ -94,13 +97,7 @@ impl State {
 
     fn page_chrome(&self, route: &Route, c: &mut Chrome) {
         match route {
-            Route::Home => c.crumbs.push((
-                Crumb {
-                    text: "Home".into(),
-                    current: true,
-                },
-                None,
-            )),
+            Route::Home => c.crumb("Home", None),
             Route::Repo(repo)
             | Route::Tree { repo, .. }
             | Route::Blob { repo, .. }
@@ -126,13 +123,7 @@ impl State {
                 c.title = Some(pr.clone());
             }
             Route::User { login, tab } => {
-                c.crumbs.push((
-                    Crumb {
-                        text: login.clone(),
-                        current: true,
-                    },
-                    None,
-                ));
+                c.crumb(login, None);
                 let profile = self.profile(login);
                 let user = |tab| {
                     Target::Page(Route::User {
@@ -159,13 +150,7 @@ impl State {
                 });
             }
             Route::Search { kind, query } => {
-                c.crumbs.push((
-                    Crumb {
-                        text: "Search".into(),
-                        current: true,
-                    },
-                    None,
-                ));
+                c.crumb("Search", None);
                 let total = self.search_results(route).map(|r| match r {
                     ghtui_api::browse::SearchResults::Repos(r) => r.total,
                     ghtui_api::browse::SearchResults::Issues(r) => r.total,
@@ -285,18 +270,20 @@ impl State {
 }
 
 fn repo_crumbs(repo: &RepoId, c: &mut Chrome) {
-    c.crumbs.push((
-        Crumb {
-            text: repo.owner.clone(),
-            current: false,
-        },
-        Some(Target::Page(Route::user(&repo.owner))),
-    ));
-    c.crumbs.push((
-        Crumb {
-            text: repo.name.clone(),
+    c.crumb(&repo.owner, Some(Target::Page(Route::user(&repo.owner))));
+    c.crumb(&repo.name, Some(Target::Page(Route::Repo(repo.clone()))));
+}
+
+impl Chrome {
+    /// Adds a crumb; the last one added is where you are.
+    fn crumb(&mut self, text: &str, target: Option<Target>) {
+        if let Some((last, _)) = self.crumbs.last_mut() {
+            last.current = false;
+        }
+        let crumb = Crumb {
+            text: text.to_owned(),
             current: true,
-        },
-        Some(Target::Page(Route::Repo(repo.clone()))),
-    ));
+        };
+        self.crumbs.push((crumb, target));
+    }
 }

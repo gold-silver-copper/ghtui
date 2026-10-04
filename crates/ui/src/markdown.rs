@@ -19,6 +19,24 @@ pub struct LinkBase {
     pub dir: String,
 }
 
+impl LinkBase {
+    /// The base for a document at `path` (or "" for none) in `repo` at `rev`.
+    pub fn new(repo: impl ToString, rev: impl Into<String>, path: &str) -> Self {
+        Self {
+            repo: repo.to_string(),
+            rev: rev.into(),
+            dir: path.rsplit_once('/').map_or("", |(d, _)| d).to_owned(),
+        }
+    }
+}
+
+/// HTML tags that start or end a block.
+#[rustfmt::skip]
+const BLOCK_TAGS: &[&str] = &[
+    "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "summary", "details", "ul", "ol", "li", "tr",
+    "table", "blockquote", "pre", "hr",
+];
+
 /// Resolves a link the way github.com does for a document in a repo.
 pub fn resolve(base: Option<&LinkBase>, url: &str) -> String {
     let url = url.trim();
@@ -197,26 +215,7 @@ impl Renderer<'_> {
                 "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => Some(Role::Heading),
                 _ => None,
             };
-            if matches!(
-                name.as_str(),
-                "p" | "div"
-                    | "h1"
-                    | "h2"
-                    | "h3"
-                    | "h4"
-                    | "h5"
-                    | "h6"
-                    | "summary"
-                    | "details"
-                    | "ul"
-                    | "ol"
-                    | "li"
-                    | "tr"
-                    | "table"
-                    | "blockquote"
-                    | "pre"
-                    | "hr"
-            ) {
+            if BLOCK_TAGS.contains(&name.as_str()) {
                 // An empty line keeps its list marker for the text to come.
                 if self.inline.iter().all(|s| s.text.trim().is_empty()) {
                     self.inline.clear();
@@ -655,11 +654,7 @@ mod tests {
 
     #[test]
     fn links_resolve_relative_to_the_repo() {
-        let base = LinkBase {
-            repo: "o/r".into(),
-            rev: "main".into(),
-            dir: "docs".into(),
-        };
+        let base = LinkBase::new("o/r", "main", "docs/README.md");
         let resolved = |url| resolve(Some(&base), url);
         assert_eq!(
             resolved("guide.md"),

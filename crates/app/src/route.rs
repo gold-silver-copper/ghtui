@@ -124,7 +124,6 @@ impl Route {
         }
     }
 
-    /// The search behind a list page.
     /// A list's filter: issues, pull requests, search results.
     pub fn list_query(&self) -> Option<&str> {
         match self {
@@ -151,6 +150,7 @@ impl Route {
         })
     }
 
+    /// The search behind a list page.
     pub fn search(&self) -> Option<(SearchKind, String)> {
         match self {
             Route::Issues { repo, query } => {
@@ -200,18 +200,13 @@ impl Target {
         {
             return external();
         }
-        let query = parsed
-            .query_pairs()
-            .find(|(k, _)| k == "q")
-            .map(|(_, v)| v.into_owned());
-        let kind = parsed
-            .query_pairs()
-            .find(|(k, _)| k == "type")
-            .map(|(_, v)| v.into_owned());
-        let tab = parsed
-            .query_pairs()
-            .find(|(k, _)| k == "tab")
-            .map(|(_, v)| v.into_owned());
+        let param = |name: &str| {
+            parsed
+                .query_pairs()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.into_owned())
+        };
+        let (query, kind, tab) = (param("q"), param("type"), param("tab"));
         let segments: Vec<String> = parsed
             .path_segments()
             .map(|s| s.filter(|p| !p.is_empty()).map(decode).collect())

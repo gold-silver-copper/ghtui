@@ -3,7 +3,6 @@
 //! show up in review. Rendering also exercises the theme's debug assertion
 //! that every fg/bg pair used is declared (and therefore contrast-tested).
 
-use crossterm::event::KeyCode;
 use ghtui_api::browse::SearchKind;
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -17,8 +16,8 @@ use ratatui::backend::TestBackend;
 
 use ghtui_ui::pages::PrTab;
 
-use crate::browse::{Data, DataKey};
-use crate::fixtures;
+use crate::browse::{Data, DataKey, Need, needs};
+use crate::fixtures::{self, press};
 use crate::keymap::Keymap;
 use crate::route::{OPEN, Route};
 use crate::state::{Msg, Overlay, State, update};
@@ -88,10 +87,6 @@ fn inbox() -> Inbox {
 }
 
 pub(crate) fn pr_detail() -> PrDetail {
-    detail()
-}
-
-fn detail() -> PrDetail {
     PrDetail {
         summary: summary(
             "gold-silver-copper/ghtui#12",
@@ -166,7 +161,7 @@ fn with_pr(mode: Mode) -> State {
         pr: pr.clone(),
         tab: PrTab::Conversation,
     });
-    update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail()))));
+    update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(pr_detail()))));
     fetched(
         &mut state,
         DataKey::PrActivity(pr),
@@ -184,6 +179,15 @@ fn fetched(state: &mut State, key: DataKey, data: Data) {
             fresh: true,
         },
     );
+}
+
+/// Pushes `route` and delivers `data` for its page's own fetch (its last).
+fn open(state: &mut State, route: Route, data: Data) {
+    let Some(Need::Data(key)) = needs(&route).pop() else {
+        panic!("{route:?} doesn't end in a data fetch");
+    };
+    state.push(route);
+    fetched(state, key, data);
 }
 
 fn ghtui() -> RepoId {
@@ -226,8 +230,7 @@ fn home_dark_256() {
 #[test]
 fn home_third_row_selected_light() {
     let mut state = with_inbox(Mode::Light, ColorDepth::TrueColor);
-    update(&mut state, Msg::Key(key(KeyCode::Char('j'))));
-    update(&mut state, Msg::Key(key(KeyCode::Char('j'))));
+    press(&mut state, "jj");
     insta::assert_snapshot!(render(&state));
 }
 
@@ -264,7 +267,7 @@ fn repo_light() {
 #[test]
 fn repo_readme_dark_256() {
     let mut state = with_repo(Mode::Dark, ColorDepth::Ansi256);
-    update(&mut state, Msg::Key(key(KeyCode::Char('G'))));
+    press(&mut state, "G");
     insta::assert_snapshot!(render(&state));
 }
 
@@ -278,17 +281,12 @@ fn repo_wide_terminal_centers_light() {
 #[test]
 fn file_light() {
     let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
-    let (rev, path) = ("main".to_owned(), "src/main.rs".to_owned());
-    state.push(Route::Blob {
+    let route = Route::Blob {
         repo: ghtui(),
-        rev: rev.clone(),
-        path: path.clone(),
-    });
-    fetched(
-        &mut state,
-        DataKey::Blob(ghtui(), rev, path),
-        Data::Blob(Box::new(fixtures::blob())),
-    );
+        rev: "main".into(),
+        path: "src/main.rs".into(),
+    };
+    open(&mut state, route, Data::Blob(Box::new(fixtures::blob())));
     insta::assert_snapshot!(render(&state));
 }
 
@@ -299,26 +297,21 @@ fn issues_dark() {
         repo: ghtui(),
         query: OPEN.into(),
     };
-    let (kind, query) = route.search().unwrap();
-    state.push(route);
-    fetched(
-        &mut state,
-        DataKey::Search(kind, query),
-        Data::Search(Box::new(fixtures::issue_results(Some("c1")))),
-    );
+    let results = fixtures::issue_results(Some("c1"));
+    open(&mut state, route, Data::Search(Box::new(results)));
     insta::assert_snapshot!(render(&state));
 }
 
 #[test]
 fn issue_light() {
     let mut state = state(Mode::Light, ColorDepth::TrueColor);
-    state.push(Route::Issue {
+    let route = Route::Issue {
         repo: ghtui(),
         number: 14,
-    });
-    fetched(
+    };
+    open(
         &mut state,
-        DataKey::Issue(ghtui(), 14),
+        route,
         Data::Issue(Some(Box::new(fixtures::issue()))),
     );
     insta::assert_snapshot!(render(&state));
@@ -337,7 +330,7 @@ fn pr_light() {
 #[test]
 fn pr_commits_dark() {
     let mut state = with_pr(Mode::Dark);
-    update(&mut state, Msg::Key(key(KeyCode::Char('2'))));
+    press(&mut state, "2");
     insta::assert_snapshot!(render(&state));
 }
 
@@ -355,10 +348,9 @@ fn pr_refresh_error_dark() {
 #[test]
 fn profile_light() {
     let mut state = state(Mode::Light, ColorDepth::TrueColor);
-    state.push(Route::user("octocat"));
-    fetched(
+    open(
         &mut state,
-        DataKey::Profile("octocat".into()),
+        Route::user("octocat"),
         Data::Profile(Box::new(fixtures::profile())),
     );
     insta::assert_snapshot!(render(&state));
@@ -371,11 +363,9 @@ fn search_dark() {
         kind: SearchKind::Repos,
         query: "terminal file manager".into(),
     };
-    let (kind, query) = route.search().unwrap();
-    state.push(route);
-    fetched(
+    open(
         &mut state,
-        DataKey::Search(kind, query),
+        route,
         Data::Search(Box::new(fixtures::repo_results())),
     );
     insta::assert_snapshot!(render(&state));
@@ -388,11 +378,9 @@ fn search_users_light() {
         kind: SearchKind::Users,
         query: "octocat".into(),
     };
-    let (kind, query) = route.search().unwrap();
-    state.push(route);
-    fetched(
+    open(
         &mut state,
-        DataKey::Search(kind, query),
+        route,
         Data::Search(Box::new(fixtures::user_results())),
     );
     insta::assert_snapshot!(render(&state));
@@ -407,27 +395,22 @@ fn quick_ways_around_dark() {
         count: 3,
         last: NOW - 600,
     }];
-    update(&mut state, Msg::Key(key(KeyCode::Char('l'))));
+    press(&mut state, "l");
     insta::assert_snapshot!("hints_dark", render(&state));
-    update(&mut state, Msg::Key(key(KeyCode::Esc)));
-    update(&mut state, Msg::Key(key(KeyCode::Char('/'))));
+    press(&mut state, "<Esc>/");
     insta::assert_snapshot!("search_empty_dark", render(&state));
-    for c in "oct".chars() {
-        update(&mut state, Msg::Key(key(KeyCode::Char(c))));
-    }
+    press(&mut state, "oct");
     insta::assert_snapshot!("search_typed_dark", render(&state));
-    update(&mut state, Msg::Key(key(KeyCode::Esc)));
-    update(&mut state, Msg::Key(key(KeyCode::Char(' '))));
+    press(&mut state, "<Esc><Space>");
     insta::assert_snapshot!("menu_dark", render(&state));
-    update(&mut state, Msg::Key(key(KeyCode::Esc)));
-    update(&mut state, Msg::Key(key(KeyCode::Char('g'))));
+    press(&mut state, "<Esc>g");
     insta::assert_snapshot!("which_key_dark", render(&state));
 }
 
 #[test]
 fn go_to_file_light() {
     let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
-    update(&mut state, Msg::Key(key(KeyCode::Char('f'))));
+    press(&mut state, "f");
     fetched(
         &mut state,
         DataKey::Files(ghtui(), "main".into()),
@@ -440,30 +423,27 @@ fn go_to_file_light() {
             false,
         ),
     );
-    for c in "main".chars() {
-        update(&mut state, Msg::Key(key(KeyCode::Char(c))));
-    }
+    press(&mut state, "main");
     insta::assert_snapshot!(render(&state));
 }
 
 #[test]
 fn list_filter_light() {
     let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
-    update(&mut state, Msg::Key(key(KeyCode::Char('2'))));
-    update(&mut state, Msg::Key(key(KeyCode::Char('/'))));
+    press(&mut state, "2/");
     insta::assert_snapshot!(render(&state));
 }
 
 #[test]
 fn profile_stars_dark() {
     let mut state = state(Mode::Dark, ColorDepth::TrueColor);
-    state.push(Route::User {
+    let route = Route::User {
         login: "octocat".into(),
         tab: ghtui_ui::pages::ProfileTab::Stars,
-    });
-    fetched(
+    };
+    open(
         &mut state,
-        DataKey::Profile("octocat".into()),
+        route,
         Data::Profile(Box::new(fixtures::profile())),
     );
     insta::assert_snapshot!(render(&state));
@@ -512,15 +492,9 @@ fn narrow_terminal_does_not_panic() {
     }
 }
 
-fn key(code: KeyCode) -> crossterm::event::KeyEvent {
-    crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
-}
-
 // ---- diff screen -----------------------------------------------------------
 
-pub(crate) fn diff_fixture() -> crate::diff_screen::DiffState {
-    diff::diff_state()
-}
+pub(crate) use diff::diff_state as diff_fixture;
 
 pub(crate) mod diff {
     use std::collections::HashSet;
@@ -533,9 +507,13 @@ pub(crate) mod diff {
     use ghtui_theme::{ColorDepth, Mode};
     use ghtui_ui::diff_doc::{Doc, Pos};
 
-    use super::{render, state};
+    use super::{NOW, Terminal, TestBackend, press, render, state, view};
     use crate::diff_screen::{DiffScreen, DiffState, Pane};
-    use crate::state::Screen;
+    use crate::state::{Msg, Screen, State, update};
+
+    fn pr() -> PrRef {
+        PrRef::parse("o/r#7").unwrap()
+    }
 
     fn file(
         status: FileStatus,
@@ -561,6 +539,27 @@ pub(crate) mod diff {
 
     const OLD_RS: &str = "use std::fmt;\n\n/// A point.\npub struct Point {\n    x: i32,\n    y: i32,\n}\n\nimpl Point {\n    pub fn new(x: i32, y: i32) -> Self {\n        Point { x, y }\n    }\n}\n";
     const NEW_RS: &str = "use std::fmt;\n\n/// A point in 2D.\npub struct Point {\n    x: i32,\n    y: i32,\n}\n\nimpl Point {\n    pub fn new(x: i32, y: i32) -> Self {\n        Point { x, y }\n    }\n\n    pub fn origin() -> Self {\n        Self::new(0, \"0\".len() as i32 - 1)\n    }\n}\n";
+
+    fn loaded(doc: Doc) -> DiffState {
+        let mut diff = DiffState::loading();
+        let refs = PrRefs {
+            head: "h".into(),
+            base: "b".into(),
+            merge_base: "m".into(),
+        };
+        diff.set_files(refs, doc);
+        diff
+    }
+
+    /// Opens a diff screen on `diff`, as wide as the terminal.
+    fn open_diff(s: &mut State, diff: DiffState, cursor: Pos, focus: Pane) {
+        s.diffs.insert(pr(), diff);
+        let mut screen = DiffScreen::new(pr(), s.size.0);
+        screen.cursor = cursor;
+        screen.focus = focus;
+        s.screens.push(Screen::Diff(Box::new(screen)));
+        s.settle_diff();
+    }
 
     pub(crate) fn diff_state() -> DiffState {
         let regular = (0o100644, 0o100644);
@@ -621,37 +620,13 @@ pub(crate) mod diff {
         for (i, d) in diffs.into_iter().enumerate() {
             doc.set_diff(i, Arc::new(d));
         }
-        let mut state = DiffState::loading();
-        state.set_files(
-            PrRefs {
-                head: "h".into(),
-                base: "b".into(),
-                merge_base: "m".into(),
-            },
-            doc,
-        );
-        state
+        loaded(doc)
     }
 
-    fn screen_state(
-        mode: Mode,
-        depth: ColorDepth,
-        cursor: Pos,
-        focus: Pane,
-    ) -> crate::state::State {
+    fn screen_state(mode: Mode, depth: ColorDepth, cursor: Pos, focus: Pane) -> State {
         let mut s = state(mode, depth);
         s.size = (110, 34);
-        let pr = PrRef::parse("o/r#7").unwrap();
-        s.diffs.insert(pr.clone(), diff_state());
-        let mut screen = DiffScreen::new(pr, 110);
-        screen.cursor = cursor;
-        screen.focus = focus;
-        s.screens.push(Screen::Diff(Box::new(screen)));
-        let content = s.content_area();
-        let crate::state::State { screens, diffs, .. } = &mut s;
-        if let Some(Screen::Diff(screen)) = screens.last_mut() {
-            crate::diff_screen::settle(screen, diffs.get_mut(&screen.pr).unwrap(), content);
-        }
+        open_diff(&mut s, diff_state(), cursor, focus);
         s
     }
 
@@ -708,7 +683,7 @@ pub(crate) mod diff {
             Pane::Diff,
         );
         s.size = (200, 30);
-        settle(&mut s);
+        s.settle_diff();
         insta::assert_snapshot!(render(&s));
     }
 
@@ -720,27 +695,18 @@ pub(crate) mod diff {
             Pos { file: 0, row: 3 },
             Pane::Diff,
         );
-        let pr = PrRef::parse("o/r#7").unwrap();
-        let diff = s.diffs.get_mut(&pr).unwrap();
+        let diff = s.diffs.get_mut(&pr()).unwrap();
         let hash = diff.doc.files[0].blocks()[0].hash.clone();
         diff.set_review(ghtui_store::ReviewState {
             reviewed_hunks: vec![hash],
             ..Default::default()
         });
         diff.doc.set_viewed(1, ghtui_ui::diff_doc::Viewed::Viewed);
-        settle(&mut s);
+        s.settle_diff();
         insta::assert_snapshot!(render(&s));
     }
 
-    fn settle(s: &mut crate::state::State) {
-        let content = s.content_area();
-        let crate::state::State { screens, diffs, .. } = s;
-        if let Some(Screen::Diff(screen)) = screens.last_mut() {
-            crate::diff_screen::settle(screen, diffs.get_mut(&screen.pr).unwrap(), content);
-        }
-    }
-
-    fn with_threads(mode: Mode) -> crate::state::State {
+    fn with_threads(mode: Mode) -> State {
         use ghtui_api::model::{ReviewComment, ReviewThread, Side};
         let mut s = screen_state(
             mode,
@@ -748,7 +714,6 @@ pub(crate) mod diff {
             Pos { file: 0, row: 0 },
             Pane::Diff,
         );
-        let pr = PrRef::parse("o/r#7").unwrap();
         let comment = |id: &str, author: &str, body: &str, pending: bool| ReviewComment {
             id: id.into(),
             author: author.into(),
@@ -777,7 +742,7 @@ pub(crate) mod diff {
                 comments,
             }
         };
-        let diff = s.diffs.get_mut(&pr).unwrap();
+        let diff = s.diffs.get_mut(&pr()).unwrap();
         diff.set_threads(vec![
             thread(
                 "t1",
@@ -806,7 +771,7 @@ pub(crate) mod diff {
             }],
             ..Default::default()
         });
-        settle(&mut s);
+        s.settle_diff();
         s
     }
 
@@ -862,7 +827,7 @@ pub(crate) mod diff {
 
     /// Intra-line emphasis, code moved between files, and a
     /// formatting-only change folded away.
-    fn better_than_github(mode: Mode) -> crate::state::State {
+    fn better_than_github(mode: Mode) -> State {
         let regular = (0o100644, 0o100644);
         let files = vec![
             file(
@@ -913,23 +878,9 @@ pub(crate) mod diff {
         ]);
         assert_eq!(moves.len(), 1);
         doc.set_moves(moves);
-        let mut diff = DiffState::loading();
-        diff.set_files(
-            PrRefs {
-                head: "h".into(),
-                base: "b".into(),
-                merge_base: "m".into(),
-            },
-            doc,
-        );
         let mut s = state(mode, ColorDepth::TrueColor);
         s.size = (110, 30);
-        let pr = PrRef::parse("o/r#7").unwrap();
-        s.diffs.insert(pr.clone(), diff);
-        let mut screen = DiffScreen::new(pr, 110);
-        screen.cursor = Pos { file: 0, row: 0 };
-        s.screens.push(Screen::Diff(Box::new(screen)));
-        settle(&mut s);
+        open_diff(&mut s, loaded(doc), Pos::default(), Pane::Diff);
         s
     }
 
@@ -946,196 +897,121 @@ pub(crate) mod diff {
     #[test]
     fn diff_loading_dark() {
         let mut s = state(Mode::Dark, ColorDepth::TrueColor);
-        let pr = PrRef::parse("o/r#7").unwrap();
         let mut diff = DiffState::loading();
         diff.progress = Some("Receiving objects:  42% (420/1000), 1.2 MiB | 3.4 MiB/s".into());
-        s.diffs.insert(pr.clone(), diff);
-        s.screens
-            .push(Screen::Diff(Box::new(DiffScreen::new(pr, 100))));
+        open_diff(&mut s, diff, Pos::default(), Pane::Diff);
         insta::assert_snapshot!(render(&s));
     }
-}
 
-/// Scrolling stays cheap on a big PR: rendering only touches visible rows.
-/// Run with `cargo test --release -p ghtui -- --ignored scroll_timing`.
-#[test]
-#[ignore = "timing; run in release"]
-fn scroll_timing_on_500_files_20k_lines() {
-    use std::collections::HashSet;
-    use std::sync::Arc;
+    /// Scrolling stays cheap on a big PR: rendering only touches visible rows.
+    /// Run with `cargo test --release -p ghtui -- --ignored scroll_timing`.
+    #[test]
+    #[ignore = "timing; run in release"]
+    fn scroll_timing_on_500_files_20k_lines() {
+        let regular = (0o100644, 0o100644);
+        let files: Vec<ChangedFile> = (0..500)
+            .map(|i| {
+                let path = format!("src/m{i}.rs");
+                file(FileStatus::Modified, Some(&path), Some(&path), regular)
+            })
+            .collect();
+        let mut doc = Doc::new(files, &HashSet::new());
+        let old: String = (0..60)
+            .map(|i| format!("    let v{i} = compute({i}, \"x\");\n"))
+            .collect();
+        let new: String = old.replace("compute(", "compute_fast(");
+        let diff = Arc::new(FileDiff::compute(
+            "m.rs",
+            Some(old.as_bytes()),
+            Some(new.as_bytes()),
+        ));
+        for i in 0..500 {
+            doc.set_diff(i, diff.clone());
+        }
+        let changed: u32 = doc
+            .files
+            .iter()
+            .map(|f| f.diff.as_ref().unwrap().additions)
+            .sum();
+        assert!(changed >= 20_000, "{changed}");
 
-    use ghtui_api::model::PrRef;
-    use ghtui_diff::FileDiff;
-    use ghtui_git::files::{ChangedFile, FileStatus};
-    use ghtui_git::repo::PrRefs;
-    use ghtui_ui::diff_doc::Doc;
+        let mut s = state(Mode::Dark, ColorDepth::TrueColor);
+        s.size = (160, 50);
+        open_diff(&mut s, loaded(doc), Pos::default(), Pane::Diff);
 
-    use crate::diff_screen::{DiffScreen, DiffState};
-    use crate::state::{Screen, update};
-
-    let files: Vec<ChangedFile> = (0..500)
-        .map(|i| ChangedFile {
-            status: FileStatus::Modified,
-            old_path: Some(format!("src/m{i}.rs")),
-            new_path: Some(format!("src/m{i}.rs")),
-            old_mode: 0o100644,
-            new_mode: 0o100644,
-            old_oid: "1".repeat(40),
-            new_oid: "2".repeat(40),
-            similarity: None,
-        })
-        .collect();
-    let mut doc = Doc::new(files, &HashSet::new());
-    let old: String = (0..60)
-        .map(|i| format!("    let v{i} = compute({i}, \"x\");\n"))
-        .collect();
-    let new: String = old.replace("compute(", "compute_fast(");
-    let diff = Arc::new(FileDiff::compute(
-        "m.rs",
-        Some(old.as_bytes()),
-        Some(new.as_bytes()),
-    ));
-    for i in 0..500 {
-        doc.set_diff(i, diff.clone());
+        let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
+        let frames = 2000;
+        let start = std::time::Instant::now();
+        for i in 0..frames {
+            press(&mut s, if i % 100 < 95 { "j" } else { "<C-d>" });
+            terminal.draw(|frame| view(&s, frame, NOW)).unwrap();
+        }
+        let per_frame = start.elapsed() / frames;
+        eprintln!("update + render per frame: {per_frame:?}");
+        assert!(
+            per_frame < std::time::Duration::from_millis(8),
+            "{per_frame:?} per frame"
+        );
     }
-    let changed: u32 = doc
-        .files
-        .iter()
-        .map(|f| f.diff.as_ref().unwrap().additions)
-        .sum();
-    assert!(changed >= 20_000, "{changed}");
 
-    let mut s = state(Mode::Dark, ColorDepth::TrueColor);
-    s.size = (160, 50);
-    let pr = PrRef::parse("o/r#1").unwrap();
-    let mut diff_state = DiffState::loading();
-    diff_state.set_files(
-        PrRefs {
-            head: "h".into(),
-            base: "b".into(),
-            merge_base: "m".into(),
-        },
-        doc,
-    );
-    s.diffs.insert(pr.clone(), diff_state);
-    s.screens
-        .push(Screen::Diff(Box::new(DiffScreen::new(pr, 160))));
+    /// A single 50k-line file: diffing and highlighting run on the diff job's
+    /// workers (never the UI task); once its result arrives, the first screen
+    /// must be ready within 100ms. This measures the worker's compute plus the
+    /// UI's update and first render.
+    /// Run with `cargo test --release -p ghtui -- --ignored big_file_timing`.
+    #[test]
+    #[ignore = "timing; run in release"]
+    fn big_file_timing_50k_lines() {
+        use std::time::{Duration, Instant};
 
-    let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
-    let frames = 2000;
-    let start = std::time::Instant::now();
-    for i in 0..frames {
-        let key = if i % 100 < 95 { 'j' } else { 'd' };
-        let event = if key == 'd' {
-            crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Char('d'),
-                crossterm::event::KeyModifiers::CONTROL,
-            )
-        } else {
-            crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Char('j'),
-                crossterm::event::KeyModifiers::NONE,
-            )
-        };
-        update(&mut s, Msg::Key(event));
+        let old: String = (0..50_000)
+            .map(|i| format!("    let value_{i} = compute({i}, \"label\");\n"))
+            .collect();
+        let new = old
+            .replace("compute(100,", "compute_fast(100,")
+            .replace("compute(25000,", "compute_fast(25000,")
+            .replace("compute(49999,", "compute_fast(49999,");
+
+        let start = Instant::now();
+        let diff = Arc::new(FileDiff::compute(
+            "big.rs",
+            Some(old.as_bytes()),
+            Some(new.as_bytes()),
+        ));
+        let compute = start.elapsed();
+
+        let regular = (0o100644, 0o100644);
+        let big = file(
+            FileStatus::Modified,
+            Some("big.rs"),
+            Some("big.rs"),
+            regular,
+        );
+        let mut s = state(Mode::Dark, ColorDepth::TrueColor);
+        s.size = (160, 50);
+        let doc = Doc::new(vec![big], &HashSet::new());
+        open_diff(&mut s, loaded(doc), Pos::default(), Pane::Diff);
+        let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
+
+        let start = Instant::now();
+        update(&mut s, Msg::FileDiff(pr(), 0, diff));
         terminal.draw(|frame| view(&s, frame, NOW)).unwrap();
+        let first_screen = start.elapsed();
+
+        // Full-file mode on 50k lines must stay interactive too.
+        let start = Instant::now();
+        press(&mut s, "F");
+        terminal.draw(|frame| view(&s, frame, NOW)).unwrap();
+        let full_file = start.elapsed();
+
+        eprintln!("compute {compute:?}, first screen {first_screen:?}, full file {full_file:?}");
+        assert!(
+            compute + first_screen < Duration::from_millis(100),
+            "{:?}",
+            compute + first_screen
+        );
+        assert!(full_file < Duration::from_millis(100), "{full_file:?}");
     }
-    let per_frame = start.elapsed() / frames;
-    eprintln!("update + render per frame: {per_frame:?}");
-    assert!(
-        per_frame < std::time::Duration::from_millis(8),
-        "{per_frame:?} per frame"
-    );
-}
-
-/// A single 50k-line file: diffing and highlighting run on the diff job's
-/// workers (never the UI task); once its result arrives, the first screen
-/// must be ready within 100ms. This measures the worker's compute plus the
-/// UI's update and first render.
-/// Run with `cargo test --release -p ghtui -- --ignored big_file_timing`.
-#[test]
-#[ignore = "timing; run in release"]
-fn big_file_timing_50k_lines() {
-    use std::collections::HashSet;
-    use std::sync::Arc;
-    use std::time::{Duration, Instant};
-
-    use ghtui_api::model::PrRef;
-    use ghtui_diff::FileDiff;
-    use ghtui_git::files::{ChangedFile, FileStatus};
-    use ghtui_git::repo::PrRefs;
-    use ghtui_ui::diff_doc::Doc;
-
-    use crate::diff_screen::{DiffScreen, DiffState};
-    use crate::state::{Screen, update};
-
-    let old: String = (0..50_000)
-        .map(|i| format!("    let value_{i} = compute({i}, \"label\");\n"))
-        .collect();
-    let new = old
-        .replace("compute(100,", "compute_fast(100,")
-        .replace("compute(25000,", "compute_fast(25000,")
-        .replace("compute(49999,", "compute_fast(49999,");
-
-    let start = Instant::now();
-    let diff = Arc::new(FileDiff::compute(
-        "big.rs",
-        Some(old.as_bytes()),
-        Some(new.as_bytes()),
-    ));
-    let compute = start.elapsed();
-
-    let file = ChangedFile {
-        status: FileStatus::Modified,
-        old_path: Some("big.rs".into()),
-        new_path: Some("big.rs".into()),
-        old_mode: 0o100644,
-        new_mode: 0o100644,
-        old_oid: "1".repeat(40),
-        new_oid: "2".repeat(40),
-        similarity: None,
-    };
-    let mut s = state(Mode::Dark, ColorDepth::TrueColor);
-    s.size = (160, 50);
-    let pr = PrRef::parse("o/r#1").unwrap();
-    let mut diff_state = DiffState::loading();
-    diff_state.set_files(
-        PrRefs {
-            head: "h".into(),
-            base: "b".into(),
-            merge_base: "m".into(),
-        },
-        Doc::new(vec![file], &HashSet::new()),
-    );
-    s.diffs.insert(pr.clone(), diff_state);
-    s.screens
-        .push(Screen::Diff(Box::new(DiffScreen::new(pr.clone(), 160))));
-    let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
-
-    let start = Instant::now();
-    update(&mut s, Msg::FileDiff(pr.clone(), 0, diff));
-    terminal.draw(|frame| view(&s, frame, NOW)).unwrap();
-    let first_screen = start.elapsed();
-
-    // Full-file mode on 50k lines must stay interactive too.
-    let start = Instant::now();
-    update(
-        &mut s,
-        Msg::Key(crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Char('F'),
-            crossterm::event::KeyModifiers::NONE,
-        )),
-    );
-    terminal.draw(|frame| view(&s, frame, NOW)).unwrap();
-    let full_file = start.elapsed();
-
-    eprintln!("compute {compute:?}, first screen {first_screen:?}, full file {full_file:?}");
-    assert!(
-        compute + first_screen < Duration::from_millis(100),
-        "{:?}",
-        compute + first_screen
-    );
-    assert!(full_file < Duration::from_millis(100), "{full_file:?}");
 }
 
 // ---- screenshots for design review ----------------------------------------------
@@ -1212,64 +1088,49 @@ fn screenshots() {
             repo: ghtui(),
             query: OPEN.into(),
         };
-        let (kind, query) = route.search().unwrap();
-        issues.push(route);
-        fetched(
-            &mut issues,
-            DataKey::Search(kind, query),
-            Data::Search(Box::new(fixtures::issue_results(Some("c")))),
-        );
+        let results = fixtures::issue_results(Some("c"));
+        open(&mut issues, route, Data::Search(Box::new(results)));
         shot(&format!("issues_{tag}"), &issues);
         let mut issue = sized(state(mode, ColorDepth::TrueColor), 130, 40);
-        issue.push(Route::Issue {
+        let route = Route::Issue {
             repo: ghtui(),
             number: 14,
-        });
+        };
+        open(
+            &mut issue,
+            route,
+            Data::Issue(Some(Box::new(fixtures::issue()))),
+        );
         fetched(
             &mut issue,
             DataKey::Repo(ghtui()),
             Data::Repo(Box::new(fixtures::overview())),
         );
-        fetched(
-            &mut issue,
-            DataKey::Issue(ghtui(), 14),
-            Data::Issue(Some(Box::new(fixtures::issue()))),
-        );
         shot(&format!("issue_{tag}"), &issue);
         shot(&format!("pr_{tag}"), &sized(with_pr(mode), 130, 44));
         let mut commits = sized(with_pr(mode), 120, 30);
-        update(&mut commits, Msg::Key(key(KeyCode::Char('2'))));
+        press(&mut commits, "2");
         shot(&format!("pr_commits_{tag}"), &commits);
         let mut file = sized(with_repo(mode, ColorDepth::TrueColor), 120, 24);
-        file.push(Route::Blob {
+        let route = Route::Blob {
             repo: ghtui(),
             rev: "main".into(),
             path: "src/main.rs".into(),
-        });
-        fetched(
-            &mut file,
-            DataKey::Blob(ghtui(), "main".into(), "src/main.rs".into()),
-            Data::Blob(Box::new(fixtures::blob())),
-        );
+        };
+        open(&mut file, route, Data::Blob(Box::new(fixtures::blob())));
         shot(&format!("file_{tag}"), &file);
         let mut profile = sized(state(mode, ColorDepth::TrueColor), 120, 36);
-        profile.push(Route::user("octocat"));
-        fetched(
-            &mut profile,
-            DataKey::Profile("octocat".into()),
-            Data::Profile(Box::new(fixtures::profile())),
-        );
+        let data = Data::Profile(Box::new(fixtures::profile()));
+        open(&mut profile, Route::user("octocat"), data);
         shot(&format!("profile_{tag}"), &profile);
         let mut search = sized(state(mode, ColorDepth::TrueColor), 120, 30);
         let route = Route::Search {
             kind: SearchKind::Repos,
             query: "terminal file manager".into(),
         };
-        let (kind, query) = route.search().unwrap();
-        search.push(route);
-        fetched(
+        open(
             &mut search,
-            DataKey::Search(kind, query),
+            route,
             Data::Search(Box::new(fixtures::repo_results())),
         );
         shot(&format!("search_{tag}"), &search);
@@ -1280,19 +1141,13 @@ fn screenshots() {
             count: 3,
             last: NOW,
         }];
-        update(&mut s, Msg::Key(key(KeyCode::Char('l'))));
+        press(&mut s, "l");
         shot(&format!("hints_{tag}"), &s);
-        update(&mut s, Msg::Key(key(KeyCode::Esc)));
-        update(&mut s, Msg::Key(key(KeyCode::Char('/'))));
-        for c in "oct".chars() {
-            update(&mut s, Msg::Key(key(KeyCode::Char(c))));
-        }
+        press(&mut s, "<Esc>/oct");
         shot(&format!("search_box_{tag}"), &s);
-        update(&mut s, Msg::Key(key(KeyCode::Esc)));
-        update(&mut s, Msg::Key(key(KeyCode::Char(' '))));
+        press(&mut s, "<Esc><Space>");
         shot(&format!("menu_{tag}"), &s);
-        update(&mut s, Msg::Key(key(KeyCode::Esc)));
-        update(&mut s, Msg::Key(key(KeyCode::Char('?'))));
+        press(&mut s, "<Esc>?");
         shot(&format!("help_{tag}"), &s);
     }
 }

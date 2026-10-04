@@ -116,13 +116,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             rows: &next_keys,
             selected: None,
         }
-        .render(
-            Rect {
-                height: area.height,
-                ..area
-            },
-            buf,
-        );
+        .render(area, buf);
     }
 
     match &state.overlay {
@@ -176,24 +170,13 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             );
         }
         Some(Overlay::Submit(dialog)) => {
-            let (pending, rejected) = match state.screen() {
-                Screen::Diff(screen) => state.diffs.get(&screen.pr).map_or((0, 0), |d| {
-                    (
-                        d.review.pending.len(),
-                        d.review
-                            .pending
-                            .iter()
-                            .filter(|p| p.error.is_some())
-                            .count(),
-                    )
-                }),
-                _ => (0, 0),
-            };
+            let pending = state.diff().map_or(&[][..], |d| &d.review.pending);
+            let rejected = pending.iter().filter(|p| p.error.is_some()).count();
             SubmitSheet {
                 ctx,
                 event: dialog.event,
                 input: &dialog.input,
-                pending,
+                pending: pending.len(),
                 rejected,
                 error: dialog.error.as_deref(),
                 sending: dialog.sending,
@@ -254,10 +237,11 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
     let mut area = lay.diff;
     if let Some(err) = &diff.error {
         let text = format!("Couldn't load the diff: {err}");
+        let retry = format!("{} retry", state.first_key(Action::Refresh));
         Banner {
             ctx,
             text: &text,
-            hint: Some("r retry"),
+            hint: Some(&retry),
             error: true,
         }
         .render(Rect { height: 1, ..area }, buf);
@@ -270,7 +254,7 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
         width: area.width.saturating_sub(2 * PAD_X),
         height: 1,
     };
-    if !diff.listed {
+    if !diff.listed() {
         if let Some(progress) = &diff.progress {
             Span::styled(
                 ghtui_ui::text::truncate(progress, usize::from(message_area.width)),

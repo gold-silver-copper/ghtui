@@ -1,11 +1,23 @@
-//! Page data for tests and snapshots.
+//! Page data and key presses for tests and snapshots.
 
+use crossterm::event::KeyEvent;
 use ghtui_api::browse::{
     Blob, Comment, CommitInfo, EntryKind, IssueDetail, IssueState, IssueSummary, PrActivity,
     Profile, Readme, RepoOverview, RepoSummary, Results, ReviewSummary, SearchResults, TreeEntry,
     UserSummary,
 };
 use ghtui_api::model::{Label, RepoId};
+
+use crate::state::{Cmd, Msg, State, update};
+
+/// Presses `keys`, in vim notation (`"jj"`, `"<Esc>/"`, `"<C-d>"`).
+pub(crate) fn press(state: &mut State, keys: &str) -> Vec<Cmd> {
+    let mut cmds = Vec::new();
+    for key in crate::keymap::parse_sequence(keys).unwrap() {
+        cmds.extend(update(state, Msg::Key(KeyEvent::new(key.code, key.mods))));
+    }
+    cmds
+}
 
 pub fn repo_summary(repo: &str, stars: u64) -> RepoSummary {
     RepoSummary {

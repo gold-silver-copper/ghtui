@@ -23,7 +23,7 @@ pub struct ComposeSheet<'a> {
     pub note: Option<&'a str>,
     pub error: Option<&'a str>,
     pub sending: bool,
-    /// What `<C-s>` does: "post reply", "add to review"…
+    /// What `ctrl-s` does: "post reply", "add to review"…
     pub save: &'a str,
 }
 
@@ -38,10 +38,9 @@ impl Widget for ComposeSheet<'_> {
             (2 * PAD_Y + 2 + INPUT_ROWS + 2 + preview_rows + u16::from(self.note.is_some()))
                 .min(screen.height.saturating_sub(2));
         let area = Rect {
-            x: screen.x + 1,
             y: screen.bottom().saturating_sub(height + 1),
-            width: screen.width.saturating_sub(2),
             height,
+            ..screen
         };
         fill(buf, area, theme, SHEET);
         let inner = padded(area);
@@ -68,7 +67,6 @@ impl Widget for ComposeSheet<'_> {
             height: input_rows,
             ..inner
         };
-        fill(buf, input_area, theme, SHEET);
         self.input.render(input_area, buf);
         y += input_rows + 1;
 
@@ -122,9 +120,9 @@ impl Widget for ComposeSheet<'_> {
             self.sending.then_some("Posting…"),
             self.error,
             &[
-                ("<C-s>", self.save),
-                ("<C-e>", "open in $EDITOR"),
-                ("Esc", "cancel"),
+                ("ctrl-s", self.save),
+                ("ctrl-e", "open in $EDITOR"),
+                ("esc", "cancel"),
             ],
         );
     }
@@ -211,7 +209,6 @@ impl Widget for SubmitSheet<'_> {
             height: 3.min(inner.bottom().saturating_sub(y + 2)),
             ..inner
         };
-        fill(buf, input_area, theme, SHEET);
         self.input.render(input_area, buf);
 
         footer(
@@ -221,10 +218,10 @@ impl Widget for SubmitSheet<'_> {
             self.sending.then_some("Submitting…"),
             self.error,
             &[
-                ("Tab", "choose"),
-                ("<C-s>", "submit"),
-                ("<C-e>", "$EDITOR"),
-                ("Esc", "cancel"),
+                ("⇥", "choose"),
+                ("ctrl-s", "submit"),
+                ("ctrl-e", "$EDITOR"),
+                ("esc", "cancel"),
             ],
         );
     }

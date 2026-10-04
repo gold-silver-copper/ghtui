@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::browse::{self, Data, DataKey, PageScreen};
 use crate::keymap::{Action, Resolution};
 use crate::picker::{fuzzy_score, move_in_list};
-use crate::review::{Compose, ComposeTarget};
+use crate::review::ComposeTarget;
 use crate::route::{self, Route, Target};
 use crate::state::{Cmd, Overlay, Remote, Screen, State, apply};
 
@@ -261,51 +261,28 @@ fn reveal(p: &mut PageScreen, item: usize, height: usize) {
     }
 }
 
-/// `↓`: more of the selected item if it continues below the screen; else
-/// the next item; else (past the last one) scroll on.
-fn next(p: &mut PageScreen, height: usize) {
+/// `↓`/`↑`: more of the selected item if it continues off screen; else the
+/// next item; else (past the last one) scroll on.
+fn step(p: &mut PageScreen, height: usize, down: bool) {
     p.fresh = false;
-    let bottom = p.scroll + height;
-    match p.selected {
-        Some(i) if p.page.items[i].end > bottom => scroll_by(p, STEP as i64, height),
-        Some(i) if i + 1 < p.page.items.len() => {
-            p.selected = Some(i + 1);
-            reveal(p, i + 1, height);
+    let n = p.page.items.len();
+    let items = &p.page.items;
+    let target = match p.selected {
+        Some(i) if down && items[i].end > p.scroll + height => None,
+        Some(i) if !down && items[i].start < p.scroll => None,
+        Some(i) if down => (i + 1 < n).then_some(i + 1),
+        Some(i) => i.checked_sub(1),
+        // Reading: pick up the first item that's on screen.
+        None if down => (0..n).find(|&i| visible(p, i, height)),
+        None => (0..n).rev().find(|&i| visible(p, i, height)),
+    };
+    match target {
+        Some(i) => {
+            p.selected = Some(i);
+            reveal(p, i, height);
         }
-        Some(_) => scroll_by(p, STEP as i64, height),
-        None => {
-            // Reading: pick up the first item that's on screen, else scroll.
-            match (0..p.page.items.len()).find(|&i| visible(p, i, height)) {
-                Some(i) => {
-                    p.selected = Some(i);
-                    reveal(p, i, height);
-                }
-                None => scroll_by(p, STEP as i64, height),
-            }
-        }
-    }
-}
-
-/// `↑`: the mirror of [`next`].
-fn prev(p: &mut PageScreen, height: usize) {
-    p.fresh = false;
-    match p.selected {
-        Some(i) if p.page.items[i].start < p.scroll => scroll_by(p, -(STEP as i64), height),
-        Some(i) if i > 0 => {
-            p.selected = Some(i - 1);
-            reveal(p, i - 1, height);
-        }
-        Some(_) => scroll_by(p, -(STEP as i64), height),
-        None => match (0..p.page.items.len())
-            .rev()
-            .find(|&i| visible(p, i, height))
-        {
-            Some(i) => {
-                p.selected = Some(i);
-                reveal(p, i, height);
-            }
-            None => scroll_by(p, -(STEP as i64), height),
-        },
+        None if down => scroll_by(p, STEP as i64, height),
+        None => scroll_by(p, -(STEP as i64), height),
     }
 }
 
@@ -343,8 +320,8 @@ pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
     };
     let half = (height / 2).max(1) as i64;
     match action {
-        Action::Down => next(p, height),
-        Action::Up => prev(p, height),
+        Action::Down => step(p, height, true),
+        Action::Up => step(p, height, false),
         Action::HalfPageDown => scroll_keep(p, half, height),
         Action::HalfPageUp => scroll_keep(p, -half, height),
         Action::PageDown => scroll_keep(p, height.saturating_sub(2).max(1) as i64, height),
@@ -372,9 +349,12 @@ pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
             return Some(match p.selected_url().map(str::to_owned) {
                 Some(url) => state.follow(&url),
                 None => {
-                    let hints = state.first_key(Action::Hints);
+                    let (down, hints) = (
+                        state.first_key(Action::Down),
+                        state.first_key(Action::Hints),
+                    );
                     state.notice = Some(Notice::Info(format!(
-                        "Nothing selected: j/k select a row, {hints} picks any link"
+                        "Nothing selected: {down} selects a row, {hints} picks any link"
                     )));
                     Vec::new()
                 }
@@ -568,12 +548,8 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             let url = hints.links[*i].clone();
             let browser = hints.browser;
             state.overlay = None;
-            if browser {
-                if url.starts_with("ghtui:") {
-                    return state.follow(&url);
-                }
-                state.notice = Some(Notice::Info(format!("Opened {url} in the browser")));
-                vec![Cmd::OpenUrl(url)]
+            if browser && !url.starts_with("ghtui:") {
+                state.go(Target::External(url))
             } else {
                 state.follow(&url)
             }
@@ -977,17 +953,12 @@ fn comment_with(state: &mut State, text: &str) -> Vec<Cmd> {
         state.notice = Some(Notice::Info("Still loading".into()));
         return Vec::new();
     };
-    let compose = Compose::new(
-        &state.theme,
-        ComposeTarget::Conversation {
-            subject_id,
-            name,
-            refresh,
-        },
-        text,
-    );
-    state.overlay = Some(Overlay::Compose(Box::new(compose)));
-    Vec::new()
+    let target = ComposeTarget::Conversation {
+        subject_id,
+        name,
+        refresh,
+    };
+    state.compose(target, text)
 }
 
 // ---- the actions menu and hints ----------------------------------------------------------------

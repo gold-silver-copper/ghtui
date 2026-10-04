@@ -63,6 +63,47 @@ fn render_split(area: Rect, buf: &mut Buffer, left: Vec<Span<'_>>, right: Vec<Sp
     Line::from(right).render(right_area, buf);
 }
 
+/// A popup list's row `y`: a band with a stripe when selected, and the
+/// padded content area with its tone.
+fn list_row(
+    buf: &mut Buffer,
+    theme: &Theme,
+    panel: Rect,
+    y: u16,
+    selected: bool,
+    base: Bg,
+) -> (Rect, Bg) {
+    let bg = if selected { Bg::SelectedHigh } else { base };
+    if selected {
+        fill(buf, Rect::new(panel.x, y, panel.width, 1), theme, bg);
+        buf.set_string(panel.x, y, "▌", theme.accent(bg));
+    }
+    let row = Rect::new(panel.x, y, panel.width, 1);
+    (inset(row, PAD_X, 0), bg)
+}
+
+/// `left` cut to fit (with `…`) on the left of `row`, `hint` on its right.
+fn label_hint(buf: &mut Buffer, row: Rect, left: &[Span<'_>], hint: Span<'_>) {
+    let hint_w = (hint.width() as u16).min(row.width);
+    let gap = if hint_w > 0 { hint_w + 2 } else { 0 };
+    let mut room = usize::from(row.width.saturating_sub(gap));
+    let left: Vec<Span<'_>> = left
+        .iter()
+        .map(|s| {
+            let shown = text::truncate(&s.content, room);
+            room -= text::width(&shown);
+            Span::styled(shown, s.style)
+        })
+        .collect();
+    Line::from(left).render(row, buf);
+    let hint_area = Rect {
+        x: row.right() - hint_w,
+        width: hint_w,
+        ..row
+    };
+    hint.render(hint_area, buf);
+}
+
 /// `key what · key what`: keys in bold accent, what they do in meta.
 fn key_hints(theme: &Theme, bg: Bg, hints: &[(&str, &str)]) -> Vec<Span<'static>> {
     let mut spans = Vec::new();

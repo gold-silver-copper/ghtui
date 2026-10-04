@@ -12,6 +12,7 @@ ghtui-diff.workspace = true
 ghtui-git.workspace = true
 ratatui.workspace = true
 ratatui-textarea.workspace = true
+unicode-segmentation = "1"
 unicode-width = "0.2"
 pulldown-cmark.workspace = true
 

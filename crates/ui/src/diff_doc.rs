@@ -31,6 +31,13 @@ const DEFAULT_WRAP: u16 = 72;
 /// Lines revealed per expansion step.
 const EXPAND_STEP: u32 = 20;
 
+/// Where a line sits on each side: its old number on the left, its new
+/// number on the right.
+pub(crate) fn sides(line: &DiffLine) -> (Option<LinePos>, Option<LinePos>) {
+    let at = |side, n: Option<u32>| n.map(|line| LinePos { side, line });
+    (at(Side::Left, line.old), at(Side::Right, line.new))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Note {
     Loading,
@@ -216,14 +223,7 @@ impl DocFile {
         else {
             return Vec::new();
         };
-        let left = line.old.map(|l| LinePos {
-            side: Side::Left,
-            line: l,
-        });
-        let right = line.new.map(|l| LinePos {
-            side: Side::Right,
-            line: l,
-        });
+        let (left, right) = sides(line);
         match line.kind {
             LineKind::Removed => left.into_iter().collect(),
             LineKind::Added => right.into_iter().collect(),
@@ -836,17 +836,13 @@ impl Doc {
         let file = self.files.get(pos.file)?;
         let text = file.text()?;
         let lines = text.lines(self.opts.whitespace);
-        let at = |e: u32| -> Option<LinePos> {
+        let at = |e: u32| {
             let l = lines.get(e as usize)?;
-            match l.kind {
-                LineKind::Removed => l.old.map(|line| LinePos {
-                    side: Side::Left,
-                    line,
-                }),
-                _ => l.new.map(|line| LinePos {
-                    side: Side::Right,
-                    line,
-                }),
+            let (left, right) = sides(l);
+            if l.kind == LineKind::Removed {
+                left
+            } else {
+                right
             }
         };
         match self.row(pos)? {

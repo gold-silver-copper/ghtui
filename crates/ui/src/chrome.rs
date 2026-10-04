@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::{Ctx, PAD_X, fill, text};
+use crate::{Ctx, PAD_X, fill, label_hint, list_row, text};
 
 const BAR: Bg = Bg::Container;
 const FIELD: Bg = Bg::ContainerHighest;
@@ -43,20 +43,35 @@ pub fn header_layout(area: Rect, crumbs: &[Crumb], right: &[String]) -> HeaderLa
     let one = |x: u16, w: u16| Rect::new(x, y, w, 1);
     let start = area.x + PAD_X.min(area.width);
     let logo = one(start, (text::width(LOGO) as u16).min(area.width));
-    // Right items, from the right edge.
-    let mut rx = area.right().saturating_sub(PAD_X);
-    let mut right_rects = Vec::new();
-    for item in right.iter().rev() {
-        let w = text::width(item) as u16;
-        rx = rx.saturating_sub(w);
-        right_rects.push(one(rx, w));
-        rx = rx.saturating_sub(3);
-    }
-    right_rects.reverse();
+    // Right items, from the right edge, while where you are and the search
+    // field still fit; the rest are dropped (zero width).
     // The search field: a third of the width, between 24 and 52 columns.
     let field_w = (area.width / 3)
         .clamp(24, 52)
         .min(area.width.saturating_sub(24));
+    let crumbs_w: u16 = crumbs.iter().map(|c| text::width(&c.text) as u16 + 3).sum();
+    let keep = logo.right() + crumbs_w.min(32) + 5 + field_w;
+    // Earlier items matter more: you know who you are.
+    let mut room = (area.right().saturating_sub(PAD_X) + 3).saturating_sub(keep);
+    let widths: Vec<u16> = right
+        .iter()
+        .map(|item| {
+            let w = text::width(item) as u16;
+            let shown = w + 3 <= room;
+            room -= if shown { w + 3 } else { 0 };
+            if shown { w } else { 0 }
+        })
+        .collect();
+    let mut rx = area.right().saturating_sub(PAD_X);
+    let mut right_rects = Vec::new();
+    for &w in widths.iter().rev() {
+        rx = rx.saturating_sub(w);
+        right_rects.push(one(rx, w));
+        if w > 0 {
+            rx = rx.saturating_sub(3);
+        }
+    }
+    right_rects.reverse();
     let field_x = rx.saturating_sub(field_w);
     let search = one(field_x, field_w);
     let mut x = logo.right() + 3;
@@ -225,9 +240,8 @@ impl Widget for TabBar<'_> {
         };
         if area.height > 1 {
             fill(buf, under, theme, BAR);
-            for x in under.left()..under.right() {
-                buf.set_string(x, under.y, "─", theme.separator(BAR));
-            }
+            let rule = "─".repeat(usize::from(under.width));
+            buf.set_string(under.x, under.y, rule, theme.separator(BAR));
         }
         let level = fit(labels, self.tabs, self.active);
         for (i, (tab, r)) in self
@@ -354,16 +368,14 @@ impl Widget for SearchPanel<'_> {
         let theme = self.ctx.theme;
         let area = self.area(screen);
         fill(buf, area, theme, PANEL);
-        let inner_w = area.width.saturating_sub(4);
         let rows = usize::from(area.height.saturating_sub(2));
         let (skip, selected_row) = self.scroll(area);
         for (n, row) in self.rows.iter().enumerate().skip(skip).take(rows) {
             let y = area.y + 1 + (n - skip) as u16;
-            let line = Rect::new(area.x + 2, y, inner_w, 1);
+            let (line, bg) = list_row(buf, theme, area, y, n == selected_row, PANEL);
             match row {
                 SuggestRow::Heading(h) => {
-                    Span::styled(h.clone(), theme.meta(PANEL).add_modifier(Modifier::BOLD))
-                        .render(line, buf);
+                    Span::styled(h.as_str(), heading(theme)).render(line, buf);
                 }
                 SuggestRow::Item {
                     icon,
@@ -371,34 +383,25 @@ impl Widget for SearchPanel<'_> {
                     detail,
                     hint,
                 } => {
-                    let sel = n == selected_row;
-                    let bg = if sel { Bg::SelectedHigh } else { PANEL };
-                    if sel {
-                        fill(buf, Rect::new(area.x, y, area.width, 1), theme, bg);
-                        buf.set_string(area.x, y, "▌", theme.accent(bg));
-                    }
-                    let hint_w = text::width(hint) as u16;
-                    let room = usize::from(inner_w.saturating_sub(hint_w + 2));
-                    let label = text::truncate(&format!("{icon}  {label}"), room);
-                    let detail_room = room.saturating_sub(text::width(&label));
-                    Line::from(vec![
-                        Span::styled(label, theme.body(bg)),
-                        Span::styled(
-                            text::truncate(&format!("  {detail}"), detail_room),
-                            theme.meta(bg),
-                        ),
-                    ])
-                    .render(line, buf);
-                    if hint_w > 0 {
-                        Span::styled(hint.clone(), theme.meta(bg)).render(
-                            Rect::new(line.right().saturating_sub(hint_w), y, hint_w, 1),
-                            buf,
-                        );
-                    }
+                    let left = [
+                        Span::styled(format!("{icon}  {label}"), theme.body(bg)),
+                        Span::styled(format!("  {detail}"), theme.meta(bg)),
+                    ];
+                    label_hint(
+                        buf,
+                        line,
+                        &left,
+                        Span::styled(hint.as_str(), theme.meta(bg)),
+                    );
                 }
             }
         }
     }
+}
+
+/// A section heading in a popup list.
+fn heading(theme: &ghtui_theme::Theme) -> ratatui::style::Style {
+    theme.meta(PANEL).add_modifier(Modifier::BOLD)
 }
 
 // ---- key panels -------------------------------------------------------------------------------
@@ -481,18 +484,9 @@ impl Widget for KeyPanel<'_> {
         let skip = self.selected.map_or(0, |s| (s + 1).saturating_sub(rows));
         for (n, row) in self.rows.iter().enumerate().skip(skip).take(rows) {
             let y = area.y + 2 + (n - skip) as u16;
-            let sel = self.selected == Some(n);
-            let bg = if sel { Bg::SelectedHigh } else { PANEL };
-            if sel {
-                fill(buf, Rect::new(area.x, y, area.width, 1), theme, bg);
-                buf.set_string(area.x, y, "▌", theme.accent(bg));
-            }
+            let (line, bg) = list_row(buf, theme, area, y, self.selected == Some(n), PANEL);
             if row.heading {
-                Span::styled(
-                    row.label.clone(),
-                    theme.meta(PANEL).add_modifier(Modifier::BOLD),
-                )
-                .render(Rect::new(area.x + 2, y, inner_w, 1), buf);
+                Span::styled(row.label.as_str(), heading(theme)).render(line, buf);
                 continue;
             }
             let (key_style, label_style) = if row.dim {
@@ -504,12 +498,11 @@ impl Widget for KeyPanel<'_> {
                 )
             };
             let pad = key_w.saturating_sub(text::width(&row.key));
-            Line::from(vec![
-                Span::styled(format!("{}{}", " ".repeat(pad), row.key), key_style),
-                Span::styled("   ", theme.body(bg)),
-                Span::styled(row.label.clone(), label_style),
-            ])
-            .render(Rect::new(area.x + 2, y, inner_w, 1), buf);
+            let left = [
+                Span::styled(format!("{}{}   ", " ".repeat(pad), row.key), key_style),
+                Span::styled(row.label.as_str(), label_style),
+            ];
+            label_hint(buf, line, &left, Span::raw(""));
         }
     }
 }

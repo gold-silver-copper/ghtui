@@ -26,7 +26,7 @@ Buffer {
         "     │                                                                                              ",
         "                                                                                                    ",
         "  ╭─ Add a comment ─────────────────────────────────────────────────────────────────────────────╮   ",
-        "  │ Press c to write a comment (Markdown; $EDITOR with <C-e>)                                   │   ",
+        "  │ Press c to write a comment (Markdown; ctrl-e for $EDITOR)                                   │   ",
         "  ╰─────────────────────────────────────────────────────────────────────────────────────────────╯   ",
         "                                                                                                    ",
         "                                                                                                    ",

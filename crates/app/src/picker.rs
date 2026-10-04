@@ -8,6 +8,7 @@ use ghtui_api::model::RepoId;
 use ghtui_theme::Bg;
 use ghtui_ui::diff_doc::Pos;
 use ghtui_ui::overlays::PaletteItem;
+use ghtui_ui::text::short_sha;
 use ratatui_textarea::TextArea;
 
 use crate::browse::{Data, DataKey, Need};
@@ -84,7 +85,7 @@ impl State {
             Kind::Commands => "A command, owner/repo, owner/repo#123, @user, a URL, or a search",
             Kind::Files { .. } | Kind::DiffFiles => "Type a file name",
             Kind::Branches { .. } => "Find a branch or tag",
-            Kind::Commits { .. } => "Space marks a range start · Enter views · Esc cancels",
+            Kind::Commits { .. } => "space marks a range start · ↵ views · esc cancels",
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
@@ -264,10 +265,7 @@ impl State {
     }
 
     fn diff_file_rows(&self, q: &str) -> Rows {
-        let Screen::Diff(screen) = self.screen() else {
-            return Vec::new();
-        };
-        let Some(diff) = self.diffs.get(&screen.pr) else {
+        let Some(diff) = self.diff() else {
             return Vec::new();
         };
         let mut hits: Vec<(usize, usize)> = diff
@@ -292,10 +290,7 @@ impl State {
     }
 
     fn commit_rows(&self, mark: Option<usize>) -> Rows {
-        let Some(diff) = (match self.screen() {
-            Screen::Diff(screen) => self.diffs.get(&screen.pr),
-            Screen::Page(_) => None,
-        }) else {
+        let Some(diff) = self.diff() else {
             return Vec::new();
         };
         let current = |on: bool| if on { "current" } else { "" };
@@ -316,7 +311,7 @@ impl State {
         for (i, (sha, subject)) in diff.commits.iter().enumerate() {
             let hint = if mark == Some(i) { "range start" } else { "" };
             rows.push((
-                item(format!("{} {subject}", &sha[..7.min(sha.len())]), hint),
+                item(format!("{} {subject}", short_sha(sha)), hint),
                 Some(Choice::Commits(PickItem::Commit(i))),
             ));
         }
@@ -420,7 +415,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
                 screen.cursor = Pos { file, row: 0 };
                 screen.top = screen.cursor;
             }
-            state.settle_diff()
+            Vec::new()
         }
         Choice::Commits(pick) => apply_commit_choice(state, pick, mark.map(PickItem::Commit)),
     }

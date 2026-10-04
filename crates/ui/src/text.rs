@@ -1,9 +1,16 @@
 //! Width-aware text helpers.
 
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 pub fn width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
+}
+
+/// What a terminal draws as one character (an emoji with its modifiers,
+/// a letter with its accents), with its width.
+pub fn graphemes(s: &str) -> impl Iterator<Item = (&str, usize)> {
+    s.graphemes(true).map(|g| (g, width(g)))
 }
 
 /// Cuts `s` to at most `max` columns, ending in `…` when shortened.
@@ -16,12 +23,11 @@ pub fn truncate(s: &str, max: usize) -> String {
     }
     let mut out = String::new();
     let mut used = 0;
-    for c in s.chars() {
-        let w = c.width().unwrap_or(0);
+    for (g, w) in graphemes(s) {
         if used + w > max - 1 {
             break;
         }
-        out.push(c);
+        out.push_str(g);
         used += w;
     }
     out.push('…');
@@ -62,14 +68,13 @@ pub fn wrap(text: &str, max: usize) -> Vec<String> {
                 used = 0;
             }
             if w > max {
-                for c in word.chars() {
-                    let cw = c.width().unwrap_or(0);
-                    if used + cw > max {
+                for (g, gw) in graphemes(word) {
+                    if used + gw > max {
                         lines.push(std::mem::take(&mut line));
                         used = 0;
                     }
-                    line.push(c);
-                    used += cw;
+                    line.push_str(g);
+                    used += gw;
                 }
                 continue;
             }
@@ -95,6 +100,10 @@ mod tests {
         assert_eq!(truncate("hello world", 6), "hello…");
         assert_eq!(truncate("日本語テキスト", 5), "日本…");
         assert_eq!(truncate("abc", 0), "");
+        // Emoji are cut whole and measured as drawn.
+        assert_eq!(truncate("⚠️ Fix warning in build", 5), "⚠️ F…");
+        assert_eq!(truncate("👨‍🍳👨‍🍳👨‍🍳", 5), "👨‍🍳👨‍🍳…");
+        assert!(width(&truncate("❤️❤️❤️abcdef", 5)) <= 5);
     }
 
     #[test]
