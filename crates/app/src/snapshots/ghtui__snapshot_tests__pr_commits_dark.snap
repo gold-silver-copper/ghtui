@@ -34,7 +34,7 @@ Buffer {
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
-        "  ↵ open   f links   / search   t go to file   c comment   4 files   ⇥ tab           API 4987/5000  ",
+        "  ↵ open   ←→ tabs   / search   f go to file   c comment   4 files   o browser       API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
@@ -143,7 +143,7 @@ Buffer {
         x: 3, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 8, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 11, y: 29, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
-        x: 12, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 13, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 18, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 21, y: 29, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
         x: 22, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
@@ -159,7 +159,7 @@ Buffer {
         x: 66, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 69, y: 29, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
         x: 70, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 74, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 78, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 85, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 98, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
     ]

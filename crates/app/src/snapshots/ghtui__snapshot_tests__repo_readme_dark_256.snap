@@ -34,7 +34,7 @@ Buffer {
         "  │                                                                                             │  ▐",
         "  │ │ Everything is a link: press  Enter  to follow it.                                         │  ▐",
         "──╰─────────────────────────────────────────────────────────────────────────────────────────────╯──▐",
-        "  ⠋ Loading   ↵ open   f links   / search   t go to file   w branch   * star         API 4987/5000  ",
+        "  ⠋ Loading   ↵ open   ←→ tabs   / search   f go to file   b branch   s star         API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
@@ -234,7 +234,7 @@ Buffer {
         x: 15, y: 29, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 20, y: 29, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 23, y: 29, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
-        x: 24, y: 29, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 25, y: 29, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 30, y: 29, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 33, y: 29, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
         x: 34, y: 29, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,

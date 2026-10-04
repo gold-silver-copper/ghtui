@@ -1564,6 +1564,36 @@ pub fn new_palette(theme: &Theme) -> Palette {
 
 pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
     let content = state.content_area();
+    // In the diff, a few keys mean their nearest thing there.
+    let mut action = action;
+    if let Screen::Diff(screen) = state.screen() {
+        let searching = screen.search.is_some();
+        match action {
+            Action::PageDown | Action::PageUp => {
+                let half = if action == Action::PageDown {
+                    Action::HalfPageDown
+                } else {
+                    Action::HalfPageUp
+                };
+                let mut cmds = apply(state, half);
+                cmds.extend(apply(state, half));
+                return cmds;
+            }
+            Action::UpLevel => return nav::switch_tab(state, 1),
+            // While searching, n and p go through the matches.
+            Action::NextHunk if searching => action = Action::SearchNext,
+            Action::PrevHunk if searching => action = Action::SearchPrev,
+            // Esc ends a search before it leaves.
+            Action::Back if searching => {
+                if let Screen::Diff(screen) = state.screen_mut() {
+                    screen.search = None;
+                }
+                state.notice = Some(Notice::Info("Search cleared".into()));
+                return Vec::new();
+            }
+            _ => {}
+        }
+    }
     if let Some(cmds) = review_action(state, action) {
         return cmds;
     }
@@ -1652,7 +1682,13 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Tab2 => return nav::switch_tab(state, 2),
         Action::Tab3 => return nav::switch_tab(state, 3),
         Action::Tab4 => return nav::switch_tab(state, 4),
-        // Diff and page actions elsewhere do nothing.
+        // Review keys on a page: say where they work.
+        _ if action.scope() == Scope::Diff => {
+            state.notice = Some(Notice::Info(format!(
+                "{}: in a pull request's Files changed tab",
+                action.description()
+            )));
+        }
         _ => {}
     }
     Vec::new()
@@ -1719,6 +1755,13 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
     let notice = |state: &mut State, n: Notice| {
         state.notice = Some(n);
         Some(Vec::new())
+    };
+    // `c` on a thread replies to it, as you'd expect.
+    let action = match (action, &annotation) {
+        (Action::Comment, Some(ann)) if matches!(ann.key, AnnotationKey::Thread(_)) => {
+            Action::ReplyThread
+        }
+        _ => action,
     };
     let in_range = diff.range.is_some();
     if in_range
@@ -2366,6 +2409,13 @@ mod tests {
         state
     }
 
+    /// Runs an action that has no default key (it's in the menu).
+    fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+        let cmds = apply(state, action);
+        state.sync_page();
+        cmds
+    }
+
     fn press(state: &mut State, keys: &str) -> Vec<Cmd> {
         let mut cmds = Vec::new();
         for key in crate::keymap::parse_sequence(keys).unwrap() {
@@ -2505,7 +2555,7 @@ mod tests {
             selected_text(&state).contains("PR 1"),
             "the selection survives"
         );
-        press(&mut state, "]");
+        act(&mut state, Action::Forward);
         assert_eq!(
             route(&state),
             Route::Pr {
@@ -2514,7 +2564,7 @@ mod tests {
             },
             "forward again"
         );
-        press(&mut state, "H");
+        press(&mut state, "h");
         assert!(!state.quit);
         press(&mut state, "q");
         assert!(state.quit);
@@ -2555,7 +2605,7 @@ mod tests {
     #[test]
     fn h_l_and_u_move_like_a_file_manager() {
         let mut state = with_repo();
-        press(&mut state, "jl");
+        press(&mut state, "j<Enter>");
         let crates = Route::Tree {
             repo: repo(),
             rev: "main".into(),
@@ -2564,16 +2614,60 @@ mod tests {
         assert_eq!(route(&state), crates, "l opens");
         press(&mut state, "u");
         assert_eq!(route(&state), Route::Repo(repo()), "u: the folder above");
-        press(&mut state, "h");
-        assert_eq!(route(&state), crates, "h: back");
+        press(&mut state, "<Esc>");
+        assert_eq!(route(&state), crates, "esc: back");
         press(&mut state, "uu");
         assert_eq!(
             route(&state),
             Route::user("gold-silver-copper"),
             "up from a repository: its owner"
         );
-        press(&mut state, "<Left><Left>");
+        press(&mut state, "<Esc><Esc>");
         assert_eq!(route(&state), crates);
+    }
+
+    #[test]
+    fn arrows_move_comment_by_comment_and_enter_quotes() {
+        let mut state = state();
+        update(&mut state, Msg::Resize(100, 14));
+        state.push(Route::Issue {
+            repo: repo(),
+            number: 14,
+        });
+        let mut issue = crate::fixtures::issue();
+        issue.body = (1..=30).map(|n| format!("Line {n}.\n\n")).collect();
+        fetched(
+            &mut state,
+            DataKey::Issue(repo(), 14),
+            Data::Issue(Some(Box::new(issue))),
+        );
+        assert_eq!(
+            page(&state).selected,
+            None,
+            "reading pages start unselected"
+        );
+        press(&mut state, "<Down>");
+        assert_eq!(page(&state).selected, Some(0), "the first comment");
+        // The long first comment scrolls before the next one is selected.
+        let scroll = page(&state).scroll;
+        press(&mut state, "<Down>");
+        assert_eq!(page(&state).selected, Some(0));
+        assert!(page(&state).scroll > scroll);
+        for _ in 0..40 {
+            press(&mut state, "<Down>");
+        }
+        assert_eq!(page(&state).selected, Some(2), "the comment box at the end");
+        press(&mut state, "<Up>");
+        assert_eq!(page(&state).selected, Some(1), "hubot's comment");
+        press(&mut state, "<Enter>");
+        let Some(Overlay::Compose(compose)) = &state.overlay else {
+            panic!("no composer")
+        };
+        assert!(
+            compose.text().starts_with("> @hubot wrote:\n> Agreed."),
+            "{}",
+            compose.text()
+        );
     }
 
     #[test]
@@ -2811,7 +2905,7 @@ mod tests {
                 query: "is:open label:bug".into()
             }
         );
-        press(&mut state, "S");
+        act(&mut state, Action::ToggleState);
         assert_eq!(
             route(&state),
             Route::Issues {
@@ -2819,7 +2913,7 @@ mod tests {
                 query: "is:closed label:bug".into()
             }
         );
-        press(&mut state, "O");
+        act(&mut state, Action::Sort);
         assert_eq!(
             route(&state),
             Route::Issues {
@@ -2828,15 +2922,15 @@ mod tests {
             }
         );
 
-        press(&mut state, "<Tab>");
+        press(&mut state, "<Right>");
         assert!(
             matches!(route(&state), Route::Pulls { .. }),
-            "Tab: the next tab"
+            "→: the next tab"
         );
         press(&mut state, "1");
         assert_eq!(route(&state), Route::Repo(repo()));
 
-        let cmds = press(&mut state, "*");
+        let cmds = press(&mut state, "s");
         assert_eq!(
             cmds,
             vec![Cmd::SetStarred {
@@ -2862,7 +2956,7 @@ mod tests {
     #[test]
     fn letter_hints_follow_links() {
         let mut state = with_repo();
-        press(&mut state, "f");
+        press(&mut state, "l");
         let Some(Overlay::Hints(hints)) = &state.overlay else {
             panic!("no hints")
         };
@@ -2876,7 +2970,7 @@ mod tests {
         assert!(state.overlay.is_none());
         assert_eq!(route(&state), Route::user("gold-silver-copper"));
         // A wrong letter cancels.
-        press(&mut state, "<Esc>f");
+        press(&mut state, "<Esc>l");
         press(&mut state, "<Esc>");
         assert!(state.overlay.is_none());
     }
@@ -2921,7 +3015,7 @@ mod tests {
     #[test]
     fn go_to_file_and_switch_branches() {
         let mut state = with_repo();
-        let cmds = press(&mut state, "t");
+        let cmds = press(&mut state, "f");
         let files = DataKey::Files(repo(), "main".into());
         assert_eq!(
             cmds,
@@ -2961,7 +3055,7 @@ mod tests {
                 path: "src/main.rs".into()
             }
         );
-        let cmds = press(&mut state, "w");
+        let cmds = press(&mut state, "b");
         assert_eq!(
             cmds,
             vec![Cmd::Fetch {
@@ -3213,7 +3307,7 @@ mod tests {
     #[test]
     fn the_menu_lists_and_runs_what_you_can_do() {
         let mut state = with_repo();
-        press(&mut state, ".");
+        press(&mut state, "<Space>");
         let Some(Overlay::Menu(menu)) = &state.overlay else {
             panic!("no menu")
         };
@@ -3227,7 +3321,7 @@ mod tests {
             .unwrap();
         assert!(fwd.unavailable.is_some(), "nothing to go forward to");
         // A row's own key runs it.
-        let cmds = press(&mut state, "t");
+        let cmds = press(&mut state, "f");
         assert!(matches!(state.overlay, Some(Overlay::Finder(_))));
         assert!(!cmds.is_empty());
     }
@@ -3241,7 +3335,7 @@ mod tests {
         press(&mut state, "2");
         let hints: Vec<String> = state.key_hints().into_iter().map(|(_, w)| w).collect();
         assert!(
-            hints.contains(&"filter".to_owned()) && hints.contains(&"open/closed".to_owned()),
+            hints.contains(&"filter".to_owned()) && hints.contains(&"tabs".to_owned()),
             "{hints:?}"
         );
     }
@@ -3249,10 +3343,10 @@ mod tests {
     #[test]
     fn key_scopes_follow_the_screen() {
         let mut state = with_repo();
-        press(&mut state, "f");
+        press(&mut state, "l");
         assert!(
             matches!(state.overlay, Some(Overlay::Hints(_))),
-            "f: link hints on a page"
+            "l: link letters on a page"
         );
         let help = state.help_entries();
         assert!(
@@ -3303,7 +3397,7 @@ mod tests {
         fn split_is_automatic_by_width_and_toggles() {
             let (mut narrow, _) = diff_state(120);
             assert!(!narrow.diffs.values().next().unwrap().doc.opts.split);
-            press(&mut narrow, "|");
+            act(&mut narrow, Action::ToggleSplit);
             assert!(narrow.diffs.values().next().unwrap().doc.opts.split);
             let (wide, _) = diff_state(220);
             assert!(wide.diffs.values().next().unwrap().doc.opts.split);
@@ -3327,7 +3421,8 @@ mod tests {
             );
 
             // ]u skips the viewed file.
-            press(&mut s, "gu");
+            press(&mut s, "g");
+            act(&mut s, Action::NextUnviewed);
             assert_eq!(screen(&s).cursor.file, 1);
 
             // Toggle file 1 viewed: optimistic, then GitHub refuses.
@@ -3358,7 +3453,7 @@ mod tests {
             assert!(press(&mut s, "g").is_empty());
             assert!(press(&mut s, "m").is_empty());
             // Onto the first change.
-            press(&mut s, "}jjj");
+            press(&mut s, "njjj");
             let cmds = press(&mut s, "m");
             let Some(Cmd::SaveReview(saved_pr, review)) = cmds.first() else {
                 panic!("{cmds:?}")
@@ -3391,9 +3486,26 @@ mod tests {
         }
 
         #[test]
+        fn n_and_p_follow_a_search_and_esc_ends_it() {
+            let (mut s, _) = diff_state(120);
+            press(&mut s, "/");
+            press(&mut s, "Point<Enter>");
+            let first = screen(&s).cursor;
+            press(&mut s, "n");
+            assert_ne!(screen(&s).cursor, first, "n: the next match");
+            press(&mut s, "p");
+            assert_eq!(screen(&s).cursor, first, "p: back");
+            let depth = s.screens.len();
+            press(&mut s, "<Esc>");
+            assert_eq!(s.screens.len(), depth, "esc ends the search first");
+            press(&mut s, "<Esc>");
+            assert_eq!(s.screens.len(), depth - 1, "then goes back");
+        }
+
+        #[test]
         fn file_finder_jumps_to_files() {
             let (mut s, _) = diff_state(120);
-            press(&mut s, "t");
+            press(&mut s, "f");
             assert!(matches!(s.overlay, Some(Overlay::FindFile(_))));
             assert_eq!(s.finder_items("gone")[0].1.label, "gone.py");
             press(&mut s, "gone<Enter>");
@@ -3405,9 +3517,9 @@ mod tests {
         #[test]
         fn whitespace_and_full_file_keep_the_cursor_line() {
             let (mut s, pr) = diff_state(120);
-            press(&mut s, "}jjj");
+            press(&mut s, "njjj");
             let text = s.diffs[&pr].doc.row_text(screen(&s).cursor);
-            press(&mut s, "F");
+            act(&mut s, Action::FullFile);
             assert!(s.diffs[&pr].doc.files[0].full);
             assert_eq!(s.diffs[&pr].doc.row_text(screen(&s).cursor), text);
             press(&mut s, "w");
@@ -3415,7 +3527,7 @@ mod tests {
                 s.diffs[&pr].doc.opts.whitespace,
                 ghtui_diff::Whitespace::Ignore
             );
-            press(&mut s, "x");
+            press(&mut s, "e");
         }
         mod better {
             use super::*;
@@ -3448,7 +3560,7 @@ mod tests {
                 // Only once.
                 let again = update(&mut s, Msg::MovesDetected(pr.clone(), Vec::new()));
                 assert!(!again.iter().any(|c| matches!(c, Cmd::DetectMoves(..))));
-                assert!(press(&mut s, "M").is_empty());
+                assert!(act(&mut s, Action::JumpMove).is_empty());
                 assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("moved")));
             }
 
@@ -3456,7 +3568,7 @@ mod tests {
             fn since_review_asks_github_then_compares() {
                 let (mut s, pr) = diff_state(120);
                 s.viewer = Some("me".into());
-                let cmds = press(&mut s, "L");
+                let cmds = act(&mut s, Action::ToggleSinceReview);
                 assert!(matches!(&cmds[..], [Cmd::FetchLastReview { login, .. }] if login == "me"));
                 let cmds = update(&mut s, Msg::LastReview(pr.clone(), Ok(Some("old".into()))));
                 assert!(
@@ -3472,7 +3584,7 @@ mod tests {
                 assert_eq!(s.chrome().tabs[3].0.label, "Files · since your review");
                 // Toggling back needs no new lookups.
                 assert!(
-                    press(&mut s, "L")
+                    act(&mut s, Action::ToggleSinceReview)
                         .iter()
                         .all(|c| matches!(c, Cmd::Prioritize(..)))
                 );
@@ -3483,7 +3595,7 @@ mod tests {
             fn since_review_without_a_review_says_so() {
                 let (mut s, pr) = diff_state(120);
                 s.viewer = Some("me".into());
-                press(&mut s, "L");
+                act(&mut s, Action::ToggleSinceReview);
                 update(&mut s, Msg::LastReview(pr.clone(), Ok(None)));
                 assert!(
                     matches!(&s.notice, Some(Notice::Info(m)) if m.contains("haven't reviewed"))
@@ -3502,7 +3614,10 @@ mod tests {
                     pr.clone(),
                     Remote::cached(Some(crate::snapshot_tests::pr_detail())),
                 );
-                assert!(matches!(&press(&mut s, "p")[..], [Cmd::ListCommits(_)]));
+                assert!(matches!(
+                    &act(&mut s, Action::PickCommits)[..],
+                    [Cmd::ListCommits(_)]
+                ));
                 update(
                     &mut s,
                     Msg::CommitsListed(
@@ -3534,7 +3649,7 @@ mod tests {
                 assert!(s.overlay.is_none());
                 assert!(matches!(&s.notice, Some(Notice::Error(m)) if m.contains("All changes")));
                 // Back to everything.
-                press(&mut s, "p");
+                act(&mut s, Action::PickCommits);
                 let cmds = press(&mut s, "<Enter>");
                 assert!(matches!(&cmds[..], [Cmd::LoadDiff { range: None, .. }]));
             }
@@ -3608,7 +3723,8 @@ mod tests {
                     ),
                 );
                 assert_eq!(s.diffs[&pr].doc.annotations.len(), 2);
-                press(&mut s, "g)");
+                press(&mut s, "g");
+                act(&mut s, Action::NextThread);
                 let at = s.diffs[&pr].doc.annotation_at(screen(&s).cursor).unwrap();
                 assert_eq!(
                     s.diffs[&pr].doc.annotations[at as usize].key,
@@ -3616,7 +3732,7 @@ mod tests {
                 );
 
                 // Resolve: optimistic, rolled back on failure.
-                let cmds = press(&mut s, "R");
+                let cmds = act(&mut s, Action::ResolveThread);
                 assert!(matches!(
                     &cmds[..],
                     [Cmd::SetResolved { resolved: true, .. }, ..]
@@ -3664,7 +3780,7 @@ mod tests {
                 ctrl(&mut s, 's');
                 assert_eq!(s.diffs[&pr].review.pending[0].body, "Use a constant!");
 
-                let cmds = press(&mut s, "D");
+                let cmds = press(&mut s, "<Delete>");
                 assert!(matches!(&cmds[..], [Cmd::SaveReview(_, r)] if r.pending.is_empty()));
             }
 
@@ -3712,7 +3828,7 @@ mod tests {
                     ),
                 );
                 to_line(&mut s, "A point in 2D");
-                press(&mut s, "V");
+                press(&mut s, "x");
                 to_line(&mut s, "origin");
                 press(&mut s, "c");
                 assert!(s.overlay.is_none());
@@ -3732,7 +3848,7 @@ mod tests {
                 ctrl(&mut s, 's');
                 let id = s.diffs[&pr].review.pending[0].id;
 
-                press(&mut s, "s");
+                press(&mut s, "a");
                 assert!(matches!(s.overlay, Some(Overlay::Submit(_))));
                 press(&mut s, "<Tab>");
                 let cmds = ctrl(&mut s, 's');
@@ -3761,9 +3877,9 @@ mod tests {
 
                 // Make it a file comment and submit again.
                 press(&mut s, "<Esc>");
-                press(&mut s, "C");
+                act(&mut s, Action::FileComment);
                 assert_eq!(s.diffs[&pr].review.pending[0].line, None);
-                press(&mut s, "s");
+                press(&mut s, "a");
                 ctrl(&mut s, 's');
                 update(
                     &mut s,
@@ -3784,7 +3900,7 @@ mod tests {
             #[test]
             fn request_changes_needs_a_summary() {
                 let (mut s, _) = diff_state(120);
-                press(&mut s, "s");
+                press(&mut s, "a");
                 press(&mut s, "<Tab><Tab>");
                 assert!(ctrl(&mut s, 's').is_empty());
                 assert!(matches!(&s.overlay, Some(Overlay::Submit(d)) if d.error.is_some()));
@@ -3797,8 +3913,9 @@ mod tests {
                     &mut s,
                     Msg::ThreadsLoaded(pr.clone(), Ok(vec![thread("t", Some(14), false, false)])),
                 );
-                press(&mut s, "g)");
-                press(&mut s, "a");
+                press(&mut s, "g");
+                act(&mut s, Action::NextThread);
+                press(&mut s, "c");
                 type_text(&mut s, "Fixed");
                 let cmds = ctrl(&mut s, 's');
                 assert!(matches!(&cmds[..], [Cmd::Reply { body, .. }] if body == "Fixed"));
@@ -3818,7 +3935,7 @@ mod tests {
             fn suggestions_go_through_the_editor_with_a_preview() {
                 let (mut s, _) = diff_state(120);
                 to_line(&mut s, "origin");
-                let cmds = press(&mut s, "S");
+                let cmds = act(&mut s, Action::Suggest);
                 let Some(Cmd::Edit { purpose, text }) = cmds.into_iter().next() else {
                     panic!()
                 };
@@ -3840,7 +3957,7 @@ mod tests {
                 assert_eq!(preview.original, ["    pub fn origin() -> Self {"]);
                 // Unchanged text isn't a suggestion.
                 s.overlay = None;
-                let cmds = press(&mut s, "S");
+                let cmds = act(&mut s, Action::Suggest);
                 let Some(Cmd::Edit { purpose, text }) = cmds.into_iter().next() else {
                     panic!()
                 };

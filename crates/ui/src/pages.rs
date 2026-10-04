@@ -34,6 +34,8 @@ pub const SORT: &str = "ghtui:sort";
 pub const STATE: &str = "ghtui:state:";
 /// Switch branches.
 pub const BRANCH: &str = "ghtui:branch";
+/// Reply quoting a comment: `ghtui:quote:<author>\n<body>`.
+pub const QUOTE: &str = "ghtui:quote:";
 /// Find a file in the repository.
 pub const FIND_FILE: &str = "ghtui:files";
 
@@ -1177,6 +1179,7 @@ fn comment_box(
     base: Option<&LinkBase>,
     now: u64,
 ) {
+    let start = page.lines.len();
     let who = link_seg(page, author.to_owned(), url::user(author), Role::Strong);
     let right = badge
         .map(|b| {
@@ -1199,6 +1202,9 @@ fn comment_box(
         markdown::render(page, body, base, 0, Frame::Body);
     }
     page.box_bottom();
+    // The whole comment is a row: Enter quote-replies, as GitHub's `r` does.
+    let quote = page.link(format!("{QUOTE}{author}\n{body}"));
+    page.item(start, quote);
 }
 
 /// The line between timeline entries.

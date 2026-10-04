@@ -149,10 +149,21 @@ impl State {
             pages::SORT => cycle_sort(self),
             pages::BRANCH => self.open_finder(FinderKind::Branches),
             pages::FIND_FILE => self.open_finder(FinderKind::Files),
-            _ => match url.strip_prefix(pages::STATE) {
-                Some(state) => set_list_state(self, state),
-                None => self.go(Target::from_url(url)),
-            },
+            _ => {
+                if let Some(state) = url.strip_prefix(pages::STATE) {
+                    return set_list_state(self, state);
+                }
+                if let Some(quoted) = url.strip_prefix(pages::QUOTE) {
+                    let (author, body) = quoted.split_once('\n').unwrap_or((quoted, ""));
+                    let mut text = format!("> @{author} wrote:\n");
+                    for line in body.trim().lines() {
+                        text.push_str(&format!("> {line}\n"));
+                    }
+                    text.push('\n');
+                    return comment_with(self, &text);
+                }
+                self.go(Target::from_url(url))
+            }
         }
     }
 
@@ -250,43 +261,52 @@ fn reveal(p: &mut PageScreen, item: usize, height: usize) {
     }
 }
 
-/// `j`: the next row if it's near, else scroll on through the text.
+/// `↓`: more of the selected item if it continues below the screen; else
+/// the next item; else (past the last one) scroll on.
 fn next(p: &mut PageScreen, height: usize) {
     p.fresh = false;
-    let items = &p.page.items;
-    let candidate = match p.selected {
-        Some(i) => i + 1,
-        None => items
-            .iter()
-            .position(|it| it.start >= p.scroll)
-            .unwrap_or(items.len()),
-    };
-    if let Some(it) = items.get(candidate)
-        && it.start < p.scroll + height + STEP
-    {
-        p.selected = Some(candidate);
-        reveal(p, candidate, height);
-        return;
+    let bottom = p.scroll + height;
+    match p.selected {
+        Some(i) if p.page.items[i].end > bottom => scroll_by(p, STEP as i64, height),
+        Some(i) if i + 1 < p.page.items.len() => {
+            p.selected = Some(i + 1);
+            reveal(p, i + 1, height);
+        }
+        Some(_) => scroll_by(p, STEP as i64, height),
+        None => {
+            // Reading: pick up the first item that's on screen, else scroll.
+            match (0..p.page.items.len()).find(|&i| visible(p, i, height)) {
+                Some(i) => {
+                    p.selected = Some(i);
+                    reveal(p, i, height);
+                }
+                None => scroll_by(p, STEP as i64, height),
+            }
+        }
     }
-    scroll_by(p, STEP as i64, height);
 }
 
-/// `k`: the previous row if it's near, else scroll back through the text.
+/// `↑`: the mirror of [`next`].
 fn prev(p: &mut PageScreen, height: usize) {
     p.fresh = false;
-    let items = &p.page.items;
-    let candidate = match p.selected {
-        Some(i) => i.checked_sub(1),
-        None => items.iter().rposition(|it| it.end <= p.scroll + height),
-    };
-    if let Some(c) = candidate
-        && items[c].end + STEP > p.scroll
-    {
-        p.selected = Some(c);
-        reveal(p, c, height);
-        return;
+    match p.selected {
+        Some(i) if p.page.items[i].start < p.scroll => scroll_by(p, -(STEP as i64), height),
+        Some(i) if i > 0 => {
+            p.selected = Some(i - 1);
+            reveal(p, i - 1, height);
+        }
+        Some(_) => scroll_by(p, -(STEP as i64), height),
+        None => match (0..p.page.items.len())
+            .rev()
+            .find(|&i| visible(p, i, height))
+        {
+            Some(i) => {
+                p.selected = Some(i);
+                reveal(p, i, height);
+            }
+            None => scroll_by(p, -(STEP as i64), height),
+        },
     }
-    scroll_by(p, -(STEP as i64), height);
 }
 
 /// Scrolls; a selection that leaves the screen is dropped.
@@ -987,6 +1007,12 @@ pub fn set_starred(state: &mut State, repo: &RepoId, starred: bool) {
 }
 
 pub fn comment(state: &mut State) -> Vec<Cmd> {
+    comment_with(state, "")
+}
+
+/// Opens the composer on the issue or pull request on screen, starting
+/// with `text`.
+fn comment_with(state: &mut State, text: &str) -> Vec<Cmd> {
     let target = match state.route() {
         Some(Route::Issue { repo, number }) => {
             let key = DataKey::Issue(repo.clone(), *number);
@@ -1021,7 +1047,7 @@ pub fn comment(state: &mut State) -> Vec<Cmd> {
             name,
             refresh,
         },
-        "",
+        text,
     );
     state.overlay = Some(Overlay::Compose(Box::new(compose)));
     Vec::new()
@@ -1296,11 +1322,9 @@ impl State {
                     None => open.unavailable = Some("nothing is selected".into()),
                 }
                 out.push(open);
-                out.push(doable(
-                    Action::Hints,
-                    "Follow a link by its letters",
-                    "links",
-                ));
+                if !self.chrome().tabs.is_empty() {
+                    out.push(doable(Action::NextTab, "Next tab", "tabs"));
+                }
                 let route = &p.route;
                 let list = matches!(
                     route,
@@ -1357,9 +1381,6 @@ impl State {
                     }
                     out.push(doable(Action::Tab4, "Files changed (review)", "files"));
                 }
-                if !self.chrome().tabs.is_empty() {
-                    out.push(doable(Action::NextTab, "Next tab", "tab"));
-                }
                 out.push(doable(
                     Action::OpenInBrowser,
                     if selected.is_some() {
@@ -1378,6 +1399,12 @@ impl State {
                     },
                     "copy link",
                 ));
+                out.push(doable(
+                    Action::Hints,
+                    "Follow any link by its letters",
+                    "links",
+                ));
+                out.push(doable(Action::UpLevel, "Up a level", ""));
                 out.push(doable(Action::Refresh, "Refresh", "refresh"));
                 let mut back = doable(Action::Back, "Back", "back");
                 if self.screens.len() < 2 {
@@ -1400,11 +1427,12 @@ impl State {
             Screen::Diff(_) => {
                 // The status bar's few, then everything else the diff does.
                 let hinted = [
-                    (Action::NextHunk, "hunk"),
+                    (Action::NextHunk, "change"),
                     (Action::NextFile, "file"),
                     (Action::ToggleViewed, "viewed"),
                     (Action::Comment, "comment"),
-                    (Action::SubmitReview, "submit"),
+                    (Action::SubmitReview, "submit review"),
+                    (Action::NextTab, "tabs"),
                     (Action::FindFile, "go to file"),
                 ];
                 for (action, short) in hinted {
@@ -1477,12 +1505,29 @@ impl State {
             if d.action == Action::Help || d.short.is_empty() {
                 continue;
             }
-            out.push((self.first_key(d.action), d.short.to_owned()));
+            // Pairs read as one hint.
+            let key = match d.action {
+                Action::NextTab => Some("←→".to_owned()),
+                Action::NextHunk => Some("n/p".to_owned()),
+                Action::NextFile => Some("⇧↓".to_owned()),
+                action => self.key_here(action),
+            };
+            if let Some(key) = key {
+                out.push((key, d.short.to_owned()));
+            }
         }
         out.truncate(7);
         out.push((self.first_key(Action::Menu), "more".into()));
         out.push((self.first_key(Action::Help), "keys".into()));
         out
+    }
+
+    /// The first key that runs `action` on this screen, if any.
+    pub fn key_here(&self, action: Action) -> Option<String> {
+        self.keymap
+            .keys_in(action, self.scope())
+            .first()
+            .map(|k| crate::keymap::pretty(k))
     }
 
     /// Keys that can follow the pending prefix (which-key).
@@ -1512,6 +1557,7 @@ fn describe(url: &str) -> String {
         pages::SORT => "Change the sort".into(),
         pages::BRANCH => "Switch branches".into(),
         pages::FIND_FILE => "Go to file".into(),
+        u if u.starts_with(pages::QUOTE) => "Quote reply".into(),
         _ => match Target::from_url(url) {
             Target::Page(r) => format!("Open {}", r.title()),
             Target::Files(pr) => format!("Review {pr}'s files"),
@@ -1539,7 +1585,7 @@ impl State {
         menu.rows
             .iter()
             .map(|d| KeyRow {
-                key: self.first_key(d.action),
+                key: self.key_here(d.action).unwrap_or_default(),
                 label: match &d.unavailable {
                     Some(why) => format!("{} ({why})", d.label),
                     None => d.label.clone(),

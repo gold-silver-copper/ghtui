@@ -407,7 +407,7 @@ fn quick_ways_around_dark() {
         count: 3,
         last: NOW - 600,
     }];
-    update(&mut state, Msg::Key(key(KeyCode::Char('f'))));
+    update(&mut state, Msg::Key(key(KeyCode::Char('l'))));
     insta::assert_snapshot!("hints_dark", render(&state));
     update(&mut state, Msg::Key(key(KeyCode::Esc)));
     update(&mut state, Msg::Key(key(KeyCode::Char('/'))));
@@ -417,7 +417,7 @@ fn quick_ways_around_dark() {
     }
     insta::assert_snapshot!("search_typed_dark", render(&state));
     update(&mut state, Msg::Key(key(KeyCode::Esc)));
-    update(&mut state, Msg::Key(key(KeyCode::Char('.'))));
+    update(&mut state, Msg::Key(key(KeyCode::Char(' '))));
     insta::assert_snapshot!("menu_dark", render(&state));
     update(&mut state, Msg::Key(key(KeyCode::Esc)));
     update(&mut state, Msg::Key(key(KeyCode::Char('g'))));
@@ -427,7 +427,7 @@ fn quick_ways_around_dark() {
 #[test]
 fn go_to_file_light() {
     let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
-    update(&mut state, Msg::Key(key(KeyCode::Char('t'))));
+    update(&mut state, Msg::Key(key(KeyCode::Char('f'))));
     fetched(
         &mut state,
         DataKey::Files(ghtui(), "main".into()),
@@ -1279,7 +1279,7 @@ fn screenshots() {
             count: 3,
             last: NOW,
         }];
-        update(&mut s, Msg::Key(key(KeyCode::Char('f'))));
+        update(&mut s, Msg::Key(key(KeyCode::Char('l'))));
         shot(&format!("hints_{tag}"), &s);
         update(&mut s, Msg::Key(key(KeyCode::Esc)));
         update(&mut s, Msg::Key(key(KeyCode::Char('/'))));
@@ -1288,7 +1288,7 @@ fn screenshots() {
         }
         shot(&format!("search_box_{tag}"), &s);
         update(&mut s, Msg::Key(key(KeyCode::Esc)));
-        update(&mut s, Msg::Key(key(KeyCode::Char('.'))));
+        update(&mut s, Msg::Key(key(KeyCode::Char(' '))));
         shot(&format!("menu_{tag}"), &s);
         update(&mut s, Msg::Key(key(KeyCode::Esc)));
         update(&mut s, Msg::Key(key(KeyCode::Char('?'))));

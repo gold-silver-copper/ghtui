@@ -191,10 +191,13 @@ impl Action {
             | Action::Tab4
             | Action::Forward
             | Action::Copy
-            | Action::Menu => Scope::Global,
-            Action::NextTab
+            | Action::Menu
+            | Action::NextTab
             | Action::PrevTab
-            | Action::GoCode
+            | Action::PageDown
+            | Action::PageUp
+            | Action::UpLevel => Scope::Global,
+            Action::GoCode
             | Action::Star
             | Action::Hints
             | Action::HintsBrowser
@@ -202,10 +205,7 @@ impl Action {
             | Action::ToggleState
             | Action::Sort
             | Action::ScrollDown
-            | Action::ScrollUp
-            | Action::PageDown
-            | Action::PageUp
-            | Action::UpLevel => Scope::Page,
+            | Action::ScrollUp => Scope::Page,
             _ => Scope::Diff,
         }
     }
@@ -359,53 +359,53 @@ impl Action {
 
     fn defaults(self) -> &'static [&'static str] {
         match self {
-            Action::Down => &["j", "<Down>"],
-            Action::Up => &["k", "<Up>"],
+            Action::Down => &["<Down>", "j"],
+            Action::Up => &["<Up>", "k"],
             Action::HalfPageDown => &["<C-d>"],
             Action::HalfPageUp => &["<C-u>"],
-            Action::Top => &["g", "<Home>"],
-            Action::Bottom => &["G", "<End>"],
-            Action::Open => &["<Enter>", "page:l", "page:<Right>"],
-            Action::Back => &["<Esc>", "<BS>", "page:h", "page:<Left>", "page:["],
+            Action::Top => &["<Home>", "g"],
+            Action::Bottom => &["<End>", "G"],
+            Action::Open => &["<Enter>"],
+            Action::Back => &["<Esc>", "<BS>"],
             Action::Close => &[],
             Action::Quit => &["q", "<C-c>"],
-            Action::Refresh => &["r", "<C-r>"],
+            Action::Refresh => &["r"],
             Action::OpenInBrowser => &["o"],
             Action::CommandPalette => &[":", "<C-k>"],
             Action::Help => &["?"],
-            Action::NextHunk => &["}"],
-            Action::PrevHunk => &["{"],
-            Action::NextFile => &["]"],
-            Action::PrevFile => &["["],
-            Action::ToggleTree => &["e"],
-            Action::SwitchPane => &["<Tab>", "<C-w>"],
-            Action::ToggleSplit => &["|"],
+            Action::NextHunk => &["n"],
+            Action::PrevHunk => &["p"],
+            Action::NextFile => &["<S-Down>"],
+            Action::PrevFile => &["<S-Up>"],
+            Action::ToggleTree => &[],
+            Action::SwitchPane => &["<Tab>"],
+            Action::ToggleSplit => &[],
             Action::IgnoreWhitespace => &["w"],
-            Action::ExpandContext => &["x"],
-            Action::FullFile => &["F"],
+            Action::ExpandContext => &["e"],
+            Action::FullFile => &[],
             Action::ToggleViewed => &["v"],
-            Action::NextUnviewed => &["u"],
+            Action::NextUnviewed => &[],
             Action::MarkReviewed => &["m"],
-            Action::Search => &["/", "page:s"],
-            Action::SearchNext => &["n"],
-            Action::SearchPrev => &["N"],
-            Action::FindFile => &["t"],
+            Action::Search => &["/"],
+            Action::SearchNext => &[],
+            Action::SearchPrev => &[],
+            Action::FindFile => &["f"],
             Action::Comment => &["c"],
-            Action::VisualLines => &["V"],
-            Action::Suggest => &["S"],
-            Action::ReplyThread => &["a"],
-            Action::ResolveThread => &["R"],
-            Action::DeleteDraft => &["D"],
-            Action::FileComment => &["C"],
-            Action::SubmitReview => &["s"],
-            Action::NextThread => &[")"],
-            Action::PrevThread => &["("],
-            Action::ToggleSinceReview => &["L"],
-            Action::JumpMove => &["M"],
-            Action::PickCommits => &["p"],
-            Action::NextTab => &["<Tab>"],
-            Action::PrevTab => &["<S-Tab>"],
-            Action::GoHome => &["H"],
+            Action::VisualLines => &["x"],
+            Action::Suggest => &[],
+            Action::ReplyThread => &[],
+            Action::ResolveThread => &[],
+            Action::DeleteDraft => &["<Delete>"],
+            Action::FileComment => &[],
+            Action::SubmitReview => &["a"],
+            Action::NextThread => &[],
+            Action::PrevThread => &[],
+            Action::ToggleSinceReview => &[],
+            Action::JumpMove => &[],
+            Action::PickCommits => &[],
+            Action::NextTab => &["<Right>"],
+            Action::PrevTab => &["<Left>"],
+            Action::GoHome => &["h"],
             Action::GoCode => &[],
             Action::GoIssues => &[],
             Action::GoPulls => &[],
@@ -413,19 +413,19 @@ impl Action {
             Action::Tab2 => &["2"],
             Action::Tab3 => &["3"],
             Action::Tab4 => &["4"],
-            Action::Star => &["*"],
-            Action::Hints => &["f"],
-            Action::HintsBrowser => &["F"],
-            Action::Forward => &["page:]"],
+            Action::Star => &["s"],
+            Action::Hints => &["l"],
+            Action::HintsBrowser => &[],
+            Action::Forward => &[],
             Action::Copy => &["y"],
-            Action::Menu => &["."],
-            Action::Branch => &["w"],
-            Action::ToggleState => &["S"],
-            Action::Sort => &["O"],
-            Action::ScrollDown => &["J"],
-            Action::ScrollUp => &["K"],
-            Action::PageDown => &["<Space>", "<PageDown>"],
-            Action::PageUp => &["b", "<PageUp>"],
+            Action::Menu => &["<Space>"],
+            Action::Branch => &["b"],
+            Action::ToggleState => &[],
+            Action::Sort => &[],
+            Action::ScrollDown => &[],
+            Action::ScrollUp => &[],
+            Action::PageDown => &["<PageDown>"],
+            Action::PageUp => &["<PageUp>"],
             Action::UpLevel => &["u"],
         }
     }
@@ -475,6 +475,8 @@ const NAMED: &[(&str, KeyCode)] = &[
     ("PageDown", KeyCode::PageDown),
     ("Home", KeyCode::Home),
     ("End", KeyCode::End),
+    ("Delete", KeyCode::Delete),
+    ("Del", KeyCode::Delete),
     ("lt", KeyCode::Char('<')),
 ];
 
@@ -718,6 +720,7 @@ pub fn pretty(keys: &[Key]) -> String {
                 KeyCode::PageDown => "pgdn".to_owned(),
                 KeyCode::Home => "home".to_owned(),
                 KeyCode::End => "end".to_owned(),
+                KeyCode::Delete => "del".to_owned(),
                 KeyCode::F(n) => format!("f{n}"),
                 KeyCode::Char(c) => c.to_string(),
                 code => format!("{code:?}").to_lowercase(),
@@ -726,6 +729,8 @@ pub fn pretty(keys: &[Key]) -> String {
                 format!("ctrl-{base}")
             } else if k.mods.contains(KeyModifiers::ALT) {
                 format!("alt-{base}")
+            } else if k.mods.contains(KeyModifiers::SHIFT) {
+                format!("⇧{base}")
             } else {
                 base
             }
@@ -820,29 +825,27 @@ mod tests {
     }
 
     #[test]
-    fn scopes_share_keys() {
+    fn every_key_means_one_thing_everywhere() {
         let keymap = Keymap::default();
-        assert_eq!(
-            keymap.resolve(&[key('f')], Scope::Page),
-            Resolution::Action(Action::Hints)
-        );
-        assert_eq!(
-            keymap.resolve(&[key('s')], Scope::Diff),
-            Resolution::Action(Action::SubmitReview)
-        );
-        assert_eq!(
-            keymap.resolve(&[key('s')], Scope::Page),
-            Resolution::Action(Action::Search),
-            "GitHub's s"
-        );
-        assert_eq!(
-            keymap.resolve(&[key('h')], Scope::Page),
-            Resolution::Action(Action::Back)
-        );
-        assert_eq!(
-            keymap.resolve(&[key('h')], Scope::Diff),
-            Resolution::Unbound
-        );
+        for (i, (a, action_a, _)) in keymap.bindings.iter().enumerate() {
+            for (b, action_b, _) in &keymap.bindings[i + 1..] {
+                assert!(
+                    a != b,
+                    "{} is both {} and {}",
+                    format_sequence(a),
+                    action_a.name(),
+                    action_b.name()
+                );
+            }
+        }
+        // The verbs do the same on a page and in the diff.
+        for c in ['f', 'c', 'o', 'y', '/', 'u'] {
+            assert_eq!(
+                keymap.resolve(&[key(c)], Scope::Page),
+                keymap.resolve(&[key(c)], Scope::Diff),
+                "{c}"
+            );
+        }
         // A page key can't shadow a global one.
         let clash = HashMap::from([("star".to_owned(), vec!["q".to_owned()])]);
         assert!(
@@ -850,7 +853,7 @@ mod tests {
                 .unwrap_err()
                 .contains("conflicts")
         );
-        // Config can scope a binding too.
+        // Config can scope a binding.
         let scoped = HashMap::from([("star".to_owned(), vec!["page:z".to_owned()])]);
         assert!(Keymap::with_overrides(&scoped).is_ok());
     }
