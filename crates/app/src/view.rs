@@ -127,6 +127,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             title: &title,
             rows: &next_keys,
             selected: None,
+            position: None,
         }
         .render(area, buf);
     }
@@ -197,11 +198,16 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
         }
         Some(Overlay::Menu(menu)) => {
             let (rows, selected) = state.menu_rows(menu);
+            let title = match &menu.filter {
+                Some(query) => format!("Here you can: /{query}▏"),
+                None => "Here you can".to_owned(),
+            };
             KeyPanel {
                 ctx,
-                title: "Here you can",
+                title: &title,
                 rows: &rows,
                 selected: Some(selected),
+                position: Some((menu.selected + 1, menu.shown().len())),
             }
             .render(area, buf);
         }

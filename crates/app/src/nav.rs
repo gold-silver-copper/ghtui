@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ghtui_api::browse::{RepoSummary, SearchKind};
 use ghtui_api::model::RepoId;
 use ghtui_theme::{Bg, Theme};
@@ -1190,10 +1190,18 @@ impl State {
             Some(Overlay::Hints(_)) => {
                 return vec![pair("a-z", "type a link's letters"), pair("esc", "cancel")];
             }
+            Some(Overlay::Menu(menu)) if menu.filter.is_some() => {
+                return vec![
+                    pair("↵", "run"),
+                    pair("↑↓", "choose"),
+                    pair("esc", "stop filtering"),
+                ];
+            }
             Some(Overlay::Menu(_)) => {
                 return vec![
                     pair("↵", "run"),
                     pair("key", "run it"),
+                    (self.first_key(Action::Search), "filter".into()),
                     pair("esc", "close"),
                 ];
             }
@@ -1269,16 +1277,43 @@ fn describe(url: &str) -> String {
 
 pub struct Menu {
     pub rows: Vec<Doable>,
+    /// Into [`Menu::shown`].
     pub selected: usize,
+    /// Typed after `/`: only matching rows show.
+    pub filter: Option<String>,
+}
+
+impl Menu {
+    /// The rows the filter lets through, in order.
+    pub fn shown(&self) -> Vec<&Doable> {
+        let query = self.filter.as_deref().unwrap_or_default();
+        self.rows
+            .iter()
+            .filter(|d| {
+                crate::picker::fuzzy_score(query, &d.label).is_some()
+                    || crate::picker::fuzzy_score(query, d.action.description()).is_some()
+            })
+            .collect()
+    }
+
+    /// Selects the first row that can run, after the filter changed.
+    fn reselect(&mut self) {
+        self.selected = self
+            .shown()
+            .iter()
+            .position(|d| d.unavailable.is_none())
+            .unwrap_or(0);
+    }
 }
 
 pub fn open_menu(state: &mut State) {
-    let rows = state.doables();
-    let selected = rows
-        .iter()
-        .position(|d| d.unavailable.is_none())
-        .unwrap_or(0);
-    state.overlay = Some(Overlay::Menu(Box::new(Menu { rows, selected })));
+    let mut menu = Menu {
+        rows: state.doables(),
+        selected: 0,
+        filter: None,
+    };
+    menu.reselect();
+    state.overlay = Some(Overlay::Menu(Box::new(menu)));
 }
 
 impl State {
@@ -1287,7 +1322,7 @@ impl State {
         let mut rows = Vec::new();
         let mut selected = 0;
         let mut previous = None;
-        for (i, d) in menu.rows.iter().enumerate() {
+        for (i, d) in menu.shown().into_iter().enumerate() {
             if previous != Some(d.section) {
                 previous = Some(d.section);
                 rows.push(KeyRow::heading(d.section));
@@ -1311,25 +1346,46 @@ impl State {
 pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let scope = state.scope();
     let pressed = [crate::keymap::Key::from(key)];
-    let toggle = state.keymap.resolve(&pressed, scope) == Resolution::Action(Action::Menu);
+    let action = match state.keymap.resolve(&pressed, scope) {
+        Resolution::Action(action) => Some(action),
+        _ => None,
+    };
     let Some(Overlay::Menu(menu)) = &mut state.overlay else {
         return Vec::new();
     };
-    let last = menu.rows.len().saturating_sub(1);
-    let run = match key.code {
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left => None,
-        _ if toggle => None,
-        KeyCode::Down | KeyCode::Char('j') => {
+    let last = menu.shown().len().saturating_sub(1);
+    let typed = !key.modifiers.contains(KeyModifiers::CONTROL);
+    let run = match (&mut menu.filter, key.code) {
+        (_, KeyCode::Down) | (None, KeyCode::Char('j')) => {
             menu.selected = (menu.selected + 1).min(last);
             return Vec::new();
         }
-        KeyCode::Up | KeyCode::Char('k') => {
+        (_, KeyCode::Up) | (None, KeyCode::Char('k')) => {
             menu.selected = menu.selected.saturating_sub(1);
             return Vec::new();
         }
-        KeyCode::Enter | KeyCode::Right => menu.rows.get(menu.selected).cloned(),
+        (_, KeyCode::Enter) | (None, KeyCode::Right) => {
+            menu.shown().get(menu.selected).map(|d| (*d).clone())
+        }
+        // Filtering: letters narrow the list instead of running rows.
+        (Some(query), code) => {
+            match code {
+                KeyCode::Char(c) if typed => query.push(c),
+                KeyCode::Backspace if query.pop().is_some() => {}
+                KeyCode::Backspace | KeyCode::Esc => menu.filter = None,
+                _ => return Vec::new(),
+            }
+            menu.reselect();
+            return Vec::new();
+        }
+        (None, _) if action == Some(Action::Search) => {
+            menu.filter = Some(String::new());
+            return Vec::new();
+        }
+        (None, KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left) => None,
+        (None, _) if action == Some(Action::Menu) => None,
         // A row's own key runs it.
-        _ => {
+        (None, _) => {
             let row = menu.rows.iter().find(|d| {
                 state
                     .keymap
@@ -1343,7 +1399,12 @@ pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             }
         }
     };
-    let Some(d) = run else {
+    run_menu_row(state, run)
+}
+
+/// Runs a menu row (`None` closes the menu).
+fn run_menu_row(state: &mut State, row: Option<Doable>) -> Vec<Cmd> {
+    let Some(d) = row else {
         state.overlay = None;
         return Vec::new();
     };

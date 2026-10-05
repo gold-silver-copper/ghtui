@@ -2725,6 +2725,34 @@ mod tests {
         assert_eq!(page(&state).scroll, before + 3);
     }
 
+    /// `/` filters the menu; letters then narrow it instead of running
+    /// rows, and Esc stops filtering before it closes the menu.
+    #[test]
+    fn the_menu_filters_as_you_type() {
+        let mut state = with_repo();
+        press(&mut state, "<Space>/");
+        press(&mut state, "go to f");
+        let Some(Overlay::Menu(menu)) = &state.overlay else {
+            panic!("no menu")
+        };
+        let shown: Vec<&str> = menu.shown().iter().map(|d| d.label.as_str()).collect();
+        assert_eq!(shown, ["Go to file"]);
+        press(&mut state, "<Esc>");
+        let Some(Overlay::Menu(menu)) = &state.overlay else {
+            panic!("Esc stopped filtering, not the menu")
+        };
+        assert!(menu.filter.is_none() && menu.shown().len() > 1);
+        press(&mut state, "/gotofile");
+        let cmds = press(&mut state, "<Enter>");
+        assert!(
+            state
+                .overlay
+                .as_ref()
+                .is_none_or(|o| !matches!(o, Overlay::Menu(_)))
+        );
+        assert!(!cmds.is_empty() || matches!(state.overlay, Some(Overlay::Picker(_))));
+    }
+
     #[test]
     fn the_menu_lists_and_runs_what_you_can_do() {
         let mut state = with_repo();

@@ -472,6 +472,9 @@ pub struct KeyPanel<'a> {
     pub title: &'a str,
     pub rows: &'a [KeyRow],
     pub selected: Option<usize>,
+    /// Where the selection is among the items (`3/40`), shown when they
+    /// don't all fit.
+    pub position: Option<(usize, usize)>,
 }
 
 impl KeyPanel<'_> {
@@ -515,9 +518,29 @@ impl Widget for KeyPanel<'_> {
         fill(buf, area, theme, PANEL);
         let key_w = self.key_width();
         let inner_w = area.width.saturating_sub(4);
-        Span::styled(self.title, theme.title(PANEL))
-            .render(Rect::new(area.x.saturating_add(2), area.y, inner_w, 1), buf);
+        let title_row = Rect::new(area.x.saturating_add(2), area.y, inner_w, 1);
         let rows = usize::from(area.height.saturating_sub(3));
+        let position = self
+            .position
+            .filter(|_| self.rows.len() > rows)
+            .map(|(at, of)| format!("{at}/{of}"))
+            .unwrap_or_default();
+        let position_w = cols(text::width(&position));
+        Span::styled(self.title, theme.title(PANEL)).render(
+            Rect {
+                width: inner_w.saturating_sub(position_w.saturating_add(1)),
+                ..title_row
+            },
+            buf,
+        );
+        Span::styled(position, theme.meta(PANEL)).render(
+            Rect {
+                x: title_row.right().saturating_sub(position_w),
+                width: position_w,
+                ..title_row
+            },
+            buf,
+        );
         let skip = self
             .selected
             .map_or(0, |s| s.saturating_add(1).saturating_sub(rows));
