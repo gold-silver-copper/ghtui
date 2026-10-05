@@ -21,6 +21,7 @@ futures = "0.3"
 ratatui.workspace = true
 ratatui-textarea.workspace = true
 serde.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
@@ -31,4 +32,3 @@ url.workspace = true
 [dev-dependencies]
 ghtui-git.workspace = true
 insta.workspace = true
-tempfile.workspace = true

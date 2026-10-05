@@ -837,6 +837,18 @@ async fn submit_review(
     outcome
 }
 
+/// A temporary file holding `text` for the editor: created exclusively
+/// (never through a symlink someone planted), readable only by you, and
+/// removed when dropped.
+fn draft_file(text: &str) -> std::io::Result<tempfile::NamedTempFile> {
+    let mut file = tempfile::Builder::new()
+        .prefix("ghtui-")
+        .suffix(".md")
+        .tempfile()?;
+    std::io::Write::write_all(&mut file, text.as_bytes())?;
+    Ok(file)
+}
+
 /// Suspends the TUI and edits `text` in `$VISUAL`/`$EDITOR` (default `vi`).
 /// Terminal input is released for the editor and taken back after.
 async fn edit_externally(
@@ -847,13 +859,9 @@ async fn edit_externally(
     use crossterm::ExecutableCommand;
     // Stop reading keys so the editor gets them.
     drop(events);
-    let path = std::env::temp_dir().join(format!(
-        "ghtui-{}-{}.md",
-        std::process::id(),
-        ghtui_store::now()
-    ));
     let result = async {
-        std::fs::write(&path, text).map_err(|e| e.to_string())?;
+        let file = draft_file(text).map_err(|e| e.to_string())?;
+        let path = file.path().to_owned();
         crate::set_mouse(false);
         ratatui::restore();
         let editor = std::env::var("VISUAL")
@@ -879,6 +887,7 @@ async fn edit_externally(
             tracing::error!(%err, "couldn't restore the terminal after the editor");
         }
         match status {
+            // By path: editors may replace the file rather than write it.
             Ok(status) if status.success() => {
                 std::fs::read_to_string(&path).map_err(|e| e.to_string())
             }
@@ -887,7 +896,6 @@ async fn edit_externally(
         }
     }
     .await;
-    let _ = std::fs::remove_file(&path);
     (EventStream::new(), result)
 }
 
@@ -912,6 +920,18 @@ mod tests {
             rx.recv().await,
             Some(Msg::ThreadsLoaded(p, Err(ApiError::Internal(_)))) if p == pr
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drafts_for_the_editor_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let a = draft_file("secret").unwrap();
+        let b = draft_file("secret").unwrap();
+        assert_ne!(a.path(), b.path());
+        let mode = std::fs::metadata(a.path()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o077, 0, "{mode:o}");
+        assert_eq!(std::fs::read_to_string(a.path()).unwrap(), "secret");
     }
 
     #[tokio::test]
