@@ -14,7 +14,7 @@ use ghtui_ui::Icons;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use ghtui_ui::pages::{PrTab, ProfileTab};
+use ghtui_ui::pages::ProfileTab;
 
 use crate::browse::{Data, DataKey, Need, needs};
 use crate::fixtures::{self, fetched, press};
@@ -157,10 +157,7 @@ fn with_inbox(mode: Mode, depth: ColorDepth) -> State {
 fn with_pr(mode: Mode) -> State {
     let mut state = with_inbox(mode, ColorDepth::TrueColor);
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    let _ = state.push(Route::Pr {
-        pr: pr.clone(),
-        tab: PrTab::Conversation,
-    });
+    let _ = state.push(Route::pr(pr.clone()));
     update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(pr_detail()))));
     fetched(
         &mut state,

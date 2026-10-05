@@ -222,10 +222,7 @@ impl State {
                 "Conversation",
                 activity.map(|a| a.comments.len() as u64),
             ),
-            Target::Page(Route::Pr {
-                pr: pr.clone(),
-                tab: PrTab::Conversation,
-            }),
+            Target::Page(Route::pr(pr.clone())),
         ));
         c.tabs.push((
             new_tab("◷", "Commits", activity.map(|a| a.commits.len() as u64)),
