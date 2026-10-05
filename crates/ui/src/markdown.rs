@@ -501,19 +501,15 @@ impl Renderer<'_> {
                 *w = (*w).max(width(cell)).min(40);
             }
         }
-        for (r, row) in rows.iter().enumerate() {
+        for (r, row) in rows.into_iter().enumerate() {
             let mut segs = Vec::new();
-            for (c, (cell, w)) in row.iter().zip(&widths).enumerate() {
+            for (c, (mut cell, w)) in row.into_iter().zip(&widths).enumerate() {
                 if c > 0 {
                     segs.push(Seg::new(" │ ", Role::Meta));
                 }
-                let mut cell = cell.clone();
-                if r == 0 {
-                    for s in &mut cell {
-                        if s.role == Role::Body {
-                            s.role = Role::Strong;
-                        }
-                    }
+                // The header row is bold.
+                for s in cell.iter_mut().filter(|s| r == 0 && s.role == Role::Body) {
+                    s.role = Role::Strong;
                 }
                 let pad = w.saturating_sub(width(&cell));
                 segs.extend(cell);
