@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::{Ctx, PAD_X, cols, fill, label_hint, list_row, put, text};
+use crate::{Ctx, PAD_X, cols, fill, label_hint, list_row, put, render_split, text};
 
 const BAR: Bg = Bg::Container;
 const FIELD: Bg = Bg::ContainerHighest;
@@ -517,30 +517,21 @@ impl Widget for KeyPanel<'_> {
         let area = self.area(screen);
         fill(buf, area, theme, PANEL);
         let key_w = self.key_width();
-        let inner_w = area.width.saturating_sub(4);
-        let title_row = Rect::new(area.x.saturating_add(2), area.y, inner_w, 1);
+        let title_row = Rect::new(
+            area.x.saturating_add(2),
+            area.y,
+            area.width.saturating_sub(4),
+            1,
+        );
         let rows = usize::from(area.height.saturating_sub(3));
         let position = self
             .position
             .filter(|_| self.rows.len() > rows)
             .map(|(at, of)| format!("{at}/{of}"))
             .unwrap_or_default();
-        let position_w = cols(text::width(&position));
-        Span::styled(self.title, theme.title(PANEL)).render(
-            Rect {
-                width: inner_w.saturating_sub(position_w.saturating_add(1)),
-                ..title_row
-            },
-            buf,
-        );
-        Span::styled(position, theme.meta(PANEL)).render(
-            Rect {
-                x: title_row.right().saturating_sub(position_w),
-                width: position_w,
-                ..title_row
-            },
-            buf,
-        );
+        let title = vec![Span::styled(self.title, theme.title(PANEL))];
+        let position = vec![Span::styled(position, theme.meta(PANEL))];
+        render_split(title_row, buf, title, position, 1);
         let skip = self
             .selected
             .map_or(0, |s| s.saturating_add(1).saturating_sub(rows));
