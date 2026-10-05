@@ -135,17 +135,16 @@ pub fn xterm_color(index: u8) -> Rgb {
 pub fn nearest_xterm(c: Rgb) -> u8 {
     const LIGHTNESS_WEIGHT: f64 = 3.0;
     let target = Lab::from(McRgb::from(c));
-    let mut best = (f64::INFINITY, 16u8);
-    for index in 16..=255u8 {
+    let distance = |index| {
         let lab = Lab::from(McRgb::from(xterm_color(index)));
-        let d = (LIGHTNESS_WEIGHT * (lab.l - target.l)).powi(2)
+        (LIGHTNESS_WEIGHT * (lab.l - target.l)).powi(2)
             + (lab.a - target.a).powi(2)
-            + (lab.b - target.b).powi(2);
-        if d < best.0 {
-            best = (d, index);
-        }
-    }
-    best.1
+            + (lab.b - target.b).powi(2)
+    };
+    (16..=255u8)
+        .map(|index| (distance(index), index))
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map_or(16, |(_, index)| index)
 }
 
 #[cfg(test)]
