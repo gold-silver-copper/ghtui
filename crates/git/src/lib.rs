@@ -38,6 +38,8 @@ pub enum GitError {
     Version(String),
     #[error("unexpected git output: {0}")]
     Parse(String),
+    #[error("git {what} stalled (no progress for {secs}s)")]
+    Stalled { what: String, secs: u64 },
 }
 
 /// A configured remote.
@@ -56,8 +58,8 @@ pub struct GitHubRepo {
 
 /// A `git` command with a predictable environment: never prompts (a prompt
 /// would hang behind the TUI, so HTTPS prompts are off and SSH runs in batch
-/// mode unless the user configured their own SSH command) and uses
-/// untranslated output.
+/// mode unless the user configured their own SSH command), gives up on a
+/// dead connection instead of waiting forever, and uses untranslated output.
 pub(crate) fn git(dir: Option<&Path>) -> Command {
     let mut cmd = Command::new("git");
     if let Some(dir) = dir {
@@ -67,8 +69,20 @@ pub(crate) fn git(dir: Option<&Path>) -> Command {
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .kill_on_drop(true);
+    // HTTPS: abort when under 1 KB/s for a minute.
+    for (key, value) in [
+        ("GIT_HTTP_LOW_SPEED_LIMIT", "1000"),
+        ("GIT_HTTP_LOW_SPEED_TIME", "60"),
+    ] {
+        if std::env::var_os(key).is_none() {
+            cmd.env(key, value);
+        }
+    }
     if std::env::var_os("GIT_SSH_COMMAND").is_none() && std::env::var_os("GIT_SSH").is_none() {
-        cmd.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+        cmd.env(
+            "GIT_SSH_COMMAND",
+            "ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4",
+        );
     }
     cmd
 }

@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
@@ -268,15 +269,16 @@ impl Repo {
         }
         let lock = repo_lock(&self.path);
         let _guard = lock.lock().await;
-        self.run(&[
+        let args = [
             "fetch",
             "--no-tags",
             "--no-write-fetch-head",
             &self.remote,
             sha,
-        ])
-        .await
-        .map(drop)
+        ];
+        deadline("fetch", Duration::from_secs(120), self.run(&args))
+            .await
+            .map(drop)
     }
 
     /// Files changed from `from` to `to`, with rename detection. In a
@@ -339,7 +341,8 @@ impl Repo {
             "--stdin",
             &self.remote,
         ]);
-        run_with_stdin(cmd, "fetch --stdin", missing.join("\n") + "\n").await?;
+        let fetch = run_with_stdin(cmd, "fetch --stdin", missing.join("\n") + "\n");
+        deadline("fetch --stdin", Duration::from_secs(600), fetch).await?;
         Ok(missing.len())
     }
 
@@ -400,16 +403,45 @@ async fn run_with_stdin(mut cmd: Command, what: &str, input: String) -> Result<S
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Runs `cmd`, reporting the latest `--progress` line from stderr.
+/// `run`, abandoned (and its git killed) after `limit`.
+async fn deadline<T>(
+    what: &str,
+    limit: Duration,
+    run: impl Future<Output = Result<T, GitError>>,
+) -> Result<T, GitError> {
+    tokio::time::timeout(limit, run).await.unwrap_or_else(|_| {
+        Err(GitError::Stalled {
+            what: what.to_owned(),
+            secs: limit.as_secs(),
+        })
+    })
+}
+
+/// How long a network operation may go without printing progress before
+/// it's given up on.
+const STALL: Duration = Duration::from_secs(180);
+
+/// Runs `cmd`, reporting the latest `--progress` line from stderr, and
+/// gives up if it goes quiet for [`STALL`].
 async fn run_with_progress(
-    mut cmd: Command,
+    cmd: Command,
     what: &str,
     progress: Progress<'_>,
 ) -> Result<String, GitError> {
+    run_watched(cmd, what, progress, STALL).await
+}
+
+async fn run_watched(
+    mut cmd: Command,
+    what: &str,
+    progress: Progress<'_>,
+    stall: Duration,
+) -> Result<String, GitError> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
-    let mut stderr = child.stderr.take().expect("piped stderr");
-    let mut stdout = child.stdout.take().expect("piped stdout");
+    let (Some(mut stderr), Some(mut stdout)) = (child.stderr.take(), child.stdout.take()) else {
+        return Err(GitError::Parse(format!("git {what} has no pipes")));
+    };
     let out_task = tokio::spawn(async move {
         let mut buf = Vec::new();
         let _ = stdout.read_to_end(&mut buf).await;
@@ -419,7 +451,14 @@ async fn run_with_progress(
     let mut chunk = [0u8; 4096];
     let mut line = Vec::new();
     loop {
-        let n = stderr.read(&mut chunk).await?;
+        let Ok(read) = tokio::time::timeout(stall, stderr.read(&mut chunk)).await else {
+            let _ = child.kill().await;
+            return Err(GitError::Stalled {
+                what: what.to_owned(),
+                secs: stall.as_secs(),
+            });
+        };
+        let n = read?;
         if n == 0 {
             break;
         }
@@ -452,4 +491,39 @@ async fn run_with_progress(
         });
     }
     Ok(String::from_utf8_lossy(&stdout).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A network operation that goes quiet is given up on, not waited on
+    /// forever.
+    #[tokio::test]
+    async fn quiet_commands_stall_out() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "echo 'Receiving objects: 1%' >&2; sleep 30"]);
+        let seen = Mutex::new(Vec::new());
+        let started = std::time::Instant::now();
+        let result = run_watched(
+            cmd,
+            "fetch",
+            &|line| seen.lock().unwrap().push(line),
+            Duration::from_millis(300),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(GitError::Stalled { .. })),
+            "{result:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(*seen.lock().unwrap(), ["Receiving objects: 1%"]);
+    }
+
+    #[test]
+    fn git_gives_up_on_dead_connections() {
+        let cmd = git(None);
+        let envs: HashMap<_, _> = cmd.as_std().get_envs().collect();
+        assert!(envs.contains_key(std::ffi::OsStr::new("GIT_HTTP_LOW_SPEED_TIME")));
+    }
 }
