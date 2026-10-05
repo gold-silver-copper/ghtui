@@ -1,7 +1,7 @@
 //! GitHub label colors adapted to tonal chips.
 
 use crate::color::Rgb;
-use crate::{Mode, TEXT_CONTRAST, Theme, adjust_tone};
+use crate::{TEXT_CONTRAST, Theme, adjust_tone};
 
 /// Chip background and foreground for a label color: same hue, chroma capped
 /// so chips don't shout, background at the scheme's container tone, and a
@@ -10,10 +10,7 @@ pub(crate) fn chip_colors(label: Rgb, theme: &Theme) -> (Rgb, Rgb) {
     let hct = label.to_hct();
     let hue = hct.get_hue();
     let chroma = hct.get_chroma().min(40.0);
-    let (bg_tone, fg_tone) = match theme.mode {
-        Mode::Dark => (30.0, 90.0),
-        Mode::Light => (90.0, 10.0),
-    };
+    let (bg_tone, fg_tone) = theme.mode.container_tones();
     let bg = Rgb::from_hct(hue, chroma, bg_tone);
     let fg = Rgb::from_hct(hue, chroma.min(24.0), fg_tone);
     let fg = adjust_tone(fg, &[(theme.displayed(bg), TEXT_CONTRAST)], |c| {
@@ -25,7 +22,7 @@ pub(crate) fn chip_colors(label: Rgb, theme: &Theme) -> (Rgb, Rgb) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ColorDepth, DEFAULT_SEED, contrast};
+    use crate::{ColorDepth, DEFAULT_SEED, Mode, contrast};
 
     #[test]
     fn label_chips_are_readable_for_any_label_color() {

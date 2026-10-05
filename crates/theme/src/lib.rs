@@ -19,6 +19,7 @@ mod labels;
 use std::collections::HashMap;
 
 use material_colors::blend::harmonize;
+use material_colors::color::Rgb as McRgb;
 use material_colors::dynamic_color::Variant;
 use material_colors::theme::ThemeBuilder;
 use ratatui::style::{Color, Modifier, Style};
@@ -43,6 +44,16 @@ pub const DECORATIVE_CONTRAST: f64 = 1.2;
 pub enum Mode {
     Light,
     Dark,
+}
+
+impl Mode {
+    /// Tones of a tinted container, and of text on it.
+    fn container_tones(self) -> (f64, f64) {
+        match self {
+            Mode::Dark => (30.0, 90.0),
+            Mode::Light => (90.0, 10.0),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -313,16 +324,11 @@ impl Theme {
             Mode::Light => material.schemes.light,
             Mode::Dark => material.schemes.dark,
         };
-        let dark = mode == Mode::Dark;
-        let rgb = |c: material_colors::color::Rgb| Rgb::from(c);
-        let seed_mc: material_colors::color::Rgb = seed.into();
-        let hue_of = |hex: u32| {
-            Rgb::from(harmonize(
-                material_colors::color::Rgb::from_u32(hex),
-                seed_mc,
-            ))
-            .to_hct()
-            .get_hue()
+        let rgb = |c: McRgb| Rgb::from(c);
+        let hue_of = |hex| {
+            rgb(harmonize(McRgb::from_u32(hex), seed.into()))
+                .to_hct()
+                .get_hue()
         };
         let green = hue_of(0x2da44e);
         let red = hue_of(0xcf222e);
@@ -332,10 +338,11 @@ impl Theme {
 
         // Tones for "colored text on this scheme's surfaces" and for tinted
         // backgrounds that stay close to the surface.
-        let text_tone = if dark { 80.0 } else { 40.0 };
-        let container_tone = if dark { 30.0 } else { 90.0 };
-        let on_container_tone = if dark { 90.0 } else { 10.0 };
-        let (diff_tone, diff_token_tone) = if dark { (14.0, 24.0) } else { (95.0, 86.0) };
+        let (text_tone, diff_tone, diff_token_tone) = match mode {
+            Mode::Dark => (80.0, 14.0, 24.0),
+            Mode::Light => (40.0, 95.0, 86.0),
+        };
+        let (container_tone, on_container_tone) = mode.container_tones();
         let hct = |hue: f64, chroma: f64, tone: f64| Rgb::from_hct(hue, chroma, tone);
 
         let surface = rgb(scheme.surface);
