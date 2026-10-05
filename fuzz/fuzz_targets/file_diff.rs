@@ -26,8 +26,8 @@ fuzz_target!(|input: (u8, u8, &[u8], &[u8])| {
         new_path: Some(path.into()),
         old_mode: 0o100644,
         new_mode: 0o100644,
-        old_oid: "1".repeat(40),
-        new_oid: "2".repeat(40),
+        old_oid: ghtui_git::Oid::new("1".repeat(40)),
+        new_oid: ghtui_git::Oid::new("2".repeat(40)),
         similarity: None,
     };
     let mut doc = Doc::new(vec![file], &HashSet::new());

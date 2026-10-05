@@ -18,7 +18,7 @@ use tokio::process::Command;
 use crate::blobs::BlobReader;
 use crate::credentials::Credentials;
 use crate::files::{ChangedFile, parse_raw};
-use crate::{GitError, Version, git, github_repo_from_url, piped};
+use crate::{GitError, Oid, Version, git, github_repo_from_url, piped};
 
 /// `GIT_NO_LAZY_FETCH` lets us ask which objects are missing without
 /// fetching them.
@@ -43,11 +43,18 @@ pub struct Repo {
 /// Refs fetched for a PR.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrRefs {
-    pub head: String,
-    pub base: String,
+    pub head: Oid,
+    pub base: Oid,
     /// `merge-base(base, head)`: the diff runs from here to `head`, like
     /// GitHub's three-dot comparison.
-    pub merge_base: String,
+    pub merge_base: Oid,
+}
+
+/// A commit in a PR.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Commit {
+    pub oid: Oid,
+    pub subject: String,
 }
 
 /// One lock per repository path: concurrent fetches into one repository
@@ -199,11 +206,7 @@ impl Repo {
         }
         let head = self.rev_parse(&head_ref).await?;
         let base = self.rev_parse(&base_ref).await?;
-        let merge_base = self
-            .run(&["merge-base", &base, &head])
-            .await?
-            .trim()
-            .to_owned();
+        let merge_base = self.merge_base(&base, &head).await?;
         Ok(PrRefs {
             head,
             base,
@@ -211,12 +214,12 @@ impl Repo {
         })
     }
 
-    pub async fn merge_base(&self, a: &str, b: &str) -> Result<String, GitError> {
-        Ok(self.run(&["merge-base", a, b]).await?.trim().to_owned())
+    pub async fn merge_base(&self, a: &str, b: &str) -> Result<Oid, GitError> {
+        Ok(Oid::new(self.run(&["merge-base", a, b]).await?.trim()))
     }
 
-    /// Commits in `from..to`, oldest first: `(sha, subject)`.
-    pub async fn commits(&self, from: &str, to: &str) -> Result<Vec<(String, String)>, GitError> {
+    /// Commits in `from..to`, oldest first.
+    pub async fn commits(&self, from: &str, to: &str) -> Result<Vec<Commit>, GitError> {
         let out = self
             .run(&[
                 "log",
@@ -228,21 +231,23 @@ impl Repo {
         Ok(out
             .lines()
             .filter_map(|l| l.split_once('\u{1f}'))
-            .map(|(sha, subject)| (sha.to_owned(), subject.to_owned()))
+            .map(|(sha, subject)| Commit {
+                oid: Oid::new(sha),
+                subject: subject.to_owned(),
+            })
             .collect())
     }
 
-    pub async fn rev_parse(&self, rev: &str) -> Result<String, GitError> {
-        Ok(self
+    pub async fn rev_parse(&self, rev: &str) -> Result<Oid, GitError> {
+        let out = self
             .run(&[
                 "rev-parse",
                 "--verify",
                 "--quiet",
                 &format!("{rev}^{{commit}}"),
             ])
-            .await?
-            .trim()
-            .to_owned())
+            .await?;
+        Ok(Oid::new(out.trim()))
     }
 
     /// Pins `sha` as `refs/ghtui/pr/<N>/seen/<sha>` so force-pushes and

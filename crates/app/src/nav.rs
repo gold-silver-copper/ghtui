@@ -51,6 +51,7 @@ impl Visit {
 }
 
 impl State {
+    #[must_use]
     fn record_visit(&mut self, route: &Route) -> Vec<Cmd> {
         if *route == Route::Home {
             return Vec::new();
@@ -78,6 +79,7 @@ impl State {
     }
 
     /// Navigates to a page, keeping the current one in history.
+    #[must_use]
     pub fn push(&mut self, route: Route) -> Vec<Cmd> {
         self.forward.clear();
         let mut cmds = self.record_visit(&route);
@@ -90,6 +92,7 @@ impl State {
     }
 
     /// Replaces the page on screen (switching tabs, changing a filter).
+    #[must_use]
     pub fn replace(&mut self, route: Route, force: bool) -> Vec<Cmd> {
         match self.screen_mut() {
             Screen::Page(p) => **p = PageScreen::new(route.clone()),
@@ -100,6 +103,7 @@ impl State {
         cmds
     }
 
+    #[must_use]
     pub fn back(&mut self) -> Vec<Cmd> {
         if let Some(screen) = self.screens.pop() {
             self.forward.push(screen);
@@ -109,6 +113,7 @@ impl State {
         Vec::new()
     }
 
+    #[must_use]
     pub fn go_forward(&mut self) -> Vec<Cmd> {
         match self.forward.pop() {
             Some(screen) => {
@@ -123,6 +128,7 @@ impl State {
     }
 
     /// Follows a link.
+    #[must_use]
     pub fn go(&mut self, target: Target) -> Vec<Cmd> {
         match target {
             Target::Page(route) => self.push(route),
@@ -141,6 +147,7 @@ impl State {
 
     /// Follows a link on the page on screen: a URL, or one of the page's
     /// actions.
+    #[must_use]
     pub fn follow(&mut self, link: &Link) -> Vec<Cmd> {
         match link {
             Link::Url(url) => self.go(Target::from_url(url)),
@@ -170,6 +177,7 @@ impl State {
         }
     }
 
+    #[must_use]
     fn load_more(&mut self) -> Vec<Cmd> {
         let Some((kind, query)) = self.route().and_then(Route::search) else {
             return Vec::new();
@@ -317,6 +325,7 @@ fn scroll_keep(p: &mut PageScreen, rows: i64, height: usize) {
 // ---- keys on pages ----------------------------------------------------------------------
 
 /// Actions on a page screen; `None` for actions it doesn't handle.
+#[must_use]
 pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
     let height = state.page_height();
     let Screen::Page(p) = state.screen_mut() else {
@@ -417,12 +426,14 @@ fn up(state: &State, route: &Route) -> Option<Route> {
     })
 }
 
+#[must_use]
 pub fn no_repo(state: &mut State) -> Vec<Cmd> {
     state.info("Open a repository first");
     Vec::new()
 }
 
 /// Switches to the chrome's tab `n` (1-based).
+#[must_use]
 pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
     let chrome = state.chrome();
     let Some((_, target)) = n.checked_sub(1).and_then(|i| chrome.tabs.get(i)).cloned() else {
@@ -451,6 +462,7 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
     }
 }
 
+#[must_use]
 fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
     let chrome = state.chrome();
     let n = chrome.tabs.len();
@@ -531,6 +543,7 @@ fn start_hints(state: &mut State, browser: bool) {
     })));
 }
 
+#[must_use]
 pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let Some(Overlay::Hints(hints)) = &mut state.overlay else {
         return Vec::new();
@@ -612,6 +625,7 @@ pub fn new_input(theme: &Theme, bg: Bg) -> TextArea<'static> {
 
 impl State {
     /// `/`: GitHub search in the header, or the list's filter on a list.
+    #[must_use]
     pub fn open_search(&mut self) -> Vec<Cmd> {
         let filter_query = self.route().and_then(Route::list_query).map(str::to_owned);
         let mut input = new_input(&self.theme, Bg::ContainerHighest);
@@ -771,6 +785,7 @@ impl State {
     }
 }
 
+#[must_use]
 pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let Some(Overlay::Search(sb)) = &state.overlay else {
         return Vec::new();
@@ -809,6 +824,7 @@ pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     }
 }
 
+#[must_use]
 fn choose(state: &mut State, pick: Pick) -> Vec<Cmd> {
     match pick {
         Pick::Go(target) => state.go(target),
@@ -857,6 +873,7 @@ fn list_query(state: &State) -> Option<(Route, String)> {
     Some((route.clone(), route.list_query()?.to_owned()))
 }
 
+#[must_use]
 fn set_list_state(state: &mut State, which: &str) -> Vec<Cmd> {
     let Some((route, query)) = list_query(state) else {
         return Vec::new();
@@ -867,6 +884,7 @@ fn set_list_state(state: &mut State, which: &str) -> Vec<Cmd> {
     }
 }
 
+#[must_use]
 fn cycle_state(state: &mut State) -> Vec<Cmd> {
     let Some((_, query)) = list_query(state) else {
         state.info("Only lists have open and closed");
@@ -875,6 +893,7 @@ fn cycle_state(state: &mut State) -> Vec<Cmd> {
     set_list_state(state, next_list_state(&query))
 }
 
+#[must_use]
 fn cycle_sort(state: &mut State) -> Vec<Cmd> {
     let Some((route, query)) = list_query(state) else {
         state.info("Only lists can be sorted");
@@ -905,6 +924,7 @@ fn cycle_sort(state: &mut State) -> Vec<Cmd> {
 
 // ---- writing: star and comment ----------------------------------------------------------------
 
+#[must_use]
 pub fn star(state: &mut State) -> Vec<Cmd> {
     let Some(repo) = state.route().and_then(Route::repo).cloned() else {
         state.info("Open a repository to star it");
@@ -940,6 +960,7 @@ pub fn set_starred(state: &mut State, repo: &RepoId, starred: bool) {
 
 /// Opens the composer on the issue or pull request on screen, starting
 /// with `text`.
+#[must_use]
 fn comment_with(state: &mut State, text: &str) -> Vec<Cmd> {
     let target = match state.route() {
         Some(Route::Issue { repo, number }) => {
@@ -1387,6 +1408,7 @@ impl State {
     }
 }
 
+#[must_use]
 pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let scope = state.scope();
     let pressed = [crate::keymap::Key::from(key)];
@@ -1444,6 +1466,7 @@ pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 }
 
 /// Runs a menu row (`None` closes the menu).
+#[must_use]
 fn run_menu_row(state: &mut State, row: Option<Doable>) -> Vec<Cmd> {
     let Some(d) = row else {
         state.overlay = None;
@@ -1473,6 +1496,7 @@ impl State {
 }
 
 /// `y`: the selection's link, or the page's.
+#[must_use]
 pub fn copy_link(state: &mut State) -> Vec<Cmd> {
     let url = state.here_url();
     state.info(format!("Copied {url}"));
@@ -1481,6 +1505,7 @@ pub fn copy_link(state: &mut State) -> Vec<Cmd> {
 
 // ---- the mouse -------------------------------------------------------------------------------------
 
+#[must_use]
 pub fn on_mouse(state: &mut State, ev: MouseEvent) -> Vec<Cmd> {
     let (x, y) = (ev.column, ev.row);
     match ev.kind {
@@ -1510,6 +1535,7 @@ pub fn on_mouse(state: &mut State, ev: MouseEvent) -> Vec<Cmd> {
     }
 }
 
+#[must_use]
 fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
     let inside = |r: Rect| r.contains((x, y).into());
     // Overlays first: a click outside closes them.

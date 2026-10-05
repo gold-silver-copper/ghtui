@@ -1,6 +1,6 @@
 //! Changed files from `git diff --raw -z`.
 
-use crate::GitError;
+use crate::{GitError, Oid};
 
 pub const ZERO_OID: &str = "0000000000000000000000000000000000000000";
 
@@ -28,8 +28,8 @@ pub struct ChangedFile {
     pub old_mode: u32,
     pub new_mode: u32,
     /// Full object IDs; [`ZERO_OID`] for a missing side.
-    pub old_oid: String,
-    pub new_oid: String,
+    pub old_oid: Oid,
+    pub new_oid: Oid,
     /// Rename/copy similarity, 0–100.
     pub similarity: Option<u8>,
 }
@@ -58,7 +58,7 @@ impl ChangedFile {
     /// Blob IDs whose contents the diff needs (none for submodules).
     pub fn blob_oids(&self) -> impl Iterator<Item = &str> {
         let submodule = self.is_submodule();
-        [self.old_oid.as_str(), self.new_oid.as_str()]
+        [&*self.old_oid, &*self.new_oid]
             .into_iter()
             .filter(move |oid| !submodule && *oid != ZERO_OID)
     }
@@ -104,8 +104,8 @@ pub fn parse_raw(out: &str) -> Result<Vec<ChangedFile>, GitError> {
             new_path,
             old_mode: mode(old_mode)?,
             new_mode: mode(new_mode)?,
-            old_oid: old_oid.to_owned(),
-            new_oid: new_oid.to_owned(),
+            old_oid: Oid::new(old_oid),
+            new_oid: Oid::new(new_oid),
             similarity,
         });
     }

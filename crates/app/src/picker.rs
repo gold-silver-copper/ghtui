@@ -87,6 +87,7 @@ fn item(label: impl Into<String>, hint: impl Into<String>) -> PaletteItem {
 }
 
 impl State {
+    #[must_use]
     pub fn open_picker(&mut self, kind: Kind) -> Vec<Cmd> {
         let placeholder = match kind {
             Kind::Commands => "A command, owner/repo, owner/repo#123, @user, a URL, or a search",
@@ -112,6 +113,7 @@ impl State {
     }
 
     /// Go to file, or switch branches, for the code on screen.
+    #[must_use]
     pub fn open_finder(&mut self, branches: bool) -> Vec<Cmd> {
         let default = |repo: &RepoId| {
             self.overview(repo)
@@ -333,10 +335,10 @@ impl State {
                 Some(Choice::Commits(PickItem::SinceReview)),
             ),
         ];
-        for (i, (sha, subject)) in diff.commits.iter().enumerate() {
+        for (i, c) in diff.commits.iter().enumerate() {
             let hint = if mark == Some(i) { "range start" } else { "" };
             rows.push((
-                item(format!("{} {subject}", short_sha(sha)), hint),
+                item(format!("{} {}", short_sha(&c.oid), c.subject), hint),
                 Some(Choice::Commits(PickItem::Commit(i))),
             ));
         }
@@ -387,6 +389,7 @@ pub fn move_in_list(key: KeyEvent, selected: &mut usize, count: usize) -> bool {
     true
 }
 
+#[must_use]
 pub fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let Some(Overlay::Picker(p)) = &state.overlay else {
         return Vec::new();
@@ -430,6 +433,7 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     Vec::new()
 }
 
+#[must_use]
 fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
     match choice {
         Choice::Action(action) => apply(state, action),

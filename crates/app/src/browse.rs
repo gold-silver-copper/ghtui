@@ -274,6 +274,7 @@ impl State {
             find_file: &find_file,
             filter: &filter,
         };
+        let cx = pages::PageCtx { icons, keys, now };
         let aside = match route {
             Route::Repo(_)
             | Route::Issue { .. }
@@ -324,7 +325,7 @@ impl State {
                 match overview {
                     Some(o) => {
                         let commits = self.last_commits(repo, "HEAD", "");
-                        pages::repo_code(&mut page, repo, o, commits, icons, keys, aside, now)
+                        pages::repo_code(&mut page, repo, o, commits, aside, cx)
                     }
                     None => missing(&mut page, "the repository"),
                 }
@@ -336,9 +337,14 @@ impl State {
                     _ => None,
                 };
                 let commits = self.last_commits(repo, rev, path);
-                pages::repo_dir(
-                    &mut page, repo, rev, path, entries, commits, icons, keys, now,
-                );
+                let dir = pages::Listing {
+                    repo,
+                    rev,
+                    path,
+                    entries,
+                    commits,
+                };
+                pages::repo_dir(&mut page, dir, cx);
                 if entries.is_none() && matches!(error, Some((_, false))) {
                     missing(&mut page, "the directory");
                 }
@@ -366,7 +372,7 @@ impl State {
                 if results.is_none() && matches!(error, Some((_, false))) {
                     missing(&mut page, "the list");
                 } else {
-                    pages::issue_list(&mut page, query, counts, is_pr, results, icons, keys, now);
+                    pages::issue_list(&mut page, query, counts, is_pr, results, cx);
                 }
             }
             Route::Search { kind, query } => {
@@ -391,7 +397,7 @@ impl State {
                 let activity = self.activity(pr);
                 match (detail, tab) {
                     (Some(d), PrTab::Conversation) => {
-                        pages::pr_conversation(&mut page, pr, d, activity, icons, keys, aside, now)
+                        pages::pr_conversation(&mut page, pr, d, activity, aside, cx)
                     }
                     (Some(d), PrTab::Commits) => pages::pr_commits(&mut page, pr, d, activity, now),
                     (None, _) => missing(&mut page, &pr.to_string()),

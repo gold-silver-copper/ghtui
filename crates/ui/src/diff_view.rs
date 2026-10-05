@@ -133,7 +133,7 @@ impl DiffView<'_> {
             }
             Row::Line(e) => self.unified(pos.file, file, e, cursor, area, buf),
             Row::Split { left, right } => {
-                self.split(pos.file, file, left, right, cursor, area, buf)
+                self.split(pos.file, file, (left, right), cursor, area, buf)
             }
             Row::Thread(t) => self.thread_row(file, t, cursor, area, buf),
             Row::Fold { block, reason } => {
@@ -477,13 +477,12 @@ impl DiffView<'_> {
             .map_or(&[], Vec::as_slice)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// A split row: the `(left, right)` entries side by side.
     fn split(
         &self,
         file_index: usize,
         file: &DocFile,
-        left: Option<u32>,
-        right: Option<u32>,
+        (left, right): (Option<u32>, Option<u32>),
         cursor: bool,
         area: Rect,
         buf: &mut Buffer,
@@ -783,7 +782,6 @@ fn number(n: Option<u32>, width: usize) -> String {
 
 /// Styled code, with tabs expanded and control characters made visible,
 /// cut to `room` columns.
-#[allow(clippy::too_many_arguments)]
 fn code_spans(
     ctx: Ctx<'_>,
     content: &str,

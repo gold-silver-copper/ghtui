@@ -10,6 +10,7 @@ use ghtui_api::ApiError;
 use ghtui_api::model::{Inbox, NodeId, PrDetail, PrRef, RepoId, ViewedFiles};
 use ghtui_api::rate_limit::RateLimits;
 use ghtui_diff::FileDiff;
+use ghtui_git::Oid;
 use ghtui_store::ReviewState;
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::bars::Notice;
@@ -99,7 +100,7 @@ pub enum DiffMsg {
     ReviewSubmitted(SubmitOutcome),
     LastReview(Result<Option<String>, ApiError>),
     SinceReady(String, Result<std::collections::HashSet<String>, String>),
-    CommitsListed(Result<Vec<(String, String)>, String>),
+    CommitsListed(Result<Vec<ghtui_git::repo::Commit>, String>),
 }
 
 /// What `update` asks the runtime to do.
@@ -177,7 +178,7 @@ pub enum Api {
     },
     SubmitReview {
         pr: PrRef,
-        head: String,
+        head: Oid,
         drafts: Vec<DraftComment>,
         event: ReviewEvent,
         body: String,
@@ -213,7 +214,7 @@ pub enum Git {
     DetectMoves(PrRef, JobId, Vec<(usize, Arc<FileDiff>)>),
     MapOutdated {
         pr: PrRef,
-        head: String,
+        head: Oid,
         threads: Vec<OutdatedThread>,
     },
     /// Block hashes of the diff at `old_head`, for "since my last review".
@@ -491,6 +492,7 @@ impl State {
 
     /// Fetches a page's data. The repository header shared by a repo's
     /// pages is only fetched when missing.
+    #[must_use]
     pub fn ensure_route(&mut self, route: &Route, force: bool) -> Vec<Cmd> {
         let mut cmds = Vec::new();
         for need in browse::needs(route) {
@@ -500,6 +502,7 @@ impl State {
         cmds
     }
 
+    #[must_use]
     pub fn ensure(&mut self, need: Need, force: bool) -> Vec<Cmd> {
         match need {
             Need::Inbox if self.inbox.begin(force) => vec![Cmd::Api(Api::FetchInbox)],
@@ -518,6 +521,7 @@ impl State {
         }
     }
 
+    #[must_use]
     pub fn ensure_pr(&mut self, pr: &PrRef, force: bool) -> Vec<Cmd> {
         if self.prs.entry(pr.clone()).or_default().begin(force) {
             vec![Cmd::Api(Api::FetchPr(pr.clone()))]
@@ -528,6 +532,7 @@ impl State {
 
     /// Fetches needed for the visible screen. `force` refreshes data we
     /// already have.
+    #[must_use]
     pub fn load_visible(&mut self, force: bool) -> Vec<Cmd> {
         let mut cmds = Vec::new();
         if self.viewer.is_none() && force {
@@ -556,6 +561,7 @@ impl State {
     }
 
     /// Opens the diff of a PR (it starts once the PR's metadata is in).
+    #[must_use]
     pub fn open_diff(&mut self, pr: PrRef) -> Vec<Cmd> {
         let reuse = self.diffs.get(&pr).is_some_and(|d| d.error.is_none());
         let cmds = if reuse {
@@ -574,6 +580,7 @@ impl State {
         Some(detail.base_ref.clone())
     }
 
+    #[must_use]
     fn start_diff(&mut self, pr: &PrRef) -> Vec<Cmd> {
         let Some(base_ref) = self.base_ref(pr) else {
             return Vec::new();
@@ -597,12 +604,14 @@ impl State {
 
     /// Rebuilds the page if its data changed and keeps the page (or the
     /// diff) in bounds.
+    #[must_use]
     pub fn settle(&mut self) -> Vec<Cmd> {
         self.sync_page();
         self.settle_diff()
     }
 
     /// Re-runs the diff screen's clamping and prioritization.
+    #[must_use]
     pub fn settle_diff(&mut self) -> Vec<Cmd> {
         let content = self.content_area();
         match self.diff_parts() {
@@ -643,6 +652,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
 
 /// Handles a message without settling the screen: the runtime handles a
 /// burst of background results, then settles once.
+#[must_use]
 pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     // Pages are built from GitHub's data; only these change it.
     if matches!(
@@ -669,6 +679,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
 /// Timers the screen needs after an update: the notice expiring (errors
 /// stay longer), the spinner's next frame while something loads. The
 /// runtime calls this; `last_notice` is the notice it last saw.
+#[must_use]
 pub fn timers(state: &mut State, last_notice: &mut Option<Notice>) -> Vec<Cmd> {
     let mut cmds = Vec::new();
     if state.notice != *last_notice {
@@ -694,6 +705,7 @@ pub fn timers(state: &mut State, last_notice: &mut Option<Notice>) -> Vec<Cmd> {
     cmds
 }
 
+#[must_use]
 fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Diff(pr, msg) => diff_screen::update(state, pr, msg),
@@ -866,6 +878,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
     }
 }
 
+#[must_use]
 fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         state.quit = true;
@@ -915,6 +928,7 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     }
 }
 
+#[must_use]
 fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let Some(Overlay::DiffSearch(input)) = &mut state.overlay else {
         return Vec::new();
@@ -943,6 +957,7 @@ fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     }
 }
 
+#[must_use]
 pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
     let content = state.content_area();
     // In the diff, a few keys mean their nearest thing there.
@@ -1035,6 +1050,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
 impl State {
     /// Asks the diff job to map outdated threads, once both the threads and
     /// the diff's head are known.
+    #[must_use]
     pub(crate) fn map_outdated(&mut self, pr: &PrRef) -> Vec<Cmd> {
         let Some(diff) = self.diffs.get_mut(pr) else {
             return Vec::new();
@@ -1058,6 +1074,7 @@ impl State {
     }
 
     /// Opens the composer on `target`, starting with `text`.
+    #[must_use]
     pub fn compose(&mut self, target: ComposeTarget, text: &str) -> Vec<Cmd> {
         let compose = Compose::new(&self.theme, target, text);
         self.overlay = Some(Overlay::Compose(Box::new(compose)));
@@ -1157,6 +1174,7 @@ pub(crate) mod tests {
         p.page.lines[item.start].text()
     }
 
+    #[must_use]
     fn fetched(state: &mut State, key: DataKey, data: Data) -> Vec<Cmd> {
         update(
             state,
@@ -1169,6 +1187,7 @@ pub(crate) mod tests {
     }
 
     /// Commands other than saving visits.
+    #[must_use]
     fn fetches(cmds: Vec<Cmd>) -> Vec<Cmd> {
         cmds.into_iter()
             .filter(|c| !matches!(c, Cmd::Api(Api::SaveVisits(_))))
@@ -1181,8 +1200,8 @@ pub(crate) mod tests {
 
     fn with_repo() -> State {
         let mut state = state();
-        state.push(Route::Repo(repo()));
-        fetched(
+        let _ = state.push(Route::Repo(repo()));
+        let _ = fetched(
             &mut state,
             DataKey::Repo(repo()),
             Data::Repo(Box::new(crate::fixtures::overview())),
@@ -1190,6 +1209,7 @@ pub(crate) mod tests {
         state
     }
 
+    #[must_use]
     fn click(state: &mut State, x: u16, y: u16) -> Vec<Cmd> {
         update(
             state,
@@ -1348,13 +1368,13 @@ pub(crate) mod tests {
     fn arrows_move_comment_by_comment_and_enter_quotes() {
         let mut state = state();
         update(&mut state, Msg::Resize(100, 14));
-        state.push(Route::Issue {
+        let _ = state.push(Route::Issue {
             repo: repo(),
             number: 14,
         });
         let mut issue = crate::fixtures::issue();
         issue.body = (1..=30).map(|n| format!("Line {n}.\n\n")).collect();
-        fetched(
+        let _ = fetched(
             &mut state,
             DataKey::Issue(repo(), 14),
             Data::Issue(Some(Box::new(issue))),
@@ -1407,7 +1427,7 @@ pub(crate) mod tests {
     #[test]
     fn cached_data_shows_while_fetching() {
         let mut state = state();
-        state.push(Route::user("octocat"));
+        let _ = state.push(Route::user("octocat"));
         update(
             &mut state,
             Msg::Fetched {
@@ -1424,7 +1444,7 @@ pub(crate) mod tests {
     #[test]
     fn failed_refresh_keeps_cached_data() {
         let mut state = with_inbox(2);
-        state.load_visible(true);
+        let _ = state.load_visible(true);
         update(&mut state, Msg::Inbox(Err(ApiError::RateLimited(30))));
         assert_eq!(state.inbox.data.as_ref().unwrap().authored.len(), 2);
         let first = page(&state).page.lines[0].text();
@@ -1445,7 +1465,7 @@ pub(crate) mod tests {
             press(&mut state, "y"),
             vec![Cmd::Copy("https://github.com/o/r/pull/1".into())]
         );
-        state.push(Route::Issues {
+        let _ = state.push(Route::Issues {
             repo: repo(),
             query: "is:closed".into(),
         });
@@ -1718,7 +1738,7 @@ pub(crate) mod tests {
             ],
             "the listing, and each entry's latest commit"
         );
-        fetched(&mut state, tree, Data::Tree(crate::fixtures::tree()));
+        let _ = fetched(&mut state, tree, Data::Tree(crate::fixtures::tree()));
         while !selected_text(&state).contains("README.md") {
             press(&mut state, "j");
         }
@@ -1745,7 +1765,7 @@ pub(crate) mod tests {
                 cached: true
             })]
         );
-        fetched(
+        let _ = fetched(
             &mut state,
             files,
             Data::Files(
@@ -1784,7 +1804,7 @@ pub(crate) mod tests {
                 cached: true
             })]
         );
-        fetched(
+        let _ = fetched(
             &mut state,
             DataKey::Refs(repo()),
             Data::Refs(Box::new(ghtui_api::browse::Refs {
@@ -1807,14 +1827,14 @@ pub(crate) mod tests {
     #[test]
     fn issue_comments_post_and_refresh() {
         let mut state = state();
-        state.push(Route::Issue {
+        let _ = state.push(Route::Issue {
             repo: repo(),
             number: 14,
         });
         let key = DataKey::Issue(repo(), 14);
         press(&mut state, "c");
         assert!(state.overlay.is_none(), "nothing to comment on yet");
-        fetched(
+        let _ = fetched(
             &mut state,
             key.clone(),
             Data::Issue(Some(Box::new(crate::fixtures::issue()))),
@@ -1892,7 +1912,7 @@ pub(crate) mod tests {
         let route = route(&state);
         let (kind, query) = route.search().unwrap();
         let key = DataKey::Search(kind, query);
-        fetched(
+        let _ = fetched(
             &mut state,
             key.clone(),
             Data::Search(Box::new(crate::fixtures::issue_results(Some("c1")))),
@@ -1927,8 +1947,8 @@ pub(crate) mod tests {
     #[test]
     fn visited_pages_come_back_as_suggestions() {
         let mut state = with_repo();
-        state.push(Route::user("octocat"));
-        state.push(Route::Home);
+        let _ = state.push(Route::user("octocat"));
+        let _ = state.push(Route::Home);
         press(&mut state, "/");
         let Some(Overlay::Search(sb)) = &state.overlay else {
             panic!()
@@ -1954,7 +1974,7 @@ pub(crate) mod tests {
     fn files_tab_opens_the_diff_once_the_pr_loads() {
         let mut state = state();
         let pr = PrRef::parse("o/r#1").unwrap();
-        state.push(Route::Pr {
+        let _ = state.push(Route::Pr {
             pr: pr.clone(),
             tab: PrTab::Conversation,
         });
@@ -1986,17 +2006,17 @@ pub(crate) mod tests {
     fn the_mouse_follows_links_switches_tabs_and_scrolls() {
         let mut state = with_repo();
         let (x, y) = find(&state, "crates");
-        click(&mut state, x, y);
+        let _ = click(&mut state, x, y);
         assert!(
             matches!(route(&state), Route::Tree { .. }),
             "a click follows a link"
         );
-        state.back();
+        let _ = state.back();
         // Tabs.
         let lay = state.layout();
         let tabs: Vec<_> = state.chrome().tabs.into_iter().map(|(t, _)| t).collect();
         let rects = ghtui_ui::chrome::tab_layout(lay.tabs.unwrap(), &tabs, state.chrome().active);
-        click(&mut state, rects[2].x + 1, rects[2].y);
+        let _ = click(&mut state, rects[2].x + 1, rects[2].y);
         assert!(matches!(route(&state), Route::Pulls { .. }));
         // The header's search field.
         let field = ghtui_ui::chrome::header_layout(lay.header, &[], &[]).search;
@@ -2005,10 +2025,10 @@ pub(crate) mod tests {
         let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
         let field2 = ghtui_ui::chrome::header_layout(lay.header, &crumbs, &right).search;
         assert_eq!(field.y, field2.y);
-        click(&mut state, field2.x + 1, field2.y);
+        let _ = click(&mut state, field2.x + 1, field2.y);
         assert!(matches!(state.overlay, Some(Overlay::Search(_))));
         let bottom = state.size.1 - 1;
-        click(&mut state, 0, bottom);
+        let _ = click(&mut state, 0, bottom);
         assert!(state.overlay.is_none(), "a click outside closes it");
         // The wheel.
         press(&mut state, "1");
@@ -2094,7 +2114,7 @@ pub(crate) mod tests {
         let mut state = with_repo();
         let depth = state.screens.len();
         state.error("boom");
-        timers(&mut state, &mut None);
+        let _ = timers(&mut state, &mut None);
         press(&mut state, "<Esc>");
         assert!(state.notice.is_none());
         assert_eq!(state.screens.len(), depth, "Esc only dismissed");
@@ -2538,8 +2558,14 @@ pub(crate) mod tests {
                     Msg::Diff(
                         pr,
                         DiffMsg::CommitsListed(Ok(vec![
-                            ("a".repeat(40), "first".into()),
-                            ("b".repeat(40), "second".into()),
+                            ghtui_git::repo::Commit {
+                                oid: Oid::new("a".repeat(40)),
+                                subject: "first".into(),
+                            },
+                            ghtui_git::repo::Commit {
+                                oid: Oid::new("b".repeat(40)),
+                                subject: "second".into(),
+                            },
                         ])),
                     ),
                 );
@@ -2904,7 +2930,7 @@ pub(crate) mod tests {
                         DiffMsg::ThreadsLoaded(Ok(vec![thread("old", None, false, true)])),
                     ),
                 );
-                assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated { threads, head, .. }) if threads.len() == 1 && head == "h")));
+                assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated { threads, head, .. }) if threads.len() == 1 && &**head == "h")));
                 let ann = &s.diffs[&pr].doc.annotations()[0];
                 assert!(
                     ann.outdated && ann.on_line().is_none(),

@@ -338,11 +338,11 @@ mod tests {
         ];
         let mut s = state();
         for route in routes {
-            s.push(route);
+            let _ = s.push(route);
             let c = s.chrome();
             assert_eq!(s.chrome_rows(), (c.title.is_some(), !c.tabs.is_empty()));
         }
-        s.open_diff(pr);
+        let _ = s.open_diff(pr);
         let c = s.chrome();
         assert_eq!(s.chrome_rows(), (c.title.is_some(), !c.tabs.is_empty()));
     }

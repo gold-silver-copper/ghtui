@@ -313,6 +313,25 @@ pub struct Keys<'a> {
     pub filter: &'a str,
 }
 
+/// What every page builder needs besides its data.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PageCtx<'a> {
+    pub icons: Icons,
+    pub keys: Keys<'a>,
+    /// Unix seconds, for relative times.
+    pub now: u64,
+}
+
+/// A directory's files, at a revision, with each one's latest commit.
+#[derive(Debug, Clone, Copy)]
+pub struct Listing<'a> {
+    pub repo: &'a RepoId,
+    pub rev: &'a str,
+    pub path: &'a str,
+    pub entries: Option<&'a [TreeEntry]>,
+    pub commits: Option<&'a HashMap<String, CommitInfo>>,
+}
+
 /// Width of a sidebar for a page `total` columns wide, if there's room.
 pub fn aside_width(total: u16) -> Option<u16> {
     (total >= 104).then_some(30)
@@ -519,18 +538,15 @@ fn crumbs(page: &mut Page, repo: &RepoId, rev: &str, path: &str, last_is_file: b
 }
 
 /// The file list box.
-#[allow(clippy::too_many_arguments)]
-fn file_box(
-    page: &mut Page,
-    repo: &RepoId,
-    rev: &str,
-    path: &str,
-    entries: Option<&[TreeEntry]>,
-    commits: Option<&HashMap<String, CommitInfo>>,
-    title: (Vec<Seg>, Vec<Seg>),
-    icons: Icons,
-    now: u64,
-) {
+fn file_box(page: &mut Page, dir: Listing<'_>, title: (Vec<Seg>, Vec<Seg>), cx: PageCtx<'_>) {
+    let Listing {
+        repo,
+        rev,
+        path,
+        entries,
+        commits,
+    } = dir;
+    let PageCtx { icons, now, .. } = cx;
     page.box_top(title.0, title.1);
     // GitHub's columns: name, the latest commit's message, its age.
     let name_w = entries
@@ -588,17 +604,15 @@ fn file_box(
 }
 
 /// The Code tab at the repository root: files, README, About.
-#[allow(clippy::too_many_arguments)]
 pub fn repo_code(
     page: &mut Page,
     repo: &RepoId,
     o: &RepoOverview,
     commits: Option<&HashMap<String, CommitInfo>>,
-    icons: Icons,
-    keys: Keys<'_>,
     aside: Option<u16>,
-    now: u64,
+    cx: PageCtx<'_>,
 ) {
+    let PageCtx { keys, now, .. } = cx;
     if aside.is_none() {
         about(page, repo, o, true);
         page.blank();
@@ -637,17 +651,14 @@ pub fn repo_code(
         }
         None => (vec![Seg::new("Files", Role::Strong)], Vec::new()),
     };
-    file_box(
-        page,
+    let dir = Listing {
         repo,
-        &rev,
-        "",
-        Some(&o.entries),
+        rev: &rev,
+        path: "",
+        entries: Some(&o.entries),
         commits,
-        title,
-        icons,
-        now,
-    );
+    };
+    file_box(page, dir, title, cx);
     if let Some(readme) = &o.readme {
         let name = link_seg(
             page,
@@ -666,19 +677,11 @@ pub fn repo_code(
 }
 
 /// A directory below the root (or the root at another branch).
-#[allow(clippy::too_many_arguments)]
-pub fn repo_dir(
-    page: &mut Page,
-    repo: &RepoId,
-    rev: &str,
-    path: &str,
-    entries: Option<&[TreeEntry]>,
-    commits: Option<&HashMap<String, CommitInfo>>,
-    icons: Icons,
-    keys: Keys<'_>,
-    now: u64,
-) {
-    code_toolbar(page, repo, rev, path, false, 0, keys);
+pub fn repo_dir(page: &mut Page, dir: Listing<'_>, cx: PageCtx<'_>) {
+    let Listing {
+        repo, rev, path, ..
+    } = dir;
+    code_toolbar(page, repo, rev, path, false, 0, cx.keys);
     let title = if path.is_empty() {
         format!("Files on {rev}")
     } else {
@@ -686,14 +689,9 @@ pub fn repo_dir(
     };
     file_box(
         page,
-        repo,
-        rev,
-        path,
-        entries,
-        commits,
+        dir,
         (vec![Seg::new(title, Role::Strong)], Vec::new()),
-        icons,
-        now,
+        cx,
     );
 }
 
@@ -974,17 +972,15 @@ pub const SORTS: [(&str, &str); 5] = [
 ];
 
 /// A repository's issue or pull request list.
-#[allow(clippy::too_many_arguments)]
 pub fn issue_list(
     page: &mut Page,
     query: &str,
     counts: Option<(u64, u64)>,
     is_pr: bool,
     results: Option<&Results<IssueSummary>>,
-    icons: Icons,
-    keys: Keys<'_>,
-    now: u64,
+    cx: PageCtx<'_>,
 ) {
+    let PageCtx { icons, keys, now } = cx;
     filter_field(page, query, keys);
     let state = list_state(query);
     let mut title = Vec::new();
@@ -1086,19 +1082,27 @@ pub fn search(
 
 // ---- conversations --------------------------------------------------------------------
 
+/// Who said what, when, for a comment box.
+#[derive(Clone, Copy)]
+struct Said<'a> {
+    author: &'a str,
+    /// "commented", "opened"...
+    verb: &'a str,
+    when: &'a str,
+    body: &'a str,
+    badge: Option<&'a str>,
+}
+
 /// A comment box: `╭─ author commented 3d ago ─── Author ─╮`, the Markdown
 /// body, `╰──╯`.
-#[allow(clippy::too_many_arguments)]
-fn comment_box(
-    page: &mut Page,
-    author: &str,
-    verb: &str,
-    when: &str,
-    body: &str,
-    badge: Option<&str>,
-    base: &LinkBase,
-    now: u64,
-) {
+fn comment_box(page: &mut Page, said: Said<'_>, base: &LinkBase, now: u64) {
+    let Said {
+        author,
+        verb,
+        when,
+        body,
+        badge,
+    } = said;
     let start = page.lines.len();
     let who = link_seg(page, author.to_owned(), url::user(author), Role::Strong);
     let right = badge
@@ -1128,11 +1132,13 @@ fn comment(page: &mut Page, c: &Comment, op: &str, base: &LinkBase, now: u64) {
     let badge = (c.author == op).then_some("Author");
     comment_box(
         page,
-        &c.author,
-        "commented",
-        &c.created_at,
-        &c.body,
-        badge,
+        Said {
+            author: &c.author,
+            verb: "commented",
+            when: &c.created_at,
+            body: &c.body,
+            badge,
+        },
         base,
         now,
     );
@@ -1265,11 +1271,13 @@ pub fn issue(
     let base = LinkBase::new(&d.repo, "HEAD", "");
     comment_box(
         page,
-        &d.author,
-        "opened",
-        &d.created_at,
-        &d.body,
-        Some("Author"),
+        Said {
+            author: &d.author,
+            verb: "opened",
+            when: &d.created_at,
+            body: &d.body,
+            badge: Some("Author"),
+        },
         &base,
         now,
     );
@@ -1406,26 +1414,26 @@ fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
     page.box_bottom();
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn pr_conversation(
     page: &mut Page,
     pr: &PrRef,
     d: &PrDetail,
     activity: Option<&PrActivity>,
-    icons: Icons,
-    keys: Keys<'_>,
     aside: Option<u16>,
-    now: u64,
+    cx: PageCtx<'_>,
 ) {
+    let PageCtx { icons, keys, now } = cx;
     pr_summary(page, pr, d, now);
     let base = LinkBase::new(&pr.repo, &d.head_oid, "");
     comment_box(
         page,
-        &d.summary.author,
-        "opened",
-        &d.created_at,
-        &d.body,
-        Some("Author"),
+        Said {
+            author: &d.summary.author,
+            verb: "opened",
+            when: &d.created_at,
+            body: &d.body,
+            badge: Some("Author"),
+        },
         &base,
         now,
     );
@@ -1466,11 +1474,13 @@ pub fn pr_conversation(
                     connector(page);
                     comment_box(
                         page,
-                        &r.author,
-                        "commented",
-                        &r.submitted_at,
-                        &r.body,
-                        None,
+                        Said {
+                            author: &r.author,
+                            verb: "commented",
+                            when: &r.submitted_at,
+                            body: &r.body,
+                            badge: None,
+                        },
                         &base,
                         now,
                     );
@@ -1805,16 +1815,7 @@ mod tests {
         };
         let mut page = Page::new(80);
         repo_title(&mut page, &repo, Some(&overview));
-        repo_code(
-            &mut page,
-            &repo,
-            &overview,
-            None,
-            Icons::default(),
-            Keys::default(),
-            None,
-            0,
-        );
+        repo_code(&mut page, &repo, &overview, None, None, PageCtx::default());
         for link in [
             Link::from("https://github.com/o/r/tree/main/src"),
             Link::from("https://github.com/o/r/blob/main/README.md"),

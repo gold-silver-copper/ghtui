@@ -157,7 +157,7 @@ fn with_inbox(mode: Mode, depth: ColorDepth) -> State {
 fn with_pr(mode: Mode) -> State {
     let mut state = with_inbox(mode, ColorDepth::TrueColor);
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    state.push(Route::Pr {
+    let _ = state.push(Route::Pr {
         pr: pr.clone(),
         tab: PrTab::Conversation,
     });
@@ -186,7 +186,7 @@ fn open(state: &mut State, route: Route, data: Data) {
     let Some(Need::Data(key)) = needs(&route).pop() else {
         panic!("{route:?} doesn't end in a data fetch");
     };
-    state.push(route);
+    let _ = state.push(route);
     fetched(state, key, data);
 }
 
@@ -197,7 +197,7 @@ fn ghtui() -> RepoId {
 /// A repository's Code tab with everything it asked for delivered.
 fn with_repo(mode: Mode, depth: ColorDepth) -> State {
     let mut state = state(mode, depth);
-    state.push(Route::Repo(ghtui()));
+    let _ = state.push(Route::Repo(ghtui()));
     fetched(
         &mut state,
         DataKey::Repo(ghtui()),
@@ -243,14 +243,14 @@ fn home_third_row_selected_light() {
 #[test]
 fn home_loading_dark() {
     let mut state = state(Mode::Dark, ColorDepth::TrueColor);
-    state.load_visible(false);
+    let _ = state.load_visible(false);
     insta::assert_snapshot!(render(&state));
 }
 
 #[test]
 fn home_error_light() {
     let mut state = state(Mode::Light, ColorDepth::TrueColor);
-    state.load_visible(false);
+    let _ = state.load_visible(false);
     update(
         &mut state,
         Msg::Inbox(Err(ghtui_api::ApiError::Network(
@@ -477,7 +477,7 @@ fn menu_overlay_dark() {
 #[test]
 fn palette_light() {
     let mut state = with_inbox(Mode::Light, ColorDepth::TrueColor);
-    state.open_picker(crate::picker::Kind::Commands);
+    let _ = state.open_picker(crate::picker::Kind::Commands);
     if let Some(Overlay::Picker(p)) = &mut state.overlay {
         p.input.insert_str("ratatui");
     }
@@ -538,6 +538,7 @@ pub(crate) mod diff {
 
     use ghtui_api::model::PrRef;
     use ghtui_diff::FileDiff;
+    use ghtui_git::Oid;
     use ghtui_git::files::{ChangedFile, FileStatus, ZERO_OID};
     use ghtui_git::repo::PrRefs;
     use ghtui_theme::{ColorDepth, Mode};
@@ -563,11 +564,11 @@ pub(crate) mod diff {
             new_path: new.map(Into::into),
             old_mode: modes.0,
             new_mode: modes.1,
-            old_oid: "1".repeat(40),
+            old_oid: Oid::new("1".repeat(40)),
             new_oid: if new.is_some() {
-                "2".repeat(40)
+                Oid::new("2".repeat(40))
             } else {
-                ZERO_OID.into()
+                Oid::new(ZERO_OID)
             },
             similarity: (status == FileStatus::Renamed).then_some(94),
         }
@@ -579,9 +580,9 @@ pub(crate) mod diff {
     fn loaded(doc: Doc) -> DiffState {
         let mut diff = DiffState::loading();
         let refs = PrRefs {
-            head: "h".into(),
-            base: "b".into(),
-            merge_base: "m".into(),
+            head: Oid::new("h"),
+            base: Oid::new("b"),
+            merge_base: Oid::new("m"),
         };
         diff.set_files(refs, doc);
         diff
@@ -594,7 +595,7 @@ pub(crate) mod diff {
         screen.cursor = cursor;
         screen.focus = focus;
         s.screens.push(Screen::Diff(Box::new(screen)));
-        s.settle_diff();
+        let _ = s.settle_diff();
     }
 
     pub(crate) fn diff_state() -> DiffState {
@@ -719,7 +720,7 @@ pub(crate) mod diff {
             Pane::Diff,
         );
         s.size = (200, 30);
-        s.settle_diff();
+        let _ = s.settle_diff();
         insta::assert_snapshot!(render(&s));
     }
 
@@ -738,7 +739,7 @@ pub(crate) mod diff {
             ..Default::default()
         });
         diff.doc.set_viewed(1, ghtui_ui::diff_doc::Viewed::Viewed);
-        s.settle_diff();
+        let _ = s.settle_diff();
         insta::assert_snapshot!(render(&s));
     }
 
@@ -807,7 +808,7 @@ pub(crate) mod diff {
             }],
             ..Default::default()
         });
-        s.settle_diff();
+        let _ = s.settle_diff();
         s
     }
 
@@ -948,7 +949,7 @@ pub(crate) mod diff {
             Pane::Diff,
         );
         s.size = (80, 24);
-        s.settle_diff();
+        let _ = s.settle_diff();
         insta::assert_snapshot!(render(&s));
     }
 
@@ -1085,7 +1086,7 @@ pub(crate) mod diff {
                 "palette",
                 Box::new(move || {
                     let mut s = with_inbox(Mode::Light, tc);
-                    s.open_picker(crate::picker::Kind::Commands);
+                    let _ = s.open_picker(crate::picker::Kind::Commands);
                     s
                 }),
             ),
@@ -1143,7 +1144,7 @@ pub(crate) mod diff {
             for &(w, h) in &sizes {
                 let mut s = build();
                 update(&mut s, Msg::Resize(w, h));
-                s.settle_diff();
+                let _ = s.settle_diff();
                 let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
                     terminal.draw(|frame| view(&s, frame, NOW)).unwrap();

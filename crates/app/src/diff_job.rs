@@ -14,11 +14,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use ghtui_api::model::PrRef;
 use ghtui_diff::FileDiff;
-use ghtui_git::GitError;
 use ghtui_git::blobs::BlobReader;
 use ghtui_git::credentials::Credentials;
 use ghtui_git::files::{ChangedFile, ZERO_OID, is_lockfile};
 use ghtui_git::repo::{PrRefs, Repo};
+use ghtui_git::{GitError, Oid};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
@@ -176,8 +176,8 @@ async fn run_inner(
     };
     let mut refs = repo.fetch_pr(pr.number, base_ref, &progress).await?;
     if let Some((from, to)) = range {
-        refs.merge_base = from;
-        refs.head = to;
+        refs.merge_base = repo.rev_parse(&from).await?;
+        refs.head = repo.rev_parse(&to).await?;
     }
     if let Err(err) = repo.pin_seen(pr.number, &refs.head).await {
         tracing::warn!(%err, "could not pin head");
@@ -280,8 +280,8 @@ async fn diff_file(reader: &BlobReader, file: &ChangedFile) -> FileDiff {
         let side = |oid: &str| (oid != ZERO_OID).then(|| oid.to_owned());
         return FileDiff::submodule(side(&file.old_oid), side(&file.new_oid));
     }
-    let read = |oid: String| async move {
-        if oid == ZERO_OID {
+    let read = |oid: Oid| async move {
+        if oid.is_zero() {
             return Ok(None);
         }
         match reader.read(&oid).await {

@@ -15,7 +15,7 @@ use ghtui_ui::diff_doc::{Doc, Pos};
 use ghtui_ui::text::short_sha;
 use ratatui_textarea::TextArea;
 
-use crate::diff_screen::{self, DiffScreen};
+use crate::diff_screen::{self, DiffScreen, LastReview};
 use crate::keymap::Action;
 use crate::picker::{self, PickItem};
 use crate::state::{Api, Cmd, Git, OutdatedThread, Overlay, Screen, State};
@@ -369,6 +369,7 @@ pub fn outdated_to_map(threads: &[ReviewThread]) -> Vec<OutdatedThread> {
 
 /// Applies the result of submitting a review: accepted drafts leave the
 /// local queue, rejected ones keep their text and GitHub's reason.
+#[must_use]
 pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcome) -> Vec<Cmd> {
     let mut cmds = vec![Cmd::Api(Api::FetchThreads(pr.clone()))];
     if let Some(diff) = state.diffs.get_mut(pr) {
@@ -383,7 +384,7 @@ pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcom
                 .map(|(_, reason)| reason.clone());
         }
         if outcome.submitted {
-            diff.review.last_reviewed_head = diff.head();
+            diff.review.last_reviewed_head = diff.head().map(|h| h.to_string());
         }
         diff.refresh_annotations();
         cmds.push(Cmd::SaveReview(pr.clone(), diff.review.clone()));
@@ -404,6 +405,7 @@ pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcom
     cmds
 }
 
+#[must_use]
 pub(crate) fn on_edited(
     state: &mut State,
     purpose: EditPurpose,
@@ -490,6 +492,7 @@ impl Here {
     }
 }
 
+#[must_use]
 pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
     let viewer = state.viewer.clone();
     let (screen, diff) = state.diff_parts()?;
@@ -537,10 +540,10 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
                 return Some(Vec::new());
             }
             diff.since_requested = true;
-            if diff.last_review.is_none() {
+            if diff.last_review == LastReview::Unknown {
                 let Some(login) = viewer else {
                     // Without a login, only the local record can say.
-                    diff.last_review = Some(None);
+                    diff.last_review = LastReview::None;
                     return Some(start_since_review(state));
                 };
                 state.info("Looking up your last review…");
@@ -582,11 +585,11 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
                         ComposeTarget::File { reason, .. } => reason.clone(),
                         _ => None,
                     };
-                    state.compose(target, "");
+                    let cmds = state.compose(target, "");
                     if let Some(reason) = reason {
                         state.info(reason);
                     }
-                    Some(Vec::new())
+                    Some(cmds)
                 }
                 Err(err) => notice(state, Notice::Error(err)),
             }
@@ -723,21 +726,21 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
 }
 
 /// Compares with the head of your last review, once known.
+#[must_use]
 pub(crate) fn start_since_review(state: &mut State) -> Vec<Cmd> {
     let Some((screen, diff)) = state.diff_parts() else {
         return Vec::new();
     };
     let pr = screen.pr.clone();
-    let old = diff
-        .last_review
-        .clone()
-        .flatten()
-        .or_else(|| diff.review.last_reviewed_head.clone());
+    let old = match &diff.last_review {
+        LastReview::At(oid) => Some(oid.to_string()),
+        LastReview::Unknown | LastReview::None => diff.review.last_reviewed_head.clone(),
+    };
     let head = diff.head();
     let problem = match (&old, &head) {
         (None, _) => Some("You haven't reviewed this PR yet"),
         (_, None) => Some("The diff hasn't loaded yet"),
-        (Some(old), Some(head)) if old == head => {
+        (Some(old), Some(head)) if **old == **head => {
             Some("Nothing new: you reviewed the current head")
         }
         _ => None,
@@ -756,6 +759,7 @@ pub(crate) fn start_since_review(state: &mut State) -> Vec<Cmd> {
 
 /// Shows what `choice` picks: the whole PR, the changes since your last
 /// review, or a commit (from `mark` to it, if a range was marked).
+#[must_use]
 pub(crate) fn apply_commit_choice(
     state: &mut State,
     choice: PickItem,
@@ -789,11 +793,10 @@ pub(crate) fn apply_commit_choice(
             };
             let (first, last) = (i.min(j), i.max(j));
             // The picker's indices, into the list it showed.
-            let (Some((from, _)), Some((to, _))) =
-                (diff.commits.get(first), diff.commits.get(last))
-            else {
+            let (Some(from), Some(to)) = (diff.commits.get(first), diff.commits.get(last)) else {
                 return Vec::new();
             };
+            let (from, to) = (&from.oid, &to.oid);
             let label = if first == last {
                 short_sha(to).to_owned()
             } else {
@@ -802,7 +805,7 @@ pub(crate) fn apply_commit_choice(
             Some(diff_screen::RangeView {
                 label,
                 from: format!("{from}^"),
-                to: to.clone(),
+                to: to.to_string(),
             })
         }
     };
@@ -820,6 +823,7 @@ pub(crate) fn apply_commit_choice(
     })]
 }
 
+#[must_use]
 pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let Some(Overlay::Compose(compose)) = &mut state.overlay else {
         return Vec::new();
@@ -854,6 +858,7 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 
 /// `ctrl-s` in the composer: drafts join the pending review (and are saved);
 /// replies post right away.
+#[must_use]
 pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
     let Some(Overlay::Compose(compose)) = &state.overlay else {
         return Vec::new();
@@ -927,6 +932,7 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
     }
 }
 
+#[must_use]
 pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let Some(Overlay::Submit(dialog)) = &mut state.overlay else {
         return Vec::new();

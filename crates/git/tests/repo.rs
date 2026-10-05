@@ -162,10 +162,10 @@ async fn partial_cache_clone_fetches_pr_with_three_dot_base() {
     assert!(repo.path.ends_with("repos/owner/repo.git"));
 
     let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
-    assert_eq!(refs.head, git(&f.origin, &["rev-parse", "feature"]));
-    assert_eq!(refs.base, git(&f.origin, &["rev-parse", "main"]));
+    assert_eq!(&*refs.head, git(&f.origin, &["rev-parse", "feature"]));
+    assert_eq!(&*refs.base, git(&f.origin, &["rev-parse", "main"]));
     assert_eq!(
-        refs.merge_base, f.branch_point,
+        &*refs.merge_base, f.branch_point,
         "diff base is the merge base, not main's tip"
     );
 
@@ -312,7 +312,7 @@ async fn pins_seen_heads() {
         &repo.path,
         &["rev-parse", &format!("refs/ghtui/pr/7/seen/{}", refs.head)],
     );
-    assert_eq!(pinned, refs.head);
+    assert_eq!(pinned, &*refs.head);
 }
 
 #[tokio::test]
@@ -339,7 +339,7 @@ async fn users_clone_only_gains_ghtui_refs() {
     let repo = Repo::open_local(&local, "upstream").await.unwrap();
     assert!(!repo.partial);
     let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
-    assert_eq!(refs.merge_base, f.branch_point);
+    assert_eq!(&*refs.merge_base, f.branch_point);
 
     let refs_after = git(
         &local,
@@ -419,7 +419,10 @@ async fn lists_pr_commits_oldest_first() {
     let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
     let commits = repo.commits(&refs.merge_base, &refs.head).await.unwrap();
     assert_eq!(commits.len(), 1);
-    assert_eq!(commits[0], (refs.head.clone(), "feature".to_owned()));
+    assert_eq!(
+        (&commits[0].oid, commits[0].subject.as_str()),
+        (&refs.head, "feature")
+    );
 }
 
 /// A read cancelled halfway (its task aborted) must not leave the rest of

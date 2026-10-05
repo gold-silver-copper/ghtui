@@ -1348,8 +1348,8 @@ mod tests {
             new_path: Some(path.into()),
             old_mode: 0o100644,
             new_mode: 0o100644,
-            old_oid: ZERO_OID.into(),
-            new_oid: ZERO_OID.into(),
+            old_oid: ghtui_git::Oid::new(ZERO_OID),
+            new_oid: ghtui_git::Oid::new(ZERO_OID),
             similarity: None,
         }
     }

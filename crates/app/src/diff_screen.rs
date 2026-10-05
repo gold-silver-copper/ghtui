@@ -6,7 +6,8 @@ use std::sync::Arc;
 use ghtui_api::model::{NodeId, PatchFile, PrRef, ReviewThread, ViewedFiles, ViewedState};
 use ghtui_diff::anchor::Commentable;
 use ghtui_diff::{FileDiff, Whitespace};
-use ghtui_git::repo::PrRefs;
+use ghtui_git::Oid;
+use ghtui_git::repo::{Commit, PrRefs};
 use ghtui_store::ReviewState;
 use ghtui_ui::bars::Notice;
 use ghtui_ui::diff_doc::{Doc, Note, Pos, Row, ViewOptions, Viewed};
@@ -19,6 +20,18 @@ use crate::keymap::Action;
 use crate::picker;
 use crate::review::{on_submitted, review_action, start_since_review};
 use crate::state::{Api, Cmd, DiffMsg, Git, Overlay, Problem, State};
+
+/// What GitHub says about your last submitted review of a PR.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum LastReview {
+    /// Not asked yet.
+    #[default]
+    Unknown,
+    /// You haven't submitted one.
+    None,
+    /// The head commit it was on.
+    At(Oid),
+}
 
 /// Split view turns on automatically from this diff-pane width.
 pub const SPLIT_MIN_WIDTH: u16 = 160;
@@ -111,13 +124,12 @@ pub struct DiffState {
     pub mapping_requested: bool,
     /// Move detection was requested (once every file is diffed).
     pub moves_requested: bool,
-    /// Head of your last submitted review on GitHub: `None` until asked,
-    /// `Some(None)` if there isn't one.
-    pub last_review: Option<Option<String>>,
+    /// Your last submitted review on GitHub.
+    pub last_review: LastReview,
     /// "Since my last review" was asked for and is waiting on data.
     pub since_requested: bool,
-    /// The PR's commits, oldest first: `(sha, subject)`.
-    pub commits: Vec<(String, String)>,
+    /// The PR's commits, oldest first.
+    pub commits: Vec<Commit>,
     /// Showing a sub-range of commits instead of the whole PR.
     pub range: Option<RangeView>,
     /// Files we've already asked the job to prioritize.
@@ -138,7 +150,7 @@ impl DiffState {
     }
 
     /// The head commit the diff was computed at.
-    pub fn head(&self) -> Option<String> {
+    pub fn head(&self) -> Option<Oid> {
         self.refs.as_ref().map(|r| r.head.clone())
     }
 
@@ -346,6 +358,7 @@ pub fn preserving_position(screen: &mut DiffScreen, doc: &mut Doc, change: impl 
 
 /// Handles `action` on the diff screen. `None` means it isn't a diff-screen
 /// action (the caller handles it).
+#[must_use]
 pub fn apply(
     screen: &mut DiffScreen,
     state: &mut DiffState,
@@ -553,6 +566,7 @@ pub fn search(screen: &mut DiffScreen, state: &mut DiffState, query: String) -> 
     notice
 }
 
+#[must_use]
 fn toggle_viewed(
     screen: &mut DiffScreen,
     state: &mut DiffState,
@@ -591,6 +605,7 @@ fn toggle_viewed(
     vec![cmd]
 }
 
+#[must_use]
 fn toggle_reviewed(
     screen: &mut DiffScreen,
     state: &mut DiffState,
@@ -617,6 +632,7 @@ fn toggle_reviewed(
 /// Applies view options, clamps positions, keeps the cursor visible (clear
 /// of the sticky header), syncs the tree with the diff, and asks the job to
 /// prioritize files that are on screen but not diffed yet.
+#[must_use]
 pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> Vec<Cmd> {
     let lay = layout(content, screen.tree_visible);
     if lay.tree.is_none() {
@@ -683,6 +699,7 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
 }
 
 /// A message from the PR's current diff job.
+#[must_use]
 pub(crate) fn on_job(state: &mut State, pr: &PrRef, msg: JobMsg) -> Vec<Cmd> {
     match msg {
         JobMsg::Progress(line) => {
@@ -743,6 +760,7 @@ pub(crate) fn on_job(state: &mut State, pr: &PrRef, msg: JobMsg) -> Vec<Cmd> {
 }
 
 /// A message for a PR's diff screen.
+#[must_use]
 pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
     match msg {
         DiffMsg::Replied(Err(err)) => {
@@ -773,7 +791,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
             let Some(diff) = state.diffs.get_mut(&pr) else {
                 return Vec::new();
             };
-            diff.last_review = Some(commit);
+            diff.last_review = commit.map_or(LastReview::None, |c| LastReview::At(Oid::new(c)));
             if diff.since_requested {
                 return start_since_review(state);
             }
