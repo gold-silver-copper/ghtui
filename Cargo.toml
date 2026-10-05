@@ -47,6 +47,7 @@ material-colors = "0.5.0"
 terminal-colorsaurus = "1.0.3"
 
 insta = "1.49.0"
+proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 pulldown-cmark = { version = "0.13.4", default-features = false }
 base64 = "0.23.1"
 

@@ -139,9 +139,16 @@ pub struct Key {
 }
 
 impl Key {
+    /// Folds Shift into the key where the key already says it: `G`, and
+    /// Shift-Tab (terminals send `BackTab` with Shift; `<C-S-Tab>` reads as
+    /// Tab with Shift).
     pub fn new(code: KeyCode, mods: KeyModifiers) -> Self {
+        let code = match code {
+            KeyCode::Tab if mods.contains(KeyModifiers::SHIFT) => KeyCode::BackTab,
+            code => code,
+        };
         let mods = match code {
-            KeyCode::Char(_) => mods - KeyModifiers::SHIFT,
+            KeyCode::Char(_) | KeyCode::BackTab => mods - KeyModifiers::SHIFT,
             _ => mods,
         };
         Self { code, mods }
@@ -493,6 +500,17 @@ mod tests {
         assert_eq!(defaults.bindings.len(), declared, "every default parses");
     }
 
+    /// What terminals send for Shift-Tab matches `<S-Tab>`.
+    #[test]
+    fn shift_tab_matches_what_terminals_send() {
+        let event = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
+        assert_eq!(parse_sequence("<S-Tab>").unwrap(), [Key::from(event)]);
+        assert_eq!(
+            parse_sequence("<C-S-Tab>").unwrap(),
+            [Key::new(KeyCode::BackTab, KeyModifiers::CONTROL)]
+        );
+    }
+
     #[test]
     fn every_default_is_one_key() {
         let keymap = Keymap::default();
@@ -610,5 +628,50 @@ mod tests {
                 .unwrap_err()
                 .contains("conflicts")
         );
+    }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn key() -> impl Strategy<Value = Key> {
+            let named = prop::sample::select(NAMED.iter().map(|(_, code)| *code).collect::<Vec<_>>());
+            let mods = prop::sample::select(vec![
+                KeyModifiers::NONE,
+                KeyModifiers::CONTROL,
+                KeyModifiers::ALT,
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            ]);
+            prop_oneof![
+                // Plain characters, anything printable.
+                any::<char>()
+                    .prop_filter("printable", |c| !c.is_control())
+                    .prop_map(|c| Key::new(KeyCode::Char(c), KeyModifiers::NONE)),
+                // Modified letters (notation folds case).
+                ("[a-z0-9]", mods.clone()).prop_map(|(c, m)| {
+                    Key::new(KeyCode::Char(c.chars().next().unwrap_or('a')), m)
+                }),
+                (named, mods).prop_map(|(code, m)| Key::new(code, m)),
+            ]
+        }
+
+        proptest! {
+            /// Writing keys down and reading them back gives the same keys.
+            #[test]
+            fn sequences_round_trip(keys in prop::collection::vec(key(), 1..5)) {
+                let written = format_sequence(&keys);
+                prop_assert_eq!(parse_sequence(&written), Ok(keys), "{}", written);
+            }
+
+            /// Any accepted spelling settles on one canonical form.
+            #[test]
+            fn parsing_settles(s in "(<[A-Za-z-]{1,8}>|[ -~]){1,6}") {
+                if let Ok(keys) = parse_sequence(&s) {
+                    let canonical = format_sequence(&keys);
+                    let again = parse_sequence(&canonical).map(|k| format_sequence(&k));
+                    prop_assert_eq!(again, Ok(canonical));
+                }
+            }
+        }
     }
 }
