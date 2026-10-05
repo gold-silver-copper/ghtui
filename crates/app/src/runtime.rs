@@ -141,8 +141,7 @@ impl Effects {
             Cmd::Api(api) => spawn(api, replies, &self.gh, &self.tx),
             Cmd::Git(git) => self.git(git, replies),
             Cmd::OpenUrl(url) => {
-                let tx = self.tx.clone();
-                spawn_guarded(&self.tx, replies, async move {
+                spawn_guarded(&self.tx, replies, |tx| async move {
                     if let Err(err) = open_url(&url).await {
                         let text = format!("Couldn't open browser: {err}");
                         let _ = tx.send(Msg::Notice(Notice::Error(text)));
@@ -152,15 +151,13 @@ impl Effects {
             // Clipboard writes go to the terminal, right away.
             Cmd::Copy(text) => copy_to_clipboard(&text),
             Cmd::Timer(timer, ms) => {
-                let tx = self.tx.clone();
-                spawn_guarded(&self.tx, replies, async move {
+                spawn_guarded(&self.tx, replies, |tx| async move {
                     tokio::time::sleep(Duration::from_millis(ms)).await;
                     let _ = tx.send(Msg::Timer(timer));
                 });
             }
             Cmd::SuggestLater(q) => {
-                let tx = self.tx.clone();
-                spawn_guarded(&self.tx, replies, async move {
+                spawn_guarded(&self.tx, replies, |tx| async move {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                     let _ = tx.send(Msg::SuggestDue(q));
                 });
@@ -192,7 +189,7 @@ impl Effects {
                     job,
                 };
                 let run = diff_job::run(self.git.clone(), base_ref, range, out, control.clone());
-                let handle = spawn_guarded(&self.tx, replies, run);
+                let handle = spawn_guarded(&self.tx, replies, |_| run);
                 self.jobs.insert(pr, (control, handle));
             }
             Git::Prioritize(pr, files) => {
@@ -206,7 +203,7 @@ impl Effects {
                     pr,
                     job,
                 };
-                spawn_guarded(&self.tx, replies, async move {
+                spawn_guarded(&self.tx, replies, |_| async move {
                     let moves = blocking(move || {
                         let inputs: Vec<_> = files
                             .iter()
@@ -224,15 +221,14 @@ impl Effects {
                 });
             }
             Git::SinceReview { pr, old_head } => {
-                let tx = self.tx.clone();
                 let Some(git) = self.job_git(&pr) else {
-                    let _ = tx.send(Msg::Diff(
+                    let _ = self.tx.send(Msg::Diff(
                         pr,
                         DiffMsg::SinceReady(old_head, Err(Failure::msg("the diff isn't ready"))),
                     ));
                     return;
                 };
-                spawn_guarded(&self.tx, replies, async move {
+                spawn_guarded(&self.tx, replies, |tx| async move {
                     let (repo, reader) = git;
                     let result =
                         diff_job::since_review_hashes(&repo, &reader, pr.number, &old_head)
@@ -242,15 +238,14 @@ impl Effects {
                 });
             }
             Git::ListCommits(pr) => {
-                let tx = self.tx.clone();
                 let Some(git) = self.job_git(&pr) else {
-                    let _ = tx.send(Msg::Diff(
+                    let _ = self.tx.send(Msg::Diff(
                         pr,
                         DiffMsg::CommitsListed(Err(Failure::msg("the diff isn't ready"))),
                     ));
                     return;
                 };
-                spawn_guarded(&self.tx, replies, async move {
+                spawn_guarded(&self.tx, replies, |tx| async move {
                     let (repo, _) = git;
                     let result = async {
                         let head = repo
@@ -271,8 +266,7 @@ impl Effects {
                 let Some(git) = self.job_git(&pr) else {
                     return;
                 };
-                let tx = self.tx.clone();
-                spawn_guarded(&self.tx, replies, async move {
+                spawn_guarded(&self.tx, replies, |tx| async move {
                     let (repo, reader) = git;
                     let mut mapped = Vec::new();
                     for t in threads {
@@ -290,8 +284,7 @@ impl Effects {
 
     fn load_review(&self, pr: PrRef, replies: Vec<Msg>) {
         let reviews = self.reviews.clone();
-        let tx = self.tx.clone();
-        spawn_guarded(&self.tx, replies, async move {
+        spawn_guarded(&self.tx, replies, |tx| async move {
             let review = match reviews {
                 Ok(reviews) => {
                     let key = (pr.repo.owner.clone(), pr.repo.name.clone(), pr.number);
@@ -320,8 +313,7 @@ impl Effects {
 /// the token's state, when it changed).
 fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
     let gh = gh.clone();
-    let tx = tx.clone();
-    spawn_guarded(&tx.clone(), replies, async move {
+    spawn_guarded(tx, replies, |tx| async move {
         let msg = match api {
             Api::FetchViewer => Msg::Viewer(gh.viewer_login().await),
             Api::FetchInbox => Msg::Inbox(gh.inbox().await),
@@ -461,15 +453,16 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
     });
 }
 
-/// Spawns `task`. If it panics, the panic is logged and reported, and
-/// `replies` (what it would have answered, as errors) go out instead, so no
-/// screen waits forever.
-fn spawn_guarded(
+/// Spawns the task `start` makes from a sender of its own. If it panics,
+/// the panic is logged and reported, and `replies` (what it would have
+/// answered, as errors) go out instead, so no screen waits forever.
+fn spawn_guarded<F: Future<Output = ()> + Send + 'static>(
     tx: &mpsc::UnboundedSender<Msg>,
     replies: Vec<Msg>,
-    task: impl Future<Output = ()> + Send + 'static,
+    start: impl FnOnce(mpsc::UnboundedSender<Msg>) -> F,
 ) -> tokio::task::JoinHandle<()> {
     use futures::FutureExt;
+    let task = start(tx.clone());
     let tx = tx.clone();
     tokio::spawn(async move {
         if let Err(panic) = std::panic::AssertUnwindSafe(task).catch_unwind().await {
@@ -613,8 +606,7 @@ fn review_writer(
         Problem::Drafts,
         Some("Drafts are no longer being saved (internal error; see the log)".into()),
     );
-    let out = tx.clone();
-    let writer = spawn_guarded(tx, vec![gone], async move {
+    let writer = spawn_guarded(tx, vec![gone], |out| async move {
         let mut failing = false;
         while let Some(first) = saves.recv().await {
             let mut latest: Vec<(PrRef, ReviewState)> = vec![first];
@@ -950,7 +942,7 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let pr = PrRef::parse("o/r#1").unwrap();
         let cmd = Cmd::Api(Api::FetchThreads(pr.clone()));
-        let handle = spawn_guarded(&tx, panic_replies(&cmd), async { panic!("boom") });
+        let handle = spawn_guarded(&tx, panic_replies(&cmd), |_| async { panic!("boom") });
         handle.await.unwrap();
         assert!(matches!(
             rx.recv().await,
@@ -990,7 +982,7 @@ mod tests {
     #[tokio::test]
     async fn panics_on_the_blocking_pool_reach_the_guard() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = spawn_guarded(&tx, Vec::new(), async {
+        let handle = spawn_guarded(&tx, Vec::new(), |_| async {
             blocking(|| panic!("deep")).await;
         });
         handle.await.unwrap();
