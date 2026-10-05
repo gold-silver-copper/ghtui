@@ -11,7 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthChar;
 
-use ghtui_diff::anchor::LinePos;
+use ghtui_diff::anchor::{LinePos, Side};
 
 use crate::annotations::{Annotation, ThreadRowKind};
 use crate::diff_doc::{Doc, DocFile, FoldReason, Note, Pos, Row, Viewed, sides};
@@ -68,19 +68,14 @@ impl Widget for DiffView<'_> {
         if self.doc.is_empty() || area.height == 0 {
             return;
         }
-        let first = self.doc.to_global(self.top);
-        for i in 0..area.height {
-            let g = first + usize::from(i);
-            if g >= self.doc.total_rows() {
-                break;
-            }
-            let pos = self.doc.to_pos(g);
+        let rows = self.doc.to_global(self.top)..self.doc.total_rows();
+        for (g, y) in rows.zip(area.top()..area.bottom()) {
             let row_area = Rect {
-                y: area.y + i,
+                y,
                 height: 1,
                 ..area
             };
-            self.render_row(pos, row_area, buf);
+            self.render_row(self.doc.to_pos(g), row_area, buf);
         }
         // Sticky header: the file you're in stays named at the top.
         let top = self.doc.clamp(self.top);
@@ -131,9 +126,22 @@ impl DiffView<'_> {
                 let header = file.headers().get(seg as usize).map_or("", String::as_str);
                 Span::styled(format!("{pad}{header}"), theme.meta(quiet_bg)).render(area, buf);
             }
-            Row::Line(e) => self.unified(pos.file, file, e, cursor, area, buf),
+            Row::Line(e) => self.line(pos, Some(e), None, cursor, area, buf),
             Row::Split { left, right } => {
-                self.split(pos.file, file, (left, right), cursor, area, buf);
+                // Two halves with a column of context tint between them.
+                fill(buf, area, theme, line_bg(DiffBg::Context, cursor));
+                let half = area.width.saturating_sub(1) / 2;
+                let right_area = Rect {
+                    x: area.x + half + 1,
+                    width: area.width.saturating_sub(half + 1),
+                    ..area
+                };
+                let left_area = Rect {
+                    width: half,
+                    ..area
+                };
+                self.line(pos, left, Some(Side::Left), cursor, left_area, buf);
+                self.line(pos, right, Some(Side::Right), cursor, right_area, buf);
             }
             Row::Thread(t) => self.thread_row(file, t, cursor, area, buf),
             Row::Fold { block, reason } => {
@@ -419,134 +427,66 @@ impl DiffView<'_> {
         }
     }
 
-    fn unified(
+    /// Alignment entry `entry` of the row at `pos`: the row's marks (except
+    /// on a split row's right half), line numbers (both in unified view,
+    /// `side`'s in split view) and code.
+    fn line(
         &self,
-        file_index: usize,
-        file: &DocFile,
-        e: u32,
+        pos: Pos,
+        entry: Option<u32>,
+        side: Option<Side>,
         cursor: bool,
         area: Rect,
         buf: &mut Buffer,
     ) {
         let theme = self.ctx.theme;
-        let Some(text) = file.text() else { return };
-        let Some(line) = text.lines(self.doc.opts.whitespace).get(e as usize) else {
+        let (Some(file), Some(row)) = (self.doc.files.get(pos.file), self.doc.row(pos)) else {
             return;
         };
-        let moved = self.doc.move_at_entry(file_index, e).is_some();
-        let diff_bg = if moved {
-            DiffBg::Moved
-        } else {
-            diff_bg(line.kind)
-        };
-        let emphasis = self.emphasis(text, e, moved);
-        let bg = line_bg(diff_bg, cursor);
-        fill(buf, area, theme, bg);
-        let width = file.number_width();
-        let (left, right) = sides(line);
-        let [reviewed, thread] = self.marks(file, &[e], bg);
-        let mut spans = vec![
-            Span::styled(" ", theme.body(bg)),
-            reviewed,
-            thread,
-            Span::styled(
-                number(line.old, width),
-                theme.style(self.number_fg(file_index, left, line.kind), bg),
-            ),
-            Span::styled(" ", theme.body(bg)),
-            Span::styled(
-                number(line.new, width),
-                theme.style(self.number_fg(file_index, right, line.kind), bg),
-            ),
-            Span::styled("  ", theme.body(bg)),
-        ];
-        let used: usize = spans.iter().map(Span::width).sum();
-        let room = usize::from(area.width).saturating_sub(used + 1);
-        spans.extend(self.code(text, line, diff_bg, cursor, room, emphasis));
-        Line::from(spans).render(area, buf);
-    }
-
-    /// Changed-token ranges for entry `e` (none on moved lines: the whole
-    /// block is the change).
-    fn emphasis<'t>(&self, text: &'t TextDiff, e: u32, moved: bool) -> &'t [(u32, u32)] {
-        if moved {
-            return &[];
-        }
-        text.intraline(self.doc.opts.whitespace)
-            .get(&e)
-            .map_or(&[], Vec::as_slice)
-    }
-
-    /// A split row: the `(left, right)` entries side by side.
-    fn split(
-        &self,
-        file_index: usize,
-        file: &DocFile,
-        (left, right): (Option<u32>, Option<u32>),
-        cursor: bool,
-        area: Rect,
-        buf: &mut Buffer,
-    ) {
-        let theme = self.ctx.theme;
         let Some(text) = file.text() else { return };
         let lines = text.lines(self.doc.opts.whitespace);
-        let width = file.number_width();
-        let half = area.width.saturating_sub(1) / 2;
-        let halves = [
-            (
-                left.and_then(|e| lines.get(e as usize).map(|l| (e, l))),
-                Rect {
-                    width: half,
-                    ..area
-                },
-                true,
-            ),
-            (
-                right.and_then(|e| lines.get(e as usize).map(|l| (e, l))),
-                Rect {
-                    x: area.x + half + 1,
-                    width: area.width.saturating_sub(half + 1),
-                    ..area
-                },
-                false,
-            ),
-        ];
-        fill(buf, area, theme, line_bg(DiffBg::Context, cursor));
-        for (entry, half_area, is_left) in halves {
-            let moved = entry.is_some_and(|(e, _)| self.doc.move_at_entry(file_index, e).is_some());
-            let line = entry.map(|(_, l)| l);
-            let diff_bg = match line {
-                Some(_) if moved => DiffBg::Moved,
-                Some(l) => diff_bg(l.kind),
-                None => DiffBg::Context,
-            };
-            let emphasis = entry.map_or(&[][..], |(e, _)| self.emphasis(text, e, moved));
-            let bg = line_bg(diff_bg, cursor);
-            fill(buf, half_area, theme, bg);
-            let mut spans = Vec::new();
-            if is_left {
-                let entries: Vec<u32> = left.into_iter().chain(right).collect();
-                let [reviewed, thread] = self.marks(file, &entries, bg);
-                spans.push(Span::styled(" ", theme.body(bg)));
-                spans.push(reviewed);
-                spans.push(thread);
-            }
-            let Some(line) = line else {
-                Line::from(spans).render(half_area, buf);
-                continue;
-            };
-            let (old, new) = sides(line);
-            let pos = if is_left { old } else { new };
-            spans.push(Span::styled(
-                number(pos.map(|p| p.line), width),
-                theme.style(self.number_fg(file_index, pos, line.kind), bg),
-            ));
-            spans.push(Span::styled("  ", theme.body(bg)));
-            let used: usize = spans.iter().map(Span::width).sum();
-            let room = usize::from(half_area.width).saturating_sub(used + 1);
-            spans.extend(self.code(text, line, diff_bg, cursor, room, emphasis));
-            Line::from(spans).render(half_area, buf);
+        let line = entry.and_then(|e| Some((e, lines.get(e as usize)?)));
+        let moved = line.is_some_and(|(e, _)| self.doc.move_at_entry(pos.file, e).is_some());
+        let diff_bg = match line {
+            Some(_) if moved => DiffBg::Moved,
+            Some((_, l)) => diff_bg(l.kind),
+            None => DiffBg::Context,
+        };
+        let bg = line_bg(diff_bg, cursor);
+        fill(buf, area, theme, bg);
+        let mut spans = Vec::new();
+        if side != Some(Side::Right) {
+            let entries: Vec<u32> = row.entries().collect();
+            spans.push(Span::styled(" ", theme.body(bg)));
+            spans.extend(self.marks(file, &entries, bg));
         }
+        let Some((e, line)) = line else {
+            Line::from(spans).render(area, buf);
+            return;
+        };
+        let (left, right) = sides(line);
+        let numbers = [(Side::Left, left), (Side::Right, right)]
+            .into_iter()
+            .filter(|(s, _)| side.is_none_or(|side| side == *s));
+        for (i, (_, at)) in numbers.enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" ", theme.body(bg)));
+            }
+            spans.push(Span::styled(
+                number(at.map(|p| p.line), file.number_width()),
+                theme.style(self.number_fg(pos.file, at, line.kind), bg),
+            ));
+        }
+        spans.push(Span::styled("  ", theme.body(bg)));
+        let used: usize = spans.iter().map(Span::width).sum();
+        let room = usize::from(area.width).saturating_sub(used + 1);
+        // No emphasis on moved lines: the whole block is the change.
+        let emphasis = match text.intraline(self.doc.opts.whitespace).get(&e) {
+            Some(ranges) if !moved => ranges.as_slice(),
+            _ => &[],
+        };
+        spans.extend(self.code(text, line, diff_bg, cursor, room, emphasis));
+        Line::from(spans).render(area, buf);
     }
 
     fn thread_row(&self, file: &DocFile, t: u32, cursor: bool, area: Rect, buf: &mut Buffer) {
