@@ -383,17 +383,22 @@ impl DiffView<'_> {
         } else {
             Span::styled(" ", theme.body(bg))
         };
-        let anns: Vec<&Annotation> = entries
+        let anns = entries
             .iter()
             .flat_map(|e| file.entry_lines(*e, self.doc.opts.whitespace))
-            .flat_map(|pos| file.annotations_at(pos).to_vec())
-            .filter_map(|i| self.doc.annotations.get(i as usize))
-            .collect();
-        let thread = if anns.iter().any(|a| a.is_draft()) {
+            .flat_map(|pos| file.annotations_at(pos))
+            .filter_map(|i| self.doc.annotations.get(*i as usize));
+        let (mut any, mut draft, mut open) = (false, false, false);
+        for a in anns {
+            any = true;
+            draft |= a.is_draft();
+            open |= !a.resolved;
+        }
+        let thread = if draft {
             Span::styled("✎", theme.style(Fg::Tertiary, bg))
-        } else if anns.iter().any(|a| !a.resolved) {
+        } else if open {
             Span::styled("◆", theme.style(Fg::Primary, bg))
-        } else if !anns.is_empty() {
+        } else if any {
             Span::styled("◇", theme.meta(bg))
         } else {
             Span::styled(" ", theme.body(bg))
@@ -824,8 +829,10 @@ fn code_spans(
     }
     // Cut segments at emphasis boundaries.
     let mut cut: Vec<(usize, usize, Option<TokenKind>, bool)> = Vec::new();
+    let mut bounds: Vec<usize> = Vec::new();
     for (s, e, kind) in segments {
-        let mut bounds: Vec<usize> = vec![s, e];
+        bounds.clear();
+        bounds.extend([s, e]);
         for (a, b) in emphasis {
             for x in [*a as usize, *b as usize] {
                 if x > s && x < e {

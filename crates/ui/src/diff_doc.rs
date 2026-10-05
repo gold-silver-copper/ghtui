@@ -216,19 +216,19 @@ impl DocFile {
 
     /// The lines an alignment entry shows: removed lines are on the left,
     /// added on the right, context on both.
-    pub fn entry_lines(&self, entry: u32, whitespace: Whitespace) -> Vec<LinePos> {
-        let Some(line) = self
+    pub fn entry_lines(
+        &self,
+        entry: u32,
+        whitespace: Whitespace,
+    ) -> impl Iterator<Item = LinePos> + use<> {
+        let line = self
             .text()
-            .and_then(|t| t.lines(whitespace).get(entry as usize))
-        else {
-            return Vec::new();
-        };
-        let (left, right) = sides(line);
-        match line.kind {
-            LineKind::Removed => left.into_iter().collect(),
-            LineKind::Added => right.into_iter().collect(),
-            LineKind::Context => left.into_iter().chain(right).collect(),
-        }
+            .and_then(|t| t.lines(whitespace).get(entry as usize));
+        let (left, right) = line.map(sides).unwrap_or_default();
+        let kind = line.map(|l| l.kind);
+        let left = left.filter(|_| kind != Some(LineKind::Added));
+        let right = right.filter(|_| kind != Some(LineKind::Removed));
+        left.into_iter().chain(right)
     }
 
     fn push_annotation(&mut self, index: u32, ann: &Annotation, open: bool, wrap: usize) {

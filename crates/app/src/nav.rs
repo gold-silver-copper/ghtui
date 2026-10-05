@@ -1285,8 +1285,8 @@ impl State {
     pub fn key_here(&self, action: Action) -> Option<String> {
         self.keymap
             .keys_in(action, self.scope())
-            .first()
-            .map(|k| crate::keymap::pretty(k))
+            .next()
+            .map(crate::keymap::pretty)
     }
 
     /// Keys that can follow the pending prefix (which-key).
@@ -1432,13 +1432,10 @@ pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         (None, _) if action == Some(Action::Menu) => None,
         // A row's own key runs it.
         (None, _) => {
-            let row = menu.rows.iter().find(|d| {
-                state
-                    .keymap
-                    .keys_in(d.action, scope)
-                    .iter()
-                    .any(|k| *k == pressed)
-            });
+            let row = menu
+                .rows
+                .iter()
+                .find(|d| state.keymap.keys_in(d.action, scope).any(|k| k == pressed));
             match row {
                 Some(d) => Some(d.clone()),
                 None => return Vec::new(),

@@ -400,12 +400,11 @@ impl Keymap {
     }
 
     /// The sequences that run `action` in `scope`, for hints.
-    pub fn keys_in(&self, action: Action, scope: Scope) -> Vec<Vec<Key>> {
+    pub fn keys_in(&self, action: Action, scope: Scope) -> impl Iterator<Item = &[Key]> {
         self.bindings
             .iter()
-            .filter(|(_, a, where_)| *a == action && where_.overlaps(scope))
-            .map(|(keys, _, _)| keys.clone())
-            .collect()
+            .filter(move |(_, a, where_)| *a == action && where_.overlaps(scope))
+            .map(|(keys, _, _)| keys.as_slice())
     }
 }
 
@@ -712,7 +711,11 @@ mod tests {
             keymap.resolve(&[key('j')], Scope::Page),
             Resolution::Unbound
         );
-        assert_eq!(keymap.keys_in(Action::Down, Scope::Page), [vec![key('z')]]);
+        assert!(
+            keymap
+                .keys_in(Action::Down, Scope::Page)
+                .eq([&[key('z')][..]])
+        );
     }
 
     #[test]
