@@ -21,7 +21,7 @@ use ratatui::layout::Rect;
 use ratatui_textarea::TextArea;
 
 use crate::browse::{self, Data, DataKey, Need, PageScreen};
-use crate::diff_job::DiffFiles;
+use crate::diff_job::{DiffFiles, JobId, JobMsg};
 use crate::diff_screen::{self, DiffScreen, DiffState};
 use crate::keymap::{Action, Key, Keymap, Resolution, Scope};
 use crate::nav::{self, Hints, Menu, SearchBox, Visit};
@@ -66,10 +66,8 @@ pub enum Msg {
     ),
     RateLimits(RateLimits),
     Notice(Notice),
-    DiffProgress(PrRef, String),
-    DiffFiles(PrRef, Box<DiffFiles>),
-    FileDiff(PrRef, usize, Arc<FileDiff>),
-    DiffFailed(PrRef, String),
+    /// From a PR's diff job; ignored unless it's the PR's current job.
+    Job(PrRef, JobId, JobMsg),
     ViewedLoaded(PrRef, Box<Result<ViewedFiles, ApiError>>),
     ViewedSaved {
         pr: PrRef,
@@ -91,7 +89,6 @@ pub enum Msg {
     ReviewSubmitted(PrRef, SubmitOutcome),
     /// `$EDITOR` finished (or failed to start).
     Edited(EditPurpose, Result<String, String>),
-    MovesDetected(PrRef, Vec<ghtui_diff::moves::Move>),
     LastReview(PrRef, Result<Option<String>, ApiError>),
     SinceReady(
         PrRef,
@@ -141,6 +138,7 @@ pub enum Cmd {
     /// With `range`, diff `(from, to)` instead of the whole PR.
     LoadDiff {
         pr: PrRef,
+        job: JobId,
         base_ref: String,
         range: Option<(String, String)>,
     },
@@ -187,7 +185,8 @@ pub enum Cmd {
         purpose: EditPurpose,
         text: String,
     },
-    DetectMoves(PrRef, Vec<(usize, Arc<FileDiff>)>),
+    /// Look for moved code; answered as the job's [`JobMsg::Moves`].
+    DetectMoves(PrRef, JobId, Vec<(usize, Arc<FileDiff>)>),
     FetchLastReview {
         pr: PrRef,
         login: String,
@@ -472,10 +471,13 @@ impl State {
         let Some(base_ref) = self.base_ref(pr) else {
             return Vec::new();
         };
-        self.diffs.insert(pr.clone(), DiffState::loading());
+        let diff = DiffState::loading();
+        let job = diff.job;
+        self.diffs.insert(pr.clone(), diff);
         vec![
             Cmd::LoadDiff {
                 pr: pr.clone(),
+                job,
                 base_ref,
                 range: None,
             },
@@ -702,54 +704,12 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.notice = Some(notice);
             Vec::new()
         }
-        Msg::DiffProgress(pr, line) => {
-            if let Some(diff) = state.diffs.get_mut(&pr)
-                && !diff.listed()
-            {
-                diff.progress = Some(line);
+        Msg::Job(pr, job, msg) => {
+            if state.diffs.get(&pr).is_some_and(|d| d.job == job) {
+                on_job(state, pr, msg)
+            } else {
+                Vec::new()
             }
-            Vec::new()
-        }
-        Msg::DiffFiles(pr, files) => {
-            let Some(diff) = state.diffs.get_mut(&pr) else {
-                return Vec::new();
-            };
-            let DiffFiles {
-                refs,
-                files,
-                generated,
-            } = *files;
-            diff.set_files(refs, Doc::new(files, &generated));
-            // "Since my last review" chosen while switching ranges.
-            if std::mem::take(&mut diff.since_requested) {
-                return review_action(state, Action::ToggleSinceReview).unwrap_or_default();
-            }
-            Vec::new()
-        }
-        Msg::FileDiff(pr, index, file) => {
-            let mut cmds = Vec::new();
-            if let Some(diff) = state.diffs.get_mut(&pr) {
-                diff.set_file(index, file);
-                if let Some(inputs) = diff.take_move_inputs() {
-                    cmds.push(Cmd::DetectMoves(pr.clone(), inputs));
-                }
-            }
-            cmds
-        }
-        Msg::MovesDetected(pr, moves) => {
-            match state.diff_parts() {
-                Some((screen, diff)) if screen.pr == pr => {
-                    diff_screen::preserving_position(screen, &mut diff.doc, |doc| {
-                        doc.set_moves(moves)
-                    });
-                }
-                _ => {
-                    if let Some(diff) = state.diffs.get_mut(&pr) {
-                        diff.doc.set_moves(moves);
-                    }
-                }
-            }
-            Vec::new()
         }
         Msg::LastReview(pr, result) => {
             let commit = result.unwrap_or_else(|err| {
@@ -805,13 +765,6 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 Vec::new()
             }
         },
-        Msg::DiffFailed(pr, error) => {
-            if let Some(diff) = state.diffs.get_mut(&pr) {
-                diff.progress = None;
-                diff.error = Some(error);
-            }
-            Vec::new()
-        }
         Msg::ViewedLoaded(pr, result) => {
             match *result {
                 Ok(viewed) => {
@@ -1517,12 +1470,76 @@ pub fn apply_commit_choice(
     diff.restart(range);
     // Since your review: compared once the whole PR is back.
     diff.since_requested = since;
+    let job = diff.job;
     *screen = DiffScreen::new(pr.clone(), width);
     vec![Cmd::LoadDiff {
         pr,
+        job,
         base_ref,
         range: cmd_range,
     }]
+}
+
+/// A message from the PR's current diff job.
+fn on_job(state: &mut State, pr: PrRef, msg: JobMsg) -> Vec<Cmd> {
+    match msg {
+        JobMsg::Progress(line) => {
+            if let Some(diff) = state.diffs.get_mut(&pr)
+                && !diff.listed()
+            {
+                diff.progress = Some(line);
+            }
+            Vec::new()
+        }
+        JobMsg::Files(files) => {
+            let Some(diff) = state.diffs.get_mut(&pr) else {
+                return Vec::new();
+            };
+            let DiffFiles {
+                refs,
+                files,
+                generated,
+            } = *files;
+            diff.set_files(refs, Doc::new(files, &generated));
+            // "Since my last review" chosen while switching ranges.
+            if std::mem::take(&mut diff.since_requested) {
+                return review_action(state, Action::ToggleSinceReview).unwrap_or_default();
+            }
+            Vec::new()
+        }
+        JobMsg::File(index, file) => {
+            let mut cmds = Vec::new();
+            if let Some(diff) = state.diffs.get_mut(&pr) {
+                diff.set_file(index, file);
+                if let Some(inputs) = diff.take_move_inputs() {
+                    cmds.push(Cmd::DetectMoves(pr.clone(), diff.job, inputs));
+                }
+            }
+            cmds
+        }
+        JobMsg::Moves(moves) => {
+            match state.diff_parts() {
+                Some((screen, diff)) if screen.pr == pr => {
+                    diff_screen::preserving_position(screen, &mut diff.doc, |doc| {
+                        doc.set_moves(moves)
+                    });
+                }
+                _ => {
+                    if let Some(diff) = state.diffs.get_mut(&pr) {
+                        diff.doc.set_moves(moves);
+                    }
+                }
+            }
+            Vec::new()
+        }
+        JobMsg::Failed(error) => {
+            if let Some(diff) = state.diffs.get_mut(&pr) {
+                diff.progress = None;
+                diff.error = Some(error);
+            }
+            Vec::new()
+        }
+    }
 }
 
 fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
@@ -2862,26 +2879,56 @@ mod tests {
                     .iter()
                     .position(|f| f.diff.is_none())
                     .unwrap();
+                let job = s.diffs[&pr].job;
                 let cmds = update(
                     &mut s,
-                    Msg::FileDiff(
+                    Msg::Job(
                         pr.clone(),
-                        pending,
-                        Arc::new(FileDiff::compute(
-                            "zz/pending.rs",
-                            Some(b"a\n"),
-                            Some(b"b\n"),
-                        )),
+                        job,
+                        JobMsg::File(
+                            pending,
+                            Arc::new(FileDiff::compute(
+                                "zz/pending.rs",
+                                Some(b"a\n"),
+                                Some(b"b\n"),
+                            )),
+                        ),
                     ),
                 );
                 assert!(cmds.iter().any(
-                    |c| matches!(c, Cmd::DetectMoves(p, files) if *p == pr && files.len() == 8)
+                    |c| matches!(c, Cmd::DetectMoves(p, j, files) if *p == pr && *j == job && files.len() == 8)
                 ));
                 // Only once.
-                let again = update(&mut s, Msg::MovesDetected(pr.clone(), Vec::new()));
+                let again = update(&mut s, Msg::Job(pr.clone(), job, JobMsg::Moves(Vec::new())));
                 assert!(!again.iter().any(|c| matches!(c, Cmd::DetectMoves(..))));
                 assert!(act(&mut s, Action::JumpMove).is_empty());
                 assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("moved")));
+            }
+
+            /// After a restart (a refresh, another commit range), the old
+            /// job's results don't land in the new diff.
+            #[test]
+            fn a_restarted_job_ignores_the_old_one() {
+                let (mut s, pr) = diff_state(120);
+                let old = s.diffs[&pr].job;
+                s.diffs.get_mut(&pr).unwrap().restart(None);
+                let stale = Arc::new(FileDiff::compute("a.rs", Some(b"a\n"), Some(b"b\n")));
+                update(&mut s, Msg::Job(pr.clone(), old, JobMsg::File(0, stale)));
+                update(
+                    &mut s,
+                    Msg::Job(pr.clone(), old, JobMsg::Failed("old".into())),
+                );
+                let diff = &s.diffs[&pr];
+                assert_ne!(diff.job, old);
+                assert!(diff.doc.is_empty());
+                assert_eq!(diff.error, None);
+                // The current job's messages still count.
+                let job = diff.job;
+                update(
+                    &mut s,
+                    Msg::Job(pr.clone(), job, JobMsg::Failed("new".into())),
+                );
+                assert_eq!(s.diffs[&pr].error.as_deref(), Some("new"));
             }
 
             #[test]

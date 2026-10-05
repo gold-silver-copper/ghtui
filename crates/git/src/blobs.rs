@@ -10,8 +10,15 @@ use tokio::sync::Mutex;
 
 use crate::GitError;
 
+type MakeCommand = Box<dyn Fn() -> Command + Send + Sync>;
+
 pub struct BlobReader {
-    inner: Mutex<Batch>,
+    make: MakeCommand,
+    /// Taken out for the length of a read and put back only once the reply
+    /// has been read in full. A read that's cancelled or fails halfway
+    /// leaves `None`, so the next read starts a fresh process instead of
+    /// parsing the rest of an old reply.
+    batch: Mutex<Option<Batch>>,
 }
 
 struct Batch {
@@ -20,34 +27,29 @@ struct Batch {
     stdout: BufReader<ChildStdout>,
 }
 
-impl BlobReader {
-    pub(crate) fn spawn(mut cmd: Command) -> Result<Self, GitError> {
+impl Batch {
+    fn spawn(make: &MakeCommand) -> Result<Self, GitError> {
+        let mut cmd = make();
         cmd.args(["cat-file", "--batch"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         let mut child = cmd.spawn()?;
-        let stdin = child.stdin.take().expect("piped stdin");
-        let stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
+        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            return Err(GitError::Parse("cat-file has no pipes".into()));
+        };
         Ok(Self {
-            inner: Mutex::new(Batch {
-                _child: child,
-                stdin,
-                stdout,
-            }),
+            _child: child,
+            stdin,
+            stdout: BufReader::new(stdout),
         })
     }
 
-    /// The contents of blob `oid`, or `None` if it doesn't exist.
-    pub async fn read(&self, oid: &str) -> Result<Option<Vec<u8>>, GitError> {
-        if oid.contains(['\n', ' ']) {
-            return Err(GitError::Parse(format!("bad object id {oid:?}")));
-        }
-        let mut batch = self.inner.lock().await;
-        batch.stdin.write_all(format!("{oid}\n").as_bytes()).await?;
-        batch.stdin.flush().await?;
+    async fn read(&mut self, name: &str) -> Result<Option<Vec<u8>>, GitError> {
+        self.stdin.write_all(format!("{name}\n").as_bytes()).await?;
+        self.stdin.flush().await?;
         let mut header = String::new();
-        if batch.stdout.read_line(&mut header).await? == 0 {
+        if self.stdout.read_line(&mut header).await? == 0 {
             return Err(GitError::Parse("cat-file exited".into()));
         }
         let header = header.trim_end();
@@ -60,9 +62,42 @@ impl BlobReader {
             .next()
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| GitError::Parse(format!("cat-file header {header:?}")))?;
-        let mut data = vec![0u8; size + 1];
-        batch.stdout.read_exact(&mut data).await?;
+        let mut data = vec![0u8; size.saturating_add(1)];
+        self.stdout.read_exact(&mut data).await?;
         data.pop(); // trailing newline
         Ok(Some(data))
+    }
+}
+
+impl BlobReader {
+    /// Reads through `git cat-file --batch`, run from commands `make`
+    /// builds (again, if a read is interrupted).
+    pub(crate) fn spawn(
+        make: impl Fn() -> Command + Send + Sync + 'static,
+    ) -> Result<Self, GitError> {
+        let make: MakeCommand = Box::new(make);
+        let batch = Batch::spawn(&make)?;
+        Ok(Self {
+            make,
+            batch: Mutex::new(Some(batch)),
+        })
+    }
+
+    /// The contents of `name` (an object ID or `<rev>:<path>`), or `None`
+    /// if it doesn't exist.
+    pub async fn read(&self, name: &str) -> Result<Option<Vec<u8>>, GitError> {
+        if name.contains(['\n', '\r']) {
+            return Err(GitError::Parse(format!("bad object name {name:?}")));
+        }
+        let mut slot = self.batch.lock().await;
+        let mut batch = match slot.take() {
+            Some(batch) => batch,
+            None => Batch::spawn(&self.make)?,
+        };
+        let result = batch.read(name).await;
+        if result.is_ok() {
+            *slot = Some(batch);
+        }
+        result
     }
 }

@@ -9,6 +9,7 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use ghtui_api::model::PrRef;
@@ -19,6 +20,7 @@ use ghtui_git::credentials::Credentials;
 use ghtui_git::files::{ChangedFile, ZERO_OID, is_lockfile};
 use ghtui_git::repo::{PrRefs, Repo};
 use tokio::sync::{mpsc, watch};
+use tokio::task::JoinSet;
 
 use crate::state::Msg;
 
@@ -36,6 +38,43 @@ pub struct DiffFiles {
     pub refs: PrRefs,
     pub files: Vec<ChangedFile>,
     pub generated: HashSet<String>,
+}
+
+/// What a diff job reports, tagged with its [`JobId`] so a restarted
+/// job's stragglers can be told apart.
+#[derive(Debug)]
+pub enum JobMsg {
+    Progress(String),
+    Files(Box<DiffFiles>),
+    File(usize, Arc<FileDiff>),
+    Failed(String),
+    Moves(Vec<ghtui_diff::moves::Move>),
+}
+
+/// Identifies one run of a diff job: a refresh or a new commit range gets
+/// a new one.
+pub type JobId = u64;
+
+pub fn next_job() -> JobId {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Sends a job's messages to the UI.
+#[derive(Clone)]
+pub struct JobTx {
+    pub tx: mpsc::UnboundedSender<Msg>,
+    pub pr: PrRef,
+    pub job: JobId,
+}
+
+impl JobTx {
+    /// False once the UI is gone.
+    pub fn send(&self, msg: JobMsg) -> bool {
+        self.tx
+            .send(Msg::Job(self.pr.clone(), self.job, msg))
+            .is_ok()
+    }
 }
 
 /// Shared between the job's workers and the UI (for prioritizing, and for
@@ -88,33 +127,33 @@ impl JobControl {
 /// A sub-range of the PR's commits to diff instead of the whole PR.
 pub type CommitRange = Option<(String, String)>;
 
+/// Runs the job. Its helper tasks belong to it: dropping (aborting) the
+/// job stops them too.
 pub async fn run(
     ctx: GitContext,
-    pr: PrRef,
     base_ref: String,
     range: CommitRange,
-    tx: mpsc::UnboundedSender<Msg>,
+    out: JobTx,
     control: Arc<JobControl>,
 ) {
-    if let Err(err) = run_inner(&ctx, &pr, &base_ref, range, &tx, &control).await {
-        tracing::warn!(%pr, %err, "diff job failed");
-        let _ = tx.send(Msg::DiffFailed(pr, err.to_string()));
+    if let Err(err) = run_inner(&ctx, &base_ref, range, &out, &control).await {
+        tracing::warn!(pr = %out.pr, %err, "diff job failed");
+        out.send(JobMsg::Failed(err.to_string()));
     }
 }
 
 async fn run_inner(
     ctx: &GitContext,
-    pr: &PrRef,
     base_ref: &str,
     range: CommitRange,
-    tx: &mpsc::UnboundedSender<Msg>,
+    out: &JobTx,
     control: &Arc<JobControl>,
 ) -> Result<(), GitError> {
+    let pr = &out.pr;
     let progress = {
-        let tx = tx.clone();
-        let pr = pr.clone();
+        let out = out.clone();
         move |line: String| {
-            let _ = tx.send(Msg::DiffProgress(pr.clone(), line));
+            out.send(JobMsg::Progress(line));
         }
     };
     let (owner, name) = (&pr.repo.owner, &pr.repo.name);
@@ -161,14 +200,11 @@ async fn run_inner(
         .chain((0..files.len()).filter(|i| collapsed(&files[*i])))
         .collect();
     control.fill(order);
-    let _ = tx.send(Msg::DiffFiles(
-        pr.clone(),
-        Box::new(DiffFiles {
-            refs,
-            files: files.clone(),
-            generated,
-        }),
-    ));
+    out.send(JobMsg::Files(Box::new(DiffFiles {
+        refs,
+        files: files.clone(),
+        generated,
+    })));
 
     let files = Arc::new(files);
     let repo = Arc::new(repo);
@@ -176,11 +212,12 @@ async fn run_inner(
     // is where the diff screen opens.
     let first: HashSet<usize> = control.front().into_iter().collect();
     let (stage_tx, stage_rx) = watch::channel(0u8);
+    let mut tasks = JoinSet::new();
     {
         let repo = repo.clone();
         let files = files.clone();
         let first = first.clone();
-        tokio::spawn(async move {
+        tasks.spawn(async move {
             let oids = |pick: &dyn Fn(usize) -> bool| -> Vec<String> {
                 files
                     .iter()
@@ -204,33 +241,36 @@ async fn run_inner(
     let reader = Arc::new(repo.blob_reader()?);
     let _ = control.git.set((repo.clone(), reader.clone()));
     let workers = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(2, 4));
-    let mut handles = Vec::new();
     for _ in 0..workers {
         let control = control.clone();
         let files = files.clone();
         let reader = reader.clone();
-        let tx = tx.clone();
-        let pr = pr.clone();
+        let out = out.clone();
         let first = first.clone();
         let mut stage = stage_rx.clone();
-        handles.push(tokio::spawn(async move {
+        tasks.spawn(async move {
             while let Some(index) = control.pop() {
+                let Some(file) = files.get(index) else {
+                    continue;
+                };
                 let needed = if first.contains(&index) { 1 } else { 2 };
                 if stage.wait_for(|s| *s >= needed).await.is_err() {
                     return;
                 }
-                let diff = diff_file(&reader, &files[index]).await;
-                if tx
-                    .send(Msg::FileDiff(pr.clone(), index, Arc::new(diff)))
-                    .is_err()
-                {
+                let diff = diff_file(&reader, file).await;
+                if !out.send(JobMsg::File(index, Arc::new(diff))) {
                     return;
                 }
             }
-        }));
+        });
     }
-    for handle in handles {
-        let _ = handle.await;
+    // A helper's panic is the job's: the runtime reports it.
+    while let Some(done) = tasks.join_next().await {
+        if let Err(err) = done
+            && err.is_panic()
+        {
+            std::panic::resume_unwind(err.into_panic());
+        }
     }
     Ok(())
 }

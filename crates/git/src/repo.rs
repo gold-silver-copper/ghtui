@@ -375,7 +375,8 @@ impl Repo {
     }
 
     pub fn blob_reader(&self) -> Result<BlobReader, GitError> {
-        BlobReader::spawn(self.cmd())
+        let repo = self.clone();
+        BlobReader::spawn(move || repo.cmd())
     }
 }
 

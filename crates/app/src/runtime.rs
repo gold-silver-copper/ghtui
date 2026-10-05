@@ -16,7 +16,7 @@ use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 
 use crate::browse::{Data, DataKey};
-use crate::diff_job::{self, GitContext, JobControl};
+use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx};
 use crate::review::{self, SubmitOutcome};
 use crate::state::{Cmd, Msg, State, timers, update};
 use crate::view::view;
@@ -102,6 +102,7 @@ impl Effects {
         match cmd {
             Cmd::LoadDiff {
                 pr,
+                job,
                 base_ref,
                 range,
             } => {
@@ -109,15 +110,13 @@ impl Effects {
                     handle.abort();
                 }
                 let control = Arc::new(JobControl::default());
-                let job = diff_job::run(
-                    self.git.clone(),
-                    pr.clone(),
-                    base_ref,
-                    range,
-                    self.tx.clone(),
-                    control.clone(),
-                );
-                let handle = spawn_guarded(&self.tx, replies, job);
+                let out = JobTx {
+                    tx: self.tx.clone(),
+                    pr: pr.clone(),
+                    job,
+                };
+                let run = diff_job::run(self.git.clone(), base_ref, range, out, control.clone());
+                let handle = spawn_guarded(&self.tx, replies, run);
                 self.jobs.insert(pr, (control, handle));
             }
             Cmd::Prioritize(pr, files) => {
@@ -125,8 +124,12 @@ impl Effects {
                     control.prioritize(&files);
                 }
             }
-            Cmd::DetectMoves(pr, files) => {
-                let tx = self.tx.clone();
+            Cmd::DetectMoves(pr, job, files) => {
+                let out = JobTx {
+                    tx: self.tx.clone(),
+                    pr,
+                    job,
+                };
                 spawn_guarded(&self.tx, replies, async move {
                     let moves = blocking(move || {
                         let inputs: Vec<_> = files
@@ -141,7 +144,7 @@ impl Effects {
                         ghtui_diff::moves::detect_moves(&inputs)
                     })
                     .await;
-                    let _ = tx.send(Msg::MovesDetected(pr, moves));
+                    out.send(JobMsg::Moves(moves));
                 });
             }
             Cmd::SinceReview { pr, old_head } => {
@@ -493,8 +496,10 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             },
         ),
         Cmd::FetchLastReview { pr, .. } => Msg::LastReview(pr.clone(), api()),
-        Cmd::LoadDiff { pr, .. } => Msg::DiffFailed(pr.clone(), "ghtui hit a bug".into()),
-        Cmd::DetectMoves(pr, _) => Msg::MovesDetected(pr.clone(), Vec::new()),
+        Cmd::LoadDiff { pr, job, .. } => {
+            Msg::Job(pr.clone(), *job, JobMsg::Failed("ghtui hit a bug".into()))
+        }
+        Cmd::DetectMoves(pr, job, _) => Msg::Job(pr.clone(), *job, JobMsg::Moves(Vec::new())),
         Cmd::SinceReview { pr, old_head } => Msg::SinceReady(pr.clone(), old_head.clone(), git()),
         Cmd::ListCommits(pr) => Msg::CommitsListed(pr.clone(), git()),
         // Nothing waits on these. A failed review load leaves the review

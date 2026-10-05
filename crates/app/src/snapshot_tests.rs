@@ -1177,7 +1177,11 @@ pub(crate) mod diff {
         let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
 
         let start = Instant::now();
-        update(&mut s, Msg::FileDiff(pr(), 0, diff));
+        let job = s.diffs[&pr()].job;
+        update(
+            &mut s,
+            Msg::Job(pr(), job, crate::diff_job::JobMsg::File(0, diff)),
+        );
         terminal.draw(|frame| view(&s, frame, NOW)).unwrap();
         let first_screen = start.elapsed();
 

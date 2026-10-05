@@ -417,3 +417,31 @@ async fn lists_pr_commits_oldest_first() {
     assert_eq!(commits.len(), 1);
     assert_eq!(commits[0], (refs.head.clone(), "feature".to_owned()));
 }
+
+/// A read cancelled halfway (its task aborted) must not leave the rest of
+/// its reply for the next read to parse. Paths with spaces work too.
+#[tokio::test]
+async fn blob_reader_survives_cancelled_reads() {
+    let f = fixture();
+    let big: Vec<u8> = (0..4_000_000u32).map(|i| b'a' + (i % 26) as u8).collect();
+    write(&f.origin, "big.txt", &big);
+    write(&f.origin, "with space.txt", b"spaced\n");
+    git(&f.origin, &["add", "."]);
+    git(&f.origin, &["commit", "-q", "-m", "more"]);
+    git(&f.origin, &["update-ref", "refs/pull/7/head", "HEAD"]);
+    let repo = cache_repo(&f).await;
+    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
+    let reader = repo.blob_reader().unwrap();
+    let head = refs.head;
+
+    let cancelled = tokio::time::timeout(
+        std::time::Duration::ZERO,
+        reader.read(&format!("{head}:big.txt")),
+    )
+    .await;
+    assert!(cancelled.is_err(), "the big read was cut short");
+    let spaced = reader.read(&format!("{head}:with space.txt")).await;
+    assert_eq!(spaced.unwrap().as_deref(), Some(&b"spaced\n"[..]));
+    let again = reader.read(&format!("{head}:big.txt")).await;
+    assert_eq!(again.unwrap().map(|b| b.len()), Some(big.len()));
+}

@@ -13,6 +13,7 @@ use ghtui_ui::diff_doc::{Doc, Note, Pos, Row, ViewOptions, Viewed};
 use ghtui_ui::file_tree::{TreeRow, row_of_file, tree_rows};
 use ratatui::layout::Rect;
 
+use crate::diff_job::{JobId, next_job};
 use crate::keymap::Action;
 use crate::state::Cmd;
 
@@ -118,6 +119,8 @@ pub struct DiffState {
     pub range: Option<RangeView>,
     /// Files we've already asked the job to prioritize.
     requested: HashSet<usize>,
+    /// The diff job whose results this shows; older jobs' are ignored.
+    pub job: JobId,
 }
 
 impl DiffState {
@@ -134,6 +137,7 @@ impl DiffState {
     pub fn loading() -> Self {
         Self {
             progress: Some("Preparing".into()),
+            job: next_job(),
             ..Self::default()
         }
     }
@@ -171,6 +175,7 @@ impl DiffState {
         self.mapping_requested = false;
         self.since_requested = false;
         self.range = range;
+        self.job = next_job();
     }
 
     /// Every file's diff, once all have arrived and moves haven't been
