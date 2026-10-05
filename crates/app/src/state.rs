@@ -15,7 +15,6 @@ use ghtui_store::ReviewState;
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::bars::Notice;
 use ghtui_ui::diff_doc::Viewed;
-use ghtui_ui::pages::PrTab;
 use ghtui_ui::{Ctx, Icons};
 use ratatui_textarea::TextArea;
 
@@ -778,13 +777,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                         number,
                     })
             {
-                return state.replace(
-                    Route::Pr {
-                        pr: PrRef { repo, number },
-                        tab: PrTab::Conversation,
-                    },
-                    true,
-                );
+                return state.replace(Route::pr(PrRef { repo, number }), true);
             }
         }
         Msg::FetchedMore(key, result) => {
@@ -1089,6 +1082,7 @@ pub(crate) mod tests {
     use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode};
     use ghtui_ui::annotations::AnnotationKey;
     use ghtui_ui::overlays::PALETTE_ROWS;
+    use ghtui_ui::pages::PrTab;
 
     /// The overlay showing, which must be a `$kind`.
     macro_rules! overlay {
@@ -1239,13 +1233,7 @@ pub(crate) mod tests {
                 fetch(DataKey::PrActivity(pr.clone()))
             ]
         );
-        assert_eq!(
-            route(&state),
-            Route::Pr {
-                pr: pr.clone(),
-                tab: PrTab::Conversation
-            }
-        );
+        assert_eq!(route(&state), Route::pr(pr.clone()));
         assert_eq!(state.busy().as_deref(), Some("Loading"));
 
         update(
@@ -1278,14 +1266,7 @@ pub(crate) mod tests {
             "the selection survives"
         );
         act(&mut state, Action::Forward);
-        assert_eq!(
-            route(&state),
-            Route::Pr {
-                pr,
-                tab: PrTab::Conversation
-            },
-            "forward again"
-        );
+        assert_eq!(route(&state), Route::pr(pr), "forward again");
         press(&mut state, "h");
         assert!(!state.quit);
         press(&mut state, "q");
@@ -1472,13 +1453,7 @@ pub(crate) mod tests {
         // The number is a pull request: GitHub's redirect.
         let cmds = fetched(&mut state, key, Data::Issue(None));
         let pr = PrRef::parse("a/b#9").unwrap();
-        assert_eq!(
-            route(&state),
-            Route::Pr {
-                pr: pr.clone(),
-                tab: PrTab::Conversation
-            }
-        );
+        assert_eq!(route(&state), Route::pr(pr.clone()));
         assert_eq!(cmds[0], Cmd::Api(Api::FetchPr(pr)));
         assert_eq!(state.screens.len(), 2, "replaced, not pushed");
 
@@ -1933,10 +1908,7 @@ pub(crate) mod tests {
     fn files_tab_opens_the_diff_once_the_pr_loads() {
         let mut state = state();
         let pr = PrRef::parse("o/r#1").unwrap();
-        let _ = state.push(Route::Pr {
-            pr: pr.clone(),
-            tab: PrTab::Conversation,
-        });
+        let _ = state.push(Route::pr(pr.clone()));
         assert!(press(&mut state, "4").is_empty(), "waits for the PR");
         assert!(matches!(state.screen(), Screen::Diff(_)));
         assert_eq!(state.chrome().active, Some(3));

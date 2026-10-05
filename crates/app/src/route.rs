@@ -62,6 +62,14 @@ pub enum Target {
 }
 
 impl Route {
+    /// A pull request's conversation.
+    pub fn pr(pr: PrRef) -> Route {
+        Route::Pr {
+            pr,
+            tab: PrTab::Conversation,
+        }
+    }
+
     /// A profile's overview.
     pub fn user(login: &str) -> Route {
         Route::User {
@@ -274,10 +282,7 @@ impl Target {
                         pr,
                         tab: PrTab::Commits,
                     },
-                    None => Route::Pr {
-                        pr,
-                        tab: PrTab::Conversation,
-                    },
+                    None => Route::pr(pr),
                     Some(_) => return external(),
                 }
             }

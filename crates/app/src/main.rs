@@ -117,10 +117,9 @@ async fn run(started: Instant) -> Result<()> {
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting");
 
     let target = match (&cli.command, &cli.target) {
-        (Some(Command::Pr { target }), _) => Some(Target::Page(Route::Pr {
-            pr: resolve_target(target).await?,
-            tab: ghtui_ui::pages::PrTab::Conversation,
-        })),
+        (Some(Command::Pr { target }), _) => {
+            Some(Target::Page(Route::pr(resolve_target(target).await?)))
+        }
         (None, Some(target)) => Some(resolve_open(target).await?),
         (None, None) => None,
     };
