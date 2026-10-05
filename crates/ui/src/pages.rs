@@ -257,6 +257,23 @@ fn box_rows<T>(page: &mut Page, items: &[T], mut row: impl FnMut(&mut Page, &T))
     }
 }
 
+/// A box of `items`, a row each, saying `empty` when there are none.
+fn list_box<T>(
+    page: &mut Page,
+    title: Vec<Seg>,
+    right: Vec<Seg>,
+    items: &[T],
+    empty: &str,
+    row: impl FnMut(&mut Page, &T),
+) {
+    page.box_top(title, right);
+    if items.is_empty() {
+        empty_row(page, empty);
+    }
+    box_rows(page, items, row);
+    page.box_bottom();
+}
+
 /// `prefix` then `segs` wrapped inside a box, continuation lines aligned
 /// after the prefix.
 fn hanging(page: &mut Page, prefix: Seg, segs: Vec<Seg>, frame: Frame) {
@@ -787,24 +804,6 @@ fn repo_row(page: &mut Page, r: &RepoSummary, now: u64, show_owner: bool) {
         }
         body(page, meta);
     });
-}
-
-/// A box of repositories.
-fn repo_box(
-    page: &mut Page,
-    title: Vec<Seg>,
-    right: Vec<Seg>,
-    repos: &[RepoSummary],
-    empty: &str,
-    show_owner: bool,
-    now: u64,
-) {
-    page.box_top(title, right);
-    if repos.is_empty() {
-        empty_row(page, empty);
-    }
-    box_rows(page, repos, |page, r| repo_row(page, r, now, show_owner));
-    page.box_bottom();
 }
 
 fn issue_row(page: &mut Page, i: &IssueSummary, show_repo: bool, icons: Icons, now: u64) {
@@ -1554,7 +1553,9 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, now: u64) {
     };
     let title = vec![Seg::new(title, Role::Strong)];
     let right = sort.map(|s| Seg::new(s, Role::Meta)).into_iter().collect();
-    repo_box(page, title, right, repos, empty, show_owner, now);
+    list_box(page, title, right, repos, empty, |page, r| {
+        repo_row(page, r, now, show_owner);
+    });
 }
 
 // ---- home -----------------------------------------------------------------------------------
@@ -1575,17 +1576,12 @@ pub fn home(
                 url::search(SearchKind::Pulls, query),
                 Role::Link,
             );
-            page.box_top(
-                vec![
-                    Seg::new(title.to_owned(), Role::Strong),
-                    Seg::new(format!("  {}", compact(total)), Role::Meta),
-                ],
-                vec![all],
-            );
-            if prs.is_empty() {
-                empty_row(page, empty);
-            }
-            box_rows(page, prs, |page, p| {
+            let total = compact(total.max(prs.len() as u64));
+            let title = vec![
+                Seg::new(title.to_owned(), Role::Strong),
+                Seg::new(format!("  {total}"), Role::Meta),
+            ];
+            list_box(page, title, vec![all], prs, empty, |page, p| {
                 let summary = IssueSummary {
                     repo: p.pr.repo.clone(),
                     number: p.pr.number,
@@ -1602,16 +1598,13 @@ pub fn home(
                 };
                 issue_row(page, &summary, true, icons, now);
             });
-            page.box_bottom();
         };
     match inbox {
         Some(inbox) => {
             pr_box(
                 page,
                 "Review requests",
-                inbox
-                    .review_requested_total
-                    .max(inbox.review_requested.len() as u64),
+                inbox.review_requested_total,
                 &inbox.review_requested,
                 "is:open is:pr review-requested:@me archived:false",
                 "Nothing is waiting for your review.",
@@ -1619,7 +1612,7 @@ pub fn home(
             pr_box(
                 page,
                 "Your pull requests",
-                inbox.authored_total.max(inbox.authored.len() as u64),
+                inbox.authored_total,
                 &inbox.authored,
                 "is:open is:pr author:@me archived:false",
                 "You have no open pull requests.",
@@ -1637,15 +1630,13 @@ pub fn home(
     });
     let title = vec![Seg::new("Your repositories", Role::Strong)];
     match repos {
-        Some(repos) => repo_box(
-            page,
-            title,
-            all.into_iter().collect(),
-            repos,
-            "You don't have any repositories yet.",
-            true,
-            now,
-        ),
+        Some(repos) => {
+            let empty = "You don't have any repositories yet.";
+            let all = Vec::from_iter(all);
+            list_box(page, title, all, repos, empty, |page, r| {
+                repo_row(page, r, now, true);
+            });
+        }
         None => loading_box(page, title),
     }
 }
