@@ -140,6 +140,8 @@ pub struct Page {
     /// The sidebar, drawn right of the main column and scrolled with it.
     pub aside: Vec<PageLine>,
     pub aside_width: u16,
+    /// Lists take one row per item.
+    pub compact: bool,
 }
 
 impl Page {

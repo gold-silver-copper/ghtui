@@ -377,6 +377,7 @@ pub struct State {
     pub keymap: Keymap,
     pub theme: Theme,
     pub icons: Icons,
+    pub density: crate::config::Density,
     /// Unix seconds; pages show relative times.
     pub clock: fn() -> u64,
     /// Which notice is showing, to expire the right one.
@@ -409,6 +410,7 @@ impl State {
             keymap,
             theme,
             icons,
+            density: crate::config::Density::default(),
             clock: ghtui_store::now,
             notice_id: 0,
             spinner: 0,

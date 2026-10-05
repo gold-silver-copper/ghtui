@@ -56,6 +56,21 @@ pub enum DepthSetting {
 pub struct UiConfig {
     #[serde(default)]
     pub nerd_font: bool,
+    #[serde(default)]
+    pub density: Density,
+}
+
+/// How much room list rows take.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Density {
+    /// Compact on short terminals (under 30 rows), comfortable otherwise.
+    #[default]
+    Auto,
+    /// One row per item.
+    Compact,
+    /// Two rows per item, as on GitHub, with rules between.
+    Comfortable,
 }
 
 impl Config {
@@ -126,6 +141,7 @@ mod tests {
 
             [ui]
             nerd_font = true
+            density = "compact"
 
             [keys]
             down = ["j", "<C-n>"]
@@ -136,6 +152,7 @@ mod tests {
         assert_eq!(config.theme.color_depth, DepthSetting::Ansi256);
         assert_eq!(config.seed().unwrap(), Rgb::from_u32(0x6750a4));
         assert!(config.ui.nerd_font);
+        assert_eq!(config.ui.density, Density::Compact);
         assert_eq!(config.keys["down"], ["j", "<C-n>"]);
     }
 

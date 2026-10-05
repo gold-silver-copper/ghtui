@@ -141,6 +141,7 @@ async fn run(started: Instant) -> Result<()> {
 
     let size = crossterm::terminal::size().unwrap_or((80, 24));
     let mut state = State::new(theme, icons, keymap, size);
+    state.density = config.ui.density;
     if let Err(err) = &reviews {
         state.problems.insert(
             state::Problem::Drafts,

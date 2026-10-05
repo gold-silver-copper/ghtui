@@ -247,6 +247,8 @@ color_depth = "auto"  # auto | truecolor | 256
 
 [ui]
 nerd_font = false     # Nerd Font icons and rounded chip ends
+density = "auto"      # auto | compact | comfortable: one row per list item,
+                      # or two as on GitHub; auto is compact under 30 rows
 
 [keys]
 # Each action listed here replaces its default bindings. Vim notation:

@@ -116,8 +116,8 @@ pub struct PageScreen {
     /// The selected item, if one is.
     pub selected: Option<usize>,
     pub page: Arc<Page>,
-    /// The data generation and width `page` was built for.
-    pub built: Option<(u64, u16)>,
+    /// The data generation, width and density `page` was built for.
+    pub built: Option<(u64, u16, bool)>,
     /// Nothing has been selected or scrolled yet: select the first visible
     /// item once the page has items.
     pub fresh: bool,
@@ -237,6 +237,15 @@ impl State {
             .min()
     }
 
+    /// One row per list item.
+    pub fn compact(&self) -> bool {
+        match self.density {
+            crate::config::Density::Compact => true,
+            crate::config::Density::Comfortable => false,
+            crate::config::Density::Auto => self.size.1 < 30,
+        }
+    }
+
     pub fn page_loading(&self, route: &Route) -> bool {
         needs(route).into_iter().any(|need| match need {
             Need::Inbox => self.inbox.loading,
@@ -275,6 +284,7 @@ impl State {
             _ => None,
         };
         let mut page = Page::new(pages::main_width(width, aside));
+        page.compact = self.compact();
         let retry = self.first_key(Action::Refresh);
         let missing = |page: &mut Page, what: &str| match &error {
             Some((err, false)) => {

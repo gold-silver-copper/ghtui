@@ -249,7 +249,7 @@ fn empty_row(page: &mut Page, text: &str) {
 /// One row per item, ruled apart.
 fn box_rows<T>(page: &mut Page, items: &[T], mut row: impl FnMut(&mut Page, &T)) {
     for (n, item) in items.iter().enumerate() {
-        if n > 0 {
+        if n > 0 && !page.compact {
             page.box_rule();
         }
         row(page, item);
@@ -778,6 +778,10 @@ fn repo_row(page: &mut Page, r: &RepoSummary, now: u64, show_owner: bool) {
     }
     let right = vec![Seg::new(format!("☆ {}", compact(r.stars)), Role::Meta)];
     page.box_line(segs, right, 0);
+    if page.compact {
+        page.item(start, link);
+        return;
+    }
     if let Some(d) = &r.description {
         page.wrapped(vec![Seg::new(d.clone(), Role::Body)], 0, Frame::Body);
     }
@@ -827,14 +831,26 @@ fn issue_row(page: &mut Page, i: &IssueSummary, show_repo: bool, icons: Icons, n
     };
     let start = page.lines.len();
     let link = page.link(target);
-    let mut segs = vec![Seg::linked(i.title.clone(), Role::Strong, link)];
-    labels(&mut segs, &i.labels);
-    hanging(page, Seg::new(format!("{icon} "), role), segs, Frame::Body);
     let place = if show_repo {
         format!("{}#{}", i.repo, i.number)
     } else {
         format!("#{}", i.number)
     };
+    if page.compact {
+        // One row: the title, then where it is and its signals.
+        let segs = vec![
+            Seg::new(format!("{icon} "), role),
+            Seg::linked(i.title.clone(), Role::Strong, link),
+        ];
+        let mut right = vec![Seg::new(format!("{place}  "), Role::Meta)];
+        right.extend(issue_signals(i, icons));
+        page.box_line(segs, right, 0);
+        page.item(start, link);
+        return;
+    }
+    let mut segs = vec![Seg::linked(i.title.clone(), Role::Strong, link)];
+    labels(&mut segs, &i.labels);
+    hanging(page, Seg::new(format!("{icon} "), role), segs, Frame::Body);
     // GitHub's second line: `#12 opened 3 days ago by octocat · Approved`.
     let when = if i.created_at.is_empty() {
         format!(
@@ -858,6 +874,12 @@ fn issue_row(page: &mut Page, i: &IssueSummary, show_repo: bool, icons: Icons, n
         };
         meta.extend([Seg::new(" · ", Role::Meta), Seg::new(text, role)]);
     }
+    page.box_line(meta, issue_signals(i, icons), 2);
+    page.item(start, link);
+}
+
+/// Checks and comment count, for the right of an issue's row.
+fn issue_signals(i: &IssueSummary, icons: Icons) -> Vec<Seg> {
     let mut right = Vec::new();
     if let Some(checks) = i.checks {
         let role = match checks {
@@ -873,8 +895,7 @@ fn issue_row(page: &mut Page, i: &IssueSummary, show_repo: bool, icons: Icons, n
             Role::Meta,
         ));
     }
-    page.box_line(meta, right, 2);
-    page.item(start, link);
+    right
 }
 
 fn user_row(page: &mut Page, u: &UserSummary) {
@@ -889,7 +910,7 @@ fn user_row(page: &mut Page, u: &UserSummary) {
         segs.push(chip("Organization", Bg::SecondaryContainer));
     }
     page.box_line(segs, Vec::new(), 0);
-    if let Some(bio) = &u.bio {
+    if let Some(bio) = u.bio.as_ref().filter(|_| !page.compact) {
         page.wrapped(vec![Seg::new(bio.clone(), Role::Meta)], 0, Frame::Body);
     }
     page.item(start, link);

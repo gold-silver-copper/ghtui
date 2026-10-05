@@ -218,10 +218,10 @@ impl State {
     /// keeps its scroll and selection valid.
     pub fn sync_page(&mut self) {
         let width = self.page_width();
-        let generation = self.data_gen;
+        let built = Some((self.data_gen, width, self.compact()));
         let height = self.page_height();
         let rebuild = match self.screen() {
-            Screen::Page(p) if p.built != Some((generation, width)) => Some(p.route.clone()),
+            Screen::Page(p) if p.built != built => Some(p.route.clone()),
             Screen::Page(_) => None,
             Screen::Diff(_) => return,
         };
@@ -229,7 +229,7 @@ impl State {
         if let Screen::Page(p) = self.screen_mut() {
             if let Some(page) = page {
                 p.page = Arc::new(page);
-                p.built = Some((generation, width));
+                p.built = built;
             }
             settle(p, height);
         }

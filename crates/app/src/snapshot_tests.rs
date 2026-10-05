@@ -473,6 +473,31 @@ fn palette_light() {
     insta::assert_snapshot!(render(&state));
 }
 
+/// The common small terminal: lists go compact (one row per item).
+#[test]
+fn small_terminal_80x24() {
+    let small = |mut state: State| {
+        update(&mut state, Msg::Resize(80, 24));
+        render(&state)
+    };
+    insta::assert_snapshot!(
+        "small_home",
+        small(with_inbox(Mode::Dark, ColorDepth::TrueColor))
+    );
+    let mut issues = with_repo(Mode::Dark, ColorDepth::TrueColor);
+    let route = Route::Issues {
+        repo: ghtui(),
+        query: OPEN.into(),
+    };
+    let results = fixtures::issue_results(Some("c1"));
+    open(&mut issues, route, Data::Search(Box::new(results)));
+    insta::assert_snapshot!("small_issues", small(issues));
+    insta::assert_snapshot!("small_pr", small(with_pr(Mode::Dark)));
+    let mut menu = with_repo(Mode::Dark, ColorDepth::TrueColor);
+    crate::nav::open_menu(&mut menu);
+    insta::assert_snapshot!("small_menu", small(menu));
+}
+
 #[test]
 fn narrow_terminal_does_not_panic() {
     for (w, h) in [(1, 1), (9, 2), (20, 5), (40, 10)] {
@@ -900,6 +925,19 @@ pub(crate) mod diff {
         let mut diff = DiffState::loading();
         diff.progress = Some("Receiving objects:  42% (420/1000), 1.2 MiB | 3.4 MiB/s".into());
         open_diff(&mut s, diff, Pos::default(), Pane::Diff);
+        insta::assert_snapshot!(render(&s));
+    }
+
+    #[test]
+    fn small_diff_80x24() {
+        let mut s = screen_state(
+            Mode::Dark,
+            ColorDepth::TrueColor,
+            Pos { file: 0, row: 4 },
+            Pane::Diff,
+        );
+        s.size = (80, 24);
+        s.settle_diff();
         insta::assert_snapshot!(render(&s));
     }
 
