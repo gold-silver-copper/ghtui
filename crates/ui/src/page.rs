@@ -458,11 +458,8 @@ pub(crate) fn wrap_segs(segs: Vec<Seg>, width: usize) -> Vec<Vec<Seg>> {
         }
     }
     // Drop trailing spaces.
-    for line in &mut lines {
-        if let Some(last) = line.last_mut() {
-            let trimmed = last.text.trim_end().to_owned();
-            last.text = trimmed;
-        }
+    for last in lines.iter_mut().filter_map(|l| l.last_mut()) {
+        last.text.truncate(last.text.trim_end().len());
     }
     lines
 }
