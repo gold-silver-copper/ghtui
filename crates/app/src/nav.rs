@@ -9,7 +9,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use ghtui_api::browse::{RepoSummary, SearchKind};
 use ghtui_api::model::RepoId;
 use ghtui_theme::{Bg, Theme};
-use ghtui_ui::bars::Notice;
 use ghtui_ui::chrome::{self, KeyRow, SuggestRow};
 use ghtui_ui::page::{self, HintLabel};
 use ghtui_ui::pages::{self, PrTab};
@@ -106,7 +105,7 @@ impl State {
             self.forward.push(screen);
             return self.load_visible(false);
         }
-        self.notice = Some(Notice::Info("This is the first page".into()));
+        self.info("This is the first page");
         Vec::new()
     }
 
@@ -117,7 +116,7 @@ impl State {
                 self.load_visible(false)
             }
             None => {
-                self.notice = Some(Notice::Info("Nothing to go forward to".into()));
+                self.info("Nothing to go forward to");
                 Vec::new()
             }
         }
@@ -134,7 +133,7 @@ impl State {
                 cmds
             }
             Target::External(url) => {
-                self.notice = Some(Notice::Info(format!("Opened {url} in the browser")));
+                self.info(format!("Opened {url} in the browser"));
                 vec![Cmd::OpenUrl(url)]
             }
         }
@@ -333,7 +332,7 @@ pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
             return Some(match up(state, &route) {
                 Some(parent) => state.push(parent),
                 None => {
-                    state.notice = Some(Notice::Info("Already at the top".into()));
+                    state.info("Already at the top");
                     Vec::new()
                 }
             });
@@ -355,9 +354,9 @@ pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
                         state.first_key(Action::Down),
                         state.first_key(Action::Hints),
                     );
-                    state.notice = Some(Notice::Info(format!(
+                    state.info(format!(
                         "Nothing selected: {down} selects a row, {hints} picks any link"
-                    )));
+                    ));
                     Vec::new()
                 }
             });
@@ -416,7 +415,7 @@ fn up(state: &State, route: &Route) -> Option<Route> {
 }
 
 pub fn no_repo(state: &mut State) -> Vec<Cmd> {
-    state.notice = Some(Notice::Info("Open a repository first".into()));
+    state.info("Open a repository first");
     Vec::new()
 }
 
@@ -429,12 +428,16 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
     if chrome.active == Some(n - 1) {
         return Vec::new();
     }
-    match (target, state.screen().clone()) {
-        (Target::Page(route), Screen::Page(_)) => state.replace(route, false),
-        (Target::Page(route), Screen::Diff(screen)) => {
+    let diff_of = match state.screen() {
+        Screen::Diff(screen) => Some(screen.pr.clone()),
+        Screen::Page(_) => None,
+    };
+    match (target, diff_of) {
+        (Target::Page(route), None) => state.replace(route, false),
+        (Target::Page(route), Some(diff_pr)) => {
             // From the files back to the pull request's other tabs.
             state.screens.pop();
-            let same = matches!(state.route(), Some(Route::Pr { pr, .. }) if *pr == screen.pr);
+            let same = matches!(state.route(), Some(Route::Pr { pr, .. }) if *pr == diff_pr);
             if same {
                 state.replace(route, false)
             } else {
@@ -500,7 +503,7 @@ fn start_hints(state: &mut State, browser: bool) {
     };
     let spots = page::spots(&p.page, area, p.scroll);
     if spots.is_empty() {
-        state.notice = Some(Notice::Info("No links on screen".into()));
+        state.info("No links on screen");
         return;
     }
     let labels = hint_labels(spots.len());
@@ -555,7 +558,7 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     match matching.as_slice() {
         [] => {
             state.overlay = None;
-            state.notice = Some(Notice::Info("No link has those letters".into()));
+            state.info("No link has those letters");
             Vec::new()
         }
         [(hint, url)] if hint.label == hints.typed => {
@@ -870,7 +873,7 @@ fn set_list_state(state: &mut State, which: &str) -> Vec<Cmd> {
 
 fn cycle_state(state: &mut State) -> Vec<Cmd> {
     let Some((_, query)) = list_query(state) else {
-        state.notice = Some(Notice::Info("Only lists have open and closed".into()));
+        state.info("Only lists have open and closed");
         return Vec::new();
     };
     set_list_state(state, next_list_state(&query))
@@ -878,7 +881,7 @@ fn cycle_state(state: &mut State) -> Vec<Cmd> {
 
 fn cycle_sort(state: &mut State) -> Vec<Cmd> {
     let Some((route, query)) = list_query(state) else {
-        state.notice = Some(Notice::Info("Only lists can be sorted".into()));
+        state.info("Only lists can be sorted");
         return Vec::new();
     };
     let current = pages::sort_label(&query);
@@ -897,7 +900,7 @@ fn cycle_sort(state: &mut State) -> Vec<Cmd> {
     if next != "created-desc" {
         words.push(&sort);
     }
-    state.notice = Some(Notice::Info(format!("Sorted: {label}")));
+    state.info(format!("Sorted: {label}"));
     match route.with_query(words.join(" ")) {
         Some(r) => state.replace(r, true),
         None => Vec::new(),
@@ -908,11 +911,11 @@ fn cycle_sort(state: &mut State) -> Vec<Cmd> {
 
 pub fn star(state: &mut State) -> Vec<Cmd> {
     let Some(repo) = state.route().and_then(Route::repo).cloned() else {
-        state.notice = Some(Notice::Info("Open a repository to star it".into()));
+        state.info("Open a repository to star it");
         return Vec::new();
     };
     let Some(overview) = state.overview(&repo) else {
-        state.notice = Some(Notice::Info("The repository hasn't loaded yet".into()));
+        state.info("The repository hasn't loaded yet");
         return Vec::new();
     };
     let (id, starred) = (overview.id.clone(), !overview.starred);
@@ -959,14 +962,12 @@ fn comment_with(state: &mut State, text: &str) -> Vec<Cmd> {
                 .map(|a| (a.id.clone(), pr.to_string(), key))
         }
         _ => {
-            state.notice = Some(Notice::Info(
-                "Comments go on issues and pull requests".into(),
-            ));
+            state.info("Comments go on issues and pull requests");
             return Vec::new();
         }
     };
     let Some((subject_id, name, refresh)) = target else {
-        state.notice = Some(Notice::Info("Still loading".into()));
+        state.info("Still loading");
         return Vec::new();
     };
     let target = ComposeTarget::Conversation {
@@ -1452,7 +1453,7 @@ fn run_menu_row(state: &mut State, row: Option<Doable>) -> Vec<Cmd> {
         return Vec::new();
     };
     if let Some(why) = d.unavailable {
-        state.notice = Some(Notice::Info(format!("Can't: {why}")));
+        state.info(format!("Can't: {why}"));
         return Vec::new();
     }
     state.overlay = None;
@@ -1477,7 +1478,7 @@ impl State {
 /// `y`: the selection's link, or the page's.
 pub fn copy_link(state: &mut State) -> Vec<Cmd> {
     let url = state.here_url();
-    state.notice = Some(Notice::Info(format!("Copied {url}")));
+    state.info(format!("Copied {url}"));
     vec![Cmd::Copy(url)]
 }
 

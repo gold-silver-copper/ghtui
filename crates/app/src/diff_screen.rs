@@ -754,7 +754,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
         }
         DiffMsg::Replied(Ok(())) => {
             state.overlay = None;
-            state.notice = Some(Notice::Info("Reply posted".into()));
+            state.info("Reply posted");
             vec![Cmd::Api(Api::FetchThreads(pr))]
         }
         // The text stays in the composer, with GitHub's reason.
@@ -789,19 +789,17 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
                         preserving_position(screen, &mut diff.doc, |doc| {
                             doc.set_since(Some(hashes), true)
                         });
-                        state.notice = Some(Notice::Info(format!(
+                        state.info(format!(
                             "Showing changes since your review of {}",
                             short_sha(&old_head)
-                        )));
+                        ));
                     }
                 }
                 Err(err) => {
                     if let Some(diff) = state.diffs.get_mut(&pr) {
                         diff.since_requested = false;
                     }
-                    state.notice = Some(Notice::Error(format!(
-                        "Couldn't compare with your last review: {err}"
-                    )));
+                    state.error(format!("Couldn't compare with your last review: {err}"));
                 }
             }
             Vec::new()
@@ -815,7 +813,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
                 state.open_picker(picker::Kind::Commits { mark: None })
             }
             Err(err) => {
-                state.notice = Some(Notice::Error(format!("Couldn't list commits: {err}")));
+                state.error(format!("Couldn't list commits: {err}"));
                 Vec::new()
             }
         },
@@ -844,7 +842,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
                 if let Some(diff) = state.diffs.get_mut(&pr) {
                     diff.doc.set_viewed(file, previous);
                 }
-                state.notice = Some(Notice::Error(format!("GitHub didn't save “viewed”: {err}")));
+                state.error(format!("GitHub didn't save “viewed”: {err}"));
             }
             Vec::new()
         }
@@ -876,9 +874,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
                 }
                 Err(err) => {
                     tracing::warn!(%pr, %err, "review threads fetch failed");
-                    state.notice = Some(Notice::Error(format!(
-                        "Couldn't load review threads: {err}"
-                    )));
+                    state.error(format!("Couldn't load review threads: {err}"));
                 }
             }
             state.map_outdated(&pr)
@@ -916,7 +912,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
                     }
                     diff.refresh_annotations();
                 }
-                state.notice = Some(Notice::Error(format!("GitHub didn't save that: {err}")));
+                state.error(format!("GitHub didn't save that: {err}"));
             }
             Vec::new()
         }

@@ -434,6 +434,16 @@ impl State {
         state
     }
 
+    /// Says `text` in the status bar for a few seconds.
+    pub fn info(&mut self, text: impl Into<String>) {
+        self.notice = Some(Notice::Info(text.into()));
+    }
+
+    /// Says what went wrong, in the status bar (and the messages list).
+    pub fn error(&mut self, text: impl Into<String>) {
+        self.notice = Some(Notice::Error(text.into()));
+    }
+
     pub fn screen(&self) -> &Screen {
         self.screens.last()
     }
@@ -515,12 +525,22 @@ impl State {
         if self.viewer.is_none() && force {
             cmds.push(Cmd::Api(Api::FetchViewer));
         }
-        match self.screen().clone() {
-            Screen::Page(p) => cmds.extend(self.ensure_route(&p.route, force)),
-            Screen::Diff(screen) => {
-                cmds.extend(self.ensure_pr(&screen.pr, false));
-                if force || !self.diffs.contains_key(&screen.pr) {
-                    cmds.extend(self.start_diff(&screen.pr));
+        // What's on screen, without cloning the screen (a page holds its
+        // whole rendered content).
+        enum Here {
+            Page(Route),
+            Diff(PrRef),
+        }
+        let here = match self.screen() {
+            Screen::Page(p) => Here::Page(p.route.clone()),
+            Screen::Diff(d) => Here::Diff(d.pr.clone()),
+        };
+        match here {
+            Here::Page(route) => cmds.extend(self.ensure_route(&route, force)),
+            Here::Diff(pr) => {
+                cmds.extend(self.ensure_pr(&pr, false));
+                if force || !self.diffs.contains_key(&pr) {
+                    cmds.extend(self.start_diff(&pr));
                 }
             }
         }
@@ -755,14 +775,14 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 }
                 Ok(_) => {}
                 Err(err) => {
-                    state.notice = Some(Notice::Error(format!("Couldn't load more: {err}")));
+                    state.error(format!("Couldn't load more: {err}"));
                 }
             }
             Vec::new()
         }
         Msg::Commented(key, Ok(())) => {
             state.overlay = None;
-            state.notice = Some(Notice::Info("Comment posted".into()));
+            state.info("Comment posted");
             state.ensure(Need::Data(key), true)
         }
         Msg::Commented(_, Err(err)) => {
@@ -780,11 +800,11 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             match result {
                 Ok(()) => {
                     let verb = if starred { "Starred" } else { "Unstarred" };
-                    state.notice = Some(Notice::Info(format!("{verb} {repo}")));
+                    state.info(format!("{verb} {repo}"));
                 }
                 Err(err) => {
                     nav::set_starred(state, &repo, !starred);
-                    state.notice = Some(Notice::Error(format!("GitHub didn't save that: {err}")));
+                    state.error(format!("GitHub didn't save that: {err}"));
                 }
             }
             Vec::new()
@@ -879,7 +899,7 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                     _ => "on pages, not in the diff",
                 };
                 let what = action.description();
-                state.notice = Some(Notice::Info(format!("{what}: {place}")));
+                state.info(format!("{what}: {place}"));
             }
             state.pending.clear();
             Vec::new()
@@ -941,7 +961,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
                 if let Screen::Diff(screen) = state.screen_mut() {
                     screen.search = None;
                 }
-                state.notice = Some(Notice::Info("Search cleared".into()));
+                state.info("Search cleared");
                 return Vec::new();
             }
             _ => {}
@@ -2046,7 +2066,7 @@ pub(crate) mod tests {
     fn errors_are_dismissed_and_kept() {
         let mut state = with_repo();
         let depth = state.screens.len();
-        state.notice = Some(Notice::Error("boom".into()));
+        state.error("boom");
         timers(&mut state, &mut None);
         press(&mut state, "<Esc>");
         assert!(state.notice.is_none());

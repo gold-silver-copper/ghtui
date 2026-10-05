@@ -735,7 +735,8 @@ impl DiffView<'_> {
                 (&text.new, n, text.new_spans(n))
             }
         };
-        let i = n as usize - 1;
+        // 1-based; 0 never happens, and would show nothing.
+        let i = n.checked_sub(1).map_or(usize::MAX, |i| i as usize);
         spans.extend(code_spans(
             self.ctx,
             source.line(i),
