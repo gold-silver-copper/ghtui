@@ -97,11 +97,11 @@ pub(crate) fn parse_key(key: &str) -> Option<(&str, &str, u64)> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{DraftComment, DraftSide};
 
-    fn draft(body: &str) -> ReviewState {
+    pub(crate) fn draft(body: &str) -> ReviewState {
         ReviewState {
             pending: vec![DraftComment {
                 id: 1,

@@ -415,19 +415,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("cache.redb"));
         let reviews = Reviews::open(&dir.path().join("reviews")).unwrap();
-        let mut state = ReviewState::default();
-        assert_eq!(state.next_draft_id(), 1);
-        state.pending.push(DraftComment {
-            id: 1,
-            path: "a.rs".into(),
-            body: "nit".into(),
-            side: DraftSide::Right,
-            line: Some(3),
-            start_line: None,
-            start_side: None,
-            commit: "abc".into(),
-            error: None,
-        });
+        assert_eq!(ReviewState::default().next_draft_id(), 1);
+        let state = reviews::tests::draft("nit");
         assert_eq!(state.next_draft_id(), 2);
         store.write_json(REVIEW, "o/r#1", &state);
         // An entry written before `pending` existed still decodes.
