@@ -30,3 +30,17 @@ jobs:
         run: cargo test --workspace --locked
       - name: TLS dependencies
         run: scripts/check-tls-deps.sh
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read rust-version
+        id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Check on the declared minimum Rust
+        run: cargo +${{ steps.msrv.outputs.version }} check --workspace --all-targets --locked

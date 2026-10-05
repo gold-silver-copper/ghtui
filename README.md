@@ -25,7 +25,8 @@ rest of GitHub) is planned but not started.
 
 ## Install
 
-Requires Rust stable (the repo pins it in `rust-toolchain.toml`) and git
+Requires Rust 1.97 or newer (the repo builds with stable, pinned in
+`rust-toolchain.toml`; CI also checks the minimum) and git
 2.36 or newer. Two optimizations need newer git and are skipped otherwise:
 2.40+ reads `linguist-generated`/`linguist-vendored` attributes in the cache
 clone, and 2.44+ (`GIT_NO_LAZY_FETCH`) lets the blob prefetch skip blobs you
