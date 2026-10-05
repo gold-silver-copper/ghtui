@@ -194,6 +194,7 @@ fn ghtui() -> RepoId {
     RepoId::new("gold-silver-copper", "ghtui")
 }
 
+/// A repository's Code tab with everything it asked for delivered.
 fn with_repo(mode: Mode, depth: ColorDepth) -> State {
     let mut state = state(mode, depth);
     state.push(Route::Repo(ghtui()));
@@ -201,6 +202,11 @@ fn with_repo(mode: Mode, depth: ColorDepth) -> State {
         &mut state,
         DataKey::Repo(ghtui()),
         Data::Repo(Box::new(fixtures::overview())),
+    );
+    fetched(
+        &mut state,
+        DataKey::LastCommits(ghtui(), "HEAD".into(), String::new()),
+        Data::LastCommits(std::sync::Arc::new(fixtures::last_commits())),
     );
     state
 }
@@ -305,6 +311,11 @@ fn issues_dark() {
 #[test]
 fn issue_light() {
     let mut state = state(Mode::Light, ColorDepth::TrueColor);
+    fetched(
+        &mut state,
+        DataKey::Repo(ghtui()),
+        Data::Repo(Box::new(fixtures::overview())),
+    );
     let route = Route::Issue {
         repo: ghtui(),
         number: 14,

@@ -85,6 +85,25 @@ pub fn overview() -> RepoOverview {
     }
 }
 
+/// The latest commit touching each of [`overview`]'s entries.
+pub fn last_commits() -> std::collections::HashMap<String, CommitInfo> {
+    let commit = |headline: &str, date: &str| CommitInfo {
+        oid: "0123456789abcdef0123456789abcdef01234567".into(),
+        headline: headline.into(),
+        author: "octocat".into(),
+        date: date.into(),
+    };
+    [
+        (".github", commit("Run CI on macOS too", "2026-09-20T10:00:00Z")),
+        ("crates", commit("Browse GitHub like the website", "2026-10-03T10:00:00Z")),
+        ("Cargo.toml", commit("Bump ratatui to 0.30", "2026-09-28T10:00:00Z")),
+        ("README.md", commit("Document the keys", "2026-10-01T10:00:00Z")),
+    ]
+    .into_iter()
+    .map(|(name, c)| (name.to_owned(), c))
+    .collect()
+}
+
 pub fn tree() -> Vec<TreeEntry> {
     vec![
         entry("crates/api", EntryKind::Dir, None),
