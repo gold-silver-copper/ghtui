@@ -568,9 +568,12 @@ mod tests {
             (segment(), segment()).prop_map(|(o, r)| RepoId::new(o, r))
         }
 
-        /// Any text a path segment can hold, spaces and non-ASCII included.
+        /// Any text a path segment can hold, spaces and non-ASCII included
+        /// (git has no `.` or `..` segments).
         fn path() -> impl Strategy<Value = String> {
-            prop::collection::vec("[^/\\x00-\\x1f]{1,12}", 0..4).prop_map(|parts| parts.join("/"))
+            let part =
+                "[^/\\x00-\\x1f]{1,12}".prop_filter("not . or ..", |p| p != "." && p != "..");
+            prop::collection::vec(part, 0..4).prop_map(|parts| parts.join("/"))
         }
 
         /// Filter words (an `is:` word would be dropped by design).
@@ -583,11 +586,17 @@ mod tests {
         }
 
         fn route() -> impl Strategy<Value = Route> {
-            let rev = "[A-Za-z0-9._-]{1,12}";
+            // A valid one-segment git ref name.
+            let rev = "[A-Za-z0-9_-][A-Za-z0-9._-]{0,11}"
+                .prop_filter("valid ref name", |r| !r.contains("..") && !r.ends_with('.'));
             prop_oneof![
                 Just(Route::Home),
                 repo().prop_map(Route::Repo),
-                (repo(), rev, path()).prop_map(|(repo, rev, path)| Route::Tree { repo, rev, path }),
+                (repo(), rev.clone(), path()).prop_map(|(repo, rev, path)| Route::Tree {
+                    repo,
+                    rev,
+                    path
+                }),
                 (repo(), rev, path())
                     .prop_filter("a file has a path", |(_, _, p)| !p.is_empty())
                     .prop_map(|(repo, rev, path)| Route::Blob { repo, rev, path }),
