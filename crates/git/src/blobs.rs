@@ -8,7 +8,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 
-use crate::GitError;
+use crate::{GitError, piped};
 
 type MakeCommand = Box<dyn Fn() -> Command + Send + Sync>;
 
@@ -35,13 +35,12 @@ impl Batch {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         let mut child = cmd.spawn()?;
-        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
-            return Err(GitError::Parse("cat-file has no pipes".into()));
-        };
+        let stdin = piped(child.stdin.take(), "stdin")?;
+        let stdout = BufReader::new(piped(child.stdout.take(), "stdout")?);
         Ok(Self {
             _child: child,
             stdin,
-            stdout: BufReader::new(stdout),
+            stdout,
         })
     }
 

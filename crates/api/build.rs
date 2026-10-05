@@ -1,3 +1,6 @@
+// A panic here fails the build, which is what a bad schema should do.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 fn main() {
     // Derives in this crate validate against the schema; the generated schema
     // module itself lives in `ghtui-schema`.

@@ -87,6 +87,11 @@ pub(crate) fn git(dir: Option<&Path>) -> Command {
     cmd
 }
 
+/// A child's stdio handle that was set to `Stdio::piped()`.
+pub(crate) fn piped<T>(handle: Option<T>, name: &str) -> Result<T, GitError> {
+    handle.ok_or_else(|| std::io::Error::other(format!("git {name} not piped")).into())
+}
+
 pub(crate) async fn run(dir: Option<&Path>, args: &[&str]) -> Result<String, GitError> {
     let output = git(dir).args(args).output().await?;
     if !output.status.success() {

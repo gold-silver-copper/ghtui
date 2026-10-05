@@ -29,6 +29,10 @@ pub use detect::{detect_background, detect_color_depth, mode_for_background};
 /// Default seed: a muted cobalt that reads well in both schemes.
 pub const DEFAULT_SEED: Rgb = Rgb::from_u32(0x3f6fb5);
 
+/// Shown for a role without a color. `Theme::new` fills every role, so this
+/// should never appear; if it does, it's loud.
+const MISSING: Rgb = Rgb::from_u32(0xff00ff);
+
 /// Minimum contrast for text.
 pub const TEXT_CONTRAST: f64 = 4.5;
 /// Minimum contrast for decorative outlines; they only need to be visible.
@@ -341,11 +345,13 @@ impl Theme {
 
         let mut bg = HashMap::new();
         let surface = rgb(scheme.surface);
+        let container_low = rgb(scheme.surface_container_low);
+        let container_high = rgb(scheme.surface_container_high);
         bg.insert(Bg::Surface, surface);
         bg.insert(Bg::ContainerLowest, rgb(scheme.surface_container_lowest));
-        bg.insert(Bg::ContainerLow, rgb(scheme.surface_container_low));
+        bg.insert(Bg::ContainerLow, container_low);
         bg.insert(Bg::Container, rgb(scheme.surface_container));
-        bg.insert(Bg::ContainerHigh, rgb(scheme.surface_container_high));
+        bg.insert(Bg::ContainerHigh, container_high);
         bg.insert(Bg::ContainerHighest, rgb(scheme.surface_container_highest));
         bg.insert(Bg::Primary, rgb(scheme.primary));
         bg.insert(Bg::PrimaryContainer, rgb(scheme.primary_container));
@@ -354,18 +360,17 @@ impl Theme {
         bg.insert(Bg::ErrorContainer, rgb(scheme.error_container));
         bg.insert(Bg::SuccessContainer, hct(green, 36.0, container_tone));
 
-        bg.insert(Bg::Diff(DiffBg::Context), surface);
-        bg.insert(Bg::Diff(DiffBg::Added), hct(green, 16.0, diff_tone));
-        bg.insert(Bg::Diff(DiffBg::Removed), hct(red, 16.0, diff_tone));
-        bg.insert(
-            Bg::Diff(DiffBg::AddedToken),
-            hct(green, 30.0, diff_token_tone),
-        );
-        bg.insert(
-            Bg::Diff(DiffBg::RemovedToken),
-            hct(red, 30.0, diff_token_tone),
-        );
-        bg.insert(Bg::Diff(DiffBg::Moved), hct(tertiary_hue, 16.0, diff_tone));
+        let diff = |d: DiffBg| match d {
+            DiffBg::Context => surface,
+            DiffBg::Added => hct(green, 16.0, diff_tone),
+            DiffBg::Removed => hct(red, 16.0, diff_tone),
+            DiffBg::AddedToken => hct(green, 30.0, diff_token_tone),
+            DiffBg::RemovedToken => hct(red, 30.0, diff_token_tone),
+            DiffBg::Moved => hct(tertiary_hue, 16.0, diff_tone),
+        };
+        for d in DiffBg::ALL {
+            bg.insert(Bg::Diff(d), diff(d));
+        }
 
         // State layers: primary composited over the base surface. In 256-color
         // mode, raise the opacity until the selection is actually visible.
@@ -380,11 +385,11 @@ impl Theme {
                 opacity += 0.02;
             }
         };
-        bg.insert(Bg::Selected, layer(bg[&Bg::ContainerLow], 0.12));
+        bg.insert(Bg::Selected, layer(container_low, 0.12));
         bg.insert(Bg::SelectedInactive, layer(surface, 0.08));
-        bg.insert(Bg::SelectedHigh, layer(bg[&Bg::ContainerHigh], 0.14));
+        bg.insert(Bg::SelectedHigh, layer(container_high, 0.14));
         for d in DiffBg::ALL {
-            bg.insert(Bg::DiffSelected(d), layer(bg[&Bg::Diff(d)], 0.14));
+            bg.insert(Bg::DiffSelected(d), layer(diff(d), 0.14));
         }
 
         let mut fg = HashMap::new();
@@ -453,11 +458,11 @@ impl Theme {
     }
 
     pub fn bg_rgb(&self, bg: Bg) -> Rgb {
-        self.bg[&bg]
+        self.bg.get(&bg).copied().unwrap_or(MISSING)
     }
 
     pub fn fg_rgb(&self, fg: Fg) -> Rgb {
-        self.fg[&fg]
+        self.fg.get(&fg).copied().unwrap_or(MISSING)
     }
 
     pub fn bg_color(&self, bg: Bg) -> Color {

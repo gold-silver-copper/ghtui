@@ -278,11 +278,12 @@ impl GitHub {
         match parsed.get_mut("data").map(serde_json::Value::take) {
             Some(data) if !data.is_null() => Ok(data),
             _ => Err(ApiError::GraphQl(
-                parsed["errors"]
-                    .as_array()
+                parsed
+                    .get("errors")
+                    .and_then(serde_json::Value::as_array)
                     .into_iter()
                     .flatten()
-                    .filter_map(|e| e["message"].as_str().map(str::to_owned))
+                    .filter_map(|e| e.get("message")?.as_str().map(str::to_owned))
                     .collect(),
             )),
         }
@@ -927,20 +928,21 @@ impl GitHub {
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "rev": rev }),
             )
             .await?;
-        let commit = &data["repository"]["object"];
         let mut out = std::collections::HashMap::new();
         for (i, name) in names.iter().take(100).enumerate() {
-            let node = &commit[format!("e{i}")]["nodes"][0];
+            let field = |path: &str| {
+                data.pointer(&format!("/repository/object/e{i}/nodes/0/{path}"))
+                    .and_then(serde_json::Value::as_str)
+            };
             let (Some(oid), Some(headline), Some(date)) = (
-                node["oid"].as_str(),
-                node["messageHeadline"].as_str(),
-                node["committedDate"].as_str(),
+                field("oid"),
+                field("messageHeadline"),
+                field("committedDate"),
             ) else {
                 continue;
             };
-            let author = node["author"]["user"]["login"]
-                .as_str()
-                .or_else(|| node["author"]["name"].as_str())
+            let author = field("author/user/login")
+                .or_else(|| field("author/name"))
                 .unwrap_or("someone");
             out.insert(
                 name.clone(),

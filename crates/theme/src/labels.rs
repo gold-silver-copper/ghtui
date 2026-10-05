@@ -38,10 +38,10 @@ mod tests {
             Rgb::from_u32(0xfef2c0),
             Rgb::from_u32(0x7057ff), // good first issue
         ];
-        for r in (0..=255).step_by(51) {
-            for g in (0..=255).step_by(51) {
-                for b in (0..=255).step_by(51) {
-                    samples.push(Rgb::new(r as u8, g as u8, b as u8));
+        for r in (0..=255u8).step_by(51) {
+            for g in (0..=255u8).step_by(51) {
+                for b in (0..=255u8).step_by(51) {
+                    samples.push(Rgb::new(r, g, b));
                 }
             }
         }

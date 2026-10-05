@@ -15,11 +15,10 @@ pub fn detect_background(timeout: Duration) -> Option<Rgb> {
     let mut options = terminal_colorsaurus::QueryOptions::default();
     options.timeout = timeout;
     match terminal_colorsaurus::background_color(options) {
-        Ok(c) => Some(Rgb::new(
-            (c.r >> 8) as u8,
-            (c.g >> 8) as u8,
-            (c.b >> 8) as u8,
-        )),
+        Ok(c) => {
+            let high = |v: u16| v.to_be_bytes()[0];
+            Some(Rgb::new(high(c.r), high(c.g), high(c.b)))
+        }
         Err(err) => {
             tracing::debug!(%err, "terminal background query failed");
             None

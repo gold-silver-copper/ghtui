@@ -1,6 +1,10 @@
 //! Client behavior against a scripted local HTTP server: ETag revalidation,
 //! retries, rate limits, error mapping and GraphQL decoding.
 
+// The scripted server isn't a `#[test]` function, but a panic in it is still
+// a test failure.
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+
 use std::sync::{Arc, Mutex};
 
 use ghtui_api::auth::Token;

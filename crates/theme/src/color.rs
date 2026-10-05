@@ -16,7 +16,8 @@ impl Rgb {
     }
 
     pub const fn from_u32(hex: u32) -> Self {
-        Self::new((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
+        let [_, r, g, b] = hex.to_be_bytes();
+        Self::new(r, g, b)
     }
 
     /// Parses `#rrggbb` or `rrggbb`.
@@ -44,11 +45,7 @@ impl Rgb {
     /// Composites `over` at `opacity` onto `self` (straight sRGB alpha, like a
     /// Material state layer).
     pub fn blend(self, over: Rgb, opacity: f64) -> Rgb {
-        let mix = |a: u8, b: u8| {
-            (f64::from(a) + (f64::from(b) - f64::from(a)) * opacity)
-                .round()
-                .clamp(0.0, 255.0) as u8
-        };
+        let mix = |a: u8, b: u8| channel(f64::from(a) + (f64::from(b) - f64::from(a)) * opacity);
         Rgb::new(
             mix(self.r, over.r),
             mix(self.g, over.g),
@@ -89,6 +86,13 @@ impl From<Hct> for Rgb {
     }
 }
 
+/// Rounds to the nearest channel value, saturating; NaN becomes 0. Std has no
+/// checked float-to-int conversion, so this searches instead of casting.
+fn channel(x: f64) -> u8 {
+    let x = x.round();
+    (0..=u8::MAX).rfind(|&n| f64::from(n) <= x).unwrap_or(0)
+}
+
 /// WCAG contrast ratio, 1.0 to 21.0.
 pub fn contrast(a: Rgb, b: Rgb) -> f64 {
     let (la, lb) = (a.luminance(), b.luminance());
@@ -96,25 +100,28 @@ pub fn contrast(a: Rgb, b: Rgb) -> f64 {
     (hi + 0.05) / (lo + 0.05)
 }
 
-const CUBE_LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+/// xterm's defaults for the 16 ANSI colors.
+const ANSI: [u32; 16] = [
+    0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5, 0x7f7f7f,
+    0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
+];
 
-/// The xterm-256 palette entry for an index in 16..=255. The first 16 are
-/// user-themed and deliberately never used.
+/// The xterm-256 palette entry for an index. The first 16 are user-themed and
+/// deliberately never chosen; for them this returns xterm's defaults.
 pub fn xterm_color(index: u8) -> Rgb {
+    if let Some(&hex) = ANSI.get(usize::from(index)) {
+        return Rgb::from_u32(hex);
+    }
+    let level = |n: u8| if n == 0 { 0 } else { 55 + 40 * n };
     match index {
         16..=231 => {
             let i = index - 16;
-            Rgb::new(
-                CUBE_LEVELS[usize::from(i / 36)],
-                CUBE_LEVELS[usize::from((i / 6) % 6)],
-                CUBE_LEVELS[usize::from(i % 6)],
-            )
+            Rgb::new(level(i / 36), level(i / 6 % 6), level(i % 6))
         }
-        232..=255 => {
+        _ => {
             let v = 8 + 10 * (index - 232);
             Rgb::new(v, v, v)
         }
-        _ => panic!("xterm_color only covers indices 16..=255"),
     }
 }
 

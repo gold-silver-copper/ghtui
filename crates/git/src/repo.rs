@@ -18,7 +18,7 @@ use tokio::process::Command;
 use crate::blobs::BlobReader;
 use crate::credentials::Credentials;
 use crate::files::{ChangedFile, parse_raw};
-use crate::{GitError, Version, git, github_repo_from_url};
+use crate::{GitError, Version, git, github_repo_from_url, piped};
 
 /// `GIT_NO_LAZY_FETCH` lets us ask which objects are missing without
 /// fetching them.
@@ -113,7 +113,9 @@ impl Repo {
         if !path.join("HEAD").exists() {
             // Clone next to the target and rename, so an interrupted clone
             // never leaves a half-made repository behind.
-            let parent = path.parent().expect("cache path has a parent");
+            let parent = path.parent().ok_or_else(|| {
+                std::io::Error::other(format!("no parent for {}", path.display()))
+            })?;
             std::fs::create_dir_all(parent)?;
             let tmp = parent.join(format!(".{name}.git.tmp-{}", std::process::id()));
             if tmp.exists() {
@@ -388,7 +390,7 @@ async fn run_with_stdin(mut cmd: Command, what: &str, input: String) -> Result<S
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
-    let mut stdin = child.stdin.take().expect("piped stdin");
+    let mut stdin = piped(child.stdin.take(), "stdin")?;
     let writer = tokio::spawn(async move {
         let _ = stdin.write_all(input.as_bytes()).await;
     });
@@ -439,9 +441,8 @@ async fn run_watched(
 ) -> Result<String, GitError> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
-    let (Some(mut stderr), Some(mut stdout)) = (child.stderr.take(), child.stdout.take()) else {
-        return Err(GitError::Parse(format!("git {what} has no pipes")));
-    };
+    let mut stderr = piped(child.stderr.take(), "stderr")?;
+    let mut stdout = piped(child.stdout.take(), "stdout")?;
     let out_task = tokio::spawn(async move {
         let mut buf = Vec::new();
         let _ = stdout.read_to_end(&mut buf).await;
@@ -459,11 +460,11 @@ async fn run_watched(
             });
         };
         let n = read?;
-        if n == 0 {
+        let Some(read) = chunk.get(..n).filter(|read| !read.is_empty()) else {
             break;
-        }
-        all.extend_from_slice(&chunk[..n]);
-        for &b in &chunk[..n] {
+        };
+        all.extend_from_slice(read);
+        for &b in read {
             if b == b'\r' || b == b'\n' {
                 let text = String::from_utf8_lossy(&line).trim().to_owned();
                 if !text.is_empty() {
