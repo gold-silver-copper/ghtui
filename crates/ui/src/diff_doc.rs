@@ -1361,6 +1361,13 @@ pub(crate) mod tests {
         doc
     }
 
+    /// A document of one file, `old` changed to `new`.
+    fn one(path: &str, old: &str, new: &str) -> Doc {
+        let mut doc = Doc::new(vec![changed(path)], &HashSet::new());
+        doc.set_diff(0, compute(path, old, new));
+        doc
+    }
+
     fn view(split: bool, whitespace: Whitespace) -> ViewOptions {
         ViewOptions {
             split,
@@ -1456,12 +1463,11 @@ pub(crate) mod tests {
 
     #[test]
     fn expanding_gaps_and_segments() {
-        let mut doc = Doc::new(vec![changed("big.txt")], &HashSet::new());
         let old = numbered(200);
         let new = old
             .replace("line 2\n", "two\n")
             .replace("line 150\n", "x\n");
-        doc.set_diff(0, compute("big.txt", &old, &new));
+        let mut doc = one("big.txt", &old, &new);
         // The leading one-line gap opens completely.
         doc.expand(Pos { file: 0, row: 1 });
         assert!(kinds(&doc.files[0]).starts_with("H@L"));
@@ -1498,8 +1504,7 @@ pub(crate) mod tests {
 
     #[test]
     fn split_rows_pair_changes() {
-        let mut doc = Doc::new(vec![changed("x.rs")], &HashSet::new());
-        doc.set_diff(0, compute("x.rs", "a\nb\nc\nd\n", "a\nB\nC\nX\nd\n"));
+        let mut doc = one("x.rs", "a\nb\nc\nd\n", "a\nB\nC\nX\nd\n");
         doc.set_options(view(true, Whitespace::Exact));
         let rows: Vec<Row> = doc.files[0]
             .rows()
@@ -1527,11 +1532,7 @@ pub(crate) mod tests {
 
     #[test]
     fn whitespace_mode_hides_whitespace_only_changes() {
-        let mut doc = Doc::new(vec![changed("x.rs")], &HashSet::new());
-        doc.set_diff(
-            0,
-            compute("x.rs", "fn a() {\n  x();\n}\n", "fn a() {\n    x();\n}\n"),
-        );
+        let mut doc = one("x.rs", "fn a() {\n  x();\n}\n", "fn a() {\n    x();\n}\n");
         assert_eq!(doc.totals(), (1, 1));
         doc.set_options(view(false, Whitespace::Ignore));
         assert_eq!(doc.totals(), (0, 0));
@@ -1554,11 +1555,7 @@ pub(crate) mod tests {
 
     #[test]
     fn reviewed_blocks_hash_content_not_position() {
-        let hash = |path: &str, old: &str, new: &str| {
-            let mut doc = Doc::new(vec![changed(path)], &HashSet::new());
-            doc.set_diff(0, compute(path, old, new));
-            doc.files[0].blocks()[0].hash.clone()
-        };
+        let hash = |path, old, new| one(path, old, new).files[0].blocks()[0].hash.clone();
         let base = hash("x.rs", "1\n2\n3\nold\n", "1\n2\n3\nnew\n");
         assert_eq!(
             base,
@@ -1592,8 +1589,7 @@ pub(crate) mod tests {
 
     #[test]
     fn missing_newline_rows() {
-        let mut doc = Doc::new(vec![changed("x.txt")], &HashSet::new());
-        doc.set_diff(0, compute("x.txt", "a\nb\n", "a\nb"));
+        let mut doc = one("x.txt", "a\nb\n", "a\nb");
         let count = |doc: &Doc| {
             doc.files[0]
                 .rows()
@@ -1756,31 +1752,20 @@ pub(crate) mod tests {
 
         #[test]
         fn formatting_only_blocks_fold_and_unfold() {
-            let mut doc = Doc::new(vec![changed("x.rs")], &HashSet::new());
-            doc.set_diff(
-                0,
-                compute(
-                    "x.rs",
-                    "a\nfoo(\n    x,\n    y\n);\nb\n",
-                    "a\nfoo(x, y);\nb\n",
-                ),
+            let mut doc = one(
+                "x.rs",
+                "a\nfoo(\n    x,\n    y\n);\nb\n",
+                "a\nfoo(x, y);\nb\n",
             );
-            assert_eq!(
-                kinds(&doc.files[0]),
-                "H@LF L_".replace(' ', "L").replace("LFLL", "LFL")
-            );
+            assert_eq!(kinds(&doc.files[0]), "H@LFL_");
+            let formatting = Row::Fold {
+                block: 0,
+                reason: FoldReason::Formatting,
+            };
             let fold = doc.files[0]
                 .rows()
                 .iter()
-                .position(|r| {
-                    matches!(
-                        r,
-                        Row::Fold {
-                            reason: FoldReason::Formatting,
-                            ..
-                        }
-                    )
-                })
+                .position(|r| *r == formatting)
                 .unwrap();
             assert!(doc.unfold(Pos { file: 0, row: fold }));
             assert!(!kinds(&doc.files[0]).contains('F'));
@@ -1790,19 +1775,15 @@ pub(crate) mod tests {
         fn since_review_shows_only_new_changes() {
             let mut doc = doc();
             // At the last review, only the change at line 5 existed.
-            let mut old = Doc::new(vec![changed("a.txt")], &HashSet::new());
             let base = numbered(60);
-            old.set_diff(
-                0,
-                compute("a.txt", &base, &base.replace("line 5\n", "five\n")),
-            );
+            let mut old = one("a.txt", &base, &base.replace("line 5\n", "five\n"));
             let seen: HashSet<String> = old.files[0]
                 .blocks()
                 .iter()
                 .map(|b| b.hash.clone())
                 .collect();
 
-            doc.set_since(Some(seen), true);
+            doc.set_since(Some(seen.clone()), true);
             let rows = kinds(&doc.files[0]);
             // The old change (line 5) is gone from view; the new one (45) shows.
             let shows = |n: u32| line_row(&doc.files[0], |l| l.new == Some(n)).is_some();
@@ -1811,20 +1792,10 @@ pub(crate) mod tests {
             assert!(doc.has_new_changes(0));
 
             // A file with only seen changes says so.
-            let only_seen = old.files[0]
-                .blocks()
-                .iter()
-                .map(|b| b.hash.clone())
-                .collect();
-            let mut same = Doc::new(vec![changed("a.txt")], &HashSet::new());
-            same.set_diff(
-                0,
-                compute("a.txt", &base, &base.replace("line 5\n", "five\n")),
-            );
-            same.set_since(Some(only_seen), true);
-            assert_eq!(same.files[0].rows()[1], Row::Note(Note::NothingNew));
-            same.set_since(same.since.clone(), false);
-            assert_ne!(same.files[0].rows()[1], Row::Note(Note::NothingNew));
+            old.set_since(Some(seen), true);
+            assert_eq!(old.files[0].rows()[1], Row::Note(Note::NothingNew));
+            old.set_since(old.since.clone(), false);
+            assert_ne!(old.files[0].rows()[1], Row::Note(Note::NothingNew));
         }
 
         #[test]
