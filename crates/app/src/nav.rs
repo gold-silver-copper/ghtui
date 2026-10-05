@@ -1216,23 +1216,63 @@ impl State {
             None => {}
         }
         // The menu first: everything else is in it, so it must never be
-        // the hint a narrow terminal drops.
+        // the hint a narrow terminal drops. Then what fits the thing under
+        // the cursor, then the screen's usual verbs.
         let menu = (self.first_key(Action::Menu), "menu".to_owned());
-        let hints = self
+        let focused = self.focus_hints();
+        let usual = self
             .doables()
             .into_iter()
             .filter(|d| d.unavailable.is_none() && !d.short.is_empty())
-            .filter_map(|d| {
+            .filter(|d| !focused.iter().any(|(a, _)| *a == d.action))
+            .map(|d| (d.action, d.short.to_owned()));
+        let hints = focused
+            .iter()
+            .cloned()
+            .chain(usual)
+            .filter_map(|(action, what)| {
                 // Pairs read as one hint.
-                let key = match d.action {
+                let key = match action {
                     Action::NextTab => Some("←→".to_owned()),
                     Action::NextHunk => Some("n/p".to_owned()),
                     action => self.key_here(action),
                 };
-                Some((key?, d.short.to_owned()))
+                Some((key?, what))
             })
             .take(7);
         std::iter::once(menu).chain(hints).collect()
+    }
+
+    /// Verbs for what's under the diff's cursor (a thread, a draft) and for
+    /// a review in progress, most useful first.
+    fn focus_hints(&self) -> Vec<(Action, String)> {
+        let Screen::Diff(screen) = self.screen() else {
+            return Vec::new();
+        };
+        let Some(diff) = self.diffs.get(&screen.pr) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let here = diff
+            .doc
+            .annotation_at(screen.cursor)
+            .and_then(|i| diff.doc.annotations().get(i as usize));
+        match here {
+            Some(a) if a.is_draft() => {
+                out.push((Action::Open, "edit".to_owned()));
+                out.push((Action::DeleteDraft, "delete".to_owned()));
+            }
+            Some(_) => {
+                out.push((Action::Comment, "reply".to_owned()));
+                out.push((Action::ResolveThread, "resolve".to_owned()));
+            }
+            None => {}
+        }
+        let pending = diff.review.pending.len();
+        if pending > 0 {
+            out.push((Action::SubmitReview, format!("submit ({pending} pending)")));
+        }
+        out
     }
 
     /// The first key that runs `action` on this screen, if any.

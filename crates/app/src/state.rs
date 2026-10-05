@@ -3236,6 +3236,12 @@ mod tests {
                     s.diffs[&pr].doc.annotations()[at as usize].key,
                     AnnotationKey::Thread("open".into())
                 );
+                // The status bar leads with what fits a thread.
+                let hints = s.key_hints();
+                assert_eq!(
+                    hints.get(1..3),
+                    Some(&[("c".into(), "reply".into()), ("R".into(), "resolve".into())][..])
+                );
 
                 // Resolve: optimistic, rolled back on failure.
                 let cmds = act(&mut s, Action::ResolveThread);
