@@ -83,29 +83,18 @@ impl Widget for ComposeSheet<'_> {
         if let Some((start, original, suggested)) = self.preview {
             Span::styled("Preview of the suggestion", theme.meta(SHEET)).render(row(y), buf);
             y = y.saturating_add(1);
-            let n = |i: usize| start.saturating_add(idx(i));
-            let lines = original
-                .iter()
-                .enumerate()
-                .map(|(i, l)| (DiffBg::Removed, "-", n(i), l))
-                .chain(
-                    suggested
-                        .iter()
-                        .enumerate()
-                        .map(|(i, l)| (DiffBg::Added, "+", n(i), l)),
-                );
-            for (diff_bg, sign, n, line) in lines {
+            let removed = (DiffBg::Removed, "-", Fg::DiffRemovedSign);
+            let added = (DiffBg::Added, "+", Fg::DiffAddedSign);
+            let lines = original.iter().enumerate().map(|(i, l)| (removed, i, l));
+            let lines = lines.chain(suggested.iter().enumerate().map(|(i, l)| (added, i, l)));
+            for ((diff_bg, sign, fg), i, line) in lines {
                 if y.saturating_add(1) >= inner.bottom() {
                     break;
                 }
+                let n = start.saturating_add(idx(i));
                 let bg = Bg::Diff(diff_bg);
                 let r = row(y);
                 fill(buf, r, theme, bg);
-                let fg = if sign == "+" {
-                    Fg::DiffAddedSign
-                } else {
-                    Fg::DiffRemovedSign
-                };
                 Line::from(vec![
                     Span::styled(format!("{n:>4} "), theme.meta(bg)),
                     Span::styled(sign, theme.style(fg, bg).add_modifier(Modifier::BOLD)),
