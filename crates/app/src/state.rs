@@ -17,7 +17,6 @@ use ghtui_ui::bars::Notice;
 use ghtui_ui::diff_doc::Viewed;
 use ghtui_ui::pages::PrTab;
 use ghtui_ui::{Ctx, Icons};
-use ratatui::layout::Rect;
 use ratatui_textarea::TextArea;
 
 use crate::browse::{self, Data, DataKey, Need, PageScreen};
@@ -497,11 +496,6 @@ impl State {
         }
     }
 
-    /// The area between the chrome and the status bar.
-    pub fn content_area(&self) -> Rect {
-        self.layout().content
-    }
-
     /// Which keymap applies.
     pub fn scope(&self) -> Scope {
         match self.screen() {
@@ -562,23 +556,17 @@ impl State {
     /// already have.
     #[must_use]
     pub fn load_visible(&mut self, force: bool) -> Vec<Cmd> {
-        // What's on screen, without cloning the screen (a page holds its
-        // whole rendered content).
-        enum Here {
-            Page(Route),
-            Diff(PrRef),
-        }
         let mut cmds = Vec::new();
         if self.viewer.is_none() && force {
             cmds.push(Cmd::Api(Api::FetchViewer));
         }
-        let here = match self.screen() {
-            Screen::Page(p) => Here::Page(p.route.clone()),
-            Screen::Diff(d) => Here::Diff(d.pr.clone()),
-        };
-        match here {
-            Here::Page(route) => cmds.extend(self.ensure_route(&route, force)),
-            Here::Diff(pr) => {
+        match self.screen() {
+            Screen::Page(p) => {
+                let route = p.route.clone();
+                cmds.extend(self.ensure_route(&route, force));
+            }
+            Screen::Diff(d) => {
+                let pr = d.pr.clone();
                 cmds.extend(self.ensure_pr(&pr, false));
                 if force || !self.diffs.contains_key(&pr) {
                     cmds.extend(self.start_diff(&pr));
@@ -604,8 +592,8 @@ impl State {
 
     /// The branch the PR merges into, once the PR has loaded.
     pub(crate) fn base_ref(&self, pr: &PrRef) -> Option<String> {
-        let detail = self.prs.get(pr)?.data.as_ref()?;
-        Some(detail.base_ref.clone())
+        let detail = self.prs.get(pr)?.data.as_ref();
+        detail.map(|d| d.base_ref.clone())
     }
 
     #[must_use]
@@ -641,11 +629,10 @@ impl State {
     /// Re-runs the diff screen's clamping and prioritization.
     #[must_use]
     pub fn settle_diff(&mut self) -> Vec<Cmd> {
-        let content = self.content_area();
-        match self.diff_parts() {
-            Some((screen, diff)) => diff_screen::settle(screen, diff, content),
-            None => Vec::new(),
-        }
+        let content = self.layout().content;
+        self.diff_parts().map_or_else(Vec::new, |(screen, diff)| {
+            diff_screen::settle(screen, diff, content)
+        })
     }
 
     /// What's loading on the visible screen, for the status bar.
@@ -957,7 +944,7 @@ fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 
 #[must_use]
 pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
-    let content = state.content_area();
+    let content = state.layout().content;
     // In the diff, a few keys mean their nearest thing there.
     let mut action = action;
     if let Screen::Diff(screen) = state.screen() {
@@ -1050,19 +1037,13 @@ impl State {
     /// the diff's head are known.
     #[must_use]
     pub(crate) fn map_outdated(&mut self, pr: &PrRef) -> Vec<Cmd> {
-        let Some(diff) = self.diffs.get_mut(pr) else {
+        let Some(diff) = self.diffs.get_mut(pr).filter(|d| !d.mapping_requested) else {
             return Vec::new();
         };
-        let Some(head) = diff.head() else {
-            return Vec::new();
-        };
-        if diff.mapping_requested {
-            return Vec::new();
-        }
         let threads = review::outdated_to_map(&diff.threads);
-        if threads.is_empty() {
+        let Some(head) = diff.head().filter(|_| !threads.is_empty()) else {
             return Vec::new();
-        }
+        };
         diff.mapping_requested = true;
         vec![Cmd::Git(Git::MapOutdated {
             pr: pr.clone(),

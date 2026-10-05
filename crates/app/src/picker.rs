@@ -115,11 +115,6 @@ impl State {
     /// Go to file, or switch branches, for the code on screen.
     #[must_use]
     pub fn open_finder(&mut self, branches: bool) -> Vec<Cmd> {
-        let default = |repo: &RepoId| {
-            self.overview(repo)
-                .and_then(|o| o.default_branch.clone())
-                .unwrap_or_else(|| "HEAD".into())
-        };
         let (repo, rev, path, file) = match self.route() {
             Some(Route::Tree { repo, rev, path }) => {
                 (repo.clone(), rev.clone(), path.clone(), false)
@@ -128,10 +123,14 @@ impl State {
                 (repo.clone(), rev.clone(), path.clone(), true)
             }
             Some(route) if let Some(repo) = route.repo() => {
-                let rev = default(repo);
+                let default = self.overview(repo).and_then(|o| o.default_branch.clone());
+                let rev = default.unwrap_or_else(|| "HEAD".into());
                 (repo.clone(), rev, String::new(), false)
             }
-            _ => return crate::nav::no_repo(self),
+            _ => {
+                self.info("Open a repository first");
+                return Vec::new();
+            }
         };
         self.open_picker(if branches {
             Kind::Branches {

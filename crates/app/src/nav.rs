@@ -428,12 +428,6 @@ fn up(state: &State, route: &Route) -> Option<Route> {
     })
 }
 
-#[must_use]
-pub fn no_repo(state: &mut State) -> Vec<Cmd> {
-    state.info("Open a repository first");
-    Vec::new()
-}
-
 /// Switches to the chrome's tab `n` (1-based).
 #[must_use]
 pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
