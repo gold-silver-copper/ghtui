@@ -981,42 +981,14 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ghtui_api::model::ReviewComment;
-
-    fn thread(id: &str, outdated: bool, line: Option<u32>) -> ReviewThread {
-        ReviewThread {
-            id: NodeId::new(id),
-            path: "a.rs".into(),
-            side: ApiSide::Right,
-            start_side: None,
-            line,
-            start_line: None,
-            original_line: Some(7),
-            original_start_line: None,
-            outdated,
-            resolved: false,
-            file_level: false,
-            can_reply: true,
-            can_resolve: true,
-            can_unresolve: false,
-            comments: vec![ReviewComment {
-                id: NodeId::new("c"),
-                author: "alice".into(),
-                body: "hm".into(),
-                created_at: "2026-10-01T00:00:00Z".into(),
-                url: String::new(),
-                original_commit: Some("abc".into()),
-                pending: false,
-            }],
-        }
-    }
+    use crate::fixtures::thread;
 
     #[test]
     fn outdated_threads_move_when_mapped() {
         let threads = vec![
-            thread("current", false, Some(3)),
-            thread("mapped", true, None),
-            thread("lost", true, None),
+            thread("current", Some(3), false, false),
+            thread("mapped", None, false, true),
+            thread("lost", None, false, true),
         ];
         let mapped = HashMap::from([
             (NodeId::new("mapped"), Some(12)),

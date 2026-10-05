@@ -17,7 +17,7 @@ use ratatui::backend::TestBackend;
 use ghtui_ui::pages::PrTab;
 
 use crate::browse::{Data, DataKey, Need, needs};
-use crate::fixtures::{self, press};
+use crate::fixtures::{self, fetched, press};
 use crate::keymap::Keymap;
 use crate::route::{OPEN, Route};
 use crate::state::{Msg, Overlay, State, update};
@@ -168,17 +168,6 @@ fn with_pr(mode: Mode) -> State {
         Data::PrActivity(Box::new(fixtures::activity())),
     );
     state
-}
-
-fn fetched(state: &mut State, key: DataKey, data: Data) {
-    update(
-        state,
-        Msg::Fetched {
-            key,
-            result: Ok(data),
-            cached_at: None,
-        },
-    );
 }
 
 /// Pushes `route` and delivers `data` for its page's own fetch (its last).
@@ -546,7 +535,8 @@ pub(crate) mod diff {
 
     use super::{NOW, Terminal, TestBackend, press, render, state, view};
     use crate::diff_screen::{DiffScreen, DiffState, Pane};
-    use crate::state::{Msg, Screen, State, update};
+    use crate::fixtures::diff_msg;
+    use crate::state::{DiffMsg, Msg, Screen, State, update};
 
     fn pr() -> PrRef {
         PrRef::parse("o/r#7").unwrap()
@@ -1248,12 +1238,10 @@ pub(crate) mod diff {
 
         let start = Instant::now();
         let job = s.diffs[&pr()].job;
-        update(
+        diff_msg(
             &mut s,
-            Msg::Diff(
-                pr(),
-                crate::state::DiffMsg::Job(job, crate::diff_job::JobMsg::File(0, diff)),
-            ),
+            &pr(),
+            DiffMsg::Job(job, crate::diff_job::JobMsg::File(0, diff)),
         );
         terminal.draw(|frame| view(&s, frame, NOW)).unwrap();
         let first_screen = start.elapsed();
