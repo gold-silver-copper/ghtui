@@ -553,4 +553,84 @@ mod tests {
             ))
         );
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn segment() -> impl Strategy<Value = String> {
+            "[A-Za-z0-9][A-Za-z0-9_.-]{0,15}".prop_filter("not . or .. or .git", |s| {
+                s != "." && s != ".." && !s.ends_with(".git")
+            })
+        }
+
+        fn repo() -> impl Strategy<Value = RepoId> {
+            (segment(), segment()).prop_map(|(o, r)| RepoId::new(o, r))
+        }
+
+        /// Any text a path segment can hold, spaces and non-ASCII included.
+        fn path() -> impl Strategy<Value = String> {
+            prop::collection::vec("[^/\\x00-\\x1f]{1,12}", 0..4).prop_map(|parts| parts.join("/"))
+        }
+
+        /// Filter words (an `is:` word would be dropped by design).
+        fn query() -> impl Strategy<Value = String> {
+            prop::collection::vec("[a-z0-9:#&+%\"]{1,8}", 1..4)
+                .prop_map(|words| words.join(" "))
+                .prop_filter("no is: words", |q| {
+                    !q.split(' ').any(|w| w.starts_with("is:"))
+                })
+        }
+
+        fn route() -> impl Strategy<Value = Route> {
+            let rev = "[A-Za-z0-9._-]{1,12}";
+            prop_oneof![
+                Just(Route::Home),
+                repo().prop_map(Route::Repo),
+                (repo(), rev, path()).prop_map(|(repo, rev, path)| Route::Tree { repo, rev, path }),
+                (repo(), rev, path())
+                    .prop_filter("a file has a path", |(_, _, p)| !p.is_empty())
+                    .prop_map(|(repo, rev, path)| Route::Blob { repo, rev, path }),
+                (repo(), query()).prop_map(|(repo, query)| Route::Issues { repo, query }),
+                (repo(), query()).prop_map(|(repo, query)| Route::Pulls { repo, query }),
+                (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Issue { repo, number }),
+                (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Pr {
+                    pr: PrRef { repo, number },
+                    tab: PrTab::Commits,
+                }),
+                segment()
+                    .prop_filter("not a reserved path", |l| !RESERVED.contains(&l.as_str()))
+                    .prop_map(|login| Route::User {
+                        login,
+                        tab: ProfileTab::Stars,
+                    }),
+                (any::<String>(), 0..4u8).prop_map(|(query, k)| Route::Search {
+                    kind: [
+                        SearchKind::Repos,
+                        SearchKind::Issues,
+                        SearchKind::Pulls,
+                        SearchKind::Users
+                    ][usize::from(k)],
+                    query,
+                }),
+            ]
+        }
+
+        proptest! {
+            /// Every page's URL leads back to it.
+            #[test]
+            fn urls_round_trip(route in route()) {
+                prop_assert_eq!(Target::from_url(&route.url()), Target::Page(route));
+            }
+
+            /// Whatever is typed, parsing doesn't panic.
+            #[test]
+            fn any_input_parses_or_not(input in any::<String>()) {
+                let repo = RepoId::new("o", "r");
+                let _ = parse_input(&input, Some(&repo));
+                let _ = Target::from_url(&input);
+                let _ = decode(&input);
+            }
+        }
+    }
 }

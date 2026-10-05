@@ -53,6 +53,7 @@ pub mod url {
         format!("{BASE}/{repo}")
     }
     pub fn tree(repo: &RepoId, rev: &str, path: &str) -> String {
+        let (rev, path) = (encode_path(rev), encode_path(path));
         if path.is_empty() {
             format!("{BASE}/{repo}/tree/{rev}")
         } else {
@@ -60,6 +61,7 @@ pub mod url {
         }
     }
     pub fn blob(repo: &RepoId, rev: &str, path: &str) -> String {
+        let (rev, path) = (encode_path(rev), encode_path(path));
         format!("{BASE}/{repo}/blob/{rev}/{path}")
     }
     pub fn issues(repo: &RepoId) -> String {
@@ -88,6 +90,22 @@ pub mod url {
     }
     pub fn commit(repo: &RepoId, oid: &str) -> String {
         format!("{BASE}/{repo}/commit/{oid}")
+    }
+
+    /// A file path in a URL: `/` separates segments, everything else that
+    /// isn't plainly safe (`#`, `?`, `%`, `\\`, spaces, non-ASCII) is
+    /// escaped.
+    pub fn encode_path(s: &str) -> String {
+        let mut out = String::new();
+        for b in s.bytes() {
+            match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                    out.push(char::from(b));
+                }
+                b => out.push_str(&format!("%{b:02X}")),
+            }
+        }
+        out
     }
 
     /// Minimal query-string encoding.
