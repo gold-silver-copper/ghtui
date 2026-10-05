@@ -696,7 +696,7 @@ pub(crate) mod diff {
             Pane::Diff,
         );
         let diff = s.diffs.get_mut(&pr()).unwrap();
-        let hash = diff.doc.files[0].blocks()[0].hash.clone();
+        let hash = diff.doc.files()[0].blocks()[0].hash.clone();
         diff.set_review(ghtui_store::ReviewState {
             reviewed_hunks: vec![hash],
             ..Default::default()
@@ -868,7 +868,7 @@ pub(crate) mod diff {
             )),
         );
         let texts: Vec<_> = doc
-            .files
+            .files()
             .iter()
             .map(|f| f.text().unwrap().clone())
             .collect();
@@ -1112,7 +1112,7 @@ pub(crate) mod diff {
             doc.set_diff(i, diff.clone());
         }
         let changed: u32 = doc
-            .files
+            .files()
             .iter()
             .map(|f| f.diff.as_ref().unwrap().additions)
             .sum();

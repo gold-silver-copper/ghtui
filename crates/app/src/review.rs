@@ -173,7 +173,7 @@ pub fn suggestion_body(suggested: &str) -> String {
 /// GitHub won't accept become a file comment (with the reason); a range that
 /// crosses GitHub's hunks is refused.
 pub fn target(doc: &Doc, cursor: Pos, selection: Option<Pos>) -> Result<ComposeTarget, String> {
-    let file = doc.files.get(cursor.file).ok_or("No file here")?;
+    let file = doc.files().get(cursor.file).ok_or("No file here")?;
     let path = file.meta.path().to_owned();
     let (from, to) = match selection {
         Some(anchor) if anchor.file == cursor.file => {

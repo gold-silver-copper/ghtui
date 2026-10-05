@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ea9f32f6ab7459029667aab90b55840de4c99c6a018c8b5cad5c95e8f586e18b # shrinks to route = Blob { repo: RepoId { owner: "A", name: "0" }, rev: "0", path: "\\" }

@@ -1255,7 +1255,7 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
     let annotation = diff
         .doc
         .annotation_at(cursor)
-        .and_then(|i| diff.doc.annotations.get(i as usize).cloned());
+        .and_then(|i| diff.doc.annotations().get(i as usize).cloned());
     let notice = |state: &mut State, n: Notice| {
         state.notice = Some(n);
         Some(Vec::new())
@@ -1279,11 +1279,12 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
                 let all = all_changes(state);
                 return notice(state, Notice::Error(format!("First {all}")));
             }
-            if diff.doc.since.is_some() {
-                let active = !diff.doc.since_active;
-                diff_screen::preserving_position(screen, &mut diff.doc, |doc| {
-                    doc.set_since(doc.since.clone(), active)
-                });
+            let active = !diff.doc.since_active();
+            let mut known = false;
+            diff_screen::preserving_position(screen, &mut diff.doc, |doc| {
+                known = doc.show_since(active);
+            });
+            if known {
                 state.notice = Some(Notice::Info(
                     if active {
                         "Showing changes since your last review"
@@ -1366,7 +1367,7 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
                 state.notice = Some(Notice::Info("Now a comment on the file".into()));
                 return Some(vec![save]);
             }
-            let path = diff.doc.files.get(cursor.file)?.meta.path().to_owned();
+            let path = diff.doc.files().get(cursor.file)?.meta.path().to_owned();
             Some(state.compose(ComposeTarget::File { path, reason: None }, ""))
         }
         Action::Suggest => {
@@ -1389,7 +1390,7 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
                     Notice::Error("Suggestions apply to new lines (not deleted ones)".into()),
                 );
             }
-            let text = diff.doc.files.get(cursor.file)?.text()?;
+            let text = diff.doc.files().get(cursor.file)?.text()?;
             let original: Vec<String> = (start.line..=end.line)
                 .map(|n| text.new.line(n as usize - 1).to_owned())
                 .collect();
@@ -1440,7 +1441,7 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
         }
         Action::Open => {
             let ann_index = diff.doc.annotation_at(cursor)?;
-            let ann = diff.doc.annotations.get(ann_index as usize)?.clone();
+            let ann = diff.doc.annotations().get(ann_index as usize)?.clone();
             if let AnnotationKey::Draft(id) = ann.key {
                 let body = diff
                     .review
@@ -1519,7 +1520,7 @@ pub fn apply_commit_choice(
     let range = match choice {
         // Already on the whole PR: only "since your review" changes.
         PickItem::All | PickItem::SinceReview if diff.range.is_none() => {
-            if diff.doc.since_active == since {
+            if diff.doc.since_active() == since {
                 return Vec::new();
             }
             return review_action(state, Action::ToggleSinceReview).unwrap_or_default();
@@ -2818,11 +2819,11 @@ mod tests {
         #[test]
         fn split_is_automatic_by_width_and_toggles() {
             let (mut narrow, _) = diff_state(120);
-            assert!(!narrow.diffs.values().next().unwrap().doc.opts.split);
+            assert!(!narrow.diffs.values().next().unwrap().doc.opts().split);
             act(&mut narrow, Action::ToggleSplit);
-            assert!(narrow.diffs.values().next().unwrap().doc.opts.split);
+            assert!(narrow.diffs.values().next().unwrap().doc.opts().split);
             let (wide, _) = diff_state(220);
-            assert!(wide.diffs.values().next().unwrap().doc.opts.split);
+            assert!(wide.diffs.values().next().unwrap().doc.opts().split);
         }
 
         #[test]
@@ -2836,9 +2837,9 @@ mod tests {
                 &mut s,
                 Msg::ViewedLoaded(pr.clone(), Box::new(Ok(viewed_files("PR_1")))),
             );
-            assert_eq!(s.diffs[&pr].doc.files[0].viewed, Viewed::Viewed);
+            assert_eq!(s.diffs[&pr].doc.files()[0].viewed, Viewed::Viewed);
             assert!(
-                s.diffs[&pr].doc.files[0].collapsed(),
+                s.diffs[&pr].doc.files()[0].collapsed(),
                 "viewed files collapse"
             );
 
@@ -2854,7 +2855,7 @@ mod tests {
                 Cmd::SetViewed { file: 1, viewed: true, previous: Viewed::Unviewed, pull_request_id, .. }
                     if pull_request_id == "PR_1"
             )));
-            assert_eq!(s.diffs[&pr].doc.files[1].viewed, Viewed::Viewed);
+            assert_eq!(s.diffs[&pr].doc.files()[1].viewed, Viewed::Viewed);
             update(
                 &mut s,
                 Msg::ViewedSaved {
@@ -2864,7 +2865,7 @@ mod tests {
                     result: Err(ApiError::Network("offline".into())),
                 },
             );
-            assert_eq!(s.diffs[&pr].doc.files[1].viewed, Viewed::Unviewed);
+            assert_eq!(s.diffs[&pr].doc.files()[1].viewed, Viewed::Unviewed);
             assert!(matches!(s.notice, Some(Notice::Error(_))));
         }
 
@@ -2983,11 +2984,11 @@ mod tests {
             press(&mut s, "njjj");
             let text = s.diffs[&pr].doc.row_text(screen(&s).cursor);
             act(&mut s, Action::FullFile);
-            assert!(s.diffs[&pr].doc.files[0].full);
+            assert!(s.diffs[&pr].doc.files()[0].full);
             assert_eq!(s.diffs[&pr].doc.row_text(screen(&s).cursor), text);
             press(&mut s, "w");
             assert_eq!(
-                s.diffs[&pr].doc.opts.whitespace,
+                s.diffs[&pr].doc.opts().whitespace,
                 ghtui_diff::Whitespace::Ignore
             );
             press(&mut s, "e");
@@ -3001,7 +3002,7 @@ mod tests {
                 // The fixture has a loading file; finishing it triggers detection.
                 let pending = s.diffs[&pr]
                     .doc
-                    .files
+                    .files()
                     .iter()
                     .position(|f| f.diff.is_none())
                     .unwrap();
@@ -3073,7 +3074,7 @@ mod tests {
                     &mut s,
                     Msg::SinceReady(pr.clone(), "old".into(), Ok(Default::default())),
                 );
-                assert!(s.diffs[&pr].doc.since_active);
+                assert!(s.diffs[&pr].doc.since_active());
                 assert_eq!(s.chrome().tabs[3].0.label, "Files · since your review");
                 // Toggling back needs no new lookups.
                 assert!(
@@ -3081,7 +3082,7 @@ mod tests {
                         .iter()
                         .all(|c| matches!(c, Cmd::Prioritize(..)))
                 );
-                assert!(!s.diffs[&pr].doc.since_active);
+                assert!(!s.diffs[&pr].doc.since_active());
             }
 
             #[test]
@@ -3199,12 +3200,12 @@ mod tests {
                         ]),
                     ),
                 );
-                assert_eq!(s.diffs[&pr].doc.annotations.len(), 2);
+                assert_eq!(s.diffs[&pr].doc.annotations().len(), 2);
                 press(&mut s, "g");
                 act(&mut s, Action::NextThread);
                 let at = s.diffs[&pr].doc.annotation_at(screen(&s).cursor).unwrap();
                 assert_eq!(
-                    s.diffs[&pr].doc.annotations[at as usize].key,
+                    s.diffs[&pr].doc.annotations()[at as usize].key,
                     AnnotationKey::Thread("open".into())
                 );
 
@@ -3246,7 +3247,7 @@ mod tests {
                 assert_eq!(review.pending.len(), 1);
                 let draft = &review.pending[0];
                 assert_eq!((draft.line, draft.commit.as_str()), (Some(14), "h"));
-                assert!(s.diffs[&pr].doc.annotations.iter().any(|a| a.is_draft()));
+                assert!(s.diffs[&pr].doc.annotations().iter().any(|a| a.is_draft()));
 
                 // The cursor is on the commented line; Enter edits the draft.
                 press(&mut s, "<Enter>");
@@ -3451,7 +3452,7 @@ mod tests {
                     Msg::ThreadsLoaded(pr.clone(), Ok(vec![thread("old", None, false, true)])),
                 );
                 assert!(cmds.iter().any(|c| matches!(c, Cmd::MapOutdated { items, head, .. } if items.len() == 1 && head == "h")));
-                let ann = &s.diffs[&pr].doc.annotations[0];
+                let ann = &s.diffs[&pr].doc.annotations()[0];
                 assert!(
                     ann.outdated && ann.on_line().is_none(),
                     "unplaced until mapped"
@@ -3460,7 +3461,7 @@ mod tests {
                     &mut s,
                     Msg::OutdatedMapped(pr.clone(), vec![("old".into(), Some(4))]),
                 );
-                let ann = &s.diffs[&pr].doc.annotations[0];
+                let ann = &s.diffs[&pr].doc.annotations()[0];
                 assert_eq!((ann.on_line(), ann.moved), (Some(4), true));
             }
         }

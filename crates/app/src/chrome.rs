@@ -79,7 +79,7 @@ impl State {
                 let diff = self.diffs.get(&d.pr);
                 let label = match diff.and_then(|d| d.range.as_ref()) {
                     Some(range) => Some(format!("Files · {}", range.label)),
-                    None if diff.is_some_and(|d| d.doc.since_active) => {
+                    None if diff.is_some_and(|d| d.doc.since_active()) => {
                         Some("Files · since your review".to_owned())
                     }
                     None => None,

@@ -160,7 +160,7 @@ impl DiffState {
 
     pub fn set_file(&mut self, index: usize, diff: Arc<FileDiff>) {
         self.doc.set_diff(index, diff);
-        if self.doc.ready_count() == self.doc.files.len() {
+        if self.doc.ready_count() == self.doc.files().len() {
             self.progress = None;
         }
     }
@@ -184,13 +184,14 @@ impl DiffState {
     /// Every file's diff, once all have arrived and moves haven't been
     /// looked for yet.
     pub fn take_move_inputs(&mut self) -> Option<Vec<(usize, Arc<FileDiff>)>> {
-        if self.moves_requested || !self.listed() || self.doc.ready_count() < self.doc.files.len() {
+        if self.moves_requested || !self.listed() || self.doc.ready_count() < self.doc.files().len()
+        {
             return None;
         }
         self.moves_requested = true;
         Some(
             self.doc
-                .files
+                .files()
                 .iter()
                 .enumerate()
                 .filter_map(|(i, f)| f.diff.clone().map(|d| (i, d)))
@@ -239,7 +240,7 @@ impl DiffState {
         let states: &HashMap<String, ViewedState> = &viewed.states;
         let updates: Vec<(usize, Viewed)> = self
             .doc
-            .files
+            .files()
             .iter()
             .enumerate()
             .map(|(i, f)| {
@@ -250,7 +251,7 @@ impl DiffState {
                 };
                 (i, state)
             })
-            .filter(|(i, state)| self.doc.files.get(*i).is_some_and(|f| f.viewed != *state))
+            .filter(|(i, state)| self.doc.files().get(*i).is_some_and(|f| f.viewed != *state))
             .collect();
         for (i, state) in updates {
             self.doc.set_viewed(i, state);
@@ -279,7 +280,7 @@ impl DiffState {
     pub fn refresh_annotations(&mut self) {
         let annotations =
             crate::review::annotations(&self.threads, &self.mapped, &self.review.pending);
-        if annotations != self.doc.annotations {
+        if annotations != self.doc.annotations() {
             self.doc.set_annotations(annotations);
         }
     }
@@ -290,7 +291,7 @@ impl DiffState {
             Some(format!(
                 "Diffing {}/{} files",
                 self.doc.ready_count(),
-                self.doc.files.len()
+                self.doc.files().len()
             ))
         } else {
             Some(progress.clone())
@@ -492,7 +493,7 @@ pub fn apply(
             Some(Row::Header | Row::Note(Note::Collapsed | Note::Viewed))
                 if state
                     .doc
-                    .files
+                    .files()
                     .get(screen.cursor.file)
                     .is_some_and(|f| f.collapsed() || f.expanded) =>
             {
@@ -559,7 +560,7 @@ fn toggle_viewed(
         return Vec::new();
     };
     let index = screen.cursor.file;
-    let Some(file) = state.doc.files.get(index) else {
+    let Some(file) = state.doc.files().get(index) else {
         return Vec::new();
     };
     let previous = file.viewed;
@@ -617,7 +618,7 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
         screen.focus = Pane::Diff;
     }
     let opts = screen.options(content);
-    if state.doc.opts != opts {
+    if state.doc.opts() != opts {
         preserving_position(screen, &mut state.doc, |doc| doc.set_options(opts));
     }
     let doc = &state.doc;
@@ -663,7 +664,7 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
     let wanted: Vec<usize> = wanted
         .into_iter()
         .filter(|f| {
-            doc.files
+            doc.files()
                 .get(*f)
                 .is_some_and(|file| file.diff.is_none() && !file.collapsed())
                 && !state.requested.contains(f)

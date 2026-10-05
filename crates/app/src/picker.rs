@@ -269,7 +269,7 @@ impl State {
         };
         let mut hits: Vec<(usize, usize, _)> = diff
             .doc
-            .files
+            .files()
             .iter()
             .enumerate()
             .filter_map(|(i, f)| fuzzy_score(q, f.meta.path()).map(|s| (s, i, f)))
@@ -292,7 +292,7 @@ impl State {
             return Vec::new();
         };
         let current = |on: bool| if on { "current" } else { "" };
-        let since = diff.doc.since_active;
+        let since = diff.doc.since_active();
         let mut rows = vec![
             (
                 item("All changes", current(diff.range.is_none() && !since)),

@@ -628,27 +628,50 @@ pub struct Anchor {
 
 #[derive(Debug, Clone, Default)]
 pub struct Doc {
-    pub files: Vec<DocFile>,
-    pub opts: ViewOptions,
+    // Rows are derived from these: change them through the setters, which
+    // rebuild, so rows never go stale.
+    pub(crate) files: Vec<DocFile>,
+    pub(crate) opts: ViewOptions,
     /// Hashes of blocks marked reviewed.
     pub reviewed: HashSet<String>,
     /// Review threads and drafts.
-    pub annotations: Vec<Annotation>,
+    pub(crate) annotations: Vec<Annotation>,
     /// Threads opened or closed by the user (others use their default).
     thread_open: HashMap<AnnotationKey, bool>,
     /// Commentable ranges from GitHub's patches, by path.
     patches: HashMap<String, Commentable>,
     /// Moved blocks (computed on the exact alignment).
-    pub moves: Vec<Move>,
+    pub(crate) moves: Vec<Move>,
     /// Block hashes of the diff at your last review.
-    pub since: Option<HashSet<String>>,
+    pub(crate) since: Option<HashSet<String>>,
     /// Show only what changed since your last review.
-    pub since_active: bool,
+    pub(crate) since_active: bool,
     starts: Vec<usize>,
     total: usize,
 }
 
 impl Doc {
+    pub fn files(&self) -> &[DocFile] {
+        &self.files
+    }
+
+    pub fn opts(&self) -> ViewOptions {
+        self.opts
+    }
+
+    pub fn annotations(&self) -> &[Annotation] {
+        &self.annotations
+    }
+
+    pub fn moves(&self) -> &[Move] {
+        &self.moves
+    }
+
+    /// Showing only what changed since your last review.
+    pub fn since_active(&self) -> bool {
+        self.since_active
+    }
+
     pub fn new(files: Vec<ChangedFile>, generated: &HashSet<String>) -> Self {
         let files = files
             .into_iter()
@@ -784,6 +807,17 @@ impl Doc {
         self.since = hashes;
         self.since_active = active && self.since.is_some();
         self.rebuild_all();
+    }
+
+    /// Shows or hides only what's new, with the hashes already known.
+    /// False if they aren't known yet.
+    pub fn show_since(&mut self, active: bool) -> bool {
+        if self.since.is_none() {
+            return false;
+        }
+        self.since_active = active;
+        self.rebuild_all();
+        true
     }
 
     /// Opens a folded block (formatting-only or seen).
