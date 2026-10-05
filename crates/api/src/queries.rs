@@ -315,6 +315,13 @@ pub struct PageInfo {
     pub end_cursor: Option<String>,
 }
 
+impl PageInfo {
+    /// The cursor for the next page, if there is one.
+    pub fn next(self) -> Option<String> {
+        self.end_cursor.filter(|_| self.has_next_page)
+    }
+}
+
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequestChangedFile", schema_module = "schema")]
 pub struct PrChangedFile {

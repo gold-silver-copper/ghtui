@@ -53,12 +53,6 @@ impl From<serde_json::Error> for ApiError {
     }
 }
 
-/// Installs rustls' `ring` provider as the process default. Must run before
-/// any TLS client is built; safe to call repeatedly.
-pub fn install_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-}
-
 /// Cheap to clone. The HTTP client is built lazily, on a blocking thread, by
 /// the first request: loading the platform's root certificates takes over
 /// 100ms on macOS and must not delay the first paint.
@@ -146,10 +140,6 @@ impl GitHub {
                     .map_err(|e| ApiError::Setup(e.to_string()))?
             })
             .await
-    }
-
-    pub fn store(&self) -> &Store {
-        &self.store
     }
 
     /// Whether GitHub started (`Some(true)`) or stopped rejecting the token
@@ -398,8 +388,7 @@ impl GitHub {
             review_requested: requested.0,
             review_requested_total: requested.1,
         };
-        self.remember(INBOX_KEY, inbox.clone()).await;
-        Ok(inbox)
+        Ok(self.kept(INBOX_KEY, inbox).await)
     }
 
     async fn search_prs(&self, query: &str) -> Result<(Vec<PrSummary>, u64), ApiError> {
@@ -423,32 +412,31 @@ impl GitHub {
             .and_then(|r| r.pull_request)
             .and_then(PrDetail::from_wire)
             .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
-        self.remember(&pr_key(pr), detail.clone()).await;
-        Ok(detail)
+        Ok(self.kept(&pr_key(pr), detail).await)
     }
 
     /// Viewed state of every file in the PR (paginated, 100 per page).
     pub async fn viewed_files(&self, pr: &PrRef) -> Result<ViewedFiles, ApiError> {
-        let mut after = None;
         let mut out = ViewedFiles {
             pull_request_id: NodeId::default(),
             states: std::collections::HashMap::new(),
         };
+        let mut after = None;
         loop {
-            let op = queries::PrFilesQuery::build(page_vars(pr, after.take())?);
-            let data = self.graphql(op).await?;
-            let files = data
+            let op = queries::PrFilesQuery::build(page_vars(pr, after)?);
+            let files = self
+                .graphql(op)
+                .await?
                 .repository
                 .and_then(|r| r.pull_request)
                 .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
             out.pull_request_id = files.id.into();
             let Some(page) = files.files else { break };
-            for file in nodes(page.nodes) {
-                out.states.insert(file.path, file.viewer_viewed_state);
-            }
-            match page.page_info.end_cursor {
-                Some(cursor) if page.page_info.has_next_page => after = Some(cursor),
-                _ => break,
+            out.states
+                .extend(nodes(page.nodes).map(|f| (f.path, f.viewer_viewed_state)));
+            after = page.page_info.next();
+            if after.is_none() {
+                break;
             }
         }
         Ok(out)
@@ -476,20 +464,21 @@ impl GitHub {
 
     /// All review threads of a PR, with up to 100 comments each.
     pub async fn review_threads(&self, pr: &PrRef) -> Result<Vec<ReviewThread>, ApiError> {
-        let mut after = None;
         let mut threads = Vec::new();
+        let mut after = None;
         loop {
-            let op = queries::ThreadsQuery::build(page_vars(pr, after.take())?);
-            let data = self.graphql(op).await?;
-            let page = data
+            let op = queries::ThreadsQuery::build(page_vars(pr, after)?);
+            let page = self
+                .graphql(op)
+                .await?
                 .repository
                 .and_then(|r| r.pull_request)
                 .ok_or_else(|| ApiError::NotFound(pr.to_string()))?
                 .review_threads;
             threads.extend(nodes(page.nodes).map(ReviewThread::from_wire));
-            match page.page_info.end_cursor {
-                Some(cursor) if page.page_info.has_next_page => after = Some(cursor),
-                _ => break,
+            after = page.page_info.next();
+            if after.is_none() {
+                break;
             }
         }
         Ok(threads)
@@ -670,9 +659,7 @@ impl GitHub {
             .repository
             .and_then(|r| r.into_overview(readme))
             .ok_or_else(|| ApiError::NotFound(repo.to_string()))?;
-        self.remember(&browse::keys::repo(repo), overview.clone())
-            .await;
-        Ok(overview)
+        Ok(self.kept(&browse::keys::repo(repo), overview).await)
     }
 
     /// The README GitHub shows for the repository root.
@@ -710,10 +697,8 @@ impl GitHub {
     ) -> Result<Vec<browse::TreeEntry>, ApiError> {
         match self.object(repo, rev, path).await? {
             Some(browse::GitObject::Tree(t)) => {
-                let entries = browse::entries(t);
-                self.remember(&browse::keys::tree(repo, rev, path), entries.clone())
-                    .await;
-                Ok(entries)
+                let key = browse::keys::tree(repo, rev, path);
+                Ok(self.kept(&key, browse::entries(t)).await)
             }
             _ => Err(ApiError::NotFound(format!("{repo}/{path}"))),
         }
@@ -764,18 +749,17 @@ impl GitHub {
     ) -> Result<browse::SearchResults, ApiError> {
         let first_page = after.is_none();
         // GitHub's issue search covers both; the tabs separate them.
-        let typed = |is: &str| {
-            if query.contains("is:issue") || query.contains("is:pr") {
-                query.to_owned()
-            } else {
-                format!("{query} {is}")
-            }
+        let is = match kind {
+            browse::SearchKind::Issues => " is:issue",
+            browse::SearchKind::Pulls => " is:pr",
+            _ => "",
         };
-        let api_query = match kind {
-            browse::SearchKind::Issues => typed("is:issue"),
-            browse::SearchKind::Pulls => typed("is:pr"),
-            _ => query.to_owned(),
+        let api_query = if query.contains("is:issue") || query.contains("is:pr") {
+            query.to_owned()
+        } else {
+            format!("{query}{is}")
         };
+
         let op = browse::BrowseSearch::build(browse::BrowseSearchVariables {
             query: api_query,
             kind: match kind {
@@ -787,10 +771,7 @@ impl GitHub {
             after,
         });
         let conn = self.graphql(op).await?.search;
-        let next = conn
-            .page_info
-            .end_cursor
-            .filter(|_| conn.page_info.has_next_page);
+        let next = conn.page_info.next();
         let items = nodes(conn.nodes);
         let count = crate::model::count;
         let results = match kind {
@@ -848,9 +829,9 @@ impl GitHub {
             _ => None,
         }
         .ok_or_else(|| ApiError::NotFound(format!("{repo}#{number}")))?;
-        self.remember(&browse::keys::issue(repo, number), issue.clone())
-            .await;
-        Ok(Some(issue))
+        Ok(Some(
+            self.kept(&browse::keys::issue(repo, number), issue).await,
+        ))
     }
 
     /// Comments, reviews and commits of a pull request.
@@ -863,9 +844,7 @@ impl GitHub {
             .and_then(|r| r.pull_request)
             .map(browse::WirePrActivity::into_activity)
             .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
-        self.remember(&browse::keys::pr_activity(pr), activity.clone())
-            .await;
-        Ok(activity)
+        Ok(self.kept(&browse::keys::pr_activity(pr), activity).await)
     }
 
     /// A user's or organization's profile.
@@ -878,9 +857,7 @@ impl GitHub {
             .await?
             .into_profile()
             .ok_or_else(|| ApiError::NotFound(login.to_owned()))?;
-        self.remember(&browse::keys::profile(login), profile.clone())
-            .await;
-        Ok(profile)
+        Ok(self.kept(&browse::keys::profile(login), profile).await)
     }
 
     /// Every file path at `rev` (GitHub's "Go to file"), and whether GitHub
@@ -976,9 +953,9 @@ impl GitHub {
                 },
             );
         }
-        self.remember(&browse::keys::last_commits(repo, rev, dir), out.clone())
-            .await;
-        Ok(out)
+        Ok(self
+            .kept(&browse::keys::last_commits(repo, rev, dir), out)
+            .await)
     }
 
     /// Branches and tags, most recently committed first.
@@ -993,8 +970,7 @@ impl GitHub {
             .repository
             .map(browse::RepoBranches::into_refs)
             .ok_or_else(|| ApiError::NotFound(repo.to_string()))?;
-        self.remember(&browse::keys::refs(repo), refs.clone()).await;
-        Ok(refs)
+        Ok(self.kept(&browse::keys::refs(repo), refs).await)
     }
 
     /// Saves a small value in the cache (e.g. recently visited pages).
@@ -1004,13 +980,17 @@ impl GitHub {
         spawn_store(move || store.query_put(&key, &value)).await;
     }
 
+    /// [`Self::remember`]s `value` and hands it back.
+    async fn kept<T: Serialize + Clone + Send + 'static>(&self, key: &str, value: T) -> T {
+        self.remember(key, value.clone()).await;
+        value
+    }
+
     /// Repositories you own or contribute to, most recently pushed first.
     pub async fn viewer_repos(&self) -> Result<Vec<browse::RepoSummary>, ApiError> {
         let data = self.graphql(browse::ViewerReposQuery::build(())).await?;
         let (repos, _) = browse::repo_list(data.viewer.repositories);
-        self.remember(browse::keys::VIEWER_REPOS, repos.clone())
-            .await;
-        Ok(repos)
+        Ok(self.kept(browse::keys::VIEWER_REPOS, repos).await)
     }
 
     /// Comments on an issue or pull request (by node ID).
@@ -1036,23 +1016,22 @@ impl GitHub {
 
 /// Percent-encodes a ref for a URL path (branch names may contain `/`).
 fn encode_path(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        match b {
+    s.bytes()
+        .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
+                char::from(b).to_string()
             }
-            b => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
+            b => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 /// The HTTP client: the token on every request, rustls with the platform's
 /// roots (loading those is why this runs on a blocking thread), GitHub's
 /// JSON media type, and no retries of its own.
 fn build_client(token: &str) -> Result<reqwest::Client, ApiError> {
-    install_crypto_provider();
+    // rustls needs a process-wide crypto provider; a second install is a no-op.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let setup = |e: &dyn std::fmt::Display| ApiError::Setup(e.to_string());
     let mut auth = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|e| setup(&e))?;
     auth.set_sensitive(true);
