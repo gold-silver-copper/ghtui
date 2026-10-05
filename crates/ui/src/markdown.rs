@@ -160,12 +160,22 @@ impl Renderer<'_> {
             alt.push_str(text);
             return;
         }
-        let role = self.role();
+        self.seg(text, self.role());
+    }
+
+    /// Inline `text` in `role`, linked where the text around it is.
+    fn seg(&mut self, text: impl Into<String>, role: Role) {
         self.inline.push(Seg {
-            text: text.to_owned(),
+            text: text.into(),
             role,
             link: self.link,
         });
+    }
+
+    /// A link to `url` from the content, unless it mustn't have it.
+    fn link_to(&mut self, url: &str) -> Option<u32> {
+        let url = resolve(self.base, url)?;
+        Some(self.page.link(url))
     }
 
     fn flush(&mut self) {
@@ -188,28 +198,15 @@ impl Renderer<'_> {
         // they may span several HTML events.
         let mut visible = String::new();
         let mut rest = html;
-        loop {
-            if self.in_comment {
-                match rest.split_once("-->") {
-                    Some((_, after)) => {
-                        rest = after;
-                        self.in_comment = false;
-                    }
-                    None => break,
-                }
-            } else {
-                match rest.split_once("<!--") {
-                    Some((before, after)) => {
-                        visible.push_str(before);
-                        rest = after;
-                        self.in_comment = true;
-                    }
-                    None => {
-                        visible.push_str(rest);
-                        break;
-                    }
-                }
+        while !rest.is_empty() {
+            let edge = if self.in_comment { "-->" } else { "<!--" };
+            let found = rest.split_once(edge);
+            let (before, after) = found.unwrap_or((rest, ""));
+            if !self.in_comment {
+                visible.push_str(before);
             }
+            self.in_comment ^= found.is_some();
+            rest = after;
         }
         // Keep text, images' alt text and links; drop the tags.
         let mut rest = visible.as_str();
@@ -261,11 +258,9 @@ impl Renderer<'_> {
             } else if lower.starts_with("img") {
                 // Images without alt text (badges, mostly) are left out.
                 if let Some(alt) = attr(tag, "alt").filter(|a| !a.trim().is_empty()) {
-                    let link = self.link.or_else(|| {
-                        attr(tag, "src")
-                            .and_then(|s| resolve(self.base, &s))
-                            .map(|s| self.page.link(s))
-                    });
+                    let link = self
+                        .link
+                        .or_else(|| attr(tag, "src").and_then(|s| self.link_to(&s)));
                     self.inline.push(Seg {
                         text: format!("[image: {}]", decode_entities(&alt)),
                         role: Role::Meta,
@@ -273,9 +268,7 @@ impl Renderer<'_> {
                     });
                 }
             } else if lower.starts_with("a ") || lower == "a" {
-                self.link = attr(tag, "href")
-                    .and_then(|h| resolve(self.base, &h))
-                    .map(|h| self.page.link(h));
+                self.link = attr(tag, "href").and_then(|h| self.link_to(&h));
                 self.roles.push(Role::Link);
             } else if lower.starts_with("/a") {
                 self.link = None;
@@ -303,14 +296,7 @@ impl Renderer<'_> {
             Event::Start(tag) => self.start(tag),
             Event::End(tag) => self.end(tag),
             Event::Text(t) => self.text(&t),
-            Event::Code(c) => {
-                let link = self.link;
-                self.inline.push(Seg {
-                    text: format!(" {c} "),
-                    role: Role::Code,
-                    link,
-                });
-            }
+            Event::Code(c) => self.seg(format!(" {c} "), Role::Code),
             Event::Html(h) | Event::InlineHtml(h) => self.html(&h),
             Event::SoftBreak => self.text(" "),
             Event::HardBreak => self.text("\n"),
@@ -383,14 +369,14 @@ impl Renderer<'_> {
             Tag::Strong => self.roles.push(Role::Strong),
             Tag::Strikethrough => self.roles.push(Role::Strike),
             Tag::Link { dest_url, .. } => {
-                self.link = resolve(self.base, &dest_url).map(|url| self.page.link(url));
+                self.link = self.link_to(&dest_url);
                 self.roles.push(Role::Link);
             }
             Tag::Image { dest_url, .. } => {
                 let outer = self.link;
                 // A linked image (a badge) leads where the link does.
                 if outer.is_none() {
-                    self.link = resolve(self.base, &dest_url).map(|url| self.page.link(url));
+                    self.link = self.link_to(&dest_url);
                 }
                 self.image = Some((String::new(), outer));
             }
@@ -453,11 +439,7 @@ impl Renderer<'_> {
                     return;
                 };
                 if !alt.trim().is_empty() {
-                    self.inline.push(Seg {
-                        text: format!("[image: {}]", alt.trim()),
-                        role: Role::Meta,
-                        link: self.link,
-                    });
+                    self.seg(format!("[image: {}]", alt.trim()), Role::Meta);
                 }
                 self.link = outer;
             }
