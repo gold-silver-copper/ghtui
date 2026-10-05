@@ -6,7 +6,7 @@ Buffer {
     area: Rect { x: 0, y: 0, width: 100, height: 30 },
     content: [
         "  ◆ ghtui   gold-silver-copper / ghtui            ⌕ Type / to search                 ⇄ 2 to review  ",
-        "   ● Open   Theme: generate syntax palette from seed  #12                                           ",
+        "   ⇄ Open   Theme: generate syntax palette from seed  #12                                           ",
         "   ◌ Conversation  1    ◷ Commits  2    ✓ Checks ↗   ± Files changed  7                             ",
         "───────────────────────━━━━━━━━━━━━━━━──────────────────────────────────────────────────────────────",
         "                                                                                                    ",

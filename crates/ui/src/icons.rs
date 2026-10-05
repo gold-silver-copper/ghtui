@@ -15,10 +15,11 @@ impl Icons {
             (true, PrState::Draft) => "\u{f4dd}",
             (true, PrState::Merged) => "\u{f419}",
             (true, PrState::Closed) => "\u{f4dc}",
-            (false, PrState::Open) => "●",
-            (false, PrState::Draft) => "○",
-            (false, PrState::Merged) => "✓",
-            (false, PrState::Closed) => "✗",
+            // Arrows, unlike the checks' marks, and narrow in every locale.
+            (false, PrState::Open) => "⇄",
+            (false, PrState::Draft) => "⇢",
+            (false, PrState::Merged) => "⇉",
+            (false, PrState::Closed) => "⇸",
         }
     }
 
@@ -29,7 +30,7 @@ impl Icons {
             (true, ChecksState::Pending) => "\u{f444}",
             (false, ChecksState::Passing) => "✓",
             (false, ChecksState::Failing) => "✗",
-            (false, ChecksState::Pending) => "●",
+            (false, ChecksState::Pending) => "◔",
         }
     }
 
@@ -42,7 +43,8 @@ impl Icons {
     }
 
     pub fn comment(self) -> &'static str {
-        if self.nerd_font { "\u{f41f}" } else { "💬" }
+        // Not 💬: emoji are two columns wide and drawn inconsistently.
+        if self.nerd_font { "\u{f41f}" } else { "❝" }
     }
 
     pub fn external(self) -> &'static str {
