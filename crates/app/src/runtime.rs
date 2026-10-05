@@ -19,7 +19,7 @@ use crate::browse::{Data, DataKey};
 use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx};
 use crate::review::EditPurpose;
 use crate::review::{self, SubmitOutcome};
-use crate::state::{Api, Cmd, Git, Msg, Problem, State, apply_msg, timers};
+use crate::state::{Api, Cmd, DiffMsg, Git, Msg, Problem, State, apply_msg, timers};
 use crate::view::view;
 
 struct Effects {
@@ -226,10 +226,9 @@ impl Effects {
             Git::SinceReview { pr, old_head } => {
                 let tx = self.tx.clone();
                 let Some(git) = self.job_git(&pr) else {
-                    let _ = tx.send(Msg::SinceReady(
+                    let _ = tx.send(Msg::Diff(
                         pr,
-                        old_head,
-                        Err("the diff isn't ready".into()),
+                        DiffMsg::SinceReady(old_head, Err("the diff isn't ready".into())),
                     ));
                     return;
                 };
@@ -239,13 +238,16 @@ impl Effects {
                         diff_job::since_review_hashes(&repo, &reader, pr.number, &old_head)
                             .await
                             .map_err(|e| e.to_string());
-                    let _ = tx.send(Msg::SinceReady(pr, old_head, result));
+                    let _ = tx.send(Msg::Diff(pr, DiffMsg::SinceReady(old_head, result)));
                 });
             }
             Git::ListCommits(pr) => {
                 let tx = self.tx.clone();
                 let Some(git) = self.job_git(&pr) else {
-                    let _ = tx.send(Msg::CommitsListed(pr, Err("the diff isn't ready".into())));
+                    let _ = tx.send(Msg::Diff(
+                        pr,
+                        DiffMsg::CommitsListed(Err("the diff isn't ready".into())),
+                    ));
                     return;
                 };
                 spawn_guarded(&self.tx, replies, async move {
@@ -262,7 +264,7 @@ impl Effects {
                     }
                     .await
                     .map_err(|e| e.to_string());
-                    let _ = tx.send(Msg::CommitsListed(pr, result));
+                    let _ = tx.send(Msg::Diff(pr, DiffMsg::CommitsListed(result)));
                 });
             }
             Git::MapOutdated { pr, head, items } => {
@@ -279,7 +281,7 @@ impl Effects {
                                 .await;
                         mapped.push((thread, to));
                     }
-                    let _ = tx.send(Msg::OutdatedMapped(pr, mapped));
+                    let _ = tx.send(Msg::Diff(pr, DiffMsg::OutdatedMapped(mapped)));
                 });
             }
         }
@@ -298,7 +300,7 @@ impl Effects {
                 }
                 Err(err) => Err(err),
             };
-            let _ = tx.send(Msg::ReviewLoaded(pr, review));
+            let _ = tx.send(Msg::Diff(pr, DiffMsg::ReviewLoaded(review)));
         });
     }
 
@@ -382,7 +384,7 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
             }
             Api::FetchViewed(pr) => {
                 let result = gh.viewed_files(&pr).await;
-                Msg::ViewedLoaded(pr, Box::new(result))
+                Msg::Diff(pr, DiffMsg::ViewedLoaded(Box::new(result)))
             }
             Api::SetViewed {
                 pr,
@@ -393,20 +395,22 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 previous,
             } => {
                 let result = gh.set_viewed(&pull_request_id, &path, viewed).await;
-                Msg::ViewedSaved {
+                Msg::Diff(
                     pr,
-                    file,
-                    previous,
-                    result,
-                }
+                    DiffMsg::ViewedSaved {
+                        file,
+                        previous,
+                        result,
+                    },
+                )
             }
             Api::FetchThreads(pr) => {
                 let result = gh.review_threads(&pr).await;
-                Msg::ThreadsLoaded(pr, result)
+                Msg::Diff(pr, DiffMsg::ThreadsLoaded(result))
             }
             Api::FetchPatches(pr) => {
                 let result = gh.pr_patches(&pr).await;
-                Msg::PatchesLoaded(pr, result)
+                Msg::Diff(pr, DiffMsg::PatchesLoaded(result))
             }
             Api::Reply {
                 pr,
@@ -414,7 +418,7 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 body,
             } => {
                 let result = gh.reply(&thread_id, &body).await;
-                Msg::Replied(pr, result)
+                Msg::Diff(pr, DiffMsg::Replied(result))
             }
             Api::SetResolved {
                 pr,
@@ -422,12 +426,14 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 resolved,
             } => {
                 let result = gh.set_resolved(&thread_id, resolved).await;
-                Msg::ResolvedSet {
+                Msg::Diff(
                     pr,
-                    thread_id,
-                    resolved,
-                    result,
-                }
+                    DiffMsg::ResolvedSet {
+                        thread_id,
+                        resolved,
+                        result,
+                    },
+                )
             }
             Api::SubmitReview {
                 pr,
@@ -437,11 +443,11 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 body,
             } => {
                 let outcome = submit_review(&gh, &pr, &head, drafts, event, &body).await;
-                Msg::ReviewSubmitted(pr, outcome)
+                Msg::Diff(pr, DiffMsg::ReviewSubmitted(outcome))
             }
             Api::FetchLastReview { pr, login } => {
                 let result = gh.last_review_commit(&pr, &login).await;
-                Msg::LastReview(pr, result)
+                Msg::Diff(pr, DiffMsg::LastReview(result))
             }
         };
         let _ = tx.send(msg);
@@ -524,51 +530,60 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             result: api(),
         },
         Cmd::Api(Api::Suggest(q)) => Msg::Suggested(q.clone(), api()),
-        Cmd::Api(Api::FetchViewed(pr)) => Msg::ViewedLoaded(pr.clone(), Box::new(api())),
+        Cmd::Api(Api::FetchViewed(pr)) => {
+            Msg::Diff(pr.clone(), DiffMsg::ViewedLoaded(Box::new(api())))
+        }
         Cmd::Api(Api::SetViewed {
             pr, file, previous, ..
-        }) => Msg::ViewedSaved {
-            pr: pr.clone(),
-            file: *file,
-            previous: *previous,
-            result: api(),
-        },
-        Cmd::Api(Api::FetchThreads(pr)) => Msg::ThreadsLoaded(pr.clone(), api()),
-        Cmd::Api(Api::FetchPatches(pr)) => Msg::PatchesLoaded(pr.clone(), api()),
-        Cmd::Git(Git::MapOutdated { pr, items, .. }) => Msg::OutdatedMapped(
+        }) => Msg::Diff(
             pr.clone(),
-            items.iter().map(|(t, ..)| (t.clone(), None)).collect(),
+            DiffMsg::ViewedSaved {
+                file: *file,
+                previous: *previous,
+                result: api(),
+            },
         ),
-        Cmd::Api(Api::Reply { pr, .. }) => Msg::Replied(pr.clone(), api()),
+        Cmd::Api(Api::FetchThreads(pr)) => Msg::Diff(pr.clone(), DiffMsg::ThreadsLoaded(api())),
+        Cmd::Api(Api::FetchPatches(pr)) => Msg::Diff(pr.clone(), DiffMsg::PatchesLoaded(api())),
+        Cmd::Git(Git::MapOutdated { pr, items, .. }) => Msg::Diff(
+            pr.clone(),
+            DiffMsg::OutdatedMapped(items.iter().map(|(t, ..)| (t.clone(), None)).collect()),
+        ),
+        Cmd::Api(Api::Reply { pr, .. }) => Msg::Diff(pr.clone(), DiffMsg::Replied(api())),
         Cmd::Api(Api::SetResolved {
             pr,
             thread_id,
             resolved,
-        }) => Msg::ResolvedSet {
-            pr: pr.clone(),
-            thread_id: thread_id.clone(),
-            resolved: *resolved,
-            result: api(),
-        },
-        Cmd::LoadReview(pr) => Msg::ReviewLoaded(pr.clone(), git()),
-        Cmd::Api(Api::SubmitReview { pr, .. }) => Msg::ReviewSubmitted(
+        }) => Msg::Diff(
             pr.clone(),
-            SubmitOutcome {
-                error: Some("Couldn't submit: ghtui hit a bug".into()),
-                ..SubmitOutcome::default()
+            DiffMsg::ResolvedSet {
+                thread_id: thread_id.clone(),
+                resolved: *resolved,
+                result: api(),
             },
         ),
-        Cmd::Api(Api::FetchLastReview { pr, .. }) => Msg::LastReview(pr.clone(), api()),
-        Cmd::Git(Git::LoadDiff { pr, job, .. }) => {
-            Msg::Job(pr.clone(), *job, JobMsg::Failed("ghtui hit a bug".into()))
+        Cmd::LoadReview(pr) => Msg::Diff(pr.clone(), DiffMsg::ReviewLoaded(git())),
+        Cmd::Api(Api::SubmitReview { pr, .. }) => Msg::Diff(
+            pr.clone(),
+            DiffMsg::ReviewSubmitted(SubmitOutcome {
+                error: Some("Couldn't submit: ghtui hit a bug".into()),
+                ..SubmitOutcome::default()
+            }),
+        ),
+        Cmd::Api(Api::FetchLastReview { pr, .. }) => {
+            Msg::Diff(pr.clone(), DiffMsg::LastReview(api()))
         }
+        Cmd::Git(Git::LoadDiff { pr, job, .. }) => Msg::Diff(
+            pr.clone(),
+            DiffMsg::Job(*job, JobMsg::Failed("ghtui hit a bug".into())),
+        ),
         Cmd::Git(Git::DetectMoves(pr, job, _)) => {
-            Msg::Job(pr.clone(), *job, JobMsg::Moves(Vec::new()))
+            Msg::Diff(pr.clone(), DiffMsg::Job(*job, JobMsg::Moves(Vec::new())))
         }
         Cmd::Git(Git::SinceReview { pr, old_head }) => {
-            Msg::SinceReady(pr.clone(), old_head.clone(), git())
+            Msg::Diff(pr.clone(), DiffMsg::SinceReady(old_head.clone(), git()))
         }
-        Cmd::Git(Git::ListCommits(pr)) => Msg::CommitsListed(pr.clone(), git()),
+        Cmd::Git(Git::ListCommits(pr)) => Msg::Diff(pr.clone(), DiffMsg::CommitsListed(git())),
         // Nothing waits on these.
         Cmd::OpenUrl(_)
         | Cmd::Copy(_)
@@ -944,7 +959,7 @@ mod tests {
         ));
         assert!(matches!(
             rx.recv().await,
-            Some(Msg::ThreadsLoaded(p, Err(ApiError::Internal(_)))) if p == pr
+            Some(Msg::Diff(p, DiffMsg::ThreadsLoaded(Err(ApiError::Internal(_))))) if p == pr
         ));
     }
 

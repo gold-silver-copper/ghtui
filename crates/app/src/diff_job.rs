@@ -22,7 +22,7 @@ use ghtui_git::repo::{PrRefs, Repo};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
-use crate::state::Msg;
+use crate::state::{DiffMsg, Msg};
 
 /// Where and how git runs.
 #[derive(Debug, Clone)]
@@ -72,7 +72,7 @@ impl JobTx {
     /// False once the UI is gone.
     pub fn send(&self, msg: JobMsg) -> bool {
         self.tx
-            .send(Msg::Job(self.pr.clone(), self.job, msg))
+            .send(Msg::Diff(self.pr.clone(), DiffMsg::Job(self.job, msg)))
             .is_ok()
     }
 }

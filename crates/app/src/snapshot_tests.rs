@@ -1247,7 +1247,10 @@ pub(crate) mod diff {
         let job = s.diffs[&pr()].job;
         update(
             &mut s,
-            Msg::Job(pr(), job, crate::diff_job::JobMsg::File(0, diff)),
+            Msg::Diff(
+                pr(),
+                crate::state::DiffMsg::Job(job, crate::diff_job::JobMsg::File(0, diff)),
+            ),
         );
         terminal.draw(|frame| view(&s, frame, NOW)).unwrap();
         let first_screen = start.elapsed();

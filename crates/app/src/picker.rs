@@ -15,8 +15,9 @@ use ratatui_textarea::TextArea;
 use crate::browse::{Data, DataKey, Need};
 use crate::keymap::Action;
 use crate::nav::new_input;
+use crate::review::apply_commit_choice;
 use crate::route::{self, Route, Target};
-use crate::state::{Cmd, Overlay, Screen, State, apply, apply_commit_choice};
+use crate::state::{Cmd, Overlay, Screen, State, apply};
 
 pub enum Kind {
     /// The command palette.

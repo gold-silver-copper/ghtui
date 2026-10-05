@@ -13,26 +13,25 @@ use ghtui_diff::FileDiff;
 use ghtui_store::ReviewState;
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::bars::Notice;
-use ghtui_ui::diff_doc::{Doc, Viewed};
+use ghtui_ui::diff_doc::Viewed;
 use ghtui_ui::pages::PrTab;
-use ghtui_ui::text::short_sha;
 use ghtui_ui::{Ctx, Icons};
 use ratatui::layout::Rect;
 use ratatui_textarea::TextArea;
 
 use crate::browse::{self, Data, DataKey, Need, PageScreen};
-use crate::diff_job::{DiffFiles, JobId, JobMsg};
+use crate::diff_job::{JobId, JobMsg};
 use crate::diff_screen::{self, DiffScreen, DiffState};
 use crate::keymap::{Action, Key, Keymap, Resolution, Scope};
 use crate::nav::{self, Hints, Menu, SearchBox, Visit};
-use crate::picker::{self, PickItem, Picker};
+use crate::picker::{self, Picker};
 use crate::review::{
-    self, Compose, ComposeTarget, EditPurpose, Preview, SubmitDialog, SubmitOutcome,
+    self, Compose, ComposeTarget, EditPurpose, SubmitDialog, SubmitOutcome, on_compose_key,
+    on_edited, on_submit_key, review_action,
 };
 use crate::route::{Route, Target};
 use ghtui_api::model::{PatchFile, ReviewEvent, ReviewThread};
 use ghtui_store::DraftComment;
-use ghtui_ui::annotations::AnnotationKey;
 
 #[derive(Debug)]
 pub enum Msg {
@@ -67,39 +66,40 @@ pub enum Msg {
     ),
     RateLimits(RateLimits),
     Notice(Notice),
-    /// From a PR's diff job; ignored unless it's the PR's current job.
-    Job(PrRef, JobId, JobMsg),
-    ViewedLoaded(PrRef, Box<Result<ViewedFiles, ApiError>>),
+    /// A lasting problem started (`Some`) or cleared up (`None`).
+    Problem(Problem, Option<String>),
+    /// `$EDITOR` finished (or failed to start).
+    Edited(EditPurpose, Result<String, String>),
+    /// For a PR's diff screen.
+    Diff(PrRef, DiffMsg),
+}
+
+/// What arrives for a PR's diff: from its job, GitHub, or the drafts.
+#[derive(Debug)]
+pub enum DiffMsg {
+    /// From the diff job; ignored unless it's the PR's current job.
+    Job(JobId, JobMsg),
+    ViewedLoaded(Box<Result<ViewedFiles, ApiError>>),
     ViewedSaved {
-        pr: PrRef,
         file: usize,
         previous: Viewed,
         result: Result<(), ApiError>,
     },
-    /// The PR's saved review state, or why it couldn't be read.
-    ReviewLoaded(PrRef, Result<ReviewState, String>),
-    /// A lasting problem started (`Some`) or cleared up (`None`).
-    Problem(Problem, Option<String>),
-    ThreadsLoaded(PrRef, Result<Vec<ReviewThread>, ApiError>),
-    PatchesLoaded(PrRef, Result<Vec<PatchFile>, ApiError>),
-    OutdatedMapped(PrRef, Vec<(String, Option<u32>)>),
-    Replied(PrRef, Result<(), ApiError>),
+    /// The saved review state, or why it couldn't be read.
+    ReviewLoaded(Result<ReviewState, String>),
+    ThreadsLoaded(Result<Vec<ReviewThread>, ApiError>),
+    PatchesLoaded(Result<Vec<PatchFile>, ApiError>),
+    OutdatedMapped(Vec<(String, Option<u32>)>),
+    Replied(Result<(), ApiError>),
     ResolvedSet {
-        pr: PrRef,
         thread_id: String,
         resolved: bool,
         result: Result<(), ApiError>,
     },
-    ReviewSubmitted(PrRef, SubmitOutcome),
-    /// `$EDITOR` finished (or failed to start).
-    Edited(EditPurpose, Result<String, String>),
-    LastReview(PrRef, Result<Option<String>, ApiError>),
-    SinceReady(
-        PrRef,
-        String,
-        Result<std::collections::HashSet<String>, String>,
-    ),
-    CommitsListed(PrRef, Result<Vec<(String, String)>, String>),
+    ReviewSubmitted(SubmitOutcome),
+    LastReview(Result<Option<String>, ApiError>),
+    SinceReady(String, Result<std::collections::HashSet<String>, String>),
+    CommitsListed(Result<Vec<(String, String)>, String>),
 }
 
 /// What `update` asks the runtime to do.
@@ -541,7 +541,7 @@ impl State {
     }
 
     /// The branch the PR merges into, once the PR has loaded.
-    fn base_ref(&self, pr: &PrRef) -> Option<String> {
+    pub(crate) fn base_ref(&self, pr: &PrRef) -> Option<String> {
         let detail = self.prs.get(pr)?.data.as_ref()?;
         Some(detail.base_ref.clone())
     }
@@ -668,6 +668,7 @@ pub fn timers(state: &mut State, last_notice: &mut Option<Notice>) -> Vec<Cmd> {
 
 fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
     match msg {
+        Msg::Diff(pr, msg) => diff_screen::update(state, pr, msg),
         Msg::Key(key) => on_key(state, key),
         Msg::Resize(w, h) => {
             state.size = (w, h);
@@ -764,13 +765,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.notice = Some(Notice::Info("Comment posted".into()));
             state.ensure(Need::Data(key), true)
         }
-        Msg::Replied(pr, Ok(())) => {
-            state.overlay = None;
-            state.notice = Some(Notice::Info("Reply posted".into()));
-            vec![Cmd::Api(Api::FetchThreads(pr))]
-        }
-        // The text stays in the composer, with GitHub's reason.
-        Msg::Commented(_, Err(err)) | Msg::Replied(_, Err(err)) => {
+        Msg::Commented(_, Err(err)) => {
             if let Some(Overlay::Compose(compose)) = &mut state.overlay {
                 compose.sending = false;
                 compose.error = Some(err.to_string());
@@ -831,116 +826,6 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.notice = Some(notice);
             Vec::new()
         }
-        Msg::Job(pr, job, msg) => {
-            if state.diffs.get(&pr).is_some_and(|d| d.job == job) {
-                on_job(state, &pr, msg)
-            } else {
-                Vec::new()
-            }
-        }
-        Msg::LastReview(pr, result) => {
-            let commit = result.unwrap_or_else(|err| {
-                tracing::warn!(%pr, %err, "last review lookup failed");
-                None
-            });
-            let Some(diff) = state.diffs.get_mut(&pr) else {
-                return Vec::new();
-            };
-            diff.last_review = Some(commit);
-            if diff.since_requested {
-                return start_since_review(state);
-            }
-            Vec::new()
-        }
-        Msg::SinceReady(pr, old_head, result) => {
-            match result {
-                Ok(hashes) => {
-                    if let Some((screen, diff)) = state.diff_parts()
-                        && screen.pr == pr
-                    {
-                        diff.since_requested = false;
-                        diff_screen::preserving_position(screen, &mut diff.doc, |doc| {
-                            doc.set_since(Some(hashes), true)
-                        });
-                        state.notice = Some(Notice::Info(format!(
-                            "Showing changes since your review of {}",
-                            short_sha(&old_head)
-                        )));
-                    }
-                }
-                Err(err) => {
-                    if let Some(diff) = state.diffs.get_mut(&pr) {
-                        diff.since_requested = false;
-                    }
-                    state.notice = Some(Notice::Error(format!(
-                        "Couldn't compare with your last review: {err}"
-                    )));
-                }
-            }
-            Vec::new()
-        }
-        Msg::CommitsListed(pr, result) => match result {
-            Ok(commits) => {
-                if let Some(diff) = state.diffs.get_mut(&pr) {
-                    diff.commits = commits;
-                }
-                state.notice = None;
-                state.open_picker(picker::Kind::Commits { mark: None })
-            }
-            Err(err) => {
-                state.notice = Some(Notice::Error(format!("Couldn't list commits: {err}")));
-                Vec::new()
-            }
-        },
-        Msg::ViewedLoaded(pr, result) => {
-            match *result {
-                Ok(viewed) => {
-                    if let Some(diff) = state.diffs.get_mut(&pr) {
-                        diff.set_viewed_states(viewed);
-                    }
-                }
-                Err(err) => {
-                    tracing::warn!(%pr, %err, "viewed state fetch failed");
-                    state.notice =
-                        Some(Notice::Error(format!("Couldn't load viewed files: {err}")));
-                }
-            }
-            Vec::new()
-        }
-        Msg::ViewedSaved {
-            pr,
-            file,
-            previous,
-            result,
-        } => {
-            if let Err(err) = result {
-                tracing::warn!(%pr, %err, "viewed state update failed");
-                if let Some(diff) = state.diffs.get_mut(&pr) {
-                    diff.doc.set_viewed(file, previous);
-                }
-                state.notice = Some(Notice::Error(format!("GitHub didn't save “viewed”: {err}")));
-            }
-            Vec::new()
-        }
-        Msg::ReviewLoaded(pr, Ok(saved)) => {
-            let Some(diff) = state.diffs.get_mut(&pr) else {
-                return Vec::new();
-            };
-            // Anything done before it arrived is kept, and saved.
-            if diff.merge_saved_review(saved) {
-                vec![Cmd::SaveReview(pr, diff.review.clone())]
-            } else {
-                Vec::new()
-            }
-        }
-        Msg::ReviewLoaded(pr, Err(err)) => {
-            tracing::warn!(%pr, %err, "reading review state failed");
-            state.problems.insert(
-                Problem::Drafts,
-                format!("Drafts for {pr} are not being saved: {err}"),
-            );
-            Vec::new()
-        }
         Msg::Problem(problem, Some(text)) => {
             state.problems.insert(problem, text);
             Vec::new()
@@ -949,154 +834,8 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.problems.remove(&problem);
             Vec::new()
         }
-        Msg::ThreadsLoaded(pr, result) => {
-            match result {
-                Ok(threads) => {
-                    if let Some(diff) = state.diffs.get_mut(&pr) {
-                        diff.set_threads(threads);
-                    }
-                }
-                Err(err) => {
-                    tracing::warn!(%pr, %err, "review threads fetch failed");
-                    state.notice = Some(Notice::Error(format!(
-                        "Couldn't load review threads: {err}"
-                    )));
-                }
-            }
-            state.map_outdated(&pr)
-        }
-        Msg::PatchesLoaded(pr, result) => {
-            match result {
-                Ok(patches) => {
-                    if let Some(diff) = state.diffs.get_mut(&pr) {
-                        diff.set_patches(patches);
-                    }
-                }
-                // The local fallback covers commenting; just note it.
-                Err(err) => {
-                    tracing::warn!(%pr, %err, "GitHub patches unavailable; using local hunks")
-                }
-            }
-            Vec::new()
-        }
-        Msg::OutdatedMapped(pr, mapped) => {
-            if let Some(diff) = state.diffs.get_mut(&pr) {
-                diff.mapped.extend(mapped);
-                diff.refresh_annotations();
-            }
-            Vec::new()
-        }
-        Msg::ResolvedSet {
-            pr,
-            thread_id,
-            resolved,
-            result,
-        } => {
-            if let Err(err) = result {
-                if let Some(diff) = state.diffs.get_mut(&pr) {
-                    if let Some(t) = diff.threads.iter_mut().find(|t| t.id == thread_id) {
-                        t.resolved = !resolved;
-                    }
-                    diff.refresh_annotations();
-                }
-                state.notice = Some(Notice::Error(format!("GitHub didn't save that: {err}")));
-            }
-            Vec::new()
-        }
-        Msg::ReviewSubmitted(pr, outcome) => on_submitted(state, &pr, &outcome),
         Msg::Edited(purpose, result) => on_edited(state, purpose, result),
     }
-}
-
-/// Applies the result of submitting a review: accepted drafts leave the
-/// local queue, rejected ones keep their text and GitHub's reason.
-fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcome) -> Vec<Cmd> {
-    let mut cmds = vec![Cmd::Api(Api::FetchThreads(pr.clone()))];
-    if let Some(diff) = state.diffs.get_mut(pr) {
-        diff.review
-            .pending
-            .retain(|d| !outcome.accepted.contains(&d.id));
-        for draft in &mut diff.review.pending {
-            draft.error = outcome
-                .rejected
-                .iter()
-                .find(|(id, _)| *id == draft.id)
-                .map(|(_, reason)| reason.clone());
-        }
-        if outcome.submitted {
-            diff.review.last_reviewed_head = diff.head();
-        }
-        diff.refresh_annotations();
-        cmds.push(Cmd::SaveReview(pr.clone(), diff.review.clone()));
-    }
-    if outcome.submitted {
-        state.overlay = None;
-        state.notice = Some(Notice::Info("Review submitted".into()));
-    } else if let Some(Overlay::Submit(dialog)) = &mut state.overlay {
-        dialog.sending = false;
-        dialog.error = Some(match (&outcome.error, outcome.rejected.len()) {
-            (Some(err), _) => err.clone(),
-            (None, n) => format!(
-                "GitHub rejected {n} comment{}; they're marked in the diff. The review stays pending on GitHub until you submit again.",
-                if n == 1 { "" } else { "s" }
-            ),
-        });
-    }
-    cmds
-}
-
-fn on_edited(state: &mut State, purpose: EditPurpose, result: Result<String, String>) -> Vec<Cmd> {
-    let text = match result {
-        Ok(text) => text,
-        Err(err) => {
-            state.notice = Some(Notice::Error(format!("Couldn't run the editor: {err}")));
-            return Vec::new();
-        }
-    };
-    let theme = &state.theme;
-    match purpose {
-        EditPurpose::Compose => {
-            if let Some(Overlay::Compose(compose)) = &mut state.overlay {
-                let target = compose.target.clone();
-                let preview = compose.preview.clone();
-                **compose = Compose::new(theme, target, &text);
-                compose.preview = preview;
-            }
-        }
-        EditPurpose::Summary => {
-            if let Some(Overlay::Submit(dialog)) = &mut state.overlay {
-                let event = dialog.event;
-                **dialog = SubmitDialog::new(theme);
-                dialog.event = event;
-                dialog.input.insert_str(text.trim_end());
-            }
-        }
-        EditPurpose::Suggest {
-            path,
-            start,
-            end,
-            original,
-        } => {
-            let suggested: Vec<String> = text
-                .trim_end_matches('\n')
-                .lines()
-                .map(str::to_owned)
-                .collect();
-            if suggested == original {
-                state.notice = Some(Notice::Info("No change suggested".into()));
-                return Vec::new();
-            }
-            let body = review::suggestion_body(&suggested.join("\n"));
-            let mut compose = Compose::new(theme, ComposeTarget::Line { path, start, end }, &body);
-            compose.preview = Some(Preview {
-                start_line: start.line,
-                original,
-                suggested,
-            });
-            state.overlay = Some(Overlay::Compose(Box::new(compose)));
-        }
-    }
-    Vec::new()
 }
 
 fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
@@ -1268,7 +1007,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
 impl State {
     /// Asks the diff job to map outdated threads, once both the threads and
     /// the diff's head are known.
-    fn map_outdated(&mut self, pr: &PrRef) -> Vec<Cmd> {
+    pub(crate) fn map_outdated(&mut self, pr: &PrRef) -> Vec<Cmd> {
         let Some(diff) = self.diffs.get_mut(pr) else {
             return Vec::new();
         };
@@ -1305,577 +1044,13 @@ impl State {
         }
     }
 
-    fn diff_parts(&mut self) -> Option<(&mut DiffScreen, &mut DiffState)> {
+    pub(crate) fn diff_parts(&mut self) -> Option<(&mut DiffScreen, &mut DiffState)> {
         let State { screens, diffs, .. } = self;
         let Screen::Diff(screen) = screens.last_mut() else {
             return None;
         };
         let diff = diffs.get_mut(&screen.pr)?;
         Some((screen, diff))
-    }
-}
-
-/// How to get back to the whole PR, for notices.
-fn all_changes(state: &State) -> String {
-    let key = state.first_key(Action::PickCommits);
-    format!("pick “All changes” ({key})")
-}
-
-/// Review actions on the diff screen. `None` lets other handlers try.
-fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
-    let viewer = state.viewer.clone();
-    let (screen, diff) = state.diff_parts()?;
-    let pr = screen.pr.clone();
-    let cursor = screen.cursor;
-    let annotation = diff
-        .doc
-        .annotation_at(cursor)
-        .and_then(|i| diff.doc.annotations().get(i as usize).cloned());
-    let notice = |state: &mut State, n: Notice| {
-        state.notice = Some(n);
-        Some(Vec::new())
-    };
-    let in_range = diff.range.is_some();
-    if in_range
-        && matches!(
-            action,
-            Action::Comment | Action::Suggest | Action::FileComment | Action::SubmitReview
-        )
-    {
-        let all = all_changes(state);
-        return notice(
-            state,
-            Notice::Error(format!("Comments anchor to the whole PR: {all} to comment")),
-        );
-    }
-    match action {
-        Action::ToggleSinceReview => {
-            if in_range {
-                let all = all_changes(state);
-                return notice(state, Notice::Error(format!("First {all}")));
-            }
-            let active = !diff.doc.since_active();
-            let mut known = false;
-            diff_screen::preserving_position(screen, &mut diff.doc, |doc| {
-                known = doc.show_since(active);
-            });
-            if known {
-                state.notice = Some(Notice::Info(
-                    if active {
-                        "Showing changes since your last review"
-                    } else {
-                        "Showing all changes"
-                    }
-                    .into(),
-                ));
-                return Some(Vec::new());
-            }
-            diff.since_requested = true;
-            if diff.last_review.is_none() {
-                let Some(login) = viewer else {
-                    // Without a login, only the local record can say.
-                    diff.last_review = Some(None);
-                    return Some(start_since_review(state));
-                };
-                state.notice = Some(Notice::Info("Looking up your last review…".into()));
-                return Some(vec![Cmd::Api(Api::FetchLastReview { pr, login })]);
-            }
-            Some(start_since_review(state))
-        }
-        Action::PickCommits => {
-            if diff.commits.is_empty() {
-                state.notice = Some(Notice::Info("Listing commits…".into()));
-                return Some(vec![Cmd::Git(Git::ListCommits(pr))]);
-            }
-            Some(state.open_picker(picker::Kind::Commits { mark: None }))
-        }
-        Action::Back if screen.selection.is_some() => {
-            screen.selection = None;
-            Some(Vec::new())
-        }
-        // `c` on a thread replies to it.
-        Action::Comment
-            if annotation
-                .as_ref()
-                .is_some_and(|a| matches!(a.key, AnnotationKey::Thread(_))) =>
-        {
-            let ann = annotation?;
-            let AnnotationKey::Thread(thread_id) = ann.key else {
-                return None;
-            };
-            if !ann.can_reply {
-                return notice(state, Notice::Info("You can't reply to this one".into()));
-            }
-            Some(state.compose(ComposeTarget::Reply { thread_id }, ""))
-        }
-        Action::Comment => {
-            let selection = screen.selection.take();
-            match review::target(&diff.doc, cursor, selection) {
-                Ok(target) => {
-                    let reason = match &target {
-                        ComposeTarget::File { reason, .. } => reason.clone(),
-                        _ => None,
-                    };
-                    state.compose(target, "");
-                    if let Some(reason) = reason {
-                        state.notice = Some(Notice::Info(reason));
-                    }
-                    Some(Vec::new())
-                }
-                Err(err) => notice(state, Notice::Error(err)),
-            }
-        }
-        Action::FileComment => {
-            // On a draft: turn it into a file comment (e.g. after GitHub
-            // rejected its line). Elsewhere: comment on the file.
-            if let Some(ann) = &annotation
-                && let AnnotationKey::Draft(id) = ann.key
-            {
-                if let Some(d) = diff.review.pending.iter_mut().find(|d| d.id == id) {
-                    d.line = None;
-                    d.start_line = None;
-                    d.start_side = None;
-                    d.error = None;
-                }
-                diff.refresh_annotations();
-                let save = Cmd::SaveReview(pr, diff.review.clone());
-                state.notice = Some(Notice::Info("Now a comment on the file".into()));
-                return Some(vec![save]);
-            }
-            let path = diff.doc.files().get(cursor.file)?.meta.path().to_owned();
-            Some(state.compose(ComposeTarget::File { path, reason: None }, ""))
-        }
-        Action::Suggest => {
-            let selection = screen.selection.take();
-            let target = match review::target(&diff.doc, cursor, selection) {
-                Ok(target) => target,
-                Err(err) => return notice(state, Notice::Error(err)),
-            };
-            let ComposeTarget::Line { path, start, end } = target else {
-                return notice(
-                    state,
-                    Notice::Error("Suggestions need lines GitHub can comment on".into()),
-                );
-            };
-            if start.side != ghtui_diff::anchor::Side::Right
-                || end.side != ghtui_diff::anchor::Side::Right
-            {
-                return notice(
-                    state,
-                    Notice::Error("Suggestions apply to new lines (not deleted ones)".into()),
-                );
-            }
-            let text = diff.doc.files().get(cursor.file)?.text()?;
-            let original: Vec<String> = (start.line..=end.line)
-                .map(|n| text.new.line(n as usize - 1).to_owned())
-                .collect();
-            Some(vec![Cmd::Edit {
-                text: original.join("\n") + "\n",
-                purpose: EditPurpose::Suggest {
-                    path,
-                    start,
-                    end,
-                    original,
-                },
-            }])
-        }
-        Action::ResolveThread => {
-            let Some(ann) = annotation else {
-                return notice(state, Notice::Info("Move to a thread to resolve it".into()));
-            };
-            let AnnotationKey::Thread(thread_id) = ann.key else {
-                return notice(state, Notice::Info("Drafts can't be resolved".into()));
-            };
-            let resolved = !ann.resolved;
-            if (resolved && !ann.can_resolve) || (!resolved && !ann.can_unresolve) {
-                return notice(state, Notice::Info("You can't change this thread".into()));
-            }
-            // Optimistic; rolled back if GitHub refuses.
-            if let Some(t) = diff.threads.iter_mut().find(|t| t.id == thread_id) {
-                t.resolved = resolved;
-            }
-            diff.refresh_annotations();
-            Some(vec![Cmd::Api(Api::SetResolved {
-                pr,
-                thread_id,
-                resolved,
-            })])
-        }
-        Action::DeleteDraft => {
-            let Some(AnnotationKey::Draft(id)) = annotation.map(|a| a.key) else {
-                return notice(
-                    state,
-                    Notice::Info("Move to a draft comment to delete it".into()),
-                );
-            };
-            let at = diff.review.pending.iter().position(|d| d.id == id)?;
-            diff.deleted = Some(diff.review.pending.remove(at));
-            diff.refresh_annotations();
-            let save = Cmd::SaveReview(pr, diff.review.clone());
-            let undo = state.first_key(Action::UndoDelete);
-            state.notice = Some(Notice::Info(format!(
-                "Draft deleted · {undo} brings it back"
-            )));
-            Some(vec![save])
-        }
-        Action::UndoDelete => {
-            let Some(mut draft) = diff.deleted.take() else {
-                return notice(state, Notice::Info("No deleted draft to bring back".into()));
-            };
-            if diff.review.pending.iter().any(|d| d.id == draft.id) {
-                draft.id = diff.review.next_draft_id();
-            }
-            diff.review.pending.push(draft);
-            diff.refresh_annotations();
-            let save = Cmd::SaveReview(pr, diff.review.clone());
-            state.notice = Some(Notice::Info("Draft restored".into()));
-            Some(vec![save])
-        }
-        Action::Open => {
-            let ann_index = diff.doc.annotation_at(cursor)?;
-            let ann = diff.doc.annotations().get(ann_index as usize)?.clone();
-            if let AnnotationKey::Draft(id) = ann.key {
-                let body = diff
-                    .review
-                    .pending
-                    .iter()
-                    .find(|d| d.id == id)?
-                    .body
-                    .clone();
-                return Some(state.compose(ComposeTarget::Draft { id }, &body));
-            }
-            diff.doc.toggle_thread(ann_index);
-            Some(Vec::new())
-        }
-        Action::SubmitReview => {
-            if diff.refs.is_none() {
-                return notice(state, Notice::Error("The diff hasn't loaded yet".into()));
-            }
-            state.overlay = Some(Overlay::Submit(Box::new(SubmitDialog::new(&state.theme))));
-            Some(Vec::new())
-        }
-        _ => None,
-    }
-}
-
-/// Compares with the head of your last review, once known.
-fn start_since_review(state: &mut State) -> Vec<Cmd> {
-    let Some((screen, diff)) = state.diff_parts() else {
-        return Vec::new();
-    };
-    let pr = screen.pr.clone();
-    let old = diff
-        .last_review
-        .clone()
-        .flatten()
-        .or_else(|| diff.review.last_reviewed_head.clone());
-    let head = diff.head();
-    let problem = match (&old, &head) {
-        (None, _) => Some("You haven't reviewed this PR yet"),
-        (_, None) => Some("The diff hasn't loaded yet"),
-        (Some(old), Some(head)) if old == head => {
-            Some("Nothing new: you reviewed the current head")
-        }
-        _ => None,
-    };
-    if let Some(message) = problem {
-        diff.since_requested = false;
-        state.notice = Some(Notice::Info(message.into()));
-        return Vec::new();
-    }
-    state.notice = Some(Notice::Info("Comparing with your last review…".into()));
-    vec![Cmd::Git(Git::SinceReview {
-        pr,
-        old_head: old.unwrap_or_default(),
-    })]
-}
-
-/// Shows what `choice` picks: the whole PR, the changes since your last
-/// review, or a commit (from `mark` to it, if a range was marked).
-pub fn apply_commit_choice(
-    state: &mut State,
-    choice: PickItem,
-    mark: Option<PickItem>,
-) -> Vec<Cmd> {
-    let width = state.size.0;
-    let pr = match state.screen() {
-        Screen::Diff(screen) => screen.pr.clone(),
-        _ => return Vec::new(),
-    };
-    let Some(base_ref) = state.base_ref(&pr) else {
-        return Vec::new();
-    };
-    let Some((screen, diff)) = state.diff_parts() else {
-        return Vec::new();
-    };
-    let since = choice == PickItem::SinceReview;
-    let range = match choice {
-        // Already on the whole PR: only "since your review" changes.
-        PickItem::All | PickItem::SinceReview if diff.range.is_none() => {
-            if diff.doc.since_active() == since {
-                return Vec::new();
-            }
-            return review_action(state, Action::ToggleSinceReview).unwrap_or_default();
-        }
-        PickItem::All | PickItem::SinceReview => None,
-        PickItem::Commit(i) => {
-            let j = match mark {
-                Some(PickItem::Commit(m)) => m,
-                _ => i,
-            };
-            let (first, last) = (i.min(j), i.max(j));
-            // The picker's indices, into the list it showed.
-            let (Some((from, _)), Some((to, _))) =
-                (diff.commits.get(first), diff.commits.get(last))
-            else {
-                return Vec::new();
-            };
-            let label = if first == last {
-                short_sha(to).to_owned()
-            } else {
-                format!("{}..{}", short_sha(from), short_sha(to))
-            };
-            Some(diff_screen::RangeView {
-                label,
-                from: format!("{from}^"),
-                to: to.clone(),
-            })
-        }
-    };
-    let cmd_range = range.as_ref().map(|r| (r.from.clone(), r.to.clone()));
-    diff.restart(range);
-    // Since your review: compared once the whole PR is back.
-    diff.since_requested = since;
-    let job = diff.job;
-    *screen = DiffScreen::new(pr.clone(), width);
-    vec![Cmd::Git(Git::LoadDiff {
-        pr,
-        job,
-        base_ref,
-        range: cmd_range,
-    })]
-}
-
-/// A message from the PR's current diff job.
-fn on_job(state: &mut State, pr: &PrRef, msg: JobMsg) -> Vec<Cmd> {
-    match msg {
-        JobMsg::Progress(line) => {
-            if let Some(diff) = state.diffs.get_mut(pr)
-                && !diff.listed()
-            {
-                diff.progress = Some(line);
-            }
-            Vec::new()
-        }
-        JobMsg::Files(files) => {
-            let Some(diff) = state.diffs.get_mut(pr) else {
-                return Vec::new();
-            };
-            let DiffFiles {
-                refs,
-                files,
-                generated,
-            } = *files;
-            diff.set_files(refs, Doc::new(files, &generated));
-            // "Since my last review" chosen while switching ranges.
-            if std::mem::take(&mut diff.since_requested) {
-                return review_action(state, Action::ToggleSinceReview).unwrap_or_default();
-            }
-            Vec::new()
-        }
-        JobMsg::File(index, file) => {
-            let mut cmds = Vec::new();
-            if let Some(diff) = state.diffs.get_mut(pr) {
-                diff.set_file(index, file);
-                if let Some(inputs) = diff.take_move_inputs() {
-                    cmds.push(Cmd::Git(Git::DetectMoves(pr.clone(), diff.job, inputs)));
-                }
-            }
-            cmds
-        }
-        JobMsg::Moves(moves) => {
-            match state.diff_parts() {
-                Some((screen, diff)) if screen.pr == *pr => {
-                    diff_screen::preserving_position(screen, &mut diff.doc, |doc| {
-                        doc.set_moves(moves)
-                    });
-                }
-                _ => {
-                    if let Some(diff) = state.diffs.get_mut(pr) {
-                        diff.doc.set_moves(moves);
-                    }
-                }
-            }
-            Vec::new()
-        }
-        JobMsg::Failed(error) => {
-            if let Some(diff) = state.diffs.get_mut(pr) {
-                diff.progress = None;
-                diff.error = Some(error);
-            }
-            Vec::new()
-        }
-    }
-}
-
-fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
-    let Some(Overlay::Compose(compose)) = &mut state.overlay else {
-        return Vec::new();
-    };
-    if compose.sending {
-        return Vec::new();
-    }
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    match key.code {
-        KeyCode::Esc if compose.text().trim().is_empty() || compose.confirm_discard => {
-            state.overlay = None;
-            Vec::new()
-        }
-        KeyCode::Esc => {
-            compose.confirm_discard = true;
-            compose.error = Some("Press esc again to discard this comment".into());
-            Vec::new()
-        }
-        KeyCode::Char('e') if ctrl => vec![Cmd::Edit {
-            purpose: EditPurpose::Compose,
-            text: compose.text(),
-        }],
-        KeyCode::Char('s') if ctrl => save_compose(state),
-        _ => {
-            compose.confirm_discard = false;
-            compose.error = None;
-            compose.input.input(key);
-            Vec::new()
-        }
-    }
-}
-
-/// `ctrl-s` in the composer: drafts join the pending review (and are saved);
-/// replies post right away.
-fn save_compose(state: &mut State) -> Vec<Cmd> {
-    let Some(Overlay::Compose(compose)) = &state.overlay else {
-        return Vec::new();
-    };
-    let body = compose.text();
-    if body.trim().is_empty() {
-        if let Some(Overlay::Compose(compose)) = &mut state.overlay {
-            compose.error = Some("Write something first".into());
-        }
-        return Vec::new();
-    }
-    let target = compose.target.clone();
-    if let ComposeTarget::Conversation {
-        subject_id,
-        refresh,
-        ..
-    } = target
-    {
-        if let Some(Overlay::Compose(compose)) = &mut state.overlay {
-            compose.sending = true;
-        }
-        return vec![Cmd::Api(Api::AddComment {
-            subject_id,
-            body,
-            refresh,
-        })];
-    }
-    let Some((screen, diff)) = state.diff_parts() else {
-        return Vec::new();
-    };
-    let pr = screen.pr.clone();
-    match target {
-        ComposeTarget::Reply { thread_id } => {
-            if let Some(Overlay::Compose(compose)) = &mut state.overlay {
-                compose.sending = true;
-            }
-            vec![Cmd::Api(Api::Reply {
-                pr,
-                thread_id,
-                body,
-            })]
-        }
-        ComposeTarget::Draft { id } => {
-            if let Some(d) = diff.review.pending.iter_mut().find(|d| d.id == id) {
-                d.body = body;
-                d.error = None;
-            }
-            diff.refresh_annotations();
-            let save = Cmd::SaveReview(pr, diff.review.clone());
-            state.overlay = None;
-            vec![save]
-        }
-        ComposeTarget::Conversation { .. } => Vec::new(),
-        target @ (ComposeTarget::Line { .. } | ComposeTarget::File { .. }) => {
-            let head = diff.head().unwrap_or_default();
-            let id = diff.review.next_draft_id();
-            let Some(draft) = review::draft(&target, &body, id, &head) else {
-                return Vec::new();
-            };
-            diff.review.pending.push(draft);
-            diff.refresh_annotations();
-            let save = Cmd::SaveReview(pr, diff.review.clone());
-            let count = diff.review.pending.len();
-            state.overlay = None;
-            state.notice = Some(Notice::Info(format!(
-                "Added to your review ({count} pending). Submit with {}",
-                state.first_key(Action::SubmitReview)
-            )));
-            vec![save]
-        }
-    }
-}
-
-fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
-    let Some(Overlay::Submit(dialog)) = &mut state.overlay else {
-        return Vec::new();
-    };
-    if dialog.sending {
-        return Vec::new();
-    }
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    match key.code {
-        KeyCode::Esc => {
-            state.overlay = None;
-            Vec::new()
-        }
-        KeyCode::Tab => {
-            dialog.cycle(true);
-            Vec::new()
-        }
-        KeyCode::BackTab => {
-            dialog.cycle(false);
-            Vec::new()
-        }
-        KeyCode::Char('e') if ctrl => vec![Cmd::Edit {
-            purpose: EditPurpose::Summary,
-            text: dialog.input.lines().join("\n"),
-        }],
-        KeyCode::Char('s') if ctrl => {
-            let event = dialog.event;
-            let body = dialog.input.lines().join("\n");
-            if event == ReviewEvent::RequestChanges && body.trim().is_empty() {
-                dialog.error = Some("Requesting changes needs a summary".into());
-                return Vec::new();
-            }
-            dialog.sending = true;
-            dialog.error = None;
-            let Some((screen, diff)) = state.diff_parts() else {
-                return Vec::new();
-            };
-            let head = diff.head().unwrap_or_default();
-            vec![Cmd::Api(Api::SubmitReview {
-                pr: screen.pr.clone(),
-                head,
-                drafts: diff.review.pending.clone(),
-                event,
-                body,
-            })]
-        }
-        _ => {
-            dialog.error = None;
-            dialog.input.input(key);
-            Vec::new()
-        }
     }
 }
 
@@ -1888,6 +1063,7 @@ pub(crate) mod tests {
     use ghtui_api::browse::SearchResults;
     use ghtui_api::model::{PrState, PrSummary};
     use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode};
+    use ghtui_ui::annotations::AnnotationKey;
     use ghtui_ui::overlays::PALETTE_ROWS;
 
     pub(crate) fn state() -> State {
@@ -2958,7 +2134,10 @@ pub(crate) mod tests {
             let _ = s.settle_diff();
             update(
                 &mut s,
-                Msg::ReviewLoaded(pr.clone(), Ok(ReviewState::default())),
+                Msg::Diff(
+                    pr.clone(),
+                    DiffMsg::ReviewLoaded(Ok(ReviewState::default())),
+                ),
             );
             (s, pr)
         }
@@ -2996,7 +2175,10 @@ pub(crate) mod tests {
 
             update(
                 &mut s,
-                Msg::ViewedLoaded(pr.clone(), Box::new(Ok(viewed_files("PR_1")))),
+                Msg::Diff(
+                    pr.clone(),
+                    DiffMsg::ViewedLoaded(Box::new(Ok(viewed_files("PR_1")))),
+                ),
             );
             assert_eq!(s.diffs[&pr].doc.files()[0].viewed, Viewed::Viewed);
             assert!(
@@ -3019,12 +2201,14 @@ pub(crate) mod tests {
             assert_eq!(s.diffs[&pr].doc.files()[1].viewed, Viewed::Viewed);
             update(
                 &mut s,
-                Msg::ViewedSaved {
-                    pr: pr.clone(),
-                    file: 1,
-                    previous: Viewed::Unviewed,
-                    result: Err(ApiError::Network("offline".into())),
-                },
+                Msg::Diff(
+                    pr.clone(),
+                    DiffMsg::ViewedSaved {
+                        file: 1,
+                        previous: Viewed::Unviewed,
+                        result: Err(ApiError::Network("offline".into())),
+                    },
+                ),
             );
             assert_eq!(s.diffs[&pr].doc.files()[1].viewed, Viewed::Unviewed);
             assert!(matches!(s.notice, Some(Notice::Error(_))));
@@ -3051,7 +2235,7 @@ pub(crate) mod tests {
                 reviewed_hunks: vec!["older".into()],
                 ..ReviewState::default()
             };
-            let cmds = update(&mut s, Msg::ReviewLoaded(pr, Ok(saved)));
+            let cmds = update(&mut s, Msg::Diff(pr, DiffMsg::ReviewLoaded(Ok(saved))));
             let [Cmd::SaveReview(_, review)] = &cmds[..] else {
                 panic!("{cmds:?}")
             };
@@ -3062,7 +2246,10 @@ pub(crate) mod tests {
         #[test]
         fn unreadable_drafts_raise_a_lasting_problem() {
             let (mut s, pr) = diff_state(120);
-            update(&mut s, Msg::ReviewLoaded(pr, Err("disk full".into())));
+            update(
+                &mut s,
+                Msg::Diff(pr, DiffMsg::ReviewLoaded(Err("disk full".into()))),
+            );
             assert!(s.problems[&Problem::Drafts].contains("disk full"));
             assert!(s.layout().problem.is_some());
             update(&mut s, Msg::Problem(Problem::Drafts, None));
@@ -3170,16 +2357,18 @@ pub(crate) mod tests {
                 let job = s.diffs[&pr].job;
                 let cmds = update(
                     &mut s,
-                    Msg::Job(
+                    Msg::Diff(
                         pr.clone(),
-                        job,
-                        JobMsg::File(
-                            pending,
-                            Arc::new(FileDiff::compute(
-                                "zz/pending.rs",
-                                Some(b"a\n"),
-                                Some(b"b\n"),
-                            )),
+                        DiffMsg::Job(
+                            job,
+                            JobMsg::File(
+                                pending,
+                                Arc::new(FileDiff::compute(
+                                    "zz/pending.rs",
+                                    Some(b"a\n"),
+                                    Some(b"b\n"),
+                                )),
+                            ),
                         ),
                     ),
                 );
@@ -3187,7 +2376,10 @@ pub(crate) mod tests {
                     |c| matches!(c, Cmd::Git(Git::DetectMoves(p, j, files)) if *p == pr && *j == job && files.len() == 8)
                 ));
                 // Only once.
-                let again = update(&mut s, Msg::Job(pr, job, JobMsg::Moves(Vec::new())));
+                let again = update(
+                    &mut s,
+                    Msg::Diff(pr, DiffMsg::Job(job, JobMsg::Moves(Vec::new()))),
+                );
                 assert!(
                     !again
                         .iter()
@@ -3205,10 +2397,13 @@ pub(crate) mod tests {
                 let old = s.diffs[&pr].job;
                 s.diffs.get_mut(&pr).unwrap().restart(None);
                 let stale = Arc::new(FileDiff::compute("a.rs", Some(b"a\n"), Some(b"b\n")));
-                update(&mut s, Msg::Job(pr.clone(), old, JobMsg::File(0, stale)));
                 update(
                     &mut s,
-                    Msg::Job(pr.clone(), old, JobMsg::Failed("old".into())),
+                    Msg::Diff(pr.clone(), DiffMsg::Job(old, JobMsg::File(0, stale))),
+                );
+                update(
+                    &mut s,
+                    Msg::Diff(pr.clone(), DiffMsg::Job(old, JobMsg::Failed("old".into()))),
                 );
                 let diff = &s.diffs[&pr];
                 assert_ne!(diff.job, old);
@@ -3218,7 +2413,7 @@ pub(crate) mod tests {
                 let job = diff.job;
                 update(
                     &mut s,
-                    Msg::Job(pr.clone(), job, JobMsg::Failed("new".into())),
+                    Msg::Diff(pr.clone(), DiffMsg::Job(job, JobMsg::Failed("new".into()))),
                 );
                 assert_eq!(s.diffs[&pr].error.as_deref(), Some("new"));
             }
@@ -3231,7 +2426,10 @@ pub(crate) mod tests {
                 assert!(
                     matches!(&cmds[..], [Cmd::Api(Api::FetchLastReview { login, .. })] if login == "me")
                 );
-                let cmds = update(&mut s, Msg::LastReview(pr.clone(), Ok(Some("old".into()))));
+                let cmds = update(
+                    &mut s,
+                    Msg::Diff(pr.clone(), DiffMsg::LastReview(Ok(Some("old".into())))),
+                );
                 assert!(
                     matches!(&cmds[..], [Cmd::Git(Git::SinceReview { old_head, .. })] if old_head == "old")
                 );
@@ -3239,7 +2437,10 @@ pub(crate) mod tests {
                 // Nothing in the old diff matched: everything is new.
                 update(
                     &mut s,
-                    Msg::SinceReady(pr.clone(), "old".into(), Ok(Default::default())),
+                    Msg::Diff(
+                        pr.clone(),
+                        DiffMsg::SinceReady("old".into(), Ok(Default::default())),
+                    ),
                 );
                 assert!(s.diffs[&pr].doc.since_active());
                 assert_eq!(s.chrome().tabs[3].0.label, "Files · since your review");
@@ -3257,13 +2458,16 @@ pub(crate) mod tests {
                 let (mut s, pr) = diff_state(120);
                 s.viewer = Some("me".into());
                 act(&mut s, Action::ToggleSinceReview);
-                update(&mut s, Msg::LastReview(pr.clone(), Ok(None)));
+                update(&mut s, Msg::Diff(pr.clone(), DiffMsg::LastReview(Ok(None))));
                 assert!(
                     matches!(&s.notice, Some(Notice::Info(m)) if m.contains("haven't reviewed"))
                 );
                 // Reviewing the current head means nothing's new.
                 s.diffs.get_mut(&pr).unwrap().since_requested = true;
-                update(&mut s, Msg::LastReview(pr.clone(), Ok(Some("h".into()))));
+                update(
+                    &mut s,
+                    Msg::Diff(pr.clone(), DiffMsg::LastReview(Ok(Some("h".into())))),
+                );
                 assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("current head")));
             }
 
@@ -3284,12 +2488,12 @@ pub(crate) mod tests {
                 ));
                 update(
                     &mut s,
-                    Msg::CommitsListed(
+                    Msg::Diff(
                         pr,
-                        Ok(vec![
+                        DiffMsg::CommitsListed(Ok(vec![
                             ("a".repeat(40), "first".into()),
                             ("b".repeat(40), "second".into()),
-                        ]),
+                        ])),
                     ),
                 );
                 assert!(matches!(s.overlay, Some(Overlay::Picker(_))));
@@ -3365,12 +2569,12 @@ pub(crate) mod tests {
                 let (mut s, pr) = diff_state(120);
                 update(
                     &mut s,
-                    Msg::ThreadsLoaded(
+                    Msg::Diff(
                         pr.clone(),
-                        Ok(vec![
+                        DiffMsg::ThreadsLoaded(Ok(vec![
                             thread("done", Some(1), true, false),
                             thread("open", Some(14), false, false),
-                        ]),
+                        ])),
                     ),
                 );
                 assert_eq!(s.diffs[&pr].doc.annotations().len(), 2);
@@ -3397,12 +2601,14 @@ pub(crate) mod tests {
                 assert!(s.diffs[&pr].threads[1].resolved);
                 update(
                     &mut s,
-                    Msg::ResolvedSet {
-                        pr: pr.clone(),
-                        thread_id: "open".into(),
-                        resolved: true,
-                        result: Err(ApiError::Network("down".into())),
-                    },
+                    Msg::Diff(
+                        pr.clone(),
+                        DiffMsg::ResolvedSet {
+                            thread_id: "open".into(),
+                            resolved: true,
+                            result: Err(ApiError::Network("down".into())),
+                        },
+                    ),
                 );
                 assert!(!s.diffs[&pr].threads[1].resolved);
                 assert!(matches!(s.notice, Some(Notice::Error(_))));
@@ -3457,13 +2663,13 @@ pub(crate) mod tests {
                 // GitHub's diff only covers line 1.
                 update(
                     &mut s,
-                    Msg::PatchesLoaded(
+                    Msg::Diff(
                         pr,
-                        Ok(vec![PatchFile {
+                        DiffMsg::PatchesLoaded(Ok(vec![PatchFile {
                             filename: "src/point.rs".into(),
                             previous_filename: None,
                             patch: Some("@@ -1 +1 @@\n-a\n+b".into()),
-                        }]),
+                        }])),
                     ),
                 );
                 to_line(&mut s, "origin");
@@ -3485,13 +2691,13 @@ pub(crate) mod tests {
                 let (mut s, pr) = diff_state(120);
                 update(
                     &mut s,
-                    Msg::PatchesLoaded(
+                    Msg::Diff(
                         pr,
-                        Ok(vec![PatchFile {
+                        DiffMsg::PatchesLoaded(Ok(vec![PatchFile {
                             filename: "src/point.rs".into(),
                             previous_filename: None,
                             patch: Some("@@ -1,6 +1,6 @@\n@@ -10,4 +10,8 @@".into()),
-                        }]),
+                        }])),
                     ),
                 );
                 to_line(&mut s, "A point in 2D");
@@ -3526,12 +2732,12 @@ pub(crate) mod tests {
 
                 update(
                     &mut s,
-                    Msg::ReviewSubmitted(
+                    Msg::Diff(
                         pr.clone(),
-                        SubmitOutcome {
+                        DiffMsg::ReviewSubmitted(SubmitOutcome {
                             rejected: vec![(id, "line must be part of the diff".into())],
                             ..SubmitOutcome::default()
-                        },
+                        }),
                     ),
                 );
                 assert!(
@@ -3550,13 +2756,13 @@ pub(crate) mod tests {
                 press(&mut s, "<C-s>");
                 update(
                     &mut s,
-                    Msg::ReviewSubmitted(
+                    Msg::Diff(
                         pr.clone(),
-                        SubmitOutcome {
+                        DiffMsg::ReviewSubmitted(SubmitOutcome {
                             accepted: vec![id],
                             submitted: true,
                             ..SubmitOutcome::default()
-                        },
+                        }),
                     ),
                 );
                 assert!(s.overlay.is_none());
@@ -3578,7 +2784,10 @@ pub(crate) mod tests {
                 let (mut s, pr) = diff_state(120);
                 update(
                     &mut s,
-                    Msg::ThreadsLoaded(pr.clone(), Ok(vec![thread("t", Some(14), false, false)])),
+                    Msg::Diff(
+                        pr.clone(),
+                        DiffMsg::ThreadsLoaded(Ok(vec![thread("t", Some(14), false, false)])),
+                    ),
                 );
                 press(&mut s, "g");
                 act(&mut s, Action::NextThread);
@@ -3590,12 +2799,15 @@ pub(crate) mod tests {
                 );
                 update(
                     &mut s,
-                    Msg::Replied(pr.clone(), Err(ApiError::Network("down".into()))),
+                    Msg::Diff(
+                        pr.clone(),
+                        DiffMsg::Replied(Err(ApiError::Network("down".into()))),
+                    ),
                 );
                 assert!(
                     matches!(&s.overlay, Some(Overlay::Compose(c)) if c.error.is_some() && c.text() == "Fixed")
                 );
-                let cmds = update(&mut s, Msg::Replied(pr.clone(), Ok(())));
+                let cmds = update(&mut s, Msg::Diff(pr.clone(), DiffMsg::Replied(Ok(()))));
                 assert!(s.overlay.is_none());
                 assert_eq!(cmds, vec![Cmd::Api(Api::FetchThreads(pr))]);
             }
@@ -3640,7 +2852,10 @@ pub(crate) mod tests {
                 let (mut s, pr) = diff_state(120);
                 let cmds = update(
                     &mut s,
-                    Msg::ThreadsLoaded(pr.clone(), Ok(vec![thread("old", None, false, true)])),
+                    Msg::Diff(
+                        pr.clone(),
+                        DiffMsg::ThreadsLoaded(Ok(vec![thread("old", None, false, true)])),
+                    ),
                 );
                 assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated { items, head, .. }) if items.len() == 1 && head == "h")));
                 let ann = &s.diffs[&pr].doc.annotations()[0];
@@ -3650,7 +2865,10 @@ pub(crate) mod tests {
                 );
                 update(
                     &mut s,
-                    Msg::OutdatedMapped(pr.clone(), vec![("old".into(), Some(4))]),
+                    Msg::Diff(
+                        pr.clone(),
+                        DiffMsg::OutdatedMapped(vec![("old".into(), Some(4))]),
+                    ),
                 );
                 let ann = &s.diffs[&pr].doc.annotations()[0];
                 assert_eq!((ann.on_line(), ann.moved), (Some(4), true));
