@@ -654,26 +654,13 @@ impl State {
     pub fn suggestions(&self, sb: &SearchBox) -> Vec<(SuggestRow, Option<Pick>)> {
         let input = sb.input.lines().join("");
         let q = input.trim();
-        let mut out: Vec<(SuggestRow, Option<Pick>)> = Vec::new();
-        let item = |icon: &str, label: String, detail: &str, hint: &str| SuggestRow::Item {
-            icon: icon.to_owned(),
-            label,
-            detail: detail.to_owned(),
-            hint: hint.to_owned(),
-        };
-        let heading = |out: &mut Vec<(SuggestRow, Option<Pick>)>, h: &str| {
-            out.push((SuggestRow::Heading(h.to_owned()), None));
-        };
-        let current = self.route().map(Route::url);
-        let now = (self.clock)();
+        let mut out = Vec::new();
         if sb.filter {
             if !q.is_empty() {
-                out.push((
-                    item("⌕", q.to_owned(), "filter this list", "↵"),
-                    Some(Pick::Filter(q.to_owned())),
-                ));
+                let pick = Pick::Filter(q.to_owned());
+                out.push(suggestion("⌕", q, "filter this list", "↵", pick));
             }
-            heading(&mut out, "Quick filters");
+            out.push(heading("Quick filters"));
             for (f, what) in [
                 ("is:open", "open"),
                 ("is:closed", "closed"),
@@ -682,17 +669,12 @@ impl State {
                 ("is:open mentions:@me", "mentioning you"),
                 ("is:open no:assignee", "unassigned"),
             ] {
-                out.push((
-                    item("⚑", f.to_owned(), what, ""),
-                    Some(Pick::Filter(f.to_owned())),
-                ));
+                out.push(suggestion("⚑", f, what, "", Pick::Filter(f.to_owned())));
             }
             if !q.is_empty() {
-                heading(&mut out, "Search all of GitHub");
-                out.push((
-                    item("⌕", q.to_owned(), "issues and pull requests", ""),
-                    Some(Pick::Search(SearchKind::Issues, q.to_owned())),
-                ));
+                out.push(heading("Search all of GitHub"));
+                let pick = Pick::Search(SearchKind::Issues, q.to_owned());
+                out.push(suggestion("⌕", q, "issues and pull requests", "", pick));
             }
             return out;
         }
@@ -702,60 +684,55 @@ impl State {
                 Target::Files(pr) => format!("Files changed in {pr}"),
                 Target::External(url) => url.clone(),
             };
-            out.push((item("→", label, "go to", "↵"), Some(Pick::Go(target))));
+            out.push(suggestion("→", label, "go to", "↵", Pick::Go(target)));
         }
         // Jump to: pages you've visited, your repositories, live matches.
-        let mut jumps: Vec<(usize, String, String, &str)> = Vec::new();
+        let current = self.route().map(Route::url);
+        let now = (self.clock)();
         let mut visits: Vec<&Visit> = self
             .visits
             .iter()
             .filter(|v| Some(&v.url) != current.as_ref())
             .collect();
         visits.sort_by_key(|v| std::cmp::Reverse(v.score(now)));
-        for v in visits {
-            if let Some(score) = fuzzy_score(q, &v.title) {
-                jumps.push((score, v.title.clone(), v.url.clone(), "◷"));
-            }
-        }
+        let mut jumps: Vec<(usize, String, String, &str, &str)> = visits
+            .into_iter()
+            .filter_map(|v| {
+                let score = fuzzy_score(q, &v.title)?;
+                Some((score, v.title.clone(), v.url.clone(), "◷", "visited"))
+            })
+            .collect();
         if let Some(Data::Repos(repos)) = self.get(&DataKey::ViewerRepos) {
             for r in repos {
                 let name = r.repo.to_string();
                 if let Some(score) = fuzzy_score(q, &name) {
-                    jumps.push((score + 1, name, pages::url::repo(&r.repo), "▤"));
+                    let url = pages::url::repo(&r.repo);
+                    jumps.push((score + 1, name, url, "▤", "your repository"));
                 }
             }
         }
-        if q.is_empty() {
-            // Most recent first, as they came.
-        } else {
+        // Most recent first, as they came, until something is typed.
+        if !q.is_empty() {
             jumps.sort_by_key(|(score, ..)| *score);
         }
+        let most = if q.is_empty() { 8 } else { 5 };
         let mut seen: Vec<String> = Vec::new();
-        for (_, title, url, icon) in jumps {
-            if seen.contains(&url) || seen.len() >= if q.is_empty() { 8 } else { 5 } {
+        for (_, title, url, icon, detail) in jumps {
+            if seen.contains(&url) || seen.len() >= most {
                 continue;
             }
             if seen.is_empty() {
-                heading(&mut out, if q.is_empty() { "Recent" } else { "Jump to" });
+                out.push(heading(if q.is_empty() { "Recent" } else { "Jump to" }));
             }
-            seen.push(url.clone());
-            let detail = if icon == "◷" {
-                "visited"
-            } else {
-                "your repository"
-            };
-            out.push((
-                item(icon, title, detail, ""),
-                Some(Pick::Go(Target::from_url(&url))),
-            ));
+            let pick = Pick::Go(Target::from_url(&url));
+            out.push(suggestion(icon, title, detail, "", pick));
+            seen.push(url);
         }
         if !q.is_empty() {
-            heading(&mut out, "Search");
+            out.push(heading("Search"));
             if let Some(repo) = self.context_repo() {
-                out.push((
-                    item("⌕", q.to_owned(), &format!("in {repo}"), ""),
-                    Some(Pick::Search(SearchKind::Issues, format!("repo:{repo} {q}"))),
-                ));
+                let pick = Pick::Search(SearchKind::Issues, format!("repo:{repo} {q}"));
+                out.push(suggestion("⌕", q, &format!("in {repo}"), "", pick));
             }
             for (kind, what) in [
                 (SearchKind::Repos, "repositories"),
@@ -763,10 +740,8 @@ impl State {
                 (SearchKind::Pulls, "pull requests"),
                 (SearchKind::Users, "users"),
             ] {
-                out.push((
-                    item("⌕", q.to_owned(), what, ""),
-                    Some(Pick::Search(kind, q.to_owned())),
-                ));
+                let pick = Pick::Search(kind, q.to_owned());
+                out.push(suggestion("⌕", q, what, "", pick));
             }
         }
         // Live matches come last, so they never move what's selected.
@@ -777,18 +752,37 @@ impl State {
                 .filter(|r| !seen.contains(&pages::url::repo(&r.repo)))
                 .collect();
             if !live.is_empty() {
-                heading(&mut out, "Repositories");
+                out.push(heading("Repositories"));
             }
             for r in live {
                 let detail = format!("☆ {}", pages::compact(r.stars));
-                out.push((
-                    item("▤", r.repo.to_string(), &detail, ""),
-                    Some(Pick::Go(Target::Page(Route::Repo(r.repo.clone())))),
-                ));
+                let pick = Pick::Go(Target::Page(Route::Repo(r.repo.clone())));
+                out.push(suggestion("▤", r.repo.to_string(), &detail, "", pick));
             }
         }
         out
     }
+}
+
+/// A suggestion to choose.
+fn suggestion(
+    icon: &str,
+    label: impl Into<String>,
+    detail: &str,
+    hint: &str,
+    pick: Pick,
+) -> (SuggestRow, Option<Pick>) {
+    let row = SuggestRow::Item {
+        icon: icon.to_owned(),
+        label: label.into(),
+        detail: detail.to_owned(),
+        hint: hint.to_owned(),
+    };
+    (row, Some(pick))
+}
+
+fn heading(text: &str) -> (SuggestRow, Option<Pick>) {
+    (SuggestRow::Heading(text.to_owned()), None)
 }
 
 #[must_use]
@@ -1015,16 +1009,11 @@ pub struct Doable {
     pub unavailable: Option<String>,
 }
 
-fn doable(
-    section: &'static str,
-    action: Action,
-    label: impl Into<String>,
-    short: &'static str,
-) -> Doable {
+fn doable(section: &'static str, action: Action, label: &str, short: &'static str) -> Doable {
     Doable {
         section,
         action,
-        label: label.into(),
+        label: label.to_owned(),
         short,
         unavailable: None,
     }
@@ -1097,42 +1086,37 @@ impl State {
                 None
             }
         };
-        let go = "Go";
+        let go = |action, label: &str, short| doable("Go", action, label, short);
         if !self.chrome().tabs.is_empty() {
-            out.push(doable(go, Action::NextTab, "Next tab", "tabs"));
+            out.push(go(Action::NextTab, "Next tab", "tabs"));
         }
         if let Screen::Diff(_) = self.screen() {
-            out.push(doable(go, Action::Tab1, "Back to the conversation", ""));
+            out.push(go(Action::Tab1, "Back to the conversation", ""));
         }
         let (open, copy) = match selected {
             Some(_) => ("Open the selection on GitHub", "Copy the selection's link"),
             None => ("Open this page on GitHub", "Copy this page's link"),
         };
-        out.push(doable(go, Action::OpenInBrowser, open, "browser"));
-        out.push(doable(go, Action::Copy, copy, "copy link"));
+        out.push(go(Action::OpenInBrowser, open, "browser"));
+        out.push(go(Action::Copy, copy, "copy link"));
         if let Screen::Page(_) = self.screen() {
-            out.push(doable(
-                go,
-                Action::Hints,
-                "Follow any link by its letters",
-                "links",
-            ));
-            out.push(doable(go, Action::UpLevel, "Up a level", ""));
+            out.push(go(Action::Hints, "Follow any link by its letters", "links"));
+            out.push(go(Action::UpLevel, "Up a level", ""));
         }
-        let mut back = doable(go, Action::Back, "Back", "");
+        let mut back = go(Action::Back, "Back", "");
         if self.screens.len() < 2 {
             back.unavailable = Some("this is the first page".into());
         }
         out.push(back);
-        let mut fwd = doable(go, Action::Forward, "Forward", "");
+        let mut fwd = go(Action::Forward, "Forward", "");
         if self.forward.is_empty() {
             fwd.unavailable = Some("nothing to go forward to".into());
         }
         out.push(fwd);
-        out.push(doable(go, Action::GoHome, "Home", ""));
-        out.push(doable(go, Action::Refresh, "Refresh", ""));
-        out.push(doable(go, Action::CommandPalette, "Command palette", ""));
-        let mut messages = doable(go, Action::Messages, "Recent messages and errors", "");
+        out.push(go(Action::GoHome, "Home", ""));
+        out.push(go(Action::Refresh, "Refresh", ""));
+        out.push(go(Action::CommandPalette, "Command palette", ""));
+        let mut messages = go(Action::Messages, "Recent messages and errors", "");
         if self.messages.is_empty() {
             messages.unavailable = Some("nothing yet".into());
         }
@@ -1154,8 +1138,8 @@ impl State {
     }
 
     fn page_doables(&self, p: &PageScreen, out: &mut Vec<Doable>) {
-        let here = "This page";
-        let mut open = doable(here, Action::Open, "Open the selected row", "open");
+        let here = |action, label: &str, short| doable("This page", action, label, short);
+        let mut open = here(Action::Open, "Open the selected row", "open");
         match p.selected_link() {
             Some(link) => open.label = describe(link),
             None => open.unavailable = Some("nothing is selected".into()),
@@ -1164,48 +1148,34 @@ impl State {
         let route = &p.route;
         let list = route.search().map(|(_, q)| q);
         out.push(match list {
-            Some(_) => doable(here, Action::Search, "Filter this list", "filter"),
-            None => doable(here, Action::Search, "Search or jump to…", "search"),
+            Some(_) => here(Action::Search, "Filter this list", "filter"),
+            None => here(Action::Search, "Search or jump to…", "search"),
         });
         if let Some(query) = &list {
-            out.push(doable(
-                here,
-                Action::ToggleState,
-                format!("Show {}", next_list_state(query)),
-                "open/closed",
-            ));
-            out.push(doable(here, Action::Sort, "Change the sort", "sort"));
+            let show = format!("Show {}", next_list_state(query));
+            out.push(here(Action::ToggleState, &show, "open/closed"));
+            out.push(here(Action::Sort, "Change the sort", "sort"));
         }
         if let Some(repo) = route.repo() {
-            out.push(doable(here, Action::FindFile, "Go to file", "go to file"));
+            out.push(here(Action::FindFile, "Go to file", "go to file"));
             if matches!(
                 route,
                 Route::Repo(_) | Route::Tree { .. } | Route::Blob { .. }
             ) {
-                out.push(doable(
-                    here,
-                    Action::Branch,
-                    "Switch branches or tags",
-                    "branch",
-                ));
+                out.push(here(Action::Branch, "Switch branches or tags", "branch"));
                 let starred = self.overview(repo).is_some_and(|o| o.starred);
                 let label = if starred { "Unstar" } else { "Star" };
-                out.push(doable(here, Action::Star, label, "star"));
+                out.push(here(Action::Star, label, "star"));
             }
         }
         if matches!(route, Route::Issue { .. } | Route::Pr { .. }) {
-            out.push(doable(here, Action::Comment, "Write a comment", "comment"));
+            out.push(here(Action::Comment, "Write a comment", "comment"));
         }
         if let Route::Pr { tab, .. } = route {
             if *tab == PrTab::Conversation {
-                out.push(doable(here, Action::Tab2, "Commits", "commits"));
+                out.push(here(Action::Tab2, "Commits", "commits"));
             }
-            out.push(doable(
-                here,
-                Action::Tab4,
-                "Files changed (review)",
-                "files",
-            ));
+            out.push(here(Action::Tab4, "Files changed (review)", "files"));
         }
     }
 
