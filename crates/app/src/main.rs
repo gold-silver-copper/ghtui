@@ -33,7 +33,7 @@ use crate::config::{Config, DepthSetting, ModeSetting};
 use crate::diff_job::GitContext;
 use crate::keymap::Keymap;
 use crate::route::{Route, Target};
-use crate::state::{Remote, State};
+use crate::state::{Api, Remote, State};
 
 /// How long to wait for the terminal to report its background color.
 const BACKGROUND_QUERY_TIMEOUT: Duration = Duration::from_millis(100);
@@ -158,7 +158,7 @@ async fn run(started: Instant) -> Result<()> {
             }
             // The home page stays underneath (Esc goes there) and loads
             // when you get there.
-            let mut cmds = vec![state::Cmd::FetchViewer];
+            let mut cmds = vec![state::Cmd::Api(Api::FetchViewer)];
             cmds.extend(state.go(target));
             cmds
         }

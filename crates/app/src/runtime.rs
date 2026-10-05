@@ -17,8 +17,9 @@ use tokio::sync::mpsc;
 
 use crate::browse::{Data, DataKey};
 use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx};
+use crate::review::EditPurpose;
 use crate::review::{self, SubmitOutcome};
-use crate::state::{Cmd, Msg, Problem, State, apply_msg, timers};
+use crate::state::{Api, Cmd, Git, Msg, Problem, State, apply_msg, timers};
 use crate::view::view;
 
 struct Effects {
@@ -82,7 +83,9 @@ async fn drive(
     tracing::info!(elapsed_ms = started.elapsed().as_millis(), "first paint");
 
     for cmd in initial {
-        effects.run(cmd);
+        if effects.run(cmd).is_some() {
+            tracing::warn!("an edit can't start before the first frame");
+        }
     }
     check_git(tx.clone());
 
@@ -115,16 +118,11 @@ async fn drive(
         cmds.extend(state.settle());
         cmds.extend(timers(&mut state, &mut last_notice));
         for cmd in cmds {
-            match cmd {
-                // The editor needs the terminal: handled here, not spawned.
-                Cmd::Edit { purpose, text } => {
-                    let (stream, result) = edit_externally(terminal, events, &text).await;
-                    events = stream;
-                    let _ = tx.send(Msg::Edited(purpose, result));
-                }
-                // Clipboard writes go to the terminal: also handled here.
-                Cmd::Copy(text) => copy_to_clipboard(&text),
-                cmd => effects.run(cmd),
+            // The editor needs the terminal: run here, not spawned.
+            if let Some((purpose, text)) = effects.run(cmd) {
+                let (stream, result) = edit_externally(terminal, events, &text).await;
+                events = stream;
+                let _ = tx.send(Msg::Edited(purpose, result));
             }
         }
         if state.quit {
@@ -135,10 +133,50 @@ async fn drive(
 }
 
 impl Effects {
-    fn run(&mut self, cmd: Cmd) {
+    /// Runs `cmd` in the background. The editor needs the terminal, so an
+    /// edit comes back for the loop to run.
+    fn run(&mut self, cmd: Cmd) -> Option<(EditPurpose, String)> {
         let replies = panic_replies(&cmd);
         match cmd {
-            Cmd::LoadDiff {
+            Cmd::Api(api) => spawn(api, replies, &self.gh, &self.tx),
+            Cmd::Git(git) => self.git(git, replies),
+            Cmd::OpenUrl(url) => {
+                let tx = self.tx.clone();
+                spawn_guarded(&self.tx, replies, async move {
+                    if let Err(err) = open_url(&url).await {
+                        let text = format!("Couldn't open browser: {err}");
+                        let _ = tx.send(Msg::Notice(Notice::Error(text)));
+                    }
+                });
+            }
+            // Clipboard writes go to the terminal, right away.
+            Cmd::Copy(text) => copy_to_clipboard(&text),
+            Cmd::Timer(timer, ms) => {
+                let tx = self.tx.clone();
+                spawn_guarded(&self.tx, replies, async move {
+                    tokio::time::sleep(Duration::from_millis(ms)).await;
+                    let _ = tx.send(Msg::Timer(timer));
+                });
+            }
+            Cmd::SuggestLater(q) => {
+                let tx = self.tx.clone();
+                spawn_guarded(&self.tx, replies, async move {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    let _ = tx.send(Msg::SuggestDue(q));
+                });
+            }
+            Cmd::LoadReview(pr) => self.load_review(pr, replies),
+            Cmd::SaveReview(pr, review) => {
+                let _ = self.save_review.send((pr, review));
+            }
+            Cmd::Edit { purpose, text } => return Some((purpose, text)),
+        }
+        None
+    }
+
+    fn git(&mut self, git: Git, replies: Vec<Msg>) {
+        match git {
+            Git::LoadDiff {
                 pr,
                 job,
                 base_ref,
@@ -157,12 +195,12 @@ impl Effects {
                 let handle = spawn_guarded(&self.tx, replies, run);
                 self.jobs.insert(pr, (control, handle));
             }
-            Cmd::Prioritize(pr, files) => {
+            Git::Prioritize(pr, files) => {
                 if let Some((control, _)) = self.jobs.get(&pr) {
                     control.prioritize(&files);
                 }
             }
-            Cmd::DetectMoves(pr, job, files) => {
+            Git::DetectMoves(pr, job, files) => {
                 let out = JobTx {
                     tx: self.tx.clone(),
                     pr,
@@ -185,7 +223,7 @@ impl Effects {
                     out.send(JobMsg::Moves(moves));
                 });
             }
-            Cmd::SinceReview { pr, old_head } => {
+            Git::SinceReview { pr, old_head } => {
                 let tx = self.tx.clone();
                 let Some(git) = self.job_git(&pr) else {
                     let _ = tx.send(Msg::SinceReady(
@@ -204,7 +242,7 @@ impl Effects {
                     let _ = tx.send(Msg::SinceReady(pr, old_head, result));
                 });
             }
-            Cmd::ListCommits(pr) => {
+            Git::ListCommits(pr) => {
                 let tx = self.tx.clone();
                 let Some(git) = self.job_git(&pr) else {
                     let _ = tx.send(Msg::CommitsListed(pr, Err("the diff isn't ready".into())));
@@ -227,7 +265,7 @@ impl Effects {
                     let _ = tx.send(Msg::CommitsListed(pr, result));
                 });
             }
-            Cmd::MapOutdated { pr, head, items } => {
+            Git::MapOutdated { pr, head, items } => {
                 let Some(git) = self.job_git(&pr) else {
                     return;
                 };
@@ -244,27 +282,24 @@ impl Effects {
                     let _ = tx.send(Msg::OutdatedMapped(pr, mapped));
                 });
             }
-            Cmd::LoadReview(pr) => {
-                let reviews = self.reviews.clone();
-                let tx = self.tx.clone();
-                spawn_guarded(&self.tx, replies, async move {
-                    let review = match reviews {
-                        Ok(reviews) => {
-                            let key = (pr.repo.owner.clone(), pr.repo.name.clone(), pr.number);
-                            blocking(move || reviews.get(&key.0, &key.1, key.2))
-                                .await
-                                .map_err(|e| e.to_string())
-                        }
-                        Err(err) => Err(err),
-                    };
-                    let _ = tx.send(Msg::ReviewLoaded(pr, review));
-                });
-            }
-            Cmd::SaveReview(pr, review) => {
-                let _ = self.save_review.send((pr, review));
-            }
-            cmd => spawn(cmd, replies, &self.gh, &self.tx),
         }
+    }
+
+    fn load_review(&self, pr: PrRef, replies: Vec<Msg>) {
+        let reviews = self.reviews.clone();
+        let tx = self.tx.clone();
+        spawn_guarded(&self.tx, replies, async move {
+            let review = match reviews {
+                Ok(reviews) => {
+                    let key = (pr.repo.owner.clone(), pr.repo.name.clone(), pr.number);
+                    blocking(move || reviews.get(&key.0, &key.1, key.2))
+                        .await
+                        .map_err(|e| e.to_string())
+                }
+                Err(err) => Err(err),
+            };
+            let _ = tx.send(Msg::ReviewLoaded(pr, review));
+        });
     }
 
     fn job_git(
@@ -278,18 +313,20 @@ impl Effects {
     }
 }
 
-fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
+/// Runs a GitHub request and sends its answer, then the rate limits (and
+/// the token's state, when it changed).
+fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
     let gh = gh.clone();
     let tx = tx.clone();
     spawn_guarded(&tx.clone(), replies, async move {
-        let msg = match cmd {
-            Cmd::FetchViewer => Msg::Viewer(gh.viewer_login().await),
-            Cmd::FetchInbox => Msg::Inbox(gh.inbox().await),
-            Cmd::FetchPr(pr) => {
+        let msg = match api {
+            Api::FetchViewer => Msg::Viewer(gh.viewer_login().await),
+            Api::FetchInbox => Msg::Inbox(gh.inbox().await),
+            Api::FetchPr(pr) => {
                 let result = gh.pull_request(&pr).await;
                 Msg::Pr(pr, Box::new(result))
             }
-            Cmd::Fetch { key, cached } => {
+            Api::Fetch { key, cached } => {
                 if cached {
                     let (gh, lookup) = (gh.clone(), key.clone());
                     if let Some((data, at)) = blocking(move || cached_data(&gh, &lookup)).await {
@@ -307,7 +344,7 @@ fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                     cached_at: None,
                 }
             }
-            Cmd::FetchMore { key, after } => {
+            Api::FetchMore { key, after } => {
                 let result = match &key {
                     DataKey::Search(kind, query) => gh
                         .search(*kind, query, Some(after))
@@ -317,26 +354,17 @@ fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 };
                 Msg::FetchedMore(key, result)
             }
-            Cmd::AddComment {
+            Api::AddComment {
                 subject_id,
                 body,
                 refresh,
             } => Msg::Commented(refresh, gh.add_comment(&subject_id, &body).await),
-            Cmd::SetStarred { repo, id, starred } => Msg::Starred {
+            Api::SetStarred { repo, id, starred } => Msg::Starred {
                 result: gh.set_starred(&id, starred).await,
                 repo,
                 starred,
             },
-            Cmd::Timer(timer, ms) => {
-                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
-                let _ = tx.send(Msg::Timer(timer));
-                return;
-            }
-            Cmd::SuggestLater(q) => {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                Msg::SuggestDue(q)
-            }
-            Cmd::Suggest(q) => {
+            Api::Suggest(q) => {
                 let result = gh
                     .search(ghtui_api::browse::SearchKind::Repos, &q, None)
                     .await
@@ -348,19 +376,15 @@ fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                     });
                 Msg::Suggested(q, result)
             }
-            Cmd::SaveVisits(visits) => {
+            Api::SaveVisits(visits) => {
                 gh.remember(ghtui_api::browse::keys::VISITS, visits).await;
                 return;
             }
-            Cmd::OpenUrl(url) => match open_url(&url).await {
-                Ok(()) => return,
-                Err(err) => Msg::Notice(Notice::Error(format!("Couldn't open browser: {err}"))),
-            },
-            Cmd::FetchViewed(pr) => {
+            Api::FetchViewed(pr) => {
                 let result = gh.viewed_files(&pr).await;
                 Msg::ViewedLoaded(pr, Box::new(result))
             }
-            Cmd::SetViewed {
+            Api::SetViewed {
                 pr,
                 pull_request_id,
                 path,
@@ -376,15 +400,15 @@ fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                     result,
                 }
             }
-            Cmd::FetchThreads(pr) => {
+            Api::FetchThreads(pr) => {
                 let result = gh.review_threads(&pr).await;
                 Msg::ThreadsLoaded(pr, result)
             }
-            Cmd::FetchPatches(pr) => {
+            Api::FetchPatches(pr) => {
                 let result = gh.pr_patches(&pr).await;
                 Msg::PatchesLoaded(pr, result)
             }
-            Cmd::Reply {
+            Api::Reply {
                 pr,
                 thread_id,
                 body,
@@ -392,7 +416,7 @@ fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 let result = gh.reply(&thread_id, &body).await;
                 Msg::Replied(pr, result)
             }
-            Cmd::SetResolved {
+            Api::SetResolved {
                 pr,
                 thread_id,
                 resolved,
@@ -405,7 +429,7 @@ fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                     result,
                 }
             }
-            Cmd::SubmitReview {
+            Api::SubmitReview {
                 pr,
                 head,
                 drafts,
@@ -415,23 +439,9 @@ fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 let outcome = submit_review(&gh, &pr, &head, drafts, event, &body).await;
                 Msg::ReviewSubmitted(pr, outcome)
             }
-            Cmd::FetchLastReview { pr, login } => {
+            Api::FetchLastReview { pr, login } => {
                 let result = gh.last_review_commit(&pr, &login).await;
                 Msg::LastReview(pr, result)
-            }
-            cmd @ (Cmd::LoadDiff { .. }
-            | Cmd::Prioritize(..)
-            | Cmd::MapOutdated { .. }
-            | Cmd::Edit { .. }
-            | Cmd::Copy(_)
-            | Cmd::DetectMoves(..)
-            | Cmd::SinceReview { .. }
-            | Cmd::ListCommits(..)
-            | Cmd::LoadReview(_)
-            | Cmd::SaveReview(..)) => {
-                // Effects::run and the loop handle these; nothing to send.
-                tracing::error!(?cmd, "not a GitHub command");
-                return;
             }
         };
         let _ = tx.send(msg);
@@ -498,70 +508,74 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Err("ghtui hit a bug".into())
     }
     let msg = match cmd {
-        Cmd::FetchViewer => Msg::Viewer(api()),
-        Cmd::FetchInbox => Msg::Inbox(api()),
-        Cmd::FetchPr(pr) => Msg::Pr(pr.clone(), Box::new(api())),
-        Cmd::Fetch { key, .. } => Msg::Fetched {
+        Cmd::Api(Api::FetchViewer) => Msg::Viewer(api()),
+        Cmd::Api(Api::FetchInbox) => Msg::Inbox(api()),
+        Cmd::Api(Api::FetchPr(pr)) => Msg::Pr(pr.clone(), Box::new(api())),
+        Cmd::Api(Api::Fetch { key, .. }) => Msg::Fetched {
             key: key.clone(),
             result: api(),
             cached_at: None,
         },
-        Cmd::FetchMore { key, .. } => Msg::FetchedMore(key.clone(), api()),
-        Cmd::AddComment { refresh, .. } => Msg::Commented(refresh.clone(), api()),
-        Cmd::SetStarred { repo, starred, .. } => Msg::Starred {
+        Cmd::Api(Api::FetchMore { key, .. }) => Msg::FetchedMore(key.clone(), api()),
+        Cmd::Api(Api::AddComment { refresh, .. }) => Msg::Commented(refresh.clone(), api()),
+        Cmd::Api(Api::SetStarred { repo, starred, .. }) => Msg::Starred {
             repo: repo.clone(),
             starred: *starred,
             result: api(),
         },
-        Cmd::Suggest(q) => Msg::Suggested(q.clone(), api()),
-        Cmd::FetchViewed(pr) => Msg::ViewedLoaded(pr.clone(), Box::new(api())),
-        Cmd::SetViewed {
+        Cmd::Api(Api::Suggest(q)) => Msg::Suggested(q.clone(), api()),
+        Cmd::Api(Api::FetchViewed(pr)) => Msg::ViewedLoaded(pr.clone(), Box::new(api())),
+        Cmd::Api(Api::SetViewed {
             pr, file, previous, ..
-        } => Msg::ViewedSaved {
+        }) => Msg::ViewedSaved {
             pr: pr.clone(),
             file: *file,
             previous: *previous,
             result: api(),
         },
-        Cmd::FetchThreads(pr) => Msg::ThreadsLoaded(pr.clone(), api()),
-        Cmd::FetchPatches(pr) => Msg::PatchesLoaded(pr.clone(), api()),
-        Cmd::MapOutdated { pr, items, .. } => Msg::OutdatedMapped(
+        Cmd::Api(Api::FetchThreads(pr)) => Msg::ThreadsLoaded(pr.clone(), api()),
+        Cmd::Api(Api::FetchPatches(pr)) => Msg::PatchesLoaded(pr.clone(), api()),
+        Cmd::Git(Git::MapOutdated { pr, items, .. }) => Msg::OutdatedMapped(
             pr.clone(),
             items.iter().map(|(t, ..)| (t.clone(), None)).collect(),
         ),
-        Cmd::Reply { pr, .. } => Msg::Replied(pr.clone(), api()),
-        Cmd::SetResolved {
+        Cmd::Api(Api::Reply { pr, .. }) => Msg::Replied(pr.clone(), api()),
+        Cmd::Api(Api::SetResolved {
             pr,
             thread_id,
             resolved,
-        } => Msg::ResolvedSet {
+        }) => Msg::ResolvedSet {
             pr: pr.clone(),
             thread_id: thread_id.clone(),
             resolved: *resolved,
             result: api(),
         },
         Cmd::LoadReview(pr) => Msg::ReviewLoaded(pr.clone(), git()),
-        Cmd::SubmitReview { pr, .. } => Msg::ReviewSubmitted(
+        Cmd::Api(Api::SubmitReview { pr, .. }) => Msg::ReviewSubmitted(
             pr.clone(),
             SubmitOutcome {
                 error: Some("Couldn't submit: ghtui hit a bug".into()),
                 ..SubmitOutcome::default()
             },
         ),
-        Cmd::FetchLastReview { pr, .. } => Msg::LastReview(pr.clone(), api()),
-        Cmd::LoadDiff { pr, job, .. } => {
+        Cmd::Api(Api::FetchLastReview { pr, .. }) => Msg::LastReview(pr.clone(), api()),
+        Cmd::Git(Git::LoadDiff { pr, job, .. }) => {
             Msg::Job(pr.clone(), *job, JobMsg::Failed("ghtui hit a bug".into()))
         }
-        Cmd::DetectMoves(pr, job, _) => Msg::Job(pr.clone(), *job, JobMsg::Moves(Vec::new())),
-        Cmd::SinceReview { pr, old_head } => Msg::SinceReady(pr.clone(), old_head.clone(), git()),
-        Cmd::ListCommits(pr) => Msg::CommitsListed(pr.clone(), git()),
+        Cmd::Git(Git::DetectMoves(pr, job, _)) => {
+            Msg::Job(pr.clone(), *job, JobMsg::Moves(Vec::new()))
+        }
+        Cmd::Git(Git::SinceReview { pr, old_head }) => {
+            Msg::SinceReady(pr.clone(), old_head.clone(), git())
+        }
+        Cmd::Git(Git::ListCommits(pr)) => Msg::CommitsListed(pr.clone(), git()),
         // Nothing waits on these.
         Cmd::OpenUrl(_)
         | Cmd::Copy(_)
         | Cmd::Timer(..)
         | Cmd::SuggestLater(_)
-        | Cmd::SaveVisits(_)
-        | Cmd::Prioritize(..)
+        | Cmd::Api(Api::SaveVisits(_))
+        | Cmd::Git(Git::Prioritize(..))
         | Cmd::SaveReview(..)
         | Cmd::Edit { .. } => return Vec::new(),
     };
@@ -921,7 +935,7 @@ mod tests {
     async fn panicking_task_sends_its_replies() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let pr = PrRef::parse("o/r#1").unwrap();
-        let cmd = Cmd::FetchThreads(pr.clone());
+        let cmd = Cmd::Api(Api::FetchThreads(pr.clone()));
         let handle = spawn_guarded(&tx, panic_replies(&cmd), async { panic!("boom") });
         handle.await.unwrap();
         assert!(matches!(

@@ -15,7 +15,7 @@ use ratatui::layout::Rect;
 
 use crate::diff_job::{JobId, next_job};
 use crate::keymap::Action;
-use crate::state::Cmd;
+use crate::state::{Api, Cmd, Git};
 
 /// Split view turns on automatically from this diff-pane width.
 pub const SPLIT_MIN_WIDTH: u16 = 160;
@@ -571,14 +571,14 @@ fn toggle_viewed(
     } else {
         Viewed::Viewed
     };
-    let cmd = Cmd::SetViewed {
+    let cmd = Cmd::Api(Api::SetViewed {
         pr: screen.pr.clone(),
         pull_request_id: viewed.pull_request_id.clone(),
         path: file.meta.path().to_owned(),
         file: index,
         viewed: now == Viewed::Viewed,
         previous,
-    };
+    });
     // Optimistic: show it now, roll back if GitHub refuses.
     state.doc.set_viewed(index, now);
     screen.cursor = Pos {
@@ -676,5 +676,5 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
         return Vec::new();
     }
     state.requested.extend(wanted.iter().copied());
-    vec![Cmd::Prioritize(screen.pr.clone(), wanted)]
+    vec![Cmd::Git(Git::Prioritize(screen.pr.clone(), wanted))]
 }

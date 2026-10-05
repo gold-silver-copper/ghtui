@@ -23,7 +23,7 @@ use crate::keymap::{Action, Resolution};
 use crate::picker::{fuzzy_score, move_in_list};
 use crate::review::ComposeTarget;
 use crate::route::{self, Route, Target};
-use crate::state::{Cmd, Overlay, Remote, Screen, State, apply};
+use crate::state::{Api, Cmd, Overlay, Remote, Screen, State, apply};
 
 /// Rows `j`/`k` scroll when there's no row to move to nearby.
 const STEP: usize = 3;
@@ -75,7 +75,7 @@ impl State {
             self.visits.sort_by_key(|v| std::cmp::Reverse(v.score(now)));
             self.visits.truncate(VISITS);
         }
-        vec![Cmd::SaveVisits(self.visits.clone())]
+        vec![Cmd::Api(Api::SaveVisits(self.visits.clone()))]
     }
 
     /// Navigates to a page, keeping the current one in history.
@@ -184,7 +184,7 @@ impl State {
             return Vec::new();
         };
         remote.loading = true;
-        vec![Cmd::FetchMore { key, after }]
+        vec![Cmd::Api(Api::FetchMore { key, after })]
     }
 }
 
@@ -917,7 +917,7 @@ pub fn star(state: &mut State) -> Vec<Cmd> {
     };
     let (id, starred) = (overview.id.clone(), !overview.starred);
     set_starred(state, &repo, starred);
-    vec![Cmd::SetStarred { repo, id, starred }]
+    vec![Cmd::Api(Api::SetStarred { repo, id, starred })]
 }
 
 /// Shows a repository as starred or not (optimistically, before GitHub

@@ -102,8 +102,31 @@ pub enum Msg {
     CommitsListed(PrRef, Result<Vec<(String, String)>, String>),
 }
 
+/// What `update` asks the runtime to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cmd {
+    /// A GitHub request.
+    Api(Api),
+    /// Work on a PR's diff (git and the diff engine).
+    Git(Git),
+    OpenUrl(String),
+    /// Put text on the clipboard (OSC 52).
+    Copy(String),
+    /// Send [`Msg::Timer`] after this many milliseconds.
+    Timer(Timer, u64),
+    /// Send [`Msg::SuggestDue`] after a pause.
+    SuggestLater(String),
+    LoadReview(PrRef),
+    SaveReview(PrRef, ReviewState),
+    /// Suspend the TUI and edit `text` in `$EDITOR`.
+    Edit {
+        purpose: EditPurpose,
+        text: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Api {
     FetchViewer,
     FetchInbox,
     FetchPr(PrRef),
@@ -128,26 +151,9 @@ pub enum Cmd {
         id: String,
         starred: bool,
     },
-    OpenUrl(String),
-    /// Put text on the clipboard (OSC 52).
-    Copy(String),
-    /// Send [`Msg::Timer`] after this many milliseconds.
-    Timer(Timer, u64),
-    /// Send [`Msg::SuggestDue`] after a pause.
-    SuggestLater(String),
     /// Search repositories for the search box's suggestions.
     Suggest(String),
     SaveVisits(Vec<Visit>),
-    /// Start (or restart) the diff job for a PR.
-    /// With `range`, diff `(from, to)` instead of the whole PR.
-    LoadDiff {
-        pr: PrRef,
-        job: JobId,
-        base_ref: String,
-        range: Option<(String, String)>,
-    },
-    /// Diff these files next.
-    Prioritize(PrRef, Vec<usize>),
     FetchViewed(PrRef),
     SetViewed {
         pr: PrRef,
@@ -157,16 +163,8 @@ pub enum Cmd {
         viewed: bool,
         previous: Viewed,
     },
-    LoadReview(PrRef),
-    SaveReview(PrRef, ReviewState),
     FetchThreads(PrRef),
     FetchPatches(PrRef),
-    MapOutdated {
-        pr: PrRef,
-        head: String,
-        /// `(thread, path, original commit, original line)`.
-        items: Vec<(String, String, String, u32)>,
-    },
     Reply {
         pr: PrRef,
         thread_id: String,
@@ -184,16 +182,31 @@ pub enum Cmd {
         event: ReviewEvent,
         body: String,
     },
-    /// Suspend the TUI and edit `text` in `$EDITOR`.
-    Edit {
-        purpose: EditPurpose,
-        text: String,
-    },
-    /// Look for moved code; answered as the job's [`JobMsg::Moves`].
-    DetectMoves(PrRef, JobId, Vec<(usize, Arc<FileDiff>)>),
     FetchLastReview {
         pr: PrRef,
         login: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Git {
+    /// Start (or restart) the diff job for a PR.
+    /// With `range`, diff `(from, to)` instead of the whole PR.
+    LoadDiff {
+        pr: PrRef,
+        job: JobId,
+        base_ref: String,
+        range: Option<(String, String)>,
+    },
+    /// Diff these files next.
+    Prioritize(PrRef, Vec<usize>),
+    /// Look for moved code; answered as the job's [`JobMsg::Moves`].
+    DetectMoves(PrRef, JobId, Vec<(usize, Arc<FileDiff>)>),
+    MapOutdated {
+        pr: PrRef,
+        head: String,
+        /// `(thread, path, original commit, original line)`.
+        items: Vec<(String, String, String, u32)>,
     },
     /// Block hashes of the diff at `old_head`, for "since my last review".
     SinceReview {
@@ -471,17 +484,17 @@ impl State {
 
     pub fn ensure(&mut self, need: Need, force: bool) -> Vec<Cmd> {
         match need {
-            Need::Inbox if self.inbox.begin(force) => vec![Cmd::FetchInbox],
+            Need::Inbox if self.inbox.begin(force) => vec![Cmd::Api(Api::FetchInbox)],
             Need::Pr(pr) => self.ensure_pr(&pr, force),
             Need::Data(key) => {
                 let remote = self.data.entry(key.clone()).or_default();
                 if !remote.begin(force) {
                     return Vec::new();
                 }
-                vec![Cmd::Fetch {
+                vec![Cmd::Api(Api::Fetch {
                     cached: remote.data.is_none(),
                     key,
-                }]
+                })]
             }
             Need::Inbox => Vec::new(),
         }
@@ -489,7 +502,7 @@ impl State {
 
     pub fn ensure_pr(&mut self, pr: &PrRef, force: bool) -> Vec<Cmd> {
         if self.prs.entry(pr.clone()).or_default().begin(force) {
-            vec![Cmd::FetchPr(pr.clone())]
+            vec![Cmd::Api(Api::FetchPr(pr.clone()))]
         } else {
             Vec::new()
         }
@@ -500,7 +513,7 @@ impl State {
     pub fn load_visible(&mut self, force: bool) -> Vec<Cmd> {
         let mut cmds = Vec::new();
         if self.viewer.is_none() && force {
-            cmds.push(Cmd::FetchViewer);
+            cmds.push(Cmd::Api(Api::FetchViewer));
         }
         match self.screen().clone() {
             Screen::Page(p) => cmds.extend(self.ensure_route(&p.route, force)),
@@ -541,16 +554,16 @@ impl State {
         let job = diff.job;
         self.diffs.insert(pr.clone(), diff);
         vec![
-            Cmd::LoadDiff {
+            Cmd::Git(Git::LoadDiff {
                 pr: pr.clone(),
                 job,
                 base_ref,
                 range: None,
-            },
-            Cmd::FetchViewed(pr.clone()),
+            }),
+            Cmd::Api(Api::FetchViewed(pr.clone())),
             Cmd::LoadReview(pr.clone()),
-            Cmd::FetchThreads(pr.clone()),
-            Cmd::FetchPatches(pr.clone()),
+            Cmd::Api(Api::FetchThreads(pr.clone())),
+            Cmd::Api(Api::FetchPatches(pr.clone())),
         ]
     }
 
@@ -754,7 +767,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Replied(pr, Ok(())) => {
             state.overlay = None;
             state.notice = Some(Notice::Info("Reply posted".into()));
-            vec![Cmd::FetchThreads(pr)]
+            vec![Cmd::Api(Api::FetchThreads(pr))]
         }
         // The text stays in the composer, with GitHub's reason.
         Msg::Commented(_, Err(err)) | Msg::Replied(_, Err(err)) => {
@@ -799,7 +812,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::SuggestDue(q) => match &state.overlay {
             Some(Overlay::Search(sb)) if sb.input.lines().join("").trim() == q => {
-                vec![Cmd::Suggest(q)]
+                vec![Cmd::Api(Api::Suggest(q))]
             }
             _ => Vec::new(),
         },
@@ -998,7 +1011,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
 /// Applies the result of submitting a review: accepted drafts leave the
 /// local queue, rejected ones keep their text and GitHub's reason.
 fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcome) -> Vec<Cmd> {
-    let mut cmds = vec![Cmd::FetchThreads(pr.clone())];
+    let mut cmds = vec![Cmd::Api(Api::FetchThreads(pr.clone()))];
     if let Some(diff) = state.diffs.get_mut(pr) {
         diff.review
             .pending
@@ -1270,11 +1283,11 @@ impl State {
             return Vec::new();
         }
         diff.mapping_requested = true;
-        vec![Cmd::MapOutdated {
+        vec![Cmd::Git(Git::MapOutdated {
             pr: pr.clone(),
             head,
             items,
-        }]
+        })]
     }
 
     /// Opens the composer on `target`, starting with `text`.
@@ -1365,14 +1378,14 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
                     return Some(start_since_review(state));
                 };
                 state.notice = Some(Notice::Info("Looking up your last review…".into()));
-                return Some(vec![Cmd::FetchLastReview { pr, login }]);
+                return Some(vec![Cmd::Api(Api::FetchLastReview { pr, login })]);
             }
             Some(start_since_review(state))
         }
         Action::PickCommits => {
             if diff.commits.is_empty() {
                 state.notice = Some(Notice::Info("Listing commits…".into()));
-                return Some(vec![Cmd::ListCommits(pr)]);
+                return Some(vec![Cmd::Git(Git::ListCommits(pr))]);
             }
             Some(state.open_picker(picker::Kind::Commits { mark: None }))
         }
@@ -1482,11 +1495,11 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
                 t.resolved = resolved;
             }
             diff.refresh_annotations();
-            Some(vec![Cmd::SetResolved {
+            Some(vec![Cmd::Api(Api::SetResolved {
                 pr,
                 thread_id,
                 resolved,
-            }])
+            })])
         }
         Action::DeleteDraft => {
             let Some(AnnotationKey::Draft(id)) = annotation.map(|a| a.key) else {
@@ -1571,10 +1584,10 @@ fn start_since_review(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     }
     state.notice = Some(Notice::Info("Comparing with your last review…".into()));
-    vec![Cmd::SinceReview {
+    vec![Cmd::Git(Git::SinceReview {
         pr,
         old_head: old.unwrap_or_default(),
-    }]
+    })]
 }
 
 /// Shows what `choice` picks: the whole PR, the changes since your last
@@ -1635,12 +1648,12 @@ pub fn apply_commit_choice(
     diff.since_requested = since;
     let job = diff.job;
     *screen = DiffScreen::new(pr.clone(), width);
-    vec![Cmd::LoadDiff {
+    vec![Cmd::Git(Git::LoadDiff {
         pr,
         job,
         base_ref,
         range: cmd_range,
-    }]
+    })]
 }
 
 /// A message from the PR's current diff job.
@@ -1675,7 +1688,7 @@ fn on_job(state: &mut State, pr: &PrRef, msg: JobMsg) -> Vec<Cmd> {
             if let Some(diff) = state.diffs.get_mut(pr) {
                 diff.set_file(index, file);
                 if let Some(inputs) = diff.take_move_inputs() {
-                    cmds.push(Cmd::DetectMoves(pr.clone(), diff.job, inputs));
+                    cmds.push(Cmd::Git(Git::DetectMoves(pr.clone(), diff.job, inputs)));
                 }
             }
             cmds
@@ -1760,11 +1773,11 @@ fn save_compose(state: &mut State) -> Vec<Cmd> {
         if let Some(Overlay::Compose(compose)) = &mut state.overlay {
             compose.sending = true;
         }
-        return vec![Cmd::AddComment {
+        return vec![Cmd::Api(Api::AddComment {
             subject_id,
             body,
             refresh,
-        }];
+        })];
     }
     let Some((screen, diff)) = state.diff_parts() else {
         return Vec::new();
@@ -1775,11 +1788,11 @@ fn save_compose(state: &mut State) -> Vec<Cmd> {
             if let Some(Overlay::Compose(compose)) = &mut state.overlay {
                 compose.sending = true;
             }
-            vec![Cmd::Reply {
+            vec![Cmd::Api(Api::Reply {
                 pr,
                 thread_id,
                 body,
-            }]
+            })]
         }
         ComposeTarget::Draft { id } => {
             if let Some(d) = diff.review.pending.iter_mut().find(|d| d.id == id) {
@@ -1850,13 +1863,13 @@ fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                 return Vec::new();
             };
             let head = diff.head().unwrap_or_default();
-            vec![Cmd::SubmitReview {
+            vec![Cmd::Api(Api::SubmitReview {
                 pr: screen.pr.clone(),
                 head,
                 drafts: diff.review.pending.clone(),
                 event,
                 body,
-            }]
+            })]
         }
         _ => {
             dialog.error = None;
@@ -1954,7 +1967,7 @@ pub(crate) mod tests {
     /// Commands other than saving visits.
     fn fetches(cmds: Vec<Cmd>) -> Vec<Cmd> {
         cmds.into_iter()
-            .filter(|c| !matches!(c, Cmd::SaveVisits(_)))
+            .filter(|c| !matches!(c, Cmd::Api(Api::SaveVisits(_))))
             .collect()
     }
 
@@ -2016,11 +2029,11 @@ pub(crate) mod tests {
         assert_eq!(
             cmds,
             vec![
-                Cmd::FetchPr(pr.clone()),
-                Cmd::Fetch {
+                Cmd::Api(Api::FetchPr(pr.clone())),
+                Cmd::Api(Api::Fetch {
                     key: DataKey::PrActivity(pr.clone()),
                     cached: true
-                }
+                })
             ]
         );
         assert_eq!(
@@ -2043,7 +2056,10 @@ pub(crate) mod tests {
         );
         assert_eq!(
             press(&mut state, "r"),
-            vec![Cmd::FetchViewer, Cmd::FetchPr(pr.clone())],
+            vec![
+                Cmd::Api(Api::FetchViewer),
+                Cmd::Api(Api::FetchPr(pr.clone()))
+            ],
             "the activity is still loading"
         );
 
@@ -2174,14 +2190,14 @@ pub(crate) mod tests {
         assert_eq!(
             state.load_visible(false),
             vec![
-                Cmd::FetchInbox,
-                Cmd::Fetch {
+                Cmd::Api(Api::FetchInbox),
+                Cmd::Api(Api::Fetch {
                     key: DataKey::ViewerRepos,
                     cached: true
-                }
+                })
             ]
         );
-        assert_eq!(state.load_visible(true), vec![Cmd::FetchViewer]);
+        assert_eq!(state.load_visible(true), vec![Cmd::Api(Api::FetchViewer)]);
     }
 
     #[test]
@@ -2247,14 +2263,14 @@ pub(crate) mod tests {
         assert_eq!(
             cmds,
             vec![
-                Cmd::Fetch {
+                Cmd::Api(Api::Fetch {
                     key: DataKey::Repo(RepoId::new("a", "b")),
                     cached: true
-                },
-                Cmd::Fetch {
+                }),
+                Cmd::Api(Api::Fetch {
                     key: key.clone(),
                     cached: true
-                }
+                })
             ]
         );
         assert!(state.overlay.is_none());
@@ -2276,7 +2292,7 @@ pub(crate) mod tests {
                 tab: PrTab::Conversation
             }
         );
-        assert_eq!(cmds[0], Cmd::FetchPr(pr));
+        assert_eq!(cmds[0], Cmd::Api(Api::FetchPr(pr)));
         assert_eq!(state.screens.len(), 2, "replaced, not pushed");
 
         // A bare number resolves against the repo on screen.
@@ -2383,10 +2399,10 @@ pub(crate) mod tests {
         let (kind, query) = issues.search().unwrap();
         assert_eq!(
             cmds,
-            vec![Cmd::Fetch {
+            vec![Cmd::Api(Api::Fetch {
                 key: DataKey::Search(kind, query),
                 cached: true
-            }],
+            })],
             "the header isn't fetched again"
         );
         assert_eq!(state.chrome().active, Some(1));
@@ -2434,11 +2450,11 @@ pub(crate) mod tests {
         let cmds = press(&mut state, "s");
         assert_eq!(
             cmds,
-            vec![Cmd::SetStarred {
+            vec![Cmd::Api(Api::SetStarred {
                 repo: repo(),
                 id: "R_ghtui".into(),
                 starred: true
-            }]
+            })]
         );
         assert!(state.overview(&repo()).unwrap().starred);
         assert_eq!(state.overview(&repo()).unwrap().summary.stars, 1235);
@@ -2487,14 +2503,14 @@ pub(crate) mod tests {
         assert_eq!(
             cmds,
             vec![
-                Cmd::Fetch {
+                Cmd::Api(Api::Fetch {
                     key: tree.clone(),
                     cached: true
-                },
-                Cmd::Fetch {
+                }),
+                Cmd::Api(Api::Fetch {
                     key: DataKey::LastCommits(repo(), "main".into(), "crates".into()),
                     cached: true
-                }
+                })
             ],
             "the listing, and each entry's latest commit"
         );
@@ -2520,10 +2536,10 @@ pub(crate) mod tests {
         let files = DataKey::Files(repo(), "main".into());
         assert_eq!(
             cmds,
-            vec![Cmd::Fetch {
+            vec![Cmd::Api(Api::Fetch {
                 key: files.clone(),
                 cached: true
-            }]
+            })]
         );
         fetched(
             &mut state,
@@ -2559,10 +2575,10 @@ pub(crate) mod tests {
         let cmds = press(&mut state, "b");
         assert_eq!(
             cmds,
-            vec![Cmd::Fetch {
+            vec![Cmd::Api(Api::Fetch {
                 key: DataKey::Refs(repo()),
                 cached: true
-            }]
+            })]
         );
         fetched(
             &mut state,
@@ -2611,15 +2627,15 @@ pub(crate) mod tests {
         );
         assert_eq!(
             cmds,
-            vec![Cmd::AddComment {
+            vec![Cmd::Api(Api::AddComment {
                 subject_id: "I_14".into(),
                 body: "Thanks!".into(),
                 refresh: key.clone()
-            }]
+            })]
         );
         let cmds = update(&mut state, Msg::Commented(key.clone(), Ok(())));
         assert!(state.overlay.is_none());
-        assert_eq!(cmds, vec![Cmd::Fetch { key, cached: false }]);
+        assert_eq!(cmds, vec![Cmd::Api(Api::Fetch { key, cached: false })]);
     }
 
     #[test]
@@ -2646,7 +2662,7 @@ pub(crate) mod tests {
         );
         // Live suggestions arrive after a pause, below what's there.
         let cmds = update(&mut state, Msg::SuggestDue("bug".into()));
-        assert_eq!(cmds, vec![Cmd::Suggest("bug".into())]);
+        assert_eq!(cmds, vec![Cmd::Api(Api::Suggest("bug".into()))]);
         update(
             &mut state,
             Msg::Suggested(
@@ -2682,10 +2698,10 @@ pub(crate) mod tests {
         let cmds = press(&mut state, "<Enter>");
         assert_eq!(
             cmds,
-            vec![Cmd::FetchMore {
+            vec![Cmd::Api(Api::FetchMore {
                 key: key.clone(),
                 after: "c1".into()
-            }]
+            })]
         );
         update(
             &mut state,
@@ -2747,7 +2763,8 @@ pub(crate) mod tests {
             Msg::Pr(pr.clone(), Box::new(Ok(crate::snapshot_tests::pr_detail()))),
         );
         assert!(
-            cmds.iter().any(|c| matches!(c, Cmd::LoadDiff { .. })),
+            cmds.iter()
+                .any(|c| matches!(c, Cmd::Git(Git::LoadDiff { .. }))),
             "{cmds:?}"
         );
         press(&mut state, "2");
@@ -2996,7 +3013,7 @@ pub(crate) mod tests {
             let cmds = press(&mut s, "v");
             assert!(cmds.iter().any(|c| matches!(
                 c,
-                Cmd::SetViewed { file: 1, viewed: true, previous: Viewed::Unviewed, pull_request_id, .. }
+                Cmd::Api(Api::SetViewed { file: 1, viewed: true, previous: Viewed::Unviewed, pull_request_id, .. })
                     if pull_request_id == "PR_1"
             )));
             assert_eq!(s.diffs[&pr].doc.files()[1].viewed, Viewed::Viewed);
@@ -3167,11 +3184,15 @@ pub(crate) mod tests {
                     ),
                 );
                 assert!(cmds.iter().any(
-                    |c| matches!(c, Cmd::DetectMoves(p, j, files) if *p == pr && *j == job && files.len() == 8)
+                    |c| matches!(c, Cmd::Git(Git::DetectMoves(p, j, files)) if *p == pr && *j == job && files.len() == 8)
                 ));
                 // Only once.
                 let again = update(&mut s, Msg::Job(pr, job, JobMsg::Moves(Vec::new())));
-                assert!(!again.iter().any(|c| matches!(c, Cmd::DetectMoves(..))));
+                assert!(
+                    !again
+                        .iter()
+                        .any(|c| matches!(c, Cmd::Git(Git::DetectMoves(..))))
+                );
                 assert!(act(&mut s, Action::JumpMove).is_empty());
                 assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("moved")));
             }
@@ -3207,10 +3228,12 @@ pub(crate) mod tests {
                 let (mut s, pr) = diff_state(120);
                 s.viewer = Some("me".into());
                 let cmds = act(&mut s, Action::ToggleSinceReview);
-                assert!(matches!(&cmds[..], [Cmd::FetchLastReview { login, .. }] if login == "me"));
+                assert!(
+                    matches!(&cmds[..], [Cmd::Api(Api::FetchLastReview { login, .. })] if login == "me")
+                );
                 let cmds = update(&mut s, Msg::LastReview(pr.clone(), Ok(Some("old".into()))));
                 assert!(
-                    matches!(&cmds[..], [Cmd::SinceReview { old_head, .. }] if old_head == "old")
+                    matches!(&cmds[..], [Cmd::Git(Git::SinceReview { old_head, .. })] if old_head == "old")
                 );
 
                 // Nothing in the old diff matched: everything is new.
@@ -3224,7 +3247,7 @@ pub(crate) mod tests {
                 assert!(
                     act(&mut s, Action::ToggleSinceReview)
                         .iter()
-                        .all(|c| matches!(c, Cmd::Prioritize(..)))
+                        .all(|c| matches!(c, Cmd::Git(Git::Prioritize(..))))
                 );
                 assert!(!s.diffs[&pr].doc.since_active());
             }
@@ -3257,7 +3280,7 @@ pub(crate) mod tests {
                 );
                 assert!(matches!(
                     &act(&mut s, Action::PickCommits)[..],
-                    [Cmd::ListCommits(_)]
+                    [Cmd::Git(Git::ListCommits(_))]
                 ));
                 update(
                     &mut s,
@@ -3274,10 +3297,10 @@ pub(crate) mod tests {
                 press(&mut s, "jj<Space>j");
                 let cmds = press(&mut s, "<Enter>");
                 let [
-                    Cmd::LoadDiff {
+                    Cmd::Git(Git::LoadDiff {
                         range: Some((from, to)),
                         ..
-                    },
+                    }),
                 ] = &cmds[..]
                 else {
                     panic!("{cmds:?}")
@@ -3292,7 +3315,10 @@ pub(crate) mod tests {
                 // Back to everything.
                 act(&mut s, Action::PickCommits);
                 let cmds = press(&mut s, "<Enter>");
-                assert!(matches!(&cmds[..], [Cmd::LoadDiff { range: None, .. }]));
+                assert!(matches!(
+                    &cmds[..],
+                    [Cmd::Git(Git::LoadDiff { range: None, .. })]
+                ));
             }
         }
 
@@ -3366,7 +3392,7 @@ pub(crate) mod tests {
                 let cmds = act(&mut s, Action::ResolveThread);
                 assert!(matches!(
                     &cmds[..],
-                    [Cmd::SetResolved { resolved: true, .. }, ..]
+                    [Cmd::Api(Api::SetResolved { resolved: true, .. }), ..]
                 ));
                 assert!(s.diffs[&pr].threads[1].resolved);
                 update(
@@ -3493,7 +3519,7 @@ pub(crate) mod tests {
                 assert!(matches!(s.overlay, Some(Overlay::Submit(_))));
                 press(&mut s, "<Tab>");
                 let cmds = press(&mut s, "<C-s>");
-                let Some(Cmd::SubmitReview { drafts, event, .. }) = cmds.first() else {
+                let Some(Cmd::Api(Api::SubmitReview { drafts, event, .. })) = cmds.first() else {
                     panic!("{cmds:?}")
                 };
                 assert_eq!((drafts.len(), *event), (1, ReviewEvent::Approve));
@@ -3559,7 +3585,9 @@ pub(crate) mod tests {
                 press(&mut s, "c");
                 press(&mut s, "Fixed");
                 let cmds = press(&mut s, "<C-s>");
-                assert!(matches!(&cmds[..], [Cmd::Reply { body, .. }] if body == "Fixed"));
+                assert!(
+                    matches!(&cmds[..], [Cmd::Api(Api::Reply { body, .. })] if body == "Fixed")
+                );
                 update(
                     &mut s,
                     Msg::Replied(pr.clone(), Err(ApiError::Network("down".into()))),
@@ -3569,7 +3597,7 @@ pub(crate) mod tests {
                 );
                 let cmds = update(&mut s, Msg::Replied(pr.clone(), Ok(())));
                 assert!(s.overlay.is_none());
-                assert_eq!(cmds, vec![Cmd::FetchThreads(pr)]);
+                assert_eq!(cmds, vec![Cmd::Api(Api::FetchThreads(pr))]);
             }
 
             #[test]
@@ -3614,7 +3642,7 @@ pub(crate) mod tests {
                     &mut s,
                     Msg::ThreadsLoaded(pr.clone(), Ok(vec![thread("old", None, false, true)])),
                 );
-                assert!(cmds.iter().any(|c| matches!(c, Cmd::MapOutdated { items, head, .. } if items.len() == 1 && head == "h")));
+                assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated { items, head, .. }) if items.len() == 1 && head == "h")));
                 let ann = &s.diffs[&pr].doc.annotations()[0];
                 assert!(
                     ann.outdated && ann.on_line().is_none(),
