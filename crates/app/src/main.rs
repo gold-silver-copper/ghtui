@@ -73,10 +73,16 @@ fn main() -> std::process::ExitCode {
         return askpass();
     }
     let started = Instant::now();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .expect("tokio runtime");
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            eprintln!("ghtui: cannot start the async runtime: {err}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
     match runtime.block_on(run(started)) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(err) => {
@@ -156,8 +162,8 @@ async fn run(started: Instant) -> Result<()> {
     state.data_gen += 1;
     state.sync_page();
 
-    install_panic_logging();
-    let mut terminal = ratatui::init();
+    install_panic_hook();
+    let mut terminal = init_terminal().context("needs an interactive terminal")?;
     set_mouse(true);
     let result = runtime::run(&mut terminal, state, gh, git, cmds, started).await;
     set_mouse(false);
@@ -295,13 +301,35 @@ pub fn set_mouse(on: bool) {
     }
 }
 
-/// Logs panics. `ratatui::init` wraps this hook with one that restores the
-/// terminal first, so the message lands on a usable screen.
-fn install_panic_logging() {
+/// Raw mode and the alternate screen, like `ratatui::init` but without its
+/// panic hook (see [`install_panic_hook`]).
+fn init_terminal() -> std::io::Result<ratatui::DefaultTerminal> {
+    use crossterm::ExecutableCommand;
+    crossterm::terminal::enable_raw_mode()?;
+    let result = std::io::stdout()
+        .execute(crossterm::terminal::EnterAlternateScreen)
+        .and_then(|_| {
+            ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))
+        });
+    if result.is_err() {
+        ratatui::restore();
+    }
+    result
+}
+
+/// Logs every panic. Only a panic on the main thread (the UI loop) ends
+/// ghtui, so only that one restores the terminal and prints. Background
+/// tasks catch their own panics (`runtime::spawn_guarded`) and keep the
+/// session running; printing those would scribble over the screen.
+fn install_panic_hook() {
+    let main = std::thread::current().id();
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        set_mouse(false);
         tracing::error!("panic: {info}");
-        previous(info);
+        if std::thread::current().id() == main {
+            set_mouse(false);
+            ratatui::restore();
+            previous(info);
+        }
     }));
 }

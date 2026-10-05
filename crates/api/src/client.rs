@@ -43,6 +43,9 @@ pub enum ApiError {
     Decode(String),
     #[error("could not start HTTP client: {0}")]
     Setup(String),
+    /// A bug in ghtui, not a problem with GitHub.
+    #[error("internal error: {0}")]
+    Internal(String),
 }
 
 impl From<serde_json::Error> for ApiError {

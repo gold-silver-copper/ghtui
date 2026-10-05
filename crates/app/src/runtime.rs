@@ -98,6 +98,7 @@ pub async fn run(
 
 impl Effects {
     fn run(&mut self, cmd: Cmd) {
+        let replies = panic_replies(&cmd);
         match cmd {
             Cmd::LoadDiff {
                 pr,
@@ -108,14 +109,15 @@ impl Effects {
                     handle.abort();
                 }
                 let control = Arc::new(JobControl::default());
-                let handle = tokio::spawn(diff_job::run(
+                let job = diff_job::run(
                     self.git.clone(),
                     pr.clone(),
                     base_ref,
                     range,
                     self.tx.clone(),
                     control.clone(),
-                ));
+                );
+                let handle = spawn_guarded(&self.tx, replies, job);
                 self.jobs.insert(pr, (control, handle));
             }
             Cmd::Prioritize(pr, files) => {
@@ -125,17 +127,20 @@ impl Effects {
             }
             Cmd::DetectMoves(pr, files) => {
                 let tx = self.tx.clone();
-                tokio::task::spawn_blocking(move || {
-                    let inputs: Vec<_> = files
-                        .iter()
-                        .filter_map(|(i, d)| match &d.content {
-                            ghtui_diff::Content::Text(t) => {
-                                Some((*i, &**t, t.lines(ghtui_diff::Whitespace::Exact)))
-                            }
-                            _ => None,
-                        })
-                        .collect();
-                    let moves = ghtui_diff::moves::detect_moves(&inputs);
+                spawn_guarded(&self.tx, replies, async move {
+                    let moves = blocking(move || {
+                        let inputs: Vec<_> = files
+                            .iter()
+                            .filter_map(|(i, d)| match &d.content {
+                                ghtui_diff::Content::Text(t) => {
+                                    Some((*i, &**t, t.lines(ghtui_diff::Whitespace::Exact)))
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        ghtui_diff::moves::detect_moves(&inputs)
+                    })
+                    .await;
                     let _ = tx.send(Msg::MovesDetected(pr, moves));
                 });
             }
@@ -149,7 +154,7 @@ impl Effects {
                     ));
                     return;
                 };
-                tokio::spawn(async move {
+                spawn_guarded(&self.tx, replies, async move {
                     let (repo, reader) = git;
                     let result =
                         diff_job::since_review_hashes(&repo, &reader, pr.number, &old_head)
@@ -164,7 +169,7 @@ impl Effects {
                     let _ = tx.send(Msg::CommitsListed(pr, Err("the diff isn't ready".into())));
                     return;
                 };
-                tokio::spawn(async move {
+                spawn_guarded(&self.tx, replies, async move {
                     let (repo, _) = git;
                     let result = async {
                         let head = repo
@@ -186,7 +191,7 @@ impl Effects {
                     return;
                 };
                 let tx = self.tx.clone();
-                tokio::spawn(async move {
+                spawn_guarded(&self.tx, replies, async move {
                     let (repo, reader) = git;
                     let mut mapped = Vec::new();
                     for (thread, path, commit, line) in items {
@@ -198,7 +203,7 @@ impl Effects {
                     let _ = tx.send(Msg::OutdatedMapped(pr, mapped));
                 });
             }
-            cmd => spawn(cmd, &self.gh, &self.tx),
+            cmd => spawn(cmd, replies, &self.gh, &self.tx),
         }
     }
 
@@ -213,10 +218,10 @@ impl Effects {
     }
 }
 
-fn spawn(cmd: Cmd, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
+fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
     let gh = gh.clone();
     let tx = tx.clone();
-    tokio::spawn(async move {
+    spawn_guarded(&tx.clone(), replies, async move {
         let msg = match cmd {
             Cmd::FetchViewer => Msg::Viewer(gh.viewer_login().await),
             Cmd::FetchInbox => Msg::Inbox(gh.inbox().await),
@@ -316,19 +321,13 @@ fn spawn(cmd: Cmd, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
             Cmd::LoadReview(pr) => {
                 let store = gh.store().clone();
                 let key = pr.to_string();
-                let review = tokio::task::spawn_blocking(move || store.review_get(&key))
-                    .await
-                    .unwrap_or_default();
+                let review = blocking(move || store.review_get(&key)).await;
                 Msg::ReviewLoaded(pr, review)
             }
             Cmd::SaveReview(pr, review) => {
                 let store = gh.store().clone();
                 let key = pr.to_string();
-                if let Err(err) =
-                    tokio::task::spawn_blocking(move || store.review_put(&key, &review)).await
-                {
-                    tracing::warn!(%pr, %err, "saving review marks failed");
-                }
+                blocking(move || store.review_put(&key, &review)).await;
                 return;
             }
             Cmd::FetchThreads(pr) => {
@@ -388,6 +387,129 @@ fn spawn(cmd: Cmd, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
         let _ = tx.send(msg);
         let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
     });
+}
+
+/// Spawns `task`. If it panics, the panic is logged and reported, and
+/// `replies` (what it would have answered, as errors) go out instead, so no
+/// screen waits forever.
+fn spawn_guarded(
+    tx: &mpsc::UnboundedSender<Msg>,
+    replies: Vec<Msg>,
+    task: impl Future<Output = ()> + Send + 'static,
+) -> tokio::task::JoinHandle<()> {
+    use futures::FutureExt;
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        if let Err(panic) = std::panic::AssertUnwindSafe(task).catch_unwind().await {
+            let what = panic_message(&*panic);
+            tracing::error!(what, "background task panicked");
+            let _ = tx.send(Msg::Notice(Notice::Error(format!(
+                "Internal error: {what} (this is a bug; details are in the log)"
+            ))));
+            for reply in replies {
+                let _ = tx.send(reply);
+            }
+        }
+    })
+}
+
+/// Runs `f` on the blocking pool. A panic in `f` resumes in the caller, so
+/// [`spawn_guarded`] reports it.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    match tokio::task::spawn_blocking(f).await {
+        Ok(value) => value,
+        Err(err) => match err.try_into_panic() {
+            Ok(panic) => std::panic::resume_unwind(panic),
+            // Only at runtime shutdown.
+            Err(err) => std::panic::resume_unwind(Box::new(err.to_string())),
+        },
+    }
+}
+
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+    panic
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".into())
+}
+
+/// The replies `cmd` owes the UI, as failures: sent if its task panics.
+fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
+    fn api<T>() -> Result<T, ApiError> {
+        Err(ApiError::Internal("ghtui hit a bug".into()))
+    }
+    fn git<T>() -> Result<T, String> {
+        Err("ghtui hit a bug".into())
+    }
+    let msg = match cmd {
+        Cmd::FetchViewer => Msg::Viewer(api()),
+        Cmd::FetchInbox => Msg::Inbox(api()),
+        Cmd::FetchPr(pr) => Msg::Pr(pr.clone(), Box::new(api())),
+        Cmd::Fetch { key, .. } => Msg::Fetched {
+            key: key.clone(),
+            result: api(),
+            fresh: true,
+        },
+        Cmd::FetchMore { key, .. } => Msg::FetchedMore(key.clone(), api()),
+        Cmd::AddComment { refresh, .. } => Msg::Commented(refresh.clone(), api()),
+        Cmd::SetStarred { repo, starred, .. } => Msg::Starred {
+            repo: repo.clone(),
+            starred: *starred,
+            result: api(),
+        },
+        Cmd::Suggest(q) => Msg::Suggested(q.clone(), api()),
+        Cmd::FetchViewed(pr) => Msg::ViewedLoaded(pr.clone(), Box::new(api())),
+        Cmd::SetViewed {
+            pr, file, previous, ..
+        } => Msg::ViewedSaved {
+            pr: pr.clone(),
+            file: *file,
+            previous: *previous,
+            result: api(),
+        },
+        Cmd::FetchThreads(pr) => Msg::ThreadsLoaded(pr.clone(), api()),
+        Cmd::FetchPatches(pr) => Msg::PatchesLoaded(pr.clone(), api()),
+        Cmd::MapOutdated { pr, items, .. } => Msg::OutdatedMapped(
+            pr.clone(),
+            items.iter().map(|(t, ..)| (t.clone(), None)).collect(),
+        ),
+        Cmd::Reply { pr, .. } => Msg::Replied(pr.clone(), api()),
+        Cmd::SetResolved {
+            pr,
+            thread_id,
+            resolved,
+        } => Msg::ResolvedSet {
+            pr: pr.clone(),
+            thread_id: thread_id.clone(),
+            resolved: *resolved,
+            result: api(),
+        },
+        Cmd::SubmitReview { pr, .. } => Msg::ReviewSubmitted(
+            pr.clone(),
+            SubmitOutcome {
+                error: Some("Couldn't submit: ghtui hit a bug".into()),
+                ..SubmitOutcome::default()
+            },
+        ),
+        Cmd::FetchLastReview { pr, .. } => Msg::LastReview(pr.clone(), api()),
+        Cmd::LoadDiff { pr, .. } => Msg::DiffFailed(pr.clone(), "ghtui hit a bug".into()),
+        Cmd::DetectMoves(pr, _) => Msg::MovesDetected(pr.clone(), Vec::new()),
+        Cmd::SinceReview { pr, old_head } => Msg::SinceReady(pr.clone(), old_head.clone(), git()),
+        Cmd::ListCommits(pr) => Msg::CommitsListed(pr.clone(), git()),
+        // Nothing waits on these. A failed review load leaves the review
+        // unloaded rather than empty, so drafts are never overwritten.
+        Cmd::OpenUrl(_)
+        | Cmd::Copy(_)
+        | Cmd::Timer(..)
+        | Cmd::SuggestLater(_)
+        | Cmd::SaveVisits(_)
+        | Cmd::Prioritize(..)
+        | Cmd::LoadReview(_)
+        | Cmd::SaveReview(..)
+        | Cmd::Edit { .. } => return Vec::new(),
+    };
+    vec![msg]
 }
 
 /// What the cache has for a page.
@@ -614,4 +736,41 @@ async fn edit_externally(
     .await;
     let _ = std::fs::remove_file(&path);
     (EventStream::new(), result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A panicking task still answers: a notice, then the failure reply
+    /// the screen is waiting for.
+    #[tokio::test]
+    async fn panicking_task_sends_its_replies() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let pr = PrRef::parse("o/r#1").unwrap();
+        let cmd = Cmd::FetchThreads(pr.clone());
+        let handle = spawn_guarded(&tx, panic_replies(&cmd), async { panic!("boom") });
+        handle.await.unwrap();
+        assert!(matches!(
+            rx.recv().await,
+            Some(Msg::Notice(Notice::Error(e))) if e.contains("boom")
+        ));
+        assert!(matches!(
+            rx.recv().await,
+            Some(Msg::ThreadsLoaded(p, Err(ApiError::Internal(_)))) if p == pr
+        ));
+    }
+
+    #[tokio::test]
+    async fn panics_on_the_blocking_pool_reach_the_guard() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle = spawn_guarded(&tx, Vec::new(), async {
+            blocking(|| panic!("deep")).await;
+        });
+        handle.await.unwrap();
+        assert!(matches!(
+            rx.recv().await,
+            Some(Msg::Notice(Notice::Error(e))) if e.contains("deep")
+        ));
+    }
 }
