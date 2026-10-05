@@ -18,7 +18,7 @@ use tokio::process::Command;
 use crate::blobs::BlobReader;
 use crate::credentials::Credentials;
 use crate::files::{ChangedFile, parse_raw};
-use crate::{GitError, Oid, Version, git, github_repo_from_url, piped};
+use crate::{GitError, Oid, Version, git, github_repo_from_url, piped, stdout};
 
 /// `GIT_NO_LAZY_FETCH` lets us ask which objects are missing without
 /// fetching them.
@@ -89,15 +89,8 @@ impl Repo {
 
     /// The user's clone at `top`, fetching from `remote`.
     pub async fn open_local(top: &Path, remote: &str) -> Result<Repo, GitError> {
-        let mut repo = Repo {
-            path: top.to_owned(),
-            remote: remote.to_owned(),
-            partial: false,
-            version: crate::version().await?,
-            credentials: Credentials::Ambient,
-        };
-        repo.partial = repo.is_promisor().await;
-        Ok(repo)
+        let version = crate::version().await?;
+        Self::open(top.to_owned(), remote, version, Credentials::Ambient).await
     }
 
     /// Opens (cloning on first use) the cache clone of `url` at
@@ -114,8 +107,7 @@ impl Repo {
             .join("repos")
             .join(owner.to_ascii_lowercase())
             .join(format!("{}.git", name.to_ascii_lowercase()));
-        let lock = repo_lock(&path);
-        let _guard = lock.lock().await;
+        let _guard = repo_lock(&path).lock_owned().await;
         let version = crate::version().await?;
         if !path.join("HEAD").exists() {
             // Clone next to the target and rename, so an interrupted clone
@@ -133,16 +125,25 @@ impl Repo {
             credentials.apply(&mut cmd);
             cmd.args(["clone", "--bare", "--filter=blob:none", "--progress", url])
                 .arg(&tmp);
-            if let Err(err) = run_with_progress(cmd, "clone", progress).await {
+            if let Err(err) = run_with_progress(cmd, "clone", progress, STALL).await {
                 std::fs::remove_dir_all(&tmp).ok();
                 return Err(err);
             }
             std::fs::rename(&tmp, &path)?;
         }
+        Self::open(path, "origin", version, credentials).await
+    }
+
+    async fn open(
+        path: PathBuf,
+        remote: &str,
+        version: Version,
+        credentials: Credentials,
+    ) -> Result<Repo, GitError> {
         let mut repo = Repo {
             path,
-            remote: "origin".to_owned(),
-            partial: true,
+            remote: remote.to_owned(),
+            partial: false,
             version,
             credentials,
         };
@@ -157,14 +158,7 @@ impl Repo {
     }
 
     async fn run(&self, args: &[&str]) -> Result<String, GitError> {
-        let output = self.cmd().args(args).output().await?;
-        if !output.status.success() {
-            return Err(GitError::Failed {
-                args: args.join(" "),
-                stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-            });
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        stdout(&self.cmd().args(args).output().await?, &args.join(" "))
     }
 
     async fn is_promisor(&self) -> bool {
@@ -189,8 +183,7 @@ impl Repo {
         let head_ref = Self::ref_name(number, "head");
         let base_ref = Self::ref_name(number, "base");
         {
-            let lock = repo_lock(&self.path);
-            let _guard = lock.lock().await;
+            let _guard = repo_lock(&self.path).lock_owned().await;
             progress(format!("Fetching #{number}"));
             let mut cmd = self.cmd();
             cmd.args([
@@ -202,7 +195,7 @@ impl Repo {
                 &format!("+refs/pull/{number}/head:{head_ref}"),
                 &format!("+refs/heads/{base_branch}:{base_ref}"),
             ]);
-            run_with_progress(cmd, "fetch", progress).await?;
+            run_with_progress(cmd, "fetch", progress, STALL).await?;
         }
         let head = self.rev_parse(&head_ref).await?;
         let base = self.rev_parse(&base_ref).await?;
@@ -274,8 +267,7 @@ impl Repo {
         if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(GitError::Parse(format!("not a commit id: {sha}")));
         }
-        let lock = repo_lock(&self.path);
-        let _guard = lock.lock().await;
+        let _guard = repo_lock(&self.path).lock_owned().await;
         let args = [
             "fetch",
             "--no-tags",
@@ -332,8 +324,7 @@ impl Repo {
         if missing.is_empty() {
             return Ok(0);
         }
-        let lock = repo_lock(&self.path);
-        let _guard = lock.lock().await;
+        let _guard = repo_lock(&self.path).lock_owned().await;
         // The same invocation git uses for its own lazy fetches, but for all
         // the blobs at once.
         let mut cmd = self.cmd();
@@ -401,13 +392,7 @@ async fn run_with_stdin(mut cmd: Command, what: &str, input: String) -> Result<S
     });
     let output = child.wait_with_output().await?;
     let _ = writer.await;
-    if !output.status.success() {
-        return Err(GitError::Failed {
-            args: what.to_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        });
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    stdout(&output, what)
 }
 
 /// `run`, abandoned (and its git killed) after `limit`.
@@ -429,16 +414,8 @@ async fn deadline<T>(
 const STALL: Duration = Duration::from_secs(180);
 
 /// Runs `cmd`, reporting the latest `--progress` line from stderr, and
-/// gives up if it goes quiet for [`STALL`].
+/// gives up if it goes quiet for `stall` (normally [`STALL`]).
 async fn run_with_progress(
-    cmd: Command,
-    what: &str,
-    progress: Progress<'_>,
-) -> Result<String, GitError> {
-    run_watched(cmd, what, progress, STALL).await
-}
-
-async fn run_watched(
     mut cmd: Command,
     what: &str,
     progress: Progress<'_>,
@@ -511,7 +488,7 @@ mod tests {
         cmd.args(["-c", "echo 'Receiving objects: 1%' >&2; sleep 30"]);
         let seen = Mutex::new(Vec::new());
         let started = std::time::Instant::now();
-        let result = run_watched(
+        let result = run_with_progress(
             cmd,
             "fetch",
             &|line| seen.lock().unwrap().push(line),

@@ -122,10 +122,14 @@ pub(crate) fn piped<T>(handle: Option<T>, name: &str) -> Result<T, GitError> {
 }
 
 pub(crate) async fn run(dir: Option<&Path>, args: &[&str]) -> Result<String, GitError> {
-    let output = git(dir).args(args).output().await?;
+    stdout(&git(dir).args(args).output().await?, &args.join(" "))
+}
+
+/// What `git <what>` printed, or its complaint if it failed.
+pub(crate) fn stdout(output: &std::process::Output, what: &str) -> Result<String, GitError> {
     if !output.status.success() {
         return Err(GitError::Failed {
-            args: args.join(" "),
+            args: what.to_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         });
     }
