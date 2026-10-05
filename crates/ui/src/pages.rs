@@ -184,10 +184,9 @@ fn skeleton(page: &mut Page) {
             page.box_gap();
         }
         let width = (room * share / 100).max(4);
-        page.box_line(
+        body(
+            page,
             vec![Seg::new(" ".repeat(width), Role::Chip(Bg::ContainerHigh))],
-            Vec::new(),
-            0,
         );
     }
 }
@@ -212,9 +211,40 @@ pub fn flash(page: &mut Page, text: &str) {
     }
 }
 
+/// A line inside a box, with nothing on its right.
+fn body(page: &mut Page, segs: Vec<Seg>) {
+    page.box_line(segs, Vec::new(), 0);
+}
+
 /// A box's empty state.
 fn empty_row(page: &mut Page, text: &str) {
-    page.box_line(vec![Seg::new(text, Role::Meta)], Vec::new(), 0);
+    body(page, vec![Seg::new(text, Role::Meta)]);
+}
+
+/// A box holding only its empty state.
+fn empty_box(page: &mut Page, title: Seg, text: &str) {
+    page.box_top(vec![title], Vec::new());
+    empty_row(page, text);
+    page.box_bottom();
+}
+
+/// The lines `build` adds, as one item opening `target`.
+fn item(page: &mut Page, target: impl Into<Link>, build: impl FnOnce(&mut Page, u32)) {
+    let start = page.lines.len();
+    let link = page.link(target);
+    build(page, link);
+    page.item(start, link);
+}
+
+/// Each name once, in order.
+fn unique<'a>(names: impl IntoIterator<Item = &'a String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for name in names {
+        if !out.contains(name) {
+            out.push(name.clone());
+        }
+    }
+    out
 }
 
 /// One row per item, ruled apart.
@@ -364,18 +394,14 @@ pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview
             format!("{star}  {}", compact(s.stars)),
             Link::Star,
         ));
-        right.push(space());
-        right.push(button(
-            page,
-            format!("⑂ Fork {}", compact(s.forks)),
-            format!("{}/forks", url::repo(repo)),
-        ));
-        right.push(space());
-        right.push(button(
-            page,
-            format!("◉ Watch {}", compact(o.watchers)),
-            format!("{}/watchers", url::repo(repo)),
-        ));
+        for (text, n, tab) in [
+            ("⑂ Fork", s.forks, "forks"),
+            ("◉ Watch", o.watchers, "watchers"),
+        ] {
+            let target = format!("{}/{tab}", url::repo(repo));
+            right.push(space());
+            right.push(button(page, format!("{text} {}", compact(n)), target));
+        }
     }
     page.push(PageLine {
         segs,
@@ -549,44 +575,42 @@ fn file_box(page: &mut Page, dir: Listing<'_>, title: (Vec<Seg>, Vec<Seg>), cx: 
         + 4;
     if !path.is_empty() {
         let parent = path.rsplit_once('/').map_or("", |(p, _)| p);
-        let start = page.lines.len();
-        let link = page.link(url::tree(repo, rev, parent));
-        page.box_line(vec![Seg::linked("..", Role::Link, link)], Vec::new(), 2);
-        page.item(start, link);
+        item(page, url::tree(repo, rev, parent), |page, link| {
+            page.box_line(vec![Seg::linked("..", Role::Link, link)], Vec::new(), 2);
+        });
     }
     match entries {
         Some([]) => empty_row(page, "This directory is empty."),
         None => skeleton(page),
         Some(entries) => {
             for e in entries {
-                let (icon, target, role) = match e.kind {
-                    EntryKind::Dir => (icons.folder(), url::tree(repo, rev, &e.path), Role::Link),
-                    EntryKind::Submodule => ("⊙", url::tree(repo, rev, &e.path), Role::Link),
-                    EntryKind::Symlink => ("↪", url::blob(repo, rev, &e.path), Role::Body),
-                    EntryKind::File => (icons.file(), url::blob(repo, rev, &e.path), Role::Body),
+                let (icon, icon_role, is_tree) = match e.kind {
+                    EntryKind::Dir => (icons.folder(), Role::Accent, true),
+                    EntryKind::Submodule => ("⊙", Role::Meta, true),
+                    EntryKind::Symlink => ("↪", Role::Meta, false),
+                    EntryKind::File => (icons.file(), Role::Meta, false),
                 };
-                let start = page.lines.len();
-                let link = page.link(target);
-                let icon_role = if e.kind == EntryKind::Dir {
-                    Role::Accent
+                let (target, role) = if is_tree {
+                    (url::tree(repo, rev, &e.path), Role::Link)
                 } else {
-                    Role::Meta
+                    (url::blob(repo, rev, &e.path), Role::Body)
                 };
-                let name = crate::text::truncate(&e.name, name_w - 4);
-                let pad = name_w.saturating_sub(crate::text::width(&name) + 2);
-                let mut segs = vec![
-                    Seg::new(format!("{icon} "), icon_role),
-                    Seg::linked(name, role, link),
-                    Seg::new(" ".repeat(pad), Role::Body),
-                ];
-                let mut right = Vec::new();
-                if let Some(c) = commits.and_then(|m| m.get(&e.name)) {
-                    let commit = page.link(url::commit(repo, &c.oid));
-                    segs.push(Seg::linked(c.headline.clone(), Role::Meta, commit));
-                    right.push(Seg::new(time::ago_iso(&c.date, now), Role::Meta));
-                }
-                page.box_line(segs, right, 0);
-                page.item(start, link);
+                item(page, target, |page, link| {
+                    let name = crate::text::truncate(&e.name, name_w - 4);
+                    let pad = name_w.saturating_sub(crate::text::width(&name) + 2);
+                    let mut segs = vec![
+                        Seg::new(format!("{icon} "), icon_role),
+                        Seg::linked(name, role, link),
+                        Seg::new(" ".repeat(pad), Role::Body),
+                    ];
+                    let mut right = Vec::new();
+                    if let Some(c) = commits.and_then(|m| m.get(&e.name)) {
+                        let commit = page.link(url::commit(repo, &c.oid));
+                        segs.push(Seg::linked(c.headline.clone(), Role::Meta, commit));
+                        right.push(Seg::new(time::ago_iso(&c.date, now), Role::Meta));
+                    }
+                    page.box_line(segs, right, 0);
+                });
             }
         }
     }
@@ -608,12 +632,8 @@ pub fn repo_code(
         page.blank();
     }
     if o.entries.is_empty() && o.default_branch.is_none() {
-        page.box_top(
-            vec![Seg::new("This repository is empty.", Role::Strong)],
-            Vec::new(),
-        );
-        empty_row(page, "Nothing has been pushed yet.");
-        page.box_bottom();
+        let title = Seg::new("This repository is empty.", Role::Strong);
+        empty_box(page, title, "Nothing has been pushed yet.");
         return;
     }
     let rev = o.default_branch.clone().unwrap_or_else(|| "HEAD".into());
@@ -690,9 +710,8 @@ pub fn file(page: &mut Page, repo: &RepoId, rev: &str, path: &str, blob: &Blob, 
     code_toolbar(page, repo, rev, path, true, 0, keys);
     let size = crate::text::size(blob.size);
     let Some(text) = &blob.text else {
-        page.box_top(vec![Seg::new(size, Role::Meta)], Vec::new());
-        empty_row(page, "Binary file not shown. o opens it on GitHub.");
-        page.box_bottom();
+        let title = Seg::new(size, Role::Meta);
+        empty_box(page, title, "Binary file not shown. o opens it on GitHub.");
         return;
     };
     let lines = text.lines().count() as u64;
@@ -731,47 +750,43 @@ pub fn file(page: &mut Page, repo: &RepoId, rev: &str, path: &str, blob: &Blob, 
 // ---- lists --------------------------------------------------------------------------
 
 fn repo_row(page: &mut Page, r: &RepoSummary, now: u64, show_owner: bool) {
-    let start = page.lines.len();
     let name = if show_owner {
         r.repo.to_string()
     } else {
         r.repo.name.clone()
     };
-    let link = page.link(url::repo(&r.repo));
-    let mut segs = vec![Seg::linked(name, Role::Link, link)];
-    for (on, text) in [
-        (r.private, "Private"),
-        (r.fork, "Fork"),
-        (r.archived, "Archived"),
-    ] {
-        if on {
-            segs.push(space());
-            segs.push(chip(text, Bg::SecondaryContainer));
+    item(page, url::repo(&r.repo), |page, link| {
+        let mut segs = vec![Seg::linked(name, Role::Link, link)];
+        for (on, text) in [
+            (r.private, "Private"),
+            (r.fork, "Fork"),
+            (r.archived, "Archived"),
+        ] {
+            if on {
+                segs.push(space());
+                segs.push(chip(text, Bg::SecondaryContainer));
+            }
         }
-    }
-    let right = vec![Seg::new(format!("☆ {}", compact(r.stars)), Role::Meta)];
-    page.box_line(segs, right, 0);
-    if page.compact {
-        page.item(start, link);
-        return;
-    }
-    if let Some(d) = &r.description {
-        page.wrapped(vec![Seg::new(d.clone(), Role::Body)], 0, Frame::Body);
-    }
-    let mut meta = Vec::new();
-    if let Some(lang) = &r.language {
-        meta.push(Seg::new("● ", Role::Accent));
-        meta.push(Seg::new(format!("{lang}   "), Role::Meta));
-    }
-    meta.push(Seg::new(format!("⑂ {}", compact(r.forks)), Role::Meta));
-    if let Some(p) = &r.pushed_at {
-        meta.push(Seg::new(
-            format!("   Updated {}", time::ago_iso(p, now)),
-            Role::Meta,
-        ));
-    }
-    page.box_line(meta, Vec::new(), 0);
-    page.item(start, link);
+        let right = vec![Seg::new(format!("☆ {}", compact(r.stars)), Role::Meta)];
+        page.box_line(segs, right, 0);
+        if page.compact {
+            return;
+        }
+        if let Some(d) = &r.description {
+            page.wrapped(vec![Seg::new(d.clone(), Role::Body)], 0, Frame::Body);
+        }
+        let mut meta = Vec::new();
+        if let Some(lang) = &r.language {
+            meta.push(Seg::new("● ", Role::Accent));
+            meta.push(Seg::new(format!("{lang}   "), Role::Meta));
+        }
+        meta.push(Seg::new(format!("⑂ {}", compact(r.forks)), Role::Meta));
+        if let Some(p) = &r.pushed_at {
+            let updated = format!("   Updated {}", time::ago_iso(p, now));
+            meta.push(Seg::new(updated, Role::Meta));
+        }
+        body(page, meta);
+    });
 }
 
 /// A box of repositories.
@@ -802,53 +817,44 @@ fn issue_row(page: &mut Page, i: &IssueSummary, show_repo: bool, icons: Icons, n
     } else {
         url::issue(&i.repo, i.number)
     };
-    let start = page.lines.len();
-    let link = page.link(target);
     let place = if show_repo {
         format!("{}#{}", i.repo, i.number)
     } else {
         format!("#{}", i.number)
     };
-    if page.compact {
-        // One row: the title, then where it is and its signals.
-        let segs = vec![
-            Seg::new(format!("{icon} "), role),
-            Seg::linked(i.title.clone(), Role::Strong, link),
-        ];
-        let mut right = vec![Seg::new(format!("{place}  "), Role::Meta)];
-        right.extend(issue_signals(i, icons));
-        page.box_line(segs, right, 0);
-        page.item(start, link);
-        return;
-    }
-    let mut segs = vec![Seg::linked(i.title.clone(), Role::Strong, link)];
-    labels(&mut segs, &i.labels);
-    hanging(page, Seg::new(format!("{icon} "), role), segs, Frame::Body);
-    // GitHub's second line: `#12 opened 3 days ago by octocat · Approved`.
-    let when = if i.created_at.is_empty() {
-        format!(
-            "updated {} by {}",
-            time::ago_iso(&i.updated_at, now),
-            i.author
-        )
-    } else {
-        format!(
-            "opened {} by {}",
-            time::ago_iso(&i.created_at, now),
-            i.author
-        )
-    };
-    let mut meta = vec![Seg::new(format!("{place} {when}"), Role::Meta)];
-    if let Some(review) = i.review {
-        let (text, role) = match review {
-            ReviewDecision::Approved => ("Approved", Role::Success),
-            ReviewDecision::ChangesRequested => ("Changes requested", Role::Error),
-            ReviewDecision::ReviewRequired => ("Review required", Role::Meta),
+    item(page, target, |page, link| {
+        if page.compact {
+            // One row: the title, then where it is and its signals.
+            let segs = vec![
+                Seg::new(format!("{icon} "), role),
+                Seg::linked(i.title.clone(), Role::Strong, link),
+            ];
+            let mut right = vec![Seg::new(format!("{place}  "), Role::Meta)];
+            right.extend(issue_signals(i, icons));
+            page.box_line(segs, right, 0);
+            return;
+        }
+        let mut segs = vec![Seg::linked(i.title.clone(), Role::Strong, link)];
+        labels(&mut segs, &i.labels);
+        hanging(page, Seg::new(format!("{icon} "), role), segs, Frame::Body);
+        // GitHub's second line: `#12 opened 3 days ago by octocat · Approved`.
+        let (verb, at) = if i.created_at.is_empty() {
+            ("updated", &i.updated_at)
+        } else {
+            ("opened", &i.created_at)
         };
-        meta.extend([Seg::new(" · ", Role::Meta), Seg::new(text, role)]);
-    }
-    page.box_line(meta, issue_signals(i, icons), 2);
-    page.item(start, link);
+        let when = format!("{place} {verb} {} by {}", time::ago_iso(at, now), i.author);
+        let mut meta = vec![Seg::new(when, Role::Meta)];
+        if let Some(review) = i.review {
+            let (text, role) = match review {
+                ReviewDecision::Approved => ("Approved", Role::Success),
+                ReviewDecision::ChangesRequested => ("Changes requested", Role::Error),
+                ReviewDecision::ReviewRequired => ("Review required", Role::Meta),
+            };
+            meta.extend([Seg::new(" · ", Role::Meta), Seg::new(text, role)]);
+        }
+        page.box_line(meta, issue_signals(i, icons), 2);
+    });
 }
 
 /// Checks and comment count, for the right of an issue's row.
@@ -872,39 +878,31 @@ fn issue_signals(i: &IssueSummary, icons: Icons) -> Vec<Seg> {
 }
 
 fn user_row(page: &mut Page, u: &UserSummary) {
-    let start = page.lines.len();
-    let link = page.link(url::user(&u.login));
-    let mut segs = vec![Seg::linked(u.login.clone(), Role::Link, link)];
-    if let Some(name) = &u.name {
-        segs.push(Seg::new(format!("  {name}"), Role::Strong));
-    }
-    if u.is_org {
-        segs.push(space());
-        segs.push(chip("Organization", Bg::SecondaryContainer));
-    }
-    page.box_line(segs, Vec::new(), 0);
-    if let Some(bio) = u.bio.as_ref().filter(|_| !page.compact) {
-        page.wrapped(vec![Seg::new(bio.clone(), Role::Meta)], 0, Frame::Body);
-    }
-    page.item(start, link);
+    item(page, url::user(&u.login), |page, link| {
+        let mut segs = vec![Seg::linked(u.login.clone(), Role::Link, link)];
+        if let Some(name) = &u.name {
+            segs.push(Seg::new(format!("  {name}"), Role::Strong));
+        }
+        if u.is_org {
+            segs.push(space());
+            segs.push(chip("Organization", Bg::SecondaryContainer));
+        }
+        body(page, segs);
+        if let Some(bio) = u.bio.as_ref().filter(|_| !page.compact) {
+            page.wrapped(vec![Seg::new(bio.clone(), Role::Meta)], 0, Frame::Body);
+        }
+    });
 }
 
 fn more_row(page: &mut Page, next: bool, shown: usize, total: u64) {
-    if next {
-        page.box_rule();
-        let start = page.lines.len();
-        let link = page.link(Link::More);
-        page.box_line(
-            vec![Seg::linked(
-                format!("Load more  ({shown} of {})", compact(total)),
-                Role::Link,
-                link,
-            )],
-            Vec::new(),
-            0,
-        );
-        page.item(start, link);
+    if !next {
+        return;
     }
+    page.box_rule();
+    item(page, Link::More, |page, link| {
+        let text = format!("Load more  ({shown} of {})", compact(total));
+        body(page, vec![Seg::linked(text, Role::Link, link)]);
+    });
 }
 
 /// The filter field above a list: `⌕ is:open label:bug`.
@@ -1072,66 +1070,64 @@ pub fn search(
 
 // ---- conversations --------------------------------------------------------------------
 
-/// Who said what, when, for a comment box.
-#[derive(Clone, Copy)]
-struct Said<'a> {
-    author: &'a str,
-    /// "commented", "opened"...
-    verb: &'a str,
-    when: &'a str,
-    body: &'a str,
-    badge: Option<&'a str>,
+/// What the comment boxes of a conversation share.
+struct Conversation<'a> {
+    base: LinkBase,
+    /// Who opened it.
+    op: &'a str,
+    now: u64,
 }
 
-/// A comment box: `╭─ author commented 3d ago ─── Author ─╮`, the Markdown
-/// body, `╰──╯`.
-fn comment_box(page: &mut Page, said: Said<'_>, base: &LinkBase, now: u64) {
-    let Said {
-        author,
-        verb,
-        when,
-        body,
-        badge,
-    } = said;
-    let start = page.lines.len();
-    let who = link_seg(page, author.to_owned(), url::user(author), Role::Strong);
-    let right = badge
-        .map(|b| chip(b, Bg::SecondaryContainer))
-        .into_iter()
-        .collect();
-    page.box_top(
-        vec![
-            who,
-            Seg::new(format!(" {verb} {}", time::ago_iso(when, now)), Role::Meta),
-        ],
-        right,
-    );
-    if body.trim().is_empty() {
-        empty_row(page, "No description provided.");
-    } else {
-        markdown::render(page, body, Some(base), Frame::Body);
+impl Conversation<'_> {
+    /// A comment box: `╭─ author commented 3d ago ─── Author ─╮`, the
+    /// Markdown body, `╰──╯`. `verb` is "commented", "opened"...
+    fn said(&self, page: &mut Page, author: &str, verb: &str, when: &str, body: &str, badge: bool) {
+        let start = page.lines.len();
+        let who = link_seg(page, author.to_owned(), url::user(author), Role::Strong);
+        let when = time::ago_iso(when, self.now);
+        let right = Vec::from_iter(badge.then(|| chip("Author", Bg::SecondaryContainer)));
+        page.box_top(
+            vec![who, Seg::new(format!(" {verb} {when}"), Role::Meta)],
+            right,
+        );
+        if body.trim().is_empty() {
+            empty_row(page, "No description provided.");
+        } else {
+            markdown::render(page, body, Some(&self.base), Frame::Body);
+        }
+        page.box_bottom();
+        // The whole comment is a row: Enter quote-replies, as GitHub's `r` does.
+        let quote = page.quote(author, body);
+        page.item(start, quote);
     }
-    page.box_bottom();
-    // The whole comment is a row: Enter quote-replies, as GitHub's `r` does.
-    let quote = page.quote(author, body);
-    page.item(start, quote);
-}
 
-/// A comment in a conversation, badged when it's by `op`, who opened it.
-fn comment(page: &mut Page, c: &Comment, op: &str, base: &LinkBase, now: u64) {
-    let badge = (c.author == op).then_some("Author");
-    comment_box(
-        page,
-        Said {
-            author: &c.author,
-            verb: "commented",
-            when: &c.created_at,
-            body: &c.body,
-            badge,
-        },
-        base,
-        now,
-    );
+    /// A comment, badged when it's by whoever opened the conversation.
+    fn comment(&self, page: &mut Page, c: &Comment) {
+        let badge = c.author == self.op;
+        self.said(page, &c.author, "commented", &c.created_at, &c.body, badge);
+    }
+
+    /// A timeline event: `● author approved these changes 1d ago`.
+    fn event(
+        &self,
+        page: &mut Page,
+        (icon, role): (&str, Role),
+        author: &str,
+        what: &str,
+        when: &str,
+    ) {
+        let who = link_seg(page, author.to_owned(), url::user(author), Role::Strong);
+        let when = time::ago_iso(when, self.now);
+        page.push(PageLine {
+            segs: vec![
+                Seg::new(format!("{icon}  "), role),
+                who,
+                Seg::new(format!(" {what} {when}"), Role::Meta),
+            ],
+            indent: 2,
+            ..PageLine::default()
+        });
+    }
 }
 
 /// The line between timeline entries.
@@ -1143,51 +1139,21 @@ fn connector(page: &mut Page) {
     });
 }
 
-/// A timeline event: `● author approved these changes 1d ago`.
-fn event(
-    page: &mut Page,
-    icon: &str,
-    icon_role: Role,
-    author: &str,
-    what: &str,
-    when: &str,
-    now: u64,
-) {
-    let who = link_seg(page, author.to_owned(), url::user(author), Role::Strong);
-    page.push(PageLine {
-        segs: vec![
-            Seg::new(format!("{icon}  "), icon_role),
-            who,
-            Seg::new(format!(" {what} {}", time::ago_iso(when, now)), Role::Meta),
-        ],
-        indent: 2,
-        ..PageLine::default()
-    });
-}
-
 /// The comment box at the end of a conversation.
 fn add_comment(page: &mut Page, keys: Keys<'_>) {
     connector(page);
-    let start = page.lines.len();
-    let link = page.link(Link::Comment);
-    page.box_top(
-        vec![Seg::linked("Add a comment", Role::Strong, link)],
-        Vec::new(),
-    );
-    page.box_line(
-        vec![Seg::linked(
-            format!(
-                "Press {} to write a comment (Markdown; ctrl-e for $EDITOR)",
-                keys.comment
-            ),
-            Role::Meta,
-            link,
-        )],
-        Vec::new(),
-        0,
-    );
-    page.box_bottom();
-    page.item(start, link);
+    item(page, Link::Comment, |page, link| {
+        page.box_top(
+            vec![Seg::linked("Add a comment", Role::Strong, link)],
+            Vec::new(),
+        );
+        let press = format!(
+            "Press {} to write a comment (Markdown; ctrl-e for $EDITOR)",
+            keys.comment
+        );
+        body(page, vec![Seg::linked(press, Role::Meta, link)]);
+        page.box_bottom();
+    });
 }
 
 fn people(page: &mut Page, heading: &str, logins: &[String], none: &str) {
@@ -1258,31 +1224,20 @@ pub fn issue(
         }
         page.line(segs);
     }
-    let base = LinkBase::new(&d.repo, "HEAD", "");
-    comment_box(
-        page,
-        Said {
-            author: &d.author,
-            verb: "opened",
-            when: &d.created_at,
-            body: &d.body,
-            badge: Some("Author"),
-        },
-        &base,
+    let talk = Conversation {
+        base: LinkBase::new(&d.repo, "HEAD", ""),
+        op: &d.author,
         now,
-    );
+    };
+    talk.said(page, &d.author, "opened", &d.created_at, &d.body, true);
     for c in &d.comments {
         connector(page);
-        comment(page, c, &d.author, &base, now);
+        talk.comment(page, c);
     }
     add_comment(page, keys);
     if let Some(width) = aside {
-        let mut participants: Vec<String> = Vec::new();
-        for who in std::iter::once(&d.author).chain(d.comments.iter().map(|c| &c.author)) {
-            if !participants.contains(who) {
-                participants.push(who.clone());
-            }
-        }
+        let participants =
+            unique(std::iter::once(&d.author).chain(d.comments.iter().map(|c| &c.author)));
         page.build_aside(width, |a| {
             people(a, "Assignees", &d.assignees, "No one assigned");
             label_list(a, &d.labels);
@@ -1353,54 +1308,47 @@ fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
         },
     };
     page.box_top(vec![Seg::new(headline, role)], Vec::new());
-    let row = |page: &mut Page, ok: Option<bool>, text: &str| {
+    // Each row: passed, failed, or neither yet.
+    let review = s.review.map(|r| match r {
+        ReviewDecision::Approved => (Some(true), "Changes approved"),
+        ReviewDecision::ChangesRequested => (Some(false), "Changes requested"),
+        ReviewDecision::ReviewRequired => (None, "Review required"),
+    });
+    let checks = s.checks.map(|c| match c {
+        ChecksState::Passing => (Some(true), "All checks have passed"),
+        ChecksState::Failing => (Some(false), "Some checks were not successful"),
+        ChecksState::Pending => (None, "Some checks haven't completed yet"),
+    });
+    let conflicts = match d.mergeable {
+        Mergeable::Yes => (Some(true), "No conflicts with the base branch"),
+        Mergeable::Conflicting => (Some(false), "This branch has conflicts"),
+        Mergeable::Unknown => (None, "Checking for conflicts…"),
+    };
+    for (ok, text) in [review, checks, Some(conflicts)].into_iter().flatten() {
         let (icon, role) = match ok {
             Some(true) => ("✓", Role::Success),
             Some(false) => ("✗", Role::Error),
             None => ("●", Role::Accent),
         };
-        page.box_line(
+        body(
+            page,
             vec![
                 Seg::new(format!("{icon}  "), role),
                 Seg::new(text, Role::Body),
             ],
-            Vec::new(),
-            0,
         );
-    };
-    match s.review {
-        Some(ReviewDecision::Approved) => row(page, Some(true), "Changes approved"),
-        Some(ReviewDecision::ChangesRequested) => row(page, Some(false), "Changes requested"),
-        Some(ReviewDecision::ReviewRequired) => row(page, None, "Review required"),
-        None => {}
     }
-    match s.checks {
-        Some(ChecksState::Passing) => row(page, Some(true), "All checks have passed"),
-        Some(ChecksState::Failing) => row(page, Some(false), "Some checks were not successful"),
-        Some(ChecksState::Pending) => row(page, None, "Some checks haven't completed yet"),
-        None => {}
-    }
-    match d.mergeable {
-        Mergeable::Yes => row(page, Some(true), "No conflicts with the base branch"),
-        Mergeable::Conflicting => row(page, Some(false), "This branch has conflicts"),
-        Mergeable::Unknown => row(page, None, "Checking for conflicts…"),
-    }
-    let start = page.lines.len();
-    let link = page.link(url::pull_tab(pr, "files"));
     page.box_rule();
-    page.box_line(
-        vec![
-            Seg::new(format!("{}  ", icons.external()), Role::Meta),
-            Seg::linked(
-                format!("Review the {} changed files", d.changed_files),
-                Role::Link,
-                link,
-            ),
-        ],
-        Vec::new(),
-        0,
-    );
-    page.item(start + 1, link);
+    item(page, url::pull_tab(pr, "files"), |page, link| {
+        let review = format!("Review the {} changed files", d.changed_files);
+        body(
+            page,
+            vec![
+                Seg::new(format!("{}  ", icons.external()), Role::Meta),
+                Seg::linked(review, Role::Link, link),
+            ],
+        );
+    });
     page.box_bottom();
 }
 
@@ -1419,19 +1367,13 @@ pub fn pr_conversation(
     }
     let PageCtx { icons, keys, now } = cx;
     pr_summary(page, pr, d, now);
-    let base = LinkBase::new(&pr.repo, &d.head_oid, "");
-    comment_box(
-        page,
-        Said {
-            author: &d.summary.author,
-            verb: "opened",
-            when: &d.created_at,
-            body: &d.body,
-            badge: Some("Author"),
-        },
-        &base,
+    let op = &d.summary.author;
+    let talk = Conversation {
+        base: LinkBase::new(&pr.repo, &d.head_oid, ""),
+        op,
         now,
-    );
+    };
+    talk.said(page, op, "opened", &d.created_at, &d.body, true);
     let Some(a) = activity else {
         connector(page);
         page.line(vec![Seg::new("   Loading the conversation…", Role::Meta)]);
@@ -1451,28 +1393,24 @@ pub fn pr_conversation(
     for (_, entry) in entries {
         connector(page);
         match entry {
-            Entry::Comment(c) => comment(page, c, &d.summary.author, &base, now),
+            Entry::Comment(c) => talk.comment(page, c),
             Entry::Review(r) => {
-                let (icon, role, what) = match r.state.as_str() {
-                    "approved" => ("✓", Role::Success, "approved these changes"),
-                    "requested changes" => ("✗", Role::Error, "requested changes"),
-                    "dismissed" => ("○", Role::Meta, "had a review dismissed"),
-                    _ => ("◉", Role::Meta, "reviewed"),
+                let (icon, what) = match r.state.as_str() {
+                    "approved" => (("✓", Role::Success), "approved these changes"),
+                    "requested changes" => (("✗", Role::Error), "requested changes"),
+                    "dismissed" => (("○", Role::Meta), "had a review dismissed"),
+                    _ => (("◉", Role::Meta), "reviewed"),
                 };
-                event(page, icon, role, &r.author, what, &r.submitted_at, now);
+                talk.event(page, icon, &r.author, what, &r.submitted_at);
                 if !r.body.trim().is_empty() {
                     connector(page);
-                    comment_box(
+                    talk.said(
                         page,
-                        Said {
-                            author: &r.author,
-                            verb: "commented",
-                            when: &r.submitted_at,
-                            body: &r.body,
-                            badge: None,
-                        },
-                        &base,
-                        now,
+                        &r.author,
+                        "commented",
+                        &r.submitted_at,
+                        &r.body,
+                        false,
                     );
                 }
             }
@@ -1481,12 +1419,7 @@ pub fn pr_conversation(
     merge_box(page, pr, d, icons);
     add_comment(page, keys);
     if let Some(width) = aside {
-        let mut reviewers: Vec<String> = Vec::new();
-        for r in &a.reviews {
-            if !reviewers.contains(&r.author) {
-                reviewers.push(r.author.clone());
-            }
-        }
+        let reviewers = unique(a.reviews.iter().map(|r| &r.author));
         page.build_aside(width, |side| {
             people(side, "Reviewers", &reviewers, "No reviews");
             label_list(side, &d.labels);
@@ -1529,22 +1462,15 @@ pub fn pr_commits(
             );
             current_day = date;
         }
-        let start = page.lines.len();
-        let link = page.link(url::commit(&pr.repo, &c.oid));
-        page.box_line(
-            vec![Seg::linked(c.headline.clone(), Role::Strong, link)],
-            vec![Seg::new(crate::text::short_sha(&c.oid), Role::Code)],
-            0,
-        );
-        page.box_line(
-            vec![Seg::new(
-                format!("{} committed {}", c.author, time::ago_iso(&c.date, now)),
-                Role::Meta,
-            )],
-            Vec::new(),
-            0,
-        );
-        page.item(start, link);
+        item(page, url::commit(&pr.repo, &c.oid), |page, link| {
+            page.box_line(
+                vec![Seg::linked(c.headline.clone(), Role::Strong, link)],
+                vec![Seg::new(crate::text::short_sha(&c.oid), Role::Code)],
+                0,
+            );
+            let committed = format!("{} committed {}", c.author, time::ago_iso(&c.date, now));
+            body(page, vec![Seg::new(committed, Role::Meta)]);
+        });
     }
     if !current_day.is_empty() {
         page.box_bottom();
