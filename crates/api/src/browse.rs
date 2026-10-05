@@ -11,7 +11,7 @@ use crate::queries::{
     Actor, AddCommentPayload, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount,
     GitObjectId, IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount,
     PullRequestReviewDecision, PullRequestState, RepositoryName, ReviewState, StarPayload,
-    UnstarPayload, Uri, UserCount, nodes,
+    UnstarPayload, Uri, UserCount, fragments, nodes,
 };
 use ghtui_schema::schema;
 
@@ -253,6 +253,18 @@ pub struct Language {
     pub color: Option<String>,
 }
 
+// Lists of nodes, and their nodes' types.
+fragments! {
+    nodes:
+    Topics = "RepositoryTopicConnection" => RepoTopic,
+    Assignees = "UserConnection" => UserLogin,
+    IssueComments = "IssueCommentConnection" => WireComment,
+    Reviews = "PullRequestReviewConnection" => WireReview,
+    PrCommits = "PullRequestCommitConnection" => PrCommitNode,
+    Pinned = "PinnableItemConnection" => PinnedItem,
+    RefNames = "RefConnection" => RefName,
+}
+
 // ---- repository ---------------------------------------------------------------------
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -312,12 +324,6 @@ pub struct RepoFull {
 pub struct License {
     pub name: String,
     pub spdx_id: Option<String>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "RepositoryTopicConnection", schema_module = "schema")]
-pub struct Topics {
-    pub nodes: Option<Vec<Option<RepoTopic>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -607,18 +613,6 @@ pub struct IssueFull {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "UserConnection", schema_module = "schema")]
-pub struct Assignees {
-    pub nodes: Option<Vec<Option<UserLogin>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "IssueCommentConnection", schema_module = "schema")]
-pub struct IssueComments {
-    pub nodes: Option<Vec<Option<WireComment>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "IssueComment", schema_module = "schema")]
 pub struct WireComment {
     pub author: Option<Actor>,
@@ -663,24 +657,12 @@ pub struct WirePrActivity {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReviewConnection", schema_module = "schema")]
-pub struct Reviews {
-    pub nodes: Option<Vec<Option<WireReview>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
 pub struct WireReview {
     pub author: Option<Actor>,
     pub state: ReviewState,
     pub body: String,
     pub submitted_at: Option<DateTime>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestCommitConnection", schema_module = "schema")]
-pub struct PrCommits {
-    pub nodes: Option<Vec<Option<PrCommitNode>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -759,12 +741,6 @@ pub struct OrgFull {
     pub repositories: RepoList,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PinnableItemConnection", schema_module = "schema")]
-pub struct Pinned {
-    pub nodes: Option<Vec<Option<PinnedItem>>>,
-}
-
 #[derive(cynic::InlineFragments, Debug)]
 #[cynic(graphql_type = "PinnableItem", schema_module = "schema")]
 pub enum PinnedItem {
@@ -807,12 +783,6 @@ pub struct RepoBranches {
     #[cynic(rename = "refs", alias)]
     #[arguments(refPrefix: "refs/tags/", first: 50, orderBy: { field: TAG_COMMIT_DATE, direction: DESC })]
     pub tags: Option<RefNames>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "RefConnection", schema_module = "schema")]
-pub struct RefNames {
-    pub nodes: Option<Vec<Option<RefName>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
