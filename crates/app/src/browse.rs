@@ -66,6 +66,9 @@ pub enum Need {
 pub fn needs(route: &Route) -> Vec<Need> {
     use DataKey as K;
     let header = |repo: &RepoId| Need::Data(K::Repo(repo.clone()));
+    let list = route
+        .search()
+        .map(|(kind, query)| Need::Data(K::Search(kind, query)));
     match route {
         Route::Home => vec![Need::Inbox, Need::Data(K::ViewerRepos)],
         Route::Repo(repo) => vec![
@@ -82,16 +85,9 @@ pub fn needs(route: &Route) -> Vec<Need> {
             Need::Data(K::Blob(repo.clone(), rev.clone(), path.clone())),
         ],
         Route::Issues { repo, .. } | Route::Pulls { repo, .. } => {
-            let list = route
-                .search()
-                .map(|(kind, query)| Need::Data(K::Search(kind, query)));
             std::iter::once(header(repo)).chain(list).collect()
         }
-        Route::Search { .. } => route
-            .search()
-            .map(|(kind, query)| Need::Data(K::Search(kind, query)))
-            .into_iter()
-            .collect(),
+        Route::Search { .. } => list.into_iter().collect(),
         Route::Issue { repo, number } => {
             vec![header(repo), Need::Data(K::Issue(repo.clone(), *number))]
         }
