@@ -81,7 +81,12 @@ impl Widget for Palette<'_> {
             buf,
         );
 
-        let list_top = inner.y + 2;
+        let list_top = inner.y.saturating_add(2);
+        // Short screens leave fewer rows than planned.
+        let rows = rows.min(usize::from(inner.bottom().saturating_sub(list_top)));
+        if rows == 0 {
+            return;
+        }
         if self.items.is_empty() {
             Span::styled("No matches", theme.meta(POPUP)).render(
                 Rect {

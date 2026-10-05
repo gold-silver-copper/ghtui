@@ -903,6 +903,189 @@ pub(crate) mod diff {
         insta::assert_snapshot!(render(&s));
     }
 
+    /// Every screen and overlay, at every tiny size and a few extreme
+    /// ones: rendering never panics.
+    #[test]
+    fn every_screen_survives_every_size() {
+        use super::{
+            DataKey, Overlay, Route, SearchKind, fetched, fixtures, ghtui, open, with_inbox,
+            with_pr, with_repo,
+        };
+        use crate::browse::Data;
+        let tc = ColorDepth::TrueColor;
+        let pressed = |mut s: State, keys: &str| {
+            press(&mut s, keys);
+            s
+        };
+        type Build = Box<dyn Fn() -> State>;
+        let builders: Vec<(&str, Build)> = vec![
+            ("home", Box::new(move || with_inbox(Mode::Dark, tc))),
+            ("home loading", Box::new(move || state(Mode::Dark, tc))),
+            ("repo", Box::new(move || with_repo(Mode::Light, tc))),
+            (
+                "file",
+                Box::new(move || {
+                    let mut s = with_repo(Mode::Light, tc);
+                    let route = Route::Blob {
+                        repo: ghtui(),
+                        rev: "main".into(),
+                        path: "src/main.rs".into(),
+                    };
+                    open(&mut s, route, Data::Blob(Box::new(fixtures::blob())));
+                    s
+                }),
+            ),
+            (
+                "issues",
+                Box::new(move || {
+                    let mut s = with_repo(Mode::Dark, tc);
+                    let route = Route::Issues {
+                        repo: ghtui(),
+                        query: crate::route::OPEN.into(),
+                    };
+                    let results = fixtures::issue_results(Some("c1"));
+                    open(&mut s, route, Data::Search(Box::new(results)));
+                    s
+                }),
+            ),
+            (
+                "issue",
+                Box::new(move || {
+                    let mut s = state(Mode::Light, tc);
+                    let route = Route::Issue {
+                        repo: ghtui(),
+                        number: 14,
+                    };
+                    open(
+                        &mut s,
+                        route,
+                        Data::Issue(Some(Box::new(fixtures::issue()))),
+                    );
+                    s
+                }),
+            ),
+            ("pr", Box::new(|| with_pr(Mode::Dark))),
+            (
+                "pr commits",
+                Box::new(move || pressed(with_pr(Mode::Dark), "2")),
+            ),
+            (
+                "profile",
+                Box::new(move || {
+                    let mut s = state(Mode::Light, tc);
+                    let profile = Data::Profile(Box::new(fixtures::profile()));
+                    open(&mut s, Route::user("octocat"), profile);
+                    s
+                }),
+            ),
+            (
+                "search",
+                Box::new(move || {
+                    let mut s = state(Mode::Dark, tc);
+                    let route = Route::Search {
+                        kind: SearchKind::Repos,
+                        query: "terminal".into(),
+                    };
+                    open(
+                        &mut s,
+                        route,
+                        Data::Search(Box::new(fixtures::repo_results())),
+                    );
+                    s
+                }),
+            ),
+            (
+                "hints",
+                Box::new(move || pressed(with_repo(Mode::Dark, tc), "l")),
+            ),
+            (
+                "search box",
+                Box::new(move || pressed(with_repo(Mode::Dark, tc), "/oct")),
+            ),
+            (
+                "menu",
+                Box::new(move || pressed(with_repo(Mode::Dark, tc), "<Space>")),
+            ),
+            (
+                "which key",
+                Box::new(move || pressed(with_repo(Mode::Dark, tc), "g")),
+            ),
+            (
+                "list filter",
+                Box::new(move || pressed(with_repo(Mode::Light, tc), "2/")),
+            ),
+            (
+                "palette",
+                Box::new(move || {
+                    let mut s = with_inbox(Mode::Light, tc);
+                    s.open_picker(crate::picker::Kind::Commands);
+                    s
+                }),
+            ),
+            (
+                "go to file",
+                Box::new(move || {
+                    let mut s = pressed(with_repo(Mode::Light, tc), "f");
+                    let files = vec!["src/main.rs".into(), "crates/ui/src/page.rs".into()];
+                    fetched(
+                        &mut s,
+                        DataKey::Files(ghtui(), "main".into()),
+                        Data::Files(Arc::new(files), false),
+                    );
+                    s
+                }),
+            ),
+            (
+                "diff",
+                Box::new(move || screen_state(Mode::Dark, tc, Pos { file: 0, row: 4 }, Pane::Diff)),
+            ),
+            (
+                "diff tree",
+                Box::new(move || screen_state(Mode::Dark, tc, Pos { file: 2, row: 0 }, Pane::Tree)),
+            ),
+            (
+                "diff search",
+                Box::new(move || {
+                    let s = screen_state(Mode::Dark, tc, Pos { file: 0, row: 4 }, Pane::Diff);
+                    pressed(s, "/point")
+                }),
+            ),
+            ("threads", Box::new(|| with_threads(Mode::Dark))),
+            (
+                "submit",
+                Box::new(|| {
+                    let mut s = with_threads(Mode::Light);
+                    let dialog = crate::review::SubmitDialog::new(&s.theme);
+                    s.overlay = Some(Overlay::Submit(Box::new(dialog)));
+                    s
+                }),
+            ),
+            ("moves", Box::new(|| better_than_github(Mode::Dark))),
+            (
+                "diff loading",
+                Box::new(move || {
+                    let mut s = state(Mode::Dark, tc);
+                    open_diff(&mut s, DiffState::loading(), Pos::default(), Pane::Diff);
+                    s
+                }),
+            ),
+        ];
+        let tiny = (0..=12).flat_map(|w| (0..=12).map(move |h| (w, h)));
+        let sizes: Vec<(u16, u16)> = tiny.chain([(1, 200), (200, 1), (80, 24)]).collect();
+        for (name, build) in &builders {
+            for &(w, h) in &sizes {
+                let mut s = build();
+                update(&mut s, Msg::Resize(w, h));
+                s.settle_diff();
+                let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+                    terminal.draw(|frame| view(&s, frame, NOW)).unwrap();
+                }));
+                assert!(caught.is_ok(), "{name} panicked at {w}x{h}");
+            }
+        }
+    }
+
     /// Scrolling stays cheap on a big PR: rendering only touches visible rows.
     /// Run with `cargo test --release -p ghtui -- --ignored scroll_timing`.
     #[test]

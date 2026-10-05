@@ -64,7 +64,7 @@ fn render_split(area: Rect, buf: &mut Buffer, left: Vec<Span<'_>>, right: Vec<Sp
 }
 
 /// A popup list's row `y`: a band with a stripe when selected, and the
-/// padded content area with its tone.
+/// padded content area with its tone. Empty when `y` is outside `panel`.
 fn list_row(
     buf: &mut Buffer,
     theme: &Theme,
@@ -74,11 +74,11 @@ fn list_row(
     base: Bg,
 ) -> (Rect, Bg) {
     let bg = if selected { Bg::SelectedHigh } else { base };
-    if selected {
-        fill(buf, Rect::new(panel.x, y, panel.width, 1), theme, bg);
-        buf.set_string(panel.x, y, "▌", theme.accent(bg));
+    let row = Rect::new(panel.x, y, panel.width, 1).intersection(panel);
+    if selected && !row.is_empty() {
+        fill(buf, row, theme, bg);
+        Span::styled("▌", theme.accent(bg)).render(row, buf);
     }
-    let row = Rect::new(panel.x, y, panel.width, 1);
     (inset(row, PAD_X, 0), bg)
 }
 
