@@ -656,58 +656,39 @@ pub(crate) mod diff {
         s
     }
 
+    /// The fixture's diff in true color, the cursor on `row` of `file`.
+    fn diff_at(mode: Mode, file: usize, row: usize) -> State {
+        screen_state(mode, ColorDepth::TrueColor, Pos { file, row }, Pane::Diff)
+    }
+
     #[test]
     fn diff_dark() {
-        let s = screen_state(
-            Mode::Dark,
-            ColorDepth::TrueColor,
-            Pos { file: 0, row: 4 },
-            Pane::Diff,
-        );
-        insta::assert_snapshot!(render(&s));
+        insta::assert_snapshot!(render(&diff_at(Mode::Dark, 0, 4)));
     }
 
     #[test]
     fn diff_light() {
-        let s = screen_state(
-            Mode::Light,
-            ColorDepth::TrueColor,
-            Pos { file: 0, row: 4 },
-            Pane::Diff,
-        );
-        insta::assert_snapshot!(render(&s));
+        insta::assert_snapshot!(render(&diff_at(Mode::Light, 0, 4)));
     }
 
     #[test]
     fn diff_dark_256_tree_focused() {
-        let s = screen_state(
+        insta::assert_snapshot!(render(&screen_state(
             Mode::Dark,
             ColorDepth::Ansi256,
             Pos { file: 2, row: 0 },
             Pane::Tree,
-        );
-        insta::assert_snapshot!(render(&s));
+        )));
     }
 
     #[test]
     fn diff_scrolled_shows_sticky_header_light() {
-        let s = screen_state(
-            Mode::Light,
-            ColorDepth::TrueColor,
-            Pos { file: 7, row: 1 },
-            Pane::Diff,
-        );
-        insta::assert_snapshot!(render(&s));
+        insta::assert_snapshot!(render(&diff_at(Mode::Light, 7, 1)));
     }
 
     #[test]
     fn diff_split_wide_light() {
-        let mut s = screen_state(
-            Mode::Light,
-            ColorDepth::TrueColor,
-            Pos { file: 0, row: 6 },
-            Pane::Diff,
-        );
+        let mut s = diff_at(Mode::Light, 0, 6);
         s.size = (200, 30);
         let _ = s.settle_diff();
         insta::assert_snapshot!(render(&s));
@@ -715,12 +696,7 @@ pub(crate) mod diff {
 
     #[test]
     fn diff_viewed_and_reviewed_dark() {
-        let mut s = screen_state(
-            Mode::Dark,
-            ColorDepth::TrueColor,
-            Pos { file: 0, row: 3 },
-            Pane::Diff,
-        );
+        let mut s = diff_at(Mode::Dark, 0, 3);
         let diff = s.diffs.get_mut(&pr()).unwrap();
         let hash = diff.doc.files()[0].blocks()[0].hash.clone();
         diff.set_review(ghtui_store::ReviewState {
@@ -734,12 +710,7 @@ pub(crate) mod diff {
 
     fn with_threads(mode: Mode) -> State {
         use ghtui_api::model::{NodeId, ReviewComment, ReviewThread, Side};
-        let mut s = screen_state(
-            mode,
-            ColorDepth::TrueColor,
-            Pos { file: 0, row: 0 },
-            Pane::Diff,
-        );
+        let mut s = diff_at(mode, 0, 0);
         let comment = |id: &str, author: &str, body: &str, pending: bool| ReviewComment {
             id: NodeId::new(id),
             author: author.into(),
@@ -931,12 +902,7 @@ pub(crate) mod diff {
 
     #[test]
     fn small_diff_80x24() {
-        let mut s = screen_state(
-            Mode::Dark,
-            ColorDepth::TrueColor,
-            Pos { file: 0, row: 4 },
-            Pane::Diff,
-        );
+        let mut s = diff_at(Mode::Dark, 0, 4);
         s.size = (80, 24);
         let _ = s.settle_diff();
         insta::assert_snapshot!(render(&s));
@@ -1033,10 +999,7 @@ pub(crate) mod diff {
                     s
                 }),
             ),
-            (
-                "diff",
-                Box::new(move || screen_state(Mode::Dark, tc, Pos { file: 0, row: 4 }, Pane::Diff)),
-            ),
+            ("diff", Box::new(|| diff_at(Mode::Dark, 0, 4))),
             (
                 "diff tree",
                 Box::new(move || screen_state(Mode::Dark, tc, Pos { file: 2, row: 0 }, Pane::Tree)),
@@ -1044,7 +1007,7 @@ pub(crate) mod diff {
             (
                 "diff search",
                 Box::new(move || {
-                    let s = screen_state(Mode::Dark, tc, Pos { file: 0, row: 4 }, Pane::Diff);
+                    let s = diff_at(Mode::Dark, 0, 4);
                     pressed(s, "/point")
                 }),
             ),
