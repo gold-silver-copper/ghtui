@@ -197,28 +197,18 @@ impl DiffView<'_> {
             left.extend(chips::chip(ctx, text, theme.fill(chip_bg), bg));
             left.push(Span::styled(" ", theme.body(bg)));
         };
+        let passed = ctx.icons.checks(ghtui_api::model::ChecksState::Passing);
         match file.viewed {
-            Viewed::Viewed => chip(
-                format!(
-                    "{} Viewed",
-                    ctx.icons.checks(ghtui_api::model::ChecksState::Passing)
-                ),
-                Bg::SuccessContainer,
-            ),
+            Viewed::Viewed => chip(format!("{passed} Viewed"), Bg::SuccessContainer),
             Viewed::Dismissed => chip("Changed since viewed".into(), Bg::TertiaryContainer),
             Viewed::Unviewed => {}
         }
+        let similarity = meta.similarity.unwrap_or(0);
         match meta.status {
             FileStatus::Added => chip("Added".into(), Bg::SuccessContainer),
             FileStatus::Deleted => chip("Deleted".into(), Bg::ErrorContainer),
-            FileStatus::Renamed => chip(
-                format!("Renamed {}%", meta.similarity.unwrap_or(0)),
-                Bg::TertiaryContainer,
-            ),
-            FileStatus::Copied => chip(
-                format!("Copied {}%", meta.similarity.unwrap_or(0)),
-                Bg::TertiaryContainer,
-            ),
+            FileStatus::Renamed => chip(format!("Renamed {similarity}%"), Bg::TertiaryContainer),
+            FileStatus::Copied => chip(format!("Copied {similarity}%"), Bg::TertiaryContainer),
             FileStatus::TypeChanged => chip("Type changed".into(), Bg::SecondaryContainer),
             FileStatus::Modified => {}
         }
@@ -227,10 +217,7 @@ impl DiffView<'_> {
         } else if meta.is_symlink() {
             chip("Symlink".into(), Bg::SecondaryContainer);
         }
-        if matches!(
-            file.diff.as_deref().map(|d| &d.content),
-            Some(Content::Binary { .. })
-        ) {
+        if let Some(Content::Binary { .. }) = file.diff.as_deref().map(|d| &d.content) {
             chip("Binary".into(), Bg::SecondaryContainer);
         }
         if file.generated {
@@ -269,15 +256,11 @@ impl DiffView<'_> {
         }
         if file.diff.is_some() {
             let (adds, dels) = self.doc.file_counts(file);
-            right.push(Span::styled(
-                format!("+{adds}"),
-                theme.style(Fg::DiffAddedSign, bg),
-            ));
-            right.push(Span::styled(" ", theme.body(bg)));
-            right.push(Span::styled(
-                format!("−{dels}"),
-                theme.style(Fg::DiffRemovedSign, bg),
-            ));
+            right.extend([
+                Span::styled(format!("+{adds}"), theme.style(Fg::DiffAddedSign, bg)),
+                Span::styled(" ", theme.body(bg)),
+                Span::styled(format!("−{dels}"), theme.style(Fg::DiffRemovedSign, bg)),
+            ]);
         }
         render_split(inset(area, PAD_X, 0), buf, left, right, 2);
     }
