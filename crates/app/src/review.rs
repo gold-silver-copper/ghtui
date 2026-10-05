@@ -471,38 +471,17 @@ pub(crate) fn all_changes(state: &State) -> String {
 }
 
 /// Review actions on the diff screen. `None` lets other handlers try.
-/// The thread or draft under the cursor, without its comments.
-struct Here {
-    key: AnnotationKey,
-    can_reply: bool,
-    resolved: bool,
-    can_resolve: bool,
-    can_unresolve: bool,
-}
-
-impl Here {
-    fn of(a: &Annotation) -> Self {
-        Self {
-            key: a.key.clone(),
-            can_reply: a.can_reply,
-            resolved: a.resolved,
-            can_resolve: a.can_resolve,
-            can_unresolve: a.can_unresolve,
-        }
-    }
-}
-
 #[must_use]
 pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
     let viewer = state.viewer.clone();
     let (screen, diff) = state.diff_parts()?;
     let pr = screen.pr.clone();
     let cursor = screen.cursor;
-    let annotation = diff
-        .doc
-        .annotation_at(cursor)
+    // The thread or draft under the cursor.
+    let at = diff.doc.annotation_at(cursor);
+    let annotation = at
         .and_then(|i| diff.doc.annotations().get(i as usize))
-        .map(Here::of);
+        .cloned();
     let notice = |state: &mut State, n: Notice| {
         state.notice = Some(n);
         Some(Vec::new())
@@ -564,32 +543,30 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
         }
         // `c` on a thread replies to it.
         Action::Comment
-            if annotation
-                .as_ref()
-                .is_some_and(|a| matches!(a.key, AnnotationKey::Thread(_))) =>
+            if let Some(Annotation {
+                key: AnnotationKey::Thread(thread_id),
+                can_reply,
+                ..
+            }) = &annotation =>
         {
-            let ann = annotation?;
-            let AnnotationKey::Thread(thread_id) = ann.key else {
-                return None;
-            };
-            if !ann.can_reply {
+            if !can_reply {
                 return notice(state, Notice::Info("You can't reply to this one".into()));
             }
+            let thread_id = thread_id.clone();
             Some(state.compose(ComposeTarget::Reply { thread_id }, ""))
         }
         Action::Comment => {
             let selection = screen.selection.take();
             match target(&diff.doc, cursor, selection) {
                 Ok(target) => {
-                    let reason = match &target {
-                        ComposeTarget::File { reason, .. } => reason.clone(),
-                        _ => None,
-                    };
-                    let cmds = state.compose(target, "");
-                    if let Some(reason) = reason {
-                        state.info(reason);
+                    if let ComposeTarget::File {
+                        reason: Some(reason),
+                        ..
+                    } = &target
+                    {
+                        state.info(reason.clone());
                     }
-                    Some(cmds)
+                    Some(state.compose(target, ""))
                 }
                 Err(err) => notice(state, Notice::Error(err)),
             }
@@ -626,9 +603,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
                     Notice::Error("Suggestions need lines GitHub can comment on".into()),
                 );
             };
-            if start.side != ghtui_diff::anchor::Side::Right
-                || end.side != ghtui_diff::anchor::Side::Right
-            {
+            if start.side != Side::Right || end.side != Side::Right {
                 return notice(
                     state,
                     Notice::Error("Suggestions apply to new lines (not deleted ones)".into()),
@@ -699,9 +674,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
             Some(vec![save])
         }
         Action::Open => {
-            let ann_index = diff.doc.annotation_at(cursor)?;
-            let ann = diff.doc.annotations().get(ann_index as usize)?.clone();
-            if let AnnotationKey::Draft(id) = ann.key {
+            if let AnnotationKey::Draft(id) = annotation?.key {
                 let body = diff
                     .review
                     .pending
@@ -711,7 +684,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
                     .clone();
                 return Some(state.compose(ComposeTarget::Draft { id }, &body));
             }
-            diff.doc.toggle_thread(ann_index);
+            diff.doc.toggle_thread(at?);
             Some(Vec::new())
         }
         Action::SubmitReview => {
@@ -860,14 +833,12 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 /// replies post right away.
 #[must_use]
 pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
-    let Some(Overlay::Compose(compose)) = &state.overlay else {
+    let Some(Overlay::Compose(compose)) = &mut state.overlay else {
         return Vec::new();
     };
     let body = compose.text();
     if body.trim().is_empty() {
-        if let Some(Overlay::Compose(compose)) = &mut state.overlay {
-            compose.error = Some("Write something first".into());
-        }
+        compose.error = Some("Write something first".into());
         return Vec::new();
     }
     let target = compose.target.clone();
@@ -877,9 +848,7 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
         ..
     } = target
     {
-        if let Some(Overlay::Compose(compose)) = &mut state.overlay {
-            compose.sending = true;
-        }
+        compose.sending = true;
         return vec![Cmd::Api(Api::AddComment {
             subject_id,
             body,
