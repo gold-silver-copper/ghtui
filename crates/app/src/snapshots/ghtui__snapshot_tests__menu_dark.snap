@@ -1,5 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
+assertion_line: 405
 expression: render(&state)
 ---
 Buffer {
@@ -20,7 +21,7 @@ Buffer {
         "                                                           l   Follow any link by its letters      ▐",
         "   ⎇ main ▾                                                u   Up a level                          ▐",
         "                                                         esc   Back                                ▐",
-        "  ╭─ octocat  Browse GitHub like the website ───────           Forward (nothing to go forward to)  ▐",
+        "  ╭─ octocat  Browse GitHub like the website ───────   alt-→   Forward (nothing to go forward to)  ▐",
         "  │▌▸ .github                                              h   Home                                ▐",
         "  │ ▸ crates                                               r   Refresh                             ▐",
         "  │ · Cargo.toml                                           :   Command palette                     ▐",

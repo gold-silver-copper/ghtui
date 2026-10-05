@@ -1,5 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
+assertion_line: 463
 expression: render(&state)
 ---
 Buffer {
@@ -19,7 +20,7 @@ Buffer {
         "  │ ● Theme: generate syntax palette from seed             l   Follow any link by its letters       ",
         "  │   gold-silver-copper/ghtui#12 updated 3h ago by        u   Up a level                           ",
         "  ├─────────────────────────────────────────────────     esc   Back (this is the first page)        ",
-        "  │ ● Cache GraphQL responses in redb                          Forward (nothing to go forward to)   ",
+        "  │ ● Cache GraphQL responses in redb                  alt-→   Forward (nothing to go forward to)   ",
         "  │   gold-silver-copper/ghtui#9 updated 3h ago by o       h   Home                                 ",
         "  ╰─────────────────────────────────────────────────       r   Refresh                              ",
         "                                                           :   Command palette                      ",

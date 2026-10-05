@@ -69,8 +69,8 @@ actions! {
     Top               "top"               ["<Home>", "g"]      Global "Go to top";
     Bottom            "bottom"            ["<End>", "G"]       Global "Go to bottom";
     Open              "open"              ["<Enter>"]          Global "Open the selection";
-    Back              "back"              ["<Esc>", "<BS>"]    Global "Back";
-    Forward           "forward"           []                   Global "Forward";
+    Back              "back"              ["<Esc>", "<BS>", "<A-Left>"] Global "Back";
+    Forward           "forward"           ["<A-Right>"]        Global "Forward";
     UpLevel           "up_level"          ["u"]                Global "Up a level";
     NextTab           "next_tab"          ["<Right>"]          Global "Next tab";
     PrevTab           "prev_tab"          ["<Left>"]           Global "Previous tab";
@@ -92,7 +92,7 @@ actions! {
     Star              "star"              ["s"]                Page   "Star / unstar";
     Branch            "branch"            ["b"]                Page   "Switch branches or tags";
     Hints             "hints"             ["l"]                Page   "Follow a link by its letters";
-    HintsBrowser      "hints_browser"     []                   Page   "Follow a link, in the browser";
+    HintsBrowser      "hints_browser"     ["L"]                Page   "Follow a link, in the browser";
     ToggleState       "toggle_state"      []                   Page   "Open / closed / all";
     Sort              "sort"              []                   Page   "Change the sort";
 
@@ -100,26 +100,26 @@ actions! {
     PrevHunk          "prev_hunk"         ["p"]                Diff   "Previous change";
     NextFile          "next_file"         ["<S-Down>"]         Diff   "Next file";
     PrevFile          "prev_file"         ["<S-Up>"]           Diff   "Previous file";
-    NextUnviewed      "next_unviewed"     []                   Diff   "Next unviewed file";
-    NextThread        "next_thread"       []                   Diff   "Next unresolved thread";
-    PrevThread        "prev_thread"       []                   Diff   "Previous unresolved thread";
-    JumpMove          "jump_move"         []                   Diff   "Jump to the other end of moved code";
+    NextUnviewed      "next_unviewed"     ["U"]                Diff   "Next unviewed file";
+    NextThread        "next_thread"       ["N"]                Diff   "Next unresolved thread";
+    PrevThread        "prev_thread"       ["P"]                Diff   "Previous unresolved thread";
+    JumpMove          "jump_move"         ["M"]                Diff   "Jump to the other end of moved code";
     SearchNext        "search_next"       []                   Diff   "Next search match";
     SearchPrev        "search_prev"       []                   Diff   "Previous search match";
     SwitchPane        "switch_pane"       ["<Tab>"]            Diff   "Switch between the file tree and the diff";
-    ToggleTree        "toggle_tree"       []                   Diff   "Show or hide the file tree";
-    ToggleSplit       "toggle_split"      []                   Diff   "Split or unified view";
+    ToggleTree        "toggle_tree"       ["t"]                Diff   "Show or hide the file tree";
+    ToggleSplit       "toggle_split"      ["S"]                Diff   "Split or unified view";
     IgnoreWhitespace  "ignore_whitespace" ["w"]                Diff   "Ignore whitespace changes";
     ExpandContext     "expand_context"    ["e"]                Diff   "Show more context";
-    FullFile          "full_file"         []                   Diff   "Show the whole file";
+    FullFile          "full_file"         ["F"]                Diff   "Show the whole file";
     ToggleSinceReview "since_review"      []                   Diff   "Show only changes since your last review";
     PickCommits       "pick_commits"      []                   Diff   "Choose commits to view";
     ToggleViewed      "toggle_viewed"     ["v"]                Diff   "Mark the file viewed (syncs with GitHub)";
     MarkReviewed      "mark_reviewed"     ["m"]                Diff   "Mark the change reviewed";
     VisualLines       "visual_lines"      ["x"]                Diff   "Select lines (for multi-line comments)";
     Suggest           "suggest"           []                   Diff   "Suggest a change (opens $EDITOR)";
-    FileComment       "file_comment"      []                   Diff   "Comment on the whole file";
-    ResolveThread     "resolve"           []                   Diff   "Resolve or unresolve the thread";
+    FileComment       "file_comment"      ["C"]                Diff   "Comment on the whole file";
+    ResolveThread     "resolve"           ["R"]                Diff   "Resolve or unresolve the thread";
     DeleteDraft       "delete_draft"      ["<Delete>"]         Diff   "Delete the draft comment";
     SubmitReview      "submit_review"     ["a"]                Diff   "Submit your review";
 }
@@ -498,6 +498,109 @@ mod tests {
         assert_eq!(validated.bindings, defaults.bindings);
         let declared: usize = Action::ALL.iter().map(|a| a.defaults().len()).sum();
         assert_eq!(defaults.bindings.len(), declared, "every default parses");
+    }
+
+    /// The README's key tables say what the keys do. Each row is listed
+    /// here with the actions it documents; the keys must run them, and a
+    /// row added to the README must be added here.
+    #[test]
+    fn readme_key_tables_match_the_keymap() {
+        use Action::*;
+        let page: &[(&str, &[Action])] = &[
+            ("`↑` `↓` (`j` `k`)", &[Up, Down]),
+            ("`←` `→`", &[PrevTab, NextTab]),
+            ("`Enter`", &[Open]),
+            ("`Esc` `⌫` `alt-←`", &[Back]),
+            ("`alt-→`", &[Forward]),
+            ("`PgUp` `PgDn`", &[PageUp, PageDown]),
+            ("`Home` `End` (`g` `G`)", &[Top, Bottom]),
+            ("`1`–`4`", &[Tab1, Tab4]),
+            ("`Space` `?`", &[Menu]),
+            ("`/`", &[Search]),
+            ("`f`", &[FindFile]),
+            ("`b`", &[Branch]),
+            ("`c`", &[Comment]),
+            ("`s`", &[Star]),
+            ("`o`", &[OpenInBrowser]),
+            ("`y`", &[Copy]),
+            ("`l`", &[Hints]),
+            ("`L`", &[HintsBrowser]),
+            ("`u`", &[UpLevel]),
+            ("`h`", &[GoHome]),
+            ("`r`", &[Refresh]),
+            ("`:` `ctrl-k`", &[CommandPalette]),
+            ("`q` `ctrl-c`", &[Quit]),
+        ];
+        let diff: &[(&str, &[Action])] = &[
+            ("`n` `p`", &[NextHunk, PrevHunk]),
+            ("`N` `P`", &[NextThread, PrevThread]),
+            ("`⇧↓` `⇧↑`", &[NextFile, PrevFile]),
+            ("`⇥`", &[SwitchPane]),
+            ("`U`", &[NextUnviewed]),
+            ("`v`", &[ToggleViewed]),
+            ("`m`", &[MarkReviewed]),
+            ("`c`", &[Comment]),
+            ("`C`", &[FileComment]),
+            ("`R`", &[ResolveThread]),
+            ("`x`", &[VisualLines]),
+            ("`e`", &[ExpandContext]),
+            ("`F`", &[FullFile]),
+            ("`S`", &[ToggleSplit]),
+            ("`t`", &[ToggleTree]),
+            ("`M`", &[JumpMove]),
+            ("`w`", &[IgnoreWhitespace]),
+            ("`a`", &[SubmitReview]),
+            ("`Delete`", &[DeleteDraft]),
+        ];
+        let notation = |shown: &str| match shown {
+            "↑" => "<Up>".to_owned(),
+            "↓" => "<Down>".to_owned(),
+            "←" => "<Left>".to_owned(),
+            "→" => "<Right>".to_owned(),
+            "⌫" => "<BS>".to_owned(),
+            "⇥" => "<Tab>".to_owned(),
+            "⇧↓" => "<S-Down>".to_owned(),
+            "⇧↑" => "<S-Up>".to_owned(),
+            "PgUp" => "<PageUp>".to_owned(),
+            "PgDn" => "<PageDown>".to_owned(),
+            "alt-←" => "<A-Left>".to_owned(),
+            "alt-→" => "<A-Right>".to_owned(),
+            "ctrl-k" => "<C-k>".to_owned(),
+            "ctrl-c" => "<C-c>".to_owned(),
+            s if s.chars().count() > 1 => format!("<{s}>"),
+            s => s.to_owned(),
+        };
+        let readme = include_str!("../../../README.md");
+        let keys = readme
+            .split_once("\n## Keys\n")
+            .and_then(|(_, rest)| rest.split_once("\n## Configuration"))
+            .map(|(keys, _)| keys)
+            .unwrap();
+        let (page_table, diff_table) = keys.split_once("Reviewing,").unwrap();
+        let keymap = Keymap::default();
+        for (table, documented, scope) in [
+            (page_table, page, Scope::Page),
+            (diff_table, diff, Scope::Diff),
+        ] {
+            let rows: Vec<&str> = table
+                .lines()
+                .filter(|l| l.starts_with("| `"))
+                .filter_map(|l| l.split('|').nth(1))
+                .map(str::trim)
+                .collect();
+            let listed: Vec<&str> = documented.iter().map(|(k, _)| *k).collect();
+            assert_eq!(rows, listed, "README rows and this test's list differ");
+            for (cell, actions) in documented {
+                for shown in cell.split('`').skip(1).step_by(2) {
+                    let keys = parse_sequence(&notation(shown)).unwrap();
+                    let does = keymap.resolve(&keys, scope);
+                    assert!(
+                        actions.iter().any(|a| does == Resolution::Action(*a)),
+                        "README says `{shown}` does {actions:?}; it does {does:?}"
+                    );
+                }
+            }
+        }
     }
 
     /// What terminals send for Shift-Tab matches `<S-Tab>`.

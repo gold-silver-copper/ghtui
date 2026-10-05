@@ -77,7 +77,8 @@ do.
 - `←`/`→` switch tabs (Code, Issues, Pull requests; Conversation, Commits,
   Files changed).
 - `Enter` opens the selected row; on a comment it starts a quote reply.
-- `Esc` (or `⌫`) goes back; `u` goes up a level.
+- `Esc` (or `⌫`, or `alt-←`) goes back, `alt-→` goes forward; `u` goes up
+  a level.
 - `PgUp`/`PgDn` and `Home`/`End` scroll.
 - The mouse works too: click a link, a row, a tab or the search field;
   scroll with the wheel; right-click for the actions menu.
@@ -89,7 +90,8 @@ do.
   branches or tags.
 - `c` comments (on a review thread, it replies); `s` stars.
 - `o` opens in the browser; `y` copies the link.
-- `l` puts letters on every link on screen; type them to follow one.
+- `l` puts letters on every link on screen; type them to follow one (`L`
+  follows it in the browser).
 - `h` goes home; `r` refreshes; `q` quits.
 - `:` (or `ctrl-k`) is the command palette. It also takes `owner/repo`,
   `owner/repo#123`, `@user`, or a URL.
@@ -107,8 +109,8 @@ do.
 - **Directories and files** open in place. Files are syntax-highlighted with
   line numbers, and `.md` files are rendered.
 - **Issues and pull requests** lists are newest first, under a filter field,
-  with Open/Closed counts (`S` cycles them) and a sort (`O` cycles it). Long
-  lists end in "Load more".
+  with Open/Closed counts and a sort (click them, or use the `Space` menu).
+  Long lists end in "Load more".
 - **Issue** shows the conversation as a timeline of comment boxes. Issue
   numbers that are pull requests redirect, as on GitHub.
 - **Pull request**:
@@ -119,7 +121,7 @@ do.
 - **Profile** has its Overview (pinned repositories), Repositories and Stars.
 - **Search** has tabs for repositories, issues, pull requests and users.
 - **Writing**: `c` comments on the issue or pull request on screen, and the
-  "Add a comment" box at the end does the same. `*` stars or unstars.
+  "Add a comment" box at the end does the same. `s` stars or unstars.
 
 Links ghtui doesn't show itself (Actions, wikis, releases, external sites)
 open in your browser. Pages show cached data first and refresh in the
@@ -163,7 +165,8 @@ never does something else. Less common actions have no key: they're in the
 | `↑` `↓` (`j` `k`)     | Move                                                          |
 | `←` `→`               | Previous / next tab                                           |
 | `Enter`               | Open the selection (on a comment: quote reply)                |
-| `Esc` `⌫`             | Back (in the diff, an active search is cleared first)         |
+| `Esc` `⌫` `alt-←`     | Back (in the diff, an active search is cleared first)         |
+| `alt-→`               | Forward                                                       |
 | `PgUp` `PgDn`         | Page up / down                                                |
 | `Home` `End` (`g` `G`) | Top / bottom                                                 |
 | `1`–`4`               | Tab by number                                                 |
@@ -176,6 +179,7 @@ never does something else. Less common actions have no key: they're in the
 | `o`                   | Open on GitHub in the browser                                 |
 | `y`                   | Copy the link                                                 |
 | `l`                   | Follow a link by its letters                                  |
+| `L`                   | Follow a link by its letters, in the browser                  |
 | `u`                   | Up a level (file → folder, PR → list, Files changed → PR)     |
 | `h`                   | Home                                                          |
 | `r`                   | Refresh                                                       |
@@ -187,21 +191,27 @@ Reviewing, in a pull request's Files changed tab:
 | Keys        | Action                                                                       |
 | ----------- | ---------------------------------------------------------------------------- |
 | `n` `p`     | Next / previous change (after a search: next / previous match)               |
+| `N` `P`     | Next / previous unresolved thread                                            |
 | `⇧↓` `⇧↑`   | Next / previous file                                                         |
 | `⇥`         | Switch between the file tree and the diff                                    |
+| `U`         | Next unviewed file                                                           |
 | `v`         | Mark the file viewed, synced with GitHub; viewed files collapse              |
 | `m`         | Mark the change under the cursor reviewed (local, survives restarts)         |
 | `c`         | Comment on the line or selection; on a thread, reply                         |
+| `C`         | Comment on the whole file                                                    |
+| `R`         | Resolve or unresolve the thread                                              |
 | `x`         | Select lines (for multi-line comments)                                       |
 | `e`         | Show more context                                                            |
+| `F`         | Show the whole file                                                          |
+| `S`         | Split or unified view                                                        |
+| `t`         | Show or hide the file tree                                                   |
+| `M`         | Jump to the other end of moved code                                          |
 | `w`         | Ignore whitespace changes                                                    |
 | `a`         | Submit your review (Comment / Approve / Request changes)                     |
 | `Delete`    | Delete the draft comment                                                     |
 
-In the `Space` menu: split or unified view, the file tree, the whole file,
-changes since your last review, picking commits, next unviewed file, threads,
-resolving, suggesting a change, commenting on a whole file, jumping across
-moved code, open/closed and sort on lists, forward.
+In the `Space` menu: changes since your last review, picking commits,
+suggesting a change, and open/closed and sort on lists.
 
 In the comment editor: `<C-s>` adds the comment to your review (or posts a
 reply or a conversation comment), `<C-e>` continues in `$EDITOR`, and `Esc` cancels (press it twice if
@@ -240,7 +250,7 @@ nerd_font = false     # Nerd Font icons and rounded chip ends
 # to pages or the diff. Actions without a default key can be bound here.
 down = ["j", "<Down>", "<C-n>"]
 up = ["k", "<Up>", "<C-p>"]
-sort = ["S"]
+sort = ["O"]
 ```
 
 Action names are listed in the `actions!` table in
@@ -373,7 +383,7 @@ line numbers shift and clears when the change is edited.
 - **Moved code** (like `git diff --color-moved`): a run of at least 3
   removed lines (30+ characters) that reappears as added lines, in the same
   file or another, ignoring indentation. It's shown in the tertiary tint, with
-  "moved to/from path:line" and `gm` to jump between the two ends.
+  "moved to/from path:line" and `M` to jump between the two ends.
 - **Formatting-only changes** (removed and added text identical once
   whitespace and line breaks are ignored) fold into one row. `<Enter>` shows
   them.
@@ -402,12 +412,12 @@ line numbers shift and clears when the change is edited.
 - **Where comments go.** Commenting on a line GitHub won't accept offers a
   file-level comment instead, and says why. A selection that crosses two of
   GitHub's hunks is refused with an explanation.
-- **Pending comments** are kept locally (in the cache, so a crash or quit
-  doesn't lose them) until you submit. On submit, ghtui reuses your pending
+- **Pending comments** are kept locally (outside the cache, so a crash, a
+  quit or clearing the cache doesn't lose them) until you submit. On submit, ghtui reuses your pending
   review on GitHub (or starts one on the head commit), adds each comment as
   its own thread, and submits only if GitHub accepted every comment. A
   rejected comment keeps its text, shows GitHub's reason, and can be turned
-  into a file comment with `f`. Accepted ones stay in GitHub's pending review
+  into a file comment with `C`. Accepted ones stay in GitHub's pending review
   until the next submit.
 - **Threads.** Threads show inline, with resolved and outdated state. Open
   threads are expanded and resolved ones collapse to a gutter marker (◆ open,
@@ -484,8 +494,7 @@ Performance targets, as timing tests
 - The cache isn't separated per GitHub account. After switching accounts, the
   previous account's cached pages show until the first refresh completes.
 - Actions, wikis, discussions, releases, notifications and code search
-  aren't pages yet; their links open in the browser. Repositories open on
-  their default branch, with no branch or tag picker yet.
+  aren't pages yet; their links open in the browser.
 - Profiles list the 30 most recently pushed (and starred) repositories;
   profile READMEs and the contribution graph aren't shown.
 - "Go to file" lists what GitHub's tree API returns in one request; for very

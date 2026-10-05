@@ -1,5 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
+assertion_line: 894
 expression: "render(&better_than_github(Mode::Light))"
 ---
 Buffer {
@@ -16,7 +17,7 @@ Buffer {
         "   M math.rs         +2 −9      3   3    }                                                                    ",
         "   M util.rs         +3 −0      4   4                                                                         ",
         "                                5      - pub fn clamp(value: i32, low: i32, high: i32) -> i32 {               ",
-        "                                       ↳ moved to src/util.rs:2 · :jump move to jump                          ",
+        "                                       ↳ moved to src/util.rs:2 · M to jump                                   ",
         "                                6      -     value.max(low).min(high)                                         ",
         "                                7      - }                                                                    ",
         "                                8      -                                                                      ",
@@ -32,7 +33,7 @@ Buffer {
         "                                       @@ -1,1 +1,4 @@                                                        ",
         "                                1   1    // helpers                                                           ",
         "                                    2  + pub fn clamp(value: i32, low: i32, high: i32) -> i32 {               ",
-        "                                       ↳ moved from src/math.rs:5 · :jump move to jump                        ",
+        "                                       ↳ moved from src/math.rs:5 · M to jump                                 ",
         "                                    3  +     value.max(low).min(high)                                         ",
         "  ⠋ Diffing 2/2 files   space menu   n/p change   ⇧↓ file   v viewed   c comment               API 4987/5000  ",
     ],
@@ -163,8 +164,8 @@ Buffer {
         x: 0, y: 11, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 27, y: 11, fg: Rgb(98, 74, 105), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
         x: 66, y: 11, fg: Rgb(50, 83, 131), bg: Rgb(249, 249, 255), underline: Reset, modifier: BOLD,
-        x: 76, y: 11, fg: Rgb(67, 71, 78), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
-        x: 84, y: 11, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
+        x: 67, y: 11, fg: Rgb(67, 71, 78), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
+        x: 75, y: 11, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
         x: 0, y: 12, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 27, y: 12, fg: Rgb(25, 28, 32), bg: Rgb(255, 235, 255), underline: Reset, modifier: NONE,
         x: 30, y: 12, fg: Rgb(67, 71, 78), bg: Rgb(255, 235, 255), underline: Reset, modifier: NONE,
@@ -342,8 +343,8 @@ Buffer {
         x: 0, y: 27, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 27, y: 27, fg: Rgb(98, 74, 105), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
         x: 68, y: 27, fg: Rgb(50, 83, 131), bg: Rgb(249, 249, 255), underline: Reset, modifier: BOLD,
-        x: 78, y: 27, fg: Rgb(67, 71, 78), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
-        x: 86, y: 27, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
+        x: 69, y: 27, fg: Rgb(67, 71, 78), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
+        x: 77, y: 27, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
         x: 0, y: 28, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 27, y: 28, fg: Rgb(25, 28, 32), bg: Rgb(255, 235, 255), underline: Reset, modifier: NONE,
         x: 30, y: 28, fg: Rgb(67, 71, 78), bg: Rgb(255, 235, 255), underline: Reset, modifier: NONE,
