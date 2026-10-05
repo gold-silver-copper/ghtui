@@ -835,25 +835,25 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     match key.code {
         KeyCode::Esc if compose.text().trim().is_empty() || compose.confirm_discard => {
             state.overlay = None;
-            Vec::new()
         }
         KeyCode::Esc => {
             compose.confirm_discard = true;
             compose.error = Some("Press esc again to discard this comment".into());
-            Vec::new()
         }
-        KeyCode::Char('e') if ctrl => vec![Cmd::Edit {
-            purpose: EditPurpose::Compose,
-            text: compose.text(),
-        }],
-        KeyCode::Char('s') if ctrl => save_compose(state),
+        KeyCode::Char('e') if ctrl => {
+            return vec![Cmd::Edit {
+                purpose: EditPurpose::Compose,
+                text: compose.text(),
+            }];
+        }
+        KeyCode::Char('s') if ctrl => return save_compose(state),
         _ => {
             compose.confirm_discard = false;
             compose.error = None;
             compose.input.input(key);
-            Vec::new()
         }
     }
+    Vec::new()
 }
 
 /// `ctrl-s` in the composer: drafts join the pending review (and are saved);
@@ -942,22 +942,15 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        KeyCode::Esc => {
-            state.overlay = None;
-            Vec::new()
+        KeyCode::Esc => state.overlay = None,
+        KeyCode::Tab => dialog.cycle(true),
+        KeyCode::BackTab => dialog.cycle(false),
+        KeyCode::Char('e') if ctrl => {
+            return vec![Cmd::Edit {
+                purpose: EditPurpose::Summary,
+                text: dialog.input.lines().join("\n"),
+            }];
         }
-        KeyCode::Tab => {
-            dialog.cycle(true);
-            Vec::new()
-        }
-        KeyCode::BackTab => {
-            dialog.cycle(false);
-            Vec::new()
-        }
-        KeyCode::Char('e') if ctrl => vec![Cmd::Edit {
-            purpose: EditPurpose::Summary,
-            text: dialog.input.lines().join("\n"),
-        }],
         KeyCode::Char('s') if ctrl => {
             let event = dialog.event;
             let body = dialog.input.lines().join("\n");
@@ -967,24 +960,22 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             }
             dialog.sending = true;
             dialog.error = None;
-            let Some((screen, diff)) = state.diff_parts() else {
-                return Vec::new();
-            };
-            let head = diff.head().unwrap_or_default();
-            vec![Cmd::Api(Api::SubmitReview {
-                pr: screen.pr.clone(),
-                head,
-                drafts: diff.review.pending.clone(),
-                event,
-                body,
-            })]
+            if let Some((screen, diff)) = state.diff_parts() {
+                return vec![Cmd::Api(Api::SubmitReview {
+                    pr: screen.pr.clone(),
+                    head: diff.head().unwrap_or_default(),
+                    drafts: diff.review.pending.clone(),
+                    event,
+                    body,
+                })];
+            }
         }
         _ => {
             dialog.error = None;
             dialog.input.input(key);
-            Vec::new()
         }
     }
+    Vec::new()
 }
 
 #[cfg(test)]
