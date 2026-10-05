@@ -48,7 +48,15 @@ macro_rules! fragments {
             pub id: cynic::Id,
         }
     )*};
+    (nodes: $($name:ident = $graphql:literal => $ty:ident),* $(,)?) => {$(
+        #[derive(cynic::QueryFragment, Debug)]
+        #[cynic(graphql_type = $graphql, schema_module = "schema")]
+        pub struct $name {
+            pub nodes: Option<Vec<Option<$ty>>>,
+        }
+    )*};
 }
+pub(crate) use fragments;
 
 // Connection sizes.
 fragments! {
@@ -89,6 +97,16 @@ fragments! {
     ThreadPayload = "AddPullRequestReviewThreadPayload",
     ResolvePayload = "ResolveReviewThreadPayload",
     UnresolvePayload = "UnresolveReviewThreadPayload",
+}
+
+// Lists of nodes, and their nodes' types.
+fragments! {
+    nodes:
+    CommitRollupConnection = "PullRequestCommitConnection" => CommitRollupNode,
+    LabelConnection = "LabelConnection" => Label,
+    ReviewCommentConnection = "PullRequestReviewCommentConnection" => ReviewComment,
+    ReviewIdConnection = "PullRequestReviewConnection" => ReviewId,
+    ReviewCommitConnection = "PullRequestReviewConnection" => ReviewCommit,
 }
 
 /// An issue or pull request by number.
@@ -175,12 +193,6 @@ pub struct Actor {
 #[cynic(graphql_type = "Repository", schema_module = "schema")]
 pub struct RepositoryName {
     pub name_with_owner: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestCommitConnection", schema_module = "schema")]
-pub struct CommitRollupConnection {
-    pub nodes: Option<Vec<Option<CommitRollupNode>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -275,12 +287,6 @@ pub enum MergeableState {
     Conflicting,
     Mergeable,
     Unknown,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "LabelConnection", schema_module = "schema")]
-pub struct LabelConnection {
-    pub nodes: Option<Vec<Option<Label>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -452,15 +458,6 @@ pub struct ReviewThread {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "PullRequestReviewCommentConnection",
-    schema_module = "schema"
-)]
-pub struct ReviewCommentConnection {
-    pub nodes: Option<Vec<Option<ReviewComment>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequestReviewComment", schema_module = "schema")]
 pub struct ReviewComment {
     pub id: cynic::Id,
@@ -529,12 +526,6 @@ pub struct PrPendingReview {
     /// Only the viewer's own pending review is visible.
     #[arguments(states: [PENDING], first: 1)]
     pub reviews: Option<ReviewIdConnection>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReviewConnection", schema_module = "schema")]
-pub struct ReviewIdConnection {
-    pub nodes: Option<Vec<Option<ReviewId>>>,
 }
 
 // ---- review mutations --------------------------------------------------------
@@ -710,12 +701,6 @@ pub struct RepositoryWithReviews {
 pub struct PrReviews {
     #[arguments(author: $login, last: 20)]
     pub reviews: Option<ReviewCommitConnection>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReviewConnection", schema_module = "schema")]
-pub struct ReviewCommitConnection {
-    pub nodes: Option<Vec<Option<ReviewCommit>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
