@@ -1320,11 +1320,11 @@ impl Doc {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use ghtui_git::files::{FileStatus, ZERO_OID};
 
-    fn changed(path: &str) -> ChangedFile {
+    pub(crate) fn changed(path: &str) -> ChangedFile {
         ChangedFile {
             status: FileStatus::Modified,
             old_path: Some(path.into()),
@@ -1360,6 +1360,24 @@ mod tests {
             .replace("line 45\n", "forty-five\n");
         doc.set_diff(0, compute("a.txt", &old, &new));
         doc
+    }
+
+    fn view(split: bool, whitespace: Whitespace) -> ViewOptions {
+        ViewOptions {
+            split,
+            whitespace,
+            wrap: 0,
+        }
+    }
+
+    /// The first row whose (first) line matches.
+    fn line_row(file: &DocFile, matches: impl Fn(&DiffLine) -> bool) -> Option<usize> {
+        let lines = &file.text()?.lines;
+        file.rows().iter().position(|r| {
+            r.entries()
+                .next()
+                .is_some_and(|e| matches(&lines[e as usize]))
+        })
     }
 
     fn kinds(file: &DocFile) -> String {
@@ -1483,11 +1501,7 @@ mod tests {
     fn split_rows_pair_changes() {
         let mut doc = Doc::new(vec![changed("x.rs")], &HashSet::new());
         doc.set_diff(0, compute("x.rs", "a\nb\nc\nd\n", "a\nB\nC\nX\nd\n"));
-        doc.set_options(ViewOptions {
-            split: true,
-            whitespace: Whitespace::Exact,
-            wrap: 0,
-        });
+        doc.set_options(view(true, Whitespace::Exact));
         let rows: Vec<Row> = doc.files[0]
             .rows()
             .iter()
@@ -1520,11 +1534,7 @@ mod tests {
             compute("x.rs", "fn a() {\n  x();\n}\n", "fn a() {\n    x();\n}\n"),
         );
         assert_eq!(doc.totals(), (1, 1));
-        doc.set_options(ViewOptions {
-            split: false,
-            whitespace: Whitespace::Ignore,
-            wrap: 0,
-        });
+        doc.set_options(view(false, Whitespace::Ignore));
         assert_eq!(doc.totals(), (0, 0));
         assert_eq!(doc.files[0].rows()[1], Row::Note(Note::NoChanges));
     }
@@ -1532,18 +1542,9 @@ mod tests {
     #[test]
     fn anchors_keep_the_line_across_view_changes() {
         let mut doc = doc();
-        let text = doc.files[0].text().unwrap().clone();
-        let row = doc.files[0]
-            .rows()
-            .iter()
-            .position(|r| matches!(r, Row::Line(e) if text.lines[*e as usize].new == Some(44)))
-            .unwrap();
+        let row = line_row(&doc.files[0], |l| l.new == Some(44)).unwrap();
         let anchor = doc.anchor(Pos { file: 0, row });
-        doc.set_options(ViewOptions {
-            split: true,
-            whitespace: Whitespace::Exact,
-            wrap: 0,
-        });
+        doc.set_options(view(true, Whitespace::Exact));
         let pos = doc.locate(anchor);
         assert!(
             doc.row_text(pos).contains("line 44"),
@@ -1602,11 +1603,7 @@ mod tests {
                 .count()
         };
         assert_eq!(count(&doc), 1);
-        doc.set_options(ViewOptions {
-            split: true,
-            whitespace: Whitespace::Exact,
-            wrap: 0,
-        });
+        doc.set_options(view(true, Whitespace::Exact));
         assert_eq!(count(&doc), 1);
     }
 
@@ -1661,29 +1658,16 @@ mod tests {
             // File-level thread right after the header (head, 2 body, footer).
             assert!(rows_of(&doc).starts_with("HTTTT"), "{}", rows_of(&doc));
             // The line thread follows the row showing new line 5.
-            let line_row = file
-                .rows()
-                .iter()
-                .position(|r| matches!(r, Row::Line(e) if file.text().unwrap().lines[*e as usize].new == Some(5)))
-                .unwrap();
-            assert!(matches!(file.rows()[line_row + 1], Row::Thread(_)));
-            assert_eq!(
-                doc.annotation_at(Pos {
-                    file: 0,
-                    row: line_row
-                }),
-                Some(0)
-            );
+            let row = line_row(file, |l| l.new == Some(5)).unwrap();
+            assert!(matches!(file.rows()[row + 1], Row::Thread(_)));
+            assert_eq!(doc.annotation_at(Pos { file: 0, row }), Some(0));
         }
 
         #[test]
         fn commented_lines_are_always_visible() {
             let mut doc = doc();
             // Line 30 is far from both changes (5 and 45): normally hidden.
-            let visible = |doc: &Doc| {
-                let f = &doc.files[0];
-                f.rows().iter().any(|r| matches!(r, Row::Line(e) if f.text().unwrap().lines[*e as usize].new == Some(30)))
-            };
+            let visible = |doc: &Doc| line_row(&doc.files[0], |l| l.new == Some(30)).is_some();
             assert!(!visible(&doc));
             doc.set_annotations(vec![ann("far", Side::Right, Some(30))]);
             assert!(visible(&doc));
@@ -1727,17 +1711,12 @@ mod tests {
         fn left_side_threads_attach_to_removed_lines_in_split_view() {
             let mut doc = doc();
             doc.set_options(ViewOptions {
-                split: true,
-                whitespace: Whitespace::Exact,
                 wrap: 40,
+                ..view(true, Whitespace::Exact)
             });
             doc.set_annotations(vec![ann("old", Side::Left, Some(5))]);
             let file = &doc.files[0];
-            let at = file
-                .rows()
-                .iter()
-                .position(|r| matches!(r, Row::Split { left: Some(e), .. } if file.text().unwrap().lines[*e as usize].old == Some(5)))
-                .unwrap();
+            let at = line_row(file, |l| l.old == Some(5)).unwrap();
             assert!(matches!(file.rows()[at + 1], Row::Thread(_)));
         }
 
@@ -1745,11 +1724,7 @@ mod tests {
         fn line_positions_for_comments() {
             let doc = doc();
             let file = &doc.files[0];
-            let removed = file
-                .rows()
-                .iter()
-                .position(|r| matches!(r, Row::Line(e) if file.text().unwrap().lines[*e as usize].kind == LineKind::Removed))
-                .unwrap();
+            let removed = line_row(file, |l| l.kind == LineKind::Removed).unwrap();
             let pos = doc
                 .line_at(Pos {
                     file: 0,
@@ -1831,13 +1806,7 @@ mod tests {
             doc.set_since(Some(seen), true);
             let rows = kinds(&doc.files[0]);
             // The old change (line 5) is gone from view; the new one (45) shows.
-            let text = doc.files[0].text().unwrap().clone();
-            let shows = |n: u32| {
-                doc.files[0]
-                    .rows()
-                    .iter()
-                    .any(|r| matches!(r, Row::Line(e) if text.lines[*e as usize].new == Some(n)))
-            };
+            let shows = |n: u32| line_row(&doc.files[0], |l| l.new == Some(n)).is_some();
             assert!(shows(45), "{rows}");
             assert!(!shows(5), "{rows}");
             assert!(doc.has_new_changes(0));
@@ -1905,10 +1874,7 @@ mod tests {
             assert_eq!(target.file, 1);
             assert_eq!(target.row + 1, moved_to, "lands on the block's first line");
             // In whitespace-insensitive mode moves don't apply.
-            doc.set_options(ViewOptions {
-                whitespace: Whitespace::Ignore,
-                ..ViewOptions::default()
-            });
+            doc.set_options(view(false, Whitespace::Ignore));
             assert!(!kinds(&doc.files[0]).contains('M'));
         }
     }

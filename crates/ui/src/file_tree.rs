@@ -239,26 +239,11 @@ impl FileTree<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ghtui_git::files::{ChangedFile, ZERO_OID};
+    use crate::diff_doc::tests::changed;
     use std::collections::HashSet;
 
     fn doc(paths: &[&str]) -> Doc {
-        Doc::new(
-            paths
-                .iter()
-                .map(|p| ChangedFile {
-                    status: FileStatus::Modified,
-                    old_path: Some((*p).into()),
-                    new_path: Some((*p).into()),
-                    old_mode: 0o100644,
-                    new_mode: 0o100644,
-                    old_oid: ghtui_git::Oid::new(ZERO_OID),
-                    new_oid: ghtui_git::Oid::new(ZERO_OID),
-                    similarity: None,
-                })
-                .collect(),
-            &HashSet::new(),
-        )
+        Doc::new(paths.iter().map(|p| changed(p)).collect(), &HashSet::new())
     }
 
     fn render(rows: &[TreeRow]) -> Vec<String> {
