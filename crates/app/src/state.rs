@@ -737,26 +737,16 @@ pub fn timers(state: &mut State, last_notice: &mut Option<Notice>) -> Vec<Cmd> {
 #[must_use]
 fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
     match msg {
-        Msg::Diff(pr, msg) => diff_screen::update(state, pr, msg),
-        Msg::Key(key) => on_key(state, key),
-        Msg::Resize(w, h) => {
-            state.size = (w, h);
-            Vec::new()
-        }
-        Msg::Viewer(Ok(login)) => {
-            state.viewer = Some(login);
-            Vec::new()
-        }
-        Msg::Viewer(Err(err)) => {
-            tracing::warn!(%err, "could not fetch viewer");
-            Vec::new()
-        }
+        Msg::Diff(pr, msg) => return diff_screen::update(state, pr, msg),
+        Msg::Key(key) => return on_key(state, key),
+        Msg::Resize(w, h) => state.size = (w, h),
+        Msg::Viewer(Ok(login)) => state.viewer = Some(login),
+        Msg::Viewer(Err(err)) => tracing::warn!(%err, "could not fetch viewer"),
         Msg::Inbox(result) => {
             if let Err(err) = &result {
                 tracing::warn!(%err, "inbox fetch failed");
             }
             state.inbox.finish(result);
-            Vec::new()
         }
         Msg::Pr(pr, result) => {
             if let Err(err) = result.as_ref() {
@@ -764,11 +754,11 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             }
             state.prs.entry(pr.clone()).or_default().finish(*result);
             // The diff was opened before the PR's metadata arrived.
-            match state.screen() {
-                Screen::Diff(screen) if screen.pr == pr && !state.diffs.contains_key(&pr) => {
-                    state.start_diff(&pr)
-                }
-                _ => Vec::new(),
+            if let Screen::Diff(screen) = state.screen()
+                && screen.pr == pr
+                && !state.diffs.contains_key(&pr)
+            {
+                return state.start_diff(&pr);
             }
         }
         Msg::Fetched {
@@ -809,7 +799,6 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                     true,
                 );
             }
-            Vec::new()
         }
         Msg::FetchedMore(key, result) => {
             let Some(remote) = state.data.get_mut(&key).filter(|r| r.loading_more) else {
@@ -823,88 +812,74 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                     }
                 }
                 Ok(_) => {}
-                Err(err) => {
-                    state.error(format!("Couldn't load more: {err}"));
-                }
+                Err(err) => state.error(format!("Couldn't load more: {err}")),
             }
-            Vec::new()
         }
         Msg::Commented(key, Ok(())) => {
             state.overlay = None;
             state.info("Comment posted");
-            state.ensure(Need::Data(key), true)
+            return state.ensure(Need::Data(key), true);
         }
         Msg::Commented(_, Err(err)) => {
             if let Some(Overlay::Compose(compose)) = &mut state.overlay {
                 compose.sending = false;
                 compose.error = Some(err.to_string());
             }
-            Vec::new()
         }
         Msg::Starred {
             repo,
             starred,
-            result,
+            result: Ok(()),
         } => {
-            match result {
-                Ok(()) => {
-                    let verb = if starred { "Starred" } else { "Unstarred" };
-                    state.info(format!("{verb} {repo}"));
-                }
-                Err(err) => {
-                    nav::set_starred(state, &repo, !starred);
-                    state.error(format!("GitHub didn't save that: {err}"));
-                }
-            }
-            Vec::new()
+            let verb = if starred { "Starred" } else { "Unstarred" };
+            state.info(format!("{verb} {repo}"));
         }
-        Msg::Mouse(ev) => nav::on_mouse(state, ev),
+        Msg::Starred {
+            repo,
+            starred,
+            result: Err(err),
+        } => {
+            nav::set_starred(state, &repo, !starred);
+            state.error(format!("GitHub didn't save that: {err}"));
+        }
+        Msg::Mouse(ev) => return nav::on_mouse(state, ev),
         Msg::Timer(Timer::ExpireNotice(id)) => {
             if id == state.notice_id {
                 state.notice = None;
             }
-            Vec::new()
         }
         Msg::Timer(Timer::Spin) => {
             state.spinning = false;
             state.spinner = state.spinner.wrapping_add(1);
-            Vec::new()
         }
         Msg::Timer(Timer::Minute) => {
             state.data_gen += 1;
-            vec![Cmd::Timer(Timer::Minute, 60_000)]
+            return vec![Cmd::Timer(Timer::Minute, 60_000)];
         }
-        Msg::SuggestDue(q) => match &state.overlay {
-            Some(Overlay::Search(sb)) if sb.input.lines().join("").trim() == q => {
-                vec![Cmd::Api(Api::Suggest(q))]
+        Msg::SuggestDue(q) => {
+            if let Some(Overlay::Search(sb)) = &state.overlay
+                && sb.input.lines().join("").trim() == q
+            {
+                return vec![Cmd::Api(Api::Suggest(q))];
             }
-            _ => Vec::new(),
-        },
+        }
         Msg::Suggested(q, result) => {
             if let (Some(Overlay::Search(sb)), Ok(repos)) = (&mut state.overlay, result) {
                 sb.remote = repos;
                 sb.remote_for = q;
             }
-            Vec::new()
         }
-        Msg::RateLimits(limits) => {
-            state.rate_limits = limits;
-            Vec::new()
-        }
-        Msg::Notice(notice) => {
-            state.notice = Some(notice);
-            Vec::new()
-        }
+        Msg::RateLimits(limits) => state.rate_limits = limits,
+        Msg::Notice(notice) => state.notice = Some(notice),
         Msg::Problem(problem, Some(text)) => {
             state.problems.insert(problem, text);
-            Vec::new()
         }
         Msg::Problem(problem, None) => {
             state.problems.remove(&problem);
-            Vec::new()
         }
-        Msg::Edited(purpose, result) => on_edited(state, purpose, result),
+        Msg::Edited(purpose, result) => return on_edited(state, purpose, result),
     }
+    Vec::new()
 }
 
 #[must_use]
@@ -963,27 +938,21 @@ fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         return Vec::new();
     };
     match key.code {
-        KeyCode::Esc => {
-            state.overlay = None;
-            Vec::new()
-        }
+        KeyCode::Esc => state.overlay = None,
         KeyCode::Enter => {
             let query = input.lines().join("");
             state.overlay = None;
-            if query.is_empty() {
-                return Vec::new();
+            if !query.is_empty()
+                && let Some((screen, diff)) = state.diff_parts()
+            {
+                state.notice = Some(diff_screen::search(screen, diff, query));
             }
-            if let Some((screen, diff)) = state.diff_parts() {
-                let found = diff_screen::search(screen, diff, query);
-                state.notice = Some(found);
-            }
-            Vec::new()
         }
         _ => {
             input.input(key);
-            Vec::new()
         }
     }
+    Vec::new()
 }
 
 #[must_use]
