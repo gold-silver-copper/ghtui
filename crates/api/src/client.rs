@@ -372,7 +372,7 @@ impl GitHub {
     }
 
     pub fn cached_inbox(&self) -> Option<Cached<Inbox>> {
-        self.store.query_get(INBOX_KEY)
+        self.cached(INBOX_KEY)
     }
 
     /// My open PRs and the open PRs where my review is requested, fetched
@@ -401,7 +401,7 @@ impl GitHub {
     }
 
     pub fn cached_pull_request(&self, pr: &PrRef) -> Option<Cached<PrDetail>> {
-        self.store.query_get(&pr_key(pr))
+        self.cached(&pr_key(pr))
     }
 
     pub async fn pull_request(&self, pr: &PrRef) -> Result<PrDetail, ApiError> {
@@ -639,7 +639,7 @@ impl GitHub {
     // ---- browsing ----------------------------------------------------------
 
     /// A cached page, by one of the keys in [`crate::browse::keys`].
-    pub fn cached<T: DeserializeOwned>(&self, key: &str) -> Option<ghtui_store::Cached<T>> {
+    pub fn cached<T: DeserializeOwned>(&self, key: &str) -> Option<Cached<T>> {
         self.store.query_get(key)
     }
 
@@ -714,12 +714,8 @@ impl GitHub {
         match self.object(repo, rev, path).await? {
             Some(browse::GitObject::Blob(b)) => Ok(browse::Blob {
                 path: path.to_owned(),
-                text: if b.is_binary.unwrap_or(false) {
-                    None
-                } else {
-                    b.text
-                },
-                size: u64::try_from(b.byte_size).unwrap_or(0),
+                text: b.text.filter(|_| b.is_binary != Some(true)),
+                size: crate::model::count(b.byte_size),
                 truncated: b.is_truncated,
             }),
             _ => Err(ApiError::NotFound(format!("{repo}/{path}"))),
