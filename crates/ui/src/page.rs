@@ -588,11 +588,19 @@ impl Widget for PageView<'_> {
             let style = theme
                 .fill(Bg::TertiaryContainer)
                 .add_modifier(Modifier::BOLD);
+            // Just before the link (over the space, padding or icon there),
+            // so the link's own text stays readable.
+            let width = cols(text::width(&hint.label));
+            let x = hint
+                .x
+                .checked_sub(width)
+                .filter(|x| *x >= area.x)
+                .unwrap_or(hint.x);
             Span::styled(hint.label.clone(), style).render(
                 Rect {
-                    x: hint.x,
+                    x,
                     y: hint.y,
-                    width: cols(text::width(&hint.label)),
+                    width,
                     height: 1,
                 },
                 buf,
