@@ -14,7 +14,7 @@ use std::process::Command;
 
 use ghtui_git::credentials::Credentials;
 use ghtui_git::files::{ChangedFile, FileStatus, MODE_EXECUTABLE, MODE_SUBMODULE, MODE_SYMLINK};
-use ghtui_git::repo::Repo;
+use ghtui_git::repo::{PrRefs, Repo};
 
 /// Runs git for fixture setup, isolated from the user's configuration.
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -149,6 +149,20 @@ async fn cache_repo(f: &Fixture) -> Repo {
     .unwrap()
 }
 
+/// The fixture, with PR #7 fetched into a cache clone.
+async fn fetched() -> (Fixture, Repo, PrRefs) {
+    let f = fixture();
+    let repo = cache_repo(&f).await;
+    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
+    (f, repo, refs)
+}
+
+async fn changed_files(repo: &Repo, refs: &PrRefs) -> Vec<ChangedFile> {
+    repo.changed_files(&refs.merge_base, &refs.head)
+        .await
+        .unwrap()
+}
+
 fn find<'a>(files: &'a [ChangedFile], path: &str) -> &'a ChangedFile {
     files
         .iter()
@@ -178,13 +192,8 @@ async fn partial_cache_clone_fetches_pr_with_three_dot_base() {
 
 #[tokio::test]
 async fn lists_every_kind_of_change() {
-    let f = fixture();
-    let repo = cache_repo(&f).await;
-    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
-    let files = repo
-        .changed_files(&refs.merge_base, &refs.head)
-        .await
-        .unwrap();
+    let (_f, repo, refs) = fetched().await;
+    let files = changed_files(&repo, &refs).await;
 
     assert_eq!(find(&files, "src/lib.rs").status, FileStatus::Modified);
     let renamed = find(&files, "src/new_name.rs");
@@ -210,13 +219,8 @@ async fn lists_every_kind_of_change() {
 
 #[tokio::test]
 async fn prefetch_fetches_missing_blobs_in_one_batch() {
-    let f = fixture();
-    let repo = cache_repo(&f).await;
-    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
-    let files = repo
-        .changed_files(&refs.merge_base, &refs.head)
-        .await
-        .unwrap();
+    let (_f, repo, refs) = fetched().await;
+    let files = changed_files(&repo, &refs).await;
     let mut oids: Vec<String> = files
         .iter()
         .flat_map(|f| f.blob_oids().map(str::to_owned).collect::<Vec<_>>())
@@ -276,13 +280,8 @@ async fn prefetch_fetches_missing_blobs_in_one_batch() {
 
 #[tokio::test]
 async fn blob_reader_lazily_fetches_without_prefetch() {
-    let f = fixture();
-    let repo = cache_repo(&f).await;
-    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
-    let files = repo
-        .changed_files(&refs.merge_base, &refs.head)
-        .await
-        .unwrap();
+    let (_f, repo, refs) = fetched().await;
+    let files = changed_files(&repo, &refs).await;
     let reader = repo.blob_reader().unwrap();
     let added = reader
         .read(&find(&files, "added.md").new_oid)
@@ -293,9 +292,7 @@ async fn blob_reader_lazily_fetches_without_prefetch() {
 
 #[tokio::test]
 async fn reads_linguist_attributes_from_the_head_commit() {
-    let f = fixture();
-    let repo = cache_repo(&f).await;
-    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
+    let (_f, repo, refs) = fetched().await;
     let generated = repo
         .generated_paths(&refs.head, &["gen/schema.rs", "src/lib.rs"])
         .await
@@ -306,9 +303,7 @@ async fn reads_linguist_attributes_from_the_head_commit() {
 
 #[tokio::test]
 async fn pins_seen_heads() {
-    let f = fixture();
-    let repo = cache_repo(&f).await;
-    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
+    let (_f, repo, refs) = fetched().await;
     repo.pin_seen(7, &refs.head).await.unwrap();
     let pinned = git(
         &repo.path,
@@ -387,9 +382,7 @@ async fn failed_clone_leaves_nothing_behind() {
 
 #[tokio::test]
 async fn fetches_force_pushed_commits_by_sha() {
-    let f = fixture();
-    let repo = cache_repo(&f).await;
-    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
+    let (f, repo, refs) = fetched().await;
     // Rewrite the PR so its old head is unreferenced on the server.
     let old_head = refs.head.clone();
     git(&f.origin, &["checkout", "-q", "feature"]);
@@ -416,9 +409,7 @@ async fn fetches_force_pushed_commits_by_sha() {
 
 #[tokio::test]
 async fn lists_pr_commits_oldest_first() {
-    let f = fixture();
-    let repo = cache_repo(&f).await;
-    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
+    let (_f, repo, refs) = fetched().await;
     let commits = repo.commits(&refs.merge_base, &refs.head).await.unwrap();
     assert_eq!(commits.len(), 1);
     assert_eq!(
