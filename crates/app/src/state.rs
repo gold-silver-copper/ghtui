@@ -1174,6 +1174,21 @@ pub(crate) mod tests {
         RepoId::new("gold-silver-copper", "ghtui")
     }
 
+    fn issues(query: &str) -> Route {
+        let (repo, query) = (repo(), query.to_owned());
+        Route::Issues { repo, query }
+    }
+
+    fn issue(number: u64) -> Route {
+        let repo = repo();
+        Route::Issue { repo, number }
+    }
+
+    fn blob(rev: &str, path: &str) -> Route {
+        let (repo, rev, path) = (repo(), rev.to_owned(), path.to_owned());
+        Route::Blob { repo, rev, path }
+    }
+
     fn with_repo() -> State {
         let mut state = state();
         let _ = state.push(Route::Repo(repo()));
@@ -1333,10 +1348,7 @@ pub(crate) mod tests {
     fn arrows_move_comment_by_comment_and_enter_quotes() {
         let mut state = state();
         update(&mut state, Msg::Resize(100, 14));
-        let _ = state.push(Route::Issue {
-            repo: repo(),
-            number: 14,
-        });
+        let _ = state.push(issue(14));
         let mut issue = crate::fixtures::issue();
         issue.body = (1..=30).map(|n| format!("Line {n}.\n\n")).collect();
         fetched(
@@ -1422,10 +1434,7 @@ pub(crate) mod tests {
             press(&mut state, "y"),
             vec![Cmd::Copy("https://github.com/o/r/pull/1".into())]
         );
-        let _ = state.push(Route::Issues {
-            repo: repo(),
-            query: "is:closed".into(),
-        });
+        let _ = state.push(issues("is:closed"));
         assert_eq!(
             press(&mut state, "o"),
             vec![Cmd::OpenUrl(
@@ -1551,12 +1560,9 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(tabs, ["Code", "Issues", "Pull requests", "Actions"]);
         let cmds = fetches(press(&mut state, "2"));
-        let issues = Route::Issues {
-            repo: repo(),
-            query: OPEN.into(),
-        };
-        assert_eq!(route(&state), issues);
-        let (kind, query) = issues.search().unwrap();
+        let open = issues(OPEN);
+        assert_eq!(route(&state), open);
+        let (kind, query) = open.search().unwrap();
         assert_eq!(
             cmds,
             vec![fetch(DataKey::Search(kind, query))],
@@ -1570,28 +1576,13 @@ pub(crate) mod tests {
         assert!(sb.filter);
         assert_eq!(sb.input.lines().join(""), "is:open ");
         press(&mut state, "label:bug<Enter>");
-        assert_eq!(
-            route(&state),
-            Route::Issues {
-                repo: repo(),
-                query: "is:open label:bug".into()
-            }
-        );
+        assert_eq!(route(&state), issues("is:open label:bug"));
         act(&mut state, Action::ToggleState);
-        assert_eq!(
-            route(&state),
-            Route::Issues {
-                repo: repo(),
-                query: "is:closed label:bug".into()
-            }
-        );
+        assert_eq!(route(&state), issues("is:closed label:bug"));
         act(&mut state, Action::Sort);
         assert_eq!(
             route(&state),
-            Route::Issues {
-                repo: repo(),
-                query: "is:closed label:bug sort:created-asc".into()
-            }
+            issues("is:closed label:bug sort:created-asc")
         );
 
         press(&mut state, "<Right>");
@@ -1666,14 +1657,7 @@ pub(crate) mod tests {
             press(&mut state, "j");
         }
         press(&mut state, "<Enter>");
-        assert_eq!(
-            route(&state),
-            Route::Blob {
-                repo: repo(),
-                rev: "main".into(),
-                path: "crates/README.md".into()
-            }
-        );
+        assert_eq!(route(&state), blob("main", "crates/README.md"));
     }
 
     #[test]
@@ -1703,14 +1687,7 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(rows, ["src/main.rs", "crates/ui/src/main_view.rs"]);
         press(&mut state, "<Enter>");
-        assert_eq!(
-            route(&state),
-            Route::Blob {
-                repo: repo(),
-                rev: "main".into(),
-                path: "src/main.rs".into()
-            }
-        );
+        assert_eq!(route(&state), blob("main", "src/main.rs"));
         let cmds = press(&mut state, "b");
         assert_eq!(cmds, vec![fetch(DataKey::Refs(repo()))]);
         fetched(
@@ -1724,11 +1701,7 @@ pub(crate) mod tests {
         press(&mut state, "next<Enter>");
         assert_eq!(
             route(&state),
-            Route::Blob {
-                repo: repo(),
-                rev: "next".into(),
-                path: "src/main.rs".into()
-            },
+            blob("next", "src/main.rs"),
             "the same file on the other branch"
         );
     }
@@ -1736,10 +1709,7 @@ pub(crate) mod tests {
     #[test]
     fn issue_comments_post_and_refresh() {
         let mut state = state();
-        let _ = state.push(Route::Issue {
-            repo: repo(),
-            number: 14,
-        });
+        let _ = state.push(issue(14));
         let key = DataKey::Issue(repo(), 14);
         press(&mut state, "c");
         assert!(state.overlay.is_none(), "nothing to comment on yet");
