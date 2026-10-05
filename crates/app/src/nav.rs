@@ -1048,6 +1048,7 @@ const DIFF_DOABLES: &[(&str, &[(Action, &str)])] = {
                 (A::FileComment, ""),
                 (A::ResolveThread, ""),
                 (A::DeleteDraft, ""),
+                (A::UndoDelete, ""),
                 (A::SubmitReview, "submit review"),
             ],
         ),

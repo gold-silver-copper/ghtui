@@ -122,6 +122,7 @@ actions! {
     FileComment       "file_comment"      ["C"]                Diff   "Comment on the whole file";
     ResolveThread     "resolve"           ["R"]                Diff   "Resolve or unresolve the thread";
     DeleteDraft       "delete_draft"      ["<Delete>"]         Diff   "Delete the draft comment";
+    UndoDelete        "undo_delete"       ["<C-z>"]            Diff   "Bring back the draft just deleted";
     SubmitReview      "submit_review"     ["a"]                Diff   "Submit your review";
 }
 
@@ -552,6 +553,7 @@ mod tests {
             ("`w`", &[IgnoreWhitespace]),
             ("`a`", &[SubmitReview]),
             ("`Delete`", &[DeleteDraft]),
+            ("`ctrl-z`", &[UndoDelete]),
         ];
         let notation = |shown: &str| match shown {
             "↑" => "<Up>".to_owned(),
@@ -568,6 +570,7 @@ mod tests {
             "alt-→" => "<A-Right>".to_owned(),
             "ctrl-k" => "<C-k>".to_owned(),
             "ctrl-c" => "<C-c>".to_owned(),
+            "ctrl-z" => "<C-z>".to_owned(),
             s if s.chars().count() > 1 => format!("<{s}>"),
             s => s.to_owned(),
         };

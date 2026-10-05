@@ -1469,10 +1469,27 @@ fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
                     Notice::Info("Move to a draft comment to delete it".into()),
                 );
             };
-            diff.review.pending.retain(|d| d.id != id);
+            let at = diff.review.pending.iter().position(|d| d.id == id)?;
+            diff.deleted = Some(diff.review.pending.remove(at));
             diff.refresh_annotations();
             let save = Cmd::SaveReview(pr, diff.review.clone());
-            state.notice = Some(Notice::Info("Draft deleted".into()));
+            let undo = state.first_key(Action::UndoDelete);
+            state.notice = Some(Notice::Info(format!(
+                "Draft deleted · {undo} brings it back"
+            )));
+            Some(vec![save])
+        }
+        Action::UndoDelete => {
+            let Some(mut draft) = diff.deleted.take() else {
+                return notice(state, Notice::Info("No deleted draft to bring back".into()));
+            };
+            if diff.review.pending.iter().any(|d| d.id == draft.id) {
+                draft.id = diff.review.next_draft_id();
+            }
+            diff.review.pending.push(draft);
+            diff.refresh_annotations();
+            let save = Cmd::SaveReview(pr, diff.review.clone());
+            state.notice = Some(Notice::Info("Draft restored".into()));
             Some(vec![save])
         }
         Action::Open => {
@@ -3356,6 +3373,16 @@ mod tests {
 
                 let cmds = press(&mut s, "<Delete>");
                 assert!(matches!(&cmds[..], [Cmd::SaveReview(_, r)] if r.pending.is_empty()));
+                assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("ctrl-z")));
+
+                // Deleting can be undone.
+                let cmds = press(&mut s, "<C-z>");
+                assert!(
+                    matches!(&cmds[..], [Cmd::SaveReview(_, r)] if r.pending[0].body == "Use a constant!")
+                );
+                assert!(s.diffs[&pr].doc.annotations().iter().any(|a| a.is_draft()));
+                press(&mut s, "<C-z>");
+                assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.starts_with("No deleted")));
             }
 
             #[test]

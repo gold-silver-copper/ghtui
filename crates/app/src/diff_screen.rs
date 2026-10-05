@@ -124,6 +124,8 @@ pub struct DiffState {
     /// The saved review state has been read (saving before that would
     /// overwrite it).
     pub review_loaded: bool,
+    /// The draft deleted last, for undo.
+    pub deleted: Option<ghtui_store::DraftComment>,
 }
 
 impl DiffState {

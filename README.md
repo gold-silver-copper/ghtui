@@ -213,6 +213,7 @@ Reviewing, in a pull request's Files changed tab:
 | `w`         | Ignore whitespace changes                                                    |
 | `a`         | Submit your review (Comment / Approve / Request changes)                     |
 | `Delete`    | Delete the draft comment                                                     |
+| `ctrl-z`    | Bring back the draft just deleted                                            |
 
 In the `Space` menu: changes since your last review, picking commits,
 suggesting a change, and open/closed and sort on lists.
