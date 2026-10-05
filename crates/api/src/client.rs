@@ -98,7 +98,18 @@ enum Request<'a> {
     Post {
         path: &'a str,
         body: &'a serde_json::Value,
+        /// Safe to send twice: a query, not a mutation.
+        idempotent: bool,
     },
+}
+
+impl Request<'_> {
+    fn idempotent(&self) -> bool {
+        match self {
+            Request::Get { .. } => true,
+            Request::Post { idempotent, .. } => *idempotent,
+        }
+    }
 }
 
 impl GitHub {
@@ -156,11 +167,13 @@ impl GitHub {
                     }
                     octo._get_with_headers(*path, Some(headers)).await
                 }
-                Request::Post { path, body } => octo._post(*path, Some(*body)).await,
+                Request::Post { path, body, .. } => octo._post(*path, Some(*body)).await,
             };
+            // A mutation that may have reached GitHub is never sent again:
+            // it could post a comment twice.
             let response = match result {
                 Ok(response) => response,
-                Err(err) if !last => {
+                Err(err) if !last && (request.idempotent() || never_sent(&err)) => {
                     tracing::debug!(%err, attempt, "request failed; retrying");
                     backoff(attempt).await;
                     continue;
@@ -182,7 +195,7 @@ impl GitHub {
                 tokio::time::sleep(Duration::from_secs(wait.max(1))).await;
                 continue;
             }
-            if status.is_server_error() && !last {
+            if status.is_server_error() && !last && request.idempotent() {
                 tracing::debug!(%status, attempt, "server error; retrying");
                 backoff(attempt).await;
                 continue;
@@ -241,8 +254,10 @@ impl GitHub {
         Q: DeserializeOwned + 'static,
         V: Serialize,
     {
-        let parsed: cynic::GraphQlResponse<Q> =
-            self.post_graphql(&serde_json::to_value(&op)?).await?;
+        let idempotent = op.query.trim_start().starts_with("query");
+        let parsed: cynic::GraphQlResponse<Q> = self
+            .post_graphql(&serde_json::to_value(&op)?, idempotent)
+            .await?;
         let errors = parsed
             .errors
             .unwrap_or_default()
@@ -259,7 +274,7 @@ impl GitHub {
         variables: serde_json::Value,
     ) -> Result<serde_json::Value, ApiError> {
         let body = serde_json::json!({ "query": query, "variables": variables });
-        let mut parsed: serde_json::Value = self.post_graphql(&body).await?;
+        let mut parsed: serde_json::Value = self.post_graphql(&body, true).await?;
         match parsed.get_mut("data").map(serde_json::Value::take) {
             Some(data) if !data.is_null() => Ok(data),
             _ => Err(ApiError::GraphQl(
@@ -276,11 +291,13 @@ impl GitHub {
     async fn post_graphql<T: DeserializeOwned>(
         &self,
         body: &serde_json::Value,
+        idempotent: bool,
     ) -> Result<T, ApiError> {
         let response = self
             .send(&Request::Post {
                 path: "/graphql",
                 body,
+                idempotent,
             })
             .await?;
         check_status(&response)?;
@@ -1046,6 +1063,21 @@ async fn spawn_store(f: impl FnOnce() + Send + 'static) {
     if let Err(err) = tokio::task::spawn_blocking(f).await {
         tracing::warn!(%err, "cache write task failed");
     }
+}
+
+/// The request provably never reached the server (the connection was
+/// refused), so even a mutation can be retried.
+fn never_sent(err: &(dyn std::error::Error + 'static)) -> bool {
+    let mut source = Some(err);
+    while let Some(err) = source {
+        if let Some(io) = err.downcast_ref::<std::io::Error>()
+            && io.kind() == std::io::ErrorKind::ConnectionRefused
+        {
+            return true;
+        }
+        source = err.source();
+    }
+    false
 }
 
 async fn backoff(attempt: u32) {

@@ -562,3 +562,59 @@ async fn last_review_commit_skips_pending_reviews() {
     let body: serde_json::Value = serde_json::from_str(&seen[0].body).unwrap();
     assert_eq!(body["variables"]["login"], "me");
 }
+
+/// A 502 after a mutation may mean GitHub applied it: sending it again
+/// could post the reply twice.
+#[tokio::test]
+async fn mutations_are_not_retried_after_server_errors() {
+    let (base, seen) = serve(vec![
+        Reply::new(502, "bad gateway"),
+        Reply::new(
+            200,
+            r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"C_1"}}}}"#,
+        ),
+    ])
+    .await;
+    let gh = client(&base, Store::disabled());
+    assert!(matches!(
+        gh.reply("T_9", "Done").await,
+        Err(ApiError::Http { status: 502, .. })
+    ));
+    assert_eq!(seen.lock().unwrap().len(), 1);
+}
+
+/// Queries also go out as POSTs, but they're safe to repeat.
+#[tokio::test]
+async fn graphql_queries_are_retried() {
+    let (base, seen) = serve(vec![
+        Reply::new(502, "bad gateway"),
+        Reply::new(
+            200,
+            r#"{"data":{"repository":{"pullRequest":{"reviews":{"nodes":[]}}}}}"#,
+        ),
+    ])
+    .await;
+    let gh = client(&base, Store::disabled());
+    let commit = gh
+        .last_review_commit(&PrRef::parse("o/r#7").unwrap(), "me")
+        .await
+        .unwrap();
+    assert_eq!(commit, None);
+    assert_eq!(seen.lock().unwrap().len(), 2);
+}
+
+/// A refused connection never reached GitHub, so even a mutation retries.
+#[tokio::test]
+async fn refused_connections_are_retried_even_for_mutations() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+    let gh = client(&format!("http://{addr}"), Store::disabled());
+    let started = std::time::Instant::now();
+    assert!(matches!(
+        gh.reply("T_9", "Done").await,
+        Err(ApiError::Network(_))
+    ));
+    // Three attempts means two backoffs (500ms + 1s).
+    assert!(started.elapsed() >= std::time::Duration::from_millis(1400));
+}
