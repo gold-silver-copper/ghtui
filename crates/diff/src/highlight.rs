@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
+use crate::sat_u32;
 use crate::text::Text;
 
 /// Larger files render without highlighting so they never stall a diff.
@@ -192,37 +193,40 @@ pub fn highlight(lang: Option<Language>, text: &Text) -> Vec<Vec<Span>> {
             return Vec::new();
         };
         match event {
-            HighlightEvent::HighlightStart(h) => stack.push(NAMES[h.0].1),
+            HighlightEvent::HighlightStart(h) => {
+                let Some(&(_, kind)) = NAMES.get(h.0) else {
+                    return Vec::new();
+                };
+                stack.push(kind);
+            }
             HighlightEvent::HighlightEnd => {
                 stack.pop();
             }
             HighlightEvent::Source { start, end } => {
                 let Some(&kind) = stack.last() else { continue };
-                let (start, end) = (start as u32, end as u32);
+                let (start, end) = (sat_u32(start), sat_u32(end));
                 // Advance to the line containing `start`, then split the
                 // range across the lines it covers.
-                while line < text.len()
-                    && text.lines[line].1 < start
-                    && line_end(text, line) <= start
+                while text
+                    .lines
+                    .get(line)
+                    .is_some_and(|&(_, le)| le < start && line_end(text, line) <= start)
                 {
                     line += 1;
                 }
-                let mut l = line;
-                while l < text.len() {
-                    let (ls, le) = text.lines[l];
+                for (spans, &(ls, le)) in out.iter_mut().zip(&text.lines).skip(line) {
                     if ls >= end {
                         break;
                     }
                     let s = start.max(ls);
                     let e = end.min(le);
                     if s < e {
-                        out[l].push(Span {
+                        spans.push(Span {
                             start: s - ls,
                             end: e - ls,
                             kind,
                         });
                     }
-                    l += 1;
                 }
             }
         }
@@ -234,7 +238,7 @@ pub fn highlight(lang: Option<Language>, text: &Text) -> Vec<Vec<Span>> {
 fn line_end(text: &Text, i: usize) -> u32 {
     text.lines
         .get(i + 1)
-        .map_or(text.source.len() as u32, |next| next.0)
+        .map_or(sat_u32(text.source.len()), |next| next.0)
 }
 
 #[cfg(test)]
@@ -248,7 +252,10 @@ mod tests {
             .iter()
             .map(|s| {
                 (
-                    text.line(line)[s.start as usize..s.end as usize].to_owned(),
+                    text.line(line)
+                        .get(s.start as usize..s.end as usize)
+                        .unwrap()
+                        .to_owned(),
                     s.kind,
                 )
             })

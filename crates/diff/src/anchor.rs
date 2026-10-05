@@ -112,13 +112,14 @@ impl Commentable {
 }
 
 fn hunk_range(h: &Hunk) -> HunkRange {
+    // Saturating: patch headers come from GitHub, untrusted.
     let range = |start: u32, len: u32| {
         // For an empty side git reports the line *before* the hunk; nothing
         // on that side is commentable.
         if len == 0 {
-            (start + 1, start + 1)
+            (start.saturating_add(1), start.saturating_add(1))
         } else {
-            (start, start + len)
+            (start, start.saturating_add(len))
         }
     };
     HunkRange {
@@ -232,6 +233,14 @@ mod tests {
         assert!(c.is_commentable(right(2)));
         assert!(!c.is_commentable(left(0)));
         assert!(!c.is_commentable(left(1)));
+    }
+
+    #[test]
+    fn huge_patch_line_numbers_saturate() {
+        let max = u32::MAX;
+        let c = Commentable::from_patch(&format!("@@ -{max},0 +{max},5 @@\n"));
+        assert_eq!(c.ranges[0].old, (max, max));
+        assert_eq!(c.ranges[0].new, (max, max));
     }
 
     #[test]

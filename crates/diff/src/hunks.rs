@@ -3,6 +3,7 @@
 pub use imara_diff::Algorithm;
 use imara_diff::{Diff, InternedInput};
 
+use crate::sat_u32;
 use crate::text::Text;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,7 +119,7 @@ pub fn segments(
 ) -> Vec<std::ops::Range<usize>> {
     segments_by(
         lines.len(),
-        |i| lines[i].kind != LineKind::Context,
+        |i| lines.get(i).is_some_and(|l| l.kind != LineKind::Context),
         context,
         windows,
         full,
@@ -153,17 +154,17 @@ pub fn segments_by(
         *v = since_change <= context;
     }
     let mut until_change = usize::MAX;
-    for i in (0..len).rev() {
+    for (i, v) in visible.iter_mut().enumerate().rev() {
         until_change = if is_change(i) {
             0
         } else {
             until_change.saturating_add(1)
         };
-        visible[i] |= until_change <= context;
+        *v |= until_change <= context;
     }
     for window in windows {
-        let end = (window.end as usize).min(len);
-        for v in &mut visible[(window.start as usize).min(end)..end] {
+        let (start, end) = (window.start as usize, window.end as usize);
+        for v in visible.iter_mut().take(end).skip(start) {
             *v = true;
         }
     }
@@ -187,7 +188,7 @@ pub fn segments_by(
 
 /// Old and new lines that come before `index` in the alignment.
 pub fn counts_before(lines: &[DiffLine], index: usize) -> (u32, u32) {
-    lines[..index].iter().fold((0, 0), |(o, n), l| {
+    lines.iter().take(index).fold((0, 0), |(o, n), l| {
         (
             o + u32::from(l.old.is_some()),
             n + u32::from(l.new.is_some()),
@@ -197,9 +198,9 @@ pub fn counts_before(lines: &[DiffLine], index: usize) -> (u32, u32) {
 
 /// The hunk for `range`, given how many old/new lines precede it.
 pub fn hunk(lines: &[DiffLine], range: std::ops::Range<usize>, before: (u32, u32)) -> Hunk {
-    let lines = lines[range].to_vec();
-    let old_len = lines.iter().filter(|l| l.old.is_some()).count() as u32;
-    let new_len = lines.iter().filter(|l| l.new.is_some()).count() as u32;
+    let lines = lines.get(range).unwrap_or_default().to_vec();
+    let old_len = sat_u32(lines.iter().filter(|l| l.old.is_some()).count());
+    let new_len = sat_u32(lines.iter().filter(|l| l.new.is_some()).count());
     let start = |seen: u32, len: u32| if len > 0 { seen + 1 } else { seen };
     Hunk {
         old_start: start(before.0, old_len),
@@ -219,7 +220,8 @@ pub fn diff_lines(old: &Text, new: &Text, algorithm: Algorithm, context: u32) ->
     segments(&lines, context, &[], false)
         .into_iter()
         .map(|range| {
-            let (o, n) = counts_before(&lines[seen..range.start], range.start - seen);
+            let gap = lines.get(seen..range.start).unwrap_or_default();
+            let (o, n) = counts_before(gap, gap.len());
             counts = (counts.0 + o, counts.1 + n);
             seen = range.start;
             hunk(&lines, range, counts)

@@ -10,6 +10,7 @@ use std::ops::Range;
 
 use crate::file::TextDiff;
 use crate::hunks::{DiffLine, LineKind};
+use crate::sat_u32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangeBlock {
@@ -21,21 +22,22 @@ pub struct ChangeBlock {
 }
 
 pub fn change_blocks(path: &str, text: &TextDiff, lines: &[DiffLine]) -> Vec<ChangeBlock> {
+    let is_context = |l: &DiffLine| l.kind == LineKind::Context;
     let mut out = Vec::new();
-    let mut e = 0;
-    while e < lines.len() {
-        if lines[e].kind == LineKind::Context {
-            e += 1;
+    let mut end = 0;
+    for run in lines.chunk_by(|a, b| is_context(a) == is_context(b)) {
+        let start = end;
+        end += run.len();
+        if run.first().is_none_or(is_context) {
             continue;
         }
-        let start = e;
         let mut hasher = Fnv::new();
         hasher.write(path.as_bytes());
         let (mut removed, mut added) = (String::new(), String::new());
         let (mut has_removed, mut has_added) = (false, false);
-        while e < lines.len() && lines[e].kind != LineKind::Context {
-            let line = text.text(&lines[e]);
-            let (sign, squeezed): (&[u8], &mut String) = if lines[e].kind == LineKind::Added {
+        for l in run {
+            let line = text.text(l);
+            let (sign, squeezed): (&[u8], &mut String) = if l.kind == LineKind::Added {
                 has_added = true;
                 (b"\n+", &mut added)
             } else {
@@ -45,16 +47,15 @@ pub fn change_blocks(path: &str, text: &TextDiff, lines: &[DiffLine]) -> Vec<Cha
             hasher.write(sign);
             hasher.write(line.trim_end().as_bytes());
             squeezed.extend(line.chars().filter(|c| !c.is_whitespace()));
-            e += 1;
         }
         // Gaining or losing the final newline is a real change (and has
         // its own marker), not formatting.
         let touches_end = text.old.missing_final_newline != text.new.missing_final_newline
-            && lines[start..e].iter().any(|l| {
-                l.old == Some(text.old.len() as u32) || l.new == Some(text.new.len() as u32)
+            && run.iter().any(|l| {
+                l.old == Some(sat_u32(text.old.len())) || l.new == Some(sat_u32(text.new.len()))
             });
         out.push(ChangeBlock {
-            entries: start as u32..e as u32,
+            entries: sat_u32(start)..sat_u32(end),
             hash: format!("{:016x}", hasher.0),
             formatting_only: has_removed && has_added && removed == added && !touches_end,
         });

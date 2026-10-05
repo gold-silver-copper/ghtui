@@ -2,12 +2,17 @@
 
 use std::sync::Arc;
 
+use crate::sat_u32;
+
 /// Bytes git checks for NUL to call a file binary.
 const BINARY_SNIFF: usize = 8000;
 
+/// Stands in for a source too large for `u32` line offsets.
+const TOO_LARGE: &str = "(file too large to show)";
+
 /// Same rule as git: a NUL byte in the first 8000 bytes means binary.
 pub fn is_binary(bytes: &[u8]) -> bool {
-    bytes[..bytes.len().min(BINARY_SNIFF)].contains(&0)
+    bytes.iter().take(BINARY_SNIFF).any(|&b| b == 0)
 }
 
 /// A text blob split into lines, keeping what the diff needs to know about
@@ -26,26 +31,26 @@ pub struct Text {
 }
 
 impl Text {
+    /// Splits `bytes` into lines. A source over `u32::MAX` bytes becomes one
+    /// line saying so, as offsets are `u32`.
     pub fn new(bytes: &[u8]) -> Self {
-        let source: Arc<str> = String::from_utf8_lossy(bytes).into();
+        let source: Arc<str> = match String::from_utf8_lossy(bytes) {
+            s if u32::try_from(s.len()).is_ok() => s.into(),
+            _ => TOO_LARGE.into(),
+        };
         let mut lines = Vec::new();
         let mut crlf = Vec::new();
-        let mut start = 0usize;
-        let s = source.as_bytes();
-        for (i, b) in s.iter().enumerate() {
-            if *b == b'\n' {
-                let is_crlf = i > start && s[i - 1] == b'\r';
-                let end = if is_crlf { i - 1 } else { i };
-                lines.push((start as u32, end as u32));
-                crlf.push(is_crlf);
-                start = i + 1;
-            }
+        let mut start = 0;
+        for chunk in source.split_inclusive('\n') {
+            let (line, is_crlf) = match chunk.strip_suffix('\n') {
+                Some(l) => l.strip_suffix('\r').map_or((l, false), |l| (l, true)),
+                None => (chunk, false),
+            };
+            lines.push((sat_u32(start), sat_u32(start + line.len())));
+            crlf.push(is_crlf);
+            start += chunk.len();
         }
-        let missing_final_newline = start < s.len();
-        if missing_final_newline {
-            lines.push((start as u32, s.len() as u32));
-            crlf.push(false);
-        }
+        let missing_final_newline = !source.is_empty() && !source.ends_with('\n');
         Self {
             source,
             lines,
@@ -62,17 +67,25 @@ impl Text {
         self.lines.is_empty()
     }
 
-    /// Line `i` (0-based) without its terminator.
+    /// Line `i` (0-based) without its terminator; empty past the end.
     pub fn line(&self, i: usize) -> &str {
-        let (a, b) = self.lines[i];
-        &self.source[a as usize..b as usize]
+        self.lines
+            .get(i)
+            .and_then(|&(a, b)| self.source.get(a as usize..b as usize))
+            .unwrap_or_default()
+    }
+
+    /// Line number `n` (1-based, as in [`DiffLine`](crate::DiffLine));
+    /// empty for 0 or past the end.
+    pub fn line_no(&self, n: u32) -> &str {
+        n.checked_sub(1).map_or("", |i| self.line(i as usize))
     }
 
     /// Line `i` as the diff compares it: content plus terminator, so a
     /// CRLF↔LF or missing-final-newline change counts as a change, as in git.
     pub(crate) fn token(&self, i: usize) -> String {
         let mut t = self.line(i).to_owned();
-        if self.crlf[i] {
+        if self.crlf.get(i) == Some(&true) {
             t.push('\r');
         }
         if i + 1 < self.len() || !self.missing_final_newline {
@@ -91,6 +104,8 @@ mod tests {
         let t = Text::new(b"a\nb\n");
         assert_eq!(t.len(), 2);
         assert_eq!(t.line(1), "b");
+        assert_eq!(t.line_no(2), "b");
+        assert_eq!((t.line(2), t.line_no(0)), ("", ""));
         assert!(!t.missing_final_newline);
     }
 

@@ -20,3 +20,9 @@ pub use hunks::{
     segments, segments_by,
 };
 pub use text::{Text, is_binary};
+
+/// `n` as a `u32`, saturating. Offsets and counts are `u32`, and [`Text`]
+/// keeps its source within range, so this only clamps what can't happen.
+pub(crate) fn sat_u32(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}

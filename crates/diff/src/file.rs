@@ -73,8 +73,8 @@ impl TextDiff {
     /// The text of an alignment entry (the old side for removed lines).
     pub fn text(&self, line: &DiffLine) -> &str {
         match (line.kind, line.old, line.new) {
-            (LineKind::Removed, Some(o), _) => self.old.line(o as usize - 1),
-            (_, _, Some(n)) => self.new.line(n as usize - 1),
+            (LineKind::Removed, Some(o), _) => self.old.line_no(o),
+            (_, _, Some(n)) => self.new.line_no(n),
             _ => "",
         }
     }

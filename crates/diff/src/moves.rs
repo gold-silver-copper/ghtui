@@ -11,6 +11,7 @@ use std::ops::Range;
 
 use crate::file::TextDiff;
 use crate::hunks::{DiffLine, LineKind};
+use crate::sat_u32;
 
 pub const MIN_LINES: usize = 3;
 pub const MIN_CHARS: usize = 30;
@@ -52,8 +53,7 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
 
     for (file_index, text, lines) in files.iter() {
         let mut e = 0;
-        while e < lines.len() {
-            let line = &lines[e];
+        while let Some(line) = lines.get(e) {
             if line.kind != LineKind::Removed || trivial(text.text(line)) {
                 e += 1;
                 continue;
@@ -65,39 +65,48 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
                 .get(key(text.text(line)))
                 .map_or(&[][..], Vec::as_slice)
             {
-                if used_added[tf][te] {
+                let (Some((_, ttext, tlines)), Some(used)) = (files.get(tf), used_added.get(tf))
+                else {
+                    continue;
+                };
+                if used.get(te).is_none_or(|&u| u) {
                     continue;
                 }
-                let (_, ttext, tlines) = files[tf];
-                let mut n = 0;
-                while e + n < lines.len()
-                    && te + n < tlines.len()
-                    && lines[e + n].kind == LineKind::Removed
-                    && tlines[te + n].kind == LineKind::Added
-                    && !used_added[tf][te + n]
-                    && key(text.text(&lines[e + n])) == key(ttext.text(&tlines[te + n]))
-                {
-                    n += 1;
-                }
+                let n = lines
+                    .iter()
+                    .skip(e)
+                    .zip(tlines.iter().zip(used).skip(te))
+                    .take_while(|(l, (t, used))| {
+                        l.kind == LineKind::Removed
+                            && t.kind == LineKind::Added
+                            && !**used
+                            && key(text.text(l)) == key(ttext.text(t))
+                    })
+                    .count();
                 if best.is_none_or(|(_, _, len)| n > len) {
                     best = Some((tf, te, n));
                 }
             }
-            let Some((tf, te, n)) = best else {
+            let chars = |n| -> usize {
+                let run = lines.iter().skip(e).take(n);
+                run.map(|l| key(text.text(l)).len()).sum()
+            };
+            let Some((tf, te, n)) =
+                best.filter(|&(_, _, n)| n >= MIN_LINES && chars(n) >= MIN_CHARS)
+            else {
                 e += 1;
                 continue;
             };
-            let chars: usize = (e..e + n).map(|k| key(text.text(&lines[k])).len()).sum();
-            if n < MIN_LINES || chars < MIN_CHARS {
+            let (Some((target, _, _)), Some(used)) = (files.get(tf), used_added.get_mut(tf)) else {
                 e += 1;
                 continue;
-            }
-            for used in &mut used_added[tf][te..te + n] {
+            };
+            for used in used.iter_mut().skip(te).take(n) {
                 *used = true;
             }
             moves.push(Move {
-                from: (*file_index, e as u32..(e + n) as u32),
-                to: (files[tf].0, te as u32..(te + n) as u32),
+                from: (*file_index, sat_u32(e)..sat_u32(e + n)),
+                to: (*target, sat_u32(te)..sat_u32(te + n)),
             });
             e += n;
         }
