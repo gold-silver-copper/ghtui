@@ -275,6 +275,14 @@ impl State {
                     Some(Data::Repos(r)) => Some(r.as_slice()),
                     _ => None,
                 };
+                // A failed first load (nothing cached) says why, instead of
+                // empty boxes that look like they're still loading.
+                if matches!(error, Some((_, false))) {
+                    missing(&mut page, "your home page");
+                    if self.inbox.data.is_none() {
+                        return page;
+                    }
+                }
                 pages::home(
                     &mut page,
                     self.inbox.data.as_ref(),
