@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc ea9f32f6ab7459029667aab90b55840de4c99c6a018c8b5cad5c95e8f586e18b # shrinks to route = Blob { repo: RepoId { owner: "A", name: "0" }, rev: "0", path: "\\" }
+cc 210b692197bab930de58cf949169308aa024123ca3280f3227bbfdec8a7ba362 # shrinks to route = Tree { repo: RepoId { owner: "A", name: "A" }, rev: ".", path: "" }

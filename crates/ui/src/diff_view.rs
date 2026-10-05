@@ -852,19 +852,21 @@ fn code_spans(
         let mut piece = String::new();
         let mut truncated = false;
         for c in slice.chars() {
-            let (text, w): (String, usize) = match c {
-                '\t' => {
-                    let w = TAB_WIDTH - used % TAB_WIDTH;
-                    (" ".repeat(w), w)
-                }
-                c if c.is_control() => ("�".into(), 1),
-                c => (c.to_string(), c.width().unwrap_or(0)),
+            let w = match c {
+                '\t' => TAB_WIDTH - used % TAB_WIDTH,
+                c if text::is_hidden(c) => 1,
+                c => c.width().unwrap_or(0),
             };
             if used + w > room {
                 truncated = true;
                 break;
             }
-            piece.push_str(&text);
+            match c {
+                '\t' => piece.extend(std::iter::repeat_n(' ', w)),
+                // Shown, never acted on: see `text::is_hidden`.
+                c if text::is_hidden(c) => piece.push('�'),
+                c => piece.push(c),
+            }
             used += w;
         }
         if !piece.is_empty() {
@@ -884,4 +886,26 @@ fn size(bytes: Option<usize>) -> String {
 
 fn short(oid: Option<&str>) -> &str {
     oid.map_or("none", text::short_sha)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
+
+    /// A bidi override in code ("Trojan Source") is shown, not obeyed or
+    /// silently dropped; tabs expand without per-character allocation.
+    #[test]
+    fn hidden_characters_in_code_are_shown() {
+        let theme = Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor);
+        let ctx = Ctx {
+            theme: &theme,
+            icons: crate::Icons::default(),
+            now: 0,
+        };
+        let line = "if a\u{202e} {\tb\u{200b}c";
+        let spans = code_spans(ctx, line, &[], DiffBg::Added, false, 80, &[]);
+        let shown: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(shown, "if a� { b�c");
+    }
 }

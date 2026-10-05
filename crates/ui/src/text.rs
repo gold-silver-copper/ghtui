@@ -3,8 +3,36 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+/// Columns `s` takes on screen. Characters that are never drawn don't
+/// count: ratatui drops control characters (and anything of zero width,
+/// bidi overrides included, so GitHub text can't reorder what's shown).
 pub fn width(s: &str) -> usize {
-    UnicodeWidthStr::width(s)
+    if !s.contains(char::is_control) {
+        return UnicodeWidthStr::width(s);
+    }
+    s.graphemes(true)
+        .filter(|g| !g.contains(char::is_control))
+        .map(UnicodeWidthStr::width)
+        .sum()
+}
+
+/// Characters that change or hide what code means without showing
+/// themselves: control characters, bidi controls ("Trojan Source") and
+/// zero-width spaces. Code views draw a marker in their place, as GitHub
+/// warns about them. Joiners (emoji sequences) aren't included.
+pub fn is_hidden(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{061C}'
+                | '\u{200B}'
+                | '\u{200E}'
+                | '\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{FEFF}'
+        )
 }
 
 /// What a terminal draws as one character (an emoji with its modifiers,
@@ -93,6 +121,15 @@ pub fn wrap(text: &str, max: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn width_counts_only_what_is_drawn() {
+        assert_eq!(width("a\u{1b}[31mb"), 6);
+        assert_eq!(width("a\u{1b}b"), 2);
+        assert_eq!(width("a\u{202e}b"), 2);
+        assert_eq!(width("漢字"), 4);
+        assert!(is_hidden('\u{202e}') && is_hidden('\u{200b}') && !is_hidden('\u{200d}'));
+    }
 
     #[test]
     fn truncates_with_ellipsis() {
