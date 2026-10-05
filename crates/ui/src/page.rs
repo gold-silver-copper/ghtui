@@ -242,6 +242,17 @@ impl Page {
         self.lines.push(line);
     }
 
+    /// A line of `segs`, `indent` columns in, with `right` on its right.
+    pub(crate) fn add(&mut self, frame: Frame, indent: u16, segs: Vec<Seg>, right: Vec<Seg>) {
+        self.lines.push(PageLine {
+            segs,
+            indent,
+            right,
+            frame,
+            tone: Tone::Plain,
+        });
+    }
+
     /// A gap line (none at the top, never two in a row).
     pub fn blank(&mut self) {
         if self
@@ -255,10 +266,7 @@ impl Page {
 
     /// A line of segments.
     pub fn line(&mut self, segs: Vec<Seg>) {
-        self.lines.push(PageLine {
-            segs,
-            ..PageLine::default()
-        });
+        self.add(Frame::None, 0, segs, Vec::new());
     }
 
     /// A line with a single link segment.
@@ -270,11 +278,12 @@ impl Page {
         indent: u16,
     ) -> u32 {
         let link = self.link(url);
-        self.lines.push(PageLine {
-            segs: vec![Seg::linked(text, role, link)],
+        self.add(
+            Frame::None,
             indent,
-            ..PageLine::default()
-        });
+            vec![Seg::linked(text, role, link)],
+            Vec::new(),
+        );
         link
     }
 
@@ -291,43 +300,25 @@ impl Page {
     pub fn wrapped(&mut self, segs: Vec<Seg>, indent: u16, frame: Frame) {
         let width = usize::from(self.room(frame, indent));
         for segs in wrap_segs(segs, width) {
-            self.lines.push(PageLine {
-                segs,
-                indent,
-                frame,
-                ..PageLine::default()
-            });
+            self.add(frame, indent, segs, Vec::new());
         }
     }
 
     /// A thin rule across the line (GitHub's header borders, Markdown's
     /// `---`).
     pub fn rule(&mut self, indent: u16, frame: Frame) {
-        let width = usize::from(self.room(frame, indent));
-        self.lines.push(PageLine {
-            segs: vec![Seg::new("─".repeat(width), Role::Meta)],
-            indent,
-            frame,
-            ..PageLine::default()
-        });
+        let rule = "─".repeat(usize::from(self.room(frame, indent)));
+        self.add(frame, indent, vec![Seg::new(rule, Role::Meta)], Vec::new());
     }
 
     /// Opens a box: `╭─ title ──── right ─╮`.
     pub fn box_top(&mut self, title: Vec<Seg>, right: Vec<Seg>) {
         self.blank_before_box();
-        self.lines.push(PageLine {
-            segs: title,
-            right,
-            frame: Frame::Top,
-            ..PageLine::default()
-        });
+        self.add(Frame::Top, 0, title, right);
     }
 
     pub fn box_rule(&mut self) {
-        self.lines.push(PageLine {
-            frame: Frame::Rule,
-            ..PageLine::default()
-        });
+        self.add(Frame::Rule, 0, Vec::new(), Vec::new());
     }
 
     pub fn box_bottom(&mut self) {
@@ -339,10 +330,7 @@ impl Page {
         {
             self.lines.pop();
         }
-        self.lines.push(PageLine {
-            frame: Frame::Bottom,
-            ..PageLine::default()
-        });
+        self.add(Frame::Bottom, 0, Vec::new(), Vec::new());
     }
 
     /// An empty line inside a box.
@@ -352,22 +340,13 @@ impl Page {
             .last()
             .is_some_and(|l| !(l.frame == Frame::Body && l.is_blank()) && l.frame != Frame::Top)
         {
-            self.lines.push(PageLine {
-                frame: Frame::Body,
-                ..PageLine::default()
-            });
+            self.add(Frame::Body, 0, Vec::new(), Vec::new());
         }
     }
 
     /// A line inside a box.
     pub fn box_line(&mut self, segs: Vec<Seg>, right: Vec<Seg>, indent: u16) {
-        self.lines.push(PageLine {
-            segs,
-            right,
-            indent,
-            frame: Frame::Body,
-            tone: Tone::Plain,
-        });
+        self.add(Frame::Body, indent, segs, right);
     }
 
     fn blank_before_box(&mut self) {

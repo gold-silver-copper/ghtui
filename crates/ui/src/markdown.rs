@@ -537,20 +537,11 @@ impl Renderer<'_> {
                 segs.extend(cell);
                 segs.push(Seg::new(" ".repeat(pad), Role::Body));
             }
-            self.page.push(PageLine {
-                segs,
-                indent: self.indent,
-                frame: self.frame,
-                ..PageLine::default()
-            });
+            self.page.add(self.frame, self.indent, segs, Vec::new());
             if r == 0 {
                 let rule: Vec<String> = widths.iter().map(|w| "─".repeat(*w)).collect();
-                self.page.push(PageLine {
-                    segs: vec![Seg::new(rule.join("─┼─"), Role::Meta)],
-                    indent: self.indent,
-                    frame: self.frame,
-                    ..PageLine::default()
-                });
+                let rule = vec![Seg::new(rule.join("─┼─"), Role::Meta)];
+                self.page.add(self.frame, self.indent, rule, Vec::new());
             }
         }
         self.page_blank();
