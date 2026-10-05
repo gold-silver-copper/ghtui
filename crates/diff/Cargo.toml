@@ -34,3 +34,6 @@ lang-yaml = ["dep:tree-sitter-yaml"]
 lang-toml = ["dep:tree-sitter-toml-ng"]
 lang-markdown = ["dep:tree-sitter-md"]
 lang-bash = ["dep:tree-sitter-bash"]
+
+[lints]
+workspace = true

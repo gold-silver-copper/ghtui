@@ -26,3 +26,6 @@ cynic-codegen.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["net"] }
+
+[lints]
+workspace = true

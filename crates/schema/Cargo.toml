@@ -10,3 +10,6 @@ cynic.workspace = true
 
 [build-dependencies]
 cynic-codegen.workspace = true
+
+[lints]
+workspace = true

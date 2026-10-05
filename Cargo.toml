@@ -65,6 +65,26 @@ tree-sitter-toml-ng = "0.7.0"
 tree-sitter-md = "0.5.3"
 tree-sitter-bash = "0.25.1"
 
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+# Panics are bugs, so non-test code can't contain them (tests are exempt in
+# clippy.toml). Where a cast or similar is provably fine, say why with
+# `#[expect(..., reason = "...")]` rather than a bare allow.
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+cast_possible_truncation = "deny"
+redundant_clone = "warn"
+needless_pass_by_value = "warn"
+manual_let_else = "warn"
+
 [profile.dev.package."*"]
 opt-level = 1
 

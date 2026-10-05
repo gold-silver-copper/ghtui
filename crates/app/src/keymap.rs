@@ -738,7 +738,8 @@ mod tests {
         use proptest::prelude::*;
 
         fn key() -> impl Strategy<Value = Key> {
-            let named = prop::sample::select(NAMED.iter().map(|(_, code)| *code).collect::<Vec<_>>());
+            let named =
+                prop::sample::select(NAMED.iter().map(|(_, code)| *code).collect::<Vec<_>>());
             let mods = prop::sample::select(vec![
                 KeyModifiers::NONE,
                 KeyModifiers::CONTROL,

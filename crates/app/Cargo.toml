@@ -33,3 +33,6 @@ url.workspace = true
 proptest.workspace = true
 ghtui-git.workspace = true
 insta.workspace = true
+
+[lints]
+workspace = true
