@@ -1199,14 +1199,12 @@ impl Doc {
     /// Files whose diffs haven't arrived, among `count` rows from `top`.
     pub fn loading_in_view(&self, top: Pos, count: usize) -> Vec<usize> {
         let first = self.to_global(top);
-        let mut out: Vec<usize> = Vec::new();
-        for g in first..(first + count).min(self.total) {
-            let pos = self.to_pos(g);
-            let Some(file) = self.files.get(pos.file) else {
-                continue;
-            };
-            if file.diff.is_none() && !file.collapsed() && !out.contains(&pos.file) {
-                out.push(pos.file);
+        let end = (first + count).min(self.total);
+        let mut out = Vec::new();
+        for (i, (file, &start)) in self.files.iter().zip(&self.starts).enumerate() {
+            let shown = start < end && start + file.rows.len() > first;
+            if shown && file.diff.is_none() && !file.collapsed() {
+                out.push(i);
             }
         }
         out
