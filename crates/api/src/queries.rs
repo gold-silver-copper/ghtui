@@ -23,27 +23,36 @@ pub(crate) fn nodes<T>(list: Option<Vec<Option<T>>>) -> impl Iterator<Item = T> 
     list.into_iter().flatten().flatten()
 }
 
-/// Fragments with the same single field on several GraphQL types.
+/// Fragments with the same single field on several GraphQL types. Field
+/// types are written out in the arms: cynic's derive fails on a type passed
+/// in whole.
 macro_rules! fragments {
-    (total_count: $($name:ident = $graphql:literal),* $(,)?) => {$(
+    ($field:ident: Option<$ty:ident>; $($name:ident = $graphql:literal),* $(,)?) => {$(
+        #[derive(cynic::QueryFragment, Debug)]
+        #[cynic(graphql_type = $graphql, schema_module = "schema")]
+        pub struct $name {
+            pub $field: Option<$ty>,
+        }
+    )*};
+    (total_count: i32; $($name:ident = $graphql:literal),* $(,)?) => {$(
         #[derive(cynic::QueryFragment, Debug)]
         #[cynic(graphql_type = $graphql, schema_module = "schema")]
         pub struct $name {
             pub total_count: i32,
         }
     )*};
-    (client_mutation_id: $($name:ident = $graphql:literal),* $(,)?) => {$(
+    (id: cynic::Id; $($name:ident = $graphql:literal),* $(,)?) => {$(
         #[derive(cynic::QueryFragment, Debug)]
         #[cynic(graphql_type = $graphql, schema_module = "schema")]
         pub struct $name {
-            pub client_mutation_id: Option<String>,
+            pub id: cynic::Id,
         }
     )*};
 }
 
 // Connection sizes.
 fragments! {
-    total_count:
+    total_count: i32;
     CommentCount = "IssueCommentConnection",
     UserCount = "UserConnection",
     IssueCount = "IssueConnection",
@@ -55,12 +64,31 @@ fragments! {
 
 // Results of mutations that only need to succeed.
 fragments! {
-    client_mutation_id:
+    client_mutation_id: Option<String>;
     MarkFileAsViewedPayload = "MarkFileAsViewedPayload",
     UnmarkFileAsViewedPayload = "UnmarkFileAsViewedPayload",
     AddCommentPayload = "AddCommentPayload",
     StarPayload = "AddStarPayload",
     UnstarPayload = "RemoveStarPayload",
+}
+
+// Node IDs, and the mutation results that carry them.
+fragments! {
+    id: cynic::Id;
+    ReviewId = "PullRequestReview",
+    ThreadId = "PullRequestReviewThread",
+    CommentId = "PullRequestReviewComment",
+}
+fragments! {
+    pull_request_review: Option<ReviewId>;
+    StartReviewPayload = "AddPullRequestReviewPayload",
+    SubmitReviewPayload = "SubmitPullRequestReviewPayload",
+}
+fragments! {
+    thread: Option<ThreadId>;
+    ThreadPayload = "AddPullRequestReviewThreadPayload",
+    ResolvePayload = "ResolveReviewThreadPayload",
+    UnresolvePayload = "UnresolveReviewThreadPayload",
 }
 
 /// An issue or pull request by number.
@@ -509,12 +537,6 @@ pub struct ReviewIdConnection {
     pub nodes: Option<Vec<Option<ReviewId>>>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
-pub struct ReviewId {
-    pub id: cynic::Id,
-}
-
 // ---- review mutations --------------------------------------------------------
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -532,12 +554,6 @@ pub struct StartReviewVariables {
 pub struct StartReview {
     #[arguments(input: { pullRequestId: $pull_request_id, commitOID: $commit })]
     pub add_pull_request_review: Option<StartReviewPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "AddPullRequestReviewPayload", schema_module = "schema")]
-pub struct StartReviewPayload {
-    pub pull_request_review: Option<ReviewId>,
 }
 
 #[derive(cynic::InputObject, Debug)]
@@ -577,21 +593,6 @@ pub struct AddThread {
     pub add_pull_request_review_thread: Option<ThreadPayload>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "AddPullRequestReviewThreadPayload",
-    schema_module = "schema"
-)]
-pub struct ThreadPayload {
-    pub thread: Option<ThreadId>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReviewThread", schema_module = "schema")]
-pub struct ThreadId {
-    pub id: cynic::Id,
-}
-
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 #[cynic(graphql_type = "PullRequestReviewEvent", schema_module = "schema")]
 pub enum ReviewEvent {
@@ -619,15 +620,6 @@ pub struct SubmitReview {
     pub submit_pull_request_review: Option<SubmitReviewPayload>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "SubmitPullRequestReviewPayload",
-    schema_module = "schema"
-)]
-pub struct SubmitReviewPayload {
-    pub pull_request_review: Option<ReviewId>,
-}
-
 #[derive(cynic::QueryVariables, Debug)]
 pub struct ReplyVariables {
     pub thread_id: cynic::Id,
@@ -645,19 +637,9 @@ pub struct Reply {
     pub add_pull_request_review_thread_reply: Option<ReplyPayload>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "AddPullRequestReviewThreadReplyPayload",
-    schema_module = "schema"
-)]
-pub struct ReplyPayload {
-    pub comment: Option<CommentId>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReviewComment", schema_module = "schema")]
-pub struct CommentId {
-    pub id: cynic::Id,
+fragments! {
+    comment: Option<CommentId>;
+    ReplyPayload = "AddPullRequestReviewThreadReplyPayload",
 }
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -677,12 +659,6 @@ pub struct Resolve {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ResolveReviewThreadPayload", schema_module = "schema")]
-pub struct ResolvePayload {
-    pub thread: Option<ThreadId>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(
     graphql_type = "Mutation",
     schema_module = "schema",
@@ -691,15 +667,6 @@ pub struct ResolvePayload {
 pub struct Unresolve {
     #[arguments(input: { threadId: $thread_id })]
     pub unresolve_review_thread: Option<UnresolvePayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "UnresolveReviewThreadPayload",
-    schema_module = "schema"
-)]
-pub struct UnresolvePayload {
-    pub thread: Option<ThreadId>,
 }
 
 // ---- the viewer's last review --------------------------------------------------
