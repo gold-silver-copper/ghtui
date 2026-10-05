@@ -54,19 +54,13 @@ impl Credentials {
         };
         let mut env = vec![("GIT_CONFIG_COUNT".to_owned(), helpers.len().to_string())];
         for (i, helper) in helpers.iter().enumerate() {
-            env.push((
-                format!("GIT_CONFIG_KEY_{i}"),
-                "credential.helper".to_owned(),
-            ));
-            env.push((format!("GIT_CONFIG_VALUE_{i}"), (*helper).to_owned()));
+            env.push((format!("GIT_CONFIG_KEY_{i}"), "credential.helper".into()));
+            env.push((format!("GIT_CONFIG_VALUE_{i}"), (*helper).into()));
         }
         if let Credentials::AskPass { program, token } = self {
-            env.push((
-                "GIT_ASKPASS".to_owned(),
-                program.to_string_lossy().into_owned(),
-            ));
-            env.push((ASKPASS_FLAG.to_owned(), "1".to_owned()));
-            env.push((ASKPASS_TOKEN.to_owned(), token.clone()));
+            env.push(("GIT_ASKPASS".into(), program.to_string_lossy().into()));
+            env.push((ASKPASS_FLAG.into(), "1".into()));
+            env.push((ASKPASS_TOKEN.into(), token.clone()));
         }
         env
     }

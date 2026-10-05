@@ -82,20 +82,19 @@ pub fn parse_raw(out: &str) -> Result<Vec<ChangedFile>, GitError> {
         let (letter, score) = status.split_at(1);
         let similarity = score.parse::<u8>().ok();
         let first = fields.next().ok_or_else(|| bad("missing path"))?.to_owned();
+        let mut target = || {
+            fields
+                .next()
+                .map(str::to_owned)
+                .ok_or_else(|| bad("missing rename target"))
+        };
         let (status, old_path, new_path) = match letter {
             "A" => (FileStatus::Added, None, Some(first)),
             "D" => (FileStatus::Deleted, Some(first), None),
             "M" => (FileStatus::Modified, Some(first.clone()), Some(first)),
             "T" => (FileStatus::TypeChanged, Some(first.clone()), Some(first)),
-            "R" | "C" => {
-                let second = fields.next().ok_or_else(|| bad("missing rename target"))?;
-                let status = if letter == "R" {
-                    FileStatus::Renamed
-                } else {
-                    FileStatus::Copied
-                };
-                (status, Some(first), Some(second.to_owned()))
-            }
+            "R" => (FileStatus::Renamed, Some(first), Some(target()?)),
+            "C" => (FileStatus::Copied, Some(first), Some(target()?)),
             other => return Err(bad(&format!("unknown status {other}"))),
         };
         files.push(ChangedFile {
