@@ -86,11 +86,13 @@ impl From<Hct> for Rgb {
     }
 }
 
-/// Rounds to the nearest channel value, saturating; NaN becomes 0. Std has no
-/// checked float-to-int conversion, so this searches instead of casting.
+/// Rounds to the nearest channel value, saturating; NaN becomes 0.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "clamped to 0..=255 first; float-to-int `as` saturates anyway"
+)]
 fn channel(x: f64) -> u8 {
-    let x = x.round();
-    (0..=u8::MAX).rfind(|&n| f64::from(n) <= x).unwrap_or(0)
+    x.round().clamp(0.0, 255.0) as u8
 }
 
 /// WCAG contrast ratio, 1.0 to 21.0.
