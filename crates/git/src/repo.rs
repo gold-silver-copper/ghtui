@@ -64,7 +64,7 @@ fn repo_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
     let mut locks = LOCKS
         .get_or_init(Mutex::default)
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     locks.entry(path.to_owned()).or_default().clone()
 }
 

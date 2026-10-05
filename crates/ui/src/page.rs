@@ -432,7 +432,7 @@ pub(crate) fn wrap_segs(segs: Vec<Seg>, width: usize) -> Vec<Vec<Seg>> {
         };
         match line.last_mut() {
             Some(last) if last.role == seg.role && last.link == seg.link => {
-                last.text.push_str(text)
+                last.text.push_str(text);
             }
             _ => line.push(Seg {
                 text: text.to_owned(),
@@ -799,7 +799,7 @@ impl PageView<'_> {
             Role::Emph => theme.body(bg).add_modifier(Modifier::ITALIC),
             Role::Strike => theme.meta(bg).add_modifier(Modifier::CROSSED_OUT),
             Role::Meta => theme.meta(bg),
-            Role::Link => theme.accent(bg),
+            Role::Link | Role::Accent => theme.accent(bg),
             Role::Code => match bg {
                 Bg::Diff(_) | Bg::DiffSelected(_) => theme.style(Fg::Syntax(Syntax::String), bg),
                 // GitHub's gray chip.
@@ -811,7 +811,6 @@ impl PageView<'_> {
             },
             Role::Success => theme.style(Fg::Success, bg),
             Role::Error => theme.error(bg),
-            Role::Accent => theme.accent(bg),
             Role::Added => theme.style(Fg::DiffAddedSign, bg),
             Role::Removed => theme.style(Fg::DiffRemovedSign, bg),
             Role::Chip(chip) => theme.fill(*chip),

@@ -121,7 +121,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
     // Which keys can follow a prefix.
     let next_keys = state.continuations();
     if !next_keys.is_empty() {
-        let title = format!("{} …", pending);
+        let title = format!("{pending} …");
         KeyPanel {
             ctx,
             title: &title,
@@ -222,7 +222,6 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             }
             .render(area, buf);
         }
-        Some(Overlay::Hints(_)) => {}
         Some(Overlay::DiffSearch(input)) => {
             // The prompt replaces the status bar.
             fill(buf, status, ctx.theme, Bg::Container);
@@ -241,7 +240,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 buf,
             );
         }
-        None => {}
+        Some(Overlay::Hints(_)) | None => {}
     }
 }
 

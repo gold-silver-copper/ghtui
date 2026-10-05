@@ -332,7 +332,7 @@ impl State {
                 match overview {
                     Some(o) => {
                         let commits = self.last_commits(repo, "HEAD", "");
-                        pages::repo_code(&mut page, repo, o, commits, aside, cx)
+                        pages::repo_code(&mut page, repo, o, commits, aside, cx);
                     }
                     None => missing(&mut page, "the repository"),
                 }
@@ -393,7 +393,7 @@ impl State {
             Route::Issue { repo, number } => match self.get(&DataKey::Issue(repo.clone(), *number))
             {
                 Some(Data::Issue(Some(issue))) => {
-                    pages::issue(&mut page, issue, icons, keys, aside, now)
+                    pages::issue(&mut page, issue, icons, keys, aside, now);
                 }
                 // Redirecting to the pull request.
                 Some(Data::Issue(None)) => page.line(vec![Seg::new("Loading…", Role::Meta)]),
@@ -404,7 +404,7 @@ impl State {
                 let activity = self.activity(pr);
                 match (detail, tab) {
                     (Some(d), PrTab::Conversation) => {
-                        pages::pr_conversation(&mut page, pr, d, activity, aside, cx)
+                        pages::pr_conversation(&mut page, pr, d, activity, aside, cx);
                     }
                     (Some(d), PrTab::Commits) => pages::pr_commits(&mut page, pr, d, activity, now),
                     (None, _) => missing(&mut page, &pr.to_string()),

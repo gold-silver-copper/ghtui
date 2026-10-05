@@ -980,12 +980,12 @@ pub(crate) mod diff {
             with_pr, with_repo,
         };
         use crate::browse::Data;
+        type Build = Box<dyn Fn() -> State>;
         let tc = ColorDepth::TrueColor;
         let pressed = |mut s: State, keys: &str| {
             press(&mut s, keys);
             s
         };
-        type Build = Box<dyn Fn() -> State>;
         let builders: Vec<(&str, Build)> = vec![
             ("home", Box::new(move || with_inbox(Mode::Dark, tc))),
             ("home loading", Box::new(move || state(Mode::Dark, tc))),
@@ -1158,6 +1158,7 @@ pub(crate) mod diff {
     /// Run with `cargo test --release -p ghtui -- --ignored scroll_timing`.
     #[test]
     #[ignore = "timing; run in release"]
+    #[expect(clippy::print_stderr, reason = "reports the timings")]
     fn scroll_timing_on_500_files_20k_lines() {
         let regular = (0o100644, 0o100644);
         let files: Vec<ChangedFile> = (0..500)
@@ -1212,6 +1213,7 @@ pub(crate) mod diff {
     /// Run with `cargo test --release -p ghtui -- --ignored big_file_timing`.
     #[test]
     #[ignore = "timing; run in release"]
+    #[expect(clippy::print_stderr, reason = "reports the timings")]
     fn big_file_timing_50k_lines() {
         use std::time::{Duration, Instant};
 

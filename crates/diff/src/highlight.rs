@@ -155,7 +155,7 @@ fn config(lang: Language) -> Option<&'static HighlightConfiguration> {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "unused when no grammar is compiled in")]
 fn build(
     language: tree_sitter::Language,
     name: &str,

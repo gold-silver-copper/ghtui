@@ -67,6 +67,10 @@ enum Command {
     },
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "errors that end ghtui, before or after the terminal is taken over"
+)]
 fn main() -> std::process::ExitCode {
     // git runs this binary as its GIT_ASKPASS helper for the cache clone.
     if std::env::var_os(ghtui_git::credentials::ASKPASS_FLAG).is_some() {
@@ -219,6 +223,7 @@ fn git_credentials(
 
 /// `GIT_ASKPASS` mode: answer git's prompt from the environment ghtui set
 /// on the git process, then exit.
+#[expect(clippy::print_stdout, reason = "git reads the answer from stdout")]
 fn askpass() -> std::process::ExitCode {
     use ghtui_git::credentials::{ASKPASS_TOKEN, askpass_answer};
     let prompt = std::env::args().nth(1).unwrap_or_default();
@@ -282,8 +287,7 @@ fn build_theme(config: &Config, cli_mode: Option<ModeSetting>) -> Result<Theme> 
         ModeSetting::Dark => Mode::Dark,
         // Must happen before the alternate screen and raw mode.
         ModeSetting::Auto => ghtui_theme::detect_background(BACKGROUND_QUERY_TIMEOUT)
-            .map(ghtui_theme::mode_for_background)
-            .unwrap_or(Mode::Dark),
+            .map_or(Mode::Dark, ghtui_theme::mode_for_background),
     };
     tracing::info!(?mode, ?depth, %seed, "theme");
     Ok(Theme::new(seed, mode, depth))

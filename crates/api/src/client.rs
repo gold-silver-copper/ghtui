@@ -161,7 +161,10 @@ impl GitHub {
     }
 
     pub fn rate_limits(&self) -> RateLimits {
-        *self.limits.lock().unwrap_or_else(|e| e.into_inner())
+        *self
+            .limits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     async fn send(&self, request: &Request<'_>) -> Result<Response, ApiError> {
@@ -203,7 +206,7 @@ impl GitHub {
             let headers = response.headers().clone();
             self.limits
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .update(&headers);
 
             if let Some(wait) = retry_after(status, &headers, ghtui_store::now()) {
@@ -1037,7 +1040,7 @@ fn encode_path(s: &str) -> String {
     for b in s.bytes() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
+                out.push(b as char);
             }
             b => out.push_str(&format!("%{b:02X}")),
         }
@@ -1112,6 +1115,10 @@ async fn backoff(attempt: u32) {
 }
 
 fn check_status(response: &Response) -> Result<(), ApiError> {
+    #[derive(serde::Deserialize)]
+    struct Message {
+        message: String,
+    }
     let status = response.status;
     if status.is_success() {
         return Ok(());
@@ -1119,13 +1126,8 @@ fn check_status(response: &Response) -> Result<(), ApiError> {
     if status == StatusCode::UNAUTHORIZED {
         return Err(ApiError::Unauthorized);
     }
-    #[derive(serde::Deserialize)]
-    struct Message {
-        message: String,
-    }
     let message = serde_json::from_str::<Message>(&response.body)
-        .map(|m| m.message)
-        .unwrap_or_else(|_| response.body.chars().take(200).collect());
+        .map_or_else(|_| response.body.chars().take(200).collect(), |m| m.message);
     if status == StatusCode::NOT_FOUND {
         return Err(ApiError::NotFound(message));
     }

@@ -227,7 +227,7 @@ impl Renderer<'_> {
             let name: String = lower
                 .trim_start_matches('/')
                 .chars()
-                .take_while(|c| c.is_ascii_alphanumeric())
+                .take_while(char::is_ascii_alphanumeric)
                 .collect();
             let inline_role = match name.as_str() {
                 "b" | "strong" | "summary" => Some(Role::Strong),
@@ -336,7 +336,6 @@ impl Renderer<'_> {
 
     fn start(&mut self, tag: Tag<'_>) {
         match tag {
-            Tag::Paragraph => {}
             Tag::Heading { level, .. } => {
                 self.flush();
                 self.page_blank();

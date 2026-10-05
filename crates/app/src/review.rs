@@ -768,7 +768,7 @@ pub(crate) fn apply_commit_choice(
     let width = state.size.0;
     let pr = match state.screen() {
         Screen::Diff(screen) => screen.pr.clone(),
-        _ => return Vec::new(),
+        Screen::Page(_) => return Vec::new(),
     };
     let Some(base_ref) = state.base_ref(&pr) else {
         return Vec::new();

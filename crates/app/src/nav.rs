@@ -25,7 +25,7 @@ use crate::route::{self, Route, Target};
 use crate::state::{Api, Cmd, Overlay, Remote, Screen, State, apply};
 
 /// Rows `j`/`k` scroll when there's no row to move to nearby.
-const STEP: usize = 3;
+const STEP: isize = 3;
 /// Rows kept around the selection when scrolling to it.
 const MARGIN: usize = 2;
 /// Recently visited pages kept for the search box.
@@ -294,24 +294,23 @@ fn step(p: &mut PageScreen, height: usize, down: bool) {
             p.selected = Some(i);
             reveal(p, i, height);
         }
-        None if down => scroll_by(p, STEP as i64, height),
-        None => scroll_by(p, -(STEP as i64), height),
+        None if down => scroll_by(p, STEP, height),
+        None => scroll_by(p, -STEP, height),
     }
 }
 
 /// Scrolls; a selection that leaves the screen is dropped.
-fn scroll_by(p: &mut PageScreen, rows: i64, height: usize) {
+fn scroll_by(p: &mut PageScreen, rows: isize, height: usize) {
     p.fresh = false;
     let max = p.page.height().saturating_sub(height);
-    let to = (p.scroll as i64).saturating_add(rows).max(0);
-    p.scroll = usize::try_from(to).unwrap_or(usize::MAX).min(max);
+    p.scroll = p.scroll.saturating_add_signed(rows).min(max);
     if p.selected.is_some_and(|s| !visible(p, s, height)) {
         p.selected = None;
     }
 }
 
 /// Pages and jumps keep a selection on screen when there's one to keep.
-fn scroll_keep(p: &mut PageScreen, rows: i64, height: usize) {
+fn scroll_keep(p: &mut PageScreen, rows: isize, height: usize) {
     let had = p.selected.is_some();
     scroll_by(p, rows, height);
     if had && p.selected.is_none() {
@@ -333,14 +332,15 @@ pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
     let Screen::Page(p) = state.screen_mut() else {
         return None;
     };
-    let half = (height / 2).max(1) as i64;
+    let half = (height / 2).max(1).cast_signed();
+    let page = height.saturating_sub(2).max(1).cast_signed();
     match action {
         Action::Down => step(p, height, true),
         Action::Up => step(p, height, false),
         Action::HalfPageDown => scroll_keep(p, half, height),
         Action::HalfPageUp => scroll_keep(p, -half, height),
-        Action::PageDown => scroll_keep(p, height.saturating_sub(2).max(1) as i64, height),
-        Action::PageUp => scroll_keep(p, -(height.saturating_sub(2).max(1) as i64), height),
+        Action::PageDown => scroll_keep(p, page, height),
+        Action::PageUp => scroll_keep(p, -page, height),
         Action::UpLevel => {
             let route = p.route.clone();
             return Some(match up(state, &route) {
@@ -352,11 +352,11 @@ pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
             });
         }
         Action::Top => {
-            scroll_by(p, i64::MIN / 2, height);
+            scroll_by(p, isize::MIN, height);
             p.selected = (!p.page.items.is_empty() && visible(p, 0, height)).then_some(0);
         }
         Action::Bottom => {
-            scroll_by(p, i64::MAX / 2, height);
+            scroll_by(p, isize::MAX, height);
             let last = p.page.items.len().checked_sub(1);
             p.selected = last.filter(|&l| visible(p, l, height));
         }
@@ -501,7 +501,11 @@ const LETTERS: &str = "asdfghjklqwertyuiopzxcvbnm";
 fn hint_labels(n: usize) -> Vec<String> {
     let letters: Vec<char> = LETTERS.chars().collect();
     if n <= letters.len() {
-        return letters.iter().take(n).map(|c| c.to_string()).collect();
+        return letters
+            .iter()
+            .take(n)
+            .map(std::string::ToString::to_string)
+            .collect();
     }
     // Spread over as many first letters as possible, so one key narrows the
     // choice to a few.
@@ -1519,7 +1523,7 @@ pub fn on_mouse(state: &mut State, ev: MouseEvent) -> Vec<Cmd> {
             let height = state.page_height();
             match state.screen_mut() {
                 Screen::Page(p) => {
-                    scroll_by(p, if down { STEP as i64 } else { -(STEP as i64) }, height)
+                    scroll_by(p, if down { STEP } else { -STEP }, height);
                 }
                 Screen::Diff(_) => {
                     let action = if down { Action::Down } else { Action::Up };

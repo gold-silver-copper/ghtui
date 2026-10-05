@@ -88,7 +88,10 @@ pub struct JobControl {
 impl JobControl {
     /// Moves `files` to the front of the queue, in order.
     pub fn prioritize(&self, files: &[usize]) {
-        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
+        let mut queue = self
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for file in files.iter().rev() {
             if let Some(pos) = queue.iter().position(|f| f == file) {
                 queue.remove(pos);
@@ -100,12 +103,15 @@ impl JobControl {
     fn pop(&self) -> Option<usize> {
         self.queue
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .pop_front()
     }
 
     fn fill(&self, files: impl IntoIterator<Item = usize>) {
-        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
+        let mut queue = self
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         queue.clear();
         queue.extend(files);
     }
@@ -118,7 +124,7 @@ impl JobControl {
     fn front(&self) -> Option<usize> {
         self.queue
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .front()
             .copied()
     }

@@ -1014,7 +1014,7 @@ impl Doc {
     /// Reveals more context at `pos`: a gap row opens up to [`EXPAND_STEP`]
     /// lines from each of its ends (all of it if small); anywhere in a
     /// segment widens that segment by [`EXPAND_STEP`] on both sides.
-    #[allow(clippy::single_range_in_vec_init, reason = "a list of one window")]
+    #[expect(clippy::single_range_in_vec_init, reason = "a list of one window")]
     pub fn expand(&mut self, pos: Pos) {
         let Some(row) = self.row(pos) else { return };
         let whitespace = self.opts.whitespace;
@@ -1156,8 +1156,7 @@ impl Doc {
 
     /// Moves by `delta` rows, clamped to the document.
     pub fn offset(&self, pos: Pos, delta: isize) -> Pos {
-        let global = self.to_global(pos) as isize + delta;
-        self.to_pos(global.max(0) as usize)
+        self.to_pos(self.to_global(pos).saturating_add_signed(delta))
     }
 
     pub fn last(&self) -> Pos {

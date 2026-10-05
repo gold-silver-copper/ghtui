@@ -562,15 +562,15 @@ impl State {
     /// already have.
     #[must_use]
     pub fn load_visible(&mut self, force: bool) -> Vec<Cmd> {
-        let mut cmds = Vec::new();
-        if self.viewer.is_none() && force {
-            cmds.push(Cmd::Api(Api::FetchViewer));
-        }
         // What's on screen, without cloning the screen (a page holds its
         // whole rendered content).
         enum Here {
             Page(Route),
             Diff(PrRef),
+        }
+        let mut cmds = Vec::new();
+        if self.viewer.is_none() && force {
+            cmds.push(Cmd::Api(Api::FetchViewer));
         }
         let here = match self.screen() {
             Screen::Page(p) => Here::Page(p.route.clone()),
@@ -1302,7 +1302,12 @@ pub(crate) mod tests {
             &mut state,
             Msg::Pr(pr.clone(), Box::new(Err(ApiError::Network("down".into())))),
         );
-        let text: Vec<String> = page(&state).page.lines.iter().map(|l| l.text()).collect();
+        let text: Vec<String> = page(&state)
+            .page
+            .lines
+            .iter()
+            .map(ghtui_ui::page::PageLine::text)
+            .collect();
         assert!(
             text.iter().any(|l| l.contains("network error: down")),
             "{text:?}"
@@ -2022,7 +2027,7 @@ pub(crate) mod tests {
             .into_iter()
             .filter_map(|(row, _)| match row {
                 ghtui_ui::chrome::SuggestRow::Item { label, .. } => Some(label),
-                _ => None,
+                ghtui_ui::chrome::SuggestRow::Heading(_) => None,
             })
             .collect();
         assert!(labels.contains(&"@octocat".to_owned()), "{labels:?}");
@@ -2276,7 +2281,7 @@ pub(crate) mod tests {
         fn screen(s: &State) -> &DiffScreen {
             match s.screen() {
                 Screen::Diff(screen) => screen,
-                _ => panic!("not on the diff"),
+                Screen::Page(_) => panic!("not on the diff"),
             }
         }
 
@@ -2775,7 +2780,13 @@ pub(crate) mod tests {
                 assert_eq!(review.pending.len(), 1);
                 let draft = &review.pending[0];
                 assert_eq!((draft.line, draft.commit.as_str()), (Some(14), "h"));
-                assert!(s.diffs[&pr].doc.annotations().iter().any(|a| a.is_draft()));
+                assert!(
+                    s.diffs[&pr]
+                        .doc
+                        .annotations()
+                        .iter()
+                        .any(ghtui_ui::annotations::Annotation::is_draft)
+                );
 
                 // The cursor is on the commented line; Enter edits the draft.
                 press(&mut s, "<Enter>");
@@ -2795,7 +2806,13 @@ pub(crate) mod tests {
                 assert!(
                     matches!(&cmds[..], [Cmd::SaveReview(_, r)] if r.pending[0].body == "Use a constant!")
                 );
-                assert!(s.diffs[&pr].doc.annotations().iter().any(|a| a.is_draft()));
+                assert!(
+                    s.diffs[&pr]
+                        .doc
+                        .annotations()
+                        .iter()
+                        .any(ghtui_ui::annotations::Annotation::is_draft)
+                );
                 press(&mut s, "<C-z>");
                 assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.starts_with("No deleted")));
             }

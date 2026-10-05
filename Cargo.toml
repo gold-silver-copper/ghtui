@@ -84,6 +84,25 @@ cast_possible_truncation = "deny"
 redundant_clone = "warn"
 needless_pass_by_value = "warn"
 manual_let_else = "warn"
+# A suppression says why.
+allow_attributes_without_reason = "deny"
+# Writing to the terminal behind ratatui's back corrupts the screen.
+print_stdout = "deny"
+print_stderr = "deny"
+dbg_macro = "deny"
+cast_possible_wrap = "deny"
+cast_sign_loss = "deny"
+match_same_arms = "warn"
+match_wildcard_for_single_variants = "warn"
+needless_pass_by_ref_mut = "warn"
+redundant_closure_for_method_calls = "warn"
+map_unwrap_or = "warn"
+items_after_statements = "warn"
+semicolon_if_nothing_returned = "warn"
+uninlined_format_args = "warn"
+explicit_iter_loop = "warn"
+if_not_else = "warn"
+str_to_string = "warn"
 
 [profile.dev.package."*"]
 opt-level = 1
