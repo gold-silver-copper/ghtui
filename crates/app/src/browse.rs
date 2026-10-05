@@ -14,7 +14,7 @@ use ghtui_ui::pages::{self, Keys, PrTab};
 
 use crate::keymap::Action;
 use crate::route::Route;
-use crate::state::State;
+use crate::state::{Remote, State};
 
 /// Widest a page gets; wider terminals center it, as GitHub does.
 pub const MAX_WIDTH: u16 = 140;
@@ -204,37 +204,26 @@ impl State {
         }
     }
 
+    /// How a page's fetches are going (the ones that have started).
+    fn fetches(&self, route: &Route) -> impl Iterator<Item = Remote<()>> {
+        needs(route).into_iter().filter_map(|need| match need {
+            Need::Inbox => Some(self.inbox.status()),
+            Need::Pr(pr) => self.prs.get(&pr).map(Remote::status),
+            Need::Data(key) => self.data.get(&key).map(Remote::status),
+        })
+    }
+
     /// The first refresh error among a page's needs, and whether the page
     /// has data despite it.
     fn page_error(&self, route: &Route) -> Option<(String, bool)> {
-        needs(route).into_iter().find_map(|need| match need {
-            Need::Inbox => self
-                .inbox
-                .error
-                .clone()
-                .map(|e| (e, self.inbox.data.is_some())),
-            Need::Pr(pr) => {
-                let r = self.prs.get(&pr)?;
-                r.error.clone().map(|e| (e, r.data.is_some()))
-            }
-            Need::Data(key) => {
-                let r = self.data.get(&key)?;
-                r.error.clone().map(|e| (e, r.data.is_some()))
-            }
-        })
+        self.fetches(route)
+            .find_map(|r| Some((r.error?, r.data.is_some())))
     }
 
     /// When the oldest cached copy on the page was fetched, while one is
     /// shown in place of fresh data.
     pub fn page_cached_at(&self, route: &Route) -> Option<u64> {
-        needs(route)
-            .into_iter()
-            .filter_map(|need| match need {
-                Need::Inbox => self.inbox.cached_at,
-                Need::Pr(pr) => self.prs.get(&pr)?.cached_at,
-                Need::Data(key) => self.data.get(&key)?.cached_at,
-            })
-            .min()
+        self.fetches(route).filter_map(|r| r.cached_at).min()
     }
 
     /// One row per list item.
@@ -247,18 +236,11 @@ impl State {
     }
 
     pub fn page_loading_more(&self, route: &Route) -> bool {
-        needs(route).into_iter().any(|need| match need {
-            Need::Data(key) => self.data.get(&key).is_some_and(|r| r.loading_more),
-            Need::Inbox | Need::Pr(_) => false,
-        })
+        self.fetches(route).any(|r| r.loading_more)
     }
 
     pub fn page_loading(&self, route: &Route) -> bool {
-        needs(route).into_iter().any(|need| match need {
-            Need::Inbox => self.inbox.loading,
-            Need::Pr(pr) => self.prs.get(&pr).is_some_and(|r| r.loading),
-            Need::Data(key) => self.data.get(&key).is_some_and(|r| r.loading),
-        })
+        self.fetches(route).any(|r| r.loading)
     }
 
     /// The first key that runs `action` here, as people write it.

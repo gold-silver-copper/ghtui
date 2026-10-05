@@ -304,6 +304,17 @@ impl<T> Remote<T> {
         }
     }
 
+    /// Where the fetch is at, without the data.
+    pub fn status(&self) -> Remote<()> {
+        Remote {
+            data: self.data.as_ref().map(|_| ()),
+            loading: self.loading,
+            error: self.error.clone(),
+            cached_at: self.cached_at,
+            loading_more: self.loading_more,
+        }
+    }
+
     /// Starts a fetch, unless one is running or (without `force`) the
     /// data is good.
     fn begin(&mut self, force: bool) -> bool {
