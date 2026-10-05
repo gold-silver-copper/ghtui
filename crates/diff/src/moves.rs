@@ -39,11 +39,9 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
     let mut added: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
     for (fi, (_, text, lines)) in files.iter().enumerate() {
         for (e, line) in lines.iter().enumerate() {
-            if line.kind == LineKind::Added {
-                let content = key(text.text(line));
-                if !content.is_empty() {
-                    added.entry(content).or_default().push((fi, e));
-                }
+            let content = key(text.text(line));
+            if line.kind == LineKind::Added && !content.is_empty() {
+                added.entry(content).or_default().push((fi, e));
             }
         }
     }
@@ -60,12 +58,14 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
             }
             // Longest run of consecutive removed lines matching consecutive
             // added lines, over every candidate start.
-            let mut best: Option<(usize, usize, usize)> = None; // (target file, target entry, length)
+            // (target file, its position in `files`, target entry, length)
+            let mut best: Option<(usize, usize, usize, usize)> = None;
             for &(tf, te) in added
                 .get(key(text.text(line)))
                 .map_or(&[][..], Vec::as_slice)
             {
-                let (Some((_, ttext, tlines)), Some(used)) = (files.get(tf), used_added.get(tf))
+                let (Some((target, ttext, tlines)), Some(used)) =
+                    (files.get(tf), used_added.get(tf))
                 else {
                     continue;
                 };
@@ -83,30 +83,25 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
                             && key(text.text(l)) == key(ttext.text(t))
                     })
                     .count();
-                if best.is_none_or(|(_, _, len)| n > len) {
-                    best = Some((tf, te, n));
+                if best.is_none_or(|(.., len)| n > len) {
+                    best = Some((*target, tf, te, n));
                 }
             }
             let chars = |n| -> usize {
                 let run = lines.iter().skip(e).take(n);
                 run.map(|l| key(text.text(l)).len()).sum()
             };
-            let Some((tf, te, n)) =
-                best.filter(|&(_, _, n)| n >= MIN_LINES && chars(n) >= MIN_CHARS)
+            let Some((target, tf, te, n)) =
+                best.filter(|&(.., n)| n >= MIN_LINES && chars(n) >= MIN_CHARS)
             else {
                 e += 1;
                 continue;
             };
-            let (Some((target, _, _)), Some(used)) = (files.get(tf), used_added.get_mut(tf)) else {
-                e += 1;
-                continue;
-            };
-            for used in used.iter_mut().skip(te).take(n) {
-                *used = true;
-            }
+            let used = used_added.get_mut(tf).into_iter().flatten();
+            used.skip(te).take(n).for_each(|used| *used = true);
             moves.push(Move {
                 from: (*file_index, sat_u32(e)..sat_u32(e + n)),
-                to: (*target, sat_u32(te)..sat_u32(te + n)),
+                to: (target, sat_u32(te)..sat_u32(te + n)),
             });
             e += n;
         }
