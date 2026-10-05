@@ -224,6 +224,19 @@ impl State {
         })
     }
 
+    /// When the oldest cached copy on the page was fetched, while one is
+    /// shown in place of fresh data.
+    pub fn page_cached_at(&self, route: &Route) -> Option<u64> {
+        needs(route)
+            .into_iter()
+            .filter_map(|need| match need {
+                Need::Inbox => self.inbox.cached_at,
+                Need::Pr(pr) => self.prs.get(&pr)?.cached_at,
+                Need::Data(key) => self.data.get(&key)?.cached_at,
+            })
+            .min()
+    }
+
     pub fn page_loading(&self, route: &Route) -> bool {
         needs(route).into_iter().any(|need| match need {
             Need::Inbox => self.inbox.loading,
@@ -381,10 +394,13 @@ impl State {
         }
         if let Some((err, true)) = error {
             // A flash banner on top; what's below is the cached copy.
+            let when = self
+                .page_cached_at(route)
+                .map_or_else(|| "before".to_owned(), |at| ghtui_ui::time::ago(at, now));
             let mut banner = Page::new(page.width);
             pages::flash(
                 &mut banner,
-                &format!("Couldn't refresh: {err}. Showing what was loaded before."),
+                &format!("Couldn't refresh: {err}. Showing what was loaded {when}."),
             );
             banner.blank();
             let n = banner.lines.len();

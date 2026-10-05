@@ -176,7 +176,7 @@ fn fetched(state: &mut State, key: DataKey, data: Data) {
         Msg::Fetched {
             key,
             result: Ok(data),
-            fresh: true,
+            cached_at: None,
         },
     );
 }

@@ -147,14 +147,13 @@ async fn run(started: Instant) -> Result<()> {
             format!("Drafts are not being saved: {err}"),
         );
     }
-    state.inbox = Remote::cached(gh.cached_inbox().map(|c| c.value));
+    state.inbox = Remote::cached(gh.cached_inbox());
     let mut cmds = match target {
         Some(target) => {
             if let Target::Page(Route::Pr { pr, .. }) | Target::Files(pr) = &target {
-                state.prs.insert(
-                    pr.clone(),
-                    Remote::cached(gh.cached_pull_request(pr).map(|c| c.value)),
-                );
+                state
+                    .prs
+                    .insert(pr.clone(), Remote::cached(gh.cached_pull_request(pr)));
             }
             // The home page stays underneath (Esc goes there) and loads
             // when you get there.

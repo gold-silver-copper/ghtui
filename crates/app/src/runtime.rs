@@ -290,13 +290,11 @@ fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
             Cmd::Fetch { key, cached } => {
                 if cached {
                     let (gh, lookup) = (gh.clone(), key.clone());
-                    if let Ok(Some(data)) =
-                        tokio::task::spawn_blocking(move || cached_data(&gh, &lookup)).await
-                    {
+                    if let Some((data, at)) = blocking(move || cached_data(&gh, &lookup)).await {
                         let _ = tx.send(Msg::Fetched {
                             key: key.clone(),
                             result: Ok(data),
-                            fresh: false,
+                            cached_at: Some(at),
                         });
                     }
                 }
@@ -304,7 +302,7 @@ fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 Msg::Fetched {
                     key,
                     result,
-                    fresh: true,
+                    cached_at: None,
                 }
             }
             Cmd::FetchMore { key, after } => {
@@ -504,7 +502,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Cmd::Fetch { key, .. } => Msg::Fetched {
             key: key.clone(),
             result: api(),
-            fresh: true,
+            cached_at: None,
         },
         Cmd::FetchMore { key, .. } => Msg::FetchedMore(key.clone(), api()),
         Cmd::AddComment { refresh, .. } => Msg::Commented(refresh.clone(), api()),
@@ -664,29 +662,34 @@ impl StopSignals {
     }
 }
 
-/// What the cache has for a page.
-fn cached_data(gh: &GitHub, key: &DataKey) -> Option<Data> {
+/// What the cache has for a page, and when it was fetched.
+fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
     use ghtui_api::browse::keys;
+    fn at<T>(c: ghtui_store::Cached<T>, wrap: impl FnOnce(T) -> Data) -> (Data, u64) {
+        (wrap(c.value), c.fetched_at)
+    }
     Some(match key {
-        DataKey::Repo(repo) => Data::Repo(Box::new(gh.cached(&keys::repo(repo))?.value)),
-        DataKey::Tree(repo, rev, path) => {
-            Data::Tree(gh.cached(&keys::tree(repo, rev, path))?.value)
+        DataKey::Repo(repo) => at(gh.cached(&keys::repo(repo))?, |v| Data::Repo(Box::new(v))),
+        DataKey::Tree(repo, rev, path) => at(gh.cached(&keys::tree(repo, rev, path))?, Data::Tree),
+        DataKey::Search(kind, query) => at(gh.cached(&keys::search(*kind, query))?, |v| {
+            Data::Search(Box::new(v))
+        }),
+        DataKey::Issue(repo, number) => at(gh.cached(&keys::issue(repo, *number))?, |v| {
+            Data::Issue(Some(Box::new(v)))
+        }),
+        DataKey::PrActivity(pr) => at(gh.cached(&keys::pr_activity(pr))?, |v| {
+            Data::PrActivity(Box::new(v))
+        }),
+        DataKey::Profile(login) => at(gh.cached(&keys::profile(login))?, |v| {
+            Data::Profile(Box::new(v))
+        }),
+        DataKey::ViewerRepos => at(gh.cached(keys::VIEWER_REPOS)?, Data::Repos),
+        DataKey::Refs(repo) => at(gh.cached(&keys::refs(repo))?, |v| Data::Refs(Box::new(v))),
+        DataKey::LastCommits(repo, rev, path) => {
+            at(gh.cached(&keys::last_commits(repo, rev, path))?, |v| {
+                Data::LastCommits(std::sync::Arc::new(v))
+            })
         }
-        DataKey::Search(kind, query) => {
-            Data::Search(Box::new(gh.cached(&keys::search(*kind, query))?.value))
-        }
-        DataKey::Issue(repo, number) => Data::Issue(Some(Box::new(
-            gh.cached(&keys::issue(repo, *number))?.value,
-        ))),
-        DataKey::PrActivity(pr) => {
-            Data::PrActivity(Box::new(gh.cached(&keys::pr_activity(pr))?.value))
-        }
-        DataKey::Profile(login) => Data::Profile(Box::new(gh.cached(&keys::profile(login))?.value)),
-        DataKey::ViewerRepos => Data::Repos(gh.cached(keys::VIEWER_REPOS)?.value),
-        DataKey::Refs(repo) => Data::Refs(Box::new(gh.cached(&keys::refs(repo))?.value)),
-        DataKey::LastCommits(repo, rev, path) => Data::LastCommits(std::sync::Arc::new(
-            gh.cached(&keys::last_commits(repo, rev, path))?.value,
-        )),
         // Files aren't cached; they can be large.
         DataKey::Blob(..) | DataKey::Files(..) => return None,
     })

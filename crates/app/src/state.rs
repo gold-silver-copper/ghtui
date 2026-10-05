@@ -41,11 +41,12 @@ pub enum Msg {
     Viewer(Result<String, ApiError>),
     Inbox(Result<Inbox, ApiError>),
     Pr(PrRef, Box<Result<PrDetail, ApiError>>),
-    /// Page data; `fresh: false` is the cached copy shown while fetching.
+    /// Page data; with `cached_at` (when it was fetched), the cached copy
+    /// shown while fetching.
     Fetched {
         key: DataKey,
         result: Result<Data, ApiError>,
-        fresh: bool,
+        cached_at: Option<u64>,
     },
     /// The next page of a list.
     FetchedMore(DataKey, Result<Data, ApiError>),
@@ -233,6 +234,8 @@ pub struct Remote<T> {
     pub data: Option<T>,
     pub loading: bool,
     pub error: Option<String>,
+    /// When `data` was fetched, while it's a copy from the cache.
+    pub cached_at: Option<u64>,
 }
 
 impl<T> Default for Remote<T> {
@@ -241,14 +244,16 @@ impl<T> Default for Remote<T> {
             data: None,
             loading: false,
             error: None,
+            cached_at: None,
         }
     }
 }
 
 impl<T> Remote<T> {
-    pub fn cached(data: Option<T>) -> Self {
+    pub fn cached(cached: Option<ghtui_store::Cached<T>>) -> Self {
         Self {
-            data,
+            cached_at: cached.as_ref().map(|c| c.fetched_at),
+            data: cached.map(|c| c.value),
             ..Self::default()
         }
     }
@@ -269,6 +274,7 @@ impl<T> Remote<T> {
             Ok(data) => {
                 self.data = Some(data);
                 self.error = None;
+                self.cached_at = None;
             }
             Err(err) => self.error = Some(err.to_string()),
         }
@@ -558,7 +564,16 @@ impl State {
     /// What's loading on the visible screen, for the status bar.
     pub fn busy(&self) -> Option<String> {
         match self.screen() {
-            Screen::Page(p) if self.page_loading(&p.route) => Some("Loading".to_owned()),
+            Screen::Page(p) if self.page_loading(&p.route) => {
+                // Cached data on screen says how old it is.
+                Some(match self.page_cached_at(&p.route) {
+                    Some(at) => {
+                        let ago = ghtui_ui::time::ago(at, (self.clock)());
+                        format!("Refreshing · cached {ago}")
+                    }
+                    None => "Loading".to_owned(),
+                })
+            }
             Screen::Page(_) => None,
             Screen::Diff(screen) => match self.diffs.get(&screen.pr) {
                 Some(diff) => diff.status(),
@@ -647,18 +662,26 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 _ => Vec::new(),
             }
         }
-        Msg::Fetched { key, result, fresh } => {
+        Msg::Fetched {
+            key,
+            result,
+            cached_at,
+        } => {
             if let Err(err) = &result {
                 tracing::warn!(?key, %err, "fetch failed");
             }
             let is_pr = matches!(result, Ok(Data::Issue(None)));
             let remote = state.data.entry(key.clone()).or_default();
-            if fresh {
-                remote.finish(result);
-            } else if remote.data.is_none()
-                && let Ok(data) = result
-            {
-                remote.data = Some(data);
+            match cached_at {
+                None => remote.finish(result),
+                Some(at) => {
+                    if remote.data.is_none()
+                        && let Ok(data) = result
+                    {
+                        remote.data = Some(data);
+                        remote.cached_at = Some(at);
+                    }
+                }
             }
             // GitHub redirects an issue number that's a pull request.
             if is_pr
@@ -1880,7 +1903,7 @@ mod tests {
             Msg::Fetched {
                 key,
                 result: Ok(data),
-                fresh: true,
+                cached_at: None,
             },
         )
     }
@@ -2127,11 +2150,12 @@ mod tests {
             Msg::Fetched {
                 key: DataKey::Profile("octocat".into()),
                 result: Ok(Data::Profile(Box::new(crate::fixtures::profile()))),
-                fresh: false,
+                cached_at: Some(0),
             },
         );
         assert!(page(&state).page.lines[0].text().contains("The Octocat"));
-        assert_eq!(state.busy().as_deref(), Some("Loading"), "still refreshing");
+        let busy = state.busy().unwrap_or_default();
+        assert!(busy.starts_with("Refreshing · cached "), "{busy}");
     }
 
     #[test]
@@ -2198,7 +2222,7 @@ mod tests {
             Msg::Fetched {
                 key,
                 result: Ok(Data::Issue(None)),
-                fresh: true,
+                cached_at: None,
             },
         );
         let pr = PrRef::parse("a/b#9").unwrap();
@@ -3169,7 +3193,10 @@ mod tests {
                 // `ghtui pr` would have loaded metadata; the picker needs the base.
                 s.prs.insert(
                     pr.clone(),
-                    Remote::cached(Some(crate::snapshot_tests::pr_detail())),
+                    Remote::cached(Some(ghtui_store::Cached {
+                        value: crate::snapshot_tests::pr_detail(),
+                        fetched_at: 0,
+                    })),
                 );
                 assert!(matches!(
                     &act(&mut s, Action::PickCommits)[..],
