@@ -37,10 +37,33 @@ const BLOCK_TAGS: &[&str] = &[
     "table", "blockquote", "pre", "hr",
 ];
 
+/// The scheme of an absolute URL (`https` in `https://…`), lowercased.
+pub fn scheme(url: &str) -> Option<String> {
+    let (scheme, _) = url.split_once(':')?;
+    let mut chars = scheme.chars();
+    let valid = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    valid.then(|| scheme.to_ascii_lowercase())
+}
+
+/// Links from content may lead only to the web or to email: never to
+/// local files, other apps' URL handlers, or ghtui's own actions.
+pub fn is_safe_link(url: &str) -> bool {
+    scheme(url).is_none_or(|s| matches!(s.as_str(), "http" | "https" | "mailto"))
+}
+
 /// Resolves a link the way github.com does for a document in a repo.
-pub fn resolve(base: Option<&LinkBase>, url: &str) -> String {
+/// `None` for links content mustn't have (see [`is_safe_link`]).
+pub fn resolve(base: Option<&LinkBase>, url: &str) -> Option<String> {
     let url = url.trim();
-    if url.contains("://") || url.starts_with("mailto:") || url.starts_with('#') {
+    if !is_safe_link(url) {
+        return None;
+    }
+    Some(resolve_safe(base, url))
+}
+
+fn resolve_safe(base: Option<&LinkBase>, url: &str) -> String {
+    if scheme(url).is_some() || url.starts_with('#') {
         return url.to_owned();
     }
     if let Some(rest) = url.strip_prefix('/') {
@@ -240,7 +263,9 @@ impl Renderer<'_> {
                 // Images without alt text (badges, mostly) are left out.
                 if let Some(alt) = attr(tag, "alt").filter(|a| !a.trim().is_empty()) {
                     let link = self.link.or_else(|| {
-                        attr(tag, "src").map(|s| self.page.link(resolve(self.base, &s)))
+                        attr(tag, "src")
+                            .and_then(|s| resolve(self.base, &s))
+                            .map(|s| self.page.link(s))
                     });
                     self.inline.push(Seg {
                         text: format!("[image: {}]", decode_entities(&alt)),
@@ -249,7 +274,9 @@ impl Renderer<'_> {
                     });
                 }
             } else if lower.starts_with("a ") || lower == "a" {
-                self.link = attr(tag, "href").map(|h| self.page.link(resolve(self.base, &h)));
+                self.link = attr(tag, "href")
+                    .and_then(|h| resolve(self.base, &h))
+                    .map(|h| self.page.link(h));
                 self.roles.push(Role::Link);
             } else if lower.starts_with("/a") {
                 self.link = None;
@@ -358,14 +385,14 @@ impl Renderer<'_> {
             Tag::Strong => self.roles.push(Role::Strong),
             Tag::Strikethrough => self.roles.push(Role::Strike),
             Tag::Link { dest_url, .. } => {
-                self.link = Some(self.page.link(resolve(self.base, &dest_url)));
+                self.link = resolve(self.base, &dest_url).map(|url| self.page.link(url));
                 self.roles.push(Role::Link);
             }
             Tag::Image { dest_url, .. } => {
                 let outer = self.link;
                 // A linked image (a badge) leads where the link does.
                 if outer.is_none() {
-                    self.link = Some(self.page.link(resolve(self.base, &dest_url)));
+                    self.link = resolve(self.base, &dest_url).map(|url| self.page.link(url));
                 }
                 self.image = Some((String::new(), outer));
             }
@@ -655,7 +682,7 @@ mod tests {
     #[test]
     fn links_resolve_relative_to_the_repo() {
         let base = LinkBase::new("o/r", "main", "docs/README.md");
-        let resolved = |url| resolve(Some(&base), url);
+        let resolved = |url| resolve(Some(&base), url).unwrap();
         assert_eq!(
             resolved("guide.md"),
             "https://github.com/o/r/blob/main/docs/guide.md"
@@ -685,6 +712,31 @@ mod tests {
                 .iter()
                 .any(|s| s.role == Role::Link && s.link == Some(0))
         );
+    }
+
+    /// Content can't link to local files, other apps, or ghtui's actions.
+    #[test]
+    fn unsafe_links_are_text() {
+        for url in [
+            "file:///etc/passwd",
+            "vscode://x",
+            "javascript:alert(1)",
+            "ghtui:star",
+            "ghtui:quote:me\nhi",
+            "GHTUI:more",
+        ] {
+            assert_eq!(resolve(None, url), None, "{url}");
+            let mut page = Page::new(60);
+            render(
+                &mut page,
+                &format!("[x]({url}) <a href=\"{url}\">y</a>"),
+                None,
+                Frame::None,
+            );
+            assert!(page.links.is_empty(), "{url}: {:?}", page.links);
+        }
+        assert!(resolve(None, "mailto:a@b.c").is_some());
+        assert!(resolve(None, "HTTPS://x.dev").is_some());
     }
 
     #[test]

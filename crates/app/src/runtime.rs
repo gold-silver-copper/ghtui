@@ -658,11 +658,19 @@ fn copy_to_clipboard(text: &str) {
     let _ = out.flush();
 }
 
+/// Opens a web or email link in the default handler. Nothing else is
+/// opened, whatever the link came from.
 async fn open_url(url: &str) -> std::io::Result<()> {
+    if ghtui_ui::markdown::scheme(url)
+        .is_none_or(|s| !matches!(s.as_str(), "http" | "https" | "mailto"))
+    {
+        return Err(std::io::Error::other("only web and email links are opened"));
+    }
+    // Never through a shell: `cmd /C start` would run `&` in a URL.
     let (program, args): (&str, Vec<&str>) = if cfg!(target_os = "macos") {
         ("open", vec![url])
     } else if cfg!(windows) {
-        ("cmd", vec!["/C", "start", "", url])
+        ("rundll32", vec!["url.dll,FileProtocolHandler", url])
     } else {
         ("xdg-open", vec![url])
     };
@@ -830,6 +838,19 @@ mod tests {
             rx.recv().await,
             Some(Msg::ThreadsLoaded(p, Err(ApiError::Internal(_)))) if p == pr
         ));
+    }
+
+    #[tokio::test]
+    async fn only_web_and_email_links_open() {
+        for url in [
+            "file:///etc/passwd",
+            "vscode://x",
+            "ghtui:star",
+            "/relative",
+        ] {
+            let err = open_url(url).await.unwrap_err();
+            assert!(err.to_string().contains("only web"), "{url}");
+        }
     }
 
     #[tokio::test]
