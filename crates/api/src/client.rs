@@ -1,5 +1,5 @@
-//! The GitHub client: one octocrab HTTP stack for GraphQL and REST, with our
-//! own retry policy, rate-limit tracking, ETag revalidation and caching.
+//! The GitHub client: one HTTP client (reqwest) for GraphQL and REST, with
+//! our own retry policy, rate-limit tracking, ETag revalidation and caching.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -8,8 +8,6 @@ use std::time::Duration;
 use cynic::{MutationBuilder, QueryBuilder};
 use ghtui_store::{Cached, HttpEntry, Store};
 use http::{HeaderMap, HeaderValue, StatusCode, header};
-use octocrab::Octocrab;
-use octocrab::service::middleware::retry::RetryConfig;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -75,8 +73,9 @@ pub struct GitHub {
 
 struct Http {
     token: Token,
-    base_uri: Option<String>,
-    client: tokio::sync::OnceCell<Octocrab>,
+    /// `https://api.github.com`, or a local server in tests.
+    base_uri: String,
+    client: tokio::sync::OnceCell<reqwest::Client>,
 }
 
 impl std::fmt::Debug for GitHub {
@@ -125,7 +124,10 @@ impl GitHub {
         Self {
             http: Arc::new(Http {
                 token,
-                base_uri: base_uri.map(str::to_owned),
+                base_uri: base_uri
+                    .unwrap_or("https://api.github.com")
+                    .trim_end_matches('/')
+                    .to_owned(),
                 client: tokio::sync::OnceCell::new(),
             }),
             store,
@@ -134,13 +136,12 @@ impl GitHub {
         }
     }
 
-    async fn octo(&self) -> Result<&Octocrab, ApiError> {
+    async fn client(&self) -> Result<&reqwest::Client, ApiError> {
         self.http
             .client
             .get_or_try_init(|| async {
                 let token = self.http.token.expose().to_owned();
-                let base_uri = self.http.base_uri.clone();
-                tokio::task::spawn_blocking(move || build_client(token, base_uri.as_deref()))
+                tokio::task::spawn_blocking(move || build_client(&token))
                     .await
                     .map_err(|e| ApiError::Setup(e.to_string()))?
             })
@@ -164,28 +165,31 @@ impl GitHub {
     }
 
     async fn send(&self, request: &Request<'_>) -> Result<Response, ApiError> {
-        let octo = self.octo().await?;
+        let client = self.client().await?;
         let mut attempt = 0;
         loop {
             attempt += 1;
             let last = attempt >= MAX_ATTEMPTS;
             let result = match request {
                 Request::Get { path, etag } => {
-                    let mut headers = HeaderMap::new();
+                    let mut get = client.get(format!("{}{path}", self.http.base_uri));
                     if let Some(etag) = etag
                         && let Ok(value) = HeaderValue::from_str(etag)
                     {
-                        headers.insert(header::IF_NONE_MATCH, value);
+                        get = get.header(header::IF_NONE_MATCH, value);
                     }
-                    octo._get_with_headers(*path, Some(headers)).await
+                    get.send().await
                 }
-                Request::Post { path, body, .. } => octo._post(*path, Some(*body)).await,
+                Request::Post { path, body, .. } => {
+                    let url = format!("{}{path}", self.http.base_uri);
+                    client.post(url).json(body).send().await
+                }
             };
             // A mutation that may have reached GitHub is never sent again:
-            // it could post a comment twice.
+            // it could post a comment twice. A failed connect never left.
             let response = match result {
                 Ok(response) => response,
-                Err(err) if !last && (request.idempotent() || never_sent(&err)) => {
+                Err(err) if !last && (request.idempotent() || err.is_connect()) => {
                     tracing::debug!(%err, attempt, "request failed; retrying");
                     backoff(attempt).await;
                     continue;
@@ -215,8 +219,8 @@ impl GitHub {
                 backoff(attempt).await;
                 continue;
             }
-            let body = octo
-                .body_to_string(response)
+            let body = response
+                .text()
                 .await
                 .map_err(|e| ApiError::Network(e.to_string()))?;
             return Ok(Response {
@@ -1041,19 +1045,32 @@ fn encode_path(s: &str) -> String {
     out
 }
 
-fn build_client(token: String, base_uri: Option<&str>) -> Result<Octocrab, ApiError> {
+/// The HTTP client: the token on every request, rustls with the platform's
+/// roots (loading those is why this runs on a blocking thread), GitHub's
+/// JSON media type, and no retries of its own.
+fn build_client(token: &str) -> Result<reqwest::Client, ApiError> {
     install_crypto_provider();
-    let mut builder = Octocrab::builder()
-        .personal_token(token)
-        .add_retry_config(RetryConfig::None)
-        .set_connect_timeout(Some(Duration::from_secs(10)))
-        .set_read_timeout(Some(Duration::from_secs(30)));
-    if let Some(uri) = base_uri {
-        builder = builder
-            .base_uri(uri)
-            .map_err(|e| ApiError::Setup(e.to_string()))?;
-    }
-    builder.build().map_err(|e| ApiError::Setup(e.to_string()))
+    let setup = |e: &dyn std::fmt::Display| ApiError::Setup(e.to_string());
+    let mut auth = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|e| setup(&e))?;
+    auth.set_sensitive(true);
+    let headers = HeaderMap::from_iter([
+        (header::AUTHORIZATION, auth),
+        (
+            header::ACCEPT,
+            HeaderValue::from_static("application/vnd.github+json"),
+        ),
+        (
+            http::HeaderName::from_static("x-github-api-version"),
+            HeaderValue::from_static("2022-11-28"),
+        ),
+    ]);
+    reqwest::Client::builder()
+        .user_agent(concat!("ghtui/", env!("CARGO_PKG_VERSION")))
+        .default_headers(headers)
+        .connect_timeout(Duration::from_secs(10))
+        .read_timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| setup(&e))
 }
 
 const INBOX_KEY: &str = "inbox";
@@ -1088,21 +1105,6 @@ async fn spawn_store(f: impl FnOnce() + Send + 'static) {
     if let Err(err) = tokio::task::spawn_blocking(f).await {
         tracing::warn!(%err, "cache write task failed");
     }
-}
-
-/// The request provably never reached the server (the connection was
-/// refused), so even a mutation can be retried.
-fn never_sent(err: &(dyn std::error::Error + 'static)) -> bool {
-    let mut source = Some(err);
-    while let Some(err) = source {
-        if let Some(io) = err.downcast_ref::<std::io::Error>()
-            && io.kind() == std::io::ErrorKind::ConnectionRefused
-        {
-            return true;
-        }
-        source = err.source();
-    }
-    false
 }
 
 async fn backoff(attempt: u32) {

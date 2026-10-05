@@ -299,7 +299,7 @@ fn init_logging(
     let appender = tracing_appender::rolling::never(cache_dir, "ghtui.log");
     let (writer, guard) = tracing_appender::non_blocking(appender);
     let filter = EnvFilter::try_from_env("GHTUI_LOG")
-        .unwrap_or_else(|_| EnvFilter::new("info,hyper=warn,hyper_util=warn,octocrab=warn"));
+        .unwrap_or_else(|_| EnvFilter::new("info,hyper=warn,hyper_util=warn,reqwest=warn"));
     tracing_subscriber::fmt()
         .with_writer(writer)
         .with_ansi(false)

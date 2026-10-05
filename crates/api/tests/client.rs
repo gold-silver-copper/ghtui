@@ -643,3 +643,20 @@ async fn refused_connections_are_retried_even_for_mutations() {
     // Three attempts means two backoffs (500ms + 1s).
     assert!(started.elapsed() >= std::time::Duration::from_millis(1400));
 }
+
+/// Every request carries the token, GitHub's media type and API version,
+/// and says who's asking.
+#[tokio::test]
+async fn requests_carry_the_token_and_github_headers() {
+    let (base, seen) = serve(vec![Reply::new(200, r#"{"login":"octocat"}"#)]).await;
+    let gh = client(&base, Store::disabled());
+    gh.viewer_login().await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0].header("authorization"), Some("Bearer test-token"));
+    assert_eq!(
+        seen[0].header("accept"),
+        Some("application/vnd.github+json")
+    );
+    assert_eq!(seen[0].header("x-github-api-version"), Some("2022-11-28"));
+    assert!(seen[0].header("user-agent").unwrap().starts_with("ghtui/"));
+}

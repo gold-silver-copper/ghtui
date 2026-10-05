@@ -303,7 +303,7 @@ work runs in tokio tasks, so the UI task never waits on them.
 | `app`    | Binary: CLI, config, keymap, routes, state/update, view, runtime loop    |
 | `ui`     | Widgets and pages (Markdown, repository, issue, PR, profile...); pure    |
 | `theme`  | Scheme generation, semantic roles, quantization, contrast, detection     |
-| `api`    | Auth, GraphQL (cynic) and REST over one octocrab client, retries, limits |
+| `api`    | Auth, GraphQL (cynic) and REST over one reqwest client, retries, limits  |
 | `schema` | GitHub's GraphQL schema compiled once (see below)                        |
 | `store`  | redb cache (GraphQL results, REST bodies with ETags); review state files |
 | `git`    | `git` CLI: repo selection, credentials, fetch, prefetch, `cat-file`      |
@@ -315,9 +315,9 @@ Notes:
   (`crates/schema/github.graphql`, from
   `https://docs.github.com/public/fpt/schema.docs.graphql`). The generated
   schema module lives in its own crate so query edits never recompile it.
-- **HTTP**: a single octocrab client is used for both GraphQL and REST. It
-  uses rustls with the `ring` provider, which is installed explicitly as the
-  process default. `scripts/check-tls-deps.sh`, which runs in CI, fails if
+- **HTTP**: a single reqwest client is used for both GraphQL and REST. It
+  uses rustls with the platform's root certificates and the `ring` provider,
+  which is installed explicitly as the process default. `scripts/check-tls-deps.sh`, which runs in CI, fails if
   `aws-lc-rs`, `openssl-sys` or `native-tls` ever enters the dependency tree.
   The client is built lazily on a blocking thread, because loading macOS root
   certificates takes over 100ms and would delay the first paint.
@@ -497,8 +497,7 @@ Performance targets, as timing tests
 | ----------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `tui-textarea`    | `ratatui-textarea` 0.9     | `tui-textarea` 0.7 depends on ratatui 0.29; `ratatui-textarea` is its maintained fork for ratatui 0.30                                                                        |
 | OSC 11 by hand    | `terminal-colorsaurus` 1.0 | Handles the query with a timeout, detects terminals that can't answer (DA1), and avoids GNU Screen's broken replies                                                           |
-| `octocrab.graphql()` | octocrab's raw `_post`  | The convenience method hides response headers (needed for rate limits) and turns partial GraphQL results into errors                                                         |
-| octocrab defaults | `rustls-ring` + `jwt-rust-crypto`, no default features | Keeps `aws-lc-rs` out. Octocrab requires a JWT backend even when it isn't used                                                                         |
+| `octocrab`        | `reqwest` 0.13 (`rustls-no-provider`) | ghtui used octocrab only as an HTTP transport, with its retries off, and it brought a JWT backend, chrono and tower along; reqwest does the job with 60 fewer crates |
 | directories       | `etcetera`                 | XDG-style config dir on macOS (`~/.config`), native cache dir (`~/Library/Caches`)                                                                                            |
 
 ## Known limitations
