@@ -23,7 +23,7 @@ use ghtui_diff::{
 use ghtui_git::files::{ChangedFile, is_lockfile};
 
 use crate::annotations::{Annotation, AnnotationKey, ThreadRow, ThreadRowKind};
-use crate::text;
+use crate::{idx, text};
 
 /// Thread text wraps at this width unless the view says otherwise.
 const DEFAULT_WRAP: u16 = 72;
@@ -274,7 +274,7 @@ impl DocFile {
     }
 
     fn push_thread_row(&mut self, ann: u32, kind: ThreadRowKind, text: String) {
-        self.rows.push(Row::Thread(self.thread_rows.len() as u32));
+        self.rows.push(Row::Thread(idx(self.thread_rows.len())));
         self.thread_rows.push(ThreadRow { ann, kind, text });
     }
 
@@ -329,9 +329,9 @@ impl DocFile {
             self.rows.push(Row::Spacer);
             return;
         }
-        let diff = self.diff.clone().expect("text diff present");
-        let Content::Text(text) = &diff.content else {
-            unreachable!("checked above")
+        let diff = self.diff.clone();
+        let Some(Content::Text(text)) = diff.as_deref().map(|d| &d.content) else {
+            return;
         };
         let lines = text.lines(opts.whitespace);
         self.blocks = change_blocks(self.meta.path(), text, lines);
@@ -357,14 +357,16 @@ impl DocFile {
             for (b, fold) in self.blocks.iter().zip(&fold_of) {
                 if *fold == Some(FoldReason::Seen) {
                     for e in b.entries.clone() {
-                        seen_entry[e as usize] = true;
+                        if let Some(seen) = seen_entry.get_mut(e as usize) {
+                            *seen = true;
+                        }
                     }
                 }
             }
             let anything_new = lines
                 .iter()
-                .enumerate()
-                .any(|(e, l)| l.kind != LineKind::Context && !seen_entry[e]);
+                .zip(&seen_entry)
+                .any(|(l, seen)| l.kind != LineKind::Context && !seen);
             if !anything_new && !self.full {
                 self.rows.push(Row::Note(Note::NothingNew));
                 self.rows.push(Row::Spacer);
@@ -383,13 +385,17 @@ impl DocFile {
                     .new
                     .is_some_and(|l| self.by_line.contains_key(&(Side::Right, l)));
                 if left || right {
-                    windows.push(e as u32..e as u32 + 1);
+                    let e = idx(e);
+                    windows.push(e..e.saturating_add(1));
                 }
             }
         }
         let segs = segments_by(
             lines.len(),
-            |e| lines[e].kind != LineKind::Context && !seen_entry[e],
+            |e| {
+                lines.get(e).is_some_and(|l| l.kind != LineKind::Context)
+                    && seen_entry.get(e) == Some(&false)
+            },
             CONTEXT,
             &windows,
             self.full,
@@ -397,25 +403,26 @@ impl DocFile {
         let (mut seen, mut before) = (0usize, (0u32, 0u32));
         let mut next_hidden = 0u32;
         for (s, seg) in segs.iter().enumerate() {
-            if seg.start as u32 > next_hidden {
+            if idx(seg.start) > next_hidden {
                 self.rows.push(Row::Gap {
                     start: next_hidden,
-                    end: seg.start as u32,
+                    end: idx(seg.start),
                 });
             }
-            let skipped = counts_in(&lines[seen..seg.start]);
+            let skipped = counts_in(lines.get(seen..seg.start).unwrap_or_default());
             before = (before.0 + skipped.0, before.1 + skipped.1);
             seen = seg.start;
             self.headers.push(hunk(lines, seg.clone(), before).header());
-            self.rows.push(Row::Hunk { seg: s as u32 });
+            self.rows.push(Row::Hunk { seg: idx(s) });
             let first_new_row = self.rows.len();
             // Split the segment around folded blocks.
             let mut at = seg.start;
             let folds: Vec<(usize, &Block, FoldReason)> = self
                 .blocks
                 .iter()
+                .zip(&fold_of)
                 .enumerate()
-                .filter_map(|(i, b)| fold_of[i].map(|r| (i, b, r)))
+                .filter_map(|(i, (b, fold))| fold.map(|r| (i, b, r)))
                 .filter(|(_, b, _)| {
                     (b.entries.start as usize) < seg.end && b.entries.end as usize > seg.start
                 })
@@ -429,7 +436,7 @@ impl DocFile {
                 if bs > at {
                     pieces.push((at..bs, None));
                 }
-                pieces.push((bs..be, Some((i as u32, reason))));
+                pieces.push((bs..be, Some((idx(i), reason))));
                 at = be;
             }
             if at < seg.end {
@@ -442,8 +449,8 @@ impl DocFile {
                     push_split_rows(&mut self.rows, text, lines, range);
                 } else {
                     for e in range {
-                        self.rows.push(Row::Line(e as u32));
-                        if ends_without_newline(text, &lines[e]) {
+                        self.rows.push(Row::Line(idx(e)));
+                        if lines.get(e).is_some_and(|l| ends_without_newline(text, l)) {
                             self.rows.push(Row::NoNewline);
                         }
                     }
@@ -452,12 +459,12 @@ impl DocFile {
             if !self.by_line.is_empty() || !extras.moves.is_empty() {
                 self.insert_extras(first_new_row, extras, wrap, opts.whitespace);
             }
-            next_hidden = seg.end as u32;
+            next_hidden = idx(seg.end);
         }
         if (next_hidden as usize) < lines.len() {
             self.rows.push(Row::Gap {
                 start: next_hidden,
-                end: lines.len() as u32,
+                end: idx(lines.len()),
             });
         }
         self.rows.push(Row::Spacer);
@@ -551,10 +558,10 @@ fn counts_in(lines: &[DiffLine]) -> (u32, u32) {
 }
 
 fn ends_without_newline(text: &TextDiff, line: &DiffLine) -> bool {
-    let old_end = line.old == Some(text.old.len() as u32)
+    let old_end = line.old == Some(idx(text.old.len()))
         && text.old.missing_final_newline
         && line.kind != LineKind::Added;
-    let new_end = line.new == Some(text.new.len() as u32)
+    let new_end = line.new == Some(idx(text.new.len()))
         && text.new.missing_final_newline
         && line.kind != LineKind::Removed;
     old_end || new_end
@@ -563,36 +570,39 @@ fn ends_without_newline(text: &TextDiff, line: &DiffLine) -> bool {
 /// Split rows: context lines pair with themselves; within a change, the
 /// removed and added runs are zipped side by side.
 fn push_split_rows(rows: &mut Vec<Row>, text: &TextDiff, lines: &[DiffLine], seg: Range<usize>) {
+    let is = |e: usize, kind: LineKind| lines.get(e).is_some_and(|l| l.kind == kind);
     let mut e = seg.start;
     while e < seg.end {
-        if lines[e].kind == LineKind::Context {
+        let Some(line) = lines.get(e) else { break };
+        if line.kind == LineKind::Context {
             rows.push(Row::Split {
-                left: Some(e as u32),
-                right: Some(e as u32),
+                left: Some(idx(e)),
+                right: Some(idx(e)),
             });
-            if ends_without_newline(text, &lines[e]) {
+            if ends_without_newline(text, line) {
                 rows.push(Row::NoNewline);
             }
             e += 1;
             continue;
         }
         let removed_start = e;
-        while e < seg.end && lines[e].kind == LineKind::Removed {
+        while e < seg.end && is(e, LineKind::Removed) {
             e += 1;
         }
         let added_start = e;
-        while e < seg.end && lines[e].kind == LineKind::Added {
+        while e < seg.end && is(e, LineKind::Added) {
             e += 1;
         }
         let (removed, added) = (added_start - removed_start, e - added_start);
         let mut missing_newline = false;
         for i in 0..removed.max(added) {
-            let left = (i < removed).then_some((removed_start + i) as u32);
-            let right = (i < added).then_some((added_start + i) as u32);
-            missing_newline |= [left, right]
-                .into_iter()
-                .flatten()
-                .any(|x| ends_without_newline(text, &lines[x as usize]));
+            let left = (i < removed).then_some(idx(removed_start + i));
+            let right = (i < added).then_some(idx(added_start + i));
+            missing_newline |= [left, right].into_iter().flatten().any(|x| {
+                lines
+                    .get(x as usize)
+                    .is_some_and(|l| ends_without_newline(text, l))
+            });
             rows.push(Row::Split { left, right });
         }
         if missing_newline {
@@ -695,7 +705,9 @@ impl Doc {
             since_active,
             ..
         } = self;
-        let file = &mut files[index];
+        let Some(file) = files.get_mut(index) else {
+            return;
+        };
         let path = file.meta.path().to_owned();
         // Moves index the exact alignment.
         let file_moves: Vec<(u32, Range<u32>, bool)> = if opts.whitespace == Whitespace::Exact {
@@ -703,8 +715,8 @@ impl Doc {
                 .iter()
                 .enumerate()
                 .flat_map(|(i, m)| {
-                    let from = (m.from.0 == index).then(|| (i as u32, m.from.1.clone(), true));
-                    let to = (m.to.0 == index).then(|| (i as u32, m.to.1.clone(), false));
+                    let from = (m.from.0 == index).then(|| (idx(i), m.from.1.clone(), true));
+                    let to = (m.to.0 == index).then(|| (idx(i), m.to.1.clone(), false));
                     from.into_iter().chain(to)
                 })
                 .collect()
@@ -715,7 +727,7 @@ impl Doc {
             .iter()
             .enumerate()
             .filter(|(_, a)| a.path == path)
-            .map(|(i, a)| (i as u32, a))
+            .map(|(i, a)| (idx(i), a))
             .collect();
         let open = |a: &Annotation| is_open(thread_open, a);
         let extras = Extras {
@@ -739,9 +751,9 @@ impl Doc {
         }
         self.moves.iter().enumerate().find_map(|(i, m)| {
             if m.from.0 == file && m.from.1.contains(&e) {
-                Some((i as u32, true))
+                Some((idx(i), true))
             } else if m.to.0 == file && m.to.1.contains(&e) {
-                Some((i as u32, false))
+                Some((idx(i), false))
             } else {
                 None
             }
@@ -976,7 +988,7 @@ impl Doc {
             return;
         };
         let Some(text) = file.text() else { return };
-        let len = text.lines(whitespace).len() as u32;
+        let len = idx(text.lines(whitespace).len());
         let step = EXPAND_STEP;
         let windows = match row {
             Row::Gap { start, end } if end - start <= 2 * step => vec![start..end],
@@ -984,15 +996,21 @@ impl Doc {
             _ => {
                 let rows = &file.rows;
                 // Rows of the segment around `pos`.
-                let begin = rows[..=pos.row]
+                let begin = rows
+                    .get(..=pos.row)
+                    .unwrap_or_default()
                     .iter()
                     .rposition(|r| matches!(r, Row::Hunk { .. }))
                     .unwrap_or(0);
-                let end = rows[begin + 1..]
+                let end = rows
+                    .get(begin + 1..)
+                    .unwrap_or_default()
                     .iter()
                     .position(|r| matches!(r, Row::Gap { .. } | Row::Spacer | Row::Hunk { .. }))
                     .map_or(rows.len(), |p| p + begin + 1);
-                let entries: Vec<u32> = rows[begin..end]
+                let entries: Vec<u32> = rows
+                    .get(begin..end)
+                    .unwrap_or_default()
                     .iter()
                     .filter_map(|r| r.entries().next())
                     .collect();
@@ -1077,7 +1095,8 @@ impl Doc {
             return Pos::default();
         };
         let file = pos.file.min(last);
-        let row = pos.row.min(self.files[file].rows.len() - 1);
+        let rows = self.files.get(file).map_or(0, |f| f.rows.len());
+        let row = pos.row.min(rows.saturating_sub(1));
         Pos { file, row }
     }
 
@@ -1091,10 +1110,13 @@ impl Doc {
             return Pos::default();
         }
         let global = global.min(self.total.saturating_sub(1));
-        let file = self.starts.partition_point(|&s| s <= global) - 1;
+        let Some(file) = self.starts.partition_point(|&s| s <= global).checked_sub(1) else {
+            return Pos::default();
+        };
+        let start = self.starts.get(file).copied().unwrap_or_default();
         Pos {
             file,
-            row: global - self.starts[file],
+            row: global - start,
         }
     }
 
@@ -1150,7 +1172,11 @@ impl Doc {
         let n = self.files.len();
         (1..=n)
             .map(|k| (pos.file + k) % n)
-            .find(|&f| self.files[f].viewed != Viewed::Viewed)
+            .find(|&f| {
+                self.files
+                    .get(f)
+                    .is_some_and(|f| f.viewed != Viewed::Viewed)
+            })
             .map(|file| Pos { file, row: 0 })
     }
 
@@ -1160,7 +1186,9 @@ impl Doc {
         let mut out: Vec<usize> = Vec::new();
         for g in first..(first + count).min(self.total) {
             let pos = self.to_pos(g);
-            let file = &self.files[pos.file];
+            let Some(file) = self.files.get(pos.file) else {
+                continue;
+            };
             if file.diff.is_none() && !file.collapsed() && !out.contains(&pos.file) {
                 out.push(pos.file);
             }

@@ -2,6 +2,8 @@
 //! are, a search field and your account; a tab bar with an underlined active
 //! tab; a sticky title; the search dropdown; key panels.
 
+#![deny(clippy::arithmetic_side_effects)]
+
 use ghtui_theme::Bg;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -10,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::{Ctx, PAD_X, fill, label_hint, list_row, text};
+use crate::{Ctx, PAD_X, cols, fill, label_hint, list_row, put, text};
 
 const BAR: Bg = Bg::Container;
 const FIELD: Bg = Bg::ContainerHighest;
@@ -41,25 +43,38 @@ pub struct HeaderLayout {
 pub fn header_layout(area: Rect, crumbs: &[Crumb], right: &[String]) -> HeaderLayout {
     let y = area.y;
     let one = |x: u16, w: u16| Rect::new(x, y, w, 1);
-    let start = area.x + PAD_X.min(area.width);
-    let logo = one(start, (text::width(LOGO) as u16).min(area.width));
+    let start = area.x.saturating_add(PAD_X.min(area.width));
+    let logo = one(start, cols(text::width(LOGO)).min(area.width));
     // Right items, from the right edge, while where you are and the search
     // field still fit; the rest are dropped (zero width).
     // The search field: a third of the width, between 24 and 52 columns.
     let field_w = (area.width / 3)
         .clamp(24, 52)
         .min(area.width.saturating_sub(24));
-    let crumbs_w: u16 = crumbs.iter().map(|c| text::width(&c.text) as u16 + 3).sum();
-    let keep = logo.right() + crumbs_w.min(32) + 5 + field_w;
+    let crumbs_w = crumbs
+        .iter()
+        .map(|c| cols(text::width(&c.text)).saturating_add(3))
+        .fold(0, u16::saturating_add);
+    let keep = logo
+        .right()
+        .saturating_add(crumbs_w.min(32))
+        .saturating_add(5)
+        .saturating_add(field_w);
     // Earlier items matter more: you know who you are.
-    let mut room = (area.right().saturating_sub(PAD_X) + 3).saturating_sub(keep);
+    let mut room = area
+        .right()
+        .saturating_sub(PAD_X)
+        .saturating_add(3)
+        .saturating_sub(keep);
     let widths: Vec<u16> = right
         .iter()
         .map(|item| {
-            let w = text::width(item) as u16;
-            let shown = w + 3 <= room;
-            room -= if shown { w + 3 } else { 0 };
-            if shown { w } else { 0 }
+            let w = cols(text::width(item));
+            let Some(rest) = room.checked_sub(w.saturating_add(3)) else {
+                return 0;
+            };
+            room = rest;
+            w
         })
         .collect();
     let mut rx = area.right().saturating_sub(PAD_X);
@@ -74,15 +89,15 @@ pub fn header_layout(area: Rect, crumbs: &[Crumb], right: &[String]) -> HeaderLa
     right_rects.reverse();
     let field_x = rx.saturating_sub(field_w);
     let search = one(field_x, field_w);
-    let mut x = logo.right() + 3;
+    let mut x = logo.right().saturating_add(3);
     let mut crumb_rects = Vec::new();
     for (i, c) in crumbs.iter().enumerate() {
         if i > 0 {
-            x += SEP.len() as u16;
+            x = x.saturating_add(cols(SEP.len()));
         }
-        let w = (text::width(&c.text) as u16).min(field_x.saturating_sub(x + 2));
+        let w = cols(text::width(&c.text)).min(field_x.saturating_sub(x.saturating_add(2)));
         crumb_rects.push(one(x, w));
-        x += w;
+        x = x.saturating_add(w);
     }
     HeaderLayout {
         logo,
@@ -110,7 +125,13 @@ impl Widget for Header<'_> {
         Span::styled(LOGO, theme.accent(BAR).add_modifier(Modifier::BOLD)).render(lay.logo, buf);
         for (i, (c, r)) in self.crumbs.iter().zip(&lay.crumbs).enumerate() {
             if i > 0 {
-                buf.set_string(r.x - SEP.len() as u16, r.y, SEP, theme.meta(BAR));
+                put(
+                    buf,
+                    r.x.saturating_sub(cols(SEP.len())),
+                    r.y,
+                    SEP,
+                    theme.meta(BAR),
+                );
             }
             let style = if c.current {
                 theme.title(BAR)
@@ -121,7 +142,7 @@ impl Widget for Header<'_> {
         }
         fill(buf, lay.search, theme, FIELD);
         let inner = Rect {
-            x: lay.search.x + 1,
+            x: lay.search.x.saturating_add(1),
             width: lay.search.width.saturating_sub(2),
             ..lay.search
         };
@@ -130,7 +151,7 @@ impl Widget for Header<'_> {
                 Span::styled("⌕ ", theme.accent(FIELD)).render(inner, buf);
                 input.render(
                     Rect {
-                        x: inner.x + 2,
+                        x: inner.x.saturating_add(2),
                         width: inner.width.saturating_sub(2),
                         ..inner
                     },
@@ -174,11 +195,11 @@ enum Fit {
 fn fit(area: Rect, tabs: &[Tab], active: Option<usize>) -> Fit {
     let room = area.width.saturating_sub(PAD_X);
     for level in [Fit::Full, Fit::NoCounts, Fit::Icons] {
-        let total: u16 = tabs
+        let total = tabs
             .iter()
             .enumerate()
-            .map(|(i, t)| tab_width(t, level, active == Some(i)) + 1)
-            .sum();
+            .map(|(i, t)| tab_width(t, level, active == Some(i)).saturating_add(1))
+            .fold(0, u16::saturating_add);
         if total <= room {
             return level;
         }
@@ -189,13 +210,13 @@ fn fit(area: Rect, tabs: &[Tab], active: Option<usize>) -> Fit {
 /// Each tab's rectangle on the label row.
 pub fn tab_layout(area: Rect, tabs: &[Tab], active: Option<usize>) -> Vec<Rect> {
     let level = fit(area, tabs, active);
-    let mut x = area.x + PAD_X.min(area.width);
+    let mut x = area.x.saturating_add(PAD_X.min(area.width));
     let mut out = Vec::new();
     for (i, tab) in tabs.iter().enumerate() {
         let w = tab_width(tab, level, active == Some(i));
         let w = w.min(area.right().saturating_sub(x));
         out.push(Rect::new(x, area.y, w, 1));
-        x += w + 1;
+        x = x.saturating_add(w).saturating_add(1);
     }
     out
 }
@@ -203,13 +224,14 @@ pub fn tab_layout(area: Rect, tabs: &[Tab], active: Option<usize>) -> Vec<Rect> 
 fn tab_width(tab: &Tab, level: Fit, active: bool) -> u16 {
     let shown = |at: Fit| active || level <= at;
     let count = if shown(Fit::Full) {
-        tab.count
-            .map_or(0, |n| text::width(&crate::pages::compact(n)) + 3)
+        tab.count.map_or(0, |n| {
+            text::width(&crate::pages::compact(n)).saturating_add(3)
+        })
     } else {
         0
     };
     let label = if shown(Fit::NoCounts) {
-        1 + text::width(&tab.label)
+        text::width(&tab.label).saturating_add(1)
     } else {
         0
     };
@@ -218,7 +240,11 @@ fn tab_width(tab: &Tab, level: Fit, active: bool) -> u16 {
     } else {
         0
     };
-    (2 + text::width(tab.icon) + label + count + external) as u16
+    cols(
+        [2, text::width(tab.icon), label, count, external]
+            .into_iter()
+            .fold(0, usize::saturating_add),
+    )
 }
 
 /// Tabs on one row, the active one underlined on the row below (2 rows).
@@ -234,14 +260,14 @@ impl Widget for TabBar<'_> {
         let labels = Rect { height: 1, ..area };
         fill(buf, labels, theme, BAR);
         let under = Rect {
-            y: area.y + 1,
+            y: area.y.saturating_add(1),
             height: 1,
             ..area
         };
         if area.height > 1 {
             fill(buf, under, theme, BAR);
             let rule = "─".repeat(usize::from(under.width));
-            buf.set_string(under.x, under.y, rule, theme.separator(BAR));
+            put(buf, under.x, under.y, &rule, theme.separator(BAR));
         }
         let level = fit(labels, self.tabs, self.active);
         for (i, (tab, r)) in self
@@ -277,9 +303,8 @@ impl Widget for TabBar<'_> {
             spans.push(Span::styled(" ", theme.body(BAR)));
             Line::from(spans).render(r, buf);
             if active && area.height > 1 {
-                for x in r.left()..r.right() {
-                    buf.set_string(x, under.y, "━", theme.accent(BAR));
-                }
+                let rule = "━".repeat(usize::from(r.width));
+                put(buf, r.x, under.y, &rule, theme.accent(BAR));
             }
         }
     }
@@ -296,7 +321,7 @@ impl Widget for TitleBar<'_> {
         fill(buf, area, self.ctx.theme, BAR);
         self.line.render(
             Rect {
-                x: area.x + PAD_X,
+                x: area.x.saturating_add(PAD_X),
                 width: area.width.saturating_sub(2 * PAD_X),
                 ..area
             },
@@ -337,8 +362,10 @@ impl SearchPanel<'_> {
             .x
             .min(screen.right().saturating_sub(width))
             .max(screen.x);
-        let height = (self.rows.len() as u16 + 2).min(screen.height.saturating_sub(2));
-        Rect::new(x, self.field.y + 1, width, height)
+        let height = cols(self.rows.len())
+            .saturating_add(2)
+            .min(screen.height.saturating_sub(2));
+        Rect::new(x, self.field.y.saturating_add(1), width, height)
     }
 
     /// The first row shown, keeping the selection in view, and the
@@ -352,14 +379,18 @@ impl SearchPanel<'_> {
             .filter(|(_, r)| matches!(r, SuggestRow::Item { .. }))
             .nth(self.selected)
             .map_or(0, |(i, _)| i);
-        ((selected_row + 1).saturating_sub(rows), selected_row)
+        (
+            selected_row.saturating_add(1).saturating_sub(rows),
+            selected_row,
+        )
     }
 
     /// The row drawn at screen row `y`, if any.
     pub fn row_at(&self, screen: Rect, y: u16) -> Option<usize> {
         let area = self.area(screen);
-        let n = usize::from(y.checked_sub(area.y + 1)?);
-        (n < usize::from(area.height.saturating_sub(2))).then(|| self.scroll(area).0 + n)
+        let n = usize::from(y.checked_sub(area.y.saturating_add(1))?);
+        (n < usize::from(area.height.saturating_sub(2)))
+            .then(|| self.scroll(area).0.saturating_add(n))
     }
 }
 
@@ -370,8 +401,8 @@ impl Widget for SearchPanel<'_> {
         fill(buf, area, theme, PANEL);
         let rows = usize::from(area.height.saturating_sub(2));
         let (skip, selected_row) = self.scroll(area);
-        for (n, row) in self.rows.iter().enumerate().skip(skip).take(rows) {
-            let y = area.y + 1 + (n - skip) as u16;
+        let shown = self.rows.iter().enumerate().skip(skip).take(rows);
+        for ((n, row), y) in shown.zip(area.y.saturating_add(1)..area.bottom()) {
             let (line, bg) = list_row(buf, theme, area, y, n == selected_row, PANEL);
             match row {
                 SuggestRow::Heading(h) => {
@@ -459,12 +490,18 @@ impl KeyPanel<'_> {
             .map(|r| text::width(&r.label))
             .max()
             .unwrap_or(0);
-        let width = ((self.key_width() + 3 + label_w + 4).max(text::width(self.title) + 4) as u16)
-            .min(screen.width);
-        let height = (self.rows.len() as u16 + 3).min(screen.height.saturating_sub(1));
+        let width = self
+            .key_width()
+            .saturating_add(label_w)
+            .saturating_add(3 + 4)
+            .max(text::width(self.title).saturating_add(4));
+        let width = cols(width).min(screen.width);
+        let height = cols(self.rows.len())
+            .saturating_add(3)
+            .min(screen.height.saturating_sub(1));
         Rect::new(
-            screen.right().saturating_sub(width + 1),
-            screen.bottom().saturating_sub(height + 1),
+            screen.right().saturating_sub(width.saturating_add(1)),
+            screen.bottom().saturating_sub(height.saturating_add(1)),
             width,
             height,
         )
@@ -479,11 +516,13 @@ impl Widget for KeyPanel<'_> {
         let key_w = self.key_width();
         let inner_w = area.width.saturating_sub(4);
         Span::styled(self.title, theme.title(PANEL))
-            .render(Rect::new(area.x + 2, area.y, inner_w, 1), buf);
+            .render(Rect::new(area.x.saturating_add(2), area.y, inner_w, 1), buf);
         let rows = usize::from(area.height.saturating_sub(3));
-        let skip = self.selected.map_or(0, |s| (s + 1).saturating_sub(rows));
-        for (n, row) in self.rows.iter().enumerate().skip(skip).take(rows) {
-            let y = area.y + 2 + (n - skip) as u16;
+        let skip = self
+            .selected
+            .map_or(0, |s| s.saturating_add(1).saturating_sub(rows));
+        let shown = self.rows.iter().enumerate().skip(skip).take(rows);
+        for ((n, row), y) in shown.zip(area.y.saturating_add(2)..area.bottom()) {
             let (line, bg) = list_row(buf, theme, area, y, self.selected == Some(n), PANEL);
             if row.heading {
                 Span::styled(row.label.as_str(), heading(theme)).render(line, buf);

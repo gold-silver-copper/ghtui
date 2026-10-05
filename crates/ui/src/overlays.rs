@@ -1,5 +1,7 @@
 //! Popups on a raised surface tone: the command palette and pickers.
 
+#![deny(clippy::arithmetic_side_effects)]
+
 use ghtui_theme::Bg;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -8,7 +10,7 @@ use ratatui::text::Span;
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::{Ctx, PAD_Y, centered, fill, label_hint, list_row, padded, text};
+use crate::{Ctx, PAD_Y, centered, cols, fill, label_hint, list_row, padded, text};
 
 const POPUP: Bg = Bg::ContainerHigh;
 
@@ -42,11 +44,15 @@ impl Widget for Palette<'_> {
         let widest = self
             .items
             .iter()
-            .map(|i| text::width(&i.label) + text::width(&i.hint) + 6)
+            .map(|i| {
+                text::width(&i.label)
+                    .saturating_add(text::width(&i.hint))
+                    .saturating_add(6)
+            })
             .max()
             .unwrap_or(0);
-        let width = (widest.clamp(72, 120) as u16).min(screen.width.saturating_sub(4));
-        let area = centered(screen, width, 1 + 1 + rows as u16 + 2 * PAD_Y, 2);
+        let width = cols(widest.clamp(72, 120)).min(screen.width.saturating_sub(4));
+        let area = centered(screen, width, cols(rows).saturating_add(2 + 2 * PAD_Y), 2);
         fill(buf, area, theme, POPUP);
         let inner = padded(area);
 
@@ -58,24 +64,29 @@ impl Widget for Palette<'_> {
         .render(prompt, buf);
         // With more rows than fit, where you are among them.
         let count = if self.items.len() > rows {
-            format!("{}/{}", self.selected + 1, self.items.len())
+            format!("{}/{}", self.selected.saturating_add(1), self.items.len())
         } else {
             String::new()
         };
-        let count_w = (text::width(&count) as u16).min(prompt.width);
+        let count_w = cols(text::width(&count)).min(prompt.width);
         Span::styled(count, theme.meta(POPUP)).render(
             Rect {
-                x: prompt.right() - count_w,
+                x: prompt.right().saturating_sub(count_w),
                 width: count_w,
                 ..prompt
             },
             buf,
         );
-        let offset = (text::width(self.prompt) as u16 + 1).min(prompt.width);
+        let offset = cols(text::width(self.prompt))
+            .saturating_add(1)
+            .min(prompt.width);
         self.input.render(
             Rect {
-                x: prompt.x + offset,
-                width: (prompt.width - offset).saturating_sub(count_w + 1),
+                x: prompt.x.saturating_add(offset),
+                width: prompt
+                    .width
+                    .saturating_sub(offset)
+                    .saturating_sub(count_w.saturating_add(1)),
                 ..prompt
             },
             buf,
@@ -98,9 +109,9 @@ impl Widget for Palette<'_> {
             );
             return;
         }
-        let first = (self.selected + 1).saturating_sub(rows);
-        for (i, item) in self.items.iter().enumerate().skip(first).take(rows) {
-            let y = list_top + (i - first) as u16;
+        let first = self.selected.saturating_add(1).saturating_sub(rows);
+        let shown = self.items.iter().enumerate().skip(first).take(rows);
+        for ((i, item), y) in shown.zip(list_top..inner.bottom()) {
             let (row, bg) = list_row(buf, theme, area, y, i == self.selected, POPUP);
             let label = Span::styled(item.label.as_str(), theme.body(bg));
             label_hint(

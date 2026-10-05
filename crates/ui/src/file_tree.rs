@@ -2,6 +2,8 @@
 //! compressed (`src/ui/` rather than `src/` then `ui/`), and rows follow the
 //! diff's file order so `]f` and the tree agree.
 
+#![deny(clippy::arithmetic_side_effects)]
+
 use ghtui_git::files::FileStatus;
 use ghtui_theme::{Bg, Fg};
 use ratatui::buffer::Buffer;
@@ -55,9 +57,12 @@ pub fn tree_rows(doc: &Doc) -> Vec<TreeRow> {
                         name: part.to_owned(),
                         ..Node::default()
                     });
-                    node.children.len() - 1
+                    node.children.len().saturating_sub(1)
                 });
-            node = &mut node.children[pos];
+            let Some(child) = node.children.get_mut(pos) else {
+                break;
+            };
+            node = child;
         }
     }
     let mut rows = Vec::new();
@@ -77,15 +82,17 @@ fn flatten(node: &Node, depth: u16, rows: &mut Vec<TreeRow>) {
         }
         let mut dir = child;
         let mut name = child.name.clone();
-        while dir.children.len() == 1 && dir.children[0].file.is_none() {
-            dir = &dir.children[0];
+        while let [only] = dir.children.as_slice()
+            && only.file.is_none()
+        {
+            dir = only;
             name = format!("{name}/{}", dir.name);
         }
         rows.push(TreeRow::Dir {
             name: format!("{name}/"),
             depth,
         });
-        flatten(dir, depth + 1, rows);
+        flatten(dir, depth.saturating_add(1), rows);
     }
 }
 
@@ -114,7 +121,9 @@ impl Widget for FileTree<'_> {
             return;
         }
         let title_area = Rect {
-            y: area.y + PAD_Y.min(area.height - 1),
+            y: area
+                .y
+                .saturating_add(PAD_Y.min(area.height.saturating_sub(1))),
             height: 1,
             ..inset(area, 1, 0)
         };
@@ -140,19 +149,9 @@ impl Widget for FileTree<'_> {
         ])
         .render(title_area, buf);
 
-        let list = Rect {
-            y: title_area.y + 2,
-            height: area.bottom().saturating_sub(title_area.y + 2),
-            ..area
-        };
-        for (i, row) in self
-            .rows
-            .iter()
-            .enumerate()
-            .skip(self.scroll)
-            .take(usize::from(list.height))
-        {
-            let y = list.y + (i - self.scroll) as u16;
+        let list_top = title_area.y.saturating_add(2);
+        let shown = self.rows.iter().enumerate().skip(self.scroll);
+        for ((i, row), y) in shown.zip(list_top..area.bottom()) {
             let selected = i == self.selected;
             let bg = match (selected, self.focused) {
                 (true, true) => Bg::Selected,
@@ -187,7 +186,9 @@ impl FileTree<'_> {
                 .render(area, buf);
             }
             TreeRow::File { index, name, depth } => {
-                let file = &self.doc.files[*index];
+                let Some(file) = self.doc.files.get(*index) else {
+                    return;
+                };
                 let (mark, mark_fg) = match file.meta.status {
                     FileStatus::Added => ("A", Fg::Success),
                     FileStatus::Deleted => ("D", Fg::Error),
@@ -208,8 +209,9 @@ impl FileTree<'_> {
                 };
                 let right_width = right.iter().map(Span::width).sum::<usize>();
                 let indent = " ".repeat(usize::from(*depth) * 2);
-                let room =
-                    usize::from(area.width).saturating_sub(indent.len() + 2 + right_width + 1);
+                let room = usize::from(area.width)
+                    .saturating_sub(indent.len())
+                    .saturating_sub(right_width.saturating_add(3));
                 let viewed = file.viewed == Viewed::Viewed;
                 let name_style = if file.generated || viewed {
                     theme.meta(bg)

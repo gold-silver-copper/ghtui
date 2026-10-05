@@ -19,8 +19,8 @@ pub mod time;
 
 use ghtui_theme::{Bg, Theme};
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::layout::{Position, Rect};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Widget};
 
@@ -39,6 +39,29 @@ pub struct Ctx<'a> {
     pub now: u64,
 }
 
+/// `n` columns (or rows) as a `u16`, saturating: for `text::width` and
+/// friends.
+pub fn cols(n: usize) -> u16 {
+    u16::try_from(n).unwrap_or(u16::MAX)
+}
+
+/// An index or count as a `u32`, saturating.
+pub fn idx(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+/// `text` at `(x, y)`, clipped to the buffer: nothing when the position is
+/// outside it, and cut at its right edge.
+pub fn put(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) {
+    if !buf.area.contains(Position { x, y }) {
+        return;
+    }
+    let room = usize::from(buf.area.right().saturating_sub(x));
+    // The one sanctioned unclipped write: the checks above do the clipping.
+    #[allow(clippy::disallowed_methods)]
+    buf.set_stringn(x, y, text, room, style);
+}
+
 /// Paints `area` with a surface tone, clearing whatever was drawn there
 /// (modifiers included).
 pub fn fill(buf: &mut Buffer, area: Rect, theme: &Theme, bg: Bg) {
@@ -48,14 +71,15 @@ pub fn fill(buf: &mut Buffer, area: Rect, theme: &Theme, bg: Bg) {
 
 /// Renders `left` and `right` on one line, at least `gap` columns apart,
 /// truncating the left side first when they don't fit.
+#[deny(clippy::arithmetic_side_effects)]
 fn render_split(area: Rect, buf: &mut Buffer, left: Vec<Span<'_>>, right: Vec<Span<'_>>, gap: u16) {
-    let right_width = (right.iter().map(Span::width).sum::<usize>() as u16).min(area.width);
+    let right_width = cols(right.iter().map(Span::width).sum()).min(area.width);
     let left_area = Rect {
-        width: area.width.saturating_sub(right_width + gap),
+        width: area.width.saturating_sub(right_width.saturating_add(gap)),
         ..area
     };
     let right_area = Rect {
-        x: area.right() - right_width,
+        x: area.right().saturating_sub(right_width),
         width: right_width,
         ..area
     };
@@ -83,21 +107,26 @@ fn list_row(
 }
 
 /// `left` cut to fit (with `…`) on the left of `row`, `hint` on its right.
+#[deny(clippy::arithmetic_side_effects)]
 fn label_hint(buf: &mut Buffer, row: Rect, left: &[Span<'_>], hint: Span<'_>) {
-    let hint_w = (hint.width() as u16).min(row.width);
-    let gap = if hint_w > 0 { hint_w + 2 } else { 0 };
+    let hint_w = cols(hint.width()).min(row.width);
+    let gap = if hint_w > 0 {
+        hint_w.saturating_add(2)
+    } else {
+        0
+    };
     let mut room = usize::from(row.width.saturating_sub(gap));
     let left: Vec<Span<'_>> = left
         .iter()
         .map(|s| {
             let shown = text::truncate(&s.content, room);
-            room -= text::width(&shown);
+            room = room.saturating_sub(text::width(&shown));
             Span::styled(shown, s.style)
         })
         .collect();
     Line::from(left).render(row, buf);
     let hint_area = Rect {
-        x: row.right() - hint_w,
+        x: row.right().saturating_sub(hint_w),
         width: hint_w,
         ..row
     };
@@ -125,26 +154,28 @@ pub fn padded(area: Rect) -> Rect {
     inset(area, PAD_X, PAD_Y)
 }
 
+#[deny(clippy::arithmetic_side_effects)]
 pub fn inset(area: Rect, x: u16, y: u16) -> Rect {
     let x = x.min(area.width / 2);
     let y = y.min(area.height / 2);
     Rect {
-        x: area.x + x,
-        y: area.y + y,
-        width: area.width - 2 * x,
-        height: area.height - 2 * y,
+        x: area.x.saturating_add(x),
+        y: area.y.saturating_add(y),
+        width: area.width.saturating_sub(x).saturating_sub(x),
+        height: area.height.saturating_sub(y).saturating_sub(y),
     }
 }
 
 /// A rectangle of at most `width`×`height` centered horizontally in `area`,
 /// `top` rows below its top edge.
+#[deny(clippy::arithmetic_side_effects)]
 pub fn centered(area: Rect, width: u16, height: u16, top: u16) -> Rect {
     let width = width.min(area.width);
     let top = top.min(area.height.saturating_sub(1));
-    let height = height.min(area.height - top);
+    let height = height.min(area.height.saturating_sub(top));
     Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + top,
+        x: area.x.saturating_add(area.width.saturating_sub(width) / 2),
+        y: area.y.saturating_add(top),
         width,
         height,
     }

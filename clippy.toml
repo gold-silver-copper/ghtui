@@ -1,0 +1,13 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+
+# Ratatui's direct buffer writes don't clip and panic past the buffer's
+# edges: draw text through `ghtui_ui::put`, or render a widget.
+disallowed-methods = [
+    { path = "ratatui_core::buffer::Buffer::set_string", reason = "unclipped: use `ghtui_ui::put`" },
+    { path = "ratatui_core::buffer::Buffer::set_stringn", reason = "unclipped: use `ghtui_ui::put`" },
+    { path = "ratatui_core::buffer::Buffer::set_line", reason = "unclipped: use `ghtui_ui::put` or render the `Line`" },
+    { path = "ratatui_core::buffer::Buffer::set_span", reason = "unclipped: use `ghtui_ui::put` or render the `Span`" },
+]

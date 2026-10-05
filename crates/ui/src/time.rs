@@ -2,8 +2,11 @@
 
 /// Parses `YYYY-MM-DDTHH:MM:SSZ` (GitHub always returns UTC) to Unix seconds.
 fn parse_iso8601(s: &str) -> Option<u64> {
-    let b = s.as_bytes();
-    if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' {
+    let shape = matches!(
+        s.as_bytes(),
+        [_, _, _, _, b'-', _, _, b'-', _, _, b'T', _, _, b':', ..]
+    );
+    if s.len() < 20 || !shape {
         return None;
     }
     let num = |range: std::ops::Range<usize>| s.get(range)?.parse::<i64>().ok();

@@ -1,5 +1,7 @@
 //! The comment composer (a bottom sheet) and the review submit dialog.
 
+#![deny(clippy::arithmetic_side_effects)]
+
 use ghtui_api::model::ReviewEvent;
 use ghtui_theme::{Bg, DiffBg, Fg, Theme};
 use ratatui::buffer::Buffer;
@@ -9,7 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::{Ctx, PAD_Y, centered, chips, fill, key_hints, padded, text};
+use crate::{Ctx, PAD_Y, centered, chips, cols, fill, idx, key_hints, padded, text};
 
 const SHEET: Bg = Bg::ContainerHigh;
 const INPUT_ROWS: u16 = 8;
@@ -32,13 +34,16 @@ impl Widget for ComposeSheet<'_> {
         let theme = self.ctx.theme;
         let preview_rows = self
             .preview
-            .map_or(0, |(_, o, s)| (o.len() + s.len()) as u16 + 2)
+            .map_or(0, |(_, o, s)| {
+                cols(o.len().saturating_add(s.len())).saturating_add(2)
+            })
             .min(12);
-        let height =
-            (2 * PAD_Y + 2 + INPUT_ROWS + 2 + preview_rows + u16::from(self.note.is_some()))
-                .min(screen.height.saturating_sub(2));
+        let height = (2 * PAD_Y + 2 + INPUT_ROWS + 2)
+            .saturating_add(preview_rows)
+            .saturating_add(u16::from(self.note.is_some()))
+            .min(screen.height.saturating_sub(2));
         let area = Rect {
-            y: screen.bottom().saturating_sub(height + 1),
+            y: screen.bottom().saturating_sub(height.saturating_add(1)),
             height,
             ..screen
         };
@@ -51,40 +56,46 @@ impl Widget for ComposeSheet<'_> {
             ..inner
         };
         Span::styled(self.title.to_owned(), theme.title(SHEET)).render(row(y), buf);
-        y += 1;
+        y = y.saturating_add(1);
         if let Some(note) = self.note {
             Span::styled(
                 text::truncate(note, usize::from(inner.width)),
                 theme.meta(SHEET),
             )
             .render(row(y), buf);
-            y += 1;
+            y = y.saturating_add(1);
         }
-        y += 1;
-        let input_rows = INPUT_ROWS.min(inner.bottom().saturating_sub(y + 2 + preview_rows));
+        y = y.saturating_add(1);
+        let input_rows = INPUT_ROWS.min(
+            inner
+                .bottom()
+                .saturating_sub(y)
+                .saturating_sub(preview_rows.saturating_add(2)),
+        );
         let input_area = Rect {
             y,
             height: input_rows,
             ..inner
         };
         self.input.render(input_area, buf);
-        y += input_rows + 1;
+        y = y.saturating_add(input_rows).saturating_add(1);
 
         if let Some((start, original, suggested)) = self.preview {
             Span::styled("Preview of the suggestion", theme.meta(SHEET)).render(row(y), buf);
-            y += 1;
+            y = y.saturating_add(1);
+            let n = |i: usize| start.saturating_add(idx(i));
             let lines = original
                 .iter()
                 .enumerate()
-                .map(|(i, l)| (DiffBg::Removed, "-", start + i as u32, l))
+                .map(|(i, l)| (DiffBg::Removed, "-", n(i), l))
                 .chain(
                     suggested
                         .iter()
                         .enumerate()
-                        .map(|(i, l)| (DiffBg::Added, "+", start + i as u32, l)),
+                        .map(|(i, l)| (DiffBg::Added, "+", n(i), l)),
                 );
             for (diff_bg, sign, n, line) in lines {
-                if y + 1 >= inner.bottom() {
+                if y.saturating_add(1) >= inner.bottom() {
                     break;
                 }
                 let bg = Bg::Diff(diff_bg);
@@ -108,9 +119,9 @@ impl Widget for ComposeSheet<'_> {
                     ),
                 ])
                 .render(r, buf);
-                y += 1;
+                y = y.saturating_add(1);
             }
-            y += 1;
+            y = y.saturating_add(1);
         }
 
         footer(
@@ -174,7 +185,7 @@ impl Widget for SubmitSheet<'_> {
         };
         let mut y = inner.y;
         Span::styled("Submit review", theme.title(SHEET)).render(row(y), buf);
-        y += 1;
+        y = y.saturating_add(1);
         let s = if self.pending == 1 { "" } else { "s" };
         let pending = match (self.pending, self.rejected) {
             (0, _) => "No pending comments.".to_owned(),
@@ -184,7 +195,7 @@ impl Widget for SubmitSheet<'_> {
             ),
         };
         Span::styled(pending, theme.meta(SHEET)).render(row(y), buf);
-        y += 2;
+        y = y.saturating_add(2);
 
         // Filled button for the chosen action, tonal for the others.
         let mut buttons: Vec<Span<'static>> = Vec::new();
@@ -202,11 +213,11 @@ impl Widget for SubmitSheet<'_> {
             buttons.push(Span::styled("  ", theme.body(SHEET)));
         }
         Line::from(buttons).render(row(y), buf);
-        y += 2;
+        y = y.saturating_add(2);
 
         let input_area = Rect {
             y,
-            height: 3.min(inner.bottom().saturating_sub(y + 2)),
+            height: 3.min(inner.bottom().saturating_sub(y).saturating_sub(2)),
             ..inner
         };
         self.input.render(input_area, buf);

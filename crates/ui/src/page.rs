@@ -8,6 +8,8 @@
 //! *Items* are the rows you select and open (a file, an issue, a comment);
 //! an optional *aside* is GitHub's right-hand sidebar.
 
+#![deny(clippy::arithmetic_side_effects)]
+
 use ghtui_theme::{Bg, DiffBg, Fg, Syntax};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -15,7 +17,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
-use crate::{Ctx, fill, text};
+use crate::{Ctx, cols, fill, idx, put, text};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Role {
@@ -152,10 +154,11 @@ impl Page {
     pub fn link(&mut self, url: impl Into<String>) -> u32 {
         let url = url.into();
         if let Some(i) = self.links.iter().position(|l| *l == url) {
-            return i as u32;
+            return idx(i);
         }
+        let i = idx(self.links.len());
         self.links.push(url);
-        (self.links.len() - 1) as u32
+        i
     }
 
     pub fn push(&mut self, line: PageLine) {
@@ -302,11 +305,11 @@ impl Page {
     pub fn item(&mut self, start: usize, link: u32) {
         let end = self.lines.len();
         // Gaps before a box aren't part of it.
-        let mut start = start;
-        while start < end && self.lines[start].frame == Frame::None && self.lines[start].is_blank()
-        {
-            start += 1;
-        }
+        let gaps = self.lines.iter().skip(start);
+        let start = start.saturating_add(
+            gaps.take_while(|l| l.frame == Frame::None && l.is_blank())
+                .count(),
+        );
         if end > start {
             self.items.push(Item { start, end, link });
         }
@@ -343,7 +346,9 @@ pub(crate) fn wrap_segs(segs: Vec<Seg>, width: usize) -> Vec<Vec<Seg>> {
     let mut lines: Vec<Vec<Seg>> = vec![Vec::new()];
     let mut used = 0usize;
     let push = |lines: &mut Vec<Vec<Seg>>, seg: &Seg, text: &str| {
-        let line = lines.last_mut().expect("at least one line");
+        let Some(line) = lines.last_mut() else {
+            return;
+        };
         match line.last_mut() {
             Some(last) if last.role == seg.role && last.link == seg.link => {
                 last.text.push_str(text)
@@ -355,20 +360,16 @@ pub(crate) fn wrap_segs(segs: Vec<Seg>, width: usize) -> Vec<Vec<Seg>> {
             }),
         }
     };
-    for seg in &segs {
+    for seg in segs {
         for (n, part) in seg.text.split('\n').enumerate() {
             if n > 0 {
                 lines.push(Vec::new());
                 used = 0;
             }
             // Words with the spaces that follow them.
-            let mut rest = part;
-            while !rest.is_empty() {
-                let word_end = rest.find(' ').map_or(rest.len(), |i| i + 1);
-                let word = &rest[..word_end];
-                rest = &rest[word_end..];
+            for word in part.split_inclusive(' ') {
                 let w = text::width(word.trim_end());
-                if used > 0 && used + w > width {
+                if used > 0 && used.saturating_add(w) > width {
                     lines.push(Vec::new());
                     used = 0;
                     if word.trim().is_empty() {
@@ -379,20 +380,20 @@ pub(crate) fn wrap_segs(segs: Vec<Seg>, width: usize) -> Vec<Vec<Seg>> {
                     // Hard-break a long word.
                     let mut chunk = String::new();
                     for (g, gw) in text::graphemes(word) {
-                        if used + gw > width {
-                            push(&mut lines, seg, &chunk);
+                        if used.saturating_add(gw) > width {
+                            push(&mut lines, &seg, &chunk);
                             chunk.clear();
                             lines.push(Vec::new());
                             used = 0;
                         }
                         chunk.push_str(g);
-                        used += gw;
+                        used = used.saturating_add(gw);
                     }
-                    push(&mut lines, seg, &chunk);
+                    push(&mut lines, &seg, &chunk);
                     continue;
                 }
-                push(&mut lines, seg, word);
-                used += text::width(word);
+                push(&mut lines, &seg, word);
+                used = used.saturating_add(text::width(word));
             }
         }
     }
@@ -417,12 +418,12 @@ pub struct Columns {
 }
 
 pub fn columns(page: &Page, area: Rect) -> Columns {
-    let aside = (!page.aside.is_empty()).then_some(ASIDE_GAP + page.aside_width);
-    let total = page.width + aside.unwrap_or(0);
-    let main_x = area.x + area.width.saturating_sub(total) / 2;
+    let aside = (!page.aside.is_empty()).then_some(ASIDE_GAP.saturating_add(page.aside_width));
+    let total = page.width.saturating_add(aside.unwrap_or(0));
+    let main_x = area.x.saturating_add(area.width.saturating_sub(total) / 2);
     Columns {
         main_x,
-        aside_x: aside.map(|_| main_x + page.width + ASIDE_GAP),
+        aside_x: aside.map(|_| main_x.saturating_add(page.width).saturating_add(ASIDE_GAP)),
     }
 }
 
@@ -445,31 +446,36 @@ pub struct PageHit {
 /// Segments of a line placed on a row: `(x, visible text, seg)`.
 fn place(line: &PageLine, x: u16, width: u16) -> Vec<(u16, String, &Seg)> {
     let (tx, tw) = match line.frame {
-        Frame::None => (x + line.indent, width.saturating_sub(line.indent)),
-        Frame::Body => (
-            x + BOX_PAD + line.indent,
-            width.saturating_sub(2 * BOX_PAD + line.indent),
+        Frame::None => (
+            x.saturating_add(line.indent),
+            width.saturating_sub(line.indent),
         ),
-        Frame::Top => (x + 3, width.saturating_sub(6)),
+        Frame::Body => (
+            x.saturating_add(BOX_PAD).saturating_add(line.indent),
+            width.saturating_sub((2 * BOX_PAD).saturating_add(line.indent)),
+        ),
+        Frame::Top => (x.saturating_add(3), width.saturating_sub(6)),
         Frame::Rule | Frame::Bottom => return Vec::new(),
     };
-    let pad = u16::from(line.frame == Frame::Top);
+    // Between the sides; a top edge keeps a column of rule on each.
+    let gap = if line.frame == Frame::Top { 4 } else { 2 };
     // The right side gets at most half when there's a left side too.
     let right_cap = if line.segs.is_empty() { tw } else { tw / 2 };
-    let right_w: u16 = line
+    let right_w = line
         .right
         .iter()
-        .map(|s| text::width(&s.text) as u16)
-        .sum::<u16>()
+        .map(|s| cols(text::width(&s.text)))
+        .fold(0, u16::saturating_add)
         .min(right_cap);
     let left_w = if right_w > 0 {
-        tw.saturating_sub(right_w + 2 + 2 * pad)
+        tw.saturating_sub(right_w.saturating_add(gap))
     } else {
         tw
     };
     let mut out = Vec::new();
     lay_out(&mut out, &line.segs, tx, left_w);
-    lay_out(&mut out, &line.right, tx + tw - right_w, right_w);
+    let right_x = tx.saturating_add(tw.saturating_sub(right_w));
+    lay_out(&mut out, &line.right, right_x, right_w);
     out
 }
 
@@ -482,24 +488,18 @@ fn lay_out<'a>(out: &mut Vec<(u16, String, &'a Seg)>, segs: &'a [Seg], mut x: u1
         }
         let shown = text::truncate(&seg.text.replace('\t', "    "), room);
         let w = text::width(&shown);
-        room -= w;
+        room = room.saturating_sub(w);
         out.push((x, shown, seg));
-        x += w as u16;
+        x = x.saturating_add(cols(w));
     }
 }
 
 /// Visible links' positions, main column then aside, top to bottom.
 pub fn spots(page: &Page, area: Rect, scroll: usize) -> Vec<Spot> {
-    let cols = columns(page, area);
+    let layout = columns(page, area);
     let mut out = Vec::new();
     let mut add = |lines: &[PageLine], x: u16, width: u16| {
-        for (row, line) in lines
-            .iter()
-            .enumerate()
-            .skip(scroll)
-            .take(usize::from(area.height))
-        {
-            let y = area.y + (row - scroll) as u16;
+        for (line, y) in lines.iter().skip(scroll).zip(area.top()..area.bottom()) {
             let mut seen = Vec::new();
             for (sx, _, seg) in place(line, x, width) {
                 if let Some(link) = seg.link
@@ -511,8 +511,8 @@ pub fn spots(page: &Page, area: Rect, scroll: usize) -> Vec<Spot> {
             }
         }
     };
-    add(&page.lines, cols.main_x, page.width);
-    if let Some(ax) = cols.aside_x {
+    add(&page.lines, layout.main_x, page.width);
+    if let Some(ax) = layout.aside_x {
         add(&page.aside, ax, page.aside_width);
     }
     out.sort_by_key(|s| (s.y, s.x));
@@ -524,15 +524,15 @@ pub fn hit(page: &Page, area: Rect, scroll: usize, x: u16, y: u16) -> PageHit {
     if !(area.y..area.bottom()).contains(&y) {
         return PageHit::default();
     }
-    let row = scroll + usize::from(y - area.y);
-    let cols = columns(page, area);
+    let row = scroll.saturating_add(usize::from(y.saturating_sub(area.y)));
+    let layout = columns(page, area);
     let link_at = |line: &PageLine, lx: u16, width: u16| {
         place(line, lx, width)
             .into_iter()
-            .find(|(sx, shown, _)| (*sx..*sx + text::width(shown) as u16).contains(&x))
+            .find(|(sx, shown, _)| (*sx..sx.saturating_add(cols(text::width(shown)))).contains(&x))
             .and_then(|(_, _, seg)| seg.link)
     };
-    if let Some(ax) = cols.aside_x
+    if let Some(ax) = layout.aside_x
         && x >= ax
     {
         let link = page
@@ -546,7 +546,7 @@ pub fn hit(page: &Page, area: Rect, scroll: usize, x: u16, y: u16) -> PageHit {
     };
     PageHit {
         line: Some(row),
-        link: link_at(line, cols.main_x, page.width),
+        link: link_at(line, layout.main_x, page.width),
     }
 }
 
@@ -571,16 +571,15 @@ impl Widget for PageView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = self.ctx.theme;
         fill(buf, area, theme, PAGE_BG);
-        let cols = columns(self.page, area);
+        let layout = columns(self.page, area);
         let selected = self.selected.and_then(|i| self.page.items.get(i)).copied();
-        for row in 0..usize::from(area.height) {
-            let i = self.scroll + row;
-            let y = area.y + row as u16;
+        for (row, y) in (area.top()..area.bottom()).enumerate() {
+            let i = self.scroll.saturating_add(row);
             if let Some(line) = self.page.lines.get(i) {
                 let sel = selected.is_some_and(|s| (s.start..s.end).contains(&i));
-                self.line(buf, line, cols.main_x, y, self.page.width, sel);
+                self.line(buf, line, layout.main_x, y, self.page.width, sel);
             }
-            if let (Some(ax), Some(line)) = (cols.aside_x, self.page.aside.get(i)) {
+            if let (Some(ax), Some(line)) = (layout.aside_x, self.page.aside.get(i)) {
                 self.line(buf, line, ax, y, self.page.aside_width, false);
             }
         }
@@ -593,7 +592,7 @@ impl Widget for PageView<'_> {
                 Rect {
                     x: hint.x,
                     y: hint.y,
-                    width: text::width(&hint.label) as u16,
+                    width: cols(text::width(&hint.label)),
                     height: 1,
                 },
                 buf,
@@ -621,16 +620,15 @@ impl PageView<'_> {
         if sel {
             // The stripe sits in the gutter, or just inside the box.
             let band = if framed {
-                row(x + 1, width.saturating_sub(2))
+                row(x.saturating_add(1), width.saturating_sub(2))
             } else {
-                row(x.saturating_sub(2), width + 2)
+                row(x.saturating_sub(2), width.saturating_add(2))
             };
             fill(buf, band, theme, Bg::Selected);
-            let stripe_x = if framed { x + 1 } else { x.saturating_sub(2) };
-            buf.set_string(stripe_x, y, "▌", theme.accent(Bg::Selected));
+            put(buf, band.x, y, "▌", theme.accent(Bg::Selected));
         } else if line.tone == Tone::Code {
             let band = if framed {
-                row(x + 1, width.saturating_sub(2))
+                row(x.saturating_add(1), width.saturating_sub(2))
             } else {
                 row(x, width)
             };
@@ -640,7 +638,7 @@ impl PageView<'_> {
         let border = theme.separator(PAGE_BG);
         let rule = |buf: &mut Buffer, left: &str, right: &str| {
             let middle = "─".repeat(usize::from(width.saturating_sub(2)));
-            buf.set_string(x, y, format!("{left}{middle}{right}"), border);
+            put(buf, x, y, &format!("{left}{middle}{right}"), border);
         };
         match line.frame {
             Frame::None => {}
@@ -648,8 +646,14 @@ impl PageView<'_> {
             Frame::Rule => rule(buf, "├", "┤"),
             Frame::Bottom => rule(buf, "╰", "╯"),
             Frame::Body => {
-                buf.set_string(x, y, "│", border);
-                buf.set_string(x + width.saturating_sub(1), y, "│", border);
+                put(buf, x, y, "│", border);
+                put(
+                    buf,
+                    x.saturating_add(width.saturating_sub(1)),
+                    y,
+                    "│",
+                    border,
+                );
             }
         }
         // Text.
@@ -657,12 +661,17 @@ impl PageView<'_> {
         if line.frame == Frame::Top {
             // Titles sit in gaps cut into the top edge.
             for (sx, shown, _) in &placed {
-                let w = text::width(shown) as u16;
-                fill(buf, row(sx.saturating_sub(1), w + 2), theme, PAGE_BG);
+                let w = cols(text::width(shown));
+                fill(
+                    buf,
+                    row(sx.saturating_sub(1), w.saturating_add(2)),
+                    theme,
+                    PAGE_BG,
+                );
             }
         }
         for (sx, shown, seg) in placed {
-            let w = text::width(&shown) as u16;
+            let w = cols(text::width(&shown));
             Line::from(Span::styled(shown, self.style(&seg.role, inner_bg)))
                 .render(row(sx, w), buf);
         }
@@ -674,11 +683,20 @@ impl PageView<'_> {
         if total <= h || h == 0 || area.width < 2 {
             return;
         }
-        let thumb = (h * h / total).clamp(1, h);
-        let top = (self.scroll * (h - thumb)) / total.saturating_sub(h).max(1);
-        let x = area.right() - 1;
-        for r in top..(top + thumb).min(h) {
-            buf.set_string(x, area.y + r as u16, "▐", self.ctx.theme.separator(PAGE_BG));
+        let thumb = h
+            .saturating_mul(h)
+            .checked_div(total)
+            .unwrap_or(h)
+            .clamp(1, h);
+        let top = self
+            .scroll
+            .saturating_mul(h.saturating_sub(thumb))
+            .checked_div(total.saturating_sub(h))
+            .unwrap_or(0);
+        let x = area.right().saturating_sub(1);
+        for r in top..top.saturating_add(thumb).min(h) {
+            let y = area.y.saturating_add(cols(r));
+            put(buf, x, y, "▐", self.ctx.theme.separator(PAGE_BG));
         }
     }
 
@@ -725,12 +743,12 @@ pub fn reveal(
 ) -> usize {
     let height = height.max(1);
     let max = total.saturating_sub(height);
-    let margin = margin.min(height.saturating_sub(end - start) / 2);
+    let margin = margin.min(height.saturating_sub(end.saturating_sub(start)) / 2);
     let mut scroll = scroll.min(max);
-    if end + margin > scroll + height {
-        scroll = (end + margin).saturating_sub(height);
+    if end.saturating_add(margin) > scroll.saturating_add(height) {
+        scroll = end.saturating_add(margin).saturating_sub(height);
     }
-    if start < scroll + margin {
+    if start < scroll.saturating_add(margin) {
         scroll = start.saturating_sub(margin);
     }
     scroll.min(max)

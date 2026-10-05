@@ -18,7 +18,7 @@ use ghtui_theme::{Bg, Syntax};
 
 use crate::markdown::{self, LinkBase};
 use crate::page::{ASIDE_GAP, Frame, Page, PageLine, Role, Seg, Tone};
-use crate::{Icons, time};
+use crate::{Icons, cols, time};
 
 /// Load the next page of a list.
 pub const MORE: &str = "ghtui:more";
@@ -119,12 +119,12 @@ pub mod url {
 pub fn compact(n: u64) -> String {
     match n {
         0..1_000 => n.to_string(),
-        1_000..999_950 => trim_zero(format!("{:.1}k", n as f64 / 1_000.0)),
-        _ => trim_zero(format!("{:.1}m", n as f64 / 1_000_000.0)),
+        1_000..999_950 => trim_zero(&format!("{:.1}k", n as f64 / 1_000.0)),
+        _ => trim_zero(&format!("{:.1}m", n as f64 / 1_000_000.0)),
     }
 }
 
-fn trim_zero(s: String) -> String {
+fn trim_zero(s: &str) -> String {
     s.replace(".0k", "k").replace(".0m", "m")
 }
 
@@ -241,7 +241,7 @@ fn box_rows<T>(page: &mut Page, items: &[T], mut row: impl FnMut(&mut Page, &T))
 /// `prefix` then `segs` wrapped inside a box, continuation lines aligned
 /// after the prefix.
 fn hanging(page: &mut Page, prefix: Seg, segs: Vec<Seg>, frame: Frame) {
-    let width = crate::text::width(&prefix.text) as u16;
+    let width = cols(crate::text::width(&prefix.text));
     let start = page.lines.len();
     page.wrapped(segs, width, frame);
     if let Some(first) = page.lines.get_mut(start) {
@@ -503,7 +503,7 @@ fn crumbs(page: &mut Page, repo: &RepoId, rev: &str, path: &str, last_is_file: b
                 segs.push(Seg::new(" /", Role::Meta));
             }
         } else {
-            let sub = parts[..=i].join("/");
+            let sub = parts.get(..=i).unwrap_or_default().join("/");
             segs.push(link_seg(
                 page,
                 *part,

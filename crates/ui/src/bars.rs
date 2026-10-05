@@ -1,6 +1,8 @@
 //! Status bar and banners: flat filled bars with left- and right-aligned
 //! content.
 
+#![deny(clippy::arithmetic_side_effects)]
+
 use ghtui_theme::Bg;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -82,17 +84,17 @@ impl Widget for StatusBar<'_> {
         }
         if self.notice.is_none() {
             // As many hints as fit, whole.
-            let right_w: usize = right.iter().map(Span::width).sum();
+            let used: usize = right.iter().chain(&left).map(Span::width).sum();
             let mut room = usize::from(area.width.saturating_sub(2 * PAD_X))
-                .saturating_sub(right_w + 1 + left.iter().map(Span::width).sum::<usize>());
+                .saturating_sub(used.saturating_add(1));
             for (i, (keys, what)) in self.hints.iter().enumerate() {
-                let gap = if i == 0 { 0 } else { 3 };
-                let w = gap + text::width(keys) + 1 + text::width(what);
-                if w > room {
+                let gap = if i == 0 { 1 } else { 4 };
+                let w = text::width(keys).saturating_add(text::width(what));
+                let Some(rest) = room.checked_sub(w.saturating_add(gap)) else {
                     break;
-                }
-                room -= w;
-                if gap > 0 {
+                };
+                room = rest;
+                if i > 0 {
                     left.push(Span::styled("   ", theme.body(BAR)));
                 }
                 left.extend(key_hints(theme, BAR, &[(keys.as_str(), what.as_str())]));
@@ -127,7 +129,8 @@ impl Widget for Banner<'_> {
         fill(buf, area, theme, bg);
         let style: Style = theme.fill(bg);
         let hint = self.hint.unwrap_or_default();
-        let room = (area.width as usize).saturating_sub(2 * PAD_X as usize + text::width(hint) + 2);
+        let room =
+            usize::from(area.width.saturating_sub(2 * PAD_X + 2)).saturating_sub(text::width(hint));
         let left = vec![Span::styled(text::truncate(self.text, room), style)];
         let right = vec![Span::styled(
             hint.to_owned(),

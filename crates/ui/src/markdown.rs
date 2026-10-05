@@ -7,6 +7,7 @@ use ghtui_diff::text::Text;
 use ghtui_theme::Syntax;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
+use crate::cols;
 use crate::diff_view::syntax_role;
 use crate::page::{Frame, Page, PageLine, Role, Seg, Tone};
 
@@ -21,7 +22,7 @@ pub struct LinkBase {
 
 impl LinkBase {
     /// The base for a document at `path` (or "" for none) in `repo` at `rev`.
-    pub fn new(repo: impl ToString, rev: impl Into<String>, path: &str) -> Self {
+    pub fn new(repo: &(impl ToString + ?Sized), rev: impl Into<String>, path: &str) -> Self {
         Self {
             repo: repo.to_string(),
             rev: rev.into(),
@@ -189,18 +190,18 @@ impl Renderer<'_> {
         let mut rest = html;
         loop {
             if self.in_comment {
-                match rest.find("-->") {
-                    Some(end) => {
-                        rest = &rest[end + 3..];
+                match rest.split_once("-->") {
+                    Some((_, after)) => {
+                        rest = after;
                         self.in_comment = false;
                     }
                     None => break,
                 }
             } else {
-                match rest.find("<!--") {
-                    Some(start) => {
-                        visible.push_str(&rest[..start]);
-                        rest = &rest[start + 4..];
+                match rest.split_once("<!--") {
+                    Some((before, after)) => {
+                        visible.push_str(before);
+                        rest = after;
                         self.in_comment = true;
                     }
                     None => {
@@ -212,17 +213,15 @@ impl Renderer<'_> {
         }
         // Keep text, images' alt text and links; drop the tags.
         let mut rest = visible.as_str();
-        while let Some(start) = rest.find('<') {
-            let before = &rest[..start];
+        while let Some((before, tail)) = rest.split_once('<') {
             if !before.trim().is_empty() {
                 self.text(&decode_entities(before));
             } else if !before.is_empty() && !before.contains('\n') {
                 self.text(" ");
             }
-            let Some(end) = rest[start..].find('>') else {
+            let Some((tag, after)) = tail.split_once('>') else {
                 break;
             };
-            let tag = &rest[start + 1..start + end];
             let lower = tag.to_ascii_lowercase();
             let closing = lower.starts_with('/');
             let name: String = lower
@@ -284,7 +283,7 @@ impl Renderer<'_> {
             } else if lower.starts_with("br") {
                 self.text("\n");
             }
-            rest = &rest[start + end + 1..];
+            rest = after;
         }
         if !rest.trim().is_empty() {
             self.text(&decode_entities(rest));
@@ -369,8 +368,8 @@ impl Renderer<'_> {
             }
             Tag::Item => {
                 self.flush();
-                let depth = self.lists.len().saturating_sub(1) as u16;
-                self.indent = depth * 2;
+                let depth = cols(self.lists.len().saturating_sub(1));
+                self.indent = depth.saturating_mul(2);
                 let marker = match self.lists.last_mut() {
                     Some(Some(n)) => {
                         let m = format!("{n}. ");
@@ -436,7 +435,7 @@ impl Renderer<'_> {
             TagEnd::List(_) => {
                 self.flush();
                 self.lists.pop();
-                self.indent = self.lists.len().saturating_sub(1) as u16 * 2;
+                self.indent = cols(self.lists.len().saturating_sub(1)).saturating_mul(2);
                 if self.lists.is_empty() {
                     self.indent = 0;
                     self.page_blank();
@@ -517,13 +516,13 @@ impl Renderer<'_> {
         };
         let mut widths = vec![0usize; cols];
         for row in &rows {
-            for (c, cell) in row.iter().enumerate() {
-                widths[c] = widths[c].max(width(cell)).min(40);
+            for (w, cell) in widths.iter_mut().zip(row) {
+                *w = (*w).max(width(cell)).min(40);
             }
         }
         for (r, row) in rows.iter().enumerate() {
             let mut segs = Vec::new();
-            for (c, cell) in row.iter().enumerate() {
+            for (c, (cell, w)) in row.iter().zip(&widths).enumerate() {
                 if c > 0 {
                     segs.push(Seg::new(" │ ", Role::Meta));
                 }
@@ -535,7 +534,7 @@ impl Renderer<'_> {
                         }
                     }
                 }
-                let pad = widths[c].saturating_sub(width(&cell));
+                let pad = w.saturating_sub(width(&cell));
                 segs.extend(cell);
                 segs.push(Seg::new(" ".repeat(pad), Role::Body));
             }
@@ -562,13 +561,16 @@ impl Renderer<'_> {
 fn attr(tag: &str, name: &str) -> Option<String> {
     let lower = tag.to_ascii_lowercase();
     let at = lower.find(&format!("{name}="))?;
-    let rest = &tag[at + name.len() + 1..];
+    let rest = tag.get(at + name.len() + 1..)?;
     let (quote, rest) = match rest.chars().next()? {
-        q @ ('"' | '\'') => (q, &rest[1..]),
+        q @ ('"' | '\'') => (q, rest.get(1..)?),
         _ => (' ', rest),
     };
-    let end = rest.find(quote).unwrap_or(rest.len());
-    Some(rest[..end].to_owned())
+    Some(
+        rest.split_once(quote)
+            .map_or(rest, |(value, _)| value)
+            .to_owned(),
+    )
 }
 
 /// `code`'s lines as highlighted segments.
@@ -584,13 +586,14 @@ pub(crate) fn highlighted(code: &str, lang: Option<Language>) -> Vec<Vec<Seg>> {
             for s in spans.get(i).map_or(&[][..], Vec::as_slice) {
                 let (a, b) = (s.start as usize, s.end as usize);
                 if a > at {
-                    segs.push(plain(&line[at..a]));
+                    segs.extend(line.get(at..a).map(plain));
                 }
-                segs.push(Seg::new(&line[a..b], Role::Syntax(syntax_role(s.kind))));
+                let role = Role::Syntax(syntax_role(s.kind));
+                segs.extend(line.get(a..b).map(|t| Seg::new(t, role)));
                 at = b;
             }
             if at < line.len() {
-                segs.push(plain(&line[at..]));
+                segs.extend(line.get(at..).map(plain));
             }
             segs
         })

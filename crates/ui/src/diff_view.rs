@@ -15,7 +15,7 @@ use ghtui_diff::anchor::LinePos;
 
 use crate::annotations::{Annotation, ThreadRowKind};
 use crate::diff_doc::{Doc, DocFile, FoldReason, Note, Pos, Row, Viewed, sides};
-use crate::{Ctx, PAD_X, chips, fill, inset, key_hints, render_split, text, time};
+use crate::{Ctx, PAD_X, chips, cols, fill, inset, key_hints, render_split, text, time};
 
 const PANE: Bg = Bg::Surface;
 const HEADER: Bg = Bg::ContainerHigh;
@@ -97,7 +97,9 @@ impl Widget for DiffView<'_> {
 impl DiffView<'_> {
     fn render_row(&self, pos: Pos, area: Rect, buf: &mut Buffer) {
         let Some(row) = self.doc.row(pos) else { return };
-        let file = &self.doc.files[pos.file];
+        let Some(file) = self.doc.files.get(pos.file) else {
+            return;
+        };
         let cursor = pos == self.doc.clamp(self.cursor) || self.selected(pos);
         let theme = self.ctx.theme;
         let quiet_bg = if cursor { Bg::SelectedInactive } else { PANE };
@@ -173,7 +175,9 @@ impl DiffView<'_> {
     }
 
     fn header(&self, file_index: usize, cursor: bool, area: Rect, buf: &mut Buffer) {
-        let file = &self.doc.files[file_index];
+        let Some(file) = self.doc.files.get(file_index) else {
+            return;
+        };
         let ctx = self.ctx;
         let theme = ctx.theme;
         let bg = if cursor { Bg::SelectedHigh } else { HEADER };
@@ -551,7 +555,7 @@ impl DiffView<'_> {
             return;
         };
         fill(buf, area, theme, PANE);
-        let indent = (sign_column(file) as u16).min(area.width);
+        let indent = cols(sign_column(file)).min(area.width);
         let card = Rect {
             x: area.x + indent,
             width: area.width.saturating_sub(indent + PAD_X),
@@ -587,7 +591,9 @@ impl DiffView<'_> {
                 spans.push(Span::styled(tail, theme.meta(bg)));
             }
             ThreadRowKind::Head { comment, first } => {
-                let c = &ann.comments[*comment];
+                let Some(c) = ann.comments.get(*comment) else {
+                    return;
+                };
                 spans.push(Span::styled(c.author.clone(), theme.title(bg)));
                 if !c.created_at.is_empty() {
                     spans.push(Span::styled(
@@ -735,7 +741,7 @@ impl DiffView<'_> {
             emphasis,
         ));
         // Line endings only matter where they changed.
-        if source.crlf[i] && line.kind != LineKind::Context {
+        if source.crlf.get(i) == Some(&true) && line.kind != LineKind::Context {
             spans.push(Span::styled("␍", theme.meta(bg)));
         }
         spans
@@ -829,11 +835,11 @@ fn code_spans(
         }
         bounds.sort_unstable();
         bounds.dedup();
-        for w in bounds.windows(2) {
+        for &[s, e] in bounds.array_windows() {
             let emph = emphasis
                 .iter()
-                .any(|(a, b)| (*a as usize) <= w[0] && w[1] <= (*b as usize));
-            cut.push((w[0], w[1], kind, emph));
+                .any(|(a, b)| (*a as usize) <= s && e <= (*b as usize));
+            cut.push((s, e, kind, emph));
         }
     }
 
