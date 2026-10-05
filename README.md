@@ -465,6 +465,15 @@ tests cover partial clones, prefetch, lazy fetch, every file status, and a
 check that your clone only gains `refs/ghtui/*`. Neither suite needs network
 access.
 
+Panics are kept out by construction: workspace lints reject `unwrap`,
+`expect`, indexing, string slicing, truncating casts and ratatui's unclipped
+buffer writes outside tests. Property tests (proptest) check that arbitrary
+Markdown and diffs lay out, render at any size and stay in bounds, that every
+page's URL leads back to it, and that key notation round-trips; a test renders
+every screen at every size up to 12×12. Fuzz targets for the Markdown renderer
+and the diff pipeline live in `fuzz/` (`cargo +nightly fuzz run markdown`,
+`cargo +nightly fuzz run file_diff`; needs `cargo-fuzz`).
+
 Performance targets, as timing tests
 (`cargo test --release -p ghtui -- --ignored --nocapture`):
 

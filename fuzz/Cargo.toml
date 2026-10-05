@@ -1,0 +1,34 @@
+[package]
+name = "ghtui-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+# Not part of the workspace: needs nightly and cargo-fuzz.
+# Run from the repo root: `cargo +nightly fuzz run markdown`.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ghtui-diff = { path = "../crates/diff" }
+ghtui-ui = { path = "../crates/ui" }
+ghtui-git = { path = "../crates/git" }
+ghtui-theme = { path = "../crates/theme" }
+ratatui = "0.30.2"
+
+[[bin]]
+name = "markdown"
+path = "fuzz_targets/markdown.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "file_diff"
+path = "fuzz_targets/file_diff.rs"
+test = false
+doc = false
+bench = false
