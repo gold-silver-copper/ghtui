@@ -1,6 +1,7 @@
 //! The GitHub client: one octocrab HTTP stack for GraphQL and REST, with our
 //! own retry policy, rate-limit tracking, ETag revalidation and caching.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -68,6 +69,8 @@ pub struct GitHub {
     http: Arc<Http>,
     store: Store,
     limits: Arc<Mutex<RateLimits>>,
+    /// GitHub's last answer was 401, and whether that was reported.
+    rejected: Arc<(AtomicBool, AtomicBool)>,
 }
 
 struct Http {
@@ -127,6 +130,7 @@ impl GitHub {
             }),
             store,
             limits: Arc::default(),
+            rejected: Arc::default(),
         }
     }
 
@@ -145,6 +149,14 @@ impl GitHub {
 
     pub fn store(&self) -> &Store {
         &self.store
+    }
+
+    /// Whether GitHub started (`Some(true)`) or stopped rejecting the token
+    /// since this was last asked.
+    pub fn token_rejected_change(&self) -> Option<bool> {
+        let now = self.rejected.0.load(Ordering::Relaxed);
+        let was = self.rejected.1.swap(now, Ordering::Relaxed);
+        (now != was).then_some(now)
     }
 
     pub fn rate_limits(&self) -> RateLimits {
@@ -181,6 +193,9 @@ impl GitHub {
                 Err(err) => return Err(ApiError::Network(err.to_string())),
             };
             let status = response.status();
+            self.rejected
+                .0
+                .store(status == StatusCode::UNAUTHORIZED, Ordering::Relaxed);
             let headers = response.headers().clone();
             self.limits
                 .lock()

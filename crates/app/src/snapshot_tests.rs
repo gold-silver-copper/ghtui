@@ -903,6 +903,24 @@ pub(crate) mod diff {
         insta::assert_snapshot!(render(&s));
     }
 
+    /// A long git error wraps instead of being cut off.
+    #[test]
+    fn diff_long_error_dark() {
+        let mut s = state(Mode::Dark, ColorDepth::TrueColor);
+        s.size = (80, 24);
+        let mut diff = DiffState::loading();
+        diff.progress = None;
+        diff.error = Some(
+            "git fetch failed: fatal: unable to access 'https://github.com/o/r.git/': \
+             Could not resolve host: github.com (is the network up?)"
+                .into(),
+        );
+        open_diff(&mut s, diff, Pos::default(), Pane::Diff);
+        let screen = render(&s);
+        assert!(screen.contains("network up?)"), "{screen}");
+        insta::assert_snapshot!(screen);
+    }
+
     /// Every screen and overlay, at every tiny size and a few extreme
     /// ones: rendering never panics.
     #[test]

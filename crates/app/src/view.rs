@@ -256,15 +256,17 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
     if let Some(err) = &diff.error {
         let text = format!("Couldn't load the diff: {err}");
         let retry = format!("{} retry", state.first_key(Action::Refresh));
-        Banner {
+        let banner = Banner {
             ctx,
             text: &text,
             hint: Some(&retry),
             error: true,
-        }
-        .render(Rect { height: 1, ..area }, buf);
-        area.y += 1;
-        area.height = area.height.saturating_sub(1);
+        };
+        // Long git errors wrap, up to a third of the pane.
+        let height = banner.height(area.width, area.height / 3);
+        banner.render(Rect { height, ..area }, buf);
+        area.y += height;
+        area.height = area.height.saturating_sub(height);
     }
     let message_area = Rect {
         x: area.x + PAD_X,

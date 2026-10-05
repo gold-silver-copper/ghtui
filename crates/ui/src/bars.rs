@@ -10,7 +10,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::Widget;
 
-use crate::{Ctx, PAD_X, fill, inset, key_hints, render_split, text};
+use crate::{Ctx, PAD_X, cols, fill, inset, key_hints, render_split, text};
 
 const BAR: Bg = Bg::Container;
 
@@ -118,7 +118,23 @@ pub struct Banner<'a> {
     pub error: bool,
 }
 
+impl Banner<'_> {
+    /// The text wrapped to `width`, beside the hint.
+    fn lines(&self, width: u16) -> Vec<String> {
+        let hint = self.hint.map_or(0, text::width);
+        let room = usize::from(width.saturating_sub(2 * PAD_X + 2)).saturating_sub(hint);
+        text::wrap(self.text, room)
+    }
+
+    /// Rows the banner takes at `width` (at most `max`).
+    pub fn height(&self, width: u16, max: u16) -> u16 {
+        cols(self.lines(width).len()).clamp(1, max.max(1))
+    }
+}
+
 impl Widget for Banner<'_> {
+    /// The text wraps over the area's rows (cut short on the last); the
+    /// hint sits on the first.
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = self.ctx.theme;
         let bg = if self.error {
@@ -129,13 +145,30 @@ impl Widget for Banner<'_> {
         fill(buf, area, theme, bg);
         let style: Style = theme.fill(bg);
         let hint = self.hint.unwrap_or_default();
-        let room =
-            usize::from(area.width.saturating_sub(2 * PAD_X + 2)).saturating_sub(text::width(hint));
-        let left = vec![Span::styled(text::truncate(self.text, room), style)];
-        let right = vec![Span::styled(
-            hint.to_owned(),
-            style.add_modifier(Modifier::BOLD),
-        )];
-        render_split(inset(area, PAD_X, 0), buf, left, right, 1);
+        let mut lines = self.lines(area.width);
+        let rows = usize::from(area.height);
+        if lines.len() > rows && rows > 0 {
+            let rest = lines.split_off(rows.saturating_sub(1)).join(" ");
+            let room = usize::from(area.width.saturating_sub(2 * PAD_X + 2))
+                .saturating_sub(text::width(hint));
+            lines.push(text::truncate(&rest, room));
+        }
+        let inner = inset(area, PAD_X, 0);
+        for (i, (line, y)) in lines.into_iter().zip(area.top()..area.bottom()).enumerate() {
+            let right = if i == 0 {
+                vec![Span::styled(
+                    hint.to_owned(),
+                    style.add_modifier(Modifier::BOLD),
+                )]
+            } else {
+                Vec::new()
+            };
+            let row = Rect {
+                y,
+                height: 1,
+                ..inner
+            };
+            render_split(row, buf, vec![Span::styled(line, style)], right, 1);
+        }
     }
 }

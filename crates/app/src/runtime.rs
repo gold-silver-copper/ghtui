@@ -436,6 +436,11 @@ fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
         };
         let _ = tx.send(msg);
         let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
+        if let Some(rejected) = gh.token_rejected_change() {
+            let text =
+                "GitHub rejected the token: run `gh auth login` or set GH_TOKEN, then restart";
+            let _ = tx.send(Msg::Problem(Problem::Auth, rejected.then(|| text.into())));
+        }
     });
 }
 

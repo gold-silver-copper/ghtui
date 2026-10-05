@@ -87,6 +87,7 @@ actions! {
     Refresh           "refresh"           ["r"]                Global "Refresh";
     Menu              "actions_menu"      ["<Space>", "?"]     Global "Everything you can do here";
     CommandPalette    "command_palette"   [":", "<C-k>"]       Global "Command palette";
+    Messages          "messages"          []                   Global "Recent messages and errors";
     Quit              "quit"              ["q", "<C-c>"]       Global "Quit";
 
     Star              "star"              ["s"]                Page   "Star / unstar";

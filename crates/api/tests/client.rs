@@ -192,12 +192,23 @@ async fn gives_up_after_three_attempts() {
 
 #[tokio::test]
 async fn maps_unauthorized() {
-    let (base, _) = serve(vec![Reply::new(401, r#"{"message":"Bad credentials"}"#)]).await;
+    let (base, _) = serve(vec![
+        Reply::new(401, r#"{"message":"Bad credentials"}"#),
+        Reply::new(401, r#"{"message":"Bad credentials"}"#),
+        Reply::new(200, r#"{"login":"octocat"}"#),
+    ])
+    .await;
     let gh = client(&base, Store::disabled());
     assert!(matches!(
         gh.viewer_login().await,
         Err(ApiError::Unauthorized)
     ));
+    // Reported once when it starts, once when it stops.
+    assert_eq!(gh.token_rejected_change(), Some(true));
+    let _ = gh.viewer_login().await;
+    assert_eq!(gh.token_rejected_change(), None);
+    let _ = gh.viewer_login().await;
+    assert_eq!(gh.token_rejected_change(), Some(false));
 }
 
 #[tokio::test]

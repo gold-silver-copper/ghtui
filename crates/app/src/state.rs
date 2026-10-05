@@ -206,6 +206,8 @@ pub enum Cmd {
 /// status bar instead of as a notice that expires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Problem {
+    /// GitHub rejects the token: nothing loads until it's fixed.
+    Auth,
     /// Review drafts can't be written to disk.
     Drafts,
 }
@@ -360,6 +362,8 @@ pub struct State {
     pub overlay: Option<Overlay>,
     pub pending: Vec<Key>,
     pub notice: Option<Notice>,
+    /// Notices shown this session, newest last, with when (Unix seconds).
+    pub messages: std::collections::VecDeque<(u64, Notice)>,
     /// Lasting problems, most important first; the first is shown.
     pub problems: std::collections::BTreeMap<Problem, String>,
     /// Terminal size.
@@ -393,6 +397,7 @@ impl State {
             overlay: None,
             pending: Vec::new(),
             notice: None,
+            messages: Default::default(),
             problems: Default::default(),
             size,
             keymap,
@@ -586,6 +591,11 @@ pub fn timers(state: &mut State, last_notice: &mut Option<Notice>) -> Vec<Cmd> {
     let mut cmds = Vec::new();
     if state.notice != *last_notice {
         if let Some(notice) = &state.notice {
+            const KEPT: usize = 50;
+            if state.messages.len() == KEPT {
+                state.messages.pop_front();
+            }
+            state.messages.push_back(((state.clock)(), notice.clone()));
             state.notice_id += 1;
             let ms = match notice {
                 Notice::Info(_) => 4_000,
@@ -615,9 +625,6 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::Viewer(Err(err)) => {
             tracing::warn!(%err, "could not fetch viewer");
-            if matches!(err, ApiError::Unauthorized) {
-                state.notice = Some(Notice::Error(err.to_string()));
-            }
             Vec::new()
         }
         Msg::Inbox(result) => {
@@ -1045,8 +1052,13 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         Some(Overlay::Submit(_)) => return on_submit_key(state, key),
         None => {}
     }
-    // Any keypress dismisses the last notice.
+    // Any keypress dismisses the last notice; Esc on an error does only
+    // that (the messages list keeps it).
+    let dismissing = matches!(state.notice, Some(Notice::Error(_)));
     state.notice = None;
+    if dismissing && key.code == KeyCode::Esc && state.pending.is_empty() {
+        return Vec::new();
+    }
     state.pending.push(Key::from(key));
     match state.keymap.resolve(&state.pending, state.scope()) {
         Resolution::Action(action) => {
@@ -1160,6 +1172,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Forward => return state.go_forward(),
         Action::Menu => nav::open_menu(state),
         Action::CommandPalette => return state.open_picker(picker::Kind::Commands),
+        Action::Messages => return state.open_picker(picker::Kind::Messages),
         Action::Refresh => return state.load_visible(true),
         Action::Copy => return nav::copy_link(state),
         Action::OpenInBrowser => return state.go(Target::External(state.here_url())),
@@ -2751,6 +2764,28 @@ mod tests {
                 .is_none_or(|o| !matches!(o, Overlay::Menu(_)))
         );
         assert!(!cmds.is_empty() || matches!(state.overlay, Some(Overlay::Picker(_))));
+    }
+
+    /// Esc on an error dismisses it (and goes nowhere); the messages list
+    /// keeps it, and choosing it copies it.
+    #[test]
+    fn errors_are_dismissed_and_kept() {
+        let mut state = with_repo();
+        let depth = state.screens.len();
+        state.notice = Some(Notice::Error("boom".into()));
+        timers(&mut state, &mut None);
+        press(&mut state, "<Esc>");
+        assert!(state.notice.is_none());
+        assert_eq!(state.screens.len(), depth, "Esc only dismissed");
+        act(&mut state, Action::Messages);
+        let Some(Overlay::Picker(p)) = &state.overlay else {
+            panic!("no messages list")
+        };
+        let rows = state.picker_rows(p);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0.label, "boom");
+        let cmds = press(&mut state, "<Enter>");
+        assert!(matches!(&cmds[..], [Cmd::Copy(t)] if t == "boom"));
     }
 
     #[test]

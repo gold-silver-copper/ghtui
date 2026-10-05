@@ -6,6 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ghtui_api::browse::SearchKind;
 use ghtui_api::model::RepoId;
 use ghtui_theme::Bg;
+use ghtui_ui::bars::Notice;
 use ghtui_ui::diff_doc::Pos;
 use ghtui_ui::overlays::PaletteItem;
 use ghtui_ui::text::short_sha;
@@ -33,6 +34,8 @@ pub enum Kind {
     DiffFiles,
     /// The diff's commits; `mark` is where a range starts.
     Commits { mark: Option<usize> },
+    /// Recent notices and errors, newest first.
+    Messages,
 }
 
 pub struct Picker {
@@ -48,6 +51,7 @@ impl Picker {
             Kind::Files { .. } | Kind::DiffFiles => "Go to file",
             Kind::Branches { .. } => "Switch branches/tags",
             Kind::Commits { .. } => "Commits",
+            Kind::Messages => "Messages",
         }
     }
 }
@@ -68,6 +72,8 @@ pub enum Choice {
     Search(String),
     DiffFile(usize),
     Commits(PickItem),
+    /// Copy this text.
+    Copy(String),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -86,6 +92,7 @@ impl State {
             Kind::Files { .. } | Kind::DiffFiles => "Type a file name",
             Kind::Branches { .. } => "Find a branch or tag",
             Kind::Commits { .. } => "space marks a range start · ↵ views · esc cancels",
+            Kind::Messages => "↵ copies a message",
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
@@ -150,7 +157,26 @@ impl State {
             } => self.branch_rows(q, repo, rev, path, *file),
             Kind::DiffFiles => self.diff_file_rows(q),
             Kind::Commits { mark } => self.commit_rows(*mark),
+            Kind::Messages => self.message_rows(q),
         }
+    }
+
+    /// Recent notices, newest first; choosing one copies it.
+    fn message_rows(&self, q: &str) -> Rows {
+        let now = (self.clock)();
+        self.messages
+            .iter()
+            .rev()
+            .filter_map(|(at, notice)| {
+                let (text, kind) = match notice {
+                    Notice::Info(text) => (text, ""),
+                    Notice::Error(text) => (text, "error · "),
+                };
+                fuzzy_score(q, text)?;
+                let hint = format!("{kind}{}", ghtui_ui::time::ago(*at, now));
+                Some((item(text, hint), Some(Choice::Copy(text.to_owned()))))
+            })
+            .collect()
     }
 
     /// Palette entries: somewhere to go, what you can do here (the menu's
@@ -416,6 +442,10 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
             Vec::new()
         }
         Choice::Commits(pick) => apply_commit_choice(state, pick, mark.map(PickItem::Commit)),
+        Choice::Copy(text) => {
+            state.notice = Some(Notice::Info("Copied the message".into()));
+            vec![Cmd::Copy(text)]
+        }
     }
 }
 

@@ -93,6 +93,10 @@ do.
 - `l` puts letters on every link on screen; type them to follow one (`L`
   follows it in the browser).
 - `h` goes home; `r` refreshes; `q` quits.
+- Errors show in the status bar; `Esc` dismisses one, and "Recent messages
+  and errors" in the `Space` menu lists them all (`Enter` copies one).
+  Problems that last, such as a rejected token or drafts that can't be
+  saved, stay in a banner above the status bar until they're fixed.
 - `:` (or `ctrl-k`) is the command palette. It also takes `owner/repo`,
   `owner/repo#123`, `@user`, or a URL.
 

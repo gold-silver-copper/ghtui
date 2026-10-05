@@ -1107,6 +1107,11 @@ impl State {
         out.push(doable(go, Action::GoHome, "Home", ""));
         out.push(doable(go, Action::Refresh, "Refresh", ""));
         out.push(doable(go, Action::CommandPalette, "Command palette", ""));
+        let mut messages = doable(go, Action::Messages, "Recent messages and errors", "");
+        if self.messages.is_empty() {
+            messages.unavailable = Some("nothing yet".into());
+        }
+        out.push(messages);
         for action in [
             Action::Down,
             Action::Up,
