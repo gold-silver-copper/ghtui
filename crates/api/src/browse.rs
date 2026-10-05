@@ -10,7 +10,8 @@ use crate::model::{Label, NodeId, RepoId, author, count, labels};
 use crate::queries::{
     Actor, AddCommentPayload, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount,
     GitObjectId, IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount,
-    RepositoryName, StarPayload, UnstarPayload, Uri, UserCount, nodes,
+    PullRequestReviewDecision, PullRequestState, RepositoryName, ReviewState, StarPayload,
+    UnstarPayload, Uri, UserCount, nodes,
 };
 use ghtui_schema::schema;
 
@@ -502,12 +503,12 @@ pub struct IssueCard {
 pub struct PrCard {
     pub number: i32,
     pub title: String,
-    pub state: crate::queries::PullRequestState,
+    pub state: PullRequestState,
     pub is_draft: bool,
     pub author: Option<Actor>,
     pub created_at: DateTime,
     pub updated_at: DateTime,
-    pub review_decision: Option<crate::queries::PullRequestReviewDecision>,
+    pub review_decision: Option<PullRequestReviewDecision>,
     pub comments: CommentCount,
     #[arguments(first: 6)]
     pub labels: Option<LabelConnection>,
@@ -671,7 +672,7 @@ pub struct Reviews {
 #[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
 pub struct WireReview {
     pub author: Option<Actor>,
-    pub state: crate::queries::ReviewState,
+    pub state: ReviewState,
     pub body: String,
     pub submitted_at: Option<DateTime>,
 }
@@ -952,21 +953,13 @@ fn issue_state(state: WireIssueState, reason: Option<StateReason>) -> IssueState
     }
 }
 
-fn git_author(a: &Option<GitActor>) -> String {
-    a.as_ref()
-        .and_then(|a| {
-            a.user
-                .as_ref()
-                .map(|u| u.login.clone())
-                .or_else(|| a.name.clone())
-        })
-        .unwrap_or_else(|| "unknown".into())
-}
-
 impl CommitCard {
     fn into_info(self) -> CommitInfo {
         CommitInfo {
-            author: git_author(&self.author),
+            author: self
+                .author
+                .and_then(|a| a.user.map(|u| u.login).or(a.name))
+                .unwrap_or_else(|| "unknown".into()),
             oid: self.oid.0,
             headline: self.message.lines().next().unwrap_or_default().to_owned(),
             date: self.committed_date.0,
@@ -1012,26 +1005,18 @@ pub(crate) fn entries(tree: Tree) -> Vec<TreeEntry> {
         })
         .collect();
     // Directories first, then by name (case-insensitively), like GitHub.
-    out.sort_by(|a, b| {
-        (a.kind != EntryKind::Dir)
-            .cmp(&(b.kind != EntryKind::Dir))
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
+    out.sort_by_cached_key(|e| (e.kind != EntryKind::Dir, e.name.to_lowercase()));
     out
 }
 
 impl RepoFull {
     pub(crate) fn into_overview(self, readme: Option<Readme>) -> Option<RepoOverview> {
-        let (default_branch, last_commit, commits) = match self.default_branch_ref {
-            Some(r) => match r.target {
-                Some(RefTarget::Commit(c)) => (
-                    Some(r.name),
-                    Some(c.commit.into_info()),
-                    count(c.history.total_count),
-                ),
-                _ => (Some(r.name), None, 0),
-            },
-            None => (None, None, 0),
+        let (default_branch, head) = self.default_branch_ref.map(|r| (r.name, r.target)).unzip();
+        let (last_commit, commits) = match head.flatten() {
+            Some(RefTarget::Commit(c)) => {
+                (Some(c.commit.into_info()), count(c.history.total_count))
+            }
+            _ => (None, 0),
         };
         let entries = match self.object {
             Some(GitObject::Tree(t)) => entries(t),
@@ -1087,10 +1072,10 @@ impl BrowseItem {
                 title: p.title,
                 is_pr: true,
                 state: match p.state {
-                    crate::queries::PullRequestState::Open if p.is_draft => IssueState::Draft,
-                    crate::queries::PullRequestState::Open => IssueState::Open,
-                    crate::queries::PullRequestState::Closed => IssueState::Closed,
-                    crate::queries::PullRequestState::Merged => IssueState::Merged,
+                    PullRequestState::Open if p.is_draft => IssueState::Draft,
+                    PullRequestState::Open => IssueState::Open,
+                    PullRequestState::Closed => IssueState::Closed,
+                    PullRequestState::Merged => IssueState::Merged,
                 },
                 author: author(p.author),
                 updated_at: p.updated_at.0,
@@ -1157,15 +1142,15 @@ impl WirePrActivity {
             id: self.id.into(),
             comments: comments(self.comments),
             reviews: nodes(self.reviews.and_then(|r| r.nodes))
-                .filter(|r| r.state != crate::queries::ReviewState::Pending)
+                .filter(|r| r.state != ReviewState::Pending)
                 .map(|r| ReviewSummary {
                     author: author(r.author),
                     state: match r.state {
-                        crate::queries::ReviewState::Approved => "approved",
-                        crate::queries::ReviewState::ChangesRequested => "requested changes",
-                        crate::queries::ReviewState::Commented => "reviewed",
-                        crate::queries::ReviewState::Dismissed => "review dismissed",
-                        crate::queries::ReviewState::Pending => "pending",
+                        ReviewState::Approved => "approved",
+                        ReviewState::ChangesRequested => "requested changes",
+                        ReviewState::Commented => "reviewed",
+                        ReviewState::Dismissed => "review dismissed",
+                        ReviewState::Pending => "pending",
                     }
                     .to_owned(),
                     body: r.body,
