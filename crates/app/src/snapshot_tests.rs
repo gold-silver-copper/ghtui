@@ -3,7 +3,7 @@
 //! show up in review. Rendering also exercises the theme's debug assertion
 //! that every fg/bg pair used is declared (and therefore contrast-tested).
 
-use ghtui_api::browse::SearchKind;
+use ghtui_api::browse::{SearchKind, SearchResults};
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
     ReviewDecision,
@@ -14,7 +14,7 @@ use ghtui_ui::Icons;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use ghtui_ui::pages::PrTab;
+use ghtui_ui::pages::{PrTab, ProfileTab};
 
 use crate::browse::{Data, DataKey, Need, needs};
 use crate::fixtures::{self, fetched, press};
@@ -200,6 +200,78 @@ fn with_repo(mode: Mode, depth: ColorDepth) -> State {
     state
 }
 
+/// A file in the repository.
+fn with_file(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Blob {
+        repo: ghtui(),
+        rev: "main".into(),
+        path: "src/main.rs".into(),
+    };
+    open(&mut state, route, Data::Blob(Box::new(fixtures::blob())));
+    state
+}
+
+/// The repository's open issues.
+fn with_issues(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Issues {
+        repo: ghtui(),
+        query: OPEN.into(),
+    };
+    let results = fixtures::issue_results(Some("c1"));
+    open(&mut state, route, Data::Search(Box::new(results)));
+    state
+}
+
+/// An issue, its repository's header loaded first.
+fn with_issue(mode: Mode) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    fetched(
+        &mut state,
+        DataKey::Repo(ghtui()),
+        Data::Repo(Box::new(fixtures::overview())),
+    );
+    let route = Route::Issue {
+        repo: ghtui(),
+        number: 14,
+    };
+    let issue = Data::Issue(Some(Box::new(fixtures::issue())));
+    open(&mut state, route, issue);
+    state
+}
+
+fn with_profile(mode: Mode, tab: ProfileTab) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    let route = Route::User {
+        login: "octocat".into(),
+        tab,
+    };
+    open(
+        &mut state,
+        route,
+        Data::Profile(Box::new(fixtures::profile())),
+    );
+    state
+}
+
+fn with_search(mode: Mode, kind: SearchKind, query: &str, results: SearchResults) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    let query = query.to_owned();
+    open(
+        &mut state,
+        Route::Search { kind, query },
+        Data::Search(Box::new(results)),
+    );
+    state
+}
+
+/// Repositories matching "terminal file manager".
+fn with_repo_search(mode: Mode) -> State {
+    let results = fixtures::repo_results();
+    with_search(mode, SearchKind::Repos, "terminal file manager", results)
+}
+
 fn render(state: &State) -> String {
     let (w, h) = state.size;
     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
@@ -275,46 +347,17 @@ fn repo_wide_terminal_centers_light() {
 
 #[test]
 fn file_light() {
-    let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
-    let route = Route::Blob {
-        repo: ghtui(),
-        rev: "main".into(),
-        path: "src/main.rs".into(),
-    };
-    open(&mut state, route, Data::Blob(Box::new(fixtures::blob())));
-    insta::assert_snapshot!(render(&state));
+    insta::assert_snapshot!(render(&with_file(Mode::Light)));
 }
 
 #[test]
 fn issues_dark() {
-    let mut state = with_repo(Mode::Dark, ColorDepth::TrueColor);
-    let route = Route::Issues {
-        repo: ghtui(),
-        query: OPEN.into(),
-    };
-    let results = fixtures::issue_results(Some("c1"));
-    open(&mut state, route, Data::Search(Box::new(results)));
-    insta::assert_snapshot!(render(&state));
+    insta::assert_snapshot!(render(&with_issues(Mode::Dark)));
 }
 
 #[test]
 fn issue_light() {
-    let mut state = state(Mode::Light, ColorDepth::TrueColor);
-    fetched(
-        &mut state,
-        DataKey::Repo(ghtui()),
-        Data::Repo(Box::new(fixtures::overview())),
-    );
-    let route = Route::Issue {
-        repo: ghtui(),
-        number: 14,
-    };
-    open(
-        &mut state,
-        route,
-        Data::Issue(Some(Box::new(fixtures::issue()))),
-    );
-    insta::assert_snapshot!(render(&state));
+    insta::assert_snapshot!(render(&with_issue(Mode::Light)));
 }
 
 #[test]
@@ -347,42 +390,18 @@ fn pr_refresh_error_dark() {
 
 #[test]
 fn profile_light() {
-    let mut state = state(Mode::Light, ColorDepth::TrueColor);
-    open(
-        &mut state,
-        Route::user("octocat"),
-        Data::Profile(Box::new(fixtures::profile())),
-    );
-    insta::assert_snapshot!(render(&state));
+    insta::assert_snapshot!(render(&with_profile(Mode::Light, ProfileTab::Overview)));
 }
 
 #[test]
 fn search_dark() {
-    let mut state = state(Mode::Dark, ColorDepth::TrueColor);
-    let route = Route::Search {
-        kind: SearchKind::Repos,
-        query: "terminal file manager".into(),
-    };
-    open(
-        &mut state,
-        route,
-        Data::Search(Box::new(fixtures::repo_results())),
-    );
-    insta::assert_snapshot!(render(&state));
+    insta::assert_snapshot!(render(&with_repo_search(Mode::Dark)));
 }
 
 #[test]
 fn search_users_light() {
-    let mut state = state(Mode::Light, ColorDepth::TrueColor);
-    let route = Route::Search {
-        kind: SearchKind::Users,
-        query: "octocat".into(),
-    };
-    open(
-        &mut state,
-        route,
-        Data::Search(Box::new(fixtures::user_results())),
-    );
+    let results = fixtures::user_results();
+    let state = with_search(Mode::Light, SearchKind::Users, "octocat", results);
     insta::assert_snapshot!(render(&state));
 }
 
@@ -436,17 +455,7 @@ fn list_filter_light() {
 
 #[test]
 fn profile_stars_dark() {
-    let mut state = state(Mode::Dark, ColorDepth::TrueColor);
-    let route = Route::User {
-        login: "octocat".into(),
-        tab: ghtui_ui::pages::ProfileTab::Stars,
-    };
-    open(
-        &mut state,
-        route,
-        Data::Profile(Box::new(fixtures::profile())),
-    );
-    insta::assert_snapshot!(render(&state));
+    insta::assert_snapshot!(render(&with_profile(Mode::Dark, ProfileTab::Stars)));
 }
 
 #[test]
@@ -484,14 +493,7 @@ fn small_terminal_80x24() {
         "small_home",
         small(with_inbox(Mode::Dark, ColorDepth::TrueColor))
     );
-    let mut issues = with_repo(Mode::Dark, ColorDepth::TrueColor);
-    let route = Route::Issues {
-        repo: ghtui(),
-        query: OPEN.into(),
-    };
-    let results = fixtures::issue_results(Some("c1"));
-    open(&mut issues, route, Data::Search(Box::new(results)));
-    insta::assert_snapshot!("small_issues", small(issues));
+    insta::assert_snapshot!("small_issues", small(with_issues(Mode::Dark)));
     insta::assert_snapshot!("small_pr", small(with_pr(Mode::Dark)));
     let mut menu = with_repo(Mode::Dark, ColorDepth::TrueColor);
     crate::nav::open_menu(&mut menu);
@@ -966,8 +968,8 @@ pub(crate) mod diff {
     #[test]
     fn every_screen_survives_every_size() {
         use super::{
-            DataKey, Overlay, Route, SearchKind, fetched, fixtures, ghtui, open, with_inbox,
-            with_pr, with_repo,
+            DataKey, Overlay, ProfileTab, fetched, ghtui, with_file, with_inbox, with_issue,
+            with_issues, with_pr, with_profile, with_repo, with_repo_search,
         };
         use crate::browse::Data;
         type Build = Box<dyn Fn() -> State>;
@@ -980,48 +982,9 @@ pub(crate) mod diff {
             ("home", Box::new(move || with_inbox(Mode::Dark, tc))),
             ("home loading", Box::new(move || state(Mode::Dark, tc))),
             ("repo", Box::new(move || with_repo(Mode::Light, tc))),
-            (
-                "file",
-                Box::new(move || {
-                    let mut s = with_repo(Mode::Light, tc);
-                    let route = Route::Blob {
-                        repo: ghtui(),
-                        rev: "main".into(),
-                        path: "src/main.rs".into(),
-                    };
-                    open(&mut s, route, Data::Blob(Box::new(fixtures::blob())));
-                    s
-                }),
-            ),
-            (
-                "issues",
-                Box::new(move || {
-                    let mut s = with_repo(Mode::Dark, tc);
-                    let route = Route::Issues {
-                        repo: ghtui(),
-                        query: crate::route::OPEN.into(),
-                    };
-                    let results = fixtures::issue_results(Some("c1"));
-                    open(&mut s, route, Data::Search(Box::new(results)));
-                    s
-                }),
-            ),
-            (
-                "issue",
-                Box::new(move || {
-                    let mut s = state(Mode::Light, tc);
-                    let route = Route::Issue {
-                        repo: ghtui(),
-                        number: 14,
-                    };
-                    open(
-                        &mut s,
-                        route,
-                        Data::Issue(Some(Box::new(fixtures::issue()))),
-                    );
-                    s
-                }),
-            ),
+            ("file", Box::new(|| with_file(Mode::Light))),
+            ("issues", Box::new(|| with_issues(Mode::Dark))),
+            ("issue", Box::new(|| with_issue(Mode::Light))),
             ("pr", Box::new(|| with_pr(Mode::Dark))),
             (
                 "pr commits",
@@ -1029,29 +992,9 @@ pub(crate) mod diff {
             ),
             (
                 "profile",
-                Box::new(move || {
-                    let mut s = state(Mode::Light, tc);
-                    let profile = Data::Profile(Box::new(fixtures::profile()));
-                    open(&mut s, Route::user("octocat"), profile);
-                    s
-                }),
+                Box::new(|| with_profile(Mode::Light, ProfileTab::Overview)),
             ),
-            (
-                "search",
-                Box::new(move || {
-                    let mut s = state(Mode::Dark, tc);
-                    let route = Route::Search {
-                        kind: SearchKind::Repos,
-                        query: "terminal".into(),
-                    };
-                    open(
-                        &mut s,
-                        route,
-                        Data::Search(Box::new(fixtures::repo_results())),
-                    );
-                    s
-                }),
-            ),
+            ("search", Box::new(|| with_repo_search(Mode::Dark))),
             (
                 "hints",
                 Box::new(move || pressed(with_repo(Mode::Dark, tc), "l")),
@@ -1331,57 +1274,19 @@ fn screenshots() {
             &format!("repo_narrow_{tag}"),
             &sized(with_repo(mode, ColorDepth::TrueColor), 90, 36),
         );
-        let mut issues = sized(with_repo(mode, ColorDepth::TrueColor), 130, 36);
-        let route = Route::Issues {
-            repo: ghtui(),
-            query: OPEN.into(),
-        };
-        let results = fixtures::issue_results(Some("c"));
-        open(&mut issues, route, Data::Search(Box::new(results)));
-        shot(&format!("issues_{tag}"), &issues);
-        let mut issue = sized(state(mode, ColorDepth::TrueColor), 130, 40);
-        let route = Route::Issue {
-            repo: ghtui(),
-            number: 14,
-        };
-        open(
-            &mut issue,
-            route,
-            Data::Issue(Some(Box::new(fixtures::issue()))),
-        );
-        fetched(
-            &mut issue,
-            DataKey::Repo(ghtui()),
-            Data::Repo(Box::new(fixtures::overview())),
-        );
-        shot(&format!("issue_{tag}"), &issue);
+        shot(&format!("issues_{tag}"), &sized(with_issues(mode), 130, 36));
+        shot(&format!("issue_{tag}"), &sized(with_issue(mode), 130, 40));
         shot(&format!("pr_{tag}"), &sized(with_pr(mode), 130, 44));
         let mut commits = sized(with_pr(mode), 120, 30);
         press(&mut commits, "2");
         shot(&format!("pr_commits_{tag}"), &commits);
-        let mut file = sized(with_repo(mode, ColorDepth::TrueColor), 120, 24);
-        let route = Route::Blob {
-            repo: ghtui(),
-            rev: "main".into(),
-            path: "src/main.rs".into(),
-        };
-        open(&mut file, route, Data::Blob(Box::new(fixtures::blob())));
-        shot(&format!("file_{tag}"), &file);
-        let mut profile = sized(state(mode, ColorDepth::TrueColor), 120, 36);
-        let data = Data::Profile(Box::new(fixtures::profile()));
-        open(&mut profile, Route::user("octocat"), data);
-        shot(&format!("profile_{tag}"), &profile);
-        let mut search = sized(state(mode, ColorDepth::TrueColor), 120, 30);
-        let route = Route::Search {
-            kind: SearchKind::Repos,
-            query: "terminal file manager".into(),
-        };
-        open(
-            &mut search,
-            route,
-            Data::Search(Box::new(fixtures::repo_results())),
+        shot(&format!("file_{tag}"), &sized(with_file(mode), 120, 24));
+        let profile = with_profile(mode, ProfileTab::Overview);
+        shot(&format!("profile_{tag}"), &sized(profile, 120, 36));
+        shot(
+            &format!("search_{tag}"),
+            &sized(with_repo_search(mode), 120, 30),
         );
-        shot(&format!("search_{tag}"), &search);
         let mut s = sized(with_repo(mode, ColorDepth::TrueColor), 120, 36);
         s.visits = vec![crate::nav::Visit {
             url: "https://github.com/octocat".into(),
