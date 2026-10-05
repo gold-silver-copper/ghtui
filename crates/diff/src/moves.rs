@@ -117,15 +117,8 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::file::{Content, FileDiff};
+    use crate::file::tests::text_diff as text;
     use crate::hunks::Whitespace;
-
-    fn text(path: &str, old: &str, new: &str) -> Box<TextDiff> {
-        match FileDiff::compute(path, Some(old.as_bytes()), Some(new.as_bytes())).content {
-            Content::Text(t) => t,
-            other => panic!("{other:?}"),
-        }
-    }
 
     const BLOCK: &str = "fn helper(x: u32) -> u32 {\n    let y = x * 2;\n    y + 1\n}\n";
 

@@ -193,8 +193,16 @@ impl FileDiff {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// The text diff of `old` to `new`.
+    pub(crate) fn text_diff(path: &str, old: &str, new: &str) -> Box<TextDiff> {
+        match FileDiff::compute(path, Some(old.as_bytes()), Some(new.as_bytes())).content {
+            Content::Text(text) => text,
+            other => panic!("{other:?}"),
+        }
+    }
 
     #[test]
     fn text_diff_counts_and_highlights() {
