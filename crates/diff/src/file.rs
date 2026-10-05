@@ -152,22 +152,19 @@ impl FileDiff {
         let new = Text::new(new.unwrap_or_default());
         let lines = align(&old, &new, Algorithm::Histogram, Whitespace::Exact);
         let (additions, deletions) = counts(&lines);
-        let lines_ignoring_whitespace = if additions + deletions == 0 {
-            lines.clone()
-        } else {
+        let changed = additions + deletions > 0;
+        let lines_ignoring_whitespace = if changed {
             align(&old, &new, Algorithm::Histogram, Whitespace::Ignore)
-        };
-        let local_ranges = if additions + deletions == 0 || !rich {
-            Vec::new()
         } else {
-            Commentable::local(&old, &new).ranges
+            lines.clone()
         };
-        let lang = Language::from_path(path);
         // Only highlight files with changes to show.
-        let (old_spans, new_spans) = if additions + deletions == 0 || !rich {
-            (Vec::new(), Vec::new())
+        let (local_ranges, old_spans, new_spans) = if changed && rich {
+            let lang = Language::from_path(path);
+            let ranges = Commentable::local(&old, &new).ranges;
+            (ranges, highlight(lang, &old), highlight(lang, &new))
         } else {
-            (highlight(lang, &old), highlight(lang, &new))
+            Default::default()
         };
         let mut text = TextDiff {
             old,
