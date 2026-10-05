@@ -420,11 +420,7 @@ pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview
             right.push(button(page, format!("{text} {}", compact(n)), target));
         }
     }
-    page.push(PageLine {
-        segs,
-        right,
-        ..PageLine::default()
-    });
+    page.add(Frame::None, 0, segs, right);
     if let Some(parent) = overview.and_then(|o| o.parent.as_deref()) {
         let link = RepoId::parse(parent)
             .map(|r| url::repo(&r))
@@ -534,11 +530,7 @@ fn code_toolbar(
             ),
         );
     }
-    page.push(PageLine {
-        segs,
-        right,
-        ..PageLine::default()
-    });
+    page.add(Frame::None, 0, segs, right);
 }
 
 /// `repo / dir / sub /` with each part a link.
@@ -1117,25 +1109,19 @@ impl Conversation<'_> {
     ) {
         let who = link_seg(page, author.to_owned(), url::user(author), Role::Strong);
         let when = time::ago_iso(when, self.now);
-        page.push(PageLine {
-            segs: vec![
-                Seg::new(format!("{icon}  "), role),
-                who,
-                Seg::new(format!(" {what} {when}"), Role::Meta),
-            ],
-            indent: 2,
-            ..PageLine::default()
-        });
+        let what = Seg::new(format!(" {what} {when}"), Role::Meta);
+        page.add(
+            Frame::None,
+            2,
+            vec![Seg::new(format!("{icon}  "), role), who, what],
+            Vec::new(),
+        );
     }
 }
 
 /// The line between timeline entries.
 fn connector(page: &mut Page) {
-    page.push(PageLine {
-        segs: vec![Seg::new("│", Role::Meta)],
-        indent: 3,
-        ..PageLine::default()
-    });
+    page.add(Frame::None, 3, vec![Seg::new("│", Role::Meta)], Vec::new());
 }
 
 /// The comment box at the end of a conversation.
