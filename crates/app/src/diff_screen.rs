@@ -254,21 +254,19 @@ impl DiffState {
 
     fn apply_viewed(&mut self) {
         let Some(viewed) = &self.viewed else { return };
-        let states: &HashMap<String, ViewedState> = &viewed.states;
         let updates: Vec<(usize, Viewed)> = self
             .doc
             .files()
             .iter()
             .enumerate()
-            .map(|(i, f)| {
-                let state = match states.get(f.meta.path()) {
+            .filter_map(|(i, f)| {
+                let state = match viewed.states.get(f.meta.path()) {
                     Some(ViewedState::Viewed) => Viewed::Viewed,
                     Some(ViewedState::Dismissed) => Viewed::Dismissed,
                     _ => Viewed::Unviewed,
                 };
-                (i, state)
+                (f.viewed != state).then_some((i, state))
             })
-            .filter(|(i, state)| self.doc.files().get(*i).is_some_and(|f| f.viewed != *state))
             .collect();
         for (i, state) in updates {
             self.doc.set_viewed(i, state);
