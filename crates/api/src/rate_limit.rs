@@ -88,24 +88,18 @@ mod tests {
     #[test]
     fn tracks_buckets_by_resource() {
         let mut limits = RateLimits::default();
-        limits.update(&headers(&[
-            ("x-ratelimit-resource", "graphql"),
-            ("x-ratelimit-remaining", "4990"),
-            ("x-ratelimit-limit", "5000"),
-            ("x-ratelimit-reset", "100"),
-        ]));
-        limits.update(&headers(&[
-            ("x-ratelimit-resource", "core"),
-            ("x-ratelimit-remaining", "10"),
-            ("x-ratelimit-limit", "5000"),
-            ("x-ratelimit-reset", "200"),
-        ]));
-        limits.update(&headers(&[
-            ("x-ratelimit-resource", "search"),
-            ("x-ratelimit-remaining", "1"),
-            ("x-ratelimit-limit", "30"),
-            ("x-ratelimit-reset", "300"),
-        ]));
+        for [resource, remaining, limit, reset] in [
+            ["graphql", "4990", "5000", "100"],
+            ["core", "10", "5000", "200"],
+            ["search", "1", "30", "300"],
+        ] {
+            limits.update(&headers(&[
+                ("x-ratelimit-resource", resource),
+                ("x-ratelimit-remaining", remaining),
+                ("x-ratelimit-limit", limit),
+                ("x-ratelimit-reset", reset),
+            ]));
+        }
         assert_eq!(limits.graphql.unwrap().remaining, 4990);
         assert_eq!(limits.rest.unwrap().remaining, 10);
         assert_eq!(limits.tightest().unwrap().0, "rest");
