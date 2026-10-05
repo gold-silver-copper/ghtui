@@ -4,11 +4,17 @@
 //! [`MAX_HIGHLIGHT_BYTES`] and grammar errors all fall back to plain text.
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::time::Duration;
 
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
 use crate::sat_u32;
 use crate::text::Text;
+
+/// How long highlighting a file may take.
+const HIGHLIGHT_BUDGET: Duration = Duration::from_secs(1);
 
 /// Larger files render without highlighting so they never stall a diff.
 pub const MAX_HIGHLIGHT_BYTES: usize = 1 << 20;
@@ -179,9 +185,28 @@ pub fn highlight(lang: Option<Language>, text: &Text) -> Vec<Vec<Span>> {
     if text.source.len() > MAX_HIGHLIGHT_BYTES {
         return Vec::new();
     }
+    // tree-sitter's error recovery can take forever on garbage input (any
+    // file can be in a diff): past the budget, the file shows plain.
+    let cancel = AtomicUsize::new(0);
+    let (done, finished) = mpsc::channel::<()>();
+    std::thread::scope(|scope| {
+        let cancel = &cancel;
+        scope.spawn(move || {
+            if finished.recv_timeout(HIGHLIGHT_BUDGET) == Err(RecvTimeoutError::Timeout) {
+                tracing::warn!("highlighting took too long; showing plain text");
+                cancel.store(1, Ordering::Relaxed);
+            }
+        });
+        let spans = spans(config, text, cancel);
+        drop(done);
+        spans
+    })
+}
+
+fn spans(config: &HighlightConfiguration, text: &Text, cancel: &AtomicUsize) -> Vec<Vec<Span>> {
     let mut highlighter = Highlighter::new();
     let source = text.source.as_bytes();
-    let Ok(events) = highlighter.highlight(config, source, None, None, |_| None) else {
+    let Ok(events) = highlighter.highlight(config, source, None, Some(cancel), |_| None) else {
         return Vec::new();
     };
 
