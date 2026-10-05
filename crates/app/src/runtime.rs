@@ -267,7 +267,7 @@ impl Effects {
                     let _ = tx.send(Msg::Diff(pr, DiffMsg::CommitsListed(result)));
                 });
             }
-            Git::MapOutdated { pr, head, items } => {
+            Git::MapOutdated { pr, head, threads } => {
                 let Some(git) = self.job_git(&pr) else {
                     return;
                 };
@@ -275,11 +275,12 @@ impl Effects {
                 spawn_guarded(&self.tx, replies, async move {
                     let (repo, reader) = git;
                     let mut mapped = Vec::new();
-                    for (thread, path, commit, line) in items {
-                        let to =
-                            diff_job::map_outdated(&repo, &reader, &head, &path, &commit, line)
-                                .await;
-                        mapped.push((thread, to));
+                    for t in threads {
+                        let to = diff_job::map_outdated(
+                            &repo, &reader, &head, &t.path, &t.commit, t.line,
+                        )
+                        .await;
+                        mapped.push((t.thread, to));
                     }
                     let _ = tx.send(Msg::Diff(pr, DiffMsg::OutdatedMapped(mapped)));
                 });
@@ -545,9 +546,9 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         ),
         Cmd::Api(Api::FetchThreads(pr)) => Msg::Diff(pr.clone(), DiffMsg::ThreadsLoaded(api())),
         Cmd::Api(Api::FetchPatches(pr)) => Msg::Diff(pr.clone(), DiffMsg::PatchesLoaded(api())),
-        Cmd::Git(Git::MapOutdated { pr, items, .. }) => Msg::Diff(
+        Cmd::Git(Git::MapOutdated { pr, threads, .. }) => Msg::Diff(
             pr.clone(),
-            DiffMsg::OutdatedMapped(items.iter().map(|(t, ..)| (t.clone(), None)).collect()),
+            DiffMsg::OutdatedMapped(threads.iter().map(|t| (t.thread.clone(), None)).collect()),
         ),
         Cmd::Api(Api::Reply { pr, .. }) => Msg::Diff(pr.clone(), DiffMsg::Replied(api())),
         Cmd::Api(Api::SetResolved {

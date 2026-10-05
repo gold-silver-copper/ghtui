@@ -16,8 +16,8 @@ use serde::de::DeserializeOwned;
 use crate::auth::Token;
 use crate::browse;
 use crate::model::{
-    Inbox, NewThread, PatchFile, PrDetail, PrRef, PrSummary, RepoId, ReviewEvent, ReviewThread,
-    ViewedFiles,
+    Inbox, NewThread, NodeId, PatchFile, PrDetail, PrRef, PrSummary, RepoId, ReviewEvent,
+    ReviewThread, ViewedFiles,
 };
 use crate::queries::{self, nodes};
 use crate::rate_limit::{RateLimits, retry_after};
@@ -424,7 +424,7 @@ impl GitHub {
     pub async fn viewed_files(&self, pr: &PrRef) -> Result<ViewedFiles, ApiError> {
         let mut after = None;
         let mut out = ViewedFiles {
-            pull_request_id: String::new(),
+            pull_request_id: NodeId::default(),
             states: std::collections::HashMap::new(),
         };
         loop {
@@ -434,7 +434,7 @@ impl GitHub {
                 .repository
                 .and_then(|r| r.pull_request)
                 .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
-            out.pull_request_id = files.id.into_inner();
+            out.pull_request_id = files.id.into();
             let Some(page) = files.files else { break };
             for file in nodes(page.nodes) {
                 out.states.insert(file.path, file.viewer_viewed_state);
@@ -450,12 +450,12 @@ impl GitHub {
     /// Marks (or unmarks) a file as viewed on GitHub.
     pub async fn set_viewed(
         &self,
-        pull_request_id: &str,
+        pull_request_id: &NodeId,
         path: &str,
         viewed: bool,
     ) -> Result<(), ApiError> {
         let vars = queries::ViewedVariables {
-            pull_request_id: cynic::Id::new(pull_request_id),
+            pull_request_id: pull_request_id.gql(),
             path: path.to_owned(),
         };
         if viewed {
@@ -508,7 +508,7 @@ impl GitHub {
     }
 
     /// The PR's node ID and the viewer's pending review on it, if any.
-    pub async fn pending_review(&self, pr: &PrRef) -> Result<(String, Option<String>), ApiError> {
+    pub async fn pending_review(&self, pr: &PrRef) -> Result<(NodeId, Option<NodeId>), ApiError> {
         let op = queries::PendingReviewQuery::build(number_vars(pr)?);
         let pr_node = self
             .graphql(op)
@@ -518,8 +518,8 @@ impl GitHub {
             .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
         let review = nodes(pr_node.reviews.and_then(|r| r.nodes))
             .next()
-            .map(|r| r.id.into_inner());
-        Ok((pr_node.id.into_inner(), review))
+            .map(|r| NodeId::from(r.id));
+        Ok((pr_node.id.into(), review))
     }
 
     /// The head commit of `login`'s latest submitted review, if any.
@@ -554,18 +554,18 @@ impl GitHub {
     /// Starts a pending review on `commit`.
     pub async fn start_review(
         &self,
-        pull_request_id: &str,
+        pull_request_id: &NodeId,
         commit: &str,
-    ) -> Result<String, ApiError> {
+    ) -> Result<NodeId, ApiError> {
         let op = queries::StartReview::build(queries::StartReviewVariables {
-            pull_request_id: cynic::Id::new(pull_request_id),
+            pull_request_id: pull_request_id.gql(),
             commit: queries::GitObjectId(commit.to_owned()),
         });
         self.mutate(op)
             .await?
             .add_pull_request_review
             .and_then(|p| p.pull_request_review)
-            .map(|r| r.id.into_inner())
+            .map(|r| NodeId::from(r.id))
             .ok_or_else(|| ApiError::Decode("no review in response".into()))
     }
 
@@ -573,12 +573,12 @@ impl GitHub {
     /// the anchor isn't part of GitHub's diff.
     pub async fn add_review_thread(
         &self,
-        review_id: &str,
+        review_id: &NodeId,
         thread: &NewThread,
-    ) -> Result<String, ApiError> {
+    ) -> Result<NodeId, ApiError> {
         let line = |n: Option<u32>| n.and_then(|n| i32::try_from(n).ok());
         let input = queries::AddThreadInput {
-            pull_request_review_id: Some(cynic::Id::new(review_id)),
+            pull_request_review_id: Some(review_id.gql()),
             path: Some(thread.path.clone()),
             body: thread.body.clone(),
             line: line(thread.line),
@@ -597,13 +597,13 @@ impl GitHub {
         .await?
         .add_pull_request_review_thread
         .and_then(|p| p.thread)
-        .map(|t| t.id.into_inner())
+        .map(|t| NodeId::from(t.id))
         .ok_or_else(|| ApiError::Decode("no thread in response".into()))
     }
 
     pub async fn submit_review(
         &self,
-        review_id: &str,
+        review_id: &NodeId,
         event: ReviewEvent,
         body: &str,
     ) -> Result<(), ApiError> {
@@ -613,7 +613,7 @@ impl GitHub {
             ReviewEvent::RequestChanges => queries::ReviewEvent::RequestChanges,
         };
         let op = queries::SubmitReview::build(queries::SubmitReviewVariables {
-            review_id: cynic::Id::new(review_id),
+            review_id: review_id.gql(),
             event,
             body: (!body.trim().is_empty()).then(|| body.to_owned()),
         });
@@ -621,17 +621,17 @@ impl GitHub {
     }
 
     /// Replies to a thread right away (outside any pending review).
-    pub async fn reply(&self, thread_id: &str, body: &str) -> Result<(), ApiError> {
+    pub async fn reply(&self, thread_id: &NodeId, body: &str) -> Result<(), ApiError> {
         let op = queries::Reply::build(queries::ReplyVariables {
-            thread_id: cynic::Id::new(thread_id),
+            thread_id: thread_id.gql(),
             body: body.to_owned(),
         });
         self.mutate(op).await.map(drop)
     }
 
-    pub async fn set_resolved(&self, thread_id: &str, resolved: bool) -> Result<(), ApiError> {
+    pub async fn set_resolved(&self, thread_id: &NodeId, resolved: bool) -> Result<(), ApiError> {
         let vars = queries::ThreadIdVariables {
-            thread_id: cynic::Id::new(thread_id),
+            thread_id: thread_id.gql(),
         };
         if resolved {
             self.mutate(queries::Resolve::build(vars)).await.map(drop)
@@ -1007,17 +1007,17 @@ impl GitHub {
     }
 
     /// Comments on an issue or pull request (by node ID).
-    pub async fn add_comment(&self, subject_id: &str, body: &str) -> Result<(), ApiError> {
+    pub async fn add_comment(&self, subject_id: &NodeId, body: &str) -> Result<(), ApiError> {
         let op = browse::AddComment::build(browse::AddCommentVariables {
-            subject: cynic::Id::new(subject_id),
+            subject: subject_id.gql(),
             body: body.to_owned(),
         });
         self.mutate(op).await.map(drop)
     }
 
-    pub async fn set_starred(&self, repo_id: &str, starred: bool) -> Result<(), ApiError> {
+    pub async fn set_starred(&self, repo_id: &NodeId, starred: bool) -> Result<(), ApiError> {
         let vars = browse::StarVariables {
-            starrable: cynic::Id::new(repo_id),
+            starrable: repo_id.gql(),
         };
         if starred {
             self.mutate(browse::AddStar::build(vars)).await.map(drop)

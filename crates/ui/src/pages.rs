@@ -1782,7 +1782,7 @@ mod tests {
             commits: 10,
             parent: None,
             starred: false,
-            id: "R_1".into(),
+            id: ghtui_api::model::NodeId::new("R_1"),
             has_issues: true,
             entries: vec![
                 TreeEntry {

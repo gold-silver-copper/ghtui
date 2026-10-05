@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use ghtui_api::model::{PatchFile, PrRef, ReviewThread, ViewedFiles, ViewedState};
+use ghtui_api::model::{NodeId, PatchFile, PrRef, ReviewThread, ViewedFiles, ViewedState};
 use ghtui_diff::anchor::Commentable;
 use ghtui_diff::{FileDiff, Whitespace};
 use ghtui_git::repo::PrRefs;
@@ -106,7 +106,7 @@ pub struct DiffState {
     /// Review threads from GitHub.
     pub threads: Vec<ReviewThread>,
     /// Outdated threads mapped onto the current diff (`None`: can't be).
-    pub mapped: HashMap<String, Option<u32>>,
+    pub mapped: HashMap<NodeId, Option<u32>>,
     /// Outdated-thread mapping was requested.
     pub mapping_requested: bool,
     /// Move detection was requested (once every file is diffed).

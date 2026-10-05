@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Label, RepoId, author, count, labels};
+use crate::model::{Label, NodeId, RepoId, author, count, labels};
 use crate::queries::{
     Actor, AddCommentPayload, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount,
     GitObjectId, IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount,
@@ -77,7 +77,7 @@ pub struct RepoOverview {
     pub parent: Option<String>,
     pub starred: bool,
     /// Node ID, for starring.
-    pub id: String,
+    pub id: NodeId,
     pub has_issues: bool,
     /// Root directory at the default branch (empty for empty repos).
     pub entries: Vec<TreeEntry>,
@@ -186,7 +186,7 @@ pub struct IssueDetail {
     pub assignees: Vec<String>,
     pub comments: Vec<Comment>,
     /// Node ID, for commenting.
-    pub id: String,
+    pub id: NodeId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,7 +203,7 @@ pub struct ReviewSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrActivity {
     /// Node ID, for commenting.
-    pub id: String,
+    pub id: NodeId,
     pub comments: Vec<Comment>,
     pub reviews: Vec<ReviewSummary>,
     pub commits: Vec<CommitInfo>,
@@ -1056,7 +1056,7 @@ impl RepoFull {
             commits,
             parent: self.parent.map(|p| p.name_with_owner),
             starred: self.viewer_has_starred,
-            id: self.id.into_inner(),
+            id: self.id.into(),
             has_issues: self.has_issues_enabled,
             entries,
             readme,
@@ -1136,7 +1136,7 @@ impl IssueFull {
             labels: labels(self.labels),
             assignees: nodes(self.assignees.nodes).map(|u| u.login).collect(),
             comments: comments(self.comments),
-            id: self.id.into_inner(),
+            id: self.id.into(),
         })
     }
 }
@@ -1154,7 +1154,7 @@ fn comments(c: IssueComments) -> Vec<Comment> {
 impl WirePrActivity {
     pub(crate) fn into_activity(self) -> PrActivity {
         PrActivity {
-            id: self.id.into_inner(),
+            id: self.id.into(),
             comments: comments(self.comments),
             reviews: nodes(self.reviews.and_then(|r| r.nodes))
                 .filter(|r| r.state != crate::queries::ReviewState::Pending)

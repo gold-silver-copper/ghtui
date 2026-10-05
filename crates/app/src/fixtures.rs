@@ -6,7 +6,7 @@ use ghtui_api::browse::{
     Profile, Readme, RepoOverview, RepoSummary, Results, ReviewSummary, SearchResults, TreeEntry,
     UserSummary,
 };
-use ghtui_api::model::{Label, RepoId};
+use ghtui_api::model::{Label, NodeId, RepoId};
 
 use crate::state::{Cmd, Msg, State, update};
 
@@ -70,7 +70,7 @@ pub fn overview() -> RepoOverview {
         commits: 412,
         parent: None,
         starred: false,
-        id: "R_ghtui".into(),
+        id: NodeId::new("R_ghtui"),
         has_issues: true,
         entries: vec![
             entry(".github", EntryKind::Dir, None),
@@ -192,13 +192,13 @@ pub fn issue() -> IssueDetail {
             body: "Agreed. 120 columns, centered?".into(),
             created_at: "2026-10-02T12:00:00Z".into(),
         }],
-        id: "I_14".into(),
+        id: NodeId::new("I_14"),
     }
 }
 
 pub fn activity() -> PrActivity {
     PrActivity {
-        id: "PR_12".into(),
+        id: NodeId::new("PR_12"),
         comments: vec![Comment {
             author: "hubot".into(),
             body: "Does this cover the 256-color fallback?".into(),

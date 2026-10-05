@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ghtui_api::model::PrRef;
 use ghtui_api::model::{NewThread, ReviewEvent, ReviewThread, Side as ApiSide};
+use ghtui_api::model::{NodeId, PrRef};
 use ghtui_diff::anchor::{AnchorError, LinePos, Side};
 use ghtui_store::{DraftComment, DraftSide};
 use ghtui_theme::{Bg, Theme};
@@ -18,7 +18,7 @@ use ratatui_textarea::TextArea;
 use crate::diff_screen::{self, DiffScreen};
 use crate::keymap::Action;
 use crate::picker::{self, PickItem};
-use crate::state::{Api, Cmd, Git, Overlay, Screen, State};
+use crate::state::{Api, Cmd, Git, OutdatedThread, Overlay, Screen, State};
 
 /// What a comment being written will be attached to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,13 +35,13 @@ pub enum ComposeTarget {
         reason: Option<String>,
     },
     /// A reply, posted right away.
-    Reply { thread_id: String },
+    Reply { thread_id: NodeId },
     /// Editing an existing draft.
     Draft { id: u64 },
     /// A comment on an issue or pull request's conversation, posted right
     /// away; `refresh` is the page data to reload after.
     Conversation {
-        subject_id: String,
+        subject_id: NodeId,
         name: String,
         refresh: crate::browse::DataKey,
     },
@@ -282,7 +282,7 @@ pub fn new_thread(draft: &DraftComment) -> NewThread {
 /// file header.
 pub fn annotations(
     threads: &[ReviewThread],
-    mapped: &HashMap<String, Option<u32>>,
+    mapped: &HashMap<NodeId, Option<u32>>,
     drafts: &[DraftComment],
 ) -> Vec<Annotation> {
     let mut out: Vec<Annotation> = threads
@@ -351,14 +351,18 @@ pub fn annotations(
     out
 }
 
-/// Outdated right-side threads worth mapping: `(thread, path, commit, line)`.
-pub fn outdated_to_map(threads: &[ReviewThread]) -> Vec<(String, String, String, u32)> {
+/// Outdated right-side threads worth mapping onto the current diff.
+pub fn outdated_to_map(threads: &[ReviewThread]) -> Vec<OutdatedThread> {
     threads
         .iter()
         .filter(|t| t.outdated && !t.file_level && t.side == ApiSide::Right)
         .filter_map(|t| {
-            let commit = t.comments.first()?.original_commit.clone()?;
-            Some((t.id.clone(), t.path.clone(), commit, t.original_line?))
+            Some(OutdatedThread {
+                thread: t.id.clone(),
+                path: t.path.clone(),
+                commit: t.comments.first()?.original_commit.clone()?,
+                line: t.original_line?,
+            })
         })
         .collect()
 }
@@ -984,7 +988,7 @@ mod tests {
 
     fn thread(id: &str, outdated: bool, line: Option<u32>) -> ReviewThread {
         ReviewThread {
-            id: id.into(),
+            id: NodeId::new(id),
             path: "a.rs".into(),
             side: ApiSide::Right,
             start_side: None,
@@ -999,7 +1003,7 @@ mod tests {
             can_resolve: true,
             can_unresolve: false,
             comments: vec![ReviewComment {
-                id: "c".into(),
+                id: NodeId::new("c"),
                 author: "alice".into(),
                 body: "hm".into(),
                 created_at: "2026-10-01T00:00:00Z".into(),
@@ -1017,7 +1021,10 @@ mod tests {
             thread("mapped", true, None),
             thread("lost", true, None),
         ];
-        let mapped = HashMap::from([("mapped".to_owned(), Some(12)), ("lost".to_owned(), None)]);
+        let mapped = HashMap::from([
+            (NodeId::new("mapped"), Some(12)),
+            (NodeId::new("lost"), None),
+        ]);
         let anns = annotations(&threads, &mapped, &[]);
         assert_eq!((anns[0].line, anns[0].outdated), (Some(3), false));
         assert_eq!(
@@ -1067,7 +1074,7 @@ mod tests {
         assert!(
             draft(
                 &ComposeTarget::Reply {
-                    thread_id: "t".into()
+                    thread_id: NodeId::new("t")
                 },
                 "x",
                 4,

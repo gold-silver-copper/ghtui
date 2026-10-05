@@ -743,7 +743,7 @@ pub(crate) mod diff {
     }
 
     fn with_threads(mode: Mode) -> State {
-        use ghtui_api::model::{ReviewComment, ReviewThread, Side};
+        use ghtui_api::model::{NodeId, ReviewComment, ReviewThread, Side};
         let mut s = screen_state(
             mode,
             ColorDepth::TrueColor,
@@ -751,7 +751,7 @@ pub(crate) mod diff {
             Pane::Diff,
         );
         let comment = |id: &str, author: &str, body: &str, pending: bool| ReviewComment {
-            id: id.into(),
+            id: NodeId::new(id),
             author: author.into(),
             body: body.into(),
             created_at: "2026-10-03T08:00:00Z".into(),
@@ -761,7 +761,7 @@ pub(crate) mod diff {
         };
         let thread = |id: &str, line: Option<u32>, resolved: bool, file_level: bool, comments| {
             ReviewThread {
-                id: id.into(),
+                id: NodeId::new(id),
                 path: "src/point.rs".into(),
                 side: Side::Right,
                 start_side: None,

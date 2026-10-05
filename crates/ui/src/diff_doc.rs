@@ -1640,7 +1640,7 @@ mod tests {
 
         fn ann(key: &str, side: Side, line: Option<u32>) -> Annotation {
             Annotation {
-                key: AnnotationKey::Thread(key.into()),
+                key: AnnotationKey::Thread(ghtui_api::model::NodeId::new(key)),
                 path: "a.txt".into(),
                 side,
                 line,

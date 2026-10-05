@@ -10,7 +10,7 @@ use ghtui_diff::anchor::Side;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AnnotationKey {
-    Thread(String),
+    Thread(ghtui_api::model::NodeId),
     Draft(u64),
 }
 

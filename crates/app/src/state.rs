@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ghtui_api::ApiError;
-use ghtui_api::model::{Inbox, PrDetail, PrRef, RepoId, ViewedFiles};
+use ghtui_api::model::{Inbox, NodeId, PrDetail, PrRef, RepoId, ViewedFiles};
 use ghtui_api::rate_limit::RateLimits;
 use ghtui_diff::FileDiff;
 use ghtui_store::ReviewState;
@@ -89,10 +89,10 @@ pub enum DiffMsg {
     ReviewLoaded(Result<ReviewState, String>),
     ThreadsLoaded(Result<Vec<ReviewThread>, ApiError>),
     PatchesLoaded(Result<Vec<PatchFile>, ApiError>),
-    OutdatedMapped(Vec<(String, Option<u32>)>),
+    OutdatedMapped(Vec<(NodeId, Option<u32>)>),
     Replied(Result<(), ApiError>),
     ResolvedSet {
-        thread_id: String,
+        thread_id: NodeId,
         resolved: bool,
         result: Result<(), ApiError>,
     },
@@ -142,13 +142,13 @@ pub enum Api {
     },
     /// Comment on an issue or pull request, then refresh `refresh`.
     AddComment {
-        subject_id: String,
+        subject_id: NodeId,
         body: String,
         refresh: DataKey,
     },
     SetStarred {
         repo: RepoId,
-        id: String,
+        id: NodeId,
         starred: bool,
     },
     /// Search repositories for the search box's suggestions.
@@ -157,7 +157,7 @@ pub enum Api {
     FetchViewed(PrRef),
     SetViewed {
         pr: PrRef,
-        pull_request_id: String,
+        pull_request_id: NodeId,
         path: String,
         file: usize,
         viewed: bool,
@@ -167,12 +167,12 @@ pub enum Api {
     FetchPatches(PrRef),
     Reply {
         pr: PrRef,
-        thread_id: String,
+        thread_id: NodeId,
         body: String,
     },
     SetResolved {
         pr: PrRef,
-        thread_id: String,
+        thread_id: NodeId,
         resolved: bool,
     },
     SubmitReview {
@@ -186,6 +186,15 @@ pub enum Api {
         pr: PrRef,
         login: String,
     },
+}
+
+/// An outdated thread to place on the current diff: where it was.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutdatedThread {
+    pub thread: NodeId,
+    pub path: String,
+    pub commit: String,
+    pub line: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,8 +214,7 @@ pub enum Git {
     MapOutdated {
         pr: PrRef,
         head: String,
-        /// `(thread, path, original commit, original line)`.
-        items: Vec<(String, String, String, u32)>,
+        threads: Vec<OutdatedThread>,
     },
     /// Block hashes of the diff at `old_head`, for "since my last review".
     SinceReview {
@@ -1037,15 +1045,15 @@ impl State {
         if diff.mapping_requested {
             return Vec::new();
         }
-        let items = review::outdated_to_map(&diff.threads);
-        if items.is_empty() {
+        let threads = review::outdated_to_map(&diff.threads);
+        if threads.is_empty() {
             return Vec::new();
         }
         diff.mapping_requested = true;
         vec![Cmd::Git(Git::MapOutdated {
             pr: pr.clone(),
             head,
-            items,
+            threads,
         })]
     }
 
@@ -1648,7 +1656,7 @@ pub(crate) mod tests {
             cmds,
             vec![Cmd::Api(Api::SetStarred {
                 repo: repo(),
-                id: "R_ghtui".into(),
+                id: NodeId::new("R_ghtui"),
                 starred: true
             })]
         );
@@ -1824,7 +1832,7 @@ pub(crate) mod tests {
         assert_eq!(
             cmds,
             vec![Cmd::Api(Api::AddComment {
-                subject_id: "I_14".into(),
+                subject_id: NodeId::new("I_14"),
                 body: "Thanks!".into(),
                 refresh: key.clone()
             })]
@@ -2190,7 +2198,7 @@ pub(crate) mod tests {
 
         fn viewed_files(pr_id: &str) -> ViewedFiles {
             ViewedFiles {
-                pull_request_id: pr_id.into(),
+                pull_request_id: NodeId::new(pr_id),
                 states: [("src/point.rs".to_owned(), ViewedState::Viewed)].into(),
             }
         }
@@ -2235,7 +2243,7 @@ pub(crate) mod tests {
             assert!(cmds.iter().any(|c| matches!(
                 c,
                 Cmd::Api(Api::SetViewed { file: 1, viewed: true, previous: Viewed::Unviewed, pull_request_id, .. })
-                    if pull_request_id == "PR_1"
+                    if pull_request_id.as_str() == "PR_1"
             )));
             assert_eq!(s.diffs[&pr].doc.files()[1].viewed, Viewed::Viewed);
             update(
@@ -2572,7 +2580,7 @@ pub(crate) mod tests {
 
             fn thread(id: &str, line: Option<u32>, resolved: bool, outdated: bool) -> ReviewThread {
                 ReviewThread {
-                    id: id.into(),
+                    id: NodeId::new(id),
                     path: "src/point.rs".into(),
                     side: Side::Right,
                     start_side: None,
@@ -2587,7 +2595,7 @@ pub(crate) mod tests {
                     can_resolve: true,
                     can_unresolve: true,
                     comments: vec![ReviewComment {
-                        id: format!("{id}-c"),
+                        id: NodeId::new(format!("{id}-c")),
                         author: "alice".into(),
                         body: format!("Thread {id}"),
                         created_at: "2026-10-03T09:00:00Z".into(),
@@ -2622,7 +2630,7 @@ pub(crate) mod tests {
                 let at = s.diffs[&pr].doc.annotation_at(screen(&s).cursor).unwrap();
                 assert_eq!(
                     s.diffs[&pr].doc.annotations()[at as usize].key,
-                    AnnotationKey::Thread("open".into())
+                    AnnotationKey::Thread(NodeId::new("open"))
                 );
                 // The status bar leads with what fits a thread.
                 let hints = s.key_hints();
@@ -2643,7 +2651,7 @@ pub(crate) mod tests {
                     Msg::Diff(
                         pr.clone(),
                         DiffMsg::ResolvedSet {
-                            thread_id: "open".into(),
+                            thread_id: NodeId::new("open"),
                             resolved: true,
                             result: Err(ApiError::Network("down".into())),
                         },
@@ -2896,7 +2904,7 @@ pub(crate) mod tests {
                         DiffMsg::ThreadsLoaded(Ok(vec![thread("old", None, false, true)])),
                     ),
                 );
-                assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated { items, head, .. }) if items.len() == 1 && head == "h")));
+                assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated { threads, head, .. }) if threads.len() == 1 && head == "h")));
                 let ann = &s.diffs[&pr].doc.annotations()[0];
                 assert!(
                     ann.outdated && ann.on_line().is_none(),
@@ -2906,7 +2914,7 @@ pub(crate) mod tests {
                     &mut s,
                     Msg::Diff(
                         pr.clone(),
-                        DiffMsg::OutdatedMapped(vec![("old".into(), Some(4))]),
+                        DiffMsg::OutdatedMapped(vec![(NodeId::new("old"), Some(4))]),
                     ),
                 );
                 let ann = &s.diffs[&pr].doc.annotations()[0];

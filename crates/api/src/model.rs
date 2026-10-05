@@ -7,6 +7,39 @@ use serde::{Deserialize, Serialize};
 
 use crate::queries::{self as q, nodes};
 
+/// A GitHub GraphQL node ID (`PR_kwDO…`, `PRRT_…`): what mutations name
+/// things by. Its own type so it can't be mixed up with a path, a SHA or
+/// another string.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct NodeId(String);
+
+impl NodeId {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub(crate) fn gql(&self) -> cynic::Id {
+        cynic::Id::new(&self.0)
+    }
+}
+
+impl From<cynic::Id> for NodeId {
+    fn from(id: cynic::Id) -> Self {
+        Self(id.into_inner())
+    }
+}
+
+impl std::fmt::Display for NodeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RepoId {
     pub owner: String,
@@ -185,7 +218,7 @@ pub enum ViewedState {
 /// it).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ViewedFiles {
-    pub pull_request_id: String,
+    pub pull_request_id: NodeId,
     pub states: std::collections::HashMap<String, ViewedState>,
 }
 
@@ -200,7 +233,7 @@ pub enum Side {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewComment {
-    pub id: String,
+    pub id: NodeId,
     pub author: String,
     pub body: String,
     /// ISO 8601.
@@ -214,7 +247,7 @@ pub struct ReviewComment {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewThread {
-    pub id: String,
+    pub id: NodeId,
     pub path: String,
     pub side: Side,
     pub start_side: Option<Side>,
@@ -378,7 +411,7 @@ impl ReviewThread {
     pub(crate) fn from_wire(t: q::ReviewThread) -> Self {
         let line = |n: Option<i32>| n.and_then(|n| u32::try_from(n).ok());
         Self {
-            id: t.id.into_inner(),
+            id: t.id.into(),
             path: t.path,
             side: t.diff_side,
             start_side: t.start_diff_side,
@@ -394,7 +427,7 @@ impl ReviewThread {
             can_unresolve: t.viewer_can_unresolve,
             comments: nodes(t.comments.nodes)
                 .map(|c| ReviewComment {
-                    id: c.id.into_inner(),
+                    id: c.id.into(),
                     author: author(c.author),
                     body: c.body,
                     created_at: c.created_at.0,

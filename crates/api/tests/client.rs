@@ -8,7 +8,7 @@
 use std::sync::{Arc, Mutex};
 
 use ghtui_api::auth::Token;
-use ghtui_api::model::PrRef;
+use ghtui_api::model::{NodeId, PrRef};
 use ghtui_api::{ApiError, GitHub};
 use ghtui_store::Store;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -344,7 +344,7 @@ async fn viewed_files_paginate() {
         .viewed_files(&PrRef::parse("o/r#3").unwrap())
         .await
         .unwrap();
-    assert_eq!(viewed.pull_request_id, "PR_kw1");
+    assert_eq!(viewed.pull_request_id.as_str(), "PR_kw1");
     assert_eq!(viewed.states["a.rs"], ViewedState::Viewed);
     assert_eq!(viewed.states["b.rs"], ViewedState::Unviewed);
     assert_eq!(viewed.states["c.rs"], ViewedState::Dismissed);
@@ -372,10 +372,14 @@ async fn set_viewed_sends_the_right_mutation() {
     ])
     .await;
     let gh = client(&base, Store::disabled());
-    gh.set_viewed("PR_kw1", "src/a.rs", true).await.unwrap();
-    gh.set_viewed("PR_kw1", "src/a.rs", false).await.unwrap();
+    gh.set_viewed(&NodeId::new("PR_kw1"), "src/a.rs", true)
+        .await
+        .unwrap();
+    gh.set_viewed(&NodeId::new("PR_kw1"), "src/a.rs", false)
+        .await
+        .unwrap();
     assert!(matches!(
-        gh.set_viewed("bad", "x", true).await,
+        gh.set_viewed(&NodeId::new("bad"), "x", true).await,
         Err(ApiError::GraphQl(_))
     ));
     let seen = seen.lock().unwrap();
@@ -496,7 +500,7 @@ async fn review_submission_calls() {
     let (pr_id, pending) = gh.pending_review(&pr).await.unwrap();
     assert_eq!((pr_id.as_str(), pending), ("PR_1", None));
     let review = gh.start_review(&pr_id, "deadbeef").await.unwrap();
-    assert_eq!(review, "R_1");
+    assert_eq!(review.as_str(), "R_1");
 
     let range = NewThread {
         path: "src/a.rs".into(),
@@ -506,7 +510,13 @@ async fn review_submission_calls() {
         start_line: Some(10),
         start_side: Some(Side::Right),
     };
-    assert_eq!(gh.add_review_thread(&review, &range).await.unwrap(), "T_9");
+    assert_eq!(
+        gh.add_review_thread(&review, &range)
+            .await
+            .unwrap()
+            .as_str(),
+        "T_9"
+    );
     let file_level = NewThread {
         line: None,
         start_line: None,
@@ -515,7 +525,7 @@ async fn review_submission_calls() {
     };
     assert_eq!(
         gh.add_review_thread(&review, &file_level).await.unwrap(),
-        "T_10"
+        NodeId::new("T_10")
     );
     match gh.add_review_thread(&review, &range).await {
         Err(ApiError::GraphQl(errors)) => assert!(errors[0].contains("part of the diff")),
@@ -524,8 +534,8 @@ async fn review_submission_calls() {
     gh.submit_review(&review, ReviewEvent::RequestChanges, "Needs work")
         .await
         .unwrap();
-    gh.reply("T_9", "Done").await.unwrap();
-    gh.set_resolved("T_9", true).await.unwrap();
+    gh.reply(&NodeId::new("T_9"), "Done").await.unwrap();
+    gh.set_resolved(&NodeId::new("T_9"), true).await.unwrap();
 
     let seen = seen.lock().unwrap();
     let body = |i: usize| serde_json::from_str::<serde_json::Value>(&seen[i].body).unwrap();
@@ -592,7 +602,7 @@ async fn mutations_are_not_retried_after_server_errors() {
     .await;
     let gh = client(&base, Store::disabled());
     assert!(matches!(
-        gh.reply("T_9", "Done").await,
+        gh.reply(&NodeId::new("T_9"), "Done").await,
         Err(ApiError::Http { status: 502, .. })
     ));
     assert_eq!(seen.lock().unwrap().len(), 1);
@@ -627,7 +637,7 @@ async fn refused_connections_are_retried_even_for_mutations() {
     let gh = client(&format!("http://{addr}"), Store::disabled());
     let started = std::time::Instant::now();
     assert!(matches!(
-        gh.reply("T_9", "Done").await,
+        gh.reply(&NodeId::new("T_9"), "Done").await,
         Err(ApiError::Network(_))
     ));
     // Three attempts means two backoffs (500ms + 1s).
