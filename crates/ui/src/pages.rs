@@ -77,35 +77,25 @@ pub mod url {
     /// isn't plainly safe (`#`, `?`, `%`, `\\`, spaces, non-ASCII) is
     /// escaped.
     pub fn encode_path(s: &str) -> String {
-        let mut out = String::new();
-        for b in s.bytes() {
-            match b {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
-                    out.push(char::from(b));
-                }
-                b => out.push_str(&format!("%{b:02X}")),
-            }
-        }
-        out
+        escape(s, b"-_.~/", false)
     }
 
     /// Minimal query-string encoding.
     pub fn encode(s: &str) -> String {
+        escape(s, b"-_.~:/@", true)
+    }
+
+    /// `s` with every byte but ASCII alphanumerics and `safe` escaped, and
+    /// spaces as `+` when `plus`.
+    fn escape(s: &str, safe: &[u8], plus: bool) -> String {
         let mut out = String::new();
         for b in s.bytes() {
-            match b {
-                b'A'..=b'Z'
-                | b'a'..=b'z'
-                | b'0'..=b'9'
-                | b'-'
-                | b'_'
-                | b'.'
-                | b'~'
-                | b':'
-                | b'/'
-                | b'@' => out.push(b as char),
-                b' ' => out.push('+'),
-                b => out.push_str(&format!("%{b:02X}")),
+            if b.is_ascii_alphanumeric() || safe.contains(&b) {
+                out.push(char::from(b));
+            } else if b == b' ' && plus {
+                out.push('+');
+            } else {
+                out.push_str(&format!("%{b:02X}"));
             }
         }
         out
