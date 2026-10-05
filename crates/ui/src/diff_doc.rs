@@ -135,9 +135,6 @@ pub struct ViewOptions {
 /// formatting-only, and compared for "since my last review".
 pub type Block = ChangeBlock;
 
-/// A stretch of a segment: plain lines, or a folded block `(index, why)`.
-type Piece = (Range<usize>, Option<(u32, FoldReason)>);
-
 /// Inputs for rebuilding one file's rows besides the file itself.
 struct Extras<'a> {
     anns: &'a [(u32, &'a Annotation)],
@@ -303,17 +300,9 @@ impl DocFile {
                 self.push_annotation(*i, ann, open(ann), wrap);
             }
         }
-        if self.collapsed() {
-            let note = if self.viewed == Viewed::Viewed {
-                Note::Viewed
-            } else {
-                Note::Collapsed
-            };
-            self.rows.push(Row::Note(note));
-            self.rows.push(Row::Spacer);
-            return;
-        }
         let note = match self.diff.as_deref().map(|d| &d.content) {
+            _ if self.collapsed() && self.viewed == Viewed::Viewed => Some(Note::Viewed),
+            _ if self.collapsed() => Some(Note::Collapsed),
             None => Some(Note::Loading),
             Some(Content::Binary { .. }) => Some(Note::Binary),
             Some(Content::TooLarge { .. }) => Some(Note::TooLarge),
@@ -415,47 +404,23 @@ impl DocFile {
             self.headers.push(hunk(lines, seg.clone(), before).header());
             self.rows.push(Row::Hunk { seg: idx(s) });
             let first_new_row = self.rows.len();
-            // Split the segment around folded blocks.
+            // Lines, with folded blocks as one row each.
+            let push =
+                |rows: &mut Vec<Row>, range| push_lines(rows, text, lines, range, opts.split);
             let mut at = seg.start;
-            let folds: Vec<(usize, &Block, FoldReason)> = self
-                .blocks
-                .iter()
-                .zip(&fold_of)
-                .enumerate()
-                .filter_map(|(i, (b, fold))| fold.map(|r| (i, b, r)))
-                .filter(|(_, b, _)| {
-                    (b.entries.start as usize) < seg.end && b.entries.end as usize > seg.start
-                })
-                .collect();
-            let mut pieces: Vec<Piece> = Vec::new();
-            for (i, b, reason) in folds {
-                let (bs, be) = (
-                    (b.entries.start as usize).max(seg.start),
-                    (b.entries.end as usize).min(seg.end),
-                );
-                if bs > at {
-                    pieces.push((at..bs, None));
-                }
-                pieces.push((bs..be, Some((idx(i), reason))));
-                at = be;
+            for (i, (b, fold)) in self.blocks.iter().zip(&fold_of).enumerate() {
+                let (start, end) = (b.entries.start as usize, b.entries.end as usize);
+                let Some(reason) = fold.filter(|_| start < seg.end && end > seg.start) else {
+                    continue;
+                };
+                push(&mut self.rows, at..start.max(seg.start));
+                self.rows.push(Row::Fold {
+                    block: idx(i),
+                    reason,
+                });
+                at = end.min(seg.end);
             }
-            if at < seg.end {
-                pieces.push((at..seg.end, None));
-            }
-            for (range, fold) in pieces {
-                if let Some((block, reason)) = fold {
-                    self.rows.push(Row::Fold { block, reason });
-                } else if opts.split {
-                    push_split_rows(&mut self.rows, text, lines, range);
-                } else {
-                    for e in range {
-                        self.rows.push(Row::Line(idx(e)));
-                        if lines.get(e).is_some_and(|l| ends_without_newline(text, l)) {
-                            self.rows.push(Row::NoNewline);
-                        }
-                    }
-                }
-            }
+            push(&mut self.rows, at..seg.end);
             if !self.by_line.is_empty() || !extras.moves.is_empty() {
                 self.insert_extras(first_new_row, extras, wrap, opts.whitespace);
             }
@@ -565,6 +530,25 @@ fn ends_without_newline(text: &TextDiff, line: &DiffLine) -> bool {
         && text.new.missing_final_newline
         && line.kind != LineKind::Removed;
     old_end || new_end
+}
+
+/// Rows for entries `range`: one each, or split.
+fn push_lines(
+    rows: &mut Vec<Row>,
+    text: &TextDiff,
+    lines: &[DiffLine],
+    range: Range<usize>,
+    split: bool,
+) {
+    if split {
+        return push_split_rows(rows, text, lines, range);
+    }
+    for e in range {
+        rows.push(Row::Line(idx(e)));
+        if lines.get(e).is_some_and(|l| ends_without_newline(text, l)) {
+            rows.push(Row::NoNewline);
+        }
+    }
 }
 
 /// Split rows: context lines pair with themselves; within a change, the
@@ -714,6 +698,14 @@ impl Doc {
         if index < self.files.len() {
             self.rebuild_file(index);
             self.reindex();
+        }
+    }
+
+    /// Changes file `index` with `f` and rebuilds its rows.
+    fn update(&mut self, index: usize, f: impl FnOnce(&mut DocFile)) {
+        if let Some(file) = self.files.get_mut(index) {
+            f(file);
+            self.rebuild(index);
         }
     }
 
@@ -963,7 +955,7 @@ impl Doc {
     }
 
     pub fn set_diff(&mut self, index: usize, diff: Arc<FileDiff>) {
-        if let Some(file) = self.files.get_mut(index) {
+        self.update(index, |file| {
             file.local_commentable = match &diff.content {
                 Content::Text(t) => Some(Commentable {
                     ranges: t.local_ranges.clone(),
@@ -972,8 +964,7 @@ impl Doc {
                 _ => None,
             };
             file.diff = Some(diff);
-            self.rebuild(index);
-        }
+        });
     }
 
     /// Changes view options. Expansion windows index the alignment, so they
@@ -990,25 +981,18 @@ impl Doc {
 
     /// Shows or hides a collapsed (generated or viewed) file.
     pub fn toggle_expanded(&mut self, index: usize) {
-        if let Some(file) = self.files.get_mut(index) {
-            file.expanded = !file.expanded;
-            self.rebuild(index);
-        }
+        self.update(index, |file| file.expanded = !file.expanded);
     }
 
     pub fn set_viewed(&mut self, index: usize, viewed: Viewed) {
-        if let Some(file) = self.files.get_mut(index) {
+        self.update(index, |file| {
             file.viewed = viewed;
             file.expanded = false;
-            self.rebuild(index);
-        }
+        });
     }
 
     pub fn toggle_full(&mut self, index: usize) {
-        if let Some(file) = self.files.get_mut(index) {
-            file.full = !file.full;
-            self.rebuild(index);
-        }
+        self.update(index, |file| file.full = !file.full);
     }
 
     /// Reveals more context at `pos`: a gap row opens up to [`EXPAND_STEP`]
