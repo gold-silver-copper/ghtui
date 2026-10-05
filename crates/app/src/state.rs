@@ -70,9 +70,32 @@ pub enum Msg {
     /// A lasting problem started (`Some`) or cleared up (`None`).
     Problem(Problem, Option<String>),
     /// `$EDITOR` finished (or failed to start).
-    Edited(EditPurpose, Result<String, String>),
+    Edited(EditPurpose, Result<String, Failure>),
     /// For a PR's diff screen.
     Diff(PrRef, DiffMsg),
+}
+
+/// Why background work failed. Shows as its message with its causes
+/// (`a: b`); `{:?}` has everything, for the log.
+#[derive(Debug)]
+pub struct Failure(anyhow::Error);
+
+impl Failure {
+    pub fn msg(text: impl std::fmt::Display + std::fmt::Debug + Send + Sync + 'static) -> Self {
+        Self(anyhow::Error::msg(text))
+    }
+}
+
+impl<E: std::error::Error + Send + Sync + 'static> From<E> for Failure {
+    fn from(err: E) -> Self {
+        Self(err.into())
+    }
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#}", self.0)
+    }
 }
 
 /// What arrives for a PR's diff: from its job, GitHub, or the drafts.
@@ -87,7 +110,7 @@ pub enum DiffMsg {
         result: Result<(), ApiError>,
     },
     /// The saved review state, or why it couldn't be read.
-    ReviewLoaded(Result<ReviewState, String>),
+    ReviewLoaded(Result<ReviewState, Failure>),
     ThreadsLoaded(Result<Vec<ReviewThread>, ApiError>),
     PatchesLoaded(Result<Vec<PatchFile>, ApiError>),
     OutdatedMapped(Vec<(NodeId, Option<u32>)>),
@@ -99,8 +122,8 @@ pub enum DiffMsg {
     },
     ReviewSubmitted(SubmitOutcome),
     LastReview(Result<Option<String>, ApiError>),
-    SinceReady(String, Result<std::collections::HashSet<String>, String>),
-    CommitsListed(Result<Vec<ghtui_git::repo::Commit>, String>),
+    SinceReady(String, Result<std::collections::HashSet<String>, Failure>),
+    CommitsListed(Result<Vec<ghtui_git::repo::Commit>, Failure>),
 }
 
 /// What `update` asks the runtime to do.
@@ -258,6 +281,8 @@ pub struct Remote<T> {
     pub error: Option<String>,
     /// When `data` was fetched, while it's a copy from the cache.
     pub cached_at: Option<u64>,
+    /// The next page of a list is on its way.
+    pub loading_more: bool,
 }
 
 impl<T> Default for Remote<T> {
@@ -267,6 +292,7 @@ impl<T> Default for Remote<T> {
             loading: false,
             error: None,
             cached_at: None,
+            loading_more: false,
         }
     }
 }
@@ -297,6 +323,8 @@ impl<T> Remote<T> {
                 self.data = Some(data);
                 self.error = None;
                 self.cached_at = None;
+                // A next page asked for before this belongs to the old list.
+                self.loading_more = false;
             }
             Err(err) => self.error = Some(err.to_string()),
         }
@@ -623,6 +651,7 @@ impl State {
     /// What's loading on the visible screen, for the status bar.
     pub fn busy(&self) -> Option<String> {
         match self.screen() {
+            Screen::Page(p) if self.page_loading_more(&p.route) => Some("Loading more".into()),
             Screen::Page(p) if self.page_loading(&p.route) => {
                 // Cached data on screen says how old it is.
                 Some(match self.page_cached_at(&p.route) {
@@ -783,10 +812,10 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             Vec::new()
         }
         Msg::FetchedMore(key, result) => {
-            let Some(remote) = state.data.get_mut(&key) else {
+            let Some(remote) = state.data.get_mut(&key).filter(|r| r.loading_more) else {
                 return Vec::new();
             };
-            remote.loading = false;
+            remote.loading_more = false;
             match result {
                 Ok(Data::Search(more)) => {
                     if let Some(Data::Search(results)) = &mut remote.data {
@@ -1942,6 +1971,41 @@ pub(crate) mod tests {
             panic!()
         };
         assert_eq!(r.items.len(), 6);
+
+        // Loading more doesn't block a refresh, and a next page that
+        // arrives after the refresh (for the old list) is dropped.
+        press(&mut state, "G");
+        let _ = fetched(
+            &mut state,
+            key.clone(),
+            Data::Search(Box::new(crate::fixtures::issue_results(Some("c2")))),
+        );
+        press(&mut state, "G<Enter>");
+        assert_eq!(state.busy().as_deref(), Some("Loading more"));
+        let cmds = press(&mut state, "r");
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, Cmd::Api(Api::Fetch { .. })))
+        );
+        let _ = fetched(
+            &mut state,
+            key.clone(),
+            Data::Search(Box::new(crate::fixtures::issue_results(Some("c2")))),
+        );
+        update(
+            &mut state,
+            Msg::FetchedMore(
+                key.clone(),
+                Ok(Data::Search(Box::new(crate::fixtures::issue_results(None)))),
+            ),
+        );
+        let Some(Data::Search(results)) = state.get(&key) else {
+            panic!()
+        };
+        let SearchResults::Issues(r) = &**results else {
+            panic!()
+        };
+        assert_eq!(r.items.len(), 3, "the stale page wasn't appended");
     }
 
     #[test]
@@ -2315,7 +2379,7 @@ pub(crate) mod tests {
             let (mut s, pr) = diff_state(120);
             update(
                 &mut s,
-                Msg::Diff(pr, DiffMsg::ReviewLoaded(Err("disk full".into()))),
+                Msg::Diff(pr, DiffMsg::ReviewLoaded(Err(Failure::msg("disk full")))),
             );
             assert!(s.problems[&Problem::Drafts].contains("disk full"));
             assert!(s.layout().problem.is_some());
@@ -2470,7 +2534,10 @@ pub(crate) mod tests {
                 );
                 update(
                     &mut s,
-                    Msg::Diff(pr.clone(), DiffMsg::Job(old, JobMsg::Failed("old".into()))),
+                    Msg::Diff(
+                        pr.clone(),
+                        DiffMsg::Job(old, JobMsg::Failed(Failure::msg("old"))),
+                    ),
                 );
                 let diff = &s.diffs[&pr];
                 assert_ne!(diff.job, old);
@@ -2480,7 +2547,10 @@ pub(crate) mod tests {
                 let job = diff.job;
                 update(
                     &mut s,
-                    Msg::Diff(pr.clone(), DiffMsg::Job(job, JobMsg::Failed("new".into()))),
+                    Msg::Diff(
+                        pr.clone(),
+                        DiffMsg::Job(job, JobMsg::Failed(Failure::msg("new"))),
+                    ),
                 );
                 assert_eq!(s.diffs[&pr].error.as_deref(), Some("new"));
             }

@@ -752,7 +752,7 @@ pub(crate) fn on_job(state: &mut State, pr: &PrRef, msg: JobMsg) -> Vec<Cmd> {
         JobMsg::Failed(error) => {
             if let Some(diff) = state.diffs.get_mut(pr) {
                 diff.progress = None;
-                diff.error = Some(error);
+                diff.error = Some(error.to_string());
             }
             Vec::new()
         }
@@ -817,6 +817,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
                     if let Some(diff) = state.diffs.get_mut(&pr) {
                         diff.since_requested = false;
                     }
+                    tracing::warn!(%pr, ?err, "comparing with the last review failed");
                     state.error(format!("Couldn't compare with your last review: {err}"));
                 }
             }
@@ -831,6 +832,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
                 state.open_picker(picker::Kind::Commits { mark: None })
             }
             Err(err) => {
+                tracing::warn!(%pr, ?err, "listing commits failed");
                 state.error(format!("Couldn't list commits: {err}"));
                 Vec::new()
             }
@@ -876,7 +878,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
             }
         }
         DiffMsg::ReviewLoaded(Err(err)) => {
-            tracing::warn!(%pr, %err, "reading review state failed");
+            tracing::warn!(%pr, ?err, "reading review state failed");
             state.problems.insert(
                 Problem::Drafts,
                 format!("Drafts for {pr} are not being saved: {err}"),

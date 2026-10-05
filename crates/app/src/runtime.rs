@@ -19,7 +19,7 @@ use crate::browse::{Data, DataKey};
 use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx};
 use crate::review::EditPurpose;
 use crate::review::{self, SubmitOutcome};
-use crate::state::{Api, Cmd, DiffMsg, Git, Msg, Problem, State, apply_msg, timers};
+use crate::state::{Api, Cmd, DiffMsg, Failure, Git, Msg, Problem, State, apply_msg, timers};
 use crate::view::view;
 
 struct Effects {
@@ -228,7 +228,7 @@ impl Effects {
                 let Some(git) = self.job_git(&pr) else {
                     let _ = tx.send(Msg::Diff(
                         pr,
-                        DiffMsg::SinceReady(old_head, Err("the diff isn't ready".into())),
+                        DiffMsg::SinceReady(old_head, Err(Failure::msg("the diff isn't ready"))),
                     ));
                     return;
                 };
@@ -237,7 +237,7 @@ impl Effects {
                     let result =
                         diff_job::since_review_hashes(&repo, &reader, pr.number, &old_head)
                             .await
-                            .map_err(|e| e.to_string());
+                            .map_err(Failure::from);
                     let _ = tx.send(Msg::Diff(pr, DiffMsg::SinceReady(old_head, result)));
                 });
             }
@@ -246,7 +246,7 @@ impl Effects {
                 let Some(git) = self.job_git(&pr) else {
                     let _ = tx.send(Msg::Diff(
                         pr,
-                        DiffMsg::CommitsListed(Err("the diff isn't ready".into())),
+                        DiffMsg::CommitsListed(Err(Failure::msg("the diff isn't ready"))),
                     ));
                     return;
                 };
@@ -263,7 +263,7 @@ impl Effects {
                         repo.commits(&merge_base, &head).await
                     }
                     .await
-                    .map_err(|e| e.to_string());
+                    .map_err(Failure::from);
                     let _ = tx.send(Msg::Diff(pr, DiffMsg::CommitsListed(result)));
                 });
             }
@@ -297,9 +297,9 @@ impl Effects {
                     let key = (pr.repo.owner.clone(), pr.repo.name.clone(), pr.number);
                     blocking(move || reviews.get(&key.0, &key.1, key.2))
                         .await
-                        .map_err(|e| e.to_string())
+                        .map_err(Failure::from)
                 }
-                Err(err) => Err(err),
+                Err(err) => Err(Failure::msg(err)),
             };
             let _ = tx.send(Msg::Diff(pr, DiffMsg::ReviewLoaded(review)));
         });
@@ -511,8 +511,8 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
     fn api<T>() -> Result<T, ApiError> {
         Err(ApiError::Internal("ghtui hit a bug".into()))
     }
-    fn git<T>() -> Result<T, String> {
-        Err("ghtui hit a bug".into())
+    fn git<T>() -> Result<T, Failure> {
+        Err(Failure::msg("ghtui hit a bug"))
     }
     let msg = match cmd {
         Cmd::Api(Api::FetchViewer) => Msg::Viewer(api()),
@@ -576,7 +576,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         }
         Cmd::Git(Git::LoadDiff { pr, job, .. }) => Msg::Diff(
             pr.clone(),
-            DiffMsg::Job(*job, JobMsg::Failed("ghtui hit a bug".into())),
+            DiffMsg::Job(*job, JobMsg::Failed(Failure::msg("ghtui hit a bug"))),
         ),
         Cmd::Git(Git::DetectMoves(pr, job, _)) => {
             Msg::Diff(pr.clone(), DiffMsg::Job(*job, JobMsg::Moves(Vec::new())))
@@ -897,12 +897,12 @@ async fn edit_externally(
     terminal: &mut DefaultTerminal,
     events: EventStream,
     text: &str,
-) -> (EventStream, Result<String, String>) {
+) -> (EventStream, Result<String, Failure>) {
     use crossterm::ExecutableCommand;
     // Stop reading keys so the editor gets them.
     drop(events);
     let result = async {
-        let file = draft_file(text).map_err(|e| e.to_string())?;
+        let file = draft_file(text)?;
         let path = file.path().to_owned();
         crate::set_mouse(false);
         ratatui::restore();
@@ -930,11 +930,9 @@ async fn edit_externally(
         }
         match status {
             // By path: editors may replace the file rather than write it.
-            Ok(status) if status.success() => {
-                std::fs::read_to_string(&path).map_err(|e| e.to_string())
-            }
-            Ok(status) => Err(format!("{editor} exited with {status}")),
-            Err(err) => Err(format!("couldn't start {editor}: {err}")),
+            Ok(status) if status.success() => Ok(std::fs::read_to_string(&path)?),
+            Ok(status) => Err(Failure::msg(format!("{editor} exited with {status}"))),
+            Err(err) => Err(Failure::msg(format!("couldn't start {editor}: {err}"))),
         }
     }
     .await;

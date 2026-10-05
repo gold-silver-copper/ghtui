@@ -409,7 +409,7 @@ pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcom
 pub(crate) fn on_edited(
     state: &mut State,
     purpose: EditPurpose,
-    result: Result<String, String>,
+    result: Result<String, crate::state::Failure>,
 ) -> Vec<Cmd> {
     let text = match result {
         Ok(text) => text,

@@ -246,6 +246,13 @@ impl State {
         }
     }
 
+    pub fn page_loading_more(&self, route: &Route) -> bool {
+        needs(route).into_iter().any(|need| match need {
+            Need::Data(key) => self.data.get(&key).is_some_and(|r| r.loading_more),
+            Need::Inbox | Need::Pr(_) => false,
+        })
+    }
+
     pub fn page_loading(&self, route: &Route) -> bool {
         needs(route).into_iter().any(|need| match need {
             Need::Inbox => self.inbox.loading,

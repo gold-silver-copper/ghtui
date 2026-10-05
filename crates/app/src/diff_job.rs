@@ -22,7 +22,7 @@ use ghtui_git::{GitError, Oid};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
-use crate::state::{DiffMsg, Msg};
+use crate::state::{DiffMsg, Failure, Msg};
 
 /// Where and how git runs.
 #[derive(Debug, Clone)]
@@ -47,7 +47,7 @@ pub enum JobMsg {
     Progress(String),
     Files(Box<DiffFiles>),
     File(usize, Arc<FileDiff>),
-    Failed(String),
+    Failed(Failure),
     Moves(Vec<ghtui_diff::moves::Move>),
 }
 
@@ -138,7 +138,7 @@ pub async fn run(
 ) {
     if let Err(err) = run_inner(&ctx, &base_ref, range, &out, &control).await {
         tracing::warn!(pr = %out.pr, %err, "diff job failed");
-        out.send(JobMsg::Failed(err.to_string()));
+        out.send(JobMsg::Failed(err.into()));
     }
 }
 

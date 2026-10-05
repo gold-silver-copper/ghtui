@@ -187,13 +187,15 @@ impl State {
             return Vec::new();
         };
         let after = match &remote.data {
-            Some(Data::Search(results)) if !remote.loading => browse::next_cursor(results),
+            Some(Data::Search(results)) if !remote.loading && !remote.loading_more => {
+                browse::next_cursor(results)
+            }
             _ => None,
         };
         let Some(after) = after.map(str::to_owned) else {
             return Vec::new();
         };
-        remote.loading = true;
+        remote.loading_more = true;
         vec![Cmd::Api(Api::FetchMore { key, after })]
     }
 }
