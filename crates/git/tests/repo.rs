@@ -3,9 +3,11 @@
 //! lazy fetching and prefetching behave as they do against github.com, with
 //! no network access.
 
-// Fixture helpers aren't `#[test]` functions, but a panic in them is still a
-// test failure.
-#![allow(clippy::unwrap_used, clippy::panic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::panic,
+    reason = "fixture helpers aren't #[test] functions, but a panic in them is still a test failure"
+)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -1004,7 +1004,7 @@ pub fn issue_list(
             Some(_) => format!("{icon} {} {label}", compact(n)),
             None => format!("{icon} {label}"),
         };
-        let link = page.link(Link::State(name.to_string()));
+        let link = page.link(Link::State(name.to_owned()));
         if !title.is_empty() {
             title.push(Seg::new("   ", Role::Body));
         }
@@ -1024,7 +1024,7 @@ pub fn issue_list(
         }
         Some(r) => {
             box_rows(page, &r.items, |page, i| {
-                issue_row(page, i, false, icons, now)
+                issue_row(page, i, false, icons, now);
             });
             more_row(page, r.next.is_some(), r.items.len(), r.total);
         }
@@ -1072,7 +1072,7 @@ pub fn search(
     match results {
         SearchResults::Repos(r) => box_rows(page, &r.items, |page, r| repo_row(page, r, now, true)),
         SearchResults::Issues(r) => box_rows(page, &r.items, |page, i| {
-            issue_row(page, i, true, icons, now)
+            issue_row(page, i, true, icons, now);
         }),
         SearchResults::Users(r) => box_rows(page, &r.items, user_row),
     }
@@ -1422,6 +1422,11 @@ pub fn pr_conversation(
     aside: Option<u16>,
     cx: PageCtx<'_>,
 ) {
+    // Comments and reviews, merged in time order below.
+    enum Entry<'a> {
+        Comment(&'a Comment),
+        Review(&'a ghtui_api::browse::ReviewSummary),
+    }
     let PageCtx { icons, keys, now } = cx;
     pr_summary(page, pr, d, now);
     let base = LinkBase::new(&pr.repo, &d.head_oid, "");
@@ -1442,11 +1447,6 @@ pub fn pr_conversation(
         page.line(vec![Seg::new("   Loading the conversation…", Role::Meta)]);
         return;
     };
-    // Comments and reviews in time order.
-    enum Entry<'a> {
-        Comment(&'a Comment),
-        Review(&'a ghtui_api::browse::ReviewSummary),
-    }
     let mut entries: Vec<(&str, Entry<'_>)> = a
         .comments
         .iter()
@@ -1527,7 +1527,9 @@ pub fn pr_commits(
     let mut current_day = String::new();
     for c in &a.commits {
         let date = day(&c.date);
-        if date != current_day {
+        if date == current_day {
+            page.box_rule();
+        } else {
             if !current_day.is_empty() {
                 page.box_bottom();
             }
@@ -1536,8 +1538,6 @@ pub fn pr_commits(
                 Vec::new(),
             );
             current_day = date;
-        } else {
-            page.box_rule();
         }
         let start = page.lines.len();
         let link = page.link(url::commit(&pr.repo, &c.oid));

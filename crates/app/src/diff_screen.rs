@@ -367,7 +367,7 @@ pub fn apply(
     notice: &mut Option<Notice>,
 ) -> Option<Vec<Cmd>> {
     let lay = layout(content, screen.tree_visible);
-    let half = (usize::from(lay.diff.height) / 2).max(1) as isize;
+    let half = (usize::from(lay.diff.height) / 2).max(1).cast_signed();
     let mut cmds = Vec::new();
     match action {
         Action::ToggleTree => {
@@ -399,24 +399,24 @@ pub fn apply(
             ));
         }
         _ if screen.focus == Pane::Tree && lay.tree.is_some() => {
-            let tree_half = (tree_list_height(lay.tree.unwrap_or_default()) / 2).max(1) as isize;
+            let tree_half = (tree_list_height(lay.tree.unwrap_or_default()) / 2)
+                .max(1)
+                .cast_signed();
             let delta = match action {
                 Action::Down => 1,
                 Action::Up => -1,
                 Action::HalfPageDown => tree_half,
                 Action::HalfPageUp => -tree_half,
-                Action::Top => isize::MIN / 2,
-                Action::Bottom => isize::MAX / 2,
+                Action::Top => isize::MIN,
+                Action::Bottom => isize::MAX,
                 Action::Open => {
                     screen.focus = Pane::Diff;
                     return Some(Vec::new());
                 }
                 _ => return None,
             };
-            let last = state.tree.len().saturating_sub(1) as isize;
-            screen.tree_selected = (screen.tree_selected as isize)
-                .saturating_add(delta)
-                .clamp(0, last) as usize;
+            let last = state.tree.len().saturating_sub(1);
+            screen.tree_selected = screen.tree_selected.saturating_add_signed(delta).min(last);
             // The diff follows the tree selection.
             if let Some(TreeRow::File { index, .. }) = state.tree.get(screen.tree_selected) {
                 jump(
@@ -550,7 +550,7 @@ fn jump(screen: &mut DiffScreen, pos: Pos) {
 }
 
 /// Starts a search from the cursor.
-pub fn search(screen: &mut DiffScreen, state: &mut DiffState, query: String) -> Notice {
+pub fn search(screen: &mut DiffScreen, state: &DiffState, query: String) -> Notice {
     let notice = match state.doc.search(&query, screen.cursor, true) {
         Some(pos) => {
             screen.cursor = pos;
@@ -607,7 +607,7 @@ fn toggle_viewed(
 
 #[must_use]
 fn toggle_reviewed(
-    screen: &mut DiffScreen,
+    screen: &DiffScreen,
     state: &mut DiffState,
     notice: &mut Option<Notice>,
 ) -> Vec<Cmd> {
@@ -805,7 +805,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
                     {
                         diff.since_requested = false;
                         preserving_position(screen, &mut diff.doc, |doc| {
-                            doc.set_since(Some(hashes), true)
+                            doc.set_since(Some(hashes), true);
                         });
                         state.info(format!(
                             "Showing changes since your review of {}",
@@ -908,7 +908,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
                 }
                 // The local fallback covers commenting; just note it.
                 Err(err) => {
-                    tracing::warn!(%pr, %err, "GitHub patches unavailable; using local hunks")
+                    tracing::warn!(%pr, %err, "GitHub patches unavailable; using local hunks");
                 }
             }
             Vec::new()

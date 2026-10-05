@@ -133,7 +133,7 @@ impl DiffView<'_> {
             }
             Row::Line(e) => self.unified(pos.file, file, e, cursor, area, buf),
             Row::Split { left, right } => {
-                self.split(pos.file, file, (left, right), cursor, area, buf)
+                self.split(pos.file, file, (left, right), cursor, area, buf);
             }
             Row::Thread(t) => self.thread_row(file, t, cursor, area, buf),
             Row::Fold { block, reason } => {

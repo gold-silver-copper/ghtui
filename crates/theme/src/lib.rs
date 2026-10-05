@@ -262,12 +262,14 @@ impl Requirement {
 pub fn requirement(fg: Fg, bg: Bg) -> Option<Requirement> {
     use Requirement::{Decorative, Exempt, Text};
     match fg {
-        Fg::OnSurface | Fg::OnSurfaceVariant if bg.is_neutral() || bg.is_diff() => Some(Text),
+        Fg::OnSurface | Fg::OnSurfaceVariant | Fg::DiffAddedSign | Fg::DiffRemovedSign
+            if bg.is_neutral() || bg.is_diff() =>
+        {
+            Some(Text)
+        }
         Fg::Primary | Fg::Tertiary | Fg::Error | Fg::Success if bg.is_neutral() => Some(Text),
-        // Reviewed and comment-thread marks in the diff gutter.
-        Fg::Success | Fg::Primary | Fg::Tertiary if bg.is_diff() => Some(Text),
-        Fg::DiffAddedSign | Fg::DiffRemovedSign if bg.is_neutral() || bg.is_diff() => Some(Text),
-        Fg::Syntax(_) if bg.is_diff() => Some(Text),
+        // Syntax, and reviewed and comment-thread marks in the diff gutter.
+        Fg::Success | Fg::Primary | Fg::Tertiary | Fg::Syntax(_) if bg.is_diff() => Some(Text),
         // Also line numbers GitHub won't accept comments on.
         Fg::Disabled if bg.is_neutral() || bg.is_diff() => Some(Exempt),
         Fg::OutlineVariant if bg.is_neutral() => Some(Decorative),
@@ -725,7 +727,7 @@ mod tests {
                 match mode {
                     Mode::Dark => assert!(a < b, "{mode:?} {:?} {a} !< {:?} {b}", pair[0], pair[1]),
                     Mode::Light => {
-                        assert!(a > b, "{mode:?} {:?} {a} !> {:?} {b}", pair[0], pair[1])
+                        assert!(a > b, "{mode:?} {:?} {a} !> {:?} {b}", pair[0], pair[1]);
                     }
                 }
             }

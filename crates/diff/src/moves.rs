@@ -51,7 +51,7 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
         files.iter().map(|(_, _, l)| vec![false; l.len()]).collect();
     let mut moves = Vec::new();
 
-    for (file_index, text, lines) in files.iter() {
+    for (file_index, text, lines) in files {
         let mut e = 0;
         while let Some(line) = lines.get(e) {
             if line.kind != LineKind::Removed || trivial(text.text(line)) {

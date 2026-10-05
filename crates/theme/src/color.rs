@@ -89,6 +89,7 @@ impl From<Hct> for Rgb {
 /// Rounds to the nearest channel value, saturating; NaN becomes 0.
 #[expect(
     clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
     reason = "clamped to 0..=255 first; float-to-int `as` saturates anyway"
 )]
 fn channel(x: f64) -> u8 {

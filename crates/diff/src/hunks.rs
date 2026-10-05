@@ -110,7 +110,6 @@ pub fn align(
 /// Ranges of `lines` to show: everything within `context` lines of a
 /// change, plus any `windows`, or everything when `full`. Adjacent visible
 /// lines form one range, so changes closer than `2 * context` share a hunk.
-#[allow(clippy::single_range_in_vec_init, reason = "a list of one range")]
 pub fn segments(
     lines: &[DiffLine],
     context: u32,
@@ -128,7 +127,7 @@ pub fn segments(
 
 /// [`segments`] with the caller deciding which lines count as changes
 /// (e.g. only changes made since a previous review).
-#[allow(clippy::single_range_in_vec_init, reason = "a list of one range")]
+#[expect(clippy::single_range_in_vec_init, reason = "a list of one range")]
 pub fn segments_by(
     len: usize,
     is_change: impl Fn(usize) -> bool,
@@ -238,7 +237,7 @@ fn context_line(o: u32, n: u32) -> DiffLine {
 }
 
 #[cfg(test)]
-#[allow(clippy::single_range_in_vec_init, reason = "lists of ranges")]
+#[expect(clippy::single_range_in_vec_init, reason = "lists of ranges")]
 mod tests {
     use super::*;
 

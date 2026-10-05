@@ -57,8 +57,10 @@ pub fn put(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) {
         return;
     }
     let room = usize::from(buf.area.right().saturating_sub(x));
-    // The one sanctioned unclipped write: the checks above do the clipping.
-    #[allow(clippy::disallowed_methods)]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one sanctioned unclipped write: the checks above clip"
+    )]
     buf.set_stringn(x, y, text, room, style);
 }
 
