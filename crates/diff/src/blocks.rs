@@ -83,15 +83,12 @@ impl Fnv {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::file::{Content, FileDiff};
+    use crate::file::tests::text_diff;
     use crate::hunks::Whitespace;
 
     fn blocks(path: &str, old: &str, new: &str) -> Vec<ChangeBlock> {
-        let diff = FileDiff::compute(path, Some(old.as_bytes()), Some(new.as_bytes()));
-        let Content::Text(text) = &diff.content else {
-            panic!()
-        };
-        change_blocks(path, text, text.lines(Whitespace::Exact))
+        let text = text_diff(path, old, new);
+        change_blocks(path, &text, text.lines(Whitespace::Exact))
     }
 
     #[test]

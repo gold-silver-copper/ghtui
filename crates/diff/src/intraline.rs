@@ -199,6 +199,8 @@ pub fn intraline(text: &TextDiff, lines: &[DiffLine]) -> IntraLine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::file::tests::text_diff;
+    use crate::hunks::Whitespace;
 
     fn changed<'a>(line: &'a str, ranges: &[(u32, u32)]) -> Vec<&'a str> {
         ranges
@@ -244,22 +246,15 @@ mod tests {
 
     #[test]
     fn pairs_by_similarity_not_position() {
-        use crate::file::{Content, FileDiff};
-        use crate::hunks::Whitespace;
         // Two lines deleted before the edited one: position would pair the
         // edit with an unrelated line.
-        let diff = FileDiff::compute(
+        let text = text_diff(
             "x.rs",
-            Some(
-                b"keep\nfn unrelated() {}\nstruct Gone;\nlet total = compute(alpha, beta);\nkeep\n",
-            ),
-            Some(b"keep\nlet total = compute(alpha, gamma);\nkeep\n"),
+            "keep\nfn unrelated() {}\nstruct Gone;\nlet total = compute(alpha, beta);\nkeep\n",
+            "keep\nlet total = compute(alpha, gamma);\nkeep\n",
         );
-        let Content::Text(text) = &diff.content else {
-            panic!()
-        };
         let lines = text.lines(Whitespace::Exact);
-        let map = intraline(text, lines);
+        let map = intraline(&text, lines);
         let added = lines
             .iter()
             .position(|l| l.kind == LineKind::Added)
@@ -273,17 +268,12 @@ mod tests {
 
     #[test]
     fn pairs_lines_within_blocks() {
-        use crate::file::{Content, FileDiff};
-        use crate::hunks::Whitespace;
-        let diff = FileDiff::compute(
+        let text = text_diff(
             "x.txt",
-            Some(b"keep\nalpha beta\ngamma delta\nkeep\n"),
-            Some(b"keep\nalpha BETA\ngamma delta epsilon\nkeep\n"),
+            "keep\nalpha beta\ngamma delta\nkeep\n",
+            "keep\nalpha BETA\ngamma delta epsilon\nkeep\n",
         );
-        let Content::Text(text) = &diff.content else {
-            panic!()
-        };
-        let map = intraline(text, text.lines(Whitespace::Exact));
+        let map = intraline(&text, text.lines(Whitespace::Exact));
         assert_eq!(map.len(), 4, "{map:?}");
     }
 }
