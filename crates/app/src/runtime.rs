@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use crate::browse::{Data, DataKey};
 use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx};
 use crate::review::{self, SubmitOutcome};
-use crate::state::{Cmd, Msg, Problem, State, timers, update};
+use crate::state::{Cmd, Msg, Problem, State, apply_msg, timers};
 use crate::view::view;
 
 struct Effects {
@@ -106,11 +106,13 @@ async fn drive(
                 return Ok(());
             }
         };
-        let mut cmds = update(&mut state, msg);
-        // Drain whatever else is ready so a burst of results draws once.
+        let mut cmds = apply_msg(&mut state, msg);
+        // Drain whatever else is ready so a burst of results is settled
+        // and drawn once.
         while let Ok(msg) = rx.try_recv() {
-            cmds.extend(update(&mut state, msg));
+            cmds.extend(apply_msg(&mut state, msg));
         }
+        cmds.extend(state.settle());
         cmds.extend(timers(&mut state, &mut last_notice));
         for cmd in cmds {
             match cmd {

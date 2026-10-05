@@ -94,10 +94,22 @@ pub fn last_commits() -> std::collections::HashMap<String, CommitInfo> {
         date: date.into(),
     };
     [
-        (".github", commit("Run CI on macOS too", "2026-09-20T10:00:00Z")),
-        ("crates", commit("Browse GitHub like the website", "2026-10-03T10:00:00Z")),
-        ("Cargo.toml", commit("Bump ratatui to 0.30", "2026-09-28T10:00:00Z")),
-        ("README.md", commit("Document the keys", "2026-10-01T10:00:00Z")),
+        (
+            ".github",
+            commit("Run CI on macOS too", "2026-09-20T10:00:00Z"),
+        ),
+        (
+            "crates",
+            commit("Browse GitHub like the website", "2026-10-03T10:00:00Z"),
+        ),
+        (
+            "Cargo.toml",
+            commit("Bump ratatui to 0.30", "2026-09-28T10:00:00Z"),
+        ),
+        (
+            "README.md",
+            commit("Document the keys", "2026-10-01T10:00:00Z"),
+        ),
     ]
     .into_iter()
     .map(|(name, c)| (name.to_owned(), c))

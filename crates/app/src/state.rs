@@ -554,6 +554,13 @@ impl State {
         ]
     }
 
+    /// Rebuilds the page if its data changed and keeps the page (or the
+    /// diff) in bounds.
+    pub fn settle(&mut self) -> Vec<Cmd> {
+        self.sync_page();
+        self.settle_diff()
+    }
+
     /// Re-runs the diff screen's clamping and prioritization.
     pub fn settle_diff(&mut self) -> Vec<Cmd> {
         let content = self.content_area();
@@ -585,19 +592,36 @@ impl State {
     }
 }
 
+/// Handles a message and settles the screen.
+#[cfg(test)]
 pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
-    if !matches!(msg, Msg::Key(_) | Msg::Mouse(_) | Msg::Timer(_)) {
+    let mut cmds = apply_msg(state, msg);
+    cmds.extend(state.settle());
+    cmds
+}
+
+/// Handles a message without settling the screen: the runtime handles a
+/// burst of background results, then settles once.
+pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
+    // Pages are built from GitHub's data; only these change it.
+    if matches!(
+        msg,
+        Msg::Viewer(_)
+            | Msg::Inbox(_)
+            | Msg::Pr(..)
+            | Msg::Fetched { .. }
+            | Msg::FetchedMore(..)
+            | Msg::Commented(..)
+            | Msg::Starred { .. }
+    ) {
         state.data_gen += 1;
     }
-    // Then keep the page (or the diff) in bounds.
     let mut cmds = handle(state, msg);
     // Until a PR's saved review is read, saving would overwrite it.
     cmds.retain(|cmd| match cmd {
         Cmd::SaveReview(pr, _) => state.diffs.get(pr).is_some_and(|d| d.review_loaded),
         _ => true,
     });
-    state.sync_page();
-    cmds.extend(state.settle_diff());
     cmds
 }
 
@@ -1843,7 +1867,7 @@ fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::fixtures::press;
     use crate::picker::{Choice, fuzzy_score};
@@ -1853,7 +1877,7 @@ mod tests {
     use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode};
     use ghtui_ui::overlays::PALETTE_ROWS;
 
-    fn state() -> State {
+    pub(crate) fn state() -> State {
         State::new(
             Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor),
             Icons::default(),
@@ -2807,6 +2831,20 @@ mod tests {
                 .is_none_or(|o| !matches!(o, Overlay::Menu(_)))
         );
         assert!(!cmds.is_empty() || matches!(state.overlay, Some(Overlay::Picker(_))));
+    }
+
+    /// Messages that don't carry page data (rate limits after every
+    /// request, notices, diff progress) don't rebuild the page.
+    #[test]
+    fn only_page_data_rebuilds_pages() {
+        let mut state = with_repo();
+        let generation = state.data_gen;
+        update(&mut state, Msg::RateLimits(RateLimits::default()));
+        update(&mut state, Msg::Notice(Notice::Info("hi".into())));
+        update(&mut state, Msg::Problem(Problem::Drafts, None));
+        assert_eq!(state.data_gen, generation);
+        update(&mut state, Msg::Viewer(Ok("me".into())));
+        assert_eq!(state.data_gen, generation + 1);
     }
 
     /// Esc on an error dismisses it (and goes nowhere); the messages list

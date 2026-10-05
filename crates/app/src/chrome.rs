@@ -244,20 +244,32 @@ impl State {
         ));
     }
 
+    /// Whether the chrome has a title row and tabs: what [`State::chrome`]
+    /// builds, without building it (layout runs several times a frame).
+    fn chrome_rows(&self) -> (bool, bool) {
+        match self.screen() {
+            Screen::Diff(_) => (true, true),
+            Screen::Page(p) => (
+                matches!(p.route, Route::Pr { .. }),
+                !matches!(p.route, Route::Home),
+            ),
+        }
+    }
+
     /// Where everything goes on screen.
     pub fn layout(&self) -> Layout {
         let (w, h) = self.size;
-        let chrome = self.chrome();
+        let (has_title, has_tabs) = self.chrome_rows();
         let mut y = 0;
         let row = |y: u16, height: u16| Rect::new(0, y, w, height.min(h.saturating_sub(y)));
         let header = row(y, 1);
         y += 1;
-        let title = chrome.title.as_ref().map(|_| {
+        let title = has_title.then(|| {
             let r = row(y, 1);
             y += 1;
             r
         });
-        let tabs = (!chrome.tabs.is_empty()).then(|| {
+        let tabs = has_tabs.then(|| {
             let r = row(y, 2);
             y += 2;
             r
@@ -292,5 +304,46 @@ impl Chrome {
             current: true,
         };
         self.crumbs.push((crumb, target));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::tests::state;
+    use ghtui_api::model::PrRef;
+
+    /// `chrome_rows` says what `chrome` builds, on every kind of screen.
+    #[test]
+    fn layout_shape_matches_the_chrome() {
+        let repo = RepoId::new("o", "r");
+        let pr = PrRef::parse("o/r#1").unwrap();
+        let routes = [
+            Route::Home,
+            Route::Repo(repo.clone()),
+            Route::Issues {
+                repo: repo.clone(),
+                query: OPEN.into(),
+            },
+            Route::Issue { repo, number: 2 },
+            Route::Pr {
+                pr: pr.clone(),
+                tab: PrTab::Commits,
+            },
+            Route::user("octocat"),
+            Route::Search {
+                kind: SearchKind::Users,
+                query: "x".into(),
+            },
+        ];
+        let mut s = state();
+        for route in routes {
+            s.push(route);
+            let c = s.chrome();
+            assert_eq!(s.chrome_rows(), (c.title.is_some(), !c.tabs.is_empty()));
+        }
+        s.open_diff(pr);
+        let c = s.chrome();
+        assert_eq!(s.chrome_rows(), (c.title.is_some(), !c.tabs.is_empty()));
     }
 }
