@@ -1100,7 +1100,7 @@ impl State {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::fixtures::press;
+    use crate::fixtures::{diff_msg, fetched, press, thread};
     use crate::picker::{Choice, fuzzy_score};
     use crate::route::OPEN;
     use ghtui_api::browse::SearchResults;
@@ -1172,18 +1172,6 @@ pub(crate) mod tests {
         p.page.lines[item.start].text()
     }
 
-    #[must_use]
-    fn fetched(state: &mut State, key: DataKey, data: Data) -> Vec<Cmd> {
-        update(
-            state,
-            Msg::Fetched {
-                key,
-                result: Ok(data),
-                cached_at: None,
-            },
-        )
-    }
-
     /// Commands other than saving visits.
     #[must_use]
     fn fetches(cmds: Vec<Cmd>) -> Vec<Cmd> {
@@ -1199,7 +1187,7 @@ pub(crate) mod tests {
     fn with_repo() -> State {
         let mut state = state();
         let _ = state.push(Route::Repo(repo()));
-        let _ = fetched(
+        fetched(
             &mut state,
             DataKey::Repo(repo()),
             Data::Repo(Box::new(crate::fixtures::overview())),
@@ -1377,7 +1365,7 @@ pub(crate) mod tests {
         });
         let mut issue = crate::fixtures::issue();
         issue.body = (1..=30).map(|n| format!("Line {n}.\n\n")).collect();
-        let _ = fetched(
+        fetched(
             &mut state,
             DataKey::Issue(repo(), 14),
             Data::Issue(Some(Box::new(issue))),
@@ -1503,14 +1491,7 @@ pub(crate) mod tests {
         assert!(state.overlay.is_none());
 
         // The number is a pull request: GitHub's redirect.
-        let cmds = update(
-            &mut state,
-            Msg::Fetched {
-                key,
-                result: Ok(Data::Issue(None)),
-                cached_at: None,
-            },
-        );
+        let cmds = fetched(&mut state, key, Data::Issue(None));
         let pr = PrRef::parse("a/b#9").unwrap();
         assert_eq!(
             route(&state),
@@ -1741,7 +1722,7 @@ pub(crate) mod tests {
             ],
             "the listing, and each entry's latest commit"
         );
-        let _ = fetched(&mut state, tree, Data::Tree(crate::fixtures::tree()));
+        fetched(&mut state, tree, Data::Tree(crate::fixtures::tree()));
         while !selected_text(&state).contains("README.md") {
             press(&mut state, "j");
         }
@@ -1768,7 +1749,7 @@ pub(crate) mod tests {
                 cached: true
             })]
         );
-        let _ = fetched(
+        fetched(
             &mut state,
             files,
             Data::Files(
@@ -1807,7 +1788,7 @@ pub(crate) mod tests {
                 cached: true
             })]
         );
-        let _ = fetched(
+        fetched(
             &mut state,
             DataKey::Refs(repo()),
             Data::Refs(Box::new(ghtui_api::browse::Refs {
@@ -1837,7 +1818,7 @@ pub(crate) mod tests {
         let key = DataKey::Issue(repo(), 14);
         press(&mut state, "c");
         assert!(state.overlay.is_none(), "nothing to comment on yet");
-        let _ = fetched(
+        fetched(
             &mut state,
             key.clone(),
             Data::Issue(Some(Box::new(crate::fixtures::issue()))),
@@ -1915,7 +1896,7 @@ pub(crate) mod tests {
         let route = route(&state);
         let (kind, query) = route.search().unwrap();
         let key = DataKey::Search(kind, query);
-        let _ = fetched(
+        fetched(
             &mut state,
             key.clone(),
             Data::Search(Box::new(crate::fixtures::issue_results(Some("c1")))),
@@ -1949,7 +1930,7 @@ pub(crate) mod tests {
         // Loading more doesn't block a refresh, and a next page that
         // arrives after the refresh (for the old list) is dropped.
         press(&mut state, "G");
-        let _ = fetched(
+        fetched(
             &mut state,
             key.clone(),
             Data::Search(Box::new(crate::fixtures::issue_results(Some("c2")))),
@@ -1961,7 +1942,7 @@ pub(crate) mod tests {
             cmds.iter()
                 .any(|c| matches!(c, Cmd::Api(Api::Fetch { .. })))
         );
-        let _ = fetched(
+        fetched(
             &mut state,
             key.clone(),
             Data::Search(Box::new(crate::fixtures::issue_results(Some("c2")))),
@@ -2227,8 +2208,9 @@ pub(crate) mod tests {
         use ghtui_api::model::{ViewedFiles, ViewedState};
         use ghtui_ui::diff_doc::Viewed;
 
-        /// A diff screen on o/r#7 built from the snapshot fixture.
-        fn diff_state(width: u16) -> (State, PrRef) {
+        /// A diff screen on o/r#7 built from the snapshot fixture, before
+        /// its saved review is read.
+        fn unread_diff_state(width: u16) -> (State, PrRef) {
             let mut s = state();
             s.size = (width, 40);
             let pr = PrRef::parse("o/r#7").unwrap();
@@ -2237,12 +2219,16 @@ pub(crate) mod tests {
             s.screens
                 .push(Screen::Diff(Box::new(DiffScreen::new(pr.clone(), width))));
             let _ = s.settle_diff();
-            update(
+            (s, pr)
+        }
+
+        /// The same, with an empty saved review read.
+        fn diff_state(width: u16) -> (State, PrRef) {
+            let (mut s, pr) = unread_diff_state(width);
+            diff_msg(
                 &mut s,
-                Msg::Diff(
-                    pr.clone(),
-                    DiffMsg::ReviewLoaded(Ok(ReviewState::default())),
-                ),
+                &pr,
+                DiffMsg::ReviewLoaded(Ok(ReviewState::default())),
             );
             (s, pr)
         }
@@ -2278,12 +2264,10 @@ pub(crate) mod tests {
             assert!(press(&mut s, "v").is_empty());
             assert!(matches!(s.notice, Some(Notice::Error(_))));
 
-            update(
+            diff_msg(
                 &mut s,
-                Msg::Diff(
-                    pr.clone(),
-                    DiffMsg::ViewedLoaded(Box::new(Ok(viewed_files("PR_1")))),
-                ),
+                &pr,
+                DiffMsg::ViewedLoaded(Box::new(Ok(viewed_files("PR_1")))),
             );
             assert_eq!(s.diffs[&pr].doc.files()[0].viewed, Viewed::Viewed);
             assert!(
@@ -2304,16 +2288,14 @@ pub(crate) mod tests {
                     if pull_request_id.as_str() == "PR_1"
             )));
             assert_eq!(s.diffs[&pr].doc.files()[1].viewed, Viewed::Viewed);
-            update(
+            diff_msg(
                 &mut s,
-                Msg::Diff(
-                    pr.clone(),
-                    DiffMsg::ViewedSaved {
-                        file: 1,
-                        previous: Viewed::Unviewed,
-                        result: Err(ApiError::Network("offline".into())),
-                    },
-                ),
+                &pr,
+                DiffMsg::ViewedSaved {
+                    file: 1,
+                    previous: Viewed::Unviewed,
+                    result: Err(ApiError::Network("offline".into())),
+                },
             );
             assert_eq!(s.diffs[&pr].doc.files()[1].viewed, Viewed::Unviewed);
             assert!(matches!(s.notice, Some(Notice::Error(_))));
@@ -2323,15 +2305,7 @@ pub(crate) mod tests {
         /// it; they're merged into it once it's in.
         #[test]
         fn nothing_is_saved_before_the_saved_review_is_read() {
-            let mut s = state();
-            s.size = (120, 40);
-            let pr = PrRef::parse("o/r#7").unwrap();
-            let mut diff = crate::snapshot_tests::diff_fixture();
-            diff.review_loaded = false;
-            s.diffs.insert(pr.clone(), diff);
-            s.screens
-                .push(Screen::Diff(Box::new(DiffScreen::new(pr.clone(), 120))));
-            let _ = s.settle_diff();
+            let (mut s, pr) = unread_diff_state(120);
             press(&mut s, "njjj");
             let cmds = press(&mut s, "m");
             assert!(!cmds.iter().any(|c| matches!(c, Cmd::SaveReview(..))));
@@ -2340,7 +2314,7 @@ pub(crate) mod tests {
                 reviewed_hunks: vec!["older".into()],
                 ..ReviewState::default()
             };
-            let cmds = update(&mut s, Msg::Diff(pr, DiffMsg::ReviewLoaded(Ok(saved))));
+            let cmds = diff_msg(&mut s, &pr, DiffMsg::ReviewLoaded(Ok(saved)));
             let [Cmd::SaveReview(_, review)] = &cmds[..] else {
                 panic!("{cmds:?}")
             };
@@ -2351,9 +2325,10 @@ pub(crate) mod tests {
         #[test]
         fn unreadable_drafts_raise_a_lasting_problem() {
             let (mut s, pr) = diff_state(120);
-            update(
+            diff_msg(
                 &mut s,
-                Msg::Diff(pr, DiffMsg::ReviewLoaded(Err(Failure::msg("disk full")))),
+                &pr,
+                DiffMsg::ReviewLoaded(Err(Failure::msg("disk full"))),
             );
             assert!(s.problems[&Problem::Drafts].contains("disk full"));
             assert!(s.layout().problem.is_some());
@@ -2460,20 +2435,18 @@ pub(crate) mod tests {
                     .position(|f| f.diff.is_none())
                     .unwrap();
                 let job = s.diffs[&pr].job;
-                let cmds = update(
+                let cmds = diff_msg(
                     &mut s,
-                    Msg::Diff(
-                        pr.clone(),
-                        DiffMsg::Job(
-                            job,
-                            JobMsg::File(
-                                pending,
-                                Arc::new(FileDiff::compute(
-                                    "zz/pending.rs",
-                                    Some(b"a\n"),
-                                    Some(b"b\n"),
-                                )),
-                            ),
+                    &pr,
+                    DiffMsg::Job(
+                        job,
+                        JobMsg::File(
+                            pending,
+                            Arc::new(FileDiff::compute(
+                                "zz/pending.rs",
+                                Some(b"a\n"),
+                                Some(b"b\n"),
+                            )),
                         ),
                     ),
                 );
@@ -2481,10 +2454,7 @@ pub(crate) mod tests {
                     |c| matches!(c, Cmd::Git(Git::DetectMoves(p, j, files)) if *p == pr && *j == job && files.len() == 8)
                 ));
                 // Only once.
-                let again = update(
-                    &mut s,
-                    Msg::Diff(pr, DiffMsg::Job(job, JobMsg::Moves(Vec::new()))),
-                );
+                let again = diff_msg(&mut s, &pr, DiffMsg::Job(job, JobMsg::Moves(Vec::new())));
                 assert!(
                     !again
                         .iter()
@@ -2502,16 +2472,11 @@ pub(crate) mod tests {
                 let old = s.diffs[&pr].job;
                 s.diffs.get_mut(&pr).unwrap().restart(None);
                 let stale = Arc::new(FileDiff::compute("a.rs", Some(b"a\n"), Some(b"b\n")));
-                update(
+                diff_msg(&mut s, &pr, DiffMsg::Job(old, JobMsg::File(0, stale)));
+                diff_msg(
                     &mut s,
-                    Msg::Diff(pr.clone(), DiffMsg::Job(old, JobMsg::File(0, stale))),
-                );
-                update(
-                    &mut s,
-                    Msg::Diff(
-                        pr.clone(),
-                        DiffMsg::Job(old, JobMsg::Failed(Failure::msg("old"))),
-                    ),
+                    &pr,
+                    DiffMsg::Job(old, JobMsg::Failed(Failure::msg("old"))),
                 );
                 let diff = &s.diffs[&pr];
                 assert_ne!(diff.job, old);
@@ -2519,12 +2484,10 @@ pub(crate) mod tests {
                 assert_eq!(diff.error, None);
                 // The current job's messages still count.
                 let job = diff.job;
-                update(
+                diff_msg(
                     &mut s,
-                    Msg::Diff(
-                        pr.clone(),
-                        DiffMsg::Job(job, JobMsg::Failed(Failure::msg("new"))),
-                    ),
+                    &pr,
+                    DiffMsg::Job(job, JobMsg::Failed(Failure::msg("new"))),
                 );
                 assert_eq!(s.diffs[&pr].error.as_deref(), Some("new"));
             }
@@ -2537,21 +2500,16 @@ pub(crate) mod tests {
                 assert!(
                     matches!(&cmds[..], [Cmd::Api(Api::FetchLastReview { login, .. })] if login == "me")
                 );
-                let cmds = update(
-                    &mut s,
-                    Msg::Diff(pr.clone(), DiffMsg::LastReview(Ok(Some("old".into())))),
-                );
+                let cmds = diff_msg(&mut s, &pr, DiffMsg::LastReview(Ok(Some("old".into()))));
                 assert!(
                     matches!(&cmds[..], [Cmd::Git(Git::SinceReview { old_head, .. })] if old_head == "old")
                 );
 
                 // Nothing in the old diff matched: everything is new.
-                update(
+                diff_msg(
                     &mut s,
-                    Msg::Diff(
-                        pr.clone(),
-                        DiffMsg::SinceReady("old".into(), Ok(Default::default())),
-                    ),
+                    &pr,
+                    DiffMsg::SinceReady("old".into(), Ok(Default::default())),
                 );
                 assert!(s.diffs[&pr].doc.since_active());
                 assert_eq!(s.chrome().tabs[3].0.label, "Files · since your review");
@@ -2569,16 +2527,13 @@ pub(crate) mod tests {
                 let (mut s, pr) = diff_state(120);
                 s.viewer = Some("me".into());
                 act(&mut s, Action::ToggleSinceReview);
-                update(&mut s, Msg::Diff(pr.clone(), DiffMsg::LastReview(Ok(None))));
+                diff_msg(&mut s, &pr, DiffMsg::LastReview(Ok(None)));
                 assert!(
                     matches!(&s.notice, Some(Notice::Info(m)) if m.contains("haven't reviewed"))
                 );
                 // Reviewing the current head means nothing's new.
                 s.diffs.get_mut(&pr).unwrap().since_requested = true;
-                update(
-                    &mut s,
-                    Msg::Diff(pr.clone(), DiffMsg::LastReview(Ok(Some("h".into())))),
-                );
+                diff_msg(&mut s, &pr, DiffMsg::LastReview(Ok(Some("h".into()))));
                 assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("current head")));
             }
 
@@ -2597,21 +2552,19 @@ pub(crate) mod tests {
                     &act(&mut s, Action::PickCommits)[..],
                     [Cmd::Git(Git::ListCommits(_))]
                 ));
-                update(
+                diff_msg(
                     &mut s,
-                    Msg::Diff(
-                        pr,
-                        DiffMsg::CommitsListed(Ok(vec![
-                            ghtui_git::repo::Commit {
-                                oid: Oid::new("a".repeat(40)),
-                                subject: "first".into(),
-                            },
-                            ghtui_git::repo::Commit {
-                                oid: Oid::new("b".repeat(40)),
-                                subject: "second".into(),
-                            },
-                        ])),
-                    ),
+                    &pr,
+                    DiffMsg::CommitsListed(Ok(vec![
+                        ghtui_git::repo::Commit {
+                            oid: Oid::new("a".repeat(40)),
+                            subject: "first".into(),
+                        },
+                        ghtui_git::repo::Commit {
+                            oid: Oid::new("b".repeat(40)),
+                            subject: "second".into(),
+                        },
+                    ])),
                 );
                 assert!(matches!(s.overlay, Some(Overlay::Picker(_))));
                 // Mark the first commit, select the second: a range.
@@ -2646,35 +2599,7 @@ pub(crate) mod tests {
         mod review {
             use super::*;
             use crate::review::{ComposeTarget, EditPurpose, SubmitOutcome};
-            use ghtui_api::model::{PatchFile, ReviewComment, ReviewEvent, ReviewThread, Side};
-
-            fn thread(id: &str, line: Option<u32>, resolved: bool, outdated: bool) -> ReviewThread {
-                ReviewThread {
-                    id: NodeId::new(id),
-                    path: "src/point.rs".into(),
-                    side: Side::Right,
-                    start_side: None,
-                    line,
-                    start_line: None,
-                    original_line: Some(3),
-                    original_start_line: None,
-                    outdated,
-                    resolved,
-                    file_level: false,
-                    can_reply: true,
-                    can_resolve: true,
-                    can_unresolve: true,
-                    comments: vec![ReviewComment {
-                        id: NodeId::new(format!("{id}-c")),
-                        author: "alice".into(),
-                        body: format!("Thread {id}"),
-                        created_at: "2026-10-03T09:00:00Z".into(),
-                        url: String::new(),
-                        original_commit: Some("abc".into()),
-                        pending: false,
-                    }],
-                }
-            }
+            use ghtui_api::model::{PatchFile, ReviewEvent};
 
             fn to_line(s: &mut State, text: &str) {
                 press(s, "/");
@@ -2684,15 +2609,13 @@ pub(crate) mod tests {
             #[test]
             fn threads_show_navigate_and_resolve() {
                 let (mut s, pr) = diff_state(120);
-                update(
+                diff_msg(
                     &mut s,
-                    Msg::Diff(
-                        pr.clone(),
-                        DiffMsg::ThreadsLoaded(Ok(vec![
-                            thread("done", Some(1), true, false),
-                            thread("open", Some(14), false, false),
-                        ])),
-                    ),
+                    &pr,
+                    DiffMsg::ThreadsLoaded(Ok(vec![
+                        thread("done", Some(1), true, false),
+                        thread("open", Some(14), false, false),
+                    ])),
                 );
                 assert_eq!(s.diffs[&pr].doc.annotations().len(), 2);
                 press(&mut s, "g");
@@ -2716,16 +2639,14 @@ pub(crate) mod tests {
                     [Cmd::Api(Api::SetResolved { resolved: true, .. }), ..]
                 ));
                 assert!(s.diffs[&pr].threads[1].resolved);
-                update(
+                diff_msg(
                     &mut s,
-                    Msg::Diff(
-                        pr.clone(),
-                        DiffMsg::ResolvedSet {
-                            thread_id: NodeId::new("open"),
-                            resolved: true,
-                            result: Err(ApiError::Network("down".into())),
-                        },
-                    ),
+                    &pr,
+                    DiffMsg::ResolvedSet {
+                        thread_id: NodeId::new("open"),
+                        resolved: true,
+                        result: Err(ApiError::Network("down".into())),
+                    },
                 );
                 assert!(!s.diffs[&pr].threads[1].resolved);
                 assert!(matches!(s.notice, Some(Notice::Error(_))));
@@ -2790,16 +2711,14 @@ pub(crate) mod tests {
             fn lines_outside_githubs_diff_become_file_comments() {
                 let (mut s, pr) = diff_state(120);
                 // GitHub's diff only covers line 1.
-                update(
+                diff_msg(
                     &mut s,
-                    Msg::Diff(
-                        pr,
-                        DiffMsg::PatchesLoaded(Ok(vec![PatchFile {
-                            filename: "src/point.rs".into(),
-                            previous_filename: None,
-                            patch: Some("@@ -1 +1 @@\n-a\n+b".into()),
-                        }])),
-                    ),
+                    &pr,
+                    DiffMsg::PatchesLoaded(Ok(vec![PatchFile {
+                        filename: "src/point.rs".into(),
+                        previous_filename: None,
+                        patch: Some("@@ -1 +1 @@\n-a\n+b".into()),
+                    }])),
                 );
                 to_line(&mut s, "origin");
                 press(&mut s, "c");
@@ -2818,16 +2737,14 @@ pub(crate) mod tests {
             #[test]
             fn selections_across_hunks_are_refused() {
                 let (mut s, pr) = diff_state(120);
-                update(
+                diff_msg(
                     &mut s,
-                    Msg::Diff(
-                        pr,
-                        DiffMsg::PatchesLoaded(Ok(vec![PatchFile {
-                            filename: "src/point.rs".into(),
-                            previous_filename: None,
-                            patch: Some("@@ -1,6 +1,6 @@\n@@ -10,4 +10,8 @@".into()),
-                        }])),
-                    ),
+                    &pr,
+                    DiffMsg::PatchesLoaded(Ok(vec![PatchFile {
+                        filename: "src/point.rs".into(),
+                        previous_filename: None,
+                        patch: Some("@@ -1,6 +1,6 @@\n@@ -10,4 +10,8 @@".into()),
+                    }])),
                 );
                 to_line(&mut s, "A point in 2D");
                 press(&mut s, "x");
@@ -2859,15 +2776,13 @@ pub(crate) mod tests {
                 };
                 assert_eq!((drafts.len(), *event), (1, ReviewEvent::Approve));
 
-                update(
+                diff_msg(
                     &mut s,
-                    Msg::Diff(
-                        pr.clone(),
-                        DiffMsg::ReviewSubmitted(SubmitOutcome {
-                            rejected: vec![(id, "line must be part of the diff".into())],
-                            ..SubmitOutcome::default()
-                        }),
-                    ),
+                    &pr,
+                    DiffMsg::ReviewSubmitted(SubmitOutcome {
+                        rejected: vec![(id, "line must be part of the diff".into())],
+                        ..SubmitOutcome::default()
+                    }),
                 );
                 assert!(
                     matches!(&s.overlay, Some(Overlay::Submit(d)) if d.error.is_some() && !d.sending)
@@ -2883,16 +2798,14 @@ pub(crate) mod tests {
                 assert_eq!(s.diffs[&pr].review.pending[0].line, None);
                 press(&mut s, "a");
                 press(&mut s, "<C-s>");
-                update(
+                diff_msg(
                     &mut s,
-                    Msg::Diff(
-                        pr.clone(),
-                        DiffMsg::ReviewSubmitted(SubmitOutcome {
-                            accepted: vec![id],
-                            submitted: true,
-                            ..SubmitOutcome::default()
-                        }),
-                    ),
+                    &pr,
+                    DiffMsg::ReviewSubmitted(SubmitOutcome {
+                        accepted: vec![id],
+                        submitted: true,
+                        ..SubmitOutcome::default()
+                    }),
                 );
                 assert!(s.overlay.is_none());
                 assert!(s.diffs[&pr].review.pending.is_empty());
@@ -2911,12 +2824,10 @@ pub(crate) mod tests {
             #[test]
             fn replies_post_right_away() {
                 let (mut s, pr) = diff_state(120);
-                update(
+                diff_msg(
                     &mut s,
-                    Msg::Diff(
-                        pr.clone(),
-                        DiffMsg::ThreadsLoaded(Ok(vec![thread("t", Some(14), false, false)])),
-                    ),
+                    &pr,
+                    DiffMsg::ThreadsLoaded(Ok(vec![thread("t", Some(14), false, false)])),
                 );
                 press(&mut s, "g");
                 act(&mut s, Action::NextThread);
@@ -2926,17 +2837,15 @@ pub(crate) mod tests {
                 assert!(
                     matches!(&cmds[..], [Cmd::Api(Api::Reply { body, .. })] if body == "Fixed")
                 );
-                update(
+                diff_msg(
                     &mut s,
-                    Msg::Diff(
-                        pr.clone(),
-                        DiffMsg::Replied(Err(ApiError::Network("down".into()))),
-                    ),
+                    &pr,
+                    DiffMsg::Replied(Err(ApiError::Network("down".into()))),
                 );
                 assert!(
                     matches!(&s.overlay, Some(Overlay::Compose(c)) if c.error.is_some() && c.text() == "Fixed")
                 );
-                let cmds = update(&mut s, Msg::Diff(pr.clone(), DiffMsg::Replied(Ok(()))));
+                let cmds = diff_msg(&mut s, &pr, DiffMsg::Replied(Ok(())));
                 assert!(s.overlay.is_none());
                 assert_eq!(cmds, vec![Cmd::Api(Api::FetchThreads(pr))]);
             }
@@ -2979,12 +2888,10 @@ pub(crate) mod tests {
             #[test]
             fn outdated_threads_are_mapped_forward() {
                 let (mut s, pr) = diff_state(120);
-                let cmds = update(
+                let cmds = diff_msg(
                     &mut s,
-                    Msg::Diff(
-                        pr.clone(),
-                        DiffMsg::ThreadsLoaded(Ok(vec![thread("old", None, false, true)])),
-                    ),
+                    &pr,
+                    DiffMsg::ThreadsLoaded(Ok(vec![thread("old", None, false, true)])),
                 );
                 assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated { threads, head, .. }) if threads.len() == 1 && &**head == "h")));
                 let ann = &s.diffs[&pr].doc.annotations()[0];
@@ -2992,12 +2899,10 @@ pub(crate) mod tests {
                     ann.outdated && ann.on_line().is_none(),
                     "unplaced until mapped"
                 );
-                update(
+                diff_msg(
                     &mut s,
-                    Msg::Diff(
-                        pr.clone(),
-                        DiffMsg::OutdatedMapped(vec![(NodeId::new("old"), Some(4))]),
-                    ),
+                    &pr,
+                    DiffMsg::OutdatedMapped(vec![(NodeId::new("old"), Some(4))]),
                 );
                 let ann = &s.diffs[&pr].doc.annotations()[0];
                 assert_eq!((ann.on_line(), ann.moved), (Some(4), true));

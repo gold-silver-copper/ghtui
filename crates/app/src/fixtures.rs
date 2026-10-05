@@ -6,9 +6,10 @@ use ghtui_api::browse::{
     Profile, Readme, RepoOverview, RepoSummary, Results, ReviewSummary, SearchResults, TreeEntry,
     UserSummary,
 };
-use ghtui_api::model::{Label, NodeId, RepoId};
+use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
-use crate::state::{Cmd, Msg, State, update};
+use crate::browse::{Data, DataKey};
+use crate::state::{Cmd, DiffMsg, Msg, State, update};
 
 /// Presses `keys`, in vim notation (`"jj"`, `"<Esc>/"`, `"<C-d>"`).
 pub(crate) fn press(state: &mut State, keys: &str) -> Vec<Cmd> {
@@ -17,6 +18,54 @@ pub(crate) fn press(state: &mut State, keys: &str) -> Vec<Cmd> {
         cmds.extend(update(state, Msg::Key(KeyEvent::new(key.code, key.mods))));
     }
     cmds
+}
+
+/// Delivers freshly fetched page data.
+pub(crate) fn fetched(state: &mut State, key: DataKey, data: Data) -> Vec<Cmd> {
+    let result = Ok(data);
+    let cached_at = None;
+    update(
+        state,
+        Msg::Fetched {
+            key,
+            result,
+            cached_at,
+        },
+    )
+}
+
+/// Delivers a message for `pr`'s diff.
+pub(crate) fn diff_msg(state: &mut State, pr: &PrRef, msg: DiffMsg) -> Vec<Cmd> {
+    update(state, Msg::Diff(pr.clone(), msg))
+}
+
+/// A review thread on `src/point.rs`, with one comment.
+pub(crate) fn thread(id: &str, line: Option<u32>, resolved: bool, outdated: bool) -> ReviewThread {
+    ReviewThread {
+        id: NodeId::new(id),
+        path: "src/point.rs".into(),
+        side: Side::Right,
+        start_side: None,
+        line,
+        start_line: None,
+        original_line: Some(3),
+        original_start_line: None,
+        outdated,
+        resolved,
+        file_level: false,
+        can_reply: true,
+        can_resolve: true,
+        can_unresolve: true,
+        comments: vec![ReviewComment {
+            id: NodeId::new(format!("{id}-c")),
+            author: "alice".into(),
+            body: format!("Thread {id}"),
+            created_at: "2026-10-03T09:00:00Z".into(),
+            url: String::new(),
+            original_commit: Some("abc".into()),
+            pending: false,
+        }],
+    }
 }
 
 pub fn repo_summary(repo: &str, stars: u64) -> RepoSummary {
