@@ -78,31 +78,27 @@ pub fn align(
     let mut diff = Diff::compute(algorithm, &input);
     diff.postprocess_lines(&input);
 
+    // Indices are 0-based, line numbers 1-based.
+    let line = |kind, old: Option<u32>, new: Option<u32>| DiffLine {
+        kind,
+        old: old.map(|o| o + 1),
+        new: new.map(|n| n + 1),
+    };
     let mut lines = Vec::with_capacity(old.len().max(new.len()));
-    let (mut o, mut n) = (0u32, 0u32);
-    for change in diff.hunks() {
-        while o < change.before.start {
-            lines.push(context_line(o, n));
-            o += 1;
-            n += 1;
-        }
-        lines.extend(change.before.clone().map(|k| DiffLine {
-            kind: LineKind::Removed,
-            old: Some(k + 1),
-            new: None,
-        }));
-        lines.extend(change.after.clone().map(|k| DiffLine {
-            kind: LineKind::Added,
-            old: None,
-            new: Some(k + 1),
-        }));
-        o = change.before.end;
-        n = change.after.end;
-    }
-    while (o as usize) < old.len() {
-        lines.push(context_line(o, n));
-        o += 1;
-        n += 1;
+    let (mut o, mut n) = (0, 0);
+    // The context after the last change comes before an empty one at the end.
+    let (old_end, new_end) = (sat_u32(old.len()), sat_u32(new.len()));
+    let end = (old_end..old_end, new_end..new_end);
+    for (before, after) in diff.hunks().map(|h| (h.before, h.after)).chain([end]) {
+        let context = (o..before.start).zip(n..);
+        lines.extend(context.map(|(o, n)| line(LineKind::Context, Some(o), Some(n))));
+        lines.extend(
+            before
+                .clone()
+                .map(|o| line(LineKind::Removed, Some(o), None)),
+        );
+        lines.extend(after.clone().map(|n| line(LineKind::Added, None, Some(n))));
+        (o, n) = (before.end, after.end);
     }
     lines
 }
@@ -143,46 +139,30 @@ pub fn segments_by(
     }
     let context = context as usize;
     let mut visible = vec![false; len];
-    let mut since_change = usize::MAX;
-    for (i, v) in visible.iter_mut().enumerate() {
-        since_change = if is_change(i) {
-            0
-        } else {
-            since_change.saturating_add(1)
-        };
-        *v = since_change <= context;
-    }
-    let mut until_change = usize::MAX;
-    for (i, v) in visible.iter_mut().enumerate().rev() {
-        until_change = if is_change(i) {
-            0
-        } else {
-            until_change.saturating_add(1)
-        };
-        *v |= until_change <= context;
+    let mut show = |range: std::ops::Range<usize>| {
+        if let Some(lines) = visible.get_mut(range.start..range.end.min(len)) {
+            lines.fill(true);
+        }
+    };
+    // Each change shows from where the previous one's context ended.
+    let mut shown = 0;
+    for i in (0..len).filter(|&i| is_change(i)) {
+        let end = i.saturating_add(context).saturating_add(1);
+        show(i.saturating_sub(context).max(shown)..end);
+        shown = end;
     }
     for window in windows {
-        let (start, end) = (window.start as usize, window.end as usize);
-        for v in visible.iter_mut().take(end).skip(start) {
-            *v = true;
-        }
+        show(window.start as usize..window.end as usize);
     }
-    let mut out = Vec::new();
-    let mut start = None;
-    for (i, v) in visible.iter().enumerate() {
-        match (v, start) {
-            (true, None) => start = Some(i),
-            (false, Some(s)) => {
-                out.push(s..i);
-                start = None;
-            }
-            _ => {}
-        }
-    }
-    if let Some(s) = start {
-        out.push(s..len);
-    }
-    out
+    let mut end = 0;
+    visible
+        .chunk_by(|a, b| a == b)
+        .filter_map(|run| {
+            let start = end;
+            end += run.len();
+            (run.first() == Some(&true)).then_some(start..end)
+        })
+        .collect()
 }
 
 /// Old and new lines that come before `index` in the alignment.
@@ -226,14 +206,6 @@ pub fn diff_lines(old: &Text, new: &Text, algorithm: Algorithm, context: u32) ->
             hunk(&lines, range, counts)
         })
         .collect()
-}
-
-fn context_line(o: u32, n: u32) -> DiffLine {
-    DiffLine {
-        kind: LineKind::Context,
-        old: Some(o + 1),
-        new: Some(n + 1),
-    }
 }
 
 #[cfg(test)]
