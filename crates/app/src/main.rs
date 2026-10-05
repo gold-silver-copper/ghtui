@@ -83,7 +83,10 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
-    match runtime.block_on(run(started)) {
+    let result = runtime.block_on(run(started));
+    // Don't wait on background work (a big diff, a stalled fetch) to exit.
+    runtime.shutdown_timeout(Duration::from_millis(100));
+    match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("ghtui: {err:#}");

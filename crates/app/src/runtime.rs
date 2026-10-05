@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind, MouseEventKind};
@@ -31,27 +31,52 @@ struct Effects {
     reviews: Result<Reviews, String>,
     /// Review saves go through one writer, in order.
     save_review: mpsc::UnboundedSender<(PrRef, ReviewState)>,
+    writer: tokio::task::JoinHandle<()>,
 }
 
 pub async fn run(
     terminal: &mut DefaultTerminal,
-    mut state: State,
+    state: State,
     gh: GitHub,
     git: GitContext,
     reviews: Result<Reviews, String>,
     initial: Vec<Cmd>,
     started: Instant,
 ) -> Result<()> {
-    let (tx, mut rx) = mpsc::unbounded_channel::<Msg>();
-    let mut events = EventStream::new();
+    let (tx, rx) = mpsc::unbounded_channel::<Msg>();
+    let (save_review, writer) = review_writer(reviews.clone(), &tx);
     let mut effects = Effects {
         gh,
         git,
-        tx: tx.clone(),
+        tx,
         jobs: HashMap::new(),
-        save_review: review_writer(reviews.clone(), &tx),
+        save_review,
+        writer,
         reviews,
     };
+    let result = drive(terminal, state, &mut effects, rx, initial, started).await;
+    // Drafts saved just before quitting still reach the disk.
+    drop(effects.save_review);
+    if tokio::time::timeout(Duration::from_secs(2), effects.writer)
+        .await
+        .is_err()
+    {
+        tracing::warn!("review state was still being written at exit");
+    }
+    result
+}
+
+async fn drive(
+    terminal: &mut DefaultTerminal,
+    mut state: State,
+    effects: &mut Effects,
+    mut rx: mpsc::UnboundedReceiver<Msg>,
+    initial: Vec<Cmd>,
+    started: Instant,
+) -> Result<()> {
+    let tx = effects.tx.clone();
+    let mut events = EventStream::new();
+    let mut stop = StopSignals::new()?;
 
     terminal.draw(|frame| view(&state, frame, ghtui_store::now()))?;
     tracing::info!(elapsed_ms = started.elapsed().as_millis(), "first paint");
@@ -76,6 +101,10 @@ pub async fn run(
                 None => return Ok(()),
             },
             Some(msg) = rx.recv() => msg,
+            signal = stop.recv() => {
+                tracing::info!(signal, "stopping");
+                return Ok(());
+            }
         };
         let mut cmds = update(&mut state, msg);
         // Drain whatever else is ready so a burst of results draws once.
@@ -538,14 +567,17 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
 fn review_writer(
     reviews: Result<Reviews, String>,
     tx: &mpsc::UnboundedSender<Msg>,
-) -> mpsc::UnboundedSender<(PrRef, ReviewState)> {
+) -> (
+    mpsc::UnboundedSender<(PrRef, ReviewState)>,
+    tokio::task::JoinHandle<()>,
+) {
     let (save, mut saves) = mpsc::unbounded_channel::<(PrRef, ReviewState)>();
     let gone = Msg::Problem(
         Problem::Drafts,
         Some("Drafts are no longer being saved (internal error; see the log)".into()),
     );
     let out = tx.clone();
-    spawn_guarded(tx, vec![gone], async move {
+    let writer = spawn_guarded(tx, vec![gone], async move {
         let mut failing = false;
         while let Some(first) = saves.recv().await {
             let mut latest: Vec<(PrRef, ReviewState)> = vec![first];
@@ -580,7 +612,49 @@ fn review_writer(
             }
         }
     });
-    save
+    (save, writer)
+}
+
+/// The signals that ask ghtui to stop: quitting on them restores the
+/// terminal (a plain `kill` used to leave it in raw mode with mouse
+/// reporting on).
+struct StopSignals {
+    #[cfg(unix)]
+    signals: Vec<(&'static str, tokio::signal::unix::Signal)>,
+}
+
+impl StopSignals {
+    fn new() -> std::io::Result<Self> {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            Ok(Self {
+                signals: vec![
+                    ("SIGTERM", signal(SignalKind::terminate())?),
+                    ("SIGHUP", signal(SignalKind::hangup())?),
+                    ("SIGQUIT", signal(SignalKind::quit())?),
+                ],
+            })
+        }
+        #[cfg(not(unix))]
+        Ok(Self {})
+    }
+
+    /// The name of the next stop signal to arrive.
+    async fn recv(&mut self) -> &'static str {
+        #[cfg(unix)]
+        {
+            let waits = self.signals.iter_mut().map(|(name, signal)| {
+                Box::pin(async move {
+                    signal.recv().await;
+                    *name
+                })
+            });
+            futures::future::select_all(waits).await.0
+        }
+        #[cfg(not(unix))]
+        std::future::pending().await
+    }
 }
 
 /// What the cache has for a page.
