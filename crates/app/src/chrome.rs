@@ -31,6 +31,8 @@ pub struct Layout {
     /// Two rows: labels and the underline.
     pub tabs: Option<Rect>,
     pub content: Rect,
+    /// The first lasting problem, above the status bar.
+    pub problem: Option<Rect>,
     pub status: Rect,
 }
 
@@ -259,11 +261,14 @@ impl State {
             r
         });
         let status_y = h.saturating_sub(1);
+        let problem_y = (!self.problems.is_empty() && status_y > y).then(|| status_y - 1);
+        let bottom = problem_y.unwrap_or(status_y);
         Layout {
             header,
             title: title.filter(|r| r.height > 0 && r.y < status_y),
             tabs: tabs.filter(|r| r.height > 0 && r.y < status_y),
-            content: Rect::new(0, y.min(status_y), w, status_y.saturating_sub(y)),
+            content: Rect::new(0, y.min(bottom), w, bottom.saturating_sub(y)),
+            problem: problem_y.map(|y| row(y, 1)),
             status: row(status_y, 1),
         }
     }

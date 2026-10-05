@@ -75,7 +75,10 @@ pub enum Msg {
         previous: Viewed,
         result: Result<(), ApiError>,
     },
-    ReviewLoaded(PrRef, ReviewState),
+    /// The PR's saved review state, or why it couldn't be read.
+    ReviewLoaded(PrRef, Result<ReviewState, String>),
+    /// A lasting problem started (`Some`) or cleared up (`None`).
+    Problem(Problem, Option<String>),
     ThreadsLoaded(PrRef, Result<Vec<ReviewThread>, ApiError>),
     PatchesLoaded(PrRef, Result<Vec<PatchFile>, ApiError>),
     OutdatedMapped(PrRef, Vec<(String, Option<u32>)>),
@@ -199,6 +202,14 @@ pub enum Cmd {
     ListCommits(PrRef),
 }
 
+/// Problems that last until they're fixed, shown in a banner above the
+/// status bar instead of as a notice that expires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Problem {
+    /// Review drafts can't be written to disk.
+    Drafts,
+}
+
 /// Things that happen later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Timer {
@@ -307,6 +318,8 @@ pub struct State {
     pub overlay: Option<Overlay>,
     pub pending: Vec<Key>,
     pub notice: Option<Notice>,
+    /// Lasting problems, most important first; the first is shown.
+    pub problems: std::collections::BTreeMap<Problem, String>,
     /// Terminal size.
     pub size: (u16, u16),
     pub keymap: Keymap,
@@ -338,6 +351,7 @@ impl State {
             overlay: None,
             pending: Vec::new(),
             notice: None,
+            problems: Default::default(),
             size,
             keymap,
             theme,
@@ -516,6 +530,11 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
     }
     // Then keep the page (or the diff) in bounds.
     let mut cmds = handle(state, msg);
+    // Until a PR's saved review is read, saving would overwrite it.
+    cmds.retain(|cmd| match cmd {
+        Cmd::SaveReview(pr, _) => state.diffs.get(pr).is_some_and(|d| d.review_loaded),
+        _ => true,
+    });
     state.sync_page();
     cmds.extend(state.settle_diff());
     cmds
@@ -795,10 +814,31 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             }
             Vec::new()
         }
-        Msg::ReviewLoaded(pr, review) => {
-            if let Some(diff) = state.diffs.get_mut(&pr) {
-                diff.set_review(review);
+        Msg::ReviewLoaded(pr, Ok(saved)) => {
+            let Some(diff) = state.diffs.get_mut(&pr) else {
+                return Vec::new();
+            };
+            // Anything done before it arrived is kept, and saved.
+            if diff.merge_saved_review(saved) {
+                vec![Cmd::SaveReview(pr, diff.review.clone())]
+            } else {
+                Vec::new()
             }
+        }
+        Msg::ReviewLoaded(pr, Err(err)) => {
+            tracing::warn!(%pr, %err, "reading review state failed");
+            state.problems.insert(
+                Problem::Drafts,
+                format!("Drafts for {pr} are not being saved: {err}"),
+            );
+            Vec::new()
+        }
+        Msg::Problem(problem, Some(text)) => {
+            state.problems.insert(problem, text);
+            Vec::new()
+        }
+        Msg::Problem(problem, None) => {
+            state.problems.remove(&problem);
             Vec::new()
         }
         Msg::ThreadsLoaded(pr, result) => {
@@ -2711,6 +2751,10 @@ mod tests {
             s.screens
                 .push(Screen::Diff(Box::new(DiffScreen::new(pr.clone(), width))));
             let _ = s.settle_diff();
+            update(
+                &mut s,
+                Msg::ReviewLoaded(pr.clone(), Ok(ReviewState::default())),
+            );
             (s, pr)
         }
 
@@ -2779,6 +2823,45 @@ mod tests {
             );
             assert_eq!(s.diffs[&pr].doc.files[1].viewed, Viewed::Unviewed);
             assert!(matches!(s.notice, Some(Notice::Error(_))));
+        }
+
+        /// Marks made before the saved review arrives aren't saved over
+        /// it; they're merged into it once it's in.
+        #[test]
+        fn nothing_is_saved_before_the_saved_review_is_read() {
+            let mut s = state();
+            s.size = (120, 40);
+            let pr = PrRef::parse("o/r#7").unwrap();
+            let mut diff = crate::snapshot_tests::diff_fixture();
+            diff.review_loaded = false;
+            s.diffs.insert(pr.clone(), diff);
+            s.screens
+                .push(Screen::Diff(Box::new(DiffScreen::new(pr.clone(), 120))));
+            let _ = s.settle_diff();
+            press(&mut s, "njjj");
+            let cmds = press(&mut s, "m");
+            assert!(!cmds.iter().any(|c| matches!(c, Cmd::SaveReview(..))));
+
+            let saved = ReviewState {
+                reviewed_hunks: vec!["older".into()],
+                ..ReviewState::default()
+            };
+            let cmds = update(&mut s, Msg::ReviewLoaded(pr.clone(), Ok(saved)));
+            let [Cmd::SaveReview(_, review)] = &cmds[..] else {
+                panic!("{cmds:?}")
+            };
+            assert_eq!(review.reviewed_hunks.len(), 2);
+            assert!(review.reviewed_hunks.contains(&"older".to_owned()));
+        }
+
+        #[test]
+        fn unreadable_drafts_raise_a_lasting_problem() {
+            let (mut s, pr) = diff_state(120);
+            update(&mut s, Msg::ReviewLoaded(pr, Err("disk full".into())));
+            assert!(s.problems[&Problem::Drafts].contains("disk full"));
+            assert!(s.layout().problem.is_some());
+            update(&mut s, Msg::Problem(Problem::Drafts, None));
+            assert!(s.layout().problem.is_none());
         }
 
         #[test]

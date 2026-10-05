@@ -121,6 +121,9 @@ pub struct DiffState {
     requested: HashSet<usize>,
     /// The diff job whose results this shows; older jobs' are ignored.
     pub job: JobId,
+    /// The saved review state has been read (saving before that would
+    /// overwrite it).
+    pub review_loaded: bool,
 }
 
 impl DiffState {
@@ -200,9 +203,35 @@ impl DiffState {
         self.apply_viewed();
     }
 
+    #[cfg(test)]
     pub fn set_review(&mut self, review: ReviewState) {
         self.review = review;
+        self.review_loaded = true;
         self.apply_review();
+    }
+
+    /// Takes in the saved review state, keeping whatever was done before
+    /// it arrived. True if that left something new to save.
+    pub fn merge_saved_review(&mut self, saved: ReviewState) -> bool {
+        let early = std::mem::replace(&mut self.review, saved);
+        let changed = early != ReviewState::default();
+        let review = &mut self.review;
+        for hunk in early.reviewed_hunks {
+            if !review.reviewed_hunks.contains(&hunk) {
+                review.reviewed_hunks.push(hunk);
+            }
+        }
+        review.reviewed_hunks.sort();
+        for mut draft in early.pending {
+            draft.id = review.next_draft_id();
+            review.pending.push(draft);
+        }
+        if early.last_reviewed_head.is_some() {
+            review.last_reviewed_head = early.last_reviewed_head;
+        }
+        self.review_loaded = true;
+        self.apply_review();
+        changed
     }
 
     fn apply_viewed(&mut self) {

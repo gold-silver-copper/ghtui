@@ -95,6 +95,13 @@ pub fn cache_dir() -> Option<PathBuf> {
     Some(native.cache_dir().join("ghtui"))
 }
 
+/// Where state that must outlive the cache lives (review drafts).
+pub fn data_dir() -> Option<PathBuf> {
+    use etcetera::BaseStrategy;
+    let native = etcetera::base_strategy::choose_native_strategy().ok()?;
+    Some(native.data_dir().join("ghtui"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -123,6 +123,7 @@ async fn run(started: Instant) -> Result<()> {
         nerd_font: config.ui.nerd_font,
     };
     let store = Store::open(&cache_dir.join("cache.redb"));
+    let reviews = open_reviews(&store);
 
     let (token, source) = token
         .join()
@@ -137,6 +138,12 @@ async fn run(started: Instant) -> Result<()> {
 
     let size = crossterm::terminal::size().unwrap_or((80, 24));
     let mut state = State::new(theme, icons, keymap, size);
+    if let Err(err) = &reviews {
+        state.problems.insert(
+            state::Problem::Drafts,
+            format!("Drafts are not being saved: {err}"),
+        );
+    }
     state.inbox = Remote::cached(gh.cached_inbox().map(|c| c.value));
     let mut cmds = match target {
         Some(target) => {
@@ -165,13 +172,26 @@ async fn run(started: Instant) -> Result<()> {
     install_panic_hook();
     let mut terminal = init_terminal().context("needs an interactive terminal")?;
     set_mouse(true);
-    let result = runtime::run(&mut terminal, state, gh, git, cmds, started).await;
+    let result = runtime::run(&mut terminal, state, gh, git, reviews, cmds, started).await;
     set_mouse(false);
     ratatui::restore();
     if let Err(err) = &result {
         tracing::error!("{err:#}");
     }
     result
+}
+
+/// Review drafts' home, with any left in the cache by older versions
+/// moved in.
+fn open_reviews(store: &Store) -> Result<ghtui_store::Reviews, String> {
+    let dir = config::data_dir().ok_or("cannot determine a data directory")?;
+    let reviews = ghtui_store::Reviews::open(&dir.join("reviews")).map_err(|e| e.to_string())?;
+    match store.migrate_reviews(&reviews) {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(n, "moved review state out of the cache"),
+        Err(err) => tracing::warn!(%err, "moving review state out of the cache failed"),
+    }
+    Ok(reviews)
 }
 
 /// How git authenticates for the cache clone: through `gh` when that's

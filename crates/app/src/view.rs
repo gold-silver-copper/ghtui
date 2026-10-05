@@ -89,6 +89,16 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
     }
     separate_collapsed_tones(ctx, content, buf);
 
+    if let (Some(rect), Some(problem)) = (lay.problem, state.problems.values().next()) {
+        Banner {
+            ctx,
+            text: problem,
+            hint: None,
+            error: true,
+        }
+        .render(rect, buf);
+    }
+
     let busy = state.busy();
     let pending = pretty(&state.pending);
     let rate_limit = state

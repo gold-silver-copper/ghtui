@@ -10,7 +10,7 @@ use crossterm::event::{Event, EventStream, KeyEventKind, MouseEventKind};
 use futures::StreamExt;
 use ghtui_api::model::{PrRef, ReviewEvent};
 use ghtui_api::{ApiError, GitHub};
-use ghtui_store::DraftComment;
+use ghtui_store::{DraftComment, ReviewState, Reviews};
 use ghtui_ui::bars::Notice;
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use crate::browse::{Data, DataKey};
 use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx};
 use crate::review::{self, SubmitOutcome};
-use crate::state::{Cmd, Msg, State, timers, update};
+use crate::state::{Cmd, Msg, Problem, State, timers, update};
 use crate::view::view;
 
 struct Effects {
@@ -27,6 +27,10 @@ struct Effects {
     tx: mpsc::UnboundedSender<Msg>,
     /// Running diff jobs by PR.
     jobs: HashMap<PrRef, (Arc<JobControl>, tokio::task::JoinHandle<()>)>,
+    /// Where review drafts live, or why they can't be saved.
+    reviews: Result<Reviews, String>,
+    /// Review saves go through one writer, in order.
+    save_review: mpsc::UnboundedSender<(PrRef, ReviewState)>,
 }
 
 pub async fn run(
@@ -34,6 +38,7 @@ pub async fn run(
     mut state: State,
     gh: GitHub,
     git: GitContext,
+    reviews: Result<Reviews, String>,
     initial: Vec<Cmd>,
     started: Instant,
 ) -> Result<()> {
@@ -44,6 +49,8 @@ pub async fn run(
         git,
         tx: tx.clone(),
         jobs: HashMap::new(),
+        save_review: review_writer(reviews.clone(), &tx),
+        reviews,
     };
 
     terminal.draw(|frame| view(&state, frame, ghtui_store::now()))?;
@@ -206,6 +213,25 @@ impl Effects {
                     let _ = tx.send(Msg::OutdatedMapped(pr, mapped));
                 });
             }
+            Cmd::LoadReview(pr) => {
+                let reviews = self.reviews.clone();
+                let tx = self.tx.clone();
+                spawn_guarded(&self.tx, replies, async move {
+                    let review = match reviews {
+                        Ok(reviews) => {
+                            let key = (pr.repo.owner.clone(), pr.repo.name.clone(), pr.number);
+                            blocking(move || reviews.get(&key.0, &key.1, key.2))
+                                .await
+                                .map_err(|e| e.to_string())
+                        }
+                        Err(err) => Err(err),
+                    };
+                    let _ = tx.send(Msg::ReviewLoaded(pr, review));
+                });
+            }
+            Cmd::SaveReview(pr, review) => {
+                let _ = self.save_review.send((pr, review));
+            }
             cmd => spawn(cmd, replies, &self.gh, &self.tx),
         }
     }
@@ -321,18 +347,6 @@ fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                     result,
                 }
             }
-            Cmd::LoadReview(pr) => {
-                let store = gh.store().clone();
-                let key = pr.to_string();
-                let review = blocking(move || store.review_get(&key)).await;
-                Msg::ReviewLoaded(pr, review)
-            }
-            Cmd::SaveReview(pr, review) => {
-                let store = gh.store().clone();
-                let key = pr.to_string();
-                blocking(move || store.review_put(&key, &review)).await;
-                return;
-            }
             Cmd::FetchThreads(pr) => {
                 let result = gh.review_threads(&pr).await;
                 Msg::ThreadsLoaded(pr, result)
@@ -383,7 +397,9 @@ fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
             | Cmd::Copy(_)
             | Cmd::DetectMoves(..)
             | Cmd::SinceReview { .. }
-            | Cmd::ListCommits(..) => {
+            | Cmd::ListCommits(..)
+            | Cmd::LoadReview(_)
+            | Cmd::SaveReview(..) => {
                 unreachable!("handled by the runtime loop")
             }
         };
@@ -488,6 +504,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             resolved: *resolved,
             result: api(),
         },
+        Cmd::LoadReview(pr) => Msg::ReviewLoaded(pr.clone(), git()),
         Cmd::SubmitReview { pr, .. } => Msg::ReviewSubmitted(
             pr.clone(),
             SubmitOutcome {
@@ -502,19 +519,68 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Cmd::DetectMoves(pr, job, _) => Msg::Job(pr.clone(), *job, JobMsg::Moves(Vec::new())),
         Cmd::SinceReview { pr, old_head } => Msg::SinceReady(pr.clone(), old_head.clone(), git()),
         Cmd::ListCommits(pr) => Msg::CommitsListed(pr.clone(), git()),
-        // Nothing waits on these. A failed review load leaves the review
-        // unloaded rather than empty, so drafts are never overwritten.
+        // Nothing waits on these.
         Cmd::OpenUrl(_)
         | Cmd::Copy(_)
         | Cmd::Timer(..)
         | Cmd::SuggestLater(_)
         | Cmd::SaveVisits(_)
         | Cmd::Prioritize(..)
-        | Cmd::LoadReview(_)
         | Cmd::SaveReview(..)
         | Cmd::Edit { .. } => return Vec::new(),
     };
     vec![msg]
+}
+
+/// Writes review state in the order it was saved (only the latest per PR
+/// when several are waiting), and reports when drafts stop or resume
+/// reaching the disk.
+fn review_writer(
+    reviews: Result<Reviews, String>,
+    tx: &mpsc::UnboundedSender<Msg>,
+) -> mpsc::UnboundedSender<(PrRef, ReviewState)> {
+    let (save, mut saves) = mpsc::unbounded_channel::<(PrRef, ReviewState)>();
+    let gone = Msg::Problem(
+        Problem::Drafts,
+        Some("Drafts are no longer being saved (internal error; see the log)".into()),
+    );
+    let out = tx.clone();
+    spawn_guarded(tx, vec![gone], async move {
+        let mut failing = false;
+        while let Some(first) = saves.recv().await {
+            let mut latest: Vec<(PrRef, ReviewState)> = vec![first];
+            while let Ok((pr, review)) = saves.try_recv() {
+                match latest.iter_mut().find(|(p, _)| *p == pr) {
+                    Some(slot) => slot.1 = review,
+                    None => latest.push((pr, review)),
+                }
+            }
+            let result = match reviews.clone() {
+                Ok(reviews) => blocking(move || {
+                    latest.iter().try_for_each(|(pr, review)| {
+                        reviews.put(&pr.repo.owner, &pr.repo.name, pr.number, review)
+                    })
+                })
+                .await
+                .map_err(|e| e.to_string()),
+                Err(err) => Err(err),
+            };
+            match result {
+                Ok(()) if failing => {
+                    failing = false;
+                    let _ = out.send(Msg::Problem(Problem::Drafts, None));
+                }
+                Ok(()) => {}
+                Err(err) => {
+                    tracing::warn!(%err, "saving review state failed");
+                    failing = true;
+                    let text = format!("Drafts are not being saved: {err}");
+                    let _ = out.send(Msg::Problem(Problem::Drafts, Some(text)));
+                }
+            }
+        }
+    });
+    save
 }
 
 /// What the cache has for a page.

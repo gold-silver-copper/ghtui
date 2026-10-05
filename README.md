@@ -287,7 +287,7 @@ work runs in tokio tasks, so the UI task never waits on them.
 | `theme`  | Scheme generation, semantic roles, quantization, contrast, detection     |
 | `api`    | Auth, GraphQL (cynic) and REST over one octocrab client, retries, limits |
 | `schema` | GitHub's GraphQL schema compiled once (see below)                        |
-| `store`  | redb cache: GraphQL results, REST bodies with ETags, review state        |
+| `store`  | redb cache (GraphQL results, REST bodies with ETags); review state files |
 | `git`    | `git` CLI: repo selection, credentials, fetch, prefetch, `cat-file`      |
 | `diff`   | Line hunks (imara-diff), tree-sitter highlighting, per-file diff model   |
 
@@ -304,7 +304,9 @@ Notes:
   The client is built lazily on a blocking thread, because loading macOS root
   certificates takes over 100ms and would delay the first paint.
 - **Retries**: transport errors and 5xx responses are retried up to 3 times
-  with backoff. On a 403/429 rate limit, ghtui waits out a `Retry-After` of
+  with backoff. Mutations are the exception: they're retried only when the
+  connection was refused, since a 5xx or timeout may mean GitHub already
+  applied them. On a 403/429 rate limit, ghtui waits out a `Retry-After` of
   up to 10s inline; longer waits are reported. Rate-limit headers (REST and
   GraphQL) feed the `API remaining/limit` indicator in the status bar.
 - **Caching**: the first paint comes from the cache, then data is
@@ -315,8 +317,14 @@ Notes:
   process holds the cache, this one runs without a cache instead of failing.
 - **Files**: cache at `~/Library/Caches/ghtui/cache.redb` on macOS
   (`$XDG_CACHE_HOME/ghtui` on Linux); log at `ghtui.log` next to it (level
-  via `GHTUI_LOG`, e.g. `GHTUI_LOG=debug`). Nothing is written to the
-  terminal while the TUI runs. Panics restore the terminal before printing.
+  via `GHTUI_LOG`, e.g. `GHTUI_LOG=debug`). Review drafts and reviewed marks
+  live outside the cache, one JSON file per PR under
+  `~/Library/Application Support/ghtui/reviews` (`$XDG_DATA_HOME/ghtui/reviews`
+  on Linux), so deleting the cache never loses them. If they can't be
+  written, a banner says so until they can. Nothing is written to the
+  terminal while the TUI runs. A panic in the UI restores the terminal before
+  printing; a panic in background work is logged and reported in the status
+  bar, and the session carries on.
 
 ## How a diff is built
 
