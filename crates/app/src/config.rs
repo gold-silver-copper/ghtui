@@ -9,25 +9,20 @@ use ghtui_theme::Rgb;
 use serde::Deserialize;
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
-    #[serde(default)]
     pub theme: ThemeConfig,
-    #[serde(default)]
     pub ui: UiConfig,
     /// Action name → key sequences.
-    #[serde(default)]
     pub keys: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct ThemeConfig {
-    #[serde(default)]
     pub mode: ModeSetting,
     /// Seed color, `#rrggbb`.
     pub seed: Option<String>,
-    #[serde(default)]
     pub color_depth: DepthSetting,
 }
 
@@ -52,11 +47,9 @@ pub enum DepthSetting {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct UiConfig {
-    #[serde(default)]
     pub nerd_font: bool,
-    #[serde(default)]
     pub density: Density,
 }
 
