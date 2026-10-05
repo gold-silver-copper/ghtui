@@ -167,43 +167,36 @@ impl Syntax {
 }
 
 impl Bg {
+    /// Plain UI surfaces that regular text may sit on.
+    const NEUTRAL: [Bg; 9] = [
+        Bg::Surface,
+        Bg::ContainerLowest,
+        Bg::ContainerLow,
+        Bg::Container,
+        Bg::ContainerHigh,
+        Bg::ContainerHighest,
+        Bg::Selected,
+        Bg::SelectedInactive,
+        Bg::SelectedHigh,
+    ];
+
     pub fn all() -> Vec<Bg> {
-        let mut all = vec![
-            Bg::Surface,
-            Bg::ContainerLowest,
-            Bg::ContainerLow,
-            Bg::Container,
-            Bg::ContainerHigh,
-            Bg::ContainerHighest,
-            Bg::Selected,
-            Bg::SelectedInactive,
-            Bg::SelectedHigh,
+        let mut all = Bg::NEUTRAL.to_vec();
+        all.extend([
             Bg::Primary,
             Bg::PrimaryContainer,
             Bg::SecondaryContainer,
             Bg::TertiaryContainer,
             Bg::ErrorContainer,
             Bg::SuccessContainer,
-        ];
+        ]);
         all.extend(DiffBg::ALL.map(Bg::Diff));
         all.extend(DiffBg::ALL.map(Bg::DiffSelected));
         all
     }
 
-    /// Plain UI surfaces that regular text may sit on.
     fn is_neutral(self) -> bool {
-        matches!(
-            self,
-            Bg::Surface
-                | Bg::ContainerLowest
-                | Bg::ContainerLow
-                | Bg::Container
-                | Bg::ContainerHigh
-                | Bg::ContainerHighest
-                | Bg::Selected
-                | Bg::SelectedInactive
-                | Bg::SelectedHigh
-        )
+        Bg::NEUTRAL.contains(&self)
     }
 
     fn is_diff(self) -> bool {
@@ -345,23 +338,9 @@ impl Theme {
         let (diff_tone, diff_token_tone) = if dark { (14.0, 24.0) } else { (95.0, 86.0) };
         let hct = |hue: f64, chroma: f64, tone: f64| Rgb::from_hct(hue, chroma, tone);
 
-        let mut bg = HashMap::new();
         let surface = rgb(scheme.surface);
         let container_low = rgb(scheme.surface_container_low);
         let container_high = rgb(scheme.surface_container_high);
-        bg.insert(Bg::Surface, surface);
-        bg.insert(Bg::ContainerLowest, rgb(scheme.surface_container_lowest));
-        bg.insert(Bg::ContainerLow, container_low);
-        bg.insert(Bg::Container, rgb(scheme.surface_container));
-        bg.insert(Bg::ContainerHigh, container_high);
-        bg.insert(Bg::ContainerHighest, rgb(scheme.surface_container_highest));
-        bg.insert(Bg::Primary, rgb(scheme.primary));
-        bg.insert(Bg::PrimaryContainer, rgb(scheme.primary_container));
-        bg.insert(Bg::SecondaryContainer, rgb(scheme.secondary_container));
-        bg.insert(Bg::TertiaryContainer, rgb(scheme.tertiary_container));
-        bg.insert(Bg::ErrorContainer, rgb(scheme.error_container));
-        bg.insert(Bg::SuccessContainer, hct(green, 36.0, container_tone));
-
         let diff = |d: DiffBg| match d {
             DiffBg::Context => surface,
             DiffBg::Added => hct(green, 16.0, diff_tone),
@@ -370,9 +349,6 @@ impl Theme {
             DiffBg::RemovedToken => hct(red, 30.0, diff_token_tone),
             DiffBg::Moved => hct(tertiary_hue, 16.0, diff_tone),
         };
-        for d in DiffBg::ALL {
-            bg.insert(Bg::Diff(d), diff(d));
-        }
 
         // State layers: primary composited over the base surface. In 256-color
         // mode, raise the opacity until the selection is actually visible.
@@ -387,32 +363,46 @@ impl Theme {
                 opacity += 0.02;
             }
         };
-        bg.insert(Bg::Selected, layer(container_low, 0.12));
-        bg.insert(Bg::SelectedInactive, layer(surface, 0.08));
-        bg.insert(Bg::SelectedHigh, layer(container_high, 0.14));
-        for d in DiffBg::ALL {
-            bg.insert(Bg::DiffSelected(d), layer(diff(d), 0.14));
-        }
+        let mut bg = HashMap::from([
+            (Bg::Surface, surface),
+            (Bg::ContainerLowest, rgb(scheme.surface_container_lowest)),
+            (Bg::ContainerLow, container_low),
+            (Bg::Container, rgb(scheme.surface_container)),
+            (Bg::ContainerHigh, container_high),
+            (Bg::ContainerHighest, rgb(scheme.surface_container_highest)),
+            (Bg::Selected, layer(container_low, 0.12)),
+            (Bg::SelectedInactive, layer(surface, 0.08)),
+            (Bg::SelectedHigh, layer(container_high, 0.14)),
+            (Bg::Primary, primary),
+            (Bg::PrimaryContainer, rgb(scheme.primary_container)),
+            (Bg::SecondaryContainer, rgb(scheme.secondary_container)),
+            (Bg::TertiaryContainer, rgb(scheme.tertiary_container)),
+            (Bg::ErrorContainer, rgb(scheme.error_container)),
+            (Bg::SuccessContainer, hct(green, 36.0, container_tone)),
+        ]);
+        bg.extend(DiffBg::ALL.map(|d| (Bg::Diff(d), diff(d))));
+        bg.extend(DiffBg::ALL.map(|d| (Bg::DiffSelected(d), layer(diff(d), 0.14))));
 
-        let mut fg = HashMap::new();
         let on_surface = rgb(scheme.on_surface);
         let on_surface_variant = rgb(scheme.on_surface_variant);
-        fg.insert(Fg::OnSurface, on_surface);
-        fg.insert(Fg::OnSurfaceVariant, on_surface_variant);
-        fg.insert(Fg::Primary, primary);
-        fg.insert(Fg::Tertiary, rgb(scheme.tertiary));
-        fg.insert(Fg::Error, rgb(scheme.error));
-        fg.insert(Fg::Success, hct(green, 48.0, text_tone));
-        fg.insert(Fg::Disabled, surface.blend(on_surface, 0.38));
-        fg.insert(Fg::OutlineVariant, rgb(scheme.outline_variant));
-        fg.insert(Fg::OnPrimary, rgb(scheme.on_primary));
-        fg.insert(Fg::OnPrimaryContainer, rgb(scheme.on_primary_container));
-        fg.insert(Fg::OnSecondaryContainer, rgb(scheme.on_secondary_container));
-        fg.insert(Fg::OnTertiaryContainer, rgb(scheme.on_tertiary_container));
-        fg.insert(Fg::OnErrorContainer, rgb(scheme.on_error_container));
-        fg.insert(Fg::OnSuccessContainer, hct(green, 36.0, on_container_tone));
-        fg.insert(Fg::DiffAddedSign, hct(green, 48.0, text_tone));
-        fg.insert(Fg::DiffRemovedSign, hct(red, 48.0, text_tone));
+        let mut fg = HashMap::from([
+            (Fg::OnSurface, on_surface),
+            (Fg::OnSurfaceVariant, on_surface_variant),
+            (Fg::Primary, primary),
+            (Fg::Tertiary, rgb(scheme.tertiary)),
+            (Fg::Error, rgb(scheme.error)),
+            (Fg::Success, hct(green, 48.0, text_tone)),
+            (Fg::Disabled, surface.blend(on_surface, 0.38)),
+            (Fg::OutlineVariant, rgb(scheme.outline_variant)),
+            (Fg::OnPrimary, rgb(scheme.on_primary)),
+            (Fg::OnPrimaryContainer, rgb(scheme.on_primary_container)),
+            (Fg::OnSecondaryContainer, rgb(scheme.on_secondary_container)),
+            (Fg::OnTertiaryContainer, rgb(scheme.on_tertiary_container)),
+            (Fg::OnErrorContainer, rgb(scheme.on_error_container)),
+            (Fg::OnSuccessContainer, hct(green, 36.0, on_container_tone)),
+            (Fg::DiffAddedSign, hct(green, 48.0, text_tone)),
+            (Fg::DiffRemovedSign, hct(red, 48.0, text_tone)),
+        ]);
 
         // Syntax: keywords primary, strings tertiary, comments and
         // punctuation on-surface-variant, the rest spread around the seed.
@@ -430,9 +420,7 @@ impl Theme {
             (Syntax::Attribute, hct(primary_hue + 180.0, 32.0, text_tone)),
             (Syntax::Property, hct(primary_hue, 16.0, text_tone)),
         ];
-        for (role, c) in syntax {
-            fg.insert(Fg::Syntax(role), c);
-        }
+        fg.extend(syntax.map(|(role, c)| (Fg::Syntax(role), c)));
 
         let mut theme = Theme {
             mode,
@@ -516,10 +504,6 @@ impl Theme {
         self.style(Fg::Primary, bg)
     }
 
-    pub fn disabled(&self, bg: Bg) -> Style {
-        self.style(Fg::Disabled, bg)
-    }
-
     pub fn error(&self, bg: Bg) -> Style {
         self.style(Fg::Error, bg)
     }
@@ -544,21 +528,19 @@ impl Theme {
 
     /// Every declared pair, resolved to displayed colors.
     pub fn pairs(&self) -> Vec<Pair> {
-        let mut pairs = Vec::new();
-        for fg in Fg::all() {
-            for bg in Bg::all() {
-                if let Some(requirement) = requirement(fg, bg) {
-                    pairs.push(Pair {
-                        fg,
-                        bg,
-                        requirement,
-                        fg_color: self.displayed(self.fg_rgb(fg)),
-                        bg_color: self.displayed(self.bg_rgb(bg)),
-                    });
-                }
-            }
-        }
-        pairs
+        let pair = |fg, bg| {
+            Some(Pair {
+                fg,
+                bg,
+                requirement: requirement(fg, bg)?,
+                fg_color: self.displayed(self.fg_rgb(fg)),
+                bg_color: self.displayed(self.bg_rgb(bg)),
+            })
+        };
+        Fg::all()
+            .into_iter()
+            .flat_map(|fg| Bg::all().into_iter().filter_map(move |bg| pair(fg, bg)))
+            .collect()
     }
 
     /// Chip style for a GitHub label color (`rrggbb`). Keeps the label's hue,
@@ -585,16 +567,14 @@ fn displayed(depth: ColorDepth, c: Rgb) -> Rgb {
 /// Moves `role`'s tone away from its backgrounds until it meets the strictest
 /// requirement against all of them, as displayed.
 fn enforce_contrast(theme: &Theme, role: Fg) -> Rgb {
-    let base = theme.fg_rgb(role);
-    let mut targets: Vec<(Rgb, f64)> = Vec::new();
-    for bg in Bg::all() {
-        if let Some(req) = requirement(role, bg)
-            && req != Requirement::Exempt
-        {
-            targets.push((theme.displayed(theme.bg_rgb(bg)), req.min_ratio()));
-        }
-    }
-    adjust_tone(base, &targets, |c| theme.displayed(c))
+    let targets: Vec<(Rgb, f64)> = Bg::all()
+        .into_iter()
+        .filter_map(|bg| {
+            let req = requirement(role, bg).filter(|r| *r != Requirement::Exempt)?;
+            Some((theme.displayed(theme.bg_rgb(bg)), req.min_ratio()))
+        })
+        .collect();
+    adjust_tone(theme.fg_rgb(role), &targets, |c| theme.displayed(c))
 }
 
 /// Shifts `base` in HCT tone (keeping hue and, where the gamut allows,
