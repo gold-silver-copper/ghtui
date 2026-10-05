@@ -342,14 +342,10 @@ impl DiffView<'_> {
             let l = t.lines.get(entries.start as usize)?;
             if from { l.new } else { l.old }
         });
-        let place = match line {
-            Some(n) => format!("{}:{n}", f.meta.path()),
-            None => f.meta.path().to_owned(),
-        };
-        if from {
-            format!("moved to {place}")
-        } else {
-            format!("moved from {place}")
+        let way = if from { "to" } else { "from" };
+        match line {
+            Some(n) => format!("moved {way} {}:{n}", f.meta.path()),
+            None => format!("moved {way} {}", f.meta.path()),
         }
     }
 
