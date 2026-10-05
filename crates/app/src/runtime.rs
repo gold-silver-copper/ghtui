@@ -16,7 +16,7 @@ use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 
 use crate::browse::{Data, DataKey};
-use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx};
+use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx, RepoGit};
 use crate::review::EditPurpose;
 use crate::review::{self, SubmitOutcome};
 use crate::state::{Api, Cmd, DiffMsg, Failure, Git, Msg, Problem, State, apply_msg, timers};
@@ -298,13 +298,7 @@ impl Effects {
         });
     }
 
-    fn job_git(
-        &self,
-        pr: &PrRef,
-    ) -> Option<(
-        Arc<ghtui_git::repo::Repo>,
-        Arc<ghtui_git::blobs::BlobReader>,
-    )> {
+    fn job_git(&self, pr: &PrRef) -> Option<RepoGit> {
         self.jobs.get(pr).and_then(|(control, _)| control.git())
     }
 }

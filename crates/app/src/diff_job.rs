@@ -10,7 +10,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use ghtui_api::model::PrRef;
 use ghtui_diff::FileDiff;
@@ -77,21 +77,27 @@ impl JobTx {
     }
 }
 
+/// A job's repository and blob reader.
+pub type RepoGit = (Arc<Repo>, Arc<BlobReader>);
+
 /// Shared between the job's workers and the UI (for prioritizing, and for
 /// later work on the same repository such as mapping outdated comments).
 #[derive(Default)]
 pub struct JobControl {
     queue: Mutex<VecDeque<usize>>,
-    git: OnceLock<(Arc<Repo>, Arc<BlobReader>)>,
+    git: OnceLock<RepoGit>,
 }
 
 impl JobControl {
+    /// The files still to diff. Every change to it is one call that can't
+    /// leave it half done, so a panic elsewhere doesn't poison it.
+    fn queue(&self) -> MutexGuard<'_, VecDeque<usize>> {
+        self.queue.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Moves `files` to the front of the queue, in order.
     pub fn prioritize(&self, files: &[usize]) {
-        let mut queue = self
-            .queue
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut queue = self.queue();
         for file in files.iter().rev() {
             if let Some(pos) = queue.iter().position(|f| f == file) {
                 queue.remove(pos);
@@ -101,32 +107,22 @@ impl JobControl {
     }
 
     fn pop(&self) -> Option<usize> {
-        self.queue
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .pop_front()
+        self.queue().pop_front()
     }
 
     fn fill(&self, files: impl IntoIterator<Item = usize>) {
-        let mut queue = self
-            .queue
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut queue = self.queue();
         queue.clear();
         queue.extend(files);
     }
 
     /// The repository and blob reader, once the job has set them up.
-    pub fn git(&self) -> Option<(Arc<Repo>, Arc<BlobReader>)> {
+    pub fn git(&self) -> Option<RepoGit> {
         self.git.get().cloned()
     }
 
     fn front(&self) -> Option<usize> {
-        self.queue
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .front()
-            .copied()
+        self.queue().front().copied()
     }
 }
 
