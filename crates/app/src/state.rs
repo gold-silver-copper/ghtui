@@ -1090,6 +1090,16 @@ pub(crate) mod tests {
     use ghtui_ui::annotations::AnnotationKey;
     use ghtui_ui::overlays::PALETTE_ROWS;
 
+    /// The overlay showing, which must be a `$kind`.
+    macro_rules! overlay {
+        ($state:expr, $kind:ident) => {
+            match &$state.overlay {
+                Some(Overlay::$kind(overlay)) => overlay,
+                _ => panic!("no {} overlay", stringify!($kind)),
+            }
+        };
+    }
+
     pub(crate) fn state() -> State {
         State::new(
             Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor),
@@ -1370,9 +1380,7 @@ pub(crate) mod tests {
         press(&mut state, "<Up>");
         assert_eq!(page(&state).selected, Some(1), "hubot's comment");
         press(&mut state, "<Enter>");
-        let Some(Overlay::Compose(compose)) = &state.overlay else {
-            panic!("no composer")
-        };
+        let compose = overlay!(state, Compose);
         assert!(
             compose.text().starts_with("> @hubot wrote:\n> Agreed."),
             "{}",
@@ -1563,9 +1571,7 @@ pub(crate) mod tests {
         for _ in 0..(state.commands("").len() + PALETTE_ROWS) {
             press(&mut state, "<Down>");
         }
-        let Some(Overlay::Picker(palette)) = &state.overlay else {
-            panic!()
-        };
+        let palette = overlay!(state, Picker);
         assert_eq!(palette.selected, state.commands("").len() - 1);
     }
 
@@ -1598,9 +1604,7 @@ pub(crate) mod tests {
 
         // `/` on a list edits its filter.
         press(&mut state, "/");
-        let Some(Overlay::Search(sb)) = &state.overlay else {
-            panic!("no search box")
-        };
+        let sb = overlay!(state, Search);
         assert!(sb.filter);
         assert_eq!(sb.input.lines().join(""), "is:open ");
         press(&mut state, "label:bug<Enter>");
@@ -1663,9 +1667,7 @@ pub(crate) mod tests {
     fn letter_hints_follow_links() {
         let mut state = with_repo();
         press(&mut state, "l");
-        let Some(Overlay::Hints(hints)) = &state.overlay else {
-            panic!("no hints")
-        };
+        let hints = overlay!(state, Hints);
         let i = hints
             .links
             .iter()
@@ -1743,9 +1745,7 @@ pub(crate) mod tests {
             ),
         );
         press(&mut state, "main");
-        let Some(Overlay::Picker(f)) = &state.overlay else {
-            panic!("no finder")
-        };
+        let f = overlay!(state, Picker);
         let rows: Vec<String> = state
             .picker_rows(f)
             .into_iter()
@@ -1805,9 +1805,7 @@ pub(crate) mod tests {
             Data::Issue(Some(Box::new(crate::fixtures::issue()))),
         );
         press(&mut state, "c");
-        let Some(Overlay::Compose(compose)) = &state.overlay else {
-            panic!("no composer")
-        };
+        let compose = overlay!(state, Compose);
         assert_eq!(compose.title(), "Comment on gold-silver-copper/ghtui#14");
         press(&mut state, "Thanks!");
         let cmds = update(
@@ -1831,14 +1829,10 @@ pub(crate) mod tests {
     fn search_box_jumps_searches_and_loads_more() {
         let mut state = with_repo();
         press(&mut state, "/");
-        let Some(Overlay::Search(sb)) = &state.overlay else {
-            panic!("no search box")
-        };
+        let sb = overlay!(state, Search);
         assert!(!sb.filter);
         press(&mut state, "bug");
-        let Some(Overlay::Search(sb)) = &state.overlay else {
-            panic!()
-        };
+        let sb = overlay!(state, Search);
         let rows: Vec<Option<nav::Pick>> =
             state.suggestions(sb).into_iter().map(|(_, p)| p).collect();
         assert_eq!(
@@ -1859,9 +1853,7 @@ pub(crate) mod tests {
                 Ok(vec![crate::fixtures::repo_summary("o/bugs", 5)]),
             ),
         );
-        let Some(Overlay::Search(sb)) = &state.overlay else {
-            panic!()
-        };
+        let sb = overlay!(state, Search);
         let picks: Vec<nav::Pick> = state
             .suggestions(sb)
             .into_iter()
@@ -1950,9 +1942,7 @@ pub(crate) mod tests {
         let _ = state.push(Route::user("octocat"));
         let _ = state.push(Route::Home);
         press(&mut state, "/");
-        let Some(Overlay::Search(sb)) = &state.overlay else {
-            panic!()
-        };
+        let sb = overlay!(state, Search);
         let labels: Vec<String> = state
             .suggestions(sb)
             .into_iter()
@@ -2053,9 +2043,7 @@ pub(crate) mod tests {
         let mut state = with_repo();
         press(&mut state, "<Space>/");
         press(&mut state, "go to f");
-        let Some(Overlay::Menu(menu)) = &state.overlay else {
-            panic!("no menu")
-        };
+        let menu = overlay!(state, Menu);
         let shown: Vec<&str> = menu.shown().iter().map(|d| d.label.as_str()).collect();
         assert_eq!(shown, ["Go to file"]);
         press(&mut state, "<Esc>");
@@ -2119,9 +2107,7 @@ pub(crate) mod tests {
         assert!(state.notice.is_none());
         assert_eq!(state.screens.len(), depth, "Esc only dismissed");
         act(&mut state, Action::Messages);
-        let Some(Overlay::Picker(p)) = &state.overlay else {
-            panic!("no messages list")
-        };
+        let p = overlay!(state, Picker);
         let rows = state.picker_rows(p);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0.label, "boom");
@@ -2133,9 +2119,7 @@ pub(crate) mod tests {
     fn the_menu_lists_and_runs_what_you_can_do() {
         let mut state = with_repo();
         press(&mut state, "<Space>");
-        let Some(Overlay::Menu(menu)) = &state.overlay else {
-            panic!("no menu")
-        };
+        let menu = overlay!(state, Menu);
         let labels: Vec<&str> = menu.rows.iter().map(|d| d.label.as_str()).collect();
         assert!(labels.contains(&"Go to file"), "{labels:?}");
         assert!(labels.contains(&"Star"), "{labels:?}");
@@ -2377,9 +2361,7 @@ pub(crate) mod tests {
         fn file_finder_jumps_to_files() {
             let (mut s, _) = diff_state(120);
             press(&mut s, "fgone");
-            let Some(Overlay::Picker(p)) = &s.overlay else {
-                panic!("no finder")
-            };
+            let p = overlay!(s, Picker);
             assert_eq!(s.picker_rows(p)[0].0.label, "gone.py");
             press(&mut s, "<Enter>");
             assert!(s.overlay.is_none());
@@ -2638,9 +2620,7 @@ pub(crate) mod tests {
                 let (mut s, pr) = diff_state(120);
                 to_line(&mut s, "origin");
                 press(&mut s, "c");
-                let Some(Overlay::Compose(compose)) = &s.overlay else {
-                    panic!("no composer")
-                };
+                let compose = overlay!(s, Compose);
                 assert!(matches!(compose.target, ComposeTarget::Line { .. }));
                 press(&mut s, "Use a constant");
                 let cmds = press(&mut s, "<C-s>");
@@ -2703,9 +2683,7 @@ pub(crate) mod tests {
                 );
                 to_line(&mut s, "origin");
                 press(&mut s, "c");
-                let Some(Overlay::Compose(compose)) = &s.overlay else {
-                    panic!()
-                };
+                let compose = overlay!(s, Compose);
                 assert!(matches!(
                     &compose.target,
                     ComposeTarget::File {
@@ -2844,9 +2822,7 @@ pub(crate) mod tests {
                     &mut s,
                     Msg::Edited(purpose, Ok("    pub fn zero() -> Self {\n".into())),
                 );
-                let Some(Overlay::Compose(compose)) = &s.overlay else {
-                    panic!()
-                };
+                let compose = overlay!(s, Compose);
                 assert!(
                     compose
                         .text()
