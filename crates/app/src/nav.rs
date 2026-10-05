@@ -1528,12 +1528,12 @@ fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
                 return Vec::new();
             }
             if inside(panel.area(screen)) {
-                let row = panel.row_at(screen, y);
-                if let Some((_, Some(pick))) = row.and_then(|r| rows.get(r)).cloned() {
-                    state.overlay = None;
-                    return choose(state, pick);
-                }
-                return Vec::new();
+                let row = panel.row_at(screen, y).and_then(|r| rows.get(r));
+                let Some((_, Some(pick))) = row.cloned() else {
+                    return Vec::new();
+                };
+                state.overlay = None;
+                return choose(state, pick);
             }
             state.overlay = None;
             return Vec::new();
@@ -1557,33 +1557,24 @@ fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
         if inside(h.logo) {
             return state.push(Route::Home);
         }
-        for (r, (_, target)) in h.crumbs.iter().zip(&chrome.crumbs) {
-            if inside(*r)
-                && let Some(t) = target.clone()
-            {
-                return state.go(t);
-            }
-        }
-        for (r, (_, target)) in h.right.iter().zip(&chrome.right) {
-            if inside(*r) {
-                return state.go(target.clone());
-            }
-        }
-        return Vec::new();
+        let hit = |rects: &[Rect]| rects.iter().position(|r| inside(*r));
+        let crumb = hit(&h.crumbs).and_then(|i| chrome.crumbs.get(i)?.1.clone());
+        let right = hit(&h.right)
+            .and_then(|i| chrome.right.get(i))
+            .map(|(_, t)| t.clone());
+        return crumb
+            .or(right)
+            .map_or_else(Vec::new, |target| state.go(target));
     }
     if let Some(tabs) = lay.tabs
         && inside(tabs)
     {
         let tab_list: Vec<_> = chrome.tabs.iter().map(|(t, _)| t.clone()).collect();
-        for (i, r) in chrome::tab_layout(tabs, &tab_list, chrome.active)
-            .iter()
-            .enumerate()
-        {
-            if x >= r.x && x < r.right() {
-                return switch_tab(state, i + 1);
-            }
-        }
-        return Vec::new();
+        let rects = chrome::tab_layout(tabs, &tab_list, chrome.active);
+        return match rects.iter().position(|r| x >= r.x && x < r.right()) {
+            Some(i) => switch_tab(state, i + 1),
+            None => Vec::new(),
+        };
     }
     let area = state.page_area();
     let height = state.page_height();
