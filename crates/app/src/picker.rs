@@ -53,7 +53,7 @@ impl Picker {
 }
 
 /// Which changes the diff shows.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickItem {
     All,
     SinceReview,
@@ -117,10 +117,9 @@ impl State {
             Some(Route::Blob { repo, rev, path }) => {
                 (repo.clone(), rev.clone(), path.clone(), true)
             }
-            Some(route) if route.repo().is_some() => {
-                let repo = route.repo().cloned().expect("checked");
-                let rev = default(&repo);
-                (repo, rev, String::new(), false)
+            Some(route) if let Some(repo) = route.repo() => {
+                let rev = default(repo);
+                (repo.clone(), rev, String::new(), false)
             }
             _ => return crate::nav::no_repo(self),
         };
@@ -268,17 +267,16 @@ impl State {
         let Some(diff) = self.diff() else {
             return Vec::new();
         };
-        let mut hits: Vec<(usize, usize)> = diff
+        let mut hits: Vec<(usize, usize, _)> = diff
             .doc
             .files
             .iter()
             .enumerate()
-            .filter_map(|(i, f)| fuzzy_score(q, f.meta.path()).map(|s| (s, i)))
+            .filter_map(|(i, f)| fuzzy_score(q, f.meta.path()).map(|s| (s, i, f)))
             .collect();
-        hits.sort();
+        hits.sort_by_key(|&(score, i, _)| (score, i));
         hits.into_iter()
-            .map(|(_, i)| {
-                let f = &diff.doc.files[i];
+            .map(|(_, i, f)| {
                 let (adds, dels) = diff.doc.file_counts(f);
                 let hint = match f.diff {
                     Some(_) => format!("+{adds} −{dels}"),

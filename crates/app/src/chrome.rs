@@ -88,8 +88,10 @@ impl State {
                     .tabs
                     .iter()
                     .position(|(_, t)| matches!(t, Target::Files(_)));
-                if let (Some(label), Some(i)) = (label, c.active) {
-                    c.tabs[i].0.label = label;
+                if let (Some(label), Some((tab, _))) =
+                    (label, c.active.and_then(|i| c.tabs.get_mut(i)))
+                {
+                    tab.label = label;
                 }
                 c.title = Some(d.pr.clone());
             }

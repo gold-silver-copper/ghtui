@@ -419,7 +419,7 @@ fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 let result = gh.last_review_commit(&pr, &login).await;
                 Msg::LastReview(pr, result)
             }
-            Cmd::LoadDiff { .. }
+            cmd @ (Cmd::LoadDiff { .. }
             | Cmd::Prioritize(..)
             | Cmd::MapOutdated { .. }
             | Cmd::Edit { .. }
@@ -428,8 +428,10 @@ fn spawn(cmd: Cmd, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
             | Cmd::SinceReview { .. }
             | Cmd::ListCommits(..)
             | Cmd::LoadReview(_)
-            | Cmd::SaveReview(..) => {
-                unreachable!("handled by the runtime loop")
+            | Cmd::SaveReview(..)) => {
+                // Effects::run and the loop handle these; nothing to send.
+                tracing::error!(?cmd, "not a GitHub command");
+                return;
             }
         };
         let _ = tx.send(msg);

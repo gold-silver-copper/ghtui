@@ -282,6 +282,49 @@ pub enum Screen {
     Diff(Box<DiffScreen>),
 }
 
+/// Navigation history, like a browser's. The first screen can't be
+/// removed, so there's always one to show.
+pub struct Screens {
+    first: Screen,
+    rest: Vec<Screen>,
+}
+
+impl Screens {
+    fn new(first: Screen) -> Self {
+        Self {
+            first,
+            rest: Vec::new(),
+        }
+    }
+
+    pub fn last(&self) -> &Screen {
+        self.rest.last().unwrap_or(&self.first)
+    }
+
+    pub fn last_mut(&mut self) -> &mut Screen {
+        self.rest.last_mut().unwrap_or(&mut self.first)
+    }
+
+    pub fn push(&mut self, screen: Screen) {
+        self.rest.push(screen);
+    }
+
+    /// The last screen, unless it's the first.
+    pub fn pop(&mut self) -> Option<Screen> {
+        self.rest.pop()
+    }
+
+    pub fn len(&self) -> usize {
+        self.rest.len() + 1
+    }
+
+    /// Keeps the first `n` screens (at least one).
+    #[cfg(test)]
+    pub fn truncate(&mut self, n: usize) {
+        self.rest.truncate(n.saturating_sub(1));
+    }
+}
+
 pub enum Overlay {
     /// `/` prompt on the diff screen.
     DiffSearch(Box<TextArea<'static>>),
@@ -300,8 +343,7 @@ pub enum Overlay {
 }
 
 pub struct State {
-    /// Navigation history, like a browser's; never empty.
-    pub screens: Vec<Screen>,
+    pub screens: Screens,
     /// Pages gone back from.
     pub forward: Vec<Screen>,
     /// Pages visited, for the search box.
@@ -338,7 +380,7 @@ pub struct State {
 impl State {
     pub fn new(theme: Theme, icons: Icons, keymap: Keymap, size: (u16, u16)) -> Self {
         let mut state = Self {
-            screens: vec![Screen::Page(Box::new(PageScreen::new(Route::Home)))],
+            screens: Screens::new(Screen::Page(Box::new(PageScreen::new(Route::Home)))),
             forward: Vec::new(),
             visits: Vec::new(),
             inbox: Remote::default(),
@@ -367,13 +409,11 @@ impl State {
     }
 
     pub fn screen(&self) -> &Screen {
-        self.screens.last().expect("screen stack is never empty")
+        self.screens.last()
     }
 
     pub fn screen_mut(&mut self) -> &mut Screen {
-        self.screens
-            .last_mut()
-            .expect("screen stack is never empty")
+        self.screens.last_mut()
     }
 
     pub fn ctx(&self, now: u64) -> Ctx<'_> {
@@ -463,16 +503,15 @@ impl State {
 
     /// Opens the diff of a PR (it starts once the PR's metadata is in).
     pub fn open_diff(&mut self, pr: PrRef) -> Vec<Cmd> {
-        self.screens.push(Screen::Diff(Box::new(DiffScreen::new(
-            pr.clone(),
-            self.size.0,
-        ))));
         let reuse = self.diffs.get(&pr).is_some_and(|d| d.error.is_none());
-        if reuse {
+        let cmds = if reuse {
             Vec::new()
         } else {
             self.start_diff(&pr)
-        }
+        };
+        let screen = DiffScreen::new(pr, self.size.0);
+        self.screens.push(Screen::Diff(Box::new(screen)));
+        cmds
     }
 
     /// The branch the PR merges into, once the PR has loaded.
@@ -725,7 +764,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::Job(pr, job, msg) => {
             if state.diffs.get(&pr).is_some_and(|d| d.job == job) {
-                on_job(state, pr, msg)
+                on_job(state, &pr, msg)
             } else {
                 Vec::new()
             }
@@ -895,16 +934,16 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             }
             Vec::new()
         }
-        Msg::ReviewSubmitted(pr, outcome) => on_submitted(state, pr, outcome),
+        Msg::ReviewSubmitted(pr, outcome) => on_submitted(state, &pr, &outcome),
         Msg::Edited(purpose, result) => on_edited(state, purpose, result),
     }
 }
 
 /// Applies the result of submitting a review: accepted drafts leave the
 /// local queue, rejected ones keep their text and GitHub's reason.
-fn on_submitted(state: &mut State, pr: PrRef, outcome: SubmitOutcome) -> Vec<Cmd> {
+fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcome) -> Vec<Cmd> {
     let mut cmds = vec![Cmd::FetchThreads(pr.clone())];
-    if let Some(diff) = state.diffs.get_mut(&pr) {
+    if let Some(diff) = state.diffs.get_mut(pr) {
         diff.review
             .pending
             .retain(|d| !outcome.accepted.contains(&d.id));
@@ -1105,7 +1144,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             notice,
             ..
         } = &mut *state;
-        if let Some(Screen::Diff(screen)) = screens.last_mut()
+        if let Screen::Diff(screen) = screens.last_mut()
             && let Some(diff) = diffs.get_mut(&screen.pr)
             && let Some(cmds) = diff_screen::apply(screen, diff, action, content, notice)
         {
@@ -1193,7 +1232,7 @@ impl State {
 
     fn diff_parts(&mut self) -> Option<(&mut DiffScreen, &mut DiffState)> {
         let State { screens, diffs, .. } = self;
-        let Some(Screen::Diff(screen)) = screens.last_mut() else {
+        let Screen::Diff(screen) = screens.last_mut() else {
             return None;
         };
         let diff = diffs.get_mut(&screen.pr)?;
@@ -1492,8 +1531,12 @@ pub fn apply_commit_choice(
                 _ => i,
             };
             let (first, last) = (i.min(j), i.max(j));
-            let (from, _) = &diff.commits[first];
-            let (to, _) = &diff.commits[last];
+            // The picker's indices, into the list it showed.
+            let (Some((from, _)), Some((to, _))) =
+                (diff.commits.get(first), diff.commits.get(last))
+            else {
+                return Vec::new();
+            };
             let label = if first == last {
                 short_sha(to).to_owned()
             } else {
@@ -1521,10 +1564,10 @@ pub fn apply_commit_choice(
 }
 
 /// A message from the PR's current diff job.
-fn on_job(state: &mut State, pr: PrRef, msg: JobMsg) -> Vec<Cmd> {
+fn on_job(state: &mut State, pr: &PrRef, msg: JobMsg) -> Vec<Cmd> {
     match msg {
         JobMsg::Progress(line) => {
-            if let Some(diff) = state.diffs.get_mut(&pr)
+            if let Some(diff) = state.diffs.get_mut(pr)
                 && !diff.listed()
             {
                 diff.progress = Some(line);
@@ -1532,7 +1575,7 @@ fn on_job(state: &mut State, pr: PrRef, msg: JobMsg) -> Vec<Cmd> {
             Vec::new()
         }
         JobMsg::Files(files) => {
-            let Some(diff) = state.diffs.get_mut(&pr) else {
+            let Some(diff) = state.diffs.get_mut(pr) else {
                 return Vec::new();
             };
             let DiffFiles {
@@ -1549,7 +1592,7 @@ fn on_job(state: &mut State, pr: PrRef, msg: JobMsg) -> Vec<Cmd> {
         }
         JobMsg::File(index, file) => {
             let mut cmds = Vec::new();
-            if let Some(diff) = state.diffs.get_mut(&pr) {
+            if let Some(diff) = state.diffs.get_mut(pr) {
                 diff.set_file(index, file);
                 if let Some(inputs) = diff.take_move_inputs() {
                     cmds.push(Cmd::DetectMoves(pr.clone(), diff.job, inputs));
@@ -1559,13 +1602,13 @@ fn on_job(state: &mut State, pr: PrRef, msg: JobMsg) -> Vec<Cmd> {
         }
         JobMsg::Moves(moves) => {
             match state.diff_parts() {
-                Some((screen, diff)) if screen.pr == pr => {
+                Some((screen, diff)) if screen.pr == *pr => {
                     diff_screen::preserving_position(screen, &mut diff.doc, |doc| {
                         doc.set_moves(moves)
                     });
                 }
                 _ => {
-                    if let Some(diff) = state.diffs.get_mut(&pr) {
+                    if let Some(diff) = state.diffs.get_mut(pr) {
                         diff.doc.set_moves(moves);
                     }
                 }
@@ -1573,7 +1616,7 @@ fn on_job(state: &mut State, pr: PrRef, msg: JobMsg) -> Vec<Cmd> {
             Vec::new()
         }
         JobMsg::Failed(error) => {
-            if let Some(diff) = state.diffs.get_mut(&pr) {
+            if let Some(diff) = state.diffs.get_mut(pr) {
                 diff.progress = None;
                 diff.error = Some(error);
             }
@@ -1672,7 +1715,7 @@ fn save_compose(state: &mut State) -> Vec<Cmd> {
         target @ (ComposeTarget::Line { .. } | ComposeTarget::File { .. }) => {
             let head = diff.head().unwrap_or_default();
             let id = diff.review.next_draft_id();
-            let Some(draft) = review::draft(&target, body, id, &head) else {
+            let Some(draft) = review::draft(&target, &body, id, &head) else {
                 return Vec::new();
             };
             diff.review.pending.push(draft);
@@ -1870,8 +1913,8 @@ mod tests {
         for (row, line) in p.page.lines.iter().enumerate().skip(p.scroll) {
             let at = line.text().find(text);
             if let Some(at) = at {
-                let x = cols.main_x + 2 + line.indent + at as u16;
-                return (x, area.y + (row - p.scroll) as u16);
+                let x = cols.main_x + 2 + line.indent + u16::try_from(at).unwrap();
+                return (x, area.y + u16::try_from(row - p.scroll).unwrap());
             }
         }
         panic!("{text} isn't on screen")
@@ -2846,7 +2889,7 @@ mod tests {
                 reviewed_hunks: vec!["older".into()],
                 ..ReviewState::default()
             };
-            let cmds = update(&mut s, Msg::ReviewLoaded(pr.clone(), Ok(saved)));
+            let cmds = update(&mut s, Msg::ReviewLoaded(pr, Ok(saved)));
             let [Cmd::SaveReview(_, review)] = &cmds[..] else {
                 panic!("{cmds:?}")
             };
@@ -2982,7 +3025,7 @@ mod tests {
                     |c| matches!(c, Cmd::DetectMoves(p, j, files) if *p == pr && *j == job && files.len() == 8)
                 ));
                 // Only once.
-                let again = update(&mut s, Msg::Job(pr.clone(), job, JobMsg::Moves(Vec::new())));
+                let again = update(&mut s, Msg::Job(pr, job, JobMsg::Moves(Vec::new())));
                 assert!(!again.iter().any(|c| matches!(c, Cmd::DetectMoves(..))));
                 assert!(act(&mut s, Action::JumpMove).is_empty());
                 assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("moved")));
@@ -3071,7 +3114,7 @@ mod tests {
                 update(
                     &mut s,
                     Msg::CommitsListed(
-                        pr.clone(),
+                        pr,
                         Ok(vec![
                             ("a".repeat(40), "first".into()),
                             ("b".repeat(40), "second".into()),
@@ -3225,7 +3268,7 @@ mod tests {
                 update(
                     &mut s,
                     Msg::PatchesLoaded(
-                        pr.clone(),
+                        pr,
                         Ok(vec![PatchFile {
                             filename: "src/point.rs".into(),
                             previous_filename: None,
@@ -3253,7 +3296,7 @@ mod tests {
                 update(
                     &mut s,
                     Msg::PatchesLoaded(
-                        pr.clone(),
+                        pr,
                         Ok(vec![PatchFile {
                             filename: "src/point.rs".into(),
                             previous_filename: None,

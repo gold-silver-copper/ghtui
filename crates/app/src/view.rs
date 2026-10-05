@@ -108,7 +108,9 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
     StatusBar {
         ctx,
         busy: busy.as_deref(),
-        spinner: crate::state::SPINNER[state.spinner % crate::state::SPINNER.len()],
+        spinner: crate::state::SPINNER
+            .get(state.spinner % crate::state::SPINNER.len())
+            .unwrap_or(&""),
         notice: state.notice.as_ref(),
         pending_keys: &pending,
         rate_limit,

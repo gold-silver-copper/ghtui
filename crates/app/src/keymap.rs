@@ -276,8 +276,18 @@ pub struct Keymap {
 }
 
 impl Default for Keymap {
+    /// The default bindings (a test checks they parse and don't conflict).
     fn default() -> Self {
-        Self::with_overrides(&HashMap::new()).expect("default keymap is valid")
+        let bindings = Action::ALL
+            .iter()
+            .flat_map(|&action| {
+                action.defaults().iter().filter_map(move |seq| {
+                    let (seq, scope) = scoped(seq, action);
+                    Some((parse_sequence(seq).ok()?, action, scope))
+                })
+            })
+            .collect();
+        Self { bindings }
     }
 }
 
@@ -328,9 +338,10 @@ impl Keymap {
     /// (the shorter one would make the longer unreachable).
     fn validate(&self) -> Result<(), String> {
         for (i, (a, action_a, scope_a)) in self.bindings.iter().enumerate() {
-            for (b, action_b, scope_b) in &self.bindings[i + 1..] {
-                let shorter = a.len().min(b.len());
-                if a[..shorter] == b[..shorter] && scope_a.overlaps(*scope_b) {
+            for (b, action_b, scope_b) in self.bindings.iter().skip(i + 1) {
+                // Equal up to the shorter one's length.
+                let prefix = a.iter().zip(b).all(|(x, y)| x == y);
+                if prefix && scope_a.overlaps(*scope_b) {
                     return Err(format!(
                         "key `{}` ({}) conflicts with `{}` ({})",
                         format_sequence(a),
@@ -373,7 +384,9 @@ impl Keymap {
             .filter(|(binding, _, where_)| {
                 where_.overlaps(scope) && binding.len() > keys.len() && binding.starts_with(keys)
             })
-            .map(|(binding, action, _)| (binding[keys.len()..].to_vec(), *action))
+            .map(|(binding, action, _)| {
+                (binding.iter().skip(keys.len()).copied().collect(), *action)
+            })
             .collect()
     }
 
@@ -468,6 +481,16 @@ mod tests {
     fn shift_is_folded_into_chars() {
         let event = KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT);
         assert_eq!(Key::from(event), key('G'));
+    }
+
+    /// `Keymap::default` skips validation; this is it.
+    #[test]
+    fn defaults_parse_and_dont_conflict() {
+        let validated = Keymap::with_overrides(&HashMap::new()).unwrap();
+        let defaults = Keymap::default();
+        assert_eq!(validated.bindings, defaults.bindings);
+        let declared: usize = Action::ALL.iter().map(|a| a.defaults().len()).sum();
+        assert_eq!(defaults.bindings.len(), declared, "every default parses");
     }
 
     #[test]

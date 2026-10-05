@@ -250,7 +250,7 @@ impl DiffState {
                 };
                 (i, state)
             })
-            .filter(|(i, state)| self.doc.files[*i].viewed != *state)
+            .filter(|(i, state)| self.doc.files.get(*i).is_some_and(|f| f.viewed != *state))
             .collect();
         for (i, state) in updates {
             self.doc.set_viewed(i, state);
@@ -663,8 +663,9 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
     let wanted: Vec<usize> = wanted
         .into_iter()
         .filter(|f| {
-            doc.files[*f].diff.is_none()
-                && !doc.files[*f].collapsed()
+            doc.files
+                .get(*f)
+                .is_some_and(|file| file.diff.is_none() && !file.collapsed())
                 && !state.requested.contains(f)
         })
         .collect();

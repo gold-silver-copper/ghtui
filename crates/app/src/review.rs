@@ -123,8 +123,10 @@ impl SubmitDialog {
             ReviewEvent::RequestChanges,
         ];
         let i = ORDER.iter().position(|e| *e == self.event).unwrap_or(0);
-        let next = if forward { i + 1 } else { i + ORDER.len() - 1 };
-        self.event = ORDER[next % ORDER.len()];
+        let steps = if forward { 1 } else { ORDER.len() - 1 };
+        if let Some(&next) = ORDER.iter().cycle().nth(i + steps) {
+            self.event = next;
+        }
     }
 }
 
@@ -221,11 +223,11 @@ fn side_of(side: DraftSide) -> Side {
 }
 
 /// A new draft for a line or file target.
-pub fn draft(target: &ComposeTarget, body: String, id: u64, commit: &str) -> Option<DraftComment> {
+pub fn draft(target: &ComposeTarget, body: &str, id: u64, commit: &str) -> Option<DraftComment> {
     let base = |path: &str| DraftComment {
         id,
         path: path.to_owned(),
-        body: body.clone(),
+        body: body.to_owned(),
         side: DraftSide::Right,
         line: None,
         start_line: None,
@@ -414,7 +416,7 @@ mod tests {
             start: right(3),
             end: right(5),
         };
-        let d = draft(&range, "x".into(), 1, "head").unwrap();
+        let d = draft(&range, "x", 1, "head").unwrap();
         assert_eq!(
             (d.line, d.start_line, d.start_side),
             (Some(5), Some(3), Some(DraftSide::Right))
@@ -427,7 +429,7 @@ mod tests {
             start: right(4),
             end: right(4),
         };
-        let d = draft(&single, "x".into(), 2, "head").unwrap();
+        let d = draft(&single, "x", 2, "head").unwrap();
         assert_eq!(
             (d.start_line, d.start_side),
             (None, None),
@@ -438,13 +440,13 @@ mod tests {
             path: "a.rs".into(),
             reason: None,
         };
-        assert_eq!(draft(&file, "x".into(), 3, "head").unwrap().line, None);
+        assert_eq!(draft(&file, "x", 3, "head").unwrap().line, None);
         assert!(
             draft(
                 &ComposeTarget::Reply {
                     thread_id: "t".into()
                 },
-                "x".into(),
+                "x",
                 4,
                 "h"
             )

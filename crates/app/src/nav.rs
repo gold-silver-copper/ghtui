@@ -81,10 +81,12 @@ impl State {
     /// Navigates to a page, keeping the current one in history.
     pub fn push(&mut self, route: Route) -> Vec<Cmd> {
         self.forward.clear();
+        let mut cmds = self.record_visit(&route);
         self.screens
-            .push(Screen::Page(Box::new(PageScreen::new(route.clone()))));
-        let mut cmds = self.ensure_route(&route, true);
-        cmds.extend(self.record_visit(&route));
+            .push(Screen::Page(Box::new(PageScreen::new(route))));
+        if let Some(route) = self.route().cloned() {
+            cmds.extend(self.ensure_route(&route, true));
+        }
         cmds
     }
 
@@ -100,8 +102,7 @@ impl State {
     }
 
     pub fn back(&mut self) -> Vec<Cmd> {
-        if self.screens.len() > 1 {
-            let screen = self.screens.pop().expect("more than one");
+        if let Some(screen) = self.screens.pop() {
             self.forward.push(screen);
             return self.load_visible(false);
         }
@@ -267,11 +268,11 @@ fn step(p: &mut PageScreen, height: usize, down: bool) {
     p.fresh = false;
     let n = p.page.items.len();
     let items = &p.page.items;
-    let target = match p.selected {
-        Some(i) if down && items[i].end > p.scroll + height => None,
-        Some(i) if !down && items[i].start < p.scroll => None,
-        Some(i) if down => (i + 1 < n).then_some(i + 1),
-        Some(i) => i.checked_sub(1),
+    let target = match p.selected.map(|i| (i, items.get(i))) {
+        Some((_, Some(item))) if down && item.end > p.scroll + height => None,
+        Some((_, Some(item))) if !down && item.start < p.scroll => None,
+        Some((i, _)) if down => (i + 1 < n).then_some(i + 1),
+        Some((i, _)) => i.checked_sub(1),
         // Reading: pick up the first item that's on screen.
         None if down => (0..n).find(|&i| visible(p, i, height)),
         None => (0..n).rev().find(|&i| visible(p, i, height)),
@@ -289,8 +290,9 @@ fn step(p: &mut PageScreen, height: usize, down: bool) {
 /// Scrolls; a selection that leaves the screen is dropped.
 fn scroll_by(p: &mut PageScreen, rows: i64, height: usize) {
     p.fresh = false;
-    let max = p.page.height().saturating_sub(height) as i64;
-    p.scroll = (p.scroll as i64 + rows).clamp(0, max.max(0)) as usize;
+    let max = p.page.height().saturating_sub(height);
+    let to = (p.scroll as i64).saturating_add(rows).max(0);
+    p.scroll = usize::try_from(to).unwrap_or(usize::MAX).min(max);
     if p.selected.is_some_and(|s| !visible(p, s, height)) {
         p.selected = None;
     }
@@ -449,18 +451,19 @@ fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
     let Some(active) = chrome.active else {
         return Vec::new();
     };
-    let mut i = active;
-    for _ in 0..n {
-        i = if forward {
-            (i + 1) % n
+    // The tabs after the active one, wrapping around, in that direction.
+    let after = (1..n).map(|k| {
+        if forward {
+            (active + k) % n
         } else {
-            (i + n - 1) % n
-        };
-        if !chrome.tabs[i].0.external {
-            return switch_tab(state, i + 1);
+            (active + n - k) % n
         }
+    });
+    let mut internal = after.filter(|&i| chrome.tabs.get(i).is_some_and(|(t, _)| !t.external));
+    match internal.next() {
+        Some(i) => switch_tab(state, i + 1),
+        None => Vec::new(),
     }
-    Vec::new()
 }
 
 // ---- letter hints -----------------------------------------------------------------------------
@@ -483,8 +486,10 @@ fn hint_labels(n: usize) -> Vec<String> {
     // Spread over as many first letters as possible, so one key narrows the
     // choice to a few.
     let per = n.div_ceil(letters.len()).min(letters.len());
-    (0..n.min(letters.len() * letters.len()))
-        .map(|i| format!("{}{}", letters[i / per], letters[i % per]))
+    letters
+        .iter()
+        .flat_map(|a| letters.iter().take(per).map(move |b| format!("{a}{b}")))
+        .take(n)
         .collect()
 }
 
@@ -501,7 +506,13 @@ fn start_hints(state: &mut State, browser: bool) {
     let labels = hint_labels(spots.len());
     let links = spots
         .iter()
-        .map(|s| p.page.links[s.link as usize].clone())
+        .map(|s| {
+            p.page
+                .links
+                .get(s.link as usize)
+                .cloned()
+                .unwrap_or_default()
+        })
         .collect();
     let labels = spots
         .iter()
@@ -535,8 +546,11 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             return Vec::new();
         }
     }
-    let matching: Vec<usize> = (0..hints.labels.len())
-        .filter(|&i| hints.labels[i].label.starts_with(&hints.typed))
+    let matching: Vec<(&HintLabel, &String)> = hints
+        .labels
+        .iter()
+        .zip(&hints.links)
+        .filter(|(h, _)| h.label.starts_with(&hints.typed))
         .collect();
     match matching.as_slice() {
         [] => {
@@ -544,8 +558,8 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             state.notice = Some(Notice::Info("No link has those letters".into()));
             Vec::new()
         }
-        [i] if hints.labels[*i].label == hints.typed => {
-            let url = hints.links[*i].clone();
+        [(hint, url)] if hint.label == hints.typed => {
+            let url = (*url).clone();
             let browser = hints.browser;
             state.overlay = None;
             if browser && !url.starts_with("ghtui:") {
@@ -872,7 +886,9 @@ fn cycle_sort(state: &mut State) -> Vec<Cmd> {
         .iter()
         .position(|(_, l)| *l == current)
         .unwrap_or(0);
-    let (next, label) = pages::SORTS[(i + 1) % pages::SORTS.len()];
+    let Some(&(next, label)) = pages::SORTS.iter().cycle().nth(i + 1) else {
+        return Vec::new();
+    };
     let mut words: Vec<&str> = query
         .split_whitespace()
         .filter(|w| !w.starts_with("sort:"))
@@ -1270,8 +1286,10 @@ impl State {
     pub fn menu_rows(&self, menu: &Menu) -> (Vec<KeyRow>, usize) {
         let mut rows = Vec::new();
         let mut selected = 0;
+        let mut previous = None;
         for (i, d) in menu.rows.iter().enumerate() {
-            if i == 0 || menu.rows[i - 1].section != d.section {
+            if previous != Some(d.section) {
+                previous = Some(d.section);
                 rows.push(KeyRow::heading(d.section));
             }
             if i == menu.selected {
@@ -1485,8 +1503,8 @@ fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
         open_menu(state);
         return Vec::new();
     }
-    if let Some(link) = hit.link {
-        let url = p.page.links[link as usize].clone();
+    if let Some(url) = hit.link.and_then(|l| p.page.links.get(l as usize)) {
+        let url = url.clone();
         p.selected = item.or(p.selected);
         return state.follow(&url);
     }
@@ -1530,7 +1548,7 @@ mod tests {
             "first letters spread out"
         );
         assert!(many.iter().all(|l| l.len() == 2));
-        let mut sorted = many.clone();
+        let mut sorted = many;
         sorted.dedup();
         assert_eq!(sorted.len(), 30);
     }

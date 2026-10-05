@@ -195,10 +195,10 @@ async fn run_inner(
 
     // Files shown expanded first; collapsed (generated, lockfiles) last.
     let collapsed = |f: &ChangedFile| generated.contains(f.path()) || is_lockfile(f.path());
-    let order: Vec<usize> = (0..files.len())
-        .filter(|i| !collapsed(&files[*i]))
-        .chain((0..files.len()).filter(|i| collapsed(&files[*i])))
-        .collect();
+    let (expanded, collapsed): (Vec<_>, Vec<_>) = (0..files.len())
+        .zip(&files)
+        .partition(|(_, f)| !collapsed(f));
+    let order = expanded.into_iter().chain(collapsed).map(|(i, _)| i);
     control.fill(order);
     out.send(JobMsg::Files(Box::new(DiffFiles {
         refs,

@@ -82,13 +82,16 @@ pub fn needs(route: &Route) -> Vec<Need> {
             Need::Data(K::Blob(repo.clone(), rev.clone(), path.clone())),
         ],
         Route::Issues { repo, .. } | Route::Pulls { repo, .. } => {
-            let (kind, query) = route.search().expect("lists are searches");
-            vec![header(repo), Need::Data(K::Search(kind, query))]
+            let list = route
+                .search()
+                .map(|(kind, query)| Need::Data(K::Search(kind, query)));
+            std::iter::once(header(repo)).chain(list).collect()
         }
-        Route::Search { .. } => {
-            let (kind, query) = route.search().expect("a search");
-            vec![Need::Data(K::Search(kind, query))]
-        }
+        Route::Search { .. } => route
+            .search()
+            .map(|(kind, query)| Need::Data(K::Search(kind, query)))
+            .into_iter()
+            .collect(),
         Route::Issue { repo, number } => {
             vec![header(repo), Need::Data(K::Issue(repo.clone(), *number))]
         }

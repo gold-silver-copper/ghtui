@@ -307,21 +307,25 @@ const RESERVED: &[&str] = &[
 ];
 
 fn decode(segment: &str) -> String {
-    let bytes = segment.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && let Some(b) = segment
-                .get(i + 1..i + 3)
-                .and_then(|h| u8::from_str_radix(h, 16).ok())
-        {
-            out.push(b);
-            i += 3;
-            continue;
+    let mut out = Vec::with_capacity(segment.len());
+    let mut rest = segment.as_bytes();
+    while let Some((&b, tail)) = rest.split_first() {
+        let escaped = match tail {
+            [hi, lo, ..] if b == b'%' => std::str::from_utf8(&[*hi, *lo])
+                .ok()
+                .and_then(|h| u8::from_str_radix(h, 16).ok()),
+            _ => None,
+        };
+        match (escaped, tail.get(2..)) {
+            (Some(byte), Some(after)) => {
+                out.push(byte);
+                rest = after;
+            }
+            _ => {
+                out.push(b);
+                rest = tail;
+            }
         }
-        out.push(bytes[i]);
-        i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
 }
@@ -434,10 +438,7 @@ mod tests {
                 number: 5
             }
         );
-        let pr = PrRef {
-            repo: repo.clone(),
-            number: 7,
-        };
+        let pr = PrRef { repo, number: 7 };
         assert_eq!(
             page("https://github.com/o/r/pull/7/commits"),
             Route::Pr {
@@ -490,10 +491,7 @@ mod tests {
                 repo: repo.clone(),
                 query: OPEN.into(),
             },
-            Route::Issue {
-                repo: repo.clone(),
-                number: 3,
-            },
+            Route::Issue { repo, number: 3 },
             Route::user("octocat"),
             Route::Search {
                 kind: SearchKind::Users,
