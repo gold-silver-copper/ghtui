@@ -9,7 +9,7 @@
 //! Comments are anchored by real file line numbers and a side, never by
 //! rendered row positions.
 
-use crate::hunks::{Algorithm, Hunk, LineKind, Whitespace, align, diff_lines};
+use crate::hunks::{Algorithm, LineKind, Whitespace, align, diff_lines};
 use crate::text::Text;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -82,7 +82,7 @@ impl Commentable {
         Self {
             ranges: diff_lines(old, new, Algorithm::Myers, 3)
                 .iter()
-                .map(hunk_range)
+                .map(|h| hunk_range((h.old_start, h.old_len), (h.new_start, h.new_len)))
                 .collect(),
             source: RangeSource::LocalFallback,
         }
@@ -111,9 +111,10 @@ impl Commentable {
     }
 }
 
-fn hunk_range(h: &Hunk) -> HunkRange {
+/// The range of a hunk from its `(start, len)` on each side.
+fn hunk_range(old: (u32, u32), new: (u32, u32)) -> HunkRange {
     // Saturating: patch headers come from GitHub, untrusted.
-    let range = |start: u32, len: u32| {
+    let range = |(start, len): (u32, u32)| {
         // For an empty side git reports the line *before* the hunk; nothing
         // on that side is commentable.
         if len == 0 {
@@ -123,8 +124,8 @@ fn hunk_range(h: &Hunk) -> HunkRange {
         }
     };
     HunkRange {
-        old: range(h.old_start, h.old_len),
-        new: range(h.new_start, h.new_len),
+        old: range(old),
+        new: range(new),
     }
 }
 
@@ -142,15 +143,7 @@ pub fn parse_patch_headers(patch: &str) -> Vec<HunkRange> {
                     None => Some((s.parse().ok()?, 1)),
                 }
             };
-            let (old_start, old_len) = parse(old)?;
-            let (new_start, new_len) = parse(new)?;
-            Some(hunk_range(&Hunk {
-                old_start,
-                old_len,
-                new_start,
-                new_len,
-                lines: Vec::new(),
-            }))
+            Some(hunk_range(parse(old)?, parse(new)?))
         })
         .collect()
 }
