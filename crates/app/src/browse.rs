@@ -9,7 +9,7 @@ use ghtui_api::browse::{
     SearchKind, SearchResults, TreeEntry,
 };
 use ghtui_api::model::{PrRef, RepoId};
-use ghtui_ui::page::{Page, Role, Seg};
+use ghtui_ui::page::{Link, Page, Role, Seg};
 use ghtui_ui::pages::{self, Keys, PrTab};
 
 use crate::keymap::Action;
@@ -147,9 +147,9 @@ impl PageScreen {
     }
 
     /// The selected item's link.
-    pub fn selected_url(&self) -> Option<&str> {
+    pub fn selected_link(&self) -> Option<&Link> {
         let item = self.page.items.get(self.selected?)?;
-        self.page.links.get(item.link as usize).map(String::as_str)
+        self.page.target(item.link)
     }
 }
 

@@ -17,7 +17,62 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
+use std::collections::HashMap;
+
 use crate::{Ctx, cols, fill, idx, put, text};
+
+/// Where following a link leads: a URL, or something the page does. Only
+/// pages create the actions; Markdown from GitHub can only make URLs.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Link {
+    Url(String),
+    /// Load the next page of a list.
+    More,
+    /// Star or unstar the repository.
+    Star,
+    /// Write a comment.
+    Comment,
+    /// Edit the list's filter.
+    Filter,
+    /// Change the list's sort.
+    Sort,
+    /// Show the list's items in this state (`open`, `closed`...).
+    State(String),
+    /// Switch branches.
+    Branch,
+    /// Find a file in the repository.
+    FindFile,
+    /// Reply quoting comment `n` of [`Page::quotes`].
+    Quote(u32),
+}
+
+impl Link {
+    pub fn url(&self) -> Option<&str> {
+        match self {
+            Link::Url(url) => Some(url),
+            _ => None,
+        }
+    }
+}
+
+impl From<String> for Link {
+    fn from(url: String) -> Self {
+        Link::Url(url)
+    }
+}
+
+impl From<&str> for Link {
+    fn from(url: &str) -> Self {
+        Link::Url(url.to_owned())
+    }
+}
+
+/// A comment a quote reply quotes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Quote {
+    pub author: String,
+    pub body: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Role {
@@ -132,8 +187,12 @@ pub const ASIDE_GAP: u16 = 3;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Page {
     pub lines: Vec<PageLine>,
-    /// Link targets (URLs), shared by the aside.
-    pub links: Vec<String>,
+    /// Link targets, shared by the aside.
+    pub links: Vec<Link>,
+    /// Each link's index in `links`.
+    link_ids: HashMap<Link, u32>,
+    /// Comments quote replies quote, by [`Link::Quote`].
+    pub quotes: Vec<Quote>,
     /// Columns of the main column.
     pub width: u16,
     pub items: Vec<Item>,
@@ -153,14 +212,30 @@ impl Page {
     }
 
     /// Registers a link target, returning its index.
-    pub fn link(&mut self, url: impl Into<String>) -> u32 {
-        let url = url.into();
-        if let Some(i) = self.links.iter().position(|l| *l == url) {
-            return idx(i);
+    pub fn link(&mut self, link: impl Into<Link>) -> u32 {
+        let link = link.into();
+        if let Some(&i) = self.link_ids.get(&link) {
+            return i;
         }
         let i = idx(self.links.len());
-        self.links.push(url);
+        self.links.push(link.clone());
+        self.link_ids.insert(link, i);
         i
+    }
+
+    /// A link that quote-replies to a comment.
+    pub fn quote(&mut self, author: &str, body: &str) -> u32 {
+        let n = idx(self.quotes.len());
+        self.quotes.push(Quote {
+            author: author.to_owned(),
+            body: body.to_owned(),
+        });
+        self.link(Link::Quote(n))
+    }
+
+    /// What following link `i` does.
+    pub fn target(&self, i: u32) -> Option<&Link> {
+        self.links.get(i as usize)
     }
 
     pub fn push(&mut self, line: PageLine) {
@@ -190,7 +265,7 @@ impl Page {
     pub fn link_line(
         &mut self,
         text: impl Into<String>,
-        url: impl Into<String>,
+        url: impl Into<Link>,
         role: Role,
         indent: u16,
     ) -> u32 {
@@ -322,8 +397,12 @@ impl Page {
     pub fn build_aside(&mut self, width: u16, f: impl FnOnce(&mut Page)) {
         let mut aside = Page::new(width);
         aside.links = std::mem::take(&mut self.links);
+        aside.link_ids = std::mem::take(&mut self.link_ids);
+        aside.quotes = std::mem::take(&mut self.quotes);
         f(&mut aside);
         self.links = std::mem::take(&mut aside.links);
+        self.link_ids = std::mem::take(&mut aside.link_ids);
+        self.quotes = std::mem::take(&mut aside.quotes);
         self.aside = aside.lines;
         self.aside_width = width;
     }
@@ -863,7 +942,10 @@ mod tests {
         let spots = spots(&page, area, 0);
         assert_eq!(spots.len(), 2);
         assert_eq!(spots[0].x, cols.main_x + 4);
-        assert_eq!(page.links[spots[1].link as usize], "https://github.com/b");
+        assert_eq!(
+            page.links[spots[1].link as usize],
+            Link::from("https://github.com/b")
+        );
         let h = hit(&page, area, 0, cols.main_x + 5, 0);
         assert_eq!(
             h,

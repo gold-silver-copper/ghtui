@@ -17,27 +17,8 @@ use ghtui_api::model::{
 use ghtui_theme::{Bg, Syntax};
 
 use crate::markdown::{self, LinkBase};
-use crate::page::{ASIDE_GAP, Frame, Page, PageLine, Role, Seg, Tone};
+use crate::page::{ASIDE_GAP, Frame, Link, Page, PageLine, Role, Seg, Tone};
 use crate::{Icons, cols, time};
-
-/// Load the next page of a list.
-pub const MORE: &str = "ghtui:more";
-/// Star or unstar the repository.
-pub const STAR: &str = "ghtui:star";
-/// Write a comment.
-pub const COMMENT: &str = "ghtui:comment";
-/// Edit the list's filter.
-pub const FILTER: &str = "ghtui:filter";
-/// Change the list's sort.
-pub const SORT: &str = "ghtui:sort";
-/// Show the list's open or closed items: `ghtui:state:open`.
-pub const STATE: &str = "ghtui:state:";
-/// Switch branches.
-pub const BRANCH: &str = "ghtui:branch";
-/// Reply quoting a comment: `ghtui:quote:<author>\n<body>`.
-pub const QUOTE: &str = "ghtui:quote:";
-/// Find a file in the repository.
-pub const FIND_FILE: &str = "ghtui:files";
 
 // ---- URLs ----------------------------------------------------------------------
 
@@ -168,13 +149,13 @@ fn labels(segs: &mut Vec<Seg>, labels: &[Label]) {
     }
 }
 
-fn link_seg(page: &mut Page, text: impl Into<String>, url: impl Into<String>, role: Role) -> Seg {
+fn link_seg(page: &mut Page, text: impl Into<String>, url: impl Into<Link>, role: Role) -> Seg {
     let link = page.link(url);
     Seg::linked(text, role, link)
 }
 
 /// A button: ` label ` on a raised tone.
-fn button(page: &mut Page, text: impl Into<String>, url: impl Into<String>) -> Seg {
+fn button(page: &mut Page, text: impl Into<String>, url: impl Into<Link>) -> Seg {
     link_seg(
         page,
         format!(" {} ", text.into()),
@@ -185,7 +166,7 @@ fn button(page: &mut Page, text: impl Into<String>, url: impl Into<String>) -> S
 
 /// GitHub's "Go to file" field, with its key.
 fn go_to_file(page: &mut Page, keys: Keys<'_>) -> Vec<Seg> {
-    let link = page.link(FIND_FILE);
+    let link = page.link(Link::FindFile);
     vec![
         Seg::linked(" ⌕ Go to file ", Role::Chip(Bg::ContainerHigh), link),
         Seg::linked(
@@ -369,7 +350,11 @@ pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview
             segs.push(chip("Archived", Bg::TertiaryContainer));
         }
         let star = if o.starred { "★ Starred" } else { "☆ Star" };
-        right.push(button(page, format!("{star}  {}", compact(s.stars)), STAR));
+        right.push(button(
+            page,
+            format!("{star}  {}", compact(s.stars)),
+            Link::Star,
+        ));
         right.push(space());
         right.push(button(
             page,
@@ -475,7 +460,7 @@ fn code_toolbar(
     keys: Keys<'_>,
 ) {
     let mut segs = vec![
-        button(page, format!("⎇ {rev} ▾"), BRANCH),
+        button(page, format!("⎇ {rev} ▾"), Link::Branch),
         Seg::new("  ", Role::Body),
     ];
     if is_file {
@@ -920,7 +905,7 @@ fn more_row(page: &mut Page, next: bool, shown: usize, total: u64) {
     if next {
         page.box_rule();
         let start = page.lines.len();
-        let link = page.link(MORE);
+        let link = page.link(Link::More);
         page.box_line(
             vec![Seg::linked(
                 format!("Load more  ({shown} of {})", compact(total)),
@@ -940,7 +925,7 @@ fn filter_field(page: &mut Page, query: &str, keys: Keys<'_>) {
     let hint = format!("{} to filter ", keys.filter);
     let text = format!(" ⌕ {query}");
     let pad = width.saturating_sub(crate::text::width(&text) + crate::text::width(&hint));
-    let link = page.link(FILTER);
+    let link = page.link(Link::Filter);
     page.line(vec![
         Seg::linked(
             format!("{text}{}", " ".repeat(pad)),
@@ -1023,7 +1008,7 @@ pub fn issue_list(
             Some(_) => format!("{icon} {} {label}", compact(n)),
             None => format!("{icon} {label}"),
         };
-        let link = page.link(format!("{STATE}{name}"));
+        let link = page.link(Link::State(name.to_string()));
         if !title.is_empty() {
             title.push(Seg::new("   ", Role::Body));
         }
@@ -1032,7 +1017,7 @@ pub fn issue_list(
     let sort = link_seg(
         page,
         format!("Sort: {} ▾", sort_label(query)),
-        SORT,
+        Link::Sort,
         Role::Meta,
     );
     page.box_top(title, vec![sort]);
@@ -1134,7 +1119,7 @@ fn comment_box(
     }
     page.box_bottom();
     // The whole comment is a row: Enter quote-replies, as GitHub's `r` does.
-    let quote = page.link(format!("{QUOTE}{author}\n{body}"));
+    let quote = page.quote(author, body);
     page.item(start, quote);
 }
 
@@ -1188,7 +1173,7 @@ fn event(
 fn add_comment(page: &mut Page, keys: Keys<'_>) {
     connector(page);
     let start = page.lines.len();
-    let link = page.link(COMMENT);
+    let link = page.link(Link::Comment);
     page.box_top(
         vec![Seg::linked("Add a comment", Role::Strong, link)],
         Vec::new(),
@@ -1830,17 +1815,17 @@ mod tests {
             None,
             0,
         );
-        for url in [
-            "https://github.com/o/r/tree/main/src",
-            "https://github.com/o/r/blob/main/README.md",
-            "https://github.com/o/r/blob/main/docs/intro.md",
-            "https://github.com/o",
-            STAR,
-            FIND_FILE,
+        for link in [
+            Link::from("https://github.com/o/r/tree/main/src"),
+            Link::from("https://github.com/o/r/blob/main/README.md"),
+            Link::from("https://github.com/o/r/blob/main/docs/intro.md"),
+            Link::from("https://github.com/o"),
+            Link::Star,
+            Link::FindFile,
         ] {
             assert!(
-                page.links.iter().any(|l| l == url),
-                "{url} missing: {:?}",
+                page.links.contains(&link),
+                "{link:?} missing: {:?}",
                 page.links
             );
         }
@@ -1851,7 +1836,7 @@ mod tests {
         let opened: Vec<&str> = page
             .items
             .iter()
-            .map(|i| page.links[i.link as usize].as_str())
+            .filter_map(|i| page.links[i.link as usize].url())
             .collect();
         assert_eq!(
             opened,

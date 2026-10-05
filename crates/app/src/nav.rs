@@ -10,7 +10,7 @@ use ghtui_api::browse::{RepoSummary, SearchKind};
 use ghtui_api::model::RepoId;
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::chrome::{self, KeyRow, SuggestRow};
-use ghtui_ui::page::{self, HintLabel};
+use ghtui_ui::page::{self, HintLabel, Link};
 use ghtui_ui::pages::{self, PrTab};
 use ghtui_ui::{PAD_X, PAD_Y};
 use ratatui::layout::Rect;
@@ -139,30 +139,33 @@ impl State {
         }
     }
 
-    /// Follows a link on a page: a GitHub URL, or one of the page's actions.
-    pub fn follow(&mut self, url: &str) -> Vec<Cmd> {
-        match url {
-            pages::MORE => self.load_more(),
-            pages::STAR => star(self),
-            pages::COMMENT => comment_with(self, ""),
-            pages::FILTER => self.open_search(),
-            pages::SORT => cycle_sort(self),
-            pages::BRANCH => self.open_finder(true),
-            pages::FIND_FILE => self.open_finder(false),
-            _ => {
-                if let Some(state) = url.strip_prefix(pages::STATE) {
-                    return set_list_state(self, state);
+    /// Follows a link on the page on screen: a URL, or one of the page's
+    /// actions.
+    pub fn follow(&mut self, link: &Link) -> Vec<Cmd> {
+        match link {
+            Link::Url(url) => self.go(Target::from_url(url)),
+            Link::More => self.load_more(),
+            Link::Star => star(self),
+            Link::Comment => comment_with(self, ""),
+            Link::Filter => self.open_search(),
+            Link::Sort => cycle_sort(self),
+            Link::Branch => self.open_finder(true),
+            Link::FindFile => self.open_finder(false),
+            Link::State(state) => set_list_state(self, state),
+            Link::Quote(n) => {
+                let quote = match self.screen() {
+                    Screen::Page(p) => p.page.quotes.get(*n as usize).cloned(),
+                    Screen::Diff(_) => None,
+                };
+                let Some(quote) = quote else {
+                    return Vec::new();
+                };
+                let mut text = format!("> @{} wrote:\n", quote.author);
+                for line in quote.body.trim().lines() {
+                    text.push_str(&format!("> {line}\n"));
                 }
-                if let Some(quoted) = url.strip_prefix(pages::QUOTE) {
-                    let (author, body) = quoted.split_once('\n').unwrap_or((quoted, ""));
-                    let mut text = format!("> @{author} wrote:\n");
-                    for line in body.trim().lines() {
-                        text.push_str(&format!("> {line}\n"));
-                    }
-                    text.push('\n');
-                    return comment_with(self, &text);
-                }
-                self.go(Target::from_url(url))
+                text.push('\n');
+                comment_with(self, &text)
             }
         }
     }
@@ -347,8 +350,8 @@ pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
             p.selected = last.filter(|&l| visible(p, l, height));
         }
         Action::Open => {
-            return Some(match p.selected_url().map(str::to_owned) {
-                Some(url) => state.follow(&url),
+            return Some(match p.selected_link().cloned() {
+                Some(link) => state.follow(&link),
                 None => {
                     let (down, hints) = (
                         state.first_key(Action::Down),
@@ -473,7 +476,7 @@ fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
 
 pub struct Hints {
     pub labels: Vec<HintLabel>,
-    pub links: Vec<String>,
+    pub links: Vec<Link>,
     pub typed: String,
     pub browser: bool,
 }
@@ -507,16 +510,10 @@ fn start_hints(state: &mut State, browser: bool) {
         return;
     }
     let labels = hint_labels(spots.len());
-    let links = spots
+    let (spots, links): (Vec<&page::Spot>, Vec<Link>) = spots
         .iter()
-        .map(|s| {
-            p.page
-                .links
-                .get(s.link as usize)
-                .cloned()
-                .unwrap_or_default()
-        })
-        .collect();
+        .filter_map(|s| Some((s, p.page.target(s.link)?.clone())))
+        .unzip();
     let labels = spots
         .iter()
         .zip(labels)
@@ -549,7 +546,7 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             return Vec::new();
         }
     }
-    let matching: Vec<(&HintLabel, &String)> = hints
+    let matching: Vec<(&HintLabel, &Link)> = hints
         .labels
         .iter()
         .zip(&hints.links)
@@ -561,14 +558,13 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             state.info("No link has those letters");
             Vec::new()
         }
-        [(hint, url)] if hint.label == hints.typed => {
-            let url = (*url).clone();
+        [(hint, link)] if hint.label == hints.typed => {
+            let link = (*link).clone();
             let browser = hints.browser;
             state.overlay = None;
-            if browser && !url.starts_with("ghtui:") {
-                state.go(Target::External(url))
-            } else {
-                state.follow(&url)
+            match link {
+                Link::Url(url) if browser => state.go(Target::External(url)),
+                link => state.follow(&link),
             }
         }
         _ => Vec::new(),
@@ -1063,7 +1059,7 @@ impl State {
         let selected = match self.screen() {
             Screen::Page(p) => {
                 self.page_doables(p, &mut out);
-                p.selected_url()
+                p.selected_link()
             }
             Screen::Diff(_) => {
                 for (section, actions) in DIFF_DOABLES {
@@ -1133,8 +1129,8 @@ impl State {
     fn page_doables(&self, p: &PageScreen, out: &mut Vec<Doable>) {
         let here = "This page";
         let mut open = doable(here, Action::Open, "Open the selected row", "open");
-        match p.selected_url() {
-            Some(url) => open.label = describe(url),
+        match p.selected_link() {
+            Some(link) => open.label = describe(link),
             None => open.unavailable = Some("nothing is selected".into()),
         }
         out.push(open);
@@ -1303,22 +1299,23 @@ impl State {
     }
 }
 
-/// What following `url` does, for the menu.
-fn describe(url: &str) -> String {
-    match url {
-        pages::MORE => "Load more".into(),
-        pages::COMMENT => "Write a comment".into(),
-        pages::STAR => "Star or unstar".into(),
-        pages::FILTER => "Edit the filter".into(),
-        pages::SORT => "Change the sort".into(),
-        pages::BRANCH => "Switch branches".into(),
-        pages::FIND_FILE => "Go to file".into(),
-        u if u.starts_with(pages::QUOTE) => "Quote reply".into(),
-        _ => match Target::from_url(url) {
+/// What following `link` does, for the menu.
+fn describe(link: &Link) -> String {
+    match link {
+        Link::Url(url) => match Target::from_url(url) {
             Target::Page(r) => format!("Open {}", r.title()),
             Target::Files(pr) => format!("Review {pr}'s files"),
             Target::External(u) => format!("Open {u} in the browser"),
         },
+        Link::More => "Load more".into(),
+        Link::Comment => "Write a comment".into(),
+        Link::Star => "Star or unstar".into(),
+        Link::Filter => "Edit the filter".into(),
+        Link::Sort => "Change the sort".into(),
+        Link::State(state) => format!("Show {state}"),
+        Link::Branch => "Switch branches".into(),
+        Link::FindFile => "Go to file".into(),
+        Link::Quote(_) => "Quote reply".into(),
     }
 }
 
@@ -1467,8 +1464,8 @@ impl State {
     pub fn here_url(&self) -> String {
         match self.screen() {
             Screen::Page(p) => p
-                .selected_url()
-                .filter(|u| u.starts_with("http"))
+                .selected_link()
+                .and_then(Link::url)
                 .map_or_else(|| p.route.url(), str::to_owned),
             Screen::Diff(d) => format!("{}/files", d.pr.url()),
         }
@@ -1608,16 +1605,16 @@ fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
         open_menu(state);
         return Vec::new();
     }
-    if let Some(url) = hit.link.and_then(|l| p.page.links.get(l as usize)) {
-        let url = url.clone();
+    if let Some(link) = hit.link.and_then(|l| p.page.target(l)) {
+        let link = link.clone();
         p.selected = item.or(p.selected);
-        return state.follow(&url);
+        return state.follow(&link);
     }
     match item {
         // A second click on a row opens it.
         Some(i) if p.selected == Some(i) => {
-            let url = p.selected_url().map(str::to_owned);
-            url.map_or_else(Vec::new, |u| state.follow(&u))
+            let link = p.selected_link().cloned();
+            link.map_or_else(Vec::new, |l| state.follow(&l))
         }
         Some(i) => {
             p.selected = Some(i);

@@ -707,7 +707,9 @@ mod tests {
         );
         assert_eq!(
             page.links,
-            ["https://github.com/o/r/blob/main/docs/guide.md"]
+            [crate::page::Link::from(
+                "https://github.com/o/r/blob/main/docs/guide.md"
+            )]
         );
         let line = &page.lines[0];
         assert!(

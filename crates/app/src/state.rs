@@ -1676,7 +1676,7 @@ pub(crate) mod tests {
         let i = hints
             .links
             .iter()
-            .position(|u| u == "https://github.com/gold-silver-copper")
+            .position(|u| u.url() == Some("https://github.com/gold-silver-copper"))
             .expect("the owner is a link");
         let label = hints.labels[i].label.clone();
         press(&mut state, &label);
@@ -2058,6 +2058,25 @@ pub(crate) mod tests {
         assert_eq!(state.data_gen, generation);
         update(&mut state, Msg::Viewer(Ok("me".into())));
         assert_eq!(state.data_gen, generation + 1);
+    }
+
+    /// A URL is only ever a URL: even one spelled like an old internal
+    /// action can't star a repository.
+    #[test]
+    fn urls_never_run_page_actions() {
+        let mut state = with_repo();
+        let cmds = state.follow(&ghtui_ui::page::Link::from("ghtui:star"));
+        assert!(
+            !cmds
+                .iter()
+                .any(|c| matches!(c, Cmd::Api(Api::SetStarred { .. }))),
+            "{cmds:?}"
+        );
+        let cmds = state.follow(&ghtui_ui::page::Link::Star);
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, Cmd::Api(Api::SetStarred { .. })))
+        );
     }
 
     /// Esc on an error dismisses it (and goes nowhere); the messages list
