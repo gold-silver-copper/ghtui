@@ -445,7 +445,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
             }
             Vec::new()
         }
-        Choice::Commits(pick) => apply_commit_choice(state, pick, mark.map(PickItem::Commit)),
+        Choice::Commits(pick) => apply_commit_choice(state, pick, mark),
         Choice::Copy(text) => {
             state.info("Copied the message");
             vec![Cmd::Copy(text)]

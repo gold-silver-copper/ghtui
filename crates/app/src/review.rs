@@ -736,7 +736,7 @@ pub(crate) fn start_since_review(state: &mut State) -> Vec<Cmd> {
 pub(crate) fn apply_commit_choice(
     state: &mut State,
     choice: PickItem,
-    mark: Option<PickItem>,
+    mark: Option<usize>,
 ) -> Vec<Cmd> {
     let width = state.size.0;
     let pr = match state.screen() {
@@ -760,10 +760,7 @@ pub(crate) fn apply_commit_choice(
         }
         PickItem::All | PickItem::SinceReview => None,
         PickItem::Commit(i) => {
-            let j = match mark {
-                Some(PickItem::Commit(m)) => m,
-                _ => i,
-            };
+            let j = mark.unwrap_or(i);
             let (first, last) = (i.min(j), i.max(j));
             // The picker's indices, into the list it showed.
             let (Some(from), Some(to)) = (diff.commits.get(first), diff.commits.get(last)) else {
