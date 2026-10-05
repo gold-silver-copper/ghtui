@@ -307,7 +307,15 @@ impl GitHub {
     /// GETs a REST path, revalidating with the cached ETag. A 304 serves the
     /// cached body (and doesn't count against the rate limit).
     pub async fn rest_get(&self, path: &str) -> Result<String, ApiError> {
-        let cached = self.store.http_get(path);
+        let cached = {
+            let (store, key) = (self.store.clone(), path.to_owned());
+            tokio::task::spawn_blocking(move || store.http_get(&key))
+                .await
+                .unwrap_or_else(|err| {
+                    tracing::warn!(%err, "cache read task failed");
+                    None
+                })
+        };
         let response = self
             .send(&Request::Get {
                 path,
