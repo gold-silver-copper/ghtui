@@ -1163,6 +1163,11 @@ pub(crate) mod tests {
         p.page.lines[item.start].text()
     }
 
+    /// Fetching `key`, the cached copy first.
+    fn fetch(key: DataKey) -> Cmd {
+        Cmd::Api(Api::Fetch { key, cached: true })
+    }
+
     /// Commands other than saving visits.
     #[must_use]
     fn fetches(cmds: Vec<Cmd>) -> Vec<Cmd> {
@@ -1231,10 +1236,7 @@ pub(crate) mod tests {
             cmds,
             vec![
                 Cmd::Api(Api::FetchPr(pr.clone())),
-                Cmd::Api(Api::Fetch {
-                    key: DataKey::PrActivity(pr.clone()),
-                    cached: true
-                })
+                fetch(DataKey::PrActivity(pr.clone()))
             ]
         );
         assert_eq!(
@@ -1393,13 +1395,7 @@ pub(crate) mod tests {
         let mut state = state();
         assert_eq!(
             state.load_visible(false),
-            vec![
-                Cmd::Api(Api::FetchInbox),
-                Cmd::Api(Api::Fetch {
-                    key: DataKey::ViewerRepos,
-                    cached: true
-                })
-            ]
+            vec![Cmd::Api(Api::FetchInbox), fetch(DataKey::ViewerRepos)]
         );
         assert_eq!(state.load_visible(true), vec![Cmd::Api(Api::FetchViewer)]);
     }
@@ -1467,14 +1463,8 @@ pub(crate) mod tests {
         assert_eq!(
             cmds,
             vec![
-                Cmd::Api(Api::Fetch {
-                    key: DataKey::Repo(RepoId::new("a", "b")),
-                    cached: true
-                }),
-                Cmd::Api(Api::Fetch {
-                    key: key.clone(),
-                    cached: true
-                })
+                fetch(DataKey::Repo(RepoId::new("a", "b"))),
+                fetch(key.clone())
             ]
         );
         assert!(state.overlay.is_none());
@@ -1594,10 +1584,7 @@ pub(crate) mod tests {
         let (kind, query) = issues.search().unwrap();
         assert_eq!(
             cmds,
-            vec![Cmd::Api(Api::Fetch {
-                key: DataKey::Search(kind, query),
-                cached: true
-            })],
+            vec![fetch(DataKey::Search(kind, query))],
             "the header isn't fetched again"
         );
         assert_eq!(state.chrome().active, Some(1));
@@ -1694,14 +1681,8 @@ pub(crate) mod tests {
         assert_eq!(
             cmds,
             vec![
-                Cmd::Api(Api::Fetch {
-                    key: tree.clone(),
-                    cached: true
-                }),
-                Cmd::Api(Api::Fetch {
-                    key: DataKey::LastCommits(repo(), "main".into(), "crates".into()),
-                    cached: true
-                })
+                fetch(tree.clone()),
+                fetch(DataKey::LastCommits(repo(), "main".into(), "crates".into()))
             ],
             "the listing, and each entry's latest commit"
         );
@@ -1725,13 +1706,7 @@ pub(crate) mod tests {
         let mut state = with_repo();
         let cmds = press(&mut state, "f");
         let files = DataKey::Files(repo(), "main".into());
-        assert_eq!(
-            cmds,
-            vec![Cmd::Api(Api::Fetch {
-                key: files.clone(),
-                cached: true
-            })]
-        );
+        assert_eq!(cmds, vec![fetch(files.clone())]);
         fetched(
             &mut state,
             files,
@@ -1762,13 +1737,7 @@ pub(crate) mod tests {
             }
         );
         let cmds = press(&mut state, "b");
-        assert_eq!(
-            cmds,
-            vec![Cmd::Api(Api::Fetch {
-                key: DataKey::Refs(repo()),
-                cached: true
-            })]
-        );
+        assert_eq!(cmds, vec![fetch(DataKey::Refs(repo()))]);
         fetched(
             &mut state,
             DataKey::Refs(repo()),
