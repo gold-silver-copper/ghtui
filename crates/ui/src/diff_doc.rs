@@ -166,7 +166,7 @@ pub struct DocFile {
     pub unfolded: HashSet<u32>,
     thread_rows: Vec<ThreadRow>,
     /// Line annotations by anchor.
-    by_line: HashMap<(Side, u32), Vec<u32>>,
+    by_line: HashMap<LinePos, Vec<u32>>,
     /// Commentable ranges reconstructed locally.
     local_commentable: Option<Commentable>,
 }
@@ -206,9 +206,7 @@ impl DocFile {
 
     /// Annotations (indices into `Doc::annotations`) anchored at a line.
     pub fn annotations_at(&self, pos: LinePos) -> &[u32] {
-        self.by_line
-            .get(&(pos.side, pos.line))
-            .map_or(&[], Vec::as_slice)
+        self.by_line.get(&pos).map_or(&[], Vec::as_slice)
     }
 
     /// The lines an alignment entry shows: removed lines are on the left,
@@ -289,7 +287,11 @@ impl DocFile {
         });
         for (i, ann) in anns {
             if let Some(line) = ann.on_line() {
-                self.by_line.entry((ann.side, line)).or_default().push(*i);
+                let pos = LinePos {
+                    side: ann.side,
+                    line,
+                };
+                self.by_line.entry(pos).or_default().push(*i);
             }
         }
         self.rows.push(Row::Header);
@@ -365,18 +367,15 @@ impl DocFile {
 
         // Commented lines are always visible.
         let mut windows = self.windows.clone();
-        if !self.by_line.is_empty() {
-            for (e, line) in lines.iter().enumerate() {
-                let left = line
-                    .old
-                    .is_some_and(|l| self.by_line.contains_key(&(Side::Left, l)));
-                let right = line
-                    .new
-                    .is_some_and(|l| self.by_line.contains_key(&(Side::Right, l)));
-                if left || right {
-                    let e = idx(e);
-                    windows.push(e..e.saturating_add(1));
-                }
+        for (e, line) in lines.iter().enumerate() {
+            let (left, right) = sides(line);
+            if left
+                .into_iter()
+                .chain(right)
+                .any(|p| self.by_line.contains_key(&p))
+            {
+                let e = idx(e);
+                windows.push(e..e.saturating_add(1));
             }
         }
         let segs = segments_by(
