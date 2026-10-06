@@ -233,6 +233,10 @@ impl Target {
                 query: query.unwrap_or_default(),
             },
             ["orgs", login] => Route::user(login),
+            ["orgs", login, "repositories"] => Route::User {
+                login: (*login).to_owned(),
+                tab: ProfileTab::Repositories,
+            },
             [login] if !RESERVED.contains(login) => Route::User {
                 login: (*login).to_owned(),
                 tab: match tab.as_deref() {
@@ -267,6 +271,22 @@ impl Target {
                     Route::Pulls { repo, query }
                 }
             }
+            // A label's issues. (Milestones are by number in URLs, but
+            // search only filters by title, so they stay on GitHub.)
+            [o, r, "labels", label] => match repo(o, r) {
+                Some(repo) => {
+                    let label = if label.contains(char::is_whitespace) {
+                        format!("\"{label}\"")
+                    } else {
+                        (*label).to_owned()
+                    };
+                    Route::Issues {
+                        repo,
+                        query: format!("{OPEN} label:{label}"),
+                    }
+                }
+                None => return external(),
+            },
             [o, r, "issues", n] => match (repo(o, r), n.parse()) {
                 (Some(repo), Ok(number)) => Route::Issue { repo, number },
                 _ => return external(),
@@ -462,8 +482,29 @@ mod tests {
                 query: "tui lang:rust".into()
             }
         );
+        assert_eq!(
+            page("https://github.com/o/r/labels/good%20first%20issue"),
+            Route::Issues {
+                repo: RepoId::new("o", "r"),
+                query: "is:open label:\"good first issue\"".into()
+            }
+        );
+        assert_eq!(
+            page("https://github.com/o/r/labels/bug"),
+            Route::Issues {
+                repo: RepoId::new("o", "r"),
+                query: "is:open label:bug".into()
+            }
+        );
+        assert_eq!(
+            page("https://github.com/orgs/rust-lang/repositories"),
+            Route::User {
+                login: "rust-lang".into(),
+                tab: ProfileTab::Repositories
+            }
+        );
         assert!(matches!(
-            Target::from_url("https://github.com/o/r/actions"),
+            Target::from_url("https://github.com/o/r/milestone/3"),
             Target::External(_)
         ));
         assert!(matches!(
