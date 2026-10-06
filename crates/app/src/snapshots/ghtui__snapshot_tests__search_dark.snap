@@ -1,6 +1,7 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-expression: render(&state)
+assertion_line: 395
+expression: "render(&with_repo_search(Mode::Dark))"
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 100, height: 30 },
@@ -34,7 +35,7 @@ Buffer {
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
-        "  space menu   ↵ open   / filter   ←→ tabs   o browser   y copy link   l links       API 4987/5000  ",
+        "  space menu   ↵ open   / filter   ←→ tabs   o browser   y copy link   i links       API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,

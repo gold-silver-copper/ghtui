@@ -411,7 +411,7 @@ fn quick_ways_around_dark() {
         count: 3,
         last: NOW - 600,
     }];
-    press(&mut state, "l");
+    press(&mut state, "i");
     insta::assert_snapshot!("hints_dark", render(&state));
     press(&mut state, "<Esc>/");
     insta::assert_snapshot!("search_empty_dark", render(&state));
@@ -960,7 +960,7 @@ pub(crate) mod diff {
             ("search", Box::new(|| with_repo_search(Mode::Dark))),
             (
                 "hints",
-                Box::new(move || pressed(with_repo(Mode::Dark, tc), "l")),
+                Box::new(move || pressed(with_repo(Mode::Dark, tc), "i")),
             ),
             (
                 "search box",
@@ -1175,12 +1175,12 @@ mod keys {
     use super::{press, render, with_issues, with_pr};
     use crate::diff_screen::Pane;
     use crate::keymap::Action;
-    use crate::state::{Screen, State, apply};
+    use crate::state::{Overlay, Screen, State, apply};
+
+    type Make = fn() -> State;
 
     /// A list, a pull request, and the diff with each pane focused, the
     /// selection away from the edges so moving can move.
-    type Make = fn() -> State;
-
     fn screens() -> [(&'static str, Make); 4] {
         fn moved(mut s: State) -> State {
             press(&mut s, "jj");
@@ -1223,40 +1223,36 @@ mod keys {
         assert!(silent.is_empty(), "silent:\n{}", silent.join("\n"));
     }
 
-    fn on_files(s: &State) -> bool {
-        matches!(s.screen(), Screen::Diff(_))
+    /// `→` walks a pull request's tabs into Files changed (past the
+    /// Checks link) and `←` walks back; so do `l` `h`, the numbers, and
+    /// `←` `→` wrapping around.
+    #[test]
+    fn tabs_go_into_the_files_and_back() {
+        let pairs = [
+            ("<Right><Right>", "<Left><Left>"),
+            ("ll", "hh"),
+            ("4", "1"),
+            ("<Left>", "<Right>"),
+        ];
+        for (there, back) in pairs {
+            let mut s = with_pr(Mode::Dark);
+            let start = s.chrome().active;
+            press(&mut s, there);
+            assert!(matches!(s.screen(), Screen::Diff(_)), "{there}");
+            press(&mut s, back);
+            assert!(matches!(s.screen(), Screen::Page(_)), "{back}");
+            assert_eq!(s.chrome().active, start, "{back}");
+        }
     }
 
-    /// `→` walks a pull request's tabs into Files changed, and `←` walks
-    /// back out the same way.
+    /// In the menu, `h` and `l` are `←` and `→`: close it, run the row.
     #[test]
-    fn arrows_go_into_the_files_and_back() {
+    fn vim_keys_work_in_the_menu() {
         let mut s = with_pr(Mode::Dark);
-        let start = s.chrome().active;
-        let mut steps = 0;
-        while !on_files(&s) {
-            press(&mut s, "<Right>");
-            steps += 1;
-            assert!(steps < 5, "never reached Files changed");
-        }
-        for _ in 0..steps {
-            assert!(s.chrome().active != start);
-            press(&mut s, "<Left>");
-        }
-        assert!(!on_files(&s));
-        assert_eq!(s.chrome().active, start);
-    }
-
-    /// So do the tab numbers.
-    #[test]
-    fn numbers_go_into_the_files_and_back() {
-        let mut s = with_pr(Mode::Dark);
-        let start = s.chrome().active;
-        press(&mut s, "4");
-        assert!(on_files(&s));
-        press(&mut s, "1");
-        assert!(!on_files(&s));
-        assert_eq!(s.chrome().active, start);
+        press(&mut s, "<Space>h");
+        assert!(s.overlay.is_none());
+        press(&mut s, "<Space>l");
+        assert!(!matches!(s.overlay, Some(Overlay::Menu(_))));
     }
 }
 
@@ -1349,7 +1345,7 @@ fn screenshots() {
             count: 3,
             last: NOW,
         }];
-        press(&mut s, "l");
+        press(&mut s, "i");
         shot(&format!("hints_{tag}"), &s);
         press(&mut s, "<Esc>/oct");
         shot(&format!("search_box_{tag}"), &s);

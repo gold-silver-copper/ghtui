@@ -1,5 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
+assertion_line: 402
 expression: render(&state)
 ---
 Buffer {
@@ -34,7 +35,7 @@ Buffer {
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
-        "  space menu   ↵ open   / filter   ←→ tabs   o browser   y copy link   l links       API 4987/5000  ",
+        "  space menu   ↵ open   / filter   ←→ tabs   o browser   y copy link   i links       API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,

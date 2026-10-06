@@ -72,13 +72,13 @@ actions! {
     Back              "back"              ["<Esc>", "<BS>", "<A-Left>"] Global "Back";
     Forward           "forward"           ["<A-Right>"]        Global "Forward";
     UpLevel           "up_level"          ["u"]                Global "Up a level";
-    NextTab           "next_tab"          ["<Right>"]          Global "Next tab";
-    PrevTab           "prev_tab"          ["<Left>"]           Global "Previous tab";
+    NextTab           "next_tab"          ["<Right>", "l"]     Global "Next tab";
+    PrevTab           "prev_tab"          ["<Left>", "h"]      Global "Previous tab";
     Tab1              "tab_1"             ["1"]                Global "First tab";
     Tab2              "tab_2"             ["2"]                Global "Second tab";
     Tab3              "tab_3"             ["3"]                Global "Third tab";
     Tab4              "tab_4"             ["4"]                Global "Fourth tab";
-    GoHome            "go_home"           ["h"]                Global "Go home";
+    GoHome            "go_home"           ["H"]                Global "Go home";
     Search            "search"            ["/"]                Global "Search (on a list: filter it)";
     FindFile          "find_file"         ["f"]                Global "Go to file";
     Comment           "comment"           ["c"]                Global "Comment (on a thread: reply)";
@@ -92,8 +92,8 @@ actions! {
 
     Star              "star"              ["s"]                Page   "Star / unstar";
     Branch            "branch"            ["b"]                Page   "Switch branches or tags";
-    Hints             "hints"             ["l"]                Page   "Follow a link by its letters";
-    HintsBrowser      "hints_browser"     ["L"]                Page   "Follow a link, in the browser";
+    Hints             "hints"             ["i"]                Page   "Follow a link by its letters";
+    HintsBrowser      "hints_browser"     ["I"]                Page   "Follow a link, in the browser";
     ToggleState       "toggle_state"      []                   Page   "Open / closed / all";
     Sort              "sort"              []                   Page   "Change the sort";
 
@@ -466,7 +466,7 @@ mod tests {
         use Action::*;
         let page: &[(&str, &[Action])] = &[
             ("`↑` `↓` (`j` `k`)", &[Up, Down]),
-            ("`←` `→`", &[PrevTab, NextTab]),
+            ("`←` `→` (`h` `l`)", &[PrevTab, NextTab]),
             ("`Enter`", &[Open]),
             ("`Esc` `⌫` `alt-←`", &[Back]),
             ("`alt-→`", &[Forward]),
@@ -481,10 +481,10 @@ mod tests {
             ("`s`", &[Star]),
             ("`o`", &[OpenInBrowser]),
             ("`y`", &[Copy]),
-            ("`l`", &[Hints]),
-            ("`L`", &[HintsBrowser]),
+            ("`i`", &[Hints]),
+            ("`I`", &[HintsBrowser]),
             ("`u`", &[UpLevel]),
-            ("`h`", &[GoHome]),
+            ("`H`", &[GoHome]),
             ("`r`", &[Refresh]),
             ("`:` `ctrl-k`", &[CommandPalette]),
             ("`q` `ctrl-c`", &[Quit]),

@@ -1,5 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
+assertion_line: 421
 expression: render(&state)
 ---
 Buffer {
@@ -17,11 +18,11 @@ Buffer {
         "   tui   github   rust                               →   Next tab                                  ▐",
         "                                                     o   Open the selection on GitHub              ▐",
         "  ⚖ MIT license   ☆ 1.2k stars   ◉ 18 watching       y   Copy the selection's link                 ▐",
-        "                                                     l   Follow any link by its letters            ▐",
+        "                                                     i   Follow any link by its letters            ▐",
         "   ⎇ main ▾                                          u   Up a level                                ▐",
         "                                                   esc   Back                                      ▐",
         "  ╭─ octocat  Browse GitHub like the website ─   alt-→   Forward (nothing to go forward to)        ▐",
-        "  │▌▸ .github     Run CI on macOS too                h   Home                                      ▐",
+        "  │▌▸ .github     Run CI on macOS too                H   Home                                      ▐",
         "  │ ▸ crates      Browse GitHub like the websi       r   Refresh                                   ▐",
         "  │ · Cargo.toml  Bump ratatui to 0.30               :   Command palette                           ▐",
         "  │ · README.md   Document the keys                      Recent messages and errors (nothing yet)  ▐",

@@ -1,5 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
+assertion_line: 469
 expression: render(&state)
 ---
 Buffer {
@@ -15,11 +16,11 @@ Buffer {
         "  │   tokio-rs/tokio#7001 updated 3h ago by oc  Go                                                  ",
         "  ╰───────────────────────────────────────────       o   Open the selection on GitHub               ",
         "                                                     y   Copy the selection's link                  ",
-        "  ╭─ Your pull requests  31 ──────────────────       l   Follow any link by its letters             ",
+        "  ╭─ Your pull requests  31 ──────────────────       i   Follow any link by its letters             ",
         "  │ ⇄ Theme: generate syntax palette from seed       u   Up a level                                 ",
         "  │   gold-silver-copper/ghtui#12 updated 3h a     esc   Back (this is the first page)              ",
         "  ├───────────────────────────────────────────   alt-→   Forward (nothing to go forward to)         ",
-        "  │ ⇄ Cache GraphQL responses in redb                h   Home                                       ",
+        "  │ ⇄ Cache GraphQL responses in redb                H   Home                                       ",
         "  │   gold-silver-copper/ghtui#9 updated 3h ag       r   Refresh                                    ",
         "  ╰───────────────────────────────────────────       :   Command palette                            ",
         "                                                         Recent messages and errors (nothing yet)   ",

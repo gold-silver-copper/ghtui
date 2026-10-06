@@ -1388,7 +1388,7 @@ pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             menu.selected = menu.selected.saturating_sub(1);
             return Vec::new();
         }
-        (_, KeyCode::Enter) | (None, KeyCode::Right) => {
+        (_, KeyCode::Enter) | (None, KeyCode::Right | KeyCode::Char('l')) => {
             menu.shown().get(menu.selected).map(|d| (*d).clone())
         }
         // Filtering: letters narrow the list instead of running rows.
@@ -1406,7 +1406,7 @@ pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             menu.filter = Some(String::new());
             return Vec::new();
         }
-        (None, KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left) => None,
+        (None, KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left | KeyCode::Char('h')) => None,
         (None, _) if action == Some(Action::Menu) => None,
         // A row's own key runs it.
         (None, _) => {
