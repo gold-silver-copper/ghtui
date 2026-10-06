@@ -87,3 +87,47 @@ fn pairs_among_extra_additions() {
          +fn area(w: ⟦u64⟧, h: ⟦u64⟧) -> ⟦u64⟧ {\n"
     );
 }
+
+// ---- characters within a token -------------------------------------------
+
+#[test]
+fn only_the_differing_characters_of_a_token_stand_out() {
+    assert_eq!(
+        show("a.rs", "let n = count;\n", "let n = counts;\n"),
+        "-let n = count;\n+let n = count⟦s⟧;\n"
+    );
+    assert_eq!(
+        show("a.rs", "let share = 0.75;\n", "let share = 0.8;\n"),
+        "-let share = 0.⟦75⟧;\n+let share = 0.⟦8⟧;\n"
+    );
+    assert_eq!(
+        show("a.rs", "foo_bar(x);\n", "foo_baz(x);\n"),
+        "-foo_ba⟦r⟧(x);\n+foo_ba⟦z⟧(x);\n"
+    );
+    assert_eq!(
+        show("a.rs", "say(\"Hello\");\n", "say(\"Hello!\");\n"),
+        "-say(\"Hello\");\n+say(\"Hello⟦!⟧\");\n"
+    );
+}
+
+/// Unrelated words that happen to share a letter stay emphasised whole.
+#[test]
+fn look_alike_words_stay_whole() {
+    assert_eq!(
+        show(
+            "a.rs",
+            "let r = area.width + 1;\n",
+            "let r = area.words + 1;\n"
+        ),
+        "-let r = area.⟦width⟧ + 1;\n+let r = area.⟦words⟧ + 1;\n"
+    );
+}
+
+/// Narrowing never splits a letter from its accent.
+#[test]
+fn characters_are_whole_graphemes() {
+    assert_eq!(
+        show("a.txt", "le cafe\u{301} noir\n", "le cafe\u{300} noir\n"),
+        "-le caf⟦e\u{301}⟧ noir\n+le caf⟦e\u{300}⟧ noir\n"
+    );
+}
