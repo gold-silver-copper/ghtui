@@ -90,9 +90,9 @@ do.
   branches or tags.
 - `c` comments (on a review thread, it replies); `s` stars.
 - `o` opens in the browser; `y` copies the link.
-- `l` puts letters on every link on screen; type them to follow one (`L`
+- `i` puts letters on every link on screen; type them to follow one (`I`
   follows it in the browser).
-- `h` goes home; `r` refreshes; `q` quits.
+- `H` goes home; `r` refreshes; `q` quits.
 - Errors show in the status bar; `Esc` dismisses one, and "Recent messages
   and errors" in the `Space` menu lists them all (`Enter` copies one).
   Problems that last, such as a rejected token or drafts that can't be
@@ -167,7 +167,7 @@ never does something else. Less common actions have no key: they're in the
 | Keys                  | Action                                                        |
 | --------------------- | ------------------------------------------------------------- |
 | `↑` `↓` (`j` `k`)     | Move                                                          |
-| `←` `→`               | Previous / next tab, into and out of Files changed            |
+| `←` `→` (`h` `l`)     | Previous / next tab, into and out of Files changed            |
 | `Enter`               | Open the selection (on a comment: quote reply)                |
 | `Esc` `⌫` `alt-←`     | Back (in the diff, a search or selection is cleared first)    |
 | `alt-→`               | Forward (back and forward go through history)                 |
@@ -182,10 +182,10 @@ never does something else. Less common actions have no key: they're in the
 | `s`                   | Star / unstar                                                 |
 | `o`                   | Open on GitHub in the browser                                 |
 | `y`                   | Copy the link                                                 |
-| `l`                   | Follow a link by its letters                                  |
-| `L`                   | Follow a link by its letters, in the browser                  |
+| `i`                   | Follow a link by its letters                                  |
+| `I`                   | Follow a link by its letters, in the browser                  |
 | `u`                   | Up a level (file → folder, PR → list, Files changed → PR)     |
-| `h`                   | Home                                                          |
+| `H`                   | Home                                                          |
 | `r`                   | Refresh                                                       |
 | `:` `ctrl-k`          | Command palette                                               |
 | `q` `ctrl-c`          | Quit                                                          |

@@ -1,5 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
+assertion_line: 497
 expression: small(menu)
 ---
 Buffer {
@@ -17,11 +18,11 @@ Buffer {
         "   tui   github   rust           →   Next tab                                  ▐",
         "                                 o   Open the selection on GitHub              ▐",
         "  ⚖ MIT license   ☆ 1.2k s       y   Copy the selection's link                 ▐",
-        "                                 l   Follow any link by its letters            ▐",
+        "                                 i   Follow any link by its letters            ▐",
         "   ⎇ main ▾                      u   Up a level                                ▐",
         "                               esc   Back                                       ",
         "  ╭─ octocat  Browse GitHu   alt-→   Forward (nothing to go forward to)         ",
-        "  │▌▸ .github     Run CI o       h   Home                                       ",
+        "  │▌▸ .github     Run CI o       H   Home                                       ",
         "  │ ▸ crates      Browse G       r   Refresh                                    ",
         "  │ · Cargo.toml  Bump rat       :   Command palette                            ",
         "  │ · README.md   Document           Recent messages and errors (nothing yet)   ",

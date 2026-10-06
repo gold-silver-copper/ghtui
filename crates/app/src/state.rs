@@ -1284,7 +1284,7 @@ pub(crate) mod tests {
         );
         act(&mut state, Action::Forward);
         assert_eq!(route(&state), Route::pr(pr), "forward again");
-        press(&mut state, "h");
+        press(&mut state, "H");
         assert!(!state.quit);
         press(&mut state, "q");
         assert!(state.quit);
@@ -1603,7 +1603,7 @@ pub(crate) mod tests {
     #[test]
     fn letter_hints_follow_links() {
         let mut state = with_repo();
-        press(&mut state, "l");
+        press(&mut state, "i");
         let hints = overlay!(state, Hints);
         let i = hints
             .links
@@ -2052,7 +2052,7 @@ pub(crate) mod tests {
             matches!(&state.notice, Some(Notice::Info(n)) if n.contains("Files changed")),
             "a review key on a page says where it works"
         );
-        press(&mut state, "l");
+        press(&mut state, "i");
         assert!(
             matches!(state.overlay, Some(Overlay::Hints(_))),
             "l: link letters on a page"
