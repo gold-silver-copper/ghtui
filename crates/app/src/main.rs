@@ -176,11 +176,14 @@ async fn run(started: Instant) -> Result<()> {
     state.sync_page();
 
     install_panic_hook();
-    let mut terminal = init_terminal().context("needs an interactive terminal")?;
+    // Never dropped: `Terminal`'s drop prints to stderr when it can't show
+    // the cursor, which panics when the terminal is gone.
+    // `restore_terminal` shows it instead.
+    let mut terminal =
+        std::mem::ManuallyDrop::new(init_terminal().context("needs an interactive terminal")?);
     set_mouse(true);
     let result = runtime::run(&mut terminal, state, gh, git, reviews, cmds, started).await;
-    set_mouse(false);
-    ratatui::restore();
+    restore_terminal();
     if let Err(err) = &result {
         tracing::error!("{err:#}");
     }
@@ -327,6 +330,21 @@ pub fn set_mouse(on: bool) {
     }
 }
 
+/// Leaves raw mode, the alternate screen and mouse capture, and shows the
+/// cursor. Failures are logged, never printed: when the terminal is gone
+/// (a closed pane sends SIGHUP), printing to it panics.
+pub fn restore_terminal() {
+    use crossterm::ExecutableCommand;
+    set_mouse(false);
+    let result = std::io::stdout()
+        .execute(crossterm::cursor::Show)
+        .map(drop)
+        .and_then(|()| ratatui::try_restore());
+    if let Err(err) = result {
+        tracing::warn!(%err, "restoring the terminal");
+    }
+}
+
 /// Raw mode and the alternate screen, like `ratatui::init` but without its
 /// panic hook (see [`install_panic_hook`]).
 fn init_terminal() -> std::io::Result<ratatui::DefaultTerminal> {
@@ -338,7 +356,7 @@ fn init_terminal() -> std::io::Result<ratatui::DefaultTerminal> {
             ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))
         });
     if result.is_err() {
-        ratatui::restore();
+        restore_terminal();
     }
     result
 }
@@ -353,8 +371,7 @@ fn install_panic_hook() {
     std::panic::set_hook(Box::new(move |info| {
         tracing::error!("panic: {info}");
         if std::thread::current().id() == main {
-            set_mouse(false);
-            ratatui::restore();
+            restore_terminal();
             previous(info);
         }
     }));

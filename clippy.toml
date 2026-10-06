@@ -10,4 +10,6 @@ disallowed-methods = [
     { path = "ratatui_core::buffer::Buffer::set_stringn", reason = "unclipped: use `ghtui_ui::put`" },
     { path = "ratatui_core::buffer::Buffer::set_line", reason = "unclipped: use `ghtui_ui::put` or render the `Line`" },
     { path = "ratatui_core::buffer::Buffer::set_span", reason = "unclipped: use `ghtui_ui::put` or render the `Span`" },
+    # It prints its failure to stderr, which panics when the terminal is gone.
+    { path = "ratatui::restore", reason = "panics without a terminal: use `restore_terminal`" },
 ]
