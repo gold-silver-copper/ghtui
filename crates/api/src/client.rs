@@ -743,26 +743,23 @@ impl GitHub {
         query: &str,
         after: Option<String>,
     ) -> Result<browse::SearchResults, ApiError> {
+        use browse::{BrowseItem, Results, SearchKind as Kind, SearchResults, SearchType};
         let first_page = after.is_none();
         // GitHub's issue search covers both; the tabs separate them.
-        let is = match kind {
-            browse::SearchKind::Issues => " is:issue",
-            browse::SearchKind::Pulls => " is:pr",
-            _ => "",
+        let (search_type, is) = match kind {
+            Kind::Repos => (SearchType::Repository, ""),
+            Kind::Issues => (SearchType::Issue, " is:issue"),
+            Kind::Pulls => (SearchType::Issue, " is:pr"),
+            Kind::Users => (SearchType::User, ""),
         };
         let api_query = if query.contains("is:issue") || query.contains("is:pr") {
             query.to_owned()
         } else {
             format!("{query}{is}")
         };
-
         let op = browse::BrowseSearch::build(browse::BrowseSearchVariables {
             query: api_query,
-            kind: match kind {
-                browse::SearchKind::Repos => browse::SearchType::Repository,
-                browse::SearchKind::Issues | browse::SearchKind::Pulls => browse::SearchType::Issue,
-                browse::SearchKind::Users => browse::SearchType::User,
-            },
+            kind: search_type,
             first: 30,
             after,
         });
@@ -771,26 +768,24 @@ impl GitHub {
         let items = nodes(conn.nodes);
         let count = crate::model::count;
         let results = match kind {
-            browse::SearchKind::Repos => browse::SearchResults::Repos(browse::Results {
+            Kind::Repos => SearchResults::Repos(Results {
                 total: count(conn.repository_count),
                 items: items
                     .filter_map(|i| match i {
-                        browse::BrowseItem::Repository(r) => r.into_summary(),
+                        BrowseItem::Repository(r) => r.into_summary(),
                         _ => None,
                     })
                     .collect(),
                 next,
             }),
-            browse::SearchKind::Issues | browse::SearchKind::Pulls => {
-                browse::SearchResults::Issues(browse::Results {
-                    total: count(conn.issue_count),
-                    items: items.filter_map(browse::BrowseItem::into_issue).collect(),
-                    next,
-                })
-            }
-            browse::SearchKind::Users => browse::SearchResults::Users(browse::Results {
+            Kind::Issues | Kind::Pulls => SearchResults::Issues(Results {
+                total: count(conn.issue_count),
+                items: items.filter_map(BrowseItem::into_issue).collect(),
+                next,
+            }),
+            Kind::Users => SearchResults::Users(Results {
                 total: count(conn.user_count),
-                items: items.filter_map(browse::BrowseItem::into_user).collect(),
+                items: items.filter_map(BrowseItem::into_user).collect(),
                 next,
             }),
         };
@@ -902,18 +897,18 @@ impl GitHub {
         names: &[String],
     ) -> Result<std::collections::HashMap<String, browse::CommitInfo>, ApiError> {
         let quote = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-        let mut fields = String::new();
-        for (i, name) in names.iter().take(100).enumerate() {
-            let path = if dir.is_empty() {
-                name.clone()
-            } else {
-                format!("{dir}/{name}")
-            };
-            fields.push_str(&format!(
-                "e{i}: history(first: 1, path: \"{}\") {{ nodes {{ oid messageHeadline committedDate author {{ name user {{ login }} }} }} }}\n",
-                quote(&path)
-            ));
-        }
+        let names = names.get(..100).unwrap_or(names);
+        let fields: String = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let path = if dir.is_empty() { name.clone() } else { format!("{dir}/{name}") };
+                format!(
+                    "e{i}: history(first: 1, path: \"{}\") {{ nodes {{ oid messageHeadline committedDate author {{ name user {{ login }} }} }} }}\n",
+                    quote(&path)
+                )
+            })
+            .collect();
         let query = format!(
             "query($owner: String!, $name: String!, $rev: String!) {{ repository(owner: $owner, name: $name) {{ object(expression: $rev) {{ ... on Commit {{ {fields} }} }} }} }}"
         );
@@ -924,7 +919,7 @@ impl GitHub {
             )
             .await?;
         let mut out = std::collections::HashMap::new();
-        for (i, name) in names.iter().take(100).enumerate() {
+        for (i, name) in names.iter().enumerate() {
             let field = |path: &str| {
                 data.pointer(&format!("/repository/object/e{i}/nodes/0/{path}"))
                     .and_then(serde_json::Value::as_str)
