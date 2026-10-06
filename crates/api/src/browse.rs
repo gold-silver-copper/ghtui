@@ -1198,18 +1198,91 @@ impl ChecksCommit {
     pub(crate) fn into_checks(self) -> Checks {
         let contexts = self.status_check_rollup.map(|r| r.contexts);
         let total = contexts.as_ref().map_or(0, |c| count(c.total_count));
+        let mut fetched = 0;
         let items = nodes(contexts.and_then(|c| c.nodes))
+            .inspect(|_| fetched += 1)
             .filter_map(|c| match c {
                 RollupContext::CheckRun(run) => Some(run.into_item()),
                 RollupContext::StatusContext(s) => Some(s.into_item()),
                 RollupContext::Other => None,
             })
             .collect();
+        let items = latest_runs(items);
+        // Those past the first page may be earlier runs too; count them as
+        // checks still to show.
+        let total = items.len() as u64 + total.saturating_sub(fetched);
         Checks {
             oid: self.oid.0,
             items,
             total,
         }
+    }
+}
+
+/// The latest run of each check. A workflow that runs again on the same
+/// commit (a re-run, or one a label or title edit triggers again) leaves
+/// every run in the rollup; GitHub shows only the newest. One not started
+/// yet is the newest.
+fn latest_runs(items: Vec<CheckItem>) -> Vec<CheckItem> {
+    let newness = |i: &CheckItem| (i.started_at.is_none(), i.started_at.clone());
+    let mut out: Vec<CheckItem> = Vec::new();
+    for item in items {
+        match out
+            .iter_mut()
+            .find(|o| o.group == item.group && o.name == item.name)
+        {
+            Some(kept) if newness(&item) > newness(kept) => *kept = item,
+            Some(_) => {}
+            None => out.push(item),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(group: &str, name: &str, started: Option<&str>, outcome: CheckOutcome) -> CheckItem {
+        CheckItem {
+            name: name.into(),
+            group: group.into(),
+            outcome,
+            started_at: started.map(|s| format!("2026-09-28T{s}Z")),
+            completed_at: None,
+            summary: None,
+            url: None,
+        }
+    }
+
+    /// Re-runs, and runs a label edit triggered again, show once: the
+    /// newest, which a run not yet started is.
+    #[test]
+    fn only_the_latest_run_of_a_check_shows() {
+        use CheckOutcome::{Failure, Pending, Success};
+        let items = vec![
+            run("CI", "test", Some("15:46:00"), Failure),
+            run("CI", "test", Some("15:52:00"), Success),
+            run("PR", "check-title", Some("15:58:00"), Success),
+            run("PR", "check-title", Some("16:01:00"), Failure),
+            run("PR", "check-title", Some("15:59:00"), Success),
+            run("Release", "test", Some("10:00:00"), Success),
+            run("Lint", "fmt", Some("10:00:00"), Success),
+            run("Lint", "fmt", None, Pending),
+        ];
+        let latest: Vec<String> = latest_runs(items)
+            .iter()
+            .map(|i| format!("{}/{} {:?}", i.group, i.name, i.outcome))
+            .collect();
+        assert_eq!(
+            latest,
+            [
+                "CI/test Success",
+                "PR/check-title Failure",
+                "Release/test Success",
+                "Lint/fmt Pending",
+            ]
+        );
     }
 }
 
