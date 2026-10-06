@@ -265,10 +265,152 @@ fn pair_lines(old: &[&str], new: &[&str]) -> Vec<(usize, usize)> {
     pairs
 }
 
-/// Intra-line changes for paired lines in `lines`. Within each change
-/// block, removed and added lines are paired by similarity (see
-/// [`pair_lines`]), so an edited line finds its counterpart even when lines
-/// were inserted or deleted around it.
+/// One side of a change block: each line's text and highlight spans.
+type Side<'a> = Vec<(&'a str, &'a [Span])>;
+
+/// Emphasis for one change block: per side, changed ranges by line. A line
+/// missing from the map has no emphasis at all (shown wholly changed).
+type BlockEmphasis = [HashMap<usize, Vec<(u32, u32)>>; 2];
+
+/// Emphasis from pairing lines and diffing each pair (see [`pair_lines`]).
+fn per_line(old: &Side<'_>, new: &Side<'_>) -> BlockEmphasis {
+    fn texts<'a>(side: &Side<'a>) -> Vec<&'a str> {
+        side.iter().map(|l| l.0).collect()
+    }
+    let mut out = BlockEmphasis::default();
+    for (r, a) in pair_lines(&texts(old), &texts(new)) {
+        let (Some(&(o, os)), Some(&(n, ns))) = (old.get(r), new.get(a)) else {
+            continue;
+        };
+        if let Some((old_changed, new_changed)) = diff_pair(o, n, os, ns) {
+            let [o_map, n_map] = &mut out;
+            o_map.insert(r, old_changed);
+            n_map.insert(a, new_changed);
+        }
+    }
+    out
+}
+
+/// Blocks with more tokens than this on a side are only diffed line by line.
+const MAX_BLOCK_TOKENS: usize = 4000;
+/// The whole-block diff is for code that mostly survived (reflowed, a word
+/// renamed); above this share of changed characters, lines read better.
+const MAX_BLOCK_CHANGED_SHARE: f64 = 0.33;
+
+/// Emphasis from diffing the tokens of the whole block, ignoring whitespace
+/// (and so line breaks and indentation): reflowed code only shows what
+/// changed in it. `None` when the block is too big or mostly changed.
+fn whole_block(old: &Side<'_>, new: &Side<'_>) -> Option<BlockEmphasis> {
+    /// Non-space tokens: (line, byte offset, text).
+    fn words<'a>(side: &Side<'a>) -> Vec<(usize, u32, &'a str)> {
+        side.iter()
+            .enumerate()
+            .flat_map(|(line, &(text, spans))| {
+                tokens(text, spans).into_iter().scan(0u32, move |at, t| {
+                    let start = *at;
+                    *at = at.saturating_add(sat_u32(t.len()));
+                    Some((line, start, t))
+                })
+            })
+            .filter(|(_, _, t)| !t.trim().is_empty())
+            .collect()
+    }
+    let (old_words, new_words) = (words(old), words(new));
+    if old_words.len() > MAX_BLOCK_TOKENS || new_words.len() > MAX_BLOCK_TOKENS {
+        return None;
+    }
+    let mut input = InternedInput::default();
+    input.update_before(old_words.iter().map(|w| w.2));
+    input.update_after(new_words.iter().map(|w| w.2));
+    let diff = Diff::compute(Algorithm::Histogram, &input);
+
+    let mut out = BlockEmphasis::default();
+    for (map, side) in out.iter_mut().zip([old, new]) {
+        // Every line takes part: no entry would mean "wholly changed".
+        map.extend((0..side.len()).map(|l| (l, Vec::new())));
+    }
+    let [old_map, new_map] = &mut out;
+    for hunk in diff.hunks() {
+        let one_for_one = hunk.before.len() == 1 && hunk.after.len() == 1;
+        let trim = match (
+            old_words.get(hunk.before.start as usize),
+            new_words.get(hunk.after.start as usize),
+        ) {
+            (Some(a), Some(b)) if one_for_one => shared_ends(a.2, b.2),
+            _ => None,
+        };
+        mark(old_map, old, &old_words, hunk.before, trim);
+        mark(new_map, new, &new_words, hunk.after, trim);
+    }
+    let too_much = out.iter().zip([old, new]).any(|(map, side)| {
+        let changed: usize = map.values().flatten().map(|(a, b)| (b - a) as usize).sum();
+        let total: usize = side.iter().map(|l| l.0.trim().len()).sum();
+        changed as f64 > total.max(1) as f64 * MAX_BLOCK_CHANGED_SHARE
+    });
+    (!too_much).then_some(out)
+}
+
+/// Emphasises `words[range]` (trimmed by `trim`'s shared ends) on their
+/// lines; changed words with only spaces between them make one range.
+fn mark(
+    map: &mut HashMap<usize, Vec<(u32, u32)>>,
+    side: &Side<'_>,
+    words: &[(usize, u32, &str)],
+    range: std::ops::Range<u32>,
+    trim: Option<(u32, u32)>,
+) {
+    let (prefix, suffix) = trim.unwrap_or_default();
+    for &(line, start, t) in words
+        .get(range.start as usize..range.end as usize)
+        .unwrap_or_default()
+    {
+        let (start, end) = (start + prefix, start + sat_u32(t.len()) - suffix);
+        if start >= end {
+            continue;
+        }
+        let text = side.get(line).map_or("", |l| l.0);
+        let ranges = map.entry(line).or_default();
+        match ranges.last_mut() {
+            Some(last)
+                if text
+                    .get(last.1 as usize..start as usize)
+                    .is_some_and(|gap| gap.trim().is_empty()) =>
+            {
+                last.1 = end;
+            }
+            _ => ranges.push((start, end)),
+        }
+    }
+}
+
+/// How much of a block is emphasised: changed characters other than
+/// spaces, a line with no emphasis counting whole (it's shown as wholly
+/// changed).
+fn cost(emphasis: &BlockEmphasis, old: &Side<'_>, new: &Side<'_>) -> usize {
+    let visible = |s: &str| s.chars().filter(|c| !c.is_whitespace()).count();
+    emphasis
+        .iter()
+        .zip([old, new])
+        .map(|(map, side)| {
+            side.iter()
+                .enumerate()
+                .map(|(l, &(text, _))| match map.get(&l) {
+                    Some(ranges) => ranges
+                        .iter()
+                        .map(|&(a, b)| text.get(a as usize..b as usize).map_or(0, visible))
+                        .sum(),
+                    None => visible(text),
+                })
+                .sum::<usize>()
+        })
+        .sum()
+}
+
+/// Intra-line changes in `lines`. Each change block is diffed two ways:
+/// line by line, pairing removed and added lines by similarity, and as a
+/// whole, token by token ignoring line breaks. The whole-block result wins
+/// only when it emphasises less, so an ordinary edit looks as it always has
+/// and reflowed code shows just what changed.
 pub fn intraline(text: &TextDiff, lines: &[DiffLine]) -> IntraLine {
     let starts = |run: &[DiffLine], kind| run.first().is_some_and(|l| l.kind == kind);
     // Runs of one kind, with the alignment entry each starts at.
@@ -289,24 +431,32 @@ pub fn intraline(text: &TextDiff, lines: &[DiffLine]) -> IntraLine {
         else {
             continue;
         };
-        let old: Vec<u32> = removed.iter().filter_map(|l| l.old).collect();
-        let new: Vec<u32> = added.iter().filter_map(|l| l.new).collect();
-        let old_text: Vec<&str> = old.iter().map(|&o| text.old.line_no(o)).collect();
-        let new_text: Vec<&str> = new.iter().map(|&n| text.new.line_no(n)).collect();
-        for (r, a) in pair_lines(&old_text, &new_text) {
-            let (Some(&o), Some(&n)) = (old.get(r), new.get(a)) else {
-                continue;
-            };
-            if let Some((old_changed, new_changed)) = diff_pair(
-                text.old.line_no(o),
-                text.new.line_no(n),
-                text.old_spans(o),
-                text.new_spans(n),
-            ) {
-                out.insert(sat_u32(removed_start + r), old_changed);
-                out.insert(sat_u32(added_start + a), new_changed);
-            }
-        }
+        let old: Side<'_> = removed
+            .iter()
+            .filter_map(|l| l.old)
+            .map(|o| (text.old.line_no(o), text.old_spans(o)))
+            .collect();
+        let new: Side<'_> = added
+            .iter()
+            .filter_map(|l| l.new)
+            .map(|n| (text.new.line_no(n), text.new_spans(n)))
+            .collect();
+        let lines = per_line(&old, &new);
+        let best = match whole_block(&old, &new) {
+            Some(block) if cost(&block, &old, &new) < cost(&lines, &old, &new) => block,
+            _ => lines,
+        };
+        let [old_map, new_map] = best;
+        out.extend(
+            old_map
+                .into_iter()
+                .map(|(l, r)| (sat_u32(removed_start + l), r)),
+        );
+        out.extend(
+            new_map
+                .into_iter()
+                .map(|(l, r)| (sat_u32(added_start + l), r)),
+        );
     }
     out
 }
