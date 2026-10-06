@@ -107,6 +107,7 @@ async fn drive(
             Some(msg) = rx.recv() => msg,
             signal = stop.recv() => {
                 tracing::info!(signal, "stopping");
+                save_tabs(&effects.gh, &state).await;
                 return Ok(());
             }
         };
@@ -127,6 +128,7 @@ async fn drive(
             }
         }
         if state.quit {
+            save_tabs(&effects.gh, &state).await;
             return Ok(());
         }
         terminal.draw(|frame| view(&state, frame, ghtui_store::now()))?;
@@ -680,6 +682,17 @@ impl StopSignals {
         #[cfg(not(unix))]
         std::future::pending().await
     }
+}
+
+/// Remembers the open tabs for next time. One tab isn't remembered:
+/// ghtui starts at home, as it always has.
+async fn save_tabs(gh: &GitHub, state: &State) {
+    let urls = if state.tab_count() > 1 {
+        state.tab_urls()
+    } else {
+        Vec::new()
+    };
+    gh.remember(ghtui_api::browse::keys::TABS, urls).await;
 }
 
 /// What the cache has for a page, and when it was fetched.

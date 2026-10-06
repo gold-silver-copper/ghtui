@@ -16,6 +16,7 @@ mod runtime;
 #[cfg(test)]
 mod snapshot_tests;
 mod state;
+mod tabs;
 mod view;
 
 use std::path::PathBuf;
@@ -153,6 +154,11 @@ async fn run(started: Instant) -> Result<()> {
         );
     }
     state.inbox = Remote::cached(gh.cached_inbox());
+    let tabs = gh
+        .cached::<Vec<String>>(ghtui_api::browse::keys::TABS)
+        .map(|c| c.value)
+        .unwrap_or_default();
+    state.restore_tabs(&tabs);
     let mut cmds = match target {
         Some(target) => {
             if let Target::Page(Route::Pr { pr, .. }) | Target::Files(DiffOf::Pr(pr)) = &target {
@@ -161,9 +167,16 @@ async fn run(started: Instant) -> Result<()> {
                     .insert(pr.clone(), Remote::cached(gh.cached_pull_request(pr)));
             }
             // The home page stays underneath (Esc goes there) and loads
-            // when you get there.
+            // when you get there. With tabs reopened, it's a new tab after
+            // them.
             let mut cmds = vec![state::Cmd::Api(Api::FetchViewer)];
-            cmds.extend(state.go(target));
+            if state.tab_count() > 1 {
+                let last = state.tab_count() - 1;
+                let _ = state.switch_to_tab(last);
+                cmds.extend(state.open_tab(target));
+            } else {
+                cmds.extend(state.go(target));
+            }
             cmds
         }
         None => state.load_visible(true),

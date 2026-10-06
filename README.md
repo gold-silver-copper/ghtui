@@ -185,6 +185,10 @@ never does something else. Less common actions have no key: they're in the
 | `i`                   | Follow a link by its letters                                  |
 | `I`                   | Follow a link by its letters, in the browser                  |
 | `u`                   | Up a level (file → folder, PR → list, Files changed → PR)     |
+| `T`                   | Open the selection in a new tab (nothing selected: this page) |
+| `[` `]`               | Previous / next open tab                                      |
+| `alt-1`–`alt-9`       | Open tab by number                                            |
+| `ctrl-w`              | Close the tab                                                 |
 | `H`                   | Home                                                          |
 | `r`                   | Refresh                                                       |
 | `:` `ctrl-k`          | Command palette                                               |

@@ -5,7 +5,7 @@
 
 use ghtui_api::browse::{RepoSort, SearchKind};
 use ghtui_api::model::{PrRef, RepoId};
-use ghtui_ui::chrome::{Crumb, Tab};
+use ghtui_ui::chrome::{Crumb, PageTab};
 use ghtui_ui::pages::{PrTab, ProfileTab};
 use ratatui::layout::Rect;
 
@@ -18,10 +18,13 @@ use crate::state::{Screen, State};
 pub struct Chrome {
     pub crumbs: Vec<(Crumb, Option<Target>)>,
     pub right: Vec<(String, Target)>,
-    pub tabs: Vec<(Tab, Target)>,
+    pub tabs: Vec<(PageTab, Target)>,
     pub active: Option<usize>,
     /// A pull request whose title stays at the top.
     pub title: Option<PrRef>,
+    /// With more than one tab open, `crumbs` are the tab strip, and this is
+    /// the tab each stands for (a hidden-tabs marker, the nearest hidden).
+    pub open_tabs: Vec<usize>,
 }
 
 /// Where the chrome and the content go.
@@ -40,8 +43,8 @@ pub struct Layout {
 /// The search behind your review requests.
 pub const REVIEW_REQUESTS: &str = "is:open is:pr review-requested:@me archived:false";
 
-fn new_tab(icon: &'static str, label: &str, count: Option<u64>) -> Tab {
-    Tab {
+fn new_tab(icon: &'static str, label: &str, count: Option<u64>) -> PageTab {
+    PageTab {
         icon,
         label: label.to_owned(),
         count,
@@ -51,6 +54,12 @@ fn new_tab(icon: &'static str, label: &str, count: Option<u64>) -> Tab {
 
 impl State {
     pub fn chrome(&self) -> Chrome {
+        let mut c = self.screen_chrome();
+        self.tab_strip(&mut c);
+        c
+    }
+
+    fn screen_chrome(&self) -> Chrome {
         let mut c = Chrome::default();
         // Right: review requests and you.
         if let Some(inbox) = &self.inbox.data {
@@ -236,6 +245,72 @@ impl State {
         }
     }
 
+    /// With more than one tab open, the header shows them where the crumbs
+    /// would be (the title row already says where you are): as many as fit
+    /// around the one on screen, and how many are hidden either side.
+    fn tab_strip(&self, c: &mut Chrome) {
+        if self.tab_count() < 2 {
+            return;
+        }
+        let lay = self.layout();
+        let right: Vec<String> = c.right.iter().map(|(t, _)| t.clone()).collect();
+        // The header keeps up to 32 columns for crumbs before dropping
+        // its right-hand items; measure with that much.
+        let reserve = Crumb {
+            text: " ".repeat(32),
+            current: false,
+            tab: true,
+        };
+        let h = ghtui_ui::chrome::header_layout(lay.header, &[reserve], &right);
+        let room = usize::from(h.search.x.saturating_sub(h.logo.right().saturating_add(5)));
+        let titles: Vec<String> = self
+            .tab_titles()
+            .into_iter()
+            .map(|t| ghtui_ui::text::truncate(&t, 20))
+            .collect();
+        let active = self.active_tab();
+        let width = |i: usize| titles.get(i).map_or(0, |t| ghtui_ui::text::width(t) + 3);
+        let (mut first, mut last) = (active, active);
+        let mut used = width(active);
+        // Grow right, then left, while it fits with room for markers.
+        loop {
+            let marker = 8;
+            let grew_right = last + 1 < titles.len() && used + width(last + 1) + marker <= room;
+            if grew_right {
+                last += 1;
+                used += width(last);
+            }
+            let grew_left = first > 0 && used + width(first - 1) + marker <= room;
+            if grew_left {
+                first -= 1;
+                used += width(first);
+            }
+            if !grew_right && !grew_left {
+                break;
+            }
+        }
+        let crumb = |text: String, current| Crumb {
+            text,
+            current,
+            tab: true,
+        };
+        c.crumbs.clear();
+        c.open_tabs.clear();
+        if first > 0 {
+            c.crumbs.push((crumb(format!("‹ {first}"), false), None));
+            c.open_tabs.push(first - 1);
+        }
+        for (i, title) in titles.iter().enumerate().take(last + 1).skip(first) {
+            c.crumbs.push((crumb(title.clone(), i == active), None));
+            c.open_tabs.push(i);
+        }
+        let hidden = titles.len() - last - 1;
+        if hidden > 0 {
+            c.crumbs.push((crumb(format!("{hidden} ›"), false), None));
+            c.open_tabs.push(last + 1);
+        }
+    }
+
     /// A commit's tabs: the commit, and its files.
     fn commit_tabs(&self, repo: &RepoId, oid: &str, c: &mut Chrome) {
         let detail = self.commit(repo, oid);
@@ -371,6 +446,7 @@ impl Chrome {
         let crumb = Crumb {
             text: text.to_owned(),
             current: true,
+            tab: false,
         };
         self.crumbs.push((crumb, target));
     }

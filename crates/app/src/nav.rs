@@ -53,7 +53,7 @@ impl Visit {
 
 impl State {
     #[must_use]
-    fn record_visit(&mut self, route: &Route) -> Vec<Cmd> {
+    pub(crate) fn record_visit(&mut self, route: &Route) -> Vec<Cmd> {
         if *route == Route::Home {
             return Vec::new();
         }
@@ -519,6 +519,8 @@ pub struct Hints {
     pub links: Vec<Link>,
     pub typed: String,
     pub browser: bool,
+    /// A capital was typed: follow the link in a new tab.
+    pub tab: bool,
 }
 
 const LETTERS: &str = "asdfghjklqwertyuiopzxcvbnm";
@@ -572,6 +574,7 @@ fn start_hints(state: &mut State, browser: bool) {
         links,
         typed: String::new(),
         browser,
+        tab: false,
     })));
 }
 
@@ -586,6 +589,11 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             return Vec::new();
         }
         KeyCode::Char(c) if c.is_ascii_lowercase() => hints.typed.push(c),
+        // A capital follows the link in a new tab.
+        KeyCode::Char(c) if c.is_ascii_uppercase() => {
+            hints.typed.push(c.to_ascii_lowercase());
+            hints.tab = true;
+        }
         _ => {
             state.overlay = None;
             return Vec::new();
@@ -605,10 +613,11 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         }
         [(hint, link)] if hint.label == hints.typed => {
             let link = (*link).clone();
-            let browser = hints.browser;
+            let (browser, tab) = (hints.browser, hints.tab);
             state.overlay = None;
             match link {
                 Link::Url(url) if browser => state.go(Target::External(url)),
+                Link::Url(url) if tab => state.open_tab(Target::from_url(&url)),
                 link => state.follow(&link),
             }
         }
@@ -1169,6 +1178,13 @@ impl State {
             messages.unavailable = Some("nothing yet".into());
         }
         out.push(messages);
+        let tab = |action, label: &str| doable("Tabs", action, label, "");
+        out.push(tab(Action::OpenInTab, "Open in a new tab"));
+        if self.tab_count() > 1 {
+            out.push(tab(Action::NextOpenTab, "Next open tab"));
+            out.push(tab(Action::PrevOpenTab, "Previous open tab"));
+            out.push(tab(Action::CloseTab, "Close the tab"));
+        }
         for action in [
             Action::Down,
             Action::Up,
@@ -1600,6 +1616,10 @@ fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
             return state.push(Route::Home);
         }
         let hit = |rects: &[Rect]| rects.iter().position(|r| inside(*r));
+        // In the tab strip, a tab (or a hidden-tabs marker) switches to it.
+        if let Some(&tab) = hit(&h.crumbs).and_then(|i| chrome.open_tabs.get(i)) {
+            return state.switch_to_tab(tab);
+        }
         let crumb = hit(&h.crumbs).and_then(|i| chrome.crumbs.get(i)?.1.clone());
         let right = hit(&h.right)
             .and_then(|i| chrome.right.get(i))

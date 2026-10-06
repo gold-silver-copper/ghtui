@@ -29,6 +29,7 @@ use crate::review::{
     on_edited, on_submit_key, review_action,
 };
 use crate::route::{Route, Target};
+use crate::tabs::Tab;
 use ghtui_api::model::{PatchFile, ReviewEvent, ReviewThread};
 use ghtui_store::DraftComment;
 
@@ -358,7 +359,7 @@ pub struct Screens {
 }
 
 impl Screens {
-    fn new(first: Screen) -> Self {
+    pub(crate) fn new(first: Screen) -> Self {
         Self {
             first,
             rest: Vec::new(),
@@ -411,9 +412,13 @@ pub enum Overlay {
 }
 
 pub struct State {
+    /// The tab on screen's history.
     pub screens: Screens,
     /// Pages gone back from.
     pub forward: Vec<Screen>,
+    /// The open tabs before and after the one on screen, in order.
+    pub before: Vec<Tab>,
+    pub after: Vec<Tab>,
     /// Pages visited, for the search box.
     pub visits: Vec<Visit>,
     pub inbox: Remote<Inbox>,
@@ -452,6 +457,8 @@ impl State {
         let mut state = Self {
             screens: Screens::new(Screen::Page(Box::new(PageScreen::new(Route::Home)))),
             forward: Vec::new(),
+            before: Vec::new(),
+            after: Vec::new(),
             visits: Vec::new(),
             inbox: Remote::default(),
             prs: HashMap::new(),
@@ -977,6 +984,22 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Tab2 => return nav::switch_tab(state, 2),
         Action::Tab3 => return nav::switch_tab(state, 3),
         Action::Tab4 => return nav::switch_tab(state, 4),
+        Action::NextOpenTab => return state.step_open_tab(true),
+        Action::PrevOpenTab => return state.step_open_tab(false),
+        Action::OpenInTab => return state.open_in_tab(),
+        Action::CloseTab => return state.close_tab(),
+        Action::OpenTab1
+        | Action::OpenTab2
+        | Action::OpenTab3
+        | Action::OpenTab4
+        | Action::OpenTab5
+        | Action::OpenTab6
+        | Action::OpenTab7
+        | Action::OpenTab8
+        | Action::OpenTab9 => {
+            let n = Action::OPEN_TABS.iter().position(|a| *a == action);
+            return state.switch_to_tab(n.unwrap_or(0));
+        }
         Action::GoHome if state.route() == Some(&Route::Home) => state.info("Already home"),
         Action::GoHome => return state.push(Route::Home),
         Action::Search if diff.is_some() => {
@@ -1569,6 +1592,106 @@ pub(crate) mod tests {
         press(&mut state, "/");
         let sb = overlay!(state, Search);
         assert_eq!(sb.input.lines().join(""), "user:octocat ");
+    }
+
+    mod tabs {
+        use super::*;
+
+        /// Two routes to tell tabs apart by.
+        fn issue(n: u64) -> Route {
+            Route::Issue {
+                repo: repo(),
+                number: n,
+            }
+        }
+
+        #[test]
+        fn open_switch_and_close() {
+            let mut s = with_repo();
+            assert_eq!(s.tab_count(), 1);
+            // Nothing selected on a reading page: T opens it again.
+            let _ = s.push(issue(1));
+            let _ = act(&mut s, Action::OpenInTab);
+            assert_eq!((s.tab_count(), s.active_tab()), (2, 1));
+            assert_eq!(route(&s), issue(1));
+            let _ = s.go(Target::Page(issue(2)));
+            press(&mut s, "[");
+            assert_eq!((s.active_tab(), route(&s)), (0, issue(1)));
+            press(&mut s, "]");
+            assert_eq!((s.active_tab(), route(&s)), (1, issue(2)));
+            // Wrapping around, and straight to a number.
+            press(&mut s, "]");
+            assert_eq!(s.active_tab(), 0);
+            press(&mut s, "<A-2>");
+            assert_eq!(s.active_tab(), 1);
+            press(&mut s, "<A-5>");
+            assert!(matches!(&s.notice, Some(Notice::Info(n)) if n.contains("No tab 5")));
+            // Closing shows the next tab, or the previous at the end.
+            press(&mut s, "<C-w>");
+            assert_eq!((s.tab_count(), route(&s)), (1, issue(1)));
+            press(&mut s, "<C-w>");
+            assert_eq!(s.tab_count(), 1);
+            assert!(matches!(&s.notice, Some(Notice::Info(n)) if n.contains("last tab")));
+        }
+
+        /// Back and forward stay within a tab.
+        #[test]
+        fn each_tab_has_its_own_history() {
+            let mut s = with_repo();
+            let _ = s.push(issue(1));
+            let _ = act(&mut s, Action::OpenInTab);
+            let _ = s.push(issue(2));
+            let _ = s.push(issue(3));
+            act(&mut s, Action::Back);
+            assert_eq!(route(&s), issue(2));
+            press(&mut s, "[");
+            assert_eq!(route(&s), issue(1));
+            act(&mut s, Action::Forward);
+            assert_eq!(route(&s), issue(1), "nothing to go forward to here");
+            press(&mut s, "]");
+            act(&mut s, Action::Forward);
+            assert_eq!(route(&s), issue(3));
+        }
+
+        /// Two tabs on one pull request share its diff (and so its review).
+        #[test]
+        fn tabs_share_a_pull_requests_diff() {
+            let (mut s, pr) = crate::state::tests::diff::diff_state(120);
+            if let Screen::Diff(d) = s.screen_mut() {
+                d.focus = crate::diff_screen::Pane::Tree;
+            }
+            let _ = act(&mut s, Action::OpenInTab);
+            assert_eq!(s.tab_count(), 2);
+            assert!(matches!(s.screen(), Screen::Diff(d) if d.of == DiffOf::Pr(pr.clone())));
+            assert_eq!(s.diffs.len(), 1, "one diff for both tabs");
+            // From the diff, T opens the pull request's page.
+            let _ = act(&mut s, Action::OpenInTab);
+            assert_eq!(route(&s), Route::pr(pr));
+        }
+
+        /// The tabs open at quit come back, in order, the first on screen.
+        #[test]
+        fn tabs_reopen() {
+            let mut s = with_repo();
+            let _ = s.push(issue(1));
+            let _ = act(&mut s, Action::OpenInTab);
+            let _ = s.push(issue(2));
+            let urls = s.tab_urls();
+            let mut again = state();
+            again.restore_tabs(&urls);
+            assert_eq!(again.tab_titles(), ["#1", "#2"]);
+            assert_eq!((again.active_tab(), route(&again)), (0, issue(1)));
+        }
+
+        /// A capital hint letter follows the link in a new tab.
+        #[test]
+        fn capital_hints_open_a_tab() {
+            let mut s = with_repo();
+            press(&mut s, "i");
+            let label = overlay!(s, Hints).labels[0].label.to_ascii_uppercase();
+            press(&mut s, &label);
+            assert_eq!(s.tab_count(), 2);
+        }
     }
 
     /// People and repository lists load more like any list.
@@ -2178,7 +2301,7 @@ pub(crate) mod tests {
         assert!(!doables.iter().any(|d| d.action == Action::FileComment));
     }
 
-    mod diff {
+    pub(super) mod diff {
         use super::*;
         use crate::diff_screen::DiffScreen;
         use ghtui_api::model::{ViewedFiles, ViewedState};
@@ -2203,7 +2326,7 @@ pub(crate) mod tests {
         }
 
         /// The same, with an empty saved review read.
-        fn diff_state(width: u16) -> (State, PrRef) {
+        pub(in crate::state) fn diff_state(width: u16) -> (State, PrRef) {
             let (mut s, pr) = unread_diff_state(width);
             diff_msg(
                 &mut s,

@@ -1,12 +1,12 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 421
+assertion_line: 656
 expression: render(&state)
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 100, height: 30 },
     content: [
-        "  ◆ ghtui   gold-silver-copper / ghtui          Here you can                                 1/25   ",
+        "  ◆ ghtui   gold-silver-copper / ghtui          Here you can                                 1/26   ",
         "   <> Code   ◉ Issues  7    ⇄ Pull requests  3                                                      ",
         "──━━━━━━━━━───────────────────────────────────  This page                                          ─",
         "                                              ▌      ↵   Open ghtui/.github                         ",
@@ -26,14 +26,14 @@ Buffer {
         "  │ ▸ crates      Browse GitHub like the websi       r   Refresh                                   ▐",
         "  │ · Cargo.toml  Bump ratatui to 0.30               :   Command palette                           ▐",
         "  │ · README.md   Document the keys                      Recent messages and errors (nothing yet)  ▐",
-        "  ╰───────────────────────────────────────────  Keys                                               ▐",
-        "                                                     ↓   Move down                                  ",
-        "  ╭─ ☰ README.md ────────────────────────────       ↑   Move up                                    ", // hidden by multi-width symbols: [(6, " ")]
-        "  │ ghtui                                         home   Go to top                                  ",
-        "  │ ──────────────────────────────────────────     end   Go to bottom                               ",
+        "  ╰───────────────────────────────────────────  Tabs                                               ▐",
+        "                                                     T   Open in a new tab                          ",
+        "  ╭─ ☰ README.md ────────────────────────────  Keys                                                ", // hidden by multi-width symbols: [(6, " ")]
+        "  │ ghtui                                            ↓   Move down                                  ",
+        "  │ ──────────────────────────────────────────       ↑   Move up                                    ",
+        "  │                                               home   Go to top                                  ",
+        "  │ A keyboard-driven terminal client for GitH     end   Go to bottom                               ",
         "  │                                               pgdn   Page down                                  ",
-        "  │ A keyboard-driven terminal client for GitH    pgup   Page up                                    ",
-        "  │                                             ctrl-d   Half page down                             ",
         "  │ Install                                                                                         ",
         "  ↵ run   key run it   / filter   esc close                                          API 4987/5000  ",
     ],
@@ -218,8 +218,8 @@ Buffer {
         x: 17, y: 22, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 18, y: 22, fg: Rgb(72, 76, 83), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 46, y: 22, fg: Rgb(226, 226, 233), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,
-        x: 48, y: 22, fg: Rgb(169, 199, 255), bg: Rgb(40, 42, 47), underline: Reset, modifier: BOLD,
-        x: 57, y: 22, fg: Rgb(226, 226, 233), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,
+        x: 48, y: 22, fg: Rgb(196, 198, 207), bg: Rgb(40, 42, 47), underline: Reset, modifier: BOLD,
+        x: 52, y: 22, fg: Rgb(226, 226, 233), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,
         x: 99, y: 22, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 2, y: 23, fg: Rgb(72, 76, 83), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 3, y: 23, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
