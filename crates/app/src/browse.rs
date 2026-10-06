@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use ghtui_api::browse::{
     Blob, Checks, CommitDetail, CommitInfo, IssueDetail, PrActivity, Profile, Refs, RepoOverview,
-    RepoSummary, Results, SearchKind, SearchResults, TreeEntry,
+    RepoSummary, Results, SearchKind, SearchResults, TreeEntry, UserList, UserSummary,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::page::{Link, Page, Role, Seg};
@@ -44,6 +44,8 @@ pub enum DataKey {
     PrChecks(PrRef),
     /// The checks on a repository's default branch.
     BranchChecks(RepoId),
+    Users(UserList),
+    Forks(RepoId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +66,9 @@ pub enum Data {
     Commit(Box<CommitDetail>),
     History(Box<Results<CommitInfo>>),
     Checks(Box<Checks>),
+    Users(Box<Results<UserSummary>>),
+    /// A page of a list of repositories.
+    RepoPage(Box<Results<RepoSummary>>),
 }
 
 impl Data {
@@ -72,6 +77,8 @@ impl Data {
         match self {
             Data::Search(r) => next_cursor(r),
             Data::History(r) => r.next.as_deref(),
+            Data::Users(r) => r.next.as_deref(),
+            Data::RepoPage(r) => r.next.as_deref(),
             _ => None,
         }
     }
@@ -81,6 +88,8 @@ impl Data {
         match (self, more) {
             (Data::Search(a), Data::Search(b)) => append(a, *b),
             (Data::History(a), Data::History(b)) => extend(a, *b),
+            (Data::Users(a), Data::Users(b)) => extend(a, *b),
+            (Data::RepoPage(a), Data::RepoPage(b)) => extend(a, *b),
             _ => {}
         }
     }
@@ -92,6 +101,9 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Commits { repo, rev, path } => {
             Some(DataKey::History(repo.clone(), rev.clone(), path.clone()))
         }
+        Route::Stargazers(repo) => Some(DataKey::Users(UserList::Stargazers(repo.clone()))),
+        Route::Watchers(repo) => Some(DataKey::Users(UserList::Watchers(repo.clone()))),
+        Route::Forks(repo) => Some(DataKey::Forks(repo.clone())),
         _ => route
             .search()
             .map(|(kind, query)| DataKey::Search(kind, query)),
@@ -146,6 +158,11 @@ pub fn needs(route: &Route) -> Vec<Need> {
         ],
         Route::Pr { pr, .. } => vec![Need::Pr(pr.clone()), Need::Data(K::PrActivity(pr.clone()))],
         Route::Actions(repo) => vec![header(repo), Need::Data(K::BranchChecks(repo.clone()))],
+        Route::Stargazers(repo) | Route::Watchers(repo) | Route::Forks(repo) => {
+            std::iter::once(header(repo))
+                .chain(paged(route).map(Need::Data))
+                .collect()
+        }
         Route::Commit { repo, oid } => {
             vec![
                 header(repo),
@@ -485,6 +502,22 @@ impl State {
                         pages::pr_checks(&mut page, pr, d, checks, now);
                     }
                     (None, _) => missing(&mut page, &pr.to_string()),
+                }
+            }
+            Route::Stargazers(_) | Route::Watchers(_) | Route::Forks(_) => {
+                let data = paged(route).and_then(|key| self.get(&key));
+                let title = match route {
+                    Route::Stargazers(_) => "Stargazers",
+                    Route::Watchers(_) => "Watchers",
+                    _ => "Forks",
+                };
+                match data {
+                    None if matches!(error, Some((_, false))) => {
+                        missing(&mut page, &title.to_lowercase());
+                    }
+                    Some(Data::RepoPage(r)) => pages::repos(&mut page, title, Some(r), now),
+                    Some(Data::Users(r)) => pages::people_list(&mut page, title, Some(r)),
+                    _ => pages::people_list(&mut page, title, None),
                 }
             }
             Route::Actions(repo) => {
