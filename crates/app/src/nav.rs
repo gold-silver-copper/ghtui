@@ -258,6 +258,12 @@ fn visible(p: &PageScreen, item: usize, height: usize) -> bool {
 /// Keeps a page's scroll in range and its selection on an item; a fresh
 /// page selects its first visible item.
 fn settle(p: &mut PageScreen, height: usize) {
+    if !p.jumped
+        && let Some(jump) = p.page.jump
+    {
+        p.scroll = jump.saturating_sub(MARGIN);
+        p.jumped = true;
+    }
     let max = p.page.height().saturating_sub(height);
     p.scroll = p.scroll.min(max);
     if p.selected.is_some_and(|s| s >= p.page.items.len()) {
@@ -415,9 +421,10 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         Route::Home => return None,
         Route::Repo(repo) => Route::user(&repo.owner),
         Route::Tree { repo, path, .. } if path.is_empty() => Route::Repo(repo.clone()),
-        Route::Tree { repo, rev, path } | Route::Blob { repo, rev, path } => {
-            folder(repo, rev, path)
-        }
+        Route::Tree { repo, rev, path }
+        | Route::Blob {
+            repo, rev, path, ..
+        } => folder(repo, rev, path),
         Route::Issues { repo, .. } | Route::Pulls { repo, .. } => Route::Repo(repo.clone()),
         Route::Issue { repo, .. } => Route::Issues {
             repo: repo.clone(),

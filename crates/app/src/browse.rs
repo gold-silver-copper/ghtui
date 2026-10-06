@@ -80,7 +80,9 @@ pub fn needs(route: &Route) -> Vec<Need> {
             Need::Data(K::Tree(repo.clone(), rev.clone(), path.clone())),
             Need::Data(K::LastCommits(repo.clone(), rev.clone(), path.clone())),
         ],
-        Route::Blob { repo, rev, path } => vec![
+        Route::Blob {
+            repo, rev, path, ..
+        } => vec![
             header(repo),
             Need::Data(K::Blob(repo.clone(), rev.clone(), path.clone())),
         ],
@@ -117,6 +119,8 @@ pub struct PageScreen {
     /// Nothing has been selected or scrolled yet: select the first visible
     /// item once the page has items.
     pub fresh: bool,
+    /// The page has been scrolled to its [`Page::jump`] (once).
+    pub jumped: bool,
 }
 
 impl PageScreen {
@@ -139,6 +143,7 @@ impl PageScreen {
             page: Arc::new(Page::default()),
             built: None,
             fresh: list,
+            jumped: false,
         }
     }
 
@@ -334,10 +339,23 @@ impl State {
                     missing(&mut page, "the directory");
                 }
             }
-            Route::Blob { repo, rev, path } => {
+            Route::Blob {
+                repo,
+                rev,
+                path,
+                lines,
+            } => {
                 let key = DataKey::Blob(repo.clone(), rev.clone(), path.clone());
                 match self.get(&key) {
-                    Some(Data::Blob(blob)) => pages::file(&mut page, repo, rev, path, blob, keys),
+                    Some(Data::Blob(blob)) => {
+                        let file = pages::FileAt {
+                            repo,
+                            rev,
+                            path,
+                            lines: *lines,
+                        };
+                        pages::file(&mut page, file, blob, keys);
+                    }
                     _ => missing(&mut page, "the file"),
                 }
             }
@@ -409,6 +427,9 @@ impl State {
             for item in &mut page.items {
                 item.start += n;
                 item.end += n;
+            }
+            if let Some(jump) = &mut page.jump {
+                *jump += n;
             }
         }
         page

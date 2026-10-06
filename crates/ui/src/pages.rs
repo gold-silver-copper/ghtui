@@ -715,7 +715,23 @@ pub fn repo_dir(page: &mut Page, dir: Listing<'_>, cx: PageCtx<'_>) {
 }
 
 /// A file: highlighted with line numbers, or Markdown rendered.
-pub fn file(page: &mut Page, repo: &RepoId, rev: &str, path: &str, blob: &Blob, keys: Keys<'_>) {
+/// A file at a revision, and the lines a link points at.
+#[derive(Clone, Copy)]
+pub struct FileAt<'a> {
+    pub repo: &'a RepoId,
+    pub rev: &'a str,
+    pub path: &'a str,
+    /// Marked, and where the page opens.
+    pub lines: Option<(u32, u32)>,
+}
+
+pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
+    let FileAt {
+        repo,
+        rev,
+        path,
+        lines: marked,
+    } = at;
     code_toolbar(page, repo, rev, path, true, 0, keys);
     let size = crate::text::size(blob.size);
     let Some(text) = &blob.text else {
@@ -743,13 +759,21 @@ pub fn file(page: &mut Page, repo: &RepoId, rev: &str, path: &str, blob: &Blob, 
     }
     let lines = markdown::highlighted(text, ghtui_diff::Language::from_path(path));
     let width = lines.len().to_string().len();
+    let is_marked = |n: usize| marked.is_some_and(|(a, b)| (a as usize..=b as usize).contains(&n));
     for (i, mut segs) in lines.into_iter().enumerate() {
         let number = format!("{:>width$}  ", i + 1);
         segs.insert(0, Seg::new(number, Role::Syntax(Syntax::Comment)));
+        if is_marked(i + 1) && page.jump.is_none() {
+            page.jump = Some(page.lines.len());
+        }
         page.push(PageLine {
             segs,
             frame: Frame::Body,
-            tone: Tone::Code,
+            tone: if is_marked(i + 1) {
+                Tone::Marked
+            } else {
+                Tone::Code
+            },
             ..PageLine::default()
         });
     }

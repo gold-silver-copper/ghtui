@@ -119,9 +119,9 @@ impl State {
             Some(Route::Tree { repo, rev, path }) => {
                 (repo.clone(), rev.clone(), path.clone(), false)
             }
-            Some(Route::Blob { repo, rev, path }) => {
-                (repo.clone(), rev.clone(), path.clone(), true)
-            }
+            Some(Route::Blob {
+                repo, rev, path, ..
+            }) => (repo.clone(), rev.clone(), path.clone(), true),
             Some(route) if let Some(repo) = route.repo() => {
                 let default = self.overview(repo).and_then(|o| o.default_branch.clone());
                 let rev = default.unwrap_or_else(|| "HEAD".into());
@@ -241,11 +241,7 @@ impl State {
             .into_iter()
             .take(200)
             .map(|(_, path)| {
-                let target = Target::Page(Route::Blob {
-                    repo: repo.clone(),
-                    rev: rev.to_owned(),
-                    path: path.clone(),
-                });
+                let target = Target::Page(Route::blob(repo.clone(), rev.to_owned(), path.clone()));
                 (item(path, ""), Some(Choice::Go(target)))
             })
             .collect();
@@ -278,7 +274,7 @@ impl State {
                 };
                 let (repo, rev, path) = (repo.clone(), name.clone(), path.to_owned());
                 let target = if file {
-                    Route::Blob { repo, rev, path }
+                    Route::blob(repo, rev, path)
                 } else if path.is_empty() && is_default {
                     Route::Repo(repo)
                 } else {

@@ -147,6 +147,8 @@ pub enum Tone {
     Plain,
     /// A code block.
     Code,
+    /// A code line a link points at.
+    Marked,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -201,6 +203,8 @@ pub struct Page {
     pub aside_width: u16,
     /// Lists take one row per item.
     pub compact: bool,
+    /// The line the page opens scrolled to (a linked line), if not the top.
+    pub jump: Option<usize>,
 }
 
 impl Page {
@@ -466,6 +470,7 @@ pub(crate) fn wrap_segs(segs: Vec<Seg>, width: usize) -> Vec<Vec<Seg>> {
 
 const PAGE_BG: Bg = Bg::ContainerLow;
 const CODE_BG: Bg = Bg::Diff(DiffBg::Context);
+const MARKED_BG: Bg = Bg::DiffSelected(DiffBg::Context);
 
 /// Where a page's columns go in `area`: centered, as on GitHub.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -677,6 +682,7 @@ impl PageView<'_> {
         };
         let inner_bg = match (line.tone, sel) {
             (Tone::Code, _) => CODE_BG,
+            (Tone::Marked, _) => MARKED_BG,
             (Tone::Plain, true) => Bg::Selected,
             (Tone::Plain, false) => PAGE_BG,
         };
@@ -691,13 +697,13 @@ impl PageView<'_> {
             };
             fill(buf, band, theme, Bg::Selected);
             put(buf, band.x, y, "▌", theme.accent(Bg::Selected));
-        } else if line.tone == Tone::Code {
+        } else if line.tone != Tone::Plain {
             let band = if framed {
                 row(x.saturating_add(1), width.saturating_sub(2))
             } else {
                 row(x, width)
             };
-            fill(buf, band, theme, CODE_BG);
+            fill(buf, band, theme, inner_bg);
         }
         // Borders.
         let border = theme.separator(PAGE_BG);

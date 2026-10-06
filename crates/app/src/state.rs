@@ -1187,8 +1187,7 @@ pub(crate) mod tests {
     }
 
     fn blob(rev: &str, path: &str) -> Route {
-        let (repo, rev, path) = (repo(), rev.to_owned(), path.to_owned());
-        Route::Blob { repo, rev, path }
+        Route::blob(repo(), rev.to_owned(), path.to_owned())
     }
 
     fn with_repo() -> State {

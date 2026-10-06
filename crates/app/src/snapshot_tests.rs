@@ -200,11 +200,7 @@ fn with_repo(mode: Mode, depth: ColorDepth) -> State {
 /// A file in the repository.
 fn with_file(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
-    let route = Route::Blob {
-        repo: ghtui(),
-        rev: "main".into(),
-        path: "src/main.rs".into(),
-    };
+    let route = Route::blob(ghtui(), "main".into(), "src/main.rs".into());
     open(&mut state, route, Data::Blob(Box::new(fixtures::blob())));
     state
 }
@@ -345,6 +341,25 @@ fn repo_wide_terminal_centers_light() {
 #[test]
 fn file_light() {
     insta::assert_snapshot!(render(&with_file(Mode::Light)));
+}
+
+/// A link to lines opens scrolled to them, marked.
+#[test]
+fn file_lines_dark() {
+    let mut state = with_repo(Mode::Dark, ColorDepth::TrueColor);
+    let text: String = (1..=80).map(|n| format!("let x{n} = {n};\n")).collect();
+    let blob = ghtui_api::browse::Blob {
+        path: "src/main.rs".into(),
+        size: text.len() as u64,
+        text: Some(text),
+        truncated: false,
+    };
+    let url = "https://github.com/gold-silver-copper/ghtui/blob/main/src/main.rs#L60-L62";
+    let crate::route::Target::Page(route) = crate::route::Target::from_url(url) else {
+        panic!("{url}");
+    };
+    open(&mut state, route, Data::Blob(Box::new(blob)));
+    insta::assert_snapshot!(render(&state));
 }
 
 #[test]
