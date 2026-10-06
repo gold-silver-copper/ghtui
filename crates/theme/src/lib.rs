@@ -142,6 +142,8 @@ pub enum Fg {
     /// `-` markers and deletion counts.
     DiffRemovedSign,
     Syntax(Syntax),
+    /// A day in the contribution graph, by level: 0 (none) to 4 (most).
+    Heat(u8),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -239,9 +241,13 @@ impl Fg {
             Fg::DiffRemovedSign,
         ];
         all.extend(Syntax::ALL.map(Fg::Syntax));
+        all.extend(HEAT_LEVELS.map(Fg::Heat));
         all
     }
 }
+
+/// The contribution graph's levels.
+pub const HEAT_LEVELS: [u8; 5] = [0, 1, 2, 3, 4];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Requirement {
@@ -280,6 +286,8 @@ pub fn requirement(fg: Fg, bg: Bg) -> Option<Requirement> {
         // Also line numbers GitHub won't accept comments on.
         Fg::Disabled if bg.is_neutral() || bg.is_diff() => Some(Exempt),
         Fg::OutlineVariant if bg.is_neutral() => Some(Decorative),
+        // Graph cells: shades, not text (each must differ; see `Theme::new`).
+        Fg::Heat(_) if bg.is_neutral() => Some(Exempt),
         _ if Bg::FILLED.contains(&(bg, fg)) => Some(Text),
         _ => None,
     }
@@ -426,6 +434,29 @@ impl Theme {
             (Syntax::Property, hct(primary_hue, 16.0, text_tone)),
         ];
         fg.extend(syntax.map(|(role, c)| (Fg::Syntax(role), c)));
+
+        // The contribution graph: a faint surface shade, then the primary
+        // hue from faint to strong. Each level must differ from the last (and
+        // the first from the page) once quantized, so tones step on until
+        // they do.
+        let (heat_tones, step) = match mode {
+            Mode::Dark => ([22.0, 34.0, 48.0, 64.0, 82.0], 3.0),
+            Mode::Light => ([90.0, 80.0, 66.0, 50.0, 34.0], -3.0),
+        };
+        let mut previous = container_low;
+        for (level, tone) in HEAT_LEVELS.into_iter().zip(heat_tones) {
+            let chroma = if level == 0 { 6.0 } else { 48.0 };
+            let mut tone: f64 = tone;
+            let mut color = hct(primary_hue, chroma, tone);
+            while displayed(depth, color) == displayed(depth, previous)
+                && (0.0..=100.0).contains(&tone)
+            {
+                tone += step;
+                color = hct(primary_hue, chroma, tone);
+            }
+            fg.insert(Fg::Heat(level), color);
+            previous = color;
+        }
 
         let mut theme = Theme {
             mode,
@@ -665,6 +696,29 @@ mod tests {
         );
     }
 
+    /// The contribution graph reads in every scheme and depth: each level
+    /// shows differently from the one below it, and none as the page.
+    #[test]
+    fn heat_levels_stay_apart() {
+        for seed in seeds() {
+            for mode in [Mode::Light, Mode::Dark] {
+                for depth in [ColorDepth::TrueColor, ColorDepth::Ansi256] {
+                    let theme = Theme::new(seed, mode, depth);
+                    let shown = |fg| theme.displayed(theme.fg_rgb(fg));
+                    let page = theme.displayed(theme.bg_rgb(Bg::ContainerLow));
+                    let levels: Vec<Rgb> = HEAT_LEVELS.map(|l| shown(Fg::Heat(l))).to_vec();
+                    assert_ne!(levels[0], page, "seed {seed} {mode:?} {depth:?}");
+                    for pair in levels.windows(2) {
+                        assert_ne!(
+                            pair[0], pair[1],
+                            "seed {seed} {mode:?} {depth:?}: {levels:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn syntax_on_diff_backgrounds_is_covered() {
         let theme = Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor);
@@ -681,12 +735,14 @@ mod tests {
         }
     }
 
+    /// Only disabled text and the graph's shades (kept apart by
+    /// `heat_levels_stay_apart`) skip contrast.
     #[test]
-    fn disabled_is_the_only_exempt_role() {
+    fn only_disabled_text_and_graph_shades_are_exempt() {
         for fg in Fg::all() {
             for bg in Bg::all() {
                 if requirement(fg, bg) == Some(Requirement::Exempt) {
-                    assert_eq!(fg, Fg::Disabled);
+                    assert!(matches!(fg, Fg::Disabled | Fg::Heat(_)), "{fg:?}");
                 }
             }
         }

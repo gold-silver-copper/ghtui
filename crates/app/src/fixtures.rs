@@ -2,9 +2,10 @@
 
 use crossterm::event::KeyEvent;
 use ghtui_api::browse::{
-    Asset, Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, EntryKind,
-    IssueDetail, IssueState, IssueSummary, PrActivity, Profile, Readme, Release, RepoOverview,
-    RepoSummary, Results, ReviewSummary, SearchResults, TagInfo, TreeEntry, UserSummary,
+    Asset, Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, Contributed,
+    Contributions, EntryKind, IssueDetail, IssueState, IssueSummary, MonthActivity, PrActivity,
+    Profile, Readme, Release, RepoOverview, RepoSummary, Results, ReviewSummary, SearchResults,
+    TagInfo, TreeEntry, UserSummary, Week,
 };
 use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
@@ -414,6 +415,126 @@ pub fn profile() -> Profile {
         repo_count: 8,
         stars: vec![repo_summary("ratatui/ratatui", 22_900)],
         star_count: 120,
+        readme: Some("### Hi there 👋\n\nI'm the Octocat. I like **terminals**.\n".into()),
+        status: Some("🐙 Reviewing pull requests".into()),
+        pronouns: Some("they/them".into()),
+        socials: vec![(
+            "@octocat@hachyderm.io".into(),
+            "https://hachyderm.io/@octocat".into(),
+        )],
+        orgs: vec!["github".into(), "ratatui".into()],
+        verified: false,
+        people: Vec::new(),
+        people_count: 0,
+        contributions: Some(contributions()),
+    }
+}
+
+/// A year of contributions, shaded in a repeating pattern, and two months
+/// of activity.
+pub fn contributions() -> Contributions {
+    const DAYS: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let (mut year, mut month, mut day) = (2025u32, 10u32, 5u32);
+    let mut weeks = Vec::new();
+    for w in 0..53u32 {
+        let days = (0..7u32)
+            .map(|d| match (w * 7 + d) * 37 % 11 {
+                0..=4 => 0,
+                5 | 6 => 1,
+                7 | 8 => 2,
+                9 => 3,
+                _ => 4,
+            })
+            .take(if w == 52 { 3 } else { 7 })
+            .collect();
+        weeks.push(Week {
+            start: format!("{year}-{month:02}-{day:02}"),
+            days,
+        });
+        day += 7;
+        let length = DAYS.get(month as usize - 1).copied().unwrap_or(30);
+        if day > length {
+            day -= length;
+            month += 1;
+            if month > 12 {
+                (month, year) = (1, year + 1);
+            }
+        }
+    }
+    let item = |repo: &str, number: u64, title: &str| Contributed {
+        repo: repo.into(),
+        number,
+        title: title.into(),
+    };
+    Contributions {
+        total: 1234,
+        weeks,
+        activity: vec![
+            MonthActivity {
+                month: "2026-10".into(),
+                commits: vec![
+                    ("gold-silver-copper/ghtui".into(), 42),
+                    ("ratatui/ratatui".into(), 3),
+                ],
+                pulls: vec![item(
+                    "gold-silver-copper/ghtui",
+                    12,
+                    "Theme: generate syntax palette from seed",
+                )],
+                issues: Vec::new(),
+                reviews: vec![item("ratatui/ratatui", 1900, "Add a scrollbar widget")],
+            },
+            MonthActivity {
+                month: "2026-09".into(),
+                commits: vec![("gold-silver-copper/ghtui".into(), 17)],
+                pulls: Vec::new(),
+                issues: vec![item(
+                    "ratatui/ratatui",
+                    1888,
+                    "Unicode width of emoji in tables",
+                )],
+                reviews: Vec::new(),
+            },
+        ],
+    }
+}
+
+/// An organization: verified, with members and a README.
+pub fn org_profile() -> Profile {
+    let mut repos = vec![
+        repo_summary("ratatui/ratatui", 22_900),
+        repo_summary("ratatui/templates", 300),
+        repo_summary("ratatui/website", 120),
+    ];
+    if let Some(r) = repos.get_mut(2) {
+        r.language = Some("TypeScript".into());
+    }
+    Profile {
+        login: "ratatui".into(),
+        name: Some("Ratatui".into()),
+        bio: Some("Rust library for cooking up terminal user interfaces".into()),
+        company: None,
+        location: None,
+        website: Some("https://ratatui.rs".into()),
+        followers: None,
+        following: None,
+        is_org: true,
+        pinned: Vec::new(),
+        repos,
+        repo_count: 24,
+        stars: Vec::new(),
+        star_count: 0,
+        readme: Some(
+            "Welcome to **Ratatui**. Start with the [tutorial](https://ratatui.rs).\n".into(),
+        ),
+        status: None,
+        pronouns: None,
+        socials: Vec::new(),
+        orgs: Vec::new(),
+        verified: true,
+        people: vec!["joshka".into(), "orhun".into(), "kdheepak".into()],
+        people_count: 14,
+        contributions: None,
     }
 }
 

@@ -7,9 +7,9 @@
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, EntryKind,
-    IssueDetail, IssueState, IssueSummary, PrActivity, Profile, Release, RepoOverview, RepoSummary,
-    Results, SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary,
+    Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, Contributions,
+    EntryKind, IssueDetail, IssueState, IssueSummary, PrActivity, Profile, Release, RepoOverview,
+    RepoSummary, Results, SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -1941,7 +1941,14 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, now: u64) {
         segs.push(space());
         segs.push(chip("Organization", Bg::SecondaryContainer));
     }
+    if p.verified {
+        segs.push(space());
+        segs.push(chip("✓ Verified", Bg::SuccessContainer));
+    }
     page.line(segs);
+    if let Some(status) = &p.status {
+        page.wrapped(vec![Seg::new(status.clone(), Role::Meta)], 0, Frame::None);
+    }
     if let Some(bio) = &p.bio {
         page.wrapped(vec![Seg::new(bio.clone(), Role::Body)], 0, Frame::None);
     }
@@ -1956,17 +1963,54 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, now: u64) {
             Role::Meta,
         ));
     }
-    for (icon, value) in [("◆ ", &p.company), ("⌖ ", &p.location)] {
+    // Spaced apart, with nothing before the first.
+    let gap = |segs: &Vec<Seg>| if segs.is_empty() { "" } else { "   " };
+    for (icon, value) in [("◆ ", &p.company), ("⌖ ", &p.location), ("", &p.pronouns)] {
         if let Some(v) = value {
-            facts.push(Seg::new(format!("   {icon}{v}"), Role::Meta));
+            facts.push(Seg::new(format!("{}{icon}{v}", gap(&facts)), Role::Meta));
         }
     }
     if let Some(site) = &p.website {
-        facts.push(Seg::new("   ↗ ", Role::Meta));
+        facts.push(Seg::new(format!("{}↗ ", gap(&facts)), Role::Meta));
         facts.push(link_seg(page, site.clone(), site.clone(), Role::Link));
     }
     if !facts.is_empty() {
         page.wrapped(facts, 0, Frame::None);
+    }
+    let mut links = Vec::new();
+    for (shown, target) in &p.socials {
+        links.push(Seg::new(format!("{}↗ ", gap(&links)), Role::Meta));
+        links.push(link_seg(page, shown.clone(), target.clone(), Role::Link));
+    }
+    if !links.is_empty() {
+        page.wrapped(links, 0, Frame::None);
+    }
+    if !p.orgs.is_empty() {
+        let mut orgs = vec![Seg::new("Organizations  ", Role::Meta)];
+        for (i, org) in p.orgs.iter().enumerate() {
+            if i > 0 {
+                orgs.push(Seg::new(" · ", Role::Meta));
+            }
+            orgs.push(link_seg(page, org.clone(), url::user(org), Role::Link));
+        }
+        page.wrapped(orgs, 0, Frame::None);
+    }
+    if tab == ProfileTab::Overview
+        && let Some(readme) = &p.readme
+    {
+        page.blank();
+        let (repo, path) = if p.is_org {
+            (format!("{}/.github", p.login), "profile/README.md")
+        } else {
+            (format!("{0}/{0}", p.login), "README.md")
+        };
+        let title = Seg::new(format!("{repo} / {path}"), Role::Meta);
+        page.box_top(vec![title], Vec::new());
+        if let Some(repo) = RepoId::parse(&repo) {
+            let base = LinkBase::new(&repo, "HEAD", path);
+            markdown::render(page, readme, Some(&base), Frame::Body);
+        }
+        page.box_bottom();
     }
     let mut popular = Vec::new();
     let (title, sort, repos, empty, show_owner) = match tab {
@@ -1998,6 +2042,202 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, now: u64) {
     list_box(page, title, right, repos, empty, |page, r| {
         repo_row(page, r, now, show_owner);
     });
+    if tab != ProfileTab::Overview {
+        return;
+    }
+    if let Some(c) = &p.contributions {
+        page.blank();
+        contribution_graph(page, c);
+        page.blank();
+        contribution_activity(page, c);
+    }
+    if p.is_org {
+        page.blank();
+        let title = vec![
+            Seg::new("People", Role::Strong),
+            Seg::new(format!("  {}", compact(p.people_count)), Role::Meta),
+        ];
+        page.box_top(title, Vec::new());
+        if p.people.is_empty() {
+            empty_row(page, "No public members.");
+        } else {
+            let mut people = Vec::new();
+            for (i, login) in p.people.iter().enumerate() {
+                if i > 0 {
+                    people.push(Seg::new(" · ", Role::Meta));
+                }
+                people.push(link_seg(page, login.clone(), url::user(login), Role::Link));
+            }
+            page.wrapped(people, 0, Frame::Body);
+        }
+        page.box_bottom();
+        let languages = top_languages(&p.repos);
+        if !languages.is_empty() {
+            page.blank();
+            let mut segs = vec![Seg::new("Top languages  ", Role::Strong)];
+            for (lang, n) in languages {
+                segs.push(Seg::new("● ", Role::Accent));
+                segs.push(Seg::new(format!("{lang} {n}   "), Role::Meta));
+            }
+            page.wrapped(segs, 0, Frame::None);
+        }
+    }
+}
+
+/// 1234567 → "1,234,567".
+fn thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// "Sep" for `2026-09-…`.
+fn month_name(date: &str) -> Option<&'static str> {
+    let month: usize = date.get(5..7)?.parse().ok()?;
+    MONTHS.get(month.checked_sub(1)?).copied()
+}
+
+/// The last year's contributions as GitHub draws them: a column per week,
+/// a row per day, shaded by how much happened. Narrow pages show the most
+/// recent weeks that fit.
+fn contribution_graph(page: &mut Page, c: &Contributions) {
+    const LABELS: usize = 4;
+    let title = format!("{} contributions in the last year", thousands(c.total));
+    page.line(vec![Seg::new(title, Role::Strong)]);
+    let room = usize::from(page.room(Frame::None, 0)).saturating_sub(LABELS);
+    let weeks = c
+        .weeks
+        .get(c.weeks.len().saturating_sub(room)..)
+        .unwrap_or_default();
+    // Month names over the week each month starts in, where they fit.
+    let mut row = vec![' '; weeks.len()];
+    let (mut free, mut last) = (0, None);
+    for (i, week) in weeks.iter().enumerate() {
+        let month = month_name(&week.start);
+        if month != last
+            && i >= free
+            && let Some(name) = month
+            && i + name.len() <= row.len()
+        {
+            for (cell, ch) in row.iter_mut().skip(i).zip(name.chars()) {
+                *cell = ch;
+            }
+            free = i + name.len() + 1;
+        }
+        last = month;
+    }
+    let months: String = " ".repeat(LABELS).chars().chain(row).collect();
+    page.line(vec![Seg::new(months, Role::Meta)]);
+    for day in 0..7 {
+        let label = match day {
+            1 => "Mon ",
+            3 => "Wed ",
+            5 => "Fri ",
+            _ => "    ",
+        };
+        let mut segs = vec![Seg::new(label, Role::Meta)];
+        for week in weeks {
+            segs.push(match week.days.get(day) {
+                Some(&level) => Seg::new("■", Role::Heat(level.min(4))),
+                None => Seg::new(" ", Role::Meta),
+            });
+        }
+        page.line(segs);
+    }
+    let mut legend = vec![Seg::new(format!("{}Less ", " ".repeat(LABELS)), Role::Meta)];
+    legend.extend((0..=4).map(|level| Seg::new("■", Role::Heat(level))));
+    legend.push(Seg::new(" More", Role::Meta));
+    page.line(legend);
+}
+
+/// What someone did, month by month: commits by repository, and the pull
+/// requests and issues they opened and reviewed.
+fn contribution_activity(page: &mut Page, c: &Contributions) {
+    page.line(vec![Seg::new("Contribution activity", Role::Strong)]);
+    if c.activity.is_empty() {
+        page.line(vec![Seg::new("No recent activity.", Role::Meta)]);
+        return;
+    }
+    for m in &c.activity {
+        page.blank();
+        let year = m.month.get(..4).unwrap_or_default();
+        let name = month_name(&format!("{}-01", m.month)).unwrap_or_default();
+        page.line(vec![Seg::new(format!("{name} {year}"), Role::Heading)]);
+        if !m.commits.is_empty() {
+            let total: u64 = m.commits.iter().map(|(_, n)| n).sum();
+            let repos = m.commits.len() as u64;
+            let repos = if repos == 1 {
+                "1 repository".to_owned()
+            } else {
+                format!("{repos} repositories")
+            };
+            let created = format!("◷ Created {} in {repos}", plural(total, "commit"));
+            page.line(vec![Seg::new(created, Role::Body)]);
+            for (repo, n) in m.commits.iter().take(5) {
+                let name = link_seg(
+                    page,
+                    repo.clone(),
+                    format!("{}/{repo}", url::BASE),
+                    Role::Link,
+                );
+                page.line(vec![
+                    Seg::new("    ", Role::Meta),
+                    name,
+                    Seg::new(format!("  {}", plural(*n, "commit")), Role::Meta),
+                ]);
+            }
+        }
+        for (items, icon, verb) in [
+            (&m.pulls, "⇄", "Opened"),
+            (&m.issues, "◉", "Opened"),
+            (&m.reviews, "◎", "Reviewed"),
+        ] {
+            if items.is_empty() {
+                continue;
+            }
+            let noun = if icon == "◉" {
+                "issue"
+            } else {
+                "pull request"
+            };
+            let what = plural(items.len() as u64, noun);
+            page.line(vec![Seg::new(format!("{icon} {verb} {what}"), Role::Body)]);
+            for item in items.iter().take(5) {
+                let target = if icon == "◉" {
+                    format!("{}/{}/issues/{}", url::BASE, item.repo, item.number)
+                } else {
+                    format!("{}/{}/pull/{}", url::BASE, item.repo, item.number)
+                };
+                let place = format!("{}#{}", item.repo, item.number);
+                let link = link_seg(page, item.title.clone(), target, Role::Link);
+                page.wrapped(
+                    vec![Seg::new(format!("{place}  "), Role::Meta), link],
+                    4,
+                    Frame::None,
+                );
+            }
+        }
+    }
+}
+
+/// An organization's most used languages, across the repositories loaded.
+fn top_languages(repos: &[RepoSummary]) -> Vec<(String, usize)> {
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for lang in repos.iter().filter_map(|r| r.language.as_ref()) {
+        match counts.iter_mut().find(|(l, _)| l == lang) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((lang.clone(), 1)),
+        }
+    }
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    counts.truncate(5);
+    counts
 }
 
 // ---- home -----------------------------------------------------------------------------------

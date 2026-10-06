@@ -258,6 +258,24 @@ fn with_actions(mode: Mode) -> State {
     state
 }
 
+/// `state` in a `w`×`h` terminal.
+fn sized(mut state: State, w: u16, h: u16) -> State {
+    update(&mut state, Msg::Resize(w, h));
+    state
+}
+
+/// An organization's profile.
+fn with_org(mode: Mode) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    let route = Route::user("ratatui");
+    open(
+        &mut state,
+        route,
+        Data::Profile(Box::new(fixtures::org_profile())),
+    );
+    state
+}
+
 /// A repository's stargazers.
 fn with_stargazers(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -461,6 +479,26 @@ fn pr_checks_dark() {
 #[test]
 fn actions_light() {
     insta::assert_snapshot!(render(&with_actions(Mode::Light)));
+}
+
+#[test]
+fn org_profile_dark() {
+    insta::assert_snapshot!(render(&sized(with_org(Mode::Dark), 100, 50)));
+}
+
+/// The whole overview: README, pinned, the contribution graph, activity.
+#[test]
+fn profile_overview_tall_light() {
+    let state = with_profile(Mode::Light, ProfileTab::Overview);
+    insta::assert_snapshot!(render(&sized(state, 100, 80)));
+}
+
+/// In 256 colors the graph's shades stay apart.
+#[test]
+fn profile_overview_256_dark() {
+    let mut state = with_profile(Mode::Dark, ProfileTab::Overview);
+    state.theme = Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::Ansi256);
+    insta::assert_snapshot!(render(&sized(state, 100, 80)));
 }
 
 #[test]
