@@ -97,6 +97,8 @@ pub enum Role {
     Chip(Bg),
     /// A GitHub label chip (`rrggbb`).
     Label(String),
+    /// A contribution graph cell, by level (0–4).
+    Heat(u8),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -797,6 +799,7 @@ impl PageView<'_> {
             Role::Removed => theme.style(Fg::DiffRemovedSign, bg),
             Role::Chip(chip) => theme.fill(*chip),
             Role::Label(color) => theme.label_chip(color),
+            Role::Heat(level) => theme.style(Fg::Heat(*level), bg),
         }
     }
 }

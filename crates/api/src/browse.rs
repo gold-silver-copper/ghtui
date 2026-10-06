@@ -329,6 +329,69 @@ pub struct Profile {
     pub stars: Vec<RepoSummary>,
     #[serde(default)]
     pub star_count: u64,
+    /// The profile README, as markdown.
+    #[serde(default)]
+    pub readme: Option<String>,
+    /// "🌴 On vacation".
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub pronouns: Option<String>,
+    /// Social accounts: (how it's shown, link).
+    #[serde(default)]
+    pub socials: Vec<(String, String)>,
+    /// Organizations a user belongs to (the public ones).
+    #[serde(default)]
+    pub orgs: Vec<String>,
+    /// An organization's verified domain badge.
+    #[serde(default)]
+    pub verified: bool,
+    /// An organization's first public members, and how many there are.
+    #[serde(default)]
+    pub people: Vec<String>,
+    #[serde(default)]
+    pub people_count: u64,
+    /// A user's contributions in the last year.
+    #[serde(default)]
+    pub contributions: Option<Contributions>,
+}
+
+/// The contribution graph and recent activity on a user's profile.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Contributions {
+    pub total: u64,
+    /// Oldest first, each starting on a Sunday (the first may start later).
+    pub weeks: Vec<Week>,
+    /// Newest month first.
+    pub activity: Vec<MonthActivity>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Week {
+    /// `YYYY-MM-DD` of its first day.
+    pub start: String,
+    /// Each day's level, 0 (none) to 4 (most).
+    pub days: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MonthActivity {
+    /// `YYYY-MM`.
+    pub month: String,
+    /// Commits per repository, most first.
+    pub commits: Vec<(String, u64)>,
+    pub pulls: Vec<Contributed>,
+    pub issues: Vec<Contributed>,
+    pub reviews: Vec<Contributed>,
+}
+
+/// An issue or pull request someone opened or reviewed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Contributed {
+    /// `owner/name`.
+    pub repo: String,
+    pub number: u64,
+    pub title: String,
 }
 
 // ---- wire types: shared fragments ---------------------------------------------
@@ -1179,6 +1242,348 @@ impl WireStatusContext {
 
 // ---- profiles ------------------------------------------------------------------------
 
+#[derive(cynic::Scalar, Debug, Clone)]
+#[cynic(graphql_type = "Date", schema_module = "schema")]
+pub struct Date(pub String);
+
+/// A profile README: `<login>/<login>`'s for a user, `.github`'s
+/// `profile/README.md` for an organization.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Repository", schema_module = "schema")]
+pub struct UserReadmeRepo {
+    #[arguments(expression: "HEAD:README.md")]
+    pub object: Option<ReadmeObject>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Repository", schema_module = "schema")]
+pub struct OrgReadmeRepo {
+    #[arguments(expression: "HEAD:profile/README.md")]
+    pub object: Option<ReadmeObject>,
+}
+
+#[derive(cynic::InlineFragments, Debug)]
+#[cynic(graphql_type = "GitObject", schema_module = "schema")]
+pub enum ReadmeObject {
+    Blob(ReadmeBlob),
+    #[cynic(fallback)]
+    Other,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Blob", schema_module = "schema")]
+pub struct ReadmeBlob {
+    pub text: Option<String>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "UserStatus", schema_module = "schema")]
+pub struct WireStatus {
+    pub emoji: Option<String>,
+    pub message: Option<String>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "SocialAccountConnection", schema_module = "schema")]
+pub struct SocialList {
+    pub nodes: Option<Vec<Option<WireSocial>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "SocialAccount", schema_module = "schema")]
+pub struct WireSocial {
+    pub display_name: String,
+    pub url: Uri,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "OrganizationConnection", schema_module = "schema")]
+pub struct OrgLogins {
+    pub nodes: Option<Vec<Option<OrgLogin>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Organization", schema_module = "schema")]
+pub struct OrgLogin {
+    pub login: String,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "OrganizationMemberConnection",
+    schema_module = "schema"
+)]
+pub struct MemberList {
+    pub total_count: i32,
+    pub nodes: Option<Vec<Option<UserLogin>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "StarredRepositoryConnection", schema_module = "schema")]
+pub struct StarCount {
+    pub total_count: i32,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "ContributionsCollection", schema_module = "schema")]
+pub struct WireContributions {
+    pub contribution_calendar: WireCalendar,
+    #[arguments(maxRepositories: 10)]
+    pub commit_contributions_by_repository: Vec<WireRepoCommits>,
+    #[arguments(last: 20)]
+    pub pull_request_contributions: PrContributions,
+    #[arguments(last: 20)]
+    pub issue_contributions: IssueContributions,
+    #[arguments(last: 20)]
+    pub pull_request_review_contributions: ReviewContributions,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "ContributionCalendar", schema_module = "schema")]
+pub struct WireCalendar {
+    pub total_contributions: i32,
+    pub weeks: Vec<WireWeek>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "ContributionCalendarWeek", schema_module = "schema")]
+pub struct WireWeek {
+    pub contribution_days: Vec<WireDay>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "ContributionCalendarDay", schema_module = "schema")]
+pub struct WireDay {
+    pub date: Date,
+    pub contribution_level: ContributionLevel,
+}
+
+#[derive(cynic::Enum, Debug, Clone, Copy)]
+#[cynic(graphql_type = "ContributionLevel", schema_module = "schema")]
+pub enum ContributionLevel {
+    None,
+    FirstQuartile,
+    SecondQuartile,
+    ThirdQuartile,
+    FourthQuartile,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "CommitContributionsByRepository",
+    schema_module = "schema"
+)]
+pub struct WireRepoCommits {
+    pub repository: RepositoryName,
+    #[arguments(first: 100)]
+    pub contributions: CommitContributions,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "CreatedCommitContributionConnection",
+    schema_module = "schema"
+)]
+pub struct CommitContributions {
+    pub nodes: Option<Vec<Option<WireCommitContribution>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "CreatedCommitContribution", schema_module = "schema")]
+pub struct WireCommitContribution {
+    pub occurred_at: DateTime,
+    pub commit_count: i32,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "CreatedPullRequestContributionConnection",
+    schema_module = "schema"
+)]
+pub struct PrContributions {
+    pub nodes: Option<Vec<Option<WirePrContribution>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "CreatedPullRequestContribution",
+    schema_module = "schema"
+)]
+pub struct WirePrContribution {
+    pub occurred_at: DateTime,
+    pub pull_request: ContributedPr,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "CreatedIssueContributionConnection",
+    schema_module = "schema"
+)]
+pub struct IssueContributions {
+    pub nodes: Option<Vec<Option<WireIssueContribution>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "CreatedIssueContribution", schema_module = "schema")]
+pub struct WireIssueContribution {
+    pub occurred_at: DateTime,
+    pub issue: ContributedIssue,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "CreatedPullRequestReviewContributionConnection",
+    schema_module = "schema"
+)]
+pub struct ReviewContributions {
+    pub nodes: Option<Vec<Option<WireReviewContribution>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "CreatedPullRequestReviewContribution",
+    schema_module = "schema"
+)]
+pub struct WireReviewContribution {
+    pub occurred_at: DateTime,
+    pub pull_request: ContributedPr,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequest", schema_module = "schema")]
+pub struct ContributedPr {
+    pub number: i32,
+    pub title: String,
+    pub repository: RepositoryName,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Issue", schema_module = "schema")]
+pub struct ContributedIssue {
+    pub number: i32,
+    pub title: String,
+    pub repository: RepositoryName,
+}
+
+/// How many months of activity a profile lists.
+const ACTIVITY_MONTHS: usize = 3;
+
+impl WireContributions {
+    fn into_contributions(self) -> Contributions {
+        let calendar = self.contribution_calendar;
+        let weeks = calendar
+            .weeks
+            .into_iter()
+            .filter_map(|w| {
+                let start = w.contribution_days.first()?.date.0.clone();
+                let days = w
+                    .contribution_days
+                    .iter()
+                    .map(|d| match d.contribution_level {
+                        ContributionLevel::None => 0,
+                        ContributionLevel::FirstQuartile => 1,
+                        ContributionLevel::SecondQuartile => 2,
+                        ContributionLevel::ThirdQuartile => 3,
+                        ContributionLevel::FourthQuartile => 4,
+                    })
+                    .collect();
+                Some(Week { start, days })
+            })
+            .collect();
+        let month = |at: &DateTime| at.0.get(..7).unwrap_or_default().to_owned();
+        let mut months: Vec<MonthActivity> = Vec::new();
+        let mut found = Vec::new();
+        for repo in self.commit_contributions_by_repository {
+            for c in nodes(repo.contributions.nodes) {
+                found.push((
+                    month(&c.occurred_at),
+                    Event::Commits(
+                        repo.repository.name_with_owner.clone(),
+                        count(c.commit_count),
+                    ),
+                ));
+            }
+        }
+        let item = |repo: RepositoryName, number: i32, title: String| Contributed {
+            repo: repo.name_with_owner,
+            number: count(number),
+            title,
+        };
+        for p in nodes(self.pull_request_contributions.nodes) {
+            let pr = p.pull_request;
+            found.push((
+                month(&p.occurred_at),
+                Event::Pull(item(pr.repository, pr.number, pr.title)),
+            ));
+        }
+        for i in nodes(self.issue_contributions.nodes) {
+            let issue = i.issue;
+            found.push((
+                month(&i.occurred_at),
+                Event::Issue(item(issue.repository, issue.number, issue.title)),
+            ));
+        }
+        for r in nodes(self.pull_request_review_contributions.nodes) {
+            let pr = r.pull_request;
+            found.push((
+                month(&r.occurred_at),
+                Event::Review(item(pr.repository, pr.number, pr.title)),
+            ));
+        }
+        for (key, event) in found {
+            let i = match months.iter().position(|m| m.month == key) {
+                Some(i) => i,
+                None => {
+                    months.push(MonthActivity {
+                        month: key,
+                        ..MonthActivity::default()
+                    });
+                    months.len() - 1
+                }
+            };
+            let Some(m) = months.get_mut(i) else {
+                continue;
+            };
+            match event {
+                Event::Commits(repo, n) => match m.commits.iter_mut().find(|(r, _)| *r == repo) {
+                    Some((_, total)) => *total += n,
+                    None => m.commits.push((repo, n)),
+                },
+                Event::Pull(c) => m.pulls.push(c),
+                Event::Issue(c) => m.issues.push(c),
+                Event::Review(c) => {
+                    if !m
+                        .reviews
+                        .iter()
+                        .any(|r| r.repo == c.repo && r.number == c.number)
+                    {
+                        m.reviews.push(c);
+                    }
+                }
+            }
+        }
+        months.sort_by(|a, b| b.month.cmp(&a.month));
+        months.truncate(ACTIVITY_MONTHS);
+        for m in &mut months {
+            m.commits
+                .sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        }
+        Contributions {
+            total: count(calendar.total_contributions),
+            weeks,
+            activity: months,
+        }
+    }
+}
+
+/// One contribution, before it's filed under its month.
+enum Event {
+    Commits(String, u64),
+    Pull(Contributed),
+    Issue(Contributed),
+    Review(Contributed),
+}
+
 #[derive(cynic::QueryVariables, Debug)]
 pub struct ProfileVariables {
     pub login: String,
@@ -1195,6 +1600,12 @@ pub struct ProfileQuery {
     pub user: Option<UserFull>,
     #[arguments(login: $login)]
     pub organization: Option<OrgFull>,
+    #[cynic(rename = "repository", alias)]
+    #[arguments(owner: $login, name: $login)]
+    pub user_readme: Option<UserReadmeRepo>,
+    #[cynic(rename = "repository", alias)]
+    #[arguments(owner: $login, name: ".github")]
+    pub org_readme: Option<OrgReadmeRepo>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -1212,8 +1623,14 @@ pub struct UserFull {
     pub pinned_items: Pinned,
     #[arguments(first: 30, orderBy: { field: PUSHED_AT, direction: DESC }, ownerAffiliations: [OWNER])]
     pub repositories: RepoList,
-    #[arguments(first: 30, orderBy: { field: STARRED_AT, direction: DESC })]
-    pub starred_repositories: StarList,
+    pub starred_repositories: StarCount,
+    pub status: Option<WireStatus>,
+    pub pronouns: Option<String>,
+    #[arguments(first: 10)]
+    pub social_accounts: SocialList,
+    #[arguments(first: 20)]
+    pub organizations: OrgLogins,
+    pub contributions_collection: WireContributions,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -1235,6 +1652,9 @@ pub struct OrgFull {
     pub pinned_items: Pinned,
     #[arguments(first: 30, orderBy: { field: PUSHED_AT, direction: DESC })]
     pub repositories: RepoList,
+    pub is_verified: bool,
+    #[arguments(first: 12)]
+    pub members_with_role: MemberList,
 }
 
 #[derive(cynic::InlineFragments, Debug)]
@@ -1994,11 +2414,38 @@ pub(crate) fn repo_list(list: RepoList) -> (Vec<RepoSummary>, u64) {
     (repos, total)
 }
 
+fn readme_text(object: Option<ReadmeObject>) -> Option<String> {
+    match object? {
+        ReadmeObject::Blob(b) => b.text.filter(|t| !t.trim().is_empty()),
+        ReadmeObject::Other => None,
+    }
+}
+
 impl ProfileQuery {
     pub(crate) fn into_profile(self) -> Option<Profile> {
         if let Some(u) = self.user {
             let (repos, repo_count) = repo_list(u.repositories);
+            let status = u.status.and_then(|s| {
+                let text = [s.emoji, s.message]
+                    .into_iter()
+                    .flatten()
+                    .filter(|t| !t.trim().is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                (!text.is_empty()).then_some(text)
+            });
             return Some(Profile {
+                readme: readme_text(self.user_readme.and_then(|r| r.object)),
+                status,
+                pronouns: u.pronouns.filter(|p| !p.trim().is_empty()),
+                socials: nodes(u.social_accounts.nodes)
+                    .map(|s| (s.display_name, s.url.0))
+                    .collect(),
+                orgs: nodes(u.organizations.nodes).map(|o| o.login).collect(),
+                verified: false,
+                people: Vec::new(),
+                people_count: 0,
+                contributions: Some(u.contributions_collection.into_contributions()),
                 login: u.login,
                 name: u.name.filter(|n| !n.is_empty()),
                 bio: u.bio.filter(|b| !b.trim().is_empty()),
@@ -2012,9 +2459,7 @@ impl ProfileQuery {
                 repos,
                 repo_count,
                 star_count: count(u.starred_repositories.total_count),
-                stars: nodes(u.starred_repositories.nodes)
-                    .filter_map(RepoCard::into_summary)
-                    .collect(),
+                stars: Vec::new(),
             });
         }
         let o = self.organization?;
@@ -2034,6 +2479,15 @@ impl ProfileQuery {
             repo_count,
             stars: Vec::new(),
             star_count: 0,
+            readme: readme_text(self.org_readme.and_then(|r| r.object)),
+            status: None,
+            pronouns: None,
+            socials: Vec::new(),
+            orgs: Vec::new(),
+            verified: o.is_verified,
+            people: nodes(o.members_with_role.nodes).map(|u| u.login).collect(),
+            people_count: count(o.members_with_role.total_count),
+            contributions: None,
         })
     }
 }
