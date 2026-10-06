@@ -191,16 +191,19 @@ impl Bg {
         Bg::SelectedHigh,
     ];
 
+    /// Filled backgrounds, each with the one text role that goes on it.
+    const FILLED: [(Bg, Fg); 6] = [
+        (Bg::Primary, Fg::OnPrimary),
+        (Bg::PrimaryContainer, Fg::OnPrimaryContainer),
+        (Bg::SecondaryContainer, Fg::OnSecondaryContainer),
+        (Bg::TertiaryContainer, Fg::OnTertiaryContainer),
+        (Bg::ErrorContainer, Fg::OnErrorContainer),
+        (Bg::SuccessContainer, Fg::OnSuccessContainer),
+    ];
+
     pub fn all() -> Vec<Bg> {
         let mut all = Bg::NEUTRAL.to_vec();
-        all.extend([
-            Bg::Primary,
-            Bg::PrimaryContainer,
-            Bg::SecondaryContainer,
-            Bg::TertiaryContainer,
-            Bg::ErrorContainer,
-            Bg::SuccessContainer,
-        ]);
+        all.extend(Bg::FILLED.map(|(bg, _)| bg));
         all.extend(DiffBg::ALL.map(Bg::Diff));
         all.extend(DiffBg::ALL.map(Bg::DiffSelected));
         all
@@ -277,12 +280,7 @@ pub fn requirement(fg: Fg, bg: Bg) -> Option<Requirement> {
         // Also line numbers GitHub won't accept comments on.
         Fg::Disabled if bg.is_neutral() || bg.is_diff() => Some(Exempt),
         Fg::OutlineVariant if bg.is_neutral() => Some(Decorative),
-        Fg::OnPrimary if bg == Bg::Primary => Some(Text),
-        Fg::OnPrimaryContainer if bg == Bg::PrimaryContainer => Some(Text),
-        Fg::OnSecondaryContainer if bg == Bg::SecondaryContainer => Some(Text),
-        Fg::OnTertiaryContainer if bg == Bg::TertiaryContainer => Some(Text),
-        Fg::OnErrorContainer if bg == Bg::ErrorContainer => Some(Text),
-        Fg::OnSuccessContainer if bg == Bg::SuccessContainer => Some(Text),
+        _ if Bg::FILLED.contains(&(bg, fg)) => Some(Text),
         _ => None,
     }
 }
@@ -483,14 +481,11 @@ impl Theme {
     /// A background fill with the default text color for that surface.
     pub fn fill(&self, bg: Bg) -> Style {
         let fg = match bg {
-            Bg::Primary => Fg::OnPrimary,
-            Bg::PrimaryContainer => Fg::OnPrimaryContainer,
-            Bg::SecondaryContainer => Fg::OnSecondaryContainer,
-            Bg::TertiaryContainer => Fg::OnTertiaryContainer,
-            Bg::ErrorContainer => Fg::OnErrorContainer,
-            Bg::SuccessContainer => Fg::OnSuccessContainer,
             Bg::Diff(_) | Bg::DiffSelected(_) => Fg::Syntax(Syntax::Default),
-            _ => Fg::OnSurface,
+            _ => Bg::FILLED
+                .iter()
+                .find(|(filled, _)| *filled == bg)
+                .map_or(Fg::OnSurface, |&(_, on)| on),
         };
         self.style(fg, bg)
     }
