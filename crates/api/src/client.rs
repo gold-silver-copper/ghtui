@@ -1112,6 +1112,60 @@ impl GitHub {
         Ok(results)
     }
 
+    /// A user's or organization's own repositories in `sort` order, 30 at a
+    /// time from `after`; the first page is cached.
+    pub async fn owner_repos(
+        &self,
+        login: &str,
+        sort: browse::RepoSort,
+        after: Option<String>,
+    ) -> Result<browse::Results<browse::RepoSummary>, ApiError> {
+        let first = after.is_none();
+        let op = browse::OwnerReposQuery::build(browse::OwnerReposVariables {
+            login: login.to_owned(),
+            after,
+            order: sort.into(),
+        });
+        let repos = self
+            .graphql(op)
+            .await?
+            .repository_owner
+            .ok_or_else(|| ApiError::NotFound(login.to_owned()))?
+            .repositories
+            .into_results();
+        if first {
+            return Ok(self
+                .kept(&browse::keys::owner_repos(login, sort), repos)
+                .await);
+        }
+        Ok(repos)
+    }
+
+    /// What a user starred, most recently first, 30 at a time from
+    /// `after`; the first page is cached.
+    pub async fn starred(
+        &self,
+        login: &str,
+        after: Option<String>,
+    ) -> Result<browse::Results<browse::RepoSummary>, ApiError> {
+        let first = after.is_none();
+        let op = browse::StarredQuery::build(browse::LoginPageVariables {
+            login: login.to_owned(),
+            after,
+        });
+        let stars = self
+            .graphql(op)
+            .await?
+            .user
+            .ok_or_else(|| ApiError::NotFound(login.to_owned()))?
+            .starred_repositories
+            .into_results();
+        if first {
+            return Ok(self.kept(&browse::keys::starred(login), stars).await);
+        }
+        Ok(stars)
+    }
+
     /// A repository's forks, most starred first, 30 at a time from
     /// `after`; the first page is cached.
     pub async fn forks(

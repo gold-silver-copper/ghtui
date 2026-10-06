@@ -3,7 +3,7 @@
 //! title for pull requests. Both the view and mouse handling use
 //! [`State::layout`], so clicks land where things are drawn.
 
-use ghtui_api::browse::SearchKind;
+use ghtui_api::browse::{RepoSort, SearchKind};
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::chrome::{Crumb, Tab};
 use ghtui_ui::pages::{PrTab, ProfileTab};
@@ -159,23 +159,52 @@ impl State {
                         tab,
                     })
                 };
-                c.tabs
-                    .push((new_tab("◫", "Overview", None), user(ProfileTab::Overview)));
-                c.tabs.push((
-                    new_tab("▤", "Repositories", profile.map(|p| p.repo_count)),
-                    user(ProfileTab::Repositories),
-                ));
-                if !profile.is_some_and(|p| p.is_org) {
-                    c.tabs.push((
-                        new_tab("☆", "Stars", profile.map(|p| p.star_count)),
-                        user(ProfileTab::Stars),
+                let sort = match tab {
+                    ProfileTab::Repositories(sort) => *sort,
+                    _ => RepoSort::Updated,
+                };
+                let mut tabs = vec![
+                    ("◫", "Overview", None, ProfileTab::Overview),
+                    (
+                        "▤",
+                        "Repositories",
+                        profile.map(|p| p.repo_count),
+                        ProfileTab::Repositories(sort),
+                    ),
+                ];
+                if profile.is_some_and(|p| p.is_org) {
+                    tabs.push((
+                        "⚇",
+                        "People",
+                        profile.map(|p| p.people_count),
+                        ProfileTab::People,
                     ));
+                } else {
+                    tabs.extend([
+                        (
+                            "☆",
+                            "Stars",
+                            profile.map(|p| p.star_count),
+                            ProfileTab::Stars,
+                        ),
+                        (
+                            "⚇",
+                            "Followers",
+                            profile.and_then(|p| p.followers),
+                            ProfileTab::Followers,
+                        ),
+                        (
+                            "⚇",
+                            "Following",
+                            profile.and_then(|p| p.following),
+                            ProfileTab::Following,
+                        ),
+                    ]);
                 }
-                c.active = Some(match tab {
-                    ProfileTab::Overview => 0,
-                    ProfileTab::Repositories => 1,
-                    ProfileTab::Stars => 2,
-                });
+                c.active = tabs.iter().position(|(.., t)| t == tab);
+                for (icon, label, count, tab) in tabs {
+                    c.tabs.push((new_tab(icon, label, count), user(tab)));
+                }
             }
             Route::Search { kind, query } => {
                 c.crumb("Search", None);

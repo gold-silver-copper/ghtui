@@ -1544,6 +1544,33 @@ pub(crate) mod tests {
         assert_eq!((h.items.len(), h.next.as_deref()), (4, None));
     }
 
+    /// A profile's repositories sort by name and stars as well as last
+    /// update, and `/` there searches that owner's repositories.
+    #[test]
+    fn profile_repositories_sort_and_filter() {
+        use ghtui_api::browse::RepoSort;
+        use ghtui_ui::pages::ProfileTab;
+        let mut state = state();
+        let tab = |sort| Route::User {
+            login: "octocat".into(),
+            tab: ProfileTab::Repositories(sort),
+        };
+        let _ = state.push(tab(RepoSort::Updated));
+        for sort in [RepoSort::Name, RepoSort::Stars, RepoSort::Updated] {
+            let cmds = act(&mut state, Action::Sort);
+            assert_eq!(route(&state), tab(sort));
+            // Last updated is still loading from when the tab opened.
+            let key = DataKey::OwnerRepos("octocat".into(), sort);
+            assert!(
+                sort == RepoSort::Updated || cmds.contains(&fetch(key)),
+                "{sort:?}"
+            );
+        }
+        press(&mut state, "/");
+        let sb = overlay!(state, Search);
+        assert_eq!(sb.input.lines().join(""), "user:octocat ");
+    }
+
     /// People and repository lists load more like any list.
     #[test]
     fn every_list_appends_its_next_page() {

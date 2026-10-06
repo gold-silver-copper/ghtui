@@ -11,7 +11,7 @@ use ghtui_api::model::RepoId;
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::chrome::{self, KeyRow, SuggestRow};
 use ghtui_ui::page::{self, HintLabel, Link};
-use ghtui_ui::pages::{self, PrTab};
+use ghtui_ui::pages::{self, PrTab, ProfileTab};
 use ghtui_ui::{PAD_X, PAD_Y};
 use ratatui::layout::Rect;
 use ratatui_textarea::TextArea;
@@ -665,6 +665,14 @@ impl State {
             input.insert_str(q);
             input.insert_char(' ');
         }
+        // A profile's repositories filter by searching that owner's.
+        if let Some(Route::User {
+            login,
+            tab: ProfileTab::Repositories(_),
+        }) = self.route()
+        {
+            input.insert_str(format!("user:{login} "));
+        }
         self.overlay = Some(Overlay::Search(Box::new(SearchBox {
             input,
             filter: filter_query.is_some(),
@@ -921,6 +929,20 @@ fn cycle_state(state: &mut State) -> Vec<Cmd> {
 
 #[must_use]
 fn cycle_sort(state: &mut State) -> Vec<Cmd> {
+    // A profile's repositories sort by GraphQL order, not a search word.
+    if let Some(Route::User {
+        login,
+        tab: ProfileTab::Repositories(sort),
+    }) = state.route()
+    {
+        let next = sort.next();
+        let route = Route::User {
+            login: login.clone(),
+            tab: ProfileTab::Repositories(next),
+        };
+        state.info(format!("Sorted: {}", next.label()));
+        return state.replace(route, true);
+    }
     let Some((route, query)) = list_query(state) else {
         state.info("Only lists can be sorted");
         return Vec::new();

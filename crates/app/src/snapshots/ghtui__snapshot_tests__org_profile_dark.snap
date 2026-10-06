@@ -1,13 +1,13 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 482
+assertion_line: 503
 expression: "render(&sized(with_org(Mode::Dark), 100, 50))"
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 100, height: 50 },
     content: [
         "  ◆ ghtui   ratatui                                    ⌕ Type / to search                 @octocat  ",
-        "   ◫ Overview   ▤ Repositories  24                                                                  ",
+        "   ◫ Overview   ▤ Repositories  24    ⚇ People  14                                                  ",
         "──━━━━━━━━━━━━──────────────────────────────────────────────────────────────────────────────────────",
         "                                                                                                    ",
         "  Ratatui  ratatui  Organization   ✓ Verified                                                       ",
@@ -76,6 +76,10 @@ Buffer {
         x: 18, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 31, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
         x: 35, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 37, y: 1, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 40, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 47, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
+        x: 51, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 0, y: 2, fg: Rgb(72, 76, 83), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 2, y: 2, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 14, y: 2, fg: Rgb(72, 76, 83), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,

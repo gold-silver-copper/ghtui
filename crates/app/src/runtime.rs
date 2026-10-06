@@ -715,6 +715,12 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Forks(repo) => at(gh.cached(&keys::forks(repo))?, |v| {
             Data::RepoPage(Box::new(v))
         }),
+        DataKey::OwnerRepos(login, sort) => at(gh.cached(&keys::owner_repos(login, *sort))?, |v| {
+            Data::RepoPage(Box::new(v))
+        }),
+        DataKey::Stars(login) => at(gh.cached(&keys::starred(login))?, |v| {
+            Data::RepoPage(Box::new(v))
+        }),
         DataKey::Releases(repo) => at(gh.cached(&keys::releases(repo))?, |v| {
             Data::Releases(Box::new(v))
         }),
@@ -749,6 +755,10 @@ async fn fetch_more(gh: &GitHub, key: &DataKey, after: String) -> Result<Data, A
         }
         DataKey::Users(list) => Data::Users(Box::new(gh.users(list, Some(after)).await?)),
         DataKey::Forks(repo) => Data::RepoPage(Box::new(gh.forks(repo, Some(after)).await?)),
+        DataKey::OwnerRepos(login, sort) => {
+            Data::RepoPage(Box::new(gh.owner_repos(login, *sort, Some(after)).await?))
+        }
+        DataKey::Stars(login) => Data::RepoPage(Box::new(gh.starred(login, Some(after)).await?)),
         DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, Some(after)).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, Some(after)).await?)),
         other => return Err(ApiError::NotFound(format!("more of {other:?}"))),
@@ -776,6 +786,10 @@ async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> {
         DataKey::PrChecks(pr) => Data::Checks(Box::new(gh.pr_checks(pr).await?)),
         DataKey::Users(list) => Data::Users(Box::new(gh.users(list, None).await?)),
         DataKey::Forks(repo) => Data::RepoPage(Box::new(gh.forks(repo, None).await?)),
+        DataKey::OwnerRepos(login, sort) => {
+            Data::RepoPage(Box::new(gh.owner_repos(login, *sort, None).await?))
+        }
+        DataKey::Stars(login) => Data::RepoPage(Box::new(gh.starred(login, None).await?)),
         DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, None).await?)),
         DataKey::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, None).await?)),

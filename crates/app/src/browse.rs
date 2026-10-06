@@ -6,12 +6,12 @@ use std::collections::HashMap;
 
 use ghtui_api::browse::{
     Blob, Checks, CommitDetail, CommitInfo, IssueDetail, PrActivity, Profile, Refs, Release,
-    RepoOverview, RepoSummary, Results, SearchKind, SearchResults, TagInfo, TreeEntry, UserList,
-    UserSummary,
+    RepoOverview, RepoSort, RepoSummary, Results, SearchKind, SearchResults, TagInfo, TreeEntry,
+    UserList, UserSummary,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::page::{Link, Page, Role, Seg};
-use ghtui_ui::pages::{self, Keys, PrTab};
+use ghtui_ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
 
 use crate::keymap::Action;
 use crate::route::Route;
@@ -50,6 +50,10 @@ pub enum DataKey {
     Releases(RepoId),
     Release(RepoId, String),
     Tags(RepoId),
+    /// Someone's own repositories, in an order.
+    OwnerRepos(String, RepoSort),
+    /// What someone starred.
+    Stars(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +120,17 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Watchers(repo) => Some(DataKey::Users(UserList::Watchers(repo.clone()))),
         Route::Forks(repo) => Some(DataKey::Forks(repo.clone())),
         Route::Releases(repo) => Some(DataKey::Releases(repo.clone())),
+        Route::User { login, tab } => {
+            let login = login.to_lowercase();
+            Some(match tab {
+                ProfileTab::Overview => return None,
+                ProfileTab::Repositories(sort) => DataKey::OwnerRepos(login, *sort),
+                ProfileTab::Stars => DataKey::Stars(login),
+                ProfileTab::Followers => DataKey::Users(UserList::Followers(login)),
+                ProfileTab::Following => DataKey::Users(UserList::Following(login)),
+                ProfileTab::People => DataKey::Users(UserList::People(login)),
+            })
+        }
         Route::Tags(repo) => Some(DataKey::Tags(repo.clone())),
         _ => route
             .search()
@@ -194,7 +209,9 @@ pub fn needs(route: &Route) -> Vec<Need> {
             header(repo),
             Need::Data(K::History(repo.clone(), rev.clone(), path.clone())),
         ],
-        Route::User { login, .. } => vec![Need::Data(K::Profile(login.to_lowercase()))],
+        Route::User { login, .. } => std::iter::once(Need::Data(K::Profile(login.to_lowercase())))
+            .chain(paged(route).map(Need::Data))
+            .collect(),
     }
 }
 
@@ -593,7 +610,16 @@ impl State {
                 None => missing(&mut page, &route.title()),
             },
             Route::User { login, tab } => match self.profile(login) {
-                Some(p) => pages::profile(&mut page, p, *tab, now),
+                Some(p) => {
+                    let list = match paged(route).map(|key| (self.get(&key), key)) {
+                        Some((Some(Data::RepoPage(r)), _)) => ProfileList::Repos(Some(r)),
+                        Some((Some(Data::Users(r)), _)) => ProfileList::People(Some(r)),
+                        Some((_, DataKey::Users(_))) => ProfileList::People(None),
+                        Some(_) => ProfileList::Repos(None),
+                        None => ProfileList::None,
+                    };
+                    pages::profile(&mut page, p, *tab, list, now);
+                }
                 _ => missing(&mut page, &format!("@{login}")),
             },
         }
