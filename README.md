@@ -57,11 +57,13 @@ ghtui --theme light                     # override the color scheme
 
 ghtui is laid out like the website:
 - **The header** shows where you are (`owner / repo`), a search field ("Type /
-  to search"), your review requests and your account.
-- **Tabs** sit under the header, with the active tab underlined: Code, Issues,
-  Pull requests and Actions on a repository; Conversation, Commits, Checks and
-  Files changed on a pull request; Overview, Repositories and Stars on a
-  profile.
+  to search"), your review requests and your account. With more than one tab
+  open, it shows your open tabs instead (see **Open tabs** below).
+- **A page's tabs** sit under the header, with the active one underlined:
+  Code, Issues, Pull requests and Actions on a repository; Conversation,
+  Commits, Checks and Files changed on a pull request; Commit and Files
+  changed on a commit; Overview, Repositories, Stars, Followers and Following
+  on a user (Overview, Repositories and People on an organization).
 - **The content** is in GitHub's boxes: the file list under the latest
   commit, the README, issue lists, and comments joined into a timeline. Wide
   terminals also get the sidebar (About, Assignees, Labels, Reviewers).
@@ -98,7 +100,26 @@ do.
   Problems that last, such as a rejected token or drafts that can't be
   saved, stay in a banner above the status bar until they're fixed.
 - `:` (or `ctrl-k`) is the command palette. It also takes `owner/repo`,
-  `owner/repo#123`, `@user`, or a URL.
+  `owner/repo#123`, `@user`, or a URL, and lists your open tabs.
+
+**Open tabs.** Like a browser's: keep several pages, issues, pull requests or
+diffs open and switch between them. Each has its own back and forward; they
+share what's been loaded, so two tabs on one pull request share its diff and
+your drafts.
+- `T` opens the selection in a new tab: a page's selected link, the file the
+  tree has selected, a diff's pull request or commit, or (with nothing
+  selected) this page again. In link hints, typing a letter as a capital
+  follows that link in a new tab.
+- `]` and `[` go to the next and previous tab, `alt-1`…`alt-9` to tab N, and
+  `ctrl-w` closes one.
+- With more than one open, the header shows them by short title (`#42`,
+  `owner/repo`, `@user`, a file's name), the one on screen in bold, and how
+  many are hidden either side when they don't all fit.
+- Tabs off screen don't fetch; going back to one shows what it had and
+  refreshes what's stale.
+- The tabs open when you quit come back next time (with a target on the
+  command line, it opens as a new tab after them). A single tab isn't kept:
+  ghtui starts at home.
 
 **The pages.**
 - **Home** shows review requests, your open pull requests and your
@@ -121,15 +142,35 @@ do.
   - A sticky title.
   - Conversation, with a merge box for checks, reviews and conflicts.
   - Commits, grouped by day.
+  - Checks: each check run and status on the head commit, grouped by
+    workflow, failures first, with how long it took. Logs and re-runs stay
+    on GitHub.
   - Files changed, which is the diff viewer below.
-- **Profile** has its Overview (pinned repositories), Repositories and Stars.
+- **Commit**: its message, author and committer, signature and parents, and
+  its Files changed in the diff viewer (against its first parent). A
+  branch's or file's **commit history** lists commits by day.
+- **Actions** shows the checks on the default branch, like a pull request's.
+- **Releases** list a repository's releases; a **release** shows its notes and
+  assets. **Tags**, **stargazers**, **watchers** and **forks** are lists too.
+- **Profile**:
+  - The profile README, status, pronouns, social accounts and organizations.
+  - A user's contribution graph for the last year, and their contribution
+    activity month by month.
+  - An organization's verified badge, members and top languages.
+  - Repositories (sorted by last updated, name or stars; `/` searches that
+    owner's), Stars, Followers and Following, or an organization's People.
+    The lists load more.
 - **Search** has tabs for repositories, issues, pull requests and users.
 - **Writing**: `c` comments on the issue or pull request on screen, and the
   "Add a comment" box at the end does the same. `s` stars or unstars.
 
-Links ghtui doesn't show itself (Actions, wikis, releases, external sites)
-open in your browser. Pages show cached data first and refresh in the
-background. Pages are at most 140 columns wide and centered.
+A github.com link opens as a ghtui page: commits, commit history, checks,
+releases, tags, labels (as a filtered issue list), stargazers, forks, and
+links to lines in a file (`#L10-L20` opens the file there, marked). What
+ghtui doesn't show itself opens in your browser: a check's logs, release
+downloads, milestones, discussions, wikis, projects, gists and other sites.
+Pages show cached data first and refresh in the background. Pages are at
+most 140 columns wide and centered.
 
 ## Authentication
 
@@ -320,6 +361,11 @@ Notes:
   (`crates/schema/github.graphql`, from
   `https://docs.github.com/public/fpt/schema.docs.graphql`). The generated
   schema module lives in its own crate so query edits never recompile it.
+- **Navigation**: each open tab has a browser-like history. The tab on
+  screen keeps its history in the state's `screens` and `forward`; the others
+  wait before and after it (`crates/app/src/tabs.rs`), so switching swaps
+  histories and the rest of the app sees only the tab on screen. Fetched
+  data, pull requests and diffs are shared by all tabs.
 - **HTTP**: a single reqwest client is used for both GraphQL and REST. It
   uses rustls with the platform's root certificates and the `ring` provider,
   which is installed explicitly as the process default. `scripts/check-tls-deps.sh`, which runs in CI, fails if
