@@ -252,10 +252,10 @@ density = "auto"      # auto | compact | comfortable: one row per list item,
                       # or two as on GitHub; auto is compact under 30 rows
 
 [keys]
-# Each action listed here replaces its default bindings. Vim notation:
-# j, G, <C-d>, <Enter>, <Esc>, <Tab>, <S-Tab>, <BS>, <Up>, <lt> for "<".
-# Sequences such as "gi" work too, and "page:" or "diff:" limits a binding
-# to pages or the diff. Actions without a default key can be bound here.
+# Each action listed here replaces its default bindings. A binding is one
+# key, in vim notation: j, G, <C-d>, <Enter>, <Esc>, <Tab>, <S-Tab>, <BS>,
+# <Up>, <lt> for "<". "page:" or "diff:" limits a binding to pages or the
+# diff. Actions without a default key can be bound here.
 down = ["j", "<Down>", "<C-n>"]
 up = ["k", "<Up>", "<C-p>"]
 sort = ["O"]

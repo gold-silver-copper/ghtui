@@ -465,16 +465,16 @@ impl KeyRow {
     }
 }
 
-/// A panel of keys at the bottom right, above the status bar: which keys
-/// can follow a prefix, or what can be done here (with a selection).
+/// A panel of keys at the bottom right, above the status bar: what can be
+/// done here, with a selection.
 pub struct KeyPanel<'a> {
     pub ctx: Ctx<'a>,
     pub title: &'a str,
     pub rows: &'a [KeyRow],
-    pub selected: Option<usize>,
+    pub selected: usize,
     /// Where the selection is among the items (`3/40`), shown when they
     /// don't all fit.
-    pub position: Option<(usize, usize)>,
+    pub position: (usize, usize),
 }
 
 impl KeyPanel<'_> {
@@ -524,20 +524,19 @@ impl Widget for KeyPanel<'_> {
             1,
         );
         let rows = usize::from(area.height.saturating_sub(3));
-        let position = self
-            .position
-            .filter(|_| self.rows.len() > rows)
-            .map(|(at, of)| format!("{at}/{of}"))
-            .unwrap_or_default();
+        let (at, of) = self.position;
+        let position = if self.rows.len() > rows {
+            format!("{at}/{of}")
+        } else {
+            String::new()
+        };
         let title = vec![Span::styled(self.title, theme.title(PANEL))];
         let position = vec![Span::styled(position, theme.meta(PANEL))];
         render_split(title_row, buf, title, position, 1);
-        let skip = self
-            .selected
-            .map_or(0, |s| s.saturating_add(1).saturating_sub(rows));
+        let skip = self.selected.saturating_add(1).saturating_sub(rows);
         let shown = self.rows.iter().enumerate().skip(skip).take(rows);
         for ((n, row), y) in shown.zip(area.y.saturating_add(2)..area.bottom()) {
-            let (line, bg) = list_row(buf, theme, area, y, self.selected == Some(n), PANEL);
+            let (line, bg) = list_row(buf, theme, area, y, self.selected == n, PANEL);
             if row.heading {
                 Span::styled(row.label.as_str(), heading(theme)).render(line, buf);
                 continue;

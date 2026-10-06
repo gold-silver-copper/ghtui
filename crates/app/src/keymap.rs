@@ -1,5 +1,5 @@
-//! Rebindable keymap with multi-key sequences in vim notation:
-//! `j`, `G`, `gg`, `]h`, `<C-d>`, `<Enter>`, `<Esc>`, `<Tab>`, `<Down>`.
+//! Rebindable keymap. A binding is one key, in vim notation: `j`, `G`,
+//! `<C-d>`, `<Enter>`, `<Esc>`, `<Tab>`, `<Down>`.
 
 use std::collections::HashMap;
 
@@ -194,29 +194,24 @@ const NAMED: &[(&str, KeyCode)] = &[
     ("lt", KeyCode::Char('<')),
 ];
 
-/// Parses a sequence in vim notation.
-pub fn parse_sequence(s: &str) -> Result<Vec<Key>, String> {
-    let mut keys = Vec::new();
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '<' || chars.peek().is_none() {
-            keys.push(Key::new(KeyCode::Char(c), KeyModifiers::NONE));
-            continue;
-        }
-        let mut name = String::new();
-        loop {
-            match chars.next() {
-                Some('>') => break,
-                Some(c) => name.push(c),
-                None => return Err(format!("unclosed `<` in key sequence `{s}`")),
-            }
-        }
-        keys.push(parse_named(&name).ok_or_else(|| format!("unknown key `<{name}>` in `{s}`"))?);
+/// Parses one key in vim notation.
+pub fn parse_key(s: &str) -> Result<Key, String> {
+    let mut chars = s.chars();
+    let (Some(first), rest) = (chars.next(), chars.as_str()) else {
+        return Err("empty key".into());
+    };
+    if rest.is_empty() {
+        return Ok(Key::new(KeyCode::Char(first), KeyModifiers::NONE));
     }
-    if keys.is_empty() {
-        return Err("empty key sequence".into());
+    match s.strip_prefix('<').and_then(|n| n.strip_suffix('>')) {
+        Some(name) if !name.contains(['<', '>']) => {
+            parse_named(name).ok_or_else(|| format!("unknown key `{s}`"))
+        }
+        _ if s.starts_with('<') && !s.contains('>') => Err(format!("unclosed `<` in `{s}`")),
+        _ => Err(format!(
+            "`{s}` is more than one key; bindings are single keys"
+        )),
     }
-    Ok(keys)
 }
 
 fn parse_named(name: &str) -> Option<Key> {
@@ -252,11 +247,8 @@ fn parse_named(name: &str) -> Option<Key> {
     Some(Key::new(code, mods))
 }
 
-pub fn format_sequence(keys: &[Key]) -> String {
-    keys.iter().map(|k| format_key(*k)).collect()
-}
-
-fn format_key(key: Key) -> String {
+/// Writes `key` in vim notation.
+pub fn format_key(key: Key) -> String {
     let base = match key.code {
         KeyCode::Char('<') => "lt".to_owned(),
         KeyCode::Char(' ') => "Space".to_owned(),
@@ -280,51 +272,36 @@ fn format_key(key: Key) -> String {
     format!("<{prefix}{base}>")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Resolution {
-    Action(Action),
-    /// A prefix of at least one binding; wait for more keys.
-    Pending,
-    Unbound,
-}
-
 #[derive(Debug, Clone)]
 pub struct Keymap {
-    /// `(keys, action, where)`.
-    bindings: Vec<(Vec<Key>, Action, Scope)>,
+    /// `(key, action, where)`.
+    bindings: Vec<(Key, Action, Scope)>,
 }
 
 impl Default for Keymap {
-    /// The default bindings (a test checks they parse and don't conflict).
+    /// The default bindings (a test checks they're valid).
     fn default() -> Self {
-        let bindings = Action::ALL
-            .iter()
-            .flat_map(|&action| {
-                action.defaults().iter().filter_map(move |seq| {
-                    let (seq, scope) = scoped(seq, action);
-                    Some((parse_sequence(seq).ok()?, action, scope))
-                })
-            })
-            .collect();
-        Self { bindings }
+        Self::with_overrides(&HashMap::new()).unwrap_or(Self {
+            bindings: Vec::new(),
+        })
     }
 }
 
 /// `page:h` binds `h` on pages only, `diff:s` in the diff only; a plain
-/// sequence applies where its action does.
-fn scoped(seq: &str, action: Action) -> (&str, Scope) {
-    if let Some(rest) = seq.strip_prefix("page:") {
+/// key applies where its action does.
+fn scoped(key: &str, action: Action) -> (&str, Scope) {
+    if let Some(rest) = key.strip_prefix("page:") {
         (rest, Scope::Page)
-    } else if let Some(rest) = seq.strip_prefix("diff:") {
+    } else if let Some(rest) = key.strip_prefix("diff:") {
         (rest, Scope::Diff)
     } else {
-        (seq, action.scope())
+        (key, action.scope())
     }
 }
 
 impl Keymap {
     /// The defaults, with each action named in `overrides` rebound to exactly
-    /// the given sequences (an empty list unbinds it).
+    /// the given keys (an empty list unbinds it).
     pub fn with_overrides(overrides: &HashMap<String, Vec<String>>) -> Result<Self, String> {
         for name in overrides.keys() {
             if Action::from_name(name).is_none() {
@@ -337,15 +314,14 @@ impl Keymap {
         }
         let mut bindings = Vec::new();
         for &action in Action::ALL {
-            let sequences: Vec<String> = match overrides.get(action.name()) {
+            let keys: Vec<String> = match overrides.get(action.name()) {
                 Some(list) => list.clone(),
                 None => action.defaults().iter().map(|s| (*s).to_owned()).collect(),
             };
-            for seq in sequences {
-                let (seq, scope) = scoped(&seq, action);
-                let keys =
-                    parse_sequence(seq).map_err(|e| format!("[keys] {}: {e}", action.name()))?;
-                bindings.push((keys, action, scope));
+            for key in keys {
+                let (key, scope) = scoped(&key, action);
+                let key = parse_key(key).map_err(|e| format!("[keys] {}: {e}", action.name()))?;
+                bindings.push((key, action, scope));
             }
         }
         let keymap = Self { bindings };
@@ -353,19 +329,15 @@ impl Keymap {
         Ok(keymap)
     }
 
-    /// Rejects duplicate bindings and bindings that are a prefix of another
-    /// (the shorter one would make the longer unreachable).
+    /// Rejects a key bound twice where both bindings apply.
     fn validate(&self) -> Result<(), String> {
         for (i, (a, action_a, scope_a)) in self.bindings.iter().enumerate() {
             for (b, action_b, scope_b) in self.bindings.iter().skip(i + 1) {
-                // Equal up to the shorter one's length.
-                let prefix = a.iter().zip(b).all(|(x, y)| x == y);
-                if prefix && scope_a.overlaps(*scope_b) {
+                if a == b && scope_a.overlaps(*scope_b) {
                     return Err(format!(
-                        "key `{}` ({}) conflicts with `{}` ({})",
-                        format_sequence(a),
+                        "key `{}` ({}) conflicts with {}",
+                        format_key(*a),
                         action_a.name(),
-                        format_sequence(b),
                         action_b.name()
                     ));
                 }
@@ -374,85 +346,54 @@ impl Keymap {
         Ok(())
     }
 
-    /// The action `keys` trigger in `scope`.
-    pub fn resolve(&self, keys: &[Key], scope: Scope) -> Resolution {
-        let mut pending = false;
-        for (binding, action, where_) in &self.bindings {
-            if !where_.overlaps(scope) {
-                continue;
-            }
-            if binding.as_slice() == keys {
-                return Resolution::Action(*action);
-            }
-            if binding.len() > keys.len() && binding.starts_with(keys) {
-                pending = true;
-            }
-        }
-        if pending {
-            Resolution::Pending
-        } else {
-            Resolution::Unbound
-        }
-    }
-
-    /// Bindings that start with `keys` in `scope`: the keys still to type,
-    /// and the action.
-    pub fn continuations(&self, keys: &[Key], scope: Scope) -> Vec<(Vec<Key>, Action)> {
+    /// The action `key` runs in `scope`.
+    pub fn resolve(&self, key: Key, scope: Scope) -> Option<Action> {
         self.bindings
             .iter()
-            .filter(|(binding, _, where_)| {
-                where_.overlaps(scope) && binding.len() > keys.len() && binding.starts_with(keys)
-            })
-            .map(|(binding, action, _)| {
-                (binding.iter().skip(keys.len()).copied().collect(), *action)
-            })
-            .collect()
+            .find(|(k, _, where_)| *k == key && where_.overlaps(scope))
+            .map(|(_, action, _)| *action)
     }
 
-    /// The sequences that run `action` in `scope`, for hints.
-    pub fn keys_in(&self, action: Action, scope: Scope) -> impl Iterator<Item = &[Key]> {
+    /// The keys that run `action` in `scope`, for hints.
+    pub fn keys_in(&self, action: Action, scope: Scope) -> impl Iterator<Item = Key> {
         self.bindings
             .iter()
             .filter(move |(_, a, where_)| *a == action && where_.overlaps(scope))
-            .map(|(keys, _, _)| keys.as_slice())
+            .map(|(key, _, _)| *key)
     }
 }
 
 /// A key as people write it: `↵`, `esc`, `⇥`, `space`, `ctrl-d`.
-pub fn pretty(keys: &[Key]) -> String {
-    keys.iter()
-        .map(|k| {
-            let base = match k.code {
-                KeyCode::Enter => "↵".to_owned(),
-                KeyCode::Esc => "esc".to_owned(),
-                KeyCode::Tab => "⇥".to_owned(),
-                KeyCode::BackTab => "⇧⇥".to_owned(),
-                KeyCode::Backspace => "⌫".to_owned(),
-                KeyCode::Char(' ') => "space".to_owned(),
-                KeyCode::Up => "↑".to_owned(),
-                KeyCode::Down => "↓".to_owned(),
-                KeyCode::Left => "←".to_owned(),
-                KeyCode::Right => "→".to_owned(),
-                KeyCode::PageUp => "pgup".to_owned(),
-                KeyCode::PageDown => "pgdn".to_owned(),
-                KeyCode::Home => "home".to_owned(),
-                KeyCode::End => "end".to_owned(),
-                KeyCode::Delete => "del".to_owned(),
-                KeyCode::F(n) => format!("f{n}"),
-                KeyCode::Char(c) => c.to_string(),
-                code => format!("{code:?}").to_lowercase(),
-            };
-            if k.mods.contains(KeyModifiers::CONTROL) {
-                format!("ctrl-{base}")
-            } else if k.mods.contains(KeyModifiers::ALT) {
-                format!("alt-{base}")
-            } else if k.mods.contains(KeyModifiers::SHIFT) {
-                format!("⇧{base}")
-            } else {
-                base
-            }
-        })
-        .collect()
+pub fn pretty(key: Key) -> String {
+    let base = match key.code {
+        KeyCode::Enter => "↵".to_owned(),
+        KeyCode::Esc => "esc".to_owned(),
+        KeyCode::Tab => "⇥".to_owned(),
+        KeyCode::BackTab => "⇧⇥".to_owned(),
+        KeyCode::Backspace => "⌫".to_owned(),
+        KeyCode::Char(' ') => "space".to_owned(),
+        KeyCode::Up => "↑".to_owned(),
+        KeyCode::Down => "↓".to_owned(),
+        KeyCode::Left => "←".to_owned(),
+        KeyCode::Right => "→".to_owned(),
+        KeyCode::PageUp => "pgup".to_owned(),
+        KeyCode::PageDown => "pgdn".to_owned(),
+        KeyCode::Home => "home".to_owned(),
+        KeyCode::End => "end".to_owned(),
+        KeyCode::Delete => "del".to_owned(),
+        KeyCode::F(n) => format!("f{n}"),
+        KeyCode::Char(c) => c.to_string(),
+        code => format!("{code:?}").to_lowercase(),
+    };
+    if key.mods.contains(KeyModifiers::CONTROL) {
+        format!("ctrl-{base}")
+    } else if key.mods.contains(KeyModifiers::ALT) {
+        format!("alt-{base}")
+    } else if key.mods.contains(KeyModifiers::SHIFT) {
+        format!("⇧{base}")
+    } else {
+        base
+    }
 }
 
 #[cfg(test)]
@@ -465,33 +406,44 @@ mod tests {
 
     #[test]
     fn parses_vim_notation() {
-        assert_eq!(parse_sequence("gg").unwrap(), vec![key('g'), key('g')]);
-        assert_eq!(parse_sequence("]h").unwrap(), vec![key(']'), key('h')]);
+        assert_eq!(parse_key("G").unwrap(), key('G'));
         assert_eq!(
-            parse_sequence("<C-d>").unwrap(),
-            vec![Key::new(KeyCode::Char('d'), KeyModifiers::CONTROL)]
+            parse_key("<C-d>").unwrap(),
+            Key::new(KeyCode::Char('d'), KeyModifiers::CONTROL)
         );
         assert_eq!(
-            parse_sequence("<c-D>").unwrap(),
-            vec![Key::new(KeyCode::Char('d'), KeyModifiers::CONTROL)]
+            parse_key("<c-D>").unwrap(),
+            Key::new(KeyCode::Char('d'), KeyModifiers::CONTROL)
         );
         assert_eq!(
-            parse_sequence("<Enter>").unwrap(),
-            vec![Key::new(KeyCode::Enter, KeyModifiers::NONE)]
+            parse_key("<Enter>").unwrap(),
+            Key::new(KeyCode::Enter, KeyModifiers::NONE)
         );
-        assert_eq!(parse_sequence("<lt>").unwrap(), vec![key('<')]);
-        assert_eq!(parse_sequence("<").unwrap(), vec![key('<')]);
-        assert!(parse_sequence("<Nope>").is_err());
-        assert!(parse_sequence("<C-d").is_err());
-        assert!(parse_sequence("").is_err());
+        assert_eq!(parse_key("<lt>").unwrap(), key('<'));
+        assert_eq!(parse_key("<").unwrap(), key('<'));
+        assert!(parse_key("<Nope>").is_err());
+        assert!(parse_key("<C-d").is_err());
+        assert!(parse_key("").is_err());
+    }
+
+    /// Bindings are single keys: a sequence is an error that says so.
+    #[test]
+    fn sequences_are_rejected() {
+        for s in ["gg", "]h", "<C-d><C-u>", "<Esc>j"] {
+            let err = parse_key(s).unwrap_err();
+            assert!(err.contains("single keys"), "{s}: {err}");
+        }
+        let overrides = HashMap::from([("sort".to_owned(), vec!["zs".to_owned()])]);
+        let err = Keymap::with_overrides(&overrides).unwrap_err();
+        assert!(err.contains("single keys"), "{err}");
     }
 
     #[test]
     fn formats_round_trip() {
         for s in [
-            "gg", "G", "]h", "<C-d>", "<Enter>", "<Esc>", "<S-Tab>", "<lt>", "?", ":",
+            "G", "<C-d>", "<Enter>", "<Esc>", "<S-Tab>", "<lt>", "?", ":",
         ] {
-            assert_eq!(format_sequence(&parse_sequence(s).unwrap()), s);
+            assert_eq!(format_key(parse_key(s).unwrap()), s);
         }
     }
 
@@ -501,14 +453,9 @@ mod tests {
         assert_eq!(Key::from(event), key('G'));
     }
 
-    /// `Keymap::default` skips validation; this is it.
     #[test]
-    fn defaults_parse_and_dont_conflict() {
-        let validated = Keymap::with_overrides(&HashMap::new()).unwrap();
-        let defaults = Keymap::default();
-        assert_eq!(validated.bindings, defaults.bindings);
-        let declared: usize = Action::ALL.iter().map(|a| a.defaults().len()).sum();
-        assert_eq!(defaults.bindings.len(), declared, "every default parses");
+    fn defaults_are_valid() {
+        assert!(Keymap::with_overrides(&HashMap::new()).is_ok());
     }
 
     /// The README's key tables say what the keys do. Each row is listed
@@ -605,10 +552,10 @@ mod tests {
             assert_eq!(rows, listed, "README rows and this test's list differ");
             for (cell, actions) in documented {
                 for shown in cell.split('`').skip(1).step_by(2) {
-                    let keys = parse_sequence(&notation(shown)).unwrap();
-                    let does = keymap.resolve(&keys, scope);
+                    let key = parse_key(&notation(shown)).unwrap();
+                    let does = keymap.resolve(key, scope);
                     assert!(
-                        actions.iter().any(|a| does == Resolution::Action(*a)),
+                        actions.iter().any(|a| does == Some(*a)),
                         "README says `{shown}` does {actions:?}; it does {does:?}"
                     );
                 }
@@ -620,51 +567,19 @@ mod tests {
     #[test]
     fn shift_tab_matches_what_terminals_send() {
         let event = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
-        assert_eq!(parse_sequence("<S-Tab>").unwrap(), [Key::from(event)]);
+        assert_eq!(parse_key("<S-Tab>").unwrap(), Key::from(event));
         assert_eq!(
-            parse_sequence("<C-S-Tab>").unwrap(),
-            [Key::new(KeyCode::BackTab, KeyModifiers::CONTROL)]
+            parse_key("<C-S-Tab>").unwrap(),
+            Key::new(KeyCode::BackTab, KeyModifiers::CONTROL)
         );
     }
 
     #[test]
-    fn every_default_is_one_key() {
+    fn resolves_defaults() {
         let keymap = Keymap::default();
-        for (keys, action, _) in &keymap.bindings {
-            assert_eq!(
-                keys.len(),
-                1,
-                "{} is bound to {}",
-                action.name(),
-                format_sequence(keys)
-            );
-        }
-        assert_eq!(
-            keymap.resolve(&[key('j')], Scope::Page),
-            Resolution::Action(Action::Down)
-        );
-        assert_eq!(
-            keymap.resolve(&[key('g')], Scope::Page),
-            Resolution::Action(Action::Top)
-        );
-        assert_eq!(
-            keymap.resolve(&[key('z')], Scope::Page),
-            Resolution::Unbound
-        );
-    }
-
-    #[test]
-    fn sequences_still_work_when_configured() {
-        let overrides = HashMap::from([("sort".to_owned(), vec!["zs".to_owned()])]);
-        let keymap = Keymap::with_overrides(&overrides).unwrap();
-        assert_eq!(
-            keymap.resolve(&[key('z')], Scope::Page),
-            Resolution::Pending
-        );
-        assert_eq!(
-            keymap.resolve(&[key('z'), key('s')], Scope::Page),
-            Resolution::Action(Action::Sort)
-        );
+        assert_eq!(keymap.resolve(key('j'), Scope::Page), Some(Action::Down));
+        assert_eq!(keymap.resolve(key('g'), Scope::Page), Some(Action::Top));
+        assert_eq!(keymap.resolve(key('z'), Scope::Page), None);
     }
 
     #[test]
@@ -675,7 +590,7 @@ mod tests {
                 assert!(
                     a != b,
                     "{} is both {} and {}",
-                    format_sequence(a),
+                    format_key(*a),
                     action_a.name(),
                     action_b.name()
                 );
@@ -684,8 +599,8 @@ mod tests {
         // The verbs do the same on a page and in the diff.
         for c in ['f', 'c', 'o', 'y', '/', 'u'] {
             assert_eq!(
-                keymap.resolve(&[key(c)], Scope::Page),
-                keymap.resolve(&[key(c)], Scope::Diff),
+                keymap.resolve(key(c), Scope::Page),
+                keymap.resolve(key(c), Scope::Diff),
                 "{c}"
             );
         }
@@ -703,29 +618,19 @@ mod tests {
 
     #[test]
     fn keys_read_like_people_write_them() {
-        assert_eq!(pretty(&parse_sequence("<Enter>").unwrap()), "↵");
-        assert_eq!(pretty(&parse_sequence("<C-d>").unwrap()), "ctrl-d");
-        assert_eq!(pretty(&parse_sequence("<Space>").unwrap()), "space");
-        assert_eq!(pretty(&parse_sequence("G").unwrap()), "G");
+        assert_eq!(pretty(parse_key("<Enter>").unwrap()), "↵");
+        assert_eq!(pretty(parse_key("<C-d>").unwrap()), "ctrl-d");
+        assert_eq!(pretty(parse_key("<Space>").unwrap()), "space");
+        assert_eq!(pretty(parse_key("G").unwrap()), "G");
     }
 
     #[test]
     fn overrides_replace_defaults() {
         let overrides = HashMap::from([("down".to_owned(), vec!["z".to_owned()])]);
         let keymap = Keymap::with_overrides(&overrides).unwrap();
-        assert_eq!(
-            keymap.resolve(&[key('z')], Scope::Page),
-            Resolution::Action(Action::Down)
-        );
-        assert_eq!(
-            keymap.resolve(&[key('j')], Scope::Page),
-            Resolution::Unbound
-        );
-        assert!(
-            keymap
-                .keys_in(Action::Down, Scope::Page)
-                .eq([&[key('z')][..]])
-        );
+        assert_eq!(keymap.resolve(key('z'), Scope::Page), Some(Action::Down));
+        assert_eq!(keymap.resolve(key('j'), Scope::Page), None);
+        assert!(keymap.keys_in(Action::Down, Scope::Page).eq([key('z')]));
     }
 
     #[test]
@@ -739,12 +644,6 @@ mod tests {
         let conflict = HashMap::from([("down".to_owned(), vec!["k".to_owned()])]);
         assert!(
             Keymap::with_overrides(&conflict)
-                .unwrap_err()
-                .contains("conflicts")
-        );
-        let shadow = HashMap::from([("refresh".to_owned(), vec!["gx".to_owned()])]);
-        assert!(
-            Keymap::with_overrides(&shadow)
                 .unwrap_err()
                 .contains("conflicts")
         );
@@ -777,19 +676,19 @@ mod tests {
         }
 
         proptest! {
-            /// Writing keys down and reading them back gives the same keys.
+            /// Writing a key down and reading it back gives the same key.
             #[test]
-            fn sequences_round_trip(keys in prop::collection::vec(key(), 1..5)) {
-                let written = format_sequence(&keys);
-                prop_assert_eq!(parse_sequence(&written), Ok(keys), "{}", written);
+            fn keys_round_trip(key in key()) {
+                let written = format_key(key);
+                prop_assert_eq!(parse_key(&written), Ok(key), "{}", written);
             }
 
             /// Any accepted spelling settles on one canonical form.
             #[test]
-            fn parsing_settles(s in "(<[A-Za-z-]{1,8}>|[ -~]){1,6}") {
-                if let Ok(keys) = parse_sequence(&s) {
-                    let canonical = format_sequence(&keys);
-                    let again = parse_sequence(&canonical).map(|k| format_sequence(&k));
+            fn parsing_settles(s in "<[A-Za-z-]{1,8}>|[ -~]") {
+                if let Ok(key) = parse_key(&s) {
+                    let canonical = format_key(key);
+                    let again = parse_key(&canonical).map(format_key);
                     prop_assert_eq!(again, Ok(canonical));
                 }
             }

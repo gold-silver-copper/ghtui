@@ -27,8 +27,6 @@ pub struct StatusBar<'a> {
     pub busy: Option<&'a str>,
     pub spinner: &'a str,
     pub notice: Option<&'a Notice>,
-    /// Keys typed so far in a multi-key sequence.
-    pub pending_keys: &'a str,
     /// `(label, remaining, limit)` for the tightest rate-limit bucket.
     pub rate_limit: Option<(&'a str, u64, u64)>,
     /// `(keys, what they do)` here, most useful first; shown when there's no
@@ -65,13 +63,6 @@ impl Widget for StatusBar<'_> {
         }
 
         let mut right = Vec::new();
-        if !self.pending_keys.is_empty() {
-            right.push(Span::styled(
-                self.pending_keys.to_owned(),
-                theme.accent(BAR).add_modifier(Modifier::BOLD),
-            ));
-            right.push(Span::styled("   ", theme.body(BAR)));
-        }
         if let Some((label, remaining, limit)) = self.rate_limit {
             let low = remaining.saturating_mul(10) < limit;
             let style = if low {
