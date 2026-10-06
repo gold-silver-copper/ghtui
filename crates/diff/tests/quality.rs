@@ -131,3 +131,58 @@ fn characters_are_whole_graphemes() {
         "-le caf⟦e\u{301}⟧ noir\n+le caf⟦e\u{300}⟧ noir\n"
     );
 }
+
+// ---- reflowed code --------------------------------------------------------
+
+/// Arguments wrapped onto their own lines, one renamed: only the rename
+/// (and the trailing comma that came with the wrapping) stands out.
+#[test]
+fn wrapped_arguments_show_only_the_rename() {
+    let old = "    let diff = compute(path, old_text, new_text, options);\n";
+    let new = "    let diff = compute(\n        path,\n        old_text,\n        updated_text,\n        options,\n    );\n";
+    assert_eq!(
+        show("a.rs", old, new),
+        "-    let diff = compute(path, old_text, ⟦new⟧_text, options);\n\
+         +    let diff = compute(\n\
+         +        path,\n\
+         +        old_text,\n\
+         +        ⟦updated⟧_text,\n\
+         +        options⟦,⟧\n\
+         +    );\n"
+    );
+}
+
+/// A chain split across lines, one call renamed: only the rename stands
+/// out, not the lines the layout change touched.
+#[test]
+fn a_split_chain_shows_only_the_rename() {
+    let old = "let names = files.iter().map(|f| f.name()).collect();\n";
+    let new = "let names = files\n    .iter()\n    .map(|f| f.title())\n    .collect();\n";
+    assert_eq!(
+        show("a.rs", old, new),
+        "-let names = files.iter().map(|f| f.⟦name⟧()).collect();\n\
+         +let names = files\n\
+         +    .iter()\n\
+         +    .map(|f| f.⟦title⟧())\n\
+         +    .collect();\n"
+    );
+}
+
+/// Two statements joined onto one line: nothing changed but the break.
+#[test]
+fn joined_statements_show_no_emphasis() {
+    assert!(!show("a.rs", "a += 1;\nb += 1;\n", "a += 1; b += 1;\n").contains('⟦'));
+}
+
+/// An ordinary edit to one line looks the same as line-by-line diffing.
+#[test]
+fn a_one_line_edit_is_unchanged() {
+    assert_eq!(
+        show(
+            "a.rs",
+            "x\nlet total = compute(a, b);\ny\n",
+            "x\nlet total = compute(a, c);\ny\n"
+        ),
+        "-let total = compute(a, ⟦b⟧);\n+let total = compute(a, ⟦c⟧);\n"
+    );
+}
