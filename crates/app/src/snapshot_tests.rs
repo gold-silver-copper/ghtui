@@ -3,7 +3,7 @@
 //! show up in review. Rendering also exercises the theme's debug assertion
 //! that every fg/bg pair used is declared (and therefore contrast-tested).
 
-use ghtui_api::browse::{SearchKind, SearchResults};
+use ghtui_api::browse::{RepoSort, SearchKind, SearchResults};
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
     ReviewDecision,
@@ -373,11 +373,17 @@ fn with_profile(mode: Mode, tab: ProfileTab) -> State {
         login: "octocat".into(),
         tab,
     };
-    open(
-        &mut state,
-        route,
-        Data::Profile(Box::new(fixtures::profile())),
-    );
+    let _ = state.push(route.clone());
+    let profile = Data::Profile(Box::new(fixtures::profile()));
+    fetched(&mut state, DataKey::Profile("octocat".into()), profile);
+    // The tab's own list.
+    if let Some(key) = crate::browse::paged(&route) {
+        let list = match key {
+            DataKey::Users(_) => Data::Users(Box::new(fixtures::people())),
+            _ => Data::RepoPage(Box::new(fixtures::profile_repos())),
+        };
+        fetched(&mut state, key, list);
+    }
     state
 }
 
@@ -479,6 +485,17 @@ fn pr_checks_dark() {
 #[test]
 fn actions_light() {
     insta::assert_snapshot!(render(&with_actions(Mode::Light)));
+}
+
+#[test]
+fn profile_repositories_light() {
+    let tab = ProfileTab::Repositories(RepoSort::Name);
+    insta::assert_snapshot!(render(&with_profile(Mode::Light, tab)));
+}
+
+#[test]
+fn profile_followers_dark() {
+    insta::assert_snapshot!(render(&with_profile(Mode::Dark, ProfileTab::Followers)));
 }
 
 #[test]
@@ -1439,7 +1456,10 @@ mod links {
             ("profile", with_profile(Mode::Dark, ProfileTab::Overview)),
             (
                 "repositories",
-                with_profile(Mode::Dark, ProfileTab::Repositories),
+                with_profile(
+                    Mode::Dark,
+                    ProfileTab::Repositories(ghtui_api::browse::RepoSort::Updated),
+                ),
             ),
             ("stars", with_profile(Mode::Dark, ProfileTab::Stars)),
             ("search", with_repo_search(Mode::Dark)),

@@ -1,6 +1,6 @@
 //! Routes: the pages ghtui shows, addressed by their github.com URLs.
 
-use ghtui_api::browse::SearchKind;
+use ghtui_api::browse::{RepoSort, SearchKind};
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::pages::url as links;
 use ghtui_ui::pages::{PrTab, ProfileTab};
@@ -152,8 +152,18 @@ impl Route {
             Route::Commit { repo, oid } => links::commit(repo, oid),
             Route::User { login, tab } => match tab {
                 ProfileTab::Overview => links::user(login),
-                ProfileTab::Repositories => format!("{}?tab=repositories", links::user(login)),
+                ProfileTab::Repositories(sort) => {
+                    let sort = match sort {
+                        RepoSort::Updated => "",
+                        RepoSort::Name => "&sort=name",
+                        RepoSort::Stars => "&sort=stargazers",
+                    };
+                    format!("{}?tab=repositories{sort}", links::user(login))
+                }
                 ProfileTab::Stars => format!("{}?tab=stars", links::user(login)),
+                ProfileTab::Followers => format!("{}?tab=followers", links::user(login)),
+                ProfileTab::Following => format!("{}?tab=following", links::user(login)),
+                ProfileTab::People => format!("{}/orgs/{login}/people", links::BASE),
             },
             Route::Search { kind, query } => links::search(*kind, query),
         }
@@ -293,6 +303,13 @@ impl Target {
                 .map(|(_, v)| v.into_owned())
         };
         let (query, kind, tab) = (param("q"), param("type"), param("tab"));
+        let repos = || {
+            ProfileTab::Repositories(match param("sort").as_deref() {
+                Some("name") => RepoSort::Name,
+                Some("stargazers") => RepoSort::Stars,
+                _ => RepoSort::Updated,
+            })
+        };
         let segments: Vec<String> = parsed
             .path_segments()
             .map(|s| s.filter(|p| !p.is_empty()).map(decode).collect())
@@ -311,15 +328,21 @@ impl Target {
                 query: query.unwrap_or_default(),
             },
             ["orgs", login] => Route::user(login),
-            ["orgs", login, "repositories"] => Route::User {
+            ["orgs", login, page @ ("repositories" | "people")] => Route::User {
                 login: (*login).to_owned(),
-                tab: ProfileTab::Repositories,
+                tab: if *page == "people" {
+                    ProfileTab::People
+                } else {
+                    repos()
+                },
             },
             [login] if !RESERVED.contains(login) => Route::User {
                 login: (*login).to_owned(),
                 tab: match tab.as_deref() {
-                    Some("repositories") => ProfileTab::Repositories,
+                    Some("repositories") => repos(),
                     Some("stars") => ProfileTab::Stars,
+                    Some("followers") => ProfileTab::Followers,
+                    Some("following") => ProfileTab::Following,
                     _ => ProfileTab::Overview,
                 },
             },
@@ -738,10 +761,31 @@ mod tests {
             }
         );
         assert_eq!(
+            page("https://github.com/octocat?tab=repositories&sort=stargazers"),
+            Route::User {
+                login: "octocat".into(),
+                tab: ProfileTab::Repositories(RepoSort::Stars)
+            }
+        );
+        assert_eq!(
+            page("https://github.com/octocat?tab=followers"),
+            Route::User {
+                login: "octocat".into(),
+                tab: ProfileTab::Followers
+            }
+        );
+        assert_eq!(
+            page("https://github.com/orgs/rust-lang/people"),
+            Route::User {
+                login: "rust-lang".into(),
+                tab: ProfileTab::People
+            }
+        );
+        assert_eq!(
             page("https://github.com/orgs/rust-lang/repositories"),
             Route::User {
                 login: "rust-lang".into(),
-                tab: ProfileTab::Repositories
+                tab: ProfileTab::Repositories(RepoSort::Updated)
             }
         );
         assert!(matches!(
@@ -930,9 +974,21 @@ mod tests {
                 }),
                 segment()
                     .prop_filter("not a reserved path", |l| !RESERVED.contains(&l.as_str()))
-                    .prop_map(|login| Route::User {
-                        login,
-                        tab: ProfileTab::Stars,
+                    .prop_flat_map(|login| {
+                        let tabs = prop::sample::select(vec![
+                            ProfileTab::Overview,
+                            ProfileTab::Repositories(RepoSort::Updated),
+                            ProfileTab::Repositories(RepoSort::Name),
+                            ProfileTab::Repositories(RepoSort::Stars),
+                            ProfileTab::Stars,
+                            ProfileTab::Followers,
+                            ProfileTab::Following,
+                            ProfileTab::People,
+                        ]);
+                        tabs.prop_map(move |tab| Route::User {
+                            login: login.clone(),
+                            tab,
+                        })
                     }),
                 (any::<String>(), 0..4u8).prop_map(|(query, k)| Route::Search {
                     kind: [

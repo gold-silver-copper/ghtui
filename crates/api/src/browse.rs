@@ -231,6 +231,34 @@ pub struct TagInfo {
     pub date: Option<String>,
 }
 
+/// How a profile's repositories are ordered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum RepoSort {
+    #[default]
+    Updated,
+    Name,
+    Stars,
+}
+
+impl RepoSort {
+    pub fn label(self) -> &'static str {
+        match self {
+            RepoSort::Updated => "Last updated",
+            RepoSort::Name => "Name",
+            RepoSort::Stars => "Stars",
+        }
+    }
+
+    /// The next order, round and round.
+    pub fn next(self) -> RepoSort {
+        match self {
+            RepoSort::Updated => RepoSort::Name,
+            RepoSort::Name => RepoSort::Stars,
+            RepoSort::Stars => RepoSort::Updated,
+        }
+    }
+}
+
 /// A list of people: a repository's stargazers or watchers, someone's
 /// followers or who they follow, an organization's public members.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -325,8 +353,6 @@ pub struct Profile {
     pub pinned: Vec<RepoSummary>,
     pub repos: Vec<RepoSummary>,
     pub repo_count: u64,
-    #[serde(default)]
-    pub stars: Vec<RepoSummary>,
     #[serde(default)]
     pub star_count: u64,
     /// The profile README, as markdown.
@@ -1634,13 +1660,6 @@ pub struct UserFull {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "StarredRepositoryConnection", schema_module = "schema")]
-pub struct StarList {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<RepoCard>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Organization", schema_module = "schema")]
 pub struct OrgFull {
     pub login: String,
@@ -1712,6 +1731,120 @@ pub struct PagedRepos {
 }
 
 impl PagedRepos {
+    pub(crate) fn into_results(self) -> Results<RepoSummary> {
+        Results {
+            total: count(self.total_count),
+            items: nodes(self.nodes)
+                .filter_map(RepoCard::into_summary)
+                .collect(),
+            next: self.page_info.next(),
+        }
+    }
+}
+
+#[derive(cynic::Enum, Debug, Clone, Copy)]
+#[cynic(graphql_type = "RepositoryOrderField", schema_module = "schema")]
+pub enum RepositoryOrderField {
+    CreatedAt,
+    Name,
+    PushedAt,
+    Stargazers,
+    UpdatedAt,
+}
+
+#[derive(cynic::Enum, Debug, Clone, Copy)]
+#[cynic(graphql_type = "OrderDirection", schema_module = "schema")]
+pub enum OrderDirection {
+    Asc,
+    Desc,
+}
+
+#[derive(cynic::InputObject, Debug)]
+#[cynic(graphql_type = "RepositoryOrder", schema_module = "schema")]
+pub struct RepositoryOrder {
+    pub field: RepositoryOrderField,
+    pub direction: OrderDirection,
+}
+
+impl From<RepoSort> for RepositoryOrder {
+    fn from(sort: RepoSort) -> Self {
+        let (field, direction) = match sort {
+            RepoSort::Updated => (RepositoryOrderField::PushedAt, OrderDirection::Desc),
+            RepoSort::Name => (RepositoryOrderField::Name, OrderDirection::Asc),
+            RepoSort::Stars => (RepositoryOrderField::Stargazers, OrderDirection::Desc),
+        };
+        RepositoryOrder { field, direction }
+    }
+}
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct OwnerReposVariables {
+    pub login: String,
+    pub after: Option<String>,
+    pub order: RepositoryOrder,
+}
+
+/// A user's or organization's own repositories.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "OwnerReposVariables"
+)]
+pub struct OwnerReposQuery {
+    #[arguments(login: $login)]
+    pub repository_owner: Option<OwnerRepos>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "RepositoryOwner",
+    schema_module = "schema",
+    variables = "OwnerReposVariables"
+)]
+pub struct OwnerRepos {
+    #[arguments(first: 30, after: $after, orderBy: $order, ownerAffiliations: [OWNER])]
+    pub repositories: PagedRepos,
+}
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct LoginPageVariables {
+    pub login: String,
+    pub after: Option<String>,
+}
+
+/// What a user starred, most recently first.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "LoginPageVariables"
+)]
+pub struct StarredQuery {
+    #[arguments(login: $login)]
+    pub user: Option<UserStarred>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "User",
+    schema_module = "schema",
+    variables = "LoginPageVariables"
+)]
+pub struct UserStarred {
+    #[arguments(first: 30, after: $after, orderBy: { field: STARRED_AT, direction: DESC })]
+    pub starred_repositories: PagedStars,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "StarredRepositoryConnection", schema_module = "schema")]
+pub struct PagedStars {
+    pub total_count: i32,
+    pub page_info: PageInfo,
+    pub nodes: Option<Vec<Option<RepoCard>>>,
+}
+
+impl PagedStars {
     pub(crate) fn into_results(self) -> Results<RepoSummary> {
         Results {
             total: count(self.total_count),
@@ -2138,6 +2271,12 @@ pub mod keys {
     pub fn tags(repo: &RepoId) -> String {
         format!("tags:{repo}")
     }
+    pub fn owner_repos(login: &str, sort: super::RepoSort) -> String {
+        format!("owner-repos:{}:{sort:?}", login.to_lowercase())
+    }
+    pub fn starred(login: &str) -> String {
+        format!("starred:{}", login.to_lowercase())
+    }
     pub fn forks(repo: &RepoId) -> String {
         format!("forks:{repo}")
     }
@@ -2459,7 +2598,6 @@ impl ProfileQuery {
                 repos,
                 repo_count,
                 star_count: count(u.starred_repositories.total_count),
-                stars: Vec::new(),
             });
         }
         let o = self.organization?;
@@ -2477,7 +2615,6 @@ impl ProfileQuery {
             pinned: pinned(o.pinned_items),
             repos,
             repo_count,
-            stars: Vec::new(),
             star_count: 0,
             readme: readme_text(self.org_readme.and_then(|r| r.object)),
             status: None,

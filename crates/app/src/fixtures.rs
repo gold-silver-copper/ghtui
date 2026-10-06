@@ -413,7 +413,6 @@ pub fn profile() -> Profile {
             repo_summary("octocat/linguist", 640),
         ],
         repo_count: 8,
-        stars: vec![repo_summary("ratatui/ratatui", 22_900)],
         star_count: 120,
         readme: Some("### Hi there 👋\n\nI'm the Octocat. I like **terminals**.\n".into()),
         status: Some("🐙 Reviewing pull requests".into()),
@@ -499,6 +498,15 @@ pub fn contributions() -> Contributions {
     }
 }
 
+/// The first page of a profile's repositories.
+pub fn profile_repos() -> Results<RepoSummary> {
+    Results {
+        total: 8,
+        items: profile().repos,
+        next: Some("p1".into()),
+    }
+}
+
 /// An organization: verified, with members and a README.
 pub fn org_profile() -> Profile {
     let mut repos = vec![
@@ -522,7 +530,6 @@ pub fn org_profile() -> Profile {
         pinned: Vec::new(),
         repos,
         repo_count: 24,
-        stars: Vec::new(),
         star_count: 0,
         readme: Some(
             "Welcome to **Ratatui**. Start with the [tutorial](https://ratatui.rs).\n".into(),

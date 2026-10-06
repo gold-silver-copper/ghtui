@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use ghtui_api::browse::{
     Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, Contributions,
     EntryKind, IssueDetail, IssueState, IssueSummary, PrActivity, Profile, Release, RepoOverview,
-    RepoSummary, Results, SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary,
+    RepoSort, RepoSummary, Results, SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -940,16 +940,32 @@ pub fn people_list(page: &mut Page, title: &str, people: Option<&Results<UserSum
 
 /// A list of repositories (forks…) that loads more.
 pub fn repos(page: &mut Page, title: &str, repos: Option<&Results<RepoSummary>>, now: u64) {
+    let total = repos.map_or(String::new(), |r| format!("  {}", compact(r.total)));
+    let title = vec![Seg::new(format!("{title}{total}"), Role::Strong)];
+    repo_list_box(page, title, Vec::new(), repos, true, "None yet.", now);
+}
+
+/// Repositories in a box that loads more.
+fn repo_list_box(
+    page: &mut Page,
+    title: Vec<Seg>,
+    right: Vec<Seg>,
+    repos: Option<&Results<RepoSummary>>,
+    show_owner: bool,
+    empty: &str,
+    now: u64,
+) {
     let Some(r) = repos else {
         page.line(vec![Seg::new("Loading…", Role::Meta)]);
         return;
     };
-    let title = format!("{title}  {}", compact(r.total));
-    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
+    page.box_top(title, right);
     if r.items.is_empty() {
-        empty_row(page, "None yet.");
+        empty_row(page, empty);
     }
-    box_rows(page, &r.items, |page, repo| repo_row(page, repo, now, true));
+    box_rows(page, &r.items, |page, repo| {
+        repo_row(page, repo, now, show_owner);
+    });
     more_row(page, r.next.is_some(), r.items.len(), r.total);
     page.box_bottom();
 }
@@ -1924,11 +1940,24 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
 pub enum ProfileTab {
     #[default]
     Overview,
-    Repositories,
+    Repositories(RepoSort),
     Stars,
+    Followers,
+    Following,
+    /// An organization's public members.
+    People,
 }
 
-pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, now: u64) {
+/// The list a profile tab shows, once loaded.
+#[derive(Debug, Clone, Copy)]
+pub enum ProfileList<'a> {
+    Repos(Option<&'a Results<RepoSummary>>),
+    People(Option<&'a Results<UserSummary>>),
+    /// The overview's are in the profile.
+    None,
+}
+
+pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<'_>, now: u64) {
     let mut segs = Vec::new();
     match &p.name {
         Some(name) => {
@@ -2012,39 +2041,74 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, now: u64) {
         }
         page.box_bottom();
     }
-    let mut popular = Vec::new();
-    let (title, sort, repos, empty, show_owner) = match tab {
-        ProfileTab::Overview if p.pinned.is_empty() => {
-            popular.clone_from(&p.repos);
-            popular.sort_by_key(|r| std::cmp::Reverse(r.stars));
-            popular.truncate(6);
-            let title = "Popular repositories".to_owned();
-            (title, None, &popular, "No public repositories yet.", false)
+    page.blank();
+    match (tab, list) {
+        (ProfileTab::Overview, _) => {}
+        (ProfileTab::Repositories(sort), ProfileList::Repos(repos)) => {
+            let title = vec![Seg::new(
+                format!("Repositories  {}", compact(p.repo_count)),
+                Role::Strong,
+            )];
+            let sort = link_seg(
+                page,
+                format!("Sort: {}", sort.label()),
+                Link::Sort,
+                Role::Link,
+            );
+            repo_list_box(
+                page,
+                title,
+                vec![sort],
+                repos,
+                false,
+                "No public repositories yet.",
+                now,
+            );
+            return;
         }
-        ProfileTab::Overview => ("Pinned".to_owned(), None, &p.pinned, "", true),
-        ProfileTab::Repositories => (
-            format!("Repositories  {}", compact(p.repo_count)),
-            Some("Sort: Last updated"),
-            &p.repos,
-            "No public repositories yet.",
-            false,
-        ),
-        ProfileTab::Stars => (
-            format!("Starred  {}", compact(p.star_count)),
-            Some("Sort: Recently starred"),
-            &p.stars,
-            "Nothing starred yet.",
-            true,
-        ),
+        (_, ProfileList::Repos(repos)) => {
+            let title = vec![Seg::new(
+                format!("Starred  {}", compact(p.star_count)),
+                Role::Strong,
+            )];
+            let sort = vec![Seg::new("Recently starred", Role::Meta)];
+            repo_list_box(page, title, sort, repos, true, "Nothing starred yet.", now);
+            return;
+        }
+        (tab, ProfileList::People(people)) => {
+            let title = match tab {
+                ProfileTab::Followers => "Followers",
+                ProfileTab::Following => "Following",
+                _ => "People",
+            };
+            people_list(page, title, people);
+            return;
+        }
+        (_, ProfileList::None) => {
+            page.line(vec![Seg::new("Loading…", Role::Meta)]);
+            return;
+        }
+    }
+    // The overview: pinned (or popular) repositories, then the rest.
+    let (title, repos, show_owner) = if p.pinned.is_empty() {
+        let mut popular = p.repos.clone();
+        popular.sort_by_key(|r| std::cmp::Reverse(r.stars));
+        popular.truncate(6);
+        ("Popular repositories", popular, false)
+    } else {
+        ("Pinned", p.pinned.clone(), true)
     };
     let title = vec![Seg::new(title, Role::Strong)];
-    let right = sort.map(|s| Seg::new(s, Role::Meta)).into_iter().collect();
-    list_box(page, title, right, repos, empty, |page, r| {
-        repo_row(page, r, now, show_owner);
-    });
-    if tab != ProfileTab::Overview {
-        return;
-    }
+    list_box(
+        page,
+        title,
+        Vec::new(),
+        &repos,
+        "No public repositories yet.",
+        |page, r| {
+            repo_row(page, r, now, show_owner);
+        },
+    );
     if let Some(c) = &p.contributions {
         page.blank();
         contribution_graph(page, c);
