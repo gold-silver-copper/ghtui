@@ -1165,6 +1165,93 @@ pub(crate) mod diff {
     }
 }
 
+// ---- links that stay in ghtui ----------------------------------------------
+
+mod links {
+    use ghtui_theme::{ColorDepth, Mode};
+    use ghtui_ui::pages::ProfileTab;
+
+    use super::{
+        press, with_file, with_inbox, with_issue, with_issues, with_pr, with_profile, with_repo,
+        with_repo_search,
+    };
+    use crate::route::Target;
+    use crate::state::{Screen, State};
+
+    /// github.com pages ghtui leaves to the browser, by path. Each entry
+    /// says why; the list only shrinks.
+    const EXTERNAL: &[&str] = &[
+        // Not pages in ghtui yet.
+        "/commit/",
+        "/commits/",
+        "/actions",
+        "/checks",
+        "/stargazers",
+        "/watchers",
+        "/forks",
+    ];
+
+    /// Every page ghtui has a fixture for.
+    fn pages() -> Vec<(&'static str, State)> {
+        let tc = ColorDepth::TrueColor;
+        let mut commits = with_pr(Mode::Dark);
+        press(&mut commits, "2");
+        vec![
+            ("home", with_inbox(Mode::Dark, tc)),
+            ("repo", with_repo(Mode::Dark, tc)),
+            ("file", with_file(Mode::Dark)),
+            ("issues", with_issues(Mode::Dark)),
+            ("issue", with_issue(Mode::Dark)),
+            ("pr", with_pr(Mode::Dark)),
+            ("pr commits", commits),
+            ("profile", with_profile(Mode::Dark, ProfileTab::Overview)),
+            (
+                "repositories",
+                with_profile(Mode::Dark, ProfileTab::Repositories),
+            ),
+            ("stars", with_profile(Mode::Dark, ProfileTab::Stars)),
+            ("search", with_repo_search(Mode::Dark)),
+        ]
+    }
+
+    fn deliberately_external(url: &str) -> bool {
+        let path = url.trim_start_matches("https://github.com");
+        EXTERNAL
+            .iter()
+            .any(|p| path.starts_with(p) || path.contains(p))
+    }
+
+    /// Every github.com link on ghtui's pages (and their tabs) opens a
+    /// ghtui page, apart from [`EXTERNAL`].
+    #[test]
+    fn github_links_stay_in_ghtui() {
+        let mut leaving = Vec::new();
+        for (name, s) in pages() {
+            let Screen::Page(p) = s.screen() else {
+                panic!("{name} isn't a page");
+            };
+            let tabs = s.chrome().tabs.into_iter().map(|(_, t)| t);
+            let links = p.page.links.iter().filter_map(|l| l.url());
+            let targets = links.map(Target::from_url).chain(tabs);
+            for target in targets {
+                if let Target::External(url) = target
+                    && url.starts_with("https://github.com/")
+                    && !deliberately_external(&url)
+                {
+                    leaving.push(format!("{name}: {url}"));
+                }
+            }
+        }
+        leaving.sort();
+        leaving.dedup();
+        assert!(
+            leaving.is_empty(),
+            "links that leave ghtui:\n{}",
+            leaving.join("\n")
+        );
+    }
+}
+
 // ---- keys on every screen ---------------------------------------------------
 
 mod keys {
