@@ -383,10 +383,26 @@ line numbers shift and clears when the change is edited.
 ## Beyond GitHub's diff
 
 - **Changed tokens within lines** get a stronger tint. Lines are split at
-  word and syntax-token boundaries and diffed token by token. A removed line
-  is paired with the most similar added line in its block (character-bigram
-  similarity, in order), so an edit finds its counterpart even when lines
-  were added or removed around it. Lines that mostly changed get no emphasis.
+  word and syntax-token boundaries and diffed token by token. Lines that
+  mostly changed get no emphasis.
+- **Changed characters within a token**: when a changed token is nearly the
+  same as its counterpart (`count` → `counts`, `0.75` → `0.8`), only the
+  differing characters (whole graphemes) stand out. Unrelated words of the
+  same length stay whole.
+- **Best line pairing**: removed and added lines in a block are paired, in
+  order, to maximise their total similarity (character bigrams), so an
+  edited line isn't stolen by a look-alike inserted next to it. Blocks over
+  200 lines a side pair greedily.
+- **Reflowed code** is diffed as a whole block, ignoring line breaks and
+  indentation, whenever that emphasises less: wrapping a call's arguments or
+  splitting a method chain highlights only what really changed, and a block
+  that was only re-laid-out shows no emphasis. A one-line edit looks the same
+  either way.
+- **Scope names**: hunk headers name where the change is, from the syntax
+  tree (`@@ -40,7 +40,9 @@ impl Doc › fn offset`), for Rust,
+  TypeScript/TSX, JavaScript, Python and Go. The sticky header names the
+  scope of the top visible line. When space is short, outer scopes are
+  dropped first.
 - **Moved code** (like `git diff --color-moved`): a run of at least 3
   removed lines (30+ characters) that reappears as added lines, in the same
   file or another, ignoring indentation. It's shown in the tertiary tint, with
