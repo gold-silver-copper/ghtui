@@ -890,8 +890,7 @@ async fn edit_externally(
     let result = async {
         let file = draft_file(text)?;
         let path = file.path().to_owned();
-        crate::set_mouse(false);
-        ratatui::restore();
+        crate::restore_terminal();
         let editor = std::env::var("VISUAL")
             .or_else(|_| std::env::var("EDITOR"))
             .unwrap_or_else(|_| "vi".into());
