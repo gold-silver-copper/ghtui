@@ -130,6 +130,16 @@ impl Action {
     pub fn from_name(name: &str) -> Option<Action> {
         Action::ALL.iter().copied().find(|a| a.name() == name)
     }
+
+    /// Says where the action works, for when it's used elsewhere.
+    pub fn not_here(self) -> String {
+        let place = match self.scope() {
+            Scope::Diff => "in a pull request's Files changed tab",
+            Scope::Page => "on pages, not in the diff",
+            Scope::Global => "not here",
+        };
+        format!("{}: {place}", self.description())
+    }
 }
 
 /// A normalized key press. Shift is folded into the character for printable

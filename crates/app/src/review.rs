@@ -470,11 +470,15 @@ pub(crate) fn all_changes(state: &State) -> String {
     format!("pick “All changes” ({key})")
 }
 
-/// Review actions on the diff screen. `None` lets other handlers try.
+/// Review actions on the diff screen: commenting, threads, drafts and
+/// submitting, and which changes are shown.
 #[must_use]
-pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
+pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
     let viewer = state.viewer.clone();
-    let (screen, diff) = state.diff_parts()?;
+    let Some((screen, diff)) = state.diff_parts() else {
+        state.info("The diff hasn't loaded yet");
+        return Vec::new();
+    };
     let pr = screen.pr.clone();
     let cursor = screen.cursor;
     // The thread or draft under the cursor.
@@ -484,7 +488,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
         .cloned();
     let notice = |state: &mut State, n: Notice| {
         state.notice = Some(n);
-        Some(Vec::new())
+        Vec::new()
     };
     let in_range = diff.range.is_some();
     if in_range
@@ -516,30 +520,26 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
                 } else {
                     "Showing all changes"
                 });
-                return Some(Vec::new());
+                return Vec::new();
             }
             diff.since_requested = true;
             if diff.last_review == LastReview::Unknown {
                 let Some(login) = viewer else {
                     // Without a login, only the local record can say.
                     diff.last_review = LastReview::None;
-                    return Some(start_since_review(state));
+                    return start_since_review(state);
                 };
                 state.info("Looking up your last review…");
-                return Some(vec![Cmd::Api(Api::FetchLastReview { pr, login })]);
+                return vec![Cmd::Api(Api::FetchLastReview { pr, login })];
             }
-            Some(start_since_review(state))
+            start_since_review(state)
         }
         Action::PickCommits => {
             if diff.commits.is_empty() {
                 state.info("Listing commits…");
-                return Some(vec![Cmd::Git(Git::ListCommits(pr))]);
+                return vec![Cmd::Git(Git::ListCommits(pr))];
             }
-            Some(state.open_picker(picker::Kind::Commits { mark: None }))
-        }
-        Action::Back if screen.selection.is_some() => {
-            screen.selection = None;
-            Some(Vec::new())
+            state.open_picker(picker::Kind::Commits { mark: None })
         }
         // `c` on a thread replies to it.
         Action::Comment
@@ -553,7 +553,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
                 return notice(state, Notice::Info("You can't reply to this one".into()));
             }
             let thread_id = thread_id.clone();
-            Some(state.compose(ComposeTarget::Reply { thread_id }, ""))
+            state.compose(ComposeTarget::Reply { thread_id }, "")
         }
         Action::Comment => {
             let selection = screen.selection.take();
@@ -566,7 +566,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
                     {
                         state.info(reason.clone());
                     }
-                    Some(state.compose(target, ""))
+                    state.compose(target, "")
                 }
                 Err(err) => notice(state, Notice::Error(err)),
             }
@@ -586,10 +586,13 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
                 diff.refresh_annotations();
                 let save = Cmd::SaveReview(pr, diff.review.clone());
                 state.info("Now a comment on the file");
-                return Some(vec![save]);
+                return vec![save];
             }
-            let path = diff.doc.files().get(cursor.file)?.meta.path().to_owned();
-            Some(state.compose(ComposeTarget::File { path, reason: None }, ""))
+            let Some(file) = diff.doc.files().get(cursor.file) else {
+                return Vec::new();
+            };
+            let path = file.meta.path().to_owned();
+            state.compose(ComposeTarget::File { path, reason: None }, "")
         }
         Action::Suggest => {
             let selection = screen.selection.take();
@@ -609,11 +612,16 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
                     Notice::Error("Suggestions apply to new lines (not deleted ones)".into()),
                 );
             }
-            let text = diff.doc.files().get(cursor.file)?.text()?;
+            let Some(text) = diff.doc.files().get(cursor.file).and_then(|f| f.text()) else {
+                return notice(
+                    state,
+                    Notice::Error("Suggestions need the file's text".into()),
+                );
+            };
             let original: Vec<String> = (start.line..=end.line)
                 .map(|n| text.new.line_no(n).to_owned())
                 .collect();
-            Some(vec![Cmd::Edit {
+            vec![Cmd::Edit {
                 text: original.join("\n") + "\n",
                 purpose: EditPurpose::Suggest {
                     path,
@@ -621,7 +629,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
                     end,
                     original,
                 },
-            }])
+            }]
         }
         Action::ResolveThread => {
             let Some(ann) = annotation else {
@@ -639,11 +647,11 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
                 t.resolved = resolved;
             }
             diff.refresh_annotations();
-            Some(vec![Cmd::Api(Api::SetResolved {
+            vec![Cmd::Api(Api::SetResolved {
                 pr,
                 thread_id,
                 resolved,
-            })])
+            })]
         }
         Action::DeleteDraft => {
             let Some(AnnotationKey::Draft(id)) = annotation.map(|a| a.key) else {
@@ -652,13 +660,15 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
                     Notice::Info("Move to a draft comment to delete it".into()),
                 );
             };
-            let at = diff.review.pending.iter().position(|d| d.id == id)?;
+            let Some(at) = diff.review.pending.iter().position(|d| d.id == id) else {
+                return Vec::new();
+            };
             diff.deleted = Some(diff.review.pending.remove(at));
             diff.refresh_annotations();
             let save = Cmd::SaveReview(pr, diff.review.clone());
             let undo = state.first_key(Action::UndoDelete);
             state.info(format!("Draft deleted · {undo} brings it back"));
-            Some(vec![save])
+            vec![save]
         }
         Action::UndoDelete => {
             let Some(mut draft) = diff.deleted.take() else {
@@ -671,30 +681,31 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Option<Vec<Cmd
             diff.refresh_annotations();
             let save = Cmd::SaveReview(pr, diff.review.clone());
             state.info("Draft restored");
-            Some(vec![save])
+            vec![save]
         }
+        // On a thread or draft (the diff handles the rest).
         Action::Open => {
-            if let AnnotationKey::Draft(id) = annotation?.key {
-                let body = diff
-                    .review
-                    .pending
-                    .iter()
-                    .find(|d| d.id == id)?
-                    .body
-                    .clone();
-                return Some(state.compose(ComposeTarget::Draft { id }, &body));
+            let draft = annotation.and_then(|a| match a.key {
+                AnnotationKey::Draft(id) => diff.review.pending.iter().find(|d| d.id == id),
+                AnnotationKey::Thread(_) => None,
+            });
+            if let Some(draft) = draft {
+                let (id, body) = (draft.id, draft.body.clone());
+                return state.compose(ComposeTarget::Draft { id }, &body);
             }
-            diff.doc.toggle_thread(at?);
-            Some(Vec::new())
+            if let Some(at) = at {
+                diff.doc.toggle_thread(at);
+            }
+            Vec::new()
         }
         Action::SubmitReview => {
             if diff.refs.is_none() {
                 return notice(state, Notice::Error("The diff hasn't loaded yet".into()));
             }
             state.overlay = Some(Overlay::Submit(Box::new(SubmitDialog::new(&state.theme))));
-            Some(Vec::new())
+            Vec::new()
         }
-        _ => None,
+        _ => notice(state, Notice::Info(action.not_here())),
     }
 }
 
@@ -756,7 +767,7 @@ pub(crate) fn apply_commit_choice(
             if diff.doc.since_active() == since {
                 return Vec::new();
             }
-            return review_action(state, Action::ToggleSinceReview).unwrap_or_default();
+            return review_action(state, Action::ToggleSinceReview);
         }
         PickItem::All | PickItem::SinceReview => None,
         PickItem::Commit(i) => {
