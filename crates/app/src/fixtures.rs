@@ -2,9 +2,9 @@
 
 use crossterm::event::KeyEvent;
 use ghtui_api::browse::{
-    Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, EntryKind,
-    IssueDetail, IssueState, IssueSummary, PrActivity, Profile, Readme, RepoOverview, RepoSummary,
-    Results, ReviewSummary, SearchResults, TreeEntry, UserSummary,
+    Asset, Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, EntryKind,
+    IssueDetail, IssueState, IssueSummary, PrActivity, Profile, Readme, Release, RepoOverview,
+    RepoSummary, Results, ReviewSummary, SearchResults, TagInfo, TreeEntry, UserSummary,
 };
 use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
@@ -456,6 +456,75 @@ pub fn forks() -> Results<RepoSummary> {
             repo_summary("hubot/ghtui", 3),
         ],
         next: Some("f1".into()),
+    }
+}
+
+/// A release, with notes and assets when it's on its own page.
+pub fn release(full: bool) -> Release {
+    let asset = |name: &str, size: u64, downloads: u64| Asset {
+        name: name.into(),
+        size,
+        downloads,
+        url: format!("https://github.com/gold-silver-copper/ghtui/releases/download/v0.2.0/{name}"),
+    };
+    Release {
+        name: "ghtui 0.2.0".into(),
+        tag: "v0.2.0".into(),
+        published_at: Some("2026-09-30T12:00:00Z".into()),
+        prerelease: false,
+        draft: false,
+        latest: true,
+        author: Some("octocat".into()),
+        notes: full.then(|| {
+            "## Highlights\n\n- Scope names in hunk headers\n- Commits open in ghtui\n".into()
+        }),
+        assets: if full {
+            vec![
+                asset("ghtui-x86_64-linux.tar.gz", 4_200_000, 1_312),
+                asset("ghtui-aarch64-macos.tar.gz", 3_900_000, 845),
+            ]
+        } else {
+            Vec::new()
+        },
+    }
+}
+
+/// A page of releases: the latest, and a pre-release before it.
+pub fn releases() -> Results<Release> {
+    let mut pre = release(false);
+    pre.name = "ghtui 0.2.0-rc.1".into();
+    pre.tag = "v0.2.0-rc.1".into();
+    pre.latest = false;
+    pre.prerelease = true;
+    pre.published_at = Some("2026-09-20T12:00:00Z".into());
+    Results {
+        total: 9,
+        items: vec![release(false), pre],
+        next: Some("r1".into()),
+    }
+}
+
+pub fn tags() -> Results<TagInfo> {
+    let tag = |name: &str, oid: &str, date: &str| TagInfo {
+        name: name.into(),
+        oid: Some(oid.into()),
+        date: Some(date.into()),
+    };
+    Results {
+        total: 2,
+        items: vec![
+            tag(
+                "v0.2.0",
+                "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                "2026-09-30T12:00:00Z",
+            ),
+            tag(
+                "v0.1.0",
+                "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a",
+                "2026-06-01T12:00:00Z",
+            ),
+        ],
+        next: None,
     }
 }
 

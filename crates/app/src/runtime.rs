@@ -715,6 +715,13 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Forks(repo) => at(gh.cached(&keys::forks(repo))?, |v| {
             Data::RepoPage(Box::new(v))
         }),
+        DataKey::Releases(repo) => at(gh.cached(&keys::releases(repo))?, |v| {
+            Data::Releases(Box::new(v))
+        }),
+        DataKey::Release(repo, tag) => at(gh.cached(&keys::release(repo, tag))?, |v| {
+            Data::Release(Box::new(v))
+        }),
+        DataKey::Tags(repo) => at(gh.cached(&keys::tags(repo))?, |v| Data::Tags(Box::new(v))),
         DataKey::BranchChecks(repo) => at(gh.cached(&keys::branch_checks(repo))?, |v| {
             Data::Checks(Box::new(v))
         }),
@@ -742,6 +749,8 @@ async fn fetch_more(gh: &GitHub, key: &DataKey, after: String) -> Result<Data, A
         }
         DataKey::Users(list) => Data::Users(Box::new(gh.users(list, Some(after)).await?)),
         DataKey::Forks(repo) => Data::RepoPage(Box::new(gh.forks(repo, Some(after)).await?)),
+        DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, Some(after)).await?)),
+        DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, Some(after)).await?)),
         other => return Err(ApiError::NotFound(format!("more of {other:?}"))),
     })
 }
@@ -767,6 +776,9 @@ async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> {
         DataKey::PrChecks(pr) => Data::Checks(Box::new(gh.pr_checks(pr).await?)),
         DataKey::Users(list) => Data::Users(Box::new(gh.users(list, None).await?)),
         DataKey::Forks(repo) => Data::RepoPage(Box::new(gh.forks(repo, None).await?)),
+        DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, None).await?)),
+        DataKey::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
+        DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, None).await?)),
         DataKey::BranchChecks(repo) => Data::Checks(Box::new(gh.branch_checks(repo).await?)),
         DataKey::History(repo, rev, path) => {
             Data::History(Box::new(gh.history(repo, rev, path, None).await?))

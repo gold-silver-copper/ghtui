@@ -51,6 +51,12 @@ pub enum Route {
     Stargazers(RepoId),
     Watchers(RepoId),
     Forks(RepoId),
+    Releases(RepoId),
+    Release {
+        repo: RepoId,
+        tag: String,
+    },
+    Tags(RepoId),
     /// A revision's commits, of `path` if it isn't empty.
     Commits {
         repo: RepoId,
@@ -139,6 +145,9 @@ impl Route {
             Route::Stargazers(repo) => format!("{}/stargazers", links::repo(repo)),
             Route::Watchers(repo) => format!("{}/watchers", links::repo(repo)),
             Route::Forks(repo) => format!("{}/forks", links::repo(repo)),
+            Route::Releases(repo) => format!("{}/releases", links::repo(repo)),
+            Route::Release { repo, tag } => links::release(repo, tag),
+            Route::Tags(repo) => format!("{}/tags", links::repo(repo)),
             Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
             Route::Commit { repo, oid } => links::commit(repo, oid),
             Route::User { login, tab } => match tab {
@@ -167,6 +176,9 @@ impl Route {
             Route::Stargazers(repo) => format!("{repo} · Stargazers"),
             Route::Watchers(repo) => format!("{repo} · Watchers"),
             Route::Forks(repo) => format!("{repo} · Forks"),
+            Route::Releases(repo) => format!("{repo} · Releases"),
+            Route::Release { repo, tag } => format!("{repo} {tag}"),
+            Route::Tags(repo) => format!("{repo} · Tags"),
             Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
             Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
             Route::Commit { repo, oid } => format!("{repo}@{}", short_sha(oid)),
@@ -189,6 +201,9 @@ impl Route {
             | Route::Stargazers(repo)
             | Route::Watchers(repo)
             | Route::Forks(repo)
+            | Route::Releases(repo)
+            | Route::Release { repo, .. }
+            | Route::Tags(repo)
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
             Route::Home | Route::User { .. } | Route::Search { .. } => None,
@@ -373,6 +388,23 @@ impl Target {
             }
             [o, r, "network", "members"] => match repo(o, r) {
                 Some(repo) => Route::Forks(repo),
+                None => return external(),
+            },
+            [o, r, "releases", "tag", tag @ ..] if !tag.is_empty() => match repo(o, r) {
+                Some(repo) => Route::Release {
+                    repo,
+                    tag: tag.join("/"),
+                },
+                None => return external(),
+            },
+            // Assets are downloads.
+            [_, _, "releases", "download", ..] => return external(),
+            [o, r, "releases", ..] => match repo(o, r) {
+                Some(repo) => Route::Releases(repo),
+                None => return external(),
+            },
+            [o, r, "tags"] => match repo(o, r) {
+                Some(repo) => Route::Tags(repo),
                 None => return external(),
             },
             [o, r, "commits", rest @ ..] => {
@@ -647,6 +679,25 @@ mod tests {
             Route::Forks(pr.repo.clone())
         );
         assert_eq!(
+            page("https://github.com/o/r/releases/tag/v1.0/rc"),
+            Route::Release {
+                repo: pr.repo.clone(),
+                tag: "v1.0/rc".into()
+            }
+        );
+        assert_eq!(
+            page("https://github.com/o/r/releases/latest"),
+            Route::Releases(pr.repo.clone())
+        );
+        assert_eq!(
+            page("https://github.com/o/r/tags"),
+            Route::Tags(pr.repo.clone())
+        );
+        assert!(matches!(
+            Target::from_url("https://github.com/o/r/releases/download/v1/x.tgz"),
+            Target::External(_)
+        ));
+        assert_eq!(
             page("https://github.com/o/r/pull/7/checks"),
             Route::Pr {
                 pr: pr.clone(),
@@ -840,6 +891,11 @@ mod tests {
                 repo().prop_map(Route::Stargazers),
                 repo().prop_map(Route::Watchers),
                 repo().prop_map(Route::Forks),
+                repo().prop_map(Route::Releases),
+                repo().prop_map(Route::Tags),
+                (repo(), "[A-Za-z0-9._-]{1,12}")
+                    .prop_filter("not . or ..", |(_, t)| t != "." && t != "..")
+                    .prop_map(|(repo, tag)| Route::Release { repo, tag }),
                 repo().prop_map(Route::Repo),
                 (repo(), rev.clone(), path()).prop_map(|(repo, rev, path)| Route::Tree {
                     repo,

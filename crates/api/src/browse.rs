@@ -198,6 +198,39 @@ pub struct UserSummary {
     pub is_org: bool,
 }
 
+/// A release, as listed (no notes or assets) or on its page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Release {
+    pub name: String,
+    pub tag: String,
+    /// ISO 8601; drafts aren't published.
+    pub published_at: Option<String>,
+    pub prerelease: bool,
+    pub draft: bool,
+    pub latest: bool,
+    pub author: Option<String>,
+    /// Its notes, as markdown (on its page).
+    pub notes: Option<String>,
+    pub assets: Vec<Asset>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Asset {
+    pub name: String,
+    pub size: u64,
+    pub downloads: u64,
+    pub url: String,
+}
+
+/// A tag and the commit it points at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TagInfo {
+    pub name: String,
+    pub oid: Option<String>,
+    /// ISO 8601: when its commit was committed.
+    pub date: Option<String>,
+}
+
 /// A list of people: a repository's stargazers or watchers, someone's
 /// followers or who they follow, an organization's public members.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1270,6 +1303,249 @@ impl PagedRepos {
     }
 }
 
+// ---- releases and tags ---------------------------------------------------------------------
+
+/// A repository's releases, newest first.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "ListVariables"
+)]
+pub struct ReleasesQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepoReleases>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Repository",
+    schema_module = "schema",
+    variables = "ListVariables"
+)]
+pub struct RepoReleases {
+    #[arguments(first: 20, after: $after, orderBy: { field: CREATED_AT, direction: DESC })]
+    pub releases: ReleaseList,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "ReleaseConnection", schema_module = "schema")]
+pub struct ReleaseList {
+    pub total_count: i32,
+    pub page_info: PageInfo,
+    pub nodes: Option<Vec<Option<WireRelease>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Release", schema_module = "schema")]
+pub struct WireRelease {
+    pub name: Option<String>,
+    pub tag_name: String,
+    pub published_at: Option<DateTime>,
+    pub is_prerelease: bool,
+    pub is_draft: bool,
+    pub is_latest: bool,
+    pub author: Option<UserLogin>,
+}
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct ReleaseVariables {
+    pub owner: String,
+    pub name: String,
+    pub tag: String,
+}
+
+/// One release, with its notes and assets.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "ReleaseVariables"
+)]
+pub struct ReleaseQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepoRelease>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Repository",
+    schema_module = "schema",
+    variables = "ReleaseVariables"
+)]
+pub struct RepoRelease {
+    #[arguments(tagName: $tag)]
+    pub release: Option<WireReleaseFull>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Release", schema_module = "schema")]
+pub struct WireReleaseFull {
+    #[cynic(spread)]
+    pub card: WireRelease,
+    pub description: Option<String>,
+    #[arguments(first: 50)]
+    pub release_assets: AssetList,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "ReleaseAssetConnection", schema_module = "schema")]
+pub struct AssetList {
+    pub nodes: Option<Vec<Option<WireAsset>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "ReleaseAsset", schema_module = "schema")]
+pub struct WireAsset {
+    pub name: String,
+    pub size: i32,
+    pub download_count: i32,
+    pub download_url: Uri,
+}
+
+/// A repository's tags, most recently committed first.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "ListVariables"
+)]
+pub struct TagsQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepoTags>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Repository",
+    schema_module = "schema",
+    variables = "ListVariables"
+)]
+pub struct RepoTags {
+    #[arguments(refPrefix: "refs/tags/", first: 30, after: $after, orderBy: { field: TAG_COMMIT_DATE, direction: DESC })]
+    pub refs: Option<TagRefs>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "RefConnection", schema_module = "schema")]
+pub struct TagRefs {
+    pub total_count: i32,
+    pub page_info: PageInfo,
+    pub nodes: Option<Vec<Option<TagRef>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Ref", schema_module = "schema")]
+pub struct TagRef {
+    pub name: String,
+    pub target: Option<TagTarget>,
+}
+
+/// A lightweight tag points at a commit; an annotated one at a tag
+/// object that points at it.
+#[derive(cynic::InlineFragments, Debug)]
+#[cynic(graphql_type = "GitObject", schema_module = "schema")]
+pub enum TagTarget {
+    Commit(TagCommit),
+    Tag(AnnotatedTag),
+    #[cynic(fallback)]
+    Other,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Commit", schema_module = "schema")]
+pub struct TagCommit {
+    pub oid: GitObjectId,
+    pub committed_date: DateTime,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Tag", schema_module = "schema")]
+pub struct AnnotatedTag {
+    pub target: TaggedObject,
+}
+
+#[derive(cynic::InlineFragments, Debug)]
+#[cynic(graphql_type = "GitObject", schema_module = "schema")]
+pub enum TaggedObject {
+    Commit(TagCommit),
+    #[cynic(fallback)]
+    Other,
+}
+
+impl WireRelease {
+    fn into_release(self) -> Release {
+        Release {
+            name: self
+                .name
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or_else(|| self.tag_name.clone()),
+            tag: self.tag_name,
+            published_at: self.published_at.map(|d| d.0),
+            prerelease: self.is_prerelease,
+            draft: self.is_draft,
+            latest: self.is_latest,
+            author: self.author.map(|a| a.login),
+            notes: None,
+            assets: Vec::new(),
+        }
+    }
+}
+
+impl ReleaseList {
+    pub(crate) fn into_results(self) -> Results<Release> {
+        Results {
+            total: count(self.total_count),
+            items: nodes(self.nodes).map(WireRelease::into_release).collect(),
+            next: self.page_info.next(),
+        }
+    }
+}
+
+impl WireReleaseFull {
+    pub(crate) fn into_release(self) -> Release {
+        Release {
+            notes: self.description.filter(|d| !d.trim().is_empty()),
+            assets: nodes(self.release_assets.nodes)
+                .map(|a| Asset {
+                    name: a.name,
+                    size: count(a.size),
+                    downloads: count(a.download_count),
+                    url: a.download_url.0,
+                })
+                .collect(),
+            ..self.card.into_release()
+        }
+    }
+}
+
+impl TagRefs {
+    pub(crate) fn into_results(self) -> Results<TagInfo> {
+        let items = nodes(self.nodes)
+            .map(|r| {
+                let commit = match r.target {
+                    Some(TagTarget::Commit(c)) => Some(c),
+                    Some(TagTarget::Tag(t)) => match t.target {
+                        TaggedObject::Commit(c) => Some(c),
+                        TaggedObject::Other => None,
+                    },
+                    _ => None,
+                };
+                TagInfo {
+                    name: r.name,
+                    oid: commit.as_ref().map(|c| c.oid.0.clone()),
+                    date: commit.map(|c| c.committed_date.0),
+                }
+            })
+            .collect();
+        Results {
+            total: count(self.total_count),
+            items,
+            next: self.page_info.next(),
+        }
+    }
+}
+
 // ---- branches ------------------------------------------------------------------------------
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -1432,6 +1708,15 @@ pub mod keys {
     }
     pub fn users(list: &super::UserList) -> String {
         format!("users:{list:?}")
+    }
+    pub fn releases(repo: &RepoId) -> String {
+        format!("releases:{repo}")
+    }
+    pub fn release(repo: &RepoId, tag: &str) -> String {
+        format!("release:{repo}:{tag}")
+    }
+    pub fn tags(repo: &RepoId) -> String {
+        format!("tags:{repo}")
     }
     pub fn forks(repo: &RepoId) -> String {
         format!("forks:{repo}")

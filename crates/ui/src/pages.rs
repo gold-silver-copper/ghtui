@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use ghtui_api::browse::{
     Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, EntryKind,
-    IssueDetail, IssueState, IssueSummary, PrActivity, Profile, RepoOverview, RepoSummary, Results,
-    SearchKind, SearchResults, TreeEntry, UserSummary,
+    IssueDetail, IssueState, IssueSummary, PrActivity, Profile, Release, RepoOverview, RepoSummary,
+    Results, SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -72,6 +72,9 @@ pub mod url {
     }
     pub fn commit(repo: &RepoId, oid: &str) -> String {
         format!("{BASE}/{repo}/commit/{oid}")
+    }
+    pub fn release(repo: &RepoId, tag: &str) -> String {
+        format!("{BASE}/{repo}/releases/tag/{}", encode_path(tag))
     }
     /// A revision's history, of `path` if it isn't empty.
     pub fn commits(repo: &RepoId, rev: &str, path: &str) -> String {
@@ -1694,6 +1697,149 @@ fn check_row(page: &mut Page, check: &CheckItem, now: u64) {
         Some(url) => item(page, url.clone(), |page, link| row(page, Some(link))),
         None => row(page, None),
     }
+}
+
+// ---- releases and tags ---------------------------------------------------------------------
+
+fn release_chips(segs: &mut Vec<Seg>, r: &Release) {
+    for (on, text, bg) in [
+        (r.latest, "Latest", Bg::SuccessContainer),
+        (r.prerelease, "Pre-release", Bg::TertiaryContainer),
+        (r.draft, "Draft", Bg::SecondaryContainer),
+    ] {
+        if on {
+            segs.push(space());
+            segs.push(chip(text, bg));
+        }
+    }
+}
+
+/// Who released it and when.
+fn release_meta(r: &Release, now: u64) -> String {
+    let mut meta = r.tag.clone();
+    if let Some(author) = &r.author {
+        meta.push_str(&format!(" · {author}"));
+    }
+    match &r.published_at {
+        Some(at) => meta.push_str(&format!(" released {}", time::ago_iso(at, now))),
+        None => meta.push_str(" · not published"),
+    }
+    meta
+}
+
+/// A repository's releases, newest first, each linked to its page.
+pub fn releases(page: &mut Page, repo: &RepoId, list: Option<&Results<Release>>, now: u64) {
+    let Some(l) = list else {
+        page.line(vec![Seg::new("Loading releases…", Role::Meta)]);
+        return;
+    };
+    let title = format!("Releases  {}", compact(l.total));
+    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
+    if l.items.is_empty() {
+        empty_row(page, "No releases yet.");
+    }
+    box_rows(page, &l.items, |page, r| {
+        item(page, url::release(repo, &r.tag), |page, link| {
+            let mut segs = vec![Seg::linked(r.name.clone(), Role::Link, link)];
+            release_chips(&mut segs, r);
+            body(page, segs);
+            body(page, vec![Seg::new(release_meta(r, now), Role::Meta)]);
+        });
+    });
+    more_row(page, l.next.is_some(), l.items.len(), l.total);
+    page.box_bottom();
+}
+
+/// A release: its notes and its assets (downloads stay on GitHub).
+pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
+    let mut title = vec![Seg::new(r.name.clone(), Role::Title)];
+    release_chips(&mut title, r);
+    page.wrapped(title, 0, Frame::None);
+    let tag = link_seg(page, r.tag.clone(), url::tree(repo, &r.tag, ""), Role::Code);
+    let mut meta = vec![Seg::new("◇ ", Role::Meta), tag];
+    if let Some(author) = &r.author {
+        meta.push(Seg::new(" · ", Role::Meta));
+        meta.push(link_seg(
+            page,
+            author.clone(),
+            url::user(author),
+            Role::Strong,
+        ));
+    }
+    if let Some(at) = &r.published_at {
+        meta.push(Seg::new(
+            format!(" released {}", time::ago_iso(at, now)),
+            Role::Meta,
+        ));
+    }
+    page.wrapped(meta, 0, Frame::None);
+    page.blank();
+    match &r.notes {
+        Some(notes) => {
+            let base = LinkBase::new(repo, &r.tag, "");
+            markdown::render(page, notes, Some(&base), Frame::None);
+        }
+        None => page.line(vec![Seg::new("No release notes.", Role::Meta)]),
+    }
+    page.blank();
+    let title = Seg::new(format!("Assets  {}", r.assets.len()), Role::Strong);
+    if r.assets.is_empty() {
+        empty_box(page, title, "No assets.");
+        return;
+    }
+    page.box_top(vec![title], Vec::new());
+    box_rows(page, &r.assets, |page, a| {
+        item(page, a.url.clone(), |page, link| {
+            let right = vec![Seg::new(
+                format!(
+                    "{} · {} downloads",
+                    crate::text::size(a.size),
+                    compact(a.downloads)
+                ),
+                Role::Meta,
+            )];
+            page.box_line(
+                vec![Seg::linked(a.name.clone(), Role::Link, link)],
+                right,
+                0,
+            );
+        });
+    });
+    page.box_bottom();
+}
+
+/// A repository's tags, each linked to its code.
+pub fn tags(page: &mut Page, repo: &RepoId, list: Option<&Results<TagInfo>>, now: u64) {
+    let Some(l) = list else {
+        page.line(vec![Seg::new("Loading tags…", Role::Meta)]);
+        return;
+    };
+    let title = format!("Tags  {}", compact(l.total));
+    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
+    if l.items.is_empty() {
+        empty_row(page, "No tags yet.");
+    }
+    box_rows(page, &l.items, |page, t| {
+        item(page, url::tree(repo, &t.name, ""), |page, link| {
+            let mut right = Vec::new();
+            if let Some(date) = &t.date {
+                right.push(Seg::new(time::ago_iso(date, now), Role::Meta));
+            }
+            if let Some(oid) = &t.oid {
+                right.push(Seg::new(
+                    format!("  {}", crate::text::short_sha(oid)),
+                    Role::Code,
+                ));
+            }
+            page.box_line(
+                vec![Seg::linked(t.name.clone(), Role::Link, link)],
+                right,
+                0,
+            );
+        });
+    });
+    more_row(page, l.next.is_some(), l.items.len(), l.total);
+    page.box_bottom();
 }
 
 // ---- commits -------------------------------------------------------------------------------

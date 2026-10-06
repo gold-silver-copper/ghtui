@@ -121,6 +121,9 @@ impl State {
             | Route::Stargazers(repo)
             | Route::Watchers(repo)
             | Route::Forks(repo)
+            | Route::Releases(repo)
+            | Route::Release { repo, .. }
+            | Route::Tags(repo)
             | Route::Actions(repo) => {
                 repo_crumbs(repo, c);
                 self.repo_tabs(repo, c);

@@ -5,8 +5,9 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blob, Checks, CommitDetail, CommitInfo, IssueDetail, PrActivity, Profile, Refs, RepoOverview,
-    RepoSummary, Results, SearchKind, SearchResults, TreeEntry, UserList, UserSummary,
+    Blob, Checks, CommitDetail, CommitInfo, IssueDetail, PrActivity, Profile, Refs, Release,
+    RepoOverview, RepoSummary, Results, SearchKind, SearchResults, TagInfo, TreeEntry, UserList,
+    UserSummary,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::page::{Link, Page, Role, Seg};
@@ -46,6 +47,9 @@ pub enum DataKey {
     BranchChecks(RepoId),
     Users(UserList),
     Forks(RepoId),
+    Releases(RepoId),
+    Release(RepoId, String),
+    Tags(RepoId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +73,9 @@ pub enum Data {
     Users(Box<Results<UserSummary>>),
     /// A page of a list of repositories.
     RepoPage(Box<Results<RepoSummary>>),
+    Releases(Box<Results<Release>>),
+    Release(Box<Release>),
+    Tags(Box<Results<TagInfo>>),
 }
 
 impl Data {
@@ -79,6 +86,8 @@ impl Data {
             Data::History(r) => r.next.as_deref(),
             Data::Users(r) => r.next.as_deref(),
             Data::RepoPage(r) => r.next.as_deref(),
+            Data::Releases(r) => r.next.as_deref(),
+            Data::Tags(r) => r.next.as_deref(),
             _ => None,
         }
     }
@@ -90,6 +99,8 @@ impl Data {
             (Data::History(a), Data::History(b)) => extend(a, *b),
             (Data::Users(a), Data::Users(b)) => extend(a, *b),
             (Data::RepoPage(a), Data::RepoPage(b)) => extend(a, *b),
+            (Data::Releases(a), Data::Releases(b)) => extend(a, *b),
+            (Data::Tags(a), Data::Tags(b)) => extend(a, *b),
             _ => {}
         }
     }
@@ -104,6 +115,8 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Stargazers(repo) => Some(DataKey::Users(UserList::Stargazers(repo.clone()))),
         Route::Watchers(repo) => Some(DataKey::Users(UserList::Watchers(repo.clone()))),
         Route::Forks(repo) => Some(DataKey::Forks(repo.clone())),
+        Route::Releases(repo) => Some(DataKey::Releases(repo.clone())),
+        Route::Tags(repo) => Some(DataKey::Tags(repo.clone())),
         _ => route
             .search()
             .map(|(kind, query)| DataKey::Search(kind, query)),
@@ -158,11 +171,19 @@ pub fn needs(route: &Route) -> Vec<Need> {
         ],
         Route::Pr { pr, .. } => vec![Need::Pr(pr.clone()), Need::Data(K::PrActivity(pr.clone()))],
         Route::Actions(repo) => vec![header(repo), Need::Data(K::BranchChecks(repo.clone()))],
-        Route::Stargazers(repo) | Route::Watchers(repo) | Route::Forks(repo) => {
-            std::iter::once(header(repo))
-                .chain(paged(route).map(Need::Data))
-                .collect()
+        Route::Release { repo, tag } => {
+            vec![
+                header(repo),
+                Need::Data(K::Release(repo.clone(), tag.clone())),
+            ]
         }
+        Route::Stargazers(repo)
+        | Route::Watchers(repo)
+        | Route::Forks(repo)
+        | Route::Releases(repo)
+        | Route::Tags(repo) => std::iter::once(header(repo))
+            .chain(paged(route).map(Need::Data))
+            .collect(),
         Route::Commit { repo, oid } => {
             vec![
                 header(repo),
@@ -211,6 +232,7 @@ impl PageScreen {
             Route::Issue { .. }
                 | Route::Blob { .. }
                 | Route::Commit { .. }
+                | Route::Release { .. }
                 | Route::Pr {
                     tab: PrTab::Conversation,
                     ..
@@ -518,6 +540,22 @@ impl State {
                     Some(Data::RepoPage(r)) => pages::repos(&mut page, title, Some(r), now),
                     Some(Data::Users(r)) => pages::people_list(&mut page, title, Some(r)),
                     _ => pages::people_list(&mut page, title, None),
+                }
+            }
+            Route::Releases(repo) | Route::Tags(repo) => {
+                let data = paged(route).and_then(|key| self.get(&key));
+                match data {
+                    None if matches!(error, Some((_, false))) => missing(&mut page, "the list"),
+                    Some(Data::Tags(t)) => pages::tags(&mut page, repo, Some(t), now),
+                    Some(Data::Releases(r)) => pages::releases(&mut page, repo, Some(r), now),
+                    _ if matches!(route, Route::Tags(_)) => pages::tags(&mut page, repo, None, now),
+                    _ => pages::releases(&mut page, repo, None, now),
+                }
+            }
+            Route::Release { repo, tag } => {
+                match self.get(&DataKey::Release(repo.clone(), tag.clone())) {
+                    Some(Data::Release(r)) => pages::release(&mut page, repo, r, now),
+                    _ => missing(&mut page, &route.title()),
                 }
             }
             Route::Actions(repo) => {

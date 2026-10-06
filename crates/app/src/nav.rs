@@ -432,7 +432,10 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Stargazers(repo)
         | Route::Watchers(repo)
         | Route::Forks(repo)
+        | Route::Releases(repo)
+        | Route::Tags(repo)
         | Route::Actions(repo) => Route::Repo(repo.clone()),
+        Route::Release { repo, .. } => Route::Releases(repo.clone()),
         // A commit's history leads up to it.
         Route::Commit { repo, oid } => Route::Commits {
             repo: repo.clone(),

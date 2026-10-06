@@ -1120,11 +1120,7 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::Results<browse::RepoSummary>, ApiError> {
         let first = after.is_none();
-        let op = browse::ForksQuery::build(browse::ListVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
-            after,
-        });
+        let op = browse::ForksQuery::build(list_vars(repo, after));
         let forks = self
             .graphql(op)
             .await?
@@ -1136,6 +1132,67 @@ impl GitHub {
             return Ok(self.kept(&browse::keys::forks(repo), forks).await);
         }
         Ok(forks)
+    }
+
+    /// A repository's releases, newest first, 20 at a time from `after`;
+    /// the first page is cached.
+    pub async fn releases(
+        &self,
+        repo: &RepoId,
+        after: Option<String>,
+    ) -> Result<browse::Results<browse::Release>, ApiError> {
+        let first = after.is_none();
+        let op = browse::ReleasesQuery::build(list_vars(repo, after));
+        let releases = self
+            .graphql(op)
+            .await?
+            .repository
+            .ok_or_else(|| ApiError::NotFound(repo.to_string()))?
+            .releases
+            .into_results();
+        if first {
+            return Ok(self.kept(&browse::keys::releases(repo), releases).await);
+        }
+        Ok(releases)
+    }
+
+    /// A release by its tag, with its notes and assets.
+    pub async fn release(&self, repo: &RepoId, tag: &str) -> Result<browse::Release, ApiError> {
+        let op = browse::ReleaseQuery::build(browse::ReleaseVariables {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+            tag: tag.to_owned(),
+        });
+        let release = self
+            .graphql(op)
+            .await?
+            .repository
+            .and_then(|r| r.release)
+            .ok_or_else(|| ApiError::NotFound(format!("{repo} release {tag}")))?
+            .into_release();
+        Ok(self.kept(&browse::keys::release(repo, tag), release).await)
+    }
+
+    /// A repository's tags, 30 at a time from `after`; the first page is
+    /// cached.
+    pub async fn tags(
+        &self,
+        repo: &RepoId,
+        after: Option<String>,
+    ) -> Result<browse::Results<browse::TagInfo>, ApiError> {
+        let first = after.is_none();
+        let op = browse::TagsQuery::build(list_vars(repo, after));
+        let tags = self
+            .graphql(op)
+            .await?
+            .repository
+            .and_then(|r| r.refs)
+            .ok_or_else(|| ApiError::NotFound(repo.to_string()))?
+            .into_results();
+        if first {
+            return Ok(self.kept(&browse::keys::tags(repo), tags).await);
+        }
+        Ok(tags)
     }
 
     /// Branches and tags, most recently committed first.
@@ -1239,6 +1296,14 @@ const INBOX_KEY: &str = "inbox";
 
 fn pr_number(pr: &PrRef) -> Result<i32, ApiError> {
     i32::try_from(pr.number).map_err(|_| ApiError::NotFound(pr.to_string()))
+}
+
+fn list_vars(repo: &RepoId, after: Option<String>) -> browse::ListVariables {
+    browse::ListVariables {
+        owner: repo.owner.clone(),
+        name: repo.name.clone(),
+        after,
+    }
 }
 
 fn number_vars(pr: &PrRef) -> Result<queries::NumberVariables, ApiError> {
