@@ -167,10 +167,10 @@ never does something else. Less common actions have no key: they're in the
 | Keys                  | Action                                                        |
 | --------------------- | ------------------------------------------------------------- |
 | `↑` `↓` (`j` `k`)     | Move                                                          |
-| `←` `→`               | Previous / next tab                                           |
+| `←` `→`               | Previous / next tab, into and out of Files changed            |
 | `Enter`               | Open the selection (on a comment: quote reply)                |
-| `Esc` `⌫` `alt-←`     | Back (in the diff, an active search is cleared first)         |
-| `alt-→`               | Forward                                                       |
+| `Esc` `⌫` `alt-←`     | Back (in the diff, a search or selection is cleared first)    |
+| `alt-→`               | Forward (back and forward go through history)                 |
 | `PgUp` `PgDn`         | Page up / down                                                |
 | `Home` `End` (`g` `G`) | Top / bottom                                                 |
 | `1`–`4`               | Tab by number                                                 |
@@ -223,7 +223,8 @@ reply or a conversation comment), `<C-e>` continues in `$EDITOR`, and `Esc` canc
 there's text).
 
 In the file tree, moving the selection scrolls the diff to that file;
-`<Enter>` returns focus to the diff.
+`<Enter>` returns focus to the diff. Other keys act on the diff, and `←`
+`→` still switch tabs.
 
 The command palette fuzzy-matches action names and descriptions. It also goes
 places: `owner/repo`, `owner/repo#123`, `@user`, or a github.com URL. On a

@@ -20,7 +20,7 @@ use ratatui_textarea::TextArea;
 
 use crate::browse::{self, Data, DataKey, Need, PageScreen};
 use crate::diff_job::{JobId, JobMsg};
-use crate::diff_screen::{self, DiffScreen, DiffState};
+use crate::diff_screen::{self, DiffScreen, DiffState, Pane};
 use crate::keymap::{Action, Key, Keymap, Resolution, Scope};
 use crate::nav::{self, Hints, Menu, SearchBox, Visit};
 use crate::picker::{self, Picker};
@@ -910,12 +910,7 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                 _ => Scope::Page,
             };
             if let Resolution::Action(action) = state.keymap.resolve(&state.pending, other) {
-                let place = match other {
-                    Scope::Diff => "in a pull request's Files changed tab",
-                    _ => "on pages, not in the diff",
-                };
-                let what = action.description();
-                state.info(format!("{what}: {place}"));
+                state.info(action.not_here());
             }
             state.pending.clear();
             Vec::new()
@@ -946,92 +941,96 @@ fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     Vec::new()
 }
 
+/// Runs `action`. The actions every screen shares are here; the rest go to
+/// the screen's own handler, which says where an action works when it
+/// doesn't work there.
 #[must_use]
 pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
-    let content = state.layout().content;
-    // In the diff, a few keys mean their nearest thing there.
-    let mut action = action;
-    if let Screen::Diff(screen) = state.screen() {
-        let searching = screen.search.is_some();
-        match action {
-            Action::PageDown | Action::PageUp => {
-                let half = if action == Action::PageDown {
-                    Action::HalfPageDown
-                } else {
-                    Action::HalfPageUp
-                };
-                let mut cmds = apply(state, half);
-                cmds.extend(apply(state, half));
-                return cmds;
-            }
-            Action::UpLevel => return nav::switch_tab(state, 1),
-            // While searching, n and p go through the matches.
-            Action::NextHunk if searching => action = Action::SearchNext,
-            Action::PrevHunk if searching => action = Action::SearchPrev,
-            // Esc ends a search before it leaves.
-            Action::Back if searching => {
-                if let Screen::Diff(screen) = state.screen_mut() {
-                    screen.search = None;
-                }
-                state.info("Search cleared");
-                return Vec::new();
-            }
-            _ => {}
-        }
-    }
-    if let Some(cmds) = review_action(state, action) {
-        return cmds;
-    }
-    {
-        let State {
-            screens,
-            diffs,
-            notice,
-            ..
-        } = &mut *state;
-        if let Screen::Diff(screen) = screens.last_mut()
-            && let Some(diff) = diffs.get_mut(&screen.pr)
-            && let Some(cmds) = diff_screen::apply(screen, diff, action, content, notice)
-        {
-            return cmds;
-        }
-    }
-    if let Some(cmds) = nav::page_action(state, action) {
-        return cmds;
-    }
+    // On the diff: whether a search or a selection is active.
+    let diff = match state.screen() {
+        Screen::Diff(screen) => Some(screen.search.is_some() || screen.selection.is_some()),
+        Screen::Page(_) => None,
+    };
     match action {
         Action::Quit => state.quit = true,
+        // Esc ends a search or selection before it leaves.
+        Action::Back if diff == Some(true) => {
+            if let Screen::Diff(screen) = state.screen_mut() {
+                (screen.search, screen.selection) = (None, None);
+            }
+            state.info("Cleared · esc again goes back");
+        }
         Action::Back => return state.back(),
         Action::Forward => return state.go_forward(),
+        // From the files, up is the pull request.
+        Action::UpLevel if diff.is_some() => return nav::switch_tab(state, 1),
+        Action::UpLevel => return nav::up_level(state),
+        Action::NextTab => return nav::step_tab(state, true),
+        Action::PrevTab => return nav::step_tab(state, false),
+        Action::Tab1 => return nav::switch_tab(state, 1),
+        Action::Tab2 => return nav::switch_tab(state, 2),
+        Action::Tab3 => return nav::switch_tab(state, 3),
+        Action::Tab4 => return nav::switch_tab(state, 4),
+        Action::GoHome if state.route() == Some(&Route::Home) => state.info("Already home"),
+        Action::GoHome => return state.push(Route::Home),
+        Action::Search if diff.is_some() => {
+            let input = nav::new_input(&state.theme, Bg::Container);
+            state.overlay = Some(Overlay::DiffSearch(Box::new(input)));
+        }
+        Action::Search => return state.open_search(),
+        Action::FindFile if diff.is_some() => return state.open_picker(picker::Kind::DiffFiles),
+        Action::FindFile => return state.open_finder(false),
         Action::Menu => nav::open_menu(state),
         Action::CommandPalette => return state.open_picker(picker::Kind::Commands),
         Action::Messages => return state.open_picker(picker::Kind::Messages),
         Action::Refresh => return state.load_visible(true),
         Action::Copy => return nav::copy_link(state),
         Action::OpenInBrowser => return state.go(Target::External(state.here_url())),
-        Action::Search => {
-            if let Screen::Diff(_) = state.screen() {
-                let input = nav::new_input(&state.theme, Bg::Container);
-                state.overlay = Some(Overlay::DiffSearch(Box::new(input)));
-            }
-        }
-        Action::FindFile => {
-            if let Screen::Diff(_) = state.screen() {
-                return state.open_picker(picker::Kind::DiffFiles);
-            }
-        }
-        Action::GoHome => {
-            if state.route() != Some(&Route::Home) {
-                return state.push(Route::Home);
-            }
-        }
-        Action::Tab1 => return nav::switch_tab(state, 1),
-        Action::Tab2 => return nav::switch_tab(state, 2),
-        Action::Tab3 => return nav::switch_tab(state, 3),
-        Action::Tab4 => return nav::switch_tab(state, 4),
-        _ => {}
+        _ if diff.is_some() => return diff_action(state, action),
+        _ => return nav::page_action(state, action),
     }
     Vec::new()
+}
+
+/// Actions on the diff screen: reviewing, and the rest on the diff itself.
+#[must_use]
+fn diff_action(state: &mut State, action: Action) -> Vec<Cmd> {
+    let content = state.layout().content;
+    let on_annotation = match (state.screen(), state.diff()) {
+        (Screen::Diff(screen), Some(diff)) => {
+            screen.focus == Pane::Diff && diff.doc.annotation_at(screen.cursor).is_some()
+        }
+        _ => false,
+    };
+    match action {
+        Action::Comment
+        | Action::FileComment
+        | Action::Suggest
+        | Action::ResolveThread
+        | Action::DeleteDraft
+        | Action::UndoDelete
+        | Action::SubmitReview
+        | Action::ToggleSinceReview
+        | Action::PickCommits => return review_action(state, action),
+        Action::Open if on_annotation => return review_action(state, action),
+        _ => {}
+    }
+    let State {
+        screens,
+        diffs,
+        notice,
+        ..
+    } = &mut *state;
+    let Screen::Diff(screen) = screens.last_mut() else {
+        return Vec::new();
+    };
+    match diffs.get_mut(&screen.pr) {
+        Some(diff) => diff_screen::apply(screen, diff, action, content, notice),
+        None => {
+            *notice = Some(Notice::Info("The diff hasn't loaded yet".into()));
+            Vec::new()
+        }
+    }
 }
 
 // ---- reviewing ---------------------------------------------------------------

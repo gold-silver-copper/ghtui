@@ -649,7 +649,7 @@ pub(crate) mod diff {
         loaded(doc)
     }
 
-    fn screen_state(mode: Mode, depth: ColorDepth, cursor: Pos, focus: Pane) -> State {
+    pub(super) fn screen_state(mode: Mode, depth: ColorDepth, cursor: Pos, focus: Pane) -> State {
         let mut s = state(mode, depth);
         s.size = (110, 34);
         open_diff(&mut s, diff_state(), cursor, focus);
@@ -1162,6 +1162,101 @@ pub(crate) mod diff {
             compute + first_screen
         );
         assert!(full_file < Duration::from_millis(100), "{full_file:?}");
+    }
+}
+
+// ---- keys on every screen ---------------------------------------------------
+
+mod keys {
+    use ghtui_theme::{ColorDepth, Mode};
+    use ghtui_ui::diff_doc::Pos;
+
+    use super::diff::screen_state;
+    use super::{press, render, with_issues, with_pr};
+    use crate::diff_screen::Pane;
+    use crate::keymap::Action;
+    use crate::state::{Screen, State, apply};
+
+    /// A list, a pull request, and the diff with each pane focused, the
+    /// selection away from the edges so moving can move.
+    type Make = fn() -> State;
+
+    fn screens() -> [(&'static str, Make); 4] {
+        fn moved(mut s: State) -> State {
+            press(&mut s, "jj");
+            s
+        }
+        [
+            ("issue list", || moved(with_issues(Mode::Dark))),
+            ("pull request", || moved(with_pr(Mode::Dark))),
+            ("diff", || {
+                let at = Pos { file: 0, row: 4 };
+                screen_state(Mode::Dark, ColorDepth::TrueColor, at, Pane::Diff)
+            }),
+            ("file tree", || {
+                let at = Pos { file: 2, row: 0 };
+                moved(screen_state(
+                    Mode::Dark,
+                    ColorDepth::TrueColor,
+                    at,
+                    Pane::Tree,
+                ))
+            }),
+        ]
+    }
+
+    /// Every action does something on every screen, or says why not.
+    #[test]
+    fn no_action_is_silent() {
+        let mut silent = Vec::new();
+        for (name, make) in screens() {
+            for &action in Action::ALL {
+                let mut s = make();
+                let before = render(&s);
+                let cmds = apply(&mut s, action);
+                let _ = s.settle();
+                if cmds.is_empty() && s.notice.is_none() && !s.quit && render(&s) == before {
+                    silent.push(format!("{name}: {}", action.name()));
+                }
+            }
+        }
+        assert!(silent.is_empty(), "silent:\n{}", silent.join("\n"));
+    }
+
+    fn on_files(s: &State) -> bool {
+        matches!(s.screen(), Screen::Diff(_))
+    }
+
+    /// `→` walks a pull request's tabs into Files changed, and `←` walks
+    /// back out the same way.
+    #[test]
+    fn arrows_go_into_the_files_and_back() {
+        let mut s = with_pr(Mode::Dark);
+        let start = s.chrome().active;
+        let mut steps = 0;
+        while !on_files(&s) {
+            press(&mut s, "<Right>");
+            steps += 1;
+            assert!(steps < 5, "never reached Files changed");
+        }
+        for _ in 0..steps {
+            assert!(s.chrome().active != start);
+            press(&mut s, "<Left>");
+        }
+        assert!(!on_files(&s));
+        assert_eq!(s.chrome().active, start);
+    }
+
+    /// So do the tab numbers.
+    #[test]
+    fn numbers_go_into_the_files_and_back() {
+        let mut s = with_pr(Mode::Dark);
+        let start = s.chrome().active;
+        press(&mut s, "4");
+        assert!(on_files(&s));
+        press(&mut s, "1");
+        assert!(!on_files(&s));
+        assert_eq!(s.chrome().active, start);
     }
 }
 

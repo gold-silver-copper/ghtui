@@ -310,10 +310,12 @@ fn scroll_by(p: &mut PageScreen, rows: isize, height: usize) {
 }
 
 /// Pages and jumps keep a selection on screen when there's one to keep.
+/// When the view can't scroll that way, the selection goes to the edge.
 fn scroll_keep(p: &mut PageScreen, rows: isize, height: usize) {
     let had = p.selected.is_some();
+    let scroll = p.scroll;
     scroll_by(p, rows, height);
-    if had && p.selected.is_none() {
+    if had && (p.selected.is_none() || p.scroll == scroll) {
         let mut visible_items = (0..p.page.items.len()).filter(|&i| visible(p, i, height));
         p.selected = if rows > 0 {
             visible_items.next()
@@ -325,12 +327,13 @@ fn scroll_keep(p: &mut PageScreen, rows: isize, height: usize) {
 
 // ---- keys on pages ----------------------------------------------------------------------
 
-/// Actions on a page screen; `None` for actions it doesn't handle.
+/// Actions on a page screen. Those that don't work on pages say where
+/// they do.
 #[must_use]
-pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
+pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
     let height = state.page_height();
     let Screen::Page(p) = state.screen_mut() else {
-        return None;
+        return Vec::new();
     };
     let half = (height / 2).max(1).cast_signed();
     let page = height.saturating_sub(2).max(1).cast_signed();
@@ -341,16 +344,6 @@ pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
         Action::HalfPageUp => scroll_keep(p, -half, height),
         Action::PageDown => scroll_keep(p, page, height),
         Action::PageUp => scroll_keep(p, -page, height),
-        Action::UpLevel => {
-            let route = p.route.clone();
-            return Some(match up(state, &route) {
-                Some(parent) => state.push(parent),
-                None => {
-                    state.info("Already at the top");
-                    Vec::new()
-                }
-            });
-        }
         Action::Top => {
             scroll_by(p, isize::MIN, height);
             p.selected = (!p.page.items.is_empty() && visible(p, 0, height)).then_some(0);
@@ -361,7 +354,7 @@ pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
             p.selected = last.filter(|&l| visible(p, l, height));
         }
         Action::Open => {
-            return Some(match p.selected_link().cloned() {
+            return match p.selected_link().cloned() {
                 Some(link) => state.follow(&link),
                 None => {
                     let (down, hints) = (
@@ -373,24 +366,34 @@ pub fn page_action(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
                     ));
                     Vec::new()
                 }
-            });
+            };
         }
         Action::Hints | Action::HintsBrowser => {
             start_hints(state, action == Action::HintsBrowser);
         }
-        Action::Search => return Some(state.open_search()),
-        Action::Star => return Some(star(state)),
-        Action::Comment => return Some(comment_with(state, "")),
-        Action::FindFile => return Some(state.open_finder(false)),
-        Action::Branch => return Some(state.open_finder(true)),
-        Action::ToggleState => return Some(cycle_state(state)),
-        Action::Sort => return Some(cycle_sort(state)),
-        Action::Menu => open_menu(state),
-        Action::NextTab => return Some(step_tab(state, true)),
-        Action::PrevTab => return Some(step_tab(state, false)),
-        _ => return None,
+        Action::Star => return star(state),
+        Action::Comment => return comment_with(state, ""),
+        Action::Branch => return state.open_finder(true),
+        Action::ToggleState => return cycle_state(state),
+        Action::Sort => return cycle_sort(state),
+        _ => state.info(action.not_here()),
     }
-    Some(Vec::new())
+    Vec::new()
+}
+
+/// Goes to the page above this one.
+#[must_use]
+pub fn up_level(state: &mut State) -> Vec<Cmd> {
+    let Some(route) = state.route().cloned() else {
+        return Vec::new();
+    };
+    match up(state, &route) {
+        Some(parent) => state.push(parent),
+        None => {
+            state.info("Already at the top");
+            Vec::new()
+        }
+    }
 }
 
 /// The page above this one, like GitHub's breadcrumbs.
@@ -432,10 +435,12 @@ fn up(state: &State, route: &Route) -> Option<Route> {
 #[must_use]
 pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
     let chrome = state.chrome();
-    let Some((_, target)) = n.checked_sub(1).and_then(|i| chrome.tabs.get(i)).cloned() else {
+    let Some((tab, target)) = n.checked_sub(1).and_then(|i| chrome.tabs.get(i)).cloned() else {
+        state.info(format!("No tab {n} here"));
         return Vec::new();
     };
     if chrome.active == Some(n - 1) {
+        state.info(format!("Already on {}", tab.label));
         return Vec::new();
     }
     let diff_of = match state.screen() {
@@ -459,24 +464,22 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
 }
 
 #[must_use]
-fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
+pub fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
     let chrome = state.chrome();
     let n = chrome.tabs.len();
-    let Some(active) = chrome.active else {
-        return Vec::new();
-    };
-    // The tabs after the active one, wrapping around, in that direction.
-    let after = (1..n).map(|k| {
-        if forward {
-            (active + k) % n
-        } else {
-            (active + n - k) % n
-        }
+    // The first tab in that direction, wrapping around, that isn't a link.
+    let next = chrome.active.and_then(|active| {
+        (1..n)
+            .map(|k| if forward { active + k } else { active + n - k })
+            .map(|i| i % n)
+            .find(|&i| chrome.tabs.get(i).is_some_and(|(t, _)| !t.external))
     });
-    let mut internal = after.filter(|&i| chrome.tabs.get(i).is_some_and(|(t, _)| !t.external));
-    match internal.next() {
+    match next {
         Some(i) => switch_tab(state, i + 1),
-        None => Vec::new(),
+        None => {
+            state.info("No other tabs here");
+            Vec::new()
+        }
     }
 }
 

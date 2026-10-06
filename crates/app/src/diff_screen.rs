@@ -354,8 +354,8 @@ pub fn preserving_position(screen: &mut DiffScreen, doc: &mut Doc, change: impl 
     screen.top = doc.locate(top);
 }
 
-/// Handles `action` on the diff screen. `None` means it isn't a diff-screen
-/// action (the caller handles it).
+/// Handles `action` on the diff screen. Those that don't work here say
+/// where they do.
 #[must_use]
 pub fn apply(
     screen: &mut DiffScreen,
@@ -363,11 +363,28 @@ pub fn apply(
     action: Action,
     content: Rect,
     notice: &mut Option<Notice>,
-) -> Option<Vec<Cmd>> {
+) -> Vec<Cmd> {
     let lay = layout(content, screen.tree_visible);
     let half = (usize::from(lay.diff.height) / 2).max(1).cast_signed();
+    let tree_focused = screen.focus == Pane::Tree && lay.tree.is_some();
+    // While searching, n and p go through the matches.
+    let action = match action {
+        Action::NextHunk if screen.search.is_some() => Action::SearchNext,
+        Action::PrevHunk if screen.search.is_some() => Action::SearchPrev,
+        action => action,
+    };
     let mut cmds = Vec::new();
     match action {
+        // A page is two half pages, so the cursor keeps its place on screen.
+        Action::PageDown | Action::PageUp => {
+            let half = if action == Action::PageDown {
+                Action::HalfPageDown
+            } else {
+                Action::HalfPageUp
+            };
+            cmds = apply(screen, state, half, content, notice);
+            cmds.extend(apply(screen, state, half, content, notice));
+        }
         Action::ToggleTree => {
             screen.tree_visible = !screen.tree_visible;
             if !screen.tree_visible {
@@ -396,7 +413,16 @@ pub fn apply(
                 .into(),
             ));
         }
-        _ if screen.focus == Pane::Tree && lay.tree.is_some() => {
+        // Moving in the file tree; everything else acts on the diff.
+        Action::Open if tree_focused => screen.focus = Pane::Diff,
+        Action::Down
+        | Action::Up
+        | Action::HalfPageDown
+        | Action::HalfPageUp
+        | Action::Top
+        | Action::Bottom
+            if tree_focused =>
+        {
             let tree_half = (tree_list_height(lay.tree.unwrap_or_default()) / 2)
                 .max(1)
                 .cast_signed();
@@ -406,12 +432,7 @@ pub fn apply(
                 Action::HalfPageDown => tree_half,
                 Action::HalfPageUp => -tree_half,
                 Action::Top => isize::MIN,
-                Action::Bottom => isize::MAX,
-                Action::Open => {
-                    screen.focus = Pane::Diff;
-                    return Some(Vec::new());
-                }
-                _ => return None,
+                _ => isize::MAX,
             };
             let last = state.tree.len().saturating_sub(1);
             screen.tree_selected = screen.tree_selected.saturating_add_signed(delta).min(last);
@@ -438,42 +459,37 @@ pub fn apply(
         }
         Action::Top => screen.cursor = Pos::default(),
         Action::Bottom => screen.cursor = state.doc.last(),
-        Action::NextHunk => {
-            if let Some(pos) = state.doc.next_hunk(screen.cursor) {
-                screen.cursor = pos;
-            }
-        }
-        Action::PrevHunk => {
-            if let Some(pos) = state.doc.prev_hunk(screen.cursor) {
-                screen.cursor = pos;
-            }
-        }
-        Action::NextFile => {
-            if let Some(pos) = state.doc.next_file(screen.cursor) {
-                jump(screen, pos);
-            }
-        }
-        Action::PrevFile => {
-            if let Some(pos) = state.doc.prev_file(screen.cursor) {
-                jump(screen, pos);
-            }
-        }
-        Action::NextThread | Action::PrevThread => {
-            let found = if action == Action::NextThread {
-                state.doc.next_thread(screen.cursor)
-            } else {
-                state.doc.prev_thread(screen.cursor)
+        Action::NextHunk
+        | Action::PrevHunk
+        | Action::NextFile
+        | Action::PrevFile
+        | Action::NextThread
+        | Action::PrevThread => {
+            let (doc, at) = (&state.doc, screen.cursor);
+            let (found, none) = match action {
+                Action::NextHunk => (doc.next_hunk(at), "No more changes"),
+                Action::PrevHunk => (doc.prev_hunk(at), "No more changes"),
+                Action::NextFile => (doc.next_file(at), "No more files"),
+                Action::PrevFile => (doc.prev_file(at), "No more files"),
+                Action::NextThread => (doc.next_thread(at), "No more unresolved threads"),
+                _ => (doc.prev_thread(at), "No more unresolved threads"),
             };
             match found {
+                // A file starts at the top of the view.
+                Some(pos) if matches!(action, Action::NextFile | Action::PrevFile) => {
+                    jump(screen, pos);
+                }
                 Some(pos) => screen.cursor = pos,
-                None => *notice = Some(Notice::Info("No more unresolved threads".into())),
+                None => *notice = Some(Notice::Info(none.into())),
             }
         }
         Action::VisualLines => {
-            screen.selection = match screen.selection {
-                Some(_) => None,
-                None => Some(screen.cursor),
+            let (selection, what) = match screen.selection {
+                Some(_) => (None, "Selection cleared"),
+                None => (Some(screen.cursor), "Selecting lines"),
             };
+            screen.selection = selection;
+            *notice = Some(Notice::Info(what.into()));
         }
         Action::NextUnviewed => match state.doc.next_unviewed(screen.cursor) {
             Some(pos) => jump(screen, pos),
@@ -481,7 +497,12 @@ pub fn apply(
         },
         Action::ExpandContext => {
             let pos = screen.cursor;
+            let rows = |doc: &Doc| doc.files().get(pos.file).map(|f| f.rows().len());
+            let before = rows(&state.doc);
             preserving_position(screen, &mut state.doc, |doc| doc.expand(pos));
+            if rows(&state.doc) == before {
+                *notice = Some(Notice::Info("No more context here".into()));
+            }
         }
         Action::FullFile => {
             let file = screen.cursor.file;
@@ -519,14 +540,14 @@ pub fn apply(
                 state.requested.remove(&file);
                 screen.cursor.row = 0;
             }
-            _ => return Some(Vec::new()),
+            _ => *notice = Some(Notice::Info("Nothing to open here".into())),
         },
         Action::ToggleViewed => cmds.extend(toggle_viewed(screen, state, notice)),
         Action::MarkReviewed => cmds.extend(toggle_reviewed(screen, state, notice)),
         Action::SearchNext | Action::SearchPrev => {
             let Some(query) = screen.search.clone() else {
                 *notice = Some(Notice::Info("No search yet".into()));
-                return Some(Vec::new());
+                return Vec::new();
             };
             match state
                 .doc
@@ -536,9 +557,9 @@ pub fn apply(
                 None => *notice = Some(Notice::Error(format!("No match for “{query}”"))),
             }
         }
-        _ => return None,
+        _ => *notice = Some(Notice::Info(action.not_here())),
     }
-    Some(cmds)
+    cmds
 }
 
 /// Puts `pos` at the top of the view with the cursor on it.
@@ -719,7 +740,7 @@ pub(crate) fn on_job(state: &mut State, pr: &PrRef, msg: JobMsg) -> Vec<Cmd> {
             diff.set_files(refs, Doc::new(files, &generated));
             // "Since my last review" chosen while switching ranges.
             if std::mem::take(&mut diff.since_requested) {
-                return review_action(state, Action::ToggleSinceReview).unwrap_or_default();
+                return review_action(state, Action::ToggleSinceReview);
             }
         }
         JobMsg::File(index, file) => {
