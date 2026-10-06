@@ -213,6 +213,15 @@ pub fn diff_lines(old: &Text, new: &Text, algorithm: Algorithm, context: u32) ->
 mod tests {
     use super::*;
 
+    fn hunks(old: &str, new: &str, algorithm: Algorithm) -> Vec<Hunk> {
+        diff_lines(
+            &Text::new(old.as_bytes()),
+            &Text::new(new.as_bytes()),
+            algorithm,
+            3,
+        )
+    }
+
     fn render(old: &str, new: &str) -> String {
         let (old, new) = (Text::new(old.as_bytes()), Text::new(new.as_bytes()));
         let mut out = String::new();
@@ -221,9 +230,9 @@ mod tests {
             out.push('\n');
             for line in &hunk.lines {
                 let (sign, text) = match line.kind {
-                    LineKind::Context => (' ', new.line(line.new.unwrap() as usize - 1)),
-                    LineKind::Added => ('+', new.line(line.new.unwrap() as usize - 1)),
-                    LineKind::Removed => ('-', old.line(line.old.unwrap() as usize - 1)),
+                    LineKind::Context => (' ', new.line_no(line.new.unwrap())),
+                    LineKind::Added => ('+', new.line_no(line.new.unwrap())),
+                    LineKind::Removed => ('-', old.line_no(line.old.unwrap())),
                 };
                 out.push(sign);
                 out.push_str(text);
@@ -251,27 +260,9 @@ mod tests {
     fn close_changes_merge_far_ones_split() {
         let old = numbered(30);
         let near = old.replace("line 5\n", "x\n").replace("line 9\n", "y\n");
-        assert_eq!(
-            diff_lines(
-                &Text::new(old.as_bytes()),
-                &Text::new(near.as_bytes()),
-                Algorithm::Histogram,
-                3
-            )
-            .len(),
-            1
-        );
+        assert_eq!(hunks(&old, &near, Algorithm::Histogram).len(), 1);
         let far = old.replace("line 5\n", "x\n").replace("line 25\n", "y\n");
-        assert_eq!(
-            diff_lines(
-                &Text::new(old.as_bytes()),
-                &Text::new(far.as_bytes()),
-                Algorithm::Histogram,
-                3
-            )
-            .len(),
-            2
-        );
+        assert_eq!(hunks(&old, &far, Algorithm::Histogram).len(), 2);
     }
 
     #[test]
@@ -362,15 +353,10 @@ mod tests {
                     format!("@@ {} @@", parts.join(" "))
                 })
                 .collect();
-            let actual: Vec<String> = diff_lines(
-                &Text::new(old.as_bytes()),
-                &Text::new(new.as_bytes()),
-                Algorithm::Myers,
-                3,
-            )
-            .iter()
-            .map(Hunk::header)
-            .collect();
+            let actual: Vec<String> = hunks(old, new, Algorithm::Myers)
+                .iter()
+                .map(Hunk::header)
+                .collect();
             assert_eq!(actual, expected, "case {i}");
         }
         std::fs::remove_dir_all(&dir).ok();
