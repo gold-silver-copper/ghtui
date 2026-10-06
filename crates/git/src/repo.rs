@@ -40,7 +40,10 @@ pub struct Repo {
     credentials: Credentials,
 }
 
-/// Refs fetched for a PR.
+/// git's empty tree: what a root commit is diffed against.
+pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/// Refs fetched for a PR (or a commit and its parent).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrRefs {
     pub head: Oid,
@@ -259,6 +262,25 @@ impl Repo {
             .status()
             .await
             .is_ok_and(|s| s.success())
+    }
+
+    /// A commit against its first parent, the empty tree for a root commit;
+    /// fetched by SHA if it isn't here.
+    pub async fn commit_refs(&self, sha: &str, progress: Progress<'_>) -> Result<PrRefs, GitError> {
+        if !self.has(sha).await {
+            progress(format!("Fetching {}", sha.get(..7).unwrap_or(sha)));
+            self.fetch_commit(sha).await?;
+        }
+        let head = self.rev_parse(sha).await?;
+        let parent = match self.rev_parse(&format!("{sha}^")).await {
+            Ok(parent) => parent,
+            Err(_) => Oid::new(EMPTY_TREE),
+        };
+        Ok(PrRefs {
+            head,
+            base: parent.clone(),
+            merge_base: parent,
+        })
     }
 
     /// Fetches one commit by SHA (e.g. a head that was force-pushed away).

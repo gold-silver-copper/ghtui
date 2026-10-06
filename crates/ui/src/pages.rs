@@ -7,8 +7,9 @@
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blob, Comment, CommitInfo, EntryKind, IssueDetail, IssueState, IssueSummary, PrActivity,
-    Profile, RepoOverview, RepoSummary, Results, SearchKind, SearchResults, TreeEntry, UserSummary,
+    Blob, Comment, CommitDetail, CommitInfo, EntryKind, IssueDetail, IssueState, IssueSummary,
+    PrActivity, Profile, RepoOverview, RepoSummary, Results, SearchKind, SearchResults, TreeEntry,
+    UserSummary,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -1484,6 +1485,82 @@ pub fn pr_commits(
     if !current_day.is_empty() {
         page.box_bottom();
     }
+}
+
+// ---- commits -------------------------------------------------------------------------------
+
+/// A commit: its message, who and when, its parents, and a link to its
+/// files (`files` is that link's target).
+pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now: u64) {
+    page.wrapped(
+        vec![Seg::new(d.headline.clone(), Role::Title)],
+        0,
+        Frame::None,
+    );
+    if !d.body.is_empty() {
+        page.blank();
+        let base = LinkBase::new(repo, &d.oid, "");
+        markdown::render(page, &d.body, Some(&base), Frame::None);
+    }
+    page.blank();
+    let mut who = vec![
+        link_seg(page, d.author.clone(), url::user(&d.author), Role::Strong),
+        Seg::new(
+            format!(" authored {}", time::ago_iso(&d.authored_at, now)),
+            Role::Meta,
+        ),
+    ];
+    if let Some(committer) = &d.committer {
+        who.push(Seg::new(" · ", Role::Meta));
+        who.push(link_seg(
+            page,
+            committer.clone(),
+            url::user(committer),
+            Role::Strong,
+        ));
+        who.push(Seg::new(
+            format!(" committed {}", time::ago_iso(&d.committed_at, now)),
+            Role::Meta,
+        ));
+    }
+    match d.verified {
+        Some(true) => who.extend([space(), chip("Verified", Bg::SuccessContainer)]),
+        Some(false) => who.extend([space(), chip("Unverified", Bg::ErrorContainer)]),
+        None => {}
+    }
+    page.wrapped(who, 0, Frame::None);
+    let mut ids = vec![Seg::new(
+        format!("commit {}", crate::text::short_sha(&d.oid)),
+        Role::Meta,
+    )];
+    if !d.parents.is_empty() {
+        let noun = if d.parents.len() == 1 {
+            "parent"
+        } else {
+            "parents"
+        };
+        ids.push(Seg::new(format!(" · {noun} "), Role::Meta));
+        for (i, parent) in d.parents.iter().enumerate() {
+            if i > 0 {
+                ids.push(Seg::new(" + ", Role::Meta));
+            }
+            let short = crate::text::short_sha(parent);
+            ids.push(link_seg(page, short, url::commit(repo, parent), Role::Code));
+        }
+    }
+    page.wrapped(ids, 0, Frame::None);
+    page.blank();
+    page.box_top(vec![Seg::new("± Files changed", Role::Meta)], Vec::new());
+    item(page, files, |page, link| {
+        let what = match d.changed_files {
+            Some(n) => plural(n, "file"),
+            None => "Files".to_owned(),
+        };
+        let mut segs = vec![Seg::linked(what, Role::Link, link), space()];
+        segs.extend(changes(d.additions, d.deletions));
+        page.box_line(segs, vec![Seg::new("↵ show the diff", Role::Meta)], 0);
+    });
+    page.box_bottom();
 }
 
 // ---- profile -------------------------------------------------------------------------------

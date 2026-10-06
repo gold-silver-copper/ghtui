@@ -20,7 +20,7 @@ use ratatui_textarea::TextArea;
 
 use crate::browse::{self, Data, DataKey, Need, PageScreen};
 use crate::diff_job::{JobId, JobMsg};
-use crate::diff_screen::{self, DiffScreen, DiffState, Pane};
+use crate::diff_screen::{self, DiffOf, DiffScreen, DiffState, Pane};
 use crate::keymap::{Action, Key, Keymap, Scope};
 use crate::nav::{self, Hints, Menu, SearchBox, Visit};
 use crate::picker::{self, Picker};
@@ -70,7 +70,7 @@ pub enum Msg {
     /// `$EDITOR` finished (or failed to start).
     Edited(EditPurpose, Result<String, Failure>),
     /// For a PR's diff screen.
-    Diff(PrRef, DiffMsg),
+    Diff(DiffOf, DiffMsg),
 }
 
 /// Why background work failed. Shows as its message with its causes
@@ -224,15 +224,16 @@ pub enum Git {
     /// Start (or restart) the diff job for a PR.
     /// With `range`, diff `(from, to)` instead of the whole PR.
     LoadDiff {
-        pr: PrRef,
+        of: DiffOf,
         job: JobId,
+        /// The branch a PR merges into (empty for a commit).
         base_ref: String,
         range: Option<(String, String)>,
     },
     /// Diff these files next.
-    Prioritize(PrRef, Vec<usize>),
+    Prioritize(DiffOf, Vec<usize>),
     /// Look for moved code; answered as the job's [`JobMsg::Moves`].
-    DetectMoves(PrRef, JobId, Vec<(usize, Arc<FileDiff>)>),
+    DetectMoves(DiffOf, JobId, Vec<(usize, Arc<FileDiff>)>),
     MapOutdated {
         pr: PrRef,
         head: Oid,
@@ -421,7 +422,7 @@ pub struct State {
     pub data: HashMap<DataKey, Remote<Data>>,
     /// Bumped whenever data changes, so pages know to rebuild.
     pub data_gen: u64,
-    pub diffs: HashMap<PrRef, DiffState>,
+    pub diffs: HashMap<DiffOf, DiffState>,
     pub viewer: Option<String>,
     pub rate_limits: RateLimits,
     pub overlay: Option<Overlay>,
@@ -574,26 +575,28 @@ impl State {
                 cmds.extend(self.ensure_route(&route, force));
             }
             Screen::Diff(d) => {
-                let pr = d.pr.clone();
-                cmds.extend(self.ensure_pr(&pr, false));
-                if force || !self.diffs.contains_key(&pr) {
-                    cmds.extend(self.start_diff(&pr));
+                let of = d.of.clone();
+                if let DiffOf::Pr(pr) = &of {
+                    cmds.extend(self.ensure_pr(pr, false));
+                }
+                if force || !self.diffs.contains_key(&of) {
+                    cmds.extend(self.start_diff(&of));
                 }
             }
         }
         cmds
     }
 
-    /// Opens the diff of a PR (it starts once the PR's metadata is in).
+    /// Opens a diff (a PR's starts once the PR's metadata is in).
     #[must_use]
-    pub fn open_diff(&mut self, pr: PrRef) -> Vec<Cmd> {
-        let reuse = self.diffs.get(&pr).is_some_and(|d| d.error.is_none());
+    pub fn open_diff(&mut self, of: DiffOf) -> Vec<Cmd> {
+        let reuse = self.diffs.get(&of).is_some_and(|d| d.error.is_none());
         let cmds = if reuse {
             Vec::new()
         } else {
-            self.start_diff(&pr)
+            self.start_diff(&of)
         };
-        let screen = DiffScreen::new(pr, self.size.0);
+        let screen = DiffScreen::new(of, self.size.0);
         self.screens.push(Screen::Diff(Box::new(screen)));
         cmds
     }
@@ -605,25 +608,33 @@ impl State {
     }
 
     #[must_use]
-    fn start_diff(&mut self, pr: &PrRef) -> Vec<Cmd> {
-        let Some(base_ref) = self.base_ref(pr) else {
-            return Vec::new();
+    fn start_diff(&mut self, of: &DiffOf) -> Vec<Cmd> {
+        let base_ref = match of {
+            DiffOf::Pr(pr) => match self.base_ref(pr) {
+                Some(base_ref) => base_ref,
+                None => return Vec::new(),
+            },
+            DiffOf::Commit(..) => String::new(),
         };
         let diff = DiffState::loading();
         let job = diff.job;
-        self.diffs.insert(pr.clone(), diff);
-        vec![
-            Cmd::Git(Git::LoadDiff {
-                pr: pr.clone(),
-                job,
-                base_ref,
-                range: None,
-            }),
-            Cmd::Api(Api::FetchViewed(pr.clone())),
-            Cmd::LoadReview(pr.clone()),
-            Cmd::Api(Api::FetchThreads(pr.clone())),
-            Cmd::Api(Api::FetchPatches(pr.clone())),
-        ]
+        self.diffs.insert(of.clone(), diff);
+        let mut cmds = vec![Cmd::Git(Git::LoadDiff {
+            of: of.clone(),
+            job,
+            base_ref,
+            range: None,
+        })];
+        // Reviews, threads and viewed files are a PR's.
+        if let DiffOf::Pr(pr) = of {
+            cmds.extend([
+                Cmd::Api(Api::FetchViewed(pr.clone())),
+                Cmd::LoadReview(pr.clone()),
+                Cmd::Api(Api::FetchThreads(pr.clone())),
+                Cmd::Api(Api::FetchPatches(pr.clone())),
+            ]);
+        }
+        cmds
     }
 
     /// Rebuilds the page if its data changed and keeps the page (or the
@@ -658,9 +669,9 @@ impl State {
                 })
             }
             Screen::Page(_) => None,
-            Screen::Diff(screen) => match self.diffs.get(&screen.pr) {
+            Screen::Diff(screen) => match self.diffs.get(&screen.of) {
                 Some(diff) => diff.status(),
-                None => Some(format!("Loading {}", screen.pr)),
+                None => Some(format!("Loading {}", screen.of)),
             },
         }
     }
@@ -694,7 +705,10 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     let mut cmds = handle(state, msg);
     // Until a PR's saved review is read, saving would overwrite it.
     cmds.retain(|cmd| match cmd {
-        Cmd::SaveReview(pr, _) => state.diffs.get(pr).is_some_and(|d| d.review_loaded),
+        Cmd::SaveReview(pr, _) => state
+            .diffs
+            .get(&DiffOf::Pr(pr.clone()))
+            .is_some_and(|d| d.review_loaded),
         _ => true,
     });
     cmds
@@ -732,7 +746,7 @@ pub fn timers(state: &mut State, last_notice: &mut Option<Notice>) -> Vec<Cmd> {
 #[must_use]
 fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
     match msg {
-        Msg::Diff(pr, msg) => return diff_screen::update(state, pr, msg),
+        Msg::Diff(of, msg) => return diff_screen::update(state, &of, msg),
         Msg::Key(key) => return on_key(state, key),
         Msg::Resize(w, h) => state.size = (w, h),
         Msg::Viewer(Ok(login)) => state.viewer = Some(login),
@@ -749,11 +763,12 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             }
             state.prs.entry(pr.clone()).or_default().finish(*result);
             // The diff was opened before the PR's metadata arrived.
+            let of = DiffOf::Pr(pr);
             if let Screen::Diff(screen) = state.screen()
-                && screen.pr == pr
-                && !state.diffs.contains_key(&pr)
+                && screen.of == of
+                && !state.diffs.contains_key(&of)
             {
-                return state.start_diff(&pr);
+                return state.start_diff(&of);
             }
         }
         Msg::Fetched {
@@ -1016,7 +1031,7 @@ fn diff_action(state: &mut State, action: Action) -> Vec<Cmd> {
     let Screen::Diff(screen) = screens.last_mut() else {
         return Vec::new();
     };
-    match diffs.get_mut(&screen.pr) {
+    match diffs.get_mut(&screen.of) {
         Some(diff) => diff_screen::apply(screen, diff, action, content, notice),
         None => {
             *notice = Some(Notice::Info("The diff hasn't loaded yet".into()));
@@ -1032,7 +1047,8 @@ impl State {
     /// the diff's head are known.
     #[must_use]
     pub(crate) fn map_outdated(&mut self, pr: &PrRef) -> Vec<Cmd> {
-        let Some(diff) = self.diffs.get_mut(pr).filter(|d| !d.mapping_requested) else {
+        let of = DiffOf::Pr(pr.clone());
+        let Some(diff) = self.diffs.get_mut(&of).filter(|d| !d.mapping_requested) else {
             return Vec::new();
         };
         let threads = review::outdated_to_map(&diff.threads);
@@ -1058,7 +1074,7 @@ impl State {
     /// The diff on screen, if it's one.
     pub fn diff(&self) -> Option<&DiffState> {
         match self.screen() {
-            Screen::Diff(screen) => self.diffs.get(&screen.pr),
+            Screen::Diff(screen) => self.diffs.get(&screen.of),
             Screen::Page(_) => None,
         }
     }
@@ -1068,7 +1084,7 @@ impl State {
         let Screen::Diff(screen) = screens.last_mut() else {
             return None;
         };
-        let diff = diffs.get_mut(&screen.pr)?;
+        let diff = diffs.get_mut(&screen.of)?;
         Some((screen, diff))
     }
 }
@@ -1489,6 +1505,29 @@ pub(crate) mod tests {
             matches!(state.overlay, Some(Overlay::Picker(_))),
             "GitHub's palette key"
         );
+    }
+
+    /// A commit's diff starts only the diff job; what belongs to pull
+    /// requests says so.
+    #[test]
+    fn a_commit_diff_has_no_review() {
+        let mut s = state();
+        let of = DiffOf::Commit(RepoId::new("o", "r"), "a".repeat(40));
+        let cmds = s.open_diff(of.clone());
+        assert!(matches!(
+            &cmds[..],
+            [Cmd::Git(Git::LoadDiff { of: o, base_ref, .. })] if *o == of && base_ref.is_empty()
+        ));
+        s.diffs.insert(of, crate::snapshot_tests::diff_fixture());
+        for action in [Action::Comment, Action::ToggleViewed, Action::MarkReviewed] {
+            s.notice = None;
+            assert!(apply(&mut s, action).is_empty(), "{action:?}");
+            assert!(
+                matches!(&s.notice, Some(Notice::Info(n)) if n.contains("pull request")),
+                "{action:?}: {:?}",
+                s.notice
+            );
+        }
     }
 
     #[test]
@@ -2073,10 +2112,14 @@ pub(crate) mod tests {
             let mut s = state();
             s.size = (width, 40);
             let pr = PrRef::parse("o/r#7").unwrap();
-            s.diffs
-                .insert(pr.clone(), crate::snapshot_tests::diff_fixture());
-            s.screens
-                .push(Screen::Diff(Box::new(DiffScreen::new(pr.clone(), width))));
+            s.diffs.insert(
+                DiffOf::Pr(pr.clone()),
+                crate::snapshot_tests::diff_fixture(),
+            );
+            s.screens.push(Screen::Diff(Box::new(DiffScreen::new(
+                DiffOf::Pr(pr.clone()),
+                width,
+            ))));
             let _ = s.settle_diff();
             (s, pr)
         }
@@ -2128,9 +2171,12 @@ pub(crate) mod tests {
                 &pr,
                 DiffMsg::ViewedLoaded(Box::new(Ok(viewed_files("PR_1")))),
             );
-            assert_eq!(s.diffs[&pr].doc.files()[0].viewed, Viewed::Viewed);
+            assert_eq!(
+                s.diffs[&DiffOf::Pr(pr.clone())].doc.files()[0].viewed,
+                Viewed::Viewed
+            );
             assert!(
-                s.diffs[&pr].doc.files()[0].collapsed(),
+                s.diffs[&DiffOf::Pr(pr.clone())].doc.files()[0].collapsed(),
                 "viewed files collapse"
             );
 
@@ -2146,7 +2192,10 @@ pub(crate) mod tests {
                 Cmd::Api(Api::SetViewed { file: 1, viewed: true, previous: Viewed::Unviewed, pull_request_id, .. })
                     if pull_request_id.as_str() == "PR_1"
             )));
-            assert_eq!(s.diffs[&pr].doc.files()[1].viewed, Viewed::Viewed);
+            assert_eq!(
+                s.diffs[&DiffOf::Pr(pr.clone())].doc.files()[1].viewed,
+                Viewed::Viewed
+            );
             diff_msg(
                 &mut s,
                 &pr,
@@ -2156,7 +2205,10 @@ pub(crate) mod tests {
                     result: Err(ApiError::Network("offline".into())),
                 },
             );
-            assert_eq!(s.diffs[&pr].doc.files()[1].viewed, Viewed::Unviewed);
+            assert_eq!(
+                s.diffs[&DiffOf::Pr(pr.clone())].doc.files()[1].viewed,
+                Viewed::Unviewed
+            );
             assert!(matches!(s.notice, Some(Notice::Error(_))));
         }
 
@@ -2209,7 +2261,7 @@ pub(crate) mod tests {
             };
             assert_eq!(saved_pr, &pr);
             assert_eq!(review.reviewed_hunks.len(), 1);
-            assert_eq!(s.diffs[&pr].doc.reviewed.len(), 1);
+            assert_eq!(s.diffs[&DiffOf::Pr(pr)].doc.reviewed.len(), 1);
             let cmds = press(&mut s, "m");
             let Some(Cmd::SaveReview(_, review)) = cmds.first() else {
                 panic!()
@@ -2225,7 +2277,12 @@ pub(crate) mod tests {
             press(&mut s, "origin<Enter>");
             assert!(s.overlay.is_none());
             let cursor = screen(&s).cursor;
-            assert!(s.diffs[&pr].doc.row_text(cursor).contains("origin"));
+            assert!(
+                s.diffs[&DiffOf::Pr(pr)]
+                    .doc
+                    .row_text(cursor)
+                    .contains("origin")
+            );
             assert!(matches!(s.notice, Some(Notice::Info(ref m)) if m.contains("1 line")));
             press(&mut s, "n");
             assert_eq!(screen(&s).cursor, cursor, "single match wraps to itself");
@@ -2267,13 +2324,20 @@ pub(crate) mod tests {
         fn whitespace_and_full_file_keep_the_cursor_line() {
             let (mut s, pr) = diff_state(120);
             press(&mut s, "njjj");
-            let text = s.diffs[&pr].doc.row_text(screen(&s).cursor);
+            let text = s.diffs[&DiffOf::Pr(pr.clone())]
+                .doc
+                .row_text(screen(&s).cursor);
             act(&mut s, Action::FullFile);
-            assert!(s.diffs[&pr].doc.files()[0].full);
-            assert_eq!(s.diffs[&pr].doc.row_text(screen(&s).cursor), text);
+            assert!(s.diffs[&DiffOf::Pr(pr.clone())].doc.files()[0].full);
+            assert_eq!(
+                s.diffs[&DiffOf::Pr(pr.clone())]
+                    .doc
+                    .row_text(screen(&s).cursor),
+                text
+            );
             press(&mut s, "w");
             assert_eq!(
-                s.diffs[&pr].doc.opts().whitespace,
+                s.diffs[&DiffOf::Pr(pr)].doc.opts().whitespace,
                 ghtui_diff::Whitespace::Ignore
             );
             press(&mut s, "e");
@@ -2285,13 +2349,13 @@ pub(crate) mod tests {
             fn moves_are_detected_when_every_file_is_diffed() {
                 let (mut s, pr) = diff_state(120);
                 // The fixture has a loading file; finishing it triggers detection.
-                let pending = s.diffs[&pr]
+                let pending = s.diffs[&DiffOf::Pr(pr.clone())]
                     .doc
                     .files()
                     .iter()
                     .position(|f| f.diff.is_none())
                     .unwrap();
-                let job = s.diffs[&pr].job;
+                let job = s.diffs[&DiffOf::Pr(pr.clone())].job;
                 let cmds = diff_msg(
                     &mut s,
                     &pr,
@@ -2308,7 +2372,7 @@ pub(crate) mod tests {
                     ),
                 );
                 assert!(cmds.iter().any(
-                    |c| matches!(c, Cmd::Git(Git::DetectMoves(p, j, files)) if *p == pr && *j == job && files.len() == 8)
+                    |c| matches!(c, Cmd::Git(Git::DetectMoves(p, j, files)) if *p == DiffOf::Pr(pr.clone()) && *j == job && files.len() == 8)
                 ));
                 // Only once.
                 let again = diff_msg(&mut s, &pr, DiffMsg::Job(job, JobMsg::Moves(Vec::new())));
@@ -2326,8 +2390,11 @@ pub(crate) mod tests {
             #[test]
             fn a_restarted_job_ignores_the_old_one() {
                 let (mut s, pr) = diff_state(120);
-                let old = s.diffs[&pr].job;
-                s.diffs.get_mut(&pr).unwrap().restart(None);
+                let old = s.diffs[&DiffOf::Pr(pr.clone())].job;
+                s.diffs
+                    .get_mut(&DiffOf::Pr(pr.clone()))
+                    .unwrap()
+                    .restart(None);
                 let stale = Arc::new(FileDiff::compute("a.rs", Some(b"a\n"), Some(b"b\n")));
                 diff_msg(&mut s, &pr, DiffMsg::Job(old, JobMsg::File(0, stale)));
                 diff_msg(
@@ -2335,7 +2402,7 @@ pub(crate) mod tests {
                     &pr,
                     DiffMsg::Job(old, JobMsg::Failed(Failure::msg("old"))),
                 );
-                let diff = &s.diffs[&pr];
+                let diff = &s.diffs[&DiffOf::Pr(pr.clone())];
                 assert_ne!(diff.job, old);
                 assert!(diff.doc.is_empty());
                 assert_eq!(diff.error, None);
@@ -2346,7 +2413,10 @@ pub(crate) mod tests {
                     &pr,
                     DiffMsg::Job(job, JobMsg::Failed(Failure::msg("new"))),
                 );
-                assert_eq!(s.diffs[&pr].error.as_deref(), Some("new"));
+                assert_eq!(
+                    s.diffs[&DiffOf::Pr(pr.clone())].error.as_deref(),
+                    Some("new")
+                );
             }
 
             #[test]
@@ -2368,7 +2438,7 @@ pub(crate) mod tests {
                     &pr,
                     DiffMsg::SinceReady("old".into(), Ok(Default::default())),
                 );
-                assert!(s.diffs[&pr].doc.since_active());
+                assert!(s.diffs[&DiffOf::Pr(pr.clone())].doc.since_active());
                 assert_eq!(s.chrome().tabs[3].0.label, "Files · since your review");
                 // Toggling back needs no new lookups.
                 assert!(
@@ -2376,7 +2446,7 @@ pub(crate) mod tests {
                         .iter()
                         .all(|c| matches!(c, Cmd::Git(Git::Prioritize(..))))
                 );
-                assert!(!s.diffs[&pr].doc.since_active());
+                assert!(!s.diffs[&DiffOf::Pr(pr.clone())].doc.since_active());
             }
 
             #[test]
@@ -2389,7 +2459,10 @@ pub(crate) mod tests {
                     matches!(&s.notice, Some(Notice::Info(m)) if m.contains("haven't reviewed"))
                 );
                 // Reviewing the current head means nothing's new.
-                s.diffs.get_mut(&pr).unwrap().since_requested = true;
+                s.diffs
+                    .get_mut(&DiffOf::Pr(pr.clone()))
+                    .unwrap()
+                    .since_requested = true;
                 diff_msg(&mut s, &pr, DiffMsg::LastReview(Ok(Some("h".into()))));
                 assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("current head")));
             }
@@ -2474,12 +2547,15 @@ pub(crate) mod tests {
                         thread("open", Some(14), false, false),
                     ])),
                 );
-                assert_eq!(s.diffs[&pr].doc.annotations().len(), 2);
+                assert_eq!(s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations().len(), 2);
                 press(&mut s, "g");
                 act(&mut s, Action::NextThread);
-                let at = s.diffs[&pr].doc.annotation_at(screen(&s).cursor).unwrap();
+                let at = s.diffs[&DiffOf::Pr(pr.clone())]
+                    .doc
+                    .annotation_at(screen(&s).cursor)
+                    .unwrap();
                 assert_eq!(
-                    s.diffs[&pr].doc.annotations()[at as usize].key,
+                    s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations()[at as usize].key,
                     AnnotationKey::Thread(NodeId::new("open"))
                 );
                 // The status bar leads with what fits a thread.
@@ -2495,7 +2571,7 @@ pub(crate) mod tests {
                     &cmds[..],
                     [Cmd::Api(Api::SetResolved { resolved: true, .. }), ..]
                 ));
-                assert!(s.diffs[&pr].threads[1].resolved);
+                assert!(s.diffs[&DiffOf::Pr(pr.clone())].threads[1].resolved);
                 diff_msg(
                     &mut s,
                     &pr,
@@ -2505,7 +2581,7 @@ pub(crate) mod tests {
                         result: Err(ApiError::Network("down".into())),
                     },
                 );
-                assert!(!s.diffs[&pr].threads[1].resolved);
+                assert!(!s.diffs[&DiffOf::Pr(pr.clone())].threads[1].resolved);
                 assert!(matches!(s.notice, Some(Notice::Error(_))));
             }
 
@@ -2526,7 +2602,7 @@ pub(crate) mod tests {
                 let draft = &review.pending[0];
                 assert_eq!((draft.line, draft.commit.as_str()), (Some(14), "h"));
                 assert!(
-                    s.diffs[&pr]
+                    s.diffs[&DiffOf::Pr(pr.clone())]
                         .doc
                         .annotations()
                         .iter()
@@ -2540,7 +2616,10 @@ pub(crate) mod tests {
                 );
                 press(&mut s, "!");
                 press(&mut s, "<C-s>");
-                assert_eq!(s.diffs[&pr].review.pending[0].body, "Use a constant!");
+                assert_eq!(
+                    s.diffs[&DiffOf::Pr(pr.clone())].review.pending[0].body,
+                    "Use a constant!"
+                );
 
                 let cmds = press(&mut s, "<Delete>");
                 assert!(matches!(&cmds[..], [Cmd::SaveReview(_, r)] if r.pending.is_empty()));
@@ -2552,7 +2631,7 @@ pub(crate) mod tests {
                     matches!(&cmds[..], [Cmd::SaveReview(_, r)] if r.pending[0].body == "Use a constant!")
                 );
                 assert!(
-                    s.diffs[&pr]
+                    s.diffs[&DiffOf::Pr(pr)]
                         .doc
                         .annotations()
                         .iter()
@@ -2618,7 +2697,7 @@ pub(crate) mod tests {
                 press(&mut s, "c");
                 press(&mut s, "nit");
                 press(&mut s, "<C-s>");
-                let id = s.diffs[&pr].review.pending[0].id;
+                let id = s.diffs[&DiffOf::Pr(pr.clone())].review.pending[0].id;
 
                 press(&mut s, "a");
                 assert!(matches!(s.overlay, Some(Overlay::Submit(_))));
@@ -2641,14 +2720,19 @@ pub(crate) mod tests {
                     matches!(&s.overlay, Some(Overlay::Submit(d)) if d.error.is_some() && !d.sending)
                 );
                 assert_eq!(
-                    s.diffs[&pr].review.pending[0].error.as_deref(),
+                    s.diffs[&DiffOf::Pr(pr.clone())].review.pending[0]
+                        .error
+                        .as_deref(),
                     Some("line must be part of the diff")
                 );
 
                 // Make it a file comment and submit again.
                 press(&mut s, "<Esc>");
                 act(&mut s, Action::FileComment);
-                assert_eq!(s.diffs[&pr].review.pending[0].line, None);
+                assert_eq!(
+                    s.diffs[&DiffOf::Pr(pr.clone())].review.pending[0].line,
+                    None
+                );
                 press(&mut s, "a");
                 press(&mut s, "<C-s>");
                 diff_msg(
@@ -2661,8 +2745,14 @@ pub(crate) mod tests {
                     }),
                 );
                 assert!(s.overlay.is_none());
-                assert!(s.diffs[&pr].review.pending.is_empty());
-                assert_eq!(s.diffs[&pr].review.last_reviewed_head.as_deref(), Some("h"));
+                assert!(s.diffs[&DiffOf::Pr(pr.clone())].review.pending.is_empty());
+                assert_eq!(
+                    s.diffs[&DiffOf::Pr(pr.clone())]
+                        .review
+                        .last_reviewed_head
+                        .as_deref(),
+                    Some("h")
+                );
             }
 
             #[test]
@@ -2745,7 +2835,7 @@ pub(crate) mod tests {
                     DiffMsg::ThreadsLoaded(Ok(vec![thread("old", None, false, true)])),
                 );
                 assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated { threads, head, .. }) if threads.len() == 1 && &**head == "h")));
-                let ann = &s.diffs[&pr].doc.annotations()[0];
+                let ann = &s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations()[0];
                 assert!(
                     ann.outdated && ann.on_line().is_none(),
                     "unplaced until mapped"
@@ -2755,7 +2845,7 @@ pub(crate) mod tests {
                     &pr,
                     DiffMsg::OutdatedMapped(vec![(NodeId::new("old"), Some(4))]),
                 );
-                let ann = &s.diffs[&pr].doc.annotations()[0];
+                let ann = &s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations()[0];
                 assert_eq!((ann.on_line(), ann.moved), (Some(4), true));
             }
         }

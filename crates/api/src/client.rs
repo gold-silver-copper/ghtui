@@ -949,6 +949,20 @@ impl GitHub {
             .await)
     }
 
+    /// A commit, by a revision GitHub can resolve (a short or full SHA).
+    pub async fn commit(&self, repo: &RepoId, rev: &str) -> Result<browse::CommitDetail, ApiError> {
+        let op = browse::CommitQuery::build(browse::RepoVariables {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+            expression: rev.to_owned(),
+        });
+        let commit = match self.graphql(op).await?.repository.and_then(|r| r.object) {
+            Some(browse::CommitObject::Commit(c)) => c.into_detail(),
+            _ => return Err(ApiError::NotFound(format!("{repo}@{rev}"))),
+        };
+        Ok(self.kept(&browse::keys::commit(repo, rev), commit).await)
+    }
+
     /// Branches and tags, most recently committed first.
     pub async fn refs(&self, repo: &RepoId) -> Result<browse::Refs, ApiError> {
         let op = browse::BranchesQuery::build(browse::BranchesVariables {

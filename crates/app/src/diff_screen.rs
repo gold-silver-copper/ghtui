@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use ghtui_api::model::{NodeId, PatchFile, PrRef, ReviewThread, ViewedFiles, ViewedState};
+use ghtui_api::model::{NodeId, PatchFile, PrRef, RepoId, ReviewThread, ViewedFiles, ViewedState};
 use ghtui_diff::anchor::Commentable;
 use ghtui_diff::{FileDiff, Whitespace};
 use ghtui_git::Oid;
@@ -33,6 +33,47 @@ pub enum LastReview {
     At(Oid),
 }
 
+/// What a diff screen shows: a pull request's changes, or one commit's.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DiffOf {
+    Pr(PrRef),
+    /// A commit (its full ID) against its first parent.
+    Commit(RepoId, String),
+}
+
+impl DiffOf {
+    /// The pull request, for what only pull requests have: reviews,
+    /// threads, viewed files.
+    pub fn pr(&self) -> Option<&PrRef> {
+        match self {
+            DiffOf::Pr(pr) => Some(pr),
+            DiffOf::Commit(..) => None,
+        }
+    }
+
+    pub fn repo(&self) -> &RepoId {
+        match self {
+            DiffOf::Pr(pr) => &pr.repo,
+            DiffOf::Commit(repo, _) => repo,
+        }
+    }
+}
+
+impl From<PrRef> for DiffOf {
+    fn from(pr: PrRef) -> Self {
+        DiffOf::Pr(pr)
+    }
+}
+
+impl std::fmt::Display for DiffOf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DiffOf::Pr(pr) => pr.fmt(f),
+            DiffOf::Commit(repo, oid) => write!(f, "{repo}@{}", short_sha(oid)),
+        }
+    }
+}
+
 /// Split view turns on automatically from this diff-pane width.
 pub const SPLIT_MIN_WIDTH: u16 = 160;
 
@@ -44,7 +85,7 @@ pub enum Pane {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffScreen {
-    pub pr: PrRef,
+    pub of: DiffOf,
     pub cursor: Pos,
     pub top: Pos,
     pub tree_visible: bool,
@@ -61,9 +102,9 @@ pub struct DiffScreen {
 }
 
 impl DiffScreen {
-    pub fn new(pr: PrRef, width: u16) -> Self {
+    pub fn new(of: DiffOf, width: u16) -> Self {
         Self {
-            pr,
+            of,
             cursor: Pos::default(),
             top: Pos::default(),
             tree_visible: width >= 100,
@@ -591,6 +632,10 @@ fn toggle_viewed(
     state: &mut DiffState,
     notice: &mut Option<Notice>,
 ) -> Vec<Cmd> {
+    let Some(pr) = screen.of.pr().cloned() else {
+        *notice = Some(Notice::Info("Viewed files are a pull request's".into()));
+        return Vec::new();
+    };
     let Some(viewed) = &state.viewed else {
         *notice = Some(Notice::Error(
             "Viewed state hasn't loaded from GitHub yet".into(),
@@ -608,7 +653,7 @@ fn toggle_viewed(
         Viewed::Viewed
     };
     let cmd = Cmd::Api(Api::SetViewed {
-        pr: screen.pr.clone(),
+        pr,
         pull_request_id: viewed.pull_request_id.clone(),
         path: file.meta.path().to_owned(),
         file: index,
@@ -630,6 +675,10 @@ fn toggle_reviewed(
     state: &mut DiffState,
     notice: &mut Option<Notice>,
 ) -> Vec<Cmd> {
+    let Some(pr) = screen.of.pr().cloned() else {
+        *notice = Some(Notice::Info("Reviewed marks are a pull request's".into()));
+        return Vec::new();
+    };
     let Some(block) = state.doc.block_at(screen.cursor) else {
         *notice = Some(Notice::Info(
             "Move to a changed line to mark it reviewed".into(),
@@ -645,7 +694,7 @@ fn toggle_reviewed(
         hunks.sort();
     }
     state.doc.reviewed = hunks.iter().cloned().collect();
-    vec![Cmd::SaveReview(screen.pr.clone(), state.review.clone())]
+    vec![Cmd::SaveReview(pr, state.review.clone())]
 }
 
 /// Applies view options, clamps positions, keeps the cursor visible (clear
@@ -714,22 +763,22 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
         return Vec::new();
     }
     state.requested.extend(wanted.iter().copied());
-    vec![Cmd::Git(Git::Prioritize(screen.pr.clone(), wanted))]
+    vec![Cmd::Git(Git::Prioritize(screen.of.clone(), wanted))]
 }
 
-/// A message from the PR's current diff job.
+/// A message from a diff's current job.
 #[must_use]
-pub(crate) fn on_job(state: &mut State, pr: &PrRef, msg: JobMsg) -> Vec<Cmd> {
+pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
     match msg {
         JobMsg::Progress(line) => {
-            if let Some(diff) = state.diffs.get_mut(pr)
+            if let Some(diff) = state.diffs.get_mut(of)
                 && !diff.listed()
             {
                 diff.progress = Some(line);
             }
         }
         JobMsg::Files(files) => {
-            let Some(diff) = state.diffs.get_mut(pr) else {
+            let Some(diff) = state.diffs.get_mut(of) else {
                 return Vec::new();
             };
             let DiffFiles {
@@ -744,25 +793,25 @@ pub(crate) fn on_job(state: &mut State, pr: &PrRef, msg: JobMsg) -> Vec<Cmd> {
             }
         }
         JobMsg::File(index, file) => {
-            if let Some(diff) = state.diffs.get_mut(pr) {
+            if let Some(diff) = state.diffs.get_mut(of) {
                 diff.set_file(index, file);
                 if let Some(inputs) = diff.take_move_inputs() {
-                    return vec![Cmd::Git(Git::DetectMoves(pr.clone(), diff.job, inputs))];
+                    return vec![Cmd::Git(Git::DetectMoves(of.clone(), diff.job, inputs))];
                 }
             }
         }
         JobMsg::Moves(moves) => match state.diff_parts() {
-            Some((screen, diff)) if screen.pr == *pr => {
+            Some((screen, diff)) if screen.of == *of => {
                 preserving_position(screen, &mut diff.doc, |doc| doc.set_moves(moves));
             }
             _ => {
-                if let Some(diff) = state.diffs.get_mut(pr) {
+                if let Some(diff) = state.diffs.get_mut(of) {
                     diff.doc.set_moves(moves);
                 }
             }
         },
         JobMsg::Failed(error) => {
-            if let Some(diff) = state.diffs.get_mut(pr) {
+            if let Some(diff) = state.diffs.get_mut(of) {
                 diff.progress = None;
                 diff.error = Some(error.to_string());
             }
@@ -771,9 +820,19 @@ pub(crate) fn on_job(state: &mut State, pr: &PrRef, msg: JobMsg) -> Vec<Cmd> {
     Vec::new()
 }
 
-/// A message for a PR's diff screen.
+/// A message for a diff screen.
 #[must_use]
-pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
+pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
+    if let DiffMsg::Job(job, msg) = msg {
+        if state.diffs.get(of).is_some_and(|d| d.job == job) {
+            return on_job(state, of, msg);
+        }
+        return Vec::new();
+    }
+    // The rest is about reviewing a pull request.
+    let DiffOf::Pr(pr) = of.clone() else {
+        return Vec::new();
+    };
     match msg {
         // The text stays in the composer, with GitHub's reason.
         DiffMsg::Replied(Err(err)) => {
@@ -787,17 +846,12 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
             state.info("Reply posted");
             return vec![Cmd::Api(Api::FetchThreads(pr))];
         }
-        DiffMsg::Job(job, msg) => {
-            if state.diffs.get(&pr).is_some_and(|d| d.job == job) {
-                return on_job(state, &pr, msg);
-            }
-        }
         DiffMsg::LastReview(result) => {
             let commit = result.unwrap_or_else(|err| {
                 tracing::warn!(%pr, %err, "last review lookup failed");
                 None
             });
-            if let Some(diff) = state.diffs.get_mut(&pr) {
+            if let Some(diff) = state.diffs.get_mut(of) {
                 diff.last_review = commit.map_or(LastReview::None, |c| LastReview::At(Oid::new(c)));
                 if diff.since_requested {
                     return start_since_review(state);
@@ -806,7 +860,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
         }
         DiffMsg::SinceReady(old_head, Ok(hashes)) => {
             if let Some((screen, diff)) = state.diff_parts()
-                && screen.pr == pr
+                && screen.of == *of
             {
                 diff.since_requested = false;
                 preserving_position(screen, &mut diff.doc, |doc| {
@@ -819,14 +873,14 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
             }
         }
         DiffMsg::SinceReady(_, Err(err)) => {
-            if let Some(diff) = state.diffs.get_mut(&pr) {
+            if let Some(diff) = state.diffs.get_mut(of) {
                 diff.since_requested = false;
             }
             tracing::warn!(%pr, ?err, "comparing with the last review failed");
             state.error(format!("Couldn't compare with your last review: {err}"));
         }
         DiffMsg::CommitsListed(Ok(commits)) => {
-            if let Some(diff) = state.diffs.get_mut(&pr) {
+            if let Some(diff) = state.diffs.get_mut(of) {
                 diff.commits = commits;
             }
             state.notice = None;
@@ -838,7 +892,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
         }
         DiffMsg::ViewedLoaded(result) => match *result {
             Ok(viewed) => {
-                if let Some(diff) = state.diffs.get_mut(&pr) {
+                if let Some(diff) = state.diffs.get_mut(of) {
                     diff.set_viewed_states(viewed);
                 }
             }
@@ -854,7 +908,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
         } => {
             if let Err(err) = result {
                 tracing::warn!(%pr, %err, "viewed state update failed");
-                if let Some(diff) = state.diffs.get_mut(&pr) {
+                if let Some(diff) = state.diffs.get_mut(of) {
                     diff.doc.set_viewed(file, previous);
                 }
                 state.error(format!("GitHub didn't save “viewed”: {err}"));
@@ -862,7 +916,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
         }
         DiffMsg::ReviewLoaded(Ok(saved)) => {
             // Anything done before it arrived is kept, and saved.
-            if let Some(diff) = state.diffs.get_mut(&pr)
+            if let Some(diff) = state.diffs.get_mut(of)
                 && diff.merge_saved_review(saved)
             {
                 return vec![Cmd::SaveReview(pr, diff.review.clone())];
@@ -878,7 +932,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
         DiffMsg::ThreadsLoaded(result) => {
             match result {
                 Ok(threads) => {
-                    if let Some(diff) = state.diffs.get_mut(&pr) {
+                    if let Some(diff) = state.diffs.get_mut(of) {
                         diff.set_threads(threads);
                     }
                 }
@@ -890,7 +944,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
             return state.map_outdated(&pr);
         }
         DiffMsg::PatchesLoaded(Ok(patches)) => {
-            if let Some(diff) = state.diffs.get_mut(&pr) {
+            if let Some(diff) = state.diffs.get_mut(of) {
                 diff.set_patches(patches);
             }
         }
@@ -899,7 +953,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
             tracing::warn!(%pr, %err, "GitHub patches unavailable; using local hunks");
         }
         DiffMsg::OutdatedMapped(mapped) => {
-            if let Some(diff) = state.diffs.get_mut(&pr) {
+            if let Some(diff) = state.diffs.get_mut(of) {
                 diff.mapped.extend(mapped);
                 diff.refresh_annotations();
             }
@@ -909,7 +963,7 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
             resolved,
             result: Err(err),
         } => {
-            if let Some(diff) = state.diffs.get_mut(&pr) {
+            if let Some(diff) = state.diffs.get_mut(of) {
                 if let Some(t) = diff.threads.iter_mut().find(|t| t.id == thread_id) {
                     t.resolved = !resolved;
                 }
@@ -917,7 +971,8 @@ pub(crate) fn update(state: &mut State, pr: PrRef, msg: DiffMsg) -> Vec<Cmd> {
             }
             state.error(format!("GitHub didn't save that: {err}"));
         }
-        DiffMsg::ResolvedSet { .. } => {}
+        // Jobs are handled above.
+        DiffMsg::ResolvedSet { .. } | DiffMsg::Job(..) => {}
         DiffMsg::ReviewSubmitted(outcome) => return on_submitted(state, &pr, &outcome),
     }
     Vec::new()

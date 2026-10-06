@@ -2,13 +2,14 @@
 
 use crossterm::event::KeyEvent;
 use ghtui_api::browse::{
-    Blob, Comment, CommitInfo, EntryKind, IssueDetail, IssueState, IssueSummary, PrActivity,
-    Profile, Readme, RepoOverview, RepoSummary, Results, ReviewSummary, SearchResults, TreeEntry,
-    UserSummary,
+    Blob, Comment, CommitDetail, CommitInfo, EntryKind, IssueDetail, IssueState, IssueSummary,
+    PrActivity, Profile, Readme, RepoOverview, RepoSummary, Results, ReviewSummary, SearchResults,
+    TreeEntry, UserSummary,
 };
 use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
 use crate::browse::{Data, DataKey};
+use crate::diff_screen::DiffOf;
 use crate::state::{Cmd, DiffMsg, Msg, State, update};
 
 /// Presses `keys`, in vim notation (`"jj"`, `"<Esc>/"`, `"<C-d>"`).
@@ -45,7 +46,7 @@ pub(crate) fn fetched(state: &mut State, key: DataKey, data: Data) -> Vec<Cmd> {
 
 /// Delivers a message for `pr`'s diff.
 pub(crate) fn diff_msg(state: &mut State, pr: &PrRef, msg: DiffMsg) -> Vec<Cmd> {
-    update(state, Msg::Diff(pr.clone(), msg))
+    update(state, Msg::Diff(DiffOf::Pr(pr.clone()), msg))
 }
 
 /// A review thread on `src/point.rs`, with one comment.
@@ -180,6 +181,23 @@ pub fn tree() -> Vec<TreeEntry> {
         entry("crates/ui", EntryKind::Dir, None),
         entry("crates/README.md", EntryKind::File, Some(120)),
     ]
+}
+
+pub fn commit() -> CommitDetail {
+    CommitDetail {
+        oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
+        headline: "Hunk headers name the enclosing scope".into(),
+        body: "Hunk headers were a bare range. They now name where the first change\nis, from the syntax tree.\n\nFixes #12.".into(),
+        author: "octocat".into(),
+        authored_at: "2026-01-14T10:00:00Z".into(),
+        committer: Some("hubot".into()),
+        committed_at: "2026-01-15T09:30:00Z".into(),
+        parents: vec!["1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into()],
+        additions: 445,
+        deletions: 71,
+        changed_files: Some(20),
+        verified: Some(true),
+    }
 }
 
 pub fn blob() -> Blob {

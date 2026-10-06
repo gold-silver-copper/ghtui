@@ -407,6 +407,34 @@ async fn fetches_force_pushed_commits_by_sha() {
     assert!(String::from_utf8(lib).unwrap().contains("line_five"));
 }
 
+/// A commit diffs against its first parent, fetched by SHA when it isn't
+/// local; a root commit diffs against the empty tree.
+#[tokio::test]
+async fn commits_diff_against_their_parent() {
+    let f = fixture();
+    let repo = cache_repo(&f).await;
+    let later = git(&f.origin, &["rev-parse", "main"]);
+    let refs = repo.commit_refs(&later, &|_| {}).await.unwrap();
+    assert_eq!(*refs.head, later);
+    let files = changed_files(&repo, &refs).await;
+    assert_eq!(files.len(), 1);
+    assert_eq!(find(&files, "later.txt").status, FileStatus::Added);
+
+    // Unreferenced on the server: fetched by SHA.
+    let loose = git(
+        &f.origin,
+        &["commit-tree", "main^{tree}", "-p", "main", "-m", "loose"],
+    );
+    assert!(!repo.has(&loose).await);
+    let refs = repo.commit_refs(&loose, &|_| {}).await.unwrap();
+    assert_eq!(*refs.merge_base, later);
+    assert!(changed_files(&repo, &refs).await.is_empty());
+
+    let root = repo.commit_refs(&f.branch_point, &|_| {}).await.unwrap();
+    assert_eq!(&*root.merge_base, ghtui_git::repo::EMPTY_TREE);
+    assert!(changed_files(&repo, &root).await.len() > 5);
+}
+
 #[tokio::test]
 async fn lists_pr_commits_oldest_first() {
     let (_f, repo, refs) = fetched().await;

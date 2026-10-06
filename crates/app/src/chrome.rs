@@ -9,6 +9,7 @@ use ghtui_ui::chrome::{Crumb, Tab};
 use ghtui_ui::pages::{PrTab, ProfileTab};
 use ratatui::layout::Rect;
 
+use crate::diff_screen::DiffOf;
 use crate::route::{OPEN, Route, Target};
 use crate::state::{Screen, State};
 
@@ -73,10 +74,18 @@ impl State {
         match self.screen() {
             Screen::Page(p) => self.page_chrome(&p.route, &mut c),
             Screen::Diff(d) => {
-                repo_crumbs(&d.pr.repo, &mut c);
-                self.pr_tabs(&d.pr, &mut c);
+                repo_crumbs(d.of.repo(), &mut c);
+                let pr = match &d.of {
+                    DiffOf::Pr(pr) => pr,
+                    DiffOf::Commit(repo, oid) => {
+                        self.commit_tabs(repo, oid, &mut c);
+                        c.active = Some(1);
+                        return c;
+                    }
+                };
+                self.pr_tabs(pr, &mut c);
                 // The tab says which changes are shown.
-                let diff = self.diffs.get(&d.pr);
+                let diff = self.diffs.get(&d.of);
                 let label = match diff.and_then(|d| d.range.as_ref()) {
                     Some(range) => Some(format!("Files · {}", range.label)),
                     None if diff.is_some_and(|d| d.doc.since_active()) => {
@@ -93,7 +102,7 @@ impl State {
                 {
                     tab.label = label;
                 }
-                c.title = Some(d.pr.clone());
+                c.title = Some(pr.clone());
             }
         }
         c
@@ -125,6 +134,11 @@ impl State {
                     PrTab::Commits => 1,
                 });
                 c.title = Some(pr.clone());
+            }
+            Route::Commit { repo, oid } => {
+                repo_crumbs(repo, c);
+                self.commit_tabs(repo, oid, c);
+                c.active = Some(0);
             }
             Route::User { login, tab } => {
                 c.crumb(login, None);
@@ -183,6 +197,23 @@ impl State {
         }
     }
 
+    /// A commit's tabs: the commit, and its files.
+    fn commit_tabs(&self, repo: &RepoId, oid: &str, c: &mut Chrome) {
+        let detail = self.commit(repo, oid);
+        let full = detail.map_or(oid, |d| d.oid.as_str());
+        c.tabs.push((
+            new_tab("◷", "Commit", None),
+            Target::Page(Route::Commit {
+                repo: repo.clone(),
+                oid: full.to_owned(),
+            }),
+        ));
+        c.tabs.push((
+            new_tab("±", "Files changed", detail.and_then(|d| d.changed_files)),
+            Target::Files(DiffOf::Commit(repo.clone(), full.to_owned())),
+        ));
+    }
+
     fn repo_tabs(&self, repo: &RepoId, c: &mut Chrome) {
         let o = self.overview(repo);
         c.tabs.push((
@@ -237,7 +268,7 @@ impl State {
             .push((checks, Target::External(format!("{}/checks", pr.url()))));
         c.tabs.push((
             new_tab("±", "Files changed", detail.map(|d| d.changed_files)),
-            Target::Files(pr.clone()),
+            Target::Files(DiffOf::Pr(pr.clone())),
         ));
     }
 
@@ -245,7 +276,8 @@ impl State {
     /// builds, without building it (layout runs several times a frame).
     fn chrome_rows(&self) -> (bool, bool) {
         match self.screen() {
-            Screen::Diff(_) => (true, true),
+            // A pull request's title stays on top; a commit has none.
+            Screen::Diff(d) => (d.of.pr().is_some(), true),
             Screen::Page(p) => (
                 matches!(p.route, Route::Pr { .. }),
                 !matches!(p.route, Route::Home),
@@ -339,7 +371,7 @@ mod tests {
             let c = s.chrome();
             assert_eq!(s.chrome_rows(), (c.title.is_some(), !c.tabs.is_empty()));
         }
-        let _ = s.open_diff(pr);
+        let _ = s.open_diff(DiffOf::Pr(pr));
         let c = s.chrome();
         assert_eq!(s.chrome_rows(), (c.title.is_some(), !c.tabs.is_empty()));
     }

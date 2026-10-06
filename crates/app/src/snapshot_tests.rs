@@ -217,6 +217,18 @@ fn with_issues(mode: Mode) -> State {
     state
 }
 
+/// A commit, its repository's header loaded first.
+fn with_commit(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let commit = fixtures::commit();
+    let route = Route::Commit {
+        repo: ghtui(),
+        oid: commit.oid.clone(),
+    };
+    open(&mut state, route, Data::Commit(Box::new(commit)));
+    state
+}
+
 /// An issue, its repository's header loaded first.
 fn with_issue(mode: Mode) -> State {
     let mut state = state(mode, ColorDepth::TrueColor);
@@ -336,6 +348,16 @@ fn repo_wide_terminal_centers_light() {
     let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
     update(&mut state, Msg::Resize(160, 30));
     insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn commit_light() {
+    insta::assert_snapshot!(render(&with_commit(Mode::Light)));
+}
+
+#[test]
+fn commit_dark() {
+    insta::assert_snapshot!(render(&with_commit(Mode::Dark)));
 }
 
 #[test]
@@ -548,7 +570,7 @@ pub(crate) mod diff {
     use ghtui_ui::diff_doc::{Doc, Pos};
 
     use super::{NOW, Terminal, TestBackend, press, render, state, view};
-    use crate::diff_screen::{DiffScreen, DiffState, Pane};
+    use crate::diff_screen::{DiffOf, DiffScreen, DiffState, Pane};
     use crate::fixtures::diff_msg;
     use crate::state::{DiffMsg, Msg, Screen, State, update};
 
@@ -594,8 +616,8 @@ pub(crate) mod diff {
 
     /// Opens a diff screen on `diff`, as wide as the terminal.
     fn open_diff(s: &mut State, diff: DiffState, cursor: Pos, focus: Pane) {
-        s.diffs.insert(pr(), diff);
-        let mut screen = DiffScreen::new(pr(), s.size.0);
+        s.diffs.insert(DiffOf::Pr(pr()), diff);
+        let mut screen = DiffScreen::new(DiffOf::Pr(pr()), s.size.0);
         screen.cursor = cursor;
         screen.focus = focus;
         s.screens.push(Screen::Diff(Box::new(screen)));
@@ -676,6 +698,23 @@ pub(crate) mod diff {
         screen_state(mode, ColorDepth::TrueColor, Pos { file, row }, Pane::Diff)
     }
 
+    pub(super) fn commit_of() -> DiffOf {
+        DiffOf::Commit(super::ghtui(), crate::fixtures::commit().oid)
+    }
+
+    /// A commit's files: its tabs instead of a pull request's.
+    #[test]
+    fn commit_files_dark() {
+        let mut s = state(Mode::Dark, ColorDepth::TrueColor);
+        s.size = (110, 34);
+        let of = commit_of();
+        s.diffs.insert(of.clone(), diff_state());
+        s.screens
+            .push(Screen::Diff(Box::new(DiffScreen::new(of, s.size.0))));
+        let _ = s.settle_diff();
+        insta::assert_snapshot!(render(&s));
+    }
+
     #[test]
     fn diff_dark() {
         insta::assert_snapshot!(render(&diff_at(Mode::Dark, 0, 4)));
@@ -712,7 +751,7 @@ pub(crate) mod diff {
     #[test]
     fn diff_viewed_and_reviewed_dark() {
         let mut s = diff_at(Mode::Dark, 0, 3);
-        let diff = s.diffs.get_mut(&pr()).unwrap();
+        let diff = s.diffs.get_mut(&DiffOf::Pr(pr())).unwrap();
         let hash = diff.doc.files()[0].blocks()[0].hash.clone();
         diff.set_review(ghtui_store::ReviewState {
             reviewed_hunks: vec![hash],
@@ -754,7 +793,7 @@ pub(crate) mod diff {
                 comments,
             }
         };
-        let diff = s.diffs.get_mut(&pr()).unwrap();
+        let diff = s.diffs.get_mut(&DiffOf::Pr(pr())).unwrap();
         diff.set_threads(vec![
             thread(
                 "t1",
@@ -1155,7 +1194,7 @@ pub(crate) mod diff {
         let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
 
         let start = Instant::now();
-        let job = s.diffs[&pr()].job;
+        let job = s.diffs[&DiffOf::Pr(pr())].job;
         diff_msg(
             &mut s,
             &pr(),
@@ -1187,8 +1226,8 @@ mod links {
     use ghtui_ui::pages::ProfileTab;
 
     use super::{
-        press, with_file, with_inbox, with_issue, with_issues, with_pr, with_profile, with_repo,
-        with_repo_search,
+        press, with_commit, with_file, with_inbox, with_issue, with_issues, with_pr, with_profile,
+        with_repo, with_repo_search,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1197,7 +1236,6 @@ mod links {
     /// says why; the list only shrinks.
     const EXTERNAL: &[&str] = &[
         // Not pages in ghtui yet.
-        "/commit/",
         "/commits/",
         "/actions",
         "/checks",
@@ -1226,6 +1264,7 @@ mod links {
             ),
             ("stars", with_profile(Mode::Dark, ProfileTab::Stars)),
             ("search", with_repo_search(Mode::Dark)),
+            ("commit", with_commit(Mode::Dark)),
         ]
     }
 
@@ -1274,7 +1313,7 @@ mod keys {
     use ghtui_ui::diff_doc::Pos;
 
     use super::diff::screen_state;
-    use super::{press, render, with_issues, with_pr};
+    use super::{press, render, with_commit, with_issues, with_pr};
     use crate::diff_screen::Pane;
     use crate::keymap::Action;
     use crate::state::{Overlay, Screen, State, apply};
@@ -1283,7 +1322,7 @@ mod keys {
 
     /// A list, a pull request, and the diff with each pane focused, the
     /// selection away from the edges so moving can move.
-    fn screens() -> [(&'static str, Make); 4] {
+    fn screens() -> [(&'static str, Make); 6] {
         fn moved(mut s: State) -> State {
             press(&mut s, "jj");
             s
@@ -1303,6 +1342,17 @@ mod keys {
                     at,
                     Pane::Tree,
                 ))
+            }),
+            ("commit", || with_commit(Mode::Dark)),
+            ("commit files", || {
+                let mut s = with_commit(Mode::Dark);
+                press(&mut s, "<Right>");
+                if let Some((screen, _)) = s.diff_parts() {
+                    screen.cursor = Pos { file: 0, row: 4 };
+                }
+                s.diffs
+                    .insert(super::diff::commit_of(), super::diff::diff_state());
+                s
             }),
         ]
     }
@@ -1345,6 +1395,22 @@ mod keys {
             assert!(matches!(s.screen(), Screen::Page(_)), "{back}");
             assert_eq!(s.chrome().active, start, "{back}");
         }
+    }
+
+    /// A commit's tabs work the same: into its files and back.
+    #[test]
+    fn commit_tabs_go_into_the_files_and_back() {
+        let mut s = with_commit(Mode::Dark);
+        press(&mut s, "<Right>");
+        assert!(
+            matches!(s.screen(), Screen::Diff(d) if d.of == super::diff::commit_of()),
+            "the commit's diff, by its full ID"
+        );
+        press(&mut s, "<Left>");
+        assert!(matches!(
+            s.route(),
+            Some(crate::route::Route::Commit { .. })
+        ));
     }
 
     /// In the menu, `h` and `l` are `←` and `→`: close it, run the row.

@@ -31,6 +31,7 @@ use ghtui_ui::Icons;
 
 use crate::config::{Config, DepthSetting, ModeSetting};
 use crate::diff_job::GitContext;
+use crate::diff_screen::DiffOf;
 use crate::keymap::Keymap;
 use crate::route::{Route, Target};
 use crate::state::{Api, Remote, State};
@@ -154,7 +155,7 @@ async fn run(started: Instant) -> Result<()> {
     state.inbox = Remote::cached(gh.cached_inbox());
     let mut cmds = match target {
         Some(target) => {
-            if let Target::Page(Route::Pr { pr, .. }) | Target::Files(pr) = &target {
+            if let Target::Page(Route::Pr { pr, .. }) | Target::Files(DiffOf::Pr(pr)) = &target {
                 state
                     .prs
                     .insert(pr.clone(), Remote::cached(gh.cached_pull_request(pr)));

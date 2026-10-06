@@ -18,6 +18,7 @@ use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
 use crate::browse::{self, Data, DataKey, PageScreen};
+use crate::diff_screen::DiffOf;
 use crate::keymap::Action;
 use crate::picker::{fuzzy_score, move_in_list};
 use crate::review::ComposeTarget;
@@ -132,10 +133,13 @@ impl State {
     pub fn go(&mut self, target: Target) -> Vec<Cmd> {
         match target {
             Target::Page(route) => self.push(route),
-            Target::Files(pr) => {
+            Target::Files(of) => {
                 self.forward.clear();
-                let mut cmds = self.ensure_pr(&pr, false);
-                cmds.extend(self.open_diff(pr));
+                let mut cmds = match &of {
+                    DiffOf::Pr(pr) => self.ensure_pr(pr, false),
+                    DiffOf::Commit(..) => Vec::new(),
+                };
+                cmds.extend(self.open_diff(of));
                 cmds
             }
             Target::External(url) => {
@@ -321,7 +325,7 @@ fn scroll_keep(p: &mut PageScreen, rows: isize, height: usize) {
     let had = p.selected.is_some();
     let scroll = p.scroll;
     scroll_by(p, rows, height);
-    if had && (p.selected.is_none() || p.scroll == scroll) {
+    if (had && p.selected.is_none()) || p.scroll == scroll {
         let mut visible_items = (0..p.page.items.len()).filter(|&i| visible(p, i, height));
         p.selected = if rows > 0 {
             visible_items.next()
@@ -425,7 +429,9 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Blob {
             repo, rev, path, ..
         } => folder(repo, rev, path),
-        Route::Issues { repo, .. } | Route::Pulls { repo, .. } => Route::Repo(repo.clone()),
+        Route::Issues { repo, .. } | Route::Pulls { repo, .. } | Route::Commit { repo, .. } => {
+            Route::Repo(repo.clone())
+        }
         Route::Issue { repo, .. } => Route::Issues {
             repo: repo.clone(),
             query: crate::route::OPEN.into(),
@@ -451,7 +457,7 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
         return Vec::new();
     }
     let diff_of = match state.screen() {
-        Screen::Diff(screen) => Some(screen.pr.clone()),
+        Screen::Diff(screen) => Some(screen.of.clone()),
         Screen::Page(_) => None,
     };
     match (target, diff_of) {
@@ -459,7 +465,13 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
         (Target::Page(route), Some(diff_pr)) => {
             // From the files back to the pull request's other tabs.
             state.screens.pop();
-            let same = matches!(state.route(), Some(Route::Pr { pr, .. }) if *pr == diff_pr);
+            let same = match (state.route(), &diff_pr) {
+                (Some(Route::Pr { pr, .. }), DiffOf::Pr(diff)) => pr == diff,
+                (Some(Route::Commit { repo, oid }), DiffOf::Commit(r, full)) => {
+                    repo == r && full.starts_with(oid.as_str())
+                }
+                _ => false,
+            };
             if same {
                 state.replace(route, false)
             } else {
@@ -685,7 +697,7 @@ impl State {
         if let Some(target) = route::parse_input(q, self.context_repo()) {
             let label = match &target {
                 Target::Page(r) => r.title(),
-                Target::Files(pr) => format!("Files changed in {pr}"),
+                Target::Files(of) => format!("Files changed in {of}"),
                 Target::External(url) => url.clone(),
             };
             out.push(suggestion("→", label, "go to", "↵", Pick::Go(target)));
@@ -1253,7 +1265,7 @@ impl State {
         let Screen::Diff(screen) = self.screen() else {
             return Vec::new();
         };
-        let Some(diff) = self.diffs.get(&screen.pr) else {
+        let Some(diff) = self.diffs.get(&screen.of) else {
             return Vec::new();
         };
         let mut out = Vec::new();
@@ -1293,7 +1305,7 @@ fn describe(link: &Link) -> String {
     match link {
         Link::Url(url) => match Target::from_url(url) {
             Target::Page(r) => format!("Open {}", r.title()),
-            Target::Files(pr) => format!("Review {pr}'s files"),
+            Target::Files(of) => format!("Files changed in {of}"),
             Target::External(u) => format!("Open {u} in the browser"),
         },
         Link::More => "Load more".into(),
@@ -1455,7 +1467,10 @@ impl State {
                 .selected_link()
                 .and_then(Link::url)
                 .map_or_else(|| p.route.url(), str::to_owned),
-            Screen::Diff(d) => format!("{}/files", d.pr.url()),
+            Screen::Diff(d) => match &d.of {
+                DiffOf::Pr(pr) => format!("{}/files", pr.url()),
+                DiffOf::Commit(repo, oid) => pages::url::commit(repo, oid),
+            },
         }
     }
 }
@@ -1612,7 +1627,7 @@ impl State {
     pub fn context_repo(&self) -> Option<&RepoId> {
         match self.screen() {
             Screen::Page(p) => p.route.repo(),
-            Screen::Diff(d) => Some(&d.pr.repo),
+            Screen::Diff(d) => Some(d.of.repo()),
         }
     }
 }
