@@ -258,6 +258,26 @@ fn with_actions(mode: Mode) -> State {
     state
 }
 
+/// A repository's stargazers.
+fn with_stargazers(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Stargazers(ghtui());
+    open(&mut state, route, Data::Users(Box::new(fixtures::people())));
+    state
+}
+
+/// A repository's forks.
+fn with_forks(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Forks(ghtui());
+    open(
+        &mut state,
+        route,
+        Data::RepoPage(Box::new(fixtures::forks())),
+    );
+    state
+}
+
 /// A branch's commits.
 fn with_history(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -403,6 +423,16 @@ fn pr_checks_dark() {
 #[test]
 fn actions_light() {
     insta::assert_snapshot!(render(&with_actions(Mode::Light)));
+}
+
+#[test]
+fn stargazers_dark() {
+    insta::assert_snapshot!(render(&with_stargazers(Mode::Dark)));
+}
+
+#[test]
+fn forks_light() {
+    insta::assert_snapshot!(render(&with_forks(Mode::Light)));
 }
 
 #[test]
@@ -1286,8 +1316,9 @@ mod links {
     use ghtui_ui::pages::ProfileTab;
 
     use super::{
-        press, with_actions, with_commit, with_file, with_history, with_inbox, with_issue,
-        with_issues, with_pr, with_pr_checks, with_profile, with_repo, with_repo_search,
+        press, with_actions, with_commit, with_file, with_forks, with_history, with_inbox,
+        with_issue, with_issues, with_pr, with_pr_checks, with_profile, with_repo,
+        with_repo_search, with_stargazers,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1297,10 +1328,6 @@ mod links {
     const EXTERNAL: &[&str] = &[
         // A check's logs and re-runs.
         "/actions/runs/",
-        // Not pages in ghtui yet.
-        "/stargazers",
-        "/watchers",
-        "/forks",
     ];
 
     /// Every page ghtui has a fixture for.
@@ -1327,6 +1354,8 @@ mod links {
             ("commits", with_history(Mode::Dark)),
             ("pr checks", with_pr_checks(Mode::Dark)),
             ("actions", with_actions(Mode::Dark)),
+            ("stargazers", with_stargazers(Mode::Dark)),
+            ("forks", with_forks(Mode::Dark)),
         ]
     }
 

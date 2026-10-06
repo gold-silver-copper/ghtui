@@ -1544,6 +1544,20 @@ pub(crate) mod tests {
         assert_eq!((h.items.len(), h.next.as_deref()), (4, None));
     }
 
+    /// People and repository lists load more like any list.
+    #[test]
+    fn every_list_appends_its_next_page() {
+        use crate::fixtures::{forks, people};
+        let mut users = Data::Users(Box::new(people()));
+        assert_eq!(users.next_cursor(), Some("u1"));
+        users.append(Data::Users(Box::new(people())));
+        assert!(matches!(&users, Data::Users(r) if r.items.len() == 6));
+        let mut repos = Data::RepoPage(Box::new(forks()));
+        assert_eq!(repos.next_cursor(), Some("f1"));
+        repos.append(Data::RepoPage(Box::new(forks())));
+        assert!(matches!(&repos, Data::RepoPage(r) if r.items.len() == 4));
+    }
+
     /// A commit's diff starts only the diff job; what belongs to pull
     /// requests says so.
     #[test]

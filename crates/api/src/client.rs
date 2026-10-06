@@ -1025,6 +1025,119 @@ impl GitHub {
         Ok(self.kept(&browse::keys::branch_checks(repo), checks).await)
     }
 
+    /// A page of people, 30 at a time from `after`; the first is cached.
+    pub async fn users(
+        &self,
+        list: &browse::UserList,
+        after: Option<String>,
+    ) -> Result<browse::Results<browse::UserSummary>, ApiError> {
+        use browse::UserList as L;
+        let first = after.is_none();
+        let (root, field, vars) = match list {
+            L::Stargazers(repo) | L::Watchers(repo) => (
+                "repository(owner: $owner, name: $name)",
+                if matches!(list, L::Stargazers(_)) {
+                    "stargazers"
+                } else {
+                    "watchers"
+                },
+                serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after }),
+            ),
+            L::Followers(login) | L::Following(login) => (
+                "user(login: $login)",
+                if matches!(list, L::Followers(_)) {
+                    "followers"
+                } else {
+                    "following"
+                },
+                serde_json::json!({ "login": login, "after": after }),
+            ),
+            L::People(login) => (
+                "organization(login: $login)",
+                "membersWithRole",
+                serde_json::json!({ "login": login, "after": after }),
+            ),
+        };
+        let params = if root.starts_with("repository") {
+            "$owner: String!, $name: String!"
+        } else {
+            "$login: String!"
+        };
+        let query = format!(
+            "query({params}, $after: String) {{ node: {root} {{ list: {field}(first: 30, after: $after) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ login name bio }} }} }} }}"
+        );
+        let data = self.graphql_json(&query, vars).await?;
+        let list_json = data
+            .pointer("/node/list")
+            .ok_or_else(|| ApiError::NotFound(format!("{list:?}")))?;
+        let text = |v: &serde_json::Value, key: &str| {
+            v.get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        };
+        let items = list_json
+            .get("nodes")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|u| {
+                Some(browse::UserSummary {
+                    login: text(u, "login")?,
+                    name: text(u, "name"),
+                    bio: text(u, "bio"),
+                    is_org: false,
+                })
+            })
+            .collect();
+        let page_info = list_json.get("pageInfo");
+        let more = page_info
+            .and_then(|p| p.get("hasNextPage"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let results = browse::Results {
+            total: list_json
+                .get("totalCount")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+            items,
+            next: page_info
+                .and_then(|p| text(p, "endCursor"))
+                .filter(|_| more),
+        };
+        if first {
+            return Ok(self.kept(&browse::keys::users(list), results).await);
+        }
+        Ok(results)
+    }
+
+    /// A repository's forks, most starred first, 30 at a time from
+    /// `after`; the first page is cached.
+    pub async fn forks(
+        &self,
+        repo: &RepoId,
+        after: Option<String>,
+    ) -> Result<browse::Results<browse::RepoSummary>, ApiError> {
+        let first = after.is_none();
+        let op = browse::ForksQuery::build(browse::ListVariables {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+            after,
+        });
+        let forks = self
+            .graphql(op)
+            .await?
+            .repository
+            .ok_or_else(|| ApiError::NotFound(repo.to_string()))?
+            .forks
+            .into_results();
+        if first {
+            return Ok(self.kept(&browse::keys::forks(repo), forks).await);
+        }
+        Ok(forks)
+    }
+
     /// Branches and tags, most recently committed first.
     pub async fn refs(&self, repo: &RepoId) -> Result<browse::Refs, ApiError> {
         let op = browse::BranchesQuery::build(browse::BranchesVariables {

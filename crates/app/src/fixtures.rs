@@ -428,6 +428,37 @@ pub fn repo_results() -> SearchResults {
     })
 }
 
+/// A page of people, with more to load.
+pub fn people() -> Results<UserSummary> {
+    let person = |login: &str, name: Option<&str>, bio: Option<&str>| UserSummary {
+        login: login.into(),
+        name: name.map(str::to_owned),
+        bio: bio.map(str::to_owned),
+        is_org: false,
+    };
+    Results {
+        total: 1234,
+        items: vec![
+            person("octocat", Some("The Octocat"), Some("GitHub's mascot.")),
+            person("hubot", None, None),
+            person("monalisa", Some("Mona Lisa Octocat"), None),
+        ],
+        next: Some("u1".into()),
+    }
+}
+
+/// A page of a repository's forks.
+pub fn forks() -> Results<RepoSummary> {
+    Results {
+        total: 87,
+        items: vec![
+            repo_summary("octocat/ghtui", 12),
+            repo_summary("hubot/ghtui", 3),
+        ],
+        next: Some("f1".into()),
+    }
+}
+
 pub fn user_results() -> SearchResults {
     SearchResults::Users(Results {
         total: 1,

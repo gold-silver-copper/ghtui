@@ -118,6 +118,9 @@ impl State {
             | Route::Pulls { repo, .. }
             | Route::Issue { repo, .. }
             | Route::Commits { repo, .. }
+            | Route::Stargazers(repo)
+            | Route::Watchers(repo)
+            | Route::Forks(repo)
             | Route::Actions(repo) => {
                 repo_crumbs(repo, c);
                 self.repo_tabs(repo, c);

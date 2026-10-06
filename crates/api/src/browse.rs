@@ -198,6 +198,17 @@ pub struct UserSummary {
     pub is_org: bool,
 }
 
+/// A list of people: a repository's stargazers or watchers, someone's
+/// followers or who they follow, an organization's public members.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum UserList {
+    Stargazers(RepoId),
+    Watchers(RepoId),
+    Followers(String),
+    Following(String),
+    People(String),
+}
+
 /// One page of search results.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Results<T> {
@@ -1208,6 +1219,57 @@ pub struct RepoList {
     pub nodes: Option<Vec<Option<RepoCard>>>,
 }
 
+#[derive(cynic::QueryVariables, Debug)]
+pub struct ListVariables {
+    pub owner: String,
+    pub name: String,
+    pub after: Option<String>,
+}
+
+/// A repository's forks, most starred first.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "ListVariables"
+)]
+pub struct ForksQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepoForks>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Repository",
+    schema_module = "schema",
+    variables = "ListVariables"
+)]
+pub struct RepoForks {
+    #[arguments(first: 30, after: $after, orderBy: { field: STARGAZERS, direction: DESC })]
+    pub forks: PagedRepos,
+}
+
+/// A page of repositories.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "RepositoryConnection", schema_module = "schema")]
+pub struct PagedRepos {
+    pub total_count: i32,
+    pub page_info: PageInfo,
+    pub nodes: Option<Vec<Option<RepoCard>>>,
+}
+
+impl PagedRepos {
+    pub(crate) fn into_results(self) -> Results<RepoSummary> {
+        Results {
+            total: count(self.total_count),
+            items: nodes(self.nodes)
+                .filter_map(RepoCard::into_summary)
+                .collect(),
+            next: self.page_info.next(),
+        }
+    }
+}
+
 // ---- branches ------------------------------------------------------------------------------
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -1367,6 +1429,12 @@ pub mod keys {
     }
     pub fn branch_checks(repo: &RepoId) -> String {
         format!("branch-checks:{repo}")
+    }
+    pub fn users(list: &super::UserList) -> String {
+        format!("users:{list:?}")
+    }
+    pub fn forks(repo: &RepoId) -> String {
+        format!("forks:{repo}")
     }
     pub fn history(repo: &RepoId, rev: &str, path: &str) -> String {
         format!("history:{repo}:{rev}:{path}")

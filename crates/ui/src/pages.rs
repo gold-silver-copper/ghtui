@@ -919,6 +919,38 @@ fn user_row(page: &mut Page, u: &UserSummary) {
     });
 }
 
+/// A list of people (stargazers, watchers, followers…) that loads more.
+pub fn people_list(page: &mut Page, title: &str, people: Option<&Results<UserSummary>>) {
+    let Some(r) = people else {
+        page.line(vec![Seg::new("Loading…", Role::Meta)]);
+        return;
+    };
+    let title = format!("{title}  {}", compact(r.total));
+    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
+    if r.items.is_empty() {
+        empty_row(page, "Nobody here yet.");
+    }
+    box_rows(page, &r.items, user_row);
+    more_row(page, r.next.is_some(), r.items.len(), r.total);
+    page.box_bottom();
+}
+
+/// A list of repositories (forks…) that loads more.
+pub fn repos(page: &mut Page, title: &str, repos: Option<&Results<RepoSummary>>, now: u64) {
+    let Some(r) = repos else {
+        page.line(vec![Seg::new("Loading…", Role::Meta)]);
+        return;
+    };
+    let title = format!("{title}  {}", compact(r.total));
+    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
+    if r.items.is_empty() {
+        empty_row(page, "None yet.");
+    }
+    box_rows(page, &r.items, |page, repo| repo_row(page, repo, now, true));
+    more_row(page, r.next.is_some(), r.items.len(), r.total);
+    page.box_bottom();
+}
+
 fn more_row(page: &mut Page, next: bool, shown: usize, total: u64) {
     if !next {
         return;

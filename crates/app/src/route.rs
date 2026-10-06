@@ -48,6 +48,9 @@ pub enum Route {
     },
     /// The checks on the default branch.
     Actions(RepoId),
+    Stargazers(RepoId),
+    Watchers(RepoId),
+    Forks(RepoId),
     /// A revision's commits, of `path` if it isn't empty.
     Commits {
         repo: RepoId,
@@ -133,6 +136,9 @@ impl Route {
                 PrTab::Checks => links::pull_tab(pr, "checks"),
             },
             Route::Actions(repo) => format!("{}/actions", links::repo(repo)),
+            Route::Stargazers(repo) => format!("{}/stargazers", links::repo(repo)),
+            Route::Watchers(repo) => format!("{}/watchers", links::repo(repo)),
+            Route::Forks(repo) => format!("{}/forks", links::repo(repo)),
             Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
             Route::Commit { repo, oid } => links::commit(repo, oid),
             Route::User { login, tab } => match tab {
@@ -158,6 +164,9 @@ impl Route {
             Route::Issue { repo, number } => format!("{repo}#{number}"),
             Route::Pr { pr, .. } => pr.to_string(),
             Route::Actions(repo) => format!("{repo} · Actions"),
+            Route::Stargazers(repo) => format!("{repo} · Stargazers"),
+            Route::Watchers(repo) => format!("{repo} · Watchers"),
+            Route::Forks(repo) => format!("{repo} · Forks"),
             Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
             Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
             Route::Commit { repo, oid } => format!("{repo}@{}", short_sha(oid)),
@@ -177,6 +186,9 @@ impl Route {
             | Route::Issue { repo, .. }
             | Route::Commits { repo, .. }
             | Route::Actions(repo)
+            | Route::Stargazers(repo)
+            | Route::Watchers(repo)
+            | Route::Forks(repo)
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
             Route::Home | Route::User { .. } | Route::Search { .. } => None,
@@ -344,8 +356,23 @@ impl Target {
                 }
                 None => return external(),
             },
-            [o, r, "actions"] => match repo(o, r) {
-                Some(repo) => Route::Actions(repo),
+            [
+                o,
+                r,
+                page @ ("actions" | "stargazers" | "watchers" | "forks" | "network"),
+            ] => {
+                let Some(repo) = repo(o, r) else {
+                    return external();
+                };
+                match *page {
+                    "actions" => Route::Actions(repo),
+                    "stargazers" => Route::Stargazers(repo),
+                    "watchers" => Route::Watchers(repo),
+                    _ => Route::Forks(repo),
+                }
+            }
+            [o, r, "network", "members"] => match repo(o, r) {
+                Some(repo) => Route::Forks(repo),
                 None => return external(),
             },
             [o, r, "commits", rest @ ..] => {
@@ -612,6 +639,14 @@ mod tests {
             Route::Actions(pr.repo.clone())
         );
         assert_eq!(
+            page("https://github.com/o/r/stargazers"),
+            Route::Stargazers(pr.repo.clone())
+        );
+        assert_eq!(
+            page("https://github.com/o/r/network/members"),
+            Route::Forks(pr.repo.clone())
+        );
+        assert_eq!(
             page("https://github.com/o/r/pull/7/checks"),
             Route::Pr {
                 pr: pr.clone(),
@@ -801,6 +836,10 @@ mod tests {
                 .prop_filter("valid ref name", |r| !r.contains("..") && !r.ends_with('.'));
             prop_oneof![
                 Just(Route::Home),
+                repo().prop_map(Route::Actions),
+                repo().prop_map(Route::Stargazers),
+                repo().prop_map(Route::Watchers),
+                repo().prop_map(Route::Forks),
                 repo().prop_map(Route::Repo),
                 (repo(), rev.clone(), path()).prop_map(|(repo, rev, path)| Route::Tree {
                     repo,
