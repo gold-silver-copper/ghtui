@@ -12,7 +12,6 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
-use ghtui_api::model::PrRef;
 use ghtui_diff::FileDiff;
 use ghtui_git::blobs::BlobReader;
 use ghtui_git::credentials::Credentials;
@@ -22,6 +21,7 @@ use ghtui_git::{GitError, Oid};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
+use crate::diff_screen::DiffOf;
 use crate::state::{DiffMsg, Failure, Msg};
 
 /// Where and how git runs.
@@ -64,7 +64,7 @@ pub fn next_job() -> JobId {
 #[derive(Clone)]
 pub struct JobTx {
     pub tx: mpsc::UnboundedSender<Msg>,
-    pub pr: PrRef,
+    pub of: DiffOf,
     pub job: JobId,
 }
 
@@ -72,7 +72,7 @@ impl JobTx {
     /// False once the UI is gone.
     pub fn send(&self, msg: JobMsg) -> bool {
         self.tx
-            .send(Msg::Diff(self.pr.clone(), DiffMsg::Job(self.job, msg)))
+            .send(Msg::Diff(self.of.clone(), DiffMsg::Job(self.job, msg)))
             .is_ok()
     }
 }
@@ -139,7 +139,7 @@ pub async fn run(
     control: Arc<JobControl>,
 ) {
     if let Err(err) = run_inner(&ctx, &base_ref, range, &out, &control).await {
-        tracing::warn!(pr = %out.pr, %err, "diff job failed");
+        tracing::warn!(diff = %out.of, %err, "diff job failed");
         out.send(JobMsg::Failed(err.into()));
     }
 }
@@ -151,14 +151,14 @@ async fn run_inner(
     out: &JobTx,
     control: &Arc<JobControl>,
 ) -> Result<(), GitError> {
-    let pr = &out.pr;
+    let of = &out.of;
     let progress = {
         let out = out.clone();
         move |line: String| {
             out.send(JobMsg::Progress(line));
         }
     };
-    let (owner, name) = (&pr.repo.owner, &pr.repo.name);
+    let (owner, name) = (&of.repo().owner, &of.repo().name);
     let repo = match Repo::find_local(&ctx.cwd, owner, name).await? {
         Some(repo) => {
             tracing::info!(path = %repo.path.display(), remote = repo.remote, "using local clone");
@@ -176,12 +176,17 @@ async fn run_inner(
             .await?
         }
     };
-    let mut refs = repo.fetch_pr(pr.number, base_ref, &progress).await?;
+    let mut refs = match of {
+        DiffOf::Pr(pr) => repo.fetch_pr(pr.number, base_ref, &progress).await?,
+        DiffOf::Commit(_, oid) => repo.commit_refs(oid, &progress).await?,
+    };
     if let Some((from, to)) = range {
         refs.merge_base = repo.rev_parse(&from).await?;
         refs.head = repo.rev_parse(&to).await?;
     }
-    if let Err(err) = repo.pin_seen(pr.number, &refs.head).await {
+    if let DiffOf::Pr(pr) = of
+        && let Err(err) = repo.pin_seen(pr.number, &refs.head).await
+    {
         tracing::warn!(%err, "could not pin head");
     }
     progress("Listing changed files".into());

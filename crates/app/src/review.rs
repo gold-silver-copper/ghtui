@@ -15,7 +15,7 @@ use ghtui_ui::diff_doc::{Doc, Pos};
 use ghtui_ui::text::short_sha;
 use ratatui_textarea::TextArea;
 
-use crate::diff_screen::{self, DiffScreen, LastReview};
+use crate::diff_screen::{self, DiffOf, DiffScreen, LastReview};
 use crate::keymap::Action;
 use crate::picker::{self, PickItem};
 use crate::state::{Api, Cmd, Git, OutdatedThread, Overlay, Screen, State};
@@ -372,7 +372,7 @@ pub fn outdated_to_map(threads: &[ReviewThread]) -> Vec<OutdatedThread> {
 #[must_use]
 pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcome) -> Vec<Cmd> {
     let mut cmds = vec![Cmd::Api(Api::FetchThreads(pr.clone()))];
-    if let Some(diff) = state.diffs.get_mut(pr) {
+    if let Some(diff) = state.diffs.get_mut(&DiffOf::Pr(pr.clone())) {
         diff.review
             .pending
             .retain(|d| !outcome.accepted.contains(&d.id));
@@ -479,7 +479,10 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         state.info("The diff hasn't loaded yet");
         return Vec::new();
     };
-    let pr = screen.pr.clone();
+    let Some(pr) = screen.of.pr().cloned() else {
+        state.info(format!("{}: on pull requests", action.description()));
+        return Vec::new();
+    };
     let cursor = screen.cursor;
     // The thread or draft under the cursor.
     let at = diff.doc.annotation_at(cursor);
@@ -715,7 +718,9 @@ pub(crate) fn start_since_review(state: &mut State) -> Vec<Cmd> {
     let Some((screen, diff)) = state.diff_parts() else {
         return Vec::new();
     };
-    let pr = screen.pr.clone();
+    let Some(pr) = screen.of.pr().cloned() else {
+        return Vec::new();
+    };
     let old = match &diff.last_review {
         LastReview::At(oid) => Some(oid.to_string()),
         LastReview::Unknown | LastReview::None => diff.review.last_reviewed_head.clone(),
@@ -751,7 +756,10 @@ pub(crate) fn apply_commit_choice(
 ) -> Vec<Cmd> {
     let width = state.size.0;
     let pr = match state.screen() {
-        Screen::Diff(screen) => screen.pr.clone(),
+        Screen::Diff(screen) => match screen.of.pr() {
+            Some(pr) => pr.clone(),
+            None => return Vec::new(),
+        },
         Screen::Page(_) => return Vec::new(),
     };
     let Some(base_ref) = state.base_ref(&pr) else {
@@ -795,9 +803,9 @@ pub(crate) fn apply_commit_choice(
     // Since your review: compared once the whole PR is back.
     diff.since_requested = since;
     let job = diff.job;
-    *screen = DiffScreen::new(pr.clone(), width);
+    *screen = DiffScreen::new(pr.clone().into(), width);
     vec![Cmd::Git(Git::LoadDiff {
-        pr,
+        of: pr.into(),
         job,
         base_ref,
         range: cmd_range,
@@ -866,7 +874,9 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
     let Some((screen, diff)) = state.diff_parts() else {
         return Vec::new();
     };
-    let pr = screen.pr.clone();
+    let Some(pr) = screen.of.pr().cloned() else {
+        return Vec::new();
+    };
     match target {
         ComposeTarget::Reply { thread_id } => {
             if let Some(Overlay::Compose(compose)) = &mut state.overlay {
@@ -937,9 +947,11 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             }
             dialog.sending = true;
             dialog.error = None;
-            if let Some((screen, diff)) = state.diff_parts() {
+            if let Some((screen, diff)) = state.diff_parts()
+                && let Some(pr) = screen.of.pr()
+            {
                 return vec![Cmd::Api(Api::SubmitReview {
-                    pr: screen.pr.clone(),
+                    pr: pr.clone(),
                     head: diff.head().unwrap_or_default(),
                     drafts: diff.review.pending.clone(),
                     event,

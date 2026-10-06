@@ -33,6 +33,27 @@ pub struct RepoSummary {
     pub archived: bool,
 }
 
+/// A commit's page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitDetail {
+    pub oid: String,
+    pub headline: String,
+    /// The message after the headline.
+    pub body: String,
+    pub author: String,
+    /// ISO 8601.
+    pub authored_at: String,
+    /// Who committed it, when that isn't the author (rebased, applied).
+    pub committer: Option<String>,
+    pub committed_at: String,
+    pub parents: Vec<String>,
+    pub additions: u64,
+    pub deletions: u64,
+    pub changed_files: Option<u64>,
+    /// Whether GitHub verified its signature; `None` when unsigned.
+    pub verified: Option<bool>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitInfo {
     pub oid: String,
@@ -681,6 +702,74 @@ pub struct CommitCard {
     pub author: Option<GitActor>,
 }
 
+// ---- commits -------------------------------------------------------------------------
+
+/// A commit by revision (`<sha>`, short or full).
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "RepoVariables"
+)]
+pub struct CommitQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepoCommit>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Repository",
+    schema_module = "schema",
+    variables = "RepoVariables"
+)]
+pub struct RepoCommit {
+    #[arguments(expression: $expression)]
+    pub object: Option<CommitObject>,
+}
+
+#[derive(cynic::InlineFragments, Debug)]
+#[cynic(graphql_type = "GitObject", schema_module = "schema")]
+pub enum CommitObject {
+    Commit(Box<WireCommit>),
+    #[cynic(fallback)]
+    Other,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Commit", schema_module = "schema")]
+pub struct WireCommit {
+    pub oid: GitObjectId,
+    pub message: String,
+    pub authored_date: DateTime,
+    pub committed_date: DateTime,
+    pub author: Option<GitActor>,
+    pub committer: Option<GitActor>,
+    #[arguments(first: 5)]
+    pub parents: CommitParents,
+    pub additions: i32,
+    pub deletions: i32,
+    pub changed_files_if_available: Option<i32>,
+    pub signature: Option<WireSignature>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "CommitConnection", schema_module = "schema")]
+pub struct CommitParents {
+    pub nodes: Option<Vec<Option<ParentCommit>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Commit", schema_module = "schema")]
+pub struct ParentCommit {
+    pub oid: GitObjectId,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "GitSignature", schema_module = "schema")]
+pub struct WireSignature {
+    pub is_valid: bool,
+}
+
 // ---- profiles ------------------------------------------------------------------------
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -907,6 +996,9 @@ pub mod keys {
     pub fn refs(repo: &RepoId) -> String {
         format!("refs:{repo}")
     }
+    pub fn commit(repo: &RepoId, oid: &str) -> String {
+        format!("commit:{repo}@{oid}")
+    }
     pub const VISITS: &str = "visits";
     pub const VIEWER_REPOS: &str = "viewer-repos";
 }
@@ -920,6 +1012,32 @@ fn issue_state(state: WireIssueState, reason: Option<StateReason>) -> IssueState
             IssueState::NotPlanned
         }
         (WireIssueState::Closed, _) => IssueState::Closed,
+    }
+}
+
+fn actor(a: Option<GitActor>) -> Option<String> {
+    a.and_then(|a| a.user.map(|u| u.login).or(a.name))
+}
+
+impl WireCommit {
+    pub(crate) fn into_detail(self) -> CommitDetail {
+        let (headline, body) = self.message.split_once('\n').unwrap_or((&self.message, ""));
+        let author = actor(self.author).unwrap_or_else(|| "unknown".into());
+        let committer = actor(self.committer).filter(|c| *c != author && c != "web-flow");
+        CommitDetail {
+            oid: self.oid.0,
+            headline: headline.trim().to_owned(),
+            body: body.trim().to_owned(),
+            author,
+            authored_at: self.authored_date.0,
+            committer,
+            committed_at: self.committed_date.0,
+            parents: nodes(self.parents.nodes).map(|p| p.oid.0).collect(),
+            additions: count(self.additions),
+            deletions: count(self.deletions),
+            changed_files: self.changed_files_if_available.map(count),
+            verified: self.signature.map(|s| s.is_valid),
+        }
     }
 }
 

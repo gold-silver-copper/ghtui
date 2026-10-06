@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blob, CommitInfo, IssueDetail, PrActivity, Profile, Refs, RepoOverview, RepoSummary, Results,
-    SearchKind, SearchResults, TreeEntry,
+    Blob, CommitDetail, CommitInfo, IssueDetail, PrActivity, Profile, Refs, RepoOverview,
+    RepoSummary, Results, SearchKind, SearchResults, TreeEntry,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::page::{Link, Page, Role, Seg};
@@ -36,6 +36,8 @@ pub enum DataKey {
     Refs(RepoId),
     /// The latest commit of each entry in a directory.
     LastCommits(RepoId, String, String),
+    /// A commit, by the revision linked.
+    Commit(RepoId, String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +55,7 @@ pub enum Data {
     Files(Arc<Vec<String>>, bool),
     Refs(Box<Refs>),
     LastCommits(Arc<HashMap<String, CommitInfo>>),
+    Commit(Box<CommitDetail>),
 }
 
 /// What a page needs fetched.
@@ -94,6 +97,12 @@ pub fn needs(route: &Route) -> Vec<Need> {
             vec![header(repo), Need::Data(K::Issue(repo.clone(), *number))]
         }
         Route::Pr { pr, .. } => vec![Need::Pr(pr.clone()), Need::Data(K::PrActivity(pr.clone()))],
+        Route::Commit { repo, oid } => {
+            vec![
+                header(repo),
+                Need::Data(K::Commit(repo.clone(), oid.clone())),
+            ]
+        }
         Route::User { login, .. } => vec![Need::Data(K::Profile(login.to_lowercase()))],
     }
 }
@@ -131,6 +140,7 @@ impl PageScreen {
             route,
             Route::Issue { .. }
                 | Route::Blob { .. }
+                | Route::Commit { .. }
                 | Route::Pr {
                     tab: PrTab::Conversation,
                     ..
@@ -194,6 +204,13 @@ impl State {
             path.to_owned(),
         ))? {
             Data::LastCommits(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn commit(&self, repo: &RepoId, oid: &str) -> Option<&CommitDetail> {
+        match self.get(&DataKey::Commit(repo.clone(), oid.to_owned()))? {
+            Data::Commit(c) => Some(c),
             _ => None,
         }
     }
@@ -406,6 +423,17 @@ impl State {
                     (None, _) => missing(&mut page, &pr.to_string()),
                 }
             }
+            Route::Commit { repo, oid } => match self.commit(repo, oid) {
+                Some(c) => {
+                    let files = Route::Commit {
+                        repo: repo.clone(),
+                        oid: c.oid.clone(),
+                    };
+                    let files = format!("{}#files", files.url());
+                    pages::commit(&mut page, repo, c, &files, now);
+                }
+                None => missing(&mut page, &route.title()),
+            },
             Route::User { login, tab } => match self.profile(login) {
                 Some(p) => pages::profile(&mut page, p, *tab, now),
                 _ => missing(&mut page, &format!("@{login}")),

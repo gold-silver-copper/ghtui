@@ -232,7 +232,7 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
     let theme = ctx.theme;
     let lay = diff_screen::layout(content, screen.tree_visible);
     fill(buf, content, theme, Bg::Surface);
-    let Some(diff) = state.diffs.get(&screen.pr) else {
+    let Some(diff) = state.diffs.get(&screen.of) else {
         return;
     };
     let mut area = lay.diff;

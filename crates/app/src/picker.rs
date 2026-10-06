@@ -188,7 +188,7 @@ impl State {
         if let Some(target) = route::parse_input(input, self.context_repo()) {
             let label = match &target {
                 Target::Page(route) => format!("Go to {}", route.title()),
-                Target::Files(pr) => format!("Files changed in {pr}"),
+                Target::Files(of) => format!("Files changed in {of}"),
                 Target::External(url) => format!("Open {url}"),
             };
             out.push((item(label, ""), Some(Choice::Go(target))));

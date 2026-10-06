@@ -4,6 +4,9 @@ use ghtui_api::browse::SearchKind;
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::pages::url as links;
 use ghtui_ui::pages::{PrTab, ProfileTab};
+use ghtui_ui::text::short_sha;
+
+use crate::diff_screen::DiffOf;
 
 /// The default filter of a repository's issue and pull request lists.
 pub const OPEN: &str = "is:open";
@@ -43,6 +46,11 @@ pub enum Route {
         pr: PrRef,
         tab: PrTab,
     },
+    /// A commit, by SHA (short or full, as linked).
+    Commit {
+        repo: RepoId,
+        oid: String,
+    },
     User {
         login: String,
         tab: ProfileTab,
@@ -57,8 +65,8 @@ pub enum Route {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
     Page(Route),
-    /// A pull request's Files changed tab: the diff screen.
-    Files(PrRef),
+    /// The diff screen: a pull request's Files changed tab, or a commit's.
+    Files(DiffOf),
     /// Anything ghtui doesn't show itself.
     External(String),
 }
@@ -115,6 +123,7 @@ impl Route {
                 PrTab::Conversation => links::pull(pr),
                 PrTab::Commits => links::pull_tab(pr, "commits"),
             },
+            Route::Commit { repo, oid } => links::commit(repo, oid),
             Route::User { login, tab } => match tab {
                 ProfileTab::Overview => links::user(login),
                 ProfileTab::Repositories => format!("{}?tab=repositories", links::user(login)),
@@ -137,6 +146,7 @@ impl Route {
             Route::Pulls { repo, .. } => format!("{repo} · Pull requests"),
             Route::Issue { repo, number } => format!("{repo}#{number}"),
             Route::Pr { pr, .. } => pr.to_string(),
+            Route::Commit { repo, oid } => format!("{repo}@{}", short_sha(oid)),
             Route::User { login, .. } => format!("@{login}"),
             Route::Search { query, .. } => format!("Search “{query}”"),
         }
@@ -150,7 +160,8 @@ impl Route {
             | Route::Blob { repo, .. }
             | Route::Issues { repo, .. }
             | Route::Pulls { repo, .. }
-            | Route::Issue { repo, .. } => Some(repo),
+            | Route::Issue { repo, .. }
+            | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
             Route::Home | Route::User { .. } | Route::Search { .. } => None,
         }
@@ -317,6 +328,22 @@ impl Target {
                 }
                 None => return external(),
             },
+            [o, r, "commit", sha] => {
+                let Some(repo) = repo(o, r) else {
+                    return external();
+                };
+                // GitHub anchors a commit's files as `#diff-…`.
+                let to_files = parsed
+                    .fragment()
+                    .is_some_and(|f| f == "files" || f.starts_with("diff-"));
+                if to_files && is_full_sha(sha) {
+                    return Target::Files(DiffOf::Commit(repo, (*sha).to_owned()));
+                }
+                Route::Commit {
+                    repo,
+                    oid: (*sha).to_owned(),
+                }
+            }
             [o, r, "issues", n] => match (repo(o, r), n.parse()) {
                 (Some(repo), Ok(number)) => Route::Issue { repo, number },
                 _ => return external(),
@@ -326,20 +353,28 @@ impl Target {
                     return external();
                 };
                 let pr = PrRef { repo, number };
-                match rest.first().copied() {
-                    Some("files" | "changes") => return Target::Files(pr),
-                    Some("commits") => Route::Pr {
+                match rest {
+                    [] => Route::pr(pr),
+                    ["commits" | "changes", sha] => Route::Commit {
+                        repo: pr.repo,
+                        oid: (*sha).to_owned(),
+                    },
+                    ["files" | "changes", ..] => return Target::Files(DiffOf::Pr(pr)),
+                    ["commits", ..] => Route::Pr {
                         pr,
                         tab: PrTab::Commits,
                     },
-                    None => Route::pr(pr),
-                    Some(_) => return external(),
+                    _ => return external(),
                 }
             }
             _ => return external(),
         };
         Target::Page(route)
     }
+}
+
+fn is_full_sha(s: &str) -> bool {
+    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// `L10` or `L10-L20` (as GitHub writes line links), in order.
@@ -517,7 +552,28 @@ mod tests {
         );
         assert_eq!(
             Target::from_url("https://github.com/o/r/pull/7/files"),
-            Target::Files(pr)
+            Target::Files(DiffOf::Pr(pr.clone()))
+        );
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let commit = |oid: &str| Route::Commit {
+            repo: pr.repo.clone(),
+            oid: oid.into(),
+        };
+        assert_eq!(
+            page(&format!("https://github.com/o/r/commit/{sha}")),
+            commit(sha)
+        );
+        assert_eq!(
+            page("https://github.com/o/r/commit/0123abc"),
+            commit("0123abc")
+        );
+        assert_eq!(
+            page(&format!("https://github.com/o/r/pull/7/commits/{sha}")),
+            commit(sha)
+        );
+        assert_eq!(
+            Target::from_url(&format!("https://github.com/o/r/commit/{sha}#diff-abc")),
+            Target::Files(DiffOf::Commit(pr.repo.clone(), sha.into()))
         );
         assert_eq!(
             page("https://github.com/search?q=tui+lang%3Arust&type=repositories"),
@@ -581,6 +637,10 @@ mod tests {
             Route::Pulls {
                 repo: repo.clone(),
                 query: OPEN.into(),
+            },
+            Route::Commit {
+                repo: repo.clone(),
+                oid: "abc1234".into(),
             },
             Route::Issue { repo, number: 3 },
             Route::user("octocat"),
@@ -704,6 +764,7 @@ mod tests {
                 (repo(), query()).prop_map(|(repo, query)| Route::Issues { repo, query }),
                 (repo(), query()).prop_map(|(repo, query)| Route::Pulls { repo, query }),
                 (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Issue { repo, number }),
+                (repo(), "[0-9a-f]{7,40}").prop_map(|(repo, oid)| Route::Commit { repo, oid }),
                 (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Pr {
                     pr: PrRef { repo, number },
                     tab: PrTab::Commits,
