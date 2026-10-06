@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 imara-diff.workspace = true
 tracing.workspace = true
+unicode-segmentation = "1"
 thiserror.workspace = true
 tree-sitter.workspace = true
 tree-sitter-highlight.workspace = true

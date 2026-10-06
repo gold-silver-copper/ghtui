@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 
 use imara_diff::{Algorithm, Diff, InternedInput};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::file::TextDiff;
 use crate::highlight::Span;
@@ -22,21 +23,20 @@ const MAX_CHANGED_SHARE: f64 = 0.75;
 pub type IntraLine = HashMap<u32, Vec<(u32, u32)>>;
 
 /// Splits `line` into tokens: runs of word characters, runs of whitespace,
-/// and single other characters, further split at highlight boundaries.
-/// Together the tokens make up the whole line.
+/// and single other characters (whole graphemes, so a letter keeps its
+/// accent), further split at highlight boundaries. Together the tokens make
+/// up the whole line.
 fn tokens<'a>(line: &'a str, spans: &[Span]) -> Vec<&'a str> {
     let mut cuts: Vec<u32> = spans.iter().flat_map(|s| [s.start, s.end]).collect();
     cuts.sort_unstable();
     let mut out = Vec::new();
     let mut rest = line;
     let mut prev: Option<u8> = None; // 0 word, 1 space, 2 other
-    for (i, c) in line.char_indices() {
-        let class = if c.is_alphanumeric() || c == '_' {
-            0
-        } else if c.is_whitespace() {
-            1
-        } else {
-            2
+    for (i, g) in line.grapheme_indices(true) {
+        let class = match g.chars().next() {
+            Some(c) if c.is_alphanumeric() || c == '_' => 0,
+            Some(c) if c.is_whitespace() => 1,
+            _ => 2,
         };
         let at_cut = cuts.binary_search(&sat_u32(i)).is_ok();
         let start = line.len() - rest.len();
@@ -72,27 +72,40 @@ pub fn diff_pair(
     input.update_after(new_tokens.iter().copied());
     let diff = Diff::compute(Algorithm::Histogram, &input);
 
-    let changed = |tokens: &[&str], removed: bool| -> Vec<(u32, u32)> {
-        let mut ranges: Vec<(u32, u32)> = Vec::new();
-        let mut start = 0u32;
-        for (i, t) in (0u32..).zip(tokens) {
-            let end = start.saturating_add(sat_u32(t.len()));
-            let hit = if removed {
-                diff.is_removed(i)
-            } else {
-                diff.is_added(i)
-            };
-            if hit {
-                match ranges.last_mut() {
-                    Some(last) if last.1 == start => last.1 = end,
-                    _ => ranges.push((start, end)),
-                }
-            }
-            start = end;
-        }
-        ranges
+    // Where each token starts (and the line's end), in bytes.
+    let offsets = |tokens: &[&str]| -> Vec<u32> {
+        std::iter::once(0)
+            .chain(tokens.iter().scan(0u32, |at, t| {
+                *at = at.saturating_add(sat_u32(t.len()));
+                Some(*at)
+            }))
+            .collect()
     };
-    let (old_changed, new_changed) = (changed(&old_tokens, true), changed(&new_tokens, false));
+    let (old_at, new_at) = (offsets(&old_tokens), offsets(&new_tokens));
+    let span = |at: &[u32], r: std::ops::Range<u32>| {
+        let get = |i: u32| at.get(i as usize).copied().unwrap_or_default();
+        (get(r.start), get(r.end))
+    };
+    let (mut old_changed, mut new_changed) = (Vec::new(), Vec::new());
+    for hunk in diff.hunks() {
+        let (mut o, mut n) = (
+            span(&old_at, hunk.before.clone()),
+            span(&new_at, hunk.after.clone()),
+        );
+        // One token for another: emphasise only the characters that differ.
+        if hunk.before.len() == 1 && hunk.after.len() == 1 {
+            let (a, b) = (
+                old.get(o.0 as usize..o.1 as usize).unwrap_or_default(),
+                new.get(n.0 as usize..n.1 as usize).unwrap_or_default(),
+            );
+            if let Some((prefix, suffix)) = shared_ends(a, b) {
+                o = (o.0 + prefix, o.1 - suffix);
+                n = (n.0 + prefix, n.1 - suffix);
+            }
+        }
+        old_changed.extend(Some(o).filter(|(a, b)| a < b));
+        new_changed.extend(Some(n).filter(|(a, b)| a < b));
+    }
     let share = |ranges: &[(u32, u32)], line: &str| {
         let changed: u32 = ranges.iter().map(|(a, b)| b - a).sum();
         f64::from(changed) / line.trim().len().max(1) as f64
@@ -105,6 +118,33 @@ pub fn diff_pair(
         return None;
     }
     Some((old_changed, new_changed))
+}
+
+/// The bytes two tokens share at their start and end (by grapheme, never
+/// overlapping), when that's most of them: `count`/`counts` share `count`,
+/// so only the `s` stands out. `None` for tokens that merely look alike
+/// (`width`/`words`), which stay emphasised whole.
+fn shared_ends(a: &str, b: &str) -> Option<(u32, u32)> {
+    let (ga, gb): (Vec<&str>, Vec<&str>) =
+        (a.graphemes(true).collect(), b.graphemes(true).collect());
+    let shorter = ga.len().min(gb.len());
+    let prefix = ga.iter().zip(&gb).take_while(|(x, y)| x == y).count();
+    let suffix = ga
+        .iter()
+        .rev()
+        .zip(gb.iter().rev())
+        .take(shorter - prefix)
+        .take_while(|(x, y)| x == y)
+        .count();
+    let kept = prefix + suffix;
+    if kept < 2 || kept * 2 < shorter {
+        return None;
+    }
+    let bytes = |gs: &[&str]| sat_u32(gs.iter().map(|g| g.len()).sum());
+    Some((
+        bytes(ga.get(..prefix).unwrap_or_default()),
+        bytes(ga.get(ga.len() - suffix..).unwrap_or_default()),
+    ))
 }
 
 /// Lines this similar or more (character-bigram Dice coefficient) pair up.
@@ -293,11 +333,11 @@ mod tests {
     }
 
     #[test]
-    fn whole_word_granularity() {
+    fn the_shared_part_of_a_word_stays_plain() {
         let (old, new) = ("value_count += 1", "value_total += 1");
         let (o, n) = diff_pair(old, new, &[], &[]).unwrap();
-        assert_eq!(changed(old, &o), ["value_count"]);
-        assert_eq!(changed(new, &n), ["value_total"]);
+        assert_eq!(changed(old, &o), ["count"]);
+        assert_eq!(changed(new, &n), ["total"]);
     }
 
     #[test]
