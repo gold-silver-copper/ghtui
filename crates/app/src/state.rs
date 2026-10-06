@@ -810,12 +810,11 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             };
             remote.loading_more = false;
             match result {
-                Ok(Data::Search(more)) => {
-                    if let Some(Data::Search(results)) = &mut remote.data {
-                        browse::append(results, *more);
+                Ok(more) => {
+                    if let Some(data) = &mut remote.data {
+                        data.append(more);
                     }
                 }
-                Ok(_) => {}
                 Err(err) => state.error(format!("Couldn't load more: {err}")),
             }
         }
@@ -1505,6 +1504,44 @@ pub(crate) mod tests {
             matches!(state.overlay, Some(Overlay::Picker(_))),
             "GitHub's palette key"
         );
+    }
+
+    /// A branch's commits page: the code toolbar's link opens it, and it
+    /// loads more like any list.
+    #[test]
+    fn commit_history_loads_more() {
+        let mut state = with_repo();
+        let url = format!("https://github.com/{}/commits/main/src", repo());
+        let Target::Page(route) = Target::from_url(&url) else {
+            panic!("{url}");
+        };
+        let key = DataKey::History(repo(), "main".into(), "src".into());
+        let cmds = state.go(Target::Page(route));
+        assert!(cmds.contains(&fetch(key.clone())), "{cmds:?}");
+        fetched(
+            &mut state,
+            key.clone(),
+            Data::History(Box::new(crate::fixtures::history(Some("h1")))),
+        );
+        press(&mut state, "G");
+        assert!(selected_text(&state).starts_with("Load more"));
+        let cmds = press(&mut state, "<Enter>");
+        assert_eq!(
+            cmds,
+            vec![Cmd::Api(Api::FetchMore {
+                key: key.clone(),
+                after: "h1".into()
+            })]
+        );
+        let more = crate::fixtures::history(None);
+        update(
+            &mut state,
+            Msg::FetchedMore(key.clone(), Ok(Data::History(Box::new(more)))),
+        );
+        let Some(Data::History(h)) = state.get(&key) else {
+            panic!()
+        };
+        assert_eq!((h.items.len(), h.next.as_deref()), (4, None));
     }
 
     /// A commit's diff starts only the diff job; what belongs to pull

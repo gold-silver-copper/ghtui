@@ -200,6 +200,16 @@ pub fn commit() -> CommitDetail {
     }
 }
 
+/// A page of a branch's history.
+pub fn history(next: Option<&str>) -> Results<CommitInfo> {
+    let commits = activity().commits;
+    Results {
+        total: 40,
+        items: commits,
+        next: next.map(str::to_owned),
+    }
+}
+
 pub fn blob() -> Blob {
     Blob {
         path: "src/main.rs".into(),

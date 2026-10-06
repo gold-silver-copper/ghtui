@@ -73,6 +73,15 @@ pub mod url {
     pub fn commit(repo: &RepoId, oid: &str) -> String {
         format!("{BASE}/{repo}/commit/{oid}")
     }
+    /// A revision's history, of `path` if it isn't empty.
+    pub fn commits(repo: &RepoId, rev: &str, path: &str) -> String {
+        let rev = encode_path(rev);
+        if path.is_empty() {
+            format!("{BASE}/{repo}/commits/{rev}")
+        } else {
+            format!("{BASE}/{repo}/commits/{rev}/{}", encode_path(path))
+        }
+    }
 
     /// A file path in a URL: `/` separates segments, everything else that
     /// isn't plainly safe (`#`, `?`, `%`, `\\`, spaces, non-ASCII) is
@@ -526,7 +535,7 @@ fn code_toolbar(
             link_seg(
                 page,
                 format!("◷ {}", plural(commits, "commit")),
-                format!("{}/commits/{rev}", url::repo(repo)),
+                url::commits(repo, rev, path),
                 Role::Meta,
             ),
         );
@@ -1457,8 +1466,20 @@ pub fn pr_commits(
         page.line(vec![Seg::new("Loading commits…", Role::Meta)]);
         return;
     };
+    commit_rows(page, &pr.repo, &a.commits, None, now);
+}
+
+/// Commits in boxes by day, each linked to its page; `more` adds a "Load
+/// more" row (shown so far, total).
+fn commit_rows(
+    page: &mut Page,
+    repo: &RepoId,
+    commits: &[CommitInfo],
+    more: Option<(usize, u64)>,
+    now: u64,
+) {
     let mut current_day = String::new();
-    for c in &a.commits {
+    for c in commits {
         let date = day(&c.date);
         if date == current_day {
             page.box_rule();
@@ -1472,7 +1493,7 @@ pub fn pr_commits(
             );
             current_day = date;
         }
-        item(page, url::commit(&pr.repo, &c.oid), |page, link| {
+        item(page, url::commit(repo, &c.oid), |page, link| {
             page.box_line(
                 vec![Seg::linked(c.headline.clone(), Role::Strong, link)],
                 vec![Seg::new(crate::text::short_sha(&c.oid), Role::Code)],
@@ -1482,9 +1503,42 @@ pub fn pr_commits(
             body(page, vec![Seg::new(committed, Role::Meta)]);
         });
     }
+    if let Some((shown, total)) = more {
+        more_row(page, true, shown, total);
+    }
     if !current_day.is_empty() {
         page.box_bottom();
     }
+}
+
+/// A revision's commits (of `path`, if it isn't empty), newest first.
+pub fn commit_history(
+    page: &mut Page,
+    repo: &RepoId,
+    rev: &str,
+    path: &str,
+    history: Option<&Results<CommitInfo>>,
+    now: u64,
+) {
+    let mut title = vec![Seg::new("Commits", Role::Title)];
+    let at = if path.is_empty() {
+        format!("  {rev}")
+    } else {
+        format!("  {rev} · {path}")
+    };
+    title.push(Seg::new(at, Role::Meta));
+    page.wrapped(title, 0, Frame::None);
+    page.blank();
+    let Some(h) = history else {
+        page.line(vec![Seg::new("Loading commits…", Role::Meta)]);
+        return;
+    };
+    if h.items.is_empty() {
+        empty_box(page, Seg::new("◷ Commits", Role::Meta), "No commits here.");
+        return;
+    }
+    let more = h.next.is_some().then_some((h.items.len(), h.total));
+    commit_rows(page, repo, &h.items, more, now);
 }
 
 // ---- commits -------------------------------------------------------------------------------

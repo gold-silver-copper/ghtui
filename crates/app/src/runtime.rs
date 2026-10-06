@@ -335,13 +335,7 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 }
             }
             Api::FetchMore { key, after } => {
-                let result = match &key {
-                    DataKey::Search(kind, query) => gh
-                        .search(*kind, query, Some(after))
-                        .await
-                        .map(|r| Data::Search(Box::new(r))),
-                    other => Err(ApiError::NotFound(format!("more of {other:?}"))),
-                };
+                let result = fetch_more(&gh, &key, after).await;
                 Msg::FetchedMore(key, result)
             }
             Api::AddComment {
@@ -714,6 +708,9 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Commit(repo, oid) => at(gh.cached(&keys::commit(repo, oid))?, |v| {
             Data::Commit(Box::new(v))
         }),
+        DataKey::History(repo, rev, path) => at(gh.cached(&keys::history(repo, rev, path))?, |v| {
+            Data::History(Box::new(v))
+        }),
         DataKey::LastCommits(repo, rev, path) => {
             at(gh.cached(&keys::last_commits(repo, rev, path))?, |v| {
                 Data::LastCommits(std::sync::Arc::new(v))
@@ -721,6 +718,19 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         }
         // Files aren't cached; they can be large.
         DataKey::Blob(..) | DataKey::Files(..) => return None,
+    })
+}
+
+/// A list's next page, from `after`.
+async fn fetch_more(gh: &GitHub, key: &DataKey, after: String) -> Result<Data, ApiError> {
+    Ok(match key {
+        DataKey::Search(kind, query) => {
+            Data::Search(Box::new(gh.search(*kind, query, Some(after)).await?))
+        }
+        DataKey::History(repo, rev, path) => {
+            Data::History(Box::new(gh.history(repo, rev, path, Some(after)).await?))
+        }
+        other => return Err(ApiError::NotFound(format!("more of {other:?}"))),
     })
 }
 
@@ -742,6 +752,9 @@ async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> {
         }
         DataKey::Refs(repo) => Data::Refs(Box::new(gh.refs(repo).await?)),
         DataKey::Commit(repo, oid) => Data::Commit(Box::new(gh.commit(repo, oid).await?)),
+        DataKey::History(repo, rev, path) => {
+            Data::History(Box::new(gh.history(repo, rev, path, None).await?))
+        }
         DataKey::LastCommits(repo, rev, path) => {
             let names: Vec<String> = gh
                 .tree(repo, rev, path)

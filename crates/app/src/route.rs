@@ -46,6 +46,12 @@ pub enum Route {
         pr: PrRef,
         tab: PrTab,
     },
+    /// A revision's commits, of `path` if it isn't empty.
+    Commits {
+        repo: RepoId,
+        rev: String,
+        path: String,
+    },
     /// A commit, by SHA (short or full, as linked).
     Commit {
         repo: RepoId,
@@ -123,6 +129,7 @@ impl Route {
                 PrTab::Conversation => links::pull(pr),
                 PrTab::Commits => links::pull_tab(pr, "commits"),
             },
+            Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
             Route::Commit { repo, oid } => links::commit(repo, oid),
             Route::User { login, tab } => match tab {
                 ProfileTab::Overview => links::user(login),
@@ -146,6 +153,8 @@ impl Route {
             Route::Pulls { repo, .. } => format!("{repo} · Pull requests"),
             Route::Issue { repo, number } => format!("{repo}#{number}"),
             Route::Pr { pr, .. } => pr.to_string(),
+            Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
+            Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
             Route::Commit { repo, oid } => format!("{repo}@{}", short_sha(oid)),
             Route::User { login, .. } => format!("@{login}"),
             Route::Search { query, .. } => format!("Search “{query}”"),
@@ -161,6 +170,7 @@ impl Route {
             | Route::Issues { repo, .. }
             | Route::Pulls { repo, .. }
             | Route::Issue { repo, .. }
+            | Route::Commits { repo, .. }
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
             Route::Home | Route::User { .. } | Route::Search { .. } => None,
@@ -328,6 +338,16 @@ impl Target {
                 }
                 None => return external(),
             },
+            [o, r, "commits", rest @ ..] => {
+                let Some(repo) = repo(o, r) else {
+                    return external();
+                };
+                let (rev, path) = match rest {
+                    [] => ("HEAD".to_owned(), String::new()),
+                    [rev, path @ ..] => ((*rev).to_owned(), path.join("/")),
+                };
+                Route::Commits { repo, rev, path }
+            }
             [o, r, "commit", sha] => {
                 let Some(repo) = repo(o, r) else {
                     return external();
@@ -563,6 +583,16 @@ mod tests {
             page(&format!("https://github.com/o/r/commit/{sha}")),
             commit(sha)
         );
+        let commits = |rev: &str, path: &str| Route::Commits {
+            repo: pr.repo.clone(),
+            rev: rev.into(),
+            path: path.into(),
+        };
+        assert_eq!(
+            page("https://github.com/o/r/commits/main/src/ui"),
+            commits("main", "src/ui")
+        );
+        assert_eq!(page("https://github.com/o/r/commits"), commits("HEAD", ""));
         assert_eq!(
             page("https://github.com/o/r/commit/0123abc"),
             commit("0123abc")
@@ -750,7 +780,7 @@ mod tests {
                 }),
                 (
                     repo(),
-                    rev,
+                    rev.clone(),
                     path(),
                     prop::option::of((1..1000u32, 1..1000u32))
                 )
@@ -765,6 +795,11 @@ mod tests {
                 (repo(), query()).prop_map(|(repo, query)| Route::Pulls { repo, query }),
                 (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Issue { repo, number }),
                 (repo(), "[0-9a-f]{7,40}").prop_map(|(repo, oid)| Route::Commit { repo, oid }),
+                (repo(), rev, path()).prop_map(|(repo, rev, path)| Route::Commits {
+                    repo,
+                    rev,
+                    path
+                }),
                 (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Pr {
                     pr: PrRef { repo, number },
                     tab: PrTab::Commits,

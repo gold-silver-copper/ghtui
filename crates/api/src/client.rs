@@ -963,6 +963,35 @@ impl GitHub {
         Ok(self.kept(&browse::keys::commit(repo, rev), commit).await)
     }
 
+    /// A revision's commits, newest first, touching `path` if it isn't
+    /// empty; 30 at a time, from `after`. The first page is cached.
+    pub async fn history(
+        &self,
+        repo: &RepoId,
+        rev: &str,
+        path: &str,
+        after: Option<String>,
+    ) -> Result<browse::Results<browse::CommitInfo>, ApiError> {
+        let first = after.is_none();
+        let op = browse::HistoryQuery::build(browse::HistoryVariables {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+            expression: rev.to_owned(),
+            path: (!path.is_empty()).then(|| path.to_owned()),
+            after,
+        });
+        let history = match self.graphql(op).await?.repository.and_then(|r| r.object) {
+            Some(browse::HistoryObject::Commit(c)) => c.history.into_results(),
+            _ => return Err(ApiError::NotFound(format!("{repo}@{rev}"))),
+        };
+        if first {
+            return Ok(self
+                .kept(&browse::keys::history(repo, rev, path), history)
+                .await);
+        }
+        Ok(history)
+    }
+
     /// Branches and tags, most recently committed first.
     pub async fn refs(&self, repo: &RepoId) -> Result<browse::Refs, ApiError> {
         let op = browse::BranchesQuery::build(browse::BranchesVariables {

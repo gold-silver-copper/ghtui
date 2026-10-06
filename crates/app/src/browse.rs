@@ -38,6 +38,8 @@ pub enum DataKey {
     LastCommits(RepoId, String, String),
     /// A commit, by the revision linked.
     Commit(RepoId, String),
+    /// A revision's commits (of a path, if it isn't empty).
+    History(RepoId, String, String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +58,39 @@ pub enum Data {
     Refs(Box<Refs>),
     LastCommits(Arc<HashMap<String, CommitInfo>>),
     Commit(Box<CommitDetail>),
+    History(Box<Results<CommitInfo>>),
+}
+
+impl Data {
+    /// Where a list's next page starts, if there's more.
+    pub fn next_cursor(&self) -> Option<&str> {
+        match self {
+            Data::Search(r) => next_cursor(r),
+            Data::History(r) => r.next.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Appends a list's next page.
+    pub fn append(&mut self, more: Data) {
+        match (self, more) {
+            (Data::Search(a), Data::Search(b)) => append(a, *b),
+            (Data::History(a), Data::History(b)) => extend(a, *b),
+            _ => {}
+        }
+    }
+}
+
+/// The list a page loads more of.
+pub fn paged(route: &Route) -> Option<DataKey> {
+    match route {
+        Route::Commits { repo, rev, path } => {
+            Some(DataKey::History(repo.clone(), rev.clone(), path.clone()))
+        }
+        _ => route
+            .search()
+            .map(|(kind, query)| DataKey::Search(kind, query)),
+    }
 }
 
 /// What a page needs fetched.
@@ -103,6 +138,10 @@ pub fn needs(route: &Route) -> Vec<Need> {
                 Need::Data(K::Commit(repo.clone(), oid.clone())),
             ]
         }
+        Route::Commits { repo, rev, path } => vec![
+            header(repo),
+            Need::Data(K::History(repo.clone(), rev.clone(), path.clone())),
+        ],
         Route::User { login, .. } => vec![Need::Data(K::Profile(login.to_lowercase()))],
     }
 }
@@ -423,6 +462,18 @@ impl State {
                     (None, _) => missing(&mut page, &pr.to_string()),
                 }
             }
+            Route::Commits { repo, rev, path } => {
+                let key = DataKey::History(repo.clone(), rev.clone(), path.clone());
+                let history = match self.get(&key) {
+                    Some(Data::History(h)) => Some(&**h),
+                    _ => None,
+                };
+                if history.is_none() && matches!(error, Some((_, false))) {
+                    missing(&mut page, "the commits");
+                } else {
+                    pages::commit_history(&mut page, repo, rev, path, history, now);
+                }
+            }
             Route::Commit { repo, oid } => match self.commit(repo, oid) {
                 Some(c) => {
                     let files = Route::Commit {
@@ -464,13 +515,14 @@ impl State {
     }
 }
 
+fn extend<T>(a: &mut Results<T>, b: Results<T>) {
+    a.items.extend(b.items);
+    a.next = b.next;
+    a.total = b.total;
+}
+
 /// Appends a page of results to what's shown.
 pub fn append(results: &mut SearchResults, more: SearchResults) {
-    fn extend<T>(a: &mut Results<T>, b: Results<T>) {
-        a.items.extend(b.items);
-        a.next = b.next;
-        a.total = b.total;
-    }
     match (results, more) {
         (SearchResults::Repos(a), SearchResults::Repos(b)) => extend(a, b),
         (SearchResults::Issues(a), SearchResults::Issues(b)) => extend(a, b),
