@@ -17,7 +17,7 @@ use ghtui_ui::file_tree::{FileTree, TREE_BG};
 use ghtui_ui::review_sheets::{ComposeSheet, SubmitSheet};
 
 use crate::diff_screen::{self, DiffScreen, Pane};
-use crate::keymap::{Action, pretty};
+use crate::keymap::Action;
 use crate::state::{Overlay, Screen, State};
 
 /// The single content pane is focused, so it sits one tone above surface.
@@ -100,7 +100,6 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
     }
 
     let busy = state.busy();
-    let pending = pretty(&state.pending);
     let rate_limit = state
         .rate_limits
         .tightest()
@@ -112,25 +111,10 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             .get(state.spinner % crate::state::SPINNER.len())
             .unwrap_or(&""),
         notice: state.notice.as_ref(),
-        pending_keys: &pending,
         rate_limit,
         hints: &state.key_hints(),
     }
     .render(status, buf);
-
-    // Which keys can follow a prefix.
-    let next_keys = state.continuations();
-    if !next_keys.is_empty() {
-        let title = format!("{pending} …");
-        KeyPanel {
-            ctx,
-            title: &title,
-            rows: &next_keys,
-            selected: None,
-            position: None,
-        }
-        .render(area, buf);
-    }
 
     match &state.overlay {
         Some(Overlay::Picker(p)) => {
@@ -206,8 +190,8 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 ctx,
                 title: &title,
                 rows: &rows,
-                selected: Some(selected),
-                position: Some((menu.selected + 1, menu.shown().len())),
+                selected,
+                position: (menu.selected + 1, menu.shown().len()),
             }
             .render(area, buf);
         }

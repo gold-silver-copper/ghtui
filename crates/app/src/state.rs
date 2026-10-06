@@ -21,7 +21,7 @@ use ratatui_textarea::TextArea;
 use crate::browse::{self, Data, DataKey, Need, PageScreen};
 use crate::diff_job::{JobId, JobMsg};
 use crate::diff_screen::{self, DiffScreen, DiffState, Pane};
-use crate::keymap::{Action, Key, Keymap, Resolution, Scope};
+use crate::keymap::{Action, Key, Keymap, Scope};
 use crate::nav::{self, Hints, Menu, SearchBox, Visit};
 use crate::picker::{self, Picker};
 use crate::review::{
@@ -425,7 +425,6 @@ pub struct State {
     pub viewer: Option<String>,
     pub rate_limits: RateLimits,
     pub overlay: Option<Overlay>,
-    pub pending: Vec<Key>,
     pub notice: Option<Notice>,
     /// Notices shown this session, newest last, with when (Unix seconds).
     pub messages: std::collections::VecDeque<(u64, Notice)>,
@@ -461,7 +460,6 @@ impl State {
             viewer: None,
             rate_limits: RateLimits::default(),
             overlay: None,
-            pending: Vec::new(),
             notice: None,
             messages: Default::default(),
             problems: Default::default(),
@@ -893,28 +891,22 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     // that (the messages list keeps it).
     let dismissing = matches!(state.notice, Some(Notice::Error(_)));
     state.notice = None;
-    if dismissing && key.code == KeyCode::Esc && state.pending.is_empty() {
+    if dismissing && key.code == KeyCode::Esc {
         return Vec::new();
     }
-    state.pending.push(Key::from(key));
-    match state.keymap.resolve(&state.pending, state.scope()) {
-        Resolution::Action(action) => {
-            state.pending.clear();
-            apply(state, action)
-        }
-        Resolution::Pending => Vec::new(),
-        Resolution::Unbound => {
-            // A key that works elsewhere says where.
-            let other = match state.scope() {
-                Scope::Page => Scope::Diff,
-                _ => Scope::Page,
-            };
-            if let Resolution::Action(action) = state.keymap.resolve(&state.pending, other) {
-                state.info(action.not_here());
-            }
-            state.pending.clear();
-            Vec::new()
-        }
+    // A key bound only on the other kind of screen still runs, to say
+    // where it works.
+    let other = match state.scope() {
+        Scope::Page => Scope::Diff,
+        _ => Scope::Page,
+    };
+    let key = Key::from(key);
+    match [state.scope(), other]
+        .into_iter()
+        .find_map(|scope| state.keymap.resolve(key, scope))
+    {
+        Some(action) => apply(state, action),
+        None => Vec::new(),
     }
 }
 
@@ -1528,24 +1520,6 @@ pub(crate) mod tests {
         assert_eq!(labels.first().map(String::as_str), Some("Open on GitHub"));
         assert!(fuzzy_score("xyz", "Refresh").is_none());
         assert!(fuzzy_score("rfr", "Refresh").is_some());
-    }
-
-    #[test]
-    fn pending_keys_show_what_can_follow() {
-        // Defaults are single keys; sequences only come from config.
-        let mut state = with_inbox(1);
-        state.keymap = Keymap::with_overrides(&std::collections::HashMap::from([
-            ("tab_2".to_owned(), vec!["zi".to_owned()]),
-            ("tab_3".to_owned(), vec!["zp".to_owned()]),
-        ]))
-        .unwrap();
-        press(&mut state, "z");
-        assert_eq!(state.pending.len(), 1);
-        let next: Vec<String> = state.continuations().into_iter().map(|r| r.key).collect();
-        assert_eq!(next, ["i", "p"]);
-        press(&mut state, "x");
-        assert!(state.pending.is_empty());
-        assert!(state.continuations().is_empty());
     }
 
     #[test]

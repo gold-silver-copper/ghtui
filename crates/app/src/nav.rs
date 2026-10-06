@@ -18,7 +18,7 @@ use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
 use crate::browse::{self, Data, DataKey, PageScreen};
-use crate::keymap::{Action, Resolution};
+use crate::keymap::Action;
 use crate::picker::{fuzzy_score, move_in_list};
 use crate::review::ComposeTarget;
 use crate::route::{self, Route, Target};
@@ -1279,18 +1279,6 @@ impl State {
             .next()
             .map(crate::keymap::pretty)
     }
-
-    /// Keys that can follow the pending prefix (which-key).
-    pub fn continuations(&self) -> Vec<KeyRow> {
-        if self.pending.is_empty() || self.overlay.is_some() {
-            return Vec::new();
-        }
-        self.keymap
-            .continuations(&self.pending, self.scope())
-            .into_iter()
-            .map(|(rest, action)| KeyRow::key(crate::keymap::pretty(&rest), action.description()))
-            .collect()
-    }
 }
 
 /// What following `link` does, for the menu.
@@ -1384,11 +1372,8 @@ impl State {
 #[must_use]
 pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let scope = state.scope();
-    let pressed = [crate::keymap::Key::from(key)];
-    let action = match state.keymap.resolve(&pressed, scope) {
-        Resolution::Action(action) => Some(action),
-        _ => None,
-    };
+    let pressed = crate::keymap::Key::from(key);
+    let action = state.keymap.resolve(pressed, scope);
     let Some(Overlay::Menu(menu)) = &mut state.overlay else {
         return Vec::new();
     };
