@@ -22,6 +22,8 @@ pub enum Route {
         repo: RepoId,
         rev: String,
         path: String,
+        /// Lines a link points at (`#L10-L20`), marked and scrolled to.
+        lines: Option<(u32, u32)>,
     },
     Issues {
         repo: RepoId,
@@ -70,6 +72,16 @@ impl Route {
         }
     }
 
+    /// A file, from the top.
+    pub fn blob(repo: RepoId, rev: String, path: String) -> Route {
+        Route::Blob {
+            repo,
+            rev,
+            path,
+            lines: None,
+        }
+    }
+
     /// A profile's overview.
     pub fn user(login: &str) -> Route {
         Route::User {
@@ -83,7 +95,19 @@ impl Route {
             Route::Home => format!("{}/", links::BASE),
             Route::Repo(repo) => links::repo(repo),
             Route::Tree { repo, rev, path } => links::tree(repo, rev, path),
-            Route::Blob { repo, rev, path } => links::blob(repo, rev, path),
+            Route::Blob {
+                repo,
+                rev,
+                path,
+                lines,
+            } => {
+                let url = links::blob(repo, rev, path);
+                match lines {
+                    None => url,
+                    Some((a, b)) if a == b => format!("{url}#L{a}"),
+                    Some((a, b)) => format!("{url}#L{a}-L{b}"),
+                }
+            }
             Route::Issues { repo, query } => list_url(&links::issues(repo), query),
             Route::Pulls { repo, query } => list_url(&links::pulls(repo), query),
             Route::Issue { repo, number } => links::issue(repo, *number),
@@ -257,7 +281,13 @@ impl Target {
                 if *kind == "tree" {
                     Route::Tree { repo, rev, path }
                 } else {
-                    Route::Blob { repo, rev, path }
+                    let lines = parsed.fragment().and_then(line_range);
+                    Route::Blob {
+                        repo,
+                        rev,
+                        path,
+                        lines,
+                    }
                 }
             }
             [o, r, list @ ("issues" | "pulls")] => {
@@ -310,6 +340,16 @@ impl Target {
         };
         Target::Page(route)
     }
+}
+
+/// `L10` or `L10-L20` (as GitHub writes line links), in order.
+fn line_range(fragment: &str) -> Option<(u32, u32)> {
+    let line = |s: &str| s.strip_prefix('L')?.parse::<u32>().ok().filter(|&n| n > 0);
+    let (a, b) = match fragment.split_once('-') {
+        Some((a, b)) => (line(a)?, line(b)?),
+        None => (line(fragment)?, line(fragment)?),
+    };
+    Some((a.min(b), a.max(b)))
 }
 
 /// Top-level github.com paths that aren't users.
@@ -436,12 +476,16 @@ mod tests {
         );
         assert_eq!(
             page("https://github.com/o/r/blob/v1.0/a%20b.md#readme"),
-            Route::Blob {
-                repo: repo.clone(),
-                rev: "v1.0".into(),
-                path: "a b.md".into()
-            }
+            Route::blob(repo.clone(), "v1.0".into(), "a b.md".into())
         );
+        for (fragment, lines) in [("L7", (7, 7)), ("L20-L10", (10, 20)), ("L0", (0, 0))] {
+            let url = format!("https://github.com/o/r/blob/main/a.rs#{fragment}");
+            let expected = (lines.0 > 0).then_some(lines);
+            assert!(
+                matches!(page(&url), Route::Blob { lines, .. } if lines == expected),
+                "{fragment}"
+            );
+        }
         assert_eq!(
             page("https://github.com/o/r/issues?q=is%3Aissue+is%3Aclosed"),
             Route::Issues {
@@ -528,6 +572,7 @@ mod tests {
                 repo: repo.clone(),
                 rev: "main".into(),
                 path: "src/lib.rs".into(),
+                lines: Some((3, 9)),
             },
             Route::Issues {
                 repo: repo.clone(),
@@ -643,9 +688,19 @@ mod tests {
                     rev,
                     path
                 }),
-                (repo(), rev, path())
-                    .prop_filter("a file has a path", |(_, _, p)| !p.is_empty())
-                    .prop_map(|(repo, rev, path)| Route::Blob { repo, rev, path }),
+                (
+                    repo(),
+                    rev,
+                    path(),
+                    prop::option::of((1..1000u32, 1..1000u32))
+                )
+                    .prop_filter("a file has a path", |(_, _, p, _)| !p.is_empty())
+                    .prop_map(|(repo, rev, path, lines)| Route::Blob {
+                        repo,
+                        rev,
+                        path,
+                        lines: lines.map(|(a, b)| (a.min(b), a.max(b))),
+                    }),
                 (repo(), query()).prop_map(|(repo, query)| Route::Issues { repo, query }),
                 (repo(), query()).prop_map(|(repo, query)| Route::Pulls { repo, query }),
                 (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Issue { repo, number }),
