@@ -186,3 +186,55 @@ fn a_one_line_edit_is_unchanged() {
         "-let total = compute(a, ⟦b⟧);\n+let total = compute(a, ⟦c⟧);\n"
     );
 }
+
+// ---- naming where a change is ---------------------------------------------
+
+/// The scopes the first added line is in.
+fn scope_of_change(path: &str, old: &str, new: &str) -> Vec<String> {
+    let diff = FileDiff::compute(path, Some(old.as_bytes()), Some(new.as_bytes()));
+    let Content::Text(text) = &diff.content else {
+        panic!("not a text diff");
+    };
+    let line = text
+        .lines(Whitespace::Exact)
+        .iter()
+        .find(|l| l.kind == LineKind::Added)
+        .and_then(|l| l.new)
+        .unwrap();
+    text.scope(line).into_iter().map(str::to_owned).collect()
+}
+
+#[test]
+fn a_change_in_a_method_names_its_impl_and_fn() {
+    let old = "struct Doc;\n\nimpl Doc {\n    fn offset(&self) -> u32 {\n        1\n    }\n}\n";
+    let new = old.replace("        1\n", "        2\n");
+    assert_eq!(
+        scope_of_change("a.rs", old, &new),
+        ["impl Doc", "fn offset"]
+    );
+}
+
+#[test]
+fn a_change_at_file_level_names_nothing() {
+    let old = "use a;\n\nfn f() {}\n";
+    let new = "use b;\n\nfn f() {}\n";
+    assert!(scope_of_change("a.rs", old, new).is_empty());
+}
+
+#[test]
+fn a_change_in_a_nested_function_names_the_whole_path() {
+    let old = "def outer():\n    def inner():\n        return 1\n    return inner\n";
+    let new = old.replace("return 1", "return 2");
+    assert_eq!(
+        scope_of_change("a.py", old, &new),
+        ["def outer", "def inner"]
+    );
+}
+
+/// A syntax error elsewhere in the file doesn't stop the change being named.
+#[test]
+fn a_syntax_error_elsewhere_degrades_gracefully() {
+    let old = "fn fine() {\n    a();\n}\n\nfn broken( {\n";
+    let new = old.replace("a();", "b();");
+    assert_eq!(scope_of_change("a.rs", old, &new), ["fn fine"]);
+}

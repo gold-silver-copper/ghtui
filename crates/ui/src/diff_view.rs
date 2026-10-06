@@ -77,14 +77,16 @@ impl Widget for DiffView<'_> {
             };
             self.render_row(self.doc.to_pos(g), row_area, buf);
         }
-        // Sticky header: the file you're in stays named at the top.
+        // Sticky header: the file (and function) you're in stays named at
+        // the top.
         let top = self.doc.clamp(self.top);
         if top.row > 0 {
-            let header = Pos {
-                file: top.file,
-                row: 0,
-            };
-            self.render_row(header, Rect { height: 1, ..area }, buf);
+            let cursor = self.doc.clamp(self.cursor) == Pos { row: 0, ..top };
+            let scope = self.doc.scope_at(Pos {
+                row: top.row + 1,
+                ..top
+            });
+            self.header(top.file, cursor, &scope, Rect { height: 1, ..area }, buf);
         }
     }
 }
@@ -108,7 +110,7 @@ impl DiffView<'_> {
             Line::from(spans).render(area, buf);
         };
         match row {
-            Row::Header => self.header(pos.file, cursor, area, buf),
+            Row::Header => self.header(pos.file, cursor, &[], area, buf),
             Row::Note(note) => self.note(file, note, quiet_bg, area, buf),
             Row::Gap { start, end } => {
                 let n = end - start;
@@ -123,8 +125,17 @@ impl DiffView<'_> {
             }
             Row::Hunk { seg } => {
                 fill(buf, area, theme, quiet_bg);
-                let header = file.headers().get(seg as usize).map_or("", String::as_str);
-                Span::styled(format!("{pad}{header}"), theme.meta(quiet_bg)).render(area, buf);
+                let Some(header) = file.headers().get(seg as usize) else {
+                    return;
+                };
+                let room =
+                    usize::from(area.width).saturating_sub(indent + text::width(&header.range) + 1);
+                let scope: Vec<&str> = header.scope.iter().map(String::as_str).collect();
+                Line::from(vec![
+                    Span::styled(format!("{pad}{} ", header.range), theme.meta(quiet_bg)),
+                    Span::styled(scope_label(&scope, room), theme.body(quiet_bg)),
+                ])
+                .render(area, buf);
             }
             Row::Line(e) => self.line(pos, Some(e), None, cursor, area, buf),
             Row::Split { left, right } => {
@@ -182,7 +193,16 @@ impl DiffView<'_> {
         }
     }
 
-    fn header(&self, file_index: usize, cursor: bool, area: Rect, buf: &mut Buffer) {
+    /// A file's header row; `scope` names where you are in it (the sticky
+    /// header).
+    fn header(
+        &self,
+        file_index: usize,
+        cursor: bool,
+        scope: &[&str],
+        area: Rect,
+        buf: &mut Buffer,
+    ) {
         let Some(file) = self.doc.files.get(file_index) else {
             return;
         };
@@ -261,6 +281,15 @@ impl DiffView<'_> {
                 Span::styled(" ", theme.body(bg)),
                 Span::styled(format!("−{dels}"), theme.style(Fg::DiffRemovedSign, bg)),
             ]);
+        }
+        if !scope.is_empty() {
+            // What's left between the file name and the counts.
+            let used: usize = left.iter().chain(&right).map(Span::width).sum();
+            let room = usize::from(area.width).saturating_sub(used + 2 * usize::from(PAD_X) + 5);
+            left.push(Span::styled(
+                format!(" › {}", scope_label(scope, room)),
+                theme.meta(bg),
+            ));
         }
         render_split(inset(area, PAD_X, 0), buf, left, right, 2);
     }
@@ -672,6 +701,22 @@ impl DiffView<'_> {
     }
 }
 
+/// `impl Doc › fn offset`, in at most `room` columns: outer scopes go
+/// first, so the innermost (where you are) stays named.
+fn scope_label(scope: &[&str], room: usize) -> String {
+    (0..scope.len())
+        .map(|skip| {
+            let shown = scope.get(skip..).unwrap_or_default().join(" › ");
+            if skip == 0 {
+                shown
+            } else {
+                format!("… › {shown}")
+            }
+        })
+        .find(|label| text::width(label) <= room)
+        .unwrap_or_else(|| text::truncate(scope.last().copied().unwrap_or_default(), room))
+}
+
 /// Column of the +/- sign: hunk headers and gap text align to it, thread
 /// cards start there.
 fn sign_column(file: &DocFile) -> usize {
@@ -817,6 +862,16 @@ fn short(oid: Option<&str>) -> &str {
 mod tests {
     use super::*;
     use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
+
+    /// Short of room, outer scopes go first; the innermost stays.
+    #[test]
+    fn scope_labels_keep_the_innermost() {
+        let scope = ["impl Doc", "fn offset"];
+        assert_eq!(scope_label(&scope, 40), "impl Doc › fn offset");
+        assert_eq!(scope_label(&scope, 15), "… › fn offset");
+        assert_eq!(scope_label(&scope, 6), "fn of…");
+        assert_eq!(scope_label(&[], 10), "");
+    }
 
     /// A bidi override in code ("Trojan Source") is shown, not obeyed or
     /// silently dropped; tabs expand without per-character allocation.

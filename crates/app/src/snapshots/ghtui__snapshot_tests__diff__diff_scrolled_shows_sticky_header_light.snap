@@ -1,6 +1,7 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-expression: render(&s)
+assertion_line: 686
+expression: "render(&diff_at(Mode::Light, 7, 1))"
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 110, height: 34 },
@@ -9,7 +10,7 @@ Buffer {
         "  o/r#7                                                                                                       ",
         "   ◌ Conversation   ◷ Commits   ✓ Checks ↗   ± Files changed                                                  ",
         "────────────────────────────────────────────━━━━━━━━━━━━━━━━━─────────────────────────────────────────────────",
-        "                             src/point.rs                                                              +5 −1  ",
+        "                             src/point.rs › impl Point › fn origin                                     +5 −1  ",
         " Files  8  +8 −4                   16  +     }                                                                ",
         "                               13  17    }                                                                    ",
         " src/                                                                                                         ",
@@ -72,7 +73,8 @@ Buffer {
         x: 0, y: 4, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 27, y: 4, fg: Rgb(25, 28, 32), bg: Rgb(231, 232, 238), underline: Reset, modifier: NONE,
         x: 29, y: 4, fg: Rgb(25, 28, 32), bg: Rgb(231, 232, 238), underline: Reset, modifier: BOLD,
-        x: 41, y: 4, fg: Rgb(25, 28, 32), bg: Rgb(231, 232, 238), underline: Reset, modifier: NONE,
+        x: 41, y: 4, fg: Rgb(67, 71, 78), bg: Rgb(231, 232, 238), underline: Reset, modifier: NONE,
+        x: 66, y: 4, fg: Rgb(25, 28, 32), bg: Rgb(231, 232, 238), underline: Reset, modifier: NONE,
         x: 103, y: 4, fg: Rgb(0, 95, 64), bg: Rgb(231, 232, 238), underline: Reset, modifier: NONE,
         x: 105, y: 4, fg: Rgb(25, 28, 32), bg: Rgb(231, 232, 238), underline: Reset, modifier: NONE,
         x: 106, y: 4, fg: Rgb(139, 52, 75), bg: Rgb(231, 232, 238), underline: Reset, modifier: NONE,
@@ -157,7 +159,7 @@ Buffer {
         x: 23, y: 12, fg: Rgb(139, 52, 75), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 26, y: 12, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 27, y: 12, fg: Rgb(67, 71, 78), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
-        x: 54, y: 12, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
+        x: 55, y: 12, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
         x: 0, y: 13, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 1, y: 13, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 2, y: 13, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
@@ -212,7 +214,7 @@ Buffer {
         x: 108, y: 17, fg: Rgb(25, 28, 32), bg: Rgb(231, 232, 238), underline: Reset, modifier: NONE,
         x: 0, y: 18, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 27, y: 18, fg: Rgb(67, 71, 78), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
-        x: 54, y: 18, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
+        x: 55, y: 18, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
         x: 0, y: 19, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 27, y: 19, fg: Rgb(25, 28, 32), bg: Rgb(255, 236, 238), underline: Reset, modifier: NONE,
         x: 30, y: 19, fg: Rgb(67, 71, 78), bg: Rgb(255, 236, 238), underline: Reset, modifier: NONE,

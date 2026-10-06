@@ -102,6 +102,27 @@ pub enum Row {
     Spacer,
 }
 
+/// A hunk's header: its `@@` range and the scopes its first change is in,
+/// outermost first (`["impl Doc", "fn offset"]`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HunkHeader {
+    pub range: String,
+    pub scope: Vec<String>,
+}
+
+/// The new-side line at alignment entry `e`, or the nearest before it (a
+/// removed line has none of its own), or after it.
+fn new_line_near(lines: &[DiffLine], e: usize) -> Option<u32> {
+    let (before, after) = lines
+        .split_at_checked(e.saturating_add(1))
+        .unwrap_or((lines, &[]));
+    before
+        .iter()
+        .rev()
+        .find_map(|l| l.new)
+        .or_else(|| after.iter().find_map(|l| l.new))
+}
+
 impl Row {
     /// The alignment entries a line row shows (none for other rows).
     pub fn entries(self) -> impl Iterator<Item = u32> {
@@ -159,8 +180,8 @@ pub struct DocFile {
     /// Extra visible alignment ranges from expanding.
     pub windows: Vec<Range<u32>>,
     rows: Vec<Row>,
-    /// `@@` text per visible segment.
-    headers: Vec<String>,
+    /// The header of each visible segment.
+    headers: Vec<HunkHeader>,
     blocks: Vec<Block>,
     /// Folded blocks the user opened (by first entry).
     pub unfolded: HashSet<u32>,
@@ -176,7 +197,7 @@ impl DocFile {
         &self.rows
     }
 
-    pub fn headers(&self) -> &[String] {
+    pub fn headers(&self) -> &[HunkHeader] {
         &self.headers
     }
 
@@ -400,7 +421,17 @@ impl DocFile {
             let skipped = counts_in(lines.get(seen..seg.start).unwrap_or_default());
             before = (before.0 + skipped.0, before.1 + skipped.1);
             seen = seg.start;
-            self.headers.push(hunk(lines, seg.clone(), before).header());
+            // Named by where its first change is.
+            let first_change = seg
+                .clone()
+                .find(|&e| lines.get(e).is_some_and(|l| l.kind != LineKind::Context))
+                .unwrap_or(seg.start);
+            self.headers.push(HunkHeader {
+                range: hunk(lines, seg.clone(), before).header(),
+                scope: new_line_near(lines, first_change)
+                    .map(|n| text.scope(n).into_iter().map(str::to_owned).collect())
+                    .unwrap_or_default(),
+            });
             self.rows.push(Row::Hunk { seg: idx(s) });
             let first_new_row = self.rows.len();
             // Lines, with folded blocks as one row each.
@@ -1106,6 +1137,26 @@ impl Doc {
         self.files.get(pos.file)?.rows.get(pos.row).copied()
     }
 
+    /// The scopes the line at `pos` (or the next line below it) is in,
+    /// outermost first: what the sticky header names.
+    pub fn scope_at(&self, pos: Pos) -> Vec<&str> {
+        let Some(file) = self.files.get(pos.file) else {
+            return Vec::new();
+        };
+        let (Some(text), Some(e)) = (
+            file.text(),
+            file.rows
+                .iter()
+                .skip(pos.row)
+                .find_map(|r| r.entries().next()),
+        ) else {
+            return Vec::new();
+        };
+        new_line_near(text.lines(self.opts.whitespace), e as usize)
+            .map(|n| text.scope(n))
+            .unwrap_or_default()
+    }
+
     /// Clamps a position to an existing row.
     pub fn clamp(&self, pos: Pos) -> Pos {
         let Some(last) = self.files.len().checked_sub(1) else {
@@ -1409,7 +1460,8 @@ pub(crate) mod tests {
         let a = &doc.files[0];
         // Leading gap (line 1), hunk 2–8, gap, hunk 42–48, trailing gap.
         assert_eq!(kinds(a), "HG@LLLLLLLLG@LLLLLLLLG_");
-        assert_eq!(a.headers(), ["@@ -2,7 +2,7 @@", "@@ -42,7 +42,7 @@"]);
+        let ranges: Vec<&str> = a.headers().iter().map(|h| h.range.as_str()).collect();
+        assert_eq!(ranges, ["@@ -2,7 +2,7 @@", "@@ -42,7 +42,7 @@"]);
         assert!(doc.files[1].generated, "lockfiles are collapsed");
         assert_eq!(doc.files[1].rows()[1], Row::Note(Note::Collapsed));
         assert_eq!(doc.files[2].rows()[1], Row::Note(Note::Loading));

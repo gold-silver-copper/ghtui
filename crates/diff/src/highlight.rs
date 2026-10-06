@@ -113,7 +113,7 @@ const NAMES: &[(&str, TokenKind)] = &[
     ("property", TokenKind::Property),
 ];
 
-fn config(lang: Language) -> Option<&'static HighlightConfiguration> {
+pub(crate) fn config(lang: Language) -> Option<&'static HighlightConfiguration> {
     // Per language: the cargo feature, the grammar and its highlight queries.
     macro_rules! grammars {
         ($($lang:ident: $feature:literal, $grammar:expr, [$($query:expr),+];)*) => {
