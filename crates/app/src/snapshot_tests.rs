@@ -14,7 +14,7 @@ use ghtui_ui::Icons;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use ghtui_ui::pages::ProfileTab;
+use ghtui_ui::pages::{PrTab, ProfileTab};
 
 use crate::browse::{Data, DataKey, Need, needs};
 use crate::fixtures::{self, fetched, press};
@@ -229,6 +229,35 @@ fn with_commit(mode: Mode) -> State {
     state
 }
 
+/// A pull request's Checks tab.
+fn with_pr_checks(mode: Mode) -> State {
+    let mut state = with_pr(mode);
+    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let _ = state.push(Route::Pr {
+        pr: pr.clone(),
+        tab: PrTab::Checks,
+    });
+    // The switch refreshes the pull request; it comes back unchanged.
+    update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(pr_detail()))));
+    let activity = Data::PrActivity(Box::new(fixtures::activity()));
+    fetched(&mut state, DataKey::PrActivity(pr.clone()), activity);
+    let checks = Data::Checks(Box::new(fixtures::checks()));
+    fetched(&mut state, DataKey::PrChecks(pr), checks);
+    state
+}
+
+/// A repository's Actions tab.
+fn with_actions(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Actions(ghtui());
+    open(
+        &mut state,
+        route,
+        Data::Checks(Box::new(fixtures::checks())),
+    );
+    state
+}
+
 /// A branch's commits.
 fn with_history(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -364,6 +393,16 @@ fn repo_wide_terminal_centers_light() {
     let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
     update(&mut state, Msg::Resize(160, 30));
     insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn pr_checks_dark() {
+    insta::assert_snapshot!(render(&with_pr_checks(Mode::Dark)));
+}
+
+#[test]
+fn actions_light() {
+    insta::assert_snapshot!(render(&with_actions(Mode::Light)));
 }
 
 #[test]
@@ -1247,8 +1286,8 @@ mod links {
     use ghtui_ui::pages::ProfileTab;
 
     use super::{
-        press, with_commit, with_file, with_history, with_inbox, with_issue, with_issues, with_pr,
-        with_profile, with_repo, with_repo_search,
+        press, with_actions, with_commit, with_file, with_history, with_inbox, with_issue,
+        with_issues, with_pr, with_pr_checks, with_profile, with_repo, with_repo_search,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1256,9 +1295,9 @@ mod links {
     /// github.com pages ghtui leaves to the browser, by path. Each entry
     /// says why; the list only shrinks.
     const EXTERNAL: &[&str] = &[
+        // A check's logs and re-runs.
+        "/actions/runs/",
         // Not pages in ghtui yet.
-        "/actions",
-        "/checks",
         "/stargazers",
         "/watchers",
         "/forks",
@@ -1286,6 +1325,8 @@ mod links {
             ("search", with_repo_search(Mode::Dark)),
             ("commit", with_commit(Mode::Dark)),
             ("commits", with_history(Mode::Dark)),
+            ("pr checks", with_pr_checks(Mode::Dark)),
+            ("actions", with_actions(Mode::Dark)),
         ]
     }
 
@@ -1396,14 +1437,13 @@ mod keys {
         assert!(silent.is_empty(), "silent:\n{}", silent.join("\n"));
     }
 
-    /// `→` walks a pull request's tabs into Files changed (past the
-    /// Checks link) and `←` walks back; so do `l` `h`, the numbers, and
-    /// `←` `→` wrapping around.
+    /// `→` walks a pull request's tabs into Files changed and `←` walks
+    /// back; so do `l` `h`, the numbers, and `←` `→` wrapping around.
     #[test]
     fn tabs_go_into_the_files_and_back() {
         let pairs = [
-            ("<Right><Right>", "<Left><Left>"),
-            ("ll", "hh"),
+            ("<Right><Right><Right>", "<Left><Left><Left>"),
+            ("lll", "hhh"),
             ("4", "1"),
             ("<Left>", "<Right>"),
         ];

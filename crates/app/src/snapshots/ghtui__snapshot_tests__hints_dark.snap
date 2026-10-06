@@ -1,12 +1,13 @@
 ---
 source: crates/app/src/snapshot_tests.rs
+assertion_line: 512
 expression: render(&state)
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 100, height: 30 },
     content: [
         "  ◆ ghtui   gold-silver-copper / ghtui                 ⌕ Type / to search                 @octocat  ",
-        "   <> Code   ◉ Issues  7    ⇄ Pull requests  3    ▶ Actions ↗                                       ",
+        "   <> Code   ◉ Issues  7    ⇄ Pull requests  3    ▶ Actions                                         ",
         "──━━━━━━━━━─────────────────────────────────────────────────────────────────────────────────────────",
         "                                                                                                    ",
         "aagold-silver-copper asghtui   Public                   sa ☆ Star  1.2kss ⑂ Fork 61da ◉ Watch 18   ▐",
@@ -62,8 +63,6 @@ Buffer {
         x: 47, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 49, y: 1, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 52, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 59, y: 1, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 61, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 0, y: 2, fg: Rgb(72, 76, 83), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 2, y: 2, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 11, y: 2, fg: Rgb(72, 76, 83), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,

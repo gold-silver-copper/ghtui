@@ -708,6 +708,12 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Commit(repo, oid) => at(gh.cached(&keys::commit(repo, oid))?, |v| {
             Data::Commit(Box::new(v))
         }),
+        DataKey::PrChecks(pr) => at(gh.cached(&keys::pr_checks(pr))?, |v| {
+            Data::Checks(Box::new(v))
+        }),
+        DataKey::BranchChecks(repo) => at(gh.cached(&keys::branch_checks(repo))?, |v| {
+            Data::Checks(Box::new(v))
+        }),
         DataKey::History(repo, rev, path) => at(gh.cached(&keys::history(repo, rev, path))?, |v| {
             Data::History(Box::new(v))
         }),
@@ -752,6 +758,8 @@ async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> {
         }
         DataKey::Refs(repo) => Data::Refs(Box::new(gh.refs(repo).await?)),
         DataKey::Commit(repo, oid) => Data::Commit(Box::new(gh.commit(repo, oid).await?)),
+        DataKey::PrChecks(pr) => Data::Checks(Box::new(gh.pr_checks(pr).await?)),
+        DataKey::BranchChecks(repo) => Data::Checks(Box::new(gh.branch_checks(repo).await?)),
         DataKey::History(repo, rev, path) => {
             Data::History(Box::new(gh.history(repo, rev, path, None).await?))
         }

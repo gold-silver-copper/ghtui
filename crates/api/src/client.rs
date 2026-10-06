@@ -992,6 +992,39 @@ impl GitHub {
         Ok(history)
     }
 
+    /// The checks on a pull request's head commit.
+    pub async fn pr_checks(&self, pr: &PrRef) -> Result<browse::Checks, ApiError> {
+        let op = browse::PrChecksQuery::build(number_vars(pr)?);
+        let head = self
+            .graphql(op)
+            .await?
+            .repository
+            .and_then(|r| r.pull_request)
+            .and_then(|p| nodes(p.commits.nodes).next())
+            .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
+        let checks = head.commit.into_checks();
+        Ok(self.kept(&browse::keys::pr_checks(pr), checks).await)
+    }
+
+    /// The checks on a repository's default branch.
+    pub async fn branch_checks(&self, repo: &RepoId) -> Result<browse::Checks, ApiError> {
+        let op = browse::BranchChecksQuery::build(browse::BranchesVariables {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+        });
+        let target = self
+            .graphql(op)
+            .await?
+            .repository
+            .and_then(|r| r.default_branch_ref)
+            .and_then(|r| r.target);
+        let Some(browse::ChecksTarget::Commit(commit)) = target else {
+            return Err(ApiError::NotFound(repo.to_string()));
+        };
+        let checks = commit.into_checks();
+        Ok(self.kept(&browse::keys::branch_checks(repo), checks).await)
+    }
+
     /// Branches and tags, most recently committed first.
     pub async fn refs(&self, repo: &RepoId) -> Result<browse::Refs, ApiError> {
         let op = browse::BranchesQuery::build(browse::BranchesVariables {

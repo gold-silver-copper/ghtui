@@ -2,9 +2,9 @@
 
 use crossterm::event::KeyEvent;
 use ghtui_api::browse::{
-    Blob, Comment, CommitDetail, CommitInfo, EntryKind, IssueDetail, IssueState, IssueSummary,
-    PrActivity, Profile, Readme, RepoOverview, RepoSummary, Results, ReviewSummary, SearchResults,
-    TreeEntry, UserSummary,
+    Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, EntryKind,
+    IssueDetail, IssueState, IssueSummary, PrActivity, Profile, Readme, RepoOverview, RepoSummary,
+    Results, ReviewSummary, SearchResults, TreeEntry, UserSummary,
 };
 use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
@@ -207,6 +207,80 @@ pub fn history(next: Option<&str>) -> Results<CommitInfo> {
         total: 40,
         items: commits,
         next: next.map(str::to_owned),
+    }
+}
+
+/// Checks on a commit: a failure, a run still going, passes, a skip, and
+/// a commit status from another service.
+pub fn checks() -> Checks {
+    let run = |name: &str,
+               group: &str,
+               outcome,
+               took: Option<(&str, &str)>,
+               summary: Option<&str>,
+               job: u32| {
+        CheckItem {
+            name: name.into(),
+            group: group.into(),
+            outcome,
+            started_at: took.map(|(s, _)| format!("2026-10-03T12:{s}Z")),
+            completed_at: took
+                .map(|(_, e)| format!("2026-10-03T12:{e}Z"))
+                .filter(|_| outcome != CheckOutcome::Pending),
+            summary: summary.map(str::to_owned),
+            url: Some(format!(
+                "https://github.com/gold-silver-copper/ghtui/actions/runs/7/job/{job}"
+            )),
+        }
+    };
+    let mut items = vec![
+        run(
+            "test (ubuntu)",
+            "CI",
+            CheckOutcome::Failure,
+            Some(("00:00", "04:12")),
+            Some("Process completed with exit code 101."),
+            1,
+        ),
+        run(
+            "test (macos)",
+            "CI",
+            CheckOutcome::Pending,
+            Some(("01:00", "01:00")),
+            None,
+            2,
+        ),
+        run(
+            "clippy",
+            "CI",
+            CheckOutcome::Success,
+            Some(("00:00", "01:31")),
+            None,
+            3,
+        ),
+        run(
+            "fmt",
+            "CI",
+            CheckOutcome::Success,
+            Some(("00:00", "00:14")),
+            None,
+            4,
+        ),
+        run("deploy", "Release", CheckOutcome::Skipped, None, None, 5),
+    ];
+    items.push(CheckItem {
+        name: "codecov/patch".into(),
+        group: "Statuses".into(),
+        outcome: CheckOutcome::Success,
+        started_at: Some("2026-10-03T12:05:00Z".into()),
+        completed_at: None,
+        summary: Some("92.31% of diff hit (target 80.00%)".into()),
+        url: Some("https://app.codecov.io/gh/gold-silver-copper/ghtui/pull/12".into()),
+    });
+    Checks {
+        oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
+        total: items.len() as u64,
+        items,
     }
 }
 

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blob, CommitDetail, CommitInfo, IssueDetail, PrActivity, Profile, Refs, RepoOverview,
+    Blob, Checks, CommitDetail, CommitInfo, IssueDetail, PrActivity, Profile, Refs, RepoOverview,
     RepoSummary, Results, SearchKind, SearchResults, TreeEntry,
 };
 use ghtui_api::model::{PrRef, RepoId};
@@ -40,6 +40,10 @@ pub enum DataKey {
     Commit(RepoId, String),
     /// A revision's commits (of a path, if it isn't empty).
     History(RepoId, String, String),
+    /// The checks on a pull request's head.
+    PrChecks(PrRef),
+    /// The checks on a repository's default branch.
+    BranchChecks(RepoId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +63,7 @@ pub enum Data {
     LastCommits(Arc<HashMap<String, CommitInfo>>),
     Commit(Box<CommitDetail>),
     History(Box<Results<CommitInfo>>),
+    Checks(Box<Checks>),
 }
 
 impl Data {
@@ -131,7 +136,16 @@ pub fn needs(route: &Route) -> Vec<Need> {
         Route::Issue { repo, number } => {
             vec![header(repo), Need::Data(K::Issue(repo.clone(), *number))]
         }
+        Route::Pr {
+            pr,
+            tab: PrTab::Checks,
+        } => vec![
+            Need::Pr(pr.clone()),
+            Need::Data(K::PrActivity(pr.clone())),
+            Need::Data(K::PrChecks(pr.clone())),
+        ],
         Route::Pr { pr, .. } => vec![Need::Pr(pr.clone()), Need::Data(K::PrActivity(pr.clone()))],
+        Route::Actions(repo) => vec![header(repo), Need::Data(K::BranchChecks(repo.clone()))],
         Route::Commit { repo, oid } => {
             vec![
                 header(repo),
@@ -243,6 +257,13 @@ impl State {
             path.to_owned(),
         ))? {
             Data::LastCommits(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn checks(&self, key: &DataKey) -> Option<&Checks> {
+        match self.get(key)? {
+            Data::Checks(c) => Some(c),
             _ => None,
         }
     }
@@ -459,7 +480,22 @@ impl State {
                         pages::pr_conversation(&mut page, pr, d, activity, aside, cx);
                     }
                     (Some(d), PrTab::Commits) => pages::pr_commits(&mut page, pr, d, activity, now),
+                    (Some(d), PrTab::Checks) => {
+                        let checks = self.checks(&DataKey::PrChecks(pr.clone()));
+                        pages::pr_checks(&mut page, pr, d, checks, now);
+                    }
                     (None, _) => missing(&mut page, &pr.to_string()),
+                }
+            }
+            Route::Actions(repo) => {
+                let checks = self.checks(&DataKey::BranchChecks(repo.clone()));
+                if checks.is_none() && matches!(error, Some((_, false))) {
+                    missing(&mut page, "the checks");
+                } else {
+                    let branch = self
+                        .overview(repo)
+                        .and_then(|o| o.default_branch.as_deref());
+                    pages::actions(&mut page, branch, checks, now);
                 }
             }
             Route::Commits { repo, rev, path } => {
