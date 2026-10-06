@@ -264,6 +264,33 @@ fn sized(mut state: State, w: u16, h: u16) -> State {
     state
 }
 
+/// The repository page with `n` more tabs open after it: an issue, a
+/// pull request, a profile, a file, a commit…, then back on the second.
+fn with_tabs(mode: Mode, n: usize) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let more = [
+        Route::Issue {
+            repo: ghtui(),
+            number: 14,
+        },
+        Route::pr(PrRef::parse("gold-silver-copper/ghtui#12").unwrap()),
+        Route::user("octocat"),
+        Route::blob(ghtui(), "main".into(), "crates/app/src/main.rs".into()),
+        Route::Commit {
+            repo: ghtui(),
+            oid: fixtures::commit().oid,
+        },
+        Route::Releases(ghtui()),
+        Route::Stargazers(ghtui()),
+    ];
+    for route in more.into_iter().cycle().take(n) {
+        let _ = state.open_tab(crate::route::Target::Page(route));
+    }
+    let _ = state.switch_to_tab(1);
+    state.notice = None;
+    state
+}
+
 /// An organization's profile.
 fn with_org(mode: Mode) -> State {
     let mut state = state(mode, ColorDepth::TrueColor);
@@ -496,6 +523,26 @@ fn profile_repositories_light() {
 #[test]
 fn profile_followers_dark() {
     insta::assert_snapshot!(render(&with_profile(Mode::Dark, ProfileTab::Followers)));
+}
+
+#[test]
+fn tabs_light() {
+    insta::assert_snapshot!(render(&with_tabs(Mode::Light, 3)));
+}
+
+#[test]
+fn tabs_dark() {
+    insta::assert_snapshot!(render(&with_tabs(Mode::Dark, 3)));
+}
+
+/// More tabs than fit: the one on screen shows, with how many are hidden
+/// either side.
+#[test]
+fn tabs_overflow_80_dark() {
+    let mut state = with_tabs(Mode::Dark, 12);
+    let _ = state.switch_to_tab(6);
+    state.notice = None;
+    insta::assert_snapshot!(render(&sized(state, 80, 24)));
 }
 
 #[test]

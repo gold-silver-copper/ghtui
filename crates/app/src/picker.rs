@@ -75,6 +75,8 @@ pub enum Choice {
     Commits(PickItem),
     /// Copy this text.
     Copy(String),
+    /// Go to open tab N (from 0).
+    Tab(usize),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -192,6 +194,26 @@ impl State {
                 Target::External(url) => format!("Open {url}"),
             };
             out.push((item(label, ""), Some(Choice::Go(target))));
+        }
+        // Open tabs, by title.
+        if self.tab_count() > 1 {
+            let mut tabs: Vec<(usize, usize, String)> = self
+                .tab_titles()
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, title)| Some((fuzzy_score(input, &title)?, i, title)))
+                .collect();
+            tabs.sort_by_key(|(score, ..)| *score);
+            for (_, i, title) in tabs {
+                let key = Action::OPEN_TABS
+                    .get(i)
+                    .and_then(|a| self.key_here(*a))
+                    .unwrap_or_default();
+                out.push((
+                    item(format!("Tab {}: {title}", i + 1), key),
+                    Some(Choice::Tab(i)),
+                ));
+            }
         }
         let scope = self.scope();
         let mut order: Vec<Action> = self.doables().into_iter().map(|d| d.action).collect();
@@ -446,6 +468,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
             state.info("Copied the message");
             vec![Cmd::Copy(text)]
         }
+        Choice::Tab(i) => state.switch_to_tab(i),
     }
 }
 

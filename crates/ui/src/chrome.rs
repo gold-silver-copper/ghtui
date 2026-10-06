@@ -26,10 +26,20 @@ pub struct Crumb {
     pub text: String,
     /// The last, current part is bold.
     pub current: bool,
+    /// An open tab in the tab strip (spaced apart, not a path).
+    pub tab: bool,
+}
+
+impl Crumb {
+    /// What goes before it, after the first.
+    fn sep(&self) -> &'static str {
+        if self.tab { TAB_SEP } else { SEP }
+    }
 }
 
 const LOGO: &str = "◆ ghtui";
 const SEP: &str = " / ";
+const TAB_SEP: &str = "   ";
 
 /// Where the header's parts are, for drawing and for clicks.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -93,7 +103,7 @@ pub fn header_layout(area: Rect, crumbs: &[Crumb], right: &[String]) -> HeaderLa
     let mut crumb_rects = Vec::new();
     for (i, c) in crumbs.iter().enumerate() {
         if i > 0 {
-            x = x.saturating_add(cols(SEP.len()));
+            x = x.saturating_add(cols(c.sep().len()));
         }
         let w = cols(text::width(&c.text)).min(field_x.saturating_sub(x.saturating_add(2)));
         crumb_rects.push(one(x, w));
@@ -125,11 +135,12 @@ impl Widget for Header<'_> {
         Span::styled(LOGO, theme.accent(BAR).add_modifier(Modifier::BOLD)).render(lay.logo, buf);
         for (i, (c, r)) in self.crumbs.iter().zip(&lay.crumbs).enumerate() {
             if i > 0 {
+                let sep = c.sep();
                 put(
                     buf,
-                    r.x.saturating_sub(cols(SEP.len())),
+                    r.x.saturating_sub(cols(sep.len())),
                     r.y,
-                    SEP,
+                    sep,
                     theme.meta(BAR),
                 );
             }
@@ -175,7 +186,7 @@ impl Widget for Header<'_> {
 // ---- tabs ------------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Tab {
+pub struct PageTab {
     pub icon: &'static str,
     pub label: String,
     pub count: Option<u64>,
@@ -192,7 +203,7 @@ enum Fit {
     Icons,
 }
 
-fn fit(area: Rect, tabs: &[Tab], active: Option<usize>) -> Fit {
+fn fit(area: Rect, tabs: &[PageTab], active: Option<usize>) -> Fit {
     let room = area.width.saturating_sub(PAD_X);
     for level in [Fit::Full, Fit::NoCounts, Fit::Icons] {
         let total = tabs
@@ -208,7 +219,7 @@ fn fit(area: Rect, tabs: &[Tab], active: Option<usize>) -> Fit {
 }
 
 /// Each tab's rectangle on the label row.
-pub fn tab_layout(area: Rect, tabs: &[Tab], active: Option<usize>) -> Vec<Rect> {
+pub fn tab_layout(area: Rect, tabs: &[PageTab], active: Option<usize>) -> Vec<Rect> {
     let level = fit(area, tabs, active);
     let mut x = area.x.saturating_add(PAD_X.min(area.width));
     let mut out = Vec::new();
@@ -221,7 +232,7 @@ pub fn tab_layout(area: Rect, tabs: &[Tab], active: Option<usize>) -> Vec<Rect> 
     out
 }
 
-fn tab_width(tab: &Tab, level: Fit, active: bool) -> u16 {
+fn tab_width(tab: &PageTab, level: Fit, active: bool) -> u16 {
     let shown = |at: Fit| active || level <= at;
     let count = if shown(Fit::Full) {
         tab.count.map_or(0, |n| {
@@ -250,7 +261,7 @@ fn tab_width(tab: &Tab, level: Fit, active: bool) -> u16 {
 /// Tabs on one row, the active one underlined on the row below (2 rows).
 pub struct TabBar<'a> {
     pub ctx: Ctx<'a>,
-    pub tabs: &'a [Tab],
+    pub tabs: &'a [PageTab],
     pub active: Option<usize>,
 }
 

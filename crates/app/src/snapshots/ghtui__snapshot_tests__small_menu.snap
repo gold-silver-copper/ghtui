@@ -1,12 +1,12 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 497
+assertion_line: 732
 expression: small(menu)
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 80, height: 24 },
     content: [
-        "  ◆ ghtui   gold-silver-co  Here you can                                 1/25   ",
+        "  ◆ ghtui   gold-silver-co  Here you can                                 1/26   ",
         "   <> Code   ◉ Issues  7                                                        ",
         "──━━━━━━━━━───────────────  This page                                          ─",
         "                          ▌      ↵   Open ghtui/.github                         ",
@@ -26,8 +26,8 @@ Buffer {
         "  │ ▸ crates      Browse G       r   Refresh                                    ",
         "  │ · Cargo.toml  Bump rat       :   Command palette                            ",
         "  │ · README.md   Document           Recent messages and errors (nothing yet)   ",
-        "  ╰───────────────────────  Keys                                                ",
-        "                                 ↓   Move down                                  ",
+        "  ╰───────────────────────  Tabs                                                ",
+        "                                 T   Open in a new tab                          ",
         "  ╭─ ☰ README.md ────────                                                      ", // hidden by multi-width symbols: [(6, " ")]
         "  ↵ run   key run it   / filter   esc close                      API 4987/5000  ",
     ],

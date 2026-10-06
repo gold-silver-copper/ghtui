@@ -78,6 +78,19 @@ actions! {
     Tab2              "tab_2"             ["2"]                Global "Second tab";
     Tab3              "tab_3"             ["3"]                Global "Third tab";
     Tab4              "tab_4"             ["4"]                Global "Fourth tab";
+    NextOpenTab       "next_open_tab"     ["]"]                Global "Next open tab";
+    PrevOpenTab       "prev_open_tab"     ["["]                Global "Previous open tab";
+    OpenInTab         "open_in_tab"       ["T"]                Global "Open the selection in a new tab";
+    CloseTab          "close_tab"         ["<C-w>"]            Global "Close the tab";
+    OpenTab1          "open_tab_1"        ["<A-1>"]            Global "Go to open tab 1";
+    OpenTab2          "open_tab_2"        ["<A-2>"]            Global "Go to open tab 2";
+    OpenTab3          "open_tab_3"        ["<A-3>"]            Global "Go to open tab 3";
+    OpenTab4          "open_tab_4"        ["<A-4>"]            Global "Go to open tab 4";
+    OpenTab5          "open_tab_5"        ["<A-5>"]            Global "Go to open tab 5";
+    OpenTab6          "open_tab_6"        ["<A-6>"]            Global "Go to open tab 6";
+    OpenTab7          "open_tab_7"        ["<A-7>"]            Global "Go to open tab 7";
+    OpenTab8          "open_tab_8"        ["<A-8>"]            Global "Go to open tab 8";
+    OpenTab9          "open_tab_9"        ["<A-9>"]            Global "Go to open tab 9";
     GoHome            "go_home"           ["H"]                Global "Go home";
     Search            "search"            ["/"]                Global "Search (on a list: filter it)";
     FindFile          "find_file"         ["f"]                Global "Go to file";
@@ -127,6 +140,19 @@ actions! {
 }
 
 impl Action {
+    /// `alt-1`…`alt-9`, in order.
+    pub const OPEN_TABS: [Action; 9] = [
+        Action::OpenTab1,
+        Action::OpenTab2,
+        Action::OpenTab3,
+        Action::OpenTab4,
+        Action::OpenTab5,
+        Action::OpenTab6,
+        Action::OpenTab7,
+        Action::OpenTab8,
+        Action::OpenTab9,
+    ];
+
     pub fn from_name(name: &str) -> Option<Action> {
         Action::ALL.iter().copied().find(|a| a.name() == name)
     }
@@ -484,6 +510,10 @@ mod tests {
             ("`i`", &[Hints]),
             ("`I`", &[HintsBrowser]),
             ("`u`", &[UpLevel]),
+            ("`T`", &[OpenInTab]),
+            ("`[` `]`", &[PrevOpenTab, NextOpenTab]),
+            ("`alt-1`–`alt-9`", &[OpenTab1, OpenTab9]),
+            ("`ctrl-w`", &[CloseTab]),
             ("`H`", &[GoHome]),
             ("`r`", &[Refresh]),
             ("`:` `ctrl-k`", &[CommandPalette]),
@@ -527,6 +557,9 @@ mod tests {
             "ctrl-k" => "<C-k>".to_owned(),
             "ctrl-c" => "<C-c>".to_owned(),
             "ctrl-z" => "<C-z>".to_owned(),
+            "ctrl-w" => "<C-w>".to_owned(),
+            "alt-1" => "<A-1>".to_owned(),
+            "alt-9" => "<A-9>".to_owned(),
             s if s.chars().count() > 1 => format!("<{s}>"),
             s => s.to_owned(),
         };

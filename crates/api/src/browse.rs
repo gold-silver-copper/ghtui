@@ -2284,6 +2284,8 @@ pub mod keys {
         format!("history:{repo}:{rev}:{path}")
     }
     pub const VISITS: &str = "visits";
+    /// The tabs open when ghtui last quit.
+    pub const TABS: &str = "tabs";
     pub const VIEWER_REPOS: &str = "viewer-repos";
 }
 
