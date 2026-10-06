@@ -46,6 +46,8 @@ pub enum Route {
         pr: PrRef,
         tab: PrTab,
     },
+    /// The checks on the default branch.
+    Actions(RepoId),
     /// A revision's commits, of `path` if it isn't empty.
     Commits {
         repo: RepoId,
@@ -128,7 +130,9 @@ impl Route {
             Route::Pr { pr, tab } => match tab {
                 PrTab::Conversation => links::pull(pr),
                 PrTab::Commits => links::pull_tab(pr, "commits"),
+                PrTab::Checks => links::pull_tab(pr, "checks"),
             },
+            Route::Actions(repo) => format!("{}/actions", links::repo(repo)),
             Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
             Route::Commit { repo, oid } => links::commit(repo, oid),
             Route::User { login, tab } => match tab {
@@ -153,6 +157,7 @@ impl Route {
             Route::Pulls { repo, .. } => format!("{repo} · Pull requests"),
             Route::Issue { repo, number } => format!("{repo}#{number}"),
             Route::Pr { pr, .. } => pr.to_string(),
+            Route::Actions(repo) => format!("{repo} · Actions"),
             Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
             Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
             Route::Commit { repo, oid } => format!("{repo}@{}", short_sha(oid)),
@@ -171,6 +176,7 @@ impl Route {
             | Route::Pulls { repo, .. }
             | Route::Issue { repo, .. }
             | Route::Commits { repo, .. }
+            | Route::Actions(repo)
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
             Route::Home | Route::User { .. } | Route::Search { .. } => None,
@@ -338,6 +344,10 @@ impl Target {
                 }
                 None => return external(),
             },
+            [o, r, "actions"] => match repo(o, r) {
+                Some(repo) => Route::Actions(repo),
+                None => return external(),
+            },
             [o, r, "commits", rest @ ..] => {
                 let Some(repo) = repo(o, r) else {
                     return external();
@@ -383,6 +393,10 @@ impl Target {
                     ["commits", ..] => Route::Pr {
                         pr,
                         tab: PrTab::Commits,
+                    },
+                    ["checks", ..] => Route::Pr {
+                        pr,
+                        tab: PrTab::Checks,
                     },
                     _ => return external(),
                 }
@@ -594,6 +608,17 @@ mod tests {
         );
         assert_eq!(page("https://github.com/o/r/commits"), commits("HEAD", ""));
         assert_eq!(
+            page("https://github.com/o/r/actions"),
+            Route::Actions(pr.repo.clone())
+        );
+        assert_eq!(
+            page("https://github.com/o/r/pull/7/checks"),
+            Route::Pr {
+                pr: pr.clone(),
+                tab: PrTab::Checks
+            }
+        );
+        assert_eq!(
             page("https://github.com/o/r/commit/0123abc"),
             commit("0123abc")
         );
@@ -633,6 +658,10 @@ mod tests {
                 tab: ProfileTab::Repositories
             }
         );
+        assert!(matches!(
+            Target::from_url("https://github.com/o/r/actions/runs/9"),
+            Target::External(_)
+        ));
         assert!(matches!(
             Target::from_url("https://github.com/o/r/milestone/3"),
             Target::External(_)

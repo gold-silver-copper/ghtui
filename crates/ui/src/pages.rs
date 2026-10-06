@@ -7,9 +7,9 @@
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blob, Comment, CommitDetail, CommitInfo, EntryKind, IssueDetail, IssueState, IssueSummary,
-    PrActivity, Profile, RepoOverview, RepoSummary, Results, SearchKind, SearchResults, TreeEntry,
-    UserSummary,
+    Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, EntryKind,
+    IssueDetail, IssueState, IssueSummary, PrActivity, Profile, RepoOverview, RepoSummary, Results,
+    SearchKind, SearchResults, TreeEntry, UserSummary,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -1271,6 +1271,7 @@ pub fn issue(
 pub enum PrTab {
     Conversation,
     Commits,
+    Checks,
 }
 
 /// The lines under a PR's title: branches, size (the state is in the
@@ -1453,6 +1454,24 @@ pub fn pr_conversation(
     }
 }
 
+/// A pull request's Checks tab: the checks on its head.
+pub fn pr_checks(page: &mut Page, pr: &PrRef, d: &PrDetail, c: Option<&Checks>, now: u64) {
+    pr_summary(page, pr, d, now);
+    page.blank();
+    checks(page, c, now);
+}
+
+/// A repository's Actions tab: the checks on its default branch.
+pub fn actions(page: &mut Page, branch: Option<&str>, c: Option<&Checks>, now: u64) {
+    let mut title = vec![Seg::new("Actions", Role::Title)];
+    if let Some(branch) = branch {
+        title.push(Seg::new(format!("  checks on {branch}"), Role::Meta));
+    }
+    page.wrapped(title, 0, Frame::None);
+    page.blank();
+    checks(page, c, now);
+}
+
 pub fn pr_commits(
     page: &mut Page,
     pr: &PrRef,
@@ -1539,6 +1558,110 @@ pub fn commit_history(
     }
     let more = h.next.is_some().then_some((h.items.len(), h.total));
     commit_rows(page, repo, &h.items, more, now);
+}
+
+// ---- checks --------------------------------------------------------------------------------
+
+fn outcome_mark(o: CheckOutcome) -> (&'static str, Role) {
+    match o {
+        CheckOutcome::Success => ("✓", Role::Success),
+        CheckOutcome::Failure => ("✗", Role::Error),
+        CheckOutcome::Pending => ("●", Role::Accent),
+        CheckOutcome::Cancelled | CheckOutcome::Skipped => ("⊘", Role::Meta),
+        CheckOutcome::Neutral => ("◦", Role::Meta),
+    }
+}
+
+/// The checks on a commit, grouped by workflow or app, failures first.
+/// Each links to its details on GitHub (logs, re-runs).
+pub fn checks(page: &mut Page, checks: Option<&Checks>, now: u64) {
+    let Some(c) = checks else {
+        page.line(vec![Seg::new("Loading checks…", Role::Meta)]);
+        return;
+    };
+    let sha = crate::text::short_sha(&c.oid);
+    if c.items.is_empty() {
+        let title = Seg::new(format!("✓ Checks on {sha}"), Role::Meta);
+        empty_box(page, title, "No checks ran on this commit.");
+        return;
+    }
+    let mut summary = Vec::new();
+    for (outcome, word) in [
+        (CheckOutcome::Failure, "failed"),
+        (CheckOutcome::Pending, "running"),
+        (CheckOutcome::Success, "passed"),
+        (CheckOutcome::Cancelled, "cancelled"),
+        (CheckOutcome::Skipped, "skipped"),
+        (CheckOutcome::Neutral, "neutral"),
+    ] {
+        let n = c.items.iter().filter(|i| i.outcome == outcome).count();
+        if n > 0 {
+            if !summary.is_empty() {
+                summary.push(Seg::new(" · ", Role::Meta));
+            }
+            let (mark, role) = outcome_mark(outcome);
+            summary.push(Seg::new(format!("{mark} {n} {word}"), role));
+        }
+    }
+    summary.push(Seg::new(format!("   on {sha}"), Role::Meta));
+    let shown = c.items.len() as u64;
+    if c.total > shown {
+        summary.push(Seg::new(
+            format!(" · {shown} of {} shown", c.total),
+            Role::Meta,
+        ));
+    }
+    page.wrapped(summary, 0, Frame::None);
+    page.blank();
+    // Groups in order of their worst check, then by name.
+    let mut groups: Vec<(&str, Vec<&CheckItem>)> = Vec::new();
+    for check in &c.items {
+        match groups.iter_mut().find(|(g, _)| *g == check.group) {
+            Some((_, checks)) => checks.push(check),
+            None => groups.push((&check.group, vec![check])),
+        }
+    }
+    for (_, checks) in &mut groups {
+        checks.sort_by(|a, b| (a.outcome, &a.name).cmp(&(b.outcome, &b.name)));
+    }
+    groups.sort_by_key(|(g, checks)| (checks.first().map(|c| c.outcome), *g));
+    for (group, checks) in groups {
+        page.box_top(vec![Seg::new(group.to_owned(), Role::Meta)], Vec::new());
+        for (n, check) in checks.into_iter().enumerate() {
+            if n > 0 {
+                page.box_rule();
+            }
+            check_row(page, check, now);
+        }
+        page.box_bottom();
+        page.blank();
+    }
+}
+
+fn check_row(page: &mut Page, check: &CheckItem, now: u64) {
+    let (mark, role) = outcome_mark(check.outcome);
+    let took = match (&check.started_at, &check.completed_at, check.outcome) {
+        (Some(start), Some(end), _) => time::duration_iso(start, end),
+        (Some(start), None, CheckOutcome::Pending) => {
+            Some(format!("started {}", time::ago_iso(start, now)))
+        }
+        _ => None,
+    };
+    let right = took.map_or_else(Vec::new, |t| vec![Seg::new(t, Role::Meta)]);
+    let row = |page: &mut Page, link: Option<u32>| {
+        let name = match link {
+            Some(link) => Seg::linked(check.name.clone(), Role::Strong, link),
+            None => Seg::new(check.name.clone(), Role::Strong),
+        };
+        page.box_line(vec![Seg::new(format!("{mark} "), role), name], right, 0);
+        if let Some(summary) = check.summary.as_ref().filter(|_| !page.compact) {
+            body(page, vec![Seg::new(format!("  {summary}"), Role::Meta)]);
+        }
+    };
+    match &check.url {
+        Some(url) => item(page, url.clone(), |page, link| row(page, Some(link))),
+        None => row(page, None),
+    }
 }
 
 // ---- commits -------------------------------------------------------------------------------

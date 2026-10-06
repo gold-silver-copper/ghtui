@@ -1,5 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
+assertion_line: 464
 expression: "render(&with_pr(Mode::Light))"
 ---
 Buffer {
@@ -7,7 +8,7 @@ Buffer {
     content: [
         "  ◆ ghtui   gold-silver-copper / ghtui            ⌕ Type / to search                 ⇄ 2 to review  ",
         "   ⇄ Open   Theme: generate syntax palette from seed  #12                                           ",
-        "   ◌ Conversation  1    ◷ Commits  2    ✓ Checks ↗   ± Files changed  7                             ",
+        "   ◌ Conversation  1    ◷ Commits  2    ✓ Checks   ± Files changed  7                               ",
         "──━━━━━━━━━━━━━━━━━━━━──────────────────────────────────────────────────────────────────────────────",
         "                                                                                                    ",
         "  octocat wants to merge into  main  from  octocat:syntax-palette                                  ▐",
@@ -65,12 +66,10 @@ Buffer {
         x: 37, y: 2, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 39, y: 2, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 42, y: 2, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 48, y: 2, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 50, y: 2, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 52, y: 2, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 55, y: 2, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 69, y: 2, fg: Rgb(25, 28, 32), bg: Rgb(226, 226, 233), underline: Reset, modifier: NONE,
-        x: 72, y: 2, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 50, y: 2, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 53, y: 2, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 67, y: 2, fg: Rgb(25, 28, 32), bg: Rgb(226, 226, 233), underline: Reset, modifier: NONE,
+        x: 70, y: 2, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 0, y: 3, fg: Rgb(190, 193, 201), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 2, y: 3, fg: Rgb(50, 83, 131), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 22, y: 3, fg: Rgb(190, 193, 201), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,

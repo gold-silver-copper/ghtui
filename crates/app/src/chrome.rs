@@ -117,13 +117,15 @@ impl State {
             | Route::Issues { repo, .. }
             | Route::Pulls { repo, .. }
             | Route::Issue { repo, .. }
-            | Route::Commits { repo, .. } => {
+            | Route::Commits { repo, .. }
+            | Route::Actions(repo) => {
                 repo_crumbs(repo, c);
                 self.repo_tabs(repo, c);
                 let pulls = c.tabs.len() - 2;
                 c.active = Some(match route {
                     Route::Issues { .. } | Route::Issue { .. } => 1,
                     Route::Pulls { .. } => pulls,
+                    Route::Actions(_) => pulls + 1,
                     _ => 0,
                 });
             }
@@ -133,6 +135,7 @@ impl State {
                 c.active = Some(match tab {
                     PrTab::Conversation => 0,
                     PrTab::Commits => 1,
+                    PrTab::Checks => 2,
                 });
                 c.title = Some(pr.clone());
             }
@@ -237,11 +240,9 @@ impl State {
                 query: OPEN.into(),
             }),
         ));
-        let mut actions = new_tab("▶", "Actions", None);
-        actions.external = true;
         c.tabs.push((
-            actions,
-            Target::External(format!("https://github.com/{repo}/actions")),
+            new_tab("▶", "Actions", None),
+            Target::Page(Route::Actions(repo.clone())),
         ));
     }
 
@@ -263,10 +264,13 @@ impl State {
                 tab: PrTab::Commits,
             }),
         ));
-        let mut checks = new_tab("✓", "Checks", None);
-        checks.external = true;
-        c.tabs
-            .push((checks, Target::External(format!("{}/checks", pr.url()))));
+        c.tabs.push((
+            new_tab("✓", "Checks", None),
+            Target::Page(Route::Pr {
+                pr: pr.clone(),
+                tab: PrTab::Checks,
+            }),
+        ));
         c.tabs.push((
             new_tab("±", "Files changed", detail.map(|d| d.changed_files)),
             Target::Files(DiffOf::Pr(pr.clone())),

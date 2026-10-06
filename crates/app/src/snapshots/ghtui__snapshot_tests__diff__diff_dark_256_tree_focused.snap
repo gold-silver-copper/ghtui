@@ -1,6 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 676
+assertion_line: 790
 expression: "render(&screen_state(Mode::Dark, ColorDepth::Ansi256, Pos { file: 2, row: 0 },\nPane::Tree,))"
 ---
 Buffer {
@@ -8,8 +8,8 @@ Buffer {
     content: [
         "  ◆ ghtui   o / r                                             ⌕ Type / to search                    @octocat  ",
         "  o/r#7                                                                                                       ",
-        "   ◌ Conversation   ◷ Commits   ✓ Checks ↗   ± Files changed                                                  ",
-        "────────────────────────────────────────────━━━━━━━━━━━━━━━━━─────────────────────────────────────────────────",
+        "   ◌ Conversation   ◷ Commits   ✓ Checks   ± Files changed                                                    ",
+        "──────────────────────────────────────────━━━━━━━━━━━━━━━━━───────────────────────────────────────────────────",
         "─────────────────────────────src/point.rs──────────────────────────────────────────────────────────────+5─−1──",
         " Files  8  +8 −4                       @@ -1,6 +1,6 @@                                                        ",
         "                                1   1    use std::fmt;                                                        ",
@@ -62,14 +62,12 @@ Buffer {
         x: 22, y: 2, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 31, y: 2, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 34, y: 2, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 40, y: 2, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 42, y: 2, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 44, y: 2, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 47, y: 2, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: BOLD,
-        x: 60, y: 2, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 42, y: 2, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 45, y: 2, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: BOLD,
+        x: 58, y: 2, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 0, y: 3, fg: Indexed(240), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 44, y: 3, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 61, y: 3, fg: Indexed(240), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 42, y: 3, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 59, y: 3, fg: Indexed(240), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 29, y: 4, fg: Indexed(254), bg: Indexed(235), underline: Reset, modifier: BOLD,
         x: 41, y: 4, fg: Indexed(240), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 103, y: 4, fg: Indexed(86), bg: Indexed(235), underline: Reset, modifier: NONE,

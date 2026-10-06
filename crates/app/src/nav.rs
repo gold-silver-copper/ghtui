@@ -426,9 +426,10 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Blob {
             repo, rev, path, ..
         } => folder(repo, rev, path),
-        Route::Issues { repo, .. } | Route::Pulls { repo, .. } | Route::Commits { repo, .. } => {
-            Route::Repo(repo.clone())
-        }
+        Route::Issues { repo, .. }
+        | Route::Pulls { repo, .. }
+        | Route::Commits { repo, .. }
+        | Route::Actions(repo) => Route::Repo(repo.clone()),
         // A commit's history leads up to it.
         Route::Commit { repo, oid } => Route::Commits {
             repo: repo.clone(),

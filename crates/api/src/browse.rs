@@ -11,7 +11,7 @@ use crate::queries::{
     Actor, AddCommentPayload, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount,
     GitObjectId, IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount,
     PullRequestReviewDecision, PullRequestState, RepositoryName, ReviewState, StarPayload,
-    UnstarPayload, Uri, UserCount, fragments, nodes,
+    StatusState, UnstarPayload, Uri, UserCount, fragments, nodes,
 };
 use ghtui_schema::schema;
 
@@ -31,6 +31,42 @@ pub struct RepoSummary {
     pub private: bool,
     pub fork: bool,
     pub archived: bool,
+}
+
+/// How a check came out. Ordered worst first, for sorting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum CheckOutcome {
+    Failure,
+    Pending,
+    Cancelled,
+    Neutral,
+    Skipped,
+    Success,
+}
+
+/// One check run or commit status.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckItem {
+    pub name: String,
+    /// The workflow or app it belongs to.
+    pub group: String,
+    pub outcome: CheckOutcome,
+    /// ISO 8601.
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    /// Its title or description.
+    pub summary: Option<String>,
+    /// Its details page (logs, re-runs).
+    pub url: Option<String>,
+}
+
+/// The checks on a commit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Checks {
+    pub oid: String,
+    pub items: Vec<CheckItem>,
+    /// All of them, when there are more than were fetched.
+    pub total: u64,
 }
 
 /// A commit's page.
@@ -843,6 +879,260 @@ impl CommitHistory {
     }
 }
 
+// ---- checks --------------------------------------------------------------------------
+
+/// The checks on a pull request's head.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "NumberVariables"
+)]
+pub struct PrChecksQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepoPrChecks>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Repository",
+    schema_module = "schema",
+    variables = "NumberVariables"
+)]
+pub struct RepoPrChecks {
+    #[arguments(number: $number)]
+    pub pull_request: Option<PrChecks>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequest", schema_module = "schema")]
+pub struct PrChecks {
+    #[arguments(last: 1)]
+    pub commits: PrHeadCommits,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestCommitConnection", schema_module = "schema")]
+pub struct PrHeadCommits {
+    pub nodes: Option<Vec<Option<PrHeadCommit>>>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestCommit", schema_module = "schema")]
+pub struct PrHeadCommit {
+    pub commit: ChecksCommit,
+}
+
+/// The checks on a repository's default branch.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "BranchesVariables"
+)]
+pub struct BranchChecksQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepoBranchChecks>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Repository", schema_module = "schema")]
+pub struct RepoBranchChecks {
+    pub default_branch_ref: Option<ChecksRef>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Ref", schema_module = "schema")]
+pub struct ChecksRef {
+    pub target: Option<ChecksTarget>,
+}
+
+#[derive(cynic::InlineFragments, Debug)]
+#[cynic(graphql_type = "GitObject", schema_module = "schema")]
+pub enum ChecksTarget {
+    Commit(ChecksCommit),
+    #[cynic(fallback)]
+    Other,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Commit", schema_module = "schema")]
+pub struct ChecksCommit {
+    pub oid: GitObjectId,
+    pub status_check_rollup: Option<WireRollup>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "StatusCheckRollup", schema_module = "schema")]
+pub struct WireRollup {
+    #[arguments(first: 100)]
+    pub contexts: RollupContexts,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "StatusCheckRollupContextConnection",
+    schema_module = "schema"
+)]
+pub struct RollupContexts {
+    pub total_count: i32,
+    pub nodes: Option<Vec<Option<RollupContext>>>,
+}
+
+#[derive(cynic::InlineFragments, Debug)]
+#[cynic(graphql_type = "StatusCheckRollupContext", schema_module = "schema")]
+pub enum RollupContext {
+    CheckRun(Box<WireCheckRun>),
+    StatusContext(WireStatusContext),
+    #[cynic(fallback)]
+    Other,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "CheckRun", schema_module = "schema")]
+pub struct WireCheckRun {
+    pub name: String,
+    pub status: CheckStatusState,
+    pub conclusion: Option<CheckConclusionState>,
+    pub started_at: Option<DateTime>,
+    pub completed_at: Option<DateTime>,
+    pub title: Option<String>,
+    pub details_url: Option<Uri>,
+    pub check_suite: Option<WireSuite>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "CheckSuite", schema_module = "schema")]
+pub struct WireSuite {
+    pub app: Option<AppName>,
+    pub workflow_run: Option<WireWorkflowRun>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "App", schema_module = "schema")]
+pub struct AppName {
+    pub name: String,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "WorkflowRun", schema_module = "schema")]
+pub struct WireWorkflowRun {
+    pub workflow: WorkflowName,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Workflow", schema_module = "schema")]
+pub struct WorkflowName {
+    pub name: String,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "StatusContext", schema_module = "schema")]
+pub struct WireStatusContext {
+    pub context: String,
+    pub state: StatusState,
+    pub description: Option<String>,
+    pub target_url: Option<Uri>,
+    pub created_at: DateTime,
+}
+
+#[derive(cynic::Enum, Debug, Clone, Copy)]
+#[cynic(graphql_type = "CheckStatusState", schema_module = "schema")]
+pub enum CheckStatusState {
+    Completed,
+    InProgress,
+    Pending,
+    Queued,
+    Requested,
+    Waiting,
+}
+
+#[derive(cynic::Enum, Debug, Clone, Copy)]
+#[cynic(graphql_type = "CheckConclusionState", schema_module = "schema")]
+pub enum CheckConclusionState {
+    ActionRequired,
+    Cancelled,
+    Failure,
+    Neutral,
+    Skipped,
+    Stale,
+    StartupFailure,
+    Success,
+    TimedOut,
+}
+
+impl ChecksCommit {
+    pub(crate) fn into_checks(self) -> Checks {
+        let contexts = self.status_check_rollup.map(|r| r.contexts);
+        let total = contexts.as_ref().map_or(0, |c| count(c.total_count));
+        let items = nodes(contexts.and_then(|c| c.nodes))
+            .filter_map(|c| match c {
+                RollupContext::CheckRun(run) => Some(run.into_item()),
+                RollupContext::StatusContext(s) => Some(s.into_item()),
+                RollupContext::Other => None,
+            })
+            .collect();
+        Checks {
+            oid: self.oid.0,
+            items,
+            total,
+        }
+    }
+}
+
+impl WireCheckRun {
+    fn into_item(self) -> CheckItem {
+        use CheckConclusionState as C;
+        let outcome = match (self.status, self.conclusion) {
+            (CheckStatusState::Completed, Some(conclusion)) => match conclusion {
+                C::Success => CheckOutcome::Success,
+                C::Skipped => CheckOutcome::Skipped,
+                C::Neutral | C::Stale => CheckOutcome::Neutral,
+                C::Cancelled => CheckOutcome::Cancelled,
+                C::Failure | C::TimedOut | C::StartupFailure | C::ActionRequired => {
+                    CheckOutcome::Failure
+                }
+            },
+            _ => CheckOutcome::Pending,
+        };
+        let suite = self.check_suite;
+        let group = suite
+            .as_ref()
+            .and_then(|s| s.workflow_run.as_ref())
+            .map(|w| w.workflow.name.clone())
+            .or_else(|| suite.and_then(|s| s.app).map(|a| a.name))
+            .unwrap_or_else(|| "Checks".into());
+        CheckItem {
+            name: self.name,
+            group,
+            outcome,
+            started_at: self.started_at.map(|d| d.0),
+            completed_at: self.completed_at.map(|d| d.0),
+            summary: self.title.filter(|t| !t.trim().is_empty()),
+            url: self.details_url.map(|u| u.0),
+        }
+    }
+}
+
+impl WireStatusContext {
+    fn into_item(self) -> CheckItem {
+        let outcome = match self.state {
+            StatusState::Success => CheckOutcome::Success,
+            StatusState::Failure | StatusState::Error => CheckOutcome::Failure,
+            StatusState::Pending | StatusState::Expected => CheckOutcome::Pending,
+        };
+        CheckItem {
+            name: self.context,
+            group: "Statuses".into(),
+            outcome,
+            started_at: Some(self.created_at.0),
+            completed_at: None,
+            summary: self.description.filter(|d| !d.trim().is_empty()),
+            url: self.target_url.map(|u| u.0),
+        }
+    }
+}
+
 // ---- profiles ------------------------------------------------------------------------
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -1071,6 +1361,12 @@ pub mod keys {
     }
     pub fn commit(repo: &RepoId, oid: &str) -> String {
         format!("commit:{repo}@{oid}")
+    }
+    pub fn pr_checks(pr: &PrRef) -> String {
+        format!("pr-checks:{pr}")
+    }
+    pub fn branch_checks(repo: &RepoId) -> String {
+        format!("branch-checks:{repo}")
     }
     pub fn history(repo: &RepoId, rev: &str, path: &str) -> String {
         format!("history:{repo}:{rev}:{path}")

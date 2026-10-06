@@ -49,9 +49,37 @@ pub fn ago_iso(iso: &str, now: u64) -> String {
     parse_iso8601(iso).map_or_else(|| iso.to_owned(), |t| ago(t, now))
 }
 
+/// How long from one ISO timestamp to another: "45s", "1m 23s", "2h 5m".
+pub fn duration_iso(start: &str, end: &str) -> Option<String> {
+    let secs = parse_iso8601(end)?.checked_sub(parse_iso8601(start)?)?;
+    Some(match secs {
+        0..60 => format!("{secs}s"),
+        60..3600 => format!("{}m {}s", secs / 60, secs % 60),
+        _ => format!("{}h {}m", secs / 3600, secs % 3600 / 60),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn durations() {
+        let at = |s: &str| format!("2026-01-01T{s}Z");
+        assert_eq!(
+            duration_iso(&at("10:00:00"), &at("10:00:45")).as_deref(),
+            Some("45s")
+        );
+        assert_eq!(
+            duration_iso(&at("10:00:00"), &at("10:01:23")).as_deref(),
+            Some("1m 23s")
+        );
+        assert_eq!(
+            duration_iso(&at("10:00:00"), &at("12:05:00")).as_deref(),
+            Some("2h 5m")
+        );
+        assert_eq!(duration_iso(&at("10:00:01"), &at("10:00:00")), None);
+    }
 
     #[test]
     fn parses_known_timestamps() {
