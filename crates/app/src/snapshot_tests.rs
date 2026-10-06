@@ -278,6 +278,44 @@ fn with_forks(mode: Mode) -> State {
     state
 }
 
+/// A repository's releases.
+fn with_releases(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Releases(ghtui());
+    open(
+        &mut state,
+        route,
+        Data::Releases(Box::new(fixtures::releases())),
+    );
+    state
+}
+
+/// A release's page.
+fn with_release(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Release {
+        repo: ghtui(),
+        tag: "v0.2.0".into(),
+    };
+    open(
+        &mut state,
+        route,
+        Data::Release(Box::new(fixtures::release(true))),
+    );
+    state
+}
+
+/// A repository's tags.
+fn with_tags(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    open(
+        &mut state,
+        Route::Tags(ghtui()),
+        Data::Tags(Box::new(fixtures::tags())),
+    );
+    state
+}
+
 /// A branch's commits.
 fn with_history(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -433,6 +471,21 @@ fn stargazers_dark() {
 #[test]
 fn forks_light() {
     insta::assert_snapshot!(render(&with_forks(Mode::Light)));
+}
+
+#[test]
+fn releases_dark() {
+    insta::assert_snapshot!(render(&with_releases(Mode::Dark)));
+}
+
+#[test]
+fn release_light() {
+    insta::assert_snapshot!(render(&with_release(Mode::Light)));
+}
+
+#[test]
+fn tags_dark() {
+    insta::assert_snapshot!(render(&with_tags(Mode::Dark)));
 }
 
 #[test]
@@ -1317,8 +1370,8 @@ mod links {
 
     use super::{
         press, with_actions, with_commit, with_file, with_forks, with_history, with_inbox,
-        with_issue, with_issues, with_pr, with_pr_checks, with_profile, with_repo,
-        with_repo_search, with_stargazers,
+        with_issue, with_issues, with_pr, with_pr_checks, with_profile, with_release,
+        with_releases, with_repo, with_repo_search, with_stargazers, with_tags,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1328,6 +1381,8 @@ mod links {
     const EXTERNAL: &[&str] = &[
         // A check's logs and re-runs.
         "/actions/runs/",
+        // A release's assets: downloads.
+        "/releases/download/",
     ];
 
     /// Every page ghtui has a fixture for.
@@ -1356,6 +1411,9 @@ mod links {
             ("actions", with_actions(Mode::Dark)),
             ("stargazers", with_stargazers(Mode::Dark)),
             ("forks", with_forks(Mode::Dark)),
+            ("releases", with_releases(Mode::Dark)),
+            ("release", with_release(Mode::Dark)),
+            ("tags", with_tags(Mode::Dark)),
         ]
     }
 
