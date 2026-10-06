@@ -1,5 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
+assertion_line: 908
 expression: render(&s)
 ---
 Buffer {
@@ -19,7 +20,7 @@ Buffer {
         " A notes.txt      +2 −0      5   5        x: i32,                               ",
         " D gone.py        +0 −2      6   6        y: i32,                               ",
         " M logo.png       +0 −0             ⋯ 3 unchanged lines · e to expand           ",
-        " M run.sh         +0 −0             @@ -10,4 +10,8 @@                           ",
+        " M run.sh         +0 −0             @@ -10,4 +10,8 @@ impl Point                ",
         " M Cargo.lock     +1 −1     10  10        pub fn new(x: i32, y: i32) -> Self {  ",
         " zz/                        11  11            Point { x, y }                    ",
         "   M pending.rs             12  12        }                                     ",
@@ -74,7 +75,7 @@ Buffer {
         x: 13, y: 5, fg: Rgb(255, 177, 192), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 16, y: 5, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 24, y: 5, fg: Rgb(196, 198, 207), bg: Rgb(17, 19, 24), underline: Reset, modifier: NONE,
-        x: 51, y: 5, fg: Rgb(226, 226, 233), bg: Rgb(17, 19, 24), underline: Reset, modifier: NONE,
+        x: 52, y: 5, fg: Rgb(226, 226, 233), bg: Rgb(17, 19, 24), underline: Reset, modifier: NONE,
         x: 0, y: 6, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 24, y: 6, fg: Rgb(226, 226, 233), bg: Rgb(17, 19, 24), underline: Reset, modifier: NONE,
         x: 27, y: 6, fg: Rgb(196, 198, 207), bg: Rgb(17, 19, 24), underline: Reset, modifier: NONE,
@@ -204,7 +205,7 @@ Buffer {
         x: 20, y: 14, fg: Rgb(255, 177, 192), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 23, y: 14, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 24, y: 14, fg: Rgb(196, 198, 207), bg: Rgb(17, 19, 24), underline: Reset, modifier: NONE,
-        x: 53, y: 14, fg: Rgb(226, 226, 233), bg: Rgb(17, 19, 24), underline: Reset, modifier: NONE,
+        x: 54, y: 14, fg: Rgb(226, 226, 233), bg: Rgb(17, 19, 24), underline: Reset, modifier: NONE,
         x: 0, y: 15, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 1, y: 15, fg: Rgb(196, 198, 207), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 2, y: 15, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,

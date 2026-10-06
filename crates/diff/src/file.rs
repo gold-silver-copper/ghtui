@@ -4,6 +4,7 @@ use crate::anchor::{Commentable, HunkRange};
 use crate::highlight::{Language, Span, highlight};
 use crate::hunks::{Algorithm, DiffLine, LineKind, Whitespace, align};
 use crate::intraline::{IntraLine, intraline};
+use crate::scope::{self, Scope};
 use crate::text::{Text, is_binary};
 
 /// Context lines around changes.
@@ -44,6 +45,8 @@ pub struct TextDiff {
     /// GitHub-style commentable ranges (Myers, 3 lines of context), used when
     /// GitHub's own patch isn't available.
     pub local_ranges: Vec<HunkRange>,
+    /// Named scopes of the new side (functions, types...), outermost first.
+    pub scopes: Vec<Scope>,
     /// Changed token ranges on paired lines, for each alignment.
     pub intraline: IntraLine,
     pub intraline_ignoring_whitespace: IntraLine,
@@ -55,6 +58,12 @@ impl TextDiff {
             Whitespace::Exact => &self.lines,
             Whitespace::Ignore => &self.lines_ignoring_whitespace,
         }
+    }
+
+    /// The scopes containing new-side line `line`, outermost first:
+    /// `["impl Doc", "fn offset"]`.
+    pub fn scope(&self, line: u32) -> Vec<&str> {
+        scope::path(&self.scopes, line)
     }
 
     pub fn intraline(&self, whitespace: Whitespace) -> &IntraLine {
@@ -159,10 +168,11 @@ impl FileDiff {
             lines.clone()
         };
         // Only highlight files with changes to show.
-        let (local_ranges, old_spans, new_spans) = if changed && rich {
+        let (local_ranges, old_spans, new_spans, scopes) = if changed && rich {
             let lang = Language::from_path(path);
             let ranges = Commentable::local(&old, &new).ranges;
-            (ranges, highlight(lang, &old), highlight(lang, &new))
+            let scopes = scope::scopes(lang, &new);
+            (ranges, highlight(lang, &old), highlight(lang, &new), scopes)
         } else {
             Default::default()
         };
@@ -174,6 +184,7 @@ impl FileDiff {
             lines,
             lines_ignoring_whitespace,
             local_ranges,
+            scopes,
             intraline: IntraLine::new(),
             intraline_ignoring_whitespace: IntraLine::new(),
         };

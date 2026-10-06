@@ -1,6 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 894
+assertion_line: 891
 expression: "render(&better_than_github(Mode::Light))"
 ---
 Buffer {
@@ -30,7 +30,7 @@ Buffer {
         "                                       ⋯ Formatting-only change, 5 lines · ↵ to show                          ",
         "                                                                                                              ",
         "                             src/util.rs                                                               +3 −0  ",
-        "                                       @@ -1,1 +1,4 @@                                                        ",
+        "                                       @@ -1,1 +1,4 @@ fn clamp                                               ",
         "                                1   1    // helpers                                                           ",
         "                                    2  + pub fn clamp(value: i32, low: i32, high: i32) -> i32 {               ",
         "                                       ↳ moved from src/math.rs:5 · M to jump                                 ",
@@ -86,7 +86,7 @@ Buffer {
         x: 71, y: 5, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
         x: 0, y: 6, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 27, y: 6, fg: Rgb(67, 71, 78), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
-        x: 55, y: 6, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
+        x: 56, y: 6, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
         x: 0, y: 7, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 1, y: 7, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 5, y: 7, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
@@ -295,7 +295,7 @@ Buffer {
         x: 108, y: 23, fg: Rgb(25, 28, 32), bg: Rgb(231, 232, 238), underline: Reset, modifier: NONE,
         x: 0, y: 24, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 27, y: 24, fg: Rgb(67, 71, 78), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
-        x: 54, y: 24, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
+        x: 55, y: 24, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
         x: 0, y: 25, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 27, y: 25, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
         x: 30, y: 25, fg: Rgb(67, 71, 78), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,

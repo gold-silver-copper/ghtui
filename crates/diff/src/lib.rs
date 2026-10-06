@@ -11,6 +11,7 @@ pub mod highlight;
 pub mod hunks;
 pub mod intraline;
 pub mod moves;
+pub mod scope;
 pub mod text;
 
 pub use file::{CONTEXT, Content, FileDiff, TextDiff, counts};
