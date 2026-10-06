@@ -109,21 +109,19 @@ pub fn diff_pair(
 
 /// Lines this similar or more (character-bigram Dice coefficient) pair up.
 const MIN_SIMILARITY: f64 = 0.5;
-/// How far ahead to look for a line's partner.
-const PAIR_WINDOW: usize = 16;
+/// Blocks with more lines than this on a side pair greedily instead.
+const MAX_ALIGNED: usize = 200;
 
-/// Dice coefficient over character bigrams of the trimmed lines.
-fn similarity(a: &str, b: &str) -> f64 {
-    let bigrams = |s: &str| -> Vec<(char, char)> {
-        let s = s.trim();
-        let mut v: Vec<(char, char)> = s.chars().zip(s.chars().skip(1)).collect();
-        v.sort_unstable();
-        v
-    };
-    let (x, y) = (bigrams(a), bigrams(b));
-    if x.is_empty() || y.is_empty() {
-        return if a.trim() == b.trim() { 1.0 } else { 0.0 };
-    }
+/// Character bigrams of the trimmed line, sorted: what `similarity` compares.
+fn bigrams(line: &str) -> Vec<(char, char)> {
+    let s = line.trim();
+    let mut v: Vec<(char, char)> = s.chars().zip(s.chars().skip(1)).collect();
+    v.sort_unstable();
+    v
+}
+
+/// Dice coefficient of two lines' sorted bigrams.
+fn dice(x: &[(char, char)], y: &[(char, char)]) -> f64 {
     // Count common bigrams (multiset intersection of sorted lists).
     let (mut i, mut j, mut common) = (0, 0, 0usize);
     while let (Some(p), Some(q)) = (x.get(i), y.get(j)) {
@@ -137,13 +135,100 @@ fn similarity(a: &str, b: &str) -> f64 {
             }
         }
     }
-    2.0 * common as f64 / (x.len() + y.len()) as f64
+    2.0 * common as f64 / (x.len() + y.len()).max(1) as f64
+}
+
+/// Dice coefficient over character bigrams of the trimmed lines.
+fn similarity(a: &str, b: &str) -> f64 {
+    let (x, y) = (bigrams(a), bigrams(b));
+    if x.is_empty() || y.is_empty() {
+        return if a.trim() == b.trim() { 1.0 } else { 0.0 };
+    }
+    dice(&x, &y)
+}
+
+/// Which removed line pairs with which added line, in order: the pairing
+/// with the greatest total similarity, lines too unlike anything left
+/// unpaired. Big blocks pair each removed line with its best match ahead.
+fn pair_lines(old: &[&str], new: &[&str]) -> Vec<(usize, usize)> {
+    #[derive(Clone, Copy)]
+    enum Step {
+        Start,
+        SkipOld,
+        SkipNew,
+        Pair,
+    }
+    let score = |a: &str, b: &str| Some(similarity(a, b)).filter(|s| *s >= MIN_SIMILARITY);
+    if old.len() > MAX_ALIGNED || new.len() > MAX_ALIGNED {
+        let mut pairs = Vec::new();
+        let mut next = 0;
+        for (i, a) in old.iter().enumerate() {
+            let best = (next..)
+                .zip(new.iter().skip(next).take(16))
+                .filter_map(|(j, b)| Some((j, score(a, b)?)))
+                .max_by(|x, y| x.1.total_cmp(&y.1));
+            if let Some((j, _)) = best {
+                pairs.push((i, j));
+                next = j + 1;
+            }
+        }
+        return pairs;
+    }
+    let new_grams: Vec<_> = new.iter().map(|b| bigrams(b)).collect();
+    // `table[i][j]`: the best total for the first `i` old and `j` new lines.
+    let mut table: Vec<Vec<(f64, Step)>> = vec![vec![(0.0, Step::Start); new.len() + 1]];
+    for a in old {
+        let grams = bigrams(a);
+        let prev = table.last().cloned().unwrap_or_default();
+        let mut row = vec![(0.0, Step::SkipOld)];
+        for (j, b) in new.iter().enumerate() {
+            let pair = match (grams.is_empty(), new_grams.get(j)) {
+                (false, Some(g)) if !g.is_empty() => dice(&grams, g),
+                _ => similarity(a, b),
+            };
+            let skip_old = (prev.get(j + 1).map_or(0.0, |c| c.0), Step::SkipOld);
+            let skip_new = (row.last().map_or(0.0, |c: &(f64, Step)| c.0), Step::SkipNew);
+            let mut best = if skip_old.0 >= skip_new.0 {
+                skip_old
+            } else {
+                skip_new
+            };
+            if pair >= MIN_SIMILARITY {
+                let paired = prev.get(j).map_or(0.0, |c| c.0) + pair;
+                if paired > best.0 {
+                    best = (paired, Step::Pair);
+                }
+            }
+            row.push(best);
+        }
+        table.push(row);
+    }
+    // Walk back from the end.
+    let mut pairs = Vec::new();
+    let (mut i, mut j) = (old.len(), new.len());
+    while let Some(&(_, step)) = table.get(i).and_then(|row| row.get(j)) {
+        match step {
+            Step::Start => break,
+            Step::SkipOld => i = i.saturating_sub(1),
+            Step::SkipNew => j = j.saturating_sub(1),
+            Step::Pair => {
+                i = i.saturating_sub(1);
+                j = j.saturating_sub(1);
+                pairs.push((i, j));
+            }
+        }
+        if i == 0 && j == 0 {
+            break;
+        }
+    }
+    pairs.reverse();
+    pairs
 }
 
 /// Intra-line changes for paired lines in `lines`. Within each change
-/// block, removed and added lines are paired by similarity, in order (not
-/// just by position), so an edited line finds its counterpart even when
-/// lines were inserted or deleted around it.
+/// block, removed and added lines are paired by similarity (see
+/// [`pair_lines`]), so an edited line finds its counterpart even when lines
+/// were inserted or deleted around it.
 pub fn intraline(text: &TextDiff, lines: &[DiffLine]) -> IntraLine {
     let starts = |run: &[DiffLine], kind| run.first().is_some_and(|l| l.kind == kind);
     // Runs of one kind, with the alignment entry each starts at.
@@ -164,31 +249,21 @@ pub fn intraline(text: &TextDiff, lines: &[DiffLine]) -> IntraLine {
         else {
             continue;
         };
-        let mut next_added = 0;
-        for (r, line) in (removed_start..).zip(removed) {
-            let Some(o) = line.old else {
+        let old: Vec<u32> = removed.iter().filter_map(|l| l.old).collect();
+        let new: Vec<u32> = added.iter().filter_map(|l| l.new).collect();
+        let old_text: Vec<&str> = old.iter().map(|&o| text.old.line_no(o)).collect();
+        let new_text: Vec<&str> = new.iter().map(|&n| text.new.line_no(n)).collect();
+        for (r, a) in pair_lines(&old_text, &new_text) {
+            let (Some(&o), Some(&n)) = (old.get(r), new.get(a)) else {
                 continue;
             };
-            let old_line = text.old.line_no(o);
-            let best = (next_added..)
-                .zip(added.iter().skip(next_added).take(PAIR_WINDOW))
-                .filter_map(|(a, l)| {
-                    l.new
-                        .map(|n| (a, n, similarity(old_line, text.new.line_no(n))))
-                })
-                .filter(|(_, _, sim)| *sim >= MIN_SIMILARITY)
-                .max_by(|x, y| x.2.total_cmp(&y.2));
-            let Some((a, n, _)) = best else {
-                continue;
-            };
-            next_added = a + 1;
             if let Some((old_changed, new_changed)) = diff_pair(
-                old_line,
+                text.old.line_no(o),
                 text.new.line_no(n),
                 text.old_spans(o),
                 text.new_spans(n),
             ) {
-                out.insert(sat_u32(r), old_changed);
+                out.insert(sat_u32(removed_start + r), old_changed);
                 out.insert(sat_u32(added_start + a), new_changed);
             }
         }

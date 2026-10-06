@@ -1,0 +1,89 @@
+//! Diff quality on small, realistic cases: what a reviewer sees. Each case
+//! renders the changed lines with emphasis marked `⟦like this⟧`.
+
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "the rendering helper isn't a #[test] function, but a panic in it is still a test failure"
+)]
+
+use ghtui_diff::{Content, FileDiff, LineKind, Whitespace};
+
+/// The changed lines of `old` → `new` (as `path`), `-`/`+` prefixed, with
+/// emphasised ranges in `⟦⟧`.
+fn show(path: &str, old: &str, new: &str) -> String {
+    let diff = FileDiff::compute(path, Some(old.as_bytes()), Some(new.as_bytes()));
+    let Content::Text(text) = &diff.content else {
+        panic!("not a text diff");
+    };
+    let mut out = String::new();
+    for (i, line) in (0u32..).zip(text.lines(Whitespace::Exact)) {
+        let sign = match line.kind {
+            LineKind::Context => continue,
+            LineKind::Removed => '-',
+            LineKind::Added => '+',
+        };
+        let content = text.text(line);
+        let mut shown = String::new();
+        let mut at = 0;
+        for &(a, b) in text
+            .intraline(Whitespace::Exact)
+            .get(&i)
+            .into_iter()
+            .flatten()
+        {
+            let (a, b) = (a as usize, b as usize);
+            shown.push_str(content.get(at..a).unwrap());
+            shown.push('⟦');
+            shown.push_str(content.get(a..b).unwrap());
+            shown.push('⟧');
+            at = b;
+        }
+        shown.push_str(content.get(at..).unwrap());
+        out.push_str(&format!("{sign}{shown}\n"));
+    }
+    out
+}
+
+// ---- pairing lines within a change block ----------------------------------
+
+/// Pairing the first removed line with its single best match would take the
+/// second line's partner and leave that edit unexplained; the best pairing
+/// overall matches both.
+#[test]
+fn pairs_for_the_best_total_not_greedily() {
+    let old = "let total = price * count;\nlet total = price * count + tax + fee;\n";
+    let new = "let total = price * qty;\nlet total = price * count + tax;\n";
+    assert_eq!(
+        show("a.rs", old, new),
+        "-let total = price * ⟦count⟧;\n\
+         -let total = price * count + tax⟦ + fee⟧;\n\
+         +let total = price * ⟦qty⟧;\n\
+         +let total = price * count + tax;\n"
+    );
+}
+
+/// Swapped lines can't both pair in order; one does, the other shows plain.
+#[test]
+fn swapped_edits_pair_one_in_order() {
+    let old = "let a = one(left);\nlet b = two(right);\n";
+    let new = "let b = two(down);\nlet a = one(up);\n";
+    let shown = show("a.rs", old, new);
+    let emphasised = shown.lines().filter(|l| l.contains('⟦')).count();
+    assert_eq!(emphasised, 2, "{shown}");
+}
+
+/// More additions than removals: the edited line still finds its partner
+/// among the new ones.
+#[test]
+fn pairs_among_extra_additions() {
+    let old = "fn area(w: u32, h: u32) -> u32 {\n";
+    let new = "/// The area.\n#[must_use]\nfn area(w: u64, h: u64) -> u64 {\n";
+    assert_eq!(
+        show("a.rs", old, new),
+        "-fn area(w: ⟦u32⟧, h: ⟦u32⟧) -> ⟦u32⟧ {\n\
+         +/// The area.\n\
+         +#[must_use]\n\
+         +fn area(w: ⟦u64⟧, h: ⟦u64⟧) -> ⟦u64⟧ {\n"
+    );
+}
