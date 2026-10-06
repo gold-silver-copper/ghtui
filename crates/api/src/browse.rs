@@ -770,6 +770,79 @@ pub struct WireSignature {
     pub is_valid: bool,
 }
 
+#[derive(cynic::QueryVariables, Debug)]
+pub struct HistoryVariables {
+    pub owner: String,
+    pub name: String,
+    pub expression: String,
+    pub path: Option<String>,
+    pub after: Option<String>,
+}
+
+/// A revision's commits, newest first (touching `path`, if given).
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "HistoryVariables"
+)]
+pub struct HistoryQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepoHistory>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Repository",
+    schema_module = "schema",
+    variables = "HistoryVariables"
+)]
+pub struct RepoHistory {
+    #[arguments(expression: $expression)]
+    pub object: Option<HistoryObject>,
+}
+
+#[derive(cynic::InlineFragments, Debug)]
+#[cynic(
+    graphql_type = "GitObject",
+    schema_module = "schema",
+    variables = "HistoryVariables"
+)]
+pub enum HistoryObject {
+    Commit(HistoryCommit),
+    #[cynic(fallback)]
+    Other,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Commit",
+    schema_module = "schema",
+    variables = "HistoryVariables"
+)]
+pub struct HistoryCommit {
+    #[arguments(first: 30, after: $after, path: $path)]
+    pub history: CommitHistory,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "CommitHistoryConnection", schema_module = "schema")]
+pub struct CommitHistory {
+    pub total_count: i32,
+    pub page_info: PageInfo,
+    pub nodes: Option<Vec<Option<CommitCard>>>,
+}
+
+impl CommitHistory {
+    pub(crate) fn into_results(self) -> Results<CommitInfo> {
+        Results {
+            total: count(self.total_count),
+            items: nodes(self.nodes).map(CommitCard::into_info).collect(),
+            next: self.page_info.next(),
+        }
+    }
+}
+
 // ---- profiles ------------------------------------------------------------------------
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -998,6 +1071,9 @@ pub mod keys {
     }
     pub fn commit(repo: &RepoId, oid: &str) -> String {
         format!("commit:{repo}@{oid}")
+    }
+    pub fn history(repo: &RepoId, rev: &str, path: &str) -> String {
+        format!("history:{repo}:{rev}:{path}")
     }
     pub const VISITS: &str = "visits";
     pub const VIEWER_REPOS: &str = "viewer-repos";

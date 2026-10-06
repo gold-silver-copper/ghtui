@@ -116,7 +116,8 @@ impl State {
             | Route::Blob { repo, .. }
             | Route::Issues { repo, .. }
             | Route::Pulls { repo, .. }
-            | Route::Issue { repo, .. } => {
+            | Route::Issue { repo, .. }
+            | Route::Commits { repo, .. } => {
                 repo_crumbs(repo, c);
                 self.repo_tabs(repo, c);
                 let pulls = c.tabs.len() - 2;

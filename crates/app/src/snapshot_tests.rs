@@ -229,6 +229,22 @@ fn with_commit(mode: Mode) -> State {
     state
 }
 
+/// A branch's commits.
+fn with_history(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Commits {
+        repo: ghtui(),
+        rev: "main".into(),
+        path: String::new(),
+    };
+    open(
+        &mut state,
+        route,
+        Data::History(Box::new(fixtures::history(Some("h1")))),
+    );
+    state
+}
+
 /// An issue, its repository's header loaded first.
 fn with_issue(mode: Mode) -> State {
     let mut state = state(mode, ColorDepth::TrueColor);
@@ -348,6 +364,11 @@ fn repo_wide_terminal_centers_light() {
     let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
     update(&mut state, Msg::Resize(160, 30));
     insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn commits_light() {
+    insta::assert_snapshot!(render(&with_history(Mode::Light)));
 }
 
 #[test]
@@ -1226,8 +1247,8 @@ mod links {
     use ghtui_ui::pages::ProfileTab;
 
     use super::{
-        press, with_commit, with_file, with_inbox, with_issue, with_issues, with_pr, with_profile,
-        with_repo, with_repo_search,
+        press, with_commit, with_file, with_history, with_inbox, with_issue, with_issues, with_pr,
+        with_profile, with_repo, with_repo_search,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1236,7 +1257,6 @@ mod links {
     /// says why; the list only shrinks.
     const EXTERNAL: &[&str] = &[
         // Not pages in ghtui yet.
-        "/commits/",
         "/actions",
         "/checks",
         "/stargazers",
@@ -1265,6 +1285,7 @@ mod links {
             ("stars", with_profile(Mode::Dark, ProfileTab::Stars)),
             ("search", with_repo_search(Mode::Dark)),
             ("commit", with_commit(Mode::Dark)),
+            ("commits", with_history(Mode::Dark)),
         ]
     }
 

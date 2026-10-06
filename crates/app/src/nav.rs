@@ -183,17 +183,14 @@ impl State {
 
     #[must_use]
     fn load_more(&mut self) -> Vec<Cmd> {
-        let Some((kind, query)) = self.route().and_then(Route::search) else {
+        let Some(key) = self.route().and_then(browse::paged) else {
             return Vec::new();
         };
-        let key = DataKey::Search(kind, query);
         let Some(remote) = self.data.get_mut(&key) else {
             return Vec::new();
         };
         let after = match &remote.data {
-            Some(Data::Search(results)) if !remote.loading && !remote.loading_more => {
-                browse::next_cursor(results)
-            }
+            Some(data) if !remote.loading && !remote.loading_more => data.next_cursor(),
             _ => None,
         };
         let Some(after) = after.map(str::to_owned) else {
@@ -429,9 +426,15 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Blob {
             repo, rev, path, ..
         } => folder(repo, rev, path),
-        Route::Issues { repo, .. } | Route::Pulls { repo, .. } | Route::Commit { repo, .. } => {
+        Route::Issues { repo, .. } | Route::Pulls { repo, .. } | Route::Commits { repo, .. } => {
             Route::Repo(repo.clone())
         }
+        // A commit's history leads up to it.
+        Route::Commit { repo, oid } => Route::Commits {
+            repo: repo.clone(),
+            rev: oid.clone(),
+            path: String::new(),
+        },
         Route::Issue { repo, .. } => Route::Issues {
             repo: repo.clone(),
             query: crate::route::OPEN.into(),
