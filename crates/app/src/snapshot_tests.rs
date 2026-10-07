@@ -2712,6 +2712,43 @@ fn failed_pr_checks_say_why_instead_of_loading() {
     assert!(text.contains("timed out"), "{text}");
 }
 
+/// While a pull request's conversation loads, the timeline under its
+/// opening comment goes on to say so.
+#[test]
+fn a_loading_conversation_stays_on_the_timeline() {
+    let mut state = with_inbox(Mode::Dark, ColorDepth::TrueColor);
+    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let route = Route::pr(pr.clone());
+    let _ = state.push(route.clone());
+    update(&mut state, Msg::Pr(pr, Box::new(Ok(pr_detail()))));
+    let lines: Vec<String> = (state.build_page(&route, 100, NOW).lines.iter())
+        .map(ghtui_ui::page::PageLine::text)
+        .collect();
+    let at = lines
+        .iter()
+        .position(|l| l.contains("Loading the conversation…"));
+    let above = at.and_then(|at| lines.get(at.checked_sub(1)?));
+    assert_eq!(above.map(|l| l.trim()), Some("│"), "{lines:#?}");
+}
+
+/// A search that hasn't answered yet says it's searching.
+#[test]
+fn a_search_in_flight_says_searching() {
+    let mut state = with_repo(Mode::Dark, ColorDepth::TrueColor);
+    let route = Route::Search {
+        kind: SearchKind::Repos,
+        query: "ghtui".into(),
+    };
+    let _ = state.push(route.clone());
+    let page = state.build_page(&route, 100, NOW);
+    let text: Vec<String> = page
+        .lines
+        .iter()
+        .map(ghtui_ui::page::PageLine::text)
+        .collect();
+    assert!(text.iter().any(|l| l.contains("Searching…")), "{text:#?}");
+}
+
 /// A workflow whose runs fail to load says so under the workflow.
 #[test]
 fn failed_workflow_runs_say_why_instead_of_loading() {
