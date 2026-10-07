@@ -1882,6 +1882,54 @@ pub(crate) mod tests {
         assert!(p.scroll > 0);
     }
 
+    /// A comment's link opened on a cached issue whose body has grown
+    /// since: the fresh copy moves the comment, and the page follows it,
+    /// unless you've scrolled away by then.
+    #[test]
+    fn a_comment_link_follows_its_comment_when_the_issue_refreshes() {
+        let open = |moved: &dyn Fn(&mut State)| {
+            let mut s = with_repo();
+            s.size = (100, 12);
+            let url = format!(
+                "https://github.com/{}/issues/14#issuecomment-1000001",
+                repo()
+            );
+            let _ = s.follow(&ghtui_ui::page::Link::Url(url));
+            let key = DataKey::Issue(repo(), 14);
+            let cached = Data::Issue(Some(Box::new(crate::fixtures::issue())));
+            let _ = update(
+                &mut s,
+                Msg::Fetched {
+                    key: key.clone(),
+                    result: Ok(cached),
+                    cached_at: Some(0),
+                },
+            );
+            moved(&mut s);
+            let at = page(&s).scroll;
+            let mut issue = crate::fixtures::issue();
+            issue.body.push_str(&"\n\nMore.".repeat(20));
+            fetched(&mut s, key, Data::Issue(Some(Box::new(issue))));
+            let p = page(&s);
+            (at, p.scroll, p.page.anchors["issuecomment-1000001"])
+        };
+        let (before, after, line) = open(&|_| {});
+        assert!(after > before, "{before} -> {after}");
+        assert!(after <= line && line < after + 10, "{after} vs {line}");
+        let (before, after, _) = open(&|s| drop(press(s, "g")));
+        assert_eq!(after, before, "yanked back after scrolling");
+        // Selecting an item on screen, as j can, is moving too.
+        let select = |s: &mut State| {
+            let Screen::Page(p) = s.screen_mut() else {
+                panic!("not on a page")
+            };
+            let shown = p.page.items.iter().position(|i| i.end > p.scroll);
+            assert!(shown.is_some_and(|i| p.page.items[i].start < p.scroll + 10));
+            p.selected = shown;
+        };
+        let (before, after, _) = open(&select);
+        assert_eq!(after, before, "yanked back after selecting");
+    }
     /// People and repository lists load more like any list.
     #[test]
     fn every_list_appends_its_next_page() {
