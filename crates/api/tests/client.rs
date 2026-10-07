@@ -1532,17 +1532,35 @@ async fn a_forbidden_field_beside_a_found_repo_is_still_left_out() {
     assert_eq!(gh.take_left_out(), [forbidden]);
 }
 
-/// An error without a message has nothing to say, so it doesn't fail
-/// the data beside it.
+/// An error without a message is still an error: it's left out by its
+/// type, or as unexplained, beside the data.
 #[tokio::test]
-async fn an_error_without_a_message_is_passed_over() {
+async fn an_error_without_a_message_is_still_left_out() {
+    let refs = r#""heads":{"totalCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"tags":{"totalCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}"#;
     let (gh, _) = github(vec![Reply::new(
         200,
-        r#"{"data":{"repository":{"heads":{"totalCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"tags":{"totalCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}},"errors":[{"path":["repository"]}]}"#,
+        format!(
+            r#"{{"data":{{"repository":{{{refs}}}}},"errors":[{{"path":["repository"]}},{{"type":"FORBIDDEN"}}]}}"#
+        ),
     )])
     .await;
     gh.refs(&RepoId::new("o", "r")).await.unwrap();
-    assert_eq!(gh.take_left_out(), Vec::<String>::new());
+    assert_eq!(gh.take_left_out(), ["an unexplained error", "FORBIDDEN"]);
+}
+
+/// A mutation answered with an error without a message still fails: the
+/// change wasn't made.
+#[tokio::test]
+async fn a_mutation_answered_with_a_bare_error_still_fails() {
+    let (gh, _) = github(vec![Reply::new(
+        200,
+        r#"{"data":{"markFileAsViewed":null},"errors":[{"type":"FORBIDDEN","path":["markFileAsViewed"]}]}"#,
+    )])
+    .await;
+    match gh.set_viewed(&NodeId::new("n"), "x", true).await {
+        Err(ApiError::GraphQl(errors)) => assert_eq!(errors, ["FORBIDDEN"]),
+        other => panic!("{other:?}"),
+    }
 }
 
 /// A NOT_FOUND pathed at something the data does hold explains no null, so
