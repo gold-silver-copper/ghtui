@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo,
+    Blame, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo,
     Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList, EntryKind,
     IssueDetail, IssueState, IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo,
     MilestoneList, PrActivity, Profile, Release, RepoOverview, RepoSort, RepoSummary, Results,
@@ -762,13 +762,16 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
     if blob.truncated {
         info.push_str(" · only the beginning is shown");
     }
+    let blame = url::blob(repo, rev, path).replacen("/blob/", "/blame/", 1);
+    let blame = link_seg(page, "Blame", blame, Role::Link);
     let raw = link_seg(
         page,
         "Raw",
         format!("https://raw.githubusercontent.com/{repo}/{rev}/{path}"),
         Role::Link,
     );
-    page.box_top(vec![Seg::new(info, Role::Meta)], vec![raw]);
+    let right = vec![blame, Seg::new("  ", Role::Meta), raw];
+    page.box_top(vec![Seg::new(info, Role::Meta)], right);
     if path.to_ascii_lowercase().ends_with(".md") {
         let base = LinkBase::new(repo, rev, path);
         markdown::render(page, text, Some(&base), Frame::Body);
@@ -798,6 +801,89 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
     page.box_bottom();
 }
 
+/// A file with, beside each run of lines, the commit that last changed
+/// them: its ID, author and age.
+pub fn blame(
+    page: &mut Page,
+    at: FileAt<'_>,
+    blob: Option<&Blob>,
+    blame: Option<&Blame>,
+    keys: Keys<'_>,
+    now: u64,
+) {
+    let FileAt {
+        repo,
+        rev,
+        path,
+        lines: marked,
+    } = at;
+    code_toolbar(page, repo, rev, path, true, 0, keys);
+    let (Some(blob), Some(blame)) = (blob, blame) else {
+        page.line(vec![Seg::new("Loading the blame…", Role::Meta)]);
+        return;
+    };
+    let Some(text) = &blob.text else {
+        empty_box(
+            page,
+            Seg::new("Blame", Role::Meta),
+            "Binary file not shown.",
+        );
+        return;
+    };
+    let file = link_seg(page, "File", url::blob(repo, rev, path), Role::Link);
+    let info = format!("Blame · {}", plural(blame.ranges.len() as u64, "change"));
+    page.box_top(vec![Seg::new(info, Role::Meta)], vec![file]);
+    let lines = markdown::highlighted(text, ghtui_diff::Language::from_path(path));
+    let width = lines.len().to_string().len();
+    let is_marked = |n: usize| marked.is_some_and(|(a, b)| (a as usize..=b as usize).contains(&n));
+    for (i, mut segs) in lines.into_iter().enumerate() {
+        let n = i + 1;
+        let range = blame
+            .ranges
+            .iter()
+            .find(|r| (r.start as usize..=r.end as usize).contains(&n));
+        let mut gutter = match range {
+            Some(r) if r.start as usize == n => {
+                let author: String = r.author.chars().take(12).collect();
+                vec![
+                    link_seg(
+                        page,
+                        crate::text::short_sha(&r.oid),
+                        url::commit(repo, &r.oid),
+                        Role::Code,
+                    ),
+                    Seg::new(
+                        format!(" {author:<12} {:>8}  ", time::ago_iso(&r.date, now)),
+                        Role::Meta,
+                    ),
+                ]
+            }
+            _ => vec![Seg::new(" ".repeat(31), Role::Meta)],
+        };
+        gutter.push(Seg::new(
+            format!("{n:>width$}  "),
+            Role::Syntax(Syntax::Comment),
+        ));
+        gutter.append(&mut segs);
+        if is_marked(n) && page.jump.is_none() {
+            page.jump = Some(page.lines.len());
+        }
+        if range.is_some_and(|r| r.start as usize == n && n > 1) {
+            page.box_rule();
+        }
+        page.push(PageLine {
+            segs: gutter,
+            frame: Frame::Body,
+            tone: if is_marked(n) {
+                Tone::Marked
+            } else {
+                Tone::Code
+            },
+            ..PageLine::default()
+        });
+    }
+    page.box_bottom();
+}
 // ---- lists --------------------------------------------------------------------------
 
 fn repo_row(page: &mut Page, r: &RepoSummary, now: u64, show_owner: bool) {

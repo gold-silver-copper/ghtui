@@ -443,6 +443,9 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Blob {
             repo, rev, path, ..
         } => folder(repo, rev, path),
+        Route::Blame {
+            repo, rev, path, ..
+        } => Route::blob(repo.clone(), rev.clone(), path.clone()),
         Route::Issues { repo, .. }
         | Route::Discussions {
             of: DiscussionsOf::Repo(repo),

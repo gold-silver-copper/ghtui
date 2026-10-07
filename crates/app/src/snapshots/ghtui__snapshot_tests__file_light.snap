@@ -1,6 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 425
+assertion_line: 836
 expression: "render(&with_file(Mode::Light))"
 ---
 Buffer {
@@ -12,7 +12,7 @@ Buffer {
         "                                                                                                    ",
         "   ⎇ main ▾   ghtui / src / main.rs                                              ⌕ Go to file  f    ",
         "                                                                                                    ",
-        "  ╭─ 7 lines · 96 B ────────────────────────────────────────────────────────────────────── Raw ─╮   ",
+        "  ╭─ 7 lines · 96 B ─────────────────────────────────────────────────────────────── Blame  Raw ─╮   ",
         "  │ 1  use std::io;                                                                             │   ",
         "  │ 2                                                                                           │   ",
         "  │ 3  /// Says hello.                                                                          │   ",
@@ -83,7 +83,9 @@ Buffer {
         x: 5, y: 6, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 19, y: 6, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 20, y: 6, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
-        x: 90, y: 6, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 83, y: 6, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 84, y: 6, fg: Rgb(50, 83, 131), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 89, y: 6, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 91, y: 6, fg: Rgb(50, 83, 131), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 94, y: 6, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 95, y: 6, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
