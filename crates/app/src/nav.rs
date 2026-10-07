@@ -512,6 +512,8 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         Route::Gist { owner, .. } => Route::Gists(owner.clone()?),
         Route::Gists(login) | Route::Teams(login) => Route::user(login),
         Route::Team { org, .. } => Route::Teams(org.clone()),
+        Route::Advisory { repo, .. } => Route::Advisories(repo.clone()),
+        Route::Advisories(repo) => repo.clone().map_or(Route::Home, Route::Repo),
     })
 }
 

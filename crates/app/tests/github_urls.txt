@@ -83,8 +83,9 @@ https://gist.github.com/discover                                            exte
 https://github.com/orgs/github/teams/justice-league                         Team
 https://github.com/orgs/rust-lang/teams                                     Teams
 # SecurityAdvisoryReference, SecurityAdvisory permalink
-https://github.com/advisories/GHSA-6r3q-mjv7-xr8m                           todo Advisory
-https://github.com/corazawaf/coraza/security/advisories/GHSA-6r3q-mjv7-xr8m todo Advisory
+https://github.com/advisories/GHSA-6r3q-mjv7-xr8m                           Advisory
+https://github.com/advisories                                               Advisories
+https://github.com/corazawaf/coraza/security/advisories/GHSA-6r3q-mjv7-xr8m Advisory
 # MergeQueue
 https://github.com/rust-lang/rust/queue/main                                external rare
 # Enterprise, EnterpriseUserAccount
@@ -185,8 +186,8 @@ https://github.com/rust-lang/rust/discussions                               Disc
 https://github.com/rust-lang/rust/discussions/categories/ideas              Discussions
 https://github.com/rust-lang/rust/wiki                                      todo Wiki
 https://github.com/rust-lang/rust/wiki/Home                                 todo Wiki
-https://github.com/rust-lang/rust/security                                  todo Advisories
-https://github.com/rust-lang/rust/security/advisories                       todo Advisories
+https://github.com/rust-lang/rust/security                                  Advisories
+https://github.com/rust-lang/rust/security/advisories                       Advisories
 https://github.com/rust-lang/rust/pulse                                     external rare
 https://github.com/rust-lang/rust/graphs/contributors                       external rare
 https://github.com/rust-lang/rust/graphs/commit-activity                    external rare

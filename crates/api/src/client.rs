@@ -1564,6 +1564,45 @@ impl GitHub {
         let team = wire.into_detail();
         Ok(self.kept(&browse::keys::team(org, slug), team).await)
     }
+    /// A repository's published security advisories, or GitHub's newest
+    /// reviewed ones, up to 100. REST: repositories' advisories aren't in
+    /// GraphQL, and one shape serves both.
+    pub async fn advisories(
+        &self,
+        repo: Option<&RepoId>,
+    ) -> Result<Vec<browse::Advisory>, ApiError> {
+        let path = match repo {
+            Some(r) => format!(
+                "/repos/{}/{}/security-advisories?state=published&per_page=100",
+                r.owner, r.name
+            ),
+            None => "/advisories?type=reviewed&per_page=50".to_owned(),
+        };
+        let wire: Vec<browse::rest_advisories::Advisory> = self.rest_json(&path).await?;
+        let list: Vec<browse::Advisory> = wire
+            .into_iter()
+            .map(browse::rest_advisories::Advisory::into_advisory)
+            .collect();
+        Ok(self.kept(&browse::keys::advisories(repo), list).await)
+    }
+
+    /// A security advisory: a repository's, or from GitHub's database.
+    pub async fn advisory(
+        &self,
+        repo: Option<&RepoId>,
+        ghsa: &str,
+    ) -> Result<browse::Advisory, ApiError> {
+        let id = encode_path(ghsa);
+        let path = match repo {
+            Some(r) => format!("/repos/{}/{}/security-advisories/{id}", r.owner, r.name),
+            None => format!("/advisories/{id}"),
+        };
+        let wire: browse::rest_advisories::Advisory = self.rest_json(&path).await?;
+        let advisory = wire.into_advisory();
+        Ok(self
+            .kept(&browse::keys::advisory(repo, ghsa), advisory)
+            .await)
+    }
     /// A workflow run (one attempt of it, or the latest) and its jobs.
     pub async fn workflow_run(
         &self,

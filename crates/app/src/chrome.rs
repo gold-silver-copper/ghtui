@@ -190,6 +190,18 @@ impl State {
                 }
                 c.crumb("Gist", None);
             }
+            Route::Advisories(Some(repo))
+            | Route::Advisory {
+                repo: Some(repo), ..
+            } => {
+                repo_crumbs(repo, c);
+                self.repo_tabs(repo, c);
+            }
+            Route::Advisories(None) => c.crumb("Advisories", None),
+            Route::Advisory { repo: None, ghsa } => {
+                c.crumb("Advisories", Some(Target::Page(Route::Advisories(None))));
+                c.crumb(ghsa, None);
+            }
             Route::Teams(org) => {
                 c.crumb(org, Some(Target::Page(Route::user(org))));
                 c.crumb("Teams", None);
