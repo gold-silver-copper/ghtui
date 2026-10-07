@@ -72,10 +72,10 @@ impl<'a, T: ?Sized> Fetched<'a, T> {
         what: &str,
         loading: impl FnOnce(&mut Page),
     ) -> Option<&'a T> {
-        let retry = self.retry;
-        match (self.error.is_some(), self.said(what)) {
+        #[expect(clippy::disallowed_methods, reason = "said here")]
+        match (self.error.is_some(), self.text(what)) {
             (_, Ok(data)) => return Some(data),
-            (true, Err(why)) => flash(page, &format!("{why}. {retry} tries again.")),
+            (true, Err(why)) => flash(page, &format!("{why}. {} tries again.", self.retry)),
             (false, Err(_)) => loading(page),
         }
         None
@@ -85,10 +85,6 @@ impl<'a, T: ?Sized> Fetched<'a, T> {
     /// Disallowed by clippy.toml: `.ok()` would drop what to say, so each
     /// use says where it's said.
     pub fn text(self, what: &str) -> Result<&'a T, String> {
-        self.said(what)
-    }
-
-    fn said(self, what: &str) -> Result<&'a T, String> {
         match (self.data, self.error) {
             (Some(data), _) => Ok(data),
             (None, Some(err)) => Err(format!("Couldn't load {what}: {err}")),
