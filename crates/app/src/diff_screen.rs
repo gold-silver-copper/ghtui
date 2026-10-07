@@ -866,50 +866,24 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
     vec![Cmd::Git(Git::Prioritize(screen.of.clone(), wanted))]
 }
 
-/// A message from a diff's current job.
-#[must_use]
-pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
+/// A message from `diff`'s current job; `screen` is its screen, only
+/// while it's on top.
+fn on_job(diff: &mut DiffState, screen: Option<&mut DiffScreen>, msg: JobMsg) {
     match msg {
-        JobMsg::Progress(line) => {
-            if let Some(diff) = state.diffs.get_mut(of)
-                && !diff.listed()
-            {
-                diff.progress = Some(line);
-            }
-        }
-        JobMsg::Files(files) => {
-            if let Some(diff) = state.diffs.get_mut(of) {
-                diff.set_files(*files);
-            }
-        }
-        JobMsg::File(index, file) => {
-            if let Some(diff) = state.diffs.get_mut(of) {
-                diff.set_file(index, file);
-            }
-        }
-        JobMsg::Moves(moves) => match state.diff_parts() {
-            Some((screen, diff)) if screen.of == *of => {
-                preserving_position(screen, &mut diff.doc, |doc| doc.set_moves(moves));
-            }
-            _ => {
-                if let Some(diff) = state.diffs.get_mut(of) {
-                    diff.doc.set_moves(moves);
-                }
-            }
+        JobMsg::Progress(line) if !diff.listed() => diff.progress = Some(line),
+        JobMsg::Progress(_) => {}
+        JobMsg::Files(files) => diff.set_files(*files),
+        JobMsg::File(index, file) => diff.set_file(index, file),
+        JobMsg::Moves(moves) => match screen {
+            Some(screen) => preserving_position(screen, &mut diff.doc, |d| d.set_moves(moves)),
+            None => diff.doc.set_moves(moves),
         },
-        JobMsg::Mapped(mapped) => {
-            if let Some(diff) = state.diffs.get_mut(of) {
-                diff.add_mapped(mapped);
-            }
-        }
+        JobMsg::Mapped(mapped) => diff.add_mapped(mapped),
         JobMsg::Failed(error) => {
-            if let Some(diff) = state.diffs.get_mut(of) {
-                diff.progress = None;
-                diff.error = Some(error.to_string());
-            }
+            diff.progress = None;
+            diff.error = Some(error.to_string());
         }
     }
-    Vec::new()
 }
 
 /// Changes the inputs of `of`'s diff, if it's still open.
@@ -923,8 +897,10 @@ fn edit(state: &mut State, of: &DiffOf, f: impl FnOnce(&mut DiffInputs)) {
 #[must_use]
 pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
     if let DiffMsg::Job(job, msg) = msg {
-        if state.diffs.get(of).is_some_and(|d| d.job == job) {
-            return on_job(state, of, msg);
+        if let Some((diff, screen)) = state.addressed(of)
+            && diff.job == job
+        {
+            on_job(diff, screen, msg);
         }
         return Vec::new();
     }
@@ -946,19 +922,15 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
             return vec![Cmd::Api(Api::FetchThreads(pr))];
         }
         DiffMsg::LastReview(result) => {
-            if let Some(diff) = state.diffs.get_mut(of) {
-                let last = match result {
-                    Ok(None) => LastReview::None,
-                    Ok(Some(commit)) => LastReview::At(Oid::new(commit)),
-                    Err(err) => LastReview::Failed(err.to_string()),
-                };
-                diff.edit(|i| i.last_review = last);
-            }
+            let last = match result {
+                Ok(None) => LastReview::None,
+                Ok(Some(commit)) => LastReview::At(Oid::new(commit)),
+                Err(err) => LastReview::Failed(err.to_string()),
+            };
+            edit(state, of, |i| i.last_review = last);
         }
         DiffMsg::SinceReady(old_head, Ok(hashes)) => {
-            if let Some((screen, diff)) = state.diff_parts()
-                && screen.of == *of
-            {
+            if let Some((diff, Some(screen))) = state.addressed(of) {
                 preserving_position(screen, &mut diff.doc, |doc| {
                     doc.set_since(Some(hashes), true);
                 });

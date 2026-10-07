@@ -1109,6 +1109,20 @@ impl State {
         }
     }
 
+    /// `of`'s diff, and its screen only while it's the one on top: all a
+    /// reply about `of` may change.
+    pub(crate) fn addressed(
+        &mut self,
+        of: &DiffOf,
+    ) -> Option<(&mut DiffState, Option<&mut DiffScreen>)> {
+        let State { screens, diffs, .. } = self;
+        let screen = match screens.last_mut() {
+            Screen::Diff(screen) if screen.of == *of => Some(&mut **screen),
+            _ => None,
+        };
+        Some((diffs.get_mut(of)?, screen))
+    }
+
     pub(crate) fn diff_parts(&mut self) -> Option<(&mut DiffScreen, &mut DiffState)> {
         let State { screens, diffs, .. } = self;
         let Screen::Diff(screen) = screens.last_mut() else {
@@ -3481,6 +3495,23 @@ pub(crate) mod tests {
                     })
                 );
                 assert_eq!(s.diffs[&DiffOf::Pr(pr)].inputs().commits.len(), 1);
+            }
+
+            /// Moved code found after you've left the diff is kept for it,
+            /// and moves nothing on the page you're on.
+            #[test]
+            fn moves_for_a_diff_you_left_still_land_in_it() {
+                let (mut s, pr) = diff_state(120);
+                let job = s.diffs[&DiffOf::Pr(pr.clone())].job;
+                act(&mut s, Action::Back);
+                assert!(matches!(s.screen(), Screen::Page(_)));
+                let moved = ghtui_diff::moves::Move {
+                    from: (0, 0..1),
+                    to: (1, 0..1),
+                };
+                diff_msg(&mut s, &pr, DiffMsg::Job(job, JobMsg::Moves(vec![moved])));
+                assert_eq!(s.diffs[&DiffOf::Pr(pr)].doc.moves().len(), 1);
+                assert!(matches!(s.screen(), Screen::Page(_)));
             }
 
             /// Commits that arrive while you're writing a comment leave the
