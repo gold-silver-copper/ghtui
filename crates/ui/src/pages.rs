@@ -49,6 +49,10 @@ pub mod url {
         let (rev, path) = (encode_path(rev), encode_path(path));
         format!("{BASE}/{repo}/blob/{rev}/{path}")
     }
+    pub fn blame(repo: &RepoId, rev: &str, path: &str) -> String {
+        let (rev, path) = (encode_path(rev), encode_path(path));
+        format!("{BASE}/{repo}/blame/{rev}/{path}")
+    }
     pub fn issues(repo: &RepoId) -> String {
         format!("{BASE}/{repo}/issues")
     }
@@ -766,7 +770,7 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
     if blob.truncated {
         info.push_str(" · only the beginning is shown");
     }
-    let blame = url::blob(repo, rev, path).replacen("/blob/", "/blame/", 1);
+    let blame = url::blame(repo, rev, path);
     let blame = link_seg(page, "Blame", blame, Role::Link);
     let raw = link_seg(
         page,
