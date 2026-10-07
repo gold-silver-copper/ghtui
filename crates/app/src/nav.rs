@@ -162,13 +162,8 @@ impl State {
                     .and_then(|u| u.fragment().map(str::to_owned));
                 match (fragment, self.screen_mut()) {
                     (Some(fragment), Screen::Page(p)) => p.anchor = Some(fragment),
-                    // A file in a diff: `#diff-<hash>`, and maybe a line.
-                    (Some(fragment), Screen::Diff(d)) => {
-                        d.anchor = fragment
-                            .strip_prefix("diff-")
-                            .and_then(|f| f.get(..64))
-                            .map(str::to_owned);
-                    }
+                    // A file (`#diff-<hash>`) or a review comment.
+                    (Some(fragment), Screen::Diff(d)) => d.anchor = Some(fragment),
                     _ => {}
                 }
                 cmds

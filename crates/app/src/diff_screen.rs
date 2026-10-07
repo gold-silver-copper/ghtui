@@ -104,8 +104,9 @@ pub struct DiffScreen {
     pub search: Option<String>,
     /// Where a visual line selection started.
     pub selection: Option<Pos>,
-    /// The file a link pointed at (`#diff-<hash>`, GitHub's SHA-256 of its
-    /// path), to go to once the files are listed.
+    /// What a link pointed at, to go to once it's loaded: a file
+    /// (`diff-<hash>`, GitHub's SHA-256 of its path) or a review comment
+    /// (`discussion_r<id>`, `r<id>`).
     pub anchor: Option<String>,
 }
 
@@ -720,6 +721,34 @@ pub fn path_hash(path: &str) -> String {
         .collect()
 }
 
+/// Where a link's anchor is in the diff: `Some(None)` when it isn't there,
+/// `None` while the review threads it needs are still on their way.
+fn anchor_pos(anchor: &str, state: &DiffState) -> Option<Option<Pos>> {
+    let doc = &state.doc;
+    if let Some(hash) = anchor.strip_prefix("diff-") {
+        let hash = hash.get(..64).unwrap_or(hash);
+        let file = doc
+            .files()
+            .iter()
+            .position(|f| path_hash(f.meta.path()) == hash);
+        return Some(file.map(|file| Pos { file, row: 0 }));
+    }
+    let id = anchor
+        .strip_prefix("discussion_r")
+        .or_else(|| anchor.strip_prefix('r'))
+        .filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))?;
+    if state.threads.is_empty() {
+        return None;
+    }
+    let comment = format!("#discussion_r{id}");
+    // Annotations list the threads first, in order.
+    let thread = state
+        .threads
+        .iter()
+        .position(|t| t.comments.iter().any(|c| c.url.ends_with(&comment)));
+    Some(thread.and_then(|t| doc.annotation_pos(u32::try_from(t).ok()?)))
+}
+
 pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> Vec<Cmd> {
     let lay = layout(content, screen.tree_visible);
     if lay.tree.is_none() {
@@ -733,14 +762,15 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
     if doc.is_empty() {
         return Vec::new();
     }
-    if let Some(hash) = screen.anchor.take()
-        && let Some(file) = doc
-            .files()
-            .iter()
-            .position(|f| path_hash(f.meta.path()) == hash)
-    {
-        screen.cursor = Pos { file, row: 0 };
+    if let Some(anchor) = screen.anchor.take() {
+        match anchor_pos(&anchor, state) {
+            Some(Some(pos)) => screen.cursor = pos,
+            // A review comment waits for the threads.
+            None => screen.anchor = Some(anchor),
+            Some(None) => {}
+        }
     }
+    let doc = &state.doc;
     screen.cursor = doc.clamp(screen.cursor);
     let height = usize::from(lay.diff.height).max(1);
     let total = doc.total_rows();

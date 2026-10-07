@@ -967,7 +967,14 @@ impl Target {
                     return external();
                 };
                 let pr = PrRef { repo, number };
+                // Review comments are threads in the diff.
+                let review_comment = parsed.fragment().is_some_and(|f| {
+                    f.strip_prefix("discussion_r")
+                        .or_else(|| f.strip_prefix('r'))
+                        .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+                });
                 match rest {
+                    [] if review_comment => return Target::Files(DiffOf::Pr(pr)),
                     [] => Route::pr(pr),
                     ["commits" | "changes", sha] => Route::Commit {
                         repo: pr.repo,
