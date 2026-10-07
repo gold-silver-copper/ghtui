@@ -5,6 +5,13 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+# The library has everything; the binary runs it. The two share a name,
+# so only the library is documented.
+[[bin]]
+name = "ghtui"
+path = "src/main.rs"
+doc = false
+
 [dependencies]
 ghtui-api.workspace = true
 ghtui-diff.workspace = true
