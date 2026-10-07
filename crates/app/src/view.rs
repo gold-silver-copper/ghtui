@@ -357,12 +357,7 @@ fn pr_title<'a>(state: &'a State, pr: &ghtui_api::model::PrRef) -> Line<'a> {
         return Line::from(Span::styled(pr.to_string(), theme.title(bar)));
     };
     let s = &d.summary;
-    let (text, bg) = match s.state {
-        ghtui_api::model::PrState::Open => ("Open", Bg::SuccessContainer),
-        ghtui_api::model::PrState::Draft => ("Draft", Bg::SecondaryContainer),
-        ghtui_api::model::PrState::Merged => ("Merged", Bg::TertiaryContainer),
-        ghtui_api::model::PrState::Closed => ("Closed", Bg::ErrorContainer),
-    };
+    let (text, bg) = ghtui_ui::pages::state_label(s.state, true);
     Line::from(vec![
         Span::styled(
             format!(" {} {text} ", state.icons.pr_state(s.state)),

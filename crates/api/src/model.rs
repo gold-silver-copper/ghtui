@@ -5,6 +5,7 @@
 use ghtui_schema::schema;
 use serde::{Deserialize, Serialize};
 
+use crate::browse::IssueState;
 use crate::queries::{self as q, nodes};
 
 /// Some of a list: the items fetched, and how many GitHub has. A list
@@ -205,14 +206,6 @@ impl std::fmt::Display for PrRef {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PrState {
-    Open,
-    Draft,
-    Closed,
-    Merged,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReviewDecision {
     Approved,
     ChangesRequested,
@@ -245,7 +238,7 @@ pub struct PrSummary {
     pub pr: PrRef,
     pub title: String,
     pub author: String,
-    pub state: PrState,
+    pub state: IssueState,
     /// ISO 8601.
     pub updated_at: String,
     pub additions: u64,
@@ -394,15 +387,6 @@ pub struct NewThread {
 
 // ---- conversions from the wire types ---------------------------------------
 
-fn state(state: q::PullRequestState, draft: bool) -> PrState {
-    match state {
-        q::PullRequestState::Open if draft => PrState::Draft,
-        q::PullRequestState::Open => PrState::Open,
-        q::PullRequestState::Closed => PrState::Closed,
-        q::PullRequestState::Merged => PrState::Merged,
-    }
-}
-
 pub(crate) fn review(decision: Option<q::PullRequestReviewDecision>) -> Option<ReviewDecision> {
     decision.map(|d| match d {
         q::PullRequestReviewDecision::Approved => ReviewDecision::Approved,
@@ -459,7 +443,7 @@ impl PrSummary {
             pr: pr_ref(&pr.repository.name_with_owner, pr.number)?,
             title: pr.title,
             author: author(pr.author),
-            state: state(pr.state, pr.is_draft),
+            state: IssueState::pr(pr.state, pr.is_draft),
             updated_at: pr.updated_at.0,
             additions: count(pr.additions),
             deletions: count(pr.deletions),

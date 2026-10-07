@@ -3,10 +3,9 @@
 //! show up in review. Rendering also exercises the theme's debug assertion
 //! that every fg/bg pair used is declared (and therefore contrast-tested).
 
-use ghtui_api::browse::{RepoSort, SearchKind, SearchResults};
+use ghtui_api::browse::{IssueState, RepoSort, SearchKind, SearchResults};
 use ghtui_api::model::{
-    ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
-    ReviewDecision,
+    ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrSummary, RepoId, ReviewDecision,
 };
 use ghtui_api::rate_limit::{Bucket, RateLimits};
 use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
@@ -29,7 +28,7 @@ const NOW: u64 = 1_791_028_800;
 fn summary(
     pr: &str,
     title: &str,
-    state: PrState,
+    state: IssueState,
     review: Option<ReviewDecision>,
     checks: Option<ChecksState>,
 ) -> PrSummary {
@@ -53,14 +52,14 @@ fn inbox() -> Inbox {
             summary(
                 "ratatui/ratatui#1820",
                 "Add a virtualized list widget for very long collections",
-                PrState::Open,
+                IssueState::Open,
                 Some(ReviewDecision::ReviewRequired),
                 Some(ChecksState::Passing),
             ),
             summary(
                 "tokio-rs/tokio#7001",
                 "Fix waker leak in the multi-thread scheduler when tasks are cancelled during shutdown",
-                PrState::Draft,
+                IssueState::Draft,
                 None,
                 Some(ChecksState::Pending),
             ),
@@ -69,14 +68,14 @@ fn inbox() -> Inbox {
             summary(
                 "gold-silver-copper/ghtui#12",
                 "Theme: generate syntax palette from seed",
-                PrState::Open,
+                IssueState::Open,
                 Some(ReviewDecision::Approved),
                 Some(ChecksState::Failing),
             ),
             summary(
                 "gold-silver-copper/ghtui#9",
                 "Cache GraphQL responses in redb",
-                PrState::Open,
+                IssueState::Open,
                 Some(ReviewDecision::ChangesRequested),
                 None,
             ),
@@ -91,7 +90,7 @@ pub(crate) fn pr_detail() -> PrDetail {
         summary: summary(
             "gold-silver-copper/ghtui#12",
             "Theme: generate syntax palette from seed",
-            PrState::Open,
+            IssueState::Open,
             Some(ReviewDecision::Approved),
             Some(ChecksState::Failing),
         ),
