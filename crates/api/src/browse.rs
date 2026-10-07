@@ -2457,7 +2457,7 @@ pub struct BranchInfo {
     pub default: bool,
     pub oid: Option<String>,
     pub headline: Option<String>,
-    /// `None` when the branch points at no commit.
+    /// `None` when the branch points at no commit, or its commit names nobody.
     pub author: Option<Person>,
     /// ISO 8601: when its latest commit was committed.
     pub date: Option<String>,
