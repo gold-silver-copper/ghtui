@@ -1165,14 +1165,18 @@ pub fn discussion() -> DiscussionDetail {
                 upvotes: 5,
                 answer: true,
                 replies: vec![comment(18765030, "octocat", "That works, thanks!")],
+                // More than came: the page says how many more.
+                total_replies: 3,
             },
             DiscussionComment {
                 comment: comment(18765100, "monalisa", "Drafts are saved locally too."),
                 upvotes: 1,
                 answer: false,
                 replies: Vec::new(),
+                total_replies: 0,
             },
         ],
+        total_comments: 2,
     }
 }
 /// A discussion search's result.

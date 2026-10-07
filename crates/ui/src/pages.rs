@@ -2879,7 +2879,7 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
         format!(
             "  ▲ {} · {}",
             d.upvotes,
-            plural(d.comments.len() as u64, "comment")
+            plural(d.total_comments.max(d.comments.len() as u64), "comment")
         ),
         Role::Meta,
     ));
@@ -2922,6 +2922,24 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
                 badge,
             );
         }
+        more_here(page, c.total_replies, c.replies.len(), "reply", "replies");
+    }
+    more_here(
+        page,
+        d.total_comments,
+        d.comments.len(),
+        "comment",
+        "comments",
+    );
+}
+
+/// What a conversation leaves out: `… 12 more replies on GitHub (o)`.
+fn more_here(page: &mut Page, total: u64, shown: usize, one: &str, many: &str) {
+    let rest = total.saturating_sub(shown as u64);
+    if rest > 0 {
+        let what = if rest == 1 { one } else { many };
+        let text = format!("… {rest} more {what} on GitHub (o)");
+        page.wrapped(vec![Seg::new(text, Role::Meta)], 2, Frame::None);
     }
 }
 

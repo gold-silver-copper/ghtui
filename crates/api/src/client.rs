@@ -1952,7 +1952,7 @@ impl GitHub {
         let repo = self.discussions_repo(of).await?;
         let data = self
             .graphql_json(
-                "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { discussion(number: $number) { number title body author { login } createdAt category { name } isAnswered upvoteCount comments(first: 50) { nodes { databaseId author { login } body createdAt isAnswer upvoteCount replies(first: 30) { nodes { databaseId author { login } body createdAt } } } } } } }",
+                "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { discussion(number: $number) { number title body author { login } createdAt category { name } isAnswered upvoteCount comments(first: 50) { totalCount nodes { databaseId author { login } body createdAt isAnswer upvoteCount replies(first: 30) { totalCount nodes { databaseId author { login } body createdAt } } } } } } }",
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number }),
             )
             .await?;
