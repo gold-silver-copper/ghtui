@@ -306,7 +306,18 @@ impl State {
             }
         }
         rows.sort_by_key(|(s, ..)| *s);
-        rows.into_iter().map(|(_, i, c)| (i, Some(c))).collect()
+        let mut rows: Rows = rows.into_iter().map(|(_, i, c)| (i, Some(c))).collect();
+        // What wasn't fetched can't be picked: say so.
+        for (shown, total, what) in [
+            (refs.branches.len(), refs.branch_total, "branches"),
+            (refs.tags.len(), refs.tag_total, "tags"),
+        ] {
+            let rest = total.saturating_sub(shown as u64);
+            if rest > 0 {
+                rows.push((item(format!("{rest} more {what} on GitHub"), ""), None));
+            }
+        }
+        rows
     }
 
     fn diff_file_rows(&self, q: &str) -> Rows {

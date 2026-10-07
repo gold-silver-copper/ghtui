@@ -1901,18 +1901,34 @@ impl GitHub {
             .await)
     }
 
-    /// Branches and tags, most recently committed first.
+    /// Branches by name, up to [`REF_PAGES`] pages of 100, and the newest
+    /// 100 tags; with how many there are of each. (GitHub's commit-date
+    /// order sorts branches by name, backwards, so it isn't used for them.)
     pub async fn refs(&self, repo: &RepoId) -> Result<browse::Refs, ApiError> {
-        let op = browse::BranchesQuery::build(browse::BranchesVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
-        });
-        let refs = self
-            .graphql(op)
-            .await?
-            .repository
-            .map(browse::RepoBranches::into_refs)
-            .ok_or_else(|| ApiError::NotFound(repo.to_string()))?;
+        use browse::wire::{Connection, Name};
+        let mut refs = browse::Refs::default();
+        let mut after: Option<String> = None;
+        for page in 0..REF_PAGES {
+            let data = self
+                .graphql_json(
+                    "query($owner: String!, $name: String!, $after: String, $tags: Boolean!) { repository(owner: $owner, name: $name) { heads: refs(refPrefix: \"refs/heads/\", first: 100, after: $after, orderBy: {field: ALPHABETICAL, direction: ASC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name } } tags: refs(refPrefix: \"refs/tags/\", first: 100, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) @include(if: $tags) { totalCount pageInfo { hasNextPage endCursor } nodes { name } } } }",
+                    serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "tags": page == 0 }),
+                )
+                .await?;
+            let heads: Connection<Name> = at(&data, "/repository/heads", || repo.to_string())?;
+            if page == 0 {
+                let tags: Connection<Name> = at(&data, "/repository/tags", || repo.to_string())?;
+                let tags = tags.into_results(|n| n.name);
+                (refs.tags, refs.tag_total) = (tags.items, tags.total);
+            }
+            let heads = heads.into_results(|n| n.name);
+            refs.branch_total = heads.total;
+            refs.branches.extend(heads.items);
+            after = heads.next;
+            if after.is_none() {
+                break;
+            }
+        }
         Ok(self.kept(&browse::keys::refs(repo), refs).await)
     }
 
@@ -1989,6 +2005,8 @@ fn at<T: DeserializeOwned>(
 const REST_PAGE: u64 = 30;
 /// GitHub's search serves its first thousand results.
 const SEARCH_CAP: u64 = 1000;
+/// How many pages of a repository's branches are fetched (100 each).
+const REF_PAGES: u64 = 10;
 /// How many pages of a run's jobs are fetched (100 each).
 const JOB_PAGES: u64 = 10;
 

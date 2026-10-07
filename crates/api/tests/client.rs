@@ -587,6 +587,44 @@ async fn discussion_search_reads_its_count_and_hits() {
     assert!(r.items[0].summary.answered);
 }
 
+/// Branches come by name, page after page, and tags newest first, with
+/// how many there are of each.
+#[tokio::test]
+async fn branches_page_by_name() {
+    let page = |names: &[&str], next: Option<&str>, tags: bool| {
+        let nodes: Vec<String> = names
+            .iter()
+            .map(|n| format!(r#"{{"name":"{n}"}}"#))
+            .collect();
+        let heads = format!(
+            r#"{{"totalCount":3,"pageInfo":{{"hasNextPage":{},"endCursor":{}}},"nodes":[{}]}}"#,
+            next.is_some(),
+            next.map_or("null".to_owned(), |c| format!("\"{c}\"")),
+            nodes.join(",")
+        );
+        let tags = if tags {
+            r#","tags":{"totalCount":7,"pageInfo":{"hasNextPage":true,"endCursor":"t"},"nodes":[{"name":"v2"},{"name":"v1"}]}"#
+        } else {
+            ""
+        };
+        format!(r#"{{"data":{{"repository":{{"heads":{heads}{tags}}}}}}}"#)
+    };
+    let (gh, seen) = github(vec![
+        Reply::new(200, page(&["a", "b"], Some("c1"), true)),
+        Reply::new(200, page(&["c"], None, false)),
+    ])
+    .await;
+    let refs = gh.refs(&RepoId::new("o", "r")).await.unwrap();
+    assert_eq!(refs.branches, ["a", "b", "c"]);
+    assert_eq!(
+        (refs.branch_total, refs.tags.len(), refs.tag_total),
+        (3, 2, 7)
+    );
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("ALPHABETICAL"));
+    assert_eq!(seen[1].json()["variables"]["after"], "c1");
+}
+
 /// A comparison of one revision is against the default branch.
 #[tokio::test]
 async fn one_revision_compares_with_the_default_branch() {

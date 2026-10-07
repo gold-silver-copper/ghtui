@@ -548,7 +548,6 @@ fragments! {
     Topics = "RepositoryTopicConnection" => RepoTopic,
     Assignees = "UserConnection" => UserLogin,
     Pinned = "PinnableItemConnection" => PinnedItem,
-    RefNames = "RefConnection" => RefName,
 }
 
 // ---- repository ---------------------------------------------------------------------
@@ -3818,50 +3817,16 @@ pub struct BranchesVariables {
     pub name: String,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Query",
-    schema_module = "schema",
-    variables = "BranchesVariables"
-)]
-pub struct BranchesQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoBranches>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", schema_module = "schema")]
-pub struct RepoBranches {
-    #[arguments(refPrefix: "refs/heads/", first: 100, orderBy: { field: TAG_COMMIT_DATE, direction: DESC })]
-    pub refs: Option<RefNames>,
-    #[cynic(rename = "refs", alias)]
-    #[arguments(refPrefix: "refs/tags/", first: 50, orderBy: { field: TAG_COMMIT_DATE, direction: DESC })]
-    pub tags: Option<RefNames>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Ref", schema_module = "schema")]
-pub struct RefName {
-    pub name: String,
-}
-
-/// A repository's branches and tags, newest first.
+/// A repository's branches (by name) and tags (newest first), and how
+/// many there are of each.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Refs {
     pub branches: Vec<String>,
     pub tags: Vec<String>,
-}
-
-impl RepoBranches {
-    pub(crate) fn into_refs(self) -> Refs {
-        let names = |r: Option<RefNames>| -> Vec<String> {
-            nodes(r.and_then(|r| r.nodes)).map(|n| n.name).collect()
-        };
-        Refs {
-            branches: names(self.refs),
-            tags: names(self.tags),
-        }
-    }
+    #[serde(default)]
+    pub branch_total: u64,
+    #[serde(default)]
+    pub tag_total: u64,
 }
 
 // ---- the viewer's repositories ---------------------------------------------------------
