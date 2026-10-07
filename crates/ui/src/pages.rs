@@ -11,8 +11,9 @@ use ghtui_api::browse::{
     CommitInfo, Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList,
     EntryKind, Gist, GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobLog, JobSummary,
     MilestoneDetail, MilestoneInfo, MilestoneList, Person, PrActivity, Profile, Readme, Release,
-    RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, Short,
-    TagInfo, TeamDetail, TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow, WorkflowRun,
+    RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, Severity,
+    Short, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow,
+    WorkflowRun,
 };
 use ghtui_api::model::{
     Capped, ChecksState, Inbox, Label, Mergeable, MilestoneRef, PrDetail, PrRef, PrSummary, RepoId,
@@ -999,16 +1000,14 @@ pub fn blame(
 }
 // ---- security advisories ----------------------------------------------------------------------
 
-fn severity_chip(severity: &str) -> Seg {
-    let bg = match severity {
-        "critical" | "high" => Bg::ErrorContainer,
-        "medium" => Bg::TertiaryContainer,
-        _ => Bg::SecondaryContainer,
+fn severity_chip(severity: Severity) -> Seg {
+    let (name, bg) = match severity {
+        Severity::Critical => ("Critical", Bg::ErrorContainer),
+        Severity::High => ("High", Bg::ErrorContainer),
+        Severity::Medium => ("Medium", Bg::TertiaryContainer),
+        Severity::Low => ("Low", Bg::SecondaryContainer),
+        Severity::Unknown => ("Unknown", Bg::SecondaryContainer),
     };
-    let mut name = severity.to_owned();
-    if let Some(first) = name.get_mut(..1) {
-        first.make_ascii_uppercase();
-    }
     chip(name, bg)
 }
 
@@ -1040,7 +1039,7 @@ pub fn advisories(
         };
         item(page, target, |page, link| {
             let segs = vec![
-                severity_chip(&a.severity),
+                severity_chip(a.severity),
                 space(),
                 Seg::linked(a.summary.clone(), Role::Strong, link),
             ];
@@ -1066,7 +1065,7 @@ pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
         0,
         Frame::None,
     );
-    let mut segs = vec![severity_chip(&a.severity)];
+    let mut segs = vec![severity_chip(a.severity)];
     if a.withdrawn_at.is_some() {
         segs.push(space());
         segs.push(chip("Withdrawn", Bg::SecondaryContainer));
@@ -3405,10 +3404,10 @@ pub fn compare(page: &mut Page, repo: &RepoId, spec: &str, c: &Comparison, now: 
         0,
         Frame::None,
     );
-    let status = match c.status.as_str() {
-        "identical" => "These are identical.".to_owned(),
-        "behind" => format!("{head} is {} behind {base}.", plural(c.behind, "commit")),
-        "ahead" => format!("{head} is {} ahead of {base}.", plural(c.ahead, "commit")),
+    let status = match (c.ahead, c.behind) {
+        (0, 0) => "These are identical.".to_owned(),
+        (0, _) => format!("{head} is {} behind {base}.", plural(c.behind, "commit")),
+        (_, 0) => format!("{head} is {} ahead of {base}.", plural(c.ahead, "commit")),
         _ => format!(
             "{head} is {} ahead of and {} behind {base}.",
             plural(c.ahead, "commit"),
@@ -4451,7 +4450,6 @@ mod tests {
     #[test]
     fn a_capped_comparison_says_its_counts_are_partial() {
         let c = Comparison {
-            status: "ahead".into(),
             ahead: 1,
             behind: 0,
             total_commits: 0,

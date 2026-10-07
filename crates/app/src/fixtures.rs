@@ -441,7 +441,7 @@ pub fn advisory() -> Advisory {
         cve: Some("CVE-2026-41510".into()),
         summary: "Silent argument drop allows bypassing rules".into(),
         description: "Requests with many arguments skip the rules that read them.".into(),
-        severity: "high".into(),
+        severity: ghtui_api::browse::Severity::High,
         published_at: Some("2026-10-02T12:00:00Z".into()),
         updated_at: Some("2026-10-02T12:00:00Z".into()),
         withdrawn_at: None,
@@ -465,11 +465,11 @@ pub fn advisory() -> Advisory {
 pub fn advisories() -> Vec<Advisory> {
     let mut low = advisory();
     low.ghsa = "GHSA-6gcq-wc29-5xf2".into();
-    low.severity = "low".into();
+    low.severity = ghtui_api::browse::Severity::Low;
     low.summary = "Deep JSON bodies can crash the process".into();
     let mut critical = advisory();
     critical.ghsa = "GHSA-3c6w-j9xm-8h2h".into();
-    critical.severity = "critical".into();
+    critical.severity = ghtui_api::browse::Severity::Critical;
     critical.summary = "Unbounded recursion exhausts the CPU".into();
     vec![critical, advisory(), low]
 }
@@ -1118,7 +1118,6 @@ pub fn comparison() -> Comparison {
         date: date.into(),
     };
     Comparison {
-        status: "ahead".into(),
         ahead: 120,
         behind: 0,
         total_commits: 120,
