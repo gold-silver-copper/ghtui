@@ -2729,10 +2729,15 @@ fn failed_workflow_runs_say_why_instead_of_loading() {
     assert!(text.contains("timed out"), "{text}");
 }
 
-/// Every page whose needs all fail says why, and nothing on it looks
-/// like it's still loading.
+/// On every page, each need that fails while the others load says why
+/// where it goes, and nothing on the page looks like it's still loading.
+/// One at a time, so a need shown only once another has loaded (a
+/// profile's tab under the profile) fails too.
 #[test]
 fn every_route_says_why_when_its_needs_fail() {
+    fn err<T>() -> Result<T, ghtui_api::ApiError> {
+        Err(ghtui_api::ApiError::Network("timed out".into()))
+    }
     let urls = [
         "https://github.com/",
         "https://github.com/o/r",
@@ -2781,23 +2786,122 @@ fn every_route_says_why_when_its_needs_fail() {
         let crate::route::Target::Page(route) = crate::route::Target::from_url(url) else {
             panic!("{url} isn't a page");
         };
-        let mut state = state(Mode::Dark, ColorDepth::TrueColor);
-        let _ = state.push(route.clone());
-        let err = || ghtui_api::ApiError::Network("timed out".into());
-        for need in needs(&route) {
-            let msg = match need {
-                Need::Inbox => Msg::Inbox(Err(err())),
-                Need::Pr(pr) => Msg::Pr(pr, Box::new(Err(err()))),
-                Need::Data(key) => Msg::Fetched {
-                    key,
-                    result: Err(err()),
-                    cached_at: None,
-                },
-            };
-            update(&mut state, msg);
+        let all = needs(&route);
+        for failing in &all {
+            let mut state = state(Mode::Dark, ColorDepth::TrueColor);
+            let _ = state.push(route.clone());
+            for need in all.iter().cloned() {
+                let fail = &need == failing;
+                let msg = match need {
+                    Need::Inbox => Msg::Inbox(if fail { err() } else { Ok(inbox()) }),
+                    Need::Pr(pr) => {
+                        Msg::Pr(pr, Box::new(if fail { err() } else { Ok(pr_detail()) }))
+                    }
+                    Need::Data(key) => Msg::Fetched {
+                        result: if fail { err() } else { Ok(sample(&key)) },
+                        key,
+                        cached_at: None,
+                    },
+                };
+                update(&mut state, msg);
+            }
+            let text = page_text(&state);
+            let at = format!("{url}, {failing:?} failing:\n{text}");
+            assert!(!text.contains("Loading"), "{at}");
+            assert_eq!(
+                text.contains("timed out"),
+                !decoration(&route, failing),
+                "{at}"
+            );
         }
-        let text = page_text(&state);
-        assert!(text.contains("timed out"), "{url}:\n{text}");
-        assert!(!text.contains("Loading"), "{url}:\n{text}");
+    }
+}
+
+/// A need whose page leaves it out until it loads, saying nothing when it
+/// fails: what the header or the chrome shows (counts, tabs, a branch, a
+/// commit's title), or the latest commit beside each file.
+fn decoration(route: &Route, need: &Need) -> bool {
+    use DataKey as K;
+    crate::browse::is_header(route, need)
+        || matches!(
+            (route, need),
+            (_, Need::Data(K::LastCommits(..)))
+                | (Route::CommitChecks { .. }, Need::Data(K::Commit(..)))
+                | (
+                    Route::Pr {
+                        tab: PrTab::Checks,
+                        ..
+                    },
+                    Need::Data(K::PrActivity(_))
+                )
+        )
+}
+
+/// What GitHub might answer for `key`, for the needs that don't fail.
+fn sample(key: &DataKey) -> Data {
+    use DataKey as K;
+    use ghtui_api::browse::Results;
+    use std::sync::Arc;
+    let search = |kind: &SearchKind| match kind {
+        SearchKind::Repos => fixtures::repo_results(),
+        SearchKind::Issues | SearchKind::Pulls => fixtures::issue_results(None),
+        SearchKind::Users => fixtures::user_results(),
+        SearchKind::Discussions => fixtures::discussion_results(),
+        SearchKind::Commits => fixtures::commit_results(),
+        SearchKind::Code => fixtures::code_results(),
+    };
+    match key {
+        K::Repo(_) => Data::Repo(Box::new(fixtures::overview())),
+        K::Readme(_) => Data::Readme(Some(Box::new(fixtures::readme()))),
+        K::Tree(..) => Data::Tree(fixtures::tree()),
+        K::Blob(..) => Data::Blob(Box::new(fixtures::blob())),
+        K::Search(kind, _) => Data::Search(Box::new(search(kind))),
+        K::Issue(..) => Data::Issue(Some(Box::new(fixtures::issue()))),
+        K::PrActivity(_) => Data::PrActivity(Box::new(fixtures::activity())),
+        K::Profile(_) => Data::Profile(Box::new(fixtures::profile())),
+        K::ViewerRepos => Data::Repos(vec![fixtures::repo_summary("o/r", 1)]),
+        K::Files(..) => Data::Files(Arc::new(vec!["README.md".into()]), false),
+        K::Refs(_) => Data::Refs(Box::default()),
+        K::LastCommits(..) => Data::LastCommits(Arc::new(fixtures::last_commits())),
+        K::Commit(..) => Data::Commit(Box::new(fixtures::commit())),
+        K::History(..) => Data::History(Box::new(fixtures::history(None))),
+        K::PrChecks(_) | K::BranchChecks(_) | K::CommitChecks(..) => {
+            Data::Checks(Box::new(fixtures::checks()))
+        }
+        K::Users(_) => Data::Users(Box::new(fixtures::people())),
+        K::Forks(_) | K::OwnerRepos(..) | K::Stars(_) => {
+            Data::RepoPage(Box::new(fixtures::profile_repos()))
+        }
+        K::Releases(_) => Data::Releases(Box::new(fixtures::releases())),
+        K::Release(..) => Data::Release(Box::new(fixtures::release(true))),
+        K::Tags(_) => Data::Tags(Box::new(fixtures::tags())),
+        K::Branches(_) => Data::Branches(Box::new(fixtures::branches())),
+        K::Wiki(..) => Data::Wiki(Box::new(fixtures::wiki())),
+        K::Advisories(_) => {
+            let items = fixtures::advisories();
+            let total = items.len() as u64;
+            Data::Advisories(Box::new(Results {
+                total,
+                items,
+                next: None,
+            }))
+        }
+        K::Advisory(..) => Data::Advisory(Box::new(fixtures::advisory())),
+        K::Teams(_) => Data::Teams(Box::new(fixtures::teams())),
+        K::Team(..) => Data::Team(Box::new(fixtures::team())),
+        K::Gist(_) => Data::Gist(Box::new(fixtures::gist())),
+        K::Gists(_) => Data::Gists(Box::new(fixtures::gists())),
+        K::Blame(..) => Data::Blame(Box::new(fixtures::blame())),
+        K::Compare(..) => Data::Compare(Box::new(fixtures::comparison())),
+        K::Deployments(..) => Data::Deployments(Box::new(fixtures::deployments())),
+        K::Milestones(..) => Data::Milestones(Box::new(fixtures::milestones())),
+        K::Milestone(..) => Data::Milestone(Box::new(fixtures::milestone())),
+        K::Discussions(..) => Data::Discussions(Box::new(fixtures::discussions())),
+        K::Discussion(..) => Data::Discussion(Box::new(fixtures::discussion())),
+        K::Run(..) => Data::Run(Box::new(fixtures::workflow_run())),
+        K::Job(..) => Data::Job(Box::new(fixtures::job().0)),
+        K::JobLog(..) => Data::Log(Arc::new(fixtures::job().1)),
+        K::Workflow(..) => Data::Workflow(Box::new(fixtures::workflow_runs().0)),
+        K::WorkflowRuns(..) => Data::Runs(Box::new(fixtures::workflow_runs().1)),
     }
 }
