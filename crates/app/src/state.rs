@@ -2791,6 +2791,18 @@ pub(crate) mod tests {
             assert!(review.reviewed_hunks.contains(&"older".to_owned()));
         }
 
+        /// A saved review read before anything was done is not written back.
+        #[test]
+        fn reading_the_saved_review_alone_saves_nothing() {
+            let (mut s, pr) = unread_diff_state(120);
+            let saved = ReviewState {
+                reviewed_hunks: vec!["older".into()],
+                ..ReviewState::default()
+            };
+            let cmds = diff_msg(&mut s, &pr, DiffMsg::ReviewLoaded(Ok(saved)));
+            assert!(cmds.is_empty(), "{cmds:?}");
+        }
+
         #[test]
         fn unreadable_drafts_raise_a_lasting_problem() {
             let (mut s, pr) = diff_state(120);
