@@ -3524,6 +3524,33 @@ pub(crate) mod tests {
                     _ => panic!("the composer is gone"),
                 }
             }
+
+            /// A save GitHub refused while the diff reloads (after
+            /// Refresh) still says so, though there's no diff to undo it in.
+            #[test]
+            fn a_refused_save_while_the_diff_reloads_still_says_so() {
+                let (mut s, pr) = diff_state(120);
+                let _ = act(&mut s, Action::Refresh);
+                assert!(!s.diffs.contains_key(&DiffOf::Pr(pr.clone())));
+                let refused = || Err(ApiError::Network("offline".into()));
+                let viewed = DiffMsg::ViewedSaved {
+                    path: "a".into(),
+                    previous: Viewed::Unviewed,
+                    result: refused(),
+                };
+                diff_msg(&mut s, &pr, viewed);
+                assert!(
+                    matches!(&s.notice, Some(Notice::Error(m)) if m.contains("didn't save “viewed”"))
+                );
+                s.notice = None;
+                let resolved = DiffMsg::ResolvedSet {
+                    thread_id: NodeId::new("t"),
+                    resolved: true,
+                    result: refused(),
+                };
+                diff_msg(&mut s, &pr, resolved);
+                assert!(matches!(&s.notice, Some(Notice::Error(m)) if m.contains("didn't save")));
+            }
         }
 
         mod review {
