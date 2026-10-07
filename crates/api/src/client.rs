@@ -1371,8 +1371,9 @@ impl GitHub {
         Ok(tags)
     }
 
-    /// Branches, most recently committed first, 30 at a time from `after`,
-    /// each with its latest commit and pull request.
+    /// Branches by name, 30 at a time from `after`, each with its latest
+    /// commit and pull request. (GitHub's commit-date order doesn't sort
+    /// branches by date.)
     pub async fn branches(
         &self,
         repo: &RepoId,
@@ -1381,7 +1382,7 @@ impl GitHub {
         let first = after.is_none();
         let data = self
             .graphql_json(
-                "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { defaultBranchRef { name } refs(refPrefix: \"refs/heads/\", first: 30, after: $after, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name target { ... on Commit { oid messageHeadline committedDate author { name user { login } } } } associatedPullRequests(first: 1, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number state } } } } } }",
+                "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { defaultBranchRef { name } refs(refPrefix: \"refs/heads/\", first: 30, after: $after, orderBy: {field: ALPHABETICAL, direction: ASC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name target { ... on Commit { oid messageHeadline committedDate author { name user { login } } } } associatedPullRequests(first: 1, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number state } } } } } }",
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after }),
             )
             .await?;

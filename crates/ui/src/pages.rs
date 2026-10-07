@@ -3008,8 +3008,8 @@ pub fn tags(page: &mut Page, repo: &RepoId, list: Option<&Results<TagInfo>>, now
     page.box_bottom();
 }
 
-/// A repository's branches, most recently committed first: each one's
-/// latest commit and pull request.
+/// A repository's branches by name: each one's latest commit and pull
+/// request.
 pub fn branches(
     page: &mut Page,
     repo: &RepoId,
