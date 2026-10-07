@@ -48,7 +48,7 @@ impl<'a, T: ?Sized> Fetched<'a, T> {
     /// plain `fn`, so it can't pick data from outside the fetch.
     pub fn pick<U: ?Sized>(self, f: fn(&'a T) -> Option<&'a U>) -> Fetched<'a, U> {
         let picked = self.data.map(f);
-        let wrong = matches!(picked, Some(None)).then_some("unexpected data from GitHub");
+        let wrong = matches!(picked, Some(None)).then_some("the wrong kind of data");
         let (data, error, retry) = (picked.flatten(), self.error.or(wrong), self.retry);
         Fetched { data, error, retry }
     }
@@ -141,7 +141,7 @@ mod tests {
         assert!(text.iter().any(|l| l == "Loading runs…"), "{text:?}");
         let why = "Couldn't load runs: timed out. r tries again.";
         assert!(text.iter().any(|l| l.contains(why)), "{text:?}");
-        let why = "Couldn't load it: unexpected data from GitHub";
+        let why = "Couldn't load it: the wrong kind of data";
         assert_eq!(wrong.text("it"), Err(why.to_owned()));
     }
 }
