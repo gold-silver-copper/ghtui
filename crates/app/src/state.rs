@@ -3282,6 +3282,29 @@ pub(crate) mod tests {
             }
 
             #[test]
+            fn a_failed_review_lookup_isnt_taken_for_no_review() {
+                let (mut s, pr) = diff_state(120);
+                s.viewer = Some("me".into());
+                act(&mut s, Action::ToggleSinceReview);
+                diff_msg(
+                    &mut s,
+                    &pr,
+                    DiffMsg::LastReview(Err(ApiError::Network("offline".into()))),
+                );
+                assert!(
+                    !matches!(&s.notice, Some(Notice::Info(m)) if m.contains("haven't reviewed")),
+                    "{:?}",
+                    s.notice
+                );
+                // Asking again asks GitHub again.
+                let cmds = act(&mut s, Action::ToggleSinceReview);
+                assert!(
+                    matches!(&cmds[..], [Cmd::Api(Api::FetchLastReview { .. })]),
+                    "{cmds:?}"
+                );
+            }
+
+            #[test]
             fn commit_picker_loads_a_range_and_blocks_comments() {
                 let (mut s, pr) = diff_state(120);
                 // `ghtui pr` would have loaded metadata; the picker needs the base.
