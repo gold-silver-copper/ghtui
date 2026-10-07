@@ -425,10 +425,8 @@ pub struct IssueDetail {
     pub assignees: Capped<String>,
     #[serde(default)]
     pub milestone: Option<MilestoneRef>,
-    /// The newest comments, oldest first, and how many there are in all.
-    pub comments: Vec<Comment>,
-    #[serde(default)]
-    pub total_comments: u64,
+    /// The newest comments, oldest first, of how many there are in all.
+    pub comments: Capped<Comment>,
     /// Node ID, for commenting.
     pub id: NodeId,
 }
@@ -447,17 +445,11 @@ pub struct ReviewSummary {
 pub struct PrActivity {
     /// Node ID, for commenting.
     pub id: NodeId,
-    /// The newest comments, reviews and commits, oldest first, and how
+    /// The newest comments, reviews and commits, oldest first, of how
     /// many there are in all.
-    pub comments: Vec<Comment>,
-    pub reviews: Vec<ReviewSummary>,
-    pub commits: Vec<CommitInfo>,
-    #[serde(default)]
-    pub total_comments: u64,
-    #[serde(default)]
-    pub total_reviews: u64,
-    #[serde(default)]
-    pub total_commits: u64,
+    pub comments: Capped<Comment>,
+    pub reviews: Capped<ReviewSummary>,
+    pub commits: Capped<CommitInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2310,6 +2302,7 @@ pub(crate) mod wire {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Counted<T> {
+        #[serde(default)]
         pub total_count: u64,
         pub nodes: Vec<Option<T>>,
     }
@@ -3431,10 +3424,8 @@ pub struct DiscussionDetail {
     pub category: String,
     pub answered: bool,
     pub upvotes: u64,
-    pub comments: Vec<DiscussionComment>,
-    /// How many comments there are (the first 50 are here).
-    #[serde(default)]
-    pub total_comments: u64,
+    /// The first 50 comments, of how many there are.
+    pub comments: Capped<DiscussionComment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -3443,16 +3434,14 @@ pub struct DiscussionComment {
     pub upvotes: u64,
     /// The answer to a question.
     pub answer: bool,
-    pub replies: Vec<Comment>,
-    /// How many replies there are (the first 30 are here).
-    #[serde(default)]
-    pub total_replies: u64,
+    /// The first 30 replies, of how many there are.
+    pub replies: Capped<Comment>,
 }
 
 pub(crate) mod wire_discussions {
     use serde::Deserialize;
 
-    pub use super::wire::{Count, Name, RepoName};
+    pub use super::wire::{Count, Counted, Name, RepoName};
     pub use crate::queries::Actor;
 
     #[derive(Deserialize)]
@@ -3486,14 +3475,6 @@ pub(crate) mod wire_discussions {
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
-    pub struct Replies {
-        #[serde(default)]
-        pub total_count: u64,
-        pub nodes: Vec<Option<Reply>>,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     pub struct WireComment {
         pub database_id: Option<u64>,
         pub author: Option<Actor>,
@@ -3501,15 +3482,7 @@ pub(crate) mod wire_discussions {
         pub created_at: String,
         pub is_answer: bool,
         pub upvote_count: u64,
-        pub replies: Replies,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Comments {
-        #[serde(default)]
-        pub total_count: u64,
-        pub nodes: Vec<Option<WireComment>>,
+        pub replies: Counted<Reply>,
     }
 
     #[derive(Deserialize)]
@@ -3523,7 +3496,7 @@ pub(crate) mod wire_discussions {
         pub category: Name,
         pub is_answered: Option<bool>,
         pub upvote_count: u64,
-        pub comments: Comments,
+        pub comments: Counted<WireComment>,
     }
 
     /// A discussion a search found, and where.
@@ -3577,26 +3550,16 @@ impl wire_discussions::Detail {
             category: self.category.name,
             answered: self.is_answered.unwrap_or(false),
             upvotes: self.upvote_count,
-            total_comments: self.comments.total_count,
-            comments: self
-                .comments
-                .nodes
-                .into_iter()
-                .flatten()
-                .map(|c| DiscussionComment {
+            comments: self.comments.into_capped(|c| {
+                Some(DiscussionComment {
                     upvotes: c.upvote_count,
                     answer: c.is_answer,
-                    total_replies: c.replies.total_count,
-                    replies: c
-                        .replies
-                        .nodes
-                        .into_iter()
-                        .flatten()
-                        .map(|r| comment(r.database_id, r.author, r.body, r.created_at))
-                        .collect(),
+                    replies: c.replies.into_capped(|r| {
+                        Some(comment(r.database_id, r.author, r.body, r.created_at))
+                    }),
                     comment: comment(c.database_id, c.author, c.body, c.created_at),
                 })
-                .collect(),
+            }),
         }
     }
 }
@@ -4908,44 +4871,42 @@ impl IssueFull {
                 u.login
             }),
             milestone: self.milestone.map(MilestoneRef::from_wire),
-            total_comments: count(self.comments.total_count),
             comments: comments(self.comments),
             id: self.id.into(),
         })
     }
 }
 
-fn comments(c: IssueComments) -> Vec<Comment> {
-    nodes(c.nodes)
-        .map(|c| Comment {
-            id: c.full_database_id.and_then(|id| id.0.parse().ok()),
-            author: author(c.author),
-            body: c.body,
-            created_at: c.created_at.0,
-        })
-        .collect()
+fn comments(c: IssueComments) -> Capped<Comment> {
+    Capped::from_nodes(c.total_count, c.nodes, |c| Comment {
+        id: c.full_database_id.and_then(|id| id.0.parse().ok()),
+        author: author(c.author),
+        body: c.body,
+        created_at: c.created_at.0,
+    })
 }
 
 impl WirePrActivity {
     pub(crate) fn into_activity(self) -> PrActivity {
+        let reviews = self.reviews.as_ref().map_or(0, |r| count(r.total_count));
         PrActivity {
             id: self.id.into(),
-            total_comments: count(self.comments.total_count),
-            total_reviews: self.reviews.as_ref().map_or(0, |r| count(r.total_count)),
-            total_commits: count(self.commits.total_count),
             comments: comments(self.comments),
-            reviews: nodes(self.reviews.and_then(|r| r.nodes))
-                .filter(|r| r.state != ReviewState::Pending)
-                .map(|r| ReviewSummary {
-                    author: author(r.author),
-                    state: r.state,
-                    body: r.body,
-                    submitted_at: r.submitted_at.map(|d| d.0).unwrap_or_default(),
-                })
-                .collect(),
-            commits: nodes(self.commits.nodes)
-                .map(|n| n.commit.into_info())
-                .collect(),
+            reviews: Capped::new(
+                nodes(self.reviews.and_then(|r| r.nodes))
+                    .filter(|r| r.state != ReviewState::Pending)
+                    .map(|r| ReviewSummary {
+                        author: author(r.author),
+                        state: r.state,
+                        body: r.body,
+                        submitted_at: r.submitted_at.map(|d| d.0).unwrap_or_default(),
+                    })
+                    .collect(),
+                reviews,
+            ),
+            commits: Capped::from_nodes(self.commits.total_count, self.commits.nodes, |n| {
+                n.commit.into_info()
+            }),
         }
     }
 }

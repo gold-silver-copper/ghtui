@@ -12,7 +12,7 @@ use ghtui_api::browse::{
     TeamDetail, TeamRepo, TeamSummary, TreeEntry, UserSummary, Week, WikiPage, Workflow,
     WorkflowRun,
 };
-use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
+use ghtui_api::model::{Capped, Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
 use crate::browse::{Data, DataKey};
 use crate::diff_screen::DiffOf;
@@ -220,7 +220,7 @@ pub fn history(next: Option<&str>) -> Results<CommitInfo> {
     let commits = activity().commits;
     Results {
         total: 40,
-        items: commits,
+        items: commits.items,
         next: next.map(str::to_owned),
     }
 }
@@ -545,8 +545,8 @@ pub fn issue() -> IssueDetail {
             author: "hubot".into(),
             body: "Agreed. 120 columns, centered?".into(),
             created_at: "2026-10-02T12:00:00Z".into(),
-        }],
-        total_comments: 1,
+        }]
+        .into(),
         id: NodeId::new("I_14"),
     }
 }
@@ -554,15 +554,13 @@ pub fn issue() -> IssueDetail {
 pub fn activity() -> PrActivity {
     PrActivity {
         id: NodeId::new("PR_12"),
-        total_comments: 1,
-        total_reviews: 2,
-        total_commits: 2,
         comments: vec![Comment {
             id: Some(1_000_001),
             author: "hubot".into(),
             body: "Does this cover the 256-color fallback?".into(),
             created_at: "2026-10-01T09:00:00Z".into(),
-        }],
+        }]
+        .into(),
         reviews: vec![
             ReviewSummary {
                 author: "monalisa".into(),
@@ -576,7 +574,8 @@ pub fn activity() -> PrActivity {
                 body: "Yes: every role is checked at both depths.".into(),
                 submitted_at: "2026-10-01T10:00:00Z".into(),
             },
-        ],
+        ]
+        .into(),
         commits: vec![
             CommitInfo {
                 oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
@@ -590,7 +589,8 @@ pub fn activity() -> PrActivity {
                 author: Person::User(Login::unchecked("octocat")),
                 date: "2026-10-01T12:00:00Z".into(),
             },
-        ],
+        ]
+        .into(),
     }
 }
 
@@ -1197,19 +1197,17 @@ pub fn discussion() -> DiscussionDetail {
                 ),
                 upvotes: 5,
                 answer: true,
-                replies: vec![comment(18765030, "octocat", "That works, thanks!")],
                 // More than came: the page says how many more.
-                total_replies: 3,
+                replies: Capped::new(vec![comment(18765030, "octocat", "That works, thanks!")], 3),
             },
             DiscussionComment {
                 comment: comment(18765100, "monalisa", "Drafts are saved locally too."),
                 upvotes: 1,
                 answer: false,
-                replies: Vec::new(),
-                total_replies: 0,
+                replies: Capped::default(),
             },
-        ],
-        total_comments: 2,
+        ]
+        .into(),
     }
 }
 /// A discussion search's result.
