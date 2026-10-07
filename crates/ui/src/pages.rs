@@ -1046,7 +1046,8 @@ fn wiki_links(text: &str) -> String {
     {
         let (label, target) = inner.split_once('|').unwrap_or((inner, inner));
         out.push_str(before);
-        out.push_str(&format!("[{label}]({})", target.trim().replace(' ', "-")));
+        let target = url::encode_path(&target.trim().replace(' ', "-"));
+        out.push_str(&format!("[{label}]({target})"));
         rest = tail;
     }
     out.push_str(rest);
@@ -4015,6 +4016,7 @@ mod tests {
             "[Start here](Getting-started)"
         );
         assert_eq!(wiki_links("[[unclosed"), "[[unclosed");
+        assert_eq!(wiki_links("[[C# tips]]"), "[C# tips](C%23-tips)");
     }
 
     #[test]

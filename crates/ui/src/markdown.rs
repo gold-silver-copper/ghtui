@@ -80,6 +80,8 @@ fn resolve_safe(base: Option<&LinkBase>, url: &str) -> String {
     }
     if let Some(rest) = url.strip_prefix('/') {
         return match base {
+            // On a wiki, root-relative links are relative to github.com.
+            Some(b) if b.wiki => format!("https://github.com/{rest}"),
             // Root-relative links are relative to the repository on GitHub.
             Some(b) => format!("https://github.com/{}/blob/{}/{}", b.repo, b.rev, rest),
             None => format!("https://github.com/{rest}"),
@@ -640,6 +642,22 @@ mod tests {
         let mut page = Page::new(40);
         render(&mut page, md, None, Frame::None);
         page.lines.iter().map(PageLine::text).collect()
+    }
+
+    /// On a wiki, relative links name pages and root-relative ones are on
+    /// github.com.
+    #[test]
+    fn wiki_links_resolve() {
+        let base = LinkBase::wiki("o/r");
+        let at = |url| resolve(Some(&base), url);
+        assert_eq!(
+            at("FAQ").as_deref(),
+            Some("https://github.com/o/r/wiki/FAQ")
+        );
+        assert_eq!(
+            at("/o/r/wiki/Home").as_deref(),
+            Some("https://github.com/o/r/wiki/Home")
+        );
     }
 
     #[test]
