@@ -795,60 +795,24 @@ impl GitHub {
                     serde_json::json!({ "q": query, "after": after }),
                 )
                 .await?;
-            let search = data.get("search").cloned().unwrap_or_default();
-            let repos: Vec<Option<RepoId>> = search
-                .pointer("/nodes")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter(|n| n.get("number").is_some())
-                .map(|n| {
-                    n.pointer("/repository/nameWithOwner")?
-                        .as_str()
-                        .and_then(RepoId::parse)
-                })
-                .collect();
-            let mut wire = search;
-            if let Some(obj) = wire.as_object_mut() {
-                let count = obj.remove("discussionCount").unwrap_or_default();
-                obj.insert("totalCount".into(), count);
-                if let Some(serde_json::Value::Array(nodes)) = obj.get_mut("nodes") {
-                    nodes.retain(|n| n.get("number").is_some());
-                }
+            let mut search = data.get("search").cloned().unwrap_or_default();
+            // A search's nodes may be other kinds, which come as `{}`.
+            if let Some(serde_json::Value::Array(nodes)) = search.get_mut("nodes") {
+                nodes.retain(|n| n.get("number").is_some());
             }
-            let page: browse::wire_discussions::Summaries = serde_json::from_value(wire)?;
-            let page = page.into_results();
-            return Ok(SearchResults::Discussions(Results {
-                total: page.total,
-                items: page
-                    .items
-                    .into_iter()
-                    .zip(repos)
-                    .filter_map(|(summary, repo)| {
-                        Some(browse::DiscussionHit {
-                            repo: repo?,
-                            summary,
-                        })
-                    })
-                    .collect(),
-                next: page.next,
-            }));
+            let page: browse::wire::Connection<browse::wire_discussions::Hit> =
+                serde_json::from_value(search)?;
+            return Ok(SearchResults::Discussions(
+                page.filter_results(browse::wire_discussions::Hit::into_hit),
+            ));
         }
         // GitHub refuses an empty commit or code search (422).
         if query.trim().is_empty() {
-            let empty = Results {
-                total: 0,
-                items: Vec::new(),
-                next: None,
-            };
+            let empty = Results::default();
             return Ok(if kind == Kind::Commits {
                 SearchResults::Commits(empty)
             } else {
-                SearchResults::Code(Results {
-                    total: 0,
-                    items: Vec::new(),
-                    next: None,
-                })
+                SearchResults::Code(Results::default())
             });
         }
         let number: u64 = after.as_deref().and_then(|a| a.parse().ok()).unwrap_or(1);
@@ -1407,13 +1371,13 @@ impl GitHub {
             .pointer("/repository/defaultBranchRef/name")
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned);
-        let wire: browse::wire_branches::Branches = serde_json::from_value(
+        let wire: browse::wire::Connection<browse::wire_branches::Branch> = serde_json::from_value(
             data.pointer("/repository/refs")
                 .filter(|r| !r.is_null())
                 .cloned()
                 .ok_or_else(|| ApiError::NotFound(repo.to_string()))?,
         )?;
-        let branches = wire.into_results(default.as_deref());
+        let branches = wire.into_results(|b| b.into_info(default.as_deref()));
         if first {
             return Ok(self.kept(&browse::keys::branches(repo), branches).await);
         }
@@ -1446,16 +1410,17 @@ impl GitHub {
                 .unwrap_or_default()
         };
         let (open, closed_count) = (count("open"), count("closed"));
-        let wire: browse::wire_milestones::Milestones = serde_json::from_value(
-            data.pointer("/repository/milestones")
-                .filter(|m| !m.is_null())
-                .cloned()
-                .ok_or_else(|| ApiError::NotFound(repo.to_string()))?,
-        )?;
+        let wire: browse::wire::Connection<browse::wire_milestones::Milestone> =
+            serde_json::from_value(
+                data.pointer("/repository/milestones")
+                    .filter(|m| !m.is_null())
+                    .cloned()
+                    .ok_or_else(|| ApiError::NotFound(repo.to_string()))?,
+            )?;
         let list = browse::MilestoneList {
             open,
             closed: closed_count,
-            results: wire.into_results(),
+            results: wire.into_results(browse::wire_milestones::Milestone::into_info),
         };
         if first {
             return Ok(self
@@ -1493,11 +1458,7 @@ impl GitHub {
         // GitHub's search can't match a title with quotes in it.
         let unsearchable = info.title.contains('"');
         let items = if unsearchable {
-            browse::Results {
-                total: 0,
-                items: Vec::new(),
-                next: None,
-            }
+            browse::Results::default()
         } else {
             let search = format!("repo:{repo} milestone:\"{}\" sort:updated-desc", info.title);
             match self
@@ -1510,11 +1471,7 @@ impl GitHub {
                 .await?
             {
                 browse::SearchResults::Issues(items) => items,
-                _ => browse::Results {
-                    total: 0,
-                    items: Vec::new(),
-                    next: None,
-                },
+                _ => browse::Results::default(),
             }
         };
         let detail = browse::MilestoneDetail {
@@ -1545,12 +1502,13 @@ impl GitHub {
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "envs": environments }),
             )
             .await?;
-        let wire: browse::wire_deployments::Deployments = serde_json::from_value(
-            data.pointer("/repository/deployments")
-                .filter(|d| !d.is_null())
-                .cloned()
-                .ok_or_else(|| ApiError::NotFound(repo.to_string()))?,
-        )?;
+        let wire: browse::wire::Connection<browse::wire_deployments::Deployment> =
+            serde_json::from_value(
+                data.pointer("/repository/deployments")
+                    .filter(|d| !d.is_null())
+                    .cloned()
+                    .ok_or_else(|| ApiError::NotFound(repo.to_string()))?,
+            )?;
         let list = browse::DeploymentList {
             environments: data
                 .pointer("/repository/environments/nodes")
@@ -1559,7 +1517,7 @@ impl GitHub {
                 .flatten()
                 .filter_map(|n| Some(n.get("name")?.as_str()?.to_owned()))
                 .collect(),
-            results: wire.into_results(),
+            results: wire.into_results(browse::wire_deployments::Deployment::into_info),
         };
         if first {
             return Ok(self
@@ -1642,13 +1600,13 @@ impl GitHub {
                 serde_json::json!({ "login": login, "after": after }),
             )
             .await?;
-        let wire: browse::wire_gists::Gists = serde_json::from_value(
+        let wire: browse::wire::Connection<browse::wire_gists::Gist> = serde_json::from_value(
             data.pointer("/user/gists")
                 .filter(|g| !g.is_null())
                 .cloned()
                 .ok_or_else(|| ApiError::NotFound(format!("{login}'s gists")))?,
         )?;
-        let gists = wire.into_results();
+        let gists = wire.into_results(browse::wire_gists::Gist::into_summary);
         if first {
             return Ok(self.kept(&browse::keys::gists(login), gists).await);
         }
@@ -1668,13 +1626,13 @@ impl GitHub {
                 serde_json::json!({ "org": org, "after": after }),
             )
             .await?;
-        let wire: browse::wire_teams::Teams = serde_json::from_value(
+        let wire: browse::wire::Connection<browse::wire_teams::Team> = serde_json::from_value(
             data.pointer("/organization/teams")
                 .filter(|t| !t.is_null())
                 .cloned()
                 .ok_or_else(|| ApiError::NotFound(org.to_owned()))?,
         )?;
-        let teams = wire.into_results();
+        let teams = wire.into_results(browse::wire_teams::Team::into_summary);
         if first {
             return Ok(self.kept(&browse::keys::teams(org), teams).await);
         }
@@ -1948,12 +1906,12 @@ impl GitHub {
                 vars,
             )
             .await?;
-        let categories: w::Categories = serde_json::from_value(
+        let categories: w::Nodes<w::Category> = serde_json::from_value(
             data.pointer("/repository/discussionCategories")
                 .cloned()
                 .unwrap_or_default(),
         )?;
-        let categories: Vec<w::Category> = categories.nodes.into_iter().flatten().collect();
+        let categories: Vec<w::Category> = categories.into_iter().collect();
         let category_id = match category {
             Some(slug) => match categories.iter().find(|c| c.slug == slug) {
                 Some(c) => Some(c.id.clone()),
@@ -1967,7 +1925,7 @@ impl GitHub {
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "category": category_id }),
             )
             .await?;
-        let page: w::Summaries = serde_json::from_value(
+        let page: browse::wire::Connection<w::Summary> = serde_json::from_value(
             data.pointer("/repository/discussions")
                 .cloned()
                 .unwrap_or_default(),
@@ -1980,7 +1938,7 @@ impl GitHub {
                     slug: c.slug,
                 })
                 .collect(),
-            results: page.into_results(),
+            results: page.into_results(w::Summary::into_summary),
         };
         if first {
             return Ok(self

@@ -563,6 +563,30 @@ async fn a_quoted_milestone_title_is_not_searched() {
     assert_eq!(seen.lock().unwrap().len(), 1, "no search");
 }
 
+/// A discussion search reads GitHub's count of discussions and leaves out
+/// nodes that aren't discussions.
+#[tokio::test]
+async fn discussion_search_reads_its_count_and_hits() {
+    let (gh, _) = github(vec![Reply::new(
+        200,
+        r#"{"data":{"search":{"discussionCount":7,"pageInfo":{"hasNextPage":true,"endCursor":"c"},"nodes":[{},{"repository":{"nameWithOwner":"o/r"},"number":4,"title":"t","author":null,"category":{"name":"Q&A"},"comments":{"totalCount":2},"isAnswered":true,"upvoteCount":1,"updatedAt":"2026-10-01T00:00:00Z"}]}}}"#,
+    )])
+    .await;
+    let results = gh
+        .search(ghtui_api::browse::SearchKind::Discussions, "q", None)
+        .await
+        .unwrap();
+    let ghtui_api::browse::SearchResults::Discussions(r) = results else {
+        panic!("not discussions");
+    };
+    assert_eq!(
+        (r.total, r.items.len(), r.next.as_deref()),
+        (7, 1, Some("c"))
+    );
+    assert_eq!(r.items[0].repo, RepoId::new("o", "r"));
+    assert!(r.items[0].summary.answered);
+}
+
 /// A comparison of one revision is against the default branch.
 #[tokio::test]
 async fn one_revision_compares_with_the_default_branch() {
