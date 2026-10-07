@@ -4780,12 +4780,15 @@ mod tests {
         );
     }
 
-    /// Links to a URL with a space in it: a git name linked as a login.
+    /// Links to a profile: a URL one name below GitHub's.
     fn profile_links(page: &Page) -> Vec<String> {
         page.links
             .iter()
             .filter_map(|l| l.url())
-            .filter(|u| u.contains(' '))
+            .filter(|u| {
+                let path = u.strip_prefix(&format!("{}/", url::BASE));
+                path.is_some_and(|p| !p.is_empty() && !p.contains('/'))
+            })
             .map(str::to_owned)
             .collect()
     }
@@ -4802,7 +4805,7 @@ mod tests {
             body: String::new(),
             author: Person::Git("Jane Doe".into()),
             authored_at: "2026-01-14T10:00:00Z".into(),
-            committer: Some(Person::Git("Bob Maintainer".into())),
+            committer: Some(Person::Git("bob".into())),
             committed_at: "2026-01-15T09:30:00Z".into(),
             parents: Vec::new().into(),
             additions: 1,
