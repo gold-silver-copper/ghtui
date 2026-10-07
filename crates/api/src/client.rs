@@ -1541,8 +1541,9 @@ impl GitHub {
         Ok(list)
     }
     /// Compares two revisions, as a compare URL names them (`a...b`,
-    /// `a..b`, `owner:branch`, `owner:repo:branch`): up to 250 commits and
-    /// 300 files.
+    /// `a..b`, `owner:branch`, `owner:repo:branch`): the newest 250 commits
+    /// (GitHub's default, ending at the head; asking for a page size pages
+    /// from the oldest instead) and up to 300 files.
     pub async fn compare(&self, repo: &RepoId, spec: &str) -> Result<browse::Comparison, ApiError> {
         let (base, head, direct) = match spec.split_once("...") {
             Some((base, head)) => (base, head, false),
@@ -1552,7 +1553,7 @@ impl GitHub {
             },
         };
         let path = format!(
-            "/repos/{}/{}/compare/{}...{}?per_page=250",
+            "/repos/{}/{}/compare/{}...{}",
             repo.owner,
             repo.name,
             encode_path(base),

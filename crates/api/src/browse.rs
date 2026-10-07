@@ -1303,6 +1303,28 @@ fn latest_runs(items: Vec<CheckItem>) -> Vec<CheckItem> {
 mod tests {
     use super::*;
 
+    /// A comparison's head is the newest commit GitHub lists, or, with
+    /// none listed (the head is behind or at the base), the merge base.
+    #[test]
+    fn a_comparisons_head() {
+        let compare = |commits: &[&str]| -> rest_compare::Compare {
+            let commits: Vec<serde_json::Value> = commits
+                .iter()
+                .map(|sha| serde_json::json!({ "sha": sha, "commit": { "message": "m" } }))
+                .collect();
+            serde_json::from_value(serde_json::json!({
+                "status": "diverged", "ahead_by": 2, "behind_by": 1, "total_commits": 2,
+                "base_commit": { "sha": "base" }, "merge_base_commit": { "sha": "mb" },
+                "commits": commits,
+            }))
+            .unwrap()
+        };
+        let c = compare(&["old", "head"]).into_comparison(false);
+        assert_eq!((c.from.as_str(), c.to.as_str()), ("mb", "head"));
+        let c = compare(&[]).into_comparison(true);
+        assert_eq!((c.from.as_str(), c.to.as_str()), ("base", "mb"));
+    }
+
     fn run(group: &str, name: &str, started: Option<&str>, outcome: CheckOutcome) -> CheckItem {
         CheckItem {
             name: name.into(),
@@ -2016,6 +2038,9 @@ pub struct Comparison {
     pub from: String,
     pub to: String,
     pub files: u64,
+    /// GitHub lists at most 300 files, so the counts may be short.
+    #[serde(default)]
+    pub files_capped: bool,
     pub additions: u64,
     pub deletions: u64,
 }
@@ -2077,7 +2102,12 @@ pub(crate) mod rest_compare {
 impl rest_compare::Compare {
     /// `direct`: `a..b`, the diff from the base itself, not the merge base.
     pub(crate) fn into_comparison(self, direct: bool) -> Comparison {
-        let to = self.commits.last().map(|c| c.sha.clone());
+        // The newest commit listed is the head; with none, the head is
+        // behind or at the base, so it's the merge base.
+        let to = self
+            .commits
+            .last()
+            .map_or_else(|| self.merge_base_commit.sha.clone(), |c| c.sha.clone());
         let from = if direct {
             self.base_commit.sha
         } else {
@@ -2088,9 +2118,10 @@ impl rest_compare::Compare {
             ahead: self.ahead_by,
             behind: self.behind_by,
             total_commits: self.total_commits,
-            to: to.unwrap_or_else(|| from.clone()),
+            to,
             from,
             files: self.files.len() as u64,
+            files_capped: self.files.len() >= 300,
             additions: self.files.iter().map(|f| f.additions).sum(),
             deletions: self.files.iter().map(|f| f.deletions).sum(),
             commits: self

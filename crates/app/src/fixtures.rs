@@ -1098,6 +1098,7 @@ pub fn comparison() -> Comparison {
         from: "1".repeat(40),
         to: "c".repeat(40),
         files: 14,
+        files_capped: false,
         additions: 812,
         deletions: 40,
     }
