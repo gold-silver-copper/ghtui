@@ -3306,7 +3306,8 @@ pub struct DiscussionComment {
 pub(crate) mod wire_discussions {
     use serde::Deserialize;
 
-    pub use super::wire::{Count, Login, Name, RepoName};
+    pub use super::wire::{Count, Name, RepoName};
+    pub use crate::queries::Actor as Login;
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -3388,10 +3389,6 @@ pub(crate) mod wire_discussions {
     }
 }
 
-fn login(a: Option<wire_discussions::Login>) -> String {
-    a.map_or_else(|| "ghost".into(), |a| a.login)
-}
-
 impl wire_discussions::Hit {
     pub(crate) fn into_hit(self) -> Option<DiscussionHit> {
         Some(DiscussionHit {
@@ -3406,7 +3403,7 @@ impl wire_discussions::Summary {
         DiscussionSummary {
             number: self.number,
             title: self.title,
-            author: login(self.author),
+            author: author(self.author),
             category: self.category.name,
             comments: self.comments.total_count,
             answered: self.is_answered.unwrap_or(false),
@@ -3418,9 +3415,9 @@ impl wire_discussions::Summary {
 
 impl wire_discussions::Detail {
     pub(crate) fn into_detail(self, repo: RepoId) -> DiscussionDetail {
-        let comment = |id, author, body, created_at| Comment {
+        let comment = |id, who, body, created_at| Comment {
             id,
-            author: login(author),
+            author: author(who),
             body,
             created_at,
         };
@@ -3429,7 +3426,7 @@ impl wire_discussions::Detail {
             number: self.number,
             title: self.title,
             body: self.body,
-            author: login(self.author),
+            author: author(self.author),
             created_at: self.created_at,
             category: self.category.name,
             answered: self.is_answered.unwrap_or(false),
