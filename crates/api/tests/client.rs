@@ -625,6 +625,56 @@ async fn branches_page_by_name() {
     assert_eq!(seen[1].json()["variables"]["after"], "c1");
 }
 
+/// A commit's checks are read to the last page: a check run again has
+/// its newest run wherever it lands, and that's the one shown.
+#[tokio::test]
+async fn checks_page_to_a_checks_newest_run() {
+    let run = |name: &str, conclusion: &str, started: &str| {
+        format!(
+            r#"{{"__typename":"CheckRun","name":"{name}","status":"COMPLETED","conclusion":"{conclusion}","startedAt":"{started}","completedAt":"{started}","title":null,"detailsUrl":null,"checkSuite":null}}"#
+        )
+    };
+    let page = |runs: &[String], next: Option<&str>| {
+        format!(
+            r#"{{"totalCount":3,"pageInfo":{{"hasNextPage":{},"endCursor":{}}},"nodes":[{}]}}"#,
+            next.is_some(),
+            next.map_or("null".to_owned(), |c| format!("\"{c}\"")),
+            runs.join(",")
+        )
+    };
+    let first = page(
+        &[
+            run("test", "FAILURE", "2026-10-01T10:00:00Z"),
+            run("lint", "SUCCESS", "2026-10-01T10:00:00Z"),
+        ],
+        Some("p2"),
+    );
+    let second = page(&[run("test", "SUCCESS", "2026-10-01T12:00:00Z")], None);
+    let (gh, seen) = github(vec![
+        Reply::new(
+            200,
+            format!(
+                r#"{{"data":{{"repository":{{"object":{{"__typename":"Commit","oid":"abc","statusCheckRollup":{{"contexts":{first}}}}}}}}}}}"#
+            ),
+        ),
+        Reply::new(
+            200,
+            format!(
+                r#"{{"data":{{"repository":{{"object":{{"__typename":"Commit","statusCheckRollup":{{"contexts":{second}}}}}}}}}}}"#
+            ),
+        ),
+    ])
+    .await;
+    let checks = gh
+        .commit_checks(&RepoId::new("o", "r"), "main")
+        .await
+        .unwrap();
+    let test = checks.items.iter().find(|c| c.name == "test").unwrap();
+    assert_eq!(test.outcome, ghtui_api::browse::CheckOutcome::Success);
+    assert_eq!((checks.items.len(), checks.total), (2, 2));
+    assert_eq!(seen.lock().unwrap()[1].json()["variables"]["after"], "p2");
+}
+
 /// A comparison of one revision is against the default branch.
 #[tokio::test]
 async fn one_revision_compares_with_the_default_branch() {

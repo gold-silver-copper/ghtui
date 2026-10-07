@@ -1215,7 +1215,73 @@ pub struct WireRollup {
 )]
 pub struct RollupContexts {
     pub total_count: i32,
+    pub page_info: crate::queries::PageInfo,
     pub nodes: Option<Vec<Option<RollupContext>>>,
+}
+
+/// A later page of a commit's checks (by its oid in `expression`): a
+/// re-run on a later page is a check's newest run.
+#[derive(cynic::QueryVariables, Debug)]
+pub struct ContextsVariables {
+    pub owner: String,
+    pub name: String,
+    pub expression: String,
+    pub after: Option<String>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "ContextsVariables"
+)]
+pub struct ContextsQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<ContextsRepo>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Repository",
+    schema_module = "schema",
+    variables = "ContextsVariables"
+)]
+pub struct ContextsRepo {
+    #[arguments(expression: $expression)]
+    pub object: Option<ContextsTarget>,
+}
+
+#[derive(cynic::InlineFragments, Debug)]
+#[cynic(
+    graphql_type = "GitObject",
+    schema_module = "schema",
+    variables = "ContextsVariables"
+)]
+pub enum ContextsTarget {
+    Commit(ContextsCommit),
+    #[cynic(fallback)]
+    Other,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Commit",
+    schema_module = "schema",
+    variables = "ContextsVariables"
+)]
+pub struct ContextsCommit {
+    pub status_check_rollup: Option<ContextsRollup>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "StatusCheckRollup",
+    schema_module = "schema",
+    variables = "ContextsVariables"
+)]
+pub struct ContextsRollup {
+    #[arguments(first: 100, after: $after)]
+    pub contexts: RollupContexts,
 }
 
 #[derive(cynic::InlineFragments, Debug)]

@@ -1101,8 +1101,55 @@ impl GitHub {
             .and_then(|r| r.pull_request)
             .and_then(|p| nodes(p.commits.nodes).next())
             .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
-        let checks = head.commit.into_checks();
+        let checks = self.all_checks(&pr.repo, head.commit).await?.into_checks();
         Ok(self.kept(&browse::keys::pr_checks(pr), checks).await)
+    }
+
+    /// A commit's checks with every page of them (up to [`CHECK_PAGES`]):
+    /// a check run again can have its newest run on a later page.
+    async fn all_checks(
+        &self,
+        repo: &RepoId,
+        mut commit: browse::ChecksCommit,
+    ) -> Result<browse::ChecksCommit, ApiError> {
+        use cynic::QueryBuilder as _;
+        for _ in 1..CHECK_PAGES {
+            let Some(contexts) = commit.status_check_rollup.as_mut().map(|r| &mut r.contexts)
+            else {
+                break;
+            };
+            let Some(after) = contexts
+                .page_info
+                .end_cursor
+                .clone()
+                .filter(|_| contexts.page_info.has_next_page)
+            else {
+                break;
+            };
+            let op = browse::ContextsQuery::build(browse::ContextsVariables {
+                owner: repo.owner.clone(),
+                name: repo.name.clone(),
+                expression: commit.oid.0.clone(),
+                after: Some(after),
+            });
+            let page = self
+                .graphql(op)
+                .await?
+                .repository
+                .and_then(|r| r.object)
+                .and_then(|o| match o {
+                    browse::ContextsTarget::Commit(c) => c.status_check_rollup,
+                    browse::ContextsTarget::Other => None,
+                })
+                .map(|r| r.contexts);
+            let Some(page) = page else { break };
+            contexts
+                .nodes
+                .get_or_insert_with(Vec::new)
+                .extend(page.nodes.into_iter().flatten());
+            contexts.page_info = page.page_info;
+        }
+        Ok(commit)
     }
 
     /// The checks on a repository's default branch.
@@ -1120,7 +1167,7 @@ impl GitHub {
         let Some(browse::ChecksTarget::Commit(commit)) = target else {
             return Err(ApiError::NotFound(repo.to_string()));
         };
-        let checks = commit.into_checks();
+        let checks = self.all_checks(repo, commit).await?.into_checks();
         Ok(self.kept(&browse::keys::branch_checks(repo), checks).await)
     }
 
@@ -1766,7 +1813,7 @@ impl GitHub {
         let Some(browse::ChecksTarget::Commit(commit)) = object else {
             return Err(ApiError::NotFound(format!("{repo}@{rev}")));
         };
-        let checks = commit.into_checks();
+        let checks = self.all_checks(repo, commit).await?.into_checks();
         Ok(self
             .kept(&browse::keys::commit_checks(repo, rev), checks)
             .await)
@@ -2005,6 +2052,8 @@ fn at<T: DeserializeOwned>(
 const REST_PAGE: u64 = 30;
 /// GitHub's search serves its first thousand results.
 const SEARCH_CAP: u64 = 1000;
+/// How many pages of a commit's checks are fetched (100 each).
+const CHECK_PAGES: u64 = 10;
 /// How many pages of a repository's branches are fetched (100 each).
 const REF_PAGES: u64 = 10;
 /// How many pages of a run's jobs are fetched (100 each).
