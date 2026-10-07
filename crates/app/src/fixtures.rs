@@ -967,7 +967,7 @@ pub fn workflow_runs() -> (Workflow, Results<RunSummary>) {
     let workflow = Workflow {
         name: "CI".into(),
         path: ".github/workflows/ci.yml".into(),
-        state: "active".into(),
+        disabled: None,
     };
     let runs = Results {
         total: 412,

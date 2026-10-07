@@ -2130,8 +2130,9 @@ pub struct Step {
 pub struct Workflow {
     pub name: String,
     pub path: String,
-    /// `active`, `disabled_manually`…
-    pub state: String,
+    /// Why it's disabled, in words ("disabled manually"); `None` while
+    /// it's active.
+    pub disabled: Option<String>,
 }
 
 /// A run in a workflow's list.
