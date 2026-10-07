@@ -700,7 +700,7 @@ impl Doc {
                 DocFile {
                     generated: generated.contains(&path) || is_lockfile(&path),
                     meta,
-                    viewed: Viewed::Unviewed,
+                    viewed: inputs.viewed.get(&path).copied().unwrap_or_default(),
                     expanded: false,
                     diff: None,
                     full: false,
@@ -717,9 +717,9 @@ impl Doc {
             .collect();
         let mut doc = Self {
             files,
+            inputs,
             ..Self::default()
         };
-        doc.set_inputs(inputs);
         doc.rebuild_all();
         doc
     }
@@ -728,19 +728,21 @@ impl Doc {
     /// (collapsing them), or everything if the threads or drafts did.
     pub fn set_inputs(&mut self, inputs: DocInputs) {
         let old = std::mem::replace(&mut self.inputs, inputs);
+        let all = old.annotations != self.inputs.annotations;
         let viewed = &self.inputs.viewed;
         let mut changed = Vec::new();
         for (i, f) in self.files.iter_mut().enumerate() {
             let now = viewed.get(f.meta.path()).copied().unwrap_or_default();
             if f.viewed != now {
                 (f.viewed, f.expanded) = (now, false);
-                changed.push(i);
+            } else if !all {
+                continue;
             }
+            changed.push(i);
         }
-        if old.annotations == self.inputs.annotations {
-            changed.into_iter().for_each(|i| self.rebuild(i));
-        } else {
-            self.rebuild_all();
+        changed.iter().for_each(|&i| self.rebuild_file(i));
+        if !changed.is_empty() {
+            self.reindex();
         }
     }
 
