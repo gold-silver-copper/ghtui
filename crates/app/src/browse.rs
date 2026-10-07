@@ -393,9 +393,8 @@ pub struct PageScreen {
     /// Nothing has been selected or scrolled yet: select the first visible
     /// item once the page has items.
     pub fresh: bool,
-    /// Where the page was scrolled to for its [`Page::jump`] or anchor,
-    /// and what was selected: it follows the jump while both stay put.
-    /// `Some(None)` once you've moved.
+    /// Where its [`Page::jump`] or anchor last left the scroll and the
+    /// selection: followed while both stay put, `Some(None)` once moved.
     pub jumped: Option<Option<(usize, Option<usize>)>>,
     /// The `#fragment` of the link that opened it: a comment to scroll to.
     pub anchor: Option<String>,
