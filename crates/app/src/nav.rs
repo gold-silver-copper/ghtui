@@ -137,7 +137,7 @@ impl State {
                 self.forward.clear();
                 let mut cmds = match &of {
                     DiffOf::Pr(pr) => self.ensure_pr(pr, false),
-                    DiffOf::Commit(..) => Vec::new(),
+                    DiffOf::Commit(..) | DiffOf::Range(..) => Vec::new(),
                 };
                 cmds.extend(self.open_diff(of));
                 cmds
@@ -456,6 +456,7 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Releases(repo)
         | Route::Tags(repo)
         | Route::Branches(repo)
+        | Route::Compare { repo, .. }
         | Route::Deployments { repo, .. }
         | Route::Milestones { repo, .. }
         | Route::Actions(repo) => Route::Repo(repo.clone()),
@@ -534,6 +535,7 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
                 (Some(Route::Commit { repo, oid }), DiffOf::Commit(r, full)) => {
                     repo == r && full.starts_with(oid.as_str())
                 }
+                (Some(Route::Compare { repo, .. }), DiffOf::Range(r, ..)) => repo == r,
                 _ => false,
             };
             if same {
@@ -1583,6 +1585,7 @@ impl State {
             Screen::Diff(d) => match &d.of {
                 DiffOf::Pr(pr) => format!("{}/files", pr.url()),
                 DiffOf::Commit(repo, oid) => pages::url::commit(repo, oid),
+                DiffOf::Range(..) => crate::route::compare_url(&d.of),
             },
         }
     }

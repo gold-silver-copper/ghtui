@@ -283,6 +283,27 @@ impl Repo {
         })
     }
 
+    /// The diff from one commit to another, each fetched by SHA if it
+    /// isn't here.
+    pub async fn range_refs(
+        &self,
+        from: &str,
+        to: &str,
+        progress: Progress<'_>,
+    ) -> Result<PrRefs, GitError> {
+        for sha in [from, to] {
+            if !self.has(sha).await {
+                progress(format!("Fetching {}", sha.get(..7).unwrap_or(sha)));
+                self.fetch_commit(sha).await?;
+            }
+        }
+        let from = self.rev_parse(from).await?;
+        Ok(PrRefs {
+            head: self.rev_parse(to).await?,
+            base: from.clone(),
+            merge_base: from,
+        })
+    }
     /// Fetches one commit by SHA (e.g. a head that was force-pushed away).
     /// GitHub serves commits it still has even when no ref points at them.
     pub async fn fetch_commit(&self, sha: &str) -> Result<(), GitError> {

@@ -621,7 +621,7 @@ impl State {
                 Some(base_ref) => base_ref,
                 None => return Vec::new(),
             },
-            DiffOf::Commit(..) => String::new(),
+            DiffOf::Commit(..) | DiffOf::Range(..) => String::new(),
         };
         let diff = DiffState::loading();
         let job = diff.job;

@@ -54,6 +54,7 @@ pub fn title(screen: &Screen) -> String {
         Screen::Diff(d) => match &d.of {
             DiffOf::Pr(pr) => format!("#{} files", pr.number),
             DiffOf::Commit(_, oid) => format!("{} files", short_sha(oid)),
+            DiffOf::Range(_, from, to) => format!("{}...{} files", short_sha(from), short_sha(to)),
         },
     }
 }
@@ -124,6 +125,10 @@ impl State {
                 DiffOf::Commit(repo, oid) => Target::Page(Route::Commit {
                     repo: repo.clone(),
                     oid: oid.clone(),
+                }),
+                DiffOf::Range(repo, from, to) => Target::Page(Route::Compare {
+                    repo: repo.clone(),
+                    spec: format!("{from}...{to}"),
                 }),
             },
         };
@@ -220,6 +225,7 @@ impl State {
                 DiffOf::Commit(repo, oid) => {
                     format!("{}#files", ghtui_ui::pages::url::commit(repo, oid))
                 }
+                DiffOf::Range(..) => format!("{}#files", crate::route::compare_url(&d.of)),
             },
         };
         let before = self.before.iter().map(|t| url(t.screens.last()));

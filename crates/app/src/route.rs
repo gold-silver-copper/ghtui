@@ -92,6 +92,11 @@ pub enum Route {
     },
     Tags(RepoId),
     Branches(RepoId),
+    /// Two revisions compared, as the URL names them (`a...b`, `a..b`).
+    Compare {
+        repo: RepoId,
+        spec: String,
+    },
     /// Deployments, to one environment if given.
     Deployments {
         repo: RepoId,
@@ -241,6 +246,9 @@ impl Route {
             Route::Discussion { of, number } => format!("{}/{number}", discussions_url(of)),
             Route::Tags(repo) => format!("{}/tags", links::repo(repo)),
             Route::Branches(repo) => format!("{}/branches", links::repo(repo)),
+            Route::Compare { repo, spec } => {
+                format!("{}/compare/{}", links::repo(repo), links::encode_path(spec))
+            }
             Route::Deployments { repo, environment } => match environment {
                 Some(env) => format!(
                     "{}/deployments/activity_log?environments_filter={}",
@@ -305,6 +313,7 @@ impl Route {
             Route::Discussion { of, number } => format!("{} · Discussion {number}", of_title(of)),
             Route::Tags(repo) => format!("{repo} · Tags"),
             Route::Branches(repo) => format!("{repo} · Branches"),
+            Route::Compare { repo, spec } => format!("{repo} · {spec}"),
             Route::Deployments { repo, .. } => format!("{repo} · Deployments"),
             Route::Milestones { repo, .. } => format!("{repo} · Milestones"),
             Route::Milestone { repo, number } => format!("{repo} · Milestone {number}"),
@@ -346,6 +355,7 @@ impl Route {
             }
             | Route::Tags(repo)
             | Route::Branches(repo)
+            | Route::Compare { repo, .. }
             | Route::Deployments { repo, .. }
             | Route::Milestones { repo, .. }
             | Route::Milestone { repo, .. }
@@ -644,6 +654,30 @@ impl Target {
                 (Some(repo), Ok(number)) => Route::Milestone { repo, number },
                 _ => return external(),
             },
+            // A comparison's patch and diff are downloads.
+            [_, _, "compare", .., last] if last.ends_with(".patch") || last.ends_with(".diff") => {
+                return external();
+            }
+            [o, r, "compare", rest @ ..] => {
+                let Some(repo) = repo(o, r) else {
+                    return external();
+                };
+                let spec = rest.join("/");
+                // Without revisions it's the form for opening a pull
+                // request.
+                if spec.is_empty() {
+                    return external();
+                }
+                // Its files, between two commits.
+                if parsed.fragment() == Some("files")
+                    && let Some((from, to)) = spec.split_once("...")
+                    && is_full_sha(from)
+                    && is_full_sha(to)
+                {
+                    return Target::Files(DiffOf::Range(repo, from.to_owned(), to.to_owned()));
+                }
+                Route::Compare { repo, spec }
+            }
             [o, r, "deployments", rest @ ..] => {
                 let Some(repo) = repo(o, r) else {
                     return external();
@@ -824,6 +858,14 @@ fn is_full_sha(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// The comparison a range of files is from.
+pub fn compare_url(of: &DiffOf) -> String {
+    match of {
+        DiffOf::Range(repo, from, to) => format!("{}/compare/{from}...{to}", links::repo(repo)),
+        DiffOf::Pr(pr) => format!("{}/files", pr.url()),
+        DiffOf::Commit(repo, oid) => links::commit(repo, oid),
+    }
+}
 /// A discussions page from what follows `/discussions` in its URL.
 fn discussions(of: DiscussionsOf, rest: &[&str]) -> Option<Route> {
     Some(match rest {
@@ -1204,6 +1246,24 @@ pub(crate) mod tests {
                 number: 3
             }
         );
+        assert_eq!(
+            page("https://github.com/o/r/compare/v1...fork:feature/x"),
+            Route::Compare {
+                repo: pr.repo.clone(),
+                spec: "v1...fork:feature/x".into()
+            }
+        );
+        let other = "f".repeat(40);
+        assert_eq!(
+            Target::from_url(&format!(
+                "https://github.com/o/r/compare/{sha}...{other}#files"
+            )),
+            Target::Files(DiffOf::Range(pr.repo.clone(), sha.into(), other.clone()))
+        );
+        assert_eq!(
+            compare_url(&DiffOf::Range(pr.repo.clone(), sha.into(), other.clone())),
+            format!("https://github.com/o/r/compare/{sha}...{other}")
+        );
         assert!(matches!(
             Target::from_url("https://github.com/settings/tokens"),
             Target::External(_)
@@ -1418,6 +1478,12 @@ pub(crate) mod tests {
                 repo().prop_map(Route::Releases),
                 repo().prop_map(Route::Tags),
                 repo().prop_map(Route::Branches),
+                (repo(), rev.clone(), rev.clone(), any::<bool>()).prop_map(|(repo, a, b, two)| {
+                    Route::Compare {
+                        repo,
+                        spec: format!("{a}{}{b}", if two { ".." } else { "..." }),
+                    }
+                }),
                 (repo(), prop::option::of("[A-Za-z0-9 _-]{1,12}"))
                     .prop_filter("not the log", |(_, e)| e.as_deref() != Some("activity_log"))
                     .prop_map(|(repo, environment)| Route::Deployments { repo, environment }),

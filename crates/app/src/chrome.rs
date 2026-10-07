@@ -3,12 +3,13 @@
 //! title for pull requests. Both the view and mouse handling use
 //! [`State::layout`], so clicks land where things are drawn.
 
-use ghtui_api::browse::{DiscussionsOf, RepoSort, SearchKind};
+use ghtui_api::browse::{Comparison, DiscussionsOf, RepoSort, SearchKind};
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::chrome::{Crumb, PageTab};
 use ghtui_ui::pages::{PrTab, ProfileTab};
 use ratatui::layout::Rect;
 
+use crate::browse::{Data, DataKey};
 use crate::diff_screen::DiffOf;
 use crate::route::{OPEN, Route, Target};
 use crate::state::{Screen, State};
@@ -91,6 +92,12 @@ impl State {
                         c.active = Some(2);
                         return c;
                     }
+                    DiffOf::Range(repo, from, to) => {
+                        let spec = format!("{from}...{to}");
+                        compare_tabs(repo, &spec, Some((from, to)), None, &mut c);
+                        c.active = Some(1);
+                        return c;
+                    }
                 };
                 self.pr_tabs(pr, &mut c);
                 // The tab says which changes are shown.
@@ -168,6 +175,10 @@ impl State {
                 repo_crumbs(repo, c);
                 self.commit_tabs(repo, oid, c);
                 c.active = Some(usize::from(matches!(route, Route::CommitChecks { .. })));
+            }
+            Route::Compare { repo, spec } => {
+                repo_crumbs(repo, c);
+                self.compare_page_tabs(repo, spec, c);
             }
             // A repository's discussions: its tabs, none of them active
             // (ghtui doesn't know which repositories have discussions on).
@@ -357,6 +368,18 @@ impl State {
         ));
     }
 
+    /// A comparison's tabs: its commits, and its files once known.
+    fn compare_page_tabs(&self, repo: &RepoId, spec: &str, c: &mut Chrome) {
+        let key = DataKey::Compare(repo.clone(), spec.to_owned());
+        let comparison = match self.get(&key) {
+            Some(Data::Compare(cmp)) => Some(&**cmp),
+            _ => None,
+        };
+        let range = comparison.map(|cmp| (cmp.from.as_str(), cmp.to.as_str()));
+        compare_tabs(repo, spec, range, comparison, c);
+        c.active = Some(0);
+    }
+
     fn repo_tabs(&self, repo: &RepoId, c: &mut Chrome) {
         let o = self.overview(repo);
         c.tabs.push((
@@ -461,6 +484,29 @@ impl State {
     }
 }
 
+/// A comparison's tabs: its commits, and (once its ends are known) the
+/// files changed between them.
+fn compare_tabs(
+    repo: &RepoId,
+    spec: &str,
+    range: Option<(&str, &str)>,
+    comparison: Option<&Comparison>,
+    c: &mut Chrome,
+) {
+    c.tabs.push((
+        new_tab("◷", "Commits", comparison.map(|cmp| cmp.total_commits)),
+        Target::Page(Route::Compare {
+            repo: repo.clone(),
+            spec: spec.to_owned(),
+        }),
+    ));
+    if let Some((from, to)) = range {
+        c.tabs.push((
+            new_tab("±", "Files changed", comparison.map(|cmp| cmp.files)),
+            Target::Files(DiffOf::Range(repo.clone(), from.to_owned(), to.to_owned())),
+        ));
+    }
+}
 fn repo_crumbs(repo: &RepoId, c: &mut Chrome) {
     c.crumb(&repo.owner, Some(Target::Page(Route::user(&repo.owner))));
     c.crumb(&repo.name, Some(Target::Page(Route::Repo(repo.clone()))));

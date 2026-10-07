@@ -5,10 +5,11 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blob, BranchInfo, Checks, CommitDetail, CommitInfo, DeploymentList, DiscussionDetail,
-    DiscussionList, DiscussionsOf, IssueDetail, Job, MilestoneDetail, MilestoneList, PrActivity,
-    Profile, Refs, Release, RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind,
-    SearchResults, TagInfo, TreeEntry, UserList, UserSummary, Workflow, WorkflowRun,
+    Blob, BranchInfo, Checks, CommitDetail, CommitInfo, Comparison, DeploymentList,
+    DiscussionDetail, DiscussionList, DiscussionsOf, IssueDetail, Job, MilestoneDetail,
+    MilestoneList, PrActivity, Profile, Refs, Release, RepoOverview, RepoSort, RepoSummary,
+    Results, RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserList, UserSummary,
+    Workflow, WorkflowRun,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::page::{Link, Page, Role, Seg};
@@ -52,6 +53,7 @@ pub enum DataKey {
     Release(RepoId, String),
     Tags(RepoId),
     Branches(RepoId),
+    Compare(RepoId, String),
     Deployments(RepoId, Option<String>),
     Milestones(RepoId, bool),
     Milestone(RepoId, u64),
@@ -104,6 +106,7 @@ pub enum Data {
     Release(Box<Release>),
     Tags(Box<Results<TagInfo>>),
     Branches(Box<Results<BranchInfo>>),
+    Compare(Box<Comparison>),
     Deployments(Box<DeploymentList>),
     Milestones(Box<MilestoneList>),
     Milestone(Box<MilestoneDetail>),
@@ -176,6 +179,7 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         }
         Route::Tags(repo) => Some(DataKey::Tags(repo.clone())),
         Route::Branches(repo) => Some(DataKey::Branches(repo.clone())),
+        Route::Compare { repo, spec } => Some(DataKey::Compare(repo.clone(), spec.clone())),
         Route::Deployments { repo, environment } => {
             Some(DataKey::Deployments(repo.clone(), environment.clone()))
         }
@@ -279,6 +283,7 @@ pub fn needs(route: &Route) -> Vec<Need> {
         | Route::Releases(repo)
         | Route::Tags(repo)
         | Route::Branches(repo)
+        | Route::Compare { repo, .. }
         | Route::Deployments { repo, .. }
         | Route::Milestones { repo, .. }
         | Route::Milestone { repo, .. } => std::iter::once(header(repo))
@@ -678,6 +683,12 @@ impl State {
             Route::Milestone { repo, number } => {
                 match self.get(&DataKey::Milestone(repo.clone(), *number)) {
                     Some(Data::Milestone(m)) => pages::milestone(&mut page, repo, m, icons, now),
+                    _ => missing(&mut page, &route.title()),
+                }
+            }
+            Route::Compare { repo, spec } => {
+                match self.get(&DataKey::Compare(repo.clone(), spec.clone())) {
+                    Some(Data::Compare(c)) => pages::compare(&mut page, repo, spec, c, now),
                     _ => missing(&mut page, &route.title()),
                 }
             }

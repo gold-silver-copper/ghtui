@@ -39,6 +39,8 @@ pub enum DiffOf {
     Pr(PrRef),
     /// A commit (its full ID) against its first parent.
     Commit(RepoId, String),
+    /// From one commit to another (full IDs): a comparison's files.
+    Range(RepoId, String, String),
 }
 
 impl DiffOf {
@@ -47,14 +49,14 @@ impl DiffOf {
     pub fn pr(&self) -> Option<&PrRef> {
         match self {
             DiffOf::Pr(pr) => Some(pr),
-            DiffOf::Commit(..) => None,
+            DiffOf::Commit(..) | DiffOf::Range(..) => None,
         }
     }
 
     pub fn repo(&self) -> &RepoId {
         match self {
             DiffOf::Pr(pr) => &pr.repo,
-            DiffOf::Commit(repo, _) => repo,
+            DiffOf::Commit(repo, _) | DiffOf::Range(repo, ..) => repo,
         }
     }
 }
@@ -70,6 +72,9 @@ impl std::fmt::Display for DiffOf {
         match self {
             DiffOf::Pr(pr) => pr.fmt(f),
             DiffOf::Commit(repo, oid) => write!(f, "{repo}@{}", short_sha(oid)),
+            DiffOf::Range(repo, from, to) => {
+                write!(f, "{repo}@{}...{}", short_sha(from), short_sha(to))
+            }
         }
     }
 }
