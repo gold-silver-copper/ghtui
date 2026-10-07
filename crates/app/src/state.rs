@@ -15,7 +15,7 @@ use ghtui_store::ReviewState;
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::bars::Notice;
 use ghtui_ui::diff_doc::Viewed;
-use ghtui_ui::{Ctx, Icons};
+use ghtui_ui::{Ctx, Fetched, Icons};
 use ratatui_textarea::TextArea;
 
 use crate::browse::{self, Data, DataKey, Need, PageScreen};
@@ -295,6 +295,18 @@ impl<T> Default for Remote<T> {
 }
 
 impl<T> Remote<T> {
+    /// What a page shows of a fetch: one that hasn't started is loading.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one place a fetch's state becomes what a page shows"
+    )]
+    pub fn fetched<'a>(remote: Option<&'a Self>, retry: &'a str) -> Fetched<'a, T> {
+        let (data, loading, error) = remote.map_or((None, false, None), |r| {
+            (r.data.as_ref(), r.loading, r.error.as_deref())
+        });
+        Fetched::new_unchecked(data, loading, error, retry)
+    }
+
     pub fn cached(cached: Option<ghtui_store::Cached<T>>) -> Self {
         Self {
             cached_at: cached.as_ref().map(|c| c.fetched_at),

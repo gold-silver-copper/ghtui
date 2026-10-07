@@ -7,6 +7,7 @@ pub mod chips;
 pub mod chrome;
 pub mod diff_doc;
 pub mod diff_view;
+pub mod fetched;
 pub mod file_tree;
 pub mod icons;
 pub mod markdown;
@@ -24,6 +25,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Widget};
 
+pub use fetched::Fetched;
 pub use icons::Icons;
 
 /// Base spacing unit: 2 cells horizontally, 1 vertically.

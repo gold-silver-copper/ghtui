@@ -12,4 +12,7 @@ disallowed-methods = [
     { path = "ratatui_core::buffer::Buffer::set_span", reason = "unclipped: use `ghtui_ui::put` or render the `Span`" },
     # It prints its failure to stderr, which panics when the terminal is gone.
     { path = "ratatui::restore", reason = "panics without a terminal: use `restore_terminal`" },
+    # A page shows each need as loading, failed (and why) or ready.
+    { path = "ghtui_ui::fetched::Fetched::ready_unchecked", reason = "says nothing of a failure: use `show`, or say why silence is right" },
+    { path = "ghtui_ui::fetched::Fetched::new_unchecked", reason = "only a fetch's owner (`Remote::fetched`) knows how it's going" },
 ]
