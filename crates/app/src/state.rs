@@ -629,7 +629,7 @@ impl State {
         let d = self.prs.get(pr)?.data.as_ref()?;
         let done = matches!(
             d.summary.state,
-            ghtui_api::model::PrState::Merged | ghtui_api::model::PrState::Closed
+            ghtui_api::browse::IssueState::Merged | ghtui_api::browse::IssueState::Closed
         );
         Some(crate::diff_job::PrBase {
             branch: d.base_ref.clone(),
@@ -1125,8 +1125,9 @@ pub(crate) mod tests {
     use crate::fixtures::{diff_msg, fetched, press, thread};
     use crate::picker::{Choice, fuzzy_score};
     use crate::route::OPEN;
+    use ghtui_api::browse::IssueState;
     use ghtui_api::browse::SearchResults;
-    use ghtui_api::model::{PrState, PrSummary};
+    use ghtui_api::model::PrSummary;
     use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode};
     use ghtui_ui::annotations::AnnotationKey;
     use ghtui_ui::overlays::PALETTE_ROWS;
@@ -1156,7 +1157,7 @@ pub(crate) mod tests {
             pr: PrRef::parse(&format!("o/r#{n}")).unwrap(),
             title: format!("PR {n}"),
             author: "a".into(),
-            state: PrState::Open,
+            state: IssueState::Open,
             updated_at: "2026-01-01T00:00:00Z".into(),
             additions: 0,
             deletions: 0,
@@ -2512,13 +2513,13 @@ pub(crate) mod tests {
     fn a_merged_prs_diff_is_from_its_own_base() {
         let pr = PrRef::parse("o/r#1").unwrap();
         for (pr_state, oid) in [
-            (PrState::Open, None),
+            (IssueState::Open, None),
             (
-                PrState::Merged,
+                IssueState::Merged,
                 Some("0123456789abcdef0123456789abcdef01234567"),
             ),
             (
-                PrState::Closed,
+                IssueState::Closed,
                 Some("0123456789abcdef0123456789abcdef01234567"),
             ),
         ] {
@@ -2683,7 +2684,7 @@ pub(crate) mod tests {
         let mut state = state();
         let pr = PrRef::parse("o/r#1").unwrap();
         let mut detail = crate::snapshot_tests::pr_detail();
-        detail.summary.state = ghtui_api::model::PrState::Open;
+        detail.summary.state = ghtui_api::browse::IssueState::Open;
         let _ = update(
             &mut state,
             Msg::Pr(pr.clone(), Box::new(Ok(detail.clone()))),
@@ -2697,7 +2698,7 @@ pub(crate) mod tests {
         };
         let cmds = act(&mut state, Action::Refresh);
         assert_eq!(load(&cmds), None, "started from the PR it had: {cmds:?}");
-        detail.summary.state = ghtui_api::model::PrState::Merged;
+        detail.summary.state = ghtui_api::browse::IssueState::Merged;
         detail.base_oid = "m".repeat(40);
         let cmds = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
         assert_eq!(load(&cmds).and_then(|b| b.oid), Some("m".repeat(40)));

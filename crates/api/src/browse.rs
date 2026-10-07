@@ -1716,11 +1716,11 @@ mod tests {
             "name": "trunk",
             "target": null,
             "associatedPullRequests": { "nodes": [
-                { "number": 1, "state": "MERGED", "headRefName": "trunk",
+                { "number": 1, "state": "MERGED", "isDraft": false, "headRefName": "trunk",
                   "repository": { "nameWithOwner": "someone/cli-fork" } },
-                { "number": 9, "state": "OPEN", "headRefName": "other",
+                { "number": 9, "state": "OPEN", "isDraft": false, "headRefName": "other",
                   "repository": { "nameWithOwner": "cli/cli" } },
-                { "number": 7, "state": "CLOSED", "headRefName": "trunk",
+                { "number": 7, "state": "CLOSED", "isDraft": false, "headRefName": "trunk",
                   "repository": { "nameWithOwner": "CLI/cli" } },
             ] },
         }))
@@ -1728,6 +1728,27 @@ mod tests {
         let info = branch.into_info(&RepoId::new("cli", "cli"), Some("trunk"));
         assert_eq!(info.pr, Some((7, IssueState::Closed)));
         assert!(info.default);
+    }
+
+    /// A branch whose pull request is a draft shows it as a draft, as a
+    /// PR's own page and the PR lists do, and the branches query asks.
+    #[test]
+    fn a_branchs_draft_pr_is_a_draft() {
+        let branch: wire_branches::Branch = serde_json::from_value(serde_json::json!({
+            "name": "wip",
+            "target": null,
+            "associatedPullRequests": { "nodes": [
+                { "number": 5, "state": "OPEN", "isDraft": true, "headRefName": "wip",
+                  "repository": { "nameWithOwner": "cli/cli" } },
+            ] },
+        }))
+        .unwrap();
+        let info = branch.into_info(&RepoId::new("cli", "cli"), None);
+        assert_eq!(info.pr, Some((5, IssueState::Draft)));
+        assert!(
+            crate::raw::BRANCHES.contains("isDraft"),
+            "the branches query doesn't ask whether a PR is a draft"
+        );
     }
 
     /// A branch whose tip has no author shows only its headline, not a
@@ -2468,8 +2489,8 @@ pub struct BranchInfo {
 pub(crate) mod wire_branches {
     use serde::Deserialize;
 
-    use super::GitActor;
     pub use super::wire::{Nodes, RepoName};
+    use super::{GitActor, PullRequestState};
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -2484,7 +2505,8 @@ pub(crate) mod wire_branches {
     #[serde(rename_all = "camelCase")]
     pub struct Pr {
         pub number: u64,
-        pub state: String,
+        pub state: PullRequestState,
+        pub is_draft: bool,
         pub head_ref_name: String,
         pub repository: RepoName,
     }
@@ -2523,14 +2545,7 @@ impl wire_branches::Branch {
             .associated_pull_requests
             .into_iter()
             .find(ours)
-            .map(|p| {
-                let state = match p.state.as_str() {
-                    "MERGED" => IssueState::Merged,
-                    "CLOSED" => IssueState::Closed,
-                    _ => IssueState::Open,
-                };
-                (p.number, state)
-            });
+            .map(|p| (p.number, IssueState::pr(p.state, p.is_draft)));
         BranchInfo {
             default: default == Some(self.name.as_str()),
             name: self.name,
@@ -4625,6 +4640,19 @@ pub mod keys {
 
 // ---- conversions ---------------------------------------------------------------------
 
+impl IssueState {
+    /// A pull request's state: the only place one is made, so none forgets
+    /// that an open draft is a draft.
+    pub(crate) fn pr(state: PullRequestState, draft: bool) -> Self {
+        match state {
+            PullRequestState::Open if draft => Self::Draft,
+            PullRequestState::Open => Self::Open,
+            PullRequestState::Closed => Self::Closed,
+            PullRequestState::Merged => Self::Merged,
+        }
+    }
+}
+
 fn issue_state(state: WireIssueState, reason: Option<StateReason>) -> IssueState {
     match (state, reason) {
         (WireIssueState::Open, _) => IssueState::Open,
@@ -4779,12 +4807,7 @@ impl BrowseItem {
                 number: count(p.number),
                 title: p.title,
                 is_pr: true,
-                state: match p.state {
-                    PullRequestState::Open if p.is_draft => IssueState::Draft,
-                    PullRequestState::Open => IssueState::Open,
-                    PullRequestState::Closed => IssueState::Closed,
-                    PullRequestState::Merged => IssueState::Merged,
-                },
+                state: IssueState::pr(p.state, p.is_draft),
                 author: author(p.author),
                 updated_at: p.updated_at.0,
                 comments: count(p.comments.total_count),

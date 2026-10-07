@@ -15,8 +15,8 @@ use ghtui_api::browse::{
     TagInfo, TeamDetail, TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
-    Capped, ChecksState, Inbox, Label, Mergeable, MilestoneRef, PrDetail, PrRef, PrState,
-    PrSummary, RepoId, ReviewDecision,
+    Capped, ChecksState, Inbox, Label, Mergeable, MilestoneRef, PrDetail, PrRef, PrSummary, RepoId,
+    ReviewDecision,
 };
 use ghtui_theme::{Bg, Syntax};
 
@@ -385,33 +385,29 @@ fn issue_icon(icons: Icons, state: IssueState, is_pr: bool) -> (String, Role) {
         (IssueState::Open, false) => (if nerd { "\u{f41b}" } else { "◉" }.into(), Role::Success),
         (IssueState::Closed, false) => (if nerd { "\u{f41d}" } else { "✓" }.into(), Role::Accent),
         (IssueState::NotPlanned, _) => (if nerd { "\u{f468}" } else { "⊘" }.into(), Role::Meta),
-        (IssueState::Open, true) => (icons.pr_state(PrState::Open).into(), Role::Success),
-        (IssueState::Draft, _) => (icons.pr_state(PrState::Draft).into(), Role::Meta),
-        (IssueState::Merged, _) => (icons.pr_state(PrState::Merged).into(), Role::Accent),
-        (IssueState::Closed, true) => (icons.pr_state(PrState::Closed).into(), Role::Error),
+        (IssueState::Open, true) => (icons.pr_state(IssueState::Open).into(), Role::Success),
+        (IssueState::Draft, _) => (icons.pr_state(IssueState::Draft).into(), Role::Meta),
+        (IssueState::Merged, _) => (icons.pr_state(IssueState::Merged).into(), Role::Accent),
+        (IssueState::Closed, true) => (icons.pr_state(IssueState::Closed).into(), Role::Error),
     }
 }
 
-fn state_chip(state: IssueState, is_pr: bool, icons: Icons) -> Seg {
-    let (icon, _) = issue_icon(icons, state, is_pr);
-    let (text, bg) = match state {
+/// An issue's or pull request's state, as its chip says it.
+pub fn state_label(state: IssueState, is_pr: bool) -> (&'static str, Bg) {
+    match state {
         IssueState::Open => ("Open", Bg::SuccessContainer),
         IssueState::Draft => ("Draft", Bg::SecondaryContainer),
         IssueState::Merged => ("Merged", Bg::TertiaryContainer),
         IssueState::NotPlanned => ("Closed as not planned", Bg::SecondaryContainer),
         IssueState::Closed if is_pr => ("Closed", Bg::ErrorContainer),
         IssueState::Closed => ("Closed", Bg::TertiaryContainer),
-    };
-    chip(format!("{icon} {text}"), bg)
+    }
 }
 
-fn pr_state(s: PrState) -> IssueState {
-    match s {
-        PrState::Open => IssueState::Open,
-        PrState::Draft => IssueState::Draft,
-        PrState::Closed => IssueState::Closed,
-        PrState::Merged => IssueState::Merged,
-    }
+fn state_chip(state: IssueState, is_pr: bool, icons: Icons) -> Seg {
+    let (icon, _) = issue_icon(icons, state, is_pr);
+    let (text, bg) = state_label(state, is_pr);
+    chip(format!("{icon} {text}"), bg)
 }
 
 const MONTHS: [&str; 12] = [
@@ -2138,7 +2134,7 @@ fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
 /// GitHub's merge box: checks, reviews, conflicts.
 fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
     let s = &d.summary;
-    if matches!(s.state, PrState::Merged | PrState::Closed) {
+    if matches!(s.state, IssueState::Merged | IssueState::Closed) {
         return;
     }
     connector(page);
@@ -4169,7 +4165,7 @@ pub fn home(
                     number: p.pr.number,
                     title: p.title.clone(),
                     is_pr: true,
-                    state: pr_state(p.state),
+                    state: p.state,
                     author: p.author.clone(),
                     updated_at: p.updated_at.clone(),
                     comments: p.comments,
