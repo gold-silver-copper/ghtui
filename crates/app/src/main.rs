@@ -173,13 +173,7 @@ async fn run(started: Instant) -> Result<()> {
             // when you get there. With tabs reopened, it's a new tab after
             // them.
             let mut cmds = vec![state::Cmd::Api(Api::FetchViewer)];
-            if state.tab_count() > 1 {
-                let last = state.tab_count() - 1;
-                let _ = state.switch_to_tab(last);
-                cmds.extend(state.open_tab(target));
-            } else {
-                cmds.extend(state.go(target));
-            }
+            cmds.extend(state.start_at(target));
             cmds
         }
         None => state.load_visible(true),

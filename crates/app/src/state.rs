@@ -1683,6 +1683,25 @@ pub(crate) mod tests {
             assert_eq!((again.active_tab(), route(&again)), (0, issue(1)));
         }
 
+        /// A page asked for on the command line loads, also when it's the
+        /// last of the reopened tabs.
+        #[test]
+        fn the_page_asked_for_loads_after_reopened_tabs() {
+            let releases = Route::Releases(RepoId::new("o", "r"));
+            let mut s = state();
+            s.restore_tabs(&[issue(1).url(), releases.url()]);
+            let cmds = s.start_at(Target::Page(releases));
+            assert_eq!(s.tab_count(), 3);
+            let fetches = |key: &DataKey| {
+                cmds.iter()
+                    .any(|c| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if k == key))
+            };
+            assert!(
+                fetches(&DataKey::Releases(RepoId::new("o", "r"))),
+                "{cmds:?}"
+            );
+        }
+
         /// A capital hint letter follows the link in a new tab.
         #[test]
         fn capital_hints_open_a_tab() {

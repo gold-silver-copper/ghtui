@@ -165,6 +165,25 @@ impl State {
             self.info(format!("Already on tab {}", i + 1));
             return Vec::new();
         }
+        self.move_to_tab(i);
+        self.load_visible(false)
+    }
+
+    /// What the command line asked for: on screen, or with tabs reopened,
+    /// in a new tab after them.
+    #[must_use]
+    pub fn start_at(&mut self, target: Target) -> Vec<Cmd> {
+        if self.tab_count() == 1 {
+            return self.go(target);
+        }
+        // Only passing through the last tab: loading it would mark its
+        // data as on its way.
+        self.move_to_tab(self.tab_count() - 1);
+        self.open_tab(target)
+    }
+
+    /// Puts tab `i` on screen.
+    fn move_to_tab(&mut self, i: usize) {
         while self.active_tab() < i {
             let next = self.after.remove(0);
             let left = self.swap_in(next);
@@ -177,7 +196,6 @@ impl State {
             let right = self.swap_in(previous);
             self.after.insert(0, right);
         }
-        self.load_visible(false)
     }
 
     /// `]` and `[`: the next or previous open tab, wrapping around.
