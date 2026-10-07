@@ -1532,6 +1532,19 @@ async fn a_forbidden_field_beside_a_found_repo_is_still_left_out() {
     assert_eq!(gh.take_left_out(), [forbidden]);
 }
 
+/// An error without a message has nothing to say, so it doesn't fail
+/// the data beside it.
+#[tokio::test]
+async fn an_error_without_a_message_is_passed_over() {
+    let (gh, _) = github(vec![Reply::new(
+        200,
+        r#"{"data":{"repository":{"heads":{"totalCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"tags":{"totalCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}},"errors":[{"path":["repository"]}]}"#,
+    )])
+    .await;
+    gh.refs(&RepoId::new("o", "r")).await.unwrap();
+    assert_eq!(gh.take_left_out(), Vec::<String>::new());
+}
+
 /// A NOT_FOUND pathed at something the data does hold explains no null, so
 /// it is still left out.
 #[tokio::test]
