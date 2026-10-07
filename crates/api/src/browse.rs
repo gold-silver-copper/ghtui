@@ -1509,6 +1509,22 @@ fn latest_runs(items: Vec<CheckItem>) -> Vec<CheckItem> {
 #[cfg(test)]
 mod tests {
 
+    /// Your pending review is neither among a PR's reviews nor counted as
+    /// one left out.
+    #[test]
+    fn a_pending_review_is_not_counted_among_the_reviews() {
+        let review = |state: &str| serde_json::json!({"author": null, "state": state, "body": "", "submittedAt": null});
+        let wire: WirePrActivity = serde_json::from_value(serde_json::json!({
+            "id": "PR_1",
+            "comments": {"totalCount": 0, "nodes": []},
+            "reviews": {"totalCount": 3, "nodes": [review("APPROVED"), review("PENDING"), review("COMMENTED")]},
+            "commits": {"totalCount": 0, "nodes": []},
+        }))
+        .unwrap();
+        let reviews = wire.into_activity().reviews;
+        assert_eq!((reviews.len(), reviews.left_out()), (2, 0));
+    }
+
     /// A tag's commit, lightweight or annotated; a tree's entries by kind,
     /// directories first, then by name whatever its case.
     #[test]
@@ -4896,12 +4912,15 @@ fn comments(c: IssueComments) -> Capped<Comment> {
 impl WirePrActivity {
     pub(crate) fn into_activity(self) -> PrActivity {
         let reviews = self.reviews.as_ref().map_or(0, |r| count(r.total_count));
+        // Your pending review isn't one yet: neither shown nor left out.
+        let (pending, submitted): (Vec<_>, Vec<_>) = nodes(self.reviews.and_then(|r| r.nodes))
+            .partition(|r| r.state == ReviewState::Pending);
         PrActivity {
             id: self.id.into(),
             comments: comments(self.comments),
             reviews: Capped::new(
-                nodes(self.reviews.and_then(|r| r.nodes))
-                    .filter(|r| r.state != ReviewState::Pending)
+                submitted
+                    .into_iter()
                     .map(|r| ReviewSummary {
                         author: author(r.author),
                         state: r.state,
@@ -4909,7 +4928,7 @@ impl WirePrActivity {
                         submitted_at: r.submitted_at.map(|d| d.0).unwrap_or_default(),
                     })
                     .collect(),
-                reviews,
+                reviews.saturating_sub(pending.len() as u64),
             ),
             commits: Capped::from_nodes(self.commits.total_count, self.commits.nodes, |n| {
                 n.commit.into_info()
