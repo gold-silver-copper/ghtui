@@ -197,7 +197,7 @@ https://github.com/rust-lang/rust/activity                                  exte
 https://github.com/rust-lang/rust/custom-properties                         external session
 https://github.com/rust-lang/rust/attestations                              external rare
 https://github.com/rust-lang/rust/settings                                  external session
-https://github.com/rust-lang/rust/branches                                  todo Branches
+https://github.com/rust-lang/rust/branches                                  Branches
 https://github.com/rust-lang/rust/tags                                      Tags
 https://github.com/rust-lang/rust/releases                                  Releases
 https://github.com/rust-lang/rust/releases/latest                           Releases

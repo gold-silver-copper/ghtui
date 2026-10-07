@@ -2,11 +2,11 @@
 
 use crossterm::event::KeyEvent;
 use ghtui_api::browse::{
-    Asset, Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, Contributed,
-    Contributions, DiscussionCategory, DiscussionComment, DiscussionDetail, DiscussionList,
-    DiscussionSummary, EntryKind, IssueDetail, IssueState, IssueSummary, Job, JobSummary,
-    MonthActivity, PrActivity, Profile, Readme, Release, RepoOverview, RepoSummary, Results,
-    ReviewSummary, RunSummary, SearchResults, Step, TagInfo, TreeEntry, UserSummary, Week,
+    Asset, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo,
+    Contributed, Contributions, DiscussionCategory, DiscussionComment, DiscussionDetail,
+    DiscussionList, DiscussionSummary, EntryKind, IssueDetail, IssueState, IssueSummary, Job,
+    JobSummary, MonthActivity, PrActivity, Profile, Readme, Release, RepoOverview, RepoSummary,
+    Results, ReviewSummary, RunSummary, SearchResults, Step, TagInfo, TreeEntry, UserSummary, Week,
     Workflow, WorkflowRun,
 };
 use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
@@ -786,6 +786,42 @@ pub fn workflow_runs() -> (Workflow, Results<RunSummary>) {
     (workflow, runs)
 }
 
+/// The default branch and two others, one with a merged pull request.
+pub fn branches() -> Results<BranchInfo> {
+    let branch = |name: &str, default, headline: &str, pr| BranchInfo {
+        name: name.into(),
+        default,
+        oid: Some("8d1a76430406c877b35d0b627e7f796dcf0dfeca".into()),
+        headline: Some(headline.into()),
+        author: Some("octocat".into()),
+        date: Some("2026-10-02T12:00:00Z".into()),
+        pr,
+    };
+    Results {
+        total: 14,
+        items: vec![
+            branch(
+                "main",
+                true,
+                "Checks show each check's latest run once",
+                None,
+            ),
+            branch(
+                "links",
+                false,
+                "Discussions are pages",
+                Some((6, IssueState::Open)),
+            ),
+            branch(
+                "tabs",
+                false,
+                "Tabs keep their history",
+                Some((5, IssueState::Merged)),
+            ),
+        ],
+        next: Some("b1".into()),
+    }
+}
 /// A page of discussions with two categories.
 pub fn discussions() -> DiscussionList {
     let summary = |number, title: &str, category: &str, answered| DiscussionSummary {

@@ -7,10 +7,11 @@
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, Contributions,
-    DiscussionDetail, DiscussionList, EntryKind, IssueDetail, IssueState, IssueSummary, Job,
-    JobSummary, PrActivity, Profile, Release, RepoOverview, RepoSort, RepoSummary, Results,
-    RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary, Workflow, WorkflowRun,
+    Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo,
+    Contributions, DiscussionDetail, DiscussionList, EntryKind, IssueDetail, IssueState,
+    IssueSummary, Job, JobSummary, PrActivity, Profile, Release, RepoOverview, RepoSort,
+    RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary,
+    Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -2415,6 +2416,65 @@ pub fn tags(page: &mut Page, repo: &RepoId, list: Option<&Results<TagInfo>>, now
     page.box_bottom();
 }
 
+/// A repository's branches, most recently committed first: each one's
+/// latest commit and pull request.
+pub fn branches(
+    page: &mut Page,
+    repo: &RepoId,
+    list: Option<&Results<BranchInfo>>,
+    icons: Icons,
+    now: u64,
+) {
+    let Some(l) = list else {
+        page.line(vec![Seg::new("Loading branches…", Role::Meta)]);
+        return;
+    };
+    let title = format!("Branches  {}", compact(l.total));
+    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
+    if l.items.is_empty() {
+        empty_row(page, "No branches.");
+    }
+    box_rows(page, &l.items, |page, b| {
+        item(page, url::tree(repo, &b.name, ""), |page, link| {
+            let mut segs = vec![Seg::linked(b.name.clone(), Role::Link, link)];
+            if b.default {
+                segs.push(space());
+                segs.push(chip("default", Bg::SecondaryContainer));
+            }
+            let mut right = Vec::new();
+            if let Some((number, state)) = b.pr {
+                let (icon, role) = issue_icon(icons, state, true);
+                right.push(Seg::new(format!("{icon} "), role));
+                right.push(link_seg(
+                    page,
+                    format!("#{number}"),
+                    url::pull(&PrRef {
+                        repo: repo.clone(),
+                        number,
+                    }),
+                    Role::Link,
+                ));
+                right.push(Seg::new("  ", Role::Meta));
+            }
+            if let Some(date) = &b.date {
+                right.push(Seg::new(time::ago_iso(date, now), Role::Meta));
+            }
+            page.box_line(segs, right, 0);
+            let mut meta = Vec::new();
+            if let Some(oid) = &b.oid {
+                let sha = crate::text::short_sha(oid);
+                meta.push(link_seg(page, sha, url::commit(repo, oid), Role::Code));
+                meta.push(Seg::new(" ", Role::Meta));
+            }
+            let what = [b.headline.as_deref(), b.author.as_deref()];
+            let text = what.into_iter().flatten().collect::<Vec<_>>().join(" · ");
+            meta.push(Seg::new(text, Role::Meta));
+            body(page, meta);
+        });
+    });
+    more_row(page, l.next.is_some(), l.items.len(), l.total);
+    page.box_bottom();
+}
 // ---- commits -------------------------------------------------------------------------------
 
 /// A commit: its message, who and when, its parents, and a link to its

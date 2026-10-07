@@ -1249,6 +1249,37 @@ impl GitHub {
         Ok(tags)
     }
 
+    /// Branches, most recently committed first, 30 at a time from `after`,
+    /// each with its latest commit and pull request.
+    pub async fn branches(
+        &self,
+        repo: &RepoId,
+        after: Option<String>,
+    ) -> Result<browse::Results<browse::BranchInfo>, ApiError> {
+        let first = after.is_none();
+        let data = self
+            .graphql_json(
+                "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { defaultBranchRef { name } refs(refPrefix: \"refs/heads/\", first: 30, after: $after, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name target { ... on Commit { oid messageHeadline committedDate author { name user { login } } } } associatedPullRequests(first: 1, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number state } } } } } }",
+                serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after }),
+            )
+            .await?;
+        let default = data
+            .pointer("/repository/defaultBranchRef/name")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        let wire: browse::wire_branches::Branches = serde_json::from_value(
+            data.pointer("/repository/refs")
+                .filter(|r| !r.is_null())
+                .cloned()
+                .ok_or_else(|| ApiError::NotFound(repo.to_string()))?,
+        )?;
+        let branches = wire.into_results(default.as_deref());
+        if first {
+            return Ok(self.kept(&browse::keys::branches(repo), branches).await);
+        }
+        Ok(branches)
+    }
+
     /// A workflow run (one attempt of it, or the latest) and its jobs.
     pub async fn workflow_run(
         &self,

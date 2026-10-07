@@ -1603,6 +1603,128 @@ pub struct RepoCommitChecks {
     pub object: Option<ChecksTarget>,
 }
 
+// ---- branches ---------------------------------------------------------------------------------
+
+/// A branch, and its latest commit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchInfo {
+    pub name: String,
+    pub default: bool,
+    pub oid: Option<String>,
+    pub headline: Option<String>,
+    pub author: Option<String>,
+    /// ISO 8601: when its latest commit was committed.
+    pub date: Option<String>,
+    /// Its most recent pull request: number and state.
+    pub pr: Option<(u64, IssueState)>,
+}
+
+pub(crate) mod wire_branches {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Login {
+        pub login: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Author {
+        pub name: Option<String>,
+        pub user: Option<Login>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Commit {
+        pub oid: Option<String>,
+        pub message_headline: Option<String>,
+        pub committed_date: Option<String>,
+        pub author: Option<Author>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Pr {
+        pub number: u64,
+        pub state: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Prs {
+        pub nodes: Vec<Option<Pr>>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Branch {
+        pub name: String,
+        pub target: Option<Commit>,
+        pub associated_pull_requests: Prs,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct PageInfo {
+        pub has_next_page: bool,
+        pub end_cursor: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Branches {
+        pub total_count: u64,
+        pub page_info: PageInfo,
+        pub nodes: Vec<Option<Branch>>,
+    }
+}
+
+impl wire_branches::Branches {
+    pub(crate) fn into_results(self, default: Option<&str>) -> Results<BranchInfo> {
+        Results {
+            total: self.total_count,
+            items: self
+                .nodes
+                .into_iter()
+                .flatten()
+                .map(|b| {
+                    let commit = b.target;
+                    let author = commit.as_ref().and_then(|c| c.author.as_ref());
+                    BranchInfo {
+                        default: default == Some(b.name.as_str()),
+                        oid: commit.as_ref().and_then(|c| c.oid.clone()),
+                        headline: commit.as_ref().and_then(|c| c.message_headline.clone()),
+                        author: author.and_then(|a| {
+                            a.user
+                                .as_ref()
+                                .map(|u| u.login.clone())
+                                .or_else(|| a.name.clone())
+                        }),
+                        date: commit.as_ref().and_then(|c| c.committed_date.clone()),
+                        pr: b
+                            .associated_pull_requests
+                            .nodes
+                            .into_iter()
+                            .flatten()
+                            .next()
+                            .map(|p| {
+                                let state = match p.state.as_str() {
+                                    "MERGED" => IssueState::Merged,
+                                    "CLOSED" => IssueState::Closed,
+                                    _ => IssueState::Open,
+                                };
+                                (p.number, state)
+                            }),
+                        name: b.name,
+                    }
+                })
+                .collect(),
+            next: self
+                .page_info
+                .end_cursor
+                .filter(|_| self.page_info.has_next_page),
+        }
+    }
+}
+
 // ---- discussions ------------------------------------------------------------------------------
 
 /// Whose discussions: a repository's, or an organization's (which GitHub
@@ -2864,6 +2986,9 @@ pub mod keys {
     }
     pub fn tags(repo: &RepoId) -> String {
         format!("tags:{repo}")
+    }
+    pub fn branches(repo: &RepoId) -> String {
+        format!("branches:{repo}")
     }
     pub fn owner_repos(login: &str, sort: super::RepoSort) -> String {
         format!("owner-repos:{}:{sort:?}", login.to_lowercase())

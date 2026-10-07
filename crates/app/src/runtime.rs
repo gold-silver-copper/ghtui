@@ -741,6 +741,9 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
             Data::Release(Box::new(v))
         }),
         DataKey::Tags(repo) => at(gh.cached(&keys::tags(repo))?, |v| Data::Tags(Box::new(v))),
+        DataKey::Branches(repo) => at(gh.cached(&keys::branches(repo))?, |v| {
+            Data::Branches(Box::new(v))
+        }),
         DataKey::Run(repo, run, attempt) => at(gh.cached(&keys::run(repo, *run, *attempt))?, |v| {
             Data::Run(Box::new(v))
         }),
@@ -801,6 +804,7 @@ async fn fetch_more(gh: &GitHub, key: &DataKey, after: String) -> Result<Data, A
         )),
         DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, Some(after)).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, Some(after)).await?)),
+        DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, Some(after)).await?)),
         DataKey::WorkflowRuns(repo, file) => {
             Data::Runs(Box::new(gh.workflow_runs(repo, file, Some(after)).await?))
         }
@@ -836,6 +840,7 @@ pub(crate) async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> 
         DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, None).await?)),
         DataKey::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, None).await?)),
+        DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, None).await?)),
         DataKey::Run(repo, run, attempt) => {
             Data::Run(Box::new(gh.workflow_run(repo, *run, *attempt).await?))
         }

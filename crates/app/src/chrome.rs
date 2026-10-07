@@ -133,6 +133,7 @@ impl State {
             | Route::Releases(repo)
             | Route::Release { repo, .. }
             | Route::Tags(repo)
+            | Route::Branches(repo)
             | Route::WorkflowRun { repo, .. }
             | Route::Job { repo, .. }
             | Route::Workflow { repo, .. }

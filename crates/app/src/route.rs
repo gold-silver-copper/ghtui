@@ -91,6 +91,7 @@ pub enum Route {
         tag: String,
     },
     Tags(RepoId),
+    Branches(RepoId),
     /// A revision's commits, of `path` if it isn't empty.
     Commits {
         repo: RepoId,
@@ -225,6 +226,7 @@ impl Route {
             },
             Route::Discussion { of, number } => format!("{}/{number}", discussions_url(of)),
             Route::Tags(repo) => format!("{}/tags", links::repo(repo)),
+            Route::Branches(repo) => format!("{}/branches", links::repo(repo)),
             Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
             Route::Commit { repo, oid } => links::commit(repo, oid),
             Route::User { login, tab } => match tab {
@@ -272,6 +274,7 @@ impl Route {
             Route::Discussions { of, .. } => format!("{} · Discussions", of_title(of)),
             Route::Discussion { of, number } => format!("{} · Discussion {number}", of_title(of)),
             Route::Tags(repo) => format!("{repo} · Tags"),
+            Route::Branches(repo) => format!("{repo} · Branches"),
             Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
             Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
             Route::Commit { repo, oid } => format!("{repo}@{}", short_sha(oid)),
@@ -309,6 +312,7 @@ impl Route {
                 ..
             }
             | Route::Tags(repo)
+            | Route::Branches(repo)
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
             Route::Home
@@ -590,6 +594,11 @@ impl Target {
             },
             [o, r, "tags"] => match repo(o, r) {
                 Some(repo) => Route::Tags(repo),
+                None => return external(),
+            },
+            // All, active, stale, yours: one list.
+            [o, r, "branches", ..] => match repo(o, r) {
+                Some(repo) => Route::Branches(repo),
                 None => return external(),
             },
             [o, r, "commits", rest @ ..] => {
@@ -1341,6 +1350,7 @@ pub(crate) mod tests {
                 repo().prop_map(Route::Forks),
                 repo().prop_map(Route::Releases),
                 repo().prop_map(Route::Tags),
+                repo().prop_map(Route::Branches),
                 (repo(), "[A-Za-z0-9._-]{1,12}")
                     .prop_filter("not . or ..", |(_, t)| t != "." && t != "..")
                     .prop_map(|(repo, tag)| Route::Release { repo, tag }),
