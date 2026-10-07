@@ -621,13 +621,15 @@ fn parse(s: &str) -> Option<Target> {
                 query: query.unwrap_or_else(|| format!("is:open is:{is} {whose} archived:false")),
             }
         }
+        // Names that can't be GitHub's are pages GitHub doesn't have.
+        ["stars" | "orgs", login, ..] if !valid_login(login) => return None,
         ["stars", login] => Route::User {
             login: (*login).to_owned(),
             tab: ProfileTab::Stars,
         },
         ["orgs", login] => Route::user(login),
         ["advisories"] => Route::Advisories(None),
-        ["advisories", ghsa] => Route::Advisory {
+        ["advisories", ghsa] if valid_ghsa(ghsa) => Route::Advisory {
             repo: None,
             ghsa: (*ghsa).to_owned(),
         },
@@ -635,7 +637,7 @@ fn parse(s: &str) -> Option<Target> {
         // GitHub's form for a new team.
         ["orgs", _, "teams", "new"] => return None,
         // Its members, repositories and child teams are on its page.
-        ["orgs", org, "teams", slug, ..] => Route::Team {
+        ["orgs", org, "teams", slug, ..] if valid_slug(slug) => Route::Team {
             org: (*org).to_owned(),
             slug: (*slug).to_owned(),
         },
@@ -650,7 +652,7 @@ fn parse(s: &str) -> Option<Target> {
                 repos()
             },
         },
-        [login] if !RESERVED.contains(login) => Route::User {
+        [login] if !RESERVED.contains(login) && valid_login(login) => Route::User {
             login: (*login).to_owned(),
             tab: match tab.as_deref() {
                 None | Some("overview") => ProfileTab::Overview,
@@ -704,12 +706,16 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
                 Route::Pulls { repo, query }
             }
         }
-        // A label's issues.
+        // A label's issues. Its name goes into a search, which control
+        // characters don't survive.
+        ["labels", label] if label.contains(char::is_control) => return None,
         ["labels", label] => {
-            let label = if label.contains(char::is_whitespace) {
+            // As a search reads it: runs of spaces are one.
+            let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
+            let label = if label.contains(' ') {
                 format!("\"{label}\"")
             } else {
-                (*label).to_owned()
+                label
             };
             Route::Issues {
                 repo,
@@ -770,7 +776,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             }
             Route::Compare { repo, spec }
         }
-        ["blame", rev, path @ ..] if !path.is_empty() => Route::Blame {
+        ["blame", rev, path @ ..] if !path.is_empty() && valid_rev(rev) => Route::Blame {
             repo,
             rev: (*rev).to_owned(),
             path: path.join("/"),
@@ -778,12 +784,12 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
         },
         // The security overview's part ghtui can show: advisories.
         ["security"] | ["security", "advisories"] => Route::Advisories(Some(repo)),
-        ["security", "advisories", ghsa] => Route::Advisory {
+        ["security", "advisories", ghsa] if valid_ghsa(ghsa) => Route::Advisory {
             repo: Some(repo),
             ghsa: (*ghsa).to_owned(),
         },
         // A page's revisions and history: the page.
-        ["wiki", rest @ ..] => Route::Wiki {
+        ["wiki", rest @ ..] if !rest.iter().any(|p| p.contains(char::is_control)) => Route::Wiki {
             repo,
             page: rest.first().map(|p| (*p).to_owned()),
         },
@@ -791,7 +797,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             let environment = match rest {
                 [] => None,
                 ["activity_log"] => param("environments_filter"),
-                [env] => Some((*env).to_owned()),
+                [env] if !env.contains(char::is_control) => Some((*env).to_owned()),
                 _ => return None,
             };
             Route::Deployments { repo, environment }
@@ -801,7 +807,8 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
         ["commits", rest @ ..] => {
             let (rev, path) = match rest {
                 [] => ("HEAD".to_owned(), String::new()),
-                [rev, path @ ..] => ((*rev).to_owned(), path.join("/")),
+                [rev, path @ ..] if valid_rev(rev) => ((*rev).to_owned(), path.join("/")),
+                _ => return None,
             };
             Route::Commits { repo, rev, path }
         }
@@ -838,10 +845,19 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             step: fragment.and_then(step_line),
             query: param("q").unwrap_or_default(),
         },
-        ["actions", "workflows", file] => Route::Workflow {
-            repo,
-            file: (*file).to_owned(),
-        },
+        ["actions", "workflows", file]
+            if !file.contains(|c: char| c.is_control() || c.is_whitespace()) =>
+        {
+            Route::Workflow {
+                repo,
+                file: (*file).to_owned(),
+            }
+        }
+        // A commit is named by its SHA or a ref, which git keeps to
+        // printable characters without spaces.
+        ["commit", rev, ..] | ["git", "commit", rev] if !valid_rev(rev) => {
+            return None;
+        }
         // A check run's logs, from a pull request's checks.
         ["commit", _, "checks", job, ..] => Route::Job {
             repo,
@@ -897,7 +913,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             match rest {
                 [] if review_comment => return Some(Target::Files(DiffOf::Pr(pr))),
                 [] => Route::pr(pr),
-                ["commits" | "changes", sha] => Route::Commit {
+                ["commits" | "changes", sha] if valid_rev(sha) => Route::Commit {
                     repo: pr.repo,
                     oid: (*sha).to_owned(),
                 },
@@ -954,16 +970,20 @@ fn gist(parsed: &url::Url) -> Option<Route> {
             owner: None,
             id: (*id).to_owned(),
         },
-        [login] => Route::Gists((*login).to_owned()),
-        [owner, id] if is_gist_id(id) => Route::Gist {
+        [login] if valid_login(login) => Route::Gists((*login).to_owned()),
+        [owner, id] if is_gist_id(id) && valid_login(owner) => Route::Gist {
             owner: Some((*owner).to_owned()),
             id: (*id).to_owned(),
         },
         // Revisions, forks, stars: the gist.
-        [owner, id, "revisions" | "forks" | "stargazers"] if is_gist_id(id) => Route::Gist {
-            owner: Some((*owner).to_owned()),
-            id: (*id).to_owned(),
-        },
+        [owner, id, "revisions" | "forks" | "stargazers"]
+            if is_gist_id(id) && valid_login(owner) =>
+        {
+            Route::Gist {
+                owner: Some((*owner).to_owned()),
+                id: (*id).to_owned(),
+            }
+        }
         _ => return None,
     })
 }
@@ -979,7 +999,7 @@ pub fn compare_url(of: &DiffOf) -> String {
 fn discussions(of: DiscussionsOf, rest: &[&str]) -> Option<Route> {
     Some(match rest {
         [] => Route::Discussions { of, category: None },
-        ["categories", slug] => Route::Discussions {
+        ["categories", slug] if valid_slug(slug) => Route::Discussions {
             of,
             category: Some((*slug).to_owned()),
         },
@@ -1152,9 +1172,63 @@ fn valid_login(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
+/// A revision as git allows ref names and SHAs to be written (roughly
+/// `git check-ref-format`): no spaces or control characters, none of
+/// `~^:?*[\`, no `..` or `@{`.
+fn valid_rev(s: &str) -> bool {
+    !s.is_empty()
+        && !s.contains("..")
+        && !s.contains("@{")
+        && !s.ends_with('.')
+        && !s
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || "~^:?*[\\".contains(c))
+}
+
+/// A security advisory's ID: `GHSA-xxxx-xxxx-xxxx`.
+fn valid_ghsa(s: &str) -> bool {
+    s.strip_prefix("GHSA-").is_some_and(|rest| {
+        !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    })
+}
+
+/// A team's slug: its name, lowercased, its other characters dashes.
+fn valid_slug(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// Names GitHub can't have aren't pages (found by fuzzing: a user
+    /// named `https:` and NULs opened, and its URL led elsewhere).
+    #[test]
+    fn impossible_names_open_the_browser() {
+        for url in [
+            "https://github.com/https:%00%00/",
+            "https://github.com/a%20b",
+            "https://github.com/stars/a:b",
+            "https://github.com/orgs/a%2Fb/teams",
+            "https://github.com/orgs/a/teams/b%20c",
+            "https://gist.github.com/a:b",
+            "https://github.com/o/r/commit/o%20[[x]]%20",
+            "https://github.com/o/r/commit/a..b",
+            "https://github.com/o/r/labels/a%0Bb",
+        ] {
+            assert!(
+                matches!(Target::from_url(url), Target::External(_)),
+                "{url}"
+            );
+        }
+        assert_eq!(page("https://github.com/octo-cat"), Route::user("octo-cat"));
+        assert!(matches!(
+            page("https://github.com/o/r/commit/main"),
+            Route::Commit { .. }
+        ));
+    }
 
     fn page(url: &str) -> Route {
         match Target::from_url(url) {
@@ -1607,6 +1681,11 @@ pub(crate) mod tests {
             })
         }
 
+        /// A user's or organization's name, as GitHub allows them.
+        fn login() -> impl Strategy<Value = String> {
+            "[A-Za-z0-9][A-Za-z0-9-]{0,15}"
+        }
+
         fn repo() -> impl Strategy<Value = RepoId> {
             (segment(), segment()).prop_map(|(o, r)| RepoId::new(o, r))
         }
@@ -1631,7 +1710,7 @@ pub(crate) mod tests {
         fn discussions_of() -> impl Strategy<Value = DiscussionsOf> {
             prop_oneof![
                 repo().prop_map(DiscussionsOf::Repo),
-                segment().prop_map(DiscussionsOf::Org),
+                login().prop_map(DiscussionsOf::Org),
             ]
         }
 
@@ -1682,11 +1761,11 @@ pub(crate) mod tests {
                 prop::option::of(repo()).prop_map(Route::Advisories),
                 (prop::option::of(repo()), "GHSA(-[2-9a-z]{4}){3}")
                     .prop_map(|(repo, ghsa)| Route::Advisory { repo, ghsa }),
-                segment().prop_map(Route::Teams),
-                (segment(), segment())
+                login().prop_map(Route::Teams),
+                (login(), segment())
                     .prop_filter("not the new-team form", |(_, slug)| slug != "new")
                     .prop_map(|(org, slug)| Route::Team { org, slug }),
-                (prop::option::of(segment()), "[0-9a-f]{20}|[0-9]{1,8}")
+                (prop::option::of(login()), "[0-9a-f]{20}|[0-9]{1,8}")
                     .prop_filter("an owner isn't a gist ID or a gist page", |(o, _)| {
                         o.as_deref()
                             .is_none_or(|o| !is_gist_id(o) && !GIST_PAGES.contains(&o))
@@ -1695,7 +1774,7 @@ pub(crate) mod tests {
                         o.is_some() || is_lone_gist_id(id)
                     })
                     .prop_map(|(owner, id)| Route::Gist { owner, id }),
-                segment()
+                login()
                     .prop_filter("not a gist ID or a gist page", |l| {
                         !is_lone_gist_id(l) && !GIST_PAGES.contains(&l.as_str())
                     })
@@ -1760,7 +1839,7 @@ pub(crate) mod tests {
                     pr: PrRef { repo, number },
                     tab: PrTab::Commits,
                 }),
-                segment()
+                login()
                     .prop_filter("not a reserved path", |l| !RESERVED.contains(&l.as_str()))
                     .prop_flat_map(|login| {
                         let tabs = prop::sample::select(vec![
