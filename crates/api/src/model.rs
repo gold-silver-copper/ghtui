@@ -224,12 +224,20 @@ pub enum IssueState {
     Draft,
 }
 
-impl IssueState {
-    /// A pull request's state: the only place one is made, so none forgets
-    /// that an open draft is a draft.
-    pub(crate) fn pr(state: q::PullRequestState, draft: bool) -> Self {
-        match state {
-            q::PullRequestState::Open if draft => Self::Draft,
+/// A pull request's state with its draft flag. Every query spreads this
+/// in, and only it makes a pull request's [`IssueState`], so none can get
+/// the state without the flag or forget that an open draft is a draft.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequest", schema_module = "schema")]
+pub struct PrStatus {
+    is_draft: bool,
+    state: q::PullRequestState,
+}
+
+impl From<PrStatus> for IssueState {
+    fn from(pr: PrStatus) -> Self {
+        match pr.state {
+            q::PullRequestState::Open if pr.is_draft => Self::Draft,
             q::PullRequestState::Open => Self::Open,
             q::PullRequestState::Closed => Self::Closed,
             q::PullRequestState::Merged => Self::Merged,
@@ -472,7 +480,7 @@ impl PrSummary {
             pr: pr_ref(&pr.repository.name_with_owner, pr.number)?,
             title: pr.title,
             author: author(pr.author),
-            state: IssueState::pr(pr.state, pr.is_draft),
+            state: pr.status.into(),
             updated_at: pr.updated_at.0,
             additions: count(pr.additions),
             deletions: count(pr.deletions),
@@ -562,6 +570,19 @@ impl ReviewThread {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every query's pull request state comes through one fragment, and
+    /// an open draft is a draft.
+    #[test]
+    fn an_open_draft_is_a_draft() {
+        let state = |json| IssueState::from(serde_json::from_value::<PrStatus>(json).unwrap());
+        let open = serde_json::json!({ "isDraft": true, "state": "OPEN" });
+        assert_eq!(state(open), IssueState::Draft);
+        let open = serde_json::json!({ "isDraft": false, "state": "OPEN" });
+        assert_eq!(state(open), IssueState::Open);
+        let merged = serde_json::json!({ "isDraft": true, "state": "MERGED" });
+        assert_eq!(state(merged), IssueState::Merged);
+    }
 
     #[test]
     fn parses_short_refs() {
