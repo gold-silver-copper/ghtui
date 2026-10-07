@@ -1,13 +1,13 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 732
+assertion_line: 1136
 expression: small(menu)
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 80, height: 24 },
     content: [
         "  ◆ ghtui   gold-silver-co  Here you can                                 1/26   ",
-        "   <> Code   ◉ Issues  7                                                        ",
+        "   <> Code   ◉ Issues   ⇄                                                       ",
         "──━━━━━━━━━───────────────  This page                                          ─",
         "                          ▌      ↵   Open ghtui/.github                         ",
         "  gold-silver-copper / ght       /   Search or jump to…                        ▐",
@@ -19,7 +19,7 @@ Buffer {
         "                                 o   Open the selection on GitHub              ▐",
         "  ⚖ MIT license   ☆ 1.2k s       y   Copy the selection's link                 ▐",
         "                                 i   Follow any link by its letters            ▐",
-        "   ⎇ main ▾                      u   Up a level                                ▐",
+        "   ⎇ main ▾   ⎇ 14 branche       u   Up a level                                ▐",
         "                               esc   Back                                       ",
         "  ╭─ octocat  Browse GitHu   alt-→   Forward (nothing to go forward to)         ",
         "  │▌▸ .github     Run CI o       H   Home                                       ",
@@ -46,8 +46,7 @@ Buffer {
         x: 10, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 12, y: 1, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 15, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 22, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
-        x: 25, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 23, y: 1, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 26, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,
         x: 79, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 0, y: 2, fg: Rgb(72, 76, 83), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
@@ -123,6 +122,7 @@ Buffer {
         x: 0, y: 13, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 2, y: 13, fg: Rgb(226, 226, 233), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,
         x: 12, y: 13, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
+        x: 14, y: 13, fg: Rgb(196, 198, 207), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 26, y: 13, fg: Rgb(226, 226, 233), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,
         x: 28, y: 13, fg: Rgb(169, 199, 255), bg: Rgb(40, 42, 47), underline: Reset, modifier: BOLD,
         x: 37, y: 13, fg: Rgb(226, 226, 233), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,

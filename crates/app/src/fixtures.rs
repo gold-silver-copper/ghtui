@@ -137,6 +137,10 @@ pub fn overview() -> RepoOverview {
         starred: false,
         id: NodeId::new("R_ghtui"),
         has_issues: true,
+        has_discussions: true,
+        has_wiki: true,
+        branches: 14,
+        tags: 9,
         entries: vec![
             entry(".github", EntryKind::Dir, None),
             entry("crates", EntryKind::Dir, None),
@@ -523,6 +527,10 @@ pub fn issue() -> IssueDetail {
         created_at: "2026-10-01T12:00:00Z".into(),
         labels: vec![label("bug", "d73a4a"), label("ui", "1d76db")],
         assignees: vec!["hubot".into()],
+        milestone: Some(ghtui_api::model::MilestoneRef {
+            number: 3,
+            title: "Links".into(),
+        }),
         comments: vec![Comment {
             id: Some(1_000_001),
             author: "hubot".into(),

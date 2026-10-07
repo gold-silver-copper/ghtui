@@ -149,18 +149,25 @@ impl State {
             | Route::WorkflowRun { repo, .. }
             | Route::Job { repo, .. }
             | Route::Workflow { repo, .. }
-            | Route::Actions(repo) => {
+            | Route::Actions(repo)
+            | Route::Discussions {
+                of: DiscussionsOf::Repo(repo),
+                ..
+            }
+            | Route::Discussion {
+                of: DiscussionsOf::Repo(repo),
+                ..
+            }
+            | Route::Advisories(Some(repo))
+            | Route::Advisory {
+                repo: Some(repo), ..
+            } => {
                 repo_crumbs(repo, c);
                 self.repo_tabs(repo, c);
-                let pulls = c.tabs.len() - 2;
-                c.active = Some(match route {
-                    Route::Issues { .. } | Route::Issue { .. } => 1,
-                    Route::Pulls { .. } => pulls,
-                    Route::Actions(_)
-                    | Route::WorkflowRun { .. }
-                    | Route::Job { .. }
-                    | Route::Workflow { .. } => pulls + 1,
-                    _ => 0,
+                let here = section(route);
+                c.active = c.tabs.iter().position(|(_, t)| match t {
+                    Target::Page(r) => section(r) == here,
+                    _ => false,
                 });
             }
             Route::Pr { pr, tab } => {
@@ -191,13 +198,6 @@ impl State {
                 }
                 c.crumb("Gist", None);
             }
-            Route::Advisories(Some(repo))
-            | Route::Advisory {
-                repo: Some(repo), ..
-            } => {
-                repo_crumbs(repo, c);
-                self.repo_tabs(repo, c);
-            }
             Route::Advisories(None) => c.crumb("Advisories", None),
             Route::Advisory { repo: None, ghsa } => {
                 c.crumb("Advisories", Some(Target::Page(Route::Advisories(None))));
@@ -220,18 +220,17 @@ impl State {
                 repo_crumbs(repo, c);
                 self.compare_page_tabs(repo, spec, c);
             }
-            // A repository's discussions: its tabs, none of them active
-            // (ghtui doesn't know which repositories have discussions on).
-            Route::Discussions { of, .. } | Route::Discussion { of, .. } => match of {
-                DiscussionsOf::Repo(repo) => {
-                    repo_crumbs(repo, c);
-                    self.repo_tabs(repo, c);
-                }
-                DiscussionsOf::Org(org) => {
-                    c.crumb(org, Some(Target::Page(Route::user(org))));
-                    c.crumb("Discussions", None);
-                }
-            },
+            Route::Discussions {
+                of: DiscussionsOf::Org(org),
+                ..
+            }
+            | Route::Discussion {
+                of: DiscussionsOf::Org(org),
+                ..
+            } => {
+                c.crumb(org, Some(Target::Page(Route::user(org))));
+                c.crumb("Discussions", None);
+            }
             Route::User { login, tab } => {
                 c.crumb(login, None);
                 let profile = self.profile(login);
@@ -442,9 +441,31 @@ impl State {
                 query: OPEN.into(),
             }),
         ));
+        if o.is_some_and(|o| o.has_discussions) {
+            c.tabs.push((
+                new_tab("◈", "Discussions", None),
+                Target::Page(Route::Discussions {
+                    of: DiscussionsOf::Repo(repo.clone()),
+                    category: None,
+                }),
+            ));
+        }
         c.tabs.push((
             new_tab("▶", "Actions", None),
             Target::Page(Route::Actions(repo.clone())),
+        ));
+        if o.is_some_and(|o| o.has_wiki) {
+            c.tabs.push((
+                new_tab("▤", "Wiki", None),
+                Target::Page(Route::Wiki {
+                    repo: repo.clone(),
+                    page: None,
+                }),
+            ));
+        }
+        c.tabs.push((
+            new_tab("⛨", "Security", None),
+            Target::Page(Route::Advisories(Some(repo.clone()))),
         ));
     }
 
@@ -521,6 +542,36 @@ impl State {
             problem: problem_y.map(|y| row(y, 1)),
             status: row(status_y, 1),
         }
+    }
+}
+
+/// Which of a repository's tabs a page is under, as on GitHub.
+#[derive(PartialEq, Eq)]
+enum Section {
+    Code,
+    Issues,
+    Pulls,
+    Discussions,
+    Actions,
+    Wiki,
+    Security,
+}
+
+fn section(route: &Route) -> Section {
+    match route {
+        Route::Issues { .. }
+        | Route::Issue { .. }
+        | Route::Milestones { .. }
+        | Route::Milestone { .. } => Section::Issues,
+        Route::Pulls { .. } | Route::Pr { .. } => Section::Pulls,
+        Route::Discussions { .. } | Route::Discussion { .. } => Section::Discussions,
+        Route::Actions(_)
+        | Route::WorkflowRun { .. }
+        | Route::Job { .. }
+        | Route::Workflow { .. } => Section::Actions,
+        Route::Wiki { .. } => Section::Wiki,
+        Route::Advisories(_) | Route::Advisory { .. } => Section::Security,
+        _ => Section::Code,
     }
 }
 

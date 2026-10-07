@@ -6,12 +6,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Label, NodeId, RepoId, author, count, labels};
+use crate::model::{Label, MilestoneRef, NodeId, RepoId, author, count, labels};
 use crate::queries::{
     Actor, AddCommentPayload, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount,
     GitObjectId, IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount,
-    PullRequestReviewDecision, PullRequestState, RepositoryName, ReviewState, StarPayload,
-    StatusState, UnstarPayload, Uri, UserCount, fragments, nodes,
+    PullRequestReviewDecision, PullRequestState, RefCount, RepositoryName, ReviewState,
+    StarPayload, StatusState, UnstarPayload, Uri, UserCount, fragments, nodes,
 };
 use ghtui_schema::schema;
 
@@ -137,6 +137,14 @@ pub struct RepoOverview {
     /// Node ID, for starring.
     pub id: NodeId,
     pub has_issues: bool,
+    #[serde(default)]
+    pub has_discussions: bool,
+    #[serde(default)]
+    pub has_wiki: bool,
+    #[serde(default)]
+    pub branches: u64,
+    #[serde(default)]
+    pub tags: u64,
     /// Root directory at the default branch (empty for empty repos).
     pub entries: Vec<TreeEntry>,
     /// README text, if there is one.
@@ -372,6 +380,8 @@ pub struct IssueDetail {
     pub created_at: String,
     pub labels: Vec<Label>,
     pub assignees: Vec<String>,
+    #[serde(default)]
+    pub milestone: Option<MilestoneRef>,
     pub comments: Vec<Comment>,
     /// Node ID, for commenting.
     pub id: NodeId,
@@ -563,6 +573,14 @@ pub struct RepoFull {
     pub parent: Option<RepositoryName>,
     pub viewer_has_starred: bool,
     pub has_issues_enabled: bool,
+    pub has_discussions_enabled: bool,
+    pub has_wiki_enabled: bool,
+    #[cynic(rename = "refs", alias)]
+    #[arguments(refPrefix: "refs/heads/")]
+    pub branch_count: Option<RefCount>,
+    #[cynic(rename = "refs", alias)]
+    #[arguments(refPrefix: "refs/tags/")]
+    pub tag_count: Option<RefCount>,
     #[arguments(expression: $expression)]
     pub object: Option<GitObject>,
 }
@@ -855,6 +873,7 @@ pub struct IssueFull {
     pub labels: Option<LabelConnection>,
     #[arguments(first: 10)]
     pub assignees: Assignees,
+    pub milestone: Option<crate::queries::MilestoneName>,
     #[arguments(first: 100)]
     pub comments: IssueComments,
     pub repository: RepositoryName,
@@ -4293,6 +4312,10 @@ impl RepoFull {
             starred: self.viewer_has_starred,
             id: self.id.into(),
             has_issues: self.has_issues_enabled,
+            has_discussions: self.has_discussions_enabled,
+            has_wiki: self.has_wiki_enabled,
+            branches: self.branch_count.map_or(0, |c| count(c.total_count)),
+            tags: self.tag_count.map_or(0, |c| count(c.total_count)),
             entries,
             readme,
         })
@@ -4370,6 +4393,7 @@ impl IssueFull {
             created_at: self.created_at.0,
             labels: labels(self.labels),
             assignees: nodes(self.assignees.nodes).map(|u| u.login).collect(),
+            milestone: self.milestone.map(MilestoneRef::from_wire),
             comments: comments(self.comments),
             id: self.id.into(),
         })

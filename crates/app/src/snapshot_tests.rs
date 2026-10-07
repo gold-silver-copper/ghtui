@@ -107,6 +107,10 @@ pub(crate) fn pr_detail() -> PrDetail {
         head_repo: Some("octocat/ghtui".into()),
         changed_files: 7,
         mergeable: Mergeable::Conflicting,
+        milestone: Some(ghtui_api::model::MilestoneRef {
+            number: 3,
+            title: "Links".into(),
+        }),
         labels: vec![
             Label {
                 name: "enhancement".into(),
@@ -1990,6 +1994,47 @@ mod links {
             ("job", with_job(Mode::Dark, None)),
             ("workflow", with_workflow(Mode::Dark)),
         ]
+    }
+
+    /// ghtui's own pages lead to the new ones as GitHub's do: an issue's
+    /// and a pull request's sidebar to their milestone, a repository's
+    /// toolbar to its branches and tags.
+    #[test]
+    fn pages_link_to_milestones_branches_and_tags() {
+        use crate::route::Route;
+        let routes = |s: &State| -> Vec<Route> {
+            let Screen::Page(p) = s.screen() else {
+                return Vec::new();
+            };
+            p.page
+                .links
+                .iter()
+                .filter_map(|l| l.url())
+                .filter_map(|u| match Target::from_url(u) {
+                    Target::Page(r) => Some(r),
+                    _ => None,
+                })
+                .collect()
+        };
+        let milestone = |repo: &str| Route::Milestone {
+            repo: ghtui_api::model::RepoId::parse(repo).unwrap(),
+            number: 3,
+        };
+        let issue = super::sized(with_issue(Mode::Dark), 160, 40);
+        assert!(routes(&issue).contains(&milestone("gold-silver-copper/ghtui")));
+        let pr = super::sized(with_pr(Mode::Dark), 160, 40);
+        let Screen::Page(p) = pr.screen() else {
+            panic!("not a page");
+        };
+        let Route::Pr { pr: pr_ref, .. } = &p.route else {
+            panic!("not a pull request");
+        };
+        assert!(routes(&pr).contains(&milestone(&pr_ref.repo.to_string())));
+        let repo = with_repo(Mode::Dark, ColorDepth::TrueColor);
+        let repo_routes = routes(&repo);
+        let id = super::ghtui();
+        assert!(repo_routes.contains(&Route::Branches(id.clone())));
+        assert!(repo_routes.contains(&Route::Tags(id)));
     }
 
     /// Every github.com link on ghtui's pages (and their tabs) opens a

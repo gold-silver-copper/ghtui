@@ -1,13 +1,13 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 512
+assertion_line: 1054
 expression: render(&state)
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 100, height: 30 },
     content: [
         "  ◆ ghtui   gold-silver-copper / ghtui                 ⌕ Type / to search                 @octocat  ",
-        "   <> Code   ◉ Issues  7    ⇄ Pull requests  3    ▶ Actions                                         ",
+        "   <> Code   ◉ Issues  7    ⇄ Pull requests  3    ◈ Discussions   ▶ Actions   ▤ Wiki   ⛨ Security   ",
         "──━━━━━━━━━─────────────────────────────────────────────────────────────────────────────────────────",
         "                                                                                                    ",
         "aagold-silver-copper asghtui   Public                   sa ☆ Star  1.2kss ⑂ Fork 61da ◉ Watch 18   ▐",
@@ -19,20 +19,20 @@ Buffer {
         "                                                                                                   ▐",
         "  ⚖ MIT license gs☆ 1.2k stars ha◉ 18 watching hs⑂ 61 forks   ● Rust                               ▐",
         "                                                                                                   ▐",
-        "ja ⎇ main ▾                                                     js◷ 412 commitka ⌕ Go to file  f   ▐",
+        "ja ⎇ main ▾ js⎇ 14 brancheska◇ 9 tags                           ks◷ 412 commitla ⌕ Go to file  f   ▐",
         "                                                                                                   ▐",
-        "  ╭ksoctocatlaBrowse GitHub like the website ──────────────────────────────── fedcba9 · 2h ago ─╮  ▐",
-        "  │▌ls.github   qaRun CI on macOS too                                                   13d ago │  ▐",
-        "  │ qscrates    waBrowse GitHub like the website                                         2h ago │  ▐",
-        "  │ wsCargo.tomleaBump ratatui to 0.30                                                   5d ago │  ▐",
-        "  │ esREADME.md raDocument the keys                                                      2d ago │  ▐",
+        "  ╭lsoctocatqaBrowse GitHub like the website ──────────────────────────────── fedcba9 · 2h ago ─╮  ▐",
+        "  │▌qs.github   waRun CI on macOS too                                                   13d ago │  ▐",
+        "  │ wscrates    eaBrowse GitHub like the website                                         2h ago │  ▐",
+        "  │ esCargo.tomlraBump ratatui to 0.30                                                   5d ago │  ▐",
+        "  │ rsREADME.md taDocument the keys                                                      2d ago │  ▐",
         "  ╰─────────────────────────────────────────────────────────────────────────────────────────────╯  ▐",
         "                                                                                                    ",
-        "  ╭rs☰ README.md ──────────────────────────────────────────────────────────────────────────────╮   ", // hidden by multi-width symbols: [(6, " ")]
+        "  ╭ts☰ README.md ──────────────────────────────────────────────────────────────────────────────╮   ", // hidden by multi-width symbols: [(6, " ")]
         "  │ ghtui                                                                                       │   ",
         "  │ ─────────────────────────────────────────────────────────────────────────────────────────── │   ",
         "  │                                                                                             │   ",
-        "  │ A keyboard-driven terminal client fotaGitHub, with a diff viewer that goetsbeyond GitHub's. │   ",
+        "  │ A keyboard-driven terminal client foyaGitHub, with a diff viewer that goeysbeyond GitHub's. │   ",
         "  │                                                                                             │   ",
         "  │ Install                                                                                     │   ",
         "  a-z type a link's letters   esc cancel                                             API 4987/5000  ",
@@ -63,6 +63,12 @@ Buffer {
         x: 47, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 49, y: 1, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 52, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 65, y: 1, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 68, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 77, y: 1, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 80, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 86, y: 1, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 89, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 0, y: 2, fg: Rgb(72, 76, 83), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 2, y: 2, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 11, y: 2, fg: Rgb(72, 76, 83), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
@@ -118,7 +124,11 @@ Buffer {
         x: 99, y: 12, fg: Rgb(72, 76, 83), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 0, y: 13, fg: Rgb(249, 216, 254), bg: Rgb(86, 62, 92), underline: Reset, modifier: BOLD,
         x: 2, y: 13, fg: Rgb(226, 226, 233), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,
-        x: 12, y: 13, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
+        x: 12, y: 13, fg: Rgb(249, 216, 254), bg: Rgb(86, 62, 92), underline: Reset, modifier: BOLD,
+        x: 14, y: 13, fg: Rgb(196, 198, 207), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
+        x: 27, y: 13, fg: Rgb(249, 216, 254), bg: Rgb(86, 62, 92), underline: Reset, modifier: BOLD,
+        x: 29, y: 13, fg: Rgb(196, 198, 207), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
+        x: 37, y: 13, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 64, y: 13, fg: Rgb(249, 216, 254), bg: Rgb(86, 62, 92), underline: Reset, modifier: BOLD,
         x: 66, y: 13, fg: Rgb(196, 198, 207), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 78, y: 13, fg: Rgb(249, 216, 254), bg: Rgb(86, 62, 92), underline: Reset, modifier: BOLD,

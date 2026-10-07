@@ -271,6 +271,7 @@ const PR_RESPONSE: &str = r#"{"data":{"repository":{"pullRequest":{
   "additions": 10, "deletions": 2, "changedFiles": 3, "mergeable": "MERGEABLE",
   "reviewDecision": "APPROVED",
   "labels": {"nodes": [{"name": "bug", "color": "d73a4a"}]},
+  "milestone": {"number": 3, "title": "v1"},
   "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]},
   "comments": {"totalCount": 4}
 }}, "rateLimit": {"cost": 1, "limit": 5000, "remaining": 4999, "resetAt": "2026-01-01T01:00:00Z"}}}"#;
@@ -294,6 +295,7 @@ async fn fetches_and_caches_pull_request() {
     assert_eq!(detail.mergeable, Mergeable::Yes);
     assert_eq!(detail.labels[0].name, "bug");
     assert_eq!(detail.head_oid, "bbb");
+    assert_eq!(detail.milestone.as_ref().map(|m| m.number), Some(3));
 
     let cached = gh.cached_pull_request(&pr).unwrap();
     assert_eq!(cached.value, detail);

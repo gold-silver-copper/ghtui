@@ -15,8 +15,8 @@ use ghtui_api::browse::{
     TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
-    ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
-    ReviewDecision,
+    ChecksState, Inbox, Label, Mergeable, MilestoneRef, PrDetail, PrRef, PrState, PrSummary,
+    RepoId, ReviewDecision,
 };
 use ghtui_theme::{Bg, Syntax};
 
@@ -530,13 +530,38 @@ fn code_toolbar(
     rev: &str,
     path: &str,
     is_file: bool,
-    commits: u64,
+    top: Option<&RepoOverview>,
     keys: Keys<'_>,
 ) {
+    // At the top of a repository: its commits, branches and tags.
+    let commits = top.map_or(0, |o| o.commits);
+    let refs = top.filter(|o| o.branches > 0).map(|o| (o.branches, o.tags));
     let mut segs = vec![
         button(page, format!("⎇ {rev} ▾"), Link::Branch),
         Seg::new("  ", Role::Body),
     ];
+    if let Some((branches, tags)) = refs {
+        let base = url::repo(repo);
+        let branches = if branches == 1 {
+            "⎇ 1 branch".to_owned()
+        } else {
+            format!("⎇ {} branches", compact(branches))
+        };
+        segs.push(link_seg(
+            page,
+            branches,
+            format!("{base}/branches"),
+            Role::Meta,
+        ));
+        segs.push(Seg::new("  ", Role::Body));
+        segs.push(link_seg(
+            page,
+            format!("◇ {}", plural(tags, "tag")),
+            format!("{base}/tags"),
+            Role::Meta,
+        ));
+        segs.push(Seg::new("  ", Role::Body));
+    }
     if is_file {
         segs.extend(crumbs(page, repo, rev, path, true));
     } else if !path.is_empty() {
@@ -672,7 +697,7 @@ pub fn repo_code(
         return;
     }
     let rev = o.default_branch.clone().unwrap_or_else(|| "HEAD".into());
-    code_toolbar(page, repo, &rev, "", false, o.commits, keys);
+    code_toolbar(page, repo, &rev, "", false, Some(o), keys);
     let title = match &o.last_commit {
         Some(c) => {
             let author = link_seg(page, c.author.clone(), url::user(&c.author), Role::Strong);
@@ -726,7 +751,7 @@ pub fn repo_dir(page: &mut Page, dir: Listing<'_>, cx: PageCtx<'_>) {
     let Listing {
         repo, rev, path, ..
     } = dir;
-    code_toolbar(page, repo, rev, path, false, 0, cx.keys);
+    code_toolbar(page, repo, rev, path, false, None, cx.keys);
     let title = if path.is_empty() {
         format!("Files on {rev}")
     } else {
@@ -758,7 +783,7 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
         path,
         lines: marked,
     } = at;
-    code_toolbar(page, repo, rev, path, true, 0, keys);
+    code_toolbar(page, repo, rev, path, true, None, keys);
     let size = crate::text::size(blob.size);
     let Some(text) = &blob.text else {
         let title = Seg::new(size, Role::Meta);
@@ -825,7 +850,7 @@ pub fn blame(
         path,
         lines: marked,
     } = at;
-    code_toolbar(page, repo, rev, path, true, 0, keys);
+    code_toolbar(page, repo, rev, path, true, None, keys);
     let (Some(blob), Some(blame)) = (blob, blame) else {
         page.line(vec![Seg::new("Loading the blame…", Role::Meta)]);
         return;
@@ -1872,6 +1897,18 @@ fn people(page: &mut Page, heading: &str, logins: &[String], none: &str) {
     }
 }
 
+/// The sidebar's milestone, linked to its page.
+fn milestone_aside(page: &mut Page, repo: &RepoId, m: Option<&MilestoneRef>) {
+    aside_heading(page, "Milestone");
+    match m {
+        Some(m) => {
+            let target = format!("{}/milestone/{}", url::repo(repo), m.number);
+            page.link_line(m.title.clone(), target, Role::Link, 0);
+        }
+        None => page.line(vec![Seg::new("No milestone", Role::Meta)]),
+    }
+}
+
 fn label_list(page: &mut Page, l: &[Label]) {
     aside_heading(page, "Labels");
     if l.is_empty() {
@@ -1915,6 +1952,11 @@ pub fn issue(
     ];
     if aside.is_none() {
         labels(&mut segs, &d.labels);
+        if let Some(m) = &d.milestone {
+            let target = format!("{}/milestone/{}", url::repo(&d.repo), m.number);
+            segs.push(Seg::new("  ", Role::Meta));
+            segs.push(link_seg(page, format!("◷ {}", m.title), target, Role::Link));
+        }
     }
     page.wrapped(segs, 0, Frame::None);
     if aside.is_some() || d.assignees.is_empty() {
@@ -1947,6 +1989,7 @@ pub fn issue(
         page.build_aside(width, |a| {
             people(a, "Assignees", &d.assignees, "No one assigned");
             label_list(a, &d.labels);
+            milestone_aside(a, &d.repo, d.milestone.as_ref());
             people(a, "Participants", &participants, "");
         });
     }
@@ -2130,6 +2173,7 @@ pub fn pr_conversation(
         page.build_aside(width, |side| {
             people(side, "Reviewers", &reviewers, "No reviews");
             label_list(side, &d.labels);
+            milestone_aside(side, &pr.repo, d.milestone.as_ref());
             aside_heading(side, "Size");
             let mut size = Vec::from(changes(d.summary.additions, d.summary.deletions));
             size.push(Seg::new(
@@ -4277,6 +4321,10 @@ mod tests {
             starred: false,
             id: ghtui_api::model::NodeId::new("R_1"),
             has_issues: true,
+            has_discussions: false,
+            has_wiki: false,
+            branches: 0,
+            tags: 0,
             entries: vec![
                 TreeEntry {
                     name: "src".into(),
