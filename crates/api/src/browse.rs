@@ -1424,14 +1424,15 @@ pub enum CheckConclusionState {
 impl CheckOutcome {
     /// How a check run, job or step came out, from GraphQL or REST alike:
     /// pending until it completes (a REST job without a status is queued),
-    /// and a failure if it completed in a way not known here.
+    /// and a failure if it completed in a way not known here or not said,
+    /// so a finished job is never taken for a running one.
     pub(crate) fn of(
         status: Option<CheckStatusState>,
         conclusion: Option<CheckConclusionState>,
     ) -> Self {
         use CheckConclusionState as C;
-        match (status, conclusion) {
-            (Some(CheckStatusState::Completed), Some(conclusion)) => match conclusion {
+        match status {
+            Some(CheckStatusState::Completed) => match conclusion.unwrap_or(C::Other) {
                 C::Success => Self::Success,
                 C::Skipped => Self::Skipped,
                 C::Neutral | C::Stale => Self::Neutral,
@@ -1601,16 +1602,33 @@ mod tests {
             ("completed", Some("failure"), CheckOutcome::Failure),
             ("completed", Some("timed_out"), CheckOutcome::Failure),
             ("completed", Some("something_new"), CheckOutcome::Failure),
-            ("completed", None, CheckOutcome::Pending),
+            ("completed", None, CheckOutcome::Failure),
             ("in_progress", None, CheckOutcome::Pending),
             ("queued", None, CheckOutcome::Pending),
         ] {
             let job: rest_actions::Job = serde_json::from_value(serde_json::json!({
                 "id": 1, "run_id": 2, "name": "build", "status": status,
                 "conclusion": conclusion, "started_at": null, "completed_at": null,
+                "steps": [{"number": 1, "name": "test", "status": status,
+                    "conclusion": conclusion, "started_at": null, "completed_at": null}],
             }))
             .unwrap();
-            assert_eq!(job.into_job().outcome, outcome, "{status} {conclusion:?}");
+            let job = job.into_job();
+            assert_eq!(job.outcome, outcome, "{status} {conclusion:?}");
+            assert_eq!(
+                job.steps[0].outcome, outcome,
+                "step {status} {conclusion:?}"
+            );
+            let run: rest_actions::Run = serde_json::from_value(serde_json::json!({
+                "id": 1, "run_number": 3, "event": "push", "head_sha": "abc",
+                "status": status, "conclusion": conclusion,
+            }))
+            .unwrap();
+            assert_eq!(
+                run.into_summary().outcome,
+                outcome,
+                "run {status} {conclusion:?}"
+            );
         }
     }
 
