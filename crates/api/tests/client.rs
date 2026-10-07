@@ -552,6 +552,26 @@ async fn an_organizations_discussions_are_found_past_the_first_page() {
     assert_eq!(seen.lock().unwrap().len(), 3);
 }
 
+/// A searched pull request that's an open draft reads as a draft, through
+/// the same state-and-draft fragment the PR page reads.
+#[tokio::test]
+async fn a_searched_draft_pr_is_a_draft() {
+    let (gh, _) = github(vec![Reply::new(
+        200,
+        r#"{"data":{"search":{"issueCount":1,"repositoryCount":0,"userCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"__typename":"PullRequest","number":5,"title":"t","isDraft":true,"state":"OPEN","author":null,"createdAt":"2026-10-01T00:00:00Z","updatedAt":"2026-10-01T00:00:00Z","reviewDecision":null,"comments":{"totalCount":0},"labels":null,"repository":{"nameWithOwner":"o/r"}}]}}}"#,
+    )])
+    .await;
+    let results = gh
+        .search(ghtui_api::browse::SearchKind::Pulls, "q", None)
+        .await
+        .unwrap();
+    let ghtui_api::browse::SearchResults::Issues(r) = results else {
+        panic!("{results:?}");
+    };
+    let states: Vec<_> = r.items.iter().map(|i| (i.number, i.state)).collect();
+    assert_eq!(states, [(5, ghtui_api::browse::IssueState::Draft)]);
+}
+
 /// An empty commit or code search, which GitHub refuses, finds nothing
 /// without asking.
 #[tokio::test]
