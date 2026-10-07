@@ -20,7 +20,7 @@ use ratatui_textarea::TextArea;
 
 use crate::browse::{self, Data, DataKey, Need, PageScreen};
 use crate::diff_job::{JobId, JobMsg};
-use crate::diff_screen::{self, DiffInputs, DiffOf, DiffScreen, DiffState, Pane};
+use crate::diff_screen::{self, DiffInputs, DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
 use crate::keymap::{Action, Key, Keymap, Scope};
 use crate::nav::{self, Hints, Menu, SearchBox, Visit};
 use crate::picker::{self, Picker};
@@ -605,7 +605,7 @@ impl State {
         } else {
             self.start_diff(&of)
         };
-        let screen = DiffScreen::new(of, self.size.0);
+        let screen = DiffScreen::new(of, DiffPrefs::fit(self.size.0));
         self.screens.push(Screen::Diff(Box::new(screen)));
         cmds
     }
@@ -2673,7 +2673,7 @@ pub(crate) mod tests {
             );
             s.screens.push(Screen::Diff(Box::new(DiffScreen::new(
                 DiffOf::Pr(pr.clone()),
-                width,
+                DiffPrefs::fit(width),
             ))));
             let _ = s.settle_diff();
             (s, pr)
@@ -3496,8 +3496,10 @@ pub(crate) mod tests {
                 let diff = DiffState::start(Default::default(), None);
                 let job = diff.job;
                 s.diffs.insert(of.clone(), diff);
-                s.screens
-                    .push(Screen::Diff(Box::new(DiffScreen::new(of, 120))));
+                s.screens.push(Screen::Diff(Box::new(DiffScreen::new(
+                    of,
+                    DiffPrefs::fit(120),
+                ))));
                 s.prs.insert(
                     pr.clone(),
                     Remote::cached(Some(ghtui_store::Cached {
@@ -3583,6 +3585,38 @@ pub(crate) mod tests {
                 deliver(&mut s, &pr, job);
                 let target = comment_target(&mut s);
                 assert!(is_file_comment(&target), "after All: {target:?}");
+            }
+
+            /// Ignoring whitespace, split and the tree are the screen's
+            /// choices; picking a commit doesn't undo them.
+            #[test]
+            fn choosing_a_commit_keeps_the_view_toggles() {
+                let (mut s, pr, job) = loading();
+                deliver(&mut s, &pr, job);
+                press(&mut s, "w");
+                press(&mut s, "S");
+                press(&mut s, "t");
+                let before = {
+                    let d = screen(&s);
+                    (
+                        d.prefs.ignore_whitespace,
+                        d.prefs.split_override,
+                        d.prefs.tree_visible,
+                    )
+                };
+                assert!(before.0 && before.1.is_some() && !before.2, "{before:?}");
+                let job = pick_commit(&mut s, &pr, "jj<Enter>");
+                deliver(&mut s, &pr, job);
+                let d = screen(&s);
+                assert_eq!(
+                    (
+                        d.prefs.ignore_whitespace,
+                        d.prefs.split_override,
+                        d.prefs.tree_visible
+                    ),
+                    before,
+                    "(ignore_whitespace, split_override, tree_visible)"
+                );
             }
 
             /// A file marked viewed stays viewed when another range of

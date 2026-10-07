@@ -89,18 +89,35 @@ pub enum Pane {
     Diff,
 }
 
+/// How a diff screen is asked to show diffs, whichever it shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiffPrefs {
+    pub tree_visible: bool,
+    /// `None` picks split or unified by width.
+    pub split_override: Option<bool>,
+    pub ignore_whitespace: bool,
+}
+
+impl DiffPrefs {
+    /// What a new diff screen `width` wide starts with.
+    pub fn fit(width: u16) -> Self {
+        Self {
+            tree_visible: width >= 100,
+            split_override: None,
+            ignore_whitespace: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffScreen {
     pub of: DiffOf,
     pub cursor: Pos,
     pub top: Pos,
-    pub tree_visible: bool,
+    pub prefs: DiffPrefs,
     pub focus: Pane,
     pub tree_selected: usize,
     pub tree_scroll: usize,
-    /// `None` picks split or unified by width.
-    pub split_override: Option<bool>,
-    pub ignore_whitespace: bool,
     /// The last search query, for `n` / `N`.
     pub search: Option<String>,
     /// Where a visual line selection started.
@@ -112,17 +129,15 @@ pub struct DiffScreen {
 }
 
 impl DiffScreen {
-    pub fn new(of: DiffOf, width: u16) -> Self {
+    pub fn new(of: DiffOf, prefs: DiffPrefs) -> Self {
         Self {
             of,
             cursor: Pos::default(),
             top: Pos::default(),
-            tree_visible: width >= 100,
+            prefs,
             focus: Pane::Diff,
             tree_selected: 0,
             tree_scroll: 0,
-            split_override: None,
-            ignore_whitespace: false,
             search: None,
             selection: None,
             anchor: None,
@@ -131,12 +146,13 @@ impl DiffScreen {
 
     /// The view options this screen wants at `content` size.
     pub fn options(&self, content: Rect) -> ViewOptions {
-        let lay = layout(content, self.tree_visible);
+        let lay = layout(content, self.prefs.tree_visible);
         ViewOptions {
             split: self
+                .prefs
                 .split_override
                 .unwrap_or(lay.diff.width >= SPLIT_MIN_WIDTH),
-            whitespace: if self.ignore_whitespace {
+            whitespace: if self.prefs.ignore_whitespace {
                 Whitespace::Ignore
             } else {
                 Whitespace::Exact
@@ -408,7 +424,7 @@ pub fn apply(
     content: Rect,
     notice: &mut Option<Notice>,
 ) -> Vec<Cmd> {
-    let lay = layout(content, screen.tree_visible);
+    let lay = layout(content, screen.prefs.tree_visible);
     let half = (usize::from(lay.diff.height) / 2).max(1).cast_signed();
     let tree_focused = screen.focus == Pane::Tree && lay.tree.is_some();
     // While searching, n and p go through the matches.
@@ -430,8 +446,8 @@ pub fn apply(
             cmds.extend(apply(screen, state, half, content, notice));
         }
         Action::ToggleTree => {
-            screen.tree_visible = !screen.tree_visible;
-            if !screen.tree_visible {
+            screen.prefs.tree_visible = !screen.prefs.tree_visible;
+            if !screen.prefs.tree_visible {
                 screen.focus = Pane::Diff;
             }
         }
@@ -444,12 +460,12 @@ pub fn apply(
             }
         }
         Action::ToggleSplit => {
-            screen.split_override = Some(!screen.options(content).split);
+            screen.prefs.split_override = Some(!screen.options(content).split);
         }
         Action::IgnoreWhitespace => {
-            screen.ignore_whitespace = !screen.ignore_whitespace;
+            screen.prefs.ignore_whitespace = !screen.prefs.ignore_whitespace;
             *notice = Some(Notice::Info(
-                if screen.ignore_whitespace {
+                if screen.prefs.ignore_whitespace {
                     "Ignoring whitespace changes"
                 } else {
                     "Showing whitespace changes"
@@ -770,7 +786,7 @@ fn anchor_pos(anchor: &str, state: &DiffState, pr: bool) -> Option<Option<Pos>> 
 /// prioritize files that are on screen but not diffed yet.
 #[must_use]
 pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> Vec<Cmd> {
-    let lay = layout(content, screen.tree_visible);
+    let lay = layout(content, screen.prefs.tree_visible);
     if lay.tree.is_none() {
         screen.focus = Pane::Diff;
     }
