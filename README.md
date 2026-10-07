@@ -60,14 +60,16 @@ ghtui is laid out like the website:
   to search"), your review requests and your account. With more than one tab
   open, it shows your open tabs instead (see **Open tabs** below).
 - **A page's tabs** sit under the header, with the active one underlined:
-  Code, Issues, Pull requests and Actions on a repository; Conversation,
+  Code, Issues, Pull requests, Discussions, Actions, Wiki and Security on a
+  repository (Discussions and Wiki when it has them on); Conversation,
   Commits, Checks and Files changed on a pull request; Commit, Checks and
   Files changed on a commit; Commits and Files changed on a comparison;
   Overview, Repositories, Stars, Followers and Following
   on a user (Overview, Repositories and People on an organization).
 - **The content** is in GitHub's boxes: the file list under the latest
   commit, the README, issue lists, and comments joined into a timeline. Wide
-  terminals also get the sidebar (About, Assignees, Labels, Reviewers).
+  terminals also get the sidebar (About, Assignees, Labels, Reviewers,
+  Milestone). When the tabs don't fit, the last ones shrink to their icons.
 - **The status bar** names the keys that do something here.
 
 **Moving.** Arrows move, `Enter` opens, `Esc` goes back, and each letter is
@@ -128,7 +130,7 @@ your drafts.
 - **Repository** has the Code tab:
   - A title with Star, Fork and Watch.
   - About.
-  - The branch and "Go to file" buttons.
+  - The branch and "Go to file" buttons, and links to the branches and tags.
   - The file list.
   - The README rendered from Markdown, with relative links resolved as on
     GitHub.
