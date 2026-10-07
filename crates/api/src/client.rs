@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 use crate::auth::Token;
 use crate::browse;
 use crate::model::{
-    Inbox, NewThread, NodeId, PatchFile, PrDetail, PrRef, PrSummary, RepoId, ReviewEvent,
+    Capped, Inbox, NewThread, NodeId, PatchFile, PrDetail, PrRef, PrSummary, RepoId, ReviewEvent,
     ReviewThread, ViewedFiles,
 };
 use crate::queries::{self, nodes};
@@ -211,6 +211,40 @@ impl GitHub {
         if items as u64 > total {
             self.doubt(format!("{what}: a page of {items}, of {total} in all"));
         }
+    }
+
+    /// A list from its `first` page and those `fetch` gets after it, `max`
+    /// pages at most. It stops at a page with no next, at a cursor seen
+    /// before (doubted), or at `max`; a cut the total doesn't count is noted
+    /// as left out, and counted.
+    async fn more_pages<T, F: Future<Output = Result<browse::Results<T>, ApiError>>>(
+        &self,
+        what: impl std::fmt::Display,
+        first: browse::Results<T>,
+        max: u32,
+        mut fetch: impl FnMut(Option<String>) -> F,
+    ) -> Result<Capped<T>, ApiError> {
+        let mut list = first;
+        let mut seen = std::collections::HashSet::new();
+        for _ in 1..max {
+            let Some(after) = list.next.clone() else {
+                break;
+            };
+            if !seen.insert(after.clone()) {
+                self.doubt(format!("{what}: GitHub gave the cursor {after} twice"));
+                break;
+            }
+            let page = fetch(Some(after)).await?;
+            list.total = list.total.max(page.total);
+            list.items.extend(page.items);
+            list.next = page.next;
+        }
+        let fetched = list.items.len() as u64;
+        if list.next.is_some() && list.total <= fetched {
+            self.leave_out(vec![format!("{what}: only the first {fetched}")]);
+            list.total = fetched + 1;
+        }
+        Ok(Capped::new(list.items, list.total))
     }
 
     /// Checks a GraphQL list's page adds up: a short page is the last
@@ -572,12 +606,7 @@ impl GitHub {
 
     /// Viewed state of every file in the PR (paginated, 100 per page).
     pub async fn viewed_files(&self, pr: &PrRef) -> Result<ViewedFiles, ApiError> {
-        let mut out = ViewedFiles {
-            pull_request_id: NodeId::default(),
-            states: std::collections::HashMap::new(),
-        };
-        let mut after = None;
-        loop {
+        let page = move |after| async move {
             let op = queries::PrFilesQuery::build(page_vars(pr, after)?);
             let files = self
                 .graphql(op)
@@ -585,16 +614,23 @@ impl GitHub {
                 .repository
                 .and_then(|r| r.pull_request)
                 .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
-            out.pull_request_id = files.id.into();
-            let Some(page) = files.files else { break };
-            out.states
-                .extend(nodes(page.nodes).map(|f| (f.path, f.viewer_viewed_state)));
-            after = page.page_info.next();
-            if after.is_none() {
-                break;
-            }
-        }
-        Ok(out)
+            let states = files.files.map(|page| {
+                let states = nodes(page.nodes).map(|f| (f.path, f.viewer_viewed_state));
+                browse::Results::uncounted(states.collect(), page.page_info.next())
+            });
+            Ok::<_, ApiError>((files.id.into(), states.unwrap_or_default()))
+        };
+        let (pull_request_id, first) = page(None).await?;
+        let states = self.more_pages(
+            format!("{pr}'s files"),
+            first,
+            FILE_PAGES,
+            |after| async move { Ok(page(after).await?.1) },
+        );
+        Ok(ViewedFiles {
+            pull_request_id,
+            states: states.await?.items.into_iter().collect(),
+        })
     }
 
     /// Marks (or unmarks) a file as viewed on GitHub.
@@ -619,9 +655,7 @@ impl GitHub {
 
     /// All review threads of a PR, with up to 100 comments each.
     pub async fn review_threads(&self, pr: &PrRef) -> Result<Vec<ReviewThread>, ApiError> {
-        let mut threads = Vec::new();
-        let mut after = None;
-        loop {
+        let page = move |after| async move {
             let op = queries::ThreadsQuery::build(page_vars(pr, after)?);
             let page = self
                 .graphql(op)
@@ -630,32 +664,30 @@ impl GitHub {
                 .and_then(|r| r.pull_request)
                 .ok_or_else(|| ApiError::NotFound(pr.to_string()))?
                 .review_threads;
-            threads.extend(nodes(page.nodes).map(ReviewThread::from_wire));
-            after = page.page_info.next();
-            if after.is_none() {
-                break;
-            }
-        }
-        Ok(threads)
+            let threads = nodes(page.nodes).map(ReviewThread::from_wire).collect();
+            Ok(browse::Results::uncounted(threads, page.page_info.next()))
+        };
+        let what = format!("{pr}'s review threads");
+        let threads = self.more_pages(what, page(None).await?, FILE_PAGES, page);
+        Ok(threads.await?.items)
     }
 
     /// GitHub's per-file patches, for commentable ranges. Paginated (100 per
     /// page) and capped by GitHub at 3000 files.
     pub async fn pr_patches(&self, pr: &PrRef) -> Result<Vec<PatchFile>, ApiError> {
-        let mut files = Vec::new();
-        for page in 1..=30 {
+        let page = move |after: Option<String>| async move {
+            let page = rest_page(after.as_deref());
             let path = format!(
                 "/repos/{}/{}/pulls/{}/files?per_page=100&page={page}",
                 pr.repo.owner, pr.repo.name, pr.number
             );
             let batch: Vec<PatchFile> = self.rest_json(&path).await?;
-            let done = batch.len() < 100;
-            files.extend(batch);
-            if done {
-                break;
-            }
-        }
-        Ok(files)
+            let next = (batch.len() == 100).then(|| page.saturating_add(1).to_string());
+            Ok(browse::Results::uncounted(batch, next))
+        };
+        let what = format!("{pr}'s patches");
+        let files = self.more_pages(what, page(None).await?, FILE_PAGES, page);
+        Ok(files.await?.items)
     }
 
     /// The PR's node ID and the viewer's pending review on it, if any.
@@ -979,7 +1011,7 @@ impl GitHub {
             "/search/{what}?q={}&per_page={REST_PAGE}&page={number}",
             encode_query(query)
         );
-        let next = |total: u64| next_page(number, total.min(SEARCH_CAP));
+        let next = |total: u64| next_page(number, REST_PAGE, total.min(SEARCH_CAP));
         if kind == Kind::Commits {
             let page: browse::rest_search::Page<browse::rest_search::Commit> =
                 self.rest_json(&path).await?;
@@ -1259,7 +1291,7 @@ impl GitHub {
         let head = nodes(pr_checks.commits.nodes)
             .next()
             .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
-        let checks = self.all_checks(&pr.repo, head.commit).await?.into_checks();
+        let checks = self.all_checks(&pr.repo, head.commit).await?;
         if checks.oid != want {
             self.doubt(format!(
                 "{pr}'s checks are for {}, but its head is {}",
@@ -1270,34 +1302,29 @@ impl GitHub {
         Ok(self.kept(&browse::keys::pr_checks(pr), checks).await)
     }
 
-    /// A commit's checks with every page of them (up to [`CHECK_PAGES`]):
-    /// a check run again can have its newest run on a later page.
+    /// A commit's checks with every page of them (up to [`PAGES`]): a
+    /// check run again can have its newest run on a later page.
     async fn all_checks(
         &self,
         repo: &RepoId,
-        mut commit: browse::ChecksCommit,
-    ) -> Result<browse::ChecksCommit, ApiError> {
+        commit: browse::ChecksCommit,
+    ) -> Result<browse::Checks, ApiError> {
         use cynic::QueryBuilder as _;
-        for _ in 1..CHECK_PAGES {
-            let Some(contexts) = commit.status_check_rollup.as_mut().map(|r| &mut r.contexts)
-            else {
-                break;
-            };
-            let Some(after) = contexts
-                .page_info
-                .end_cursor
-                .clone()
-                .filter(|_| contexts.page_info.has_next_page)
-            else {
-                break;
-            };
+        let oid = commit.oid.0;
+        let first = commit
+            .status_check_rollup
+            .map(|r| r.contexts.into_results())
+            .unwrap_or_default();
+        let what = format!("{}'s checks", text_short(&oid));
+        let expression = &oid;
+        let page = move |after| async move {
             let op = browse::ContextsQuery::build(browse::ContextsVariables {
                 owner: repo.owner.clone(),
                 name: repo.name.clone(),
-                expression: commit.oid.0.clone(),
-                after: Some(after),
+                expression: expression.clone(),
+                after,
             });
-            let page = self
+            Ok(self
                 .graphql(op)
                 .await?
                 .repository
@@ -1306,15 +1333,11 @@ impl GitHub {
                     browse::ContextsTarget::Commit(c) => c.status_check_rollup,
                     browse::ContextsTarget::Other => None,
                 })
-                .map(|r| r.contexts);
-            let Some(page) = page else { break };
-            contexts
-                .nodes
-                .get_or_insert_with(Vec::new)
-                .extend(page.nodes.into_iter().flatten());
-            contexts.page_info = page.page_info;
-        }
-        Ok(commit)
+                .map(|r| r.contexts.into_results())
+                .unwrap_or_default())
+        };
+        let contexts = self.more_pages(what, first, PAGES, page).await?;
+        Ok(browse::checks(oid, contexts))
     }
 
     /// The checks on a repository's default branch.
@@ -1332,7 +1355,7 @@ impl GitHub {
         let Some(browse::ChecksTarget::Commit(commit)) = target else {
             return Err(ApiError::NotFound(repo.to_string()));
         };
-        let checks = self.all_checks(repo, commit).await?.into_checks();
+        let checks = self.all_checks(repo, commit).await?;
         Ok(self.kept(&browse::keys::branch_checks(repo), checks).await)
     }
 
@@ -1889,27 +1912,27 @@ impl GitHub {
             Some(n) => format!("{base}/attempts/{n}"),
             None => base,
         };
-        let jobs_path = format!("{path}/jobs?per_page=100");
+        let jobs_path = &format!("{path}/jobs?per_page=100");
         let (wire, jobs) = tokio::join!(
             self.rest_json::<browse::rest_actions::Run>(&path),
-            self.rest_json::<browse::rest_actions::Jobs>(&jobs_path)
+            self.rest_json::<browse::rest_actions::Jobs>(jobs_path)
         );
-        let browse::rest_actions::Jobs {
-            mut jobs,
-            total_count,
-        } = jobs?;
-        // Big matrices have more than a page of jobs.
-        let mut page = 2;
-        while (jobs.len() as u64) < total_count && page <= JOB_PAGES {
-            let more: browse::rest_actions::Jobs =
-                self.rest_json(&format!("{jobs_path}&page={page}")).await?;
-            if more.jobs.is_empty() {
-                break;
-            }
-            jobs.extend(more.jobs);
-            page += 1;
-        }
-        let run = wire?.into_run(jobs);
+        // Big matrices have more than a page of jobs; an empty page is the last.
+        let results = |page: u64, jobs: browse::rest_actions::Jobs| browse::Results {
+            next: next_page(page, 100, jobs.total_count).filter(|_| !jobs.jobs.is_empty()),
+            total: jobs.total_count,
+            items: jobs.jobs,
+        };
+        let page = move |after: Option<String>| async move {
+            let page = rest_page(after.as_deref());
+            let jobs = self.rest_json(&format!("{jobs_path}&page={page}")).await?;
+            Ok(results(page, jobs))
+        };
+        let what = format!("run {run}'s jobs");
+        let jobs = self
+            .more_pages(what, results(1, jobs?), PAGES, page)
+            .await?;
+        let run = wire?.into_run(jobs.items);
         Ok(self
             .kept(&browse::keys::run(repo, run.id, attempt), run)
             .await)
@@ -2001,7 +2024,7 @@ impl GitHub {
                 .into_iter()
                 .map(browse::rest_actions::Run::into_summary)
                 .collect(),
-            next: next_page(page, wire.total_count),
+            next: next_page(page, REST_PAGE, wire.total_count),
         };
         Ok(self
             .kept_page(page == 1, &browse::keys::workflow_runs(repo, file), runs)
@@ -2023,7 +2046,7 @@ impl GitHub {
         let Some(browse::ChecksTarget::Commit(commit)) = object else {
             return Err(ApiError::NotFound(format!("{repo}@{rev}")));
         };
-        let checks = self.all_checks(repo, commit).await?.into_checks();
+        let checks = self.all_checks(repo, commit).await?;
         // A full commit ID names the commit checked.
         if rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit()) && checks.oid != rev {
             self.doubt(format!(
@@ -2045,46 +2068,40 @@ impl GitHub {
             browse::DiscussionsOf::Repo(repo) => return Ok(repo.clone()),
             browse::DiscussionsOf::Org(org) => org,
         };
-        let prefix = format!(
+        let prefix = &format!(
             "https://github.com/orgs/{}/discussions/",
             org.to_lowercase()
         );
         // The organization's discussions are among its repositories', in
-        // best-match order: look through up to five pages.
-        let mut after: Option<String> = None;
-        for _ in 0..5 {
-            let data = self
-                .graphql_json(
-                    raw::DISCUSSION_URLS,
-                    serde_json::json!({ "q": format!("org:{org}"), "after": after }),
-                )
-                .await?;
-            let found = data
+        // best-match order: look through the search's pages for them.
+        let page = move |after| async move {
+            let vars = serde_json::json!({ "q": format!("org:{org}"), "after": after });
+            let data = self.graphql_json(raw::DISCUSSION_URLS, vars).await?;
+            let found: Vec<Option<RepoId>> = data
                 .pointer("/search/nodes")
                 .and_then(serde_json::Value::as_array)
                 .into_iter()
                 .flatten()
-                .find(|n| {
+                .map(|n| {
                     n.get("url")
                         .and_then(serde_json::Value::as_str)
-                        .is_some_and(|u| u.to_lowercase().starts_with(&prefix))
+                        .filter(|u| u.to_lowercase().starts_with(prefix))
+                        .and_then(|_| n.pointer("/repository/nameWithOwner")?.as_str())
+                        .and_then(RepoId::parse)
                 })
-                .and_then(|n| n.pointer("/repository/nameWithOwner")?.as_str())
-                .and_then(RepoId::parse);
-            if let Some(repo) = found {
-                return Ok(repo);
-            }
+                .collect();
             let more = data.pointer("/search/pageInfo/hasNextPage")
                 == Some(&serde_json::Value::Bool(true));
-            after = data
+            let next = data
                 .pointer("/search/pageInfo/endCursor")
                 .and_then(serde_json::Value::as_str)
-                .map(str::to_owned);
-            if !more || after.is_none() {
-                break;
-            }
-        }
-        Err(ApiError::NotFound(format!("{org}'s discussions")))
+                .filter(|_| more && found.iter().all(Option::is_none));
+            Ok(browse::Results::uncounted(found, next.map(str::to_owned)))
+        };
+        let what = format!("the search for {org}'s discussions");
+        let found = self.more_pages(what, page(None).await?, SEARCH_PAGES, page);
+        (found.await?.items.into_iter().flatten().next())
+            .ok_or_else(|| ApiError::NotFound(format!("{org}'s discussions")))
     }
 
     /// Discussions, most recently updated first, 25 at a time from
@@ -2173,36 +2190,33 @@ impl GitHub {
             .await)
     }
 
-    /// Branches by name, up to [`REF_PAGES`] pages of 100, and the newest
-    /// 100 tags; with how many there are of each. (GitHub's commit-date
-    /// order sorts branches by name, backwards, so it isn't used for them.)
+    /// Branches by name, up to [`PAGES`] pages of 100, and the newest 100
+    /// tags; with how many there are of each. (GitHub's commit-date order
+    /// sorts branches by name, backwards, so it isn't used for them.)
     pub async fn refs(&self, repo: &RepoId) -> Result<browse::Refs, ApiError> {
         use browse::wire::{Connection, Name};
-        let mut refs = browse::Refs::default();
-        let mut after: Option<String> = None;
-        for page in 0..REF_PAGES {
-            let data = self
-                .graphql_json(
-                    raw::REFS,
-                    serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "tags": page == 0 }),
-                )
-                .await?;
+        let what = &format!("{repo}'s branches");
+        // The first page has the tags too.
+        let heads = move |after: Option<String>| async move {
+            let tags = after.is_none();
+            let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "tags": tags });
+            let data = self.graphql_json(raw::REFS, vars).await?;
             let heads: Connection<Name> = at(&data, "/repository/heads", || repo.to_string())?;
-            self.check_connection(&heads, 100, format!("{repo}'s branches"));
-            if page == 0 {
-                let tags: Connection<Name> = at(&data, "/repository/tags", || repo.to_string())?;
-                self.check_connection(&tags, 100, format!("{repo}'s tags"));
-                let tags = tags.into_results(|n| n.name);
-                (refs.tags, refs.tag_total) = (tags.items, tags.total);
-            }
-            let heads = heads.into_results(|n| n.name);
-            refs.branch_total = heads.total;
-            refs.branches.extend(heads.items);
-            after = heads.next;
-            if after.is_none() {
-                break;
-            }
-        }
+            self.check_connection(&heads, 100, what);
+            Ok::<_, ApiError>((heads.into_results(|n| n.name), data))
+        };
+        let (first, data) = heads(None).await?;
+        let tags: Connection<Name> = at(&data, "/repository/tags", || repo.to_string())?;
+        self.check_connection(&tags, 100, format!("{repo}'s tags"));
+        let tags = tags.into_results(|n| n.name);
+        let more = |after| async move { Ok(heads(after).await?.0) };
+        let branches = self.more_pages(what, first, PAGES, more).await?;
+        let refs = browse::Refs {
+            branches: branches.items,
+            branch_total: branches.total,
+            tags: tags.items,
+            tag_total: tags.total,
+        };
         Ok(self.kept(&browse::keys::refs(repo), refs).await)
     }
 
@@ -2290,21 +2304,23 @@ fn at<T: DeserializeOwned>(
 const REST_PAGE: u64 = 30;
 /// GitHub's search serves its first thousand results.
 const SEARCH_CAP: u64 = 1000;
-/// How many pages of a commit's checks are fetched (100 each).
-const CHECK_PAGES: u64 = 10;
-/// How many pages of a repository's branches are fetched (100 each).
-const REF_PAGES: u64 = 10;
-/// How many pages of a run's jobs are fetched (100 each).
-const JOB_PAGES: u64 = 10;
+/// Pages of 100 read of a list GitHub can make long (checks, branches,
+/// jobs): a thousand.
+const PAGES: u32 = 10;
+/// GitHub's own cap on a PR's files: 3000, 100 a page.
+const FILE_PAGES: u32 = 30;
+/// Pages of 50 search results within [`SEARCH_CAP`].
+const SEARCH_PAGES: u32 = 20;
 
 /// A REST list's page number from its cursor (pages count from 1).
 fn rest_page(after: Option<&str>) -> u64 {
     after.and_then(|a| a.parse().ok()).unwrap_or(1)
 }
 
-/// The cursor for the page after `page` of `total` items, if there is one.
-fn next_page(page: u64, total: u64) -> Option<String> {
-    (page.saturating_mul(REST_PAGE) < total).then(|| page.saturating_add(1).to_string())
+/// The cursor for the page after `page` of `total` items, `per_page` a
+/// page, if there is one.
+fn next_page(page: u64, per_page: u64, total: u64) -> Option<String> {
+    (page.saturating_mul(per_page) < total).then(|| page.saturating_add(1).to_string())
 }
 
 /// A commit ID shortened, as GitHub shows it.
@@ -2461,10 +2477,13 @@ mod tests {
     /// its total.
     #[test]
     fn rest_lists_page_to_their_total() {
-        assert_eq!(next_page(1, 0), None);
-        assert_eq!(next_page(1, REST_PAGE), None);
-        assert_eq!(next_page(1, REST_PAGE + 1).as_deref(), Some("2"));
-        assert_eq!(next_page(2, 2 * REST_PAGE), None);
-        assert_eq!(next_page(2, 2 * REST_PAGE + 1).as_deref(), Some("3"));
+        assert_eq!(next_page(1, REST_PAGE, 0), None);
+        assert_eq!(next_page(1, REST_PAGE, REST_PAGE), None);
+        assert_eq!(next_page(1, REST_PAGE, REST_PAGE + 1).as_deref(), Some("2"));
+        assert_eq!(next_page(2, REST_PAGE, 2 * REST_PAGE), None);
+        assert_eq!(
+            next_page(2, REST_PAGE, 2 * REST_PAGE + 1).as_deref(),
+            Some("3")
+        );
     }
 }
