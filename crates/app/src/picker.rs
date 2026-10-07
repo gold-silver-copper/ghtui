@@ -352,13 +352,13 @@ impl State {
         let since = diff.doc.since_active();
         let mut rows = vec![
             (
-                item("All changes", current(diff.range.is_none() && !since)),
+                item("All changes", current(diff.range().is_none() && !since)),
                 Some(Choice::Commits(PickItem::All)),
             ),
             (
                 item(
                     "Changes since your last review",
-                    current(diff.range.is_none() && since),
+                    current(diff.range().is_none() && since),
                 ),
                 Some(Choice::Commits(PickItem::SinceReview)),
             ),

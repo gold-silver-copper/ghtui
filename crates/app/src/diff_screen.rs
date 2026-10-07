@@ -236,7 +236,7 @@ impl DiffInputs {
 }
 
 /// Everything known about one PR's diff: its inputs, and what a job made.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DiffState {
     /// Changed only through [`DiffState::edit`], which shows the change.
     inputs: DiffInputs,
@@ -252,8 +252,9 @@ pub struct DiffState {
     pub moves_requested: bool,
     /// "Since my last review" was asked for and is waiting on data.
     pub since_requested: bool,
-    /// Showing a sub-range of commits instead of the whole PR.
-    pub range: Option<RangeView>,
+    /// Showing a sub-range of commits instead of the whole PR; changed
+    /// only by [`DiffState::restart`].
+    range: Option<RangeView>,
     /// Files we've already asked the job to prioritize.
     requested: HashSet<usize>,
     /// The diff job whose results this shows; older jobs' are ignored.
@@ -261,20 +262,38 @@ pub struct DiffState {
 }
 
 impl DiffState {
+    /// A new job's diff of the whole PR, knowing nothing yet: every input
+    /// is fetched again.
+    pub fn fresh() -> Self {
+        Self::start(DiffInputs::default(), None)
+    }
+
     /// A new job's diff of `range` (`None`: the whole PR), with `inputs`.
-    pub fn start(inputs: DiffInputs, range: Option<RangeView>) -> Self {
+    fn start(inputs: DiffInputs, range: Option<RangeView>) -> Self {
         Self {
             inputs,
-            range,
+            doc: Doc::default(),
+            tree: Vec::new(),
+            refs: None,
             progress: Some("Preparing".into()),
+            error: None,
+            mapping_requested: false,
+            moves_requested: false,
+            since_requested: false,
+            range,
+            requested: HashSet::new(),
             job: next_job(),
-            ..Self::default()
         }
     }
 
     /// Starts over for a different commit range, with the same inputs.
     pub fn restart(&mut self, range: Option<RangeView>) {
         *self = Self::start(std::mem::take(&mut self.inputs), range);
+    }
+
+    /// The commit range shown, if not the whole PR.
+    pub fn range(&self) -> Option<&RangeView> {
+        self.range.as_ref()
     }
 
     pub fn inputs(&self) -> &DiffInputs {
@@ -324,6 +343,8 @@ impl DiffState {
         self.refs.as_ref().map(|r| r.head.clone())
     }
 
+    /// Lists the job's files. The doc shows the inputs from the start, so
+    /// whatever arrived before the files (GitHub's patches, say) applies.
     pub fn set_files(&mut self, files: DiffFiles) {
         self.doc = Doc::new(files.files, &files.generated, self.doc_inputs());
         self.tree = tree_rows(&self.doc);
@@ -333,6 +354,22 @@ impl DiffState {
         } else {
             Some("Computing diffs".into())
         };
+    }
+
+    /// Shows `doc` as if the job had listed and diffed its files, with
+    /// these inputs.
+    #[cfg(test)]
+    pub(crate) fn with_doc(mut self, refs: PrRefs, doc: Doc) -> Self {
+        self.set_files(DiffFiles {
+            refs,
+            files: Vec::new(),
+            generated: HashSet::new(),
+        });
+        self.doc = doc;
+        self.doc.set_inputs(self.doc_inputs());
+        self.tree = tree_rows(&self.doc);
+        self.progress = (!self.doc.is_empty()).then(|| "Computing diffs".into());
+        self
     }
 
     pub fn set_file(&mut self, index: usize, diff: Arc<FileDiff>) {
@@ -879,7 +916,7 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
             // The whole PR's diff, checked against what GitHub says of it
             // (once that's fresh: a cached copy may be from before a push).
             if let DiffOf::Pr(pr) = of
-                && diff.range.is_none()
+                && diff.range().is_none()
                 && let Some(remote) = state.prs.get(pr)
                 && let Some(detail) = remote.data.as_ref()
                 && !remote.loading
