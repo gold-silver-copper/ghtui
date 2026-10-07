@@ -327,7 +327,7 @@ impl<T> Remote<T> {
         true
     }
 
-    fn finish(&mut self, result: Result<T, ApiError>) {
+    pub(crate) fn finish(&mut self, result: Result<T, ApiError>) {
         self.loading = false;
         match result {
             Ok(data) => {

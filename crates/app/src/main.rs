@@ -3,6 +3,8 @@
 mod browse;
 mod chrome;
 mod config;
+#[cfg(test)]
+mod crawl;
 mod diff_job;
 mod diff_screen;
 #[cfg(test)]
