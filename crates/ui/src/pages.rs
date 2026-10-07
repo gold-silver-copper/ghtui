@@ -11,8 +11,8 @@ use ghtui_api::browse::{
     CommitInfo, Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList,
     EntryKind, Gist, GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobLog, JobSummary,
     MilestoneDetail, MilestoneInfo, MilestoneList, PrActivity, Profile, Release, RepoOverview,
-    RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TeamDetail,
-    TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow, WorkflowRun,
+    RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, Short, TagInfo,
+    TeamDetail, TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
     Capped, ChecksState, Inbox, Label, Mergeable, MilestoneRef, PrDetail, PrRef, PrState,
@@ -4050,6 +4050,17 @@ fn contribution_graph(page: &mut Page, c: &Contributions) {
 
 /// What someone did, month by month: commits by repository, and the pull
 /// requests and issues they opened and reviewed.
+/// "20+ pull requests" when GitHub may have more than `n`.
+fn at_least(n: u64, noun: &str, short: bool) -> String {
+    if short {
+        let many = plural(2, noun);
+        let nouns = many.split_once(' ').map_or(many.as_str(), |(_, n)| n);
+        format!("{n}+ {nouns}")
+    } else {
+        plural(n, noun)
+    }
+}
+
 fn contribution_activity(page: &mut Page, c: &Contributions) {
     page.line(vec![Seg::new("Contribution activity", Role::Strong)]);
     if c.activity.is_empty() {
@@ -4069,7 +4080,8 @@ fn contribution_activity(page: &mut Page, c: &Contributions) {
             } else {
                 format!("{repos} repositories")
             };
-            let created = format!("◷ Created {} in {repos}", plural(total, "commit"));
+            let short = Short::in_month(c.short.commits.as_ref(), &m.month);
+            let created = format!("◷ Created {} in {repos}", at_least(total, "commit", short));
             page.line(vec![Seg::new(created, Role::Body)]);
             for (repo, n) in m.commits.iter().take(5) {
                 let name = link_seg(
@@ -4085,10 +4097,10 @@ fn contribution_activity(page: &mut Page, c: &Contributions) {
                 ]);
             }
         }
-        for (items, icon, verb) in [
-            (&m.pulls, "⇄", "Opened"),
-            (&m.issues, "◉", "Opened"),
-            (&m.reviews, "◎", "Reviewed"),
+        for (items, icon, verb, short) in [
+            (&m.pulls, "⇄", "Opened", &c.short.pulls),
+            (&m.issues, "◉", "Opened", &c.short.issues),
+            (&m.reviews, "◎", "Reviewed", &c.short.reviews),
         ] {
             if items.is_empty() {
                 continue;
@@ -4098,7 +4110,11 @@ fn contribution_activity(page: &mut Page, c: &Contributions) {
             } else {
                 "pull request"
             };
-            let what = plural(items.len() as u64, noun);
+            let what = at_least(
+                items.len() as u64,
+                noun,
+                Short::in_month(short.as_ref(), &m.month),
+            );
             page.line(vec![Seg::new(format!("{icon} {verb} {what}"), Role::Body)]);
             for item in items.iter().take(5) {
                 let target = if icon == "◉" {
@@ -4115,6 +4131,17 @@ fn contribution_activity(page: &mut Page, c: &Contributions) {
                 );
             }
         }
+    }
+    let short = &c.short;
+    if [&short.commits, &short.pulls, &short.issues, &short.reviews]
+        .iter()
+        .any(|s| s.is_some())
+    {
+        page.blank();
+        page.line(vec![Seg::new(
+            "Counts with + are at least that: GitHub has more (o)",
+            Role::Meta,
+        )]);
     }
 }
 

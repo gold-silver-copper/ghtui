@@ -687,6 +687,11 @@ pub fn contributions() -> Contributions {
                 reviews: Vec::new(),
             },
         ],
+        // More reviews than were fetched, from October back.
+        short: ghtui_api::browse::Short {
+            reviews: Some("2026-10".into()),
+            ..Default::default()
+        },
     }
 }
 

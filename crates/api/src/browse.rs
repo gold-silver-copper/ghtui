@@ -480,6 +480,30 @@ pub struct Contributions {
     pub weeks: Vec<Week>,
     /// Newest month first.
     pub activity: Vec<MonthActivity>,
+    /// Where its counts may be short.
+    #[serde(default)]
+    pub short: Short,
+}
+
+/// For each kind of activity, the month (`YYYY-MM`) in and before which
+/// GitHub has more than was fetched: only the newest are.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Short {
+    pub commits: Option<String>,
+    pub pulls: Option<String>,
+    pub issues: Option<String>,
+    pub reviews: Option<String>,
+}
+
+impl Short {
+    /// Counts may be short in every month.
+    pub const EVERY_MONTH: &str = "9999-12";
+
+    /// Whether a count in `month` may be short, given the month a kind is
+    /// short from.
+    pub fn in_month(from: Option<&String>, month: &str) -> bool {
+        from.is_some_and(|from| month <= from.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1418,6 +1442,30 @@ fn latest_runs(items: Vec<CheckItem>) -> Vec<CheckItem> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A profile's activity lists are its newest, and where GitHub has
+    /// more than came, the counts say they may be short.
+    #[test]
+    fn short_activity_says_so() {
+        let pr = |at: &str| serde_json::json!({"occurredAt": at, "pullRequest": {"number": 1, "title": "t", "repository": {"nameWithOwner": "o/r"}}});
+        let wire: WireContributions = serde_json::from_value(serde_json::json!({
+            "contributionCalendar": {"totalContributions": 3, "weeks": []},
+            "commitContributionsByRepository": [],
+            "totalRepositoriesWithContributedCommits": 0,
+            "pullRequestContributions": {"totalCount": 50, "nodes": [pr("2026-10-02T00:00:00Z"), pr("2026-09-20T00:00:00Z")]},
+            "issueContributions": {"totalCount": 0, "nodes": []},
+            "pullRequestReviewContributions": {"totalCount": 1, "nodes": [pr("2026-08-01T00:00:00Z")]},
+        }))
+        .unwrap();
+        let c = wire.into_contributions();
+        assert_eq!(c.short.pulls.as_deref(), Some("2026-09"));
+        assert_eq!(
+            (c.short.reviews.as_ref(), c.short.commits.as_ref()),
+            (None, None)
+        );
+        assert!(Short::in_month(c.short.pulls.as_ref(), "2026-09"));
+        assert!(!Short::in_month(c.short.pulls.as_ref(), "2026-10"));
+    }
 
     /// A long log is cut at a line's start; the lines cut keep their
     /// timestamps, and the ones that start steps their text.
@@ -3281,13 +3329,16 @@ pub struct StarCount {
 #[cynic(graphql_type = "ContributionsCollection", schema_module = "schema")]
 pub struct WireContributions {
     pub contribution_calendar: WireCalendar,
+    /// The 10 repositories with the most, and how many there are.
     #[arguments(maxRepositories: 10)]
     pub commit_contributions_by_repository: Vec<WireRepoCommits>,
-    #[arguments(last: 20)]
+    pub total_repositories_with_contributed_commits: i32,
+    // These lists are newest first, so `first` is the newest.
+    #[arguments(first: 20)]
     pub pull_request_contributions: PrContributions,
-    #[arguments(last: 20)]
+    #[arguments(first: 20)]
     pub issue_contributions: IssueContributions,
-    #[arguments(last: 20)]
+    #[arguments(first: 20)]
     pub pull_request_review_contributions: ReviewContributions,
 }
 
@@ -3338,6 +3389,7 @@ pub struct WireRepoCommits {
     schema_module = "schema"
 )]
 pub struct CommitContributions {
+    pub total_count: i32,
     pub nodes: Option<Vec<Option<WireCommitContribution>>>,
 }
 
@@ -3354,6 +3406,7 @@ pub struct WireCommitContribution {
     schema_module = "schema"
 )]
 pub struct PrContributions {
+    pub total_count: i32,
     pub nodes: Option<Vec<Option<WirePrContribution>>>,
 }
 
@@ -3373,6 +3426,7 @@ pub struct WirePrContribution {
     schema_module = "schema"
 )]
 pub struct IssueContributions {
+    pub total_count: i32,
     pub nodes: Option<Vec<Option<WireIssueContribution>>>,
 }
 
@@ -3389,6 +3443,7 @@ pub struct WireIssueContribution {
     schema_module = "schema"
 )]
 pub struct ReviewContributions {
+    pub total_count: i32,
     pub nodes: Option<Vec<Option<WireReviewContribution>>>,
 }
 
@@ -3446,8 +3501,31 @@ impl WireContributions {
         let month = |at: &DateTime| at.0.get(..7).unwrap_or_default().to_owned();
         let mut months: Vec<MonthActivity> = Vec::new();
         let mut found = Vec::new();
+        let mut short = Short::default();
+        // A list cut short has all of its kind from its oldest month on;
+        // in that month and before, there may be more.
+        let cut = |total: i32, list: &[DateTime]| {
+            let oldest = list.iter().min_by(|a, b| a.0.cmp(&b.0));
+            oldest
+                .filter(|_| usize::try_from(total).unwrap_or_default() > list.len())
+                .map(month)
+        };
+        let later = |a: Option<String>, b: Option<String>| a.max(b);
+        if usize::try_from(self.total_repositories_with_contributed_commits).unwrap_or_default()
+            > self.commit_contributions_by_repository.len()
+        {
+            // Another repository's commits could be in any month.
+            short.commits = Some(Short::EVERY_MONTH.to_owned());
+        }
         for repo in self.commit_contributions_by_repository {
-            for c in nodes(repo.contributions.nodes) {
+            let contributions: Vec<WireCommitContribution> =
+                nodes(repo.contributions.nodes).collect();
+            let at: Vec<DateTime> = contributions
+                .iter()
+                .map(|c| c.occurred_at.clone())
+                .collect();
+            short.commits = later(short.commits, cut(repo.contributions.total_count, &at));
+            for c in contributions {
                 found.push((
                     month(&c.occurred_at),
                     Event::Commits(
@@ -3462,21 +3540,45 @@ impl WireContributions {
             number: count(number),
             title,
         };
-        for p in nodes(self.pull_request_contributions.nodes) {
+        let pulls: Vec<_> = nodes(self.pull_request_contributions.nodes).collect();
+        let issues: Vec<_> = nodes(self.issue_contributions.nodes).collect();
+        let reviews: Vec<_> = nodes(self.pull_request_review_contributions.nodes).collect();
+        short.pulls = cut(
+            self.pull_request_contributions.total_count,
+            &pulls
+                .iter()
+                .map(|p| p.occurred_at.clone())
+                .collect::<Vec<_>>(),
+        );
+        short.issues = cut(
+            self.issue_contributions.total_count,
+            &issues
+                .iter()
+                .map(|i| i.occurred_at.clone())
+                .collect::<Vec<_>>(),
+        );
+        short.reviews = cut(
+            self.pull_request_review_contributions.total_count,
+            &reviews
+                .iter()
+                .map(|r| r.occurred_at.clone())
+                .collect::<Vec<_>>(),
+        );
+        for p in pulls {
             let pr = p.pull_request;
             found.push((
                 month(&p.occurred_at),
                 Event::Pull(item(pr.repository, pr.number, pr.title)),
             ));
         }
-        for i in nodes(self.issue_contributions.nodes) {
+        for i in issues {
             let issue = i.issue;
             found.push((
                 month(&i.occurred_at),
                 Event::Issue(item(issue.repository, issue.number, issue.title)),
             ));
         }
-        for r in nodes(self.pull_request_review_contributions.nodes) {
+        for r in reviews {
             let pr = r.pull_request;
             found.push((
                 month(&r.occurred_at),
@@ -3525,6 +3627,7 @@ impl WireContributions {
             total: count(calendar.total_contributions),
             weeks,
             activity: months,
+            short,
         }
     }
 }

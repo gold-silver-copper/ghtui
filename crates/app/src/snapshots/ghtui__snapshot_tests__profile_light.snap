@@ -1,6 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 625
+assertion_line: 1066
 expression: "render(&with_profile(Mode::Light, ProfileTab::Overview))"
 ---
 Buffer {
@@ -22,7 +22,7 @@ Buffer {
         "  │ Hi there 👋                                                                                 │  ▐", // hidden by multi-width symbols: [(14, " ")]
         "  │                                                                                             │  ▐",
         "  │ I'm the Octocat. I like terminals.                                                          │  ▐",
-        "  ╰─────────────────────────────────────────────────────────────────────────────────────────────╯  ▐",
+        "  ╰─────────────────────────────────────────────────────────────────────────────────────────────╯   ",
         "                                                                                                    ",
         "  ╭─ Pinned ────────────────────────────────────────────────────────────────────────────────────╮   ",
         "  │▌octocat/Hello-World                                                                  ☆ 3.1k │   ",
@@ -140,8 +140,6 @@ Buffer {
         x: 0, y: 16, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 2, y: 16, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 97, y: 16, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
-        x: 99, y: 16, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
-        x: 0, y: 17, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 2, y: 18, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 4, y: 18, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 5, y: 18, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: BOLD,

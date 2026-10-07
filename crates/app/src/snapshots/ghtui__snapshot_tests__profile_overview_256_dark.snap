@@ -1,6 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 518
+assertion_line: 863
 expression: "render(&sized(state, 100, 80))"
 ---
 Buffer {
@@ -49,7 +49,7 @@ Buffer {
         "      ratatui/ratatui  3 commits                                                                    ",
         "  ⇄ Opened 1 pull request                                                                           ",
         "      gold-silver-copper/ghtui#12  Theme: generate syntax palette from seed                         ",
-        "  ◎ Reviewed 1 pull request                                                                         ",
+        "  ◎ Reviewed 1+ pull requests                                                                       ",
         "      ratatui/ratatui#1900  Add a scrollbar widget                                                  ",
         "                                                                                                    ",
         "  Sep 2026                                                                                          ",
@@ -58,7 +58,7 @@ Buffer {
         "  ◉ Opened 1 issue                                                                                  ",
         "      ratatui/ratatui#1888  Unicode width of emoji in tables                                        ",
         "                                                                                                    ",
-        "                                                                                                    ",
+        "  Counts with + are at least that: GitHub has more (o)                                              ",
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
@@ -616,6 +616,8 @@ Buffer {
         x: 6, y: 50, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 28, y: 50, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 60, y: 50, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 2, y: 52, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 54, y: 52, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 0, y: 78, fg: Indexed(240), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 0, y: 79, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 2, y: 79, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
