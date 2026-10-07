@@ -1472,6 +1472,23 @@ pub(crate) mod tests {
         );
     }
 
+    /// One outage that fails each of the page's needs is said once.
+    #[test]
+    fn a_refresh_error_shared_by_needs_is_said_once() {
+        let mut state = with_inbox(2);
+        let fetched = |result| Msg::Fetched {
+            key: DataKey::ViewerRepos,
+            result,
+            cached_at: None,
+        };
+        update(&mut state, fetched(Ok(Data::Repos(Vec::new()))));
+        let _ = state.load_visible(true);
+        update(&mut state, Msg::Inbox(Err(ApiError::RateLimited(30))));
+        update(&mut state, fetched(Err(ApiError::RateLimited(30))));
+        let first = page(&state).page.lines[0].text();
+        assert_eq!(first.matches("rate limited").count(), 1, "{first}");
+    }
+
     #[test]
     fn browser_and_copy_use_the_selection_or_the_page() {
         let mut state = with_inbox(1);
