@@ -20,7 +20,7 @@ use ratatui_textarea::TextArea;
 
 use crate::browse::{self, Data, DataKey, Need, PageScreen};
 use crate::diff_job::{JobId, JobMsg};
-use crate::diff_screen::{self, DiffInputs, DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
+use crate::diff_screen::{self, DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
 use crate::keymap::{Action, Key, Keymap, Scope};
 use crate::nav::{self, Hints, Menu, SearchBox, Visit};
 use crate::picker::{self, Picker};
@@ -636,7 +636,7 @@ impl State {
             DiffOf::Commit(..) | DiffOf::Range(..) => crate::diff_job::PrBase::default(),
         };
         // Every input is fetched again.
-        let diff = DiffState::start(DiffInputs::default(), None);
+        let diff = DiffState::fresh();
         let job = diff.job;
         self.diffs.insert(of.clone(), diff);
         let mut cmds = vec![Cmd::Git(Git::LoadDiff {
@@ -3493,7 +3493,7 @@ pub(crate) mod tests {
                 s.size = (120, 40);
                 let pr = PrRef::parse("o/r#7").unwrap();
                 let of = DiffOf::Pr(pr.clone());
-                let diff = DiffState::start(Default::default(), None);
+                let diff = DiffState::fresh();
                 let job = diff.job;
                 s.diffs.insert(of.clone(), diff);
                 s.screens.push(Screen::Diff(Box::new(DiffScreen::new(

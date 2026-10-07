@@ -496,7 +496,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         state.notice = Some(n);
         Vec::new()
     };
-    let in_range = diff.range.is_some();
+    let in_range = diff.range().is_some();
     if in_range
         && matches!(
             action,
@@ -771,7 +771,7 @@ pub(crate) fn apply_commit_choice(
     let since = choice == PickItem::SinceReview;
     let range = match choice {
         // Already on the whole PR: only "since your review" changes.
-        PickItem::All | PickItem::SinceReview if diff.range.is_none() => {
+        PickItem::All | PickItem::SinceReview if diff.range().is_none() => {
             if diff.doc.since_active() == since {
                 return Vec::new();
             }

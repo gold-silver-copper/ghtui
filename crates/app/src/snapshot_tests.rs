@@ -1271,22 +1271,12 @@ pub(crate) mod diff {
     const NEW_RS: &str = "use std::fmt;\n\n/// A point in 2D.\npub struct Point {\n    x: i32,\n    y: i32,\n}\n\nimpl Point {\n    pub fn new(x: i32, y: i32) -> Self {\n        Point { x, y }\n    }\n\n    pub fn origin() -> Self {\n        Self::new(0, \"0\".len() as i32 - 1)\n    }\n}\n";
 
     fn loaded(doc: Doc) -> DiffState {
-        let mut diff = DiffState::start(Default::default(), None);
         let refs = PrRefs {
             head: Oid::new("h"),
             base: Oid::new("b"),
             merge_base: Oid::new("m"),
         };
-        // As listed by the job, then with the test's own doc.
-        diff.set_files(crate::diff_job::DiffFiles {
-            refs,
-            files: Vec::new(),
-            generated: HashSet::new(),
-        });
-        diff.tree = ghtui_ui::file_tree::tree_rows(&doc);
-        diff.progress = (!doc.is_empty()).then(|| "Computing diffs".into());
-        diff.doc = doc;
-        diff
+        DiffState::fresh().with_doc(refs, doc)
     }
 
     /// Opens a diff screen on `diff`, as wide as the terminal.
@@ -1736,7 +1726,7 @@ pub(crate) mod diff {
     #[test]
     fn diff_loading_dark() {
         let mut s = state(Mode::Dark, ColorDepth::TrueColor);
-        let mut diff = DiffState::start(Default::default(), None);
+        let mut diff = DiffState::fresh();
         diff.progress = Some("Receiving objects:  42% (420/1000), 1.2 MiB | 3.4 MiB/s".into());
         open_diff(&mut s, diff, Pos::default(), Pane::Diff);
         insta::assert_snapshot!(render(&s));
@@ -1755,7 +1745,7 @@ pub(crate) mod diff {
     fn diff_long_error_dark() {
         let mut s = state(Mode::Dark, ColorDepth::TrueColor);
         s.size = (80, 24);
-        let mut diff = DiffState::start(Default::default(), None);
+        let mut diff = DiffState::fresh();
         diff.progress = None;
         diff.error = Some(
             "git fetch failed: fatal: unable to access 'https://github.com/o/r.git/': \
@@ -1868,12 +1858,7 @@ pub(crate) mod diff {
                 "diff loading",
                 Box::new(move || {
                     let mut s = state(Mode::Dark, tc);
-                    open_diff(
-                        &mut s,
-                        DiffState::start(Default::default(), None),
-                        Pos::default(),
-                        Pane::Diff,
-                    );
+                    open_diff(&mut s, DiffState::fresh(), Pos::default(), Pane::Diff);
                     s
                 }),
             ),
