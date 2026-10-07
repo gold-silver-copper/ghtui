@@ -515,21 +515,8 @@ impl State {
         self.picked(&DataKey::Repo(repo.clone()))
     }
 
-    pub fn search_results(&self, route: &Route) -> Option<&SearchResults> {
-        let (kind, query) = route.search()?;
-        self.picked(&DataKey::Search(kind, query))
-    }
-
     pub fn activity(&self, pr: &PrRef) -> Option<&PrActivity> {
         self.picked(&DataKey::PrActivity(pr.clone()))
-    }
-
-    pub fn commit(&self, repo: &RepoId, oid: &str) -> Option<&CommitDetail> {
-        self.picked(&DataKey::Commit(repo.clone(), oid.to_owned()))
-    }
-
-    pub fn profile(&self, login: &str) -> Option<&Profile> {
-        self.picked(&DataKey::Profile(login.to_lowercase()))
     }
 
     /// How a page's fetches are going (the ones that have started).

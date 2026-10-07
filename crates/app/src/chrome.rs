@@ -3,7 +3,9 @@
 //! title for pull requests. Both the view and mouse handling use
 //! [`State::layout`], so clicks land where things are drawn.
 
-use ghtui_api::browse::{Comparison, DiscussionsOf, RepoSort, SearchKind};
+use ghtui_api::browse::{
+    CommitDetail, Comparison, DiscussionsOf, Profile, RepoSort, SearchKind, SearchResults,
+};
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::chrome::{Crumb, PageTab};
 use ghtui_ui::pages::{PrTab, ProfileTab};
@@ -233,7 +235,7 @@ impl State {
             }
             Route::User { login, tab } => {
                 c.crumb(login, None);
-                let profile = self.profile(login);
+                let profile = self.picked::<Profile>(&DataKey::Profile(login.to_lowercase()));
                 let user = |tab| {
                     Target::Page(Route::User {
                         login: login.clone(),
@@ -289,7 +291,8 @@ impl State {
             }
             Route::Search { kind, query } => {
                 c.crumb("Search", None);
-                let total = self.search_results(route).map(|r| r.counts().0);
+                let results = self.picked::<SearchResults>(&DataKey::Search(*kind, query.clone()));
+                let total = results.map(|r| r.counts().0);
                 let kinds = [
                     // Short, so all seven fit.
                     (SearchKind::Repos, "▤", "Repos"),
@@ -385,7 +388,7 @@ impl State {
 
     /// A commit's tabs: the commit, and its files.
     fn commit_tabs(&self, repo: &RepoId, oid: &str, c: &mut Chrome) {
-        let detail = self.commit(repo, oid);
+        let detail = self.picked::<CommitDetail>(&DataKey::Commit(repo.clone(), oid.to_owned()));
         let full = detail.map_or(oid, |d| d.oid.as_str());
         c.tabs.push((
             new_tab("◷", "Commit", None),
