@@ -68,7 +68,7 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
         let threads = review::outdated_to_map(&diff.inputs().threads);
         let ids = threads.iter().map(|t| t.thread.clone()).collect();
         if claim(&mut diff.joins.mapped, (job, ids)) && !threads.is_empty() {
-            let work = (pr.clone(), head, threads);
+            let work = (pr.clone(), job, head, threads);
             cmds.push(Cmd::Git(Git::MapOutdated(Joined(work))));
         }
     }

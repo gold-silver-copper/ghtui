@@ -49,6 +49,7 @@ pub enum JobMsg {
     File(usize, Arc<FileDiff>),
     Failed(Failure),
     Moves(Vec<ghtui_diff::moves::Move>),
+    Mapped(Vec<(ghtui_api::model::NodeId, Option<u32>)>),
 }
 
 /// Identifies one run of a diff job: a refresh or a new commit range gets

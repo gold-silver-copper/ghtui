@@ -189,8 +189,6 @@ pub struct DiffInputs {
     pub review_loaded: bool,
     /// Review threads from GitHub.
     pub threads: Vec<ReviewThread>,
-    /// Outdated threads mapped onto the current diff (`None`: can't be).
-    pub mapped: HashMap<NodeId, Option<u32>>,
     /// Commentable ranges from GitHub's patches of the whole PR, by path.
     pub patches: Arc<HashMap<String, Commentable>>,
     /// Your last submitted review on GitHub.
@@ -251,6 +249,9 @@ pub struct DiffState {
     /// What the background job is doing, while it works.
     pub progress: Option<String>,
     pub error: Option<String>,
+    /// Outdated threads mapped onto this job's head (`None`: can't be).
+    /// Changed only through [`DiffState::add_mapped`], which shows it.
+    mapped: HashMap<NodeId, Option<u32>>,
     /// What the work that waits on several inputs last ran for.
     pub(crate) joins: join::Joins,
     /// "Since my last review" was asked for and is waiting on data.
@@ -273,6 +274,7 @@ impl DiffState {
             refs: None,
             progress: Some("Preparing".into()),
             error: None,
+            mapped: HashMap::new(),
             joins: join::Joins::default(),
             since_requested: false,
             range: None,
@@ -299,8 +301,8 @@ impl DiffState {
         &self.inputs
     }
 
-    /// What the doc shows of the inputs; GitHub's patches only on the
-    /// whole PR's diff, whose lines they number.
+    /// What the doc shows of the inputs and this job's mapping; GitHub's
+    /// patches only on the whole PR's diff, whose lines they number.
     fn doc_inputs(&self) -> DocInputs {
         let i = &self.inputs;
         DocInputs {
@@ -311,7 +313,7 @@ impl DiffState {
             },
             viewed: i.viewed.iter().flat_map(|v| v.states.clone()).collect(),
             reviewed: i.review.reviewed_hunks.iter().cloned().collect(),
-            annotations: annotations(&i.threads, &i.mapped, &i.review.pending),
+            annotations: annotations(&i.threads, &self.mapped, &i.review.pending),
         }
     }
 
@@ -320,6 +322,12 @@ impl DiffState {
         let r = f(&mut self.inputs);
         self.doc.set_inputs(self.doc_inputs());
         r
+    }
+
+    /// Places outdated threads as this job's mapping says, and shows them.
+    pub fn add_mapped(&mut self, mapped: impl IntoIterator<Item = (NodeId, Option<u32>)>) {
+        self.mapped.extend(mapped);
+        self.doc.set_inputs(self.doc_inputs());
     }
 
     /// Changes the review with `f`, shows the change, and saves it once
@@ -888,6 +896,11 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
                 }
             }
         },
+        JobMsg::Mapped(mapped) => {
+            if let Some(diff) = state.diffs.get_mut(of) {
+                diff.add_mapped(mapped);
+            }
+        }
         JobMsg::Failed(error) => {
             if let Some(diff) = state.diffs.get_mut(of) {
                 diff.progress = None;
@@ -1018,9 +1031,6 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
         DiffMsg::PatchesLoaded(Err(err)) => {
             tracing::warn!(%pr, %err, "GitHub patches unavailable; using local hunks");
         }
-        DiffMsg::OutdatedMapped(mapped) => {
-            edit(state, of, |i| i.mapped.extend(mapped));
-        }
         DiffMsg::ResolvedSet {
             thread_id,
             resolved,
@@ -1041,6 +1051,11 @@ mod tests {
     use super::*;
 
     impl DiffState {
+        /// Where this job's outdated threads are.
+        pub(crate) fn mapped(&self) -> &HashMap<NodeId, Option<u32>> {
+            &self.mapped
+        }
+
         /// Lists `doc`'s files at `refs` and diffs them as it has, as if the
         /// job had sent them.
         pub(crate) fn with_doc(mut self, refs: PrRefs, doc: &Doc) -> Self {

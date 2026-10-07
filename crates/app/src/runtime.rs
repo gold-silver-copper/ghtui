@@ -272,7 +272,7 @@ impl Effects {
                 });
             }
             Git::MapOutdated(joined) => {
-                let (pr, head, threads) = joined.into_inner();
+                let (pr, job, head, threads) = joined.into_inner();
                 let Some(git) = self.job_git(&DiffOf::Pr(pr.clone())) else {
                     return;
                 };
@@ -286,7 +286,8 @@ impl Effects {
                         .await;
                         mapped.push((t.thread, to));
                     }
-                    let _ = tx.send(Msg::Diff(pr.into(), DiffMsg::OutdatedMapped(mapped)));
+                    let msg = DiffMsg::Job(job, JobMsg::Mapped(mapped));
+                    let _ = tx.send(Msg::Diff(pr.into(), msg));
                 });
             }
         }
@@ -564,9 +565,9 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             Msg::Diff(pr.clone().into(), DiffMsg::PatchesLoaded(api()))
         }
         Cmd::Git(Git::MapOutdated(joined)) => {
-            let (pr, _, threads) = joined.get();
+            let (pr, job, _, threads) = joined.get();
             let none = threads.iter().map(|t| (t.thread.clone(), None)).collect();
-            Msg::Diff(pr.clone().into(), DiffMsg::OutdatedMapped(none))
+            Msg::Diff(pr.clone().into(), DiffMsg::Job(*job, JobMsg::Mapped(none)))
         }
         Cmd::Api(Api::Reply { pr, .. }) => Msg::Diff(pr.clone().into(), DiffMsg::Replied(api())),
         Cmd::Api(Api::SetResolved {

@@ -113,7 +113,6 @@ pub enum DiffMsg {
     ReviewLoaded(Result<ReviewState, Failure>),
     ThreadsLoaded(Result<Vec<ReviewThread>, ApiError>),
     PatchesLoaded(Result<Vec<PatchFile>, ApiError>),
-    OutdatedMapped(Vec<(NodeId, Option<u32>)>),
     Replied(Result<(), ApiError>),
     ResolvedSet {
         thread_id: NodeId,
@@ -238,8 +237,8 @@ pub enum Git {
     Prioritize(DiffOf, Vec<usize>),
     /// Look for moved code; answered as the job's [`JobMsg::Moves`].
     DetectMoves(join::Joined<(DiffOf, JobId, FileDiffs)>),
-    /// Outdated threads mapped onto the PR's diff at a head.
-    MapOutdated(join::Joined<(PrRef, Oid, Vec<OutdatedThread>)>),
+    /// Outdated threads mapped onto a job's head, answered as its [`JobMsg::Mapped`].
+    MapOutdated(join::Joined<(PrRef, JobId, Oid, Vec<OutdatedThread>)>),
     /// Block hashes of the PR's diff at an old head, for "since my last
     /// review".
     SinceReview(join::Joined<(PrRef, String)>),
@@ -2529,7 +2528,7 @@ pub(crate) mod tests {
         let cmds = diff_msg(&mut state, &pr, no_files(job, &head));
         assert!(
             cmds.iter()
-                .any(|c| matches!(c, Cmd::Git(Git::MapOutdated(j)) if j.get().2.len() == 1)),
+                .any(|c| matches!(c, Cmd::Git(Git::MapOutdated(j)) if j.get().3.len() == 1)),
             "the outdated thread is never mapped: {cmds:?}"
         );
     }
@@ -3612,19 +3611,38 @@ pub(crate) mod tests {
                     &pr,
                     DiffMsg::ThreadsLoaded(Ok(vec![thread("old", None, false, true)])),
                 );
-                assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated(j)) if j.get().2.len() == 1 && &*j.get().1 == "h")));
+                assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated(j)) if j.get().3.len() == 1 && &*j.get().2 == "h")));
                 let ann = &s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations()[0];
                 assert!(
                     ann.outdated && ann.on_line().is_none(),
                     "unplaced until mapped"
                 );
-                diff_msg(
-                    &mut s,
-                    &pr,
-                    DiffMsg::OutdatedMapped(vec![(NodeId::new("old"), Some(4))]),
-                );
+                let job = s.diffs[&DiffOf::Pr(pr.clone())].job;
+                let mapped = JobMsg::Mapped(vec![(NodeId::new("old"), Some(4))]);
+                diff_msg(&mut s, &pr, DiffMsg::Job(job, mapped));
                 let ann = &s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations()[0];
                 assert_eq!((ann.on_line(), ann.moved), (Some(4), true));
+            }
+
+            /// Outdated threads are mapped onto each job's head: another
+            /// range drops the old lines, and a late reply for the old job
+            /// doesn't land on the new one.
+            #[test]
+            fn an_outdated_mapping_is_for_its_own_job() {
+                let (mut s, pr) = diff_state(120);
+                let of = DiffOf::Pr(pr.clone());
+                let thread = DiffMsg::ThreadsLoaded(Ok(vec![thread("old", None, false, true)]));
+                let _ = diff_msg(&mut s, &pr, thread);
+                let old = s.diffs[&of].job;
+                let line = |n| JobMsg::Mapped(vec![(NodeId::new("old"), Some(n))]);
+                diff_msg(&mut s, &pr, DiffMsg::Job(old, line(4)));
+                s.diffs.get_mut(&of).unwrap().restart(None);
+                assert!(s.diffs[&of].mapped().is_empty(), "the old job's lines kept");
+                diff_msg(&mut s, &pr, DiffMsg::Job(old, line(9)));
+                assert!(s.diffs[&of].mapped().is_empty(), "a late reply landed");
+                let new = s.diffs[&of].job;
+                diff_msg(&mut s, &pr, DiffMsg::Job(new, line(7)));
+                assert_eq!(s.diffs[&of].mapped()[&NodeId::new("old")], Some(7));
             }
         }
 
