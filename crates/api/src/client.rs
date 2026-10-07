@@ -1860,28 +1860,46 @@ impl GitHub {
             browse::DiscussionsOf::Repo(repo) => return Ok(repo.clone()),
             browse::DiscussionsOf::Org(org) => org,
         };
-        let data = self
-            .graphql_json(
-                "query($q: String!) { search(type: DISCUSSION, query: $q, first: 50) { nodes { ... on Discussion { url repository { nameWithOwner } } } } }",
-                serde_json::json!({ "q": format!("org:{org}") }),
-            )
-            .await?;
         let prefix = format!(
             "https://github.com/orgs/{}/discussions/",
             org.to_lowercase()
         );
-        data.pointer("/search/nodes")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .find(|n| {
-                n.get("url")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|u| u.to_lowercase().starts_with(&prefix))
-            })
-            .and_then(|n| n.pointer("/repository/nameWithOwner")?.as_str())
-            .and_then(RepoId::parse)
-            .ok_or_else(|| ApiError::NotFound(format!("{org}'s discussions")))
+        // The organization's discussions are among its repositories', in
+        // best-match order: look through up to five pages.
+        let mut after: Option<String> = None;
+        for _ in 0..5 {
+            let data = self
+                .graphql_json(
+                    "query($q: String!, $after: String) { search(type: DISCUSSION, query: $q, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on Discussion { url repository { nameWithOwner } } } } }",
+                    serde_json::json!({ "q": format!("org:{org}"), "after": after }),
+                )
+                .await?;
+            let found = data
+                .pointer("/search/nodes")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|n| {
+                    n.get("url")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|u| u.to_lowercase().starts_with(&prefix))
+                })
+                .and_then(|n| n.pointer("/repository/nameWithOwner")?.as_str())
+                .and_then(RepoId::parse);
+            if let Some(repo) = found {
+                return Ok(repo);
+            }
+            let more = data.pointer("/search/pageInfo/hasNextPage")
+                == Some(&serde_json::Value::Bool(true));
+            after = data
+                .pointer("/search/pageInfo/endCursor")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            if !more || after.is_none() {
+                break;
+            }
+        }
+        Err(ApiError::NotFound(format!("{org}'s discussions")))
     }
 
     /// Discussions, most recently updated first, 25 at a time from
