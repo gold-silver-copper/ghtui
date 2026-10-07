@@ -39,7 +39,8 @@ pub enum DiffOf {
     Pr(PrRef),
     /// A commit (its full ID) against its first parent.
     Commit(RepoId, String),
-    /// From one commit to another (full IDs): a comparison's files.
+    /// From one commit to another (full IDs), as `a..b`: a comparison's
+    /// files, from the merge base its page found.
     Range(RepoId, String, String),
 }
 

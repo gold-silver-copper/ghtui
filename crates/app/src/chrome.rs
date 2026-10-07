@@ -93,7 +93,7 @@ impl State {
                         return c;
                     }
                     DiffOf::Range(repo, from, to) => {
-                        let spec = format!("{from}...{to}");
+                        let spec = format!("{from}..{to}");
                         compare_tabs(repo, &spec, Some((from, to)), None, &mut c);
                         c.active = Some(1);
                         return c;

@@ -128,7 +128,7 @@ impl State {
                 }),
                 DiffOf::Range(repo, from, to) => Target::Page(Route::Compare {
                     repo: repo.clone(),
-                    spec: format!("{from}...{to}"),
+                    spec: format!("{from}..{to}"),
                 }),
             },
         };
