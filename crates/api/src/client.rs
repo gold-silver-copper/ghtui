@@ -834,6 +834,23 @@ impl GitHub {
                 next: page.next,
             }));
         }
+        // GitHub refuses an empty commit or code search (422).
+        if query.trim().is_empty() {
+            let empty = Results {
+                total: 0,
+                items: Vec::new(),
+                next: None,
+            };
+            return Ok(if kind == Kind::Commits {
+                SearchResults::Commits(empty)
+            } else {
+                SearchResults::Code(Results {
+                    total: 0,
+                    items: Vec::new(),
+                    next: None,
+                })
+            });
+        }
         let number: u64 = after.as_deref().and_then(|a| a.parse().ok()).unwrap_or(1);
         let what = if kind == Kind::Commits {
             "commits"
@@ -1473,27 +1490,38 @@ impl GitHub {
                 .ok_or_else(|| ApiError::NotFound(format!("{repo} milestone {number}")))?,
         )?;
         let info = wire.into_info();
-        let search = format!(
-            "repo:{repo} milestone:\"{}\" sort:updated-desc",
-            info.title.replace('"', "")
-        );
-        let items = match self
-            .search_as(
-                browse::SearchKind::Issues,
-                browse::SearchType::Issue,
-                search,
-                after,
-            )
-            .await?
-        {
-            browse::SearchResults::Issues(items) => items,
-            _ => browse::Results {
+        // GitHub's search can't match a title with quotes in it.
+        let unsearchable = info.title.contains('"');
+        let items = if unsearchable {
+            browse::Results {
                 total: 0,
                 items: Vec::new(),
                 next: None,
-            },
+            }
+        } else {
+            let search = format!("repo:{repo} milestone:\"{}\" sort:updated-desc", info.title);
+            match self
+                .search_as(
+                    browse::SearchKind::Issues,
+                    browse::SearchType::Issue,
+                    search,
+                    after,
+                )
+                .await?
+            {
+                browse::SearchResults::Issues(items) => items,
+                _ => browse::Results {
+                    total: 0,
+                    items: Vec::new(),
+                    next: None,
+                },
+            }
         };
-        let detail = browse::MilestoneDetail { info, items };
+        let detail = browse::MilestoneDetail {
+            info,
+            items,
+            unsearchable,
+        };
         if first {
             return Ok(self
                 .kept(&browse::keys::milestone(repo, number), detail)

@@ -1868,6 +1868,10 @@ pub struct MilestoneList {
 pub struct MilestoneDetail {
     pub info: MilestoneInfo,
     pub items: Results<IssueSummary>,
+    /// Its title has quotes, which GitHub's search can't match, so its
+    /// issues and pull requests weren't looked up.
+    #[serde(default)]
+    pub unsearchable: bool,
 }
 
 pub(crate) mod wire_milestones {

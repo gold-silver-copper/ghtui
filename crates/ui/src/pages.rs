@@ -3493,7 +3493,12 @@ pub fn milestone(page: &mut Page, repo: &RepoId, d: &MilestoneDetail, icons: Ico
         Role::Strong,
     )];
     page.box_top(title, Vec::new());
-    if r.items.is_empty() {
+    if d.unsearchable {
+        empty_row(
+            page,
+            "GitHub's search can't look up a title with quotes: o shows them on GitHub.",
+        );
+    } else if r.items.is_empty() {
         empty_row(page, "Nothing in this milestone.");
     }
     box_rows(page, &r.items, |page, i| {
