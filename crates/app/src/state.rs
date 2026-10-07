@@ -984,6 +984,11 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Tab2 => return nav::switch_tab(state, 2),
         Action::Tab3 => return nav::switch_tab(state, 3),
         Action::Tab4 => return nav::switch_tab(state, 4),
+        Action::Tab5 => return nav::switch_tab(state, 5),
+        Action::Tab6 => return nav::switch_tab(state, 6),
+        Action::Tab7 => return nav::switch_tab(state, 7),
+        Action::Tab8 => return nav::switch_tab(state, 8),
+        Action::Tab9 => return nav::switch_tab(state, 9),
         Action::NextOpenTab => return state.step_open_tab(true),
         Action::PrevOpenTab => return state.step_open_tab(false),
         Action::OpenInTab => return state.open_in_tab(),
@@ -1931,6 +1936,12 @@ pub(crate) mod tests {
             let _ = state.push(route.clone());
             assert_eq!(active(&state).as_deref(), Some(tab), "{route:?}");
         }
+        // Every tab has a number key: `5` is Actions, `7` Security.
+        let _ = state.push(Route::Repo(repo()));
+        press(&mut state, "5");
+        assert_eq!(route(&state), Route::Actions(repo()));
+        press(&mut state, "7");
+        assert_eq!(route(&state), Route::Advisories(Some(repo())));
     }
 
     #[test]

@@ -78,6 +78,11 @@ actions! {
     Tab2              "tab_2"             ["2"]                Global "Second tab";
     Tab3              "tab_3"             ["3"]                Global "Third tab";
     Tab4              "tab_4"             ["4"]                Global "Fourth tab";
+    Tab5              "tab_5"             ["5"]                Global "Fifth tab";
+    Tab6              "tab_6"             ["6"]                Global "Sixth tab";
+    Tab7              "tab_7"             ["7"]                Global "Seventh tab";
+    Tab8              "tab_8"             ["8"]                Global "Eighth tab";
+    Tab9              "tab_9"             ["9"]                Global "Ninth tab";
     NextOpenTab       "next_open_tab"     ["]"]                Global "Next open tab";
     PrevOpenTab       "prev_open_tab"     ["["]                Global "Previous open tab";
     OpenInTab         "open_in_tab"       ["T"]                Global "Open the selection in a new tab";
@@ -498,7 +503,7 @@ mod tests {
             ("`alt-→`", &[Forward]),
             ("`PgUp` `PgDn`", &[PageUp, PageDown]),
             ("`Home` `End` (`g` `G`)", &[Top, Bottom]),
-            ("`1`–`4`", &[Tab1, Tab4]),
+            ("`1`–`9`", &[Tab1, Tab9]),
             ("`Space` `?`", &[Menu]),
             ("`/`", &[Search]),
             ("`f`", &[FindFile]),
