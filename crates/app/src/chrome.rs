@@ -11,7 +11,7 @@ use ghtui_ui::chrome::{Crumb, PageTab};
 use ghtui_ui::pages::{PrTab, ProfileTab};
 use ratatui::layout::Rect;
 
-use crate::browse::{Data, DataKey};
+use crate::browse::{Data, DataKey, paged};
 use crate::diff_screen::DiffOf;
 use crate::route::{OPEN, Route, Target};
 use crate::state::{Screen, State};
@@ -291,7 +291,7 @@ impl State {
             }
             Route::Search { kind, query } => {
                 c.crumb("Search", None);
-                let results = self.picked::<SearchResults>(&DataKey::Search(*kind, query.clone()));
+                let results = paged(route).and_then(|key| self.picked::<SearchResults>(&key));
                 let total = results.map(|r| r.counts().0);
                 let kinds = [
                     // Short, so all seven fit.
