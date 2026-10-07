@@ -50,6 +50,7 @@ terminal-colorsaurus = "1.0.3"
 
 insta = "1.49.0"
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 pulldown-cmark = { version = "0.13.4", default-features = false }
 base64 = "0.23.1"
 

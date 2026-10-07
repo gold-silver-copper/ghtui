@@ -1,0 +1,80 @@
+{
+  "id": 112490402200,
+  "run_id": 37489604184,
+  "name": "pre-build",
+  "outcome": "Success",
+  "started_at": "2026-10-06T15:41:21Z",
+  "completed_at": "2026-10-06T15:41:37Z",
+  "steps": [
+    {
+      "number": 1,
+      "name": "Set up job",
+      "outcome": "Success",
+      "started_at": "2026-10-06T15:41:22Z",
+      "completed_at": "2026-10-06T15:41:27Z"
+    },
+    {
+      "number": 2,
+      "name": "Configure git",
+      "outcome": "Success",
+      "started_at": "2026-10-06T15:41:27Z",
+      "completed_at": "2026-10-06T15:41:27Z"
+    },
+    {
+      "number": 3,
+      "name": "Clone repository",
+      "outcome": "Success",
+      "started_at": "2026-10-06T15:41:27Z",
+      "completed_at": "2026-10-06T15:41:31Z"
+    },
+    {
+      "number": 4,
+      "name": "Install Deno",
+      "outcome": "Success",
+      "started_at": "2026-10-06T15:41:31Z",
+      "completed_at": "2026-10-06T15:41:33Z"
+    },
+    {
+      "number": 5,
+      "name": "Run GIT_MESSAGE=$(git log --format=%s -n 1 9f74de4c8cb68a55f2cfab43e82c7e4b6ef5771b)",
+      "outcome": "Skipped",
+      "started_at": "2026-10-06T15:41:33Z",
+      "completed_at": "2026-10-06T15:41:33Z"
+    },
+    {
+      "number": 6,
+      "name": "Run git fetch --depth=1 origin ead2af980a19edb0d0ffc8d24ecc51c0281a3dfa",
+      "outcome": "Success",
+      "started_at": "2026-10-06T15:41:33Z",
+      "completed_at": "2026-10-06T15:41:34Z"
+    },
+    {
+      "number": 7,
+      "name": "Run deno run -A tools/check_docs_only_changes.js ead2af980a19edb0d0ffc8d24ecc51c0281a3dfa",
+      "outcome": "Success",
+      "started_at": "2026-10-06T15:41:34Z",
+      "completed_at": "2026-10-06T15:41:34Z"
+    },
+    {
+      "number": 13,
+      "name": "Post Install Deno",
+      "outcome": "Success",
+      "started_at": "2026-10-06T15:41:34Z",
+      "completed_at": "2026-10-06T15:41:34Z"
+    },
+    {
+      "number": 14,
+      "name": "Post Clone repository",
+      "outcome": "Success",
+      "started_at": "2026-10-06T15:41:34Z",
+      "completed_at": "2026-10-06T15:41:34Z"
+    },
+    {
+      "number": 15,
+      "name": "Complete job",
+      "outcome": "Success",
+      "started_at": "2026-10-06T15:41:34Z",
+      "completed_at": "2026-10-06T15:41:34Z"
+    }
+  ]
+}

@@ -1,0 +1,117 @@
+---
+source: crates/ui/tests/job_logs.rs
+assertion_line: 91
+expression: "golden(\"iputils-container\")"
+---
+421605 bytes, 5064 lines; 0 cut
+
+step 1 Success Set up job: 0 cut, 58 lines
+  Body: Current runner version: '2.337.0'
+  Strong: ▸ Runner Image Provisioner
+  Strong: ▸ Clean up resources from previous jobs
+  Syntax(Function): /usr/bin/docker ps --all --quiet --no-trunc --filter "label=487fb5"
+
+step 2 Success Initialize containers: 0 cut, 31 lines
+  Syntax(Function): /usr/bin/docker network prune --force --filter "label=487fb5"
+  Meta: 
+  Strong: ▸ Waiting for all services to be ready
+  Meta: 
+
+step 3 Success Show OS: 0 cut, 16 lines
+  Strong: ▸ Run cat /etc/os-release
+  Body: cat /etc/os-release
+  Body: DOCUMENTATION_URL="https://en.opensuse.org/Portal:Leap"
+  Body: LOGO="distributor-logo-Leap"
+
+step 4 Success Git checkout: 0 cut, 501 lines
+  Strong: ▸ Run actions/checkout@v1
+  Body: with:
+  Body: 
+  Body: HEAD is now at 6ee96bd Merge 1aab91287a3687c1322e5f8ec33cdd7bdbea7b2f into 18717a3984c8345
+
+step 5 Success Fix permissions: 0 cut, 211 lines
+  Strong: ▸ Run chown -Rv $(id -u):$(id -g) .
+  Body: chown -Rv $(id -u):$(id -g) .
+  Body: changed ownership of './iputils_common.h' from 1001:1001 to 0:0
+  Body: changed ownership of '.' from 1001:1001 to 0:0
+
+step 6 Success Install additional packages: 0 cut, 1851 lines
+  Strong: ▸ Run export INSTALL=opensuse/leap
+  Body: export INSTALL=opensuse/leap
+  Body:   EXODIST/Test-Simple-1.302225.tar.gz
+  Body:   /usr/bin/make install  -- OK
+
+step 7 Success Check dependencies: 0 cut, 32 lines
+  Strong: ▸ Run ./build.sh dependencies
+  Body: ./build.sh dependencies
+  Body: + '[' -z dependencies -o dependencies = test ']'
+  Body: + '[' dependencies = test-log ']'
+
+step 8 Success Check info: 0 cut, 45 lines
+  Strong: ▸ Run ./build.sh info
+  Body: ./build.sh info
+  Body: + '[' -z info -o info = test ']'
+  Body: + '[' info = test-log ']'
+
+step 9 Success Configure: 0 cut, 129 lines
+  Strong: ▸ Run ./build.sh configure
+  Body: ./build.sh configure
+  Body: + '[' -z configure -o configure = test ']'
+  Body: + '[' configure = test-log ']'
+
+step 10 Success Compile: 0 cut, 108 lines
+  Strong: ▸ Run ./build.sh build
+  Body: ./build.sh build
+  Body: + '[' -z build -o build = test ']'
+  Body: + '[' build = test-log ']'
+
+step 11 Success Show build log: 0 cut, 585 lines
+  Strong: ▸ Run ./build.sh build-log
+  Body: ./build.sh build-log
+  Body: Failed to guess install tag for /github/home/iputils-install/share/iputils/tracepath.html
+  Body: === END builddir/meson-logs/meson-log.txt ===
+
+step 12 Success Check binaries: 0 cut, 65 lines
+  Strong: ▸ Run ./build.sh check-binaries
+  Body: ./build.sh check-binaries
+  Body: + '[' -z check-binaries -o check-binaries = test ']'
+  Body: + '[' check-binaries = test-log ']'
+
+step 13 Success Dist: 0 cut, 478 lines
+  Strong: ▸ Run if [ ! "$SKIP_DISC" ]; then ./build.sh dist; else echo '::notice ::meson dist skippe
+  Body: if [ ! "$SKIP_DISC" ]; then ./build.sh dist; else echo '::notice ::meson dist skipped'; fi
+  Body: + '[' -z dist -o dist = test ']'
+  Body: + '[' dist = test-log ']'
+
+step 14 Success Install: 0 cut, 69 lines
+  Strong: ▸ Run ./build.sh install
+  Body: ./build.sh install
+  Body: + '[' -z install -o install = test ']'
+  Body: + '[' install = test-log ']'
+
+step 15 Success Show install log: 0 cut, 121 lines
+  Strong: ▸ Run ./build.sh install-log
+  Body: ./build.sh install-log
+  Body: /github/home/iputils-install
+  Body: === END builddir/meson-logs/install-log.txt ===
+
+step 16 Success Tests: 0 cut, 84 lines
+  Strong: ▸ Run if [ ! "$SKIP_TESTS" ]; then ./build.sh test; else echo '::notice ::Tests skipped'; 
+  Body: if [ ! "$SKIP_TESTS" ]; then ./build.sh test; else echo '::notice ::Tests skipped'; fi
+  Body: + echo '0 test failures'
+  Body: + exit 0
+
+step 17 Success Show test log: 0 cut, 675 lines
+  Strong: ▸ Run if [ ! "$SKIP_TESTS" ]; then ./build.sh test-log; else echo '::notice ::Tests skippe
+  Body: if [ ! "$SKIP_TESTS" ]; then ./build.sh test-log; else echo '::notice ::Tests skipped'; fi
+  Body: Stop and remove container: a90de0b994304efaa4f6c403a99cdd65_opensuseleap_a1b6b9
+  Syntax(Function): /usr/bin/docker rm --force 213be89a6bd19e0f26a9242e36e576b16be947b537511c1d82501d131c15edd
+
+step 34 Success Stop containers: 0 cut, 4 lines
+  Body: 213be89a6bd19e0f26a9242e36e576b16be947b537511c1d82501d131c15edd0
+  Body: Remove container network: github_network_53e168b47e7d4c71bc7381593a2332f4
+  Syntax(Function): /usr/bin/docker network rm github_network_53e168b47e7d4c71bc7381593a2332f4
+  Body: github_network_53e168b47e7d4c71bc7381593a2332f4
+
+step 35 Success Complete job: 0 cut, 1 lines
+  Body: Cleaning up orphan processes

@@ -320,3 +320,39 @@ async fn contract_record_corpus() {
     std::fs::create_dir_all(&dir).unwrap();
     common::run(&gh.recording(dir)).await;
 }
+
+/// Records the job-log corpus `crates/ui/tests/job_logs.rs` replays: each
+/// case's job (as ghtui models it) and its raw log, into `$GHTUI_RECORD`
+/// (default: the temporary directory's `ghtui-logs`). GitHub keeps logs
+/// for 90 days, so these job IDs stop working; the corpus doesn't.
+#[tokio::test]
+#[ignore = "reads github.com"]
+async fn contract_record_logs() {
+    let gh = github!();
+    let dir = std::env::var("GHTUI_RECORD").map_or_else(
+        |_| std::env::temp_dir().join("ghtui-logs"),
+        std::path::PathBuf::from,
+    );
+    std::fs::create_dir_all(&dir).unwrap();
+    // A BOM, a composite action, groups and `[command]` lines.
+    // A re-run (attempt 2) with debug logging.
+    // A log over 2 MB.
+    // A `##[warning]`.
+    // A container job's `##[command]` lines.
+    let cases = [
+        ("ratatui-clippy", "ratatui/ratatui", 112_630_463_742_u64),
+        ("deno-rerun-debug", "denoland/deno", 112_490_402_200),
+        ("rust-dist-big", "rust-lang/rust", 112_723_124_879),
+        ("cli-warning", "cli/cli", 95_690_755_657),
+        ("iputils-container", "iputils/iputils", 112_025_073_907),
+    ];
+    for (name, repo, id) in cases {
+        let repo = RepoId::parse(repo).unwrap();
+        let job = gh.job(&repo, id).await.unwrap();
+        let json = serde_json::to_string_pretty(&job).unwrap();
+        std::fs::write(dir.join(format!("{name}.job.json")), json).unwrap();
+        let path = format!("/repos/{}/{}/actions/jobs/{id}/logs", repo.owner, repo.name);
+        let log = gh.rest_get(&path).await.unwrap();
+        std::fs::write(dir.join(format!("{name}.log")), log).unwrap();
+    }
+}

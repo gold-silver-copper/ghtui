@@ -1,0 +1,51 @@
+---
+source: crates/ui/tests/job_logs.rs
+assertion_line: 91
+expression: "golden(\"ratatui-clippy\")"
+---
+52979 bytes, 592 lines; 0 cut
+
+step 1 Success Set up job: 0 cut, 32 lines
+  Body: Current runner version: '2.337.0'
+  Strong: ▸ Runner Image Provisioner
+  Body: Download action repository 'Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6' 
+  Body: Complete job name: Check Clippy (stable)
+
+step 2 Success Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1: 0 cut, 126 lines
+  Strong: ▸ Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+  Body: with:
+  Body: Removing credentials config '/home/runner/work/_temp/git-credentials-63e70c9c-96c8-4668-bd
+  Meta: 
+
+step 3 Success Run dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772: 0 cut, 173 lines
+  Strong: ▸ Run dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+  Body: with:
+  Body: LLVM version: 23.1.1
+  Meta: 
+
+step 4 Success Run Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6: 0 cut, 99 lines
+  Strong: ▸ Run Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+  Body: with:
+  Body: Cache restored successfully
+  Body: Restored from cache key "v0-rust-lint-clippy-Linux-x64-c7b3ef7d-46f3f84f" full match: fals
+
+step 5 Success Run cargo xtask clippy: 0 cut, 65 lines
+  Strong: ▸ Run cargo xtask clippy
+  Body: cargo xtask clippy
+  Body:     Checking constraint-explorer v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/c
+  Body:     Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.89s
+
+step 9 Success Post Run Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6: 0 cut, 81 lines
+  Body: Post job cleanup.
+  Strong: ▸ Cache Configuration
+  Body: Sent 160530648 of 361857240 (44.4%), 152.9 MBs/sec
+  Body: Sent 361857240 of 361857240 (100.0%), 268.6 MBs/sec
+
+step 10 Success Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1: 0 cut, 15 lines
+  Body: Post job cleanup.
+  Syntax(Function): /usr/bin/git version
+  Syntax(Function): /usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+  Syntax(Function): /usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --
+
+step 11 Success Complete job: 0 cut, 1 lines
+  Body: Cleaning up orphan processes

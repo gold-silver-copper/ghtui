@@ -1,0 +1,143 @@
+{
+  "id": 112025073907,
+  "run_id": 37387701267,
+  "name": "job (opensuse/leap, clang)",
+  "outcome": "Success",
+  "started_at": "2026-10-05T23:18:15Z",
+  "completed_at": "2026-10-05T23:20:43Z",
+  "steps": [
+    {
+      "number": 1,
+      "name": "Set up job",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:18:16Z",
+      "completed_at": "2026-10-05T23:18:16Z"
+    },
+    {
+      "number": 2,
+      "name": "Initialize containers",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:18:16Z",
+      "completed_at": "2026-10-05T23:18:20Z"
+    },
+    {
+      "number": 3,
+      "name": "Show OS",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:18:20Z",
+      "completed_at": "2026-10-05T23:18:20Z"
+    },
+    {
+      "number": 4,
+      "name": "Git checkout",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:18:20Z",
+      "completed_at": "2026-10-05T23:18:22Z"
+    },
+    {
+      "number": 5,
+      "name": "Fix permissions",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:18:22Z",
+      "completed_at": "2026-10-05T23:18:22Z"
+    },
+    {
+      "number": 6,
+      "name": "Install additional packages",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:18:22Z",
+      "completed_at": "2026-10-05T23:20:20Z"
+    },
+    {
+      "number": 7,
+      "name": "Check dependencies",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:20:20Z",
+      "completed_at": "2026-10-05T23:20:20Z"
+    },
+    {
+      "number": 8,
+      "name": "Check info",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:20:20Z",
+      "completed_at": "2026-10-05T23:20:20Z"
+    },
+    {
+      "number": 9,
+      "name": "Configure",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:20:20Z",
+      "completed_at": "2026-10-05T23:20:21Z"
+    },
+    {
+      "number": 10,
+      "name": "Compile",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:20:21Z",
+      "completed_at": "2026-10-05T23:20:22Z"
+    },
+    {
+      "number": 11,
+      "name": "Show build log",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:20:22Z",
+      "completed_at": "2026-10-05T23:20:23Z"
+    },
+    {
+      "number": 12,
+      "name": "Check binaries",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:20:23Z",
+      "completed_at": "2026-10-05T23:20:23Z"
+    },
+    {
+      "number": 13,
+      "name": "Dist",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:20:23Z",
+      "completed_at": "2026-10-05T23:20:34Z"
+    },
+    {
+      "number": 14,
+      "name": "Install",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:20:34Z",
+      "completed_at": "2026-10-05T23:20:34Z"
+    },
+    {
+      "number": 15,
+      "name": "Show install log",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:20:34Z",
+      "completed_at": "2026-10-05T23:20:34Z"
+    },
+    {
+      "number": 16,
+      "name": "Tests",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:20:34Z",
+      "completed_at": "2026-10-05T23:20:39Z"
+    },
+    {
+      "number": 17,
+      "name": "Show test log",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:20:39Z",
+      "completed_at": "2026-10-05T23:20:39Z"
+    },
+    {
+      "number": 34,
+      "name": "Stop containers",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:20:39Z",
+      "completed_at": "2026-10-05T23:20:40Z"
+    },
+    {
+      "number": 35,
+      "name": "Complete job",
+      "outcome": "Success",
+      "started_at": "2026-10-05T23:20:40Z",
+      "completed_at": "2026-10-05T23:20:40Z"
+    }
+  ]
+}
