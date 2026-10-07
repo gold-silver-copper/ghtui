@@ -1173,9 +1173,11 @@ fn valid_login(s: &str) -> bool {
 
 /// A revision as git allows ref names and SHAs to be written (roughly
 /// `git check-ref-format`): no spaces or control characters, none of
-/// `~^:?*[\`, no `..` or `@{`.
+/// `~^:?*[\`, no `..` or `@{`, and no `/`-separated part that is empty,
+/// starts with `.` or ends with `.lock`.
 fn valid_rev(s: &str) -> bool {
-    !s.is_empty()
+    s.split('/')
+        .all(|c| !c.is_empty() && !c.starts_with('.') && !c.ends_with(".lock"))
         && !s.contains("..")
         && !s.contains("@{")
         && !s.ends_with('.')
@@ -1324,7 +1326,7 @@ pub(crate) mod tests {
         assert!(!valid_rev("a b") && !valid_rev("a~1") && !valid_rev("a.") && valid_rev("v1.2/x"));
         // A page at a revision git can't name opens the browser.
         for view in ["tree", "blob", "blame", "commits"] {
-            for rev in ["a..b", "a~1"] {
+            for rev in ["a..b", "a~1", "%2E%2Fx", "a%2F%2Fb", "%2F", "x.lock%2Fy"] {
                 let url = format!("https://github.com/o/r/{view}/{rev}/src/lib.rs");
                 assert!(
                     matches!(Target::from_url(&url), Target::External(_)),
