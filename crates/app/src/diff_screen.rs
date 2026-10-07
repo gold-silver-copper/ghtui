@@ -708,10 +708,6 @@ fn toggle_reviewed(
     vec![Cmd::SaveReview(pr, state.review.clone())]
 }
 
-/// Applies view options, clamps positions, keeps the cursor visible (clear
-/// of the sticky header), syncs the tree with the diff, and asks the job to
-/// prioritize files that are on screen but not diffed yet.
-#[must_use]
 /// How GitHub names a file in its diffs' anchors: the SHA-256 of its path,
 /// in hex.
 pub fn path_hash(path: &str) -> String {
@@ -750,6 +746,10 @@ fn anchor_pos(anchor: &str, state: &DiffState) -> Option<Option<Pos>> {
     Some(thread.and_then(|t| doc.annotation_pos(u32::try_from(t).ok()?)))
 }
 
+/// Applies view options, clamps positions, keeps the cursor visible (clear
+/// of the sticky header), syncs the tree with the diff, and asks the job to
+/// prioritize files that are on screen but not diffed yet.
+#[must_use]
 pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> Vec<Cmd> {
     let lay = layout(content, screen.tree_visible);
     if lay.tree.is_none() {
