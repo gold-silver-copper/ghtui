@@ -242,6 +242,7 @@ https://github.com/rust-lang/rust/milestones                                Mile
 https://github.com/rust-lang/rust/tree/main                                 Tree
 https://github.com/rust-lang/rust/tree/main/compiler                        Tree
 https://github.com/rust-lang/rust/tree/8d1a76430406c877b35d0b627e7f796dcf0dfeca Tree
+https://github.com/rust-lang/rust/tree/automation%2Fbors%2Ftry             Tree
 https://github.com/rust-lang/rust/blob/main/README.md                       Blob
 https://github.com/rust-lang/rust/blob/main/README.md?plain=1               Blob
 https://github.com/rust-lang/rust/blob/main/README.md#L10-L20               Blob
@@ -255,6 +256,7 @@ https://github.com/rust-lang/rust/archive/refs/heads/main.zip               exte
 https://github.com/rust-lang/rust/archive/refs/tags/1.99.0.tar.gz           external download
 https://github.com/rust-lang/rust/commits/main                              Commits
 https://github.com/rust-lang/rust/commits/main/compiler                     Commits
+https://github.com/rust-lang/rust/commits/automation%2Fbors%2Ftry            Commits
 https://github.com/rust-lang/rust/commits                                   Commits
 https://github.com/rust-lang/rust/commit/8d1a76430406c877b35d0b627e7f796dcf0dfeca#diff-0123abcd files
 https://github.com/rust-lang/rust/commit/8d1a76430406c877b35d0b627e7f796dcf0dfeca.diff files

@@ -1714,6 +1714,23 @@ pub(crate) mod tests {
             assert_eq!((again.active_tab(), route(&again)), (0, issue(1)));
         }
 
+        /// A tab on a branch with a slash in its name (`feature/x`)
+        /// reopens on that branch, not on `feature` with `x` as a path.
+        #[test]
+        fn a_tab_on_a_slashed_branch_reopens_on_it() {
+            let tree = Route::Tree {
+                repo: RepoId::new("o", "r"),
+                rev: "feature/x".into(),
+                path: "src".into(),
+            };
+            let mut s = state();
+            let _ = s.push(tree.clone());
+            let urls = s.tab_urls();
+            let mut again = state();
+            again.restore_tabs(&urls);
+            assert_eq!(route(&again), tree, "{urls:?}");
+        }
+
         /// A page asked for on the command line loads, also when it's the
         /// last of the reopened tabs.
         #[test]

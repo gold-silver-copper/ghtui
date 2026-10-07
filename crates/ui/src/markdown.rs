@@ -83,7 +83,7 @@ fn resolve_safe(base: Option<&LinkBase>, url: &str) -> String {
             // On a wiki, root-relative links are relative to github.com.
             Some(b) if b.wiki => format!("https://github.com/{rest}"),
             // Root-relative links are relative to the repository on GitHub.
-            Some(b) => format!("https://github.com/{}/blob/{}/{}", b.repo, b.rev, rest),
+            Some(b) => crate::pages::url::at_rev(&b.repo, "blob", &b.rev, rest),
             None => format!("https://github.com/{rest}"),
         };
     }
@@ -106,12 +106,7 @@ fn resolve_safe(base: Option<&LinkBase>, url: &str) -> String {
         }
     }
     let kind = if path.ends_with('/') { "tree" } else { "blob" };
-    let mut out = format!(
-        "https://github.com/{}/{kind}/{}/{}",
-        base.repo,
-        base.rev,
-        parts.join("/")
-    );
+    let mut out = crate::pages::url::at_rev(&base.repo, kind, &base.rev, &parts.join("/"));
     if !frag.is_empty() {
         out.push('#');
         out.push_str(frag);
@@ -717,6 +712,22 @@ mod tests {
             line.segs
                 .iter()
                 .any(|s| s.role == Role::Link && s.link == Some(0))
+        );
+    }
+
+    /// A document on a branch with a slash in its name links within that
+    /// branch: the ref stays one segment of the URL.
+    #[test]
+    fn links_on_a_slashed_branch_keep_the_branch() {
+        let base = LinkBase::new("o/r", "feature/x", "docs/README.md");
+        let resolved = |url| resolve(Some(&base), url).unwrap();
+        assert_eq!(
+            resolved("a.md"),
+            "https://github.com/o/r/blob/feature%2Fx/docs/a.md"
+        );
+        assert_eq!(
+            resolved("/LICENSE"),
+            "https://github.com/o/r/blob/feature%2Fx/LICENSE"
         );
     }
 

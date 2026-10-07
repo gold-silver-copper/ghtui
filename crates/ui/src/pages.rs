@@ -38,20 +38,13 @@ pub mod url {
         format!("{BASE}/{repo}")
     }
     pub fn tree(repo: &RepoId, rev: &str, path: &str) -> String {
-        let (rev, path) = (encode_path(rev), encode_path(path));
-        if path.is_empty() {
-            format!("{BASE}/{repo}/tree/{rev}")
-        } else {
-            format!("{BASE}/{repo}/tree/{rev}/{path}")
-        }
+        at_rev(repo, "tree", rev, &encode_path(path))
     }
     pub fn blob(repo: &RepoId, rev: &str, path: &str) -> String {
-        let (rev, path) = (encode_path(rev), encode_path(path));
-        format!("{BASE}/{repo}/blob/{rev}/{path}")
+        at_rev(repo, "blob", rev, &encode_path(path))
     }
     pub fn blame(repo: &RepoId, rev: &str, path: &str) -> String {
-        let (rev, path) = (encode_path(rev), encode_path(path));
-        format!("{BASE}/{repo}/blame/{rev}/{path}")
+        at_rev(repo, "blame", rev, &encode_path(path))
     }
     pub fn issues(repo: &RepoId) -> String {
         format!("{BASE}/{repo}/issues")
@@ -91,11 +84,22 @@ pub mod url {
     }
     /// A revision's history, of `path` if it isn't empty.
     pub fn commits(repo: &RepoId, rev: &str, path: &str) -> String {
-        let rev = encode_path(rev);
+        at_rev(repo, "commits", rev, &encode_path(path))
+    }
+    /// A revision's page, `/<repo>/<view>/<rev>[/<path>]`. The rev is one
+    /// segment, its '/' escaped (%2F, which GitHub resolves), so `feature/x`
+    /// can't be read as `feature` and a path. `path` is already URL-encoded.
+    pub(crate) fn at_rev(
+        repo: impl std::fmt::Display,
+        view: &str,
+        rev: &str,
+        path: &str,
+    ) -> String {
+        let rev = escape(rev, b"-_.~", false);
         if path.is_empty() {
-            format!("{BASE}/{repo}/commits/{rev}")
+            format!("{BASE}/{repo}/{view}/{rev}")
         } else {
-            format!("{BASE}/{repo}/commits/{rev}/{}", encode_path(path))
+            format!("{BASE}/{repo}/{view}/{rev}/{path}")
         }
     }
 
