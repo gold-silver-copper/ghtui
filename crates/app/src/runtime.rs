@@ -749,6 +749,11 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Milestone(repo, n) => at(gh.cached(&keys::milestone(repo, *n))?, |v| {
             Data::Milestone(Box::new(v))
         }),
+        DataKey::Deployments(repo, env) => {
+            at(gh.cached(&keys::deployments(repo, env.as_deref()))?, |v| {
+                Data::Deployments(Box::new(v))
+            })
+        }
         DataKey::Branches(repo) => at(gh.cached(&keys::branches(repo))?, |v| {
             Data::Branches(Box::new(v))
         }),
@@ -813,6 +818,9 @@ async fn fetch_more(gh: &GitHub, key: &DataKey, after: String) -> Result<Data, A
         DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, Some(after)).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, Some(after)).await?)),
         DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, Some(after)).await?)),
+        DataKey::Deployments(repo, env) => Data::Deployments(Box::new(
+            gh.deployments(repo, env.as_deref(), Some(after)).await?,
+        )),
         DataKey::Milestones(repo, closed) => {
             Data::Milestones(Box::new(gh.milestones(repo, *closed, Some(after)).await?))
         }
@@ -855,6 +863,9 @@ pub(crate) async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> 
         DataKey::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, None).await?)),
         DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, None).await?)),
+        DataKey::Deployments(repo, env) => {
+            Data::Deployments(Box::new(gh.deployments(repo, env.as_deref(), None).await?))
+        }
         DataKey::Milestones(repo, closed) => {
             Data::Milestones(Box::new(gh.milestones(repo, *closed, None).await?))
         }

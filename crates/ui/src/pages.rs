@@ -8,10 +8,10 @@ use std::collections::HashMap;
 
 use ghtui_api::browse::{
     Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo,
-    Contributions, DiscussionDetail, DiscussionList, EntryKind, IssueDetail, IssueState,
-    IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList, PrActivity,
-    Profile, Release, RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind,
-    SearchResults, TagInfo, TreeEntry, UserSummary, Workflow, WorkflowRun,
+    Contributions, DeploymentList, DiscussionDetail, DiscussionList, EntryKind, IssueDetail,
+    IssueState, IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList,
+    PrActivity, Profile, Release, RepoOverview, RepoSort, RepoSummary, Results, RunSummary,
+    SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -2473,6 +2473,96 @@ pub fn branches(
         });
     });
     more_row(page, l.next.is_some(), l.items.len(), l.total);
+    page.box_bottom();
+}
+// ---- deployments ------------------------------------------------------------------------------
+
+/// A repository's deployments, newest first, with the environments to
+/// filter by.
+pub fn deployments(
+    page: &mut Page,
+    repo: &RepoId,
+    list: Option<&DeploymentList>,
+    environment: Option<&str>,
+    now: u64,
+) {
+    let Some(l) = list else {
+        page.line(vec![Seg::new("Loading deployments…", Role::Meta)]);
+        return;
+    };
+    let base = format!("{}/deployments", url::repo(repo));
+    let filter = |env: &str| {
+        format!(
+            "{base}/activity_log?environments_filter={}",
+            url::encode(env)
+        )
+    };
+    if !l.environments.is_empty() {
+        let role = |on: bool| if on { Role::Strong } else { Role::Link };
+        let mut segs = vec![link_seg(
+            page,
+            "All",
+            base.clone(),
+            role(environment.is_none()),
+        )];
+        for env in &l.environments {
+            segs.push(Seg::new(" · ", Role::Meta));
+            segs.push(link_seg(
+                page,
+                env.clone(),
+                filter(env),
+                role(environment == Some(env.as_str())),
+            ));
+        }
+        page.wrapped(segs, 0, Frame::None);
+        page.blank();
+    }
+    let r = &l.results;
+    let title = vec![Seg::new(
+        format!("Deployments  {}", compact(r.total)),
+        Role::Strong,
+    )];
+    page.box_top(title, Vec::new());
+    if r.items.is_empty() {
+        empty_row(page, "No deployments.");
+    }
+    box_rows(page, &r.items, |page, d| {
+        let target = d
+            .log_url
+            .clone()
+            .unwrap_or_else(|| url::commit(repo, &d.oid));
+        item(page, target, |page, link| {
+            let (mark, role) = outcome_mark(d.outcome);
+            let segs = vec![
+                Seg::new(format!("{mark} "), role),
+                Seg::linked(d.environment.clone(), Role::Strong, link),
+                Seg::new(format!("  {}", d.state), Role::Meta),
+            ];
+            let right = vec![Seg::new(time::ago_iso(&d.created_at, now), Role::Meta)];
+            page.box_line(segs, right, 0);
+            let sha = crate::text::short_sha(&d.oid);
+            let mut meta = vec![link_seg(page, sha, url::commit(repo, &d.oid), Role::Code)];
+            if let Some(branch) = &d.branch {
+                meta.push(Seg::new(" · ", Role::Meta));
+                meta.push(link_seg(
+                    page,
+                    branch.clone(),
+                    url::tree(repo, branch, ""),
+                    Role::Code,
+                ));
+            }
+            if let Some(who) = &d.creator {
+                meta.push(Seg::new(" · ", Role::Meta));
+                meta.push(link_seg(page, who.clone(), url::user(who), Role::Meta));
+            }
+            if let Some(at) = &d.environment_url {
+                meta.push(Seg::new(" · ", Role::Meta));
+                meta.push(link_seg(page, at.clone(), at.clone(), Role::Link));
+            }
+            body(page, meta);
+        });
+    });
+    more_row(page, r.next.is_some(), r.items.len(), r.total);
     page.box_bottom();
 }
 // ---- milestones -------------------------------------------------------------------------------

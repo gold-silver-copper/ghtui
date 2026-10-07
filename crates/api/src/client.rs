@@ -1393,6 +1393,45 @@ impl GitHub {
         }
         Ok(detail)
     }
+    /// Deployments, newest first, 25 at a time from `after`, to one
+    /// environment if given; with the environments.
+    pub async fn deployments(
+        &self,
+        repo: &RepoId,
+        environment: Option<&str>,
+        after: Option<String>,
+    ) -> Result<browse::DeploymentList, ApiError> {
+        let first = after.is_none();
+        let environments = environment.map(|e| vec![e]);
+        let data = self
+            .graphql_json(
+                "query($owner: String!, $name: String!, $after: String, $envs: [String!]) { repository(owner: $owner, name: $name) { environments(first: 50) { nodes { name } } deployments(first: 25, after: $after, environments: $envs, orderBy: {field: CREATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { environment state createdAt creator { login } ref { name } commitOid latestStatus { logUrl environmentUrl } } } } }",
+                serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "envs": environments }),
+            )
+            .await?;
+        let wire: browse::wire_deployments::Deployments = serde_json::from_value(
+            data.pointer("/repository/deployments")
+                .filter(|d| !d.is_null())
+                .cloned()
+                .ok_or_else(|| ApiError::NotFound(repo.to_string()))?,
+        )?;
+        let list = browse::DeploymentList {
+            environments: data
+                .pointer("/repository/environments/nodes")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|n| Some(n.get("name")?.as_str()?.to_owned()))
+                .collect(),
+            results: wire.into_results(),
+        };
+        if first {
+            return Ok(self
+                .kept(&browse::keys::deployments(repo, environment), list)
+                .await);
+        }
+        Ok(list)
+    }
     /// A workflow run (one attempt of it, or the latest) and its jobs.
     pub async fn workflow_run(
         &self,
