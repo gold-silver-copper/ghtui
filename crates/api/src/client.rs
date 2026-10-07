@@ -1192,12 +1192,14 @@ impl GitHub {
             )
             .await?;
         for (i, name) in names.iter().enumerate() {
-            let node = data.pointer(&format!("/repository/object/e{i}/nodes/0"));
-            let commit = node
-                .cloned()
-                .map(serde_json::from_value::<browse::wire::Commit>);
-            if let Some(Ok(commit)) = commit {
-                out.insert(name.clone(), commit.into_info());
+            let Some(node) = data.pointer(&format!("/repository/object/e{i}/nodes/0")) else {
+                continue;
+            };
+            match <browse::wire::Commit as serde::Deserialize>::deserialize(node) {
+                Ok(commit) => {
+                    out.insert(name.clone(), commit.into_info());
+                }
+                Err(err) => tracing::warn!(%err, %name, "a last commit didn't decode"),
             }
         }
         Ok(())
