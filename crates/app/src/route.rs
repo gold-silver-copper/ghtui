@@ -1893,10 +1893,12 @@ pub(crate) mod tests {
         }
 
         fn route() -> impl Strategy<Value = Route> {
-            // A valid git ref name, of one to three segments (`feature/x`).
-            let rev = prop::collection::vec("[A-Za-z0-9_-][A-Za-z0-9._-]{0,7}", 1..=3)
-                .prop_map(|s| s.join("/"))
-                .prop_filter("valid ref name", |r| valid_rev(r));
+            // A valid git ref name, of one to three segments (`feature/x`),
+            // with characters a URL must escape (`fix#1`, `50%`, `é`).
+            let rev =
+                prop::collection::vec("[A-Za-z0-9_#%+@&;é-][A-Za-z0-9._#%+@&;é-]{0,7}", 1..=3)
+                    .prop_map(|s| s.join("/"))
+                    .prop_filter("valid ref name", |r| valid_rev(r));
             prop_oneof![
                 Just(Route::Home),
                 repo().prop_map(Route::Actions),
