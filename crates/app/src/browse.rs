@@ -166,20 +166,30 @@ impl Data {
     pub fn append(&mut self, more: Data) {
         match (self, more) {
             (Data::Search(a), Data::Search(b)) => append(a, *b),
-            (Data::History(a), Data::History(b)) => extend(a, *b),
-            (Data::Users(a), Data::Users(b)) => extend(a, *b),
-            (Data::RepoPage(a), Data::RepoPage(b)) => extend(a, *b),
-            (Data::Releases(a), Data::Releases(b)) => extend(a, *b),
-            (Data::Runs(a), Data::Runs(b)) => extend(a, *b),
-            (Data::Discussions(a), Data::Discussions(b)) => extend(&mut a.results, b.results),
-            (Data::Tags(a), Data::Tags(b)) => extend(a, *b),
-            (Data::Branches(a), Data::Branches(b)) => extend(a, *b),
-            (Data::Teams(a), Data::Teams(b)) => extend(a, *b),
-            (Data::Gists(a), Data::Gists(b)) => extend(a, *b),
-            (Data::Deployments(a), Data::Deployments(b)) => extend(&mut a.results, b.results),
-            (Data::Milestones(a), Data::Milestones(b)) => extend(&mut a.results, b.results),
-            (Data::Milestone(a), Data::Milestone(b)) => extend(&mut a.items, b.items),
-            (Data::Advisories(a), Data::Advisories(b)) => extend(a, *b),
+            (Data::History(a), Data::History(b)) => extend(a, *b, |c| c.oid.clone()),
+            (Data::Users(a), Data::Users(b)) => extend(a, *b, |u| u.login.clone()),
+            (Data::RepoPage(a), Data::RepoPage(b)) => extend(a, *b, |r| r.repo.clone()),
+            (Data::Releases(a), Data::Releases(b)) => extend(a, *b, |r| r.tag.clone()),
+            (Data::Runs(a), Data::Runs(b)) => extend(a, *b, |r| r.id),
+            (Data::Discussions(a), Data::Discussions(b)) => {
+                extend(&mut a.results, b.results, |d| d.number);
+            }
+            (Data::Tags(a), Data::Tags(b)) => extend(a, *b, |t| t.name.clone()),
+            (Data::Branches(a), Data::Branches(b)) => extend(a, *b, |b| b.name.clone()),
+            (Data::Teams(a), Data::Teams(b)) => extend(a, *b, |t| t.slug.clone()),
+            (Data::Gists(a), Data::Gists(b)) => extend(a, *b, |g| g.id.clone()),
+            (Data::Deployments(a), Data::Deployments(b)) => {
+                extend(&mut a.results, b.results, |d| {
+                    (d.created_at.clone(), d.environment.clone(), d.oid.clone())
+                });
+            }
+            (Data::Milestones(a), Data::Milestones(b)) => {
+                extend(&mut a.results, b.results, |m| m.number);
+            }
+            (Data::Milestone(a), Data::Milestone(b)) => {
+                extend(&mut a.items, b.items, |i| (i.repo.clone(), i.number));
+            }
+            (Data::Advisories(a), Data::Advisories(b)) => extend(a, *b, |a| a.ghsa.clone()),
             _ => {}
         }
     }
@@ -985,8 +995,12 @@ impl State {
     }
 }
 
-fn extend<T>(a: &mut Results<T>, b: Results<T>) {
-    a.items.extend(b.items);
+/// Appends a page to a list, leaving out what's already there (by `id`):
+/// a list that moved between pages repeats items at their edge.
+fn extend<T, K: Eq + std::hash::Hash>(a: &mut Results<T>, b: Results<T>, id: impl Fn(&T) -> K) {
+    let mut seen: std::collections::HashSet<K> = a.items.iter().map(&id).collect();
+    a.items
+        .extend(b.items.into_iter().filter(|item| seen.insert(id(item))));
     a.next = b.next;
     // A list GitHub doesn't count says how many each page has.
     a.total = b.total.max(a.items.len() as u64);
@@ -995,16 +1009,50 @@ fn extend<T>(a: &mut Results<T>, b: Results<T>) {
 /// Appends a page of results to what's shown.
 pub fn append(results: &mut SearchResults, more: SearchResults) {
     match (results, more) {
-        (SearchResults::Repos(a), SearchResults::Repos(b)) => extend(a, b),
-        (SearchResults::Issues(a), SearchResults::Issues(b)) => extend(a, b),
-        (SearchResults::Users(a), SearchResults::Users(b)) => extend(a, b),
-        (SearchResults::Discussions(a), SearchResults::Discussions(b)) => extend(a, b),
-        (SearchResults::Commits(a), SearchResults::Commits(b)) => extend(a, b),
-        (SearchResults::Code(a), SearchResults::Code(b)) => extend(a, b),
+        (SearchResults::Repos(a), SearchResults::Repos(b)) => extend(a, b, |r| r.repo.clone()),
+        (SearchResults::Issues(a), SearchResults::Issues(b)) => {
+            extend(a, b, |i| (i.repo.clone(), i.number));
+        }
+        (SearchResults::Users(a), SearchResults::Users(b)) => extend(a, b, |u| u.login.clone()),
+        (SearchResults::Discussions(a), SearchResults::Discussions(b)) => {
+            extend(a, b, |d| (d.repo.clone(), d.summary.number));
+        }
+        (SearchResults::Commits(a), SearchResults::Commits(b)) => {
+            extend(a, b, |c| (c.repo.clone(), c.commit.oid.clone()));
+        }
+        (SearchResults::Code(a), SearchResults::Code(b)) => {
+            extend(a, b, |c| (c.repo.clone(), c.path.clone()));
+        }
         _ => {}
     }
 }
 
 pub fn next_cursor(results: &SearchResults) -> Option<&str> {
     results.next()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A next page that overlaps the last (the list moved between them)
+    /// doesn't show its overlap twice.
+    #[test]
+    fn a_next_page_leaves_out_what_is_shown() {
+        let branch = |n: u32| BranchInfo {
+            name: format!("b{n}"),
+            ..crate::fixtures::branches().items[0].clone()
+        };
+        let page = |names: std::ops::Range<u32>, next: bool| Results {
+            total: 5,
+            items: names.map(branch).collect(),
+            next: next.then(|| "c".to_owned()),
+        };
+        let mut shown = Data::Branches(Box::new(page(0..3, true)));
+        shown.append(Data::Branches(Box::new(page(2..5, false))));
+        let Data::Branches(r) = shown else { panic!() };
+        let names: Vec<&str> = r.items.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, ["b0", "b1", "b2", "b3", "b4"]);
+        assert_eq!(r.next, None);
+    }
 }

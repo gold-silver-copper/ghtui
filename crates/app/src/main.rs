@@ -16,6 +16,8 @@ mod review;
 mod route;
 mod runtime;
 #[cfg(test)]
+mod sequence_tests;
+#[cfg(test)]
 mod snapshot_tests;
 mod state;
 mod tabs;
