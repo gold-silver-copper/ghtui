@@ -2252,8 +2252,15 @@ impl GqlError {
     }
 }
 
+/// What GitHub's errors say: an error without a message by its type, so
+/// it still counts.
 fn messages(errors: impl IntoIterator<Item = GqlError>) -> Vec<String> {
-    errors.into_iter().filter_map(|e| e.message).collect()
+    let said = |e: GqlError| {
+        e.message
+            .or(e.kind)
+            .unwrap_or_else(|| "an unexplained error".into())
+    };
+    errors.into_iter().map(said).collect()
 }
 
 /// What's at `pointer` in a GraphQL response's data, or `what` not found
