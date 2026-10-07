@@ -1884,6 +1884,56 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_repositorys_pages_are_under_their_tabs() {
+        let mut state = with_repo();
+        let active = |state: &State| {
+            let c = state.chrome();
+            c.active
+                .and_then(|i| c.tabs.get(i))
+                .map(|(t, _)| t.label.clone())
+        };
+        let pages = [
+            (
+                Route::Milestone {
+                    repo: repo(),
+                    number: 3,
+                },
+                "Issues",
+            ),
+            (
+                Route::Discussions {
+                    of: ghtui_api::browse::DiscussionsOf::Repo(repo()),
+                    category: None,
+                },
+                "Discussions",
+            ),
+            (Route::Advisories(Some(repo())), "Security"),
+            (
+                Route::Wiki {
+                    repo: repo(),
+                    page: None,
+                },
+                "Wiki",
+            ),
+            (Route::Branches(repo()), "Code"),
+            (
+                Route::Job {
+                    repo: repo(),
+                    run: Some(1),
+                    job: 2,
+                    step: None,
+                    query: String::new(),
+                },
+                "Actions",
+            ),
+        ];
+        for (route, tab) in pages {
+            let _ = state.push(route.clone());
+            assert_eq!(active(&state).as_deref(), Some(tab), "{route:?}");
+        }
+    }
+
+    #[test]
     fn repo_tabs_filters_state_sort_and_star() {
         let mut state = with_repo();
         let tabs: Vec<String> = state
@@ -1892,7 +1942,18 @@ pub(crate) mod tests {
             .iter()
             .map(|(t, _)| t.label.clone())
             .collect();
-        assert_eq!(tabs, ["Code", "Issues", "Pull requests", "Actions"]);
+        assert_eq!(
+            tabs,
+            [
+                "Code",
+                "Issues",
+                "Pull requests",
+                "Discussions",
+                "Actions",
+                "Wiki",
+                "Security"
+            ]
+        );
         let cmds = fetches(press(&mut state, "2"));
         let open = issues(OPEN);
         assert_eq!(route(&state), open);

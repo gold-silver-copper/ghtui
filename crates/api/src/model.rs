@@ -203,6 +203,24 @@ pub struct PrDetail {
     pub changed_files: u64,
     pub mergeable: Mergeable,
     pub labels: Vec<Label>,
+    #[serde(default)]
+    pub milestone: Option<MilestoneRef>,
+}
+
+/// The milestone an issue or pull request is in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MilestoneRef {
+    pub number: u64,
+    pub title: String,
+}
+
+impl MilestoneRef {
+    pub(crate) fn from_wire(m: q::MilestoneName) -> Self {
+        Self {
+            number: count(m.number),
+            title: m.title,
+        }
+    }
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -403,6 +421,7 @@ impl PrDetail {
                 q::MergeableState::Unknown => Mergeable::Unknown,
             },
             labels: labels(pr.labels),
+            milestone: pr.milestone.map(MilestoneRef::from_wire),
         })
     }
 }

@@ -1,13 +1,13 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 381
+assertion_line: 730
 expression: "render(&with_repo(Mode::Light, ColorDepth::TrueColor))"
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 100, height: 30 },
     content: [
         "  ◆ ghtui   gold-silver-copper / ghtui                 ⌕ Type / to search                 @octocat  ",
-        "   <> Code   ◉ Issues  7    ⇄ Pull requests  3    ▶ Actions                                         ",
+        "   <> Code   ◉ Issues  7    ⇄ Pull requests  3    ◈ Discussions   ▶ Actions   ▤ Wiki   ⛨ Security   ",
         "──━━━━━━━━━─────────────────────────────────────────────────────────────────────────────────────────",
         "                                                                                                    ",
         "  gold-silver-copper / ghtui   Public                      ☆ Star  1.2k   ⑂ Fork 61   ◉ Watch 18   ▐",
@@ -19,7 +19,7 @@ Buffer {
         "                                                                                                   ▐",
         "  ⚖ MIT license   ☆ 1.2k stars   ◉ 18 watching   ⑂ 61 forks   ● Rust                               ▐",
         "                                                                                                   ▐",
-        "   ⎇ main ▾                                                       ◷ 412 commits  ⌕ Go to file  f   ▐",
+        "   ⎇ main ▾   ⎇ 14 branches  ◇ 9 tags                             ◷ 412 commits  ⌕ Go to file  f   ▐",
         "                                                                                                   ▐",
         "  ╭─ octocat  Browse GitHub like the website ──────────────────────────────── fedcba9 · 2h ago ─╮  ▐",
         "  │▌▸ .github     Run CI on macOS too                                                   13d ago │  ▐",
@@ -63,6 +63,12 @@ Buffer {
         x: 47, y: 1, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 49, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 52, y: 1, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 65, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 68, y: 1, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 77, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 80, y: 1, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 86, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 89, y: 1, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 0, y: 2, fg: Rgb(190, 193, 201), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 2, y: 2, fg: Rgb(50, 83, 131), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 11, y: 2, fg: Rgb(190, 193, 201), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
@@ -110,6 +116,10 @@ Buffer {
         x: 0, y: 13, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 2, y: 13, fg: Rgb(25, 28, 32), bg: Rgb(231, 232, 238), underline: Reset, modifier: NONE,
         x: 12, y: 13, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 14, y: 13, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 27, y: 13, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 29, y: 13, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 37, y: 13, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 66, y: 13, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 79, y: 13, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 80, y: 13, fg: Rgb(25, 28, 32), bg: Rgb(231, 232, 238), underline: Reset, modifier: NONE,

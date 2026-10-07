@@ -73,6 +73,7 @@ fragments! {
     CommitCount = "CommitHistoryConnection",
     FollowCount = "FollowerConnection",
     FollowingCount = "FollowingConnection",
+    RefCount = "RefConnection",
 }
 
 // Results of mutations that only need to succeed.
@@ -201,6 +202,13 @@ pub struct RepositoryName {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Milestone", schema_module = "schema")]
+pub struct MilestoneName {
+    pub number: i32,
+    pub title: String,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequestCommit", schema_module = "schema")]
 pub struct CommitRollupNode {
     pub commit: CommitRollup,
@@ -284,6 +292,7 @@ pub struct PrDetail {
     pub mergeable: MergeableState,
     #[arguments(first: 20)]
     pub labels: Option<LabelConnection>,
+    pub milestone: Option<MilestoneName>,
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy)]
