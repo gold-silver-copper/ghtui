@@ -426,6 +426,102 @@ mod tests {
         assert_eq!(control.pop(), None);
     }
 
+    /// The whole job, for a PR merged with a merge commit: its file list
+    /// is the PR's, from the base it had, not empty from `main` after.
+    #[tokio::test]
+    async fn a_merged_prs_job_lists_its_files() {
+        use std::path::Path;
+        use std::process::Command;
+
+        fn git(dir: &Path, args: &[&str]) -> String {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_AUTHOR_NAME", "T")
+                .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
+                .env("GIT_COMMITTER_NAME", "T")
+                .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let origin = tmp.path().join("origin");
+        std::fs::create_dir_all(&origin).unwrap();
+        git(&origin, &["init", "-q", "-b", "main"]);
+        git(&origin, &["config", "uploadpack.allowFilter", "true"]);
+        git(
+            &origin,
+            &["config", "uploadpack.allowAnySHA1InWant", "true"],
+        );
+        std::fs::write(origin.join("a.txt"), "a\n").unwrap();
+        git(&origin, &["add", "."]);
+        git(&origin, &["commit", "-q", "-m", "base"]);
+        git(&origin, &["checkout", "-q", "-b", "feature"]);
+        std::fs::write(origin.join("b.txt"), "b\n").unwrap();
+        git(&origin, &["add", "."]);
+        git(&origin, &["commit", "-q", "-m", "b"]);
+        git(&origin, &["update-ref", "refs/pull/7/head", "feature"]);
+        git(&origin, &["checkout", "-q", "main"]);
+        let base = git(&origin, &["rev-parse", "HEAD"]);
+        git(
+            &origin,
+            &["merge", "-q", "--no-ff", "-m", "Merge #7", "feature"],
+        );
+
+        // The user's clone of github.com/o/r, which git fetches from the
+        // local "GitHub" instead.
+        let local = tmp.path().join("local");
+        let url = format!("file://{}", origin.display());
+        git(tmp.path(), &["clone", "-q", &url, "local"]);
+        git(
+            &local,
+            &["remote", "set-url", "origin", "https://github.com/o/r.git"],
+        );
+        git(
+            &local,
+            &[
+                "config",
+                &format!("url.{url}.insteadOf"),
+                "https://github.com/o/r.git",
+            ],
+        );
+
+        let ctx = GitContext {
+            cache_root: tmp.path().join("cache"),
+            credentials: Credentials::Ambient,
+            cwd: local,
+        };
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let of = DiffOf::Pr(ghtui_api::model::PrRef::parse("o/r#7").unwrap());
+        let out = JobTx { tx, of, job: 1 };
+        let base = PrBase {
+            branch: "main".into(),
+            oid: Some(base),
+        };
+        run(ctx, base, None, out, Arc::default()).await;
+        let mut listed = None;
+        while let Ok(msg) = rx.try_recv() {
+            match msg {
+                Msg::Diff(_, DiffMsg::Job(_, JobMsg::Files(files))) => listed = Some(files),
+                Msg::Diff(_, DiffMsg::Job(_, JobMsg::Failed(err))) => panic!("{err}"),
+                _ => {}
+            }
+        }
+        let files = listed.expect("the job listed files");
+        let paths: Vec<&str> = files.files.iter().map(ChangedFile::path).collect();
+        assert_eq!(paths, ["b.txt"]);
+    }
+
     /// "Since my last review" against a real force-push and rebase: the
     /// PR is rebased onto a `main` that moved on, and gains one change.
     /// Only that change is new; the rebase and the old change aren't.
