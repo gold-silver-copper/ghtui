@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Label, MilestoneRef, NodeId, RepoId, author, count, labels};
+use crate::model::{Capped, Label, MilestoneRef, NodeId, RepoId, author, count, labels};
 use crate::queries::{
     Actor, AddCommentPayload, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount,
     GitObjectId, IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount,
@@ -82,7 +82,7 @@ pub struct CommitDetail {
     /// Who committed it, when that isn't the author (rebased, applied).
     pub committer: Option<String>,
     pub committed_at: String,
-    pub parents: Vec<String>,
+    pub parents: Capped<String>,
     pub additions: u64,
     pub deletions: u64,
     pub changed_files: Option<u64>,
@@ -127,7 +127,7 @@ pub struct RepoOverview {
     #[serde(default)]
     pub closed_prs: u64,
     pub license: Option<String>,
-    pub topics: Vec<String>,
+    pub topics: Capped<String>,
     pub default_branch: Option<String>,
     pub last_commit: Option<CommitInfo>,
     pub commits: u64,
@@ -187,7 +187,7 @@ pub struct IssueSummary {
     pub author: String,
     pub updated_at: String,
     pub comments: u64,
-    pub labels: Vec<Label>,
+    pub labels: Capped<Label>,
     #[serde(default)]
     pub created_at: String,
     /// Pull requests only.
@@ -219,7 +219,7 @@ pub struct Release {
     pub author: Option<String>,
     /// Its notes, as markdown (on its page).
     pub notes: Option<String>,
-    pub assets: Vec<Asset>,
+    pub assets: Capped<Asset>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -389,8 +389,8 @@ pub struct IssueDetail {
     pub state: IssueState,
     pub author: String,
     pub created_at: String,
-    pub labels: Vec<Label>,
-    pub assignees: Vec<String>,
+    pub labels: Capped<Label>,
+    pub assignees: Capped<String>,
     #[serde(default)]
     pub milestone: Option<MilestoneRef>,
     /// The newest comments, oldest first, and how many there are in all.
@@ -458,7 +458,7 @@ pub struct Profile {
     pub socials: Vec<(String, String)>,
     /// Organizations a user belongs to (the public ones).
     #[serde(default)]
-    pub orgs: Vec<String>,
+    pub orgs: Capped<String>,
     /// An organization's verified domain badge.
     #[serde(default)]
     pub verified: bool,
@@ -544,9 +544,13 @@ fragments! {
 
 // Lists of nodes, and their nodes' types.
 fragments! {
-    nodes:
+    counted:
     Topics = "RepositoryTopicConnection" => RepoTopic,
     Assignees = "UserConnection" => UserLogin,
+}
+
+fragments! {
+    nodes:
     Pinned = "PinnableItemConnection" => PinnedItem,
 }
 
@@ -1030,6 +1034,7 @@ pub struct WireCommit {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "CommitConnection", schema_module = "schema")]
 pub struct CommitParents {
+    pub total_count: i32,
     pub nodes: Option<Vec<Option<ParentCommit>>>,
 }
 
@@ -1645,6 +1650,10 @@ pub struct JobSummary {
     pub completed_at: Option<String>,
 }
 
+/// How many of a directory's entries get their latest commit, as on
+/// GitHub (whose file list stops at 1,000).
+pub const LAST_COMMIT_ENTRIES: usize = 1000;
+
 /// A job's log. A long one is cut to its last 2 MB (where failures are);
 /// the lines cut are kept as their timestamps, and the ones that start a
 /// step whole, so the rest still have their steps and line numbers.
@@ -1796,6 +1805,22 @@ pub(crate) mod wire {
 
         fn into_iter(self) -> Self::IntoIter {
             self.nodes.into_iter().flatten()
+        }
+    }
+
+    /// Some of a connection's nodes, and how many there are in all.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Counted<T> {
+        pub total_count: u64,
+        pub nodes: Vec<Option<T>>,
+    }
+
+    impl<T> Counted<T> {
+        /// The nodes that aren't null, each made an item by `item`.
+        pub fn into_capped<U>(self, item: impl FnMut(T) -> Option<U>) -> crate::model::Capped<U> {
+            let items = self.nodes.into_iter().flatten().filter_map(item).collect();
+            crate::model::Capped::new(items, self.total_count)
         }
     }
 
@@ -2200,7 +2225,7 @@ pub struct DeploymentInfo {
 /// A page of deployments, and the environments to filter by.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeploymentList {
-    pub environments: Vec<String>,
+    pub environments: Capped<String>,
     pub results: Results<DeploymentInfo>,
 }
 
@@ -2624,15 +2649,15 @@ pub struct TeamRepo {
 pub struct TeamDetail {
     pub team: TeamSummary,
     pub parent: Option<TeamSummary>,
-    pub members: Vec<UserSummary>,
-    pub repos: Vec<TeamRepo>,
-    pub children: Vec<TeamSummary>,
+    pub members: Capped<UserSummary>,
+    pub repos: Capped<TeamRepo>,
+    pub children: Capped<TeamSummary>,
 }
 
 pub(crate) mod wire_teams {
     use serde::Deserialize;
 
-    pub use super::wire::{Count, Nodes};
+    pub use super::wire::{Count, Counted};
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -2666,10 +2691,10 @@ pub(crate) mod wire_teams {
         pub team: Team,
         pub parent_team: Option<Team>,
         #[serde(rename = "memberList")]
-        pub member_list: Nodes<Member>,
+        pub member_list: Counted<Member>,
         #[serde(rename = "repoList")]
-        pub repo_list: Nodes<Repo>,
-        pub child_teams: Nodes<Team>,
+        pub repo_list: Counted<Repo>,
+        pub child_teams: Counted<Team>,
     }
 }
 
@@ -2691,32 +2716,22 @@ impl wire_teams::Detail {
         TeamDetail {
             team: self.team.into_summary(),
             parent: self.parent_team.map(wire_teams::Team::into_summary),
-            members: self
-                .member_list
-                .into_iter()
-                .map(|m| UserSummary {
+            members: self.member_list.into_capped(|m| {
+                Some(UserSummary {
                     login: m.login,
                     name: m.name,
                     bio: None,
                     is_org: false,
                 })
-                .collect(),
-            repos: self
-                .repo_list
-                .into_iter()
-                .filter_map(|r| {
-                    Some(TeamRepo {
-                        repo: RepoId::parse(&r.name_with_owner)?,
-                        description: r.description.unwrap_or_default(),
-                        stars: r.stargazer_count,
-                    })
+            }),
+            repos: self.repo_list.into_capped(|r| {
+                Some(TeamRepo {
+                    repo: RepoId::parse(&r.name_with_owner)?,
+                    description: r.description.unwrap_or_default(),
+                    stars: r.stargazer_count,
                 })
-                .collect(),
-            children: self
-                .child_teams
-                .into_iter()
-                .map(wire_teams::Team::into_summary)
-                .collect(),
+            }),
+            children: self.child_teams.into_capped(|t| Some(t.into_summary())),
         }
     }
 }
@@ -2988,7 +3003,7 @@ pub struct DiscussionSummary {
 /// A page of discussions, and the categories to filter by.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscussionList {
-    pub categories: Vec<DiscussionCategory>,
+    pub categories: Capped<DiscussionCategory>,
     pub results: Results<DiscussionSummary>,
 }
 
@@ -3025,7 +3040,7 @@ pub struct DiscussionComment {
 pub(crate) mod wire_discussions {
     use serde::Deserialize;
 
-    pub use super::wire::{Count, Login, Name, Nodes, RepoName};
+    pub use super::wire::{Count, Login, Name, RepoName};
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -3236,6 +3251,7 @@ pub struct WireSocial {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "OrganizationConnection", schema_module = "schema")]
 pub struct OrgLogins {
+    pub total_count: i32,
     pub nodes: Option<Vec<Option<OrgLogin>>>,
 }
 
@@ -3855,6 +3871,7 @@ pub struct WireReleaseFull {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "ReleaseAssetConnection", schema_module = "schema")]
 pub struct AssetList {
+    pub total_count: i32,
     pub nodes: Option<Vec<Option<WireAsset>>>,
 }
 
@@ -3951,7 +3968,7 @@ impl WireRelease {
             latest: self.is_latest,
             author: self.author.map(|a| a.login),
             notes: None,
-            assets: Vec::new(),
+            assets: Vec::new().into(),
         }
     }
 }
@@ -3970,14 +3987,16 @@ impl WireReleaseFull {
     pub(crate) fn into_release(self) -> Release {
         Release {
             notes: self.description.filter(|d| !d.trim().is_empty()),
-            assets: nodes(self.release_assets.nodes)
-                .map(|a| Asset {
+            assets: Capped::from_nodes(
+                self.release_assets.total_count,
+                self.release_assets.nodes,
+                |a| Asset {
                     name: a.name,
                     size: count(a.size),
                     downloads: count(a.download_count),
                     url: a.download_url.0,
-                })
-                .collect(),
+                },
+            ),
             ..self.card.into_release()
         }
     }
@@ -4252,7 +4271,7 @@ impl WireCommit {
             authored_at: self.authored_date.0,
             committer,
             committed_at: self.committed_date.0,
-            parents: nodes(self.parents.nodes).map(|p| p.oid.0).collect(),
+            parents: Capped::from_nodes(self.parents.total_count, self.parents.nodes, |p| p.oid.0),
             additions: count(self.additions),
             deletions: count(self.deletions),
             changed_files: self.changed_files_if_available.map(count),
@@ -4341,9 +4360,11 @@ impl RepoFull {
             license: self
                 .license_info
                 .map(|l| l.spdx_id.filter(|s| s != "NOASSERTION").unwrap_or(l.name)),
-            topics: nodes(self.repository_topics.nodes)
-                .map(|t| t.topic.name)
-                .collect(),
+            topics: Capped::from_nodes(
+                self.repository_topics.total_count,
+                self.repository_topics.nodes,
+                |t| t.topic.name,
+            ),
             default_branch,
             last_commit,
             commits,
@@ -4431,7 +4452,9 @@ impl IssueFull {
             author: author(self.author),
             created_at: self.created_at.0,
             labels: labels(self.labels),
-            assignees: nodes(self.assignees.nodes).map(|u| u.login).collect(),
+            assignees: Capped::from_nodes(self.assignees.total_count, self.assignees.nodes, |u| {
+                u.login
+            }),
             milestone: self.milestone.map(MilestoneRef::from_wire),
             total_comments: count(self.comments.total_count),
             comments: comments(self.comments),
@@ -4526,7 +4549,9 @@ impl ProfileQuery {
                 socials: nodes(u.social_accounts.nodes)
                     .map(|s| (s.display_name, s.url.0))
                     .collect(),
-                orgs: nodes(u.organizations.nodes).map(|o| o.login).collect(),
+                orgs: Capped::from_nodes(u.organizations.total_count, u.organizations.nodes, |o| {
+                    o.login
+                }),
                 verified: false,
                 people: Vec::new(),
                 people_count: 0,
@@ -4566,7 +4591,7 @@ impl ProfileQuery {
             status: None,
             pronouns: None,
             socials: Vec::new(),
-            orgs: Vec::new(),
+            orgs: Vec::new().into(),
             verified: o.is_verified,
             people: nodes(o.members_with_role.nodes).map(|u| u.login).collect(),
             people_count: count(o.members_with_role.total_count),

@@ -116,7 +116,7 @@ pub enum Data {
     Tags(Box<Results<TagInfo>>),
     Branches(Box<Results<BranchInfo>>),
     Wiki(Box<WikiPage>),
-    Advisories(Vec<Advisory>),
+    Advisories(Box<Results<Advisory>>),
     Advisory(Box<Advisory>),
     Teams(Box<Results<TeamSummary>>),
     Team(Box<TeamDetail>),
@@ -157,6 +157,7 @@ impl Data {
             Data::Deployments(d) => d.results.next.as_deref(),
             Data::Milestones(m) => m.results.next.as_deref(),
             Data::Milestone(m) => m.items.next.as_deref(),
+            Data::Advisories(r) => r.next.as_deref(),
             _ => None,
         }
     }
@@ -178,6 +179,7 @@ impl Data {
             (Data::Deployments(a), Data::Deployments(b)) => extend(&mut a.results, b.results),
             (Data::Milestones(a), Data::Milestones(b)) => extend(&mut a.results, b.results),
             (Data::Milestone(a), Data::Milestone(b)) => extend(&mut a.items, b.items),
+            (Data::Advisories(a), Data::Advisories(b)) => extend(a, *b),
             _ => {}
         }
     }
@@ -218,6 +220,7 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         }
         Route::Milestones { repo, closed } => Some(DataKey::Milestones(repo.clone(), *closed)),
         Route::Milestone { repo, number } => Some(DataKey::Milestone(repo.clone(), *number)),
+        Route::Advisories(repo) => Some(DataKey::Advisories(repo.clone())),
         _ => route
             .search()
             .map(|(kind, query)| DataKey::Search(kind, query)),
@@ -985,7 +988,8 @@ impl State {
 fn extend<T>(a: &mut Results<T>, b: Results<T>) {
     a.items.extend(b.items);
     a.next = b.next;
-    a.total = b.total;
+    // A list GitHub doesn't count says how many each page has.
+    a.total = b.total.max(a.items.len() as u64);
 }
 
 /// Appends a page of results to what's shown.

@@ -791,7 +791,7 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
             Data::Team(Box::new(v))
         }),
         DataKey::Advisories(repo) => at(gh.cached(&keys::advisories(repo.as_ref()))?, |v| {
-            Data::Advisories(v)
+            Data::Advisories(Box::new(v))
         }),
         DataKey::Advisory(repo, ghsa) => {
             at(gh.cached(&keys::advisory(repo.as_ref(), ghsa))?, |v| {
@@ -885,7 +885,9 @@ pub(crate) async fn fetch(
                 "{repo}'s wiki, which git reads"
             )));
         }
-        DataKey::Advisories(repo) => Data::Advisories(gh.advisories(repo.as_ref()).await?),
+        DataKey::Advisories(repo) => {
+            Data::Advisories(Box::new(gh.advisories(repo.as_ref(), after).await?))
+        }
         DataKey::Advisory(repo, ghsa) => {
             Data::Advisory(Box::new(gh.advisory(repo.as_ref(), ghsa).await?))
         }

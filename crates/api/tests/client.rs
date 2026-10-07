@@ -270,7 +270,7 @@ const PR_RESPONSE: &str = r#"{"data":{"repository":{"pullRequest":{
   "headRepository": {"nameWithOwner": "alice/r"},
   "additions": 10, "deletions": 2, "changedFiles": 3, "mergeable": "MERGEABLE",
   "reviewDecision": "APPROVED",
-  "labels": {"nodes": [{"name": "bug", "color": "d73a4a"}]},
+  "labels": {"totalCount": 3, "nodes": [{"name": "bug", "color": "d73a4a"}]},
   "milestone": {"number": 3, "title": "v1"},
   "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]},
   "comments": {"totalCount": 4}
@@ -294,6 +294,7 @@ async fn fetches_and_caches_pull_request() {
     assert_eq!(detail.summary.checks, Some(ChecksState::Failing));
     assert_eq!(detail.mergeable, Mergeable::Yes);
     assert_eq!(detail.labels[0].name, "bug");
+    assert_eq!(detail.labels.left_out(), 2);
     assert_eq!(detail.head_oid, "bbb");
     assert_eq!(detail.milestone.as_ref().map(|m| m.number), Some(3));
 
@@ -736,12 +737,70 @@ async fn one_revision_compares_with_the_default_branch() {
 async fn an_unknown_discussion_category_is_not_found() {
     let (gh, _) = github(vec![Reply::new(
         200,
-        r#"{"data":{"repository":{"discussionCategories":{"nodes":[{"id":"C1","name":"Ideas","slug":"ideas"}]}}}}"#,
+        r#"{"data":{"repository":{"discussionCategories":{"totalCount":1,"nodes":[{"id":"C1","name":"Ideas","slug":"ideas"}]}}}}"#,
     )])
     .await;
     let of = ghtui_api::browse::DiscussionsOf::Repo(RepoId::new("o", "r"));
     let result = gh.discussions(&of, Some("nope"), None).await;
     assert!(matches!(result, Err(ApiError::NotFound(_))), "{result:?}");
+}
+
+/// A directory's entries past the first 100 get their latest commits too,
+/// a query for each 100.
+#[tokio::test]
+async fn last_commits_cover_big_directories() {
+    let commit = r#"{"nodes":[{"oid":"abc","messageHeadline":"h","committedDate":"2026-10-01T00:00:00Z","author":{"name":"a","user":null}}]}"#;
+    let reply = |n: usize| {
+        let fields: Vec<String> = (0..n).map(|i| format!(r#""e{i}":{commit}"#)).collect();
+        Reply::new(
+            200,
+            format!(
+                r#"{{"data":{{"repository":{{"object":{{{}}}}}}}}}"#,
+                fields.join(",")
+            ),
+        )
+    };
+    let (gh, seen) = github(vec![reply(100), reply(50)]).await;
+    let names: Vec<String> = (0..150).map(|i| format!("f{i}")).collect();
+    let found = gh
+        .last_commits(&RepoId::new("o", "r"), "HEAD", "src", &names)
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 150);
+    assert!(found.contains_key("f149"));
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[1]
+            .query()
+            .contains(r#"e0: history(first: 1, path: "src/f100")"#)
+    );
+}
+
+/// Advisories page by the cursor in GitHub's `Link` header (as
+/// api.github.com sends it), and a full page says there are more.
+#[tokio::test]
+async fn advisories_page_by_cursor() {
+    let advisory = r#"{"ghsa_id":"GHSA-1","summary":"s","severity":"high","published_at":null,"vulnerabilities":[]}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, format!("[{advisory}]")).header(
+            "link",
+            r#"<https://api.github.com/advisories?type=reviewed&per_page=30&after=Y3Vyc29yOnYyOpK0%3D%3D>; rel="next""#,
+        ),
+        Reply::new(200, format!("[{advisory}]")),
+    ])
+    .await;
+    let first = gh.advisories(None, None).await.unwrap();
+    assert_eq!(first.next.as_deref(), Some("Y3Vyc29yOnYyOpK0=="));
+    let second = gh.advisories(None, first.next).await.unwrap();
+    assert_eq!(second.next, None);
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[1]
+            .request_line
+            .contains("&after=Y3Vyc29yOnYyOpK0%3D%3D "),
+        "{}",
+        seen[1].request_line
+    );
 }
 
 /// A job's REST body, `status` and `conclusion` as given.
