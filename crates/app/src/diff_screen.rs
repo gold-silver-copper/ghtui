@@ -952,7 +952,7 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
 }
 
 /// Changes the inputs of `of`'s diff, if it's still open.
-fn edit<R>(state: &mut State, of: &DiffOf, f: impl FnOnce(&mut DiffInputs) -> R) {
+fn edit(state: &mut State, of: &DiffOf, f: impl FnOnce(&mut DiffInputs)) {
     if let Some(diff) = state.diffs.get_mut(of) {
         diff.edit(f);
     }
@@ -1049,10 +1049,10 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
         }
         DiffMsg::ReviewLoaded(Ok(saved)) => {
             // Anything done before it arrived is kept, and saved.
-            if let Some(diff) = state.diffs.get_mut(of)
-                && diff.edit(|i| i.merge_saved_review(saved))
-            {
-                return vec![Cmd::SaveReview(pr, diff.inputs().review.clone())];
+            if let Some(diff) = state.diffs.get_mut(of) {
+                let mut changed = false;
+                let save = diff.edit_review(&pr, |i| changed = i.merge_saved_review(saved));
+                return if changed { save } else { Vec::new() };
             }
         }
         DiffMsg::ReviewLoaded(Err(err)) => {
