@@ -18,6 +18,8 @@
     reason = "tests: failing loudly is the point"
 )]
 
+mod common;
+
 use ghtui_api::GitHub;
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_store::Store;
@@ -301,4 +303,20 @@ async fn contract_lists_keep_their_order() {
     let (one, two) = (jobs(1).await, jobs(2).await);
     assert!(one["total_count"].as_u64().unwrap() >= 2);
     assert_ne!(one["jobs"][0]["id"], two["jobs"][0]["id"]);
+}
+
+/// Records the corpus `tests/corpus.rs` replays: the requests in
+/// `common::run`, live, each checked as it comes. They're written to
+/// `$GHTUI_RECORD` (default: the temporary directory's `ghtui-corpus`), for
+/// a person to look over and copy into `tests/corpus`.
+#[tokio::test]
+#[ignore = "reads github.com"]
+async fn contract_record_corpus() {
+    let gh = github!();
+    let dir = std::env::var("GHTUI_RECORD").map_or_else(
+        |_| std::env::temp_dir().join("ghtui-corpus"),
+        std::path::PathBuf::from,
+    );
+    std::fs::create_dir_all(&dir).unwrap();
+    common::run(&gh.recording(dir)).await;
 }
