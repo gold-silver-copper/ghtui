@@ -586,8 +586,9 @@ impl State {
                 if let DiffOf::Pr(pr) = &of {
                     cmds.extend(self.ensure_pr(pr, force));
                 }
-                if force || !self.diffs.contains_key(&of) {
-                    cmds.extend(self.start_diff(&of));
+                // Settling starts it (again); a PR's waits for the PR, which may have merged.
+                if force {
+                    self.diffs.remove(&of);
                 }
             }
         }
@@ -667,7 +668,11 @@ impl State {
     #[must_use]
     pub fn settle_diff(&mut self) -> Vec<Cmd> {
         let mut cmds = match self.screen() {
-            Screen::Diff(screen) if !self.diffs.contains_key(&screen.of) => {
+            Screen::Diff(screen)
+                if !self.diffs.contains_key(&screen.of)
+                    && (screen.of.pr())
+                        .is_none_or(|pr| self.prs.get(pr).is_none_or(|r| !r.loading)) =>
+            {
                 self.start_diff(&screen.of.clone())
             }
             _ => Vec::new(),
@@ -2584,6 +2589,33 @@ pub(crate) mod tests {
             cmds.contains(&Cmd::Api(Api::FetchPr(pr.clone()))),
             "r reloads the diff but not the PR it's checked against: {cmds:?}"
         );
+    }
+
+    /// A PR held as open may have merged since: r starts its diff again
+    /// from the PR it fetches, not the one it had.
+    #[test]
+    fn refreshing_a_pr_diff_waits_for_the_pr() {
+        let mut state = state();
+        let pr = PrRef::parse("o/r#1").unwrap();
+        let mut detail = crate::snapshot_tests::pr_detail();
+        detail.summary.state = ghtui_api::model::PrState::Open;
+        let _ = update(
+            &mut state,
+            Msg::Pr(pr.clone(), Box::new(Ok(detail.clone()))),
+        );
+        let _ = start_pr_diff(&mut state, &pr);
+        let load = |cmds: &[Cmd]| {
+            cmds.iter().find_map(|c| match c {
+                Cmd::Git(Git::LoadDiff { base, .. }) => Some(base.clone()),
+                _ => None,
+            })
+        };
+        let cmds = act(&mut state, Action::Refresh);
+        assert_eq!(load(&cmds), None, "started from the PR it had: {cmds:?}");
+        detail.summary.state = ghtui_api::model::PrState::Merged;
+        detail.base_oid = "m".repeat(40);
+        let cmds = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
+        assert_eq!(load(&cmds).and_then(|b| b.oid), Some("m".repeat(40)));
     }
 
     /// A diff you've left isn't checked when its PR refreshes (on the PR's
