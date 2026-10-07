@@ -3,7 +3,9 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use ghtui_api::model::{NodeId, PatchFile, PrRef, RepoId, ReviewThread, ViewedFiles, ViewedState};
+use ghtui_api::model::{
+    NodeId, PatchFile, PrDetail, PrRef, RepoId, ReviewThread, ViewedFiles, ViewedState,
+};
 use ghtui_diff::anchor::Commentable;
 use ghtui_diff::{FileDiff, Whitespace};
 use ghtui_git::Oid;
@@ -872,7 +874,32 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
                 files,
                 generated,
             } = *files;
+            let (head, count) = (refs.head.to_string(), files.len());
             diff.set_files(refs, Doc::new(files, &generated));
+            // The whole PR's diff, checked against what GitHub says of it
+            // (once that's fresh: a cached copy may be from before a push).
+            if let DiffOf::Pr(pr) = of
+                && diff.range.is_none()
+                && let Some(remote) = state.prs.get(pr)
+                && let Some(detail) = remote.data.as_ref()
+                && !remote.loading
+                && remote.cached_at.is_none()
+            {
+                let check = check_pr_diff(detail, &head, count, &state.first_key(Action::Refresh));
+                if let Some(error) = &check.error {
+                    tracing::warn!(%pr, error, "the PR's diff doesn't match GitHub");
+                    if let Some(diff) = state.diffs.get_mut(of) {
+                        diff.error = Some(error.clone());
+                    }
+                }
+                if let Some(warning) = check.warning {
+                    tracing::warn!(%pr, warning, "the PR's diff doesn't match GitHub");
+                    state.error(warning);
+                }
+            }
+            let Some(diff) = state.diffs.get_mut(of) else {
+                return Vec::new();
+            };
             // "Since my last review" chosen while switching ranges.
             if std::mem::take(&mut diff.since_requested) {
                 return review_action(state, Action::ToggleSinceReview);
@@ -1062,4 +1089,78 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
         DiffMsg::ReviewSubmitted(outcome) => return on_submitted(state, &pr, &outcome),
     }
     Vec::new()
+}
+
+/// What checking a PR's diff from git against GitHub's account of it
+/// found: an error (the diff is wrong) or a warning (it may be).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct PrDiffCheck {
+    pub error: Option<String>,
+    pub warning: Option<String>,
+}
+
+/// Checks the diff git made (its head, how many files) against GitHub's
+/// PR: the same head, and about as many files. No files where GitHub has
+/// some is the merged-PR bug's shape, and an error.
+pub(crate) fn check_pr_diff(
+    detail: &PrDetail,
+    head: &str,
+    files: usize,
+    refresh: &str,
+) -> PrDiffCheck {
+    let mut check = PrDiffCheck::default();
+    let short = ghtui_ui::text::short_sha;
+    if head != detail.head_oid {
+        check.warning = Some(format!(
+            "The PR's head is {} on GitHub but {} here: it moved while loading. {refresh} reloads",
+            short(&detail.head_oid),
+            short(head)
+        ));
+        return check;
+    }
+    let (ours, theirs) = (files as u64, detail.changed_files);
+    if ours == 0 && theirs > 0 {
+        check.error = Some(format!(
+            "git found no changes, but GitHub says {theirs} file{} changed. {refresh} tries again",
+            if theirs == 1 { "" } else { "s" }
+        ));
+    } else if ours.abs_diff(theirs) > 3.max(theirs / 10) {
+        check.warning = Some(format!(
+            "git found {ours} changed files, GitHub says {theirs}: the diff may not be the PR's"
+        ));
+    }
+    check
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_prs_diff_is_checked_against_github() {
+        let mut pr = crate::snapshot_tests::pr_detail();
+        pr.head_oid = "a".repeat(40);
+        pr.changed_files = 12;
+        let check = |head: &str, files| check_pr_diff(&pr, head, files, "r");
+        assert_eq!(check(&"a".repeat(40), 12), PrDiffCheck::default());
+        // Renames and the like count differently; a few files either way
+        // is no cause for alarm.
+        assert_eq!(check(&"a".repeat(40), 10), PrDiffCheck::default());
+        let none = check(&"a".repeat(40), 0);
+        assert!(
+            none.error
+                .is_some_and(|e| e.contains("GitHub says 12 files"))
+        );
+        let off = check(&"a".repeat(40), 40);
+        assert!(
+            off.warning
+                .is_some_and(|w| w.contains("git found 40 changed files, GitHub says 12"))
+        );
+        let moved = check(&"b".repeat(40), 12);
+        assert!(
+            moved
+                .warning
+                .is_some_and(|w| w.contains("aaaaaaa on GitHub but bbbbbbb here"))
+        );
+    }
 }
