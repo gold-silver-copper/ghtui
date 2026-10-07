@@ -177,6 +177,23 @@ impl State {
                 self.commit_tabs(repo, oid, c);
                 c.active = Some(usize::from(matches!(route, Route::CommitChecks { .. })));
             }
+            Route::Gist { owner, id } => {
+                // Its owner, from the gist when the URL doesn't say.
+                let gist = match self.get(&DataKey::Gist(id.clone())) {
+                    Some(Data::Gist(g)) => g.owner.clone(),
+                    _ => None,
+                };
+                let owner = owner.clone().or(gist);
+                if let Some(owner) = owner {
+                    c.crumb(&owner, Some(Target::Page(Route::user(&owner))));
+                    c.crumb("Gists", Some(Target::Page(Route::Gists(owner.clone()))));
+                }
+                c.crumb("Gist", None);
+            }
+            Route::Gists(login) => {
+                c.crumb(login, Some(Target::Page(Route::user(login))));
+                c.crumb("Gists", None);
+            }
             Route::Compare { repo, spec } => {
                 repo_crumbs(repo, c);
                 self.compare_page_tabs(repo, spec, c);

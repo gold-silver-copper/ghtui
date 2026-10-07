@@ -5,10 +5,10 @@ use ghtui_api::browse::{
     Asset, Blame, BlameRange, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment,
     CommitDetail, CommitInfo, Comparison, Contributed, Contributions, DeploymentInfo,
     DeploymentList, DiscussionCategory, DiscussionComment, DiscussionDetail, DiscussionList,
-    DiscussionSummary, EntryKind, IssueDetail, IssueState, IssueSummary, Job, JobSummary,
-    MilestoneDetail, MilestoneInfo, MilestoneList, MonthActivity, PrActivity, Profile, Readme,
-    Release, RepoOverview, RepoSummary, Results, ReviewSummary, RunSummary, SearchResults, Step,
-    TagInfo, TreeEntry, UserSummary, Week, Workflow, WorkflowRun,
+    DiscussionSummary, EntryKind, Gist, GistFile, GistSummary, IssueDetail, IssueState,
+    IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList, MonthActivity,
+    PrActivity, Profile, Readme, Release, RepoOverview, RepoSummary, Results, ReviewSummary,
+    RunSummary, SearchResults, Step, TagInfo, TreeEntry, UserSummary, Week, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
@@ -323,6 +323,53 @@ pub fn blame() -> Blame {
             ),
             range(6, 7, 'a', "octocat", "2025-01-01T00:00:00Z"),
         ],
+    }
+}
+/// A gist with a Rust file and a README.
+pub fn gist() -> Gist {
+    let file = |name: &str, language: &str, text: &str| GistFile {
+        name: name.into(),
+        language: Some(language.into()),
+        size: text.len() as u64,
+        text: Some(text.into()),
+        truncated: false,
+    };
+    Gist {
+        id: "6cad326836d38bd3a7ae".into(),
+        owner: Some("octocat".into()),
+        description: "Hello world!".into(),
+        public: true,
+        created_at: "2025-01-01T00:00:00Z".into(),
+        updated_at: "2026-10-02T12:00:00Z".into(),
+        comments: 3,
+        files: vec![
+            file(
+                "hello.rs",
+                "Rust",
+                "fn main() {\n    println!(\"hello\");\n}\n",
+            ),
+            file("README.md", "Markdown", "# Hello\n\nSays *hello*."),
+        ],
+    }
+}
+
+/// Two of someone's gists.
+pub fn gists() -> Results<GistSummary> {
+    let gist = |id: &str, file: &str, description: &str| GistSummary {
+        id: id.into(),
+        description: description.into(),
+        files: vec![file.into()],
+        updated_at: "2026-10-02T12:00:00Z".into(),
+        stars: 26,
+        comments: 3,
+    };
+    Results {
+        total: 8,
+        items: vec![
+            gist("6cad326836d38bd3a7ae", "hello.rs", "Hello world!"),
+            gist("9257657", ".gitignore", ""),
+        ],
+        next: Some("g1".into()),
     }
 }
 fn label(name: &str, color: &str) -> Label {

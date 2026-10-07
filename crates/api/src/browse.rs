@@ -2148,6 +2148,171 @@ impl wire_blame::Blame {
         }
     }
 }
+// ---- gists -------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GistFile {
+    pub name: String,
+    pub language: Option<String>,
+    pub size: u64,
+    /// `None` past the API's size limit.
+    pub text: Option<String>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Gist {
+    pub id: String,
+    pub owner: Option<String>,
+    pub description: String,
+    pub public: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub comments: u64,
+    pub files: Vec<GistFile>,
+}
+
+/// A gist in a list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GistSummary {
+    pub id: String,
+    pub description: String,
+    pub files: Vec<String>,
+    pub updated_at: String,
+    pub stars: u64,
+    pub comments: u64,
+}
+
+pub(crate) mod rest_gists {
+    use std::collections::BTreeMap;
+
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Login {
+        pub login: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct File {
+        pub language: Option<String>,
+        #[serde(default)]
+        pub size: u64,
+        pub content: Option<String>,
+        #[serde(default)]
+        pub truncated: bool,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Gist {
+        pub id: String,
+        pub owner: Option<Login>,
+        pub description: Option<String>,
+        pub public: bool,
+        pub created_at: String,
+        pub updated_at: String,
+        #[serde(default)]
+        pub comments: u64,
+        pub files: BTreeMap<String, File>,
+    }
+}
+
+impl rest_gists::Gist {
+    pub(crate) fn into_gist(self) -> Gist {
+        Gist {
+            id: self.id,
+            owner: self.owner.map(|o| o.login),
+            description: self.description.unwrap_or_default(),
+            public: self.public,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            comments: self.comments,
+            files: self
+                .files
+                .into_iter()
+                .map(|(name, f)| GistFile {
+                    name,
+                    language: f.language,
+                    size: f.size,
+                    text: f.content,
+                    truncated: f.truncated,
+                })
+                .collect(),
+        }
+    }
+}
+
+pub(crate) mod wire_gists {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Name {
+        pub name: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Count {
+        pub total_count: u64,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Gist {
+        pub name: String,
+        pub description: Option<String>,
+        pub updated_at: String,
+        pub stargazer_count: u64,
+        pub files: Option<Vec<Option<Name>>>,
+        pub comments: Count,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct PageInfo {
+        pub has_next_page: bool,
+        pub end_cursor: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Gists {
+        pub total_count: u64,
+        pub page_info: PageInfo,
+        pub nodes: Vec<Option<Gist>>,
+    }
+}
+
+impl wire_gists::Gists {
+    pub(crate) fn into_results(self) -> Results<GistSummary> {
+        Results {
+            total: self.total_count,
+            items: self
+                .nodes
+                .into_iter()
+                .flatten()
+                .map(|g| GistSummary {
+                    id: g.name,
+                    description: g.description.unwrap_or_default(),
+                    files: g
+                        .files
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .map(|f| f.name)
+                        .collect(),
+                    updated_at: g.updated_at,
+                    stars: g.stargazer_count,
+                    comments: g.comments.total_count,
+                })
+                .collect(),
+            next: self
+                .page_info
+                .end_cursor
+                .filter(|_| self.page_info.has_next_page),
+        }
+    }
+}
 // ---- discussions ------------------------------------------------------------------------------
 
 /// Whose discussions: a repository's, or an organization's (which GitHub
@@ -3412,6 +3577,12 @@ pub mod keys {
     }
     pub fn branches(repo: &RepoId) -> String {
         format!("branches:{repo}")
+    }
+    pub fn gist(id: &str) -> String {
+        format!("gist:{id}")
+    }
+    pub fn gists(login: &str) -> String {
+        format!("gists:{login}")
     }
     pub fn blame(repo: &RepoId, rev: &str, path: &str) -> String {
         format!("blame:{repo}:{rev}:{path}")

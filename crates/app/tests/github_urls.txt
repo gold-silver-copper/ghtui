@@ -74,9 +74,11 @@ https://github.com/cli/cli/discussions/14603                                Disc
 https://github.com/cli/cli/discussions/14603#discussioncomment-18765024     Discussion
 https://github.com/orgs/community/discussions/12345                         Discussion
 # Gist
-https://gist.github.com/1162032                                             todo Gist
-https://gist.github.com/octocat/1162032                                     todo Gist
-https://gist.github.com/octocat                                             todo Gists
+https://gist.github.com/1162032                                             Gist
+https://gist.github.com/octocat/1162032                                     Gist
+https://gist.github.com/octocat                                             Gists
+https://gist.github.com/octocat/1162032/raw                                 external download
+https://gist.github.com/discover                                            external rare
 # Team
 https://github.com/orgs/github/teams/justice-league                         todo Team
 https://github.com/orgs/rust-lang/teams                                     todo Teams
