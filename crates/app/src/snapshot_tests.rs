@@ -1270,7 +1270,7 @@ pub(crate) mod diff {
     const OLD_RS: &str = "use std::fmt;\n\n/// A point.\npub struct Point {\n    x: i32,\n    y: i32,\n}\n\nimpl Point {\n    pub fn new(x: i32, y: i32) -> Self {\n        Point { x, y }\n    }\n}\n";
     const NEW_RS: &str = "use std::fmt;\n\n/// A point in 2D.\npub struct Point {\n    x: i32,\n    y: i32,\n}\n\nimpl Point {\n    pub fn new(x: i32, y: i32) -> Self {\n        Point { x, y }\n    }\n\n    pub fn origin() -> Self {\n        Self::new(0, \"0\".len() as i32 - 1)\n    }\n}\n";
 
-    fn loaded(doc: Doc) -> DiffState {
+    fn loaded(doc: &Doc) -> DiffState {
         let refs = PrRefs {
             head: Oid::new("h"),
             base: Oid::new("b"),
@@ -1353,7 +1353,7 @@ pub(crate) mod diff {
         for (i, d) in diffs.into_iter().enumerate() {
             doc.set_diff(i, Arc::new(d));
         }
-        loaded(doc)
+        loaded(&doc)
     }
 
     pub(super) fn screen_state(mode: Mode, depth: ColorDepth, cursor: Pos, focus: Pane) -> State {
@@ -1455,7 +1455,7 @@ pub(crate) mod diff {
         let mut s = state(Mode::Dark, ColorDepth::TrueColor);
         let url = "https://github.com/o/r/pull/7#discussion_r42".to_owned();
         let _ = s.follow(&ghtui_ui::page::Link::Url(url));
-        let mut diff = loaded(Doc::new(
+        let mut diff = loaded(&Doc::new(
             fixture_files(),
             &HashSet::new(),
             Default::default(),
@@ -1709,7 +1709,7 @@ pub(crate) mod diff {
         doc.set_moves(moves);
         let mut s = state(mode, ColorDepth::TrueColor);
         s.size = (110, 30);
-        open_diff(&mut s, loaded(doc), Pos::default(), Pane::Diff);
+        open_diff(&mut s, loaded(&doc), Pos::default(), Pane::Diff);
         s
     }
 
@@ -1914,7 +1914,7 @@ pub(crate) mod diff {
 
         let mut s = state(Mode::Dark, ColorDepth::TrueColor);
         s.size = (160, 50);
-        open_diff(&mut s, loaded(doc), Pos::default(), Pane::Diff);
+        open_diff(&mut s, loaded(&doc), Pos::default(), Pane::Diff);
 
         let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
         let frames = 2000;
@@ -1968,7 +1968,7 @@ pub(crate) mod diff {
         let mut s = state(Mode::Dark, ColorDepth::TrueColor);
         s.size = (160, 50);
         let doc = Doc::new(vec![big], &HashSet::new(), Default::default());
-        open_diff(&mut s, loaded(doc), Pos::default(), Pane::Diff);
+        open_diff(&mut s, loaded(&doc), Pos::default(), Pane::Diff);
         let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
 
         let start = Instant::now();
