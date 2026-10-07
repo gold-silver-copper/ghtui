@@ -2236,7 +2236,7 @@ struct GqlError {
 
 impl GqlError {
     /// Whether this is GitHub's NOT_FOUND for what `data` holds as null (or
-    /// doesn't hold): the reason it's absent.
+    /// what's under a null): the reason it's absent.
     fn explains_null(&self, data: &Value) -> bool {
         self.kind.as_deref() == Some("NOT_FOUND")
             && self
@@ -2244,11 +2244,12 @@ impl GqlError {
                 .iter()
                 .flatten()
                 .try_fold(data, |at, step| match step {
+                    _ if at.is_null() => Some(at),
                     Value::String(key) => at.get(key),
                     Value::Number(i) => at.get(usize::try_from(i.as_u64()?).ok()?),
                     _ => None,
                 })
-                .is_none_or(Value::is_null)
+                .is_some_and(Value::is_null)
     }
 }
 
@@ -2476,7 +2477,9 @@ mod tests {
         let found = Some("NOT_FOUND");
         assert!(error(found, serde_json::json!(["a", 1])).explains_null(&data));
         assert!(error(found, serde_json::json!(["c"])).explains_null(&data));
-        assert!(error(found, serde_json::json!(["d"])).explains_null(&data));
+        assert!(error(found, serde_json::json!(["c", "e", 0])).explains_null(&data));
+        assert!(!error(found, serde_json::json!(["d"])).explains_null(&data));
+        assert!(!error(found, serde_json::json!(["a", 0, "b", "e"])).explains_null(&data));
         assert!(!error(found, serde_json::json!(["a", 0])).explains_null(&data));
         assert!(!error(found, serde_json::json!([])).explains_null(&data));
         assert!(!error(None, serde_json::json!(["c"])).explains_null(&data));
