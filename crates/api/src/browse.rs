@@ -287,6 +287,9 @@ pub enum SearchKind {
     /// Pull requests only.
     Pulls,
     Users,
+    Discussions,
+    Commits,
+    Code,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -294,6 +297,57 @@ pub enum SearchResults {
     Repos(Results<RepoSummary>),
     Issues(Results<IssueSummary>),
     Users(Results<UserSummary>),
+    Discussions(Results<DiscussionHit>),
+    Commits(Results<CommitHit>),
+    Code(Results<CodeHit>),
+}
+
+impl SearchResults {
+    /// How many there are in all, and how many are here.
+    pub fn counts(&self) -> (u64, usize) {
+        match self {
+            SearchResults::Repos(r) => (r.total, r.items.len()),
+            SearchResults::Issues(r) => (r.total, r.items.len()),
+            SearchResults::Users(r) => (r.total, r.items.len()),
+            SearchResults::Discussions(r) => (r.total, r.items.len()),
+            SearchResults::Commits(r) => (r.total, r.items.len()),
+            SearchResults::Code(r) => (r.total, r.items.len()),
+        }
+    }
+
+    pub fn next(&self) -> Option<&str> {
+        match self {
+            SearchResults::Repos(r) => r.next.as_deref(),
+            SearchResults::Issues(r) => r.next.as_deref(),
+            SearchResults::Users(r) => r.next.as_deref(),
+            SearchResults::Discussions(r) => r.next.as_deref(),
+            SearchResults::Commits(r) => r.next.as_deref(),
+            SearchResults::Code(r) => r.next.as_deref(),
+        }
+    }
+}
+
+/// A discussion a search found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscussionHit {
+    pub repo: RepoId,
+    pub summary: DiscussionSummary,
+}
+
+/// A commit a search found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitHit {
+    pub repo: RepoId,
+    pub commit: CommitInfo,
+}
+
+/// A file a code search found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeHit {
+    pub repo: RepoId,
+    pub path: String,
+    /// The blob's ID: the file as it was indexed.
+    pub sha: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2647,6 +2701,90 @@ pub struct WikiPage {
     /// Every page's title, in order.
     pub pages: Vec<String>,
     pub sidebar: Option<String>,
+}
+// ---- search: discussions, commits, code -------------------------------------------------------
+
+pub(crate) mod rest_search {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Repo {
+        pub full_name: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Login {
+        pub login: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Signature {
+        pub name: Option<String>,
+        pub date: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Message {
+        pub message: String,
+        pub committer: Option<Signature>,
+        pub author: Option<Signature>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Commit {
+        pub sha: String,
+        pub repository: Repo,
+        pub commit: Message,
+        pub author: Option<Login>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Code {
+        pub path: String,
+        pub sha: String,
+        pub repository: Repo,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Page<T> {
+        pub total_count: u64,
+        pub items: Vec<T>,
+    }
+}
+
+impl rest_search::Commit {
+    pub(crate) fn into_hit(self) -> Option<CommitHit> {
+        let signature = self.commit.committer.or(self.commit.author);
+        Some(CommitHit {
+            repo: RepoId::parse(&self.repository.full_name)?,
+            commit: CommitInfo {
+                headline: self
+                    .commit
+                    .message
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned(),
+                author: self
+                    .author
+                    .map(|a| a.login)
+                    .or_else(|| signature.as_ref().and_then(|s| s.name.clone()))
+                    .unwrap_or_default(),
+                date: signature.and_then(|s| s.date).unwrap_or_default(),
+                oid: self.sha,
+            },
+        })
+    }
+}
+
+impl rest_search::Code {
+    pub(crate) fn into_hit(self) -> Option<CodeHit> {
+        Some(CodeHit {
+            repo: RepoId::parse(&self.repository.full_name)?,
+            path: self.path,
+            sha: self.sha,
+        })
+    }
 }
 // ---- discussions ------------------------------------------------------------------------------
 

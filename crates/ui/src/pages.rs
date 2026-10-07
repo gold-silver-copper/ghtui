@@ -70,6 +70,9 @@ pub mod url {
             SearchKind::Issues => "issues",
             SearchKind::Pulls => "pullrequests",
             SearchKind::Users => "users",
+            SearchKind::Discussions => "discussions",
+            SearchKind::Commits => "commits",
+            SearchKind::Code => "code",
         };
         format!("{BASE}/search?q={}&type={kind}", encode(query))
     }
@@ -1650,16 +1653,16 @@ pub fn search(
         SearchKind::Issues => "issue",
         SearchKind::Pulls => "pull request",
         SearchKind::Users => "user",
+        SearchKind::Discussions => "discussion",
+        SearchKind::Commits => "commit",
+        SearchKind::Code => "code",
     };
     let Some(results) = results else {
         loading_box(page, vec![Seg::new("Searching…", Role::Meta)]);
         return;
     };
-    let (total, shown, next) = match results {
-        SearchResults::Repos(r) => (r.total, r.items.len(), r.next.is_some()),
-        SearchResults::Issues(r) => (r.total, r.items.len(), r.next.is_some()),
-        SearchResults::Users(r) => (r.total, r.items.len(), r.next.is_some()),
-    };
+    let (total, shown) = results.counts();
+    let next = results.next().is_some();
     page.box_top(
         vec![Seg::new(
             format!("{} {noun} results", compact(total)),
@@ -1676,6 +1679,60 @@ pub fn search(
             issue_row(page, i, true, icons, now);
         }),
         SearchResults::Users(r) => box_rows(page, &r.items, user_row),
+        SearchResults::Discussions(r) => box_rows(page, &r.items, |page, hit| {
+            let d = &hit.summary;
+            let target = format!("{}/discussions/{}", url::repo(&hit.repo), d.number);
+            item(page, target, |page, link| {
+                let mut segs = vec![Seg::linked(d.title.clone(), Role::Strong, link)];
+                if d.answered {
+                    segs.push(space());
+                    segs.push(chip("✓ Answered", Bg::SuccessContainer));
+                }
+                body(page, segs);
+                let meta = format!(
+                    "{}#{} · {} · {} · {} · updated {}",
+                    hit.repo,
+                    d.number,
+                    d.category,
+                    d.author,
+                    plural(d.comments, "comment"),
+                    time::ago_iso(&d.updated_at, now)
+                );
+                body(page, vec![Seg::new(meta, Role::Meta)]);
+            });
+        }),
+        SearchResults::Commits(r) => box_rows(page, &r.items, |page, hit| {
+            let c = &hit.commit;
+            item(page, url::commit(&hit.repo, &c.oid), |page, link| {
+                let right = vec![Seg::new(crate::text::short_sha(&c.oid), Role::Code)];
+                page.box_line(
+                    vec![Seg::linked(c.headline.clone(), Role::Strong, link)],
+                    right,
+                    0,
+                );
+                let meta = format!(
+                    "{} · {} committed {}",
+                    hit.repo,
+                    c.author,
+                    time::ago_iso(&c.date, now)
+                );
+                body(page, vec![Seg::new(meta, Role::Meta)]);
+            });
+        }),
+        SearchResults::Code(r) => box_rows(page, &r.items, |page, hit| {
+            item(
+                page,
+                url::blob(&hit.repo, "HEAD", &hit.path),
+                |page, link| {
+                    page.box_line(
+                        vec![Seg::linked(hit.path.clone(), Role::Code, link)],
+                        Vec::new(),
+                        0,
+                    );
+                    body(page, vec![Seg::new(hit.repo.to_string(), Role::Meta)]);
+                },
+            );
+        }),
     }
     more_row(page, next, shown, total);
     page.box_bottom();

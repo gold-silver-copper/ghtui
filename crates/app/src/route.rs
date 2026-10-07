@@ -580,6 +580,9 @@ impl Target {
                     Some("issues") => SearchKind::Issues,
                     Some("pullrequests") => SearchKind::Pulls,
                     Some("users") => SearchKind::Users,
+                    Some("discussions") => SearchKind::Discussions,
+                    Some("commits") => SearchKind::Commits,
+                    Some("code") => SearchKind::Code,
                     // Topics: the repositories tagged with one.
                     Some("topics") => {
                         return Target::Page(Route::Search {
@@ -1513,6 +1516,22 @@ pub(crate) mod tests {
         );
     }
 
+    /// "Not built yet" isn't a reason: every link opens a page, the diff
+    /// viewer, or the browser for a reason the corpus states.
+    #[test]
+    fn no_link_waits_for_a_page() {
+        let todo: Vec<&str> = corpus()
+            .iter()
+            .filter(|(_, expect, _)| *expect == "todo")
+            .map(|(url, _, _)| *url)
+            .collect();
+        assert!(
+            todo.is_empty(),
+            "pages still to build:\n{}",
+            todo.join("\n")
+        );
+    }
+
     #[test]
     fn routes_round_trip_through_urls() {
         let repo = RepoId::new("o", "r");
@@ -1748,12 +1767,15 @@ pub(crate) mod tests {
                             tab,
                         })
                     }),
-                (any::<String>(), 0..4u8).prop_map(|(query, k)| Route::Search {
+                (any::<String>(), 0..7u8).prop_map(|(query, k)| Route::Search {
                     kind: [
                         SearchKind::Repos,
                         SearchKind::Issues,
                         SearchKind::Pulls,
-                        SearchKind::Users
+                        SearchKind::Users,
+                        SearchKind::Discussions,
+                        SearchKind::Commits,
+                        SearchKind::Code,
                     ][usize::from(k)],
                     query,
                 }),
