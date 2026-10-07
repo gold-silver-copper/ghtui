@@ -1423,12 +1423,15 @@ pub enum CheckConclusionState {
 
 impl CheckOutcome {
     /// How a check run, job or step came out, from GraphQL or REST alike:
-    /// pending until it completes, and a failure if it completed in a way
-    /// not known here.
-    pub(crate) fn of(status: CheckStatusState, conclusion: Option<CheckConclusionState>) -> Self {
+    /// pending until it completes (a REST job without a status is queued),
+    /// and a failure if it completed in a way not known here.
+    pub(crate) fn of(
+        status: Option<CheckStatusState>,
+        conclusion: Option<CheckConclusionState>,
+    ) -> Self {
         use CheckConclusionState as C;
         match (status, conclusion) {
-            (CheckStatusState::Completed, Some(conclusion)) => match conclusion {
+            (Some(CheckStatusState::Completed), Some(conclusion)) => match conclusion {
                 C::Success => Self::Success,
                 C::Skipped => Self::Skipped,
                 C::Neutral | C::Stale => Self::Neutral,
@@ -1956,7 +1959,7 @@ mod tests {
 
 impl WireCheckRun {
     fn into_item(self) -> CheckItem {
-        let outcome = CheckOutcome::of(self.status, self.conclusion);
+        let outcome = CheckOutcome::of(Some(self.status), self.conclusion);
         let suite = self.check_suite;
         let group = suite
             .as_ref()
@@ -2321,21 +2324,13 @@ pub(crate) mod rest_actions {
     use serde::{Deserialize, Deserializer};
 
     pub use super::UserLogin as Actor;
-    use super::{CheckConclusionState, CheckOutcome, CheckStatusState};
+    use super::{CheckConclusionState, CheckStatusState};
 
     /// REST spells GraphQL's enum values in lower case.
     fn upper<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
         Option::<String>::deserialize(d)?
             .map(|s| T::deserialize(s.to_uppercase().into_deserializer()))
             .transpose()
-    }
-
-    /// How a run, job or step came out; one without a status is queued.
-    pub(super) fn outcome(
-        status: Option<CheckStatusState>,
-        conclusion: Option<CheckConclusionState>,
-    ) -> CheckOutcome {
-        CheckOutcome::of(status.unwrap_or(CheckStatusState::Queued), conclusion)
     }
 
     #[derive(Deserialize)]
@@ -2410,7 +2405,7 @@ pub(crate) mod rest_actions {
 
 impl rest_actions::Run {
     pub(crate) fn into_run(self, jobs: Vec<rest_actions::Job>) -> WorkflowRun {
-        let outcome = rest_actions::outcome(self.status, self.conclusion);
+        let outcome = CheckOutcome::of(self.status, self.conclusion);
         WorkflowRun {
             id: self.id,
             name: self.name.unwrap_or_else(|| "Workflow".into()),
@@ -2428,7 +2423,7 @@ impl rest_actions::Run {
             jobs: jobs
                 .into_iter()
                 .map(|j| JobSummary {
-                    outcome: rest_actions::outcome(j.status, j.conclusion),
+                    outcome: CheckOutcome::of(j.status, j.conclusion),
                     id: j.id,
                     name: j.name,
                     started_at: j.started_at,
@@ -2439,7 +2434,7 @@ impl rest_actions::Run {
     }
 
     pub(crate) fn into_summary(self) -> RunSummary {
-        let outcome = rest_actions::outcome(self.status, self.conclusion);
+        let outcome = CheckOutcome::of(self.status, self.conclusion);
         RunSummary {
             id: self.id,
             title: self.display_title.unwrap_or_default(),
@@ -2456,7 +2451,7 @@ impl rest_actions::Run {
 impl rest_actions::Job {
     pub(crate) fn into_job(self) -> Job {
         Job {
-            outcome: rest_actions::outcome(self.status, self.conclusion),
+            outcome: CheckOutcome::of(self.status, self.conclusion),
             id: self.id,
             run_id: self.run_id,
             name: self.name,
@@ -2466,7 +2461,7 @@ impl rest_actions::Job {
                 .steps
                 .into_iter()
                 .map(|s| Step {
-                    outcome: rest_actions::outcome(s.status, s.conclusion),
+                    outcome: CheckOutcome::of(s.status, s.conclusion),
                     number: s.number,
                     name: s.name,
                     started_at: s.started_at,
