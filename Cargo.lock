@@ -914,6 +914,7 @@ dependencies = [
  "base64 0.23.1",
  "cynic",
  "cynic-codegen",
+ "cynic-parser",
  "ghtui-schema",
  "ghtui-store",
  "http",

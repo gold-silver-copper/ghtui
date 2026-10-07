@@ -5,6 +5,8 @@ pub mod browse;
 mod client;
 pub mod model;
 pub mod queries;
+#[cfg(test)]
+mod query_check;
 pub mod rate_limit;
 mod raw;
 

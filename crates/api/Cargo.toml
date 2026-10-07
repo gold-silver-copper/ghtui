@@ -24,6 +24,7 @@ url.workspace = true
 cynic-codegen.workspace = true
 
 [dev-dependencies]
+cynic-parser.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["net"] }
 

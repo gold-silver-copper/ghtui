@@ -100,3 +100,43 @@ pub(crate) fn team() -> String {
         "query($org: String!, $slug: String!) {{ organization(login: $org) {{ team(slug: $slug) {{ {TEAM} parentTeam {{ {TEAM} }} memberList: members(first: 50) {{ totalCount nodes {{ login name }} }} repoList: repositories(first: 50) {{ totalCount nodes {{ nameWithOwner description stargazerCount }} }} childTeams(first: 50) {{ totalCount nodes {{ {TEAM} }} }} }} }} }}"
     )
 }
+
+/// Every query here, by name, built with sample input.
+#[cfg(test)]
+pub(crate) fn all() -> Vec<(&'static str, String)> {
+    let mut all: Vec<(&str, String)> = vec![
+        ("DISCUSSION_SEARCH", DISCUSSION_SEARCH.to_owned()),
+        ("BRANCHES", BRANCHES.to_owned()),
+        ("DEPLOYMENTS", DEPLOYMENTS.to_owned()),
+        ("BLAME", BLAME.to_owned()),
+        ("GISTS", GISTS.to_owned()),
+        ("DISCUSSION_URLS", DISCUSSION_URLS.to_owned()),
+        ("DISCUSSION_CATEGORIES", DISCUSSION_CATEGORIES.to_owned()),
+        ("DISCUSSIONS", DISCUSSIONS.to_owned()),
+        ("DISCUSSION", DISCUSSION.to_owned()),
+        ("REFS", REFS.to_owned()),
+        (
+            "last_commits",
+            last_commits(&["src/a \"b\".rs".into(), "README.md".into()]),
+        ),
+        ("milestones(open)", milestones(false)),
+        ("milestones(closed)", milestones(true)),
+        ("milestone", milestone()),
+        ("teams", teams()),
+        ("team", team()),
+    ];
+    for field in ["stargazers", "watchers"] {
+        all.push((
+            "users(repository)",
+            users("repository(owner: $owner, name: $name)", field),
+        ));
+    }
+    for field in ["followers", "following"] {
+        all.push(("users(user)", users("user(login: $login)", field)));
+    }
+    all.push((
+        "users(organization)",
+        users("organization(login: $login)", "membersWithRole"),
+    ));
+    all
+}
