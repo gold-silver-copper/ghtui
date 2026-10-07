@@ -1831,6 +1831,118 @@ impl wire_milestones::Milestones {
         }
     }
 }
+// ---- deployments ------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeploymentInfo {
+    pub environment: String,
+    pub outcome: CheckOutcome,
+    /// GitHub's word for its state: `active`, `failure`, `inactive`…
+    pub state: String,
+    pub created_at: String,
+    pub creator: Option<String>,
+    pub branch: Option<String>,
+    pub oid: String,
+    /// Where its log is (usually a workflow run's job).
+    pub log_url: Option<String>,
+    /// What it deployed to.
+    pub environment_url: Option<String>,
+}
+
+/// A page of deployments, and the environments to filter by.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeploymentList {
+    pub environments: Vec<String>,
+    pub results: Results<DeploymentInfo>,
+}
+
+pub(crate) mod wire_deployments {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Login {
+        pub login: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Name {
+        pub name: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Status {
+        pub log_url: Option<String>,
+        pub environment_url: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Deployment {
+        pub environment: Option<String>,
+        pub state: Option<String>,
+        pub created_at: String,
+        pub creator: Option<Login>,
+        #[serde(rename = "ref")]
+        pub branch: Option<Name>,
+        pub commit_oid: String,
+        pub latest_status: Option<Status>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct PageInfo {
+        pub has_next_page: bool,
+        pub end_cursor: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Deployments {
+        pub total_count: u64,
+        pub page_info: PageInfo,
+        pub nodes: Vec<Option<Deployment>>,
+    }
+}
+
+impl wire_deployments::Deployments {
+    pub(crate) fn into_results(self) -> Results<DeploymentInfo> {
+        Results {
+            total: self.total_count,
+            items: self
+                .nodes
+                .into_iter()
+                .flatten()
+                .map(|d| {
+                    let state = d.state.unwrap_or_default().to_lowercase();
+                    let outcome = match state.as_str() {
+                        "active" | "success" => CheckOutcome::Success,
+                        "failure" | "error" => CheckOutcome::Failure,
+                        "inactive" | "destroyed" => CheckOutcome::Neutral,
+                        "abandoned" => CheckOutcome::Cancelled,
+                        _ => CheckOutcome::Pending,
+                    };
+                    let status = d.latest_status;
+                    DeploymentInfo {
+                        environment: d.environment.unwrap_or_default(),
+                        outcome,
+                        state: state.replace('_', " "),
+                        created_at: d.created_at,
+                        creator: d.creator.map(|c| c.login),
+                        branch: d.branch.map(|r| r.name),
+                        oid: d.commit_oid,
+                        log_url: status.as_ref().and_then(|s| s.log_url.clone()),
+                        environment_url: status.and_then(|s| s.environment_url),
+                    }
+                })
+                .collect(),
+            next: self
+                .page_info
+                .end_cursor
+                .filter(|_| self.page_info.has_next_page),
+        }
+    }
+}
 // ---- discussions ------------------------------------------------------------------------------
 
 /// Whose discussions: a repository's, or an organization's (which GitHub
@@ -3095,6 +3207,9 @@ pub mod keys {
     }
     pub fn branches(repo: &RepoId) -> String {
         format!("branches:{repo}")
+    }
+    pub fn deployments(repo: &RepoId, environment: Option<&str>) -> String {
+        format!("deployments:{repo}:{environment:?}")
     }
     pub fn milestones(repo: &RepoId, closed: bool) -> String {
         format!("milestones:{repo}:{closed}")

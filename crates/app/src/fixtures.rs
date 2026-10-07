@@ -3,11 +3,12 @@
 use crossterm::event::KeyEvent;
 use ghtui_api::browse::{
     Asset, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo,
-    Contributed, Contributions, DiscussionCategory, DiscussionComment, DiscussionDetail,
-    DiscussionList, DiscussionSummary, EntryKind, IssueDetail, IssueState, IssueSummary, Job,
-    JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList, MonthActivity, PrActivity, Profile,
-    Readme, Release, RepoOverview, RepoSummary, Results, ReviewSummary, RunSummary, SearchResults,
-    Step, TagInfo, TreeEntry, UserSummary, Week, Workflow, WorkflowRun,
+    Contributed, Contributions, DeploymentInfo, DeploymentList, DiscussionCategory,
+    DiscussionComment, DiscussionDetail, DiscussionList, DiscussionSummary, EntryKind, IssueDetail,
+    IssueState, IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList,
+    MonthActivity, PrActivity, Profile, Readme, Release, RepoOverview, RepoSummary, Results,
+    ReviewSummary, RunSummary, SearchResults, Step, TagInfo, TreeEntry, UserSummary, Week,
+    Workflow, WorkflowRun,
 };
 use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
@@ -865,6 +866,36 @@ pub fn milestone() -> MilestoneDetail {
                 issue_summary(6, true, IssueState::Merged),
             ],
             next: Some("m1".into()),
+        },
+    }
+}
+/// Two environments' deployments, one failed.
+pub fn deployments() -> DeploymentList {
+    let deployment = |env: &str, outcome, state: &str, url: Option<&str>| DeploymentInfo {
+        environment: env.into(),
+        outcome,
+        state: state.into(),
+        created_at: "2026-10-02T12:00:00Z".into(),
+        creator: Some("octocat".into()),
+        branch: Some("main".into()),
+        oid: "8d1a76430406c877b35d0b627e7f796dcf0dfeca".into(),
+        log_url: Some("https://github.com/gold-silver-copper/ghtui/actions/runs/9/job/12".into()),
+        environment_url: url.map(Into::into),
+    };
+    DeploymentList {
+        environments: vec!["production".into(), "staging".into()],
+        results: Results {
+            total: 2,
+            items: vec![
+                deployment(
+                    "production",
+                    CheckOutcome::Success,
+                    "active",
+                    Some("https://ghtui.example.com"),
+                ),
+                deployment("staging", CheckOutcome::Failure, "failure", None),
+            ],
+            next: None,
         },
     }
 }

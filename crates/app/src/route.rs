@@ -92,6 +92,11 @@ pub enum Route {
     },
     Tags(RepoId),
     Branches(RepoId),
+    /// Deployments, to one environment if given.
+    Deployments {
+        repo: RepoId,
+        environment: Option<String>,
+    },
     /// Open or closed milestones.
     Milestones {
         repo: RepoId,
@@ -236,6 +241,14 @@ impl Route {
             Route::Discussion { of, number } => format!("{}/{number}", discussions_url(of)),
             Route::Tags(repo) => format!("{}/tags", links::repo(repo)),
             Route::Branches(repo) => format!("{}/branches", links::repo(repo)),
+            Route::Deployments { repo, environment } => match environment {
+                Some(env) => format!(
+                    "{}/deployments/activity_log?environments_filter={}",
+                    links::repo(repo),
+                    links::encode(env)
+                ),
+                None => format!("{}/deployments", links::repo(repo)),
+            },
             Route::Milestones { repo, closed } => format!(
                 "{}/milestones{}",
                 links::repo(repo),
@@ -292,6 +305,7 @@ impl Route {
             Route::Discussion { of, number } => format!("{} · Discussion {number}", of_title(of)),
             Route::Tags(repo) => format!("{repo} · Tags"),
             Route::Branches(repo) => format!("{repo} · Branches"),
+            Route::Deployments { repo, .. } => format!("{repo} · Deployments"),
             Route::Milestones { repo, .. } => format!("{repo} · Milestones"),
             Route::Milestone { repo, number } => format!("{repo} · Milestone {number}"),
             Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
@@ -332,6 +346,7 @@ impl Route {
             }
             | Route::Tags(repo)
             | Route::Branches(repo)
+            | Route::Deployments { repo, .. }
             | Route::Milestones { repo, .. }
             | Route::Milestone { repo, .. }
             | Route::Commit { repo, .. } => Some(repo),
@@ -629,6 +644,18 @@ impl Target {
                 (Some(repo), Ok(number)) => Route::Milestone { repo, number },
                 _ => return external(),
             },
+            [o, r, "deployments", rest @ ..] => {
+                let Some(repo) = repo(o, r) else {
+                    return external();
+                };
+                let environment = match rest {
+                    [] => None,
+                    ["activity_log"] => param("environments_filter"),
+                    [env] => Some((*env).to_owned()),
+                    _ => return external(),
+                };
+                Route::Deployments { repo, environment }
+            }
             // All, active, stale, yours: one list.
             [o, r, "branches", ..] => match repo(o, r) {
                 Some(repo) => Route::Branches(repo),
@@ -1391,6 +1418,9 @@ pub(crate) mod tests {
                 repo().prop_map(Route::Releases),
                 repo().prop_map(Route::Tags),
                 repo().prop_map(Route::Branches),
+                (repo(), prop::option::of("[A-Za-z0-9 _-]{1,12}"))
+                    .prop_filter("not the log", |(_, e)| e.as_deref() != Some("activity_log"))
+                    .prop_map(|(repo, environment)| Route::Deployments { repo, environment }),
                 (repo(), any::<bool>())
                     .prop_map(|(repo, closed)| Route::Milestones { repo, closed }),
                 (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Milestone { repo, number }),

@@ -456,6 +456,7 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Releases(repo)
         | Route::Tags(repo)
         | Route::Branches(repo)
+        | Route::Deployments { repo, .. }
         | Route::Milestones { repo, .. }
         | Route::Actions(repo) => Route::Repo(repo.clone()),
         Route::Discussion { of, .. } => Route::Discussions {

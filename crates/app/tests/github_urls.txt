@@ -118,8 +118,8 @@ https://github.com/octocat/Hello-World/releases/v1.0.0                      Rele
 https://github.com/octocat/Hello-World/git/commit/7638417db6d59f3c431d3e1f261cc637155684cd Commit
 https://github.com/octocat/Hello-World/blob/6dcb09b5b57875f334f61aebed695e2e4193db5e/file1.txt Blob
 https://github.com/octokit/octokit.rb/tree/master/lib/octokit               Tree
-https://github.com/github/hello-world/deployments/activity_log?environments_filter=staging todo Deployments
-https://github.com/octocat/Hello-World/deployments                          todo Deployments
+https://github.com/github/hello-world/deployments/activity_log?environments_filter=staging Deployments
+https://github.com/octocat/Hello-World/deployments                          Deployments
 https://github.com/octocat/Hello-World/security/dependabot/1                external session
 https://github.com/octocat/hello-world/code-scanning/42                     external session
 https://github.com/owner/private-repo/security/secret-scanning/42           external session
