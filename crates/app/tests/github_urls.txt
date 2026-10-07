@@ -19,6 +19,29 @@
 # description; (c) website views, from GitHub's docs and
 # scripts/page-links.sh; (d) shapes the live crawl (link_crawl) found.
 
+# Query strings and fragments that carry meaning:
+#   handled  ?q= (lists, search, dashboards, a job's log filter), ?type=
+#            (search), ?tab= and ?sort= (profiles), ?state=closed
+#            (milestones), ?environments_filter= (deployments); #L10-L20
+#            (files and blame, marked), #issuecomment-… and
+#            #discussioncomment-… (scrolled to), #discussion_r…/#r… (the
+#            review thread in the diff), #diff-<hash> (that file in the
+#            diff), #step:3:12 (that step and line), #files (a commit's or
+#            comparison's diff)
+#   ignored  ?plain=1 (ghtui shows the file; Markdown renders), ?query= on
+#            a workflow (its runs aren't filtered), ?from=/?to= on a
+#            profile (the contribution range), #readme and other heading
+#            anchors (the page opens at the top), tracking parameters
+#
+# GraphQL types with a URL that have no example below: the ~80
+# organization and enterprise audit-log entries, identity providers,
+# migrations and repository invitations need admin or the invitee's
+# session; StripeConnectAccount is Stripe's site; the rest (Blob, Tree,
+# Tag, GitObject, Submodule, GitActor, contributions, Push,
+# DependencyGraphDependency, DeploymentStatus, StatusContext, TeamMemberEdge,
+# CheckAnnotation, ProfileOwner, ProjectOwner, App) link to shapes listed
+# here (files, trees, commits, profiles, jobs, teams) or to other sites.
+
 # ---- (a) GraphQL types with a URL -------------------------------------------
 
 # Repository, RepositoryInfo, RepositoryOwner
