@@ -18,6 +18,11 @@ pub struct Uri(pub String);
 #[cynic(graphql_type = "GitObjectID", schema_module = "schema")]
 pub struct GitObjectId(pub String);
 
+/// A number too big for GraphQL's `Int`, as GitHub writes it: a string.
+#[derive(cynic::Scalar, Debug, Clone)]
+#[cynic(graphql_type = "BigInt", schema_module = "schema")]
+pub struct BigInt(pub String);
+
 /// The non-null nodes of a GraphQL list.
 pub(crate) fn nodes<T>(list: Option<Vec<Option<T>>>) -> impl Iterator<Item = T> {
     list.into_iter().flatten().flatten()

@@ -863,7 +863,8 @@ pub struct IssueFull {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "IssueComment", schema_module = "schema")]
 pub struct WireComment {
-    pub database_id: Option<i32>,
+    /// `databaseId` overflows GraphQL's `Int` on newer comments.
+    pub full_database_id: Option<crate::queries::BigInt>,
     pub author: Option<Actor>,
     pub body: String,
     pub created_at: DateTime,
@@ -4316,7 +4317,7 @@ impl IssueFull {
 fn comments(c: IssueComments) -> Vec<Comment> {
     nodes(c.nodes)
         .map(|c| Comment {
-            id: c.database_id.map(count),
+            id: c.full_database_id.and_then(|id| id.0.parse().ok()),
             author: author(c.author),
             body: c.body,
             created_at: c.created_at.0,
