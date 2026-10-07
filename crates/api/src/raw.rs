@@ -25,7 +25,7 @@ pub(crate) const BLAME: &str = "query($owner: String!, $name: String!, $rev: Str
 pub(crate) const GISTS: &str = "query($login: String!, $after: String) { user(login: $login) { gists(first: 30, after: $after, privacy: PUBLIC, orderBy: {field: UPDATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name description updatedAt stargazerCount files(limit: 5) { name } comments { totalCount } } } } }";
 
 /// Discussions' URLs and repositories, to find where an organization's are.
-pub(crate) const DISCUSSION_URLS: &str = "query($q: String!, $after: String) { search(type: DISCUSSION, query: $q, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on Discussion { url repository { nameWithOwner } } } } }";
+pub(crate) const DISCUSSION_URLS: &str = "query($q: String!, $after: String) { search(type: DISCUSSION, query: $q, first: 100, after: $after) { discussionCount pageInfo { hasNextPage endCursor } nodes { ... on Discussion { url repository { nameWithOwner } } } } }";
 
 /// A repository's discussion categories.
 pub(crate) const DISCUSSION_CATEGORIES: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { discussionCategories(first: 50) { totalCount nodes { id name slug } } } }";

@@ -2096,10 +2096,17 @@ impl GitHub {
                 .pointer("/search/pageInfo/endCursor")
                 .and_then(serde_json::Value::as_str)
                 .filter(|_| more && found.iter().all(Option::is_none));
-            Ok(browse::Results::uncounted(found, next.map(str::to_owned)))
+            let total = data.pointer("/search/discussionCount");
+            Ok(browse::Results {
+                total: total
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or_default(),
+                items: found,
+                next: next.map(str::to_owned),
+            })
         };
         let what = format!("the search for {org}'s discussions");
-        let found = self.more_pages(what, page(None).await?, SEARCH_PAGES, page);
+        let found = self.more_pages(what, page(None).await?, PAGES, page);
         (found.await?.items.into_iter().flatten().next())
             .ok_or_else(|| ApiError::NotFound(format!("{org}'s discussions")))
     }
@@ -2293,12 +2300,11 @@ const REST_PAGE: u64 = 30;
 /// GitHub's search serves its first thousand results.
 const SEARCH_CAP: u64 = 1000;
 /// Pages of 100 read of a list GitHub can make long (checks, branches,
-/// jobs): a thousand.
+/// jobs, search results): a thousand.
 const PAGES: u32 = 10;
-/// GitHub's own cap on a PR's files: 3000, 100 a page.
+/// Pages of 100 of a PR's files (GitHub's own cap is 3000) or review
+/// threads.
 const FILE_PAGES: u32 = 30;
-/// Pages of 50 search results within [`SEARCH_CAP`].
-const SEARCH_PAGES: u32 = 20;
 
 /// A REST list's page number from its cursor (pages count from 1).
 fn rest_page(after: Option<&str>) -> u64 {
