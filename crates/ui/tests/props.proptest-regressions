@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9019b539b6dc1b2614082f959e1530ab725eab4fc64fff8988755e747278b9df # shrinks to text = "👩\u{200d}👩\u{200d}👧\u{200d}👦a=(👩\u{200d}👩\u{200d}👧\u{200d}👦👩\u{200d}👩\u{200d}👧\u{200d}👦(\"\u{1b}[31m\u{200d}=👩\u{200d}👩\u{200d}👧\u{200d}👦;\n👩\u{200d}👩\u{200d}👧\u{200d}👦a\"}=(a=👩\u{200d}👩\u{200d}👧\u{200d}👦\"a=👩\u{200d}👩\u{200d}👧\u{200d}👦\u{200d} a👩\u{200d}👩\u{200d}👧\u{200d}👦e\u{301}👩\u{200d}👩\u{200d}👧\u{200d}👦a 👩\u{200d}👩\u{200d}👧\u{200d}👦}👩\u{200d}👩\u{200d}👧\u{200d}👦\u{1b}[31m\u{200d}\n=;\u{1b}[31m👩\u{200d}👩\u{200d}👧\u{200d}👦a\u{301}\u{302}\u{303}\u{304}a\u{301}\u{302}\u{303}\u{304}\u{1b}[31m\n👩\u{200d}👩\u{200d}👧\u{200d}👦a👩\u{200d}👩\u{200d}👧\u{200d}👦}=e\u{301}\r=e\u{301}\r(\na(👩\u{200d}👩\u{200d}👧\u{200d}👦\u{200d}🇯🇵}👩\u{200d}👩\u{200d}👧\u{200d}👦;漢字漢字 a\u{1b}[31m👩\u{200d}👩\u{200d}👧\u{200d}👦}\"", width = 0
