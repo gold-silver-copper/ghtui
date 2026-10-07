@@ -1288,9 +1288,9 @@ impl GitHub {
                 expression: expression.clone(),
                 after,
             });
-            let pick = |q: browse::ContextsQuery| match q.repository.and_then(|r| r.object) {
-                Some(browse::ContextsTarget::Commit(c)) => Some(c.status_check_rollup),
-                _ => Some(None),
+            let pick = |q: browse::ContextsQuery| match q.repository?.object? {
+                browse::ContextsTarget::Commit(c) => Some(c.status_check_rollup),
+                browse::ContextsTarget::Other => None,
             };
             let rollup = self.find(op, repo, pick).await?;
             Ok(rollup
