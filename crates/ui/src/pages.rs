@@ -3170,15 +3170,23 @@ pub fn branches(
 /// Two revisions compared: how they differ, a link to the files changed,
 /// and the commits from one to the other, oldest first.
 pub fn compare(page: &mut Page, repo: &RepoId, spec: &str, c: &Comparison, now: u64) {
+    // One revision is compared with the default branch.
     let (base, head) = spec
         .split_once("...")
         .or_else(|| spec.split_once(".."))
-        .unwrap_or((spec, ""));
+        .unwrap_or(("the default branch", spec));
     page.wrapped(
         vec![
             Seg::new("Comparing ", Role::Title),
             Seg::new(base.to_owned(), Role::Code),
-            Seg::new(if spec.contains("...") { "..." } else { ".." }, Role::Meta),
+            Seg::new(
+                if spec.contains("..") && !spec.contains("...") {
+                    ".."
+                } else {
+                    "..."
+                },
+                Role::Meta,
+            ),
             Seg::new(head.to_owned(), Role::Code),
         ],
         0,
