@@ -8,9 +8,9 @@ use std::collections::HashMap;
 
 use ghtui_api::browse::{
     Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, Contributions,
-    EntryKind, IssueDetail, IssueState, IssueSummary, Job, JobSummary, PrActivity, Profile,
-    Release, RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults,
-    TagInfo, TreeEntry, UserSummary, Workflow, WorkflowRun,
+    DiscussionDetail, DiscussionList, EntryKind, IssueDetail, IssueState, IssueSummary, Job,
+    JobSummary, PrActivity, Profile, Release, RepoOverview, RepoSort, RepoSummary, Results,
+    RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -1159,10 +1159,37 @@ impl Conversation<'_> {
     /// A comment box: `╭─ author commented 3d ago ─── Author ─╮`, the
     /// Markdown body, `╰──╯`. `verb` is "commented", "opened"...
     fn said(&self, page: &mut Page, author: &str, verb: &str, when: &str, body: &str, badge: bool) {
+        self.said_at(
+            page,
+            None,
+            author,
+            verb,
+            when,
+            body,
+            badge.then(|| chip("Author", Bg::SecondaryContainer)),
+        );
+    }
+
+    /// A comment box, named `anchor` for links to it, with `chip` on its
+    /// right (Author, Answer).
+    #[expect(clippy::too_many_arguments, reason = "the parts of a comment box")]
+    fn said_at(
+        &self,
+        page: &mut Page,
+        anchor: Option<String>,
+        author: &str,
+        verb: &str,
+        when: &str,
+        body: &str,
+        chip: Option<Seg>,
+    ) {
+        if let Some(anchor) = anchor {
+            page.anchor(anchor);
+        }
         let start = page.lines.len();
         let who = link_seg(page, author.to_owned(), url::user(author), Role::Strong);
         let when = time::ago_iso(when, self.now);
-        let right = Vec::from_iter(badge.then(|| chip("Author", Bg::SecondaryContainer)));
+        let right = Vec::from_iter(chip);
         page.box_top(
             vec![who, Seg::new(format!(" {verb} {when}"), Role::Meta)],
             right,
@@ -1180,8 +1207,17 @@ impl Conversation<'_> {
 
     /// A comment, badged when it's by whoever opened the conversation.
     fn comment(&self, page: &mut Page, c: &Comment) {
-        let badge = c.author == self.op;
-        self.said(page, &c.author, "commented", &c.created_at, &c.body, badge);
+        let anchor = c.id.map(|id| format!("issuecomment-{id}"));
+        let badge = (c.author == self.op).then(|| chip("Author", Bg::SecondaryContainer));
+        self.said_at(
+            page,
+            anchor,
+            &c.author,
+            "commented",
+            &c.created_at,
+            &c.body,
+            badge,
+        );
     }
 
     /// A timeline event: `● author approved these changes 1d ago`.
@@ -2098,6 +2134,142 @@ pub fn workflow(
 /// A commit's checks.
 pub fn commit_checks(page: &mut Page, c: Option<&Checks>, now: u64) {
     checks(page, c, now);
+}
+
+// ---- discussions ------------------------------------------------------------------------------
+
+/// A list of discussions: the categories to filter by (`base` is the
+/// list's URL), then the discussions, most recently updated first.
+pub fn discussions(
+    page: &mut Page,
+    base: &str,
+    list: Option<&DiscussionList>,
+    category: Option<&str>,
+    now: u64,
+) {
+    let Some(l) = list else {
+        page.line(vec![Seg::new("Loading discussions…", Role::Meta)]);
+        return;
+    };
+    if !l.categories.is_empty() {
+        let mut segs = Vec::new();
+        let all = category.is_none();
+        segs.push(link_seg(
+            page,
+            "All",
+            base.to_owned(),
+            if all { Role::Strong } else { Role::Link },
+        ));
+        for c in &l.categories {
+            segs.push(Seg::new(" · ", Role::Meta));
+            let target = format!("{base}/categories/{}", c.slug);
+            let role = if category == Some(c.slug.as_str()) {
+                Role::Strong
+            } else {
+                Role::Link
+            };
+            segs.push(link_seg(page, c.name.clone(), target, role));
+        }
+        page.wrapped(segs, 0, Frame::None);
+        page.blank();
+    }
+    let r = &l.results;
+    let title = vec![Seg::new(
+        format!("Discussions  {}", compact(r.total)),
+        Role::Strong,
+    )];
+    page.box_top(title, Vec::new());
+    if r.items.is_empty() {
+        empty_row(page, "No discussions yet.");
+    }
+    box_rows(page, &r.items, |page, d| {
+        item(page, format!("{base}/{}", d.number), |page, link| {
+            let mut segs = vec![Seg::linked(d.title.clone(), Role::Strong, link)];
+            if d.answered {
+                segs.push(space());
+                segs.push(chip("✓ Answered", Bg::SuccessContainer));
+            }
+            body(page, segs);
+            let meta = format!(
+                "#{} · {} · {} · {} · ▲ {} · updated {}",
+                d.number,
+                d.category,
+                d.author,
+                plural(d.comments, "comment"),
+                d.upvotes,
+                time::ago_iso(&d.updated_at, now)
+            );
+            body(page, vec![Seg::new(meta, Role::Meta)]);
+        });
+    });
+    more_row(page, r.next.is_some(), r.items.len(), r.total);
+    page.box_bottom();
+}
+
+/// A discussion: its post, then its comments (the answer marked) with their
+/// replies, each named for links to it (`#discussioncomment-…`).
+pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
+    page.wrapped(
+        vec![
+            Seg::new(d.title.clone(), Role::Title),
+            Seg::new(format!("  #{}", d.number), Role::Meta),
+        ],
+        0,
+        Frame::None,
+    );
+    let mut segs = vec![chip(d.category.clone(), Bg::SecondaryContainer)];
+    if d.answered {
+        segs.push(space());
+        segs.push(chip("✓ Answered", Bg::SuccessContainer));
+    }
+    segs.push(Seg::new(
+        format!(
+            "  ▲ {} · {}",
+            d.upvotes,
+            plural(d.comments.len() as u64, "comment")
+        ),
+        Role::Meta,
+    ));
+    page.wrapped(segs, 0, Frame::None);
+    page.rule(0, Frame::None);
+    let talk = Conversation {
+        base: LinkBase::new(&d.repo, "HEAD", ""),
+        op: &d.author,
+        now,
+    };
+    talk.said(page, &d.author, "started", &d.created_at, &d.body, true);
+    let anchor = |c: &Comment| c.id.map(|id| format!("discussioncomment-{id}"));
+    for c in &d.comments {
+        connector(page);
+        let badge = if c.answer {
+            Some(chip("✓ Answer", Bg::SuccessContainer))
+        } else {
+            (c.comment.author == d.author).then(|| chip("Author", Bg::SecondaryContainer))
+        };
+        let verb = format!("commented · ▲ {}", c.upvotes);
+        let comment = &c.comment;
+        talk.said_at(
+            page,
+            anchor(comment),
+            &comment.author,
+            &verb,
+            &comment.created_at,
+            &comment.body,
+            badge,
+        );
+        for r in &c.replies {
+            let badge = (r.author == d.author).then(|| chip("Author", Bg::SecondaryContainer));
+            talk.said_at(
+                page,
+                anchor(r),
+                &r.author,
+                "replied",
+                &r.created_at,
+                &r.body,
+                badge,
+            );
+        }
+    }
 }
 
 // ---- releases and tags ---------------------------------------------------------------------

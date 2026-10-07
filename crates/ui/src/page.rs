@@ -207,6 +207,8 @@ pub struct Page {
     pub compact: bool,
     /// The line the page opens scrolled to (a linked line), if not the top.
     pub jump: Option<usize>,
+    /// Named places a link's `#fragment` can point at (a comment), by line.
+    pub anchors: HashMap<String, usize>,
 }
 
 impl Page {
@@ -227,6 +229,12 @@ impl Page {
         self.links.push(link.clone());
         self.link_ids.insert(link, i);
         i
+    }
+
+    /// Names the next line, for links that point at it (`#issuecomment-1`).
+    pub fn anchor(&mut self, name: impl Into<String>) {
+        let line = self.lines.len();
+        self.anchors.entry(name.into()).or_insert(line);
     }
 
     /// A link that quote-replies to a comment.

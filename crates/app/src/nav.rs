@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ghtui_api::browse::{RepoSummary, SearchKind};
+use ghtui_api::browse::{DiscussionsOf, RepoSummary, SearchKind};
 use ghtui_api::model::RepoId;
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::chrome::{self, KeyRow, SuggestRow};
@@ -154,7 +154,19 @@ impl State {
     #[must_use]
     pub fn follow(&mut self, link: &Link) -> Vec<Cmd> {
         match link {
-            Link::Url(url) => self.go(Target::from_url(url)),
+            Link::Url(url) => {
+                let cmds = self.go(Target::from_url(url));
+                // A comment the link points at (`#issuecomment-…`).
+                let fragment = url::Url::parse(url)
+                    .ok()
+                    .and_then(|u| u.fragment().map(str::to_owned));
+                if let Some(fragment) = fragment
+                    && let Screen::Page(p) = self.screen_mut()
+                {
+                    p.anchor = Some(fragment);
+                }
+                cmds
+            }
             Link::More => self.load_more(),
             Link::Star => star(self),
             Link::Comment => comment_with(self, ""),
@@ -259,8 +271,13 @@ fn visible(p: &PageScreen, item: usize, height: usize) -> bool {
 /// Keeps a page's scroll in range and its selection on an item; a fresh
 /// page selects its first visible item.
 fn settle(p: &mut PageScreen, height: usize) {
+    let anchor = p
+        .anchor
+        .as_ref()
+        .and_then(|a| p.page.anchors.get(a))
+        .copied();
     if !p.jumped
-        && let Some(jump) = p.page.jump
+        && let Some(jump) = p.page.jump.or(anchor)
     {
         p.scroll = jump.saturating_sub(MARGIN);
         p.jumped = true;
@@ -427,6 +444,10 @@ fn up(state: &State, route: &Route) -> Option<Route> {
             repo, rev, path, ..
         } => folder(repo, rev, path),
         Route::Issues { repo, .. }
+        | Route::Discussions {
+            of: DiscussionsOf::Repo(repo),
+            ..
+        }
         | Route::Pulls { repo, .. }
         | Route::Commits { repo, .. }
         | Route::Stargazers(repo)
@@ -435,6 +456,14 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Releases(repo)
         | Route::Tags(repo)
         | Route::Actions(repo) => Route::Repo(repo.clone()),
+        Route::Discussion { of, .. } => Route::Discussions {
+            of: of.clone(),
+            category: None,
+        },
+        Route::Discussions {
+            of: DiscussionsOf::Org(org),
+            ..
+        } => Route::user(org),
         Route::Release { repo, .. } => Route::Releases(repo.clone()),
         Route::WorkflowRun { repo, .. }
         | Route::Workflow { repo, .. }

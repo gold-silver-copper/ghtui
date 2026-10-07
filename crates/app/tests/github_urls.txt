@@ -70,9 +70,9 @@ https://github.com/rust-lang/rust/blob/main/CONTRIBUTING.md                 Blob
 https://github.com/rust-lang/rust-clippy/issues/new/choose                  external session
 # FundingLink, SocialAccount: other sites
 # Discussion, DiscussionComment
-https://github.com/cli/cli/discussions/14603                                todo Discussion
-https://github.com/cli/cli/discussions/14603#discussioncomment-18765024     todo Discussion
-https://github.com/orgs/community/discussions/12345                         todo Discussion
+https://github.com/cli/cli/discussions/14603                                Discussion
+https://github.com/cli/cli/discussions/14603#discussioncomment-18765024     Discussion
+https://github.com/orgs/community/discussions/12345                         Discussion
 # Gist
 https://gist.github.com/1162032                                             todo Gist
 https://gist.github.com/octocat/1162032                                     todo Gist
@@ -170,7 +170,7 @@ https://github.com/orgs/rust-lang/repositories                              User
 https://github.com/orgs/rust-lang/people                                    User
 https://github.com/orgs/rust-lang/projects                                  external scope
 https://github.com/orgs/rust-lang/packages                                  external scope
-https://github.com/orgs/rust-lang/discussions                               todo Discussions
+https://github.com/orgs/rust-lang/discussions                               Discussions
 # A repository's tabs and lists
 https://github.com/rust-lang/rust/issues                                    Issues
 https://github.com/rust-lang/rust/issues?q=is%3Aclosed+label%3Abug          Issues
@@ -179,8 +179,8 @@ https://github.com/rust-lang/rust/pulls                                     Pull
 https://github.com/rust-lang/rust/pulls?q=is%3Amerged                       Pulls
 https://github.com/rust-lang/rust/actions                                   Actions
 https://github.com/rust-lang/rust/actions/caches                            external session
-https://github.com/rust-lang/rust/discussions                               todo Discussions
-https://github.com/rust-lang/rust/discussions/categories/ideas              todo Discussions
+https://github.com/rust-lang/rust/discussions                               Discussions
+https://github.com/rust-lang/rust/discussions/categories/ideas              Discussions
 https://github.com/rust-lang/rust/wiki                                      todo Wiki
 https://github.com/rust-lang/rust/wiki/Home                                 todo Wiki
 https://github.com/rust-lang/rust/security                                  todo Advisories

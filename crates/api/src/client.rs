@@ -1377,6 +1377,119 @@ impl GitHub {
             .await)
     }
 
+    /// The repository a discussion list or discussion is in: an
+    /// organization's are in one of its repositories, which a search for
+    /// them names.
+    async fn discussions_repo(&self, of: &browse::DiscussionsOf) -> Result<RepoId, ApiError> {
+        let org = match of {
+            browse::DiscussionsOf::Repo(repo) => return Ok(repo.clone()),
+            browse::DiscussionsOf::Org(org) => org,
+        };
+        let data = self
+            .graphql_json(
+                "query($q: String!) { search(type: DISCUSSION, query: $q, first: 50) { nodes { ... on Discussion { url repository { nameWithOwner } } } } }",
+                serde_json::json!({ "q": format!("org:{org}") }),
+            )
+            .await?;
+        let prefix = format!(
+            "https://github.com/orgs/{}/discussions/",
+            org.to_lowercase()
+        );
+        data.pointer("/search/nodes")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|n| {
+                n.get("url")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|u| u.to_lowercase().starts_with(&prefix))
+            })
+            .and_then(|n| n.pointer("/repository/nameWithOwner")?.as_str())
+            .and_then(RepoId::parse)
+            .ok_or_else(|| ApiError::NotFound(format!("{org}'s discussions")))
+    }
+
+    /// Discussions, most recently updated first, 25 at a time from
+    /// `after`, in a category (by its slug) if given; with the categories.
+    pub async fn discussions(
+        &self,
+        of: &browse::DiscussionsOf,
+        category: Option<&str>,
+        after: Option<String>,
+    ) -> Result<browse::DiscussionList, ApiError> {
+        use browse::wire_discussions as w;
+        let first = after.is_none();
+        let repo = self.discussions_repo(of).await?;
+        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name });
+        let data = self
+            .graphql_json(
+                "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { discussionCategories(first: 50) { nodes { id name slug } } } }",
+                vars,
+            )
+            .await?;
+        let categories: w::Categories = serde_json::from_value(
+            data.pointer("/repository/discussionCategories")
+                .cloned()
+                .unwrap_or_default(),
+        )?;
+        let categories: Vec<w::Category> = categories.nodes.into_iter().flatten().collect();
+        let category_id = category
+            .and_then(|slug| categories.iter().find(|c| c.slug == slug))
+            .map(|c| c.id.clone());
+        let data = self
+            .graphql_json(
+                "query($owner: String!, $name: String!, $after: String, $category: ID) { repository(owner: $owner, name: $name) { discussions(first: 25, after: $after, categoryId: $category, orderBy: {field: UPDATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { number title author { login } category { name } comments { totalCount } isAnswered upvoteCount updatedAt } } } }",
+                serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "category": category_id }),
+            )
+            .await?;
+        let page: w::Summaries = serde_json::from_value(
+            data.pointer("/repository/discussions")
+                .cloned()
+                .unwrap_or_default(),
+        )?;
+        let list = browse::DiscussionList {
+            categories: categories
+                .into_iter()
+                .map(|c| browse::DiscussionCategory {
+                    name: c.name,
+                    slug: c.slug,
+                })
+                .collect(),
+            results: page.into_results(),
+        };
+        if first {
+            return Ok(self
+                .kept(&browse::keys::discussions(of, category), list)
+                .await);
+        }
+        Ok(list)
+    }
+
+    /// A discussion, its comments and their replies.
+    pub async fn discussion(
+        &self,
+        of: &browse::DiscussionsOf,
+        number: u64,
+    ) -> Result<browse::DiscussionDetail, ApiError> {
+        let repo = self.discussions_repo(of).await?;
+        let data = self
+            .graphql_json(
+                "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { discussion(number: $number) { number title body author { login } createdAt category { name } isAnswered upvoteCount comments(first: 50) { nodes { databaseId author { login } body createdAt isAnswer upvoteCount replies(first: 30) { nodes { databaseId author { login } body createdAt } } } } } } }",
+                serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number }),
+            )
+            .await?;
+        let wire: browse::wire_discussions::Detail = serde_json::from_value(
+            data.pointer("/repository/discussion")
+                .filter(|d| !d.is_null())
+                .cloned()
+                .ok_or_else(|| ApiError::NotFound(format!("{repo} discussion {number}")))?,
+        )?;
+        let detail = wire.into_detail(repo);
+        Ok(self
+            .kept(&browse::keys::discussion(of, number), detail)
+            .await)
+    }
+
     /// Branches and tags, most recently committed first.
     pub async fn refs(&self, repo: &RepoId) -> Result<browse::Refs, ApiError> {
         let op = browse::BranchesQuery::build(browse::BranchesVariables {
