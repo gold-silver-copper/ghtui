@@ -529,24 +529,26 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 return Vec::new();
             }
             diff.since_requested = true;
-            if matches!(
-                diff.inputs().last_review,
-                LastReview::Unknown | LastReview::Failed(_)
-            ) {
-                let Some(login) = viewer else {
-                    // Without a login, only the local record can say.
+            match (&diff.inputs().last_review, viewer) {
+                // GitHub hasn't answered, or couldn't: ask it (again), and
+                // it isn't known until it answers.
+                (LastReview::Unknown | LastReview::Failed(_), Some(login)) => {
+                    diff.edit(|i| i.last_review = LastReview::Unknown);
+                    state.info("Looking up your last review…");
+                    vec![Cmd::Api(Api::FetchLastReview { pr, login })]
+                }
+                // Without a login, only the local record can say.
+                (LastReview::Unknown | LastReview::Failed(_), None) => {
                     diff.edit(|i| i.last_review = LastReview::None);
-                    return Vec::new();
-                };
-                // Asked again: not known until GitHub answers.
-                diff.edit(|i| i.last_review = LastReview::Unknown);
-                state.info("Looking up your last review…");
-                return vec![Cmd::Api(Api::FetchLastReview { pr, login })];
+                    Vec::new()
+                }
+                (LastReview::None | LastReview::At(_), _) => {
+                    if !diff.listed() {
+                        state.info("Comparing once the diff has loaded");
+                    }
+                    Vec::new()
+                }
             }
-            if !diff.listed() {
-                state.info("Comparing once the diff has loaded");
-            }
-            Vec::new()
         }
         Action::PickCommits => {
             if diff.inputs().commits.is_empty() {
