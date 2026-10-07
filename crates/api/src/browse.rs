@@ -7,8 +7,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    Capped, Label, MilestoneRef, NodeId, PrStatus, RepoId, ReviewDecision, ReviewState, author,
-    count, labels,
+    Capped, ChecksState, Label, MilestoneRef, NodeId, PrStatus, RepoId, ReviewDecision,
+    ReviewState, author, count, labels,
 };
 use crate::queries::{
     Actor, AddCommentPayload, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount,
@@ -1978,10 +1978,10 @@ impl WireCheckRun {
 
 impl WireStatusContext {
     fn into_item(self) -> CheckItem {
-        let outcome = match self.state {
-            StatusState::Success => CheckOutcome::Success,
-            StatusState::Failure | StatusState::Error => CheckOutcome::Failure,
-            StatusState::Pending | StatusState::Expected => CheckOutcome::Pending,
+        let outcome = match ChecksState::from(self.state) {
+            ChecksState::Passing => CheckOutcome::Success,
+            ChecksState::Failing => CheckOutcome::Failure,
+            ChecksState::Pending => CheckOutcome::Pending,
         };
         CheckItem {
             name: self.context,
