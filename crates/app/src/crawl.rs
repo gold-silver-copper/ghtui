@@ -25,7 +25,8 @@ use ghtui_store::Store;
 use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
 use ghtui_ui::Icons;
 
-use crate::browse::{Need, needs};
+use crate::browse::{DataKey, Need, needs};
+use crate::diff_job::GitContext;
 use crate::keymap::Keymap;
 use crate::route::{Route, Target};
 use crate::state::{Remote, State};
@@ -34,6 +35,8 @@ const PAGES: usize = 300;
 const DEPTH: usize = 3;
 /// Stop while this much of the hourly GraphQL budget is left.
 const RESERVE: u64 = 1000;
+/// And this much of the hourly REST budget.
+const REST_RESERVE: u64 = 500;
 
 const SEEDS: &[&str] = &[
     "https://github.com/rust-lang/rust",
@@ -93,8 +96,9 @@ fn is_github(url: &str) -> bool {
         || host.ends_with(".githubusercontent.com")
 }
 
-/// Fetches what `route` needs into `state`; false if the page couldn't load.
-async fn load(gh: &GitHub, state: &mut State, route: &Route) -> bool {
+/// Fetches what `route` needs into `state` (a wiki through git, as the
+/// app does); false if the page couldn't load.
+async fn load(gh: &GitHub, git: &GitContext, state: &mut State, route: &Route) -> bool {
     for need in needs(route) {
         match need {
             Need::Inbox => {}
@@ -108,7 +112,7 @@ async fn load(gh: &GitHub, state: &mut State, route: &Route) -> bool {
                     return false;
                 }
             },
-            Need::Data(key) => match crate::runtime::fetch(gh, &key).await {
+            Need::Data(key) => match fetch(gh, git, &key).await {
                 Ok(data) => {
                     let remote: &mut Remote<_> = state.data.entry(key).or_default();
                     remote.finish(Ok(data));
@@ -121,12 +125,30 @@ async fn load(gh: &GitHub, state: &mut State, route: &Route) -> bool {
     true
 }
 
+async fn fetch(
+    gh: &GitHub,
+    git: &GitContext,
+    key: &DataKey,
+) -> Result<crate::browse::Data, ghtui_api::ApiError> {
+    match key {
+        DataKey::Wiki(repo, page) => crate::wiki::page(git, repo, page.as_deref())
+            .await
+            .map(|w| crate::browse::Data::Wiki(Box::new(w))),
+        key => crate::runtime::fetch(gh, key).await,
+    }
+}
+
 #[tokio::test]
 #[ignore = "crawls github.com; run by hand"]
 async fn link_crawl() {
     let (token, _) = ghtui_api::auth::resolve_token().expect("a GitHub token");
     let cache = tempfile::tempdir().unwrap();
     let gh = GitHub::new(token, Store::open(&cache.path().join("cache.redb")));
+    let git = GitContext {
+        cache_root: cache.path().to_owned(),
+        credentials: ghtui_git::credentials::Credentials::Ambient,
+        cwd: cache.path().to_owned(),
+    };
     let theme = Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor);
     let mut state = State::new(theme, Icons::default(), Keymap::default(), (140, 50));
 
@@ -145,13 +167,20 @@ async fn link_crawl() {
         if pages >= PAGES {
             break;
         }
-        if let Some(b) = gh.rate_limits().graphql
+        let limits = gh.rate_limits();
+        if let Some(b) = limits.graphql
             && b.remaining < RESERVE
         {
             eprintln!("stopping: {} GraphQL points left", b.remaining);
             break;
         }
-        if !load(&gh, &mut state, &route).await {
+        if let Some(b) = limits.rest
+            && b.remaining < REST_RESERVE
+        {
+            eprintln!("stopping: {} REST requests left", b.remaining);
+            break;
+        }
+        if !load(&gh, &git, &mut state, &route).await {
             continue;
         }
         pages += 1;
