@@ -1855,9 +1855,9 @@ mod tests {
         assert_eq!(hit.commit.date, "2026-02-01T00:00:00Z");
     }
 
-    /// A commit's committer is shown unless they're its author, nobody, or
-    /// GitHub's own web-flow account; a git name that happens to read
-    /// "web-flow" is somebody.
+    /// A commit's committer is shown unless they read as its author, or are
+    /// nobody or GitHub's own web-flow account; a git name that happens to
+    /// read "web-flow" is somebody.
     #[test]
     fn a_commits_committer_is_hidden_only_for_web_flows_account() {
         let committer = |c: serde_json::Value| {
@@ -1885,6 +1885,11 @@ mod tests {
         );
         let jane = serde_json::json!({"name": "J", "user": {"login": "jane"}});
         assert_eq!(committer(jane), None);
+        // Shown as the author is: "jane", whether by login or by git name.
+        assert_eq!(
+            committer(serde_json::json!({"name": "jane", "user": null})),
+            None
+        );
         assert_eq!(committer(serde_json::json!(null)), None);
     }
 }
@@ -4634,8 +4639,9 @@ impl WireCommit {
     pub(crate) fn into_detail(self) -> CommitDetail {
         let (headline, body) = self.message.split_once('\n').unwrap_or((&self.message, ""));
         let author = Person::from(self.author);
-        let committer = Some(Person::from(self.committer))
-            .filter(|c| *c != author && *c != Person::Unknown && c.login() != Some("web-flow"));
+        let committer = Some(Person::from(self.committer)).filter(|c| {
+            c.name() != author.name() && *c != Person::Unknown && c.login() != Some("web-flow")
+        });
         CommitDetail {
             oid: self.oid.0,
             headline: headline.trim().to_owned(),
