@@ -260,9 +260,7 @@ impl State {
         let (files, truncated) =
             match self.listed(&DataKey::Files(repo.clone(), rev.into()), "files") {
                 Ok(Data::Files(files, truncated)) => (files, truncated),
-                // Never: the key holds files.
-                Ok(_) => return Vec::new(),
-                Err(row) => return row,
+                other => return other.err().unwrap_or_default(),
             };
         let mut hits: Vec<(usize, &String)> = files
             .iter()
@@ -286,9 +284,7 @@ impl State {
     fn branch_rows(&self, q: &str, repo: &RepoId, rev: &str, path: &str, file: bool) -> Rows {
         let refs = match self.listed(&DataKey::Refs(repo.clone()), "branches") {
             Ok(Data::Refs(refs)) => refs,
-            // Never: the key holds branches.
-            Ok(_) => return Vec::new(),
-            Err(row) => return row,
+            other => return other.err().unwrap_or_default(),
         };
         let default = self
             .overview(repo)
