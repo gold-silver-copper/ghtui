@@ -934,7 +934,8 @@ impl Doc {
     }
 
     /// Where annotation `ann` (an index into the annotations) first shows:
-    /// its line, or its file's header for a file-level thread.
+    /// its line, or its first thread row (`None` while its file isn't
+    /// diffed, or is collapsed).
     pub fn annotation_pos(&self, ann: u32) -> Option<Pos> {
         (0..self.total)
             .map(|g| self.to_pos(g))
