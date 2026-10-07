@@ -2601,7 +2601,10 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
     page.blank();
     let mut jobs: Vec<&JobSummary> = run.jobs.iter().collect();
     jobs.sort_by(|a, b| (a.outcome, &a.name).cmp(&(b.outcome, &b.name)));
-    let title = vec![Seg::new(format!("Jobs  {}", jobs.len()), Role::Strong)];
+    let title = vec![Seg::new(
+        format!("Jobs  {}", count_of(&run.jobs)),
+        Role::Strong,
+    )];
     list_box(page, title, Vec::new(), &jobs, "No jobs.", |page, job| {
         let target = format!("{}/actions/runs/{}/job/{}", url::repo(repo), run.id, job.id);
         item(page, target, |page, link| {
@@ -2620,6 +2623,7 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
             page.box_line(segs, right, 0);
         });
     });
+    left_out(page, run.jobs.total, run.jobs.len(), "job", "jobs");
 }
 
 /// Which step each log line belongs to. GitHub's one log for a job

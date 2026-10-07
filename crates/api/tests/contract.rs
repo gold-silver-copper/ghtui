@@ -110,7 +110,7 @@ async fn contract_branches_by_commit_date_are_by_name_backwards() {
     let by_name = names("field: ALPHABETICAL, direction: ASC").await;
     let refs = gh.refs(&RepoId::new("cli", "cli")).await.unwrap();
     assert_eq!(refs.branches.get(..30), Some(by_name.as_slice()));
-    assert!(refs.branches.len() as u64 == refs.branch_total || refs.branches.len() == 1000);
+    assert!(refs.branches.left_out() == 0 || refs.branches.len() == 1000);
 }
 
 /// 2026-10-07. A branch's associated pull requests include other
