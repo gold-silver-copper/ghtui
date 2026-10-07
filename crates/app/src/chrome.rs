@@ -476,12 +476,16 @@ impl State {
             new_tab(
                 "◌",
                 "Conversation",
-                activity.map(|a| a.comments.len() as u64),
+                activity.map(|a| a.total_comments.max(a.comments.len() as u64)),
             ),
             Target::Page(Route::pr(pr.clone())),
         ));
         c.tabs.push((
-            new_tab("◷", "Commits", activity.map(|a| a.commits.len() as u64)),
+            new_tab(
+                "◷",
+                "Commits",
+                activity.map(|a| a.total_commits.max(a.commits.len() as u64)),
+            ),
             Target::Page(Route::Pr {
                 pr: pr.clone(),
                 tab: PrTab::Commits,

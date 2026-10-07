@@ -1951,7 +1951,7 @@ pub fn issue(
             format!(
                 " opened this issue {} · {}",
                 time::ago_iso(&d.created_at, now),
-                plural(d.comments.len() as u64, "comment")
+                plural(d.total_comments.max(d.comments.len() as u64), "comment")
             ),
             Role::Meta,
         ),
@@ -1984,6 +1984,13 @@ pub fn issue(
         now,
     };
     talk.said(page, &d.author, "opened", &d.created_at, &d.body, true);
+    earlier_here(
+        page,
+        d.total_comments,
+        d.comments.len(),
+        "comment",
+        "comments",
+    );
     for c in &d.comments {
         connector(page);
         talk.comment(page, c);
@@ -2135,6 +2142,14 @@ pub fn pr_conversation(
         page.line(vec![Seg::new("   Loading the conversation…", Role::Meta)]);
         return;
     };
+    earlier_here(
+        page,
+        a.total_comments,
+        a.comments.len(),
+        "comment",
+        "comments",
+    );
+    earlier_here(page, a.total_reviews, a.reviews.len(), "review", "reviews");
     let mut entries: Vec<(&str, Entry<'_>)> = a
         .comments
         .iter()
@@ -2222,6 +2237,7 @@ pub fn pr_commits(
         page.line(vec![Seg::new("Loading commits…", Role::Meta)]);
         return;
     };
+    earlier_here(page, a.total_commits, a.commits.len(), "commit", "commits");
     commit_rows(page, &pr.repo, &a.commits, None, now);
 }
 
@@ -3001,10 +3017,27 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
 
 /// What a conversation leaves out: `… 12 more replies on GitHub (o)`.
 fn more_here(page: &mut Page, total: u64, shown: usize, one: &str, many: &str) {
+    left_out(
+        page,
+        total,
+        shown,
+        &format!("more {one}"),
+        &format!("more {many}"),
+    );
+}
+
+/// The older part of a conversation that isn't shown (only its newest
+/// comments are fetched): `… 120 earlier comments on GitHub (o)`.
+fn earlier_here(page: &mut Page, total: u64, shown: usize, one: &str, many: &str) {
+    let (one, many) = (format!("earlier {one}"), format!("earlier {many}"));
+    left_out(page, total, shown, &one, &many);
+}
+
+fn left_out(page: &mut Page, total: u64, shown: usize, one: &str, many: &str) {
     let rest = total.saturating_sub(shown as u64);
     if rest > 0 {
         let what = if rest == 1 { one } else { many };
-        let text = format!("… {rest} more {what} on GitHub (o)");
+        let text = format!("… {rest} {what} on GitHub (o)");
         page.wrapped(vec![Seg::new(text, Role::Meta)], 2, Frame::None);
     }
 }

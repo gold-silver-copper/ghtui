@@ -537,6 +537,7 @@ pub fn issue() -> IssueDetail {
             body: "Agreed. 120 columns, centered?".into(),
             created_at: "2026-10-02T12:00:00Z".into(),
         }],
+        total_comments: 1,
         id: NodeId::new("I_14"),
     }
 }
@@ -544,6 +545,9 @@ pub fn issue() -> IssueDetail {
 pub fn activity() -> PrActivity {
     PrActivity {
         id: NodeId::new("PR_12"),
+        total_comments: 1,
+        total_reviews: 2,
+        total_commits: 2,
         comments: vec![Comment {
             id: Some(1_000_001),
             author: "hubot".into(),

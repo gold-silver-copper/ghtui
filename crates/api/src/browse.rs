@@ -393,7 +393,10 @@ pub struct IssueDetail {
     pub assignees: Vec<String>,
     #[serde(default)]
     pub milestone: Option<MilestoneRef>,
+    /// The newest comments, oldest first, and how many there are in all.
     pub comments: Vec<Comment>,
+    #[serde(default)]
+    pub total_comments: u64,
     /// Node ID, for commenting.
     pub id: NodeId,
 }
@@ -413,9 +416,17 @@ pub struct ReviewSummary {
 pub struct PrActivity {
     /// Node ID, for commenting.
     pub id: NodeId,
+    /// The newest comments, reviews and commits, oldest first, and how
+    /// many there are in all.
     pub comments: Vec<Comment>,
     pub reviews: Vec<ReviewSummary>,
     pub commits: Vec<CommitInfo>,
+    #[serde(default)]
+    pub total_comments: u64,
+    #[serde(default)]
+    pub total_reviews: u64,
+    #[serde(default)]
+    pub total_commits: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -522,14 +533,20 @@ pub struct Language {
     pub color: Option<String>,
 }
 
+// A conversation's lists: the newest page (`last:`, oldest first within
+// it) and how many there are, so what's left out can be said.
+fragments! {
+    counted:
+    IssueComments = "IssueCommentConnection" => WireComment,
+    Reviews = "PullRequestReviewConnection" => WireReview,
+    PrCommits = "PullRequestCommitConnection" => PrCommitNode,
+}
+
 // Lists of nodes, and their nodes' types.
 fragments! {
     nodes:
     Topics = "RepositoryTopicConnection" => RepoTopic,
     Assignees = "UserConnection" => UserLogin,
-    IssueComments = "IssueCommentConnection" => WireComment,
-    Reviews = "PullRequestReviewConnection" => WireReview,
-    PrCommits = "PullRequestCommitConnection" => PrCommitNode,
     Pinned = "PinnableItemConnection" => PinnedItem,
     RefNames = "RefConnection" => RefName,
 }
@@ -885,7 +902,7 @@ pub struct IssueFull {
     #[arguments(first: 10)]
     pub assignees: Assignees,
     pub milestone: Option<crate::queries::MilestoneName>,
-    #[arguments(first: 100)]
+    #[arguments(last: 100)]
     pub comments: IssueComments,
     pub repository: RepositoryName,
 }
@@ -928,11 +945,11 @@ pub struct RepoPrActivity {
 #[cynic(graphql_type = "PullRequest", schema_module = "schema")]
 pub struct WirePrActivity {
     pub id: cynic::Id,
-    #[arguments(first: 100)]
+    #[arguments(last: 100)]
     pub comments: IssueComments,
-    #[arguments(first: 50)]
+    #[arguments(last: 50)]
     pub reviews: Option<Reviews>,
-    #[arguments(first: 100)]
+    #[arguments(last: 100)]
     pub commits: PrCommits,
 }
 
@@ -4250,6 +4267,7 @@ impl IssueFull {
             labels: labels(self.labels),
             assignees: nodes(self.assignees.nodes).map(|u| u.login).collect(),
             milestone: self.milestone.map(MilestoneRef::from_wire),
+            total_comments: count(self.comments.total_count),
             comments: comments(self.comments),
             id: self.id.into(),
         })
@@ -4271,6 +4289,9 @@ impl WirePrActivity {
     pub(crate) fn into_activity(self) -> PrActivity {
         PrActivity {
             id: self.id.into(),
+            total_comments: count(self.comments.total_count),
+            total_reviews: self.reviews.as_ref().map_or(0, |r| count(r.total_count)),
+            total_commits: count(self.commits.total_count),
             comments: comments(self.comments),
             reviews: nodes(self.reviews.and_then(|r| r.nodes))
                 .filter(|r| r.state != ReviewState::Pending)
