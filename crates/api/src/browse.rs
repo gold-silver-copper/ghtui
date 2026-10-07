@@ -6,12 +6,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Capped, Label, MilestoneRef, NodeId, RepoId, author, count, labels};
+use crate::model::{
+    Capped, Label, MilestoneRef, NodeId, RepoId, ReviewDecision, ReviewState, author, count, labels,
+};
 use crate::queries::{
     Actor, AddCommentPayload, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount,
     GitObjectId, IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount,
-    PullRequestReviewDecision, PullRequestState, RefCount, RepositoryName, ReviewState,
-    StarPayload, StatusState, UnstarPayload, Uri, UserCount, fragments, nodes,
+    PullRequestState, RefCount, RepositoryName, StarPayload, StatusState, UnstarPayload, Uri,
+    UserCount, fragments, nodes,
 };
 use ghtui_schema::schema;
 
@@ -432,8 +434,7 @@ pub struct IssueDetail {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewSummary {
     pub author: String,
-    /// "approved", "changes requested", "commented", ...
-    pub state: String,
+    pub state: ReviewState,
     pub body: String,
     pub submitted_at: String,
 }
@@ -863,7 +864,7 @@ pub struct PrCard {
     pub author: Option<Actor>,
     pub created_at: DateTime,
     pub updated_at: DateTime,
-    pub review_decision: Option<PullRequestReviewDecision>,
+    pub review_decision: Option<ReviewDecision>,
     pub comments: CommentCount,
     #[arguments(first: 6)]
     pub labels: Option<LabelConnection>,
@@ -1749,6 +1750,29 @@ mod tests {
             crate::raw::BRANCHES.contains("isDraft"),
             "the branches query doesn't ask whether a PR is a draft"
         );
+    }
+
+    /// A dismissed review keeps GitHub's own state, the one the UI's
+    /// conversation matches (`a_dismissed_review_reads_as_dismissed`, app).
+    #[test]
+    fn a_dismissed_reviews_wire_spelling() {
+        let activity: WirePrActivity = serde_json::from_value(serde_json::json!({
+            "id": "PR_1",
+            "comments": { "totalCount": 0, "nodes": [] },
+            "reviews": { "totalCount": 1, "nodes": [
+                { "author": { "__typename": "User", "login": "hubot" }, "state": "DISMISSED",
+                  "body": "", "submittedAt": "2026-10-01T00:00:00Z" },
+            ] },
+            "commits": { "totalCount": 0, "nodes": [] },
+        }))
+        .unwrap();
+        let states: Vec<ReviewState> = activity
+            .into_activity()
+            .reviews
+            .into_iter()
+            .map(|r| r.state)
+            .collect();
+        assert_eq!(states, [ReviewState::Dismissed]);
     }
 
     /// A branch whose tip has no author shows only its headline, not a
@@ -4813,7 +4837,7 @@ impl BrowseItem {
                 comments: count(p.comments.total_count),
                 labels: labels(p.labels),
                 created_at: p.created_at.0,
-                review: crate::model::review(p.review_decision),
+                review: p.review_decision,
                 checks: None,
             }),
             _ => None,
@@ -4884,14 +4908,7 @@ impl WirePrActivity {
                 .filter(|r| r.state != ReviewState::Pending)
                 .map(|r| ReviewSummary {
                     author: author(r.author),
-                    state: match r.state {
-                        ReviewState::Approved => "approved",
-                        ReviewState::ChangesRequested => "requested changes",
-                        ReviewState::Commented => "reviewed",
-                        ReviewState::Dismissed => "review dismissed",
-                        ReviewState::Pending => "pending",
-                    }
-                    .to_owned(),
+                    state: r.state,
                     body: r.body,
                     submitted_at: r.submitted_at.map(|d| d.0).unwrap_or_default(),
                 })

@@ -1,4 +1,6 @@
-//! Domain types the app works with, decoupled from the GraphQL wire shapes.
+//! Domain types the app works with, decoupled from the GraphQL wire shapes;
+//! GitHub's closed vocabularies are its own enums, checked against the
+//! schema here, so a value keeps one spelling from decode to render.
 //! These are what get cached, so changing them requires bumping
 //! `ghtui_store::SCHEMA_VERSION`.
 
@@ -205,7 +207,8 @@ impl std::fmt::Display for PrRef {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[cynic(graphql_type = "PullRequestReviewDecision", schema_module = "schema")]
 pub enum ReviewDecision {
     Approved,
     ChangesRequested,
@@ -219,11 +222,23 @@ pub enum ChecksState {
     Pending,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[cynic(graphql_type = "MergeableState", schema_module = "schema")]
 pub enum Mergeable {
+    #[cynic(rename = "MERGEABLE")]
     Yes,
     Conflicting,
     Unknown,
+}
+
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[cynic(graphql_type = "PullRequestReviewState", schema_module = "schema")]
+pub enum ReviewState {
+    Approved,
+    ChangesRequested,
+    Commented,
+    Dismissed,
+    Pending,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -387,14 +402,6 @@ pub struct NewThread {
 
 // ---- conversions from the wire types ---------------------------------------
 
-pub(crate) fn review(decision: Option<q::PullRequestReviewDecision>) -> Option<ReviewDecision> {
-    decision.map(|d| match d {
-        q::PullRequestReviewDecision::Approved => ReviewDecision::Approved,
-        q::PullRequestReviewDecision::ChangesRequested => ReviewDecision::ChangesRequested,
-        q::PullRequestReviewDecision::ReviewRequired => ReviewDecision::ReviewRequired,
-    })
-}
-
 fn checks(commits: &q::CommitRollupConnection) -> Option<ChecksState> {
     let rollup = commits
         .nodes
@@ -448,7 +455,7 @@ impl PrSummary {
             additions: count(pr.additions),
             deletions: count(pr.deletions),
             comments: count(pr.comments.total_count),
-            review: review(pr.review_decision),
+            review: pr.review_decision,
             checks: checks(&pr.commits),
         })
     }
@@ -477,11 +484,7 @@ impl PrDetail {
             head_oid: pr.head_ref_oid.0,
             head_repo: pr.head_repository.map(|r| r.name_with_owner),
             changed_files: count(pr.changed_files),
-            mergeable: match pr.mergeable {
-                q::MergeableState::Mergeable => Mergeable::Yes,
-                q::MergeableState::Conflicting => Mergeable::Conflicting,
-                q::MergeableState::Unknown => Mergeable::Unknown,
-            },
+            mergeable: pr.mergeable,
             labels: labels(pr.labels),
             milestone: pr.milestone.map(MilestoneRef::from_wire),
         })

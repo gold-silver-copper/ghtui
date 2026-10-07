@@ -16,7 +16,7 @@ use ghtui_api::browse::{
 };
 use ghtui_api::model::{
     Capped, ChecksState, Inbox, Label, Mergeable, MilestoneRef, PrDetail, PrRef, PrSummary, RepoId,
-    ReviewDecision,
+    ReviewDecision, ReviewState,
 };
 use ghtui_theme::{Bg, Syntax};
 
@@ -2248,11 +2248,13 @@ pub fn pr_conversation(
         match entry {
             Entry::Comment(c) => talk.comment(page, c),
             Entry::Review(r) => {
-                let (icon, what) = match r.state.as_str() {
-                    "approved" => (("✓", Role::Success), "approved these changes"),
-                    "requested changes" => (("✗", Role::Error), "requested changes"),
-                    "dismissed" => (("○", Role::Meta), "had a review dismissed"),
-                    _ => (("◉", Role::Meta), "reviewed"),
+                let (icon, what) = match r.state {
+                    ReviewState::Approved => (("✓", Role::Success), "approved these changes"),
+                    ReviewState::ChangesRequested => (("✗", Role::Error), "requested changes"),
+                    ReviewState::Dismissed => (("○", Role::Meta), "had a review dismissed"),
+                    ReviewState::Commented | ReviewState::Pending => {
+                        (("◉", Role::Meta), "reviewed")
+                    }
                 };
                 talk.event(page, icon, &r.author, what, &r.submitted_at);
                 if !r.body.trim().is_empty() {
