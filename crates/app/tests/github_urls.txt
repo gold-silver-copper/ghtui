@@ -282,3 +282,4 @@ https://github.com/user-attachments/assets/c5c659f4-e721-4527-af4a-3165f8b588f6 
 https://github.com/tokio-rs/tokio/discussions/new                           external session
 https://help.github.com/en/github/managing-security-vulnerabilities         external not-github
 https://github.com/rust-lang/rustfmt/actions/workflows/test.yml?query=branch%3Amain Workflow
+https://cli.github.com/manual/                                              external not-github
