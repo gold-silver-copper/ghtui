@@ -1192,29 +1192,13 @@ impl GitHub {
             )
             .await?;
         for (i, name) in names.iter().enumerate() {
-            let field = |path: &str| {
-                data.pointer(&format!("/repository/object/e{i}/nodes/0/{path}"))
-                    .and_then(serde_json::Value::as_str)
-            };
-            let (Some(oid), Some(headline), Some(date)) = (
-                field("oid"),
-                field("messageHeadline"),
-                field("committedDate"),
-            ) else {
-                continue;
-            };
-            let author = field("author/user/login")
-                .or_else(|| field("author/name"))
-                .unwrap_or("someone");
-            out.insert(
-                name.clone(),
-                browse::CommitInfo {
-                    oid: oid.to_owned(),
-                    headline: headline.to_owned(),
-                    author: author.to_owned(),
-                    date: date.to_owned(),
-                },
-            );
+            let node = data.pointer(&format!("/repository/object/e{i}/nodes/0"));
+            let commit = node
+                .cloned()
+                .map(serde_json::from_value::<browse::wire::Commit>);
+            if let Some(Ok(commit)) = commit {
+                out.insert(name.clone(), commit.into_info());
+            }
         }
         Ok(())
     }

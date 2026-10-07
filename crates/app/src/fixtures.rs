@@ -6,8 +6,8 @@ use ghtui_api::browse::{
     Checks, CodeHit, Comment, CommitDetail, CommitHit, CommitInfo, Comparison, Contributed,
     Contributions, DeploymentInfo, DeploymentList, DiscussionCategory, DiscussionComment,
     DiscussionDetail, DiscussionHit, DiscussionList, DiscussionSummary, EntryKind, Gist, GistFile,
-    GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobSummary, MilestoneDetail,
-    MilestoneInfo, MilestoneList, MonthActivity, PrActivity, Profile, Readme, Release,
+    GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobSummary, Login, MilestoneDetail,
+    MilestoneInfo, MilestoneList, MonthActivity, Person, PrActivity, Profile, Readme, Release,
     RepoOverview, RepoSummary, Results, ReviewSummary, RunSummary, SearchResults, Step, TagInfo,
     TeamDetail, TeamRepo, TeamSummary, TreeEntry, UserSummary, Week, WikiPage, Workflow,
     WorkflowRun,
@@ -130,7 +130,7 @@ pub fn overview() -> RepoOverview {
         last_commit: Some(CommitInfo {
             oid: "fedcba9876543210fedcba9876543210fedcba98".into(),
             headline: "Browse GitHub like the website".into(),
-            author: "octocat".into(),
+            author: Person::User(Login::unchecked("octocat")),
             date: "2026-10-03T10:00:00Z".into(),
         }),
         commits: 412,
@@ -164,7 +164,7 @@ pub fn last_commits() -> std::collections::HashMap<String, CommitInfo> {
     let commit = |headline: &str, date: &str| CommitInfo {
         oid: "0123456789abcdef0123456789abcdef01234567".into(),
         headline: headline.into(),
-        author: "octocat".into(),
+        author: Person::User(Login::unchecked("octocat")),
         date: date.into(),
     };
     [
@@ -203,9 +203,9 @@ pub fn commit() -> CommitDetail {
         oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
         headline: "Hunk headers name the enclosing scope".into(),
         body: "Hunk headers were a bare range. They now name where the first change\nis, from the syntax tree.\n\nFixes #12.".into(),
-        author: "octocat".into(),
+        author: Person::User(Login::unchecked("octocat")),
         authored_at: "2026-01-14T10:00:00Z".into(),
-        committer: Some("hubot".into()),
+        committer: Some(Person::User(Login::unchecked("hubot"))),
         committed_at: "2026-01-15T09:30:00Z".into(),
         parents: vec!["1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into()].into(),
         additions: 445,
@@ -319,7 +319,7 @@ pub fn blame() -> Blame {
         age: 1,
         oid: oid.to_string().repeat(40),
         headline: "Say hello".into(),
-        author: author.into(),
+        author: Person::User(Login::unchecked(author)),
         date: date.into(),
     };
     Blame {
@@ -579,13 +579,13 @@ pub fn activity() -> PrActivity {
             CommitInfo {
                 oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
                 headline: "Theme: derive syntax colors from the seed".into(),
-                author: "octocat".into(),
+                author: Person::User(Login::unchecked("octocat")),
                 date: "2026-09-30T12:00:00Z".into(),
             },
             CommitInfo {
                 oid: "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into(),
                 headline: "Check every syntax role against diff backgrounds".into(),
-                author: "octocat".into(),
+                author: Person::User(Login::unchecked("octocat")),
                 date: "2026-10-01T12:00:00Z".into(),
             },
         ],
@@ -996,7 +996,7 @@ pub fn branches() -> Results<BranchInfo> {
         default,
         oid: Some("8d1a76430406c877b35d0b627e7f796dcf0dfeca".into()),
         headline: Some(headline.into()),
-        author: Some("octocat".into()),
+        author: Some(Person::User(Login::unchecked("octocat"))),
         date: Some("2026-10-02T12:00:00Z".into()),
         pr,
     };
@@ -1112,7 +1112,7 @@ pub fn comparison() -> Comparison {
     let commit = |oid: char, headline: &str, date: &str| CommitInfo {
         oid: oid.to_string().repeat(40),
         headline: headline.into(),
-        author: "octocat".into(),
+        author: Person::User(Login::unchecked("octocat")),
         date: date.into(),
     };
     Comparison {
@@ -1230,7 +1230,7 @@ pub fn commit_results() -> SearchResults {
         commit: CommitInfo {
             oid: oid.to_string().repeat(40),
             headline: headline.into(),
-            author: "octocat".into(),
+            author: Person::User(Login::unchecked("octocat")),
             date: "2026-10-01T12:00:00Z".into(),
         },
     };

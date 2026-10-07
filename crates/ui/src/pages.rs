@@ -10,7 +10,7 @@ use ghtui_api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail,
     CommitInfo, Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList,
     EntryKind, Gist, GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobLog, JobSummary,
-    MilestoneDetail, MilestoneInfo, MilestoneList, PrActivity, Profile, Readme, Release,
+    MilestoneDetail, MilestoneInfo, MilestoneList, Person, PrActivity, Profile, Readme, Release,
     RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, Short,
     TagInfo, TeamDetail, TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow, WorkflowRun,
 };
@@ -181,6 +181,15 @@ fn link_seg(page: &mut Page, text: impl Into<String>, url: impl Into<Link>, role
 /// A login, linked to its profile.
 fn login_seg(page: &mut Page, login: &str, role: Role) -> Seg {
     link_seg(page, login.to_owned(), url::user(login), role)
+}
+
+/// A commit's author or committer: linked to their profile only when
+/// GitHub linked an account; a git name is just text.
+fn person_seg(page: &mut Page, who: &Person, role: Role) -> Seg {
+    match who.login() {
+        Some(login) => login_seg(page, login, role),
+        None => Seg::new(who.name().to_owned(), role),
+    }
 }
 
 /// A button: ` label ` on a raised tone.
@@ -767,7 +776,7 @@ pub fn repo_code(
     code_toolbar(page, repo, &rev, "", false, Some(o), keys);
     let title = match &o.last_commit {
         Some(c) => {
-            let author = login_seg(page, &c.author, Role::Strong);
+            let author = person_seg(page, &c.author, Role::Strong);
             let headline = link_seg(
                 page,
                 c.headline.clone(),
@@ -947,7 +956,7 @@ pub fn blame(
             .find(|r| (r.start as usize..=r.end as usize).contains(&n));
         let mut gutter = match range {
             Some(r) if r.start as usize == n => {
-                let author: String = r.author.chars().take(12).collect();
+                let author: String = r.author.name().chars().take(12).collect();
                 vec![
                     link_seg(
                         page,
@@ -1793,7 +1802,7 @@ pub fn search(
                 let meta = format!(
                     "{} · {} committed {}",
                     hit.repo,
-                    c.author,
+                    c.author.name(),
                     time::ago_iso(&c.date, now)
                 );
                 body(page, vec![Seg::new(meta, Role::Meta)]);
@@ -2348,7 +2357,8 @@ fn commit_rows(
                 vec![Seg::new(crate::text::short_sha(&c.oid), Role::Code)],
                 0,
             );
-            let committed = format!("{} committed {}", c.author, time::ago_iso(&c.date, now));
+            let who = c.author.name();
+            let committed = format!("{who} committed {}", time::ago_iso(&c.date, now));
             body(page, vec![Seg::new(committed, Role::Meta)]);
         });
     }
@@ -3358,7 +3368,7 @@ pub fn branches(
                 meta.push(link_seg(page, sha, url::commit(repo, oid), Role::Code));
                 meta.push(Seg::new(" ", Role::Meta));
             }
-            let what = [b.headline.as_deref(), b.author.as_deref()];
+            let what = [b.headline.as_deref(), b.author.as_ref().map(Person::name)];
             let text = what.into_iter().flatten().collect::<Vec<_>>().join(" · ");
             meta.push(Seg::new(text, Role::Meta));
             body(page, meta);
@@ -3670,7 +3680,7 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
     }
     page.blank();
     let mut who = vec![
-        login_seg(page, &d.author, Role::Strong),
+        person_seg(page, &d.author, Role::Strong),
         Seg::new(
             format!(" authored {}", time::ago_iso(&d.authored_at, now)),
             Role::Meta,
@@ -3678,7 +3688,7 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
     ];
     if let Some(committer) = &d.committer {
         who.push(Seg::new(" · ", Role::Meta));
-        who.push(login_seg(page, committer, Role::Strong));
+        who.push(person_seg(page, committer, Role::Strong));
         who.push(Seg::new(
             format!(" committed {}", time::ago_iso(&d.committed_at, now)),
             Role::Meta,
@@ -4593,7 +4603,7 @@ mod tests {
             age: 1,
             oid: oid.into(),
             headline: String::new(),
-            author: "octocat".into(),
+            author: Person::User(ghtui_api::browse::Login::unchecked("octocat")),
             date: "2026-10-01T00:00:00Z".into(),
         };
         let blame = Blame {
@@ -4765,6 +4775,138 @@ mod tests {
                 "https://github.com/o/r/blob/main/README.md"
             ]
         );
+    }
+
+    /// Links to a URL with a space in it: a git name linked as a login.
+    fn profile_links(page: &Page) -> Vec<String> {
+        page.links
+            .iter()
+            .filter_map(|l| l.url())
+            .filter(|u| u.contains(' '))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// A commit by an email without an account is by its git name, which
+    /// isn't a login: neither its author nor its committer links to a
+    /// profile, as GitHub shows them.
+    #[test]
+    fn a_commit_by_git_names_doesnt_link_them_as_profiles() {
+        let repo = RepoId::new("o", "r");
+        let d = CommitDetail {
+            oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
+            headline: "Fix the thing".into(),
+            body: String::new(),
+            author: Person::Git("Jane Doe".into()),
+            authored_at: "2026-01-14T10:00:00Z".into(),
+            committer: Some(Person::Git("Bob Maintainer".into())),
+            committed_at: "2026-01-15T09:30:00Z".into(),
+            parents: Vec::new().into(),
+            additions: 1,
+            deletions: 1,
+            changed_files: Some(1),
+            verified: None,
+        };
+        let mut page = Page::new(100);
+        commit(&mut page, &repo, &d, "", 0);
+        let text: Vec<String> = page.lines.iter().map(PageLine::text).collect();
+        assert!(text.iter().any(|l| l.contains("Jane Doe")), "{text:?}");
+        assert_eq!(profile_links(&page), Vec::<String>::new());
+    }
+
+    /// A commit with no author at all reads "unknown", which isn't the
+    /// GitHub user of that name.
+    #[test]
+    fn a_commit_by_nobody_doesnt_link_unknown_as_a_profile() {
+        let d = CommitDetail {
+            oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
+            headline: "Fix the thing".into(),
+            body: String::new(),
+            author: Person::Unknown,
+            authored_at: "2026-01-14T10:00:00Z".into(),
+            committer: None,
+            committed_at: "2026-01-14T10:00:00Z".into(),
+            parents: Vec::new().into(),
+            additions: 1,
+            deletions: 1,
+            changed_files: None,
+            verified: None,
+        };
+        let mut page = Page::new(100);
+        commit(&mut page, &RepoId::new("o", "r"), &d, "", 0);
+        let text: Vec<String> = page.lines.iter().map(PageLine::text).collect();
+        assert!(
+            text.iter().any(|l| l.contains("unknown authored")),
+            "{text:?}"
+        );
+        let urls: Vec<&str> = page.links.iter().filter_map(|l| l.url()).collect();
+        assert!(!urls.iter().any(|u| u.ends_with("/unknown")), "{urls:?}");
+    }
+
+    /// The repo's last commit, by an email without an account, shows its
+    /// author's git name without linking it as a profile.
+    #[test]
+    fn a_last_commit_by_a_git_name_doesnt_link_it_as_a_profile() {
+        let repo = RepoId::new("o", "r");
+        let overview = RepoOverview {
+            summary: RepoSummary {
+                repo: repo.clone(),
+                description: None,
+                stars: 0,
+                forks: 0,
+                language: None,
+                language_color: None,
+                pushed_at: None,
+                private: false,
+                fork: false,
+                archived: false,
+            },
+            homepage: None,
+            watchers: 0,
+            open_issues: 0,
+            open_prs: 0,
+            closed_issues: 0,
+            closed_prs: 0,
+            license: None,
+            topics: Vec::new().into(),
+            default_branch: Some("main".into()),
+            last_commit: Some(CommitInfo {
+                oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
+                headline: "Fix the thing".into(),
+                author: Person::Git("Jane Doe".into()),
+                date: "2026-01-14T10:00:00Z".into(),
+            }),
+            commits: 1,
+            parent: None,
+            starred: false,
+            id: ghtui_api::model::NodeId::new("R_1"),
+            has_issues: true,
+            has_discussions: false,
+            has_wiki: false,
+            branches: 1,
+            tags: 0,
+            entries: vec![TreeEntry {
+                name: "a.rs".into(),
+                path: "a.rs".into(),
+                kind: EntryKind::File,
+                size: Some(1),
+            }],
+        };
+        let mut page = Page::new(100);
+        let readme = None;
+        let readme = Fetched::ready(&readme);
+        repo_code(
+            &mut page,
+            &repo,
+            &overview,
+            None,
+            readme,
+            None,
+            PageCtx::default(),
+        );
+        let text: Vec<String> = page.lines.iter().map(PageLine::text).collect();
+        assert!(text.iter().any(|l| l.contains("Jane Doe")), "{text:?}");
+        assert_eq!(profile_links(&page), Vec::<String>::new());
     }
 
     #[test]

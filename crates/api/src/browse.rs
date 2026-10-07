@@ -76,11 +76,11 @@ pub struct CommitDetail {
     pub headline: String,
     /// The message after the headline.
     pub body: String,
-    pub author: String,
+    pub author: Person,
     /// ISO 8601.
     pub authored_at: String,
     /// Who committed it, when that isn't the author (rebased, applied).
-    pub committer: Option<String>,
+    pub committer: Option<Person>,
     pub committed_at: String,
     pub parents: Capped<String>,
     pub additions: u64,
@@ -94,9 +94,62 @@ pub struct CommitDetail {
 pub struct CommitInfo {
     pub oid: String,
     pub headline: String,
-    pub author: String,
+    pub author: Person,
     /// ISO 8601.
     pub date: String,
+}
+
+/// Who wrote or committed a commit, as GitHub knows them. Kept externally
+/// tagged in the cache: a login and a git name must not read back alike.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Person {
+    /// The account GitHub linked to the commit's email: the only kind of
+    /// person a profile link may be built from.
+    User(Login),
+    /// Only git's name for them, with no account behind it. Never a URL.
+    Git(String),
+    /// No author, or an empty name.
+    Unknown,
+}
+
+impl Person {
+    /// The login, when GitHub linked an account.
+    pub fn login(&self) -> Option<&str> {
+        match self {
+            Person::User(Login(login)) => Some(login),
+            _ => None,
+        }
+    }
+
+    /// The text to show. Not a login: never pass it to a URL builder.
+    pub fn name(&self) -> &str {
+        match self {
+            Person::User(Login(name)) | Person::Git(name) => name,
+            Person::Unknown => "unknown",
+        }
+    }
+}
+
+/// A login GitHub gave for a commit's account. Only this crate's decoders
+/// make one, so a git name can't pass for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Login(String);
+
+impl Login {
+    /// A login that didn't come from GitHub: for fixtures and tests.
+    pub fn unchecked(login: impl Into<String>) -> Login {
+        Login(login.into())
+    }
+}
+
+impl From<Option<GitActor>> for Person {
+    fn from(actor: Option<GitActor>) -> Person {
+        match actor {
+            Some(GitActor { user: Some(u), .. }) => Person::User(Login(u.login)),
+            Some(GitActor { name: Some(n), .. }) if !n.is_empty() => Person::Git(n),
+            _ => Person::Unknown,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1807,6 +1860,58 @@ mod tests {
             ]
         );
     }
+
+    /// A commit found by search whose author has no account is by its
+    /// author's git name, not by whoever committed it (cherry-picked, applied).
+    #[test]
+    fn a_found_commit_by_an_unlinked_author_isnt_by_its_committer() {
+        let found: super::rest_search::Commit = serde_json::from_value(serde_json::json!({
+            "sha": "abc123",
+            "repository": {"full_name": "o/r"},
+            "author": null,
+            "commit": {
+                "message": "Fix the thing",
+                "author": {"name": "Jane Doe", "date": "2026-01-01T00:00:00Z"},
+                "committer": {"name": "Bob Maintainer", "date": "2026-02-01T00:00:00Z"}
+            }
+        }))
+        .unwrap();
+        let hit = found.into_hit().unwrap();
+        assert_eq!(hit.commit.author, super::Person::Git("Jane Doe".into()));
+    }
+
+    /// A commit's committer is shown unless they're its author, nobody, or
+    /// GitHub's own web-flow account; a git name that happens to read
+    /// "web-flow" is somebody.
+    #[test]
+    fn a_commits_committer_is_hidden_only_for_web_flows_account() {
+        let committer = |c: serde_json::Value| {
+            let wire: super::WireCommit = serde_json::from_value(serde_json::json!({
+                "oid": "abc123",
+                "message": "Fix",
+                "authoredDate": "2026-01-01T00:00:00Z",
+                "committedDate": "2026-01-02T00:00:00Z",
+                "author": {"name": "Jane", "user": {"login": "jane"}},
+                "committer": c,
+                "parents": {"totalCount": 0, "nodes": []},
+                "additions": 0,
+                "deletions": 0,
+                "changedFilesIfAvailable": null,
+                "signature": null
+            }))
+            .unwrap();
+            wire.into_detail().committer
+        };
+        let web_flow = serde_json::json!({"name": "GitHub", "user": {"login": "web-flow"}});
+        assert_eq!(committer(web_flow), None);
+        assert_eq!(
+            committer(serde_json::json!({"name": "web-flow", "user": null})),
+            Some(super::Person::Git("web-flow".into()))
+        );
+        let jane = serde_json::json!({"name": "J", "user": {"login": "jane"}});
+        assert_eq!(committer(jane), None);
+        assert_eq!(committer(serde_json::json!(null)), None);
+    }
 }
 
 impl WireCheckRun {
@@ -2028,15 +2133,72 @@ pub(crate) mod wire {
     use serde::Deserialize;
 
     use super::Results;
-
-    #[derive(Deserialize)]
-    pub struct Login {
-        pub login: String,
-    }
+    pub use super::UserLogin as Login;
 
     #[derive(Deserialize)]
     pub struct Name {
         pub name: String,
+    }
+
+    /// A REST commit's git author or committer.
+    #[derive(Deserialize)]
+    pub struct Signature {
+        pub name: Option<String>,
+        pub date: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Message {
+        pub message: String,
+        pub author: Option<Signature>,
+        pub committer: Option<Signature>,
+    }
+
+    /// A commit as REST lists them (compare, search).
+    #[derive(Deserialize)]
+    pub struct RestCommit {
+        pub sha: String,
+        pub commit: Message,
+        pub author: Option<Login>,
+    }
+
+    impl RestCommit {
+        /// By GitHub's account for it, else its git name; dated when authored.
+        pub fn into_info(self) -> super::CommitInfo {
+            let git = self.commit;
+            let name = git.author.as_ref().and_then(|a| a.name.clone());
+            let author = super::GitActor {
+                name,
+                user: self.author,
+            };
+            super::CommitInfo {
+                headline: git.message.lines().next().unwrap_or_default().to_owned(),
+                author: Some(author).into(),
+                date: git.author.and_then(|a| a.date).unwrap_or_default(),
+                oid: self.sha,
+            }
+        }
+    }
+
+    /// A commit as raw GraphQL lists them (blame, a path's last commit).
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Commit {
+        pub oid: String,
+        pub message_headline: String,
+        pub committed_date: String,
+        pub author: Option<super::GitActor>,
+    }
+
+    impl Commit {
+        pub fn into_info(self) -> super::CommitInfo {
+            super::CommitInfo {
+                author: self.author.into(),
+                oid: self.oid,
+                headline: self.message_headline,
+                date: self.committed_date,
+            }
+        }
     }
 
     #[derive(Deserialize)]
@@ -2299,7 +2461,8 @@ pub struct BranchInfo {
     pub default: bool,
     pub oid: Option<String>,
     pub headline: Option<String>,
-    pub author: Option<String>,
+    /// `None` when the branch points at no commit.
+    pub author: Option<Person>,
     /// ISO 8601: when its latest commit was committed.
     pub date: Option<String>,
     /// Its most recent pull request: number and state.
@@ -2309,13 +2472,8 @@ pub struct BranchInfo {
 pub(crate) mod wire_branches {
     use serde::Deserialize;
 
-    pub use super::wire::{Login, Nodes, RepoName};
-
-    #[derive(Deserialize)]
-    pub struct Author {
-        pub name: Option<String>,
-        pub user: Option<Login>,
-    }
+    use super::GitActor;
+    pub use super::wire::{Nodes, RepoName};
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -2323,7 +2481,7 @@ pub(crate) mod wire_branches {
         pub oid: Option<String>,
         pub message_headline: Option<String>,
         pub committed_date: Option<String>,
-        pub author: Option<Author>,
+        pub author: Option<GitActor>,
     }
 
     #[derive(Deserialize)]
@@ -2354,7 +2512,7 @@ impl wire_branches::Branch {
                 c.oid,
                 c.message_headline,
                 c.committed_date,
-                c.author.and_then(|a| a.user.map(|u| u.login).or(a.name)),
+                Some(c.author.into()),
             ),
             None => (None, None, None, None),
         };
@@ -2574,30 +2732,11 @@ pub const COMPARE_COMMITS: u64 = 250;
 pub(crate) mod rest_compare {
     use serde::Deserialize;
 
-    pub use super::wire::Login;
+    pub use super::wire::RestCommit as Commit;
 
     #[derive(Deserialize)]
     pub struct Sha {
         pub sha: String,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Signature {
-        pub name: Option<String>,
-        pub date: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Message {
-        pub message: String,
-        pub author: Option<Signature>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Commit {
-        pub sha: String,
-        pub commit: Message,
-        pub author: Option<Login>,
     }
 
     #[derive(Deserialize)]
@@ -2654,25 +2793,7 @@ impl rest_compare::Compare {
             commits: self
                 .commits
                 .into_iter()
-                .map(|c| {
-                    let author = c.commit.author;
-                    CommitInfo {
-                        headline: c
-                            .commit
-                            .message
-                            .lines()
-                            .next()
-                            .unwrap_or_default()
-                            .to_owned(),
-                        author: c
-                            .author
-                            .map(|a| a.login)
-                            .or_else(|| author.as_ref().and_then(|a| a.name.clone()))
-                            .unwrap_or_default(),
-                        date: author.and_then(|a| a.date).unwrap_or_default(),
-                        oid: c.sha,
-                    }
-                })
+                .map(rest_compare::Commit::into_info)
                 .collect(),
         }
     }
@@ -2694,29 +2815,14 @@ pub struct BlameRange {
     pub age: u8,
     pub oid: String,
     pub headline: String,
-    pub author: String,
+    pub author: Person,
     pub date: String,
 }
 
 pub(crate) mod wire_blame {
     use serde::Deserialize;
 
-    pub use super::wire::Login;
-
-    #[derive(Deserialize)]
-    pub struct Author {
-        pub name: Option<String>,
-        pub user: Option<Login>,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Commit {
-        pub oid: String,
-        pub message_headline: String,
-        pub committed_date: String,
-        pub author: Option<Author>,
-    }
+    use super::wire::Commit;
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -2739,20 +2845,14 @@ impl wire_blame::Blame {
             ranges: self
                 .ranges
                 .into_iter()
-                .map(|r| {
-                    let author = r
-                        .commit
-                        .author
-                        .and_then(|a| a.user.map(|u| u.login).or(a.name));
-                    BlameRange {
-                        start: r.starting_line,
-                        end: r.ending_line,
-                        age: r.age,
-                        oid: r.commit.oid,
-                        headline: r.commit.message_headline,
-                        author: author.unwrap_or_default(),
-                        date: r.commit.committed_date,
-                    }
+                .map(|r| BlameRange {
+                    start: r.starting_line,
+                    end: r.ending_line,
+                    age: r.age,
+                    oid: r.commit.oid,
+                    headline: r.commit.message_headline,
+                    author: r.commit.author.into(),
+                    date: r.commit.committed_date,
                 })
                 .collect(),
         }
@@ -3158,7 +3258,7 @@ pub struct WikiPage {
 pub(crate) mod rest_search {
     use serde::Deserialize;
 
-    pub use super::wire::Login;
+    use super::wire::RestCommit;
 
     #[derive(Deserialize)]
     pub struct Repo {
@@ -3166,24 +3266,10 @@ pub(crate) mod rest_search {
     }
 
     #[derive(Deserialize)]
-    pub struct Signature {
-        pub name: Option<String>,
-        pub date: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Message {
-        pub message: String,
-        pub committer: Option<Signature>,
-        pub author: Option<Signature>,
-    }
-
-    #[derive(Deserialize)]
     pub struct Commit {
-        pub sha: String,
         pub repository: Repo,
-        pub commit: Message,
-        pub author: Option<Login>,
+        #[serde(flatten)]
+        pub commit: RestCommit,
     }
 
     #[derive(Deserialize)]
@@ -3205,26 +3291,12 @@ pub(crate) mod rest_search {
 
 impl rest_search::Commit {
     pub(crate) fn into_hit(self) -> Option<CommitHit> {
-        let signature = self.commit.committer.or(self.commit.author);
-        Some(CommitHit {
-            repo: RepoId::parse(&self.repository.full_name)?,
-            commit: CommitInfo {
-                headline: self
-                    .commit
-                    .message
-                    .lines()
-                    .next()
-                    .unwrap_or_default()
-                    .to_owned(),
-                author: self
-                    .author
-                    .map(|a| a.login)
-                    .or_else(|| signature.as_ref().and_then(|s| s.name.clone()))
-                    .unwrap_or_default(),
-                date: signature.and_then(|s| s.date).unwrap_or_default(),
-                oid: self.sha,
-            },
-        })
+        let git = &self.commit.commit;
+        let committed = git.committer.as_ref().and_then(|c| c.date.clone());
+        let mut commit = self.commit.into_info();
+        commit.date = committed.unwrap_or(commit.date);
+        let repo = RepoId::parse(&self.repository.full_name)?;
+        Some(CommitHit { repo, commit })
     }
 }
 
@@ -4575,15 +4647,12 @@ fn issue_state(state: WireIssueState, reason: Option<StateReason>) -> IssueState
     }
 }
 
-fn actor(a: Option<GitActor>) -> Option<String> {
-    a.and_then(|a| a.user.map(|u| u.login).or(a.name))
-}
-
 impl WireCommit {
     pub(crate) fn into_detail(self) -> CommitDetail {
         let (headline, body) = self.message.split_once('\n').unwrap_or((&self.message, ""));
-        let author = actor(self.author).unwrap_or_else(|| "unknown".into());
-        let committer = actor(self.committer).filter(|c| *c != author && c != "web-flow");
+        let author = Person::from(self.author);
+        let committer = Some(Person::from(self.committer))
+            .filter(|c| *c != author && *c != Person::Unknown && c.login() != Some("web-flow"));
         CommitDetail {
             oid: self.oid.0,
             headline: headline.trim().to_owned(),
@@ -4604,10 +4673,7 @@ impl WireCommit {
 impl CommitCard {
     fn into_info(self) -> CommitInfo {
         CommitInfo {
-            author: self
-                .author
-                .and_then(|a| a.user.map(|u| u.login).or(a.name))
-                .unwrap_or_else(|| "unknown".into()),
+            author: self.author.into(),
             oid: self.oid.0,
             headline: self.message.lines().next().unwrap_or_default().to_owned(),
             date: self.committed_date.0,
