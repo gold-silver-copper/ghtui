@@ -528,13 +528,16 @@ impl State {
         })
     }
 
-    /// Why the page's needs that show a copy couldn't refresh it.
+    /// Why the page's needs that show a copy couldn't refresh it, each
+    /// reason once (one outage fails them all alike).
     fn stale_errors(&self, route: &Route) -> Option<String> {
-        let errors: Vec<String> = self
+        let mut errors: Vec<String> = self
             .fetches(route)
             .filter(|r| r.data.is_some())
             .filter_map(|r| r.error)
             .collect();
+        errors.sort();
+        errors.dedup();
         (!errors.is_empty()).then(|| errors.join("; "))
     }
 
