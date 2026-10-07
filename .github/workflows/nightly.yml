@@ -1,0 +1,51 @@
+name: Nightly
+
+# Checks what ghtui assumes of GitHub against GitHub, and crawls real pages
+# for links ghtui can't open. Both only read. They need a token in the
+# CONTRACT_TOKEN secret (a fine-grained token with read access to public
+# repositories is enough); without it the job says so and stops.
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.CONTRACT_TOKEN }}
+    steps:
+      - name: Token
+        id: token
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::No CONTRACT_TOKEN secret: skipping the contract tests and the crawl"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.skip != 'true'
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.token.outputs.skip != 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.token.outputs.skip != 'true'
+      - name: Contract tests
+        if: steps.token.outputs.skip != 'true'
+        run: cargo test -p ghtui-api --test contract --locked -- --ignored contract
+      - name: Link crawl
+        if: steps.token.outputs.skip != 'true' && !cancelled()
+        run: |
+          GHTUI_CRAWL_OUT=crawl.txt cargo test --release -p ghtui --locked -- --ignored --nocapture link_crawl
+          cp "${TMPDIR:-/tmp}/crawl.txt" crawl.txt
+      - uses: actions/upload-artifact@v4
+        if: steps.token.outputs.skip != 'true' && !cancelled()
+        with:
+          name: link-crawl
+          path: crawl.txt
+          if-no-files-found: ignore

@@ -379,8 +379,9 @@ impl GitHub {
         Ok((parsed.data, errors))
     }
 
-    /// Runs a query built at runtime (fields that depend on data), as JSON.
-    async fn graphql_json(
+    /// Runs a query given as text (built at run time, or read as JSON),
+    /// returning its data. Public for the contract tests.
+    pub async fn graphql_json(
         &self,
         query: &str,
         variables: serde_json::Value,
