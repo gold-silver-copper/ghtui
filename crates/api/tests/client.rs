@@ -1165,19 +1165,25 @@ async fn review_submission_calls() {
 
 #[tokio::test]
 async fn last_review_commit_skips_pending_reviews() {
-    let (gh, seen) = github(vec![Reply::new(
-        200,
-        r#"{"data":{"repository":{"pullRequest":{"reviews":{"nodes":[
-            {"state":"COMMENTED","commit":{"oid":"old"}},
-            {"state":"APPROVED","commit":{"oid":"newer"}},
-            {"state":"PENDING","commit":{"oid":"draft"}}]}}}}}"#,
-    )])
+    let (gh, seen) = github(vec![
+        Reply::new(
+            200,
+            r#"{"data":{"repository":{"pullRequest":{"reviews":{"nodes":[
+                {"state":"COMMENTED","commit":{"oid":"old"}},
+                {"state":"APPROVED","commit":{"oid":"newer"}},
+                {"state":"PENDING","commit":{"oid":"draft"}}]}}}}}"#,
+        ),
+        // No reviews on a PR that's there is no last review, not a missing PR.
+        Reply::new(
+            200,
+            r#"{"data":{"repository":{"pullRequest":{"reviews":null}}}}"#,
+        ),
+    ])
     .await;
-    let commit = gh
-        .last_review_commit(&PrRef::parse("o/r#7").unwrap(), "me")
-        .await
-        .unwrap();
+    let pr = PrRef::parse("o/r#7").unwrap();
+    let commit = gh.last_review_commit(&pr, "me").await.unwrap();
     assert_eq!(commit.as_deref(), Some("newer"));
+    assert_eq!(gh.last_review_commit(&pr, "me").await.unwrap(), None);
     let seen = seen.lock().unwrap();
     let body = seen[0].json();
     assert_eq!(body["variables"]["login"], "me");

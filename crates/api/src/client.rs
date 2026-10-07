@@ -701,8 +701,10 @@ impl GitHub {
             login: login.to_owned(),
         });
         let reviews = self
-            .find(op, pr, |q| Some(q.repository?.pull_request?.reviews?.nodes))
+            .find(op, pr, |q| q.repository?.pull_request)
             .await?
+            .reviews
+            .and_then(|r| r.nodes)
             .unwrap_or_default();
         Ok(reviews
             .into_iter()
