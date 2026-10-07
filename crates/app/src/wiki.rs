@@ -47,8 +47,7 @@ pub async fn page(
     repo: &RepoId,
     page: Option<&str>,
 ) -> Result<WikiPage, ApiError> {
-    let missing =
-        |err: &dyn std::fmt::Display| ApiError::NotFound(format!("{repo}'s wiki ({err})"));
+    let unread = |err: &dyn std::fmt::Display| ApiError::Git(format!("{repo}'s wiki: {err}"));
     let name = format!("{}.wiki", repo.name);
     let url = format!("https://github.com/{}/{name}.git", repo.owner);
     let quiet = |_: String| {};
@@ -61,14 +60,14 @@ pub async fn page(
         &quiet,
     )
     .await
-    .map_err(|e| missing(&e))?;
+    .map_err(|e| unread(&e))?;
     // Offline, the pages fetched before still read.
     if let Err(err) = wiki.fetch_head(HEAD).await
         && !wiki.has(HEAD).await
     {
-        return Err(missing(&err));
+        return Err(unread(&err));
     }
-    let files = wiki.file_names(HEAD).await.map_err(|e| missing(&e))?;
+    let files = wiki.file_names(HEAD).await.map_err(|e| unread(&e))?;
     let pages: Vec<(&str, &str, &String)> = files
         .iter()
         .filter_map(|f| page_file(f).map(|(title, ext)| (title, ext, f)))
@@ -87,7 +86,7 @@ pub async fn page(
             .find(|(t, _, _)| slug(&title_of(t)).eq_ignore_ascii_case(&slug(wanted)))
     };
     let sidebar = match find("_Sidebar") {
-        Some((_, _, path)) => wiki.file_text(HEAD, path).await.ok(),
+        Some((_, _, path)) => Some(wiki.file_text(HEAD, path).await.map_err(|e| unread(&e))?),
         None => None,
     };
     let wanted = page.unwrap_or("Home");
@@ -98,13 +97,17 @@ pub async fn page(
     };
     let (title, text, markdown) = match found {
         Some((t, ext, path)) => {
-            let text = wiki.file_text(HEAD, path).await.map_err(|e| missing(&e))?;
+            let text = wiki.file_text(HEAD, path).await.map_err(|e| unread(&e))?;
             let markdown = matches!(ext.to_ascii_lowercase().as_str(), "md" | "markdown");
             (Some(title_of(t)), Some(text), markdown)
         }
         // The list of pages, also what a wiki without a Home shows.
         None if page.is_none() || wanted == "_pages" => (None, None, false),
-        None => return Err(missing(&format!("no page {wanted}"))),
+        None => {
+            return Err(ApiError::NotFound(format!(
+                "{repo}'s wiki has no page {wanted}"
+            )));
+        }
     };
     Ok(WikiPage {
         title,
@@ -132,6 +135,21 @@ mod tests {
             slug("Doc continuous integration"),
             "Doc-continuous-integration"
         );
+    }
+
+    /// A wiki git can't read is a failure, not a wiki that isn't there.
+    #[tokio::test]
+    async fn a_wiki_git_cant_read_isnt_taken_for_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_root = dir.path().join("a-file");
+        std::fs::write(&cache_root, "").unwrap();
+        let git = GitContext {
+            cache_root,
+            credentials: ghtui_git::credentials::Credentials::Ambient,
+            cwd: dir.path().to_owned(),
+        };
+        let err = page(&git, &RepoId::new("o", "r"), None).await.unwrap_err();
+        assert!(matches!(err, ApiError::Git(_)), "{err:?}");
     }
 
     /// Reads a real wiki through git (network; run by hand with
