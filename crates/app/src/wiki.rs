@@ -159,6 +159,6 @@ mod tests {
         assert!(spaced.text.is_some());
         let list = page(&git, &repo, Some("_pages")).await.unwrap();
         assert!(list.text.is_none() && !list.pages.is_empty());
-        assert!(page(&git, &repo, Some("No-such-page")).await.is_err());
+        page(&git, &repo, Some("No-such-page")).await.unwrap_err();
     }
 }

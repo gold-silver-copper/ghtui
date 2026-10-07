@@ -452,9 +452,9 @@ mod tests {
         );
         assert_eq!(parse_key("<lt>").unwrap(), key('<'));
         assert_eq!(parse_key("<").unwrap(), key('<'));
-        assert!(parse_key("<Nope>").is_err());
-        assert!(parse_key("<C-d").is_err());
-        assert!(parse_key("").is_err());
+        parse_key("<Nope>").unwrap_err();
+        parse_key("<C-d").unwrap_err();
+        parse_key("").unwrap_err();
     }
 
     /// Bindings are single keys: a sequence is an error that says so.
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn defaults_are_valid() {
-        assert!(Keymap::with_overrides(&HashMap::new()).is_ok());
+        Keymap::with_overrides(&HashMap::new()).unwrap();
     }
 
     /// The README's key tables say what the keys do. Each row is listed
@@ -651,7 +651,7 @@ mod tests {
         );
         // Config can scope a binding.
         let scoped = HashMap::from([("star".to_owned(), vec!["page:z".to_owned()])]);
-        assert!(Keymap::with_overrides(&scoped).is_ok());
+        Keymap::with_overrides(&scoped).unwrap();
     }
 
     #[test]

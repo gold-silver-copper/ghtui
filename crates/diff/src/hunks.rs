@@ -359,7 +359,7 @@ mod tests {
                 .collect();
             assert_eq!(actual, expected, "case {i}");
         }
-        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     fn kinds(lines: &[DiffLine]) -> String {

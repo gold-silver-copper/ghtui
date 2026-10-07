@@ -69,30 +69,50 @@ tree-sitter-bash = "0.25.1"
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
-# Panics are bugs, so non-test code can't contain them (tests are exempt in
-# clippy.toml). Where a cast or similar is provably fine, say why with
-# `#[expect(..., reason = "...")]` rather than a bare allow.
+# Panics are bugs, so non-test code can't contain them (tests are exempt
+# from unwrap, expect, panic and indexing in clippy.toml). These are `deny`,
+# not `forbid`: clap's derives allow the whole restriction group, which
+# `forbid` rejects. Where a cast or similar is provably fine, say why with
+# `#[expect(..., reason = "...")]`; a bare allow is refused.
 [workspace.lints.clippy]
+# Panics.
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+indexing_slicing = "deny"
+unwrap_in_result = "deny"
+panic_in_result_fn = "deny"
+get_unwrap = "deny"
+fallible_impl_from = "deny"
+manual_assert = "deny"
+unchecked_time_subtraction = "deny"
+large_stack_frames = "deny"
+string_slice = "deny"
 unreachable = "deny"
 todo = "deny"
 unimplemented = "deny"
-indexing_slicing = "deny"
-string_slice = "deny"
+exit = "deny"
+# Casts that lose or misread values.
 cast_possible_truncation = "deny"
-redundant_clone = "warn"
-needless_pass_by_value = "warn"
-manual_let_else = "warn"
+cast_possible_wrap = "deny"
+cast_sign_loss = "deny"
+lossy_float_literal = "deny"
+# Ignoring what can fail, or leaking.
+let_underscore_future = "deny"
+unused_result_ok = "deny"
+mem_forget = "deny"
 # A suppression says why.
 allow_attributes_without_reason = "deny"
 # Writing to the terminal behind ratatui's back corrupts the screen.
 print_stdout = "deny"
 print_stderr = "deny"
 dbg_macro = "deny"
-cast_possible_wrap = "deny"
-cast_sign_loss = "deny"
+# Tests say what they expect.
+assertions_on_result_states = "warn"
+# Style.
+redundant_clone = "warn"
+needless_pass_by_value = "warn"
+manual_let_else = "warn"
 match_same_arms = "warn"
 match_wildcard_for_single_variants = "warn"
 needless_pass_by_ref_mut = "warn"
