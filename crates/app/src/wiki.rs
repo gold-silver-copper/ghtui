@@ -41,6 +41,13 @@ pub fn slug(title: &str) -> String {
     title.replace(' ', "-")
 }
 
+/// Whether GitHub said the wiki's repository isn't there (one without
+/// pages, or a repository without a wiki), as git reports its 404.
+fn absent(err: &ghtui_git::GitError) -> bool {
+    matches!(err, ghtui_git::GitError::Failed { stderr, .. }
+        if stderr.contains("fatal: repository '") && stderr.contains("' not found"))
+}
+
 /// A wiki's page (its Home without one; its list of pages for `_pages`).
 pub async fn page(
     git: &GitContext,
@@ -48,6 +55,13 @@ pub async fn page(
     page: Option<&str>,
 ) -> Result<WikiPage, ApiError> {
     let unread = |err: &dyn std::fmt::Display| ApiError::Git(format!("{repo}'s wiki: {err}"));
+    let failed = |err: &ghtui_git::GitError| {
+        if absent(err) {
+            ApiError::NotFound(format!("{repo} has no wiki"))
+        } else {
+            unread(err)
+        }
+    };
     let name = format!("{}.wiki", repo.name);
     let url = format!("https://github.com/{}/{name}.git", repo.owner);
     let quiet = |_: String| {};
@@ -60,12 +74,12 @@ pub async fn page(
         &quiet,
     )
     .await
-    .map_err(|e| unread(&e))?;
+    .map_err(|e| failed(&e))?;
     // Offline, the pages fetched before still read.
     if let Err(err) = wiki.fetch_head(HEAD).await
         && !wiki.has(HEAD).await
     {
-        return Err(unread(&err));
+        return Err(failed(&err));
     }
     let files = wiki.file_names(HEAD).await.map_err(|e| unread(&e))?;
     let pages: Vec<(&str, &str, &String)> = files
@@ -150,6 +164,31 @@ mod tests {
         };
         let err = page(&git, &RepoId::new("o", "r"), None).await.unwrap_err();
         assert!(matches!(err, ApiError::Git(_)), "{err:?}");
+    }
+
+    /// Only git's own word that GitHub has no such repository is a wiki
+    /// that isn't there; any other failure stays a failure.
+    #[test]
+    fn only_a_missing_repository_is_no_wiki() {
+        let failed = |stderr: &str| ghtui_git::GitError::Failed {
+            args: "fetch".into(),
+            stderr: stderr.into(),
+        };
+        // As git 2.5x says it for github.com/o/r.wiki.git.
+        let missing = "remote: Repository not found.\nfatal: repository 'https://github.com/o/r.wiki.git/' not found\n";
+        assert!(absent(&failed(missing)));
+        // As a clone reports it, its lines joined.
+        let missing = "Cloning into bare repository 'x'...; remote: Repository not found.; fatal: repository 'https://github.com/o/r.wiki.git/' not found";
+        assert!(absent(&failed(missing)));
+        let auth =
+            "fatal: could not read Username for 'https://github.com': terminal prompts disabled";
+        assert!(!absent(&failed(auth)));
+        assert!(!absent(&failed(
+            "fatal: unable to access 'https://github.com/o/r.wiki.git/': Could not resolve host: github.com"
+        )));
+        assert!(!absent(&ghtui_git::GitError::Spawn(
+            std::io::ErrorKind::NotFound.into()
+        )));
     }
 
     /// Reads a real wiki through git (network; run by hand with
