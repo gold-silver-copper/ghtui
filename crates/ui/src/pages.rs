@@ -178,6 +178,11 @@ fn link_seg(page: &mut Page, text: impl Into<String>, url: impl Into<Link>, role
     Seg::linked(text, role, link)
 }
 
+/// A login, linked to its profile.
+fn login_seg(page: &mut Page, login: &str, role: Role) -> Seg {
+    link_seg(page, login.to_owned(), url::user(login), role)
+}
+
 /// A button: ` label ` on a raised tone.
 fn button(page: &mut Page, text: impl Into<String>, url: impl Into<Link>) -> Seg {
     link_seg(
@@ -467,7 +472,7 @@ fn aside_heading(page: &mut Page, text: &str) {
 /// The repository's title: `owner / name  Public` with Star, Fork and Watch
 /// buttons on the right, as on GitHub.
 pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview>) {
-    let owner = link_seg(page, repo.owner.clone(), url::user(&repo.owner), Role::Link);
+    let owner = login_seg(page, &repo.owner, Role::Link);
     let name = link_seg(page, repo.name.clone(), url::repo(repo), Role::Title);
     let mut segs = vec![owner, Seg::new(" / ", Role::Meta), name];
     let mut right = Vec::new();
@@ -762,7 +767,7 @@ pub fn repo_code(
     code_toolbar(page, repo, &rev, "", false, Some(o), keys);
     let title = match &o.last_commit {
         Some(c) => {
-            let author = link_seg(page, c.author.clone(), url::user(&c.author), Role::Strong);
+            let author = login_seg(page, &c.author, Role::Strong);
             let headline = link_seg(
                 page,
                 c.headline.clone(),
@@ -1118,7 +1123,7 @@ pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
             if i > 0 {
                 segs.push(Seg::new(", ", Role::Meta));
             }
-            segs.push(link_seg(page, login.clone(), url::user(login), Role::Link));
+            segs.push(login_seg(page, login, Role::Link));
         }
         page.wrapped(segs, 0, Frame::None);
     }
@@ -1855,7 +1860,7 @@ impl Conversation<'_> {
             page.anchor(anchor);
         }
         let start = page.lines.len();
-        let who = link_seg(page, author.to_owned(), url::user(author), Role::Strong);
+        let who = login_seg(page, author, Role::Strong);
         let when = time::ago_iso(when, self.now);
         let right = Vec::from_iter(chip);
         page.box_top(
@@ -1897,7 +1902,7 @@ impl Conversation<'_> {
         what: &str,
         when: &str,
     ) {
-        let who = link_seg(page, author.to_owned(), url::user(author), Role::Strong);
+        let who = login_seg(page, author, Role::Strong);
         let when = time::ago_iso(when, self.now);
         let what = Seg::new(format!(" {what} {when}"), Role::Meta);
         page.add(
@@ -1995,7 +2000,7 @@ pub fn issue(
         0,
         Frame::None,
     );
-    let author = link_seg(page, d.author.clone(), url::user(&d.author), Role::Strong);
+    let author = login_seg(page, &d.author, Role::Strong);
     let mut segs = vec![
         state_chip(d.state, false, icons),
         Seg::new("  ", Role::Body),
@@ -2027,7 +2032,7 @@ pub fn issue(
             if i > 0 {
                 segs.push(Seg::new(", ", Role::Meta));
             }
-            segs.push(link_seg(page, a.clone(), url::user(a), Role::Link));
+            segs.push(login_seg(page, a, Role::Link));
         }
         if d.assignees.left_out() > 0 {
             segs.push(Seg::new(
@@ -2087,7 +2092,7 @@ pub enum PrTab {
 /// sticky title above).
 fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
     let s = &d.summary;
-    let author = link_seg(page, s.author.clone(), url::user(&s.author), Role::Strong);
+    let author = login_seg(page, &s.author, Role::Strong);
     let head = match &d.head_repo {
         Some(repo) if *repo != pr.repo.to_string() => {
             format!("{}:{}", repo.split('/').next().unwrap_or(repo), d.head_ref)
@@ -2542,12 +2547,7 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
     meta.push(link_seg(page, sha, url::commit(repo, &run.sha), Role::Code));
     if let Some(actor) = &run.actor {
         meta.push(Seg::new(" · ", Role::Meta));
-        meta.push(link_seg(
-            page,
-            actor.clone(),
-            url::user(actor),
-            Role::Strong,
-        ));
+        meta.push(login_seg(page, actor, Role::Strong));
     }
     if let Some(at) = &run.started_at {
         meta.push(Seg::new(
@@ -3249,12 +3249,7 @@ pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
     let mut meta = vec![Seg::new("◇ ", Role::Meta), tag];
     if let Some(author) = &r.author {
         meta.push(Seg::new(" · ", Role::Meta));
-        meta.push(link_seg(
-            page,
-            author.clone(),
-            url::user(author),
-            Role::Strong,
-        ));
+        meta.push(login_seg(page, author, Role::Strong));
     }
     if let Some(at) = &r.published_at {
         meta.push(Seg::new(
@@ -3517,7 +3512,7 @@ pub fn deployments(
             }
             if let Some(who) = &d.creator {
                 meta.push(Seg::new(" · ", Role::Meta));
-                meta.push(link_seg(page, who.clone(), url::user(who), Role::Meta));
+                meta.push(login_seg(page, who, Role::Meta));
             }
             if let Some(at) = &d.environment_url {
                 meta.push(Seg::new(" · ", Role::Meta));
@@ -3675,7 +3670,7 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
     }
     page.blank();
     let mut who = vec![
-        link_seg(page, d.author.clone(), url::user(&d.author), Role::Strong),
+        login_seg(page, &d.author, Role::Strong),
         Seg::new(
             format!(" authored {}", time::ago_iso(&d.authored_at, now)),
             Role::Meta,
@@ -3683,12 +3678,7 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
     ];
     if let Some(committer) = &d.committer {
         who.push(Seg::new(" · ", Role::Meta));
-        who.push(link_seg(
-            page,
-            committer.clone(),
-            url::user(committer),
-            Role::Strong,
-        ));
+        who.push(login_seg(page, committer, Role::Strong));
         who.push(Seg::new(
             format!(" committed {}", time::ago_iso(&d.committed_at, now)),
             Role::Meta,
@@ -3826,7 +3816,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
             if i > 0 {
                 orgs.push(Seg::new(" · ", Role::Meta));
             }
-            orgs.push(link_seg(page, org.clone(), url::user(org), Role::Link));
+            orgs.push(login_seg(page, org, Role::Link));
         }
         more_chips(&mut orgs, &p.orgs);
         page.wrapped(orgs, 0, Frame::None);
@@ -3934,7 +3924,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
                 if i > 0 {
                     people.push(Seg::new(" · ", Role::Meta));
                 }
-                people.push(link_seg(page, login.clone(), url::user(login), Role::Link));
+                people.push(login_seg(page, login, Role::Link));
             }
             page.wrapped(people, 0, Frame::Body);
         }
