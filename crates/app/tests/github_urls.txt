@@ -80,8 +80,8 @@ https://gist.github.com/octocat                                             Gist
 https://gist.github.com/octocat/1162032/raw                                 external download
 https://gist.github.com/discover                                            external rare
 # Team
-https://github.com/orgs/github/teams/justice-league                         todo Team
-https://github.com/orgs/rust-lang/teams                                     todo Teams
+https://github.com/orgs/github/teams/justice-league                         Team
+https://github.com/orgs/rust-lang/teams                                     Teams
 # SecurityAdvisoryReference, SecurityAdvisory permalink
 https://github.com/advisories/GHSA-6r3q-mjv7-xr8m                           todo Advisory
 https://github.com/corazawaf/coraza/security/advisories/GHSA-6r3q-mjv7-xr8m todo Advisory

@@ -11,8 +11,8 @@ use ghtui_api::browse::{
     Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList, EntryKind, Gist,
     GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobSummary, MilestoneDetail,
     MilestoneInfo, MilestoneList, PrActivity, Profile, Release, RepoOverview, RepoSort,
-    RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary,
-    Workflow, WorkflowRun,
+    RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TeamDetail, TeamSummary,
+    TreeEntry, UserSummary, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -884,6 +884,132 @@ pub fn blame(
         });
     }
     page.box_bottom();
+}
+// ---- teams -------------------------------------------------------------------------------------
+
+fn team_row(page: &mut Page, org: &str, t: &TeamSummary) {
+    item(
+        page,
+        format!("{}/orgs/{org}/teams/{}", url::BASE, t.slug),
+        |page, link| {
+            let mut segs = vec![Seg::linked(t.name.clone(), Role::Strong, link)];
+            if t.secret {
+                segs.push(space());
+                segs.push(chip("Secret", Bg::SecondaryContainer));
+            }
+            let counts = format!(
+                "{} · {}",
+                plural(t.members, "member"),
+                if t.repos == 1 {
+                    "1 repository".to_owned()
+                } else {
+                    format!("{} repositories", t.repos)
+                }
+            );
+            page.box_line(segs, vec![Seg::new(counts, Role::Meta)], 0);
+            if !t.description.is_empty() {
+                body(page, vec![Seg::new(t.description.clone(), Role::Meta)]);
+            }
+        },
+    );
+}
+
+/// An organization's teams, the ones you can see.
+pub fn teams(page: &mut Page, org: &str, list: Option<&Results<TeamSummary>>) {
+    let Some(l) = list else {
+        page.line(vec![Seg::new("Loading teams…", Role::Meta)]);
+        return;
+    };
+    let title = vec![Seg::new(
+        format!("Teams  {}", compact(l.total)),
+        Role::Strong,
+    )];
+    page.box_top(title, Vec::new());
+    if l.items.is_empty() {
+        empty_row(
+            page,
+            "No teams you can see: an organization's teams show to its members.",
+        );
+    }
+    box_rows(page, &l.items, |page, t| team_row(page, org, t));
+    more_row(page, l.next.is_some(), l.items.len(), l.total);
+    page.box_bottom();
+}
+
+/// A team: its description and parent, then its members, repositories
+/// and child teams.
+pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
+    let t = &d.team;
+    let mut title = vec![
+        link_seg(page, format!("@{org}"), url::user(org), Role::Link),
+        Seg::new(" / ", Role::Meta),
+        Seg::new(t.name.clone(), Role::Title),
+    ];
+    if t.secret {
+        title.push(space());
+        title.push(chip("Secret", Bg::SecondaryContainer));
+    }
+    page.wrapped(title, 0, Frame::None);
+    if !t.description.is_empty() {
+        page.wrapped(
+            vec![Seg::new(t.description.clone(), Role::Body)],
+            0,
+            Frame::None,
+        );
+    }
+    if let Some(parent) = &d.parent {
+        let target = format!("{}/orgs/{org}/teams/{}", url::BASE, parent.slug);
+        let link = link_seg(page, parent.name.clone(), target, Role::Link);
+        page.wrapped(vec![Seg::new("Part of ", Role::Meta), link], 0, Frame::None);
+    }
+    page.blank();
+    let shown = |n: usize, total: u64| {
+        if (n as u64) < total {
+            format!("{n} of {total}")
+        } else {
+            total.to_string()
+        }
+    };
+    let title = vec![Seg::new(
+        format!("Members  {}", shown(d.members.len(), t.members)),
+        Role::Strong,
+    )];
+    list_box(page, title, Vec::new(), &d.members, "No members.", user_row);
+    page.blank();
+    let title = vec![Seg::new(
+        format!("Repositories  {}", shown(d.repos.len(), t.repos)),
+        Role::Strong,
+    )];
+    list_box(
+        page,
+        title,
+        Vec::new(),
+        &d.repos,
+        "No repositories.",
+        |page, r| {
+            item(page, url::repo(&r.repo), |page, link| {
+                let right = vec![Seg::new(format!("★ {}", compact(r.stars)), Role::Meta)];
+                page.box_line(
+                    vec![Seg::linked(r.repo.to_string(), Role::Link, link)],
+                    right,
+                    0,
+                );
+                if !r.description.is_empty() {
+                    body(page, vec![Seg::new(r.description.clone(), Role::Meta)]);
+                }
+            });
+        },
+    );
+    if !d.children.is_empty() {
+        page.blank();
+        let title = vec![Seg::new(
+            format!("Child teams  {}", d.children.len()),
+            Role::Strong,
+        )];
+        list_box(page, title, Vec::new(), &d.children, "", |page, c| {
+            team_row(page, org, c);
+        });
+    }
 }
 // ---- gists -------------------------------------------------------------------------------------
 

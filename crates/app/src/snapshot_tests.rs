@@ -242,6 +242,27 @@ fn with_gists(mode: Mode) -> State {
     open(&mut state, route, Data::Gists(Box::new(fixtures::gists())));
     state
 }
+/// An organization's teams.
+fn with_teams(mode: Mode) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    open(
+        &mut state,
+        Route::Teams("github".into()),
+        Data::Teams(Box::new(fixtures::teams())),
+    );
+    state
+}
+
+/// A team.
+fn with_team(mode: Mode) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    let route = Route::Team {
+        org: "github".into(),
+        slug: "core".into(),
+    };
+    open(&mut state, route, Data::Team(Box::new(fixtures::team())));
+    state
+}
 /// The repository's open issues.
 fn with_issues(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -837,6 +858,16 @@ fn gist_light() {
 #[test]
 fn gists_dark() {
     insta::assert_snapshot!(render(&with_gists(Mode::Dark)));
+}
+
+#[test]
+fn teams_light() {
+    insta::assert_snapshot!(render(&with_teams(Mode::Light)));
+}
+
+#[test]
+fn team_dark() {
+    insta::assert_snapshot!(render(&with_team(Mode::Dark)));
 }
 
 #[test]
@@ -1729,7 +1760,8 @@ mod links {
         with_deployments, with_discussion, with_discussions, with_file, with_forks, with_gist,
         with_gists, with_history, with_inbox, with_issue, with_issues, with_job, with_milestone,
         with_milestones, with_pr, with_pr_checks, with_profile, with_release, with_releases,
-        with_repo, with_repo_search, with_run, with_stargazers, with_tags, with_workflow,
+        with_repo, with_repo_search, with_run, with_stargazers, with_tags, with_team, with_teams,
+        with_workflow,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1797,6 +1829,8 @@ mod links {
             ("release", with_release(Mode::Dark)),
             ("tags", with_tags(Mode::Dark)),
             ("branches", with_branches(Mode::Dark)),
+            ("teams", with_teams(Mode::Dark)),
+            ("team", with_team(Mode::Dark)),
             ("gist", with_gist(Mode::Dark)),
             ("gists", with_gists(Mode::Dark)),
             ("blame", with_blame(Mode::Dark)),
