@@ -679,24 +679,42 @@ fn param(url: &url::Url, name: &str) -> Option<String> {
         .map(|(_, v)| v.into_owned())
 }
 
+/// A page at a revision, from what follows its view: the rev is one
+/// segment (a ref's '/' comes escaped), the rest is the path.
+fn rev_page(repo: RepoId, view: &str, rest: &[&str], fragment: Option<&str>) -> Option<Route> {
+    let (rev, path) = match rest {
+        [] if view == "commits" => ("HEAD".to_owned(), String::new()),
+        [rev, path @ ..] if valid_rev(rev) => ((*rev).to_owned(), path.join("/")),
+        _ => return None,
+    };
+    let lines = fragment.and_then(line_range);
+    Some(match view {
+        "tree" => Route::Tree { repo, rev, path },
+        "blob" => Route::Blob {
+            repo,
+            rev,
+            path,
+            lines,
+        },
+        "blame" if !path.is_empty() => Route::Blame {
+            repo,
+            rev,
+            path,
+            lines,
+        },
+        "commits" => Route::Commits { repo, rev, path },
+        _ => return None,
+    })
+}
+
 /// A repository's page, from what follows `/<owner>/<repo>` in its URL.
 fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
     let param = |name: &str| param(url, name);
     let fragment = url.fragment();
     let route = match rest {
         [] => Route::Repo(repo),
-        [kind @ ("tree" | "blob"), rev, path @ ..] => {
-            let (rev, path) = ((*rev).to_owned(), path.join("/"));
-            if *kind == "tree" {
-                Route::Tree { repo, rev, path }
-            } else {
-                Route::Blob {
-                    repo,
-                    rev,
-                    path,
-                    lines: fragment.and_then(line_range),
-                }
-            }
+        [view @ ("tree" | "blob" | "blame" | "commits"), rest @ ..] => {
+            rev_page(repo, view, rest, fragment)?
         }
         [list @ ("issues" | "pulls")] => {
             let query = param("q").map_or_else(|| OPEN.to_owned(), |q| strip_is(&q));
@@ -776,12 +794,6 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             }
             Route::Compare { repo, spec }
         }
-        ["blame", rev, path @ ..] if !path.is_empty() && valid_rev(rev) => Route::Blame {
-            repo,
-            rev: (*rev).to_owned(),
-            path: path.join("/"),
-            lines: fragment.and_then(line_range),
-        },
         // The security overview's part ghtui can show: advisories.
         ["security"] | ["security", "advisories"] => Route::Advisories(Some(repo)),
         ["security", "advisories", ghsa] if valid_ghsa(ghsa) => Route::Advisory {
@@ -804,14 +816,6 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
         }
         // All, active, stale, yours: one list.
         ["branches", ..] => Route::Branches(repo),
-        ["commits", rest @ ..] => {
-            let (rev, path) = match rest {
-                [] => ("HEAD".to_owned(), String::new()),
-                [rev, path @ ..] if valid_rev(rev) => ((*rev).to_owned(), path.join("/")),
-                _ => return None,
-            };
-            Route::Commits { repo, rev, path }
-        }
         ["discussions", rest @ ..] => discussions(DiscussionsOf::Repo(repo), rest)?,
         ["actions", "runs", run, rest @ ..] => {
             let run = run.parse().ok()?;
