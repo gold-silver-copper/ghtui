@@ -2805,10 +2805,7 @@ pub struct BlameRange {
     pub end: u32,
     /// How recent, 1 (newest) to 10 (oldest).
     pub age: u8,
-    pub oid: String,
-    pub headline: String,
-    pub author: Person,
-    pub date: String,
+    pub commit: CommitInfo,
 }
 
 pub(crate) mod wire_blame {
@@ -2841,10 +2838,7 @@ impl wire_blame::Blame {
                     start: r.starting_line,
                     end: r.ending_line,
                     age: r.age,
-                    oid: r.commit.oid,
-                    headline: r.commit.message_headline,
-                    author: r.commit.author.into(),
-                    date: r.commit.committed_date,
+                    commit: r.commit.into_info(),
                 })
                 .collect(),
         }

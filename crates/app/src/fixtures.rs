@@ -317,10 +317,12 @@ pub fn blame() -> Blame {
         start,
         end,
         age: 1,
-        oid: oid.to_string().repeat(40),
-        headline: "Say hello".into(),
-        author: Person::User(Login::unchecked(author)),
-        date: date.into(),
+        commit: CommitInfo {
+            oid: oid.to_string().repeat(40),
+            headline: "Say hello".into(),
+            author: Person::User(Login::unchecked(author)),
+            date: date.into(),
+        },
     };
     Blame {
         ranges: vec![

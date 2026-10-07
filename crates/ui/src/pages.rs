@@ -942,7 +942,7 @@ pub fn blame(
         return;
     };
     let file = link_seg(page, "File", url::blob(repo, rev, path), Role::Link);
-    let commits = unique(blame.ranges.iter().map(|r| &r.oid)).len() as u64;
+    let commits = unique(blame.ranges.iter().map(|r| &r.commit.oid)).len() as u64;
     let info = format!("Blame · {}", plural(commits, "commit"));
     page.box_top(vec![Seg::new(info, Role::Meta)], vec![file]);
     let lines = markdown::highlighted(text, ghtui_diff::Language::from_path(path));
@@ -956,16 +956,17 @@ pub fn blame(
             .find(|r| (r.start as usize..=r.end as usize).contains(&n));
         let mut gutter = match range {
             Some(r) if r.start as usize == n => {
-                let author: String = r.author.name().chars().take(12).collect();
+                let c = &r.commit;
+                let author: String = c.author.name().chars().take(12).collect();
                 vec![
                     link_seg(
                         page,
-                        crate::text::short_sha(&r.oid),
-                        url::commit(repo, &r.oid),
+                        crate::text::short_sha(&c.oid),
+                        url::commit(repo, &c.oid),
                         Role::Code,
                     ),
                     Seg::new(
-                        format!(" {author:<12} {:>8}  ", time::ago_iso(&r.date, now)),
+                        format!(" {author:<12} {:>8}  ", time::ago_iso(&c.date, now)),
                         Role::Meta,
                     ),
                 ]
@@ -4601,10 +4602,12 @@ mod tests {
             start,
             end,
             age: 1,
-            oid: oid.into(),
-            headline: String::new(),
-            author: Person::User(ghtui_api::browse::Login::unchecked("octocat")),
-            date: "2026-10-01T00:00:00Z".into(),
+            commit: CommitInfo {
+                oid: oid.into(),
+                headline: String::new(),
+                author: Person::User(ghtui_api::browse::Login::unchecked("octocat")),
+                date: "2026-10-01T00:00:00Z".into(),
+            },
         };
         let blame = Blame {
             ranges: vec![range(1, 2, "aaaaaaa"), range(3, 3, "bbbbbbb")],
