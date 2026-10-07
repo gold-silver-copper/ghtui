@@ -1226,9 +1226,10 @@ pub(crate) mod diff {
         let _ = s.settle_diff();
     }
 
-    pub(crate) fn diff_state() -> DiffState {
+    /// The fixture's changed files.
+    fn fixture_files() -> Vec<ChangedFile> {
         let regular = (0o100644, 0o100644);
-        let files = vec![
+        vec![
             file(
                 FileStatus::Modified,
                 Some("src/point.rs"),
@@ -1267,7 +1268,11 @@ pub(crate) mod diff {
                 Some("zz/pending.rs"),
                 regular,
             ),
-        ];
+        ]
+    }
+
+    pub(crate) fn diff_state() -> DiffState {
+        let files = fixture_files();
         let mut doc = Doc::new(files, &HashSet::new());
         let diffs = [
             FileDiff::compute(
@@ -1363,6 +1368,38 @@ pub(crate) mod diff {
         let doc = &s.diffs[&d.of].doc;
         assert_eq!(d.anchor, None);
         assert_eq!(doc.annotation_at(d.cursor), Some(1), "the second thread");
+    }
+
+    /// Threads that come before their file's diff don't lose the link's
+    /// place: it waits for the diff, then goes to the thread.
+    #[test]
+    fn review_comment_links_wait_for_their_file() {
+        let mut s = state(Mode::Dark, ColorDepth::TrueColor);
+        let url = "https://github.com/o/r/pull/7#discussion_r42".to_owned();
+        let _ = s.follow(&ghtui_ui::page::Link::Url(url));
+        let mut diff = loaded(Doc::new(fixture_files(), &HashSet::new()));
+        let mut thread = crate::fixtures::thread("t", Some(3), false, false);
+        thread.comments[0].url = "https://github.com/o/r/pull/7#discussion_r42".into();
+        diff.set_threads(vec![thread]);
+        s.diffs.insert(DiffOf::Pr(pr()), diff);
+        let _ = s.settle_diff();
+        let waiting = matches!(s.screen(), Screen::Diff(d) if d.anchor.is_some());
+        assert!(waiting, "waits for src/point.rs's diff");
+        if let Some(diff) = s.diffs.get_mut(&DiffOf::Pr(pr())) {
+            let d = FileDiff::compute(
+                "src/point.rs",
+                Some(OLD_RS.as_bytes()),
+                Some(NEW_RS.as_bytes()),
+            );
+            diff.doc.set_diff(0, Arc::new(d));
+            diff.refresh_annotations();
+        }
+        let _ = s.settle_diff();
+        let Screen::Diff(d) = s.screen() else {
+            panic!("not a diff");
+        };
+        assert_eq!(d.anchor, None);
+        assert_eq!(s.diffs[&d.of].doc.annotation_at(d.cursor), Some(0));
     }
 
     #[test]

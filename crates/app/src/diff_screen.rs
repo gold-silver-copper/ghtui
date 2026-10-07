@@ -730,20 +730,44 @@ fn anchor_pos(anchor: &str, state: &DiffState) -> Option<Option<Pos>> {
             .position(|f| path_hash(f.meta.path()) == hash);
         return Some(file.map(|file| Pos { file, row: 0 }));
     }
-    let id = anchor
+    let Some(id) = anchor
         .strip_prefix("discussion_r")
         .or_else(|| anchor.strip_prefix('r'))
-        .filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))?;
+        .filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+    else {
+        // Not something ghtui finds in a diff (`#files`).
+        return Some(None);
+    };
     if state.threads.is_empty() {
         return None;
     }
     let comment = format!("#discussion_r{id}");
     // Annotations list the threads first, in order.
-    let thread = state
+    let Some((index, thread)) = state
         .threads
         .iter()
-        .position(|t| t.comments.iter().any(|c| c.url.ends_with(&comment)));
-    Some(thread.and_then(|t| doc.annotation_pos(u32::try_from(t).ok()?)))
+        .enumerate()
+        .find(|(_, t)| t.comments.iter().any(|c| c.url.ends_with(&comment)))
+    else {
+        return Some(None);
+    };
+    if let Some(pos) = u32::try_from(index)
+        .ok()
+        .and_then(|i| doc.annotation_pos(i))
+    {
+        return Some(Some(pos));
+    }
+    // Its file shows no thread rows yet: wait while it's being diffed;
+    // once it is (collapsed, say), go to the file.
+    let Some(file) = doc
+        .files()
+        .iter()
+        .position(|f| f.meta.path() == thread.path)
+    else {
+        return Some(None);
+    };
+    let diffed = doc.files().get(file).is_some_and(|f| f.diff.is_some());
+    diffed.then_some(Some(Pos { file, row: 0 }))
 }
 
 /// Applies view options, clamps positions, keeps the cursor visible (clear
