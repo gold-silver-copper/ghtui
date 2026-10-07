@@ -350,27 +350,7 @@ impl DiffState {
         self.doc = Doc::new(files.files, &files.generated, self.doc_inputs());
         self.tree = tree_rows(&self.doc);
         self.refs = Some(files.refs);
-        self.progress = if self.doc.is_empty() {
-            None
-        } else {
-            Some("Computing diffs".into())
-        };
-    }
-
-    /// Shows `doc` as if the job had listed and diffed its files, with
-    /// these inputs.
-    #[cfg(test)]
-    pub(crate) fn with_doc(mut self, refs: PrRefs, doc: Doc) -> Self {
-        self.set_files(DiffFiles {
-            refs,
-            files: Vec::new(),
-            generated: HashSet::new(),
-        });
-        self.doc = doc;
-        self.doc.set_inputs(self.doc_inputs());
-        self.tree = tree_rows(&self.doc);
         self.progress = (!self.doc.is_empty()).then(|| "Computing diffs".into());
-        self
     }
 
     pub fn set_file(&mut self, index: usize, diff: Arc<FileDiff>) {
@@ -1165,6 +1145,27 @@ pub(crate) fn check_pr_diff(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl DiffState {
+        /// Lists `doc`'s files at `refs` and diffs them as it has, as if the
+        /// job had sent them.
+        pub(crate) fn with_doc(mut self, refs: PrRefs, doc: &Doc) -> Self {
+            let files = doc.files().iter().map(|f| f.meta.clone()).collect();
+            let generated = HashSet::new();
+            self.set_files(DiffFiles {
+                refs,
+                files,
+                generated,
+            });
+            for (i, f) in doc.files().iter().enumerate() {
+                if let Some(diff) = &f.diff {
+                    self.doc.set_diff(i, Arc::clone(diff));
+                }
+            }
+            self.doc.set_moves(doc.moves().to_vec());
+            self
+        }
+    }
 
     #[test]
     fn a_prs_diff_is_checked_against_github() {
