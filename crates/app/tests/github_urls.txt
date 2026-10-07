@@ -55,7 +55,7 @@ https://github.com/rust-lang/rust/actions/runs/37486756971/job/112349439173#step
 https://github.com/rust-lang/rust/actions/runs/37486756971/workflow         WorkflowRun
 https://github.com/rust-lang/rust/actions/workflows/ci.yml                  Workflow
 # Milestone
-https://github.com/rust-lang/rust/milestone/147                             todo Milestone
+https://github.com/rust-lang/rust/milestone/147                             Milestone
 # Release, ReleaseAsset (url and downloadUrl)
 https://github.com/rust-lang/rust/releases/tag/1.99.0                       Release
 https://github.com/rust-lang/rust/releases/download/1.99.0/rust.tar.gz      external download
@@ -106,8 +106,8 @@ https://github.com/torvalds?tab=overview&from=2026-09-01&to=2026-09-30      User
 
 # ---- (b) REST API description (html_url shapes) ------------------------------
 
-https://github.com/octocat/Hello-World/milestones/v1.0                      todo Milestones
-https://github.com/octocat/Hello-World/milestones                           todo Milestones
+https://github.com/octocat/Hello-World/milestones/v1.0                      Milestones
+https://github.com/octocat/Hello-World/milestones                           Milestones
 https://github.com/octocat/Hello-World/pull/1347                            Pr
 https://github.com/octocat/Hello-World/issues/1347#issuecomment-1           Issue
 https://github.com/octocat/Hello-World/actions/runs/5                       WorkflowRun
@@ -204,7 +204,7 @@ https://github.com/rust-lang/rust/releases/latest                           Rele
 https://github.com/rust-lang/rust/stargazers                                Stargazers
 https://github.com/rust-lang/rust/watchers                                  Watchers
 https://github.com/rust-lang/rust/forks                                     Forks
-https://github.com/rust-lang/rust/milestones                                todo Milestones
+https://github.com/rust-lang/rust/milestones                                Milestones
 # Code
 https://github.com/rust-lang/rust/tree/main                                 Tree
 https://github.com/rust-lang/rust/tree/main/compiler                        Tree

@@ -456,6 +456,7 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Releases(repo)
         | Route::Tags(repo)
         | Route::Branches(repo)
+        | Route::Milestones { repo, .. }
         | Route::Actions(repo) => Route::Repo(repo.clone()),
         Route::Discussion { of, .. } => Route::Discussions {
             of: of.clone(),
@@ -466,6 +467,10 @@ fn up(state: &State, route: &Route) -> Option<Route> {
             ..
         } => Route::user(org),
         Route::Release { repo, .. } => Route::Releases(repo.clone()),
+        Route::Milestone { repo, .. } => Route::Milestones {
+            repo: repo.clone(),
+            closed: false,
+        },
         Route::WorkflowRun { repo, .. }
         | Route::Workflow { repo, .. }
         | Route::Job {

@@ -450,6 +450,35 @@ fn with_branches(mode: Mode) -> State {
     );
     state
 }
+/// A repository's milestones.
+fn with_milestones(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Milestones {
+        repo: ghtui(),
+        closed: false,
+    };
+    open(
+        &mut state,
+        route,
+        Data::Milestones(Box::new(fixtures::milestones())),
+    );
+    state
+}
+
+/// A milestone.
+fn with_milestone(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Milestone {
+        repo: ghtui(),
+        number: 3,
+    };
+    open(
+        &mut state,
+        route,
+        Data::Milestone(Box::new(fixtures::milestone())),
+    );
+    state
+}
 /// A branch's commits.
 fn with_history(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -708,6 +737,16 @@ fn release_light() {
 #[test]
 fn tags_dark() {
     insta::assert_snapshot!(render(&with_tags(Mode::Dark)));
+}
+
+#[test]
+fn milestones_dark() {
+    insta::assert_snapshot!(render(&with_milestones(Mode::Dark)));
+}
+
+#[test]
+fn milestone_light() {
+    insta::assert_snapshot!(render(&with_milestone(Mode::Light)));
 }
 
 #[test]
@@ -1598,8 +1637,9 @@ mod links {
     use super::{
         press, with_actions, with_branches, with_commit, with_discussion, with_discussions,
         with_file, with_forks, with_history, with_inbox, with_issue, with_issues, with_job,
-        with_pr, with_pr_checks, with_profile, with_release, with_releases, with_repo,
-        with_repo_search, with_run, with_stargazers, with_tags, with_workflow,
+        with_milestone, with_milestones, with_pr, with_pr_checks, with_profile, with_release,
+        with_releases, with_repo, with_repo_search, with_run, with_stargazers, with_tags,
+        with_workflow,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1667,6 +1707,8 @@ mod links {
             ("release", with_release(Mode::Dark)),
             ("tags", with_tags(Mode::Dark)),
             ("branches", with_branches(Mode::Dark)),
+            ("milestones", with_milestones(Mode::Dark)),
+            ("milestone", with_milestone(Mode::Dark)),
             ("run", with_run(Mode::Dark)),
             ("discussions", with_discussions(Mode::Dark)),
             ("discussion", with_discussion(Mode::Dark)),
