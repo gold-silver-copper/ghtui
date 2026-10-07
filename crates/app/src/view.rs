@@ -167,7 +167,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             );
         }
         Some(Overlay::Submit(dialog)) => {
-            let pending = state.diff().map_or(&[][..], |d| &d.review.pending);
+            let pending = state.diff().map_or(&[][..], |d| &d.inputs().review.pending);
             let rejected = pending.iter().filter(|p| p.error.is_some()).count();
             SubmitSheet {
                 ctx,

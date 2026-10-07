@@ -22,6 +22,9 @@ use ghtui_diff::{
 };
 use ghtui_git::files::{ChangedFile, is_lockfile};
 
+/// A file's viewed state, as GitHub keeps it.
+pub use ghtui_api::model::ViewedState as Viewed;
+
 use crate::annotations::{Annotation, AnnotationKey, ThreadRow, ThreadRowKind};
 use crate::{idx, text};
 
@@ -133,15 +136,6 @@ impl Row {
         };
         a.into_iter().chain(b)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Viewed {
-    #[default]
-    Unviewed,
-    Viewed,
-    /// Viewed, but the file changed since.
-    Dismissed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -644,20 +638,29 @@ pub struct Anchor {
     row: usize,
 }
 
+/// What a diff shows that isn't the diff: GitHub's patches, viewed marks,
+/// reviewed hunks, threads and drafts. A [`Doc`] takes them only whole.
+#[derive(Debug, Clone, Default)]
+pub struct DocInputs {
+    /// Commentable ranges from GitHub's patches, by path.
+    pub patches: Arc<HashMap<String, Commentable>>,
+    /// Viewed state by path; unviewed when missing.
+    pub viewed: HashMap<String, Viewed>,
+    /// Hashes of blocks marked reviewed.
+    pub reviewed: HashSet<String>,
+    /// Review threads and drafts.
+    pub annotations: Vec<Annotation>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Doc {
     // Rows are derived from these: change them through the setters, which
     // rebuild, so rows never go stale.
     pub(crate) files: Vec<DocFile>,
     pub(crate) opts: ViewOptions,
-    /// Hashes of blocks marked reviewed.
-    pub reviewed: HashSet<String>,
-    /// Review threads and drafts.
-    pub(crate) annotations: Vec<Annotation>,
+    pub(crate) inputs: DocInputs,
     /// Threads opened or closed by the user (others use their default).
     thread_open: HashMap<AnnotationKey, bool>,
-    /// Commentable ranges from GitHub's patches, by path.
-    patches: HashMap<String, Commentable>,
     /// Moved blocks (computed on the exact alignment).
     pub(crate) moves: Vec<Move>,
     /// Block hashes of the diff at your last review.
@@ -678,7 +681,7 @@ impl Doc {
     }
 
     pub fn annotations(&self) -> &[Annotation] {
-        &self.annotations
+        &self.inputs.annotations
     }
 
     pub fn moves(&self) -> &[Move] {
@@ -690,15 +693,15 @@ impl Doc {
         self.since_active
     }
 
-    pub fn new(files: Vec<ChangedFile>, generated: &HashSet<String>) -> Self {
+    pub fn new(files: Vec<ChangedFile>, generated: &HashSet<String>, inputs: DocInputs) -> Self {
         let files = files
             .into_iter()
             .map(|meta| {
                 let path = meta.path().to_owned();
                 DocFile {
                     generated: generated.contains(&path) || is_lockfile(&path),
+                    viewed: inputs.viewed.get(&path).copied().unwrap_or_default(),
                     meta,
-                    viewed: Viewed::Unviewed,
                     expanded: false,
                     diff: None,
                     full: false,
@@ -715,10 +718,31 @@ impl Doc {
             .collect();
         let mut doc = Self {
             files,
+            inputs,
             ..Self::default()
         };
         doc.rebuild_all();
         doc
+    }
+
+    /// Shows new inputs, rebuilding files whose viewed state changed
+    /// (collapsing them), or everything if the threads or drafts did.
+    pub fn set_inputs(&mut self, inputs: DocInputs) {
+        let old = std::mem::replace(&mut self.inputs, inputs);
+        let viewed = &self.inputs.viewed;
+        let mut changed = Vec::new();
+        for (i, f) in self.files.iter_mut().enumerate() {
+            let now = viewed.get(f.meta.path()).copied().unwrap_or_default();
+            if f.viewed != now {
+                (f.viewed, f.expanded) = (now, false);
+                changed.push(i);
+            }
+        }
+        if old.annotations == self.inputs.annotations {
+            changed.into_iter().for_each(|i| self.rebuild(i));
+        } else {
+            self.rebuild_all();
+        }
     }
 
     fn rebuild_all(&mut self) {
@@ -747,7 +771,7 @@ impl Doc {
         let Doc {
             files,
             opts,
-            annotations,
+            inputs,
             thread_open,
             moves,
             since,
@@ -772,7 +796,8 @@ impl Doc {
         } else {
             Vec::new()
         };
-        let anns: Vec<(u32, &Annotation)> = annotations
+        let anns: Vec<(u32, &Annotation)> = inputs
+            .annotations
             .iter()
             .enumerate()
             .filter(|(_, a)| a.path == path)
@@ -872,14 +897,9 @@ impl Doc {
             .is_some_and(|f| f.blocks.iter().any(|b| !since.contains(&b.hash)))
     }
 
-    pub fn set_annotations(&mut self, annotations: Vec<Annotation>) {
-        self.annotations = annotations;
-        self.rebuild_all();
-    }
-
     /// Opens or closes a thread.
     pub fn toggle_thread(&mut self, index: u32) {
-        let Some(ann) = self.annotations.get(index as usize) else {
+        let Some(ann) = self.inputs.annotations.get(index as usize) else {
             return;
         };
         let open = is_open(&self.thread_open, ann);
@@ -889,15 +909,12 @@ impl Doc {
         }
     }
 
-    pub fn set_patches(&mut self, patches: HashMap<String, Commentable>) {
-        self.patches = patches;
-    }
-
     /// Where comments on `file` can go: GitHub's patch if we have it,
     /// otherwise the local reconstruction.
     pub fn commentable(&self, file: usize) -> Option<&Commentable> {
         let f = self.files.get(file)?;
-        self.patches
+        self.inputs
+            .patches
             .get(f.meta.path())
             .or(f.local_commentable.as_ref())
     }
@@ -953,7 +970,8 @@ impl Doc {
             return false;
         };
         let unresolved = |i: u32| {
-            self.annotations
+            self.inputs
+                .annotations
                 .get(i as usize)
                 .is_some_and(|a| !a.resolved)
         };
@@ -1025,13 +1043,6 @@ impl Doc {
     /// Shows or hides a collapsed (generated or viewed) file.
     pub fn toggle_expanded(&mut self, index: usize) {
         self.update(index, |file| file.expanded = !file.expanded);
-    }
-
-    pub fn set_viewed(&mut self, index: usize, viewed: Viewed) {
-        self.update(index, |file| {
-            file.viewed = viewed;
-            file.expanded = false;
-        });
     }
 
     pub fn toggle_full(&mut self, index: usize) {
@@ -1414,6 +1425,7 @@ pub(crate) mod tests {
         let mut doc = Doc::new(
             vec![changed("a.txt"), changed("Cargo.lock"), changed("b.txt")],
             &HashSet::new(),
+            Default::default(),
         );
         let old = numbered(60);
         let new = old
@@ -1425,7 +1437,7 @@ pub(crate) mod tests {
 
     /// A document of one file, `old` changed to `new`.
     fn one(path: &str, old: &str, new: &str) -> Doc {
-        let mut doc = Doc::new(vec![changed(path)], &HashSet::new());
+        let mut doc = Doc::new(vec![changed(path)], &HashSet::new(), Default::default());
         doc.set_diff(0, compute(path, old, new));
         doc
     }
@@ -1512,7 +1524,11 @@ pub(crate) mod tests {
         assert_eq!(doc.next_file(h2), Some(Pos { file: 1, row: 0 }));
         assert_eq!(doc.prev_file(h2), Some(Pos { file: 0, row: 0 }));
 
-        doc.set_viewed(1, Viewed::Viewed);
+        let viewed = [("Cargo.lock".to_owned(), Viewed::Viewed)].into();
+        doc.set_inputs(DocInputs {
+            viewed,
+            ..DocInputs::default()
+        });
         assert_eq!(doc.files[1].rows()[1], Row::Note(Note::Viewed));
         assert_eq!(
             doc.next_unviewed(Pos::default()),
@@ -1702,6 +1718,13 @@ pub(crate) mod tests {
             }
         }
 
+        fn set_annotations(doc: &mut Doc, annotations: Vec<Annotation>) {
+            doc.set_inputs(DocInputs {
+                annotations,
+                ..DocInputs::default()
+            });
+        }
+
         fn rows_of(doc: &Doc) -> String {
             kinds(&doc.files[0])
         }
@@ -1709,10 +1732,13 @@ pub(crate) mod tests {
         #[test]
         fn threads_sit_under_their_line_or_the_header() {
             let mut doc = doc();
-            doc.set_annotations(vec![
-                ann("line", Side::Right, Some(5)),
-                ann("file", Side::Right, None),
-            ]);
+            set_annotations(
+                &mut doc,
+                vec![
+                    ann("line", Side::Right, Some(5)),
+                    ann("file", Side::Right, None),
+                ],
+            );
             let file = &doc.files[0];
             // File-level thread right after the header (head, 2 body, footer).
             assert!(rows_of(&doc).starts_with("HTTTT"), "{}", rows_of(&doc));
@@ -1729,7 +1755,7 @@ pub(crate) mod tests {
             let mut doc = doc();
             let mut long = ann("file", Side::Right, None);
             long.left_out = 120;
-            doc.set_annotations(vec![long]);
+            set_annotations(&mut doc, vec![long]);
             let file = &doc.files[0];
             let texts: Vec<(ThreadRowKind, String)> = file
                 .rows()
@@ -1758,7 +1784,7 @@ pub(crate) mod tests {
             // Line 30 is far from both changes (5 and 45): normally hidden.
             let visible = |doc: &Doc| line_row(&doc.files[0], |l| l.new == Some(30)).is_some();
             assert!(!visible(&doc));
-            doc.set_annotations(vec![ann("far", Side::Right, Some(30))]);
+            set_annotations(&mut doc, vec![ann("far", Side::Right, Some(30))]);
             assert!(visible(&doc));
         }
 
@@ -1767,7 +1793,7 @@ pub(crate) mod tests {
             let mut doc = doc();
             let mut resolved = ann("r", Side::Right, Some(5));
             resolved.resolved = true;
-            doc.set_annotations(vec![resolved]);
+            set_annotations(&mut doc, vec![resolved]);
             assert!(!rows_of(&doc).contains('T'), "collapsed: marker only");
             doc.toggle_thread(0);
             assert!(rows_of(&doc).contains("TTTT"));
@@ -1780,7 +1806,7 @@ pub(crate) mod tests {
             let mut doc = doc();
             let mut resolved = ann("r", Side::Right, Some(5));
             resolved.resolved = true;
-            doc.set_annotations(vec![resolved, ann("open", Side::Right, Some(45))]);
+            set_annotations(&mut doc, vec![resolved, ann("open", Side::Right, Some(45))]);
             let first = doc.next_thread(Pos::default()).unwrap();
             assert_eq!(
                 doc.files[0]
@@ -1803,7 +1829,7 @@ pub(crate) mod tests {
                 wrap: 40,
                 ..view(true, Whitespace::Exact)
             });
-            doc.set_annotations(vec![ann("old", Side::Left, Some(5))]);
+            set_annotations(&mut doc, vec![ann("old", Side::Left, Some(5))]);
             let file = &doc.files[0];
             let at = line_row(file, |l| l.old == Some(5)).unwrap();
             assert!(matches!(file.rows()[at + 1], Row::Thread(_)));
@@ -1895,7 +1921,11 @@ pub(crate) mod tests {
         #[test]
         fn moved_blocks_get_rows_and_jump_targets() {
             let block = "fn helper(x: u32) -> u32 {\n    let y = x * 2;\n    y + 1\n}\n";
-            let mut doc = Doc::new(vec![changed("a.rs"), changed("b.rs")], &HashSet::new());
+            let mut doc = Doc::new(
+                vec![changed("a.rs"), changed("b.rs")],
+                &HashSet::new(),
+                Default::default(),
+            );
             doc.set_diff(
                 0,
                 compute(

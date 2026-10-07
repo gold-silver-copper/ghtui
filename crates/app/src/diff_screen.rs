@@ -3,16 +3,14 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use ghtui_api::model::{
-    NodeId, PatchFile, PrDetail, PrRef, RepoId, ReviewThread, ViewedFiles, ViewedState,
-};
+use ghtui_api::model::{NodeId, PatchFile, PrDetail, PrRef, RepoId, ReviewThread, ViewedFiles};
 use ghtui_diff::anchor::Commentable;
 use ghtui_diff::{FileDiff, Whitespace};
 use ghtui_git::Oid;
 use ghtui_git::repo::{Commit, PrRefs};
 use ghtui_store::ReviewState;
 use ghtui_ui::bars::Notice;
-use ghtui_ui::diff_doc::{Doc, Note, Pos, Row, ViewOptions, Viewed};
+use ghtui_ui::diff_doc::{Doc, DocInputs, Note, Pos, Row, ViewOptions, Viewed};
 use ghtui_ui::file_tree::{TreeRow, row_of_file, tree_rows};
 use ghtui_ui::text::short_sha;
 use ratatui::layout::Rect;
@@ -20,7 +18,7 @@ use ratatui::layout::Rect;
 use crate::diff_job::{DiffFiles, JobId, JobMsg, next_job};
 use crate::keymap::Action;
 use crate::picker;
-use crate::review::{on_submitted, review_action, start_since_review};
+use crate::review::{annotations, on_submitted, review_action, start_since_review};
 use crate::state::{Api, Cmd, DiffMsg, Git, Overlay, Problem, State};
 
 /// What GitHub says about your last submitted review of a PR.
@@ -157,129 +155,44 @@ pub struct RangeView {
     pub to: String,
 }
 
-/// Everything known about one PR's diff.
+/// What GitHub and the saved review say of a PR's diff; it outlasts every
+/// rebuild of the diff.
 #[derive(Debug, Default)]
-pub struct DiffState {
-    pub doc: Doc,
-    pub tree: Vec<TreeRow>,
-    pub refs: Option<PrRefs>,
-    /// What the background job is doing, while it works.
-    pub progress: Option<String>,
-    pub error: Option<String>,
+pub struct DiffInputs {
     /// GitHub's viewed state and the PR's node ID.
     pub viewed: Option<ViewedFiles>,
     /// Locally persisted review marks and draft comments.
     pub review: ReviewState,
+    /// The saved review state has been read (saving before that would
+    /// overwrite it).
+    pub review_loaded: bool,
     /// Review threads from GitHub.
     pub threads: Vec<ReviewThread>,
     /// Outdated threads mapped onto the current diff (`None`: can't be).
     pub mapped: HashMap<NodeId, Option<u32>>,
-    /// Outdated-thread mapping was requested.
-    pub mapping_requested: bool,
-    /// Move detection was requested (once every file is diffed).
-    pub moves_requested: bool,
+    /// Commentable ranges from GitHub's patches of the whole PR, by path.
+    pub patches: Arc<HashMap<String, Commentable>>,
     /// Your last submitted review on GitHub.
     pub last_review: LastReview,
-    /// "Since my last review" was asked for and is waiting on data.
-    pub since_requested: bool,
     /// The PR's commits, oldest first.
     pub commits: Vec<Commit>,
-    /// Showing a sub-range of commits instead of the whole PR.
-    pub range: Option<RangeView>,
-    /// Files we've already asked the job to prioritize.
-    requested: HashSet<usize>,
-    /// The diff job whose results this shows; older jobs' are ignored.
-    pub job: JobId,
-    /// The saved review state has been read (saving before that would
-    /// overwrite it).
-    pub review_loaded: bool,
     /// The draft deleted last, for undo.
     pub deleted: Option<ghtui_store::DraftComment>,
 }
 
-impl DiffState {
-    /// The file list has arrived.
-    pub fn listed(&self) -> bool {
-        self.refs.is_some()
-    }
-
-    /// The head commit the diff was computed at.
-    pub fn head(&self) -> Option<Oid> {
-        self.refs.as_ref().map(|r| r.head.clone())
-    }
-
-    pub fn loading() -> Self {
-        Self {
-            progress: Some("Preparing".into()),
-            job: next_job(),
-            ..Self::default()
+impl DiffInputs {
+    /// Notes `path`'s viewed state, once GitHub's are in.
+    pub fn set_viewed(&mut self, path: String, viewed: Viewed) {
+        if let Some(files) = &mut self.viewed {
+            files.states.insert(path, viewed);
         }
     }
 
-    pub fn set_files(&mut self, refs: PrRefs, doc: Doc) {
-        self.tree = tree_rows(&doc);
-        self.doc = doc;
-        self.refs = Some(refs);
-        self.progress = if self.doc.is_empty() {
-            None
-        } else {
-            Some("Computing diffs".into())
-        };
-        self.apply_viewed();
-        self.apply_review();
-    }
-
-    pub fn set_file(&mut self, index: usize, diff: Arc<FileDiff>) {
-        self.doc.set_diff(index, diff);
-        if self.doc.ready_count() == self.doc.files().len() {
-            self.progress = None;
+    /// Marks thread `id` resolved or not.
+    pub fn set_resolved(&mut self, id: &NodeId, resolved: bool) {
+        if let Some(t) = self.threads.iter_mut().find(|t| t.id == *id) {
+            t.resolved = resolved;
         }
-    }
-
-    /// Starts over for a different commit range, keeping threads, drafts,
-    /// viewed state and commits.
-    pub fn restart(&mut self, range: Option<RangeView>) {
-        self.doc = Doc::default();
-        self.tree.clear();
-        self.refs = None;
-        self.progress = Some("Preparing".into());
-        self.error = None;
-        self.requested.clear();
-        self.moves_requested = false;
-        self.mapping_requested = false;
-        self.since_requested = false;
-        self.range = range;
-        self.job = next_job();
-    }
-
-    /// Every file's diff, once all have arrived and moves haven't been
-    /// looked for yet.
-    pub fn take_move_inputs(&mut self) -> Option<Vec<(usize, Arc<FileDiff>)>> {
-        if self.moves_requested || !self.listed() || self.doc.ready_count() < self.doc.files().len()
-        {
-            return None;
-        }
-        self.moves_requested = true;
-        Some(
-            self.doc
-                .files()
-                .iter()
-                .enumerate()
-                .filter_map(|(i, f)| f.diff.clone().map(|d| (i, d)))
-                .collect(),
-        )
-    }
-
-    pub fn set_viewed_states(&mut self, viewed: ViewedFiles) {
-        self.viewed = Some(viewed);
-        self.apply_viewed();
-    }
-
-    #[cfg(test)]
-    pub fn set_review(&mut self, review: ReviewState) {
-        self.review = review;
-        self.review_loaded = true;
-        self.apply_review();
     }
 
     /// Takes in the saved review state, keeping whatever was done before
@@ -302,56 +215,133 @@ impl DiffState {
             review.last_reviewed_head = early.last_reviewed_head;
         }
         self.review_loaded = true;
-        self.apply_review();
         changed
     }
+}
 
-    fn apply_viewed(&mut self) {
-        let Some(viewed) = &self.viewed else { return };
-        let updates: Vec<(usize, Viewed)> = self
-            .doc
-            .files()
-            .iter()
-            .enumerate()
-            .filter_map(|(i, f)| {
-                let state = match viewed.states.get(f.meta.path()) {
-                    Some(ViewedState::Viewed) => Viewed::Viewed,
-                    Some(ViewedState::Dismissed) => Viewed::Dismissed,
-                    _ => Viewed::Unviewed,
-                };
-                (f.viewed != state).then_some((i, state))
-            })
-            .collect();
-        for (i, state) in updates {
-            self.doc.set_viewed(i, state);
+/// Everything known about one PR's diff: its inputs, and what a job made.
+#[derive(Debug, Default)]
+pub struct DiffState {
+    /// Changed only through [`DiffState::edit`], which shows the change.
+    inputs: DiffInputs,
+    pub doc: Doc,
+    pub tree: Vec<TreeRow>,
+    pub refs: Option<PrRefs>,
+    /// What the background job is doing, while it works.
+    pub progress: Option<String>,
+    pub error: Option<String>,
+    /// Outdated-thread mapping was requested.
+    pub mapping_requested: bool,
+    /// Move detection was requested (once every file is diffed).
+    pub moves_requested: bool,
+    /// "Since my last review" was asked for and is waiting on data.
+    pub since_requested: bool,
+    /// Showing a sub-range of commits instead of the whole PR.
+    pub range: Option<RangeView>,
+    /// Files we've already asked the job to prioritize.
+    requested: HashSet<usize>,
+    /// The diff job whose results this shows; older jobs' are ignored.
+    pub job: JobId,
+}
+
+impl DiffState {
+    /// A new job's diff of `range` (`None`: the whole PR), with `inputs`.
+    pub fn start(inputs: DiffInputs, range: Option<RangeView>) -> Self {
+        Self {
+            inputs,
+            range,
+            progress: Some("Preparing".into()),
+            job: next_job(),
+            ..Self::default()
         }
     }
 
-    fn apply_review(&mut self) {
-        self.doc.reviewed = self.review.reviewed_hunks.iter().cloned().collect();
-        self.refresh_annotations();
+    /// Starts over for a different commit range, with the same inputs.
+    pub fn restart(&mut self, range: Option<RangeView>) {
+        *self = Self::start(std::mem::take(&mut self.inputs), range);
     }
 
-    pub fn set_threads(&mut self, threads: Vec<ReviewThread>) {
-        self.threads = threads;
-        self.refresh_annotations();
+    pub fn inputs(&self) -> &DiffInputs {
+        &self.inputs
     }
 
-    pub fn set_patches(&mut self, patches: Vec<PatchFile>) {
-        let map = patches
-            .into_iter()
-            .filter_map(|f| Some((f.filename, Commentable::from_patch(&f.patch?))))
-            .collect();
-        self.doc.set_patches(map);
-    }
-
-    /// Rebuilds thread and draft annotations from current data.
-    pub fn refresh_annotations(&mut self) {
-        let annotations =
-            crate::review::annotations(&self.threads, &self.mapped, &self.review.pending);
-        if annotations != self.doc.annotations() {
-            self.doc.set_annotations(annotations);
+    /// What the doc shows of the inputs; GitHub's patches only on the
+    /// whole PR's diff, whose lines they number.
+    fn doc_inputs(&self) -> DocInputs {
+        let i = &self.inputs;
+        DocInputs {
+            patches: if self.range.is_none() {
+                Arc::clone(&i.patches)
+            } else {
+                Arc::default()
+            },
+            viewed: i.viewed.iter().flat_map(|v| v.states.clone()).collect(),
+            reviewed: i.review.reviewed_hunks.iter().cloned().collect(),
+            annotations: annotations(&i.threads, &i.mapped, &i.review.pending),
         }
+    }
+
+    /// Changes the inputs with `f` and shows the change.
+    pub fn edit<R>(&mut self, f: impl FnOnce(&mut DiffInputs) -> R) -> R {
+        let r = f(&mut self.inputs);
+        self.doc.set_inputs(self.doc_inputs());
+        r
+    }
+
+    /// Changes the review with `f`, shows the change, and saves it once
+    /// the saved one has been read (saving before would overwrite it).
+    #[must_use]
+    pub fn edit_review(&mut self, pr: &PrRef, f: impl FnOnce(&mut DiffInputs)) -> Vec<Cmd> {
+        self.edit(f);
+        let i = &self.inputs;
+        let save = || Cmd::SaveReview(pr.clone(), i.review.clone());
+        i.review_loaded.then(save).into_iter().collect()
+    }
+
+    /// The file list has arrived.
+    pub fn listed(&self) -> bool {
+        self.refs.is_some()
+    }
+
+    /// The head commit the diff was computed at.
+    pub fn head(&self) -> Option<Oid> {
+        self.refs.as_ref().map(|r| r.head.clone())
+    }
+
+    pub fn set_files(&mut self, files: DiffFiles) {
+        self.doc = Doc::new(files.files, &files.generated, self.doc_inputs());
+        self.tree = tree_rows(&self.doc);
+        self.refs = Some(files.refs);
+        self.progress = if self.doc.is_empty() {
+            None
+        } else {
+            Some("Computing diffs".into())
+        };
+    }
+
+    pub fn set_file(&mut self, index: usize, diff: Arc<FileDiff>) {
+        self.doc.set_diff(index, diff);
+        if self.doc.ready_count() == self.doc.files().len() {
+            self.progress = None;
+        }
+    }
+
+    /// Every file's diff, once all have arrived and moves haven't been
+    /// looked for yet.
+    pub fn take_move_inputs(&mut self) -> Option<Vec<(usize, Arc<FileDiff>)>> {
+        if self.moves_requested || !self.listed() || self.doc.ready_count() < self.doc.files().len()
+        {
+            return None;
+        }
+        self.moves_requested = true;
+        Some(
+            self.doc
+                .files()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, f)| f.diff.clone().map(|d| (i, d)))
+                .collect(),
+        )
     }
 
     pub fn status(&self) -> Option<String> {
@@ -649,7 +639,7 @@ fn toggle_viewed(
         *notice = Some(Notice::Info("Viewed files are a pull request's".into()));
         return Vec::new();
     };
-    let Some(viewed) = &state.viewed else {
+    let Some(viewed) = &state.inputs().viewed else {
         *notice = Some(Notice::Error(
             "Viewed state hasn't loaded from GitHub yet".into(),
         ));
@@ -659,7 +649,7 @@ fn toggle_viewed(
     let Some(file) = state.doc.files().get(index) else {
         return Vec::new();
     };
-    let previous = file.viewed;
+    let (previous, path) = (file.viewed, file.meta.path().to_owned());
     let now = if previous == Viewed::Viewed {
         Viewed::Unviewed
     } else {
@@ -668,13 +658,12 @@ fn toggle_viewed(
     let cmd = Cmd::Api(Api::SetViewed {
         pr,
         pull_request_id: viewed.pull_request_id.clone(),
-        path: file.meta.path().to_owned(),
-        file: index,
+        path: path.clone(),
         viewed: now == Viewed::Viewed,
         previous,
     });
     // Optimistic: show it now, roll back if GitHub refuses.
-    state.doc.set_viewed(index, now);
+    state.edit(|i| i.set_viewed(path, now));
     screen.cursor = Pos {
         file: index,
         row: 0,
@@ -699,15 +688,15 @@ fn toggle_reviewed(
         return Vec::new();
     };
     let hash = block.hash.clone();
-    let hunks = &mut state.review.reviewed_hunks;
-    if let Some(i) = hunks.iter().position(|h| *h == hash) {
-        hunks.remove(i);
-    } else {
-        hunks.push(hash);
-        hunks.sort();
-    }
-    state.doc.reviewed = hunks.iter().cloned().collect();
-    vec![Cmd::SaveReview(pr, state.review.clone())]
+    state.edit_review(&pr, |i| {
+        let hunks = &mut i.review.reviewed_hunks;
+        if let Some(i) = hunks.iter().position(|h| *h == hash) {
+            hunks.remove(i);
+        } else {
+            hunks.push(hash);
+            hunks.sort();
+        }
+    })
 }
 
 /// How GitHub names a file in its diffs' anchors: the SHA-256 of its path,
@@ -744,13 +733,13 @@ fn anchor_pos(anchor: &str, state: &DiffState, pr: bool) -> Option<Option<Pos>> 
     if !pr {
         return Some(None);
     }
-    if state.threads.is_empty() {
+    let threads = &state.inputs().threads;
+    if threads.is_empty() {
         return None;
     }
     let comment = format!("#discussion_r{id}");
     // Annotations list the threads first, in order.
-    let Some((index, thread)) = state
-        .threads
+    let Some((index, thread)) = threads
         .iter()
         .enumerate()
         .find(|(_, t)| t.comments.iter().any(|c| c.url.ends_with(&comment)))
@@ -869,13 +858,8 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
             let Some(diff) = state.diffs.get_mut(of) else {
                 return Vec::new();
             };
-            let DiffFiles {
-                refs,
-                files,
-                generated,
-            } = *files;
-            let (head, count) = (refs.head.to_string(), files.len());
-            diff.set_files(refs, Doc::new(files, &generated));
+            let (head, count) = (files.refs.head.to_string(), files.files.len());
+            diff.set_files(*files);
             // The whole PR's diff, checked against what GitHub says of it
             // (once that's fresh: a cached copy may be from before a push).
             if let DiffOf::Pr(pr) = of
@@ -933,6 +917,13 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
     Vec::new()
 }
 
+/// Changes the inputs of `of`'s diff, if it's still open.
+fn edit<R>(state: &mut State, of: &DiffOf, f: impl FnOnce(&mut DiffInputs) -> R) {
+    if let Some(diff) = state.diffs.get_mut(of) {
+        diff.edit(f);
+    }
+}
+
 /// A message for a diff screen.
 #[must_use]
 pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
@@ -965,7 +956,8 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
                 None
             });
             if let Some(diff) = state.diffs.get_mut(of) {
-                diff.last_review = commit.map_or(LastReview::None, |c| LastReview::At(Oid::new(c)));
+                let last = commit.map_or(LastReview::None, |c| LastReview::At(Oid::new(c)));
+                diff.edit(|i| i.last_review = last);
                 if diff.since_requested {
                     return start_since_review(state);
                 }
@@ -993,9 +985,7 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
             state.error(format!("Couldn't compare with your last review: {err}"));
         }
         DiffMsg::CommitsListed(Ok(commits)) => {
-            if let Some(diff) = state.diffs.get_mut(of) {
-                diff.commits = commits;
-            }
+            edit(state, of, |i| i.commits = commits);
             state.notice = None;
             return state.open_picker(picker::Kind::Commits { mark: None });
         }
@@ -1005,9 +995,7 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
         }
         DiffMsg::ViewedLoaded(result) => match *result {
             Ok(viewed) => {
-                if let Some(diff) = state.diffs.get_mut(of) {
-                    diff.set_viewed_states(viewed);
-                }
+                edit(state, of, |i| i.viewed = Some(viewed));
             }
             Err(err) => {
                 tracing::warn!(%pr, %err, "viewed state fetch failed");
@@ -1015,24 +1003,22 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
             }
         },
         DiffMsg::ViewedSaved {
-            file,
+            path,
             previous,
             result,
         } => {
             if let Err(err) = result {
                 tracing::warn!(%pr, %err, "viewed state update failed");
-                if let Some(diff) = state.diffs.get_mut(of) {
-                    diff.doc.set_viewed(file, previous);
-                }
+                edit(state, of, |i| i.set_viewed(path, previous));
                 state.error(format!("GitHub didn't save “viewed”: {err}"));
             }
         }
         DiffMsg::ReviewLoaded(Ok(saved)) => {
             // Anything done before it arrived is kept, and saved.
             if let Some(diff) = state.diffs.get_mut(of)
-                && diff.merge_saved_review(saved)
+                && diff.edit(|i| i.merge_saved_review(saved))
             {
-                return vec![Cmd::SaveReview(pr, diff.review.clone())];
+                return vec![Cmd::SaveReview(pr, diff.inputs().review.clone())];
             }
         }
         DiffMsg::ReviewLoaded(Err(err)) => {
@@ -1045,9 +1031,7 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
         DiffMsg::ThreadsLoaded(result) => {
             match result {
                 Ok(threads) => {
-                    if let Some(diff) = state.diffs.get_mut(of) {
-                        diff.set_threads(threads);
-                    }
+                    edit(state, of, |i| i.threads = threads);
                 }
                 Err(err) => {
                     tracing::warn!(%pr, %err, "review threads fetch failed");
@@ -1057,31 +1041,23 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
             return state.map_outdated(&pr);
         }
         DiffMsg::PatchesLoaded(Ok(patches)) => {
-            if let Some(diff) = state.diffs.get_mut(of) {
-                diff.set_patches(patches);
-            }
+            let commentable = |f: PatchFile| Some((f.filename, Commentable::from_patch(&f.patch?)));
+            let patches = Arc::new(patches.into_iter().filter_map(commentable).collect());
+            edit(state, of, |i| i.patches = patches);
         }
         // The local fallback covers commenting; just note it.
         DiffMsg::PatchesLoaded(Err(err)) => {
             tracing::warn!(%pr, %err, "GitHub patches unavailable; using local hunks");
         }
         DiffMsg::OutdatedMapped(mapped) => {
-            if let Some(diff) = state.diffs.get_mut(of) {
-                diff.mapped.extend(mapped);
-                diff.refresh_annotations();
-            }
+            edit(state, of, |i| i.mapped.extend(mapped));
         }
         DiffMsg::ResolvedSet {
             thread_id,
             resolved,
             result: Err(err),
         } => {
-            if let Some(diff) = state.diffs.get_mut(of) {
-                if let Some(t) = diff.threads.iter_mut().find(|t| t.id == thread_id) {
-                    t.resolved = !resolved;
-                }
-                diff.refresh_annotations();
-            }
+            edit(state, of, |i| i.set_resolved(&thread_id, !resolved));
             state.error(format!("GitHub didn't save that: {err}"));
         }
         // Jobs are handled above.

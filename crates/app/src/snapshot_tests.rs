@@ -1271,13 +1271,21 @@ pub(crate) mod diff {
     const NEW_RS: &str = "use std::fmt;\n\n/// A point in 2D.\npub struct Point {\n    x: i32,\n    y: i32,\n}\n\nimpl Point {\n    pub fn new(x: i32, y: i32) -> Self {\n        Point { x, y }\n    }\n\n    pub fn origin() -> Self {\n        Self::new(0, \"0\".len() as i32 - 1)\n    }\n}\n";
 
     fn loaded(doc: Doc) -> DiffState {
-        let mut diff = DiffState::loading();
+        let mut diff = DiffState::start(Default::default(), None);
         let refs = PrRefs {
             head: Oid::new("h"),
             base: Oid::new("b"),
             merge_base: Oid::new("m"),
         };
-        diff.set_files(refs, doc);
+        // As listed by the job, then with the test's own doc.
+        diff.set_files(crate::diff_job::DiffFiles {
+            refs,
+            files: Vec::new(),
+            generated: HashSet::new(),
+        });
+        diff.tree = ghtui_ui::file_tree::tree_rows(&doc);
+        diff.progress = (!doc.is_empty()).then(|| "Computing diffs".into());
+        diff.doc = doc;
         diff
     }
 
@@ -1338,7 +1346,7 @@ pub(crate) mod diff {
 
     pub(crate) fn diff_state() -> DiffState {
         let files = fixture_files();
-        let mut doc = Doc::new(files, &HashSet::new());
+        let mut doc = Doc::new(files, &HashSet::new(), Default::default());
         let diffs = [
             FileDiff::compute(
                 "src/point.rs",
@@ -1421,10 +1429,9 @@ pub(crate) mod diff {
         let mut thread = crate::fixtures::thread("t", Some(3), false, false);
         thread.comments[0].url = "https://github.com/o/r/pull/7#discussion_r42".into();
         if let Some(diff) = s.diffs.get_mut(&DiffOf::Pr(pr())) {
-            diff.set_threads(vec![
-                crate::fixtures::thread("u", Some(1), false, false),
-                thread,
-            ]);
+            diff.edit(|i| {
+                i.threads = vec![crate::fixtures::thread("u", Some(1), false, false), thread];
+            });
         }
         let _ = s.settle_diff();
         let Screen::Diff(d) = s.screen() else {
@@ -1456,10 +1463,14 @@ pub(crate) mod diff {
         let mut s = state(Mode::Dark, ColorDepth::TrueColor);
         let url = "https://github.com/o/r/pull/7#discussion_r42".to_owned();
         let _ = s.follow(&ghtui_ui::page::Link::Url(url));
-        let mut diff = loaded(Doc::new(fixture_files(), &HashSet::new()));
+        let mut diff = loaded(Doc::new(
+            fixture_files(),
+            &HashSet::new(),
+            Default::default(),
+        ));
         let mut thread = crate::fixtures::thread("t", Some(3), false, false);
         thread.comments[0].url = "https://github.com/o/r/pull/7#discussion_r42".into();
-        diff.set_threads(vec![thread]);
+        diff.edit(|i| i.threads = vec![thread]);
         s.diffs.insert(DiffOf::Pr(pr()), diff);
         let _ = s.settle_diff();
         let waiting = matches!(s.screen(), Screen::Diff(d) if d.anchor.is_some());
@@ -1471,7 +1482,6 @@ pub(crate) mod diff {
                 Some(NEW_RS.as_bytes()),
             );
             diff.doc.set_diff(0, Arc::new(d));
-            diff.refresh_annotations();
         }
         let _ = s.settle_diff();
         let Screen::Diff(d) = s.screen() else {
@@ -1519,11 +1529,19 @@ pub(crate) mod diff {
         let mut s = diff_at(Mode::Dark, 0, 3);
         let diff = s.diffs.get_mut(&DiffOf::Pr(pr())).unwrap();
         let hash = diff.doc.files()[0].blocks()[0].hash.clone();
-        diff.set_review(ghtui_store::ReviewState {
-            reviewed_hunks: vec![hash],
-            ..Default::default()
+        diff.edit(|i| {
+            i.review = ghtui_store::ReviewState {
+                reviewed_hunks: vec![hash],
+                ..Default::default()
+            }
         });
-        diff.doc.set_viewed(1, ghtui_ui::diff_doc::Viewed::Viewed);
+        let path = diff.doc.files()[1].meta.path().to_owned();
+        diff.edit(|i| {
+            i.viewed = Some(ghtui_api::model::ViewedFiles {
+                pull_request_id: ghtui_api::model::NodeId::new("PR_1"),
+                states: [(path, ghtui_ui::diff_doc::Viewed::Viewed)].into(),
+            });
+        });
         let _ = s.settle_diff();
         insta::assert_snapshot!(render(&s));
     }
@@ -1560,7 +1578,7 @@ pub(crate) mod diff {
             }
         };
         let diff = s.diffs.get_mut(&DiffOf::Pr(pr())).unwrap();
-        diff.set_threads(vec![
+        diff.edit(|i| i.threads = vec![
             thread(
                 "t1",
                 Some(3),
@@ -1574,19 +1592,21 @@ pub(crate) mod diff {
             thread("t2", Some(10), true, false, vec![comment("c3", "bob", "Looks fine now.", false)].into()),
             thread("t3", None, false, true, vec![comment("c4", "carol", "Please add tests for this file.", false)].into()),
         ]);
-        diff.set_review(ghtui_store::ReviewState {
-            pending: vec![ghtui_store::DraftComment {
-                id: 1,
-                path: "src/point.rs".into(),
-                body: "Prefer `Self::default()` here.".into(),
-                side: ghtui_store::DraftSide::Right,
-                line: Some(15),
-                start_line: None,
-                start_side: None,
-                commit: "h".into(),
-                error: Some("pull_request_review_thread.line must be part of the diff".into()),
-            }],
-            ..Default::default()
+        diff.edit(|i| {
+            i.review = ghtui_store::ReviewState {
+                pending: vec![ghtui_store::DraftComment {
+                    id: 1,
+                    path: "src/point.rs".into(),
+                    body: "Prefer `Self::default()` here.".into(),
+                    side: ghtui_store::DraftSide::Right,
+                    line: Some(15),
+                    start_line: None,
+                    start_side: None,
+                    commit: "h".into(),
+                    error: Some("pull_request_review_thread.line must be part of the diff".into()),
+                }],
+                ..Default::default()
+            }
         });
         let _ = s.settle_diff();
         s
@@ -1667,7 +1687,7 @@ pub(crate) mod diff {
         let math_new = "pub fn area(width: u32, height: u32) -> u32 {\n    width * height\n}\n\nlet total = compute(alpha, gamma);\n// a\n// b\n// c\n// d\ncall(one, two);\n";
         let util_old = "// helpers\n";
         let util_new = format!("// helpers\n{helper}");
-        let mut doc = Doc::new(files, &HashSet::new());
+        let mut doc = Doc::new(files, &HashSet::new(), Default::default());
         doc.set_diff(
             0,
             Arc::new(FileDiff::compute(
@@ -1714,7 +1734,7 @@ pub(crate) mod diff {
     #[test]
     fn diff_loading_dark() {
         let mut s = state(Mode::Dark, ColorDepth::TrueColor);
-        let mut diff = DiffState::loading();
+        let mut diff = DiffState::start(Default::default(), None);
         diff.progress = Some("Receiving objects:  42% (420/1000), 1.2 MiB | 3.4 MiB/s".into());
         open_diff(&mut s, diff, Pos::default(), Pane::Diff);
         insta::assert_snapshot!(render(&s));
@@ -1733,7 +1753,7 @@ pub(crate) mod diff {
     fn diff_long_error_dark() {
         let mut s = state(Mode::Dark, ColorDepth::TrueColor);
         s.size = (80, 24);
-        let mut diff = DiffState::loading();
+        let mut diff = DiffState::start(Default::default(), None);
         diff.progress = None;
         diff.error = Some(
             "git fetch failed: fatal: unable to access 'https://github.com/o/r.git/': \
@@ -1846,7 +1866,12 @@ pub(crate) mod diff {
                 "diff loading",
                 Box::new(move || {
                     let mut s = state(Mode::Dark, tc);
-                    open_diff(&mut s, DiffState::loading(), Pos::default(), Pane::Diff);
+                    open_diff(
+                        &mut s,
+                        DiffState::start(Default::default(), None),
+                        Pos::default(),
+                        Pane::Diff,
+                    );
                     s
                 }),
             ),
@@ -1880,7 +1905,7 @@ pub(crate) mod diff {
                 file(FileStatus::Modified, Some(&path), Some(&path), regular)
             })
             .collect();
-        let mut doc = Doc::new(files, &HashSet::new());
+        let mut doc = Doc::new(files, &HashSet::new(), Default::default());
         let old: String = (0..60)
             .map(|i| format!("    let v{i} = compute({i}, \"x\");\n"))
             .collect();
@@ -1955,7 +1980,7 @@ pub(crate) mod diff {
         );
         let mut s = state(Mode::Dark, ColorDepth::TrueColor);
         s.size = (160, 50);
-        let doc = Doc::new(vec![big], &HashSet::new());
+        let doc = Doc::new(vec![big], &HashSet::new(), Default::default());
         open_diff(&mut s, loaded(doc), Pos::default(), Pane::Diff);
         let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
 

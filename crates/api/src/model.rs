@@ -298,9 +298,10 @@ impl MilestoneRef {
     }
 }
 
-#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cynic(graphql_type = "FileViewedState", schema_module = "schema")]
 pub enum ViewedState {
+    #[default]
     Unviewed,
     Viewed,
     /// Viewed, but the file changed since.

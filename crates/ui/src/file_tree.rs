@@ -243,7 +243,11 @@ mod tests {
     use std::collections::HashSet;
 
     fn doc(paths: &[&str]) -> Doc {
-        Doc::new(paths.iter().map(|p| changed(p)).collect(), &HashSet::new())
+        Doc::new(
+            paths.iter().map(|p| changed(p)).collect(),
+            &HashSet::new(),
+            Default::default(),
+        )
     }
 
     fn render(rows: &[TreeRow]) -> Vec<String> {

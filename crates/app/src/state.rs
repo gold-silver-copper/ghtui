@@ -20,7 +20,7 @@ use ratatui_textarea::TextArea;
 
 use crate::browse::{self, Data, DataKey, Need, PageScreen};
 use crate::diff_job::{JobId, JobMsg};
-use crate::diff_screen::{self, DiffOf, DiffScreen, DiffState, Pane};
+use crate::diff_screen::{self, DiffInputs, DiffOf, DiffScreen, DiffState, Pane};
 use crate::keymap::{Action, Key, Keymap, Scope};
 use crate::nav::{self, Hints, Menu, SearchBox, Visit};
 use crate::picker::{self, Picker};
@@ -104,7 +104,7 @@ pub enum DiffMsg {
     Job(JobId, JobMsg),
     ViewedLoaded(Box<Result<ViewedFiles, ApiError>>),
     ViewedSaved {
-        file: usize,
+        path: String,
         previous: Viewed,
         result: Result<(), ApiError>,
     },
@@ -182,7 +182,6 @@ pub enum Api {
         pr: PrRef,
         pull_request_id: NodeId,
         path: String,
-        file: usize,
         viewed: bool,
         previous: Viewed,
     },
@@ -636,7 +635,8 @@ impl State {
             },
             DiffOf::Commit(..) | DiffOf::Range(..) => crate::diff_job::PrBase::default(),
         };
-        let diff = DiffState::loading();
+        // Every input is fetched again.
+        let diff = DiffState::start(DiffInputs::default(), None);
         let job = diff.job;
         self.diffs.insert(of.clone(), diff);
         let mut cmds = vec![Cmd::Git(Git::LoadDiff {
@@ -722,16 +722,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     ) {
         state.data_gen += 1;
     }
-    let mut cmds = handle(state, msg);
-    // Until a PR's saved review is read, saving would overwrite it.
-    cmds.retain(|cmd| match cmd {
-        Cmd::SaveReview(pr, _) => state
-            .diffs
-            .get(&DiffOf::Pr(pr.clone()))
-            .is_some_and(|d| d.review_loaded),
-        _ => true,
-    });
-    cmds
+    handle(state, msg)
 }
 
 /// Timers the screen needs after an update: the notice expiring (errors
@@ -1095,7 +1086,7 @@ impl State {
         let Some(diff) = self.diffs.get_mut(&of).filter(|d| !d.mapping_requested) else {
             return Vec::new();
         };
-        let threads = review::outdated_to_map(&diff.threads);
+        let threads = review::outdated_to_map(&diff.inputs().threads);
         let Some(head) = diff.head().filter(|_| !threads.is_empty()) else {
             return Vec::new();
         };
@@ -2753,18 +2744,22 @@ pub(crate) mod tests {
             let cmds = press(&mut s, "v");
             assert!(cmds.iter().any(|c| matches!(
                 c,
-                Cmd::Api(Api::SetViewed { file: 1, viewed: true, previous: Viewed::Unviewed, pull_request_id, .. })
+                Cmd::Api(Api::SetViewed { viewed: true, previous: Viewed::Unviewed, pull_request_id, .. })
                     if pull_request_id.as_str() == "PR_1"
             )));
             assert_eq!(
                 s.diffs[&DiffOf::Pr(pr.clone())].doc.files()[1].viewed,
                 Viewed::Viewed
             );
+            let path = s.diffs[&DiffOf::Pr(pr.clone())].doc.files()[1]
+                .meta
+                .path()
+                .to_owned();
             diff_msg(
                 &mut s,
                 &pr,
                 DiffMsg::ViewedSaved {
-                    file: 1,
+                    path,
                     previous: Viewed::Unviewed,
                     result: Err(ApiError::Network("offline".into())),
                 },
@@ -2825,7 +2820,14 @@ pub(crate) mod tests {
             };
             assert_eq!(saved_pr, &pr);
             assert_eq!(review.reviewed_hunks.len(), 1);
-            assert_eq!(s.diffs[&DiffOf::Pr(pr)].doc.reviewed.len(), 1);
+            assert_eq!(
+                s.diffs[&DiffOf::Pr(pr)]
+                    .inputs()
+                    .review
+                    .reviewed_hunks
+                    .len(),
+                1
+            );
             let cmds = press(&mut s, "m");
             let Some(Cmd::SaveReview(_, review)) = cmds.first() else {
                 panic!()
@@ -3135,7 +3137,7 @@ pub(crate) mod tests {
                     &cmds[..],
                     [Cmd::Api(Api::SetResolved { resolved: true, .. }), ..]
                 ));
-                assert!(s.diffs[&DiffOf::Pr(pr.clone())].threads[1].resolved);
+                assert!(s.diffs[&DiffOf::Pr(pr.clone())].inputs().threads[1].resolved);
                 diff_msg(
                     &mut s,
                     &pr,
@@ -3145,7 +3147,7 @@ pub(crate) mod tests {
                         result: Err(ApiError::Network("down".into())),
                     },
                 );
-                assert!(!s.diffs[&DiffOf::Pr(pr.clone())].threads[1].resolved);
+                assert!(!s.diffs[&DiffOf::Pr(pr.clone())].inputs().threads[1].resolved);
                 assert!(matches!(s.notice, Some(Notice::Error(_))));
             }
 
@@ -3181,7 +3183,7 @@ pub(crate) mod tests {
                 press(&mut s, "!");
                 press(&mut s, "<C-s>");
                 assert_eq!(
-                    s.diffs[&DiffOf::Pr(pr.clone())].review.pending[0].body,
+                    s.diffs[&DiffOf::Pr(pr.clone())].inputs().review.pending[0].body,
                     "Use a constant!"
                 );
 
@@ -3261,7 +3263,7 @@ pub(crate) mod tests {
                 press(&mut s, "c");
                 press(&mut s, "nit");
                 press(&mut s, "<C-s>");
-                let id = s.diffs[&DiffOf::Pr(pr.clone())].review.pending[0].id;
+                let id = s.diffs[&DiffOf::Pr(pr.clone())].inputs().review.pending[0].id;
 
                 press(&mut s, "a");
                 assert!(matches!(s.overlay, Some(Overlay::Submit(_))));
@@ -3284,7 +3286,7 @@ pub(crate) mod tests {
                     matches!(&s.overlay, Some(Overlay::Submit(d)) if d.error.is_some() && !d.sending)
                 );
                 assert_eq!(
-                    s.diffs[&DiffOf::Pr(pr.clone())].review.pending[0]
+                    s.diffs[&DiffOf::Pr(pr.clone())].inputs().review.pending[0]
                         .error
                         .as_deref(),
                     Some("line must be part of the diff")
@@ -3294,7 +3296,7 @@ pub(crate) mod tests {
                 press(&mut s, "<Esc>");
                 act(&mut s, Action::FileComment);
                 assert_eq!(
-                    s.diffs[&DiffOf::Pr(pr.clone())].review.pending[0].line,
+                    s.diffs[&DiffOf::Pr(pr.clone())].inputs().review.pending[0].line,
                     None
                 );
                 press(&mut s, "a");
@@ -3309,9 +3311,16 @@ pub(crate) mod tests {
                     }),
                 );
                 assert!(s.overlay.is_none());
-                assert!(s.diffs[&DiffOf::Pr(pr.clone())].review.pending.is_empty());
+                assert!(
+                    s.diffs[&DiffOf::Pr(pr.clone())]
+                        .inputs()
+                        .review
+                        .pending
+                        .is_empty()
+                );
                 assert_eq!(
                     s.diffs[&DiffOf::Pr(pr.clone())]
+                        .inputs()
                         .review
                         .last_reviewed_head
                         .as_deref(),
@@ -3411,6 +3420,206 @@ pub(crate) mod tests {
                 );
                 let ann = &s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations()[0];
                 assert_eq!((ann.on_line(), ann.moved), (Some(4), true));
+            }
+        }
+
+        /// What a diff is built from (GitHub's patches, viewed marks, the
+        /// screen's toggles) outlasts each rebuild of what's shown.
+        mod inputs_survive {
+            use super::*;
+            use crate::diff_job::{DiffFiles, JobMsg};
+            use crate::diff_screen::DiffState;
+            use crate::review::ComposeTarget;
+            use ghtui_api::model::PatchFile;
+            use std::sync::Arc;
+
+            const PATH: &str = "lines.txt";
+
+            fn text(changed: bool) -> String {
+                (1..=20)
+                    .map(|n| {
+                        if changed && n == 15 {
+                            "fifteen changed\n".to_owned()
+                        } else {
+                            format!("line {n}\n")
+                        }
+                    })
+                    .collect()
+            }
+
+            /// GitHub's diff of `lines.txt` covers only its first line.
+            fn patches() -> DiffMsg {
+                DiffMsg::PatchesLoaded(Ok(vec![PatchFile {
+                    filename: PATH.into(),
+                    previous_filename: None,
+                    patch: Some("@@ -1 +1 @@\n-a\n+b".into()),
+                }]))
+            }
+
+            /// The diff job's answer for `job`: `lines.txt`, line 15 changed.
+            fn deliver(s: &mut State, pr: &PrRef, job: crate::diff_job::JobId) {
+                let files = DiffFiles {
+                    refs: ghtui_git::repo::PrRefs {
+                        head: Oid::new("h"),
+                        base: Oid::new("b"),
+                        merge_base: Oid::new("m"),
+                    },
+                    files: vec![ghtui_git::files::ChangedFile {
+                        status: ghtui_git::files::FileStatus::Modified,
+                        old_path: Some(PATH.into()),
+                        new_path: Some(PATH.into()),
+                        old_mode: 0o100644,
+                        new_mode: 0o100644,
+                        old_oid: Oid::new("1".repeat(40)),
+                        new_oid: Oid::new("2".repeat(40)),
+                        similarity: None,
+                    }],
+                    generated: std::collections::HashSet::new(),
+                };
+                diff_msg(s, pr, DiffMsg::Job(job, JobMsg::Files(Box::new(files))));
+                let diff = ghtui_diff::FileDiff::compute(
+                    PATH,
+                    Some(text(false).as_bytes()),
+                    Some(text(true).as_bytes()),
+                );
+                diff_msg(s, pr, DiffMsg::Job(job, JobMsg::File(0, Arc::new(diff))));
+                let _ = s.settle_diff();
+            }
+
+            /// A diff screen on o/r#7 whose job hasn't answered yet, its
+            /// saved review read and its metadata (for the commit picker) in.
+            fn loading() -> (State, PrRef, crate::diff_job::JobId) {
+                let mut s = state();
+                s.size = (120, 40);
+                let pr = PrRef::parse("o/r#7").unwrap();
+                let of = DiffOf::Pr(pr.clone());
+                let diff = DiffState::start(Default::default(), None);
+                let job = diff.job;
+                s.diffs.insert(of.clone(), diff);
+                s.screens
+                    .push(Screen::Diff(Box::new(DiffScreen::new(of, 120))));
+                s.prs.insert(
+                    pr.clone(),
+                    Remote::cached(Some(ghtui_store::Cached {
+                        value: crate::snapshot_tests::pr_detail(),
+                        fetched_at: 0,
+                    })),
+                );
+                diff_msg(
+                    &mut s,
+                    &pr,
+                    DiffMsg::ReviewLoaded(Ok(ReviewState::default())),
+                );
+                (s, pr, job)
+            }
+
+            /// Where `c` on the changed line 15 would put a comment.
+            fn comment_target(s: &mut State) -> ComposeTarget {
+                press(s, "/");
+                press(s, "fifteen changed<Enter>");
+                press(s, "c");
+                let target = overlay!(s, Compose).target.clone();
+                press(s, "<C-c>");
+                s.overlay = None;
+                target
+            }
+
+            fn is_file_comment(target: &ComposeTarget) -> bool {
+                matches!(
+                    target,
+                    ComposeTarget::File {
+                        reason: Some(_),
+                        ..
+                    }
+                )
+            }
+
+            /// Opens the commit picker on one commit and presses `keys` (`jj<Enter>`
+            /// picks the commit, `<Enter>` "All"); the new job's id.
+            fn pick_commit(s: &mut State, pr: &PrRef, keys: &str) -> crate::diff_job::JobId {
+                act(s, Action::PickCommits);
+                diff_msg(
+                    s,
+                    pr,
+                    DiffMsg::CommitsListed(Ok(vec![ghtui_git::repo::Commit {
+                        oid: Oid::new("a".repeat(40)),
+                        subject: "first".into(),
+                    }])),
+                );
+                assert!(matches!(s.overlay, Some(Overlay::Picker(_))));
+                let cmds = press(s, keys);
+                cmds.iter()
+                    .find_map(|c| match c {
+                        Cmd::Git(Git::LoadDiff { job, .. }) => Some(*job),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("{cmds:?}"))
+            }
+
+            /// GitHub's patches usually arrive before git has listed the
+            /// files; lines outside GitHub's diff still become file comments.
+            #[test]
+            fn patches_that_arrive_before_the_files_still_place_comments() {
+                let (mut s, pr, job) = loading();
+                diff_msg(&mut s, &pr, patches());
+                deliver(&mut s, &pr, job);
+                let target = comment_target(&mut s);
+                assert!(is_file_comment(&target), "{target:?}");
+            }
+
+            /// Back to the whole PR after a commit, GitHub's patches still
+            /// decide where comments go.
+            #[test]
+            fn the_whole_pr_after_a_commit_keeps_githubs_patches() {
+                let (mut s, pr, job) = loading();
+                deliver(&mut s, &pr, job);
+                diff_msg(&mut s, &pr, patches());
+                let target = comment_target(&mut s);
+                assert!(is_file_comment(&target), "before: {target:?}");
+
+                let job = pick_commit(&mut s, &pr, "jj<Enter>");
+                deliver(&mut s, &pr, job);
+                let job = pick_commit(&mut s, &pr, "<Enter>");
+                deliver(&mut s, &pr, job);
+                let target = comment_target(&mut s);
+                assert!(is_file_comment(&target), "after All: {target:?}");
+            }
+
+            /// A file marked viewed stays viewed when another range of
+            /// commits is shown.
+            #[test]
+            fn a_file_marked_viewed_stays_viewed_in_another_range() {
+                let (mut s, pr, job) = loading();
+                deliver(&mut s, &pr, job);
+                diff_msg(
+                    &mut s,
+                    &pr,
+                    DiffMsg::ViewedLoaded(Box::new(Ok(ViewedFiles {
+                        pull_request_id: NodeId::new("PR_1"),
+                        states: std::collections::HashMap::new(),
+                    }))),
+                );
+                let cmds = press(&mut s, "v");
+                assert!(
+                    cmds.iter()
+                        .any(|c| matches!(c, Cmd::Api(Api::SetViewed { viewed: true, .. }))),
+                    "{cmds:?}"
+                );
+                diff_msg(
+                    &mut s,
+                    &pr,
+                    DiffMsg::ViewedSaved {
+                        path: PATH.into(),
+                        previous: Viewed::Unviewed,
+                        result: Ok(()),
+                    },
+                );
+                let of = DiffOf::Pr(pr.clone());
+                assert_eq!(s.diffs[&of].doc.files()[0].viewed, Viewed::Viewed);
+
+                let job = pick_commit(&mut s, &pr, "jj<Enter>");
+                deliver(&mut s, &pr, job);
+                assert_eq!(s.diffs[&of].doc.files()[0].viewed, Viewed::Viewed);
             }
         }
     }
