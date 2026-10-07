@@ -287,6 +287,17 @@ pub struct Results<T> {
     pub next: Option<String>,
 }
 
+/// No results (without asking `T` for a default).
+impl<T> Default for Results<T> {
+    fn default() -> Self {
+        Self {
+            total: 0,
+            items: Vec::new(),
+            next: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SearchKind {
     Repos,
@@ -1326,7 +1337,7 @@ mod tests {
     /// spoil the list.
     #[test]
     fn gist_files_may_lack_names() {
-        let gists: wire_gists::Gists = serde_json::from_value(serde_json::json!({
+        let gists: wire::Connection<wire_gists::Gist> = serde_json::from_value(serde_json::json!({
             "totalCount": 1,
             "pageInfo": { "hasNextPage": false, "endCursor": null },
             "nodes": [{ "name": "abc", "description": null, "updatedAt": "2026-10-01T00:00:00Z",
@@ -1334,7 +1345,8 @@ mod tests {
                 "comments": { "totalCount": 0 } }],
         }))
         .unwrap();
-        assert_eq!(gists.into_results().items[0].files, ["a.rs"]);
+        let gists = gists.into_results(wire_gists::Gist::into_summary);
+        assert_eq!(gists.items[0].files, ["a.rs"]);
     }
 
     /// A comparison's head is the newest commit GitHub lists, or, with
@@ -1545,13 +1557,87 @@ pub struct RunSummary {
     pub created_at: Option<String>,
 }
 
+/// The shapes GraphQL responses read as raw JSON share.
+pub(crate) mod wire {
+    use serde::Deserialize;
+
+    use super::Results;
+
+    #[derive(Deserialize)]
+    pub struct Login {
+        pub login: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Name {
+        pub name: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Count {
+        pub total_count: u64,
+    }
+
+    /// A connection's nodes, without paging.
+    #[derive(Deserialize)]
+    pub struct Nodes<T> {
+        pub nodes: Vec<Option<T>>,
+    }
+
+    /// The nodes that aren't null.
+    impl<T> IntoIterator for Nodes<T> {
+        type Item = T;
+        type IntoIter = std::iter::Flatten<std::vec::IntoIter<Option<T>>>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.nodes.into_iter().flatten()
+        }
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct PageInfo {
+        pub has_next_page: bool,
+        pub end_cursor: Option<String>,
+    }
+
+    /// A page of a connection, and how many there are in all (a search's
+    /// count of discussions included).
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Connection<T> {
+        #[serde(alias = "discussionCount")]
+        pub total_count: u64,
+        pub page_info: PageInfo,
+        pub nodes: Vec<Option<T>>,
+    }
+
+    impl<T> Connection<T> {
+        /// The page as results, each node made an item by `item`.
+        pub fn into_results<U>(self, mut item: impl FnMut(T) -> U) -> Results<U> {
+            self.filter_results(|node| Some(item(node)))
+        }
+
+        /// The page as results, the nodes `item` makes nothing of left out.
+        pub fn filter_results<U>(self, item: impl FnMut(T) -> Option<U>) -> Results<U> {
+            let PageInfo {
+                has_next_page,
+                end_cursor,
+            } = self.page_info;
+            Results {
+                total: self.total_count,
+                items: self.nodes.into_iter().flatten().filter_map(item).collect(),
+                next: end_cursor.filter(|_| has_next_page),
+            }
+        }
+    }
+}
+
 pub(crate) mod rest_actions {
     use serde::Deserialize;
 
-    #[derive(Deserialize)]
-    pub struct Actor {
-        pub login: String,
-    }
+    pub use super::wire::Login as Actor;
 
     #[derive(Deserialize)]
     pub struct Run {
@@ -1735,10 +1821,7 @@ pub struct BranchInfo {
 pub(crate) mod wire_branches {
     use serde::Deserialize;
 
-    #[derive(Deserialize)]
-    pub struct Login {
-        pub login: String,
-    }
+    pub use super::wire::{Login, Nodes};
 
     #[derive(Deserialize)]
     pub struct Author {
@@ -1762,78 +1845,42 @@ pub(crate) mod wire_branches {
     }
 
     #[derive(Deserialize)]
-    pub struct Prs {
-        pub nodes: Vec<Option<Pr>>,
-    }
-
-    #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Branch {
         pub name: String,
         pub target: Option<Commit>,
-        pub associated_pull_requests: Prs,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct PageInfo {
-        pub has_next_page: bool,
-        pub end_cursor: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Branches {
-        pub total_count: u64,
-        pub page_info: PageInfo,
-        pub nodes: Vec<Option<Branch>>,
+        pub associated_pull_requests: Nodes<Pr>,
     }
 }
 
-impl wire_branches::Branches {
-    pub(crate) fn into_results(self, default: Option<&str>) -> Results<BranchInfo> {
-        Results {
-            total: self.total_count,
-            items: self
-                .nodes
-                .into_iter()
-                .flatten()
-                .map(|b| {
-                    let commit = b.target;
-                    let author = commit.as_ref().and_then(|c| c.author.as_ref());
-                    BranchInfo {
-                        default: default == Some(b.name.as_str()),
-                        oid: commit.as_ref().and_then(|c| c.oid.clone()),
-                        headline: commit.as_ref().and_then(|c| c.message_headline.clone()),
-                        author: author.and_then(|a| {
-                            a.user
-                                .as_ref()
-                                .map(|u| u.login.clone())
-                                .or_else(|| a.name.clone())
-                        }),
-                        date: commit.as_ref().and_then(|c| c.committed_date.clone()),
-                        pr: b
-                            .associated_pull_requests
-                            .nodes
-                            .into_iter()
-                            .flatten()
-                            .next()
-                            .map(|p| {
-                                let state = match p.state.as_str() {
-                                    "MERGED" => IssueState::Merged,
-                                    "CLOSED" => IssueState::Closed,
-                                    _ => IssueState::Open,
-                                };
-                                (p.number, state)
-                            }),
-                        name: b.name,
-                    }
-                })
-                .collect(),
-            next: self
-                .page_info
-                .end_cursor
-                .filter(|_| self.page_info.has_next_page),
+impl wire_branches::Branch {
+    /// The branch, marked the default if it's `default`.
+    pub(crate) fn into_info(self, default: Option<&str>) -> BranchInfo {
+        let (oid, headline, date, author) = match self.target {
+            Some(c) => (
+                c.oid,
+                c.message_headline,
+                c.committed_date,
+                c.author.and_then(|a| a.user.map(|u| u.login).or(a.name)),
+            ),
+            None => (None, None, None, None),
+        };
+        let pr = self.associated_pull_requests.into_iter().next().map(|p| {
+            let state = match p.state.as_str() {
+                "MERGED" => IssueState::Merged,
+                "CLOSED" => IssueState::Closed,
+                _ => IssueState::Open,
+            };
+            (p.number, state)
+        });
+        BranchInfo {
+            default: default == Some(self.name.as_str()),
+            name: self.name,
+            oid,
+            headline,
+            author,
+            date,
+            pr,
         }
     }
 }
@@ -1877,11 +1924,7 @@ pub struct MilestoneDetail {
 pub(crate) mod wire_milestones {
     use serde::Deserialize;
 
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Count {
-        pub total_count: u64,
-    }
+    pub use super::wire::Count;
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -1897,21 +1940,6 @@ pub(crate) mod wire_milestones {
         pub done_issues: Count,
         pub open_prs: Count,
         pub done_prs: Count,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct PageInfo {
-        pub has_next_page: bool,
-        pub end_cursor: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Milestones {
-        pub total_count: u64,
-        pub page_info: PageInfo,
-        pub nodes: Vec<Option<Milestone>>,
     }
 }
 
@@ -1931,23 +1959,6 @@ impl wire_milestones::Milestone {
     }
 }
 
-impl wire_milestones::Milestones {
-    pub(crate) fn into_results(self) -> Results<MilestoneInfo> {
-        Results {
-            total: self.total_count,
-            items: self
-                .nodes
-                .into_iter()
-                .flatten()
-                .map(wire_milestones::Milestone::into_info)
-                .collect(),
-            next: self
-                .page_info
-                .end_cursor
-                .filter(|_| self.page_info.has_next_page),
-        }
-    }
-}
 // ---- deployments ------------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1976,15 +1987,7 @@ pub struct DeploymentList {
 pub(crate) mod wire_deployments {
     use serde::Deserialize;
 
-    #[derive(Deserialize)]
-    pub struct Login {
-        pub login: String,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Name {
-        pub name: String,
-    }
+    pub use super::wire::{Login, Name};
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -2005,58 +2008,31 @@ pub(crate) mod wire_deployments {
         pub commit_oid: String,
         pub latest_status: Option<Status>,
     }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct PageInfo {
-        pub has_next_page: bool,
-        pub end_cursor: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Deployments {
-        pub total_count: u64,
-        pub page_info: PageInfo,
-        pub nodes: Vec<Option<Deployment>>,
-    }
 }
 
-impl wire_deployments::Deployments {
-    pub(crate) fn into_results(self) -> Results<DeploymentInfo> {
-        Results {
-            total: self.total_count,
-            items: self
-                .nodes
-                .into_iter()
-                .flatten()
-                .map(|d| {
-                    let state = d.state.unwrap_or_default().to_lowercase();
-                    let outcome = match state.as_str() {
-                        "active" | "success" => CheckOutcome::Success,
-                        "failure" | "error" => CheckOutcome::Failure,
-                        "inactive" | "destroyed" => CheckOutcome::Neutral,
-                        "abandoned" => CheckOutcome::Cancelled,
-                        _ => CheckOutcome::Pending,
-                    };
-                    let status = d.latest_status;
-                    DeploymentInfo {
-                        environment: d.environment.unwrap_or_default(),
-                        outcome,
-                        state: state.replace('_', " "),
-                        created_at: d.created_at,
-                        creator: d.creator.map(|c| c.login),
-                        branch: d.branch.map(|r| r.name),
-                        oid: d.commit_oid,
-                        log_url: status.as_ref().and_then(|s| s.log_url.clone()),
-                        environment_url: status.and_then(|s| s.environment_url),
-                    }
-                })
-                .collect(),
-            next: self
-                .page_info
-                .end_cursor
-                .filter(|_| self.page_info.has_next_page),
+impl wire_deployments::Deployment {
+    pub(crate) fn into_info(self) -> DeploymentInfo {
+        let state = self.state.unwrap_or_default().to_lowercase();
+        let outcome = match state.as_str() {
+            "active" | "success" => CheckOutcome::Success,
+            "failure" | "error" => CheckOutcome::Failure,
+            "inactive" | "destroyed" => CheckOutcome::Neutral,
+            "abandoned" => CheckOutcome::Cancelled,
+            _ => CheckOutcome::Pending,
+        };
+        let (log_url, environment_url) = self
+            .latest_status
+            .map_or((None, None), |s| (s.log_url, s.environment_url));
+        DeploymentInfo {
+            environment: self.environment.unwrap_or_default(),
+            outcome,
+            state: state.replace('_', " "),
+            created_at: self.created_at,
+            creator: self.creator.map(|c| c.login),
+            branch: self.branch.map(|r| r.name),
+            oid: self.commit_oid,
+            log_url,
+            environment_url,
         }
     }
 }
@@ -2088,14 +2064,11 @@ pub struct Comparison {
 pub(crate) mod rest_compare {
     use serde::Deserialize;
 
+    pub use super::wire::Login;
+
     #[derive(Deserialize)]
     pub struct Sha {
         pub sha: String,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Login {
-        pub login: String,
     }
 
     #[derive(Deserialize)]
@@ -2214,10 +2187,7 @@ pub struct BlameRange {
 pub(crate) mod wire_blame {
     use serde::Deserialize;
 
-    #[derive(Deserialize)]
-    pub struct Login {
-        pub login: String,
-    }
+    pub use super::wire::Login;
 
     #[derive(Deserialize)]
     pub struct Author {
@@ -2314,10 +2284,7 @@ pub(crate) mod rest_gists {
 
     use serde::Deserialize;
 
-    #[derive(Deserialize)]
-    pub struct Login {
-        pub login: String,
-    }
+    pub use super::wire::Login;
 
     #[derive(Deserialize)]
     pub struct File {
@@ -2371,15 +2338,11 @@ impl rest_gists::Gist {
 pub(crate) mod wire_gists {
     use serde::Deserialize;
 
+    pub use super::wire::Count;
+
     #[derive(Deserialize)]
     pub struct Name {
         pub name: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Count {
-        pub total_count: u64,
     }
 
     #[derive(Deserialize)]
@@ -2392,50 +2355,23 @@ pub(crate) mod wire_gists {
         pub files: Option<Vec<Option<Name>>>,
         pub comments: Count,
     }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct PageInfo {
-        pub has_next_page: bool,
-        pub end_cursor: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Gists {
-        pub total_count: u64,
-        pub page_info: PageInfo,
-        pub nodes: Vec<Option<Gist>>,
-    }
 }
 
-impl wire_gists::Gists {
-    pub(crate) fn into_results(self) -> Results<GistSummary> {
-        Results {
-            total: self.total_count,
-            items: self
-                .nodes
+impl wire_gists::Gist {
+    pub(crate) fn into_summary(self) -> GistSummary {
+        GistSummary {
+            id: self.name,
+            description: self.description.unwrap_or_default(),
+            files: self
+                .files
                 .into_iter()
                 .flatten()
-                .map(|g| GistSummary {
-                    id: g.name,
-                    description: g.description.unwrap_or_default(),
-                    files: g
-                        .files
-                        .into_iter()
-                        .flatten()
-                        .flatten()
-                        .filter_map(|f| f.name)
-                        .collect(),
-                    updated_at: g.updated_at,
-                    stars: g.stargazer_count,
-                    comments: g.comments.total_count,
-                })
+                .flatten()
+                .filter_map(|f| f.name)
                 .collect(),
-            next: self
-                .page_info
-                .end_cursor
-                .filter(|_| self.page_info.has_next_page),
+            updated_at: self.updated_at,
+            stars: self.stargazer_count,
+            comments: self.comments.total_count,
         }
     }
 }
@@ -2473,11 +2409,7 @@ pub struct TeamDetail {
 pub(crate) mod wire_teams {
     use serde::Deserialize;
 
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Count {
-        pub total_count: u64,
-    }
+    pub use super::wire::{Count, Nodes};
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -2491,29 +2423,9 @@ pub(crate) mod wire_teams {
     }
 
     #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct PageInfo {
-        pub has_next_page: bool,
-        pub end_cursor: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Teams {
-        pub total_count: u64,
-        pub page_info: PageInfo,
-        pub nodes: Vec<Option<Team>>,
-    }
-
-    #[derive(Deserialize)]
     pub struct Member {
         pub login: String,
         pub name: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Members {
-        pub nodes: Vec<Option<Member>>,
     }
 
     #[derive(Deserialize)]
@@ -2525,26 +2437,16 @@ pub(crate) mod wire_teams {
     }
 
     #[derive(Deserialize)]
-    pub struct Repos {
-        pub nodes: Vec<Option<Repo>>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Children {
-        pub nodes: Vec<Option<Team>>,
-    }
-
-    #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Detail {
         #[serde(flatten)]
         pub team: Team,
         pub parent_team: Option<Team>,
         #[serde(rename = "memberList")]
-        pub member_list: Members,
+        pub member_list: Nodes<Member>,
         #[serde(rename = "repoList")]
-        pub repo_list: Repos,
-        pub child_teams: Children,
+        pub repo_list: Nodes<Repo>,
+        pub child_teams: Nodes<Team>,
     }
 }
 
@@ -2561,24 +2463,6 @@ impl wire_teams::Team {
     }
 }
 
-impl wire_teams::Teams {
-    pub(crate) fn into_results(self) -> Results<TeamSummary> {
-        Results {
-            total: self.total_count,
-            items: self
-                .nodes
-                .into_iter()
-                .flatten()
-                .map(wire_teams::Team::into_summary)
-                .collect(),
-            next: self
-                .page_info
-                .end_cursor
-                .filter(|_| self.page_info.has_next_page),
-        }
-    }
-}
-
 impl wire_teams::Detail {
     pub(crate) fn into_detail(self) -> TeamDetail {
         TeamDetail {
@@ -2586,9 +2470,7 @@ impl wire_teams::Detail {
             parent: self.parent_team.map(wire_teams::Team::into_summary),
             members: self
                 .member_list
-                .nodes
                 .into_iter()
-                .flatten()
                 .map(|m| UserSummary {
                     login: m.login,
                     name: m.name,
@@ -2598,9 +2480,7 @@ impl wire_teams::Detail {
                 .collect(),
             repos: self
                 .repo_list
-                .nodes
                 .into_iter()
-                .flatten()
                 .filter_map(|r| {
                     Some(TeamRepo {
                         repo: RepoId::parse(&r.name_with_owner)?,
@@ -2611,9 +2491,7 @@ impl wire_teams::Detail {
                 .collect(),
             children: self
                 .child_teams
-                .nodes
                 .into_iter()
-                .flatten()
                 .map(wire_teams::Team::into_summary)
                 .collect(),
         }
@@ -2653,6 +2531,8 @@ pub struct Advisory {
 pub(crate) mod rest_advisories {
     use serde::Deserialize;
 
+    pub use super::wire::Login;
+
     #[derive(Deserialize)]
     pub struct Package {
         pub ecosystem: Option<String>,
@@ -2677,11 +2557,6 @@ pub(crate) mod rest_advisories {
     pub struct Cwe {
         pub cwe_id: String,
         pub name: String,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Login {
-        pub login: String,
     }
 
     #[derive(Deserialize)]
@@ -2779,14 +2654,11 @@ pub struct WikiPage {
 pub(crate) mod rest_search {
     use serde::Deserialize;
 
+    pub use super::wire::Login;
+
     #[derive(Deserialize)]
     pub struct Repo {
         pub full_name: String,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Login {
-        pub login: String,
     }
 
     #[derive(Deserialize)]
@@ -2927,28 +2799,7 @@ pub struct DiscussionComment {
 pub(crate) mod wire_discussions {
     use serde::Deserialize;
 
-    #[derive(Deserialize)]
-    pub struct Login {
-        pub login: String,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct PageInfo {
-        pub has_next_page: bool,
-        pub end_cursor: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Name {
-        pub name: String,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Count {
-        pub total_count: u64,
-    }
+    pub use super::wire::{Count, Login, Name, Nodes};
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -2964,23 +2815,10 @@ pub(crate) mod wire_discussions {
     }
 
     #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Summaries {
-        pub total_count: u64,
-        pub page_info: PageInfo,
-        pub nodes: Vec<Option<Summary>>,
-    }
-
-    #[derive(Deserialize)]
     pub struct Category {
         pub id: String,
         pub name: String,
         pub slug: String,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Categories {
-        pub nodes: Vec<Option<Category>>,
     }
 
     #[derive(Deserialize)]
@@ -3033,35 +2871,46 @@ pub(crate) mod wire_discussions {
         pub upvote_count: u64,
         pub comments: Comments,
     }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct RepoName {
+        pub name_with_owner: String,
+    }
+
+    /// A discussion a search found, and where.
+    #[derive(Deserialize)]
+    pub struct Hit {
+        pub repository: RepoName,
+        #[serde(flatten)]
+        pub summary: Summary,
+    }
 }
 
 fn login(a: Option<wire_discussions::Login>) -> String {
     a.map_or_else(|| "ghost".into(), |a| a.login)
 }
 
-impl wire_discussions::Summaries {
-    pub(crate) fn into_results(self) -> Results<DiscussionSummary> {
-        Results {
-            total: self.total_count,
-            items: self
-                .nodes
-                .into_iter()
-                .flatten()
-                .map(|d| DiscussionSummary {
-                    number: d.number,
-                    title: d.title,
-                    author: login(d.author),
-                    category: d.category.name,
-                    comments: d.comments.total_count,
-                    answered: d.is_answered.unwrap_or(false),
-                    upvotes: d.upvote_count,
-                    updated_at: d.updated_at,
-                })
-                .collect(),
-            next: self
-                .page_info
-                .end_cursor
-                .filter(|_| self.page_info.has_next_page),
+impl wire_discussions::Hit {
+    pub(crate) fn into_hit(self) -> Option<DiscussionHit> {
+        Some(DiscussionHit {
+            repo: RepoId::parse(&self.repository.name_with_owner)?,
+            summary: self.summary.into_summary(),
+        })
+    }
+}
+
+impl wire_discussions::Summary {
+    pub(crate) fn into_summary(self) -> DiscussionSummary {
+        DiscussionSummary {
+            number: self.number,
+            title: self.title,
+            author: login(self.author),
+            category: self.category.name,
+            comments: self.comments.total_count,
+            answered: self.is_answered.unwrap_or(false),
+            upvotes: self.upvote_count,
+            updated_at: self.updated_at,
         }
     }
 }
