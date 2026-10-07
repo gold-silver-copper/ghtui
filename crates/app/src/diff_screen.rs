@@ -104,6 +104,9 @@ pub struct DiffScreen {
     pub search: Option<String>,
     /// Where a visual line selection started.
     pub selection: Option<Pos>,
+    /// The file a link pointed at (`#diff-<hash>`, GitHub's SHA-256 of its
+    /// path), to go to once the files are listed.
+    pub anchor: Option<String>,
 }
 
 impl DiffScreen {
@@ -120,6 +123,7 @@ impl DiffScreen {
             ignore_whitespace: false,
             search: None,
             selection: None,
+            anchor: None,
         }
     }
 
@@ -706,6 +710,16 @@ fn toggle_reviewed(
 /// of the sticky header), syncs the tree with the diff, and asks the job to
 /// prioritize files that are on screen but not diffed yet.
 #[must_use]
+/// How GitHub names a file in its diffs' anchors: the SHA-256 of its path,
+/// in hex.
+pub fn path_hash(path: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(path.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> Vec<Cmd> {
     let lay = layout(content, screen.tree_visible);
     if lay.tree.is_none() {
@@ -718,6 +732,14 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
     let doc = &state.doc;
     if doc.is_empty() {
         return Vec::new();
+    }
+    if let Some(hash) = screen.anchor.take()
+        && let Some(file) = doc
+            .files()
+            .iter()
+            .position(|f| path_hash(f.meta.path()) == hash)
+    {
+        screen.cursor = Pos { file, row: 0 };
     }
     screen.cursor = doc.clamp(screen.cursor);
     let height = usize::from(lay.diff.height).max(1);

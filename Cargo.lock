@@ -897,6 +897,7 @@ dependencies = [
  "ratatui",
  "ratatui-textarea",
  "serde",
+ "sha2",
  "tempfile",
  "tokio",
  "toml",

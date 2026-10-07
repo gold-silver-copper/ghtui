@@ -160,10 +160,16 @@ impl State {
                 let fragment = url::Url::parse(url)
                     .ok()
                     .and_then(|u| u.fragment().map(str::to_owned));
-                if let Some(fragment) = fragment
-                    && let Screen::Page(p) = self.screen_mut()
-                {
-                    p.anchor = Some(fragment);
+                match (fragment, self.screen_mut()) {
+                    (Some(fragment), Screen::Page(p)) => p.anchor = Some(fragment),
+                    // A file in a diff: `#diff-<hash>`, and maybe a line.
+                    (Some(fragment), Screen::Diff(d)) => {
+                        d.anchor = fragment
+                            .strip_prefix("diff-")
+                            .and_then(|f| f.get(..64))
+                            .map(str::to_owned);
+                    }
+                    _ => {}
                 }
                 cmds
             }
