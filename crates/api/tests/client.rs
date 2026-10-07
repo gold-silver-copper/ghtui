@@ -509,6 +509,31 @@ async fn a_runs_jobs_paginate() {
     assert_eq!(seen.lock().unwrap().len(), 3);
 }
 
+/// An organization's discussions are found in whichever of its
+/// repositories holds them, past the first page of a search.
+#[tokio::test]
+async fn an_organizations_discussions_are_found_past_the_first_page() {
+    let (gh, seen) = github(vec![
+        Reply::new(
+            200,
+            r#"{"data":{"search":{"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"nodes":[{"url":"https://github.com/acme/app/discussions/1","repository":{"nameWithOwner":"acme/app"}}]}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://github.com/orgs/acme/discussions/9","repository":{"nameWithOwner":"acme/community"}}]}}}"#,
+        ),
+        Reply::new(200, r#"{"data":{"repository":null}}"#),
+    ])
+    .await;
+    let of = ghtui_api::browse::DiscussionsOf::Org("acme".into());
+    let result = gh.discussion(&of, 9).await;
+    assert!(
+        matches!(result, Err(ApiError::NotFound(ref m)) if m.contains("acme/community")),
+        "{result:?}"
+    );
+    assert_eq!(seen.lock().unwrap().len(), 3);
+}
+
 /// A comparison of one revision is against the default branch.
 #[tokio::test]
 async fn one_revision_compares_with_the_default_branch() {
