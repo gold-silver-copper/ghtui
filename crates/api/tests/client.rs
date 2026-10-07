@@ -675,6 +675,24 @@ async fn checks_page_to_a_checks_newest_run() {
     assert_eq!(seen.lock().unwrap()[1].json()["variables"]["after"], "p2");
 }
 
+/// What a partial result leaves out (GitHub's errors beside the data, for
+/// what the token can't see) is kept to report, once.
+#[tokio::test]
+async fn partial_results_say_what_they_left_out() {
+    let sso = "Resource protected by organization SAML enforcement.";
+    let (gh, _) = github(vec![Reply::new(
+        200,
+        format!(
+            r#"{{"data":{{"repository":{{"heads":{{"totalCount":1,"pageInfo":{{"hasNextPage":false,"endCursor":null}},"nodes":[{{"name":"main"}},null]}},"tags":{{"totalCount":0,"pageInfo":{{"hasNextPage":false,"endCursor":null}},"nodes":[]}}}}}},"errors":[{{"message":"{sso}"}},{{"message":"{sso}"}}]}}"#
+        ),
+    )])
+    .await;
+    let refs = gh.refs(&RepoId::new("o", "r")).await.unwrap();
+    assert_eq!(refs.branches, ["main"]);
+    assert_eq!(gh.take_left_out(), [sso]);
+    assert!(gh.take_left_out().is_empty());
+}
+
 /// A comparison of one revision is against the default branch.
 #[tokio::test]
 async fn one_revision_compares_with_the_default_branch() {
