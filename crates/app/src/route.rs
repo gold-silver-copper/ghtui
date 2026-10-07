@@ -1682,6 +1682,13 @@ pub(crate) mod tests {
                 })
         }
 
+        fn discussions_of() -> impl Strategy<Value = DiscussionsOf> {
+            prop_oneof![
+                repo().prop_map(DiscussionsOf::Repo),
+                segment().prop_map(DiscussionsOf::Org),
+            ]
+        }
+
         fn route() -> impl Strategy<Value = Route> {
             // A valid one-segment git ref name.
             let rev = "[A-Za-z0-9_-][A-Za-z0-9._-]{0,11}"
@@ -1695,6 +1702,32 @@ pub(crate) mod tests {
                 repo().prop_map(Route::Releases),
                 repo().prop_map(Route::Tags),
                 repo().prop_map(Route::Branches),
+                (repo(), 1..u64::MAX, prop::option::of(1..100u64))
+                    .prop_map(|(repo, run, attempt)| Route::WorkflowRun { repo, run, attempt }),
+                (
+                    repo(),
+                    prop::option::of(1..u64::MAX),
+                    1..u64::MAX,
+                    prop::option::of((1..100u32, 1..10_000u32)),
+                    prop_oneof![Just(String::new()), query()],
+                )
+                    .prop_map(|(repo, run, job, step, query)| Route::Job {
+                        repo,
+                        run,
+                        job,
+                        step,
+                        query
+                    }),
+                (repo(), "[A-Za-z0-9_-][A-Za-z0-9_.-]{0,11}\\.ya?ml")
+                    .prop_map(|(repo, file)| Route::Workflow { repo, file }),
+                (repo(), "[0-9a-f]{40}").prop_map(|(repo, oid)| Route::CommitChecks { repo, oid }),
+                (
+                    discussions_of(),
+                    prop::option::of("[a-z0-9][a-z0-9-]{0,11}")
+                )
+                    .prop_map(|(of, category)| Route::Discussions { of, category }),
+                (discussions_of(), 1..u64::MAX)
+                    .prop_map(|(of, number)| Route::Discussion { of, number }),
                 (repo(), prop::option::of("[A-Za-z0-9][A-Za-z0-9 _-]{0,15}"))
                     .prop_filter("not a writing page", |(_, p)| {
                         !matches!(p.as_deref(), Some("_new" | "_edit" | "_compare"))
