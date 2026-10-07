@@ -428,6 +428,7 @@ fn checks(commits: &q::CommitRollupConnection) -> Option<ChecksState> {
     })
 }
 
+/// A login; a deleted account is GitHub's own "ghost" user.
 pub(crate) fn author(actor: Option<q::Actor>) -> String {
     actor.map_or_else(|| "ghost".to_owned(), |a| a.login)
 }
