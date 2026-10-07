@@ -2061,6 +2061,9 @@ pub struct Comparison {
     pub deletions: u64,
 }
 
+/// How many files GitHub lists in a comparison at most.
+const COMPARE_FILES: usize = 300;
+
 pub(crate) mod rest_compare {
     use serde::Deserialize;
 
@@ -2134,7 +2137,7 @@ impl rest_compare::Compare {
             to,
             from,
             files: self.files.len() as u64,
-            files_capped: self.files.len() >= 300,
+            files_capped: self.files.len() >= COMPARE_FILES,
             additions: self.files.iter().map(|f| f.additions).sum(),
             deletions: self.files.iter().map(|f| f.deletions).sum(),
             commits: self

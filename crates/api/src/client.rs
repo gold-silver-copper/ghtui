@@ -815,18 +815,17 @@ impl GitHub {
                 SearchResults::Code(Results::default())
             });
         }
-        let number: u64 = after.as_deref().and_then(|a| a.parse().ok()).unwrap_or(1);
+        let number = rest_page(after.as_deref());
         let what = if kind == Kind::Commits {
             "commits"
         } else {
             "code"
         };
         let path = format!(
-            "/search/{what}?q={}&per_page=30&page={number}",
+            "/search/{what}?q={}&per_page={REST_PAGE}&page={number}",
             encode_query(query)
         );
-        // GitHub serves the first 1000 results.
-        let next = |total: u64| (number * 30 < total.min(1000)).then(|| (number + 1).to_string());
+        let next = |total: u64| next_page(number, total.min(SEARCH_CAP));
         if kind == Kind::Commits {
             let page: browse::rest_search::Page<browse::rest_search::Commit> =
                 self.rest_json(&path).await?;
@@ -1655,9 +1654,9 @@ impl GitHub {
             mut jobs,
             total_count,
         } = jobs?;
-        // Big matrices have more than a page of jobs (up to 1,000 here).
+        // Big matrices have more than a page of jobs.
         let mut page = 2;
-        while (jobs.len() as u64) < total_count && page <= 10 {
+        while (jobs.len() as u64) < total_count && page <= JOB_PAGES {
             let more: browse::rest_actions::Jobs =
                 self.rest_json(&format!("{jobs_path}&page={page}")).await?;
             if more.jobs.is_empty() {
@@ -1730,15 +1729,14 @@ impl GitHub {
         file: &str,
         after: Option<String>,
     ) -> Result<browse::Results<browse::RunSummary>, ApiError> {
-        let page: u64 = after.as_deref().and_then(|a| a.parse().ok()).unwrap_or(1);
+        let page = rest_page(after.as_deref());
         let path = format!(
-            "/repos/{}/{}/actions/workflows/{}/runs?per_page=30&page={page}",
+            "/repos/{}/{}/actions/workflows/{}/runs?per_page={REST_PAGE}&page={page}",
             repo.owner,
             repo.name,
             encode_path(file)
         );
         let wire: browse::rest_actions::Runs = self.rest_json(&path).await?;
-        let shown = page * 30;
         let runs = browse::Results {
             total: wire.total_count,
             items: wire
@@ -1746,7 +1744,7 @@ impl GitHub {
                 .into_iter()
                 .map(browse::rest_actions::Run::into_summary)
                 .collect(),
-            next: (shown < wire.total_count).then(|| (page + 1).to_string()),
+            next: next_page(page, wire.total_count),
         };
         Ok(self
             .kept_if(page == 1, &browse::keys::workflow_runs(repo, file), runs)
@@ -1987,29 +1985,50 @@ fn at<T: DeserializeOwned>(
     Ok(T::deserialize(value)?)
 }
 
-/// Percent-encodes a query string's value.
+/// How many items a REST list page holds here.
+const REST_PAGE: u64 = 30;
+/// GitHub's search serves its first thousand results.
+const SEARCH_CAP: u64 = 1000;
+/// How many pages of a run's jobs are fetched (100 each).
+const JOB_PAGES: u64 = 10;
+
+/// A REST list's page number from its cursor (pages count from 1).
+fn rest_page(after: Option<&str>) -> u64 {
+    after.and_then(|a| a.parse().ok()).unwrap_or(1)
+}
+
+/// The cursor for the page after `page` of `total` items, if there is one.
+fn next_page(page: u64, total: u64) -> Option<String> {
+    (page.saturating_mul(REST_PAGE) < total).then(|| page.saturating_add(1).to_string())
+}
+
+/// Percent-encodes a query string's value (spaces as `+`).
 fn encode_query(s: &str) -> String {
-    s.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                char::from(b).to_string()
-            }
-            b' ' => "+".to_owned(),
-            b => format!("%{b:02X}"),
-        })
-        .collect()
+    escape(s, true)
 }
 
 /// Percent-encodes a ref for a URL path (branch names may contain `/`).
 fn encode_path(s: &str) -> String {
-    s.bytes()
-        .map(|b| match b {
+    escape(s, false)
+}
+
+/// `s` with every byte but unreserved ones (`A-Z a-z 0-9 - _ . ~`)
+/// percent-encoded, and spaces as `+` when `plus`.
+fn escape(s: &str, plus: bool) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                char::from(b).to_string()
+                out.push(char::from(b));
             }
-            b => format!("%{b:02X}"),
-        })
-        .collect()
+            b' ' if plus => out.push('+'),
+            b => {
+                let _ = write!(out, "%{b:02X}");
+            }
+        }
+    }
+    out
 }
 
 /// The HTTP client: the token on every request, rustls with the platform's
