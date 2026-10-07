@@ -1339,6 +1339,265 @@ impl WireStatusContext {
     }
 }
 
+// ---- actions --------------------------------------------------------------------------------
+
+/// How a REST check run, job or step came out.
+fn rest_outcome(status: &str, conclusion: Option<&str>) -> CheckOutcome {
+    match (status, conclusion) {
+        ("completed", Some("success")) => CheckOutcome::Success,
+        ("completed", Some("skipped")) => CheckOutcome::Skipped,
+        ("completed", Some("cancelled")) => CheckOutcome::Cancelled,
+        ("completed", Some("neutral" | "stale")) => CheckOutcome::Neutral,
+        ("completed", _) => CheckOutcome::Failure,
+        _ => CheckOutcome::Pending,
+    }
+}
+
+/// A workflow run and its jobs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowRun {
+    pub id: u64,
+    /// The workflow's name.
+    pub name: String,
+    /// What it ran for: the commit's headline or the pull request's title.
+    pub title: String,
+    pub number: u64,
+    pub attempt: u64,
+    /// `push`, `pull_request`, `schedule`…
+    pub event: String,
+    pub branch: Option<String>,
+    pub sha: String,
+    pub outcome: CheckOutcome,
+    pub actor: Option<String>,
+    /// ISO 8601.
+    pub started_at: Option<String>,
+    pub updated_at: Option<String>,
+    /// The workflow file, `.github/workflows/ci.yml`.
+    pub path: String,
+    pub jobs: Vec<JobSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobSummary {
+    pub id: u64,
+    pub name: String,
+    pub outcome: CheckOutcome,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+}
+
+/// A job: its steps (its log comes separately).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Job {
+    pub id: u64,
+    pub run_id: u64,
+    pub name: String,
+    pub outcome: CheckOutcome,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub steps: Vec<Step>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Step {
+    pub number: u32,
+    pub name: String,
+    pub outcome: CheckOutcome,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+}
+
+/// A workflow (its runs come separately, a page at a time).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Workflow {
+    pub name: String,
+    pub path: String,
+    /// `active`, `disabled_manually`…
+    pub state: String,
+}
+
+/// A run in a workflow's list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunSummary {
+    pub id: u64,
+    pub title: String,
+    pub number: u64,
+    pub event: String,
+    pub branch: Option<String>,
+    pub outcome: CheckOutcome,
+    pub actor: Option<String>,
+    pub created_at: Option<String>,
+}
+
+pub(crate) mod rest_actions {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Actor {
+        pub login: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Run {
+        pub id: u64,
+        pub name: Option<String>,
+        pub display_title: Option<String>,
+        pub run_number: u64,
+        pub run_attempt: Option<u64>,
+        pub event: String,
+        pub head_branch: Option<String>,
+        pub head_sha: String,
+        pub status: Option<String>,
+        pub conclusion: Option<String>,
+        pub actor: Option<Actor>,
+        pub run_started_at: Option<String>,
+        pub created_at: Option<String>,
+        pub updated_at: Option<String>,
+        #[serde(default)]
+        pub path: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Runs {
+        pub total_count: u64,
+        pub workflow_runs: Vec<Run>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Step {
+        pub number: u32,
+        pub name: String,
+        pub status: String,
+        pub conclusion: Option<String>,
+        pub started_at: Option<String>,
+        pub completed_at: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Job {
+        pub id: u64,
+        pub run_id: u64,
+        pub name: String,
+        pub status: String,
+        pub conclusion: Option<String>,
+        pub started_at: Option<String>,
+        pub completed_at: Option<String>,
+        #[serde(default)]
+        pub steps: Vec<Step>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Jobs {
+        pub jobs: Vec<Job>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Workflow {
+        pub name: String,
+        pub path: String,
+        pub state: String,
+    }
+}
+
+impl rest_actions::Run {
+    fn outcome(&self) -> CheckOutcome {
+        rest_outcome(
+            self.status.as_deref().unwrap_or("queued"),
+            self.conclusion.as_deref(),
+        )
+    }
+
+    pub(crate) fn into_run(self, jobs: Vec<rest_actions::Job>) -> WorkflowRun {
+        let outcome = self.outcome();
+        WorkflowRun {
+            id: self.id,
+            name: self.name.unwrap_or_else(|| "Workflow".into()),
+            title: self.display_title.unwrap_or_default(),
+            number: self.run_number,
+            attempt: self.run_attempt.unwrap_or(1),
+            event: self.event,
+            branch: self.head_branch,
+            sha: self.head_sha,
+            outcome,
+            actor: self.actor.map(|a| a.login),
+            started_at: self.run_started_at.or(self.created_at),
+            updated_at: self.updated_at,
+            path: self.path,
+            jobs: jobs
+                .into_iter()
+                .map(|j| JobSummary {
+                    outcome: rest_outcome(&j.status, j.conclusion.as_deref()),
+                    id: j.id,
+                    name: j.name,
+                    started_at: j.started_at,
+                    completed_at: j.completed_at,
+                })
+                .collect(),
+        }
+    }
+
+    pub(crate) fn into_summary(self) -> RunSummary {
+        let outcome = self.outcome();
+        RunSummary {
+            id: self.id,
+            title: self.display_title.unwrap_or_default(),
+            number: self.run_number,
+            event: self.event,
+            branch: self.head_branch,
+            outcome,
+            actor: self.actor.map(|a| a.login),
+            created_at: self.created_at,
+        }
+    }
+}
+
+impl rest_actions::Job {
+    pub(crate) fn into_job(self) -> Job {
+        Job {
+            outcome: rest_outcome(&self.status, self.conclusion.as_deref()),
+            id: self.id,
+            run_id: self.run_id,
+            name: self.name,
+            started_at: self.started_at,
+            completed_at: self.completed_at,
+            steps: self
+                .steps
+                .into_iter()
+                .map(|s| Step {
+                    outcome: rest_outcome(&s.status, s.conclusion.as_deref()),
+                    number: s.number,
+                    name: s.name,
+                    started_at: s.started_at,
+                    completed_at: s.completed_at,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// The checks on a commit, by revision.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "RepoVariables"
+)]
+pub struct CommitChecksQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepoCommitChecks>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Repository",
+    schema_module = "schema",
+    variables = "RepoVariables"
+)]
+pub struct RepoCommitChecks {
+    #[arguments(expression: $expression)]
+    pub object: Option<ChecksTarget>,
+}
+
 // ---- profiles ------------------------------------------------------------------------
 
 #[derive(cynic::Scalar, Debug, Clone)]
@@ -2325,6 +2584,21 @@ pub mod keys {
     }
     pub fn commit(repo: &RepoId, oid: &str) -> String {
         format!("commit:{repo}@{oid}")
+    }
+    pub fn run(repo: &RepoId, run: u64, attempt: Option<u64>) -> String {
+        format!("run:{repo}:{run}:{attempt:?}")
+    }
+    pub fn job(repo: &RepoId, job: u64) -> String {
+        format!("job:{repo}:{job}")
+    }
+    pub fn workflow(repo: &RepoId, file: &str) -> String {
+        format!("workflow:{repo}:{file}")
+    }
+    pub fn workflow_runs(repo: &RepoId, file: &str) -> String {
+        format!("workflow-runs:{repo}:{file}")
+    }
+    pub fn commit_checks(repo: &RepoId, rev: &str) -> String {
+        format!("commit-checks:{repo}@{rev}")
     }
     pub fn pr_checks(pr: &PrRef) -> String {
         format!("pr-checks:{pr}")

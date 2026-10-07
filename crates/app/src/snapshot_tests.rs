@@ -303,6 +303,60 @@ fn with_org(mode: Mode) -> State {
     state
 }
 
+/// A workflow run.
+fn with_run(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::WorkflowRun {
+        repo: ghtui(),
+        run: 7,
+        attempt: None,
+    };
+    open(
+        &mut state,
+        route,
+        Data::Run(Box::new(fixtures::workflow_run())),
+    );
+    state
+}
+
+/// A job, its failed step's log open; `step` is the step a link pointed at.
+fn with_job(mode: Mode, step: Option<(u32, u32)>) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Job {
+        repo: ghtui(),
+        run: Some(7),
+        job: 2,
+        step,
+        query: String::new(),
+    };
+    let _ = state.push(route);
+    let (job, log) = fixtures::job();
+    fetched(
+        &mut state,
+        DataKey::Job(ghtui(), 2),
+        Data::Job(Box::new(job)),
+    );
+    let log = Data::Log(std::sync::Arc::new(log));
+    fetched(&mut state, DataKey::JobLog(ghtui(), 2), log);
+    state
+}
+
+/// A workflow and its runs.
+fn with_workflow(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Workflow {
+        repo: ghtui(),
+        file: "ci.yml".into(),
+    };
+    let _ = state.push(route);
+    let (workflow, runs) = fixtures::workflow_runs();
+    let key = DataKey::Workflow(ghtui(), "ci.yml".into());
+    fetched(&mut state, key, Data::Workflow(Box::new(workflow)));
+    let key = DataKey::WorkflowRuns(ghtui(), "ci.yml".into());
+    fetched(&mut state, key, Data::Runs(Box::new(runs)));
+    state
+}
+
 /// A repository's stargazers.
 fn with_stargazers(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -563,6 +617,27 @@ fn profile_overview_256_dark() {
     let mut state = with_profile(Mode::Dark, ProfileTab::Overview);
     state.theme = Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::Ansi256);
     insta::assert_snapshot!(render(&sized(state, 100, 80)));
+}
+
+#[test]
+fn workflow_run_dark() {
+    insta::assert_snapshot!(render(&with_run(Mode::Dark)));
+}
+
+#[test]
+fn job_light() {
+    insta::assert_snapshot!(render(&sized(with_job(Mode::Light, None), 100, 40)));
+}
+
+/// A link to a step's line opens that step's log there.
+#[test]
+fn job_step_dark() {
+    insta::assert_snapshot!(render(&sized(with_job(Mode::Dark, Some((2, 2))), 100, 40)));
+}
+
+#[test]
+fn workflow_light() {
+    insta::assert_snapshot!(render(&with_workflow(Mode::Light)));
 }
 
 #[test]
@@ -1472,8 +1547,9 @@ mod links {
 
     use super::{
         press, with_actions, with_commit, with_file, with_forks, with_history, with_inbox,
-        with_issue, with_issues, with_pr, with_pr_checks, with_profile, with_release,
-        with_releases, with_repo, with_repo_search, with_stargazers, with_tags,
+        with_issue, with_issues, with_job, with_pr, with_pr_checks, with_profile, with_release,
+        with_releases, with_repo, with_repo_search, with_run, with_stargazers, with_tags,
+        with_workflow,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1540,6 +1616,9 @@ mod links {
             ("releases", with_releases(Mode::Dark)),
             ("release", with_release(Mode::Dark)),
             ("tags", with_tags(Mode::Dark)),
+            ("run", with_run(Mode::Dark)),
+            ("job", with_job(Mode::Dark, None)),
+            ("workflow", with_workflow(Mode::Dark)),
         ]
     }
 
@@ -1628,7 +1707,7 @@ mod keys {
             ("commit", || with_commit(Mode::Dark)),
             ("commit files", || {
                 let mut s = with_commit(Mode::Dark);
-                press(&mut s, "<Right>");
+                press(&mut s, "<Right><Right>");
                 if let Some((screen, _)) = s.diff_parts() {
                     screen.cursor = Pos { file: 0, row: 4 };
                 }
@@ -1683,11 +1762,16 @@ mod keys {
     fn commit_tabs_go_into_the_files_and_back() {
         let mut s = with_commit(Mode::Dark);
         press(&mut s, "<Right>");
+        assert!(matches!(
+            s.route(),
+            Some(crate::route::Route::CommitChecks { .. })
+        ));
+        press(&mut s, "<Right>");
         assert!(
             matches!(s.screen(), Screen::Diff(d) if d.of == super::diff::commit_of()),
             "the commit's diff, by its full ID"
         );
-        press(&mut s, "<Left>");
+        press(&mut s, "<Left><Left>");
         assert!(matches!(
             s.route(),
             Some(crate::route::Route::Commit { .. })

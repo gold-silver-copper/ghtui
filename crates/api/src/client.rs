@@ -1249,6 +1249,134 @@ impl GitHub {
         Ok(tags)
     }
 
+    /// A workflow run (one attempt of it, or the latest) and its jobs.
+    pub async fn workflow_run(
+        &self,
+        repo: &RepoId,
+        run: u64,
+        attempt: Option<u64>,
+    ) -> Result<browse::WorkflowRun, ApiError> {
+        let base = format!("/repos/{}/{}/actions/runs/{run}", repo.owner, repo.name);
+        let path = match attempt {
+            Some(n) => format!("{base}/attempts/{n}"),
+            None => base,
+        };
+        let jobs_path = format!("{path}/jobs?per_page=100");
+        let (wire, jobs) = tokio::join!(
+            self.rest_json::<browse::rest_actions::Run>(&path),
+            self.rest_json::<browse::rest_actions::Jobs>(&jobs_path)
+        );
+        let run = wire?.into_run(jobs?.jobs);
+        Ok(self
+            .kept(&browse::keys::run(repo, run.id, attempt), run)
+            .await)
+    }
+
+    /// A job and its steps.
+    pub async fn job(&self, repo: &RepoId, job: u64) -> Result<browse::Job, ApiError> {
+        let path = format!("/repos/{}/{}/actions/jobs/{job}", repo.owner, repo.name);
+        let job_wire: browse::rest_actions::Job = self.rest_json(&path).await?;
+        let job = job_wire.into_job();
+        Ok(self.kept(&browse::keys::job(repo, job.id), job).await)
+    }
+
+    /// A job's log, as plain text: its last 2 MB (where failures are), and
+    /// never cached (logs are big and don't change once a job is done).
+    pub async fn job_log(&self, repo: &RepoId, job: u64) -> Result<String, ApiError> {
+        const KEEP: usize = 2 << 20;
+        let path = format!(
+            "/repos/{}/{}/actions/jobs/{job}/logs",
+            repo.owner, repo.name
+        );
+        let response = self
+            .send(&Request::Get {
+                path: &path,
+                etag: None,
+            })
+            .await?;
+        check_status(&response)?;
+        let log = response.body;
+        let start = log.len().saturating_sub(KEEP);
+        let start = (start..log.len())
+            .find(|&i| log.is_char_boundary(i))
+            .unwrap_or(0);
+        Ok(log.get(start..).unwrap_or_default().to_owned())
+    }
+
+    /// A workflow, by its file name (`ci.yml`) or ID.
+    pub async fn workflow(&self, repo: &RepoId, file: &str) -> Result<browse::Workflow, ApiError> {
+        let path = format!(
+            "/repos/{}/{}/actions/workflows/{}",
+            repo.owner,
+            repo.name,
+            encode_path(file)
+        );
+        let wire: browse::rest_actions::Workflow = self.rest_json(&path).await?;
+        let workflow = browse::Workflow {
+            name: wire.name,
+            path: wire.path,
+            state: wire.state,
+        };
+        Ok(self
+            .kept(&browse::keys::workflow(repo, file), workflow)
+            .await)
+    }
+
+    /// A workflow's runs, newest first, 30 at a time; `after` is the page
+    /// number to fetch (REST pages by number). The first page is cached.
+    pub async fn workflow_runs(
+        &self,
+        repo: &RepoId,
+        file: &str,
+        after: Option<String>,
+    ) -> Result<browse::Results<browse::RunSummary>, ApiError> {
+        let page: u64 = after.as_deref().and_then(|a| a.parse().ok()).unwrap_or(1);
+        let path = format!(
+            "/repos/{}/{}/actions/workflows/{}/runs?per_page=30&page={page}",
+            repo.owner,
+            repo.name,
+            encode_path(file)
+        );
+        let wire: browse::rest_actions::Runs = self.rest_json(&path).await?;
+        let shown = page * 30;
+        let runs = browse::Results {
+            total: wire.total_count,
+            items: wire
+                .workflow_runs
+                .into_iter()
+                .map(browse::rest_actions::Run::into_summary)
+                .collect(),
+            next: (shown < wire.total_count).then(|| (page + 1).to_string()),
+        };
+        if page == 1 {
+            return Ok(self
+                .kept(&browse::keys::workflow_runs(repo, file), runs)
+                .await);
+        }
+        Ok(runs)
+    }
+
+    /// The checks on a commit, by a revision GitHub can resolve.
+    pub async fn commit_checks(
+        &self,
+        repo: &RepoId,
+        rev: &str,
+    ) -> Result<browse::Checks, ApiError> {
+        let op = browse::CommitChecksQuery::build(browse::RepoVariables {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+            expression: rev.to_owned(),
+        });
+        let object = self.graphql(op).await?.repository.and_then(|r| r.object);
+        let Some(browse::ChecksTarget::Commit(commit)) = object else {
+            return Err(ApiError::NotFound(format!("{repo}@{rev}")));
+        };
+        let checks = commit.into_checks();
+        Ok(self
+            .kept(&browse::keys::commit_checks(repo, rev), checks)
+            .await)
+    }
+
     /// Branches and tags, most recently committed first.
     pub async fn refs(&self, repo: &RepoId) -> Result<browse::Refs, ApiError> {
         let op = browse::BranchesQuery::build(browse::BranchesVariables {
