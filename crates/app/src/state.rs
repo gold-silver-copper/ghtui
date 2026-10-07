@@ -2113,7 +2113,20 @@ pub(crate) mod tests {
             Data::Refs(Box::new(ghtui_api::browse::Refs {
                 branches: vec!["main".into(), "next".into()],
                 tags: vec!["v1.0".into()],
+                branch_total: 300,
+                tag_total: 1,
             })),
+        );
+        // Branches it didn't fetch can't be picked, and it says so.
+        let f = overlay!(state, Picker);
+        let rows: Vec<String> = state
+            .picker_rows(f)
+            .into_iter()
+            .map(|(i, _)| i.label)
+            .collect();
+        assert_eq!(
+            rows.last().map(String::as_str),
+            Some("298 more branches on GitHub")
         );
         press(&mut state, "next<Enter>");
         assert_eq!(
