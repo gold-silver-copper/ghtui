@@ -582,7 +582,7 @@ checks each one, a property test checks each shape with any names and
 numbers, and another checks every link on every page fixture against it. A
 crawl of real GitHub pages finds links whose shapes it lacks (network; run by
 hand: `GHTUI_CRAWL_OUT=crawl.txt cargo test --release -p ghtui -- --ignored
---nocapture link_crawl`).
+--nocapture link_crawl`; a relative path is under the temporary directory).
 
 Performance targets, as timing tests
 (`cargo test --release -p ghtui -- --ignored --nocapture`):

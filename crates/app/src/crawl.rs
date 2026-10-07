@@ -8,7 +8,8 @@
 //! It starts from a few busy repositories, users and an organization,
 //! follows every link a few levels deep up to a page budget, and stops early
 //! when the rate limit runs low. The report (link shapes that leave, how
-//! often, and where) goes to `$GHTUI_CRAWL_OUT`, never the repository.
+//! often, and where) goes to `$GHTUI_CRAWL_OUT` (a relative path is
+//! under the temporary directory), never the repository.
 
 #![allow(
     clippy::unwrap_used,
@@ -188,12 +189,13 @@ async fn link_crawl() {
             "{n:>5}  {shape}\n       {example}\n       on {from}\n"
         ));
     }
-    let out = std::env::var("GHTUI_CRAWL_OUT").unwrap_or_else(|_| {
-        std::env::temp_dir()
-            .join("ghtui-link-crawl.txt")
-            .display()
-            .to_string()
-    });
+    // A relative path is under the temporary directory: tests run in the
+    // crate, and the report never goes into the repository.
+    let out = std::env::var("GHTUI_CRAWL_OUT").map_or_else(
+        |_| std::env::temp_dir().join("ghtui-link-crawl.txt"),
+        |path| std::env::temp_dir().join(path),
+    );
+    let out = out.display().to_string();
     std::fs::write(&out, &report).unwrap();
     eprintln!("{report}\nwritten to {out}");
 }
