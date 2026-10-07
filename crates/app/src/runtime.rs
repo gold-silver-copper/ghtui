@@ -778,7 +778,7 @@ async fn fetch_more(gh: &GitHub, key: &DataKey, after: String) -> Result<Data, A
     })
 }
 
-async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> {
+pub(crate) async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> {
     Ok(match key {
         DataKey::Repo(repo) => Data::Repo(Box::new(gh.repo(repo).await?)),
         DataKey::Tree(repo, rev, path) => Data::Tree(gh.tree(repo, rev, path).await?),
