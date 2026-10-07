@@ -385,13 +385,14 @@ fn team_summary(slug: &str, name: &str, secret: bool) -> TeamSummary {
     }
 }
 
-/// Two teams.
+/// Three teams.
 pub fn teams() -> Results<TeamSummary> {
     Results {
-        total: 2,
+        total: 3,
         items: vec![
             team_summary("core", "Core", false),
             team_summary("security", "Security", true),
+            team_summary("triage", "Triage", false),
         ],
         next: None,
     }
@@ -447,13 +448,17 @@ pub fn advisory() -> Advisory {
     }
 }
 
-/// A repository's two advisories.
+/// A repository's three advisories.
 pub fn advisories() -> Vec<Advisory> {
     let mut low = advisory();
     low.ghsa = "GHSA-6gcq-wc29-5xf2".into();
     low.severity = "low".into();
     low.summary = "Deep JSON bodies can crash the process".into();
-    vec![advisory(), low]
+    let mut critical = advisory();
+    critical.ghsa = "GHSA-3c6w-j9xm-8h2h".into();
+    critical.severity = "critical".into();
+    critical.summary = "Unbounded recursion exhausts the CPU".into();
+    vec![critical, advisory(), low]
 }
 /// A wiki's Home, with links to its other pages.
 pub fn wiki() -> WikiPage {
@@ -1005,7 +1010,7 @@ fn milestone_info(number: u64, title: &str, closed: bool) -> MilestoneInfo {
     }
 }
 
-/// Two open milestones.
+/// Three open milestones.
 pub fn milestones() -> MilestoneList {
     let mut later = milestone_info(4, "1.0", false);
     later.due_on = None;
@@ -1013,11 +1018,15 @@ pub fn milestones() -> MilestoneList {
     later.open = 9;
     later.done = 0;
     MilestoneList {
-        open: 2,
+        open: 3,
         closed: 3,
         results: Results {
-            total: 2,
-            items: vec![milestone_info(3, "Links", false), later],
+            total: 3,
+            items: vec![
+                milestone_info(3, "Links", false),
+                milestone_info(5, "Pages", false),
+                later,
+            ],
             next: None,
         },
     }
@@ -1037,7 +1046,7 @@ pub fn milestone() -> MilestoneDetail {
         },
     }
 }
-/// Two environments' deployments, one failed.
+/// Three deployments to two environments, one failed.
 pub fn deployments() -> DeploymentList {
     let deployment = |env: &str, outcome, state: &str, url: Option<&str>| DeploymentInfo {
         environment: env.into(),
@@ -1053,7 +1062,7 @@ pub fn deployments() -> DeploymentList {
     DeploymentList {
         environments: vec!["production".into(), "staging".into()],
         results: Results {
-            total: 2,
+            total: 3,
             items: vec![
                 deployment(
                     "production",
@@ -1062,6 +1071,7 @@ pub fn deployments() -> DeploymentList {
                     Some("https://ghtui.example.com"),
                 ),
                 deployment("staging", CheckOutcome::Failure, "failure", None),
+                deployment("staging", CheckOutcome::Neutral, "inactive", None),
             ],
             next: None,
         },
