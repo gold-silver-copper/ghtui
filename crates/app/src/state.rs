@@ -21,12 +21,13 @@ use ratatui_textarea::TextArea;
 use crate::browse::{self, Data, DataKey, Need, PageScreen};
 use crate::diff_job::{JobId, JobMsg};
 use crate::diff_screen::{self, DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
+use crate::join;
 use crate::keymap::{Action, Key, Keymap, Scope};
 use crate::nav::{self, Hints, Menu, SearchBox, Visit};
 use crate::picker::{self, Picker};
 use crate::review::{
-    self, Compose, ComposeTarget, EditPurpose, SubmitDialog, SubmitOutcome, on_compose_key,
-    on_edited, on_submit_key, review_action,
+    Compose, ComposeTarget, EditPurpose, SubmitDialog, SubmitOutcome, on_compose_key, on_edited,
+    on_submit_key, review_action,
 };
 use crate::route::{Route, Target};
 use crate::tabs::Tab;
@@ -219,6 +220,9 @@ pub struct OutdatedThread {
     pub line: u32,
 }
 
+/// Files' diffs, with each file's index in the listing.
+pub type FileDiffs = Vec<(usize, Arc<FileDiff>)>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Git {
     /// Start (or restart) the diff job for a PR.
@@ -233,17 +237,12 @@ pub enum Git {
     /// Diff these files next.
     Prioritize(DiffOf, Vec<usize>),
     /// Look for moved code; answered as the job's [`JobMsg::Moves`].
-    DetectMoves(DiffOf, JobId, Vec<(usize, Arc<FileDiff>)>),
-    MapOutdated {
-        pr: PrRef,
-        head: Oid,
-        threads: Vec<OutdatedThread>,
-    },
-    /// Block hashes of the diff at `old_head`, for "since my last review".
-    SinceReview {
-        pr: PrRef,
-        old_head: String,
-    },
+    DetectMoves(join::Joined<(DiffOf, JobId, FileDiffs)>),
+    /// Outdated threads mapped onto the PR's diff at a head.
+    MapOutdated(join::Joined<(PrRef, Oid, Vec<OutdatedThread>)>),
+    /// Block hashes of the PR's diff at an old head, for "since my last
+    /// review".
+    SinceReview(join::Joined<(PrRef, String)>),
     ListCommits(PrRef),
 }
 
@@ -297,6 +296,13 @@ impl<T> Default for Remote<T> {
 }
 
 impl<T> Remote<T> {
+    /// The data, once it's GitHub's latest: not cached, not being refreshed.
+    pub fn fresh(&self) -> Option<&T> {
+        self.data
+            .as_ref()
+            .filter(|_| !self.loading && self.cached_at.is_none())
+    }
+
     pub fn cached(cached: Option<ghtui_store::Cached<T>>) -> Self {
         Self {
             cached_at: cached.as_ref().map(|c| c.fetched_at),
@@ -664,13 +670,24 @@ impl State {
         self.settle_diff()
     }
 
-    /// Re-runs the diff screen's clamping and prioritization.
+    /// Starts the diff on screen once it can (a PR's needs the PR) and the
+    /// joined diff work that's due, and re-runs the diff screen's clamping
+    /// and prioritization.
     #[must_use]
     pub fn settle_diff(&mut self) -> Vec<Cmd> {
+        let mut cmds = match self.screen() {
+            Screen::Diff(screen) if !self.diffs.contains_key(&screen.of) => {
+                let of = screen.of.clone();
+                self.start_diff(&of)
+            }
+            _ => Vec::new(),
+        };
+        cmds.extend(join::join(self));
         let content = self.layout().content;
-        self.diff_parts().map_or_else(Vec::new, |(screen, diff)| {
-            diff_screen::settle(screen, diff, content)
-        })
+        if let Some((screen, diff)) = self.diff_parts() {
+            cmds.extend(diff_screen::settle(screen, diff, content));
+        }
+        cmds
     }
 
     /// What's loading on the visible screen, for the status bar.
@@ -771,15 +788,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             if let Err(err) = result.as_ref() {
                 tracing::warn!(%pr, %err, "PR fetch failed");
             }
-            state.prs.entry(pr.clone()).or_default().finish(*result);
-            // The diff was opened before the PR's metadata arrived.
-            let of = DiffOf::Pr(pr);
-            if let Screen::Diff(screen) = state.screen()
-                && screen.of == of
-                && !state.diffs.contains_key(&of)
-            {
-                return state.start_diff(&of);
-            }
+            state.prs.entry(pr).or_default().finish(*result);
         }
         Msg::Fetched {
             key,
@@ -1077,26 +1086,6 @@ fn diff_action(state: &mut State, action: Action) -> Vec<Cmd> {
 // ---- reviewing ---------------------------------------------------------------
 
 impl State {
-    /// Asks the diff job to map outdated threads, once both the threads and
-    /// the diff's head are known.
-    #[must_use]
-    pub(crate) fn map_outdated(&mut self, pr: &PrRef) -> Vec<Cmd> {
-        let of = DiffOf::Pr(pr.clone());
-        let Some(diff) = self.diffs.get_mut(&of).filter(|d| !d.mapping_requested) else {
-            return Vec::new();
-        };
-        let threads = review::outdated_to_map(&diff.inputs().threads);
-        let Some(head) = diff.head().filter(|_| !threads.is_empty()) else {
-            return Vec::new();
-        };
-        diff.mapping_requested = true;
-        vec![Cmd::Git(Git::MapOutdated {
-            pr: pr.clone(),
-            head,
-            threads,
-        })]
-    }
-
     /// Opens the composer on `target`, starting with `text`.
     #[must_use]
     pub fn compose(&mut self, target: ComposeTarget, text: &str) -> Vec<Cmd> {
@@ -1892,6 +1881,7 @@ pub(crate) mod tests {
         assert!(p.page.anchors.contains_key("issuecomment-1000001"));
         assert!(p.scroll > 0);
     }
+
     /// People and repository lists load more like any list.
     #[test]
     fn every_list_appends_its_next_page() {
@@ -2476,6 +2466,66 @@ pub(crate) mod tests {
         DiffMsg::Job(job, crate::diff_job::JobMsg::Files(Box::new(files)))
     }
 
+    /// Review threads from GraphQL often beat git's fetch on an uncached
+    /// repo: the outdated ones are still mapped once the diff's head is known.
+    #[test]
+    fn outdated_threads_that_beat_the_diff_are_mapped_when_it_lists() {
+        let mut state = state();
+        let pr = PrRef::parse("o/r#1").unwrap();
+        let detail = crate::snapshot_tests::pr_detail();
+        let head = detail.head_oid.clone();
+        let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
+        let job = start_pr_diff(&mut state, &pr);
+        let early = diff_msg(
+            &mut state,
+            &pr,
+            DiffMsg::ThreadsLoaded(Ok(vec![thread("old", None, false, true)])),
+        );
+        assert!(
+            !early
+                .iter()
+                .any(|c| matches!(c, Cmd::Git(Git::MapOutdated(_)))),
+            "no head to map onto yet"
+        );
+        let cmds = diff_msg(&mut state, &pr, no_files(job, &head));
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, Cmd::Git(Git::MapOutdated(j)) if j.get().2.len() == 1)),
+            "the outdated thread is never mapped: {cmds:?}"
+        );
+    }
+
+    /// A PR shown from the cache may have been merged since: once GitHub's
+    /// fresh copy arrives, git's diff is still checked against it.
+    #[test]
+    fn a_diff_listed_under_a_cached_pr_is_checked_when_the_pr_refreshes() {
+        let mut state = state();
+        let pr = PrRef::parse("o/r#1").unwrap();
+        let detail = crate::snapshot_tests::pr_detail();
+        let head = detail.head_oid.clone();
+        state.prs.insert(
+            pr.clone(),
+            Remote::cached(Some(ghtui_store::Cached {
+                value: detail.clone(),
+                fetched_at: 0,
+            })),
+        );
+        let job = start_pr_diff(&mut state, &pr);
+        let _ = diff_msg(&mut state, &pr, no_files(job, &head));
+        assert!(
+            state.diffs[&DiffOf::Pr(pr.clone())].error.is_none(),
+            "a cached PR isn't trusted for the check"
+        );
+        let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
+        let error = state.diffs[&DiffOf::Pr(pr.clone())].error.clone();
+        assert!(
+            error
+                .as_deref()
+                .is_some_and(|e| e.contains("GitHub says 7 files changed")),
+            "the empty diff was never checked against the fresh PR: error = {error:?}"
+        );
+    }
+
     /// After a push, git's diff is at a newer head than the PR we hold;
     /// refreshing the diff fetches the PR again, so the check can agree.
     #[test]
@@ -2495,6 +2545,65 @@ pub(crate) mod tests {
         assert!(
             cmds.contains(&Cmd::Api(Api::FetchPr(pr.clone()))),
             "r reloads the diff but not the PR it's checked against: {cmds:?}"
+        );
+    }
+
+    /// A diff you've left isn't checked when its PR refreshes (on the PR's
+    /// page, "moved while loading" would be wrong), only once it's back.
+    #[test]
+    fn a_hidden_diff_is_checked_when_it_shows_again() {
+        let mut state = state();
+        let pr = PrRef::parse("o/r#1").unwrap();
+        let mut detail = crate::snapshot_tests::pr_detail();
+        detail.changed_files = 0;
+        let head = detail.head_oid.clone();
+        let _ = update(
+            &mut state,
+            Msg::Pr(pr.clone(), Box::new(Ok(detail.clone()))),
+        );
+        let job = start_pr_diff(&mut state, &pr);
+        let _ = diff_msg(&mut state, &pr, no_files(job, &head));
+        let _ = state.back();
+        state.notice = None;
+        detail.head_oid = "d".repeat(40);
+        let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
+        assert_eq!(state.notice, None, "a diff off screen was checked");
+        let _ = state.open_diff(DiffOf::Pr(pr.clone()));
+        let _ = state.settle();
+        assert!(
+            matches!(&state.notice, Some(Notice::Error(m)) if m.contains("moved while loading")),
+            "{:?}",
+            state.notice
+        );
+    }
+
+    /// "Since my last review" asked for while the diff loads says it'll
+    /// wait, and is dropped if you leave before it's in.
+    #[test]
+    fn since_review_asked_on_a_diff_you_left_is_dropped() {
+        let mut state = state();
+        let pr = PrRef::parse("o/r#1").unwrap();
+        let mut detail = crate::snapshot_tests::pr_detail();
+        detail.changed_files = 0;
+        let head = detail.head_oid.clone();
+        let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
+        let job = start_pr_diff(&mut state, &pr);
+        let _ = diff_msg(&mut state, &pr, DiffMsg::LastReview(Ok(Some("old".into()))));
+        let _ = act(&mut state, Action::ToggleSinceReview);
+        assert!(
+            matches!(&state.notice, Some(Notice::Info(m)) if m.contains("once the diff has loaded")),
+            "{:?}",
+            state.notice
+        );
+        let _ = state.back();
+        let _ = diff_msg(&mut state, &pr, no_files(job, &head));
+        let mut cmds = state.open_diff(DiffOf::Pr(pr.clone()));
+        cmds.extend(state.settle());
+        assert!(
+            !cmds
+                .iter()
+                .any(|c| matches!(c, Cmd::Git(Git::SinceReview(_)))),
+            "a request from before you left came back: {cmds:?}"
         );
     }
 
@@ -2997,7 +3106,7 @@ pub(crate) mod tests {
                     ),
                 );
                 assert!(cmds.iter().any(
-                    |c| matches!(c, Cmd::Git(Git::DetectMoves(p, j, files)) if *p == DiffOf::Pr(pr.clone()) && *j == job && files.len() == 8)
+                    |c| matches!(c, Cmd::Git(Git::DetectMoves(m)) if matches!(m.get(), (p, j, files) if *p == DiffOf::Pr(pr.clone()) && *j == job && files.len() == 8))
                 ));
                 // Only once.
                 let again = diff_msg(&mut s, &pr, DiffMsg::Job(job, JobMsg::Moves(Vec::new())));
@@ -3053,9 +3162,7 @@ pub(crate) mod tests {
                     matches!(&cmds[..], [Cmd::Api(Api::FetchLastReview { login, .. })] if login == "me")
                 );
                 let cmds = diff_msg(&mut s, &pr, DiffMsg::LastReview(Ok(Some("old".into()))));
-                assert!(
-                    matches!(&cmds[..], [Cmd::Git(Git::SinceReview { old_head, .. })] if old_head == "old")
-                );
+                assert!(matches!(&cmds[..], [Cmd::Git(Git::SinceReview(j))] if j.get().1 == "old"));
 
                 // Nothing in the old diff matched: everything is new.
                 diff_msg(
@@ -3466,7 +3573,7 @@ pub(crate) mod tests {
                     &pr,
                     DiffMsg::ThreadsLoaded(Ok(vec![thread("old", None, false, true)])),
                 );
-                assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated { threads, head, .. }) if threads.len() == 1 && &**head == "h")));
+                assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated(j)) if j.get().2.len() == 1 && &*j.get().1 == "h")));
                 let ann = &s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations()[0];
                 assert!(
                     ann.outdated && ann.on_line().is_none(),

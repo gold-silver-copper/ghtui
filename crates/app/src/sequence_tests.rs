@@ -375,3 +375,79 @@ proptest! {
         }
     }
 }
+
+/// Work that waits on several of a diff's inputs comes out the same in
+/// every order they arrive in: git's listing (no files), review threads
+/// with an outdated one, and GitHub's fresh PR over a cached copy.
+#[test]
+fn joined_diff_work_is_the_same_in_every_arrival_order() {
+    use crate::diff_job::{DiffFiles, JobMsg};
+    use crate::diff_screen::DiffOf;
+    use crate::state::{Cmd, DiffMsg, Git, Remote};
+    use ghtui_api::model::PrRef;
+    use ghtui_git::{Oid, repo::PrRefs};
+
+    let pr = PrRef::parse("o/r#1").unwrap();
+    let of = DiffOf::Pr(pr.clone());
+    let detail = crate::snapshot_tests::pr_detail();
+    let orders = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    for order in orders {
+        let mut state = new_state();
+        let cached = ghtui_store::Cached {
+            value: detail.clone(),
+            fetched_at: 0,
+        };
+        state.prs.insert(pr.clone(), Remote::cached(Some(cached)));
+        let mut cmds = state.open_diff(of.clone());
+        let job = cmds
+            .iter()
+            .find_map(|c| match c {
+                Cmd::Git(Git::LoadDiff { job, .. }) => Some(*job),
+                _ => None,
+            })
+            .unwrap();
+        for step in order {
+            let msg = match step {
+                0 => {
+                    let refs = PrRefs {
+                        head: Oid::new(detail.head_oid.clone()),
+                        base: Oid::new("b".repeat(40)),
+                        merge_base: Oid::new("b".repeat(40)),
+                    };
+                    let files = DiffFiles {
+                        refs,
+                        files: Vec::new(),
+                        generated: HashSet::new(),
+                    };
+                    Msg::Diff(
+                        of.clone(),
+                        DiffMsg::Job(job, JobMsg::Files(Box::new(files))),
+                    )
+                }
+                1 => {
+                    let threads = vec![fixtures::thread("old", None, false, true)];
+                    Msg::Diff(of.clone(), DiffMsg::ThreadsLoaded(Ok(threads)))
+                }
+                _ => Msg::Pr(pr.clone(), Box::new(Ok(detail.clone()))),
+            };
+            cmds.extend(update(&mut state, msg));
+        }
+        let mapped = cmds
+            .iter()
+            .filter(|c| matches!(c, Cmd::Git(Git::MapOutdated(_))))
+            .count();
+        assert_eq!(mapped, 1, "{order:?}: {cmds:?}");
+        let error = state.diffs[&of].error.clone();
+        assert!(
+            error.is_some_and(|e| e.contains("GitHub says 7 files changed")),
+            "{order:?}"
+        );
+    }
+}
