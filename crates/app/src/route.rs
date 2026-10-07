@@ -584,9 +584,16 @@ impl Target {
                     Some("code") => SearchKind::Code,
                     // Topics: the repositories tagged with one.
                     Some("topics") => {
+                        let topic = query.unwrap_or_default();
+                        let topic = topic.trim();
+                        let query = if topic.is_empty() {
+                            String::new()
+                        } else {
+                            format!("topic:{topic}")
+                        };
                         return Target::Page(Route::Search {
                             kind: SearchKind::Repos,
-                            query: format!("topic:{}", query.unwrap_or_default().trim()),
+                            query,
                         });
                     }
                     // Wikis, packages, the marketplace…
@@ -630,6 +637,8 @@ impl Target {
             },
             ["orgs", org, "teams"] => Route::Teams((*org).to_owned()),
             // Its members, repositories and child teams are on its page.
+            // GitHub's form for a new team.
+            ["orgs", _, "teams", "new"] => return external(),
             ["orgs", org, "teams", slug, ..] => Route::Team {
                 org: (*org).to_owned(),
                 slug: (*slug).to_owned(),
@@ -694,8 +703,7 @@ impl Target {
                     Route::Pulls { repo, query }
                 }
             }
-            // A label's issues. (Milestones are by number in URLs, but
-            // search only filters by title, so they stay on GitHub.)
+            // A label's issues.
             [o, r, "labels", label] => match repo(o, r) {
                 Some(repo) => {
                     let label = if label.contains(char::is_whitespace) {
@@ -738,9 +746,15 @@ impl Target {
                 },
                 None => return external(),
             },
-            // Assets are downloads, and writing wiki pages is on GitHub.
+            // Assets are downloads; writing wiki pages, and the form for a
+            // new advisory, are on GitHub.
             [_, _, "releases", "download", ..]
-            | [_, _, "wiki", .., "_new" | "_edit" | "_compare"] => return external(),
+            | [_, _, "wiki", .., "_new" | "_edit" | "_compare"]
+            | [_, _, "security", "advisories", "new"] => return external(),
+            // A wiki's own pages but its list (history, comparisons).
+            [_, _, "wiki", special, ..] if special.starts_with('_') && *special != "_pages" => {
+                return external();
+            }
             [o, r, "releases", ..] => match repo(o, r) {
                 Some(repo) => Route::Releases(repo),
                 None => return external(),
@@ -1011,11 +1025,19 @@ const GIST_PAGES: &[&str] = &[
     "discover", "starred", "search", "auth", "login", "join", "mine",
 ];
 
-/// Whether a gist.github.com path segment is a gist's ID (numbers for old
-/// gists, 20 or 32 hex digits for newer) rather than someone's login.
+/// Whether a gist.github.com path segment after an owner is a gist's ID
+/// (numbers for old gists, 20 or 32 hex digits for newer).
 fn is_gist_id(s: &str) -> bool {
     s.bytes().all(|b| b.is_ascii_digit())
         || (matches!(s.len(), 20 | 32) && s.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// Whether a lone gist.github.com segment is a gist rather than someone's
+/// gists. GitHub tries a login first; ghtui can't ask, so it takes short
+/// numbers for logins (`/1`, `/2000`) and long ones for old gists
+/// (`/1162032`, which GitHub redirects to its owner's).
+fn is_lone_gist_id(s: &str) -> bool {
+    is_gist_id(s) && !(s.len() < 5 && s.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// A gist.github.com page: a gist (`/<id>`, `/<owner>/<id>`) or someone's
@@ -1024,7 +1046,7 @@ fn gist(parsed: &url::Url) -> Option<Route> {
     let segments: Vec<&str> = parsed.path_segments()?.filter(|s| !s.is_empty()).collect();
     Some(match segments.as_slice() {
         [first, ..] if GIST_PAGES.contains(first) => return None,
-        [id] if is_gist_id(id) => Route::Gist {
+        [id] if is_lone_gist_id(id) => Route::Gist {
             owner: None,
             id: (*id).to_owned(),
         },
@@ -1457,6 +1479,26 @@ pub(crate) mod tests {
             compare_url(&DiffOf::Range(pr.repo.clone(), sha.into(), other.clone())),
             format!("https://github.com/o/r/compare/{sha}..{other}")
         );
+        // A topic search without a topic is an empty search, not `topic:`.
+        assert_eq!(
+            page("https://github.com/search?type=topics"),
+            Route::Search {
+                kind: SearchKind::Repos,
+                query: String::new()
+            }
+        );
+        // A short number alone is someone's gists; a long one, an old gist.
+        assert_eq!(
+            page("https://gist.github.com/2000"),
+            Route::Gists("2000".into())
+        );
+        assert_eq!(
+            page("https://gist.github.com/1162032"),
+            Route::Gist {
+                owner: None,
+                id: "1162032".into()
+            }
+        );
         // A repository (or owner) named `blob` keeps its blame.
         let blame = Route::Blame {
             repo: RepoId::new("blob", "blob"),
@@ -1737,16 +1779,21 @@ pub(crate) mod tests {
                 (prop::option::of(repo()), "GHSA(-[2-9a-z]{4}){3}")
                     .prop_map(|(repo, ghsa)| Route::Advisory { repo, ghsa }),
                 segment().prop_map(Route::Teams),
-                (segment(), segment()).prop_map(|(org, slug)| Route::Team { org, slug }),
+                (segment(), segment())
+                    .prop_filter("not the new-team form", |(_, slug)| slug != "new")
+                    .prop_map(|(org, slug)| Route::Team { org, slug }),
                 (prop::option::of(segment()), "[0-9a-f]{20}|[0-9]{1,8}")
                     .prop_filter("an owner isn't a gist ID or a gist page", |(o, _)| {
                         o.as_deref()
                             .is_none_or(|o| !is_gist_id(o) && !GIST_PAGES.contains(&o))
                     })
+                    .prop_filter("a lone ID is a gist's", |(o, id)| {
+                        o.is_some() || is_lone_gist_id(id)
+                    })
                     .prop_map(|(owner, id)| Route::Gist { owner, id }),
                 segment()
                     .prop_filter("not a gist ID or a gist page", |l| {
-                        !is_gist_id(l) && !GIST_PAGES.contains(&l.as_str())
+                        !is_lone_gist_id(l) && !GIST_PAGES.contains(&l.as_str())
                     })
                     .prop_map(Route::Gists),
                 (
@@ -1866,8 +1913,13 @@ pub(crate) mod tests {
                     _ if s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit()) => {
                         sha.to_owned()
                     }
+                    // As many digits: a lone gist.github.com number is a gist
+                    // only when it's long.
                     _ if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) => {
-                        number.to_string()
+                        let digits = u32::try_from(s.len()).unwrap_or(u32::MAX);
+                        let low = 10u64.checked_pow(digits - 1).unwrap_or(1);
+                        let high = 10u64.checked_pow(digits).unwrap_or(u64::MAX);
+                        (low + number % (high - low)).to_string()
                     }
                     _ => s.clone(),
                 })

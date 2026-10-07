@@ -98,6 +98,7 @@ https://github.com/cli/cli/discussions/14603#discussioncomment-18765024     Disc
 https://github.com/orgs/community/discussions/12345                         Discussion
 # Gist
 https://gist.github.com/1162032                                             Gist
+https://gist.github.com/2000                                                Gists
 https://gist.github.com/octocat/1162032                                     Gist
 https://gist.github.com/octocat                                             Gists
 https://gist.github.com/octocat/1162032/raw                                 external download
@@ -105,6 +106,7 @@ https://gist.github.com/discover                                            exte
 # Team
 https://github.com/orgs/github/teams/justice-league                         Team
 https://github.com/orgs/rust-lang/teams                                     Teams
+https://github.com/orgs/rust-lang/teams/new                                 external session
 # SecurityAdvisoryReference, SecurityAdvisory permalink
 https://github.com/advisories/GHSA-6r3q-mjv7-xr8m                           Advisory
 https://github.com/advisories                                               Advisories
@@ -211,8 +213,11 @@ https://github.com/rust-lang/rust/wiki                                      Wiki
 https://github.com/rust-lang/rust/wiki/Home                                 Wiki
 https://github.com/rust-lang/rust/wiki/_pages                               Wiki
 https://github.com/rust-lang/rust/wiki/_new                                 external session
+https://github.com/rust-lang/rust/wiki/_history                             external rare
+https://github.com/rust-lang/rust/wiki/_compare/029a999f7a641ee25596aa00ca09f6b760f1d10e external rare
 https://github.com/rust-lang/rust/security                                  Advisories
 https://github.com/rust-lang/rust/security/advisories                       Advisories
+https://github.com/rust-lang/rust/security/advisories/new                   external session
 https://github.com/rust-lang/rust/pulse                                     external rare
 https://github.com/rust-lang/rust/graphs/contributors                       external rare
 https://github.com/rust-lang/rust/graphs/commit-activity                    external rare
