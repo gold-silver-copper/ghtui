@@ -15,7 +15,7 @@ use ghtui_ui::diff_doc::{Doc, Pos};
 use ghtui_ui::text::short_sha;
 use ratatui_textarea::TextArea;
 
-use crate::diff_screen::{self, DiffOf, DiffScreen, LastReview};
+use crate::diff_screen::{self, DiffOf, LastReview};
 use crate::keymap::Action;
 use crate::picker::{self, PickItem};
 use crate::state::{Api, Cmd, Git, OutdatedThread, Overlay, Screen, State};
@@ -804,7 +804,7 @@ pub(crate) fn apply_commit_choice(
     // Since your review: compared once the whole PR is back.
     diff.since_requested = since;
     let job = diff.job;
-    *screen = DiffScreen::new(pr.clone().into(), screen.prefs);
+    screen.restart();
     vec![Cmd::Git(Git::LoadDiff {
         of: pr.into(),
         job,
