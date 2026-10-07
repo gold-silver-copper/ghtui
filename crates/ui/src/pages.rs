@@ -2977,9 +2977,9 @@ pub fn workflow(
 ) {
     if let Some(wf) = wf.show(page, "the workflow") {
         let mut title = vec![Seg::new(wf.name.clone(), Role::Title)];
-        if wf.state != "active" {
+        if let Some(why) = &wf.disabled {
             title.push(space());
-            title.push(chip(wf.state.replace('_', " "), Bg::SecondaryContainer));
+            title.push(chip(why.clone(), Bg::SecondaryContainer));
         }
         page.wrapped(title, 0, Frame::None);
         let file = link_seg(

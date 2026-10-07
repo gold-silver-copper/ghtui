@@ -1969,7 +1969,9 @@ impl GitHub {
         let workflow = browse::Workflow {
             name: wire.name,
             path: wire.path,
-            state: wire.state,
+            disabled: Some(wire.state)
+                .filter(|s| s != "active")
+                .map(|s| s.replace('_', " ")),
         };
         Ok(self
             .kept(&browse::keys::workflow(repo, file), workflow)
