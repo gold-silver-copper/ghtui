@@ -442,11 +442,19 @@ fn checks(commits: &q::CommitRollupConnection) -> Option<ChecksState> {
         .commit
         .status_check_rollup
         .as_ref()?;
-    Some(match rollup.state {
-        q::StatusState::Success => ChecksState::Passing,
-        q::StatusState::Failure | q::StatusState::Error => ChecksState::Failing,
-        q::StatusState::Pending | q::StatusState::Expected => ChecksState::Pending,
-    })
+    Some(rollup.state.into())
+}
+
+/// The one reading of a commit status, for a PR's rollup and for each
+/// status among a commit's checks.
+impl From<q::StatusState> for ChecksState {
+    fn from(state: q::StatusState) -> Self {
+        match state {
+            q::StatusState::Success => Self::Passing,
+            q::StatusState::Failure | q::StatusState::Error => Self::Failing,
+            q::StatusState::Pending | q::StatusState::Expected => Self::Pending,
+        }
+    }
 }
 
 /// A login; a deleted account is GitHub's own "ghost" user.
