@@ -2062,7 +2062,7 @@ pub struct WorkflowRun {
     pub updated_at: Option<String>,
     /// The workflow file, `.github/workflows/ci.yml`.
     pub path: String,
-    pub jobs: Vec<JobSummary>,
+    pub jobs: Capped<JobSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2446,7 +2446,7 @@ pub(crate) mod rest_actions {
 }
 
 impl rest_actions::Run {
-    pub(crate) fn into_run(self, jobs: Vec<rest_actions::Job>) -> WorkflowRun {
+    pub(crate) fn into_run(self, jobs: Capped<rest_actions::Job>) -> WorkflowRun {
         let outcome = CheckOutcome::of(self.status, self.conclusion);
         WorkflowRun {
             id: self.id,
@@ -2462,16 +2462,13 @@ impl rest_actions::Run {
             started_at: self.run_started_at.or(self.created_at),
             updated_at: self.updated_at,
             path: self.path,
-            jobs: jobs
-                .into_iter()
-                .map(|j| JobSummary {
-                    outcome: CheckOutcome::of(j.status, j.conclusion),
-                    id: j.id,
-                    name: j.name,
-                    started_at: j.started_at,
-                    completed_at: j.completed_at,
-                })
-                .collect(),
+            jobs: jobs.map(|j| JobSummary {
+                outcome: CheckOutcome::of(j.status, j.conclusion),
+                id: j.id,
+                name: j.name,
+                started_at: j.started_at,
+                completed_at: j.completed_at,
+            }),
         }
     }
 
@@ -4508,12 +4505,8 @@ pub struct BranchesVariables {
 /// many there are of each.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Refs {
-    pub branches: Vec<String>,
-    pub tags: Vec<String>,
-    #[serde(default)]
-    pub branch_total: u64,
-    #[serde(default)]
-    pub tag_total: u64,
+    pub branches: Capped<String>,
+    pub tags: Capped<String>,
 }
 
 // ---- the viewer's repositories ---------------------------------------------------------

@@ -887,7 +887,8 @@ pub fn workflow_run() -> WorkflowRun {
             job(1, "fmt", CheckOutcome::Success, Some("00:14")),
             job(2, "test (ubuntu)", CheckOutcome::Failure, Some("04:12")),
             job(3, "test (macos)", CheckOutcome::Pending, None),
-        ],
+        ]
+        .into(),
     }
 }
 

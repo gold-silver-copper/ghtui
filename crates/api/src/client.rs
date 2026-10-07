@@ -1932,7 +1932,7 @@ impl GitHub {
         let jobs = self
             .more_pages(what, results(1, jobs?), PAGES, page)
             .await?;
-        let run = wire?.into_run(jobs.items);
+        let run = wire?.into_run(jobs);
         Ok(self
             .kept(&browse::keys::run(repo, run.id, attempt), run)
             .await)
@@ -2149,18 +2149,10 @@ impl GitHub {
         )?;
         self.check_connection(&page, 25, format!("{repo}'s discussions"));
         let list = browse::DiscussionList {
-            categories: {
-                let total = categories.total;
-                let items = categories
-                    .items
-                    .into_iter()
-                    .map(|c| browse::DiscussionCategory {
-                        name: c.name,
-                        slug: c.slug,
-                    })
-                    .collect();
-                crate::model::Capped::new(items, total)
-            },
+            categories: categories.map(|c| browse::DiscussionCategory {
+                name: c.name,
+                slug: c.slug,
+            }),
             results: page.into_results(w::Summary::into_summary),
         };
         Ok(self
@@ -2209,14 +2201,10 @@ impl GitHub {
         let tags: Connection<Name> = at(&data, "/repository/tags", || repo.to_string())?;
         self.check_connection(&tags, 100, format!("{repo}'s tags"));
         let tags = tags.into_results(|n| n.name);
+        let tags = Capped::new(tags.items, tags.total);
         let more = |after| async move { Ok(heads(after).await?.0) };
         let branches = self.more_pages(what, first, PAGES, more).await?;
-        let refs = browse::Refs {
-            branches: branches.items,
-            branch_total: branches.total,
-            tags: tags.items,
-            tag_total: tags.total,
-        };
+        let refs = browse::Refs { branches, tags };
         Ok(self.kept(&browse::keys::refs(repo), refs).await)
     }
 

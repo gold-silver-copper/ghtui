@@ -317,11 +317,8 @@ impl State {
         rows.sort_by_key(|(s, ..)| *s);
         let mut rows: Rows = rows.into_iter().map(|(_, i, c)| (i, Some(c))).collect();
         // What wasn't fetched can't be picked: say so.
-        for (shown, total, what) in [
-            (refs.branches.len(), refs.branch_total, "branches"),
-            (refs.tags.len(), refs.tag_total, "tags"),
-        ] {
-            let rest = total.saturating_sub(shown as u64);
+        for (list, what) in [(&refs.branches, "branches"), (&refs.tags, "tags")] {
+            let rest = list.left_out();
             if rest > 0 {
                 rows.push((item(format!("{rest} more {what} on GitHub"), ""), None));
             }

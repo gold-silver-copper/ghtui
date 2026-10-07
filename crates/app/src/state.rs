@@ -2310,10 +2310,8 @@ pub(crate) mod tests {
             &mut state,
             DataKey::Refs(repo()),
             Data::Refs(Box::new(ghtui_api::browse::Refs {
-                branches: vec!["main".into(), "next".into()],
-                tags: vec!["v1.0".into()],
-                branch_total: 300,
-                tag_total: 1,
+                branches: ghtui_api::model::Capped::new(vec!["main".into(), "next".into()], 300),
+                tags: vec!["v1.0".into()].into(),
             })),
         );
         // Branches it didn't fetch can't be picked, and it says so.

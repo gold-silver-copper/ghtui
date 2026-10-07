@@ -39,6 +39,15 @@ impl<T> Capped<T> {
         )
     }
 
+    /// Each item made another by `f`, of the same total.
+    pub fn map<U>(self, f: impl FnMut(T) -> U) -> Capped<U> {
+        let items = self.items.into_iter().map(f).collect();
+        Capped {
+            items,
+            total: self.total,
+        }
+    }
+
     /// How many GitHub has that aren't here.
     pub fn left_out(&self) -> u64 {
         self.total.saturating_sub(self.items.len() as u64)
@@ -54,7 +63,7 @@ impl<T> Default for Capped<T> {
     }
 }
 
-/// All of a list.
+/// All of a list: the way to say none of it is left out.
 impl<T> From<Vec<T>> for Capped<T> {
     fn from(items: Vec<T>) -> Self {
         Self::new(items, 0)

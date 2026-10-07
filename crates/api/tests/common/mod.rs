@@ -63,8 +63,8 @@ pub async fn run(gh: &GitHub) {
     // A repository with many branches.
     let cli = RepoId::new("cli", "cli");
     let refs = gh.refs(&cli).await.unwrap();
-    assert!(refs.branch_total > 100);
-    assert_eq!(refs.branches.len() as u64, refs.branch_total.min(1000));
+    assert!(refs.branches.total > 100);
+    assert_eq!(refs.branches.len() as u64, refs.branches.total.min(1000));
     let branches = gh.branches(&cli, None).await.unwrap();
     assert!(branches.next.is_some() && branches.items.len() == 30);
     no_doubts(gh, "many branches");

@@ -651,9 +651,9 @@ async fn branches_page_by_name() {
     ])
     .await;
     let refs = gh.refs(&RepoId::new("o", "r")).await.unwrap();
-    assert_eq!(refs.branches, ["a", "b", "c"]);
+    assert_eq!(*refs.branches, ["a", "b", "c"]);
     assert_eq!(
-        (refs.branch_total, refs.tags.len(), refs.tag_total),
+        (refs.branches.total, refs.tags.len(), refs.tags.total),
         (3, 2, 7)
     );
     let seen = seen.lock().unwrap();
@@ -724,7 +724,7 @@ async fn partial_results_say_what_they_left_out() {
     )])
     .await;
     let refs = gh.refs(&RepoId::new("o", "r")).await.unwrap();
-    assert_eq!(refs.branches, ["main"]);
+    assert_eq!(*refs.branches, ["main"]);
     assert_eq!(gh.take_left_out(), [sso]);
     assert!(gh.take_left_out().is_empty());
 }
@@ -1325,4 +1325,41 @@ async fn patches_past_the_cap_are_left_out() {
         .unwrap();
     assert_eq!((files.len(), seen.lock().unwrap().len()), (3000, 30));
     assert_eq!(gh.take_left_out(), ["o/r#7's patches: only the first 3000"]);
+}
+
+/// A run with more jobs than are fetched says how many it left out: 1050
+/// jobs, of which ten pages of 100 are read, keep the other 50 counted.
+#[tokio::test]
+async fn a_runs_jobs_past_the_cap_are_counted() {
+    let job = |id: u64| {
+        format!(
+            r#"{{"id":{id},"run_id":9,"name":"j{id}","status":"completed","conclusion":"success"}}"#
+        )
+    };
+    let page = |ids: std::ops::Range<u64>| {
+        let jobs: Vec<String> = ids.map(job).collect();
+        format!(r#"{{"total_count":1050,"jobs":[{}]}}"#, jobs.join(","))
+    };
+    let base = 7_000_000;
+    let mut replies = vec![
+        Reply::new(200, r#"{"id":9,"run_number":1,"event":"push","head_sha":"abc","status":"completed","conclusion":"success"}"#)
+            .on("/runs/9 "),
+        Reply::new(200, page(base..base + 100)).on("jobs?per_page=100 "),
+    ];
+    for n in 2..=11u64 {
+        let on: &'static str = Box::leak(format!("&page={n} ").into_boxed_str());
+        let start = base + (n - 1) * 100;
+        let end = (start + 100).min(base + 1050);
+        replies.push(Reply::new(200, page(start..end)).on(on));
+    }
+    let (gh, _) = github(replies).await;
+    let run = gh
+        .workflow_run(&RepoId::new("o", "r"), 9, None)
+        .await
+        .unwrap();
+    assert_eq!((run.jobs.len(), run.jobs.total), (1000, 1050));
+    assert!(
+        gh.take_left_out().is_empty(),
+        "the total says what's left out"
+    );
 }
