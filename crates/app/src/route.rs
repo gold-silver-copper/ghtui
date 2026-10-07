@@ -775,9 +775,12 @@ impl Target {
                 if spec.is_empty() {
                     return external();
                 }
-                // Its files, between two commits.
+                // Its files, from one commit to the other (`a..b`; with
+                // three dots it's from their merge base, which the
+                // comparison page finds).
                 if parsed.fragment() == Some("files")
-                    && let Some((from, to)) = spec.split_once("...")
+                    && !spec.contains("...")
+                    && let Some((from, to)) = spec.split_once("..")
                     && is_full_sha(from)
                     && is_full_sha(to)
                 {
@@ -1041,7 +1044,7 @@ fn gist(parsed: &url::Url) -> Option<Route> {
 /// The comparison a range of files is from.
 pub fn compare_url(of: &DiffOf) -> String {
     match of {
-        DiffOf::Range(repo, from, to) => format!("{}/compare/{from}...{to}", links::repo(repo)),
+        DiffOf::Range(repo, from, to) => format!("{}/compare/{from}..{to}", links::repo(repo)),
         DiffOf::Pr(pr) => format!("{}/files", pr.url()),
         DiffOf::Commit(repo, oid) => links::commit(repo, oid),
     }
@@ -1436,13 +1439,23 @@ pub(crate) mod tests {
         let other = "f".repeat(40);
         assert_eq!(
             Target::from_url(&format!(
-                "https://github.com/o/r/compare/{sha}...{other}#files"
+                "https://github.com/o/r/compare/{sha}..{other}#files"
             )),
             Target::Files(DiffOf::Range(pr.repo.clone(), sha.into(), other.clone()))
         );
+        // Three dots diff from the merge base, which the comparison finds.
+        assert_eq!(
+            page(&format!(
+                "https://github.com/o/r/compare/{sha}...{other}#files"
+            )),
+            Route::Compare {
+                repo: pr.repo.clone(),
+                spec: format!("{sha}...{other}")
+            }
+        );
         assert_eq!(
             compare_url(&DiffOf::Range(pr.repo.clone(), sha.into(), other.clone())),
-            format!("https://github.com/o/r/compare/{sha}...{other}")
+            format!("https://github.com/o/r/compare/{sha}..{other}")
         );
         // A repository (or owner) named `blob` keeps its blame.
         let blame = Route::Blame {

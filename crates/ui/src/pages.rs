@@ -84,7 +84,7 @@ pub mod url {
         format!("{BASE}/{repo}/commit/{oid}")
     }
     pub fn compare(repo: &RepoId, from: &str, to: &str) -> String {
-        format!("{}/compare/{from}...{to}", self::repo(repo))
+        format!("{}/compare/{from}..{to}", self::repo(repo))
     }
     pub fn release(repo: &RepoId, tag: &str) -> String {
         format!("{BASE}/{repo}/releases/tag/{}", encode_path(tag))
