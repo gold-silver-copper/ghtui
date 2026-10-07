@@ -1052,6 +1052,7 @@ pub fn milestone() -> MilestoneDetail {
             ],
             next: Some("m1".into()),
         },
+        unsearchable: false,
     }
 }
 /// Three deployments to two environments, one failed.

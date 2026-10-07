@@ -536,6 +536,33 @@ async fn an_organizations_discussions_are_found_past_the_first_page() {
     assert_eq!(seen.lock().unwrap().len(), 3);
 }
 
+/// An empty commit or code search, which GitHub refuses, finds nothing
+/// without asking.
+#[tokio::test]
+async fn an_empty_code_search_asks_nothing() {
+    let (gh, seen) = github(Vec::new()).await;
+    let results = gh
+        .search(ghtui_api::browse::SearchKind::Code, " ", None)
+        .await
+        .unwrap();
+    assert_eq!(results.counts(), (0, 0));
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+/// A milestone whose title has quotes isn't searched for, which GitHub
+/// can't do, and says so.
+#[tokio::test]
+async fn a_quoted_milestone_title_is_not_searched() {
+    let (gh, seen) = github(vec![Reply::new(
+        200,
+        r#"{"data":{"repository":{"milestone":{"number":3,"title":"Say \"hi\"","description":null,"dueOn":null,"closed":false,"closedAt":null,"updatedAt":"2026-10-01T00:00:00Z","openIssues":{"totalCount":2},"doneIssues":{"totalCount":0},"openPrs":{"totalCount":0},"donePrs":{"totalCount":0}}}}}"#,
+    )])
+    .await;
+    let m = gh.milestone(&RepoId::new("o", "r"), 3, None).await.unwrap();
+    assert!(m.unsearchable);
+    assert_eq!(seen.lock().unwrap().len(), 1, "no search");
+}
+
 /// A comparison of one revision is against the default branch.
 #[tokio::test]
 async fn one_revision_compares_with_the_default_branch() {
