@@ -2382,6 +2382,39 @@ pub(crate) mod tests {
         }
     }
 
+    /// git finding no changes in a PR GitHub says has some (as a merged
+    /// PR's diff once did) is shown as an error, not as an empty diff.
+    #[test]
+    fn an_empty_diff_of_a_pr_with_changes_is_an_error() {
+        let mut state = state();
+        let pr = PrRef::parse("o/r#1").unwrap();
+        let detail = crate::snapshot_tests::pr_detail();
+        let head = ghtui_git::Oid::new(detail.head_oid.clone());
+        let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
+        let cmds = state.open_diff(DiffOf::Pr(pr.clone()));
+        let job = cmds
+            .iter()
+            .find_map(|c| match c {
+                Cmd::Git(Git::LoadDiff { job, .. }) => Some(*job),
+                _ => None,
+            })
+            .unwrap();
+        let refs = ghtui_git::repo::PrRefs {
+            head,
+            base: ghtui_git::Oid::new("b".repeat(40)),
+            merge_base: ghtui_git::Oid::new("b".repeat(40)),
+        };
+        let files = crate::diff_job::DiffFiles {
+            refs,
+            files: Vec::new(),
+            generated: std::collections::HashSet::new(),
+        };
+        let msg = DiffMsg::Job(job, crate::diff_job::JobMsg::Files(Box::new(files)));
+        let _ = diff_msg(&mut state, &pr, msg);
+        let error = state.diffs[&DiffOf::Pr(pr)].error.clone();
+        assert!(error.is_some_and(|e| e.contains("GitHub says 7 files changed")));
+    }
+
     #[test]
     fn files_tab_opens_the_diff_once_the_pr_loads() {
         let mut state = state();
