@@ -92,6 +92,15 @@ pub enum Route {
     },
     Tags(RepoId),
     Branches(RepoId),
+    /// Open or closed milestones.
+    Milestones {
+        repo: RepoId,
+        closed: bool,
+    },
+    Milestone {
+        repo: RepoId,
+        number: u64,
+    },
     /// A revision's commits, of `path` if it isn't empty.
     Commits {
         repo: RepoId,
@@ -227,6 +236,14 @@ impl Route {
             Route::Discussion { of, number } => format!("{}/{number}", discussions_url(of)),
             Route::Tags(repo) => format!("{}/tags", links::repo(repo)),
             Route::Branches(repo) => format!("{}/branches", links::repo(repo)),
+            Route::Milestones { repo, closed } => format!(
+                "{}/milestones{}",
+                links::repo(repo),
+                if *closed { "?state=closed" } else { "" }
+            ),
+            Route::Milestone { repo, number } => {
+                format!("{}/milestone/{number}", links::repo(repo))
+            }
             Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
             Route::Commit { repo, oid } => links::commit(repo, oid),
             Route::User { login, tab } => match tab {
@@ -275,6 +292,8 @@ impl Route {
             Route::Discussion { of, number } => format!("{} · Discussion {number}", of_title(of)),
             Route::Tags(repo) => format!("{repo} · Tags"),
             Route::Branches(repo) => format!("{repo} · Branches"),
+            Route::Milestones { repo, .. } => format!("{repo} · Milestones"),
+            Route::Milestone { repo, number } => format!("{repo} · Milestone {number}"),
             Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
             Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
             Route::Commit { repo, oid } => format!("{repo}@{}", short_sha(oid)),
@@ -313,6 +332,8 @@ impl Route {
             }
             | Route::Tags(repo)
             | Route::Branches(repo)
+            | Route::Milestones { repo, .. }
+            | Route::Milestone { repo, .. }
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
             Route::Home
@@ -595,6 +616,18 @@ impl Target {
             [o, r, "tags"] => match repo(o, r) {
                 Some(repo) => Route::Tags(repo),
                 None => return external(),
+            },
+            // A milestone by its title is in the list.
+            [o, r, "milestones", ..] => match repo(o, r) {
+                Some(repo) => Route::Milestones {
+                    repo,
+                    closed: param("state").as_deref() == Some("closed"),
+                },
+                None => return external(),
+            },
+            [o, r, "milestone", n] => match (repo(o, r), n.parse()) {
+                (Some(repo), Ok(number)) => Route::Milestone { repo, number },
+                _ => return external(),
             },
             // All, active, stale, yours: one list.
             [o, r, "branches", ..] => match repo(o, r) {
@@ -1137,8 +1170,15 @@ pub(crate) mod tests {
                 attempt: None
             }
         );
+        assert_eq!(
+            page("https://github.com/o/r/milestone/3"),
+            Route::Milestone {
+                repo: pr.repo.clone(),
+                number: 3
+            }
+        );
         assert!(matches!(
-            Target::from_url("https://github.com/o/r/milestone/3"),
+            Target::from_url("https://github.com/settings/tokens"),
             Target::External(_)
         ));
         assert!(matches!(
@@ -1351,6 +1391,9 @@ pub(crate) mod tests {
                 repo().prop_map(Route::Releases),
                 repo().prop_map(Route::Tags),
                 repo().prop_map(Route::Branches),
+                (repo(), any::<bool>())
+                    .prop_map(|(repo, closed)| Route::Milestones { repo, closed }),
+                (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Milestone { repo, number }),
                 (repo(), "[A-Za-z0-9._-]{1,12}")
                     .prop_filter("not . or ..", |(_, t)| t != "." && t != "..")
                     .prop_map(|(repo, tag)| Route::Release { repo, tag }),

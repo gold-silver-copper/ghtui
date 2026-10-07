@@ -108,6 +108,8 @@ impl Request<'_> {
     }
 }
 
+/// A milestone's fields, as [`browse::wire_milestones::Milestone`] reads them.
+const MILESTONE: &str = "number title description dueOn closed closedAt updatedAt openIssues: issues(states: OPEN) { totalCount } doneIssues: issues(states: CLOSED) { totalCount } openPrs: pullRequests(states: OPEN) { totalCount } donePrs: pullRequests(states: [CLOSED, MERGED]) { totalCount }";
 impl GitHub {
     pub fn new(token: Token, store: Store) -> Self {
         Self::with_base_uri(token, store, None)
@@ -743,7 +745,7 @@ impl GitHub {
         query: &str,
         after: Option<String>,
     ) -> Result<browse::SearchResults, ApiError> {
-        use browse::{BrowseItem, Results, SearchKind as Kind, SearchResults, SearchType};
+        use browse::{SearchKind as Kind, SearchType};
         let first_page = after.is_none();
         // GitHub's issue search covers both; the tabs separate them.
         let (search_type, is) = match kind {
@@ -757,8 +759,25 @@ impl GitHub {
         } else {
             format!("{query}{is}")
         };
+        let results = self.search_as(kind, search_type, api_query, after).await?;
+        if first_page {
+            self.remember(&browse::keys::search(kind, query), results.clone())
+                .await;
+        }
+        Ok(results)
+    }
+
+    /// A page of a search, as GitHub's API takes it.
+    async fn search_as(
+        &self,
+        kind: browse::SearchKind,
+        search_type: browse::SearchType,
+        query: String,
+        after: Option<String>,
+    ) -> Result<browse::SearchResults, ApiError> {
+        use browse::{BrowseItem, Results, SearchKind as Kind, SearchResults};
         let op = browse::BrowseSearch::build(browse::BrowseSearchVariables {
-            query: api_query,
+            query,
             kind: search_type,
             first: 30,
             after,
@@ -789,10 +808,6 @@ impl GitHub {
                 next,
             }),
         };
-        if first_page {
-            self.remember(&browse::keys::search(kind, query), results.clone())
-                .await;
-        }
         Ok(results)
     }
 
@@ -1280,6 +1295,104 @@ impl GitHub {
         Ok(branches)
     }
 
+    /// Open or closed milestones, soonest due first, 25 at a time from
+    /// `after`, with how many there are of each.
+    pub async fn milestones(
+        &self,
+        repo: &RepoId,
+        closed: bool,
+        after: Option<String>,
+    ) -> Result<browse::MilestoneList, ApiError> {
+        let first = after.is_none();
+        let state = if closed { "CLOSED" } else { "OPEN" };
+        let query = format!(
+            "query($owner: String!, $name: String!, $after: String) {{ repository(owner: $owner, name: $name) {{ open: milestones(states: OPEN) {{ totalCount }} closed: milestones(states: CLOSED) {{ totalCount }} milestones(first: 25, after: $after, states: {state}, orderBy: {{field: DUE_DATE, direction: {}}}) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ {MILESTONE} }} }} }} }}",
+            if closed { "DESC" } else { "ASC" }
+        );
+        let data = self
+            .graphql_json(
+                &query,
+                serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after }),
+            )
+            .await?;
+        let count = |which: &str| {
+            data.pointer(&format!("/repository/{which}/totalCount"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default()
+        };
+        let (open, closed_count) = (count("open"), count("closed"));
+        let wire: browse::wire_milestones::Milestones = serde_json::from_value(
+            data.pointer("/repository/milestones")
+                .filter(|m| !m.is_null())
+                .cloned()
+                .ok_or_else(|| ApiError::NotFound(repo.to_string()))?,
+        )?;
+        let list = browse::MilestoneList {
+            open,
+            closed: closed_count,
+            results: wire.into_results(),
+        };
+        if first {
+            return Ok(self
+                .kept(&browse::keys::milestones(repo, closed), list)
+                .await);
+        }
+        Ok(list)
+    }
+
+    /// A milestone, and 30 of its issues and pull requests from `after`,
+    /// most recently updated first.
+    pub async fn milestone(
+        &self,
+        repo: &RepoId,
+        number: u64,
+        after: Option<String>,
+    ) -> Result<browse::MilestoneDetail, ApiError> {
+        let first = after.is_none();
+        let query = format!(
+            "query($owner: String!, $name: String!, $number: Int!) {{ repository(owner: $owner, name: $name) {{ milestone(number: $number) {{ {MILESTONE} }} }} }}"
+        );
+        let data = self
+            .graphql_json(
+                &query,
+                serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number }),
+            )
+            .await?;
+        let wire: browse::wire_milestones::Milestone = serde_json::from_value(
+            data.pointer("/repository/milestone")
+                .filter(|m| !m.is_null())
+                .cloned()
+                .ok_or_else(|| ApiError::NotFound(format!("{repo} milestone {number}")))?,
+        )?;
+        let info = wire.into_info();
+        let search = format!(
+            "repo:{repo} milestone:\"{}\" sort:updated-desc",
+            info.title.replace('"', "")
+        );
+        let items = match self
+            .search_as(
+                browse::SearchKind::Issues,
+                browse::SearchType::Issue,
+                search,
+                after,
+            )
+            .await?
+        {
+            browse::SearchResults::Issues(items) => items,
+            _ => browse::Results {
+                total: 0,
+                items: Vec::new(),
+                next: None,
+            },
+        };
+        let detail = browse::MilestoneDetail { info, items };
+        if first {
+            return Ok(self
+                .kept(&browse::keys::milestone(repo, number), detail)
+                .await);
+        }
+        Ok(detail)
+    }
     /// A workflow run (one attempt of it, or the latest) and its jobs.
     pub async fn workflow_run(
         &self,

@@ -6,9 +6,9 @@ use std::collections::HashMap;
 
 use ghtui_api::browse::{
     Blob, BranchInfo, Checks, CommitDetail, CommitInfo, DiscussionDetail, DiscussionList,
-    DiscussionsOf, IssueDetail, Job, PrActivity, Profile, Refs, Release, RepoOverview, RepoSort,
-    RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserList,
-    UserSummary, Workflow, WorkflowRun,
+    DiscussionsOf, IssueDetail, Job, MilestoneDetail, MilestoneList, PrActivity, Profile, Refs,
+    Release, RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults,
+    TagInfo, TreeEntry, UserList, UserSummary, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::page::{Link, Page, Role, Seg};
@@ -52,6 +52,8 @@ pub enum DataKey {
     Release(RepoId, String),
     Tags(RepoId),
     Branches(RepoId),
+    Milestones(RepoId, bool),
+    Milestone(RepoId, u64),
     Discussions(DiscussionsOf, Option<String>),
     Discussion(DiscussionsOf, u64),
     /// A workflow run (an attempt of it, or the latest).
@@ -101,6 +103,8 @@ pub enum Data {
     Release(Box<Release>),
     Tags(Box<Results<TagInfo>>),
     Branches(Box<Results<BranchInfo>>),
+    Milestones(Box<MilestoneList>),
+    Milestone(Box<MilestoneDetail>),
 }
 
 impl Data {
@@ -116,6 +120,8 @@ impl Data {
             Data::Discussions(d) => d.results.next.as_deref(),
             Data::Tags(r) => r.next.as_deref(),
             Data::Branches(r) => r.next.as_deref(),
+            Data::Milestones(m) => m.results.next.as_deref(),
+            Data::Milestone(m) => m.items.next.as_deref(),
             _ => None,
         }
     }
@@ -132,6 +138,8 @@ impl Data {
             (Data::Discussions(a), Data::Discussions(b)) => extend(&mut a.results, b.results),
             (Data::Tags(a), Data::Tags(b)) => extend(a, *b),
             (Data::Branches(a), Data::Branches(b)) => extend(a, *b),
+            (Data::Milestones(a), Data::Milestones(b)) => extend(&mut a.results, b.results),
+            (Data::Milestone(a), Data::Milestone(b)) => extend(&mut a.items, b.items),
             _ => {}
         }
     }
@@ -164,6 +172,8 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         }
         Route::Tags(repo) => Some(DataKey::Tags(repo.clone())),
         Route::Branches(repo) => Some(DataKey::Branches(repo.clone())),
+        Route::Milestones { repo, closed } => Some(DataKey::Milestones(repo.clone(), *closed)),
+        Route::Milestone { repo, number } => Some(DataKey::Milestone(repo.clone(), *number)),
         _ => route
             .search()
             .map(|(kind, query)| DataKey::Search(kind, query)),
@@ -261,7 +271,9 @@ pub fn needs(route: &Route) -> Vec<Need> {
         | Route::Forks(repo)
         | Route::Releases(repo)
         | Route::Tags(repo)
-        | Route::Branches(repo) => std::iter::once(header(repo))
+        | Route::Branches(repo)
+        | Route::Milestones { repo, .. }
+        | Route::Milestone { repo, .. } => std::iter::once(header(repo))
             .chain(paged(route).map(Need::Data))
             .collect(),
         Route::Commit { repo, oid } => {
@@ -644,6 +656,23 @@ impl State {
                 None if matches!(error, Some((_, false))) => missing(&mut page, "the branches"),
                 _ => pages::branches(&mut page, repo, None, icons, now),
             },
+            Route::Milestones { repo, closed } => {
+                match self.get(&DataKey::Milestones(repo.clone(), *closed)) {
+                    Some(Data::Milestones(m)) => {
+                        pages::milestones(&mut page, repo, Some(m), *closed, now);
+                    }
+                    None if matches!(error, Some((_, false))) => {
+                        missing(&mut page, "the milestones");
+                    }
+                    _ => pages::milestones(&mut page, repo, None, *closed, now),
+                }
+            }
+            Route::Milestone { repo, number } => {
+                match self.get(&DataKey::Milestone(repo.clone(), *number)) {
+                    Some(Data::Milestone(m)) => pages::milestone(&mut page, repo, m, icons, now),
+                    _ => missing(&mut page, &route.title()),
+                }
+            }
             Route::Discussions { of, category } => {
                 let list = match self.get(&DataKey::Discussions(of.clone(), category.clone())) {
                     Some(Data::Discussions(d)) => Some(&**d),

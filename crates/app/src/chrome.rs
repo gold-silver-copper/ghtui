@@ -134,6 +134,8 @@ impl State {
             | Route::Release { repo, .. }
             | Route::Tags(repo)
             | Route::Branches(repo)
+            | Route::Milestones { repo, .. }
+            | Route::Milestone { repo, .. }
             | Route::WorkflowRun { repo, .. }
             | Route::Job { repo, .. }
             | Route::Workflow { repo, .. }

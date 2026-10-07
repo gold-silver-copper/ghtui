@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use ghtui_api::browse::{
     Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo,
     Contributions, DiscussionDetail, DiscussionList, EntryKind, IssueDetail, IssueState,
-    IssueSummary, Job, JobSummary, PrActivity, Profile, Release, RepoOverview, RepoSort,
-    RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary,
-    Workflow, WorkflowRun,
+    IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList, PrActivity,
+    Profile, Release, RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind,
+    SearchResults, TagInfo, TreeEntry, UserSummary, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -2473,6 +2473,134 @@ pub fn branches(
         });
     });
     more_row(page, l.next.is_some(), l.items.len(), l.total);
+    page.box_bottom();
+}
+// ---- milestones -------------------------------------------------------------------------------
+
+/// How far along a milestone is: a bar, the share done, and the counts.
+fn progress(m: &MilestoneInfo) -> Vec<Seg> {
+    let all = m.open + m.done;
+    let percent = (m.done * 100).checked_div(all).unwrap_or(0);
+    let filled = usize::try_from(percent / 10).unwrap_or(0);
+    vec![
+        Seg::new("▰".repeat(filled), Role::Success),
+        Seg::new("▱".repeat(10 - filled), Role::Meta),
+        Seg::new(
+            format!("  {percent}% · {} open · {} closed", m.open, m.done),
+            Role::Meta,
+        ),
+    ]
+}
+
+/// When a milestone is due, or was closed.
+fn due(m: &MilestoneInfo) -> String {
+    match (&m.closed_at, &m.due_on) {
+        (Some(at), _) if m.closed => format!("Closed {}", day(at)),
+        (_, Some(at)) => format!("Due by {}", day(at)),
+        _ => "No due date".to_owned(),
+    }
+}
+
+/// A repository's open or closed milestones.
+pub fn milestones(
+    page: &mut Page,
+    repo: &RepoId,
+    list: Option<&MilestoneList>,
+    closed: bool,
+    now: u64,
+) {
+    let Some(l) = list else {
+        page.line(vec![Seg::new("Loading milestones…", Role::Meta)]);
+        return;
+    };
+    let base = format!("{}/milestones", url::repo(repo));
+    let role = |on: bool| if on { Role::Strong } else { Role::Link };
+    let open = link_seg(
+        page,
+        format!("Open {}", l.open),
+        base.clone(),
+        role(!closed),
+    );
+    let shut = link_seg(
+        page,
+        format!("Closed {}", l.closed),
+        format!("{base}?state=closed"),
+        role(closed),
+    );
+    page.wrapped(
+        vec![open, Seg::new(" · ", Role::Meta), shut],
+        0,
+        Frame::None,
+    );
+    page.blank();
+    let r = &l.results;
+    let title = vec![Seg::new(
+        format!("Milestones  {}", compact(r.total)),
+        Role::Strong,
+    )];
+    page.box_top(title, Vec::new());
+    if r.items.is_empty() {
+        empty_row(page, "No milestones.");
+    }
+    box_rows(page, &r.items, |page, m| {
+        let target = format!("{}/milestone/{}", url::repo(repo), m.number);
+        item(page, target, |page, link| {
+            let right = vec![Seg::new(due(m), Role::Meta)];
+            page.box_line(
+                vec![Seg::linked(m.title.clone(), Role::Strong, link)],
+                right,
+                0,
+            );
+            let mut segs = progress(m);
+            segs.push(Seg::new(
+                format!(" · updated {}", time::ago_iso(&m.updated_at, now)),
+                Role::Meta,
+            ));
+            body(page, segs);
+            if let Some(first) = m.description.lines().find(|l| !l.trim().is_empty()) {
+                body(page, vec![Seg::new(first.trim().to_owned(), Role::Body)]);
+            }
+        });
+    });
+    more_row(page, r.next.is_some(), r.items.len(), r.total);
+    page.box_bottom();
+}
+
+/// A milestone: how far along it is, its description, and its issues and
+/// pull requests.
+pub fn milestone(page: &mut Page, repo: &RepoId, d: &MilestoneDetail, icons: Icons, now: u64) {
+    let m = &d.info;
+    page.wrapped(vec![Seg::new(m.title.clone(), Role::Title)], 0, Frame::None);
+    let state = if m.closed {
+        chip("Closed", Bg::TertiaryContainer)
+    } else {
+        chip("Open", Bg::SuccessContainer)
+    };
+    page.wrapped(
+        vec![state, Seg::new(format!("  {}", due(m)), Role::Meta)],
+        0,
+        Frame::None,
+    );
+    page.wrapped(progress(m), 0, Frame::None);
+    if !m.description.trim().is_empty() {
+        page.blank();
+        let base = LinkBase::new(repo, "HEAD", "");
+        markdown::render(page, &m.description, Some(&base), Frame::None);
+    }
+    page.blank();
+    let r = &d.items;
+    let title = vec![Seg::new(
+        format!("Issues and pull requests  {}", compact(r.total)),
+        Role::Strong,
+    )];
+    page.box_top(title, Vec::new());
+    if r.items.is_empty() {
+        empty_row(page, "Nothing in this milestone.");
+    }
+    box_rows(page, &r.items, |page, i| {
+        issue_row(page, i, false, icons, now);
+    });
+    more_row(page, r.next.is_some(), r.items.len(), r.total);
     page.box_bottom();
 }
 // ---- commits -------------------------------------------------------------------------------

@@ -1725,6 +1725,112 @@ impl wire_branches::Branches {
     }
 }
 
+// ---- milestones -------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MilestoneInfo {
+    pub number: u64,
+    pub title: String,
+    pub description: String,
+    /// ISO 8601.
+    pub due_on: Option<String>,
+    pub closed: bool,
+    pub closed_at: Option<String>,
+    pub updated_at: String,
+    /// Its issues and pull requests, open and done.
+    pub open: u64,
+    pub done: u64,
+}
+
+/// A page of milestones, and how many are open and closed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MilestoneList {
+    pub open: u64,
+    pub closed: u64,
+    pub results: Results<MilestoneInfo>,
+}
+
+/// A milestone and a page of its issues and pull requests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MilestoneDetail {
+    pub info: MilestoneInfo,
+    pub items: Results<IssueSummary>,
+}
+
+pub(crate) mod wire_milestones {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Count {
+        pub total_count: u64,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Milestone {
+        pub number: u64,
+        pub title: String,
+        pub description: Option<String>,
+        pub due_on: Option<String>,
+        pub closed: bool,
+        pub closed_at: Option<String>,
+        pub updated_at: String,
+        pub open_issues: Count,
+        pub done_issues: Count,
+        pub open_prs: Count,
+        pub done_prs: Count,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct PageInfo {
+        pub has_next_page: bool,
+        pub end_cursor: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Milestones {
+        pub total_count: u64,
+        pub page_info: PageInfo,
+        pub nodes: Vec<Option<Milestone>>,
+    }
+}
+
+impl wire_milestones::Milestone {
+    pub(crate) fn into_info(self) -> MilestoneInfo {
+        MilestoneInfo {
+            number: self.number,
+            title: self.title,
+            description: self.description.unwrap_or_default(),
+            due_on: self.due_on,
+            closed: self.closed,
+            closed_at: self.closed_at,
+            updated_at: self.updated_at,
+            open: self.open_issues.total_count + self.open_prs.total_count,
+            done: self.done_issues.total_count + self.done_prs.total_count,
+        }
+    }
+}
+
+impl wire_milestones::Milestones {
+    pub(crate) fn into_results(self) -> Results<MilestoneInfo> {
+        Results {
+            total: self.total_count,
+            items: self
+                .nodes
+                .into_iter()
+                .flatten()
+                .map(wire_milestones::Milestone::into_info)
+                .collect(),
+            next: self
+                .page_info
+                .end_cursor
+                .filter(|_| self.page_info.has_next_page),
+        }
+    }
+}
 // ---- discussions ------------------------------------------------------------------------------
 
 /// Whose discussions: a repository's, or an organization's (which GitHub
@@ -2989,6 +3095,12 @@ pub mod keys {
     }
     pub fn branches(repo: &RepoId) -> String {
         format!("branches:{repo}")
+    }
+    pub fn milestones(repo: &RepoId, closed: bool) -> String {
+        format!("milestones:{repo}:{closed}")
+    }
+    pub fn milestone(repo: &RepoId, number: u64) -> String {
+        format!("milestone:{repo}#{number}")
     }
     pub fn owner_repos(login: &str, sort: super::RepoSort) -> String {
         format!("owner-repos:{}:{sort:?}", login.to_lowercase())

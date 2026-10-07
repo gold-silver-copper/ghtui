@@ -5,9 +5,9 @@ use ghtui_api::browse::{
     Asset, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo,
     Contributed, Contributions, DiscussionCategory, DiscussionComment, DiscussionDetail,
     DiscussionList, DiscussionSummary, EntryKind, IssueDetail, IssueState, IssueSummary, Job,
-    JobSummary, MonthActivity, PrActivity, Profile, Readme, Release, RepoOverview, RepoSummary,
-    Results, ReviewSummary, RunSummary, SearchResults, Step, TagInfo, TreeEntry, UserSummary, Week,
-    Workflow, WorkflowRun,
+    JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList, MonthActivity, PrActivity, Profile,
+    Readme, Release, RepoOverview, RepoSummary, Results, ReviewSummary, RunSummary, SearchResults,
+    Step, TagInfo, TreeEntry, UserSummary, Week, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
@@ -820,6 +820,52 @@ pub fn branches() -> Results<BranchInfo> {
             ),
         ],
         next: Some("b1".into()),
+    }
+}
+fn milestone_info(number: u64, title: &str, closed: bool) -> MilestoneInfo {
+    MilestoneInfo {
+        number,
+        title: title.into(),
+        description: "Every GitHub link opens in ghtui.\n\nOr says why it doesn't.".into(),
+        due_on: Some("2026-11-05T00:00:00Z".into()),
+        closed,
+        closed_at: closed.then(|| "2026-09-30T00:00:00Z".into()),
+        updated_at: "2026-10-02T12:00:00Z".into(),
+        open: 4,
+        done: 6,
+    }
+}
+
+/// Two open milestones.
+pub fn milestones() -> MilestoneList {
+    let mut later = milestone_info(4, "1.0", false);
+    later.due_on = None;
+    later.description = String::new();
+    later.open = 9;
+    later.done = 0;
+    MilestoneList {
+        open: 2,
+        closed: 3,
+        results: Results {
+            total: 2,
+            items: vec![milestone_info(3, "Links", false), later],
+            next: None,
+        },
+    }
+}
+
+/// A milestone with an issue and a pull request.
+pub fn milestone() -> MilestoneDetail {
+    MilestoneDetail {
+        info: milestone_info(3, "Links", false),
+        items: Results {
+            total: 10,
+            items: vec![
+                issue_summary(42, false, IssueState::Open),
+                issue_summary(6, true, IssueState::Merged),
+            ],
+            next: Some("m1".into()),
+        },
     }
 }
 /// A page of discussions with two categories.
