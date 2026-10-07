@@ -61,8 +61,9 @@ ghtui is laid out like the website:
   open, it shows your open tabs instead (see **Open tabs** below).
 - **A page's tabs** sit under the header, with the active one underlined:
   Code, Issues, Pull requests and Actions on a repository; Conversation,
-  Commits, Checks and Files changed on a pull request; Commit and Files
-  changed on a commit; Overview, Repositories, Stars, Followers and Following
+  Commits, Checks and Files changed on a pull request; Commit, Checks and
+  Files changed on a commit; Commits and Files changed on a comparison;
+  Overview, Repositories, Stars, Followers and Following
   on a user (Overview, Repositories and People on an organization).
 - **The content** is in GitHub's boxes: the file list under the latest
   commit, the README, issue lists, and comments joined into a timeline. Wide
@@ -143,15 +144,34 @@ your drafts.
   - Conversation, with a merge box for checks, reviews and conflicts.
   - Commits, grouped by day.
   - Checks: each check run and status on the head commit, grouped by
-    workflow, failures first, with how long it took. Logs and re-runs stay
-    on GitHub.
+    workflow, failures first, with how long it took. A check opens its
+    job. Re-runs stay on GitHub.
   - Files changed, which is the diff viewer below.
-- **Commit**: its message, author and committer, signature and parents, and
-  its Files changed in the diff viewer (against its first parent). A
-  branch's or file's **commit history** lists commits by day.
+- **Commit**: its message, author and committer, signature and parents, its
+  Checks, and its Files changed in the diff viewer (against its first
+  parent). A branch's or file's **commit history** lists commits by day.
+- **Comparison** (`/compare/a...b`): ahead and behind, files and lines
+  changed, the commits by day, and Files changed in the diff viewer (from
+  the merge base, or from `a` for `a..b`).
+- **Blame**: a file with the commit that last changed each run of lines;
+  files link to their blame.
 - **Actions** shows the checks on the default branch, like a pull request's.
+  A **workflow run** lists its jobs, failures first; a **job** lists its
+  steps with the failing ones (and the one a link points at) opened to their
+  log, and `/` filters the log. A **workflow** lists its runs.
 - **Releases** list a repository's releases; a **release** shows its notes and
-  assets. **Tags**, **stargazers**, **watchers** and **forks** are lists too.
+  assets. **Tags**, **branches** (with each one's latest commit and pull
+  request), **stargazers**, **watchers** and **forks** are lists too.
+- **Milestones** show their progress; a **milestone** lists its issues and
+  pull requests. **Deployments** list each deployment by environment.
+- **Discussions**, by category, and a **discussion** with its answer and
+  replies, a repository's or an organization's.
+- **Wikis**: a page (Home first), the wiki's pages and its sidebar. ghtui
+  reads them from the wiki's git repository, cloned into its cache.
+- **Security advisories**: a repository's, GitHub's database, and an
+  advisory with the packages and versions it affects.
+- **Gists** (a gist's files, someone's gists) and an organization's
+  **teams** (the ones you can see, as a member).
 - **Profile**:
   - The profile README, status, pronouns, social accounts and organizations.
   - A user's contribution graph for the last year, and their contribution
@@ -160,15 +180,23 @@ your drafts.
   - Repositories (sorted by last updated, name or stars; `/` searches that
     owner's), Stars, Followers and Following, or an organization's People.
     The lists load more.
-- **Search** has tabs for repositories, issues, pull requests and users.
+- **Search** has tabs for repositories, issues, pull requests, users,
+  discussions, commits and code. Your pull request and issue dashboards
+  (`/pulls`, `/issues/assigned`…) and topics open as searches.
 - **Writing**: `c` comments on the issue or pull request on screen, and the
   "Add a comment" box at the end does the same. `s` stars or unstars.
 
-A github.com link opens as a ghtui page: commits, commit history, checks,
-releases, tags, labels (as a filtered issue list), stargazers, forks, and
-links to lines in a file (`#L10-L20` opens the file there, marked). What
-ghtui doesn't show itself opens in your browser: a check's logs, release
-downloads, milestones, discussions, wikis, projects, gists and other sites.
+Every github.com link opens in ghtui: links to lines open the file there,
+marked (`#L10-L20`); links to a comment scroll to it (`#issuecomment-…`);
+links to a job's log line open that step (`#step:3:12`); links to a file in a
+diff open the diff at that file (`#diff-…`). A link opens your browser only
+for a reason: downloads (release assets, archives, raw files, patches),
+what needs a browser session or writes (settings, notifications, a new issue
+or pull request, editing a wiki page, Dependabot and secret scanning
+alerts), what needs a token scope gh doesn't grant (projects, packages),
+what the API doesn't expose (wiki search), and other sites. Every kind of
+link, with an example and what it does, is listed in
+`crates/app/tests/github_urls.txt`, which the tests hold ghtui to.
 Pages show cached data first and refresh in the background. Pages are at
 most 140 columns wide and centered.
 
@@ -547,6 +575,14 @@ page's URL leads back to it, and that key notation round-trips; a test renders
 every screen at every size up to 12×12. Fuzz targets for the Markdown renderer
 and the diff pipeline live in `fuzz/` (`cargo +nightly fuzz run markdown`,
 `cargo +nightly fuzz run file_diff`; needs `cargo-fuzz`).
+
+`crates/app/tests/github_urls.txt` lists every kind of github.com link with
+what it must open (a page, the diff viewer, or the browser and why); a test
+checks each one, a property test checks each shape with any names and
+numbers, and another checks every link on every page fixture against it. A
+crawl of real GitHub pages finds links whose shapes it lacks (network; run by
+hand: `GHTUI_CRAWL_OUT=crawl.txt cargo test --release -p ghtui -- --ignored
+--nocapture link_crawl`).
 
 Performance targets, as timing tests
 (`cargo test --release -p ghtui -- --ignored --nocapture`):
