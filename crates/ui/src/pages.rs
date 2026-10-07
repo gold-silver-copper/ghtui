@@ -2559,6 +2559,15 @@ fn strip_escapes(text: &str) -> String {
                     }
                 }
             }
+            // Others: intermediate bytes, then a final byte (`ESC ( B`);
+            // or one byte (`ESC 7`).
+            Some(' '..='/') => {
+                for c in chars.by_ref() {
+                    if ('0'..='~').contains(&c) {
+                        break;
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -4103,6 +4112,7 @@ mod tests {
         assert_eq!(strip_escapes("\u{1b}[36;1mcd src\u{1b}[0m"), "cd src");
         assert_eq!(strip_escapes("a\u{1b}]8;;https://x\u{7}b"), "ab");
         assert_eq!(strip_escapes("plain [36m"), "plain [36m");
+        assert_eq!(strip_escapes("a\u{1b}(Bb\u{1b}7c"), "abc");
     }
 
     #[test]
