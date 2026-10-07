@@ -1322,6 +1322,16 @@ pub(crate) mod tests {
             Target::Page(Route::Commit { .. })
         ));
         assert!(!valid_rev("a b") && !valid_rev("a~1") && !valid_rev("a.") && valid_rev("v1.2/x"));
+        // A page at a revision git can't name opens the browser.
+        for view in ["tree", "blob", "blame", "commits"] {
+            for rev in ["a..b", "a~1"] {
+                let url = format!("https://github.com/o/r/{view}/{rev}/src/lib.rs");
+                assert!(
+                    matches!(Target::from_url(&url), Target::External(_)),
+                    "{url}"
+                );
+            }
+        }
         assert!(valid_ghsa("GHSA-2345") && !valid_ghsa("ghsa-1") && !valid_ghsa("GHSA-1 2"));
     }
 
