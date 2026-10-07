@@ -1401,7 +1401,7 @@ pub struct WireStatusContext {
     pub created_at: DateTime,
 }
 
-#[derive(cynic::Enum, Debug, Clone, Copy)]
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 #[cynic(graphql_type = "CheckStatusState", schema_module = "schema")]
 pub enum CheckStatusState {
     Completed,
@@ -1410,9 +1410,11 @@ pub enum CheckStatusState {
     Queued,
     Requested,
     Waiting,
+    #[cynic(fallback)]
+    Other,
 }
 
-#[derive(cynic::Enum, Debug, Clone, Copy)]
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 #[cynic(graphql_type = "CheckConclusionState", schema_module = "schema")]
 pub enum CheckConclusionState {
     ActionRequired,
@@ -1424,6 +1426,29 @@ pub enum CheckConclusionState {
     StartupFailure,
     Success,
     TimedOut,
+    #[cynic(fallback)]
+    Other,
+}
+
+impl CheckOutcome {
+    /// How a check run, job or step came out, from GraphQL or REST alike:
+    /// pending until it completes, and a failure if it completed in a way
+    /// not known here.
+    pub(crate) fn of(status: CheckStatusState, conclusion: Option<CheckConclusionState>) -> Self {
+        use CheckConclusionState as C;
+        match (status, conclusion) {
+            (CheckStatusState::Completed, Some(conclusion)) => match conclusion {
+                C::Success => Self::Success,
+                C::Skipped => Self::Skipped,
+                C::Neutral | C::Stale => Self::Neutral,
+                C::Cancelled => Self::Cancelled,
+                C::Failure | C::TimedOut | C::StartupFailure | C::ActionRequired | C::Other => {
+                    Self::Failure
+                }
+            },
+            _ => Self::Pending,
+        }
+    }
 }
 
 impl ChecksCommit {
@@ -1570,7 +1595,7 @@ mod tests {
     }
 
     /// How REST names a run's, job's or step's outcome (found by mutation
-    /// testing: no test pinned it).
+    /// testing: no test pinned it), decoded as REST spells it.
     #[test]
     fn rest_outcomes() {
         for (status, conclusion, outcome) in [
@@ -1581,14 +1606,17 @@ mod tests {
             ("completed", Some("stale"), CheckOutcome::Neutral),
             ("completed", Some("failure"), CheckOutcome::Failure),
             ("completed", Some("timed_out"), CheckOutcome::Failure),
+            ("completed", Some("something_new"), CheckOutcome::Failure),
+            ("completed", None, CheckOutcome::Pending),
             ("in_progress", None, CheckOutcome::Pending),
             ("queued", None, CheckOutcome::Pending),
         ] {
-            assert_eq!(
-                rest_outcome(status, conclusion),
-                outcome,
-                "{status} {conclusion:?}"
-            );
+            let job: rest_actions::Job = serde_json::from_value(serde_json::json!({
+                "id": 1, "run_id": 2, "name": "build", "status": status,
+                "conclusion": conclusion, "started_at": null, "completed_at": null,
+            }))
+            .unwrap();
+            assert_eq!(job.into_job().outcome, outcome, "{status} {conclusion:?}");
         }
     }
 
@@ -1941,19 +1969,7 @@ mod tests {
 
 impl WireCheckRun {
     fn into_item(self) -> CheckItem {
-        use CheckConclusionState as C;
-        let outcome = match (self.status, self.conclusion) {
-            (CheckStatusState::Completed, Some(conclusion)) => match conclusion {
-                C::Success => CheckOutcome::Success,
-                C::Skipped => CheckOutcome::Skipped,
-                C::Neutral | C::Stale => CheckOutcome::Neutral,
-                C::Cancelled => CheckOutcome::Cancelled,
-                C::Failure | C::TimedOut | C::StartupFailure | C::ActionRequired => {
-                    CheckOutcome::Failure
-                }
-            },
-            _ => CheckOutcome::Pending,
-        };
+        let outcome = CheckOutcome::of(self.status, self.conclusion);
         let suite = self.check_suite;
         let group = suite
             .as_ref()
@@ -1993,18 +2009,6 @@ impl WireStatusContext {
 }
 
 // ---- actions --------------------------------------------------------------------------------
-
-/// How a REST check run, job or step came out.
-fn rest_outcome(status: &str, conclusion: Option<&str>) -> CheckOutcome {
-    match (status, conclusion) {
-        ("completed", Some("success")) => CheckOutcome::Success,
-        ("completed", Some("skipped")) => CheckOutcome::Skipped,
-        ("completed", Some("cancelled")) => CheckOutcome::Cancelled,
-        ("completed", Some("neutral" | "stale")) => CheckOutcome::Neutral,
-        ("completed", _) => CheckOutcome::Failure,
-        _ => CheckOutcome::Pending,
-    }
-}
 
 /// A workflow run and its jobs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2326,9 +2330,26 @@ pub(crate) mod wire {
 }
 
 pub(crate) mod rest_actions {
-    use serde::Deserialize;
+    use serde::de::IntoDeserializer;
+    use serde::{Deserialize, Deserializer};
 
     pub use super::UserLogin as Actor;
+    use super::{CheckConclusionState, CheckOutcome, CheckStatusState};
+
+    /// REST spells GraphQL's enum values in lower case.
+    fn upper<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+        Option::<String>::deserialize(d)?
+            .map(|s| T::deserialize(s.to_uppercase().into_deserializer()))
+            .transpose()
+    }
+
+    /// How a run, job or step came out; one without a status is queued.
+    pub(super) fn outcome(
+        status: Option<CheckStatusState>,
+        conclusion: Option<CheckConclusionState>,
+    ) -> CheckOutcome {
+        CheckOutcome::of(status.unwrap_or(CheckStatusState::Queued), conclusion)
+    }
 
     #[derive(Deserialize)]
     pub struct Run {
@@ -2340,8 +2361,10 @@ pub(crate) mod rest_actions {
         pub event: String,
         pub head_branch: Option<String>,
         pub head_sha: String,
-        pub status: Option<String>,
-        pub conclusion: Option<String>,
+        #[serde(default, deserialize_with = "upper")]
+        pub status: Option<CheckStatusState>,
+        #[serde(default, deserialize_with = "upper")]
+        pub conclusion: Option<CheckConclusionState>,
         pub actor: Option<Actor>,
         pub run_started_at: Option<String>,
         pub created_at: Option<String>,
@@ -2360,8 +2383,10 @@ pub(crate) mod rest_actions {
     pub struct Step {
         pub number: u32,
         pub name: String,
-        pub status: String,
-        pub conclusion: Option<String>,
+        #[serde(default, deserialize_with = "upper")]
+        pub status: Option<CheckStatusState>,
+        #[serde(default, deserialize_with = "upper")]
+        pub conclusion: Option<CheckConclusionState>,
         pub started_at: Option<String>,
         pub completed_at: Option<String>,
     }
@@ -2371,8 +2396,10 @@ pub(crate) mod rest_actions {
         pub id: u64,
         pub run_id: u64,
         pub name: String,
-        pub status: String,
-        pub conclusion: Option<String>,
+        #[serde(default, deserialize_with = "upper")]
+        pub status: Option<CheckStatusState>,
+        #[serde(default, deserialize_with = "upper")]
+        pub conclusion: Option<CheckConclusionState>,
         pub started_at: Option<String>,
         pub completed_at: Option<String>,
         #[serde(default)]
@@ -2395,15 +2422,8 @@ pub(crate) mod rest_actions {
 }
 
 impl rest_actions::Run {
-    fn outcome(&self) -> CheckOutcome {
-        rest_outcome(
-            self.status.as_deref().unwrap_or("queued"),
-            self.conclusion.as_deref(),
-        )
-    }
-
     pub(crate) fn into_run(self, jobs: Vec<rest_actions::Job>) -> WorkflowRun {
-        let outcome = self.outcome();
+        let outcome = rest_actions::outcome(self.status, self.conclusion);
         WorkflowRun {
             id: self.id,
             name: self.name.unwrap_or_else(|| "Workflow".into()),
@@ -2421,7 +2441,7 @@ impl rest_actions::Run {
             jobs: jobs
                 .into_iter()
                 .map(|j| JobSummary {
-                    outcome: rest_outcome(&j.status, j.conclusion.as_deref()),
+                    outcome: rest_actions::outcome(j.status, j.conclusion),
                     id: j.id,
                     name: j.name,
                     started_at: j.started_at,
@@ -2432,7 +2452,7 @@ impl rest_actions::Run {
     }
 
     pub(crate) fn into_summary(self) -> RunSummary {
-        let outcome = self.outcome();
+        let outcome = rest_actions::outcome(self.status, self.conclusion);
         RunSummary {
             id: self.id,
             title: self.display_title.unwrap_or_default(),
@@ -2449,7 +2469,7 @@ impl rest_actions::Run {
 impl rest_actions::Job {
     pub(crate) fn into_job(self) -> Job {
         Job {
-            outcome: rest_outcome(&self.status, self.conclusion.as_deref()),
+            outcome: rest_actions::outcome(self.status, self.conclusion),
             id: self.id,
             run_id: self.run_id,
             name: self.name,
@@ -2459,7 +2479,7 @@ impl rest_actions::Job {
                 .steps
                 .into_iter()
                 .map(|s| Step {
-                    outcome: rest_outcome(&s.status, s.conclusion.as_deref()),
+                    outcome: rest_actions::outcome(s.status, s.conclusion),
                     number: s.number,
                     name: s.name,
                     started_at: s.started_at,
