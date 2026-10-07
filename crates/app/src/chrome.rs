@@ -130,6 +130,7 @@ impl State {
             Route::Repo(repo)
             | Route::Tree { repo, .. }
             | Route::Blob { repo, .. }
+            | Route::Blame { repo, .. }
             | Route::Issues { repo, .. }
             | Route::Pulls { repo, .. }
             | Route::Issue { repo, .. }

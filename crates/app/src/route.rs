@@ -28,6 +28,13 @@ pub enum Route {
         /// Lines a link points at (`#L10-L20`), marked and scrolled to.
         lines: Option<(u32, u32)>,
     },
+    /// Which commit last changed each line of a file.
+    Blame {
+        repo: RepoId,
+        rev: String,
+        path: String,
+        lines: Option<(u32, u32)>,
+    },
     Issues {
         repo: RepoId,
         query: String,
@@ -187,6 +194,20 @@ impl Route {
                     Some((a, b)) => format!("{url}#L{a}-L{b}"),
                 }
             }
+            Route::Blame {
+                repo,
+                rev,
+                path,
+                lines,
+            } => {
+                // The first `/blob/` follows the repository.
+                let url = links::blob(repo, rev, path).replacen("/blob/", "/blame/", 1);
+                match lines {
+                    None => url,
+                    Some((a, b)) if a == b => format!("{url}#L{a}"),
+                    Some((a, b)) => format!("{url}#L{a}-L{b}"),
+                }
+            }
             Route::Issues { repo, query } => list_url(&links::issues(repo), query),
             Route::Pulls { repo, query } => list_url(&links::pulls(repo), query),
             Route::Issue { repo, number } => links::issue(repo, *number),
@@ -295,6 +316,7 @@ impl Route {
             Route::Tree { repo, path, .. } | Route::Blob { repo, path, .. } => {
                 format!("{}/{path}", repo.name)
             }
+            Route::Blame { repo, path, .. } => format!("{}/{path} · Blame", repo.name),
             Route::Issues { repo, .. } => format!("{repo} · Issues"),
             Route::Pulls { repo, .. } => format!("{repo} · Pull requests"),
             Route::Issue { repo, number } => format!("{repo}#{number}"),
@@ -355,6 +377,7 @@ impl Route {
             }
             | Route::Tags(repo)
             | Route::Branches(repo)
+            | Route::Blame { repo, .. }
             | Route::Compare { repo, .. }
             | Route::Deployments { repo, .. }
             | Route::Milestones { repo, .. }
@@ -678,6 +701,15 @@ impl Target {
                 }
                 Route::Compare { repo, spec }
             }
+            [o, r, "blame", rev, path @ ..] if !path.is_empty() => match repo(o, r) {
+                Some(repo) => Route::Blame {
+                    repo,
+                    rev: (*rev).to_owned(),
+                    path: path.join("/"),
+                    lines: parsed.fragment().and_then(line_range),
+                },
+                None => return external(),
+            },
             [o, r, "deployments", rest @ ..] => {
                 let Some(repo) = repo(o, r) else {
                     return external();
@@ -1478,6 +1510,19 @@ pub(crate) mod tests {
                 repo().prop_map(Route::Releases),
                 repo().prop_map(Route::Tags),
                 repo().prop_map(Route::Branches),
+                (
+                    repo(),
+                    rev.clone(),
+                    path(),
+                    prop::option::of((1..1000u32, 1..1000u32))
+                )
+                    .prop_filter("a file has a path", |(_, _, p, _)| !p.is_empty())
+                    .prop_map(|(repo, rev, path, lines)| Route::Blame {
+                        repo,
+                        rev,
+                        path,
+                        lines: lines.map(|(a, b)| (a.min(b), a.max(b))),
+                    }),
                 (repo(), rev.clone(), rev.clone(), any::<bool>()).prop_map(|(repo, a, b, two)| {
                     Route::Compare {
                         repo,

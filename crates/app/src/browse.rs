@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blob, BranchInfo, Checks, CommitDetail, CommitInfo, Comparison, DeploymentList,
+    Blame, Blob, BranchInfo, Checks, CommitDetail, CommitInfo, Comparison, DeploymentList,
     DiscussionDetail, DiscussionList, DiscussionsOf, IssueDetail, Job, MilestoneDetail,
     MilestoneList, PrActivity, Profile, Refs, Release, RepoOverview, RepoSort, RepoSummary,
     Results, RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserList, UserSummary,
@@ -53,6 +53,7 @@ pub enum DataKey {
     Release(RepoId, String),
     Tags(RepoId),
     Branches(RepoId),
+    Blame(RepoId, String, String),
     Compare(RepoId, String),
     Deployments(RepoId, Option<String>),
     Milestones(RepoId, bool),
@@ -106,6 +107,7 @@ pub enum Data {
     Release(Box<Release>),
     Tags(Box<Results<TagInfo>>),
     Branches(Box<Results<BranchInfo>>),
+    Blame(Box<Blame>),
     Compare(Box<Comparison>),
     Deployments(Box<DeploymentList>),
     Milestones(Box<MilestoneList>),
@@ -221,6 +223,13 @@ pub fn needs(route: &Route) -> Vec<Need> {
         } => vec![
             header(repo),
             Need::Data(K::Blob(repo.clone(), rev.clone(), path.clone())),
+        ],
+        Route::Blame {
+            repo, rev, path, ..
+        } => vec![
+            header(repo),
+            Need::Data(K::Blob(repo.clone(), rev.clone(), path.clone())),
+            Need::Data(K::Blame(repo.clone(), rev.clone(), path.clone())),
         ],
         Route::Issues { repo, .. } | Route::Pulls { repo, .. } => {
             std::iter::once(header(repo)).chain(list).collect()
@@ -340,6 +349,7 @@ impl PageScreen {
             route,
             Route::Issue { .. }
                 | Route::Blob { .. }
+                | Route::Blame { .. }
                 | Route::Commit { .. }
                 | Route::Release { .. }
                 | Route::Discussion { .. }
@@ -585,6 +595,33 @@ impl State {
                         pages::file(&mut page, file, blob, keys);
                     }
                     _ => missing(&mut page, "the file"),
+                }
+            }
+            Route::Blame {
+                repo,
+                rev,
+                path,
+                lines,
+            } => {
+                let blob = match self.get(&DataKey::Blob(repo.clone(), rev.clone(), path.clone())) {
+                    Some(Data::Blob(b)) => Some(&**b),
+                    _ => None,
+                };
+                let blame = match self.get(&DataKey::Blame(repo.clone(), rev.clone(), path.clone()))
+                {
+                    Some(Data::Blame(b)) => Some(&**b),
+                    _ => None,
+                };
+                let file = pages::FileAt {
+                    repo,
+                    rev,
+                    path,
+                    lines: *lines,
+                };
+                if blob.is_none() && matches!(error, Some((_, false))) {
+                    missing(&mut page, "the file");
+                } else {
+                    pages::blame(&mut page, file, blob, blame, keys, now);
                 }
             }
             Route::Issues { repo, query } | Route::Pulls { repo, query } => {

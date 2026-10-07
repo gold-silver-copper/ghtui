@@ -213,8 +213,8 @@ https://github.com/rust-lang/rust/blob/main/README.md                       Blob
 https://github.com/rust-lang/rust/blob/main/README.md?plain=1               Blob
 https://github.com/rust-lang/rust/blob/main/README.md#L10-L20               Blob
 https://github.com/rust-lang/rust/blob/8d1a76430406c877b35d0b627e7f796dcf0dfeca/README.md#L3 Blob
-https://github.com/rust-lang/rust/blame/main/README.md                      todo Blame
-https://github.com/rust-lang/rust/blame/8d1a76430406c877b35d0b627e7f796dcf0dfeca/README.md#L5 todo Blame
+https://github.com/rust-lang/rust/blame/main/README.md                      Blame
+https://github.com/rust-lang/rust/blame/8d1a76430406c877b35d0b627e7f796dcf0dfeca/README.md#L5 Blame
 https://github.com/rust-lang/rust/raw/main/README.md                        external download
 https://github.com/rust-lang/rust/raw/refs/heads/main/README.md             external download
 https://raw.githubusercontent.com/rust-lang/rust/main/README.md             external download

@@ -1456,6 +1456,30 @@ impl GitHub {
             .kept(&browse::keys::compare(repo, spec), comparison)
             .await)
     }
+    /// Which commit last changed each line of a file at a revision.
+    pub async fn blame(
+        &self,
+        repo: &RepoId,
+        rev: &str,
+        path: &str,
+    ) -> Result<browse::Blame, ApiError> {
+        let data = self
+            .graphql_json(
+                "query($owner: String!, $name: String!, $rev: String!, $path: String!) { repository(owner: $owner, name: $name) { object(expression: $rev) { ... on Commit { blame(path: $path) { ranges { startingLine endingLine age commit { oid messageHeadline committedDate author { name user { login } } } } } } } } }",
+                serde_json::json!({ "owner": repo.owner, "name": repo.name, "rev": rev, "path": path }),
+            )
+            .await?;
+        let wire: browse::wire_blame::Blame = serde_json::from_value(
+            data.pointer("/repository/object/blame")
+                .filter(|b| !b.is_null())
+                .cloned()
+                .ok_or_else(|| ApiError::NotFound(format!("{repo}:{rev}:{path}")))?,
+        )?;
+        let blame = wire.into_blame();
+        Ok(self
+            .kept(&browse::keys::blame(repo, rev, path), blame)
+            .await)
+    }
     /// A workflow run (one attempt of it, or the latest) and its jobs.
     pub async fn workflow_run(
         &self,

@@ -2,13 +2,13 @@
 
 use crossterm::event::KeyEvent;
 use ghtui_api::browse::{
-    Asset, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo,
-    Comparison, Contributed, Contributions, DeploymentInfo, DeploymentList, DiscussionCategory,
-    DiscussionComment, DiscussionDetail, DiscussionList, DiscussionSummary, EntryKind, IssueDetail,
-    IssueState, IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList,
-    MonthActivity, PrActivity, Profile, Readme, Release, RepoOverview, RepoSummary, Results,
-    ReviewSummary, RunSummary, SearchResults, Step, TagInfo, TreeEntry, UserSummary, Week,
-    Workflow, WorkflowRun,
+    Asset, Blame, BlameRange, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment,
+    CommitDetail, CommitInfo, Comparison, Contributed, Contributions, DeploymentInfo,
+    DeploymentList, DiscussionCategory, DiscussionComment, DiscussionDetail, DiscussionList,
+    DiscussionSummary, EntryKind, IssueDetail, IssueState, IssueSummary, Job, JobSummary,
+    MilestoneDetail, MilestoneInfo, MilestoneList, MonthActivity, PrActivity, Profile, Readme,
+    Release, RepoOverview, RepoSummary, Results, ReviewSummary, RunSummary, SearchResults, Step,
+    TagInfo, TreeEntry, UserSummary, Week, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
@@ -300,6 +300,31 @@ pub fn blob() -> Blob {
     }
 }
 
+/// [`blob`]'s blame: two commits.
+pub fn blame() -> Blame {
+    let range = |start, end, oid: char, author: &str, date: &str| BlameRange {
+        start,
+        end,
+        age: 1,
+        oid: oid.to_string().repeat(40),
+        headline: "Say hello".into(),
+        author: author.into(),
+        date: date.into(),
+    };
+    Blame {
+        ranges: vec![
+            range(1, 4, 'a', "octocat", "2025-01-01T00:00:00Z"),
+            range(
+                5,
+                5,
+                'b',
+                "monalisa-with-a-long-name",
+                "2026-10-01T00:00:00Z",
+            ),
+            range(6, 7, 'a', "octocat", "2025-01-01T00:00:00Z"),
+        ],
+    }
+}
 fn label(name: &str, color: &str) -> Label {
     Label {
         name: name.into(),

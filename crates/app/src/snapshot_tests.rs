@@ -205,6 +205,25 @@ fn with_file(mode: Mode) -> State {
     state
 }
 
+/// A file's blame.
+fn with_blame(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let (repo, rev, path) = (ghtui(), "main".to_owned(), "src/main.rs".to_owned());
+    let blob = DataKey::Blob(repo.clone(), rev.clone(), path.clone());
+    let route = Route::Blame {
+        repo,
+        rev,
+        path,
+        lines: Some((5, 5)),
+    };
+    let _ = state.push(route.clone());
+    fetched(&mut state, blob, Data::Blob(Box::new(fixtures::blob())));
+    let Some(Need::Data(key)) = needs(&route).pop() else {
+        panic!("a blame fetches its blame");
+    };
+    fetched(&mut state, key, Data::Blame(Box::new(fixtures::blame())));
+    state
+}
 /// The repository's open issues.
 fn with_issues(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -785,6 +804,11 @@ fn deployments_dark() {
 #[test]
 fn compare_light() {
     insta::assert_snapshot!(render(&with_compare(Mode::Light)));
+}
+
+#[test]
+fn blame_dark() {
+    insta::assert_snapshot!(render(&with_blame(Mode::Dark)));
 }
 
 #[test]
@@ -1673,9 +1697,9 @@ mod links {
     use ghtui_ui::pages::ProfileTab;
 
     use super::{
-        press, with_actions, with_branches, with_commit, with_compare, with_deployments,
-        with_discussion, with_discussions, with_file, with_forks, with_history, with_inbox,
-        with_issue, with_issues, with_job, with_milestone, with_milestones, with_pr,
+        press, with_actions, with_blame, with_branches, with_commit, with_compare,
+        with_deployments, with_discussion, with_discussions, with_file, with_forks, with_history,
+        with_inbox, with_issue, with_issues, with_job, with_milestone, with_milestones, with_pr,
         with_pr_checks, with_profile, with_release, with_releases, with_repo, with_repo_search,
         with_run, with_stargazers, with_tags, with_workflow,
     };
@@ -1745,6 +1769,7 @@ mod links {
             ("release", with_release(Mode::Dark)),
             ("tags", with_tags(Mode::Dark)),
             ("branches", with_branches(Mode::Dark)),
+            ("blame", with_blame(Mode::Dark)),
             ("compare", with_compare(Mode::Dark)),
             ("deployments", with_deployments(Mode::Dark)),
             ("milestones", with_milestones(Mode::Dark)),

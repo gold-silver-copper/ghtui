@@ -757,6 +757,9 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Compare(repo, spec) => at(gh.cached(&keys::compare(repo, spec))?, |v| {
             Data::Compare(Box::new(v))
         }),
+        DataKey::Blame(repo, rev, path) => at(gh.cached(&keys::blame(repo, rev, path))?, |v| {
+            Data::Blame(Box::new(v))
+        }),
         DataKey::Branches(repo) => at(gh.cached(&keys::branches(repo))?, |v| {
             Data::Branches(Box::new(v))
         }),
@@ -866,6 +869,7 @@ pub(crate) async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> 
         DataKey::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, None).await?)),
         DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, None).await?)),
+        DataKey::Blame(repo, rev, path) => Data::Blame(Box::new(gh.blame(repo, rev, path).await?)),
         DataKey::Compare(repo, spec) => Data::Compare(Box::new(gh.compare(repo, spec).await?)),
         DataKey::Deployments(repo, env) => {
             Data::Deployments(Box::new(gh.deployments(repo, env.as_deref(), None).await?))

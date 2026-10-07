@@ -2064,6 +2064,90 @@ impl rest_compare::Compare {
         }
     }
 }
+// ---- blame ------------------------------------------------------------------------------------
+
+/// Which commit last changed each line of a file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Blame {
+    pub ranges: Vec<BlameRange>,
+}
+
+/// Lines `start..=end` (from 1), last changed by one commit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlameRange {
+    pub start: u32,
+    pub end: u32,
+    /// How recent, 1 (newest) to 10 (oldest).
+    pub age: u8,
+    pub oid: String,
+    pub headline: String,
+    pub author: String,
+    pub date: String,
+}
+
+pub(crate) mod wire_blame {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Login {
+        pub login: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Author {
+        pub name: Option<String>,
+        pub user: Option<Login>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Commit {
+        pub oid: String,
+        pub message_headline: String,
+        pub committed_date: String,
+        pub author: Option<Author>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Range {
+        pub starting_line: u32,
+        pub ending_line: u32,
+        pub age: u8,
+        pub commit: Commit,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Blame {
+        pub ranges: Vec<Range>,
+    }
+}
+
+impl wire_blame::Blame {
+    pub(crate) fn into_blame(self) -> Blame {
+        Blame {
+            ranges: self
+                .ranges
+                .into_iter()
+                .map(|r| {
+                    let author = r
+                        .commit
+                        .author
+                        .and_then(|a| a.user.map(|u| u.login).or(a.name));
+                    BlameRange {
+                        start: r.starting_line,
+                        end: r.ending_line,
+                        age: r.age,
+                        oid: r.commit.oid,
+                        headline: r.commit.message_headline,
+                        author: author.unwrap_or_default(),
+                        date: r.commit.committed_date,
+                    }
+                })
+                .collect(),
+        }
+    }
+}
 // ---- discussions ------------------------------------------------------------------------------
 
 /// Whose discussions: a repository's, or an organization's (which GitHub
@@ -3328,6 +3412,9 @@ pub mod keys {
     }
     pub fn branches(repo: &RepoId) -> String {
         format!("branches:{repo}")
+    }
+    pub fn blame(repo: &RepoId, rev: &str, path: &str) -> String {
+        format!("blame:{repo}:{rev}:{path}")
     }
     pub fn compare(repo: &RepoId, spec: &str) -> String {
         format!("compare:{repo}:{spec}")
