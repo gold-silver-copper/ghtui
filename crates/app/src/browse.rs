@@ -613,11 +613,10 @@ impl State {
                 );
             }
             Route::Repo(repo) => {
-                let key = DataKey::Repo(repo.clone());
+                let overview = f.get(&DataKey::Repo(repo.clone()));
                 #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
-                let buttons = f.get(&key).ready_unchecked();
-                pages::repo_title(&mut page, repo, buttons);
-                if let Some(o) = f.get(&key).show(&mut page, "the repository") {
+                pages::repo_title(&mut page, repo, overview.ready_unchecked());
+                if let Some(o) = overview.show(&mut page, "the repository") {
                     let key = DataKey::LastCommits(repo.clone(), "HEAD".into(), String::new());
                     #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
                     let commits = f.get(&key).ready_unchecked();
