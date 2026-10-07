@@ -1588,6 +1588,32 @@ async fn a_repository_gone_between_check_pages_is_not_found() {
     assert_eq!(gh.take_left_out(), Vec::<String>::new());
 }
 
+/// A repository gone by the time its discussions (or its entries' last
+/// commits) are asked for is not found, not an empty or undecodable list.
+#[tokio::test]
+async fn a_repository_gone_under_a_raw_query_is_not_found() {
+    let gone = || {
+        root_not_found(
+            r#"{"repository":null}"#,
+            r#"["repository"]"#,
+            "Could not resolve to a Repository with the name 'o/r'.",
+        )
+    };
+    let categories = Reply::new(
+        200,
+        r#"{"data":{"repository":{"discussionCategories":{"totalCount":0,"nodes":[]}}}}"#,
+    );
+    let (gh, _) = github(vec![categories, gone(), gone()]).await;
+    let repo = RepoId::new("o", "r");
+    let of = ghtui_api::browse::DiscussionsOf::Repo(repo.clone());
+    let result = gh.discussions(&of, None, None).await;
+    assert!(matches!(result, Err(ApiError::NotFound(_))), "{result:?}");
+    let names = ["a".to_owned()];
+    let result = gh.last_commits(&repo, "HEAD", "", &names).await;
+    assert!(matches!(result, Err(ApiError::NotFound(_))), "{result:?}");
+    assert_eq!(gh.take_left_out(), Vec::<String>::new());
+}
+
 /// A NOT_FOUND pathed at something the data does hold explains no null, so
 /// it is still left out.
 #[tokio::test]
