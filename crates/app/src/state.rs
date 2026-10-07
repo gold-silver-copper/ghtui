@@ -1574,7 +1574,11 @@ pub(crate) mod tests {
                 after: "h1".into()
             })]
         );
-        let more = crate::fixtures::history(None);
+        // The next page: other commits.
+        let mut more = crate::fixtures::history(None);
+        for c in &mut more.items {
+            c.oid = c.oid.replace('a', "b");
+        }
         update(
             &mut state,
             Msg::FetchedMore(key.clone(), Ok(Data::History(Box::new(more)))),
@@ -1875,11 +1879,19 @@ pub(crate) mod tests {
         use crate::fixtures::{forks, people};
         let mut users = Data::Users(Box::new(people()));
         assert_eq!(users.next_cursor(), Some("u1"));
-        users.append(Data::Users(Box::new(people())));
+        let mut more = people();
+        for u in &mut more.items {
+            u.login.push_str("-2");
+        }
+        users.append(Data::Users(Box::new(more)));
         assert!(matches!(&users, Data::Users(r) if r.items.len() == 6));
         let mut repos = Data::RepoPage(Box::new(forks()));
         assert_eq!(repos.next_cursor(), Some("f1"));
-        repos.append(Data::RepoPage(Box::new(forks())));
+        let mut more = forks();
+        for r in &mut more.items {
+            r.repo = RepoId::new(&r.repo.owner, format!("{}-2", r.repo.name));
+        }
+        repos.append(Data::RepoPage(Box::new(more)));
         assert!(matches!(&repos, Data::RepoPage(r) if r.items.len() == 4));
     }
 
@@ -2277,12 +2289,16 @@ pub(crate) mod tests {
                 after: "c1".into()
             })]
         );
+        // The next page: other issues.
+        let mut more = crate::fixtures::issue_results(None);
+        if let SearchResults::Issues(r) = &mut more {
+            for i in &mut r.items {
+                i.number += 100;
+            }
+        }
         update(
             &mut state,
-            Msg::FetchedMore(
-                key.clone(),
-                Ok(Data::Search(Box::new(crate::fixtures::issue_results(None)))),
-            ),
+            Msg::FetchedMore(key.clone(), Ok(Data::Search(Box::new(more)))),
         );
         let Some(Data::Search(results)) = state.get(&key) else {
             panic!()
