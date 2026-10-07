@@ -4399,7 +4399,7 @@ mod tests {
         let text: Vec<String> = page.lines.iter().map(PageLine::text).collect();
         assert!(
             text.iter()
-                .any(|l| l.contains("Couldn't load the log: this log has expired")),
+                .any(|l| l.contains("Couldn't load the log: this log has expired. r tries again.")),
             "{text:#?}"
         );
     }

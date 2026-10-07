@@ -75,19 +75,23 @@ impl<'a, T: ?Sized> Fetched<'a, T> {
         #[expect(clippy::disallowed_methods, reason = "said here")]
         match (self.error.is_some(), self.text(what)) {
             (_, Ok(data)) => return Some(data),
-            (true, Err(why)) => flash(page, &format!("{why}. {} tries again.", self.retry)),
+            (true, Err(why)) => flash(page, &why),
             (false, Err(_)) => loading(page),
         }
         None
     }
 
-    /// The data, or what to say instead, for a state shown inside a row.
-    /// Disallowed by clippy.toml: `.ok()` would drop what to say, so each
-    /// use says where it's said.
+    /// The data, or what to say instead (with the key that tries again),
+    /// for a state shown inside a row. Disallowed by clippy.toml: `.ok()`
+    /// would drop what to say, so each use says where it's said.
     pub fn text(self, what: &str) -> Result<&'a T, String> {
+        let again = match self.retry {
+            "" => String::new(),
+            key => format!(". {key} tries again."),
+        };
         match (self.data, self.error) {
             (Some(data), _) => Ok(data),
-            (None, Some(err)) => Err(format!("Couldn't load {what}: {err}")),
+            (None, Some(err)) => Err(format!("Couldn't load {what}: {err}{again}")),
             (None, None) => Err(format!("Loading {what}…")),
         }
     }
