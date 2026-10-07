@@ -3505,6 +3505,14 @@ pub(crate) mod wire_discussions {
         #[serde(flatten)]
         pub summary: Summary,
     }
+
+    /// A discussion a search found, by its link (none for another kind).
+    #[derive(Deserialize)]
+    pub struct Found {
+        #[serde(default)]
+        pub url: String,
+        pub repository: Option<RepoName>,
+    }
 }
 
 impl wire_discussions::Hit {

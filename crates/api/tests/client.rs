@@ -534,11 +534,11 @@ async fn an_organizations_discussions_are_found_past_the_first_page() {
     let (gh, seen) = github(vec![
         Reply::new(
             200,
-            r#"{"data":{"search":{"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"nodes":[{"url":"https://github.com/acme/app/discussions/1","repository":{"nameWithOwner":"acme/app"}}]}}}"#,
+            r#"{"data":{"search":{"discussionCount":9,"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"nodes":[{},{"url":"https://github.com/acme/app/discussions/1","repository":{"nameWithOwner":"acme/app"}}]}}}"#,
         ),
         Reply::new(
             200,
-            r#"{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://github.com/orgs/acme/discussions/9","repository":{"nameWithOwner":"acme/community"}}]}}}"#,
+            r#"{"data":{"search":{"discussionCount":9,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://github.com/orgs/acme/discussions/9","repository":{"nameWithOwner":"acme/community"}}]}}}"#,
         ),
         Reply::new(200, r#"{"data":{"repository":null}}"#),
     ])
@@ -1278,14 +1278,14 @@ async fn an_organizations_discussions_are_found_past_the_fifth_page() {
             Reply::new(
                 200,
                 format!(
-                    r#"{{"data":{{"search":{{"pageInfo":{{"hasNextPage":true,"endCursor":"c{n}"}},"nodes":[{other}]}}}}}}"#
+                    r#"{{"data":{{"search":{{"discussionCount":900,"pageInfo":{{"hasNextPage":true,"endCursor":"c{n}"}},"nodes":[{other}]}}}}}}"#
                 ),
             )
         })
         .collect();
     replies.push(Reply::new(
         200,
-        r#"{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://github.com/orgs/acme/discussions/9","repository":{"nameWithOwner":"acme/community"}}]}}}"#,
+        r#"{"data":{"search":{"discussionCount":9,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://github.com/orgs/acme/discussions/9","repository":{"nameWithOwner":"acme/community"}}]}}}"#,
     ));
     replies.push(Reply::new(200, r#"{"data":{"repository":null}}"#));
     let (gh, _) = github(replies).await;
@@ -1386,4 +1386,18 @@ async fn a_runs_jobs_past_the_cap_are_counted() {
         gh.take_left_out().is_empty(),
         "the total says what's left out"
     );
+}
+
+/// A search answer without GitHub's count of discussions is an error, not
+/// a search that looks cut off.
+#[tokio::test]
+async fn an_uncounted_discussion_search_is_an_error() {
+    let page =
+        r#"{"data":{"search":{"pageInfo":{"hasNextPage":true,"endCursor":"c"},"nodes":[]}}}"#;
+    let (gh, seen) = github(vec![Reply::new(200, page); 12]).await;
+    let of = ghtui_api::browse::DiscussionsOf::Org("acme".into());
+    let result = gh.discussion(&of, 9).await;
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    assert_eq!(gh.take_left_out(), Vec::<String>::new());
 }

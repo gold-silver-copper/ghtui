@@ -2077,37 +2077,18 @@ impl GitHub {
         let page = move |after| async move {
             let vars = serde_json::json!({ "q": format!("org:{org}"), "after": after });
             let data = self.graphql_json(raw::DISCUSSION_URLS, vars).await?;
-            let found: Vec<Option<RepoId>> = data
-                .pointer("/search/nodes")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-                .map(|n| {
-                    n.get("url")
-                        .and_then(serde_json::Value::as_str)
-                        .filter(|u| u.to_lowercase().starts_with(prefix))
-                        .and_then(|_| n.pointer("/repository/nameWithOwner")?.as_str())
-                        .and_then(RepoId::parse)
-                })
-                .collect();
-            let more = data.pointer("/search/pageInfo/hasNextPage")
-                == Some(&serde_json::Value::Bool(true));
-            let next = data
-                .pointer("/search/pageInfo/endCursor")
-                .and_then(serde_json::Value::as_str)
-                .filter(|_| more && found.iter().all(Option::is_none));
-            let total = data.pointer("/search/discussionCount");
-            Ok(browse::Results {
-                total: total
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or_default(),
-                items: found,
-                next: next.map(str::to_owned),
-            })
+            let search: browse::wire::Connection<browse::wire_discussions::Found> =
+                at(&data, "/search", || format!("{org}'s discussions"))?;
+            let mut found = search.filter_results(|n| {
+                (n.url.to_lowercase().starts_with(prefix))
+                    .then(|| RepoId::parse(&n.repository?.name_with_owner))?
+            });
+            found.next = found.next.filter(|_| found.items.is_empty());
+            Ok(found)
         };
         let what = format!("the search for {org}'s discussions");
         let found = self.more_pages(what, page(None).await?, PAGES, page);
-        (found.await?.items.into_iter().flatten().next())
+        (found.await?.items.into_iter().next())
             .ok_or_else(|| ApiError::NotFound(format!("{org}'s discussions")))
     }
 
