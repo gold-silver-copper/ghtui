@@ -980,6 +980,7 @@ dependencies = [
 name = "ghtui-git"
 version = "0.1.0"
 dependencies = [
+ "ghtui-diff",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
