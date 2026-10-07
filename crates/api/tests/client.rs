@@ -1194,7 +1194,8 @@ async fn requests_carry_the_token_and_github_headers() {
     assert!(seen[0].header("user-agent").unwrap().starts_with("ghtui/"));
 }
 
-/// A README that couldn't be fetched isn't reported (or kept) as none.
+/// A README that couldn't be fetched isn't reported (or kept) as none,
+/// and the overview doesn't wait on it.
 #[tokio::test]
 async fn a_failed_readme_isnt_taken_for_no_readme() {
     let recorded: serde_json::Value = serde_json::from_str(
@@ -1206,20 +1207,28 @@ async fn a_failed_readme_isnt_taken_for_no_readme() {
     )
     .unwrap();
     let overview = recorded["response"].as_str().unwrap().to_owned();
-    let (gh, _) = github(vec![
+    let bad = || Reply::new(502, r#"{"message":"bad gateway"}"#).on("/readme");
+    let (base, _) = serve(vec![
         Reply::new(200, overview).on("/graphql"),
-        Reply::new(502, r#"{"message":"bad gateway"}"#).on("/readme"),
-        Reply::new(502, r#"{"message":"bad gateway"}"#).on("/readme"),
-        Reply::new(502, r#"{"message":"bad gateway"}"#).on("/readme"),
+        bad(),
+        bad(),
+        bad(),
+        Reply::new(404, r#"{"message":"Not Found"}"#).on("/readme"),
     ])
     .await;
+    let dir = tempfile::tempdir().unwrap();
+    let gh = client(&base, Store::open(&dir.path().join("cache.redb")));
     let repo = RepoId::new("atom", "atom");
-    // Either the failure surfaces, or the overview doesn't claim no README.
-    if let Ok(overview) = gh.repo(&repo).await {
-        assert!(
-            overview.readme.is_some(),
-            "the README failed with a 502, but the overview says there is none: {:?}",
-            overview.readme
-        );
-    }
+    gh.repo(&repo).await.unwrap();
+    let readme = gh.readme(&repo).await;
+    assert!(
+        readme.is_err(),
+        "the README failed with a 502, but it reads as {readme:?}"
+    );
+    let key = ghtui_api::browse::keys::readme(&repo);
+    let kept: Option<ghtui_store::Cached<Option<ghtui_api::browse::Readme>>> = gh.cached(&key);
+    assert!(kept.is_none(), "a failed README was kept: {kept:?}");
+    assert_eq!(gh.readme(&repo).await.unwrap(), None, "a 404 is no README");
+    let kept: Option<ghtui_store::Cached<Option<ghtui_api::browse::Readme>>> = gh.cached(&key);
+    assert_eq!(kept.map(|k| k.value), Some(None), "no README is kept");
 }

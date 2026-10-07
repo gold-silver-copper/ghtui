@@ -803,23 +803,23 @@ impl GitHub {
         self.store.query_get(key)
     }
 
-    /// A repository's overview: stats, root directory, last commit, README.
+    /// A repository's overview: stats, root directory, last commit.
     pub async fn repo(&self, repo: &RepoId) -> Result<browse::RepoOverview, ApiError> {
         let op = browse::RepoQuery::build(browse::RepoVariables {
             owner: repo.owner.clone(),
             name: repo.name.clone(),
             expression: "HEAD:".into(),
         });
-        let (data, readme) = tokio::join!(self.graphql(op), self.readme(repo));
-        let readme = readme?;
-        let overview = data?
+        let overview = self
+            .graphql(op)
+            .await?
             .repository
-            .and_then(|r| r.into_overview(readme))
+            .and_then(browse::RepoFull::into_overview)
             .ok_or_else(|| ApiError::NotFound(repo.to_string()))?;
         Ok(self.kept(&browse::keys::repo(repo), overview).await)
     }
 
-    /// The README GitHub shows for the repository root.
+    /// The README GitHub shows for the repository root, if it has one.
     pub async fn readme(&self, repo: &RepoId) -> Result<Option<browse::Readme>, ApiError> {
         use base64::Engine;
         #[derive(serde::Deserialize)]
@@ -832,17 +832,20 @@ impl GitHub {
             .await
         {
             Ok(wire) => wire,
-            Err(ApiError::NotFound(_)) => return Ok(None),
+            Err(ApiError::NotFound(_)) => {
+                return Ok(self.kept(&browse::keys::readme(repo), None).await);
+            }
             Err(err) => return Err(err),
         };
         let compact: String = wire.content.split_whitespace().collect();
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(compact)
             .map_err(|e| ApiError::Decode(e.to_string()))?;
-        Ok(Some(browse::Readme {
+        let readme = browse::Readme {
             path: wire.path,
             text: String::from_utf8_lossy(&bytes).into_owned(),
-        }))
+        };
+        Ok(self.kept(&browse::keys::readme(repo), Some(readme)).await)
     }
 
     /// A directory at `rev:path`.

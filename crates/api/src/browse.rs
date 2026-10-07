@@ -147,8 +147,6 @@ pub struct RepoOverview {
     pub tags: u64,
     /// Root directory at the default branch (empty for empty repos).
     pub entries: Vec<TreeEntry>,
-    /// README text, if there is one.
-    pub readme: Option<Readme>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -4448,6 +4446,9 @@ pub mod keys {
     pub fn repo(repo: &RepoId) -> String {
         format!("repo:{repo}")
     }
+    pub fn readme(repo: &RepoId) -> String {
+        format!("readme:{repo}")
+    }
     pub fn tree(repo: &RepoId, rev: &str, path: &str) -> String {
         format!("tree:{repo}:{rev}:{path}")
     }
@@ -4660,7 +4661,7 @@ pub(crate) fn entries(tree: Tree) -> Vec<TreeEntry> {
 }
 
 impl RepoFull {
-    pub(crate) fn into_overview(self, readme: Option<Readme>) -> Option<RepoOverview> {
+    pub(crate) fn into_overview(self) -> Option<RepoOverview> {
         let (default_branch, head) = self.default_branch_ref.map(|r| (r.name, r.target)).unzip();
         let (last_commit, commits) = match head.flatten() {
             Some(RefTarget::Commit(c)) => {
@@ -4700,7 +4701,6 @@ impl RepoFull {
             branches: self.branch_count.map_or(0, |c| count(c.total_count)),
             tags: self.tag_count.map_or(0, |c| count(c.total_count)),
             entries,
-            readme,
         })
     }
 }
