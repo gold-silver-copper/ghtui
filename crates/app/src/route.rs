@@ -1915,7 +1915,13 @@ pub(crate) mod tests {
             let rev =
                 prop::collection::vec("[A-Za-z0-9_#%+@&;é-][A-Za-z0-9._#%+@&;é-]{0,7}", 1..=3)
                     .prop_map(|s| s.join("/"))
-                    .prop_filter("valid ref name", |r| valid_rev(r));
+                    .prop_filter("valid ref name", |r| {
+                        // git's rules, written apart from `valid_rev` so
+                        // the round trip catches it rejecting a legal name.
+                        !r.contains("..")
+                            && !r.ends_with('.')
+                            && !r.split('/').any(|c| c.ends_with(".lock"))
+                    });
             prop_oneof![
                 Just(Route::Home),
                 repo().prop_map(Route::Actions),
