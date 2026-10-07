@@ -18,6 +18,8 @@ pub struct LinkBase {
     pub rev: String,
     /// Directory of the document, without a trailing slash ("" for root).
     pub dir: String,
+    /// A wiki page: relative links name other pages.
+    pub wiki: bool,
 }
 
 impl LinkBase {
@@ -27,6 +29,15 @@ impl LinkBase {
             repo: repo.to_string(),
             rev: rev.into(),
             dir: path.rsplit_once('/').map_or("", |(d, _)| d).to_owned(),
+            wiki: false,
+        }
+    }
+
+    /// The base for a page of `repo`'s wiki.
+    pub fn wiki(repo: &(impl ToString + ?Sized)) -> Self {
+        Self {
+            wiki: true,
+            ..Self::new(repo, "", "")
         }
     }
 }
@@ -77,6 +88,10 @@ fn resolve_safe(base: Option<&LinkBase>, url: &str) -> String {
     let Some(base) = base else {
         return url.to_owned();
     };
+    if base.wiki {
+        let page = url.trim_start_matches("./").trim_end_matches(".md");
+        return format!("https://github.com/{}/wiki/{page}", base.repo);
+    }
     let (path, frag) = url.split_once('#').map_or((url, ""), |(p, f)| (p, f));
     let mut parts: Vec<&str> = base.dir.split('/').filter(|p| !p.is_empty()).collect();
     for seg in path.split('/') {

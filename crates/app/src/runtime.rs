@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind, MouseEventKind};
 use futures::StreamExt;
-use ghtui_api::model::{PrRef, ReviewEvent};
+use ghtui_api::model::{PrRef, RepoId, ReviewEvent};
 use ghtui_api::{ApiError, GitHub};
 use ghtui_store::{DraftComment, ReviewState, Reviews};
 use ghtui_ui::bars::Notice;
@@ -141,6 +141,10 @@ impl Effects {
     fn run(&mut self, cmd: Cmd) -> Option<(EditPurpose, String)> {
         let replies = panic_replies(&cmd);
         match cmd {
+            Cmd::Api(Api::Fetch {
+                key: DataKey::Wiki(repo, page),
+                ..
+            }) => self.wiki(repo, page, replies),
             Cmd::Api(api) => spawn(api, replies, &self.gh, &self.tx),
             Cmd::Git(git) => self.git(git, replies),
             Cmd::OpenUrl(url) => {
@@ -298,6 +302,19 @@ impl Effects {
                 Err(err) => Err(Failure::msg(err)),
             };
             let _ = tx.send(Msg::Diff(pr.into(), DiffMsg::ReviewLoaded(review)));
+        });
+    }
+
+    /// Reads a wiki page through git.
+    fn wiki(&self, repo: RepoId, page: Option<String>, replies: Vec<Msg>) {
+        let git = self.git.clone();
+        spawn_guarded(&self.tx, replies, |tx| async move {
+            let result = crate::wiki::page(&git, &repo, page.as_deref()).await;
+            let _ = tx.send(Msg::Fetched {
+                key: DataKey::Wiki(repo, page),
+                result: result.map(|w| Data::Wiki(Box::new(w))),
+                cached_at: None,
+            });
         });
     }
 
@@ -815,7 +832,10 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
             })
         }
         // Files aren't cached; they can be large.
-        DataKey::Blob(..) | DataKey::Files(..) | DataKey::JobLog(..) => return None,
+        // A wiki's clone is its cache.
+        DataKey::Blob(..) | DataKey::Files(..) | DataKey::JobLog(..) | DataKey::Wiki(..) => {
+            return None;
+        }
     })
 }
 
@@ -887,6 +907,12 @@ pub(crate) async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> 
         DataKey::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, None).await?)),
         DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, None).await?)),
+        // Wikis come through git (see `Effects::wiki`).
+        DataKey::Wiki(repo, _) => {
+            return Err(ApiError::NotFound(format!(
+                "{repo}'s wiki, which git reads"
+            )));
+        }
         DataKey::Advisories(repo) => Data::Advisories(gh.advisories(repo.as_ref()).await?),
         DataKey::Advisory(repo, ghsa) => {
             Data::Advisory(Box::new(gh.advisory(repo.as_ref(), ghsa).await?))

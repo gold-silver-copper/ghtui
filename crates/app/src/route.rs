@@ -99,6 +99,11 @@ pub enum Route {
     },
     Tags(RepoId),
     Branches(RepoId),
+    /// A wiki page (its Home without one; its pages for `_pages`).
+    Wiki {
+        repo: RepoId,
+        page: Option<String>,
+    },
     /// A repository's security advisories, or GitHub's newest.
     Advisories(Option<RepoId>),
     /// A security advisory: a repository's, or from GitHub's database.
@@ -287,6 +292,10 @@ impl Route {
             Route::Discussion { of, number } => format!("{}/{number}", discussions_url(of)),
             Route::Tags(repo) => format!("{}/tags", links::repo(repo)),
             Route::Branches(repo) => format!("{}/branches", links::repo(repo)),
+            Route::Wiki { repo, page } => match page {
+                Some(page) => format!("{}/wiki/{}", links::repo(repo), links::encode_path(page)),
+                None => format!("{}/wiki", links::repo(repo)),
+            },
             Route::Advisories(repo) => match repo {
                 Some(repo) => format!("{}/security/advisories", links::repo(repo)),
                 None => format!("{}/advisories", links::BASE),
@@ -370,6 +379,10 @@ impl Route {
             Route::Discussion { of, number } => format!("{} · Discussion {number}", of_title(of)),
             Route::Tags(repo) => format!("{repo} · Tags"),
             Route::Branches(repo) => format!("{repo} · Branches"),
+            Route::Wiki { repo, page } => match page {
+                Some(page) => format!("{repo} · {}", page.replace('-', " ")),
+                None => format!("{repo} · Wiki"),
+            },
             Route::Advisories(Some(repo)) => format!("{repo} · Security"),
             Route::Advisories(None) => "Advisories".to_owned(),
             Route::Advisory { ghsa, .. } => ghsa.clone(),
@@ -419,6 +432,7 @@ impl Route {
             }
             | Route::Tags(repo)
             | Route::Branches(repo)
+            | Route::Wiki { repo, .. }
             | Route::Advisories(Some(repo))
             | Route::Advisory {
                 repo: Some(repo), ..
@@ -722,8 +736,9 @@ impl Target {
                 },
                 None => return external(),
             },
-            // Assets are downloads.
-            [_, _, "releases", "download", ..] => return external(),
+            // Assets are downloads, and writing wiki pages is on GitHub.
+            [_, _, "releases", "download", ..]
+            | [_, _, "wiki", .., "_new" | "_edit" | "_compare"] => return external(),
             [o, r, "releases", ..] => match repo(o, r) {
                 Some(repo) => Route::Releases(repo),
                 None => return external(),
@@ -786,6 +801,14 @@ impl Target {
                 Some(repo) => Route::Advisory {
                     repo: Some(repo),
                     ghsa: (*ghsa).to_owned(),
+                },
+                None => return external(),
+            },
+            // A page's revisions and history: the page.
+            [o, r, "wiki", rest @ ..] => match repo(o, r) {
+                Some(repo) => Route::Wiki {
+                    repo,
+                    page: rest.first().map(|p| (*p).to_owned()),
                 },
                 None => return external(),
             },
@@ -1626,6 +1649,11 @@ pub(crate) mod tests {
                 repo().prop_map(Route::Releases),
                 repo().prop_map(Route::Tags),
                 repo().prop_map(Route::Branches),
+                (repo(), prop::option::of("[A-Za-z0-9][A-Za-z0-9 _-]{0,15}"))
+                    .prop_filter("not a writing page", |(_, p)| {
+                        !matches!(p.as_deref(), Some("_new" | "_edit" | "_compare"))
+                    })
+                    .prop_map(|(repo, page)| Route::Wiki { repo, page }),
                 prop::option::of(repo()).prop_map(Route::Advisories),
                 (prop::option::of(repo()), "GHSA(-[2-9a-z]{4}){3}")
                     .prop_map(|(repo, ghsa)| Route::Advisory { repo, ghsa }),

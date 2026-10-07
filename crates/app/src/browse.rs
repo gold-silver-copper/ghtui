@@ -9,7 +9,7 @@ use ghtui_api::browse::{
     DeploymentList, DiscussionDetail, DiscussionList, DiscussionsOf, Gist, GistSummary,
     IssueDetail, Job, MilestoneDetail, MilestoneList, PrActivity, Profile, Refs, Release,
     RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo,
-    TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, Workflow, WorkflowRun,
+    TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::page::{Link, Page, Role, Seg};
@@ -53,6 +53,8 @@ pub enum DataKey {
     Release(RepoId, String),
     Tags(RepoId),
     Branches(RepoId),
+    /// From git, not GitHub's API.
+    Wiki(RepoId, Option<String>),
     Advisories(Option<RepoId>),
     Advisory(Option<RepoId>, String),
     Teams(String),
@@ -113,6 +115,7 @@ pub enum Data {
     Release(Box<Release>),
     Tags(Box<Results<TagInfo>>),
     Branches(Box<Results<BranchInfo>>),
+    Wiki(Box<WikiPage>),
     Advisories(Vec<Advisory>),
     Advisory(Box<Advisory>),
     Teams(Box<Results<TeamSummary>>),
@@ -253,6 +256,10 @@ pub fn needs(route: &Route) -> Vec<Need> {
             std::iter::once(header(repo)).chain(list).collect()
         }
         Route::Search { .. } => list.into_iter().collect(),
+        Route::Wiki { repo, page } => vec![
+            header(repo),
+            Need::Data(K::Wiki(repo.clone(), page.clone())),
+        ],
         Route::Advisories(repo) | Route::Advisory { repo, .. } => {
             let own = match route {
                 Route::Advisory { ghsa, .. } => K::Advisory(repo.clone(), ghsa.clone()),
@@ -754,6 +761,12 @@ impl State {
             Route::Compare { repo, spec } => {
                 match self.get(&DataKey::Compare(repo.clone(), spec.clone())) {
                     Some(Data::Compare(c)) => pages::compare(&mut page, repo, spec, c, now),
+                    _ => missing(&mut page, &route.title()),
+                }
+            }
+            Route::Wiki { repo, page: name } => {
+                match self.get(&DataKey::Wiki(repo.clone(), name.clone())) {
+                    Some(Data::Wiki(w)) => pages::wiki(&mut page, repo, w),
                     _ => missing(&mut page, &route.title()),
                 }
             }

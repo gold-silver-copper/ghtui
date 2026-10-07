@@ -462,6 +462,7 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Compare { repo, .. }
         | Route::Deployments { repo, .. }
         | Route::Milestones { repo, .. }
+        | Route::Wiki { repo, page: None }
         | Route::Actions(repo) => Route::Repo(repo.clone()),
         Route::Discussion { of, .. } => Route::Discussions {
             of: of.clone(),
@@ -512,6 +513,13 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         Route::Gist { owner, .. } => Route::Gists(owner.clone()?),
         Route::Gists(login) | Route::Teams(login) => Route::user(login),
         Route::Team { org, .. } => Route::Teams(org.clone()),
+        Route::Wiki {
+            repo,
+            page: Some(_),
+        } => Route::Wiki {
+            repo: repo.clone(),
+            page: None,
+        },
         Route::Advisory { repo, .. } => Route::Advisories(repo.clone()),
         Route::Advisories(repo) => repo.clone().map_or(Route::Home, Route::Repo),
     })

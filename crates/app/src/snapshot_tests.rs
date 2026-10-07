@@ -285,6 +285,16 @@ fn with_advisory(mode: Mode) -> State {
     );
     state
 }
+/// A wiki's Home.
+fn with_wiki(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Wiki {
+        repo: ghtui(),
+        page: None,
+    };
+    open(&mut state, route, Data::Wiki(Box::new(fixtures::wiki())));
+    state
+}
 /// The repository's open issues.
 fn with_issues(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -900,6 +910,11 @@ fn advisories_dark() {
 #[test]
 fn advisory_light() {
     insta::assert_snapshot!(render(&sized(with_advisory(Mode::Light), 100, 40)));
+}
+
+#[test]
+fn wiki_light() {
+    insta::assert_snapshot!(render(&with_wiki(Mode::Light)));
 }
 
 #[test]
@@ -1793,7 +1808,7 @@ mod links {
         with_forks, with_gist, with_gists, with_history, with_inbox, with_issue, with_issues,
         with_job, with_milestone, with_milestones, with_pr, with_pr_checks, with_profile,
         with_release, with_releases, with_repo, with_repo_search, with_run, with_stargazers,
-        with_tags, with_team, with_teams, with_workflow,
+        with_tags, with_team, with_teams, with_wiki, with_workflow,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1861,6 +1876,7 @@ mod links {
             ("release", with_release(Mode::Dark)),
             ("tags", with_tags(Mode::Dark)),
             ("branches", with_branches(Mode::Dark)),
+            ("wiki", with_wiki(Mode::Dark)),
             ("advisories", with_advisories(Mode::Dark)),
             ("advisory", with_advisory(Mode::Dark)),
             ("teams", with_teams(Mode::Dark)),
