@@ -2285,7 +2285,13 @@ mod keys {
             ("milestone", || mid(with_milestone(Mode::Dark))),
             ("deployments", || mid(with_deployments(Mode::Dark))),
             ("comparison", || mid(with_compare(Mode::Dark))),
-            ("blame", || mid(with_blame(Mode::Dark))),
+            // Scrolled off its line, which it otherwise follows to the
+            // bottom when resized.
+            ("blame", || {
+                let mut s = super::sized(with_blame(Mode::Dark), 100, 12);
+                press(&mut s, "gj");
+                s
+            }),
             ("gist", || mid(with_gist(Mode::Dark))),
             ("gists", || mid(with_gists(Mode::Dark))),
             ("teams", || mid(with_teams(Mode::Dark))),

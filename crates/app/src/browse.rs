@@ -393,8 +393,10 @@ pub struct PageScreen {
     /// Nothing has been selected or scrolled yet: select the first visible
     /// item once the page has items.
     pub fresh: bool,
-    /// The page has been scrolled to its [`Page::jump`] or anchor (once).
-    pub jumped: bool,
+    /// Where the page was scrolled to for its [`Page::jump`] or anchor,
+    /// and what was selected: it follows the jump while both stay put.
+    /// `Some(None)` once you've moved.
+    pub jumped: Option<Option<(usize, Option<usize>)>>,
     /// The `#fragment` of the link that opened it: a comment to scroll to.
     pub anchor: Option<String>,
 }
@@ -424,7 +426,7 @@ impl PageScreen {
             page: Arc::new(Page::default()),
             built: None,
             fresh: list,
-            jumped: false,
+            jumped: None,
             anchor,
         }
     }

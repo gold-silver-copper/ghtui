@@ -299,19 +299,22 @@ fn settle(p: &mut PageScreen, height: usize) {
         .as_ref()
         .and_then(|a| p.page.anchors.get(a))
         .copied();
-    if !p.jumped
-        && let Some(jump) = p.page.jump.or(anchor)
-    {
-        p.scroll = jump.saturating_sub(MARGIN);
-        p.jumped = true;
-    }
     let max = p.page.height().saturating_sub(height);
+    // Again when a rebuild moves it, until you scroll or select.
+    let here = Some((p.scroll, p.selected));
+    let jump = (p.page.jump.or(anchor)).filter(|_| p.jumped.is_none_or(|at| at == here));
+    if let Some(jump) = jump {
+        p.scroll = jump.saturating_sub(MARGIN);
+    }
     p.scroll = p.scroll.min(max);
     if p.selected.is_some_and(|s| s >= p.page.items.len()) {
         p.selected = None;
     }
     if p.fresh && p.selected.is_none() {
         p.selected = (0..p.page.items.len()).find(|&i| visible(p, i, height));
+    }
+    if jump.is_some() || p.jumped.is_some() {
+        p.jumped = Some(jump.map(|_| (p.scroll, p.selected)));
     }
 }
 
