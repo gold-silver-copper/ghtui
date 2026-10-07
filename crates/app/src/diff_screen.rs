@@ -144,6 +144,11 @@ impl DiffScreen {
         }
     }
 
+    /// Starts over at the top, as for a new range, keeping the view prefs.
+    pub fn restart(&mut self) {
+        *self = Self::new(self.of.clone(), self.prefs);
+    }
+
     /// The view options this screen wants at `content` size.
     pub fn options(&self, content: Rect) -> ViewOptions {
         let lay = layout(content, self.prefs.tree_visible);
