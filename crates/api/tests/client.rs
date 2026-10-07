@@ -818,6 +818,94 @@ async fn a_list_page_is_checked_against_itself() {
             .any(|d| d.contains("me's gists: a page of 2, of 1 in all")),
         "{doubts:?}"
     );
+    // The list as kept is checked too (named by its cache key).
+    assert!(
+        doubts
+            .iter()
+            .any(|d| d.contains("gists:me: a page of 2, of 1 in all")),
+        "{doubts:?}"
+    );
+}
+
+/// "Go to file" lists files only, and says when GitHub cut the tree short.
+#[tokio::test]
+async fn the_file_list_is_files_and_says_when_cut() {
+    let (gh, seen) = github(vec![Reply::new(
+        200,
+        r#"{"tree":[{"path":"src","type":"tree"},{"path":"src/a.rs","type":"blob"},{"path":"sub","type":"commit"}],"truncated":true}"#,
+    )])
+    .await;
+    let (files, cut) = gh.file_list(&RepoId::new("o", "r"), "main").await.unwrap();
+    assert_eq!((files, cut), (vec!["src/a.rs".to_owned()], true));
+    assert!(
+        seen.lock().unwrap()[0]
+            .request_line
+            .contains("/git/trees/main?recursive=1")
+    );
+}
+
+/// Checks asked for by full commit ID are that commit's, or don't add up;
+/// by a branch name they're whatever it points at.
+#[tokio::test]
+async fn a_commits_checks_are_for_that_commit() {
+    let checks = |oid: &str| {
+        Reply::new(
+            200,
+            format!(
+                r#"{{"data":{{"repository":{{"object":{{"__typename":"Commit","oid":"{oid}","statusCheckRollup":null}}}}}}}}"#
+            ),
+        )
+    };
+    let full = "a".repeat(40);
+    let (gh, _) = github(vec![
+        checks(&full),
+        checks(&"b".repeat(40)),
+        checks(&"c".repeat(40)),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    gh.commit_checks(&repo, &full).await.unwrap();
+    assert_eq!(gh.take_doubts(), Vec::<String>::new());
+    gh.commit_checks(&repo, &full).await.unwrap();
+    let doubts = gh.take_doubts();
+    assert!(
+        doubts[0].contains("the checks asked for aaaaaaa are for bbbbbbb"),
+        "{doubts:?}"
+    );
+    gh.commit_checks(&repo, "main").await.unwrap();
+    assert_eq!(gh.take_doubts(), Vec::<String>::new());
+}
+
+/// A category not among the first 50 of more may be past them; a page
+/// exactly as long as the total adds up.
+#[tokio::test]
+async fn a_category_past_those_fetched_may_exist() {
+    let categories = |total: u32| {
+        Reply::new(
+            200,
+            format!(
+                r#"{{"data":{{"repository":{{"discussionCategories":{{"totalCount":{total},"nodes":[{{"id":"C1","name":"Ideas","slug":"ideas"}}]}}}}}}}}"#
+            ),
+        )
+    };
+    let (gh, _) = github(vec![categories(60), categories(1)]).await;
+    let of = ghtui_api::browse::DiscussionsOf::Repo(RepoId::new("o", "r"));
+    match gh.discussions(&of, Some("nope"), None).await {
+        Err(ApiError::NotFound(why)) => assert!(why.contains("past the first 1 of 60"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    match gh.discussions(&of, Some("nope"), None).await {
+        Err(ApiError::NotFound(why)) => assert!(!why.contains("past"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    let (gh, _) = github(vec![Reply::new(
+        200,
+        r#"{"data":{"user":{"gists":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
+            {"name":"a","description":null,"updatedAt":"2026-10-01T00:00:00Z","stargazerCount":0,"files":[],"comments":{"totalCount":0}}]}}}}"#,
+    )])
+    .await;
+    gh.gists("me", None).await.unwrap();
+    assert_eq!(gh.take_doubts(), Vec::<String>::new());
 }
 
 /// A category the repository doesn't have is not found, not every
