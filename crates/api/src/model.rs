@@ -7,7 +7,6 @@
 use ghtui_schema::schema;
 use serde::{Deserialize, Serialize};
 
-use crate::browse::IssueState;
 use crate::queries::{self as q, nodes};
 
 /// Some of a list: the items fetched, and how many GitHub has. A list
@@ -213,6 +212,29 @@ pub enum ReviewDecision {
     Approved,
     ChangesRequested,
     ReviewRequired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IssueState {
+    Open,
+    Closed,
+    /// Closed as not planned (or duplicate).
+    NotPlanned,
+    Merged,
+    Draft,
+}
+
+impl IssueState {
+    /// A pull request's state: the only place one is made, so none forgets
+    /// that an open draft is a draft.
+    pub(crate) fn pr(state: q::PullRequestState, draft: bool) -> Self {
+        match state {
+            q::PullRequestState::Open if draft => Self::Draft,
+            q::PullRequestState::Open => Self::Open,
+            q::PullRequestState::Closed => Self::Closed,
+            q::PullRequestState::Merged => Self::Merged,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
