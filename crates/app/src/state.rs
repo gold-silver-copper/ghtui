@@ -586,7 +586,7 @@ impl State {
             Screen::Diff(d) => {
                 let of = d.of.clone();
                 if let DiffOf::Pr(pr) = &of {
-                    cmds.extend(self.ensure_pr(pr, false));
+                    cmds.extend(self.ensure_pr(pr, force));
                 }
                 if force || !self.diffs.contains_key(&of) {
                     cmds.extend(self.start_diff(&of));
@@ -2448,6 +2448,54 @@ pub(crate) mod tests {
         let _ = diff_msg(&mut state, &pr, msg);
         let error = state.diffs[&DiffOf::Pr(pr)].error.clone();
         assert!(error.is_some_and(|e| e.contains("GitHub says 7 files changed")));
+    }
+
+    /// Opens `pr`'s diff (its metadata already in) and returns the job's id.
+    fn start_pr_diff(state: &mut State, pr: &PrRef) -> crate::diff_job::JobId {
+        let cmds = state.open_diff(DiffOf::Pr(pr.clone()));
+        cmds.iter()
+            .find_map(|c| match c {
+                Cmd::Git(Git::LoadDiff { job, .. }) => Some(*job),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    /// git's listing of a PR's diff: at `head`, with no files.
+    fn no_files(job: crate::diff_job::JobId, head: &str) -> DiffMsg {
+        let refs = ghtui_git::repo::PrRefs {
+            head: ghtui_git::Oid::new(head.to_owned()),
+            base: ghtui_git::Oid::new("b".repeat(40)),
+            merge_base: ghtui_git::Oid::new("b".repeat(40)),
+        };
+        let files = crate::diff_job::DiffFiles {
+            refs,
+            files: Vec::new(),
+            generated: std::collections::HashSet::new(),
+        };
+        DiffMsg::Job(job, crate::diff_job::JobMsg::Files(Box::new(files)))
+    }
+
+    /// After a push, git's diff is at a newer head than the PR we hold;
+    /// refreshing the diff fetches the PR again, so the check can agree.
+    #[test]
+    fn refreshing_a_pr_diff_refetches_the_pr() {
+        let mut state = state();
+        let pr = PrRef::parse("o/r#1").unwrap();
+        let detail = crate::snapshot_tests::pr_detail();
+        let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
+        let job = start_pr_diff(&mut state, &pr);
+        let _ = diff_msg(&mut state, &pr, no_files(job, &"c".repeat(40)));
+        assert!(
+            matches!(&state.notice, Some(Notice::Error(m)) if m.contains("moved while loading")),
+            "{:?}",
+            state.notice
+        );
+        let cmds = act(&mut state, Action::Refresh);
+        assert!(
+            cmds.contains(&Cmd::Api(Api::FetchPr(pr.clone()))),
+            "r reloads the diff but not the PR it's checked against: {cmds:?}"
+        );
     }
 
     #[test]
