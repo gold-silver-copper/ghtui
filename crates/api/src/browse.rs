@@ -1852,6 +1852,7 @@ mod tests {
         .unwrap();
         let hit = found.into_hit().unwrap();
         assert_eq!(hit.commit.author, super::Person::Git("Jane Doe".into()));
+        assert_eq!(hit.commit.date, "2026-02-01T00:00:00Z");
     }
 
     /// A commit's committer is shown unless they're its author, nobody, or
@@ -2136,19 +2137,36 @@ pub(crate) mod wire {
         pub author: Option<Login>,
     }
 
+    /// Which signature dates a REST commit.
+    #[derive(Clone, Copy)]
+    pub enum Dated {
+        Authored,
+        /// When committed, else when authored.
+        Committed,
+    }
+
     impl RestCommit {
-        /// By GitHub's account for it, else its git name; dated when authored.
-        pub fn into_info(self) -> super::CommitInfo {
-            let git = self.commit;
-            let name = git.author.as_ref().and_then(|a| a.name.clone());
+        /// By GitHub's account for it, else its author's git name (never the
+        /// committer's).
+        pub fn into_info(self, dated: Dated) -> super::CommitInfo {
+            let Message {
+                message,
+                author,
+                committer,
+            } = self.commit;
+            let committed = match dated {
+                Dated::Authored => None,
+                Dated::Committed => committer.and_then(|c| c.date),
+            };
+            let (name, authored) = author.map_or((None, None), |a| (a.name, a.date));
             let author = super::GitActor {
                 name,
                 user: self.author,
             };
             super::CommitInfo {
-                headline: git.message.lines().next().unwrap_or_default().to_owned(),
+                headline: message.lines().next().unwrap_or_default().to_owned(),
                 author: Some(author).into(),
-                date: git.author.and_then(|a| a.date).unwrap_or_default(),
+                date: committed.or(authored).unwrap_or_default(),
                 oid: self.sha,
             }
         }
@@ -2767,7 +2785,7 @@ impl rest_compare::Compare {
             commits: self
                 .commits
                 .into_iter()
-                .map(rest_compare::Commit::into_info)
+                .map(|c| c.into_info(wire::Dated::Authored))
                 .collect(),
         }
     }
@@ -3265,12 +3283,10 @@ pub(crate) mod rest_search {
 
 impl rest_search::Commit {
     pub(crate) fn into_hit(self) -> Option<CommitHit> {
-        let git = &self.commit.commit;
-        let committed = git.committer.as_ref().and_then(|c| c.date.clone());
-        let mut commit = self.commit.into_info();
-        commit.date = committed.unwrap_or(commit.date);
-        let repo = RepoId::parse(&self.repository.full_name)?;
-        Some(CommitHit { repo, commit })
+        Some(CommitHit {
+            repo: RepoId::parse(&self.repository.full_name)?,
+            commit: self.commit.into_info(wire::Dated::Committed),
+        })
     }
 }
 
