@@ -2302,7 +2302,6 @@ pub(crate) mod wire {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Counted<T> {
-        #[serde(default)]
         pub total_count: u64,
         pub nodes: Vec<Option<T>>,
     }

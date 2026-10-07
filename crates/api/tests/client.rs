@@ -1327,10 +1327,7 @@ async fn a_repeated_cursor_ends_the_review_threads() {
     let (gh, seen) = github(vec![Reply::new(200, page); 20]).await;
     let result = gh.review_threads(&PrRef::parse("o/r#7").unwrap()).await;
     let asked = seen.lock().unwrap().len();
-    assert!(
-        asked <= 2,
-        "asked {asked} times for the same cursor, ending with {result:?}"
-    );
+    assert_eq!((asked, gh.take_doubts().len()), (2, 1), "{result:?}");
 }
 
 /// A PR's patches stop at GitHub's cap of 3000 files, and say they did.
