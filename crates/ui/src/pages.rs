@@ -2480,27 +2480,81 @@ fn log_line(line: &str) -> (Option<&str>, &str) {
     }
 }
 
-/// Which step each log line belongs to, by when it was written (GitHub's
-/// one log for a job doesn't mark steps).
+/// Which step each log line belongs to. GitHub's one log for a job
+/// doesn't say, and its steps' times are to the second, so a step that
+/// ran begins at the line that starts it (`##[group]Run …`, `Post job
+/// cleanup.`, `Cleaning up orphan processes`) or once the step before
+/// has ended, whichever comes first.
 fn step_lines<'a>(job: &Job, log: &'a str) -> Vec<(u32, Vec<&'a str>)> {
     let mut out: Vec<(u32, Vec<&str>)> = job.steps.iter().map(|s| (s.number, Vec::new())).collect();
-    let mut current = 0;
+    let second = |at: Option<&String>| at.map(|at| at.get(..19).unwrap_or(at).to_owned());
+    // Skipped steps log nothing.
+    let ran: Vec<usize> = job
+        .steps
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.outcome != CheckOutcome::Skipped)
+        .map(|(i, _)| i)
+        .collect();
+    let mut at = 0;
     for raw in log.lines() {
-        let (at, text) = log_line(raw);
-        if let Some(at) = at {
-            // The last step started by then (timestamps carry fractions;
-            // the step's start is to the second).
-            let second = at.get(..19).unwrap_or(at);
-            if let Some(i) = job.steps.iter().rposition(|s| {
-                s.started_at
-                    .as_deref()
-                    .is_some_and(|start| start.get(..19).unwrap_or(start) <= second)
-            }) {
-                current = i;
+        let (time, text) = log_line(raw.trim_start_matches('\u{feff}'));
+        if let Some(time) = time {
+            let t = time.get(..19).unwrap_or(time);
+            let starts = text.starts_with("##[group]Run ")
+                || text == "Post job cleanup."
+                || text == "Cleaning up orphan processes";
+            while let (Some(current), Some(next)) = (
+                ran.get(at).and_then(|&i| job.steps.get(i)),
+                ran.get(at + 1).and_then(|&i| job.steps.get(i)),
+            ) {
+                let next_started =
+                    second(next.started_at.as_ref()).is_some_and(|s| s.as_str() <= t);
+                let ended = second(current.completed_at.as_ref()).is_some_and(|s| s.as_str() < t);
+                if !next_started || !(ended || starts) {
+                    break;
+                }
+                at += 1;
+                // A start line starts one step.
+                if starts && !ended {
+                    break;
+                }
             }
         }
-        if let Some((_, lines)) = out.get_mut(current) {
+        if let Some((_, lines)) = ran.get(at).and_then(|&i| out.get_mut(i)) {
             lines.push(text);
+        }
+    }
+    out
+}
+
+/// `text` without terminal escape sequences (colors, mostly).
+fn strip_escapes(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            // CSI: parameters, then a final byte from @ to ~.
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('@'..='~').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            // OSC: up to BEL or ESC \.
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\u{7}' || (c == '\u{1b}' && chars.next_if_eq(&'\\').is_some()) {
+                        break;
+                    }
+                }
+            }
+            _ => {}
         }
     }
     out
@@ -2508,6 +2562,7 @@ fn step_lines<'a>(job: &Job, log: &'a str) -> Vec<(u32, Vec<&'a str>)> {
 
 /// A log line as shown: group markers and errors stand out.
 fn log_seg(text: &str) -> Seg {
+    let text = &strip_escapes(text);
     if let Some(group) = text.strip_prefix("##[group]") {
         Seg::new(format!("▸ {group}"), Role::Strong)
     } else if text.starts_with("##[endgroup]") {
@@ -3877,6 +3932,70 @@ pub fn home(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Steps that start in the second the one before ends still get their
+    /// own lines, by the lines that start them.
+    #[test]
+    fn log_lines_go_to_their_steps() {
+        let step = |number, outcome, start: &str, end: &str| ghtui_api::browse::Step {
+            number,
+            name: String::new(),
+            outcome,
+            started_at: Some(format!("2026-10-05T17:42:{start}Z")),
+            completed_at: Some(format!("2026-10-05T17:42:{end}Z")),
+        };
+        let job = Job {
+            id: 1,
+            run_id: 1,
+            name: String::new(),
+            outcome: CheckOutcome::Success,
+            started_at: None,
+            completed_at: None,
+            steps: vec![
+                step(1, CheckOutcome::Success, "04", "04"),
+                step(2, CheckOutcome::Success, "04", "16"),
+                step(3, CheckOutcome::Skipped, "16", "16"),
+                step(4, CheckOutcome::Success, "16", "37"),
+                step(8, CheckOutcome::Success, "37", "37"),
+                step(9, CheckOutcome::Success, "37", "37"),
+            ],
+        };
+        let log = [
+            "\u{feff}2026-10-05T17:42:04.31Z Current runner version",
+            "2026-10-05T17:42:04.32Z ##[group]Runner Image",
+            "2026-10-05T17:42:04.90Z ##[group]Run actions/checkout@v4",
+            "2026-10-05T17:42:16.01Z HEAD is now at 984a54e",
+            "2026-10-05T17:42:16.07Z ##[group]Run cd src/ci/citool",
+            "2026-10-05T17:42:37.10Z done",
+            "2026-10-05T17:42:37.20Z Post job cleanup.",
+            "2026-10-05T17:42:37.49Z Cleaning up orphan processes",
+        ]
+        .join("\n");
+        let lines = step_lines(&job, &log);
+        let of = |n: u32| {
+            lines
+                .iter()
+                .find(|(s, _)| *s == n)
+                .map(|(_, l)| l.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(of(1), ["Current runner version", "##[group]Runner Image"]);
+        assert_eq!(
+            of(2),
+            ["##[group]Run actions/checkout@v4", "HEAD is now at 984a54e"]
+        );
+        assert!(of(3).is_empty());
+        assert_eq!(of(4), ["##[group]Run cd src/ci/citool", "done"]);
+        assert_eq!(of(8), ["Post job cleanup."]);
+        assert_eq!(of(9), ["Cleaning up orphan processes"]);
+    }
+
+    #[test]
+    fn escapes_are_stripped_from_logs() {
+        assert_eq!(strip_escapes("\u{1b}[36;1mcd src\u{1b}[0m"), "cd src");
+        assert_eq!(strip_escapes("a\u{1b}]8;;https://x\u{7}b"), "ab");
+        assert_eq!(strip_escapes("plain [36m"), "plain [36m");
+    }
 
     #[test]
     fn wiki_links_become_markdown() {
