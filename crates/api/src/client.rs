@@ -1192,7 +1192,8 @@ impl GitHub {
             )
             .await?;
         for (i, name) in names.iter().enumerate() {
-            let Some(node) = data.pointer(&format!("/repository/object/e{i}/nodes/0")) else {
+            let node = data.pointer(&format!("/repository/object/e{i}/nodes/0"));
+            let Some(node) = node.filter(|n| !n.is_null()) else {
                 continue;
             };
             match <browse::wire::Commit as serde::Deserialize>::deserialize(node) {
