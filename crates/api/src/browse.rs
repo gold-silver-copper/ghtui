@@ -17,6 +17,7 @@ use crate::queries::{
 };
 use ghtui_schema::schema;
 
+pub use crate::model::IssueState;
 pub use crate::person::{Login, Person};
 
 // ---- models ------------------------------------------------------------------
@@ -166,16 +167,6 @@ pub struct Blob {
     pub text: Option<String>,
     pub size: u64,
     pub truncated: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum IssueState {
-    Open,
-    Closed,
-    /// Closed as not planned (or duplicate).
-    NotPlanned,
-    Merged,
-    Draft,
 }
 
 /// An issue or pull request in a list.
@@ -4689,19 +4680,6 @@ pub mod keys {
 }
 
 // ---- conversions ---------------------------------------------------------------------
-
-impl IssueState {
-    /// A pull request's state: the only place one is made, so none forgets
-    /// that an open draft is a draft.
-    pub(crate) fn pr(state: PullRequestState, draft: bool) -> Self {
-        match state {
-            PullRequestState::Open if draft => Self::Draft,
-            PullRequestState::Open => Self::Open,
-            PullRequestState::Closed => Self::Closed,
-            PullRequestState::Merged => Self::Merged,
-        }
-    }
-}
 
 fn issue_state(state: WireIssueState, reason: Option<StateReason>) -> IssueState {
     match (state, reason) {
