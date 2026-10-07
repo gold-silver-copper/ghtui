@@ -1,5 +1,6 @@
 //! Who wrote or committed a commit. A module of its own so that [`Login`]'s
-//! field is private to it: a decoder can't make one from any string at hand.
+//! field is private: a git name can't become one by accident, though a
+//! hand-built [`GitActor`] or [`Login::unchecked`] can still make any.
 
 use serde::{Deserialize, Serialize};
 
