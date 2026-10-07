@@ -2884,6 +2884,9 @@ pub struct DiscussionDetail {
     pub answered: bool,
     pub upvotes: u64,
     pub comments: Vec<DiscussionComment>,
+    /// How many comments there are (the first 50 are here).
+    #[serde(default)]
+    pub total_comments: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2893,6 +2896,9 @@ pub struct DiscussionComment {
     /// The answer to a question.
     pub answer: bool,
     pub replies: Vec<Comment>,
+    /// How many replies there are (the first 30 are here).
+    #[serde(default)]
+    pub total_replies: u64,
 }
 
 pub(crate) mod wire_discussions {
@@ -2964,7 +2970,10 @@ pub(crate) mod wire_discussions {
     }
 
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     pub struct Replies {
+        #[serde(default)]
+        pub total_count: u64,
         pub nodes: Vec<Option<Reply>>,
     }
 
@@ -2981,7 +2990,10 @@ pub(crate) mod wire_discussions {
     }
 
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     pub struct Comments {
+        #[serde(default)]
+        pub total_count: u64,
         pub nodes: Vec<Option<WireComment>>,
     }
 
@@ -3049,6 +3061,7 @@ impl wire_discussions::Detail {
             category: self.category.name,
             answered: self.is_answered.unwrap_or(false),
             upvotes: self.upvote_count,
+            total_comments: self.comments.total_count,
             comments: self
                 .comments
                 .nodes
@@ -3057,6 +3070,7 @@ impl wire_discussions::Detail {
                 .map(|c| DiscussionComment {
                     upvotes: c.upvote_count,
                     answer: c.is_answer,
+                    total_replies: c.replies.total_count,
                     replies: c
                         .replies
                         .nodes
