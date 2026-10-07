@@ -2228,7 +2228,7 @@ struct Reply {
 /// `FORBIDDEN`, …) and where in the query it is.
 #[derive(Debug, serde::Deserialize)]
 struct GqlError {
-    message: String,
+    message: Option<String>,
     #[serde(rename = "type")]
     kind: Option<String>,
     path: Option<Vec<Value>>,
@@ -2253,7 +2253,7 @@ impl GqlError {
 }
 
 fn messages(errors: impl IntoIterator<Item = GqlError>) -> Vec<String> {
-    errors.into_iter().map(|e| e.message).collect()
+    errors.into_iter().filter_map(|e| e.message).collect()
 }
 
 /// What's at `pointer` in a GraphQL response's data, or `what` not found
@@ -2462,7 +2462,7 @@ mod tests {
     fn a_not_found_explains_only_the_null_it_points_at() {
         let data = serde_json::json!({"a": [{"b": 1}, null], "c": null});
         let error = |kind: Option<&str>, path: serde_json::Value| GqlError {
-            message: String::new(),
+            message: None,
             kind: kind.map(str::to_owned),
             path: serde_json::from_value(path).ok(),
         };
