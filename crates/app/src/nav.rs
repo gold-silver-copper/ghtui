@@ -149,25 +149,47 @@ impl State {
         }
     }
 
+    /// Opens a URL (in a new tab with `tab`), going once it's loaded to
+    /// what its `#fragment` names: a comment, a file in a diff, a review
+    /// comment's thread.
+    #[must_use]
+    pub fn open_url(&mut self, url: &str, tab: bool) -> Vec<Cmd> {
+        let target = Target::from_url(url);
+        let external = matches!(target, Target::External(_));
+        let cmds = if tab {
+            self.open_tab(target)
+        } else {
+            self.go(target)
+        };
+        if !external {
+            self.anchor_at(url);
+        }
+        cmds
+    }
+
+    /// Notes `url`'s `#fragment` on the screen it opened.
+    pub fn anchor_at(&mut self, url: &str) {
+        let with_scheme = if url.starts_with("github.com/") {
+            format!("https://{url}")
+        } else {
+            url.to_owned()
+        };
+        let fragment = url::Url::parse(&with_scheme)
+            .ok()
+            .and_then(|u| u.fragment().map(str::to_owned));
+        match (fragment, self.screen_mut()) {
+            (Some(fragment), Screen::Page(p)) => p.anchor = Some(fragment),
+            (Some(fragment), Screen::Diff(d)) => d.anchor = Some(fragment),
+            _ => {}
+        }
+    }
+
     /// Follows a link on the page on screen: a URL, or one of the page's
     /// actions.
     #[must_use]
     pub fn follow(&mut self, link: &Link) -> Vec<Cmd> {
         match link {
-            Link::Url(url) => {
-                let cmds = self.go(Target::from_url(url));
-                // A comment the link points at (`#issuecomment-…`).
-                let fragment = url::Url::parse(url)
-                    .ok()
-                    .and_then(|u| u.fragment().map(str::to_owned));
-                match (fragment, self.screen_mut()) {
-                    (Some(fragment), Screen::Page(p)) => p.anchor = Some(fragment),
-                    // A file (`#diff-<hash>`) or a review comment.
-                    (Some(fragment), Screen::Diff(d)) => d.anchor = Some(fragment),
-                    _ => {}
-                }
-                cmds
-            }
+            Link::Url(url) => self.open_url(url, false),
             Link::More => self.load_more(),
             Link::Star => star(self),
             Link::Comment => comment_with(self, ""),
@@ -690,7 +712,7 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             state.overlay = None;
             match link {
                 Link::Url(url) if browser => state.go(Target::External(url)),
-                Link::Url(url) if tab => state.open_tab(Target::from_url(&url)),
+                Link::Url(url) if tab => state.open_url(&url, true),
                 link => state.follow(&link),
             }
         }
@@ -725,6 +747,7 @@ pub struct SearchBox {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pick {
     Go(Target),
+    Url(String),
     Search(SearchKind, String),
     Filter(String),
 }
@@ -811,7 +834,13 @@ impl State {
                 Target::Files(of) => format!("Files changed in {of}"),
                 Target::External(url) => url.clone(),
             };
-            out.push(suggestion("→", label, "go to", "↵", Pick::Go(target)));
+            // A URL keeps its `#fragment`.
+            let pick = if q.contains("://") || q.starts_with("github.com/") {
+                Pick::Url(q.to_owned())
+            } else {
+                Pick::Go(target)
+            };
+            out.push(suggestion("→", label, "go to", "↵", pick));
         }
         // Jump to: pages you've visited, your repositories, live matches.
         let current = self.route().map(Route::url);
@@ -955,6 +984,7 @@ pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 fn choose(state: &mut State, pick: Pick) -> Vec<Cmd> {
     match pick {
         Pick::Go(target) => state.go(target),
+        Pick::Url(url) => state.open_url(&url, false),
         Pick::Search(kind, query) => state.push(Route::Search { kind, query }),
         Pick::Filter(query) => match state.route().and_then(|r| r.with_query(query.clone())) {
             Some(route) => state.replace(route, true),

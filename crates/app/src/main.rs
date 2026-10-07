@@ -173,7 +173,12 @@ async fn run(started: Instant) -> Result<()> {
             // when you get there. With tabs reopened, it's a new tab after
             // them.
             let mut cmds = vec![state::Cmd::Api(Api::FetchViewer)];
+            let external = matches!(target, Target::External(_));
             cmds.extend(state.start_at(target));
+            // A link to a comment, a file in a diff, a review comment.
+            if let Some(url) = cli.target.as_deref().filter(|_| !external) {
+                state.anchor_at(url);
+            }
             cmds
         }
         None => state.load_visible(true),
