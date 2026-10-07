@@ -672,7 +672,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             save
         }
         Action::UndoDelete => {
-            let Some(mut draft) = diff.inputs().deleted.clone() else {
+            let Some(mut draft) = diff.edit(|i| i.deleted.take()) else {
                 return notice(state, Notice::Info("No deleted draft to bring back".into()));
             };
             let save = diff.edit_review(&pr, |i| {
@@ -680,7 +680,6 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                     draft.id = i.review.next_draft_id();
                 }
                 i.review.pending.push(draft);
-                i.deleted = None;
             });
             state.info("Draft restored");
             save
@@ -721,10 +720,9 @@ pub(crate) fn start_since_review(state: &mut State) -> Vec<Cmd> {
     let Some(pr) = screen.of.pr().cloned() else {
         return Vec::new();
     };
-    let inputs = diff.inputs();
-    let old = match &inputs.last_review {
+    let old = match &diff.inputs().last_review {
         LastReview::At(oid) => Some(oid.to_string()),
-        LastReview::Unknown | LastReview::None => inputs.review.last_reviewed_head.clone(),
+        LastReview::Unknown | LastReview::None => diff.inputs().review.last_reviewed_head.clone(),
     };
     let head = diff.head();
     let problem = match (&old, &head) {
