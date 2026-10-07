@@ -533,12 +533,15 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 let Some(login) = viewer else {
                     // Without a login, only the local record can say.
                     diff.edit(|i| i.last_review = LastReview::None);
-                    return start_since_review(state);
+                    return Vec::new();
                 };
                 state.info("Looking up your last review…");
                 return vec![Cmd::Api(Api::FetchLastReview { pr, login })];
             }
-            start_since_review(state)
+            if !diff.listed() {
+                state.info("Comparing once the diff has loaded");
+            }
+            Vec::new()
         }
         Action::PickCommits => {
             if diff.inputs().commits.is_empty() {
@@ -709,40 +712,6 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         _ => notice(state, Notice::Info(action.not_here())),
     }
-}
-
-/// Compares with the head of your last review, once known.
-#[must_use]
-pub(crate) fn start_since_review(state: &mut State) -> Vec<Cmd> {
-    let Some((screen, diff)) = state.diff_parts() else {
-        return Vec::new();
-    };
-    let Some(pr) = screen.of.pr().cloned() else {
-        return Vec::new();
-    };
-    let old = match &diff.inputs().last_review {
-        LastReview::At(oid) => Some(oid.to_string()),
-        LastReview::Unknown | LastReview::None => diff.inputs().review.last_reviewed_head.clone(),
-    };
-    let head = diff.head();
-    let problem = match (&old, &head) {
-        (None, _) => Some("You haven't reviewed this PR yet"),
-        (_, None) => Some("The diff hasn't loaded yet"),
-        (Some(old), Some(head)) if **old == **head => {
-            Some("Nothing new: you reviewed the current head")
-        }
-        _ => None,
-    };
-    if let Some(message) = problem {
-        diff.since_requested = false;
-        state.info(message);
-        return Vec::new();
-    }
-    state.info("Comparing with your last review…");
-    vec![Cmd::Git(Git::SinceReview {
-        pr,
-        old_head: old.unwrap_or_default(),
-    })]
 }
 
 /// Shows what `choice` picks: the whole PR, the changes since your last

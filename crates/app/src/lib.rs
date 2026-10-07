@@ -10,6 +10,7 @@ mod diff_job;
 mod diff_screen;
 #[cfg(test)]
 mod fixtures;
+mod join;
 mod keymap;
 mod nav;
 mod picker;

@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use ghtui_api::model::{NodeId, PatchFile, PrDetail, PrRef, RepoId, ReviewThread, ViewedFiles};
+use ghtui_api::model::{NodeId, PatchFile, PrRef, RepoId, ReviewThread, ViewedFiles};
 use ghtui_diff::anchor::Commentable;
 use ghtui_diff::{FileDiff, Whitespace};
 use ghtui_git::Oid;
@@ -16,9 +16,10 @@ use ghtui_ui::text::short_sha;
 use ratatui::layout::Rect;
 
 use crate::diff_job::{DiffFiles, JobId, JobMsg, next_job};
+use crate::join;
 use crate::keymap::Action;
 use crate::picker;
-use crate::review::{annotations, on_submitted, review_action, start_since_review};
+use crate::review::{annotations, on_submitted};
 use crate::state::{Api, Cmd, DiffMsg, Git, Overlay, Problem, State};
 
 /// What GitHub says about your last submitted review of a PR.
@@ -250,10 +251,8 @@ pub struct DiffState {
     /// What the background job is doing, while it works.
     pub progress: Option<String>,
     pub error: Option<String>,
-    /// Outdated-thread mapping was requested.
-    pub mapping_requested: bool,
-    /// Move detection was requested (once every file is diffed).
-    pub moves_requested: bool,
+    /// What the work that waits on several inputs last ran for.
+    pub(crate) joins: join::Joins,
     /// "Since my last review" was asked for and is waiting on data.
     pub since_requested: bool,
     /// Showing a sub-range of commits instead of the whole PR.
@@ -274,8 +273,7 @@ impl DiffState {
             refs: None,
             progress: Some("Preparing".into()),
             error: None,
-            mapping_requested: false,
-            moves_requested: false,
+            joins: join::Joins::default(),
             since_requested: false,
             range: None,
             requested: HashSet::new(),
@@ -358,24 +356,6 @@ impl DiffState {
         if self.doc.ready_count() == self.doc.files().len() {
             self.progress = None;
         }
-    }
-
-    /// Every file's diff, once all have arrived and moves haven't been
-    /// looked for yet.
-    pub fn take_move_inputs(&mut self) -> Option<Vec<(usize, Arc<FileDiff>)>> {
-        if self.moves_requested || !self.listed() || self.doc.ready_count() < self.doc.files().len()
-        {
-            return None;
-        }
-        self.moves_requested = true;
-        Some(
-            self.doc
-                .files()
-                .iter()
-                .enumerate()
-                .filter_map(|(i, f)| f.diff.clone().map(|d| (i, d)))
-                .collect(),
-        )
     }
 
     pub fn status(&self) -> Option<String> {
@@ -889,46 +869,13 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
             }
         }
         JobMsg::Files(files) => {
-            let Some(diff) = state.diffs.get_mut(of) else {
-                return Vec::new();
-            };
-            let (head, count) = (files.refs.head.to_string(), files.files.len());
-            diff.set_files(*files);
-            // The whole PR's diff, checked against what GitHub says of it
-            // (once that's fresh: a cached copy may be from before a push).
-            if let DiffOf::Pr(pr) = of
-                && diff.range().is_none()
-                && let Some(remote) = state.prs.get(pr)
-                && let Some(detail) = remote.data.as_ref()
-                && !remote.loading
-                && remote.cached_at.is_none()
-            {
-                let check = check_pr_diff(detail, &head, count, &state.first_key(Action::Refresh));
-                if let Some(error) = &check.error {
-                    tracing::warn!(%pr, error, "the PR's diff doesn't match GitHub");
-                    if let Some(diff) = state.diffs.get_mut(of) {
-                        diff.error = Some(error.clone());
-                    }
-                }
-                if let Some(warning) = check.warning {
-                    tracing::warn!(%pr, warning, "the PR's diff doesn't match GitHub");
-                    state.error(warning);
-                }
-            }
-            let Some(diff) = state.diffs.get_mut(of) else {
-                return Vec::new();
-            };
-            // "Since my last review" chosen while switching ranges.
-            if std::mem::take(&mut diff.since_requested) {
-                return review_action(state, Action::ToggleSinceReview);
+            if let Some(diff) = state.diffs.get_mut(of) {
+                diff.set_files(*files);
             }
         }
         JobMsg::File(index, file) => {
             if let Some(diff) = state.diffs.get_mut(of) {
                 diff.set_file(index, file);
-                if let Some(inputs) = diff.take_move_inputs() {
-                    return vec![Cmd::Git(Git::DetectMoves(of.clone(), diff.job, inputs))];
-                }
             }
         }
         JobMsg::Moves(moves) => match state.diff_parts() {
@@ -992,16 +939,12 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
             if let Some(diff) = state.diffs.get_mut(of) {
                 let last = commit.map_or(LastReview::None, |c| LastReview::At(Oid::new(c)));
                 diff.edit(|i| i.last_review = last);
-                if diff.since_requested {
-                    return start_since_review(state);
-                }
             }
         }
         DiffMsg::SinceReady(old_head, Ok(hashes)) => {
             if let Some((screen, diff)) = state.diff_parts()
                 && screen.of == *of
             {
-                diff.since_requested = false;
                 preserving_position(screen, &mut diff.doc, |doc| {
                     doc.set_since(Some(hashes), true);
                 });
@@ -1012,9 +955,6 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
             }
         }
         DiffMsg::SinceReady(_, Err(err)) => {
-            if let Some(diff) = state.diffs.get_mut(of) {
-                diff.since_requested = false;
-            }
             tracing::warn!(%pr, ?err, "comparing with the last review failed");
             state.error(format!("Couldn't compare with your last review: {err}"));
         }
@@ -1062,17 +1002,12 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
                 format!("Drafts for {pr} are not being saved: {err}"),
             );
         }
-        DiffMsg::ThreadsLoaded(result) => {
-            match result {
-                Ok(threads) => {
-                    edit(state, of, |i| i.threads = threads);
-                }
-                Err(err) => {
-                    tracing::warn!(%pr, %err, "review threads fetch failed");
-                    state.error(format!("Couldn't load review threads: {err}"));
-                }
-            }
-            return state.map_outdated(&pr);
+        DiffMsg::ThreadsLoaded(Ok(threads)) => {
+            edit(state, of, |i| i.threads = threads);
+        }
+        DiffMsg::ThreadsLoaded(Err(err)) => {
+            tracing::warn!(%pr, %err, "review threads fetch failed");
+            state.error(format!("Couldn't load review threads: {err}"));
         }
         DiffMsg::PatchesLoaded(Ok(patches)) => {
             let commentable = |f: PatchFile| Some((f.filename, Commentable::from_patch(&f.patch?)));
@@ -1101,47 +1036,6 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
     Vec::new()
 }
 
-/// What checking a PR's diff from git against GitHub's account of it
-/// found: an error (the diff is wrong) or a warning (it may be).
-#[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) struct PrDiffCheck {
-    pub error: Option<String>,
-    pub warning: Option<String>,
-}
-
-/// Checks the diff git made (its head, how many files) against GitHub's
-/// PR: the same head, and about as many files. No files where GitHub has
-/// some is the merged-PR bug's shape, and an error.
-pub(crate) fn check_pr_diff(
-    detail: &PrDetail,
-    head: &str,
-    files: usize,
-    refresh: &str,
-) -> PrDiffCheck {
-    let mut check = PrDiffCheck::default();
-    let short = ghtui_ui::text::short_sha;
-    if head != detail.head_oid {
-        check.warning = Some(format!(
-            "The PR's head is {} on GitHub but {} here: it moved while loading. {refresh} reloads",
-            short(&detail.head_oid),
-            short(head)
-        ));
-        return check;
-    }
-    let (ours, theirs) = (files as u64, detail.changed_files);
-    if ours == 0 && theirs > 0 {
-        check.error = Some(format!(
-            "git found no changes, but GitHub says {theirs} file{} changed. {refresh} tries again",
-            if theirs == 1 { "" } else { "s" }
-        ));
-    } else if ours.abs_diff(theirs) > 3.max(theirs / 10) {
-        check.warning = Some(format!(
-            "git found {ours} changed files, GitHub says {theirs}: the diff may not be the PR's"
-        ));
-    }
-    check
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1165,33 +1059,5 @@ mod tests {
             self.doc.set_moves(doc.moves().to_vec());
             self
         }
-    }
-
-    #[test]
-    fn a_prs_diff_is_checked_against_github() {
-        let mut pr = crate::snapshot_tests::pr_detail();
-        pr.head_oid = "a".repeat(40);
-        pr.changed_files = 12;
-        let check = |head: &str, files| check_pr_diff(&pr, head, files, "r");
-        assert_eq!(check(&"a".repeat(40), 12), PrDiffCheck::default());
-        // Renames and the like count differently; a few files either way
-        // is no cause for alarm.
-        assert_eq!(check(&"a".repeat(40), 10), PrDiffCheck::default());
-        let none = check(&"a".repeat(40), 0);
-        assert!(
-            none.error
-                .is_some_and(|e| e.contains("GitHub says 12 files"))
-        );
-        let off = check(&"a".repeat(40), 40);
-        assert!(
-            off.warning
-                .is_some_and(|w| w.contains("git found 40 changed files, GitHub says 12"))
-        );
-        let moved = check(&"b".repeat(40), 12);
-        assert!(
-            moved
-                .warning
-                .is_some_and(|w| w.contains("aaaaaaa on GitHub but bbbbbbb here"))
-        );
     }
 }

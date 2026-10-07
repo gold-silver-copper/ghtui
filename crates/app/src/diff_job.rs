@@ -219,6 +219,13 @@ async fn run_inner(
         .partition(|(_, f)| !collapsed(f));
     let order = expanded.into_iter().chain(collapsed).map(|(i, _)| i);
     control.fill(order);
+    // Listed means git is there for the work that waited on the listing
+    // (if it opened: if not, the job fails once the files are shown).
+    let repo = Arc::new(repo);
+    let reader = repo.blob_reader().map(Arc::new);
+    if let Ok(reader) = &reader {
+        let _ = control.git.set((repo.clone(), reader.clone()));
+    }
     out.send(JobMsg::Files(Box::new(DiffFiles {
         refs,
         files: files.clone(),
@@ -226,7 +233,6 @@ async fn run_inner(
     })));
 
     let files = Arc::new(files);
-    let repo = Arc::new(repo);
     // The first batch covers the head of the queue: the first file, which
     // is where the diff screen opens.
     let first: HashSet<usize> = control.front().into_iter().collect();
@@ -257,8 +263,7 @@ async fn run_inner(
         });
     }
 
-    let reader = Arc::new(repo.blob_reader()?);
-    let _ = control.git.set((repo.clone(), reader.clone()));
+    let reader = reader?;
     let workers = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(2, 4));
     for _ in 0..workers {
         let control = control.clone();

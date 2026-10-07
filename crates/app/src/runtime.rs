@@ -204,7 +204,8 @@ impl Effects {
                     control.prioritize(&files);
                 }
             }
-            Git::DetectMoves(of, job, files) => {
+            Git::DetectMoves(joined) => {
+                let (of, job, files) = joined.into_inner();
                 let out = JobTx {
                     tx: self.tx.clone(),
                     of,
@@ -227,7 +228,8 @@ impl Effects {
                     out.send(JobMsg::Moves(moves));
                 });
             }
-            Git::SinceReview { pr, old_head } => {
+            Git::SinceReview(joined) => {
+                let (pr, old_head) = joined.into_inner();
                 let Some(git) = self.job_git(&DiffOf::Pr(pr.clone())) else {
                     let _ = self.tx.send(Msg::Diff(
                         pr.into(),
@@ -269,7 +271,8 @@ impl Effects {
                     let _ = tx.send(Msg::Diff(pr.into(), DiffMsg::CommitsListed(result)));
                 });
             }
-            Git::MapOutdated { pr, head, threads } => {
+            Git::MapOutdated(joined) => {
+                let (pr, head, threads) = joined.into_inner();
                 let Some(git) = self.job_git(&DiffOf::Pr(pr.clone())) else {
                     return;
                 };
@@ -560,10 +563,11 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Cmd::Api(Api::FetchPatches(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::PatchesLoaded(api()))
         }
-        Cmd::Git(Git::MapOutdated { pr, threads, .. }) => Msg::Diff(
-            pr.clone().into(),
-            DiffMsg::OutdatedMapped(threads.iter().map(|t| (t.thread.clone(), None)).collect()),
-        ),
+        Cmd::Git(Git::MapOutdated(joined)) => {
+            let (pr, _, threads) = joined.get();
+            let none = threads.iter().map(|t| (t.thread.clone(), None)).collect();
+            Msg::Diff(pr.clone().into(), DiffMsg::OutdatedMapped(none))
+        }
         Cmd::Api(Api::Reply { pr, .. }) => Msg::Diff(pr.clone().into(), DiffMsg::Replied(api())),
         Cmd::Api(Api::SetResolved {
             pr,
@@ -592,13 +596,17 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             of.clone(),
             DiffMsg::Job(*job, JobMsg::Failed(Failure::msg("ghtui hit a bug"))),
         ),
-        Cmd::Git(Git::DetectMoves(of, job, _)) => {
+        Cmd::Git(Git::DetectMoves(joined)) => {
+            let (of, job, _) = joined.get();
             Msg::Diff(of.clone(), DiffMsg::Job(*job, JobMsg::Moves(Vec::new())))
         }
-        Cmd::Git(Git::SinceReview { pr, old_head }) => Msg::Diff(
-            pr.clone().into(),
-            DiffMsg::SinceReady(old_head.clone(), git()),
-        ),
+        Cmd::Git(Git::SinceReview(joined)) => {
+            let (pr, old_head) = joined.get();
+            Msg::Diff(
+                pr.clone().into(),
+                DiffMsg::SinceReady(old_head.clone(), git()),
+            )
+        }
         Cmd::Git(Git::ListCommits(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::CommitsListed(git()))
         }
