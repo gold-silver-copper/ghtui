@@ -380,7 +380,7 @@ impl State {
             ));
         }
         if diff.inputs().commits.is_empty() {
-            rows.push((item("Listing commits…", ""), None));
+            rows.push((item("No commits listed yet", ""), None));
         }
         rows
     }

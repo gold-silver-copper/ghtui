@@ -3461,7 +3461,7 @@ pub(crate) mod tests {
                     &act(&mut s, Action::PickCommits)[..],
                     [Cmd::Git(Git::ListCommits(_))]
                 ));
-                // The picker opens at once, saying it's listing; leave it,
+                // The picker opens at once, with no commits yet; leave it,
                 // then the diff.
                 let Some(Overlay::Picker(p)) = &s.overlay else {
                     panic!("no picker")
