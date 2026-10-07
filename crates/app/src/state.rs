@@ -2202,6 +2202,43 @@ pub(crate) mod tests {
         assert_eq!(route(&state), blob("main", "crates/README.md"));
     }
 
+    /// A list the picker couldn't fetch says why, rather than loading for
+    /// good, and opening the picker again asks again.
+    #[test]
+    fn a_picker_list_that_failed_says_why() {
+        let mut state = with_repo();
+        for (keys, key, why) in [
+            (
+                "f",
+                DataKey::Files(repo(), "main".into()),
+                "Couldn't load files",
+            ),
+            ("b", DataKey::Refs(repo()), "Couldn't load branches"),
+        ] {
+            assert_eq!(press(&mut state, keys), vec![fetch(key.clone())]);
+            let result = Err(ApiError::Network("timed out".into()));
+            let cached_at = None;
+            let _ = update(
+                &mut state,
+                Msg::Fetched {
+                    key: key.clone(),
+                    result,
+                    cached_at,
+                },
+            );
+            let f = overlay!(state, Picker);
+            let rows: Vec<String> = state
+                .picker_rows(f)
+                .into_iter()
+                .map(|(i, _)| i.label)
+                .collect();
+            assert_eq!(rows, [format!("{why}: network error: timed out")]);
+            press(&mut state, "<Esc>");
+            assert_eq!(press(&mut state, keys), vec![fetch(key)]);
+            press(&mut state, "<Esc>");
+        }
+    }
+
     #[test]
     fn go_to_file_and_switch_branches() {
         let mut state = with_repo();

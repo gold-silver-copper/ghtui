@@ -17,7 +17,7 @@ use crate::keymap::Action;
 use crate::nav::new_input;
 use crate::review::apply_commit_choice;
 use crate::route::{self, Route, Target};
-use crate::state::{Cmd, Overlay, Screen, State, apply};
+use crate::state::{Cmd, Overlay, Remote, Screen, State, apply};
 
 pub enum Kind {
     /// The command palette.
@@ -248,12 +248,22 @@ impl State {
         out
     }
 
+    /// What `key` holds, or the row saying it's loading or why it failed
+    /// (opening the picker again tries again).
+    fn listed(&self, key: &DataKey, what: &str) -> Result<&Data, Rows> {
+        #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
+        let listed = Remote::fetched(self.data.get(key), "").text(what);
+        listed.map_err(|why| vec![(item(why, ""), None)])
+    }
+
     fn file_rows(&self, q: &str, repo: &RepoId, rev: &str) -> Rows {
-        let Some(Data::Files(files, truncated)) =
-            self.get(&DataKey::Files(repo.clone(), rev.to_owned()))
-        else {
-            return vec![(item("Loading files…", ""), None)];
-        };
+        let (files, truncated) =
+            match self.listed(&DataKey::Files(repo.clone(), rev.into()), "files") {
+                Ok(Data::Files(files, truncated)) => (files, truncated),
+                // Never: the key holds files.
+                Ok(_) => return Vec::new(),
+                Err(row) => return row,
+            };
         let mut hits: Vec<(usize, &String)> = files
             .iter()
             .filter_map(|p| path_score(q, p).map(|s| (s, p)))
@@ -274,8 +284,11 @@ impl State {
     }
 
     fn branch_rows(&self, q: &str, repo: &RepoId, rev: &str, path: &str, file: bool) -> Rows {
-        let Some(Data::Refs(refs)) = self.get(&DataKey::Refs(repo.clone())) else {
-            return vec![(item("Loading branches…", ""), None)];
+        let refs = match self.listed(&DataKey::Refs(repo.clone()), "branches") {
+            Ok(Data::Refs(refs)) => refs,
+            // Never: the key holds branches.
+            Ok(_) => return Vec::new(),
+            Err(row) => return row,
         };
         let default = self
             .overview(repo)
