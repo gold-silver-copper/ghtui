@@ -1087,12 +1087,9 @@ impl GitHub {
             Some(browse::HistoryObject::Commit(c)) => c.history.into_results(),
             _ => return Err(ApiError::NotFound(format!("{repo}@{rev}"))),
         };
-        if first {
-            return Ok(self
-                .kept(&browse::keys::history(repo, rev, path), history)
-                .await);
-        }
-        Ok(history)
+        Ok(self
+            .kept_if(first, &browse::keys::history(repo, rev, path), history)
+            .await)
     }
 
     /// The checks on a pull request's head commit.
@@ -1209,10 +1206,9 @@ impl GitHub {
                 .and_then(|p| text(p, "endCursor"))
                 .filter(|_| more),
         };
-        if first {
-            return Ok(self.kept(&browse::keys::users(list), results).await);
-        }
-        Ok(results)
+        Ok(self
+            .kept_if(first, &browse::keys::users(list), results)
+            .await)
     }
 
     /// A user's or organization's own repositories in `sort` order, 30 at a
@@ -1236,12 +1232,9 @@ impl GitHub {
             .ok_or_else(|| ApiError::NotFound(login.to_owned()))?
             .repositories
             .into_results();
-        if first {
-            return Ok(self
-                .kept(&browse::keys::owner_repos(login, sort), repos)
-                .await);
-        }
-        Ok(repos)
+        Ok(self
+            .kept_if(first, &browse::keys::owner_repos(login, sort), repos)
+            .await)
     }
 
     /// What a user starred, most recently first, 30 at a time from
@@ -1263,10 +1256,9 @@ impl GitHub {
             .ok_or_else(|| ApiError::NotFound(login.to_owned()))?
             .starred_repositories
             .into_results();
-        if first {
-            return Ok(self.kept(&browse::keys::starred(login), stars).await);
-        }
-        Ok(stars)
+        Ok(self
+            .kept_if(first, &browse::keys::starred(login), stars)
+            .await)
     }
 
     /// A repository's forks, most starred first, 30 at a time from
@@ -1285,10 +1277,7 @@ impl GitHub {
             .ok_or_else(|| ApiError::NotFound(repo.to_string()))?
             .forks
             .into_results();
-        if first {
-            return Ok(self.kept(&browse::keys::forks(repo), forks).await);
-        }
-        Ok(forks)
+        Ok(self.kept_if(first, &browse::keys::forks(repo), forks).await)
     }
 
     /// A repository's releases, newest first, 20 at a time from `after`;
@@ -1307,10 +1296,9 @@ impl GitHub {
             .ok_or_else(|| ApiError::NotFound(repo.to_string()))?
             .releases
             .into_results();
-        if first {
-            return Ok(self.kept(&browse::keys::releases(repo), releases).await);
-        }
-        Ok(releases)
+        Ok(self
+            .kept_if(first, &browse::keys::releases(repo), releases)
+            .await)
     }
 
     /// A release by its tag, with its notes and assets.
@@ -1346,10 +1334,7 @@ impl GitHub {
             .and_then(|r| r.refs)
             .ok_or_else(|| ApiError::NotFound(repo.to_string()))?
             .into_results();
-        if first {
-            return Ok(self.kept(&browse::keys::tags(repo), tags).await);
-        }
-        Ok(tags)
+        Ok(self.kept_if(first, &browse::keys::tags(repo), tags).await)
     }
 
     /// Branches by name, 30 at a time from `after`, each with its latest
@@ -1371,17 +1356,12 @@ impl GitHub {
             .pointer("/repository/defaultBranchRef/name")
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned);
-        let wire: browse::wire::Connection<browse::wire_branches::Branch> = serde_json::from_value(
-            data.pointer("/repository/refs")
-                .filter(|r| !r.is_null())
-                .cloned()
-                .ok_or_else(|| ApiError::NotFound(repo.to_string()))?,
-        )?;
+        let wire: browse::wire::Connection<browse::wire_branches::Branch> =
+            at(&data, "/repository/refs", || repo.to_string())?;
         let branches = wire.into_results(|b| b.into_info(default.as_deref()));
-        if first {
-            return Ok(self.kept(&browse::keys::branches(repo), branches).await);
-        }
-        Ok(branches)
+        Ok(self
+            .kept_if(first, &browse::keys::branches(repo), branches)
+            .await)
     }
 
     /// Open or closed milestones, soonest due first, 25 at a time from
@@ -1411,23 +1391,15 @@ impl GitHub {
         };
         let (open, closed_count) = (count("open"), count("closed"));
         let wire: browse::wire::Connection<browse::wire_milestones::Milestone> =
-            serde_json::from_value(
-                data.pointer("/repository/milestones")
-                    .filter(|m| !m.is_null())
-                    .cloned()
-                    .ok_or_else(|| ApiError::NotFound(repo.to_string()))?,
-            )?;
+            at(&data, "/repository/milestones", || repo.to_string())?;
         let list = browse::MilestoneList {
             open,
             closed: closed_count,
             results: wire.into_results(browse::wire_milestones::Milestone::into_info),
         };
-        if first {
-            return Ok(self
-                .kept(&browse::keys::milestones(repo, closed), list)
-                .await);
-        }
-        Ok(list)
+        Ok(self
+            .kept_if(first, &browse::keys::milestones(repo, closed), list)
+            .await)
     }
 
     /// A milestone, and 30 of its issues and pull requests from `after`,
@@ -1448,12 +1420,9 @@ impl GitHub {
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number }),
             )
             .await?;
-        let wire: browse::wire_milestones::Milestone = serde_json::from_value(
-            data.pointer("/repository/milestone")
-                .filter(|m| !m.is_null())
-                .cloned()
-                .ok_or_else(|| ApiError::NotFound(format!("{repo} milestone {number}")))?,
-        )?;
+        let wire: browse::wire_milestones::Milestone = at(&data, "/repository/milestone", || {
+            format!("{repo} milestone {number}")
+        })?;
         let info = wire.into_info();
         // GitHub's search can't match a title with quotes in it.
         let unsearchable = info.title.contains('"');
@@ -1479,12 +1448,9 @@ impl GitHub {
             items,
             unsearchable,
         };
-        if first {
-            return Ok(self
-                .kept(&browse::keys::milestone(repo, number), detail)
-                .await);
-        }
-        Ok(detail)
+        Ok(self
+            .kept_if(first, &browse::keys::milestone(repo, number), detail)
+            .await)
     }
     /// Deployments, newest first, 25 at a time from `after`, to one
     /// environment if given; with the environments.
@@ -1503,12 +1469,7 @@ impl GitHub {
             )
             .await?;
         let wire: browse::wire::Connection<browse::wire_deployments::Deployment> =
-            serde_json::from_value(
-                data.pointer("/repository/deployments")
-                    .filter(|d| !d.is_null())
-                    .cloned()
-                    .ok_or_else(|| ApiError::NotFound(repo.to_string()))?,
-            )?;
+            at(&data, "/repository/deployments", || repo.to_string())?;
         let list = browse::DeploymentList {
             environments: data
                 .pointer("/repository/environments/nodes")
@@ -1519,12 +1480,9 @@ impl GitHub {
                 .collect(),
             results: wire.into_results(browse::wire_deployments::Deployment::into_info),
         };
-        if first {
-            return Ok(self
-                .kept(&browse::keys::deployments(repo, environment), list)
-                .await);
-        }
-        Ok(list)
+        Ok(self
+            .kept_if(first, &browse::keys::deployments(repo, environment), list)
+            .await)
     }
     /// Compares two revisions, as a compare URL names them (`a...b`,
     /// `a..b`, `owner:branch`, `owner:repo:branch`): the newest 250 commits
@@ -1565,12 +1523,9 @@ impl GitHub {
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "rev": rev, "path": path }),
             )
             .await?;
-        let wire: browse::wire_blame::Blame = serde_json::from_value(
-            data.pointer("/repository/object/blame")
-                .filter(|b| !b.is_null())
-                .cloned()
-                .ok_or_else(|| ApiError::NotFound(format!("{repo}:{rev}:{path}")))?,
-        )?;
+        let wire: browse::wire_blame::Blame = at(&data, "/repository/object/blame", || {
+            format!("{repo}:{rev}:{path}")
+        })?;
         let blame = wire.into_blame();
         Ok(self
             .kept(&browse::keys::blame(repo, rev, path), blame)
@@ -1600,17 +1555,12 @@ impl GitHub {
                 serde_json::json!({ "login": login, "after": after }),
             )
             .await?;
-        let wire: browse::wire::Connection<browse::wire_gists::Gist> = serde_json::from_value(
-            data.pointer("/user/gists")
-                .filter(|g| !g.is_null())
-                .cloned()
-                .ok_or_else(|| ApiError::NotFound(format!("{login}'s gists")))?,
-        )?;
+        let wire: browse::wire::Connection<browse::wire_gists::Gist> =
+            at(&data, "/user/gists", || format!("{login}'s gists"))?;
         let gists = wire.into_results(browse::wire_gists::Gist::into_summary);
-        if first {
-            return Ok(self.kept(&browse::keys::gists(login), gists).await);
-        }
-        Ok(gists)
+        Ok(self
+            .kept_if(first, &browse::keys::gists(login), gists)
+            .await)
     }
     /// The teams in an organization you can see (its members see them),
     /// by name, 30 at a time from `after`.
@@ -1626,17 +1576,10 @@ impl GitHub {
                 serde_json::json!({ "org": org, "after": after }),
             )
             .await?;
-        let wire: browse::wire::Connection<browse::wire_teams::Team> = serde_json::from_value(
-            data.pointer("/organization/teams")
-                .filter(|t| !t.is_null())
-                .cloned()
-                .ok_or_else(|| ApiError::NotFound(org.to_owned()))?,
-        )?;
+        let wire: browse::wire::Connection<browse::wire_teams::Team> =
+            at(&data, "/organization/teams", || org.to_owned())?;
         let teams = wire.into_results(browse::wire_teams::Team::into_summary);
-        if first {
-            return Ok(self.kept(&browse::keys::teams(org), teams).await);
-        }
-        Ok(teams)
+        Ok(self.kept_if(first, &browse::keys::teams(org), teams).await)
     }
 
     /// A team: its members, repositories and child teams.
@@ -1647,12 +1590,8 @@ impl GitHub {
                 serde_json::json!({ "org": org, "slug": slug }),
             )
             .await?;
-        let wire: browse::wire_teams::Detail = serde_json::from_value(
-            data.pointer("/organization/team")
-                .filter(|t| !t.is_null())
-                .cloned()
-                .ok_or_else(|| ApiError::NotFound(format!("{org}/{slug}")))?,
-        )?;
+        let wire: browse::wire_teams::Detail =
+            at(&data, "/organization/team", || format!("{org}/{slug}"))?;
         let team = wire.into_detail();
         Ok(self.kept(&browse::keys::team(org, slug), team).await)
     }
@@ -1809,12 +1748,9 @@ impl GitHub {
                 .collect(),
             next: (shown < wire.total_count).then(|| (page + 1).to_string()),
         };
-        if page == 1 {
-            return Ok(self
-                .kept(&browse::keys::workflow_runs(repo, file), runs)
-                .await);
-        }
-        Ok(runs)
+        Ok(self
+            .kept_if(page == 1, &browse::keys::workflow_runs(repo, file), runs)
+            .await)
     }
 
     /// The checks on a commit, by a revision GitHub can resolve.
@@ -1940,12 +1876,9 @@ impl GitHub {
                 .collect(),
             results: page.into_results(w::Summary::into_summary),
         };
-        if first {
-            return Ok(self
-                .kept(&browse::keys::discussions(of, category), list)
-                .await);
-        }
-        Ok(list)
+        Ok(self
+            .kept_if(first, &browse::keys::discussions(of, category), list)
+            .await)
     }
 
     /// A discussion, its comments and their replies.
@@ -1961,12 +1894,9 @@ impl GitHub {
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number }),
             )
             .await?;
-        let wire: browse::wire_discussions::Detail = serde_json::from_value(
-            data.pointer("/repository/discussion")
-                .filter(|d| !d.is_null())
-                .cloned()
-                .ok_or_else(|| ApiError::NotFound(format!("{repo} discussion {number}")))?,
-        )?;
+        let wire: browse::wire_discussions::Detail = at(&data, "/repository/discussion", || {
+            format!("{repo} discussion {number}")
+        })?;
         let detail = wire.into_detail(repo);
         Ok(self
             .kept(&browse::keys::discussion(of, number), detail)
@@ -1993,6 +1923,20 @@ impl GitHub {
         let store = self.store.clone();
         let key = key.to_owned();
         spawn_store(move || store.query_put(&key, &value)).await;
+    }
+
+    /// [`Self::kept`] for a list's first page; later pages aren't cached.
+    async fn kept_if<T: Serialize + Clone + Send + 'static>(
+        &self,
+        first: bool,
+        key: &str,
+        value: T,
+    ) -> T {
+        if first {
+            self.kept(key, value).await
+        } else {
+            value
+        }
     }
 
     /// [`Self::remember`]s `value` and hands it back.
@@ -2027,6 +1971,20 @@ impl GitHub {
             self.mutate(browse::RemoveStar::build(vars)).await.map(drop)
         }
     }
+}
+
+/// What's at `pointer` in a GraphQL response's data, or `what` not found
+/// (missing or null).
+fn at<T: DeserializeOwned>(
+    data: &serde_json::Value,
+    pointer: &str,
+    what: impl FnOnce() -> String,
+) -> Result<T, ApiError> {
+    let value = data
+        .pointer(pointer)
+        .filter(|v| !v.is_null())
+        .ok_or_else(|| ApiError::NotFound(what()))?;
+    Ok(T::deserialize(value)?)
 }
 
 /// Percent-encodes a query string's value.
