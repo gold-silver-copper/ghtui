@@ -720,7 +720,7 @@ pub fn path_hash(path: &str) -> String {
 
 /// Where a link's anchor is in the diff: `Some(None)` when it isn't there,
 /// `None` while the review threads it needs are still on their way.
-fn anchor_pos(anchor: &str, state: &DiffState) -> Option<Option<Pos>> {
+fn anchor_pos(anchor: &str, state: &DiffState, pr: bool) -> Option<Option<Pos>> {
     let doc = &state.doc;
     if let Some(hash) = anchor.strip_prefix("diff-") {
         let hash = hash.get(..64).unwrap_or(hash);
@@ -738,6 +738,10 @@ fn anchor_pos(anchor: &str, state: &DiffState) -> Option<Option<Pos>> {
         // Not something ghtui finds in a diff (`#files`).
         return Some(None);
     };
+    // Only pull requests have review threads.
+    if !pr {
+        return Some(None);
+    }
     if state.threads.is_empty() {
         return None;
     }
@@ -788,7 +792,7 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
         return Vec::new();
     }
     if let Some(anchor) = screen.anchor.take() {
-        match anchor_pos(&anchor, state) {
+        match anchor_pos(&anchor, state, screen.of.pr().is_some()) {
             Some(Some(pos)) => screen.cursor = pos,
             // A review comment waits for the threads.
             None => screen.anchor = Some(anchor),

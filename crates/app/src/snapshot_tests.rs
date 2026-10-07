@@ -1370,6 +1370,20 @@ pub(crate) mod diff {
         assert_eq!(doc.annotation_at(d.cursor), Some(1), "the second thread");
     }
 
+    /// A commit's diff has no review threads: a review comment's anchor
+    /// there is let go rather than waited on.
+    #[test]
+    fn review_comment_anchors_on_a_commit_are_let_go() {
+        let mut s = state(Mode::Dark, ColorDepth::TrueColor);
+        let of = commit_of();
+        s.diffs.insert(of.clone(), diff_state());
+        let mut screen = DiffScreen::new(of, s.size.0);
+        screen.anchor = Some("discussion_r42".into());
+        s.screens.push(Screen::Diff(Box::new(screen)));
+        let _ = s.settle_diff();
+        assert!(matches!(s.screen(), Screen::Diff(d) if d.anchor.is_none()));
+    }
+
     /// Threads that come before their file's diff don't lose the link's
     /// place: it waits for the diff, then goes to the thread.
     #[test]
