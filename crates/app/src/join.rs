@@ -8,7 +8,7 @@ use crate::diff_job::JobId;
 use crate::diff_screen::{DiffOf, LastReview};
 use crate::keymap::Action;
 use crate::review;
-use crate::state::{Cmd, Git, Remote, Screen, State};
+use crate::state::{Cmd, Git, Screen, State};
 
 /// What each piece of a diff's joined work last ran for: it runs again
 /// when that changes. Only [`join`] sees inside.
@@ -43,10 +43,7 @@ impl<T> Joined<T> {
     }
 }
 
-/// The joined work now due: moves looked for once every file is diffed,
-/// outdated threads mapped onto the diff's head, and, for the diff on
-/// screen, the check against a fresh PR and the comparison with your last
-/// review once that's known.
+/// The joined work now due, for every diff and then for the one on screen.
 #[must_use]
 pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
     let mut cmds = Vec::new();
@@ -62,8 +59,7 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
         let Some(head) = diff.head() else { continue };
         let (job, files) = (diff.job, diff.doc.files().len());
         if files > 0 && diff.doc.ready_count() == files && claim(&mut diff.joins.moves, job) {
-            let files = diff.doc.files().iter().enumerate();
-            let diffs = files
+            let diffs = (diff.doc.files().iter().enumerate())
                 .filter_map(|(i, f)| Some((i, f.diff.clone()?)))
                 .collect();
             cmds.push(Cmd::Git(Git::DetectMoves(Joined((of.clone(), job, diffs)))));
@@ -72,11 +68,8 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
         let threads = review::outdated_to_map(&diff.inputs().threads);
         let ids = threads.iter().map(|t| t.thread.clone()).collect();
         if claim(&mut diff.joins.mapped, (job, ids)) && !threads.is_empty() {
-            cmds.push(Cmd::Git(Git::MapOutdated(Joined((
-                pr.clone(),
-                head,
-                threads,
-            )))));
+            let work = (pr.clone(), head, threads);
+            cmds.push(Cmd::Git(Git::MapOutdated(Joined(work))));
         }
     }
     // What tells you something is for the diff on screen: a hidden one's
@@ -91,7 +84,10 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
     let Some(head) = diff.head() else { return cmds };
     // The whole PR's diff, checked against what GitHub says of it (once
     // that's fresh: a cached copy may be from before a push).
-    if let Some(detail) = state.prs.get(pr).and_then(Remote::fresh)
+    if let Some(remote) = state.prs.get(pr)
+        && let Some(detail) = remote.data.as_ref()
+        && !remote.loading
+        && remote.cached_at.is_none()
         && claim(&mut diff.joins.checked, (diff.job, detail.head_oid.clone()))
     {
         let check = check_pr_diff(detail, &head, diff.doc.files().len(), &refresh);
@@ -127,8 +123,7 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
 
 /// Checks the diff git made (its head, how many files) against GitHub's
 /// PR: the same head, and about as many files. No files where GitHub has
-/// some is the merged-PR bug's shape: the diff is wrong (`Err`). Otherwise
-/// it may be, with a warning.
+/// some is the merged-PR bug's shape, an `Err`; a warning says it may be.
 fn check_pr_diff(
     detail: &PrDetail,
     head: &str,

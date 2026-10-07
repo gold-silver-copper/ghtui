@@ -601,11 +601,8 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             Msg::Diff(of.clone(), DiffMsg::Job(*job, JobMsg::Moves(Vec::new())))
         }
         Cmd::Git(Git::SinceReview(joined)) => {
-            let (pr, old_head) = joined.get();
-            Msg::Diff(
-                pr.clone().into(),
-                DiffMsg::SinceReady(old_head.clone(), git()),
-            )
+            let (pr, old) = joined.get();
+            Msg::Diff(pr.clone().into(), DiffMsg::SinceReady(old.clone(), git()))
         }
         Cmd::Git(Git::ListCommits(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::CommitsListed(git()))

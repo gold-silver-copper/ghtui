@@ -296,13 +296,6 @@ impl<T> Default for Remote<T> {
 }
 
 impl<T> Remote<T> {
-    /// The data, once it's GitHub's latest: not cached, not being refreshed.
-    pub fn fresh(&self) -> Option<&T> {
-        self.data
-            .as_ref()
-            .filter(|_| !self.loading && self.cached_at.is_none())
-    }
-
     pub fn cached(cached: Option<ghtui_store::Cached<T>>) -> Self {
         Self {
             cached_at: cached.as_ref().map(|c| c.fetched_at),
@@ -670,15 +663,13 @@ impl State {
         self.settle_diff()
     }
 
-    /// Starts the diff on screen once it can (a PR's needs the PR) and the
-    /// joined diff work that's due, and re-runs the diff screen's clamping
-    /// and prioritization.
+    /// Starts the diff on screen once it can and the joined work that's
+    /// due, and re-runs the diff screen's clamping and prioritization.
     #[must_use]
     pub fn settle_diff(&mut self) -> Vec<Cmd> {
         let mut cmds = match self.screen() {
             Screen::Diff(screen) if !self.diffs.contains_key(&screen.of) => {
-                let of = screen.of.clone();
-                self.start_diff(&of)
+                self.start_diff(&screen.of.clone())
             }
             _ => Vec::new(),
         };
