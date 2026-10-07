@@ -1003,10 +1003,9 @@ async fn graphql_queries_are_retried() {
 /// A refused connection never reached GitHub, so even a mutation retries.
 #[tokio::test]
 async fn refused_connections_are_retried_even_for_mutations() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-    let gh = client(&format!("http://{addr}"), Store::disabled());
+    // A privileged port, which no test's server can be given: a port freed
+    // here could be another test's by the time this connects.
+    let gh = client("http://127.0.0.1:1", Store::disabled());
     let started = std::time::Instant::now();
     assert!(matches!(
         gh.reply(&NodeId::new("T_9"), "Done").await,
