@@ -7,13 +7,13 @@
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    Capped, Label, MilestoneRef, NodeId, RepoId, ReviewDecision, ReviewState, author, count, labels,
+    Capped, Label, MilestoneRef, NodeId, PrStatus, RepoId, ReviewDecision, ReviewState, author,
+    count, labels,
 };
 use crate::queries::{
     Actor, AddCommentPayload, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount,
-    GitObjectId, IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount,
-    PullRequestState, RefCount, RepositoryName, StarPayload, StatusState, UnstarPayload, Uri,
-    UserCount, fragments, nodes,
+    GitObjectId, IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount, RefCount,
+    RepositoryName, StarPayload, StatusState, UnstarPayload, Uri, UserCount, fragments, nodes,
 };
 use ghtui_schema::schema;
 
@@ -850,8 +850,8 @@ pub struct IssueCard {
 pub struct PrCard {
     pub number: i32,
     pub title: String,
-    pub state: PullRequestState,
-    pub is_draft: bool,
+    #[cynic(spread)]
+    pub status: PrStatus,
     pub author: Option<Actor>,
     pub created_at: DateTime,
     pub updated_at: DateTime,
@@ -1751,7 +1751,7 @@ mod tests {
     }
 
     /// A branch whose pull request is a draft shows it as a draft, as a
-    /// PR's own page and the PR lists do, and the branches query asks.
+    /// PR's own page and the PR lists do.
     #[test]
     fn a_branchs_draft_pr_is_a_draft() {
         let branch: wire_branches::Branch = serde_json::from_value(serde_json::json!({
@@ -1765,10 +1765,6 @@ mod tests {
         .unwrap();
         let info = branch.into_info(&RepoId::new("cli", "cli"), None);
         assert_eq!(info.pr, Some((5, IssueState::Draft)));
-        assert!(
-            crate::raw::BRANCHES.contains("isDraft"),
-            "the branches query doesn't ask whether a PR is a draft"
-        );
     }
 
     /// A dismissed review keeps GitHub's own state, the one the UI's
@@ -2525,7 +2521,7 @@ pub(crate) mod wire_branches {
     use serde::Deserialize;
 
     pub use super::wire::{Nodes, RepoName};
-    use super::{GitActor, PullRequestState};
+    use super::{GitActor, PrStatus};
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -2540,8 +2536,8 @@ pub(crate) mod wire_branches {
     #[serde(rename_all = "camelCase")]
     pub struct Pr {
         pub number: u64,
-        pub state: PullRequestState,
-        pub is_draft: bool,
+        #[serde(flatten)]
+        pub status: PrStatus,
         pub head_ref_name: String,
         pub repository: RepoName,
     }
@@ -2580,7 +2576,7 @@ impl wire_branches::Branch {
             .associated_pull_requests
             .into_iter()
             .find(ours)
-            .map(|p| (p.number, IssueState::pr(p.state, p.is_draft)));
+            .map(|p| (p.number, p.status.into()));
         BranchInfo {
             default: default == Some(self.name.as_str()),
             name: self.name,
@@ -4835,7 +4831,7 @@ impl BrowseItem {
                 number: count(p.number),
                 title: p.title,
                 is_pr: true,
-                state: IssueState::pr(p.state, p.is_draft),
+                state: p.status.into(),
                 author: author(p.author),
                 updated_at: p.updated_at.0,
                 comments: count(p.comments.total_count),

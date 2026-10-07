@@ -190,8 +190,8 @@ pub struct PrSummary {
     pub number: i32,
     pub title: String,
     pub url: Uri,
-    pub is_draft: bool,
-    pub state: PullRequestState,
+    #[cynic(spread)]
+    pub status: crate::model::PrStatus,
     pub updated_at: DateTime,
     pub author: Option<Actor>,
     pub repository: RepositoryName,
