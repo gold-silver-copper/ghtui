@@ -638,8 +638,7 @@ pub struct Anchor {
     row: usize,
 }
 
-/// What a diff shows that isn't the diff: GitHub's patches, viewed marks,
-/// reviewed hunks, threads and drafts. A [`Doc`] takes them only whole.
+/// What a diff shows that isn't the diff; a [`Doc`] takes it only whole.
 #[derive(Debug, Clone, Default)]
 pub struct DocInputs {
     /// Commentable ranges from GitHub's patches, by path.
@@ -700,8 +699,8 @@ impl Doc {
                 let path = meta.path().to_owned();
                 DocFile {
                     generated: generated.contains(&path) || is_lockfile(&path),
-                    viewed: inputs.viewed.get(&path).copied().unwrap_or_default(),
                     meta,
+                    viewed: Viewed::Unviewed,
                     expanded: false,
                     diff: None,
                     full: false,
@@ -718,9 +717,9 @@ impl Doc {
             .collect();
         let mut doc = Self {
             files,
-            inputs,
             ..Self::default()
         };
+        doc.set_inputs(inputs);
         doc.rebuild_all();
         doc
     }
@@ -771,7 +770,7 @@ impl Doc {
         let Doc {
             files,
             opts,
-            inputs,
+            inputs: DocInputs { annotations, .. },
             thread_open,
             moves,
             since,
@@ -796,8 +795,7 @@ impl Doc {
         } else {
             Vec::new()
         };
-        let anns: Vec<(u32, &Annotation)> = inputs
-            .annotations
+        let anns: Vec<(u32, &Annotation)> = annotations
             .iter()
             .enumerate()
             .filter(|(_, a)| a.path == path)
@@ -970,8 +968,7 @@ impl Doc {
             return false;
         };
         let unresolved = |i: u32| {
-            self.inputs
-                .annotations
+            self.annotations()
                 .get(i as usize)
                 .is_some_and(|a| !a.resolved)
         };
