@@ -1776,10 +1776,16 @@ impl GitHub {
         Ok(self.kept(&browse::keys::job(repo, job.id), job).await)
     }
 
-    /// A job's log, as plain text: its last 2 MB (where failures are), and
-    /// never cached (logs are big and don't change once a job is done).
-    pub async fn job_log(&self, repo: &RepoId, job: u64) -> Result<String, ApiError> {
-        const KEEP: usize = 2 << 20;
+    /// A job's log (see [`browse::JobLog`]), never cached: logs are big.
+    /// A running job has none yet (GitHub writes it when the job ends), and
+    /// one past the repository's retention has expired.
+    pub async fn job_log(&self, repo: &RepoId, job: u64) -> Result<browse::JobLog, ApiError> {
+        if self.job(repo, job).await?.outcome == browse::CheckOutcome::Pending {
+            return Ok(browse::JobLog {
+                running: true,
+                ..browse::JobLog::default()
+            });
+        }
         let path = format!(
             "/repos/{}/{}/actions/jobs/{job}/logs",
             repo.owner, repo.name
@@ -1790,13 +1796,18 @@ impl GitHub {
                 etag: None,
             })
             .await?;
+        if response.status == StatusCode::GONE {
+            return Err(ApiError::NotFound(
+                "this log has expired (GitHub keeps logs for the repository's retention period, 90 days by default)".into(),
+            ));
+        }
         check_status(&response)?;
-        let log = response.body;
-        let start = log.len().saturating_sub(KEEP);
-        let start = (start..log.len())
-            .find(|&i| log.is_char_boundary(i))
-            .unwrap_or(0);
-        Ok(log.get(start..).unwrap_or_default().to_owned())
+        let (cut, text) = browse::log::cut(&response.body);
+        Ok(browse::JobLog {
+            text: text.to_owned(),
+            cut,
+            running: false,
+        })
     }
 
     /// A workflow, by its file name (`ci.yml`) or ID.

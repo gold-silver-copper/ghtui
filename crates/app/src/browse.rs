@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Advisory, Blame, Blob, BranchInfo, Checks, CommitDetail, CommitInfo, Comparison,
+    Advisory, Blame, Blob, BranchInfo, CheckOutcome, Checks, CommitDetail, CommitInfo, Comparison,
     DeploymentList, DiscussionDetail, DiscussionList, DiscussionsOf, Gist, GistSummary,
     IssueDetail, Job, MilestoneDetail, MilestoneList, PrActivity, Profile, Refs, Release,
     RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo,
@@ -109,7 +109,7 @@ pub enum Data {
     Discussion(Box<DiscussionDetail>),
     Run(Box<WorkflowRun>),
     Job(Box<Job>),
-    Log(Arc<String>),
+    Log(Arc<ghtui_api::browse::JobLog>),
     Workflow(Box<Workflow>),
     Runs(Box<Results<RunSummary>>),
     Release(Box<Release>),
@@ -130,6 +130,16 @@ pub enum Data {
 }
 
 impl Data {
+    /// What was still running when fetched: a job, a run, a job's log.
+    pub fn running(&self) -> bool {
+        match self {
+            Data::Log(log) => log.running,
+            Data::Job(job) => job.outcome == CheckOutcome::Pending,
+            Data::Run(run) => run.outcome == CheckOutcome::Pending,
+            _ => false,
+        }
+    }
+
     /// Where a list's next page starts, if there's more.
     pub fn next_cursor(&self) -> Option<&str> {
         match self {
@@ -850,10 +860,14 @@ impl State {
                 ..
             } => match self.get(&DataKey::Job(repo.clone(), *job)) {
                 Some(Data::Job(j)) => {
-                    let log = match self.get(&DataKey::JobLog(repo.clone(), *job)) {
-                        Some(Data::Log(log)) => Some(log.as_str()),
-                        _ => None,
-                    };
+                    let log = self
+                        .data
+                        .get(&DataKey::JobLog(repo.clone(), *job))
+                        .and_then(|r| match (&r.data, &r.error) {
+                            (Some(Data::Log(log)), _) => Some(Ok(&**log)),
+                            (_, Some(err)) => Some(Err(err.as_str())),
+                            _ => None,
+                        });
                     let at = pages::JobAt {
                         step: *step,
                         query,

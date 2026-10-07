@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use ghtui_api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail,
     CommitInfo, Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList,
-    EntryKind, Gist, GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobSummary,
+    EntryKind, Gist, GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobLog, JobSummary,
     MilestoneDetail, MilestoneInfo, MilestoneList, PrActivity, Profile, Release, RepoOverview,
     RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TeamDetail,
     TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow, WorkflowRun,
@@ -2540,25 +2540,18 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
     });
 }
 
-/// A log line without its timestamp, and when it was written (ISO 8601).
-fn log_line(line: &str) -> (Option<&str>, &str) {
-    match line.split_once(' ') {
-        Some((at, rest))
-            if at.len() >= 20 && at.ends_with('Z') && at.as_bytes().get(4) == Some(&b'-') =>
-        {
-            (Some(at), rest)
-        }
-        _ => (None, line),
-    }
-}
-
 /// Which step each log line belongs to. GitHub's one log for a job
 /// doesn't say, and its steps' times are to the second, so a step that
 /// ran begins at the line that starts it (`##[group]Run …`, `Post job
 /// cleanup.`, `Cleaning up orphan processes`) or once the step before
-/// has ended, whichever comes first.
-fn step_lines<'a>(job: &Job, log: &'a str) -> Vec<(u32, Vec<&'a str>)> {
-    let mut out: Vec<(u32, Vec<&str>)> = job.steps.iter().map(|s| (s.number, Vec::new())).collect();
+/// has ended, whichever comes first. The lines cut from a long log
+/// (`cut`) only count: each step's first number is how many of them it has.
+fn step_lines<'a>(job: &Job, cut: &'a str, log: &'a str) -> Vec<(u32, usize, Vec<&'a str>)> {
+    let mut out: Vec<(u32, usize, Vec<&str>)> = job
+        .steps
+        .iter()
+        .map(|s| (s.number, 0, Vec::new()))
+        .collect();
     let second = |at: Option<&String>| at.map(|at| at.get(..19).unwrap_or(at).to_owned());
     // Skipped steps log nothing.
     let ran: Vec<usize> = job
@@ -2569,14 +2562,16 @@ fn step_lines<'a>(job: &Job, log: &'a str) -> Vec<(u32, Vec<&'a str>)> {
         .map(|(i, _)| i)
         .collect();
     let mut at = 0;
-    for raw in log.lines() {
-        let (time, text) = log_line(raw.trim_start_matches('\u{feff}'));
+    let lines = cut
+        .lines()
+        .map(|l| (true, l))
+        .chain(log.lines().map(|l| (false, l)));
+    for (was_cut, raw) in lines {
+        let (time, text) = ghtui_api::browse::log::split(raw);
         if let Some(time) = time {
             let t = time.get(..19).unwrap_or(time);
             let run = text.strip_prefix("##[group]");
-            let marks = run.is_some_and(|r| r.starts_with("Run "))
-                || text == "Post job cleanup."
-                || text == "Cleaning up orphan processes";
+            let marks = ghtui_api::browse::log::starts_step(text);
             while let (Some(current), Some(next)) = (
                 ran.get(at).and_then(|&i| job.steps.get(i)),
                 ran.get(at + 1).and_then(|&i| job.steps.get(i)),
@@ -2598,8 +2593,12 @@ fn step_lines<'a>(job: &Job, log: &'a str) -> Vec<(u32, Vec<&'a str>)> {
                 }
             }
         }
-        if let Some((_, lines)) = ran.get(at).and_then(|&i| out.get_mut(i)) {
-            lines.push(text);
+        if let Some((_, cut, lines)) = ran.get(at).and_then(|&i| out.get_mut(i)) {
+            if was_cut {
+                *cut += 1;
+            } else {
+                lines.push(text);
+            }
         }
     }
     out
@@ -2668,7 +2667,16 @@ const STEP_LINES: usize = 400;
 /// A job: its steps, each collapsed to its outcome, failing ones (and the
 /// one a link points at) expanded with their log. With `query`, only the
 /// log lines that contain it, under their steps.
-pub fn job(page: &mut Page, repo: &RepoId, job: &Job, log: Option<&str>, at: JobAt<'_>, now: u64) {
+/// A job's page. `log` is `None` while it loads, and the error if it
+/// couldn't.
+pub fn job(
+    page: &mut Page,
+    repo: &RepoId,
+    job: &Job,
+    log: Option<Result<&JobLog, &str>>,
+    at: JobAt<'_>,
+    now: u64,
+) {
     outcome_title(page, job.name.clone(), job.outcome);
     let mut meta = Vec::new();
     let run = format!("{}/actions/runs/{}", url::repo(repo), job.run_id);
@@ -2692,7 +2700,10 @@ pub fn job(page: &mut Page, repo: &RepoId, job: &Job, log: Option<&str>, at: Job
         filter_field(page, at.query, at.keys);
         page.blank();
     }
-    let lines = log.map(|log| step_lines(job, log));
+    let lines = match log {
+        Some(Ok(log)) if !log.running => Some(step_lines(job, &log.cut, &log.text)),
+        _ => None,
+    };
     let title = vec![Seg::new(
         format!("Steps  {}", job.steps.len()),
         Role::Strong,
@@ -2734,13 +2745,28 @@ pub fn job(page: &mut Page, repo: &RepoId, job: &Job, log: Option<&str>, at: Job
             continue;
         }
         let Some(lines) = &lines else {
-            body(page, vec![Seg::new("Loading the log…", Role::Meta)]);
+            let text = match log {
+                None => "Loading the log…".to_owned(),
+                Some(Err(err)) => format!("Couldn't load the log: {err}"),
+                Some(Ok(_)) => "The job is still running: GitHub has its log once it ends (o follows it on GitHub)".to_owned(),
+            };
+            body(page, vec![Seg::new(text, Role::Meta)]);
             continue;
         };
-        let step_lines: Vec<(usize, &str)> = lines
+        // Numbered from the step's first line, cut ones included.
+        let (cut, step_lines): (usize, Vec<(usize, &str)>) = lines
             .iter()
-            .find(|(n, _)| *n == step.number)
-            .map(|(_, l)| l.iter().copied().enumerate().collect())
+            .find(|(n, _, _)| *n == step.number)
+            .map(|(_, cut, l)| {
+                (
+                    *cut,
+                    l.iter()
+                        .copied()
+                        .enumerate()
+                        .map(|(i, t)| (cut + i, t))
+                        .collect(),
+                )
+            })
             .unwrap_or_default();
         let shown: Vec<(usize, &str)> = if at.query.is_empty() {
             step_lines
@@ -2765,7 +2791,36 @@ pub fn job(page: &mut Page, repo: &RepoId, job: &Job, log: Option<&str>, at: Job
                 body(page, vec![Seg::new(text, Role::Meta)]);
             }
         };
-        note(page, skip, "earlier");
+        let cut_note = |page: &mut Page, text: String| {
+            body(page, vec![Seg::new(text, Role::Meta)]);
+        };
+        if pointed
+            && let Some(l) = at
+                .step
+                .map(|(_, l)| l as usize)
+                .filter(|&l| l >= 1 && l <= cut)
+        {
+            page.jump = Some(page.lines.len());
+            cut_note(
+                page,
+                format!(
+                    "Line {l} is in the part of the log too long to load (o shows it on GitHub)"
+                ),
+            );
+        }
+        if at.query.is_empty() {
+            note(page, cut + skip, "earlier");
+        } else {
+            if cut > 0 {
+                cut_note(
+                    page,
+                    format!(
+                        "… {cut} earlier lines weren't loaded, so aren't filtered (o shows them on GitHub)"
+                    ),
+                );
+            }
+            note(page, skip, "earlier");
+        }
         let width = shown.last().map_or(1, |(i, _)| (i + 1).to_string().len());
         for (i, text) in shown.into_iter().skip(skip).take(STEP_LINES) {
             if pointed && at.step.map(|(_, l)| l as usize) == Some(i + 1) && page.jump.is_none() {
@@ -4103,12 +4158,12 @@ mod tests {
             "2026-10-05T17:42:37.49Z Cleaning up orphan processes",
         ]
         .join("\n");
-        let lines = step_lines(&job, &log);
+        let lines = step_lines(&job, "", &log);
         let of = |n: u32| {
             lines
                 .iter()
-                .find(|(s, _)| *s == n)
-                .map(|(_, l)| l.clone())
+                .find(|(s, _, _)| *s == n)
+                .map(|(_, _, l)| l.clone())
                 .unwrap_or_default()
         };
         assert_eq!(of(1), ["Current runner version", "##[group]Runner Image"]);
@@ -4192,7 +4247,109 @@ mod tests {
     }
 
     fn job_page(page: &mut Page, job: &Job, log: &str, at: JobAt<'_>) {
-        super::job(page, &RepoId::new("o", "r"), job, Some(log), at, 0);
+        let log = JobLog {
+            text: log.into(),
+            ..JobLog::default()
+        };
+        super::job(page, &RepoId::new("o", "r"), job, Some(Ok(&log)), at, 0);
+    }
+
+    fn one_step_job(outcome: CheckOutcome) -> Job {
+        Job {
+            id: 1,
+            run_id: 1,
+            name: String::new(),
+            outcome,
+            started_at: None,
+            completed_at: None,
+            steps: vec![ghtui_api::browse::Step {
+                number: 1,
+                name: "Build".into(),
+                outcome,
+                started_at: Some("2026-10-05T17:42:00Z".into()),
+                completed_at: None,
+            }],
+        }
+    }
+
+    /// A log cut to its last 2 MB keeps GitHub's line numbers: a link to
+    /// a line shows that line, and one into the cut part says so.
+    #[test]
+    fn a_cut_log_keeps_its_line_numbers() {
+        let job = one_step_job(CheckOutcome::Failure);
+        let full: String = (1..=300_000)
+            .map(|n| format!("2026-10-05T17:42:01.0000000Z line {n}\n"))
+            .collect();
+        let (cut, text) = ghtui_api::browse::log::cut(&full);
+        assert!(!cut.is_empty());
+        let log = JobLog {
+            cut: cut.clone(),
+            text: text.into(),
+            running: false,
+        };
+        let first_kept = cut.lines().count() + 1;
+        let shown = |line: usize| {
+            let mut page = Page::new(100);
+            let at = JobAt {
+                step: Some((1, u32::try_from(line).unwrap())),
+                query: "",
+                keys: Keys::default(),
+            };
+            super::job(
+                &mut page,
+                &RepoId::new("o", "r"),
+                &job,
+                Some(Ok(&log)),
+                at,
+                0,
+            );
+            let jump = page
+                .jump
+                .and_then(|j| page.lines.get(j))
+                .map(PageLine::text);
+            jump.unwrap_or_default()
+        };
+        let line = first_kept + 10;
+        let at = shown(line);
+        assert!(
+            at.starts_with(&format!("{line}  ")) && at.ends_with(&format!("line {line}")),
+            "{at}"
+        );
+        assert!(shown(5).contains("Line 5 is in the part of the log too long to load"));
+    }
+
+    /// A running job's log, and one that couldn't load, say so rather
+    /// than loading forever.
+    #[test]
+    fn a_log_that_isnt_there_says_why() {
+        let text = |job: &Job, log: Result<&JobLog, &str>| {
+            let mut page = Page::new(120);
+            let at = JobAt {
+                step: Some((1, 1)),
+                query: "",
+                keys: Keys::default(),
+            };
+            super::job(&mut page, &RepoId::new("o", "r"), job, Some(log), at, 0);
+            page.lines
+                .iter()
+                .map(PageLine::text)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let running = JobLog {
+            running: true,
+            ..JobLog::default()
+        };
+        let page = text(&one_step_job(CheckOutcome::Pending), Ok(&running));
+        assert!(page.contains("still running"), "{page}");
+        let page = text(
+            &one_step_job(CheckOutcome::Failure),
+            Err("not found: this log has expired"),
+        );
+        assert!(
+            page.contains("Couldn't load the log: not found: this log has expired"),
+            "{page}"
+        );
     }
 
     /// A composite action's inner `Run` lines stay in its step, even in
@@ -4225,12 +4382,12 @@ mod tests {
             "2026-10-05T17:42:05.5Z ##[group]Run ./test",
         ]
         .join("\n");
-        let lines = step_lines(&job, &log);
+        let lines = step_lines(&job, "", &log);
         let of = |n: u32| {
             lines
                 .iter()
-                .find(|(s, _)| *s == n)
-                .map(|(_, l)| l.len())
+                .find(|(s, _, _)| *s == n)
+                .map(|(_, _, l)| l.len())
                 .unwrap_or_default()
         };
         assert_eq!((of(1), of(2)), (3, 1));

@@ -1413,6 +1413,33 @@ fn latest_runs(items: Vec<CheckItem>) -> Vec<CheckItem> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A long log is cut at a line's start; the lines cut keep their
+    /// timestamps, and the ones that start steps their text.
+    #[test]
+    fn a_long_log_is_cut_at_a_line() {
+        use super::log;
+        assert_eq!(log::cut("a\nb\n"), (String::new(), "a\nb\n"));
+        let filler = "x".repeat(100);
+        let mut full = String::from("2026-10-05T17:42:00.1Z ##[group]Run ./build\nno time\n");
+        while full.len() <= log::KEEP + 1000 {
+            full.push_str(&format!("2026-10-05T17:42:01.1Z {filler}\n"));
+        }
+        let (cut, kept) = log::cut(&full);
+        assert!(kept.len() <= log::KEEP && kept.starts_with("2026-"));
+        assert_eq!(
+            cut.lines().count() + kept.lines().count(),
+            full.lines().count()
+        );
+        let mut lines = cut.lines();
+        assert_eq!(
+            lines.next(),
+            Some("2026-10-05T17:42:00.1Z ##[group]Run ./build")
+        );
+        assert_eq!(lines.next(), Some(""));
+        assert_eq!(lines.next(), Some("2026-10-05T17:42:01.1Z"));
+    }
+
     use super::*;
 
     /// A branch's pull request is one in its own repository from that
@@ -1616,6 +1643,73 @@ pub struct JobSummary {
     pub outcome: CheckOutcome,
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
+}
+
+/// A job's log. A long one is cut to its last 2 MB (where failures are);
+/// the lines cut are kept as their timestamps, and the ones that start a
+/// step whole, so the rest still have their steps and line numbers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct JobLog {
+    /// The lines cut, reduced as above.
+    pub cut: String,
+    pub text: String,
+    /// The job hadn't finished, so there was no log to fetch yet.
+    pub running: bool,
+}
+
+/// A job's log lines, as GitHub writes them.
+pub mod log {
+    /// Bytes of log kept.
+    pub const KEEP: usize = 2 << 20;
+
+    /// A log line without its timestamp, and when it was written (ISO 8601).
+    pub fn split(line: &str) -> (Option<&str>, &str) {
+        let line = line.trim_start_matches('\u{feff}');
+        match line.split_once(' ') {
+            Some((at, rest))
+                if at.len() >= 20 && at.ends_with('Z') && at.as_bytes().get(4) == Some(&b'-') =>
+            {
+                (Some(at), rest)
+            }
+            _ => (None, line),
+        }
+    }
+
+    /// Whether a line (without its timestamp) is one that starts a step:
+    /// `##[group]Run …`, `Post job cleanup.`, `Cleaning up orphan processes`.
+    pub fn starts_step(text: &str) -> bool {
+        text.starts_with("##[group]Run ")
+            || text == "Post job cleanup."
+            || text == "Cleaning up orphan processes"
+    }
+
+    /// `log` cut to its last [`KEEP`] bytes, at a line's start: the lines
+    /// cut, reduced to what places the rest, and the lines kept.
+    pub fn cut(log: &str) -> (String, &str) {
+        if log.len() <= KEEP {
+            return (String::new(), log);
+        }
+        let from = log.len() - KEEP;
+        let start = log
+            .get(from..)
+            .and_then(|tail| tail.find('\n'))
+            .map_or(log.len(), |i| from + i + 1);
+        let (head, kept) = log.split_at(start);
+        let mut cut = String::new();
+        for line in head.lines() {
+            match split(line) {
+                (Some(at), text) if starts_step(text) => {
+                    cut.push_str(at);
+                    cut.push(' ');
+                    cut.push_str(text);
+                }
+                (Some(at), _) => cut.push_str(at),
+                (None, _) => {}
+            }
+            cut.push('\n');
+        }
+        (cut, kept)
+    }
 }
 
 /// A job: its steps (its log comes separately).

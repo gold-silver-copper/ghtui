@@ -744,6 +744,38 @@ async fn an_unknown_discussion_category_is_not_found() {
     assert!(matches!(result, Err(ApiError::NotFound(_))), "{result:?}");
 }
 
+/// A job's REST body, `status` and `conclusion` as given.
+fn job_json(status: &str, conclusion: &str) -> String {
+    format!(
+        r#"{{"id":2,"run_id":7,"name":"test","status":"{status}","conclusion":{conclusion},"started_at":null,"completed_at":null,"steps":[]}}"#
+    )
+}
+
+/// A running job has no log yet (GitHub's link for it is a missing blob),
+/// so none is fetched; an expired one says it has expired. Both bodies are
+/// GitHub's.
+#[tokio::test]
+async fn a_jobs_log_says_why_it_isnt_there() {
+    let repo = RepoId::new("o", "r");
+    let (gh, seen) = github(vec![Reply::new(200, job_json("in_progress", "null"))]).await;
+    let log = gh.job_log(&repo, 2).await.unwrap();
+    assert!(log.running && log.text.is_empty());
+    assert_eq!(seen.lock().unwrap().len(), 1);
+
+    let (gh, _) = github(vec![
+        Reply::new(200, job_json("completed", r#""failure""#)),
+        Reply::new(
+            410,
+            r#"{"message":"Server Error","documentation_url":"https://docs.github.com/rest/actions/workflow-jobs#download-job-logs-for-a-workflow-run","status":"410"}"#,
+        ),
+    ])
+    .await;
+    match gh.job_log(&repo, 2).await {
+        Err(ApiError::NotFound(why)) => assert!(why.contains("expired"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+}
+
 /// A pending review comes with the commit it's on, so comments for another
 /// diff aren't added to it.
 #[tokio::test]
