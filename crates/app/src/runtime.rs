@@ -346,7 +346,7 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                         });
                     }
                 }
-                let result = fetch(&gh, &key).await;
+                let result = fetch(&gh, &key, None).await;
                 Msg::Fetched {
                     key,
                     result,
@@ -354,7 +354,7 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 }
             }
             Api::FetchMore { key, after } => {
-                let result = fetch_more(&gh, &key, after).await;
+                let result = fetch(&gh, &key, Some(after)).await;
                 Msg::FetchedMore(key, result)
             }
             Api::AddComment {
@@ -840,51 +840,18 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
 }
 
 /// A list's next page, from `after`.
-async fn fetch_more(gh: &GitHub, key: &DataKey, after: String) -> Result<Data, ApiError> {
-    Ok(match key {
-        DataKey::Search(kind, query) => {
-            Data::Search(Box::new(gh.search(*kind, query, Some(after)).await?))
-        }
-        DataKey::History(repo, rev, path) => {
-            Data::History(Box::new(gh.history(repo, rev, path, Some(after)).await?))
-        }
-        DataKey::Users(list) => Data::Users(Box::new(gh.users(list, Some(after)).await?)),
-        DataKey::Forks(repo) => Data::RepoPage(Box::new(gh.forks(repo, Some(after)).await?)),
-        DataKey::OwnerRepos(login, sort) => {
-            Data::RepoPage(Box::new(gh.owner_repos(login, *sort, Some(after)).await?))
-        }
-        DataKey::Stars(login) => Data::RepoPage(Box::new(gh.starred(login, Some(after)).await?)),
-        DataKey::Discussions(of, category) => Data::Discussions(Box::new(
-            gh.discussions(of, category.as_deref(), Some(after)).await?,
-        )),
-        DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, Some(after)).await?)),
-        DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, Some(after)).await?)),
-        DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, Some(after)).await?)),
-        DataKey::Teams(org) => Data::Teams(Box::new(gh.teams(org, Some(after)).await?)),
-        DataKey::Gists(login) => Data::Gists(Box::new(gh.gists(login, Some(after)).await?)),
-        DataKey::Deployments(repo, env) => Data::Deployments(Box::new(
-            gh.deployments(repo, env.as_deref(), Some(after)).await?,
-        )),
-        DataKey::Milestones(repo, closed) => {
-            Data::Milestones(Box::new(gh.milestones(repo, *closed, Some(after)).await?))
-        }
-        DataKey::Milestone(repo, n) => {
-            Data::Milestone(Box::new(gh.milestone(repo, *n, Some(after)).await?))
-        }
-        DataKey::WorkflowRuns(repo, file) => {
-            Data::Runs(Box::new(gh.workflow_runs(repo, file, Some(after)).await?))
-        }
-        other => return Err(ApiError::NotFound(format!("more of {other:?}"))),
-    })
-}
-
-pub(crate) async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> {
+/// A page's data; for a list, the page after `after` (the first without).
+pub(crate) async fn fetch(
+    gh: &GitHub,
+    key: &DataKey,
+    after: Option<String>,
+) -> Result<Data, ApiError> {
     Ok(match key {
         DataKey::Repo(repo) => Data::Repo(Box::new(gh.repo(repo).await?)),
         DataKey::Tree(repo, rev, path) => Data::Tree(gh.tree(repo, rev, path).await?),
         DataKey::Blob(repo, rev, path) => Data::Blob(Box::new(gh.blob(repo, rev, path).await?)),
         DataKey::Search(kind, query) => {
-            Data::Search(Box::new(gh.search(*kind, query, None).await?))
+            Data::Search(Box::new(gh.search(*kind, query, after).await?))
         }
         DataKey::Issue(repo, number) => Data::Issue(gh.issue(repo, *number).await?.map(Box::new)),
         DataKey::PrActivity(pr) => Data::PrActivity(Box::new(gh.pr_activity(pr).await?)),
@@ -897,16 +864,16 @@ pub(crate) async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> 
         DataKey::Refs(repo) => Data::Refs(Box::new(gh.refs(repo).await?)),
         DataKey::Commit(repo, oid) => Data::Commit(Box::new(gh.commit(repo, oid).await?)),
         DataKey::PrChecks(pr) => Data::Checks(Box::new(gh.pr_checks(pr).await?)),
-        DataKey::Users(list) => Data::Users(Box::new(gh.users(list, None).await?)),
-        DataKey::Forks(repo) => Data::RepoPage(Box::new(gh.forks(repo, None).await?)),
+        DataKey::Users(list) => Data::Users(Box::new(gh.users(list, after).await?)),
+        DataKey::Forks(repo) => Data::RepoPage(Box::new(gh.forks(repo, after).await?)),
         DataKey::OwnerRepos(login, sort) => {
-            Data::RepoPage(Box::new(gh.owner_repos(login, *sort, None).await?))
+            Data::RepoPage(Box::new(gh.owner_repos(login, *sort, after).await?))
         }
-        DataKey::Stars(login) => Data::RepoPage(Box::new(gh.starred(login, None).await?)),
-        DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, None).await?)),
+        DataKey::Stars(login) => Data::RepoPage(Box::new(gh.starred(login, after).await?)),
+        DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, after).await?)),
         DataKey::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
-        DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, None).await?)),
-        DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, None).await?)),
+        DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, after).await?)),
+        DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, after).await?)),
         // Wikis come through git (see `Effects::wiki`).
         DataKey::Wiki(repo, _) => {
             return Err(ApiError::NotFound(format!(
@@ -917,40 +884,40 @@ pub(crate) async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> 
         DataKey::Advisory(repo, ghsa) => {
             Data::Advisory(Box::new(gh.advisory(repo.as_ref(), ghsa).await?))
         }
-        DataKey::Teams(org) => Data::Teams(Box::new(gh.teams(org, None).await?)),
+        DataKey::Teams(org) => Data::Teams(Box::new(gh.teams(org, after).await?)),
         DataKey::Team(org, slug) => Data::Team(Box::new(gh.team(org, slug).await?)),
         DataKey::Gist(id) => Data::Gist(Box::new(gh.gist(id).await?)),
-        DataKey::Gists(login) => Data::Gists(Box::new(gh.gists(login, None).await?)),
+        DataKey::Gists(login) => Data::Gists(Box::new(gh.gists(login, after).await?)),
         DataKey::Blame(repo, rev, path) => Data::Blame(Box::new(gh.blame(repo, rev, path).await?)),
         DataKey::Compare(repo, spec) => Data::Compare(Box::new(gh.compare(repo, spec).await?)),
         DataKey::Deployments(repo, env) => {
-            Data::Deployments(Box::new(gh.deployments(repo, env.as_deref(), None).await?))
+            Data::Deployments(Box::new(gh.deployments(repo, env.as_deref(), after).await?))
         }
         DataKey::Milestones(repo, closed) => {
-            Data::Milestones(Box::new(gh.milestones(repo, *closed, None).await?))
+            Data::Milestones(Box::new(gh.milestones(repo, *closed, after).await?))
         }
         DataKey::Milestone(repo, n) => {
-            Data::Milestone(Box::new(gh.milestone(repo, *n, None).await?))
+            Data::Milestone(Box::new(gh.milestone(repo, *n, after).await?))
         }
         DataKey::Run(repo, run, attempt) => {
             Data::Run(Box::new(gh.workflow_run(repo, *run, *attempt).await?))
         }
         DataKey::Discussions(of, category) => Data::Discussions(Box::new(
-            gh.discussions(of, category.as_deref(), None).await?,
+            gh.discussions(of, category.as_deref(), after).await?,
         )),
         DataKey::Discussion(of, n) => Data::Discussion(Box::new(gh.discussion(of, *n).await?)),
         DataKey::Job(repo, job) => Data::Job(Box::new(gh.job(repo, *job).await?)),
         DataKey::JobLog(repo, job) => Data::Log(Arc::new(gh.job_log(repo, *job).await?)),
         DataKey::Workflow(repo, file) => Data::Workflow(Box::new(gh.workflow(repo, file).await?)),
         DataKey::WorkflowRuns(repo, file) => {
-            Data::Runs(Box::new(gh.workflow_runs(repo, file, None).await?))
+            Data::Runs(Box::new(gh.workflow_runs(repo, file, after).await?))
         }
         DataKey::CommitChecks(repo, oid) => {
             Data::Checks(Box::new(gh.commit_checks(repo, oid).await?))
         }
         DataKey::BranchChecks(repo) => Data::Checks(Box::new(gh.branch_checks(repo).await?)),
         DataKey::History(repo, rev, path) => {
-            Data::History(Box::new(gh.history(repo, rev, path, None).await?))
+            Data::History(Box::new(gh.history(repo, rev, path, after).await?))
         }
         DataKey::LastCommits(repo, rev, path) => {
             let names: Vec<String> = gh

@@ -134,7 +134,7 @@ async fn fetch(
         DataKey::Wiki(repo, page) => crate::wiki::page(git, repo, page.as_deref())
             .await
             .map(|w| crate::browse::Data::Wiki(Box::new(w))),
-        key => crate::runtime::fetch(gh, key).await,
+        key => crate::runtime::fetch(gh, key, None).await,
     }
 }
 
