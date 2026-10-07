@@ -2809,6 +2809,18 @@ pub fn job(
         Role::Meta,
     )];
     page.box_top(title, right);
+    // GitHub drops an old job's steps; its log may be gone too.
+    if job.steps.is_empty() {
+        let text = match log {
+            None => "Loading the log…".to_owned(),
+            Some(Err(err)) => format!("Couldn't load the log: {err}"),
+            Some(Ok(l)) if l.running => {
+                "The job is still running (o follows it on GitHub)".to_owned()
+            }
+            Some(Ok(_)) => "GitHub lists no steps for this job (o shows it on GitHub)".to_owned(),
+        };
+        empty_row(page, &text);
+    }
     for (n, step) in job.steps.iter().enumerate() {
         if n > 0 {
             page.box_rule();
@@ -4416,6 +4428,35 @@ mod tests {
                 completed_at: None,
             }],
         }
+    }
+
+    /// A job GitHub keeps no steps for (an old one) still says what became
+    /// of its log.
+    #[test]
+    fn a_job_without_steps_says_what_became_of_its_log() {
+        let mut job = one_step_job(CheckOutcome::Success);
+        job.steps.clear();
+        let mut page = Page::new(120);
+        let at = JobAt {
+            step: None,
+            query: "",
+            keys: Keys::default(),
+        };
+        let expired = "not found: this log has expired";
+        super::job(
+            &mut page,
+            &RepoId::new("o", "r"),
+            &job,
+            Some(Err(expired)),
+            at,
+            0,
+        );
+        let text: Vec<String> = page.lines.iter().map(PageLine::text).collect();
+        assert!(
+            text.iter()
+                .any(|l| l.contains("Couldn't load the log: not found: this log has expired")),
+            "{text:#?}"
+        );
     }
 
     /// A log's markers show as GitHub shows them, and text that only looks
