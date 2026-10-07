@@ -1730,6 +1730,31 @@ mod tests {
         assert!(info.default);
     }
 
+    /// A branch whose tip has no author shows only its headline, not a
+    /// made-up "unknown"; a git name is still shown.
+    #[test]
+    fn a_branch_tip_without_an_author_names_nobody() {
+        let author = |author: serde_json::Value| {
+            let branch: wire_branches::Branch = serde_json::from_value(serde_json::json!({
+                "name": "trunk",
+                "target": { "oid": "abc", "messageHeadline": "Fix",
+                    "committedDate": "2026-01-01T00:00:00Z", "author": author },
+                "associatedPullRequests": { "nodes": [] },
+            }))
+            .unwrap();
+            branch.into_info(&RepoId::new("cli", "cli"), None).author
+        };
+        assert_eq!(author(serde_json::Value::Null), None);
+        assert_eq!(
+            author(serde_json::json!({ "name": "", "user": null })),
+            None
+        );
+        assert_eq!(
+            author(serde_json::json!({ "name": "Jane", "user": null })),
+            Some(Person::Git("Jane".into()))
+        );
+    }
+
     /// A gist file without a name (GitHub's schema allows it) doesn't
     /// spoil the list.
     #[test]
@@ -2461,7 +2486,7 @@ impl wire_branches::Branch {
                 c.oid,
                 c.message_headline,
                 c.committed_date,
-                Some(c.author.into()),
+                Some(Person::from(c.author)).filter(|a| *a != Person::Unknown),
             ),
             None => (None, None, None, None),
         };
