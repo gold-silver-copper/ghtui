@@ -2422,7 +2422,7 @@ fn screenshots() {
         let commit = |headline: &str, date: &str| ghtui_api::browse::CommitInfo {
             oid: "abc1234".into(),
             headline: headline.into(),
-            author: "octocat".into(),
+            author: ghtui_api::browse::Person::User(ghtui_api::browse::Login::unchecked("octocat")),
             date: date.into(),
         };
         fetched(
