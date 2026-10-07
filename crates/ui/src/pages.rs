@@ -10,9 +10,9 @@ use ghtui_api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail,
     CommitInfo, Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList,
     EntryKind, Gist, GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobLog, JobSummary,
-    MilestoneDetail, MilestoneInfo, MilestoneList, PrActivity, Profile, Release, RepoOverview,
-    RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, Short, TagInfo,
-    TeamDetail, TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow, WorkflowRun,
+    MilestoneDetail, MilestoneInfo, MilestoneList, PrActivity, Profile, Readme, Release,
+    RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, Short,
+    TagInfo, TeamDetail, TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
     Capped, ChecksState, Inbox, Label, Mergeable, MilestoneRef, PrDetail, PrRef, PrState,
@@ -744,6 +744,7 @@ pub fn repo_code(
     repo: &RepoId,
     o: &RepoOverview,
     commits: Option<&HashMap<String, CommitInfo>>,
+    readme: Fetched<'_, Option<Box<Readme>>>,
     aside: Option<u16>,
     cx: PageCtx<'_>,
 ) {
@@ -790,7 +791,7 @@ pub fn repo_code(
         commits,
     };
     file_box(page, dir, title, cx);
-    if let Some(readme) = &o.readme {
+    if let Some(Some(readme)) = readme.show(page, "the README") {
         let name = link_seg(
             page,
             format!("☰ {}", readme.path),
@@ -4723,14 +4724,23 @@ mod tests {
                     size: Some(120),
                 },
             ],
-            readme: Some(ghtui_api::browse::Readme {
-                path: "README.md".into(),
-                text: "# Hello\n\nSee [docs](docs/intro.md).".into(),
-            }),
         };
+        let readme = Some(Box::new(Readme {
+            path: "README.md".into(),
+            text: "# Hello\n\nSee [docs](docs/intro.md).".into(),
+        }));
         let mut page = Page::new(80);
         repo_title(&mut page, &repo, Some(&overview));
-        repo_code(&mut page, &repo, &overview, None, None, PageCtx::default());
+        let readme = Fetched::ready(&readme);
+        repo_code(
+            &mut page,
+            &repo,
+            &overview,
+            None,
+            readme,
+            None,
+            PageCtx::default(),
+        );
         for link in [
             Link::from("https://github.com/o/r/tree/main/src"),
             Link::from("https://github.com/o/r/blob/main/README.md"),

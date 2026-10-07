@@ -148,10 +148,14 @@ pub fn overview() -> RepoOverview {
             entry("Cargo.toml", EntryKind::File, Some(1530)),
             entry("README.md", EntryKind::File, Some(2210)),
         ],
-        readme: Some(Readme {
-            path: "README.md".into(),
-            text: README.into(),
-        }),
+    }
+}
+
+/// [`overview`]'s README.
+pub fn readme() -> Readme {
+    Readme {
+        path: "README.md".into(),
+        text: README.into(),
     }
 }
 

@@ -69,7 +69,7 @@ pub fn decode(shape: u8, json: &[u8]) {
         22 => model!(b::WireReleaseFull, b::WireReleaseFull::into_release),
         23 => model!(b::TagRefs, b::TagRefs::into_results),
         24 => model!(b::WireCommit, b::WireCommit::into_detail),
-        25 => model!(b::RepoFull, |v: b::RepoFull| v.into_overview(None)),
+        25 => model!(b::RepoFull, |v: b::RepoFull| v.into_overview()),
         26 => model!(b::BrowseItem, b::BrowseItem::into_issue),
         27 => model!(b::BrowseItem, b::BrowseItem::into_user),
         28 => model!(b::IssueFull, b::IssueFull::into_detail),

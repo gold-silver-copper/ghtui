@@ -254,6 +254,11 @@ fn with_repo(mode: Mode, depth: ColorDepth) -> State {
     );
     fetched(
         &mut state,
+        DataKey::Readme(ghtui()),
+        Data::Readme(Some(Box::new(fixtures::readme()))),
+    );
+    fetched(
+        &mut state,
         DataKey::LastCommits(ghtui(), "HEAD".into(), String::new()),
         Data::LastCommits(std::sync::Arc::new(fixtures::last_commits())),
     );
@@ -2648,6 +2653,22 @@ fn failed(state: &mut State, key: DataKey) {
             cached_at: None,
         },
     );
+}
+
+/// A README that fails to load says so where it goes, under the files;
+/// the overview (every repository page's header) doesn't depend on it.
+#[test]
+fn a_failed_readme_says_why_under_the_files() {
+    let mut state = state(Mode::Dark, ColorDepth::TrueColor);
+    let _ = state.push(Route::Repo(ghtui()));
+    let overview = Data::Repo(Box::new(fixtures::overview()));
+    fetched(&mut state, DataKey::Repo(ghtui()), overview);
+    failed(&mut state, DataKey::Readme(ghtui()));
+    let text = page_text(&state);
+    assert!(text.contains("Cargo.toml"), "{text}");
+    let why = "Couldn't load the README: network error: timed out. r tries again.";
+    assert!(text.contains(why), "{text}");
+    assert!(state.overview(&ghtui()).is_some());
 }
 
 /// A blame whose query fails says so, under the file that loaded.

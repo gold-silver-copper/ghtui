@@ -1244,6 +1244,8 @@ pub(crate) mod tests {
             DataKey::Repo(repo()),
             Data::Repo(Box::new(crate::fixtures::overview())),
         );
+        let readme = Some(Box::new(crate::fixtures::readme()));
+        fetched(&mut state, DataKey::Readme(repo()), Data::Readme(readme));
         state
     }
 

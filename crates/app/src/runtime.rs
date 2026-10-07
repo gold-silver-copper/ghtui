@@ -735,6 +735,9 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
     }
     Some(match key {
         DataKey::Repo(repo) => at(gh.cached(&keys::repo(repo))?, |v| Data::Repo(Box::new(v))),
+        DataKey::Readme(repo) => at(gh.cached(&keys::readme(repo))?, |v: Option<_>| {
+            Data::Readme(v.map(Box::new))
+        }),
         DataKey::Tree(repo, rev, path) => at(gh.cached(&keys::tree(repo, rev, path))?, Data::Tree),
         DataKey::Search(kind, query) => at(gh.cached(&keys::search(*kind, query))?, |v| {
             Data::Search(Box::new(v))
@@ -863,6 +866,7 @@ pub(crate) async fn fetch(
 ) -> Result<Data, ApiError> {
     Ok(match key {
         DataKey::Repo(repo) => Data::Repo(Box::new(gh.repo(repo).await?)),
+        DataKey::Readme(repo) => Data::Readme(gh.readme(repo).await?.map(Box::new)),
         DataKey::Tree(repo, rev, path) => Data::Tree(gh.tree(repo, rev, path).await?),
         DataKey::Blob(repo, rev, path) => Data::Blob(Box::new(gh.blob(repo, rev, path).await?)),
         DataKey::Search(kind, query) => {

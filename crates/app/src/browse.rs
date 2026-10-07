@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use ghtui_api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckOutcome, Checks, CommitDetail, CommitInfo, Comparison,
     DeploymentList, DiscussionDetail, DiscussionList, DiscussionsOf, Gist, GistSummary,
-    IssueDetail, Job, MilestoneDetail, MilestoneList, PrActivity, Profile, Refs, Release,
+    IssueDetail, Job, MilestoneDetail, MilestoneList, PrActivity, Profile, Readme, Refs, Release,
     RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo,
     TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage, Workflow, WorkflowRun,
 };
@@ -27,6 +27,9 @@ pub const MAX_WIDTH: u16 = 140;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DataKey {
     Repo(RepoId),
+    /// The README at the root, apart from the overview every repository
+    /// page has for its header.
+    Readme(RepoId),
     Tree(RepoId, String, String),
     Blob(RepoId, String, String),
     Search(SearchKind, String),
@@ -87,6 +90,8 @@ pub enum DataKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Data {
     Repo(Box<RepoOverview>),
+    /// `None`: the repository has no README.
+    Readme(Option<Box<Readme>>),
     Tree(Vec<TreeEntry>),
     Blob(Box<Blob>),
     Search(Box<SearchResults>),
@@ -256,6 +261,7 @@ pub fn needs(route: &Route) -> Vec<Need> {
         Route::Home => vec![Need::Inbox, Need::Data(K::ViewerRepos)],
         Route::Repo(repo) => vec![
             header(repo),
+            Need::Data(K::Readme(repo.clone())),
             Need::Data(K::LastCommits(repo.clone(), "HEAD".into(), String::new())),
         ],
         Route::Tree { repo, rev, path } => vec![
@@ -471,6 +477,16 @@ picked!(
     Deployments => DeploymentList, Milestones => MilestoneList, Milestone => MilestoneDetail,
 );
 
+/// A README, or `None` when there's none.
+impl Picked for Option<Box<Readme>> {
+    fn pick(data: &Data) -> Option<&Self> {
+        match data {
+            Data::Readme(readme) => Some(readme),
+            _ => None,
+        }
+    }
+}
+
 /// An issue, or `None` while redirecting to the pull request it is.
 impl Picked for Option<Box<IssueDetail>> {
     fn pick(data: &Data) -> Option<&Self> {
@@ -636,7 +652,8 @@ impl State {
                     let key = DataKey::LastCommits(repo.clone(), "HEAD".into(), String::new());
                     #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
                     let commits = f.get(&key).ready_unchecked();
-                    pages::repo_code(&mut page, repo, o, commits, aside, cx);
+                    let readme = f.get(&DataKey::Readme(repo.clone()));
+                    pages::repo_code(&mut page, repo, o, commits, readme, aside, cx);
                 }
             }
             Route::Tree { repo, rev, path } => {
