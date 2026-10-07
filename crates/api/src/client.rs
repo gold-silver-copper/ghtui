@@ -1549,7 +1549,8 @@ impl GitHub {
             Some((base, head)) => (base, head, false),
             None => match spec.split_once("..") {
                 Some((base, head)) => (base, head, true),
-                None => return Err(ApiError::NotFound(format!("{repo} compare {spec}"))),
+                // One revision: against the default branch, as on GitHub.
+                None => ("HEAD", spec, false),
             },
         };
         let path = format!(

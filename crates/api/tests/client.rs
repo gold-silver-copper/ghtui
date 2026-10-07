@@ -509,6 +509,26 @@ async fn a_runs_jobs_paginate() {
     assert_eq!(seen.lock().unwrap().len(), 3);
 }
 
+/// A comparison of one revision is against the default branch.
+#[tokio::test]
+async fn one_revision_compares_with_the_default_branch() {
+    let (gh, seen) = github(vec![Reply::new(
+        200,
+        r#"{"status":"ahead","ahead_by":1,"behind_by":0,"total_commits":1,"base_commit":{"sha":"b"},"merge_base_commit":{"sha":"m"},"commits":[{"sha":"h","commit":{"message":"m"}}]}"#,
+    )])
+    .await;
+    let c = gh
+        .compare(&RepoId::new("o", "r"), "feature/x")
+        .await
+        .unwrap();
+    assert_eq!((c.from.as_str(), c.to.as_str()), ("m", "h"));
+    assert!(
+        seen.lock().unwrap()[0]
+            .request_line
+            .contains("/repos/o/r/compare/HEAD...feature%2Fx ")
+    );
+}
+
 /// A category the repository doesn't have is not found, not every
 /// discussion under its name.
 #[tokio::test]

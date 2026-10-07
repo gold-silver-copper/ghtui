@@ -235,6 +235,7 @@ https://github.com/rust-lang/rust/compare/1.98.0...1.99.0                   Comp
 https://github.com/rust-lang/rust/compare/1.98.0..1.99.0                    Compare
 https://github.com/rust-lang/rust/compare/rust-lang:88d9e12...rust-lang:b940084 Compare
 https://github.com/rust-lang/rust/compare/main...ytmimi:rust:subtree        Compare
+https://github.com/rust-lang/rust/compare/stable                            Compare
 https://github.com/rust-lang/rust/compare/8d1a76430406c877b35d0b627e7f796dcf0dfeca..b940084d7eb6a299eb4bfeb8e34901bc051e7ac4#files files
 https://github.com/rust-lang/rust/compare                                   external session
 https://github.com/rust-lang/rust/find/main                                 external rare
