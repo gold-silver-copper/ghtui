@@ -437,11 +437,42 @@ impl Target {
                     Some("issues") => SearchKind::Issues,
                     Some("pullrequests") => SearchKind::Pulls,
                     Some("users") => SearchKind::Users,
+                    // Topics: the repositories tagged with one.
+                    Some("topics") => {
+                        return Target::Page(Route::Search {
+                            kind: SearchKind::Repos,
+                            query: format!("topic:{}", query.unwrap_or_default().trim()),
+                        });
+                    }
                     // Wikis, packages, the marketplace…
                     Some(_) => return external(),
                 },
                 query: query.unwrap_or_default(),
             },
+            ["topics", topic] => Route::Search {
+                kind: SearchKind::Repos,
+                query: format!("topic:{topic}"),
+            },
+            // The dashboards of your pull requests and issues: searches.
+            [list @ ("pulls" | "issues"), rest @ ..] => {
+                let (kind, is) = if *list == "pulls" {
+                    (SearchKind::Pulls, "pr")
+                } else {
+                    (SearchKind::Issues, "issue")
+                };
+                let whose = match rest {
+                    [] => "author:@me",
+                    ["assigned"] => "assignee:@me",
+                    ["mentioned"] => "mentions:@me",
+                    ["review-requested"] if *list == "pulls" => "review-requested:@me",
+                    _ => return external(),
+                };
+                Route::Search {
+                    kind,
+                    query: query
+                        .unwrap_or_else(|| format!("is:open is:{is} {whose} archived:false")),
+                }
+            }
             ["stars", login] => Route::User {
                 login: (*login).to_owned(),
                 tab: ProfileTab::Stars,

@@ -61,7 +61,7 @@ https://github.com/rust-lang/rust/releases/tag/1.99.0                       Rele
 https://github.com/rust-lang/rust/releases/download/1.99.0/rust.tar.gz      external download
 # Label, RepositoryTopic, License
 https://github.com/rust-lang/rust/labels/A-attributes                       Issues
-https://github.com/topics/rust                                              todo Topic
+https://github.com/topics/rust                                              Search
 https://github.com/licenses/mit                                             external not-github
 # CodeOfConduct, ContributingGuidelines (files in the repository)
 https://github.com/rust-lang/rust/blob/main/CODE_OF_CONDUCT.md              Blob
@@ -137,13 +137,13 @@ https://uploads.github.com                                                  exte
 # Home and dashboards
 https://github.com/                                                         Home
 https://github.com/dashboard                                                Home
-https://github.com/pulls                                                    todo Search
-https://github.com/pulls/assigned                                           todo Search
-https://github.com/pulls/review-requested                                   todo Search
-https://github.com/pulls/mentioned                                          todo Search
-https://github.com/issues                                                   todo Search
-https://github.com/issues/assigned                                          todo Search
-https://github.com/issues/mentioned                                         todo Search
+https://github.com/pulls                                                    Search
+https://github.com/pulls/assigned                                           Search
+https://github.com/pulls/review-requested                                   Search
+https://github.com/pulls/mentioned                                          Search
+https://github.com/issues                                                   Search
+https://github.com/issues/assigned                                          Search
+https://github.com/issues/mentioned                                         Search
 https://github.com/notifications                                            external session
 # Search, every type
 https://github.com/search?q=tui&type=repositories                           Search
@@ -153,7 +153,7 @@ https://github.com/search?q=tui&type=users                                  Sear
 https://github.com/search?q=tui&type=discussions                            todo Search
 https://github.com/search?q=tui&type=commits                                todo Search
 https://github.com/search?q=tui&type=code                                   todo Search
-https://github.com/search?q=tui&type=topics                                 todo Topic
+https://github.com/search?q=tui&type=topics                                 Search
 https://github.com/search?q=tui&type=wikis                                  external no-api
 https://github.com/search?q=tui&type=registrypackages                       external scope
 https://github.com/search?q=tui&type=marketplace                            external not-github
