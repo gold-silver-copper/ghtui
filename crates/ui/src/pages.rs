@@ -1732,7 +1732,8 @@ pub fn search(
         SearchKind::Commits => "commit",
         SearchKind::Code => "code",
     };
-    let Some(results) = results.show(page, "results") else {
+    let searching = |page: &mut Page| loading_box(page, vec![Seg::new("Searching…", Role::Meta)]);
+    let Some(results) = results.show_or(page, "results", searching) else {
         return;
     };
     let (total, shown) = results.counts();
@@ -2202,7 +2203,10 @@ pub fn pr_conversation(
         now,
     };
     talk.said(page, op, "opened", &d.created_at, &d.body, true);
-    let Some(a) = activity.show(page, "the conversation") else {
+    let Some(a) = activity.show_or(page, "the conversation", |page| {
+        connector(page);
+        page.line(vec![Seg::new("   Loading the conversation…", Role::Meta)]);
+    }) else {
         return;
     };
     earlier_here(
