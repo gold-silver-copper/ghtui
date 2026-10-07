@@ -6,6 +6,7 @@ mod client;
 pub mod model;
 pub mod queries;
 pub mod rate_limit;
+mod raw;
 
 pub use client::{ApiError, GitHub};
 pub use ghtui_store::Cached;

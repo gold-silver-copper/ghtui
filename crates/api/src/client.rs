@@ -19,6 +19,7 @@ use crate::model::{
 };
 use crate::queries::{self, nodes};
 use crate::rate_limit::{RateLimits, retry_after};
+use crate::raw;
 
 const MAX_ATTEMPTS: u32 = 3;
 /// Rate-limit waits longer than this are reported instead of slept through.
@@ -111,12 +112,6 @@ impl Request<'_> {
     }
 }
 
-/// A team's fields, as [`browse::wire_teams::Team`] reads them.
-const TEAM: &str =
-    "slug name description privacy members { totalCount } repositories { totalCount }";
-
-/// A milestone's fields, as [`browse::wire_milestones::Milestone`] reads them.
-const MILESTONE: &str = "number title description dueOn closed closedAt updatedAt openIssues: issues(states: OPEN) { totalCount } doneIssues: issues(states: CLOSED) { totalCount } openPrs: pullRequests(states: OPEN) { totalCount } donePrs: pullRequests(states: [CLOSED, MERGED]) { totalCount }";
 impl GitHub {
     pub fn new(token: Token, store: Store) -> Self {
         Self::with_base_uri(token, store, None)
@@ -839,7 +834,7 @@ impl GitHub {
         if kind == Kind::Discussions {
             let data = self
                 .graphql_json(
-                    "query($q: String!, $after: String) { search(type: DISCUSSION, query: $q, first: 30, after: $after) { discussionCount pageInfo { hasNextPage endCursor } nodes { ... on Discussion { repository { nameWithOwner } number title author { login } category { name } comments { totalCount } isAnswered upvoteCount updatedAt } } } }",
+                    raw::DISCUSSION_SEARCH,
                     serde_json::json!({ "q": query, "after": after }),
                 )
                 .await?;
@@ -1048,22 +1043,18 @@ impl GitHub {
         dir: &str,
         names: &[String],
     ) -> Result<std::collections::HashMap<String, browse::CommitInfo>, ApiError> {
-        let quote = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
         let names = names.get(..100).unwrap_or(names);
-        let fields: String = names
+        let paths: Vec<String> = names
             .iter()
-            .enumerate()
-            .map(|(i, name)| {
-                let path = if dir.is_empty() { name.clone() } else { format!("{dir}/{name}") };
-                format!(
-                    "e{i}: history(first: 1, path: \"{}\") {{ nodes {{ oid messageHeadline committedDate author {{ name user {{ login }} }} }} }}\n",
-                    quote(&path)
-                )
+            .map(|name| {
+                if dir.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{dir}/{name}")
+                }
             })
             .collect();
-        let query = format!(
-            "query($owner: String!, $name: String!, $rev: String!) {{ repository(owner: $owner, name: $name) {{ object(expression: $rev) {{ ... on Commit {{ {fields} }} }} }} }}"
-        );
+        let query = raw::last_commits(&paths);
         let data = self
             .graphql_json(
                 &query,
@@ -1254,14 +1245,7 @@ impl GitHub {
                 serde_json::json!({ "login": login, "after": after }),
             ),
         };
-        let params = if root.starts_with("repository") {
-            "$owner: String!, $name: String!"
-        } else {
-            "$login: String!"
-        };
-        let query = format!(
-            "query({params}, $after: String) {{ node: {root} {{ list: {field}(first: 30, after: $after) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ login name bio }} }} }} }}"
-        );
+        let query = raw::users(root, field);
         let data = self.graphql_json(&query, vars).await?;
         let list_json = data
             .pointer("/node/list")
@@ -1444,7 +1428,7 @@ impl GitHub {
         let first = after.is_none();
         let data = self
             .graphql_json(
-                "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { defaultBranchRef { name } refs(refPrefix: \"refs/heads/\", first: 30, after: $after, orderBy: {field: ALPHABETICAL, direction: ASC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name target { ... on Commit { oid messageHeadline committedDate author { name user { login } } } } associatedPullRequests(first: 10, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number state headRefName repository { nameWithOwner } } } } } } }",
+                raw::BRANCHES,
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after }),
             )
             .await?;
@@ -1469,11 +1453,7 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::MilestoneList, ApiError> {
         let first = after.is_none();
-        let state = if closed { "CLOSED" } else { "OPEN" };
-        let query = format!(
-            "query($owner: String!, $name: String!, $after: String) {{ repository(owner: $owner, name: $name) {{ open: milestones(states: OPEN) {{ totalCount }} closed: milestones(states: CLOSED) {{ totalCount }} milestones(first: 25, after: $after, states: {state}, orderBy: {{field: DUE_DATE, direction: {}}}) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ {MILESTONE} }} }} }} }}",
-            if closed { "DESC" } else { "ASC" }
-        );
+        let query = raw::milestones(closed);
         let data = self
             .graphql_json(
                 &query,
@@ -1507,9 +1487,7 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::MilestoneDetail, ApiError> {
         let first = after.is_none();
-        let query = format!(
-            "query($owner: String!, $name: String!, $number: Int!) {{ repository(owner: $owner, name: $name) {{ milestone(number: $number) {{ {MILESTONE} }} }} }}"
-        );
+        let query = raw::milestone();
         let data = self
             .graphql_json(
                 &query,
@@ -1560,7 +1538,7 @@ impl GitHub {
         let environments = environment.map(|e| vec![e]);
         let data = self
             .graphql_json(
-                "query($owner: String!, $name: String!, $after: String, $envs: [String!]) { repository(owner: $owner, name: $name) { environments(first: 50) { nodes { name } } deployments(first: 25, after: $after, environments: $envs, orderBy: {field: CREATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { environment state createdAt creator { login } ref { name } commitOid latestStatus { logUrl environmentUrl } } } } }",
+                raw::DEPLOYMENTS,
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "envs": environments }),
             )
             .await?;
@@ -1615,7 +1593,7 @@ impl GitHub {
     ) -> Result<browse::Blame, ApiError> {
         let data = self
             .graphql_json(
-                "query($owner: String!, $name: String!, $rev: String!, $path: String!) { repository(owner: $owner, name: $name) { object(expression: $rev) { ... on Commit { blame(path: $path) { ranges { startingLine endingLine age commit { oid messageHeadline committedDate author { name user { login } } } } } } } } }",
+                raw::BLAME,
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "rev": rev, "path": path }),
             )
             .await?;
@@ -1647,7 +1625,7 @@ impl GitHub {
         let first = after.is_none();
         let data = self
             .graphql_json(
-                "query($login: String!, $after: String) { user(login: $login) { gists(first: 30, after: $after, privacy: PUBLIC, orderBy: {field: UPDATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name description updatedAt stargazerCount files(limit: 5) { name } comments { totalCount } } } } }",
+                raw::GISTS,
                 serde_json::json!({ "login": login, "after": after }),
             )
             .await?;
@@ -1668,7 +1646,7 @@ impl GitHub {
         let first = after.is_none();
         let data = self
             .graphql_json(
-                &format!("query($org: String!, $after: String) {{ organization(login: $org) {{ teams(first: 30, after: $after, orderBy: {{field: NAME, direction: ASC}}) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ {TEAM} }} }} }} }}"),
+                &raw::teams(),
                 serde_json::json!({ "org": org, "after": after }),
             )
             .await?;
@@ -1682,7 +1660,7 @@ impl GitHub {
     pub async fn team(&self, org: &str, slug: &str) -> Result<browse::TeamDetail, ApiError> {
         let data = self
             .graphql_json(
-                &format!("query($org: String!, $slug: String!) {{ organization(login: $org) {{ team(slug: $slug) {{ {TEAM} parentTeam {{ {TEAM} }} memberList: members(first: 50) {{ nodes {{ login name }} }} repoList: repositories(first: 50) {{ nodes {{ nameWithOwner description stargazerCount }} }} childTeams(first: 50) {{ nodes {{ {TEAM} }} }} }} }} }}"),
+                &raw::team(),
                 serde_json::json!({ "org": org, "slug": slug }),
             )
             .await?;
@@ -1898,7 +1876,7 @@ impl GitHub {
         for _ in 0..5 {
             let data = self
                 .graphql_json(
-                    "query($q: String!, $after: String) { search(type: DISCUSSION, query: $q, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on Discussion { url repository { nameWithOwner } } } } }",
+                    raw::DISCUSSION_URLS,
                     serde_json::json!({ "q": format!("org:{org}"), "after": after }),
                 )
                 .await?;
@@ -1942,12 +1920,7 @@ impl GitHub {
         let first = after.is_none();
         let repo = self.discussions_repo(of).await?;
         let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name });
-        let data = self
-            .graphql_json(
-                "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { discussionCategories(first: 50) { nodes { id name slug } } } }",
-                vars,
-            )
-            .await?;
+        let data = self.graphql_json(raw::DISCUSSION_CATEGORIES, vars).await?;
         let categories: w::Nodes<w::Category> = serde_json::from_value(
             data.pointer("/repository/discussionCategories")
                 .cloned()
@@ -1963,7 +1936,7 @@ impl GitHub {
         };
         let data = self
             .graphql_json(
-                "query($owner: String!, $name: String!, $after: String, $category: ID) { repository(owner: $owner, name: $name) { discussions(first: 25, after: $after, categoryId: $category, orderBy: {field: UPDATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { number title author { login } category { name } comments { totalCount } isAnswered upvoteCount updatedAt } } } }",
+                raw::DISCUSSIONS,
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "category": category_id }),
             )
             .await?;
@@ -1996,7 +1969,7 @@ impl GitHub {
         let repo = self.discussions_repo(of).await?;
         let data = self
             .graphql_json(
-                "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { discussion(number: $number) { number title body author { login } createdAt category { name } isAnswered upvoteCount comments(first: 50) { totalCount nodes { databaseId author { login } body createdAt isAnswer upvoteCount replies(first: 30) { totalCount nodes { databaseId author { login } body createdAt } } } } } } }",
+                raw::DISCUSSION,
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number }),
             )
             .await?;
@@ -2019,7 +1992,7 @@ impl GitHub {
         for page in 0..REF_PAGES {
             let data = self
                 .graphql_json(
-                    "query($owner: String!, $name: String!, $after: String, $tags: Boolean!) { repository(owner: $owner, name: $name) { heads: refs(refPrefix: \"refs/heads/\", first: 100, after: $after, orderBy: {field: ALPHABETICAL, direction: ASC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name } } tags: refs(refPrefix: \"refs/tags/\", first: 100, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) @include(if: $tags) { totalCount pageInfo { hasNextPage endCursor } nodes { name } } } }",
+                    raw::REFS,
                     serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "tags": page == 0 }),
                 )
                 .await?;
