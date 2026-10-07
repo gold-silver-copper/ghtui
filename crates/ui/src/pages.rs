@@ -2667,21 +2667,26 @@ pub fn job(page: &mut Page, repo: &RepoId, job: &Job, log: Option<&str>, at: Job
             let q = at.query.to_lowercase();
             step_lines
                 .into_iter()
-                .filter(|(_, l)| l.to_lowercase().contains(&q))
+                .filter(|(_, l)| strip_escapes(l).to_lowercase().contains(&q))
                 .collect()
         };
-        let skip = shown.len().saturating_sub(STEP_LINES);
-        if skip > 0 {
-            body(
-                page,
-                vec![Seg::new(
-                    format!("… {skip} earlier lines (o shows them all on GitHub)"),
-                    Role::Meta,
-                )],
-            );
-        }
+        // The last lines, or the ones around the line a link points at.
+        let linked = at
+            .step
+            .filter(|_| pointed)
+            .and_then(|(_, l)| shown.iter().position(|(i, _)| i + 1 == l as usize));
+        let last = shown.len().saturating_sub(STEP_LINES);
+        let skip = linked.map_or(last, |p| last.min(p.saturating_sub(5)));
+        let later = shown.len().saturating_sub(skip + STEP_LINES);
+        let note = |page: &mut Page, n: usize, when: &str| {
+            if n > 0 {
+                let text = format!("… {n} {when} lines (o shows them all on GitHub)");
+                body(page, vec![Seg::new(text, Role::Meta)]);
+            }
+        };
+        note(page, skip, "earlier");
         let width = shown.last().map_or(1, |(i, _)| (i + 1).to_string().len());
-        for (i, text) in shown.into_iter().skip(skip) {
+        for (i, text) in shown.into_iter().skip(skip).take(STEP_LINES) {
             if pointed && at.step.map(|(_, l)| l as usize) == Some(i + 1) && page.jump.is_none() {
                 page.jump = Some(page.lines.len());
             }
@@ -2696,6 +2701,7 @@ pub fn job(page: &mut Page, repo: &RepoId, job: &Job, log: Option<&str>, at: Job
                 ..PageLine::default()
             });
         }
+        note(page, later, "later");
         if pointed && page.jump.is_none() {
             page.jump = Some(page.lines.len().saturating_sub(1));
         }
@@ -4017,6 +4023,79 @@ mod tests {
         assert_eq!(of(4), ["##[group]Run cd src/ci/citool", "done"]);
         assert_eq!(of(8), ["Post job cleanup."]);
         assert_eq!(of(9), ["Cleaning up orphan processes"]);
+    }
+
+    /// A link to a line far up a long step's log shows that line, not
+    /// just the step's last lines.
+    #[test]
+    fn a_linked_log_line_shows_in_a_long_step() {
+        let step = ghtui_api::browse::Step {
+            number: 1,
+            name: "Build".into(),
+            outcome: CheckOutcome::Success,
+            started_at: Some("2026-10-05T17:42:00Z".into()),
+            completed_at: Some("2026-10-05T17:43:00Z".into()),
+        };
+        let job = Job {
+            id: 1,
+            run_id: 1,
+            name: String::new(),
+            outcome: CheckOutcome::Success,
+            started_at: None,
+            completed_at: None,
+            steps: vec![step],
+        };
+        let log: String = (1..=1000)
+            .map(|n| format!("2026-10-05T17:42:01.0Z line {n}\n"))
+            .collect();
+        let text = |at: JobAt<'_>| {
+            let mut page = Page::new(100);
+            job_page(&mut page, &job, &log, at);
+            let lines: Vec<String> = page.lines.iter().map(PageLine::text).collect();
+            (lines, page.jump)
+        };
+        let at = JobAt {
+            step: Some((1, 10)),
+            query: "",
+            keys: Keys::default(),
+        };
+        let (lines, jump) = text(at);
+        assert!(lines.iter().any(|l| l.ends_with("line 10")), "{lines:?}");
+        assert!(jump.is_some_and(|j| lines.get(j).is_some_and(|l| l.ends_with("line 10"))));
+        assert!(lines.iter().any(|l| l.contains("later lines")));
+    }
+
+    /// The log's filter matches what shows, not the color codes around it.
+    #[test]
+    fn the_log_filter_ignores_color_codes() {
+        let job = Job {
+            id: 1,
+            run_id: 1,
+            name: String::new(),
+            outcome: CheckOutcome::Success,
+            started_at: None,
+            completed_at: None,
+            steps: vec![ghtui_api::browse::Step {
+                number: 1,
+                name: "Build".into(),
+                outcome: CheckOutcome::Success,
+                started_at: None,
+                completed_at: None,
+            }],
+        };
+        let log = "2026-10-05T17:42:01.0Z \u{1b}[36;1mcd\u{1b}[0m src\n";
+        let at = JobAt {
+            step: None,
+            query: "cd src",
+            keys: Keys::default(),
+        };
+        let mut page = Page::new(100);
+        job_page(&mut page, &job, log, at);
+        assert!(page.lines.iter().any(|l| l.text().ends_with("cd src")));
+    }
+
+    fn job_page(page: &mut Page, job: &Job, log: &str, at: JobAt<'_>) {
+        super::job(page, &RepoId::new("o", "r"), job, Some(log), at, 0);
     }
 
     #[test]
