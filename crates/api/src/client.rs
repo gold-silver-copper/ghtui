@@ -63,6 +63,9 @@ pub struct GitHub {
     limits: Arc<Mutex<RateLimits>>,
     /// GitHub's last answer was 401, and whether that was reported.
     rejected: Arc<(AtomicBool, AtomicBool)>,
+    /// What partial GraphQL results left out (GitHub's errors beside the
+    /// data), not yet reported.
+    left_out: Arc<Mutex<Vec<String>>>,
 }
 
 struct Http {
@@ -133,6 +136,7 @@ impl GitHub {
             store,
             limits: Arc::default(),
             rejected: Arc::default(),
+            left_out: Arc::default(),
         }
     }
 
@@ -146,6 +150,35 @@ impl GitHub {
                     .map_err(|e| ApiError::Setup(e.to_string()))?
             })
             .await
+    }
+
+    /// What GitHub left out of partial results since this was last asked:
+    /// its errors for data the token can't see (an organization's SSO,
+    /// a fine-grained token's permissions), which come back as nulls.
+    pub fn take_left_out(&self) -> Vec<String> {
+        std::mem::take(
+            &mut *self
+                .left_out
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    /// Notes a partial result's errors to report.
+    fn leave_out(&self, errors: Vec<String>) {
+        if errors.is_empty() {
+            return;
+        }
+        tracing::warn!(?errors, "partial GraphQL result");
+        let mut left_out = self
+            .left_out
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for error in errors {
+            if !left_out.contains(&error) {
+                left_out.push(error);
+            }
+        }
     }
 
     /// Whether GitHub started (`Some(true)`) or stopped rejecting the token
@@ -231,7 +264,8 @@ impl GitHub {
     }
 
     /// Runs a GraphQL query. Partial results are accepted (and their errors
-    /// logged); a response without data is an error.
+    /// kept to report, see [`Self::take_left_out`]); a response without
+    /// data is an error.
     pub async fn graphql<Q, V>(&self, op: cynic::Operation<Q, V>) -> Result<Q, ApiError>
     where
         Q: DeserializeOwned + 'static,
@@ -240,9 +274,7 @@ impl GitHub {
         let (data, errors) = self.graphql_raw(op).await?;
         match data {
             Some(data) => {
-                if !errors.is_empty() {
-                    tracing::warn!(?errors, "partial GraphQL result");
-                }
+                self.leave_out(errors);
                 Ok(data)
             }
             None if errors.is_empty() => Err(ApiError::Decode("no data".into())),
@@ -293,17 +325,19 @@ impl GitHub {
     ) -> Result<serde_json::Value, ApiError> {
         let body = serde_json::json!({ "query": query, "variables": variables });
         let mut parsed: serde_json::Value = self.post_graphql(&body, true).await?;
+        let errors: Vec<String> = parsed
+            .get("errors")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.get("message")?.as_str().map(str::to_owned))
+            .collect();
         match parsed.get_mut("data").map(serde_json::Value::take) {
-            Some(data) if !data.is_null() => Ok(data),
-            _ => Err(ApiError::GraphQl(
-                parsed
-                    .get("errors")
-                    .and_then(serde_json::Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|e| e.get("message")?.as_str().map(str::to_owned))
-                    .collect(),
-            )),
+            Some(data) if !data.is_null() => {
+                self.leave_out(errors);
+                Ok(data)
+            }
+            _ => Err(ApiError::GraphQl(errors)),
         }
     }
 

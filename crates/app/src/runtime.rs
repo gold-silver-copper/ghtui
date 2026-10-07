@@ -453,6 +453,11 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
         };
         let _ = tx.send(msg);
         let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
+        let left_out = gh.take_left_out();
+        if !left_out.is_empty() {
+            let text = format!("GitHub left some data out: {}", left_out.join("; "));
+            let _ = tx.send(Msg::Notice(Notice::Error(text)));
+        }
         if let Some(rejected) = gh.token_rejected_change() {
             let text =
                 "GitHub rejected the token: run `gh auth login` or set GH_TOKEN, then restart";
