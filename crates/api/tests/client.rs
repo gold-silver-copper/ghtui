@@ -1267,3 +1267,62 @@ async fn a_failed_readme_isnt_taken_for_no_readme() {
     let kept: Option<ghtui_store::Cached<Option<ghtui_api::browse::Readme>>> = gh.cached(&key);
     assert_eq!(kept.map(|k| k.value), Some(None), "no README is kept");
 }
+
+/// An organization's discussions are found however many pages of search
+/// results (within GitHub's thousand) come before them.
+#[tokio::test]
+async fn an_organizations_discussions_are_found_past_the_fifth_page() {
+    let other = r#"{"url":"https://github.com/acme/app/discussions/1","repository":{"nameWithOwner":"acme/app"}}"#;
+    let mut replies: Vec<Reply> = (1..=5)
+        .map(|n| {
+            Reply::new(
+                200,
+                format!(
+                    r#"{{"data":{{"search":{{"pageInfo":{{"hasNextPage":true,"endCursor":"c{n}"}},"nodes":[{other}]}}}}}}"#
+                ),
+            )
+        })
+        .collect();
+    replies.push(Reply::new(
+        200,
+        r#"{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://github.com/orgs/acme/discussions/9","repository":{"nameWithOwner":"acme/community"}}]}}}"#,
+    ));
+    replies.push(Reply::new(200, r#"{"data":{"repository":null}}"#));
+    let (gh, _) = github(replies).await;
+    let of = ghtui_api::browse::DiscussionsOf::Org("acme".into());
+    let result = gh.discussion(&of, 9).await;
+    assert!(
+        matches!(result, Err(ApiError::NotFound(ref m)) if m.contains("acme/community")),
+        "the sixth page's repository wasn't looked in: {result:?}"
+    );
+}
+
+/// A cursor GitHub hands back twice ends the reading instead of asking for
+/// the same page again and again.
+#[tokio::test]
+async fn a_repeated_cursor_ends_the_review_threads() {
+    let page = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"same"},"nodes":[]}}}}}"#;
+    let (gh, seen) = github(vec![Reply::new(200, page); 20]).await;
+    let result = gh.review_threads(&PrRef::parse("o/r#7").unwrap()).await;
+    let asked = seen.lock().unwrap().len();
+    assert!(
+        asked <= 2,
+        "asked {asked} times for the same cursor, ending with {result:?}"
+    );
+}
+
+/// A PR's patches stop at GitHub's cap of 3000 files, and say they did.
+#[tokio::test]
+async fn patches_past_the_cap_are_left_out() {
+    let full: Vec<String> = (0..100)
+        .map(|i| format!(r#"{{"filename":"f{i}.rs"}}"#))
+        .collect();
+    let full = format!("[{}]", full.join(","));
+    let (gh, seen) = github(vec![Reply::new(200, full); 31]).await;
+    let files = gh
+        .pr_patches(&PrRef::parse("o/r#7").unwrap())
+        .await
+        .unwrap();
+    assert_eq!((files.len(), seen.lock().unwrap().len()), (3000, 30));
+    assert_eq!(gh.take_left_out(), ["o/r#7's patches: only the first 3000"]);
+}

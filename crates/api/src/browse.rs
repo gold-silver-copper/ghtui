@@ -308,6 +308,17 @@ page_in! {
     DiscussionList => results,
 }
 
+impl<T> Results<T> {
+    /// A page of a list GitHub doesn't count.
+    pub(crate) fn uncounted(items: Vec<T>, next: Option<String>) -> Self {
+        Self {
+            total: 0,
+            items,
+            next,
+        }
+    }
+}
+
 /// No results (without asking `T` for a default).
 impl<T> Default for Results<T> {
     fn default() -> Self {
@@ -1448,27 +1459,39 @@ impl CheckOutcome {
 
 impl ChecksCommit {
     pub(crate) fn into_checks(self) -> Checks {
-        let contexts = self.status_check_rollup.map(|r| r.contexts);
-        let total = contexts.as_ref().map_or(0, |c| count(c.total_count));
-        let mut fetched = 0;
-        let items = nodes(contexts.and_then(|c| c.nodes))
-            .inspect(|_| fetched += 1)
-            .filter_map(|c| match c {
-                RollupContext::CheckRun(run) => Some(run.into_item()),
-                RollupContext::StatusContext(s) => Some(s.into_item()),
-                RollupContext::Other => None,
-            })
-            .collect();
-        let items = latest_runs(items);
-        // Those past the first page may be earlier runs too; count them as
-        // checks still to show.
-        let total = items.len() as u64 + total.saturating_sub(fetched);
-        Checks {
-            oid: self.oid.0,
-            items,
-            total,
+        let first = self.status_check_rollup.map(|r| r.contexts.into_results());
+        let first = first.unwrap_or_default();
+        checks(self.oid.0, Capped::new(first.items, first.total))
+    }
+}
+
+impl RollupContexts {
+    pub(crate) fn into_results(self) -> Results<RollupContext> {
+        Results {
+            total: count(self.total_count),
+            items: nodes(self.nodes).collect(),
+            next: self.page_info.next(),
         }
     }
+}
+
+/// A commit's checks from its rollup's contexts, the newest run of each.
+pub(crate) fn checks(oid: String, contexts: Capped<RollupContext>) -> Checks {
+    let fetched = contexts.items.len() as u64;
+    let items = contexts
+        .items
+        .into_iter()
+        .filter_map(|c| match c {
+            RollupContext::CheckRun(run) => Some(run.into_item()),
+            RollupContext::StatusContext(s) => Some(s.into_item()),
+            RollupContext::Other => None,
+        })
+        .collect();
+    let items = latest_runs(items);
+    // Those past the pages read may be earlier runs too; count them as
+    // checks still to show.
+    let total = items.len() as u64 + contexts.total.saturating_sub(fetched);
+    Checks { oid, items, total }
 }
 
 /// The latest run of each check. A workflow that runs again on the same
