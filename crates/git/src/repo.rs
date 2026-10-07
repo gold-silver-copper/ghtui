@@ -179,10 +179,15 @@ impl Repo {
 
     /// Fetches the PR head and its base branch into `refs/ghtui/pr/<N>/`
     /// and computes the merge base.
+    ///
+    /// `base_oid` is the base the PR had, when it's no longer its branch's
+    /// tip: once merged with a merge commit, a PR's head is in its base
+    /// branch, so the tip would leave nothing to diff.
     pub async fn fetch_pr(
         &self,
         number: u64,
         base_branch: &str,
+        base_oid: Option<&str>,
         progress: Progress<'_>,
     ) -> Result<PrRefs, GitError> {
         let head_ref = Self::ref_name(number, "head");
@@ -203,7 +208,15 @@ impl Repo {
             run_with_progress(cmd, "fetch", progress, STALL).await?;
         }
         let head = self.rev_parse(&head_ref).await?;
-        let base = self.rev_parse(&base_ref).await?;
+        let base = match base_oid {
+            Some(oid) => {
+                if !self.has(oid).await {
+                    self.fetch_commit(oid).await?;
+                }
+                self.rev_parse(oid).await?
+            }
+            None => self.rev_parse(&base_ref).await?,
+        };
         let merge_base = self.merge_base(&base, &head).await?;
         Ok(PrRefs {
             head,

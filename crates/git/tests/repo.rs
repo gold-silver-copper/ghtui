@@ -153,7 +153,7 @@ async fn cache_repo(f: &Fixture) -> Repo {
 async fn fetched() -> (Fixture, Repo, PrRefs) {
     let f = fixture();
     let repo = cache_repo(&f).await;
-    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
+    let refs = repo.fetch_pr(7, "main", None, &|_| {}).await.unwrap();
     (f, repo, refs)
 }
 
@@ -177,7 +177,7 @@ async fn partial_cache_clone_fetches_pr_with_three_dot_base() {
     assert!(repo.partial);
     assert!(repo.path.ends_with("repos/owner/repo.git"));
 
-    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
+    let refs = repo.fetch_pr(7, "main", None, &|_| {}).await.unwrap();
     assert_eq!(&*refs.head, git(&f.origin, &["rev-parse", "feature"]));
     assert_eq!(&*refs.base, git(&f.origin, &["rev-parse", "main"]));
     assert_eq!(
@@ -335,7 +335,7 @@ async fn users_clone_only_gains_ghtui_refs() {
 
     let repo = Repo::open_local(&local, "upstream").await.unwrap();
     assert!(!repo.partial);
-    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
+    let refs = repo.fetch_pr(7, "main", None, &|_| {}).await.unwrap();
     assert_eq!(&*refs.merge_base, f.branch_point);
 
     let refs_after = git(
@@ -389,7 +389,7 @@ async fn fetches_force_pushed_commits_by_sha() {
     git(&f.origin, &["commit", "-q", "--amend", "-m", "rewritten"]);
     git(&f.origin, &["update-ref", "refs/pull/7/head", "feature"]);
     git(&f.origin, &["checkout", "-q", "main"]);
-    let new = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
+    let new = repo.fetch_pr(7, "main", None, &|_| {}).await.unwrap();
     assert_ne!(new.head, old_head);
     // Still local thanks to the earlier fetch: `has` sees it without fetching.
     assert!(repo.has(&old_head).await);
@@ -435,6 +435,47 @@ async fn commits_diff_against_their_parent() {
     assert!(changed_files(&repo, &root).await.len() > 5);
 }
 
+/// A merged pull request's files are its own, however it was merged: with
+/// a merge commit its head is in the base branch, so diffing from the
+/// branch's tip would show nothing; GitHub diffs from the base the PR had
+/// (`baseRefOid`), and so does ghtui.
+#[tokio::test]
+async fn merged_prs_diff_from_their_own_base() {
+    let (f, repo, open) = fetched().await;
+    let open_files = changed_files(&repo, &open).await.len();
+    assert!(open_files > 0);
+    for (how, args) in [
+        (
+            "merge commit",
+            &["merge", "-q", "--no-ff", "-m", "Merge #7", "feature"][..],
+        ),
+        ("squash", &["merge", "-q", "--squash", "feature"][..]),
+    ] {
+        git(&f.origin, &["checkout", "-q", "main"]);
+        git(&f.origin, &["reset", "-q", "--hard", "HEAD"]);
+        let base_before = git(&f.origin, &["rev-parse", "HEAD"]);
+        git(&f.origin, args);
+        if how == "squash" {
+            git(&f.origin, &["commit", "-q", "-m", "Squashed #7"]);
+        }
+        let merged = repo
+            .fetch_pr(7, "main", Some(&base_before), &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(
+            changed_files(&repo, &merged).await.len(),
+            open_files,
+            "{how}: the PR's own files"
+        );
+        // The branch's tip, as before: a merge commit leaves nothing.
+        let tip = repo.fetch_pr(7, "main", None, &|_| {}).await.unwrap();
+        if how == "merge commit" {
+            assert!(changed_files(&repo, &tip).await.is_empty());
+        }
+        git(&f.origin, &["reset", "-q", "--hard", &base_before]);
+    }
+}
+
 #[tokio::test]
 async fn lists_pr_commits_oldest_first() {
     let (_f, repo, refs) = fetched().await;
@@ -458,7 +499,7 @@ async fn blob_reader_survives_cancelled_reads() {
     git(&f.origin, &["commit", "-q", "-m", "more"]);
     git(&f.origin, &["update-ref", "refs/pull/7/head", "HEAD"]);
     let repo = cache_repo(&f).await;
-    let refs = repo.fetch_pr(7, "main", &|_| {}).await.unwrap();
+    let refs = repo.fetch_pr(7, "main", None, &|_| {}).await.unwrap();
     let reader = repo.blob_reader().unwrap();
     let head = refs.head;
 

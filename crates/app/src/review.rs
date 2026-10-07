@@ -762,7 +762,7 @@ pub(crate) fn apply_commit_choice(
         },
         Screen::Page(_) => return Vec::new(),
     };
-    let Some(base_ref) = state.base_ref(&pr) else {
+    let Some(base) = state.pr_base(&pr) else {
         return Vec::new();
     };
     let Some((screen, diff)) = state.diff_parts() else {
@@ -807,7 +807,7 @@ pub(crate) fn apply_commit_choice(
     vec![Cmd::Git(Git::LoadDiff {
         of: pr.into(),
         job,
-        base_ref,
+        base,
         range: cmd_range,
     })]
 }

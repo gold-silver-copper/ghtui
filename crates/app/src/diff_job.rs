@@ -129,16 +129,24 @@ impl JobControl {
 /// A sub-range of the PR's commits to diff instead of the whole PR.
 pub type CommitRange = Option<(String, String)>;
 
+/// What a pull request's diff is from: its base branch, and the base it
+/// had once that's no longer the branch's tip (merged or closed).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PrBase {
+    pub branch: String,
+    pub oid: Option<String>,
+}
+
 /// Runs the job. Its helper tasks belong to it: dropping (aborting) the
 /// job stops them too.
 pub async fn run(
     ctx: GitContext,
-    base_ref: String,
+    base: PrBase,
     range: CommitRange,
     out: JobTx,
     control: Arc<JobControl>,
 ) {
-    if let Err(err) = run_inner(&ctx, &base_ref, range, &out, &control).await {
+    if let Err(err) = run_inner(&ctx, &base, range, &out, &control).await {
         tracing::warn!(diff = %out.of, %err, "diff job failed");
         out.send(JobMsg::Failed(err.into()));
     }
@@ -146,7 +154,7 @@ pub async fn run(
 
 async fn run_inner(
     ctx: &GitContext,
-    base_ref: &str,
+    base: &PrBase,
     range: CommitRange,
     out: &JobTx,
     control: &Arc<JobControl>,
@@ -177,7 +185,10 @@ async fn run_inner(
         }
     };
     let mut refs = match of {
-        DiffOf::Pr(pr) => repo.fetch_pr(pr.number, base_ref, &progress).await?,
+        DiffOf::Pr(pr) => {
+            repo.fetch_pr(pr.number, &base.branch, base.oid.as_deref(), &progress)
+                .await?
+        }
         DiffOf::Commit(_, oid) => repo.commit_refs(oid, &progress).await?,
         DiffOf::Range(_, from, to) => repo.range_refs(from, to, &progress).await?,
     };
@@ -478,7 +489,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let reviewed = repo.fetch_pr(1, "main", &|_| {}).await.unwrap().head;
+        let reviewed = repo.fetch_pr(1, "main", None, &|_| {}).await.unwrap().head;
 
         // main moves on (unrelated change), and the PR is rebased onto it,
         // keeps its first change and adds a second: force-pushed.
@@ -497,7 +508,7 @@ mod tests {
         std::fs::write(origin.join("a.txt"), rebased).unwrap();
         git(&origin, &["commit", "-qam", "v2"]);
         git(&origin, &["update-ref", "refs/pull/1/head", "feature"]);
-        let now = repo.fetch_pr(1, "main", &|_| {}).await.unwrap();
+        let now = repo.fetch_pr(1, "main", None, &|_| {}).await.unwrap();
         assert_ne!(now.head, reviewed);
 
         let reader = repo.blob_reader().unwrap();

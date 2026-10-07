@@ -227,8 +227,8 @@ pub enum Git {
     LoadDiff {
         of: DiffOf,
         job: JobId,
-        /// The branch a PR merges into (empty for a commit).
-        base_ref: String,
+        /// What a PR's diff is from (empty for a commit).
+        base: crate::diff_job::PrBase,
         range: Option<(String, String)>,
     },
     /// Diff these files next.
@@ -609,19 +609,29 @@ impl State {
     }
 
     /// The branch the PR merges into, once the PR has loaded.
-    pub(crate) fn base_ref(&self, pr: &PrRef) -> Option<String> {
-        let detail = self.prs.get(pr)?.data.as_ref();
-        detail.map(|d| d.base_ref.clone())
+    /// What the PR's diff is from, once the PR has loaded: its base
+    /// branch, and for a merged or closed PR the base it had then (with a
+    /// merge commit, its head is in the branch, which would leave nothing).
+    pub(crate) fn pr_base(&self, pr: &PrRef) -> Option<crate::diff_job::PrBase> {
+        let d = self.prs.get(pr)?.data.as_ref()?;
+        let done = matches!(
+            d.summary.state,
+            ghtui_api::model::PrState::Merged | ghtui_api::model::PrState::Closed
+        );
+        Some(crate::diff_job::PrBase {
+            branch: d.base_ref.clone(),
+            oid: done.then(|| d.base_oid.clone()).filter(|o| !o.is_empty()),
+        })
     }
 
     #[must_use]
     fn start_diff(&mut self, of: &DiffOf) -> Vec<Cmd> {
-        let base_ref = match of {
-            DiffOf::Pr(pr) => match self.base_ref(pr) {
-                Some(base_ref) => base_ref,
+        let base = match of {
+            DiffOf::Pr(pr) => match self.pr_base(pr) {
+                Some(base) => base,
                 None => return Vec::new(),
             },
-            DiffOf::Commit(..) | DiffOf::Range(..) => String::new(),
+            DiffOf::Commit(..) | DiffOf::Range(..) => crate::diff_job::PrBase::default(),
         };
         let diff = DiffState::loading();
         let job = diff.job;
@@ -629,7 +639,7 @@ impl State {
         let mut cmds = vec![Cmd::Git(Git::LoadDiff {
             of: of.clone(),
             job,
-            base_ref,
+            base,
             range: None,
         })];
         // Reviews, threads and viewed files are a PR's.
@@ -1833,7 +1843,8 @@ pub(crate) mod tests {
         let cmds = s.open_diff(of.clone());
         assert!(matches!(
             &cmds[..],
-            [Cmd::Git(Git::LoadDiff { of: o, base_ref, .. })] if *o == of && base_ref.is_empty()
+            [Cmd::Git(Git::LoadDiff { of: o, base, .. })]
+                if *o == of && *base == crate::diff_job::PrBase::default()
         ));
         s.diffs.insert(of, crate::snapshot_tests::diff_fixture());
         for action in [Action::Comment, Action::ToggleViewed, Action::MarkReviewed] {
@@ -2278,6 +2289,35 @@ pub(crate) mod tests {
         );
         press(&mut state, "octo<Enter>");
         assert_eq!(route(&state), Route::user("octocat"));
+    }
+
+    /// An open PR's diff is from its base branch; a merged or closed one's
+    /// from the base it had then, which a merge commit has moved past.
+    #[test]
+    fn a_merged_prs_diff_is_from_its_own_base() {
+        let pr = PrRef::parse("o/r#1").unwrap();
+        for (pr_state, oid) in [
+            (PrState::Open, None),
+            (
+                PrState::Merged,
+                Some("0123456789abcdef0123456789abcdef01234567"),
+            ),
+            (
+                PrState::Closed,
+                Some("0123456789abcdef0123456789abcdef01234567"),
+            ),
+        ] {
+            let mut state = state();
+            let mut detail = crate::snapshot_tests::pr_detail();
+            detail.summary.state = pr_state;
+            let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
+            let cmds = state.open_diff(DiffOf::Pr(pr.clone()));
+            let base = cmds.iter().find_map(|c| match c {
+                Cmd::Git(Git::LoadDiff { base, .. }) => Some(base.clone()),
+                _ => None,
+            });
+            assert_eq!(base.and_then(|b| b.oid).as_deref(), oid, "{pr_state:?}");
+        }
     }
 
     #[test]
