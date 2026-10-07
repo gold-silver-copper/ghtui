@@ -3153,10 +3153,11 @@ pub fn compare(page: &mut Page, repo: &RepoId, spec: &str, c: &Comparison, now: 
     };
     page.wrapped(vec![Seg::new(status, Role::Meta)], 0, Frame::None);
     let files = format!("{}#files", url::compare(repo, &c.from, &c.to));
-    let changed = if c.files == 1 {
-        "1 file changed".to_owned()
-    } else {
-        format!("{} files changed", c.files)
+    let changed = match c.files {
+        1 => "1 file changed".to_owned(),
+        // GitHub lists the first 300; the diff has them all.
+        n if c.files_capped => format!("{n}+ files changed"),
+        n => format!("{n} files changed"),
     };
     let mut segs = vec![link_seg(page, format!("± {changed}"), files, Role::Link)];
     segs.push(Seg::new("  ", Role::Meta));
@@ -3174,7 +3175,7 @@ pub fn compare(page: &mut Page, repo: &RepoId, spec: &str, c: &Comparison, now: 
     let shown = c.commits.len();
     if (shown as u64) < c.total_commits {
         let more = format!(
-            "The first {shown} of {} commits (o shows them all on GitHub).",
+            "The latest {shown} of {} commits (o shows them all on GitHub).",
             c.total_commits
         );
         page.wrapped(vec![Seg::new(more, Role::Meta)], 0, Frame::None);
