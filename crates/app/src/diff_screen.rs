@@ -945,17 +945,20 @@ fn on_reply(
             };
             diff.edit(|i| i.last_review = last);
         }
-        (DiffMsg::SinceReady(old_head, Ok(hashes)), Some(diff)) => {
-            if let Some(screen) = screen {
-                preserving_position(screen, &mut diff.doc, |doc| {
-                    doc.set_since(Some(hashes), true);
-                });
-                let said = format!(
-                    "Showing changes since your review of {}",
-                    short_sha(&old_head)
-                );
-                *notice = Some(Notice::Info(said));
-            }
+        // Compared with the whole PR, so kept off a range; turned on only on screen.
+        (DiffMsg::SinceReady(old_head, Ok(hashes)), Some(diff)) if diff.range().is_none() => {
+            let Some(screen) = screen else {
+                diff.doc.set_since(Some(hashes), false);
+                return Vec::new();
+            };
+            preserving_position(screen, &mut diff.doc, |doc| {
+                doc.set_since(Some(hashes), true);
+            });
+            let said = format!(
+                "Showing changes since your review of {}",
+                short_sha(&old_head)
+            );
+            *notice = Some(Notice::Info(said));
         }
         (DiffMsg::SinceReady(_, Err(err)), _) => {
             tracing::warn!(%of, ?err, "comparing with the last review failed");
@@ -1036,6 +1039,7 @@ fn on_reply(
         (
             DiffMsg::ResolvedSet { .. }
             | DiffMsg::ViewedSaved { .. }
+            | DiffMsg::SinceReady(..)
             | DiffMsg::Job(..)
             | DiffMsg::Replied(_)
             | DiffMsg::ReviewSubmitted(_),

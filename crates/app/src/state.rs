@@ -3551,6 +3551,37 @@ pub(crate) mod tests {
                 diff_msg(&mut s, &pr, resolved);
                 assert!(matches!(&s.notice, Some(Notice::Error(m)) if m.contains("didn't save")));
             }
+
+            /// A comparison that finishes after you've left the diff is
+            /// kept for it, off, so turning it on needs no new one.
+            #[test]
+            fn a_comparison_for_a_diff_you_left_is_kept_off() {
+                let (mut s, pr) = diff_state(120);
+                act(&mut s, Action::Back);
+                let ready = DiffMsg::SinceReady("old".into(), Ok(Default::default()));
+                diff_msg(&mut s, &pr, ready);
+                let diff = s.diffs.get_mut(&DiffOf::Pr(pr)).unwrap();
+                assert!(!diff.doc.since_active());
+                assert!(diff.doc.show_since(true), "the comparison was dropped");
+            }
+
+            /// A comparison with the whole PR that finishes after you've
+            /// picked a range of commits isn't turned on over the range.
+            #[test]
+            fn a_late_comparison_stays_off_a_range() {
+                let (mut s, pr) = diff_state(120);
+                s.diffs
+                    .get_mut(&DiffOf::Pr(pr.clone()))
+                    .unwrap()
+                    .restart(Some(crate::diff_screen::RangeView {
+                        label: "aaaaaaa".into(),
+                        from: format!("{}^", "a".repeat(40)),
+                        to: "a".repeat(40),
+                    }));
+                let ready = DiffMsg::SinceReady("old".into(), Ok(Default::default()));
+                diff_msg(&mut s, &pr, ready);
+                assert!(!s.diffs[&DiffOf::Pr(pr)].doc.since_active());
+            }
         }
 
         mod review {
