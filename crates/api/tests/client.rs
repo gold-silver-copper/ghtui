@@ -309,19 +309,26 @@ async fn fetches_and_caches_pull_request() {
     assert_eq!(body["variables"]["owner"], "o");
 }
 
+/// A root nulled by something other than NOT_FOUND (an untyped error, as
+/// for a timeout) isn't called not found: GitHub's message says why, once.
 #[tokio::test]
-async fn missing_pull_request_is_not_found() {
+async fn a_root_nulled_by_a_timeout_says_githubs_message_once() {
+    let timeout =
+        "Something went wrong while executing your query. This may be the result of a timeout.";
     let (gh, _) = github(vec![Reply::new(
         200,
-        r#"{"data":{"repository":{"pullRequest":null},"rateLimit":null},
-            "errors":[{"message":"Could not resolve to a PullRequest with the number of 9."}]}"#,
+        format!(
+            r#"{{"data":{{"repository":{{"pullRequest":null}},"rateLimit":null}},
+            "errors":[{{"path":["repository","pullRequest"],"message":"{timeout}"}}]}}"#
+        ),
     )])
     .await;
     let pr = PrRef::parse("o/r#9").unwrap();
-    assert!(matches!(
-        gh.pull_request(&pr).await,
-        Err(ApiError::NotFound(_))
-    ));
+    match gh.pull_request(&pr).await {
+        Err(ApiError::GraphQl(errors)) => assert_eq!(errors, [timeout]),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(gh.take_left_out(), Vec::<String>::new());
 }
 
 #[tokio::test]

@@ -396,17 +396,36 @@ impl GitHub {
         }
     }
 
-    /// Runs a GraphQL query. Partial results are accepted (and their errors
-    /// kept to report, see [`Self::take_left_out`]); a response without
-    /// data is an error.
-    pub async fn graphql<Q: DeserializeOwned, V: Serialize>(
+    /// Runs a query whose root is never null, taking its data whole.
+    /// Partial results are accepted (and their errors kept to report, see
+    /// [`Self::take_left_out`]); a response without data is an error.
+    async fn graphql<Q: DeserializeOwned + Unrooted, V: Serialize>(
         &self,
         op: cynic::Operation<Q, V>,
     ) -> Result<Q, ApiError> {
-        let idempotent = op.query.trim_start().starts_with("query");
-        let reply = self.ask(&serde_json::to_value(&op)?, idempotent).await?;
-        self.leave_out(reply.errors);
-        Ok(serde_json::from_value(reply.data)?)
+        self.find(op, "", Some).await
+    }
+
+    /// Runs a query for the one thing `pick`ed from its data: the one place
+    /// a typed query calls `subject` not found, when nothing is picked and
+    /// GitHub said it wasn't there, or said nothing else.
+    async fn find<Q: DeserializeOwned, V: Serialize, T>(
+        &self,
+        op: cynic::Operation<Q, V>,
+        subject: impl std::fmt::Display,
+        pick: impl FnOnce(Q) -> Option<T>,
+    ) -> Result<T, ApiError> {
+        let reply = self.ask(&serde_json::to_value(&op)?, true).await?;
+        match pick(serde_json::from_value(reply.data)?) {
+            Some(found) => {
+                self.leave_out(reply.errors);
+                Ok(found)
+            }
+            None if !reply.absent.is_empty() || reply.errors.is_empty() => {
+                Err(ApiError::NotFound(subject.to_string()))
+            }
+            None => Err(ApiError::GraphQl(reply.errors)),
+        }
     }
 
     /// Runs a GraphQL mutation. Any error fails it, with GitHub's messages:
@@ -573,12 +592,9 @@ impl GitHub {
 
     pub async fn pull_request(&self, pr: &PrRef) -> Result<PrDetail, ApiError> {
         let op = queries::PullRequestQuery::build(number_vars(pr)?);
-        let data = self.graphql(op).await?;
-        let detail = data
-            .repository
-            .and_then(|r| r.pull_request)
-            .and_then(PrDetail::from_wire)
-            .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
+        let detail = self
+            .find(op, pr, |q| PrDetail::from_wire(q.repository?.pull_request?))
+            .await?;
         Ok(self.kept(&pr_key(pr), detail).await)
     }
 
@@ -586,12 +602,7 @@ impl GitHub {
     pub async fn viewed_files(&self, pr: &PrRef) -> Result<ViewedFiles, ApiError> {
         let page = move |after| async move {
             let op = queries::PrFilesQuery::build(page_vars(pr, after)?);
-            let files = self
-                .graphql(op)
-                .await?
-                .repository
-                .and_then(|r| r.pull_request)
-                .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
+            let files = self.find(op, pr, |q| q.repository?.pull_request).await?;
             let states = files.files.map(|page| {
                 let states = nodes(page.nodes).map(|f| (f.path, f.viewer_viewed_state));
                 browse::Results::uncounted(states.collect(), page.page_info.next())
@@ -636,11 +647,8 @@ impl GitHub {
         let page = move |after| async move {
             let op = queries::ThreadsQuery::build(page_vars(pr, after)?);
             let page = self
-                .graphql(op)
+                .find(op, pr, |q| q.repository?.pull_request)
                 .await?
-                .repository
-                .and_then(|r| r.pull_request)
-                .ok_or_else(|| ApiError::NotFound(pr.to_string()))?
                 .review_threads;
             let threads = nodes(page.nodes).map(ReviewThread::from_wire).collect();
             Ok(browse::Results::uncounted(threads, page.page_info.next()))
@@ -676,12 +684,7 @@ impl GitHub {
         pr: &PrRef,
     ) -> Result<(NodeId, Option<(NodeId, Option<String>)>), ApiError> {
         let op = queries::PendingReviewQuery::build(number_vars(pr)?);
-        let pr_node = self
-            .graphql(op)
-            .await?
-            .repository
-            .and_then(|r| r.pull_request)
-            .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
+        let pr_node = self.find(op, pr, |q| q.repository?.pull_request).await?;
         let review = nodes(pr_node.reviews.and_then(|r| r.nodes))
             .next()
             .map(|r| (NodeId::from(r.id), r.commit.map(|c| c.oid.0)));
@@ -701,12 +704,8 @@ impl GitHub {
             login: login.to_owned(),
         });
         let reviews = self
-            .graphql(op)
+            .find(op, pr, |q| Some(q.repository?.pull_request?.reviews?.nodes))
             .await?
-            .repository
-            .and_then(|r| r.pull_request)
-            .and_then(|p| p.reviews)
-            .and_then(|r| r.nodes)
             .unwrap_or_default();
         Ok(reviews
             .into_iter()
@@ -821,11 +820,8 @@ impl GitHub {
             expression: "HEAD:".into(),
         });
         let overview = self
-            .graphql(op)
-            .await?
-            .repository
-            .and_then(browse::RepoFull::into_overview)
-            .ok_or_else(|| ApiError::NotFound(repo.to_string()))?;
+            .find(op, repo, |q| q.repository?.into_overview())
+            .await?;
         Ok(self.kept(&browse::keys::repo(repo), overview).await)
     }
 
@@ -866,7 +862,7 @@ impl GitHub {
         path: &str,
     ) -> Result<Vec<browse::TreeEntry>, ApiError> {
         match self.object(repo, rev, path).await? {
-            Some(browse::GitObject::Tree(t)) => {
+            browse::GitObject::Tree(t) => {
                 let key = browse::keys::tree(repo, rev, path);
                 Ok(self.kept(&key, browse::entries(t)).await)
             }
@@ -882,7 +878,7 @@ impl GitHub {
         path: &str,
     ) -> Result<browse::Blob, ApiError> {
         match self.object(repo, rev, path).await? {
-            Some(browse::GitObject::Blob(b)) => Ok(browse::Blob {
+            browse::GitObject::Blob(b) => Ok(browse::Blob {
                 path: path.to_owned(),
                 text: b.text.filter(|_| b.is_binary != Some(true)),
                 size: crate::model::count(b.byte_size),
@@ -897,13 +893,14 @@ impl GitHub {
         repo: &RepoId,
         rev: &str,
         path: &str,
-    ) -> Result<Option<browse::GitObject>, ApiError> {
+    ) -> Result<browse::GitObject, ApiError> {
         let op = browse::ObjectQuery::build(browse::RepoVariables {
             owner: repo.owner.clone(),
             name: repo.name.clone(),
             expression: format!("{rev}:{path}"),
         });
-        Ok(self.graphql(op).await?.repository.and_then(|r| r.object))
+        self.find(op, format!("{repo}/{path}"), |q| q.repository?.object)
+            .await
     }
 
     /// One page of search results (30 per page).
@@ -1077,17 +1074,14 @@ impl GitHub {
             number: i32::try_from(number)
                 .map_err(|_| ApiError::NotFound(format!("{repo}#{number}")))?,
         });
-        let issue = match self
-            .graphql(op)
-            .await?
-            .repository
-            .and_then(|r| r.issue_or_pull_request)
-        {
-            Some(browse::IssueOrPr::Issue(issue)) => issue.into_detail(),
-            Some(browse::IssueOrPr::PullRequest(_)) => return Ok(None),
-            _ => None,
-        }
-        .ok_or_else(|| ApiError::NotFound(format!("{repo}#{number}")))?;
+        let pick = |q: browse::IssueQuery| match q.repository?.issue_or_pull_request? {
+            browse::IssueOrPr::Issue(issue) => issue.into_detail().map(Some),
+            browse::IssueOrPr::PullRequest(_) => Some(None),
+            browse::IssueOrPr::Other => None,
+        };
+        let Some(issue) = self.find(op, format!("{repo}#{number}"), pick).await? else {
+            return Ok(None);
+        };
         Ok(Some(
             self.kept(&browse::keys::issue(repo, number), issue).await,
         ))
@@ -1097,12 +1091,10 @@ impl GitHub {
     pub async fn pr_activity(&self, pr: &PrRef) -> Result<browse::PrActivity, ApiError> {
         let op = browse::PrActivityQuery::build(number_vars(pr)?);
         let activity = self
-            .graphql(op)
-            .await?
-            .repository
-            .and_then(|r| r.pull_request)
-            .map(browse::WirePrActivity::into_activity)
-            .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
+            .find(op, pr, |q| {
+                Some(q.repository?.pull_request?.into_activity())
+            })
+            .await?;
         Ok(self.kept(&browse::keys::pr_activity(pr), activity).await)
     }
 
@@ -1112,10 +1104,8 @@ impl GitHub {
             login: login.to_owned(),
         });
         let profile = self
-            .graphql(op)
-            .await?
-            .into_profile()
-            .ok_or_else(|| ApiError::NotFound(login.to_owned()))?;
+            .find(op, login, browse::ProfileQuery::into_profile)
+            .await?;
         Ok(self.kept(&browse::keys::profile(login), profile).await)
     }
 
@@ -1223,10 +1213,11 @@ impl GitHub {
             name: repo.name.clone(),
             expression: rev.to_owned(),
         });
-        let commit = match self.graphql(op).await?.repository.and_then(|r| r.object) {
-            Some(browse::CommitObject::Commit(c)) => c.into_detail(),
-            _ => return Err(ApiError::NotFound(format!("{repo}@{rev}"))),
+        let pick = |q: browse::CommitQuery| match q.repository?.object? {
+            browse::CommitObject::Commit(c) => Some(c.into_detail()),
+            browse::CommitObject::Other => None,
         };
+        let commit = self.find(op, format!("{repo}@{rev}"), pick).await?;
         Ok(self.kept(&browse::keys::commit(repo, rev), commit).await)
     }
 
@@ -1247,10 +1238,11 @@ impl GitHub {
             path: (!path.is_empty()).then(|| path.to_owned()),
             after,
         });
-        let history = match self.graphql(op).await?.repository.and_then(|r| r.object) {
-            Some(browse::HistoryObject::Commit(c)) => c.history.into_results(),
-            _ => return Err(ApiError::NotFound(format!("{repo}@{rev}"))),
+        let pick = |q: browse::HistoryQuery| match q.repository?.object? {
+            browse::HistoryObject::Commit(c) => Some(c.history.into_results()),
+            browse::HistoryObject::Other => None,
         };
+        let history = self.find(op, format!("{repo}@{rev}"), pick).await?;
         Ok(self
             .kept_page(first, &browse::keys::history(repo, rev, path), history)
             .await)
@@ -1259,12 +1251,7 @@ impl GitHub {
     /// The checks on a pull request's head commit.
     pub async fn pr_checks(&self, pr: &PrRef) -> Result<browse::Checks, ApiError> {
         let op = browse::PrChecksQuery::build(number_vars(pr)?);
-        let pr_checks = self
-            .graphql(op)
-            .await?
-            .repository
-            .and_then(|r| r.pull_request)
-            .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
+        let pr_checks = self.find(op, pr, |q| q.repository?.pull_request).await?;
         let want = pr_checks.head_ref_oid.0;
         let head = nodes(pr_checks.commits.nodes)
             .next()
@@ -1302,15 +1289,12 @@ impl GitHub {
                 expression: expression.clone(),
                 after,
             });
-            Ok(self
-                .graphql(op)
-                .await?
-                .repository
-                .and_then(|r| r.object)
-                .and_then(|o| match o {
-                    browse::ContextsTarget::Commit(c) => c.status_check_rollup,
-                    browse::ContextsTarget::Other => None,
-                })
+            let pick = |q: browse::ContextsQuery| match q.repository.and_then(|r| r.object) {
+                Some(browse::ContextsTarget::Commit(c)) => Some(c.status_check_rollup),
+                _ => Some(None),
+            };
+            let rollup = self.find(op, repo, pick).await?;
+            Ok(rollup
                 .map(|r| r.contexts.into_results())
                 .unwrap_or_default())
         };
@@ -1324,15 +1308,11 @@ impl GitHub {
             owner: repo.owner.clone(),
             name: repo.name.clone(),
         });
-        let target = self
-            .graphql(op)
-            .await?
-            .repository
-            .and_then(|r| r.default_branch_ref)
-            .and_then(|r| r.target);
-        let Some(browse::ChecksTarget::Commit(commit)) = target else {
-            return Err(ApiError::NotFound(repo.to_string()));
+        let pick = |q: browse::BranchChecksQuery| match q.repository?.default_branch_ref?.target? {
+            browse::ChecksTarget::Commit(commit) => Some(commit),
+            browse::ChecksTarget::Other => None,
         };
+        let commit = self.find(op, repo, pick).await?;
         let checks = self.all_checks(repo, commit).await?;
         Ok(self.kept(&browse::keys::branch_checks(repo), checks).await)
     }
@@ -1431,10 +1411,8 @@ impl GitHub {
             order: sort.into(),
         });
         let repos = self
-            .graphql(op)
+            .find(op, login, |q| q.repository_owner)
             .await?
-            .repository_owner
-            .ok_or_else(|| ApiError::NotFound(login.to_owned()))?
             .repositories
             .into_results();
         Ok(self
@@ -1455,10 +1433,8 @@ impl GitHub {
             after,
         });
         let stars = self
-            .graphql(op)
+            .find(op, login, |q| q.user)
             .await?
-            .user
-            .ok_or_else(|| ApiError::NotFound(login.to_owned()))?
             .starred_repositories
             .into_results();
         Ok(self
@@ -1476,10 +1452,8 @@ impl GitHub {
         let first = after.is_none();
         let op = browse::ForksQuery::build(list_vars(repo, after));
         let forks = self
-            .graphql(op)
+            .find(op, repo, |q| q.repository)
             .await?
-            .repository
-            .ok_or_else(|| ApiError::NotFound(repo.to_string()))?
             .forks
             .into_results();
         Ok(self
@@ -1497,10 +1471,8 @@ impl GitHub {
         let first = after.is_none();
         let op = browse::ReleasesQuery::build(list_vars(repo, after));
         let releases = self
-            .graphql(op)
+            .find(op, repo, |q| q.repository)
             .await?
-            .repository
-            .ok_or_else(|| ApiError::NotFound(repo.to_string()))?
             .releases
             .into_results();
         Ok(self
@@ -1516,11 +1488,10 @@ impl GitHub {
             tag: tag.to_owned(),
         });
         let release = self
-            .graphql(op)
+            .find(op, format!("{repo} release {tag}"), |q| {
+                q.repository?.release
+            })
             .await?
-            .repository
-            .and_then(|r| r.release)
-            .ok_or_else(|| ApiError::NotFound(format!("{repo} release {tag}")))?
             .into_release();
         Ok(self.kept(&browse::keys::release(repo, tag), release).await)
     }
@@ -1535,11 +1506,8 @@ impl GitHub {
         let first = after.is_none();
         let op = browse::TagsQuery::build(list_vars(repo, after));
         let tags = self
-            .graphql(op)
+            .find(op, repo, |q| q.repository?.refs)
             .await?
-            .repository
-            .and_then(|r| r.refs)
-            .ok_or_else(|| ApiError::NotFound(repo.to_string()))?
             .into_results();
         Ok(self.kept_page(first, &browse::keys::tags(repo), tags).await)
     }
@@ -2020,10 +1988,11 @@ impl GitHub {
             name: repo.name.clone(),
             expression: rev.to_owned(),
         });
-        let object = self.graphql(op).await?.repository.and_then(|r| r.object);
-        let Some(browse::ChecksTarget::Commit(commit)) = object else {
-            return Err(ApiError::NotFound(format!("{repo}@{rev}")));
+        let pick = |q: browse::CommitChecksQuery| match q.repository?.object? {
+            browse::ChecksTarget::Commit(commit) => Some(commit),
+            browse::ChecksTarget::Other => None,
         };
+        let commit = self.find(op, format!("{repo}@{rev}"), pick).await?;
         let checks = self.all_checks(repo, commit).await?;
         // A full commit ID names the commit checked.
         if rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit()) && checks.oid != rev {
@@ -2239,6 +2208,15 @@ impl GitHub {
         }
     }
 }
+
+/// A query whose root GitHub never answers with null (`search`,
+/// `viewer`), so [`GitHub::graphql`] may take its data whole. A claim
+/// about GitHub's schema: a query for one thing goes through
+/// [`GitHub::find`] instead.
+trait Unrooted {}
+impl Unrooted for queries::SearchQuery {}
+impl Unrooted for browse::BrowseSearch {}
+impl Unrooted for browse::ViewerReposQuery {}
 
 /// A GraphQL response with data: GitHub's errors beside it, and apart
 /// from them the NOT_FOUND ones that explain a null in it.
