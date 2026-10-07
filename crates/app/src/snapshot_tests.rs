@@ -2014,18 +2014,31 @@ mod keys {
     use ghtui_ui::diff_doc::Pos;
 
     use super::diff::screen_state;
-    use super::{press, render, with_commit, with_issues, with_pr};
+    use super::{
+        press, render, with_advisories, with_advisory, with_blame, with_branches, with_commit,
+        with_compare, with_deployments, with_discussion, with_discussions, with_gist, with_gists,
+        with_issues, with_job, with_milestone, with_milestones, with_pr, with_run, with_search,
+        with_team, with_teams, with_wiki, with_workflow,
+    };
     use crate::diff_screen::Pane;
     use crate::keymap::Action;
     use crate::state::{Overlay, Screen, State, apply};
 
     type Make = fn() -> State;
 
-    /// A list, a pull request, and the diff with each pane focused, the
-    /// selection away from the edges so moving can move.
-    fn screens() -> [(&'static str, Make); 6] {
+    /// A list, a pull request, the diff with each pane focused (the
+    /// selection away from the edges so moving can move), and every page
+    /// links lead to.
+    fn screens() -> [(&'static str, Make); 25] {
         fn moved(mut s: State) -> State {
             press(&mut s, "jj");
+            s
+        }
+        /// A page in a short terminal, scrolled into its middle, so every
+        /// way of moving can move.
+        fn mid(s: State) -> State {
+            let mut s = super::sized(s, 100, 12);
+            press(&mut s, "j");
             s
         }
         [
@@ -2054,6 +2067,37 @@ mod keys {
                 s.diffs
                     .insert(super::diff::commit_of(), super::diff::diff_state());
                 s
+            }),
+            ("workflow run", || mid(with_run(Mode::Dark))),
+            ("job", || {
+                let mut s = mid(with_job(Mode::Dark, None));
+                press(&mut s, "j");
+                s
+            }),
+            ("workflow", || mid(with_workflow(Mode::Dark))),
+            ("discussions", || mid(with_discussions(Mode::Dark))),
+            ("discussion", || mid(with_discussion(Mode::Dark))),
+            ("branches", || mid(with_branches(Mode::Dark))),
+            ("milestones", || mid(with_milestones(Mode::Dark))),
+            ("milestone", || mid(with_milestone(Mode::Dark))),
+            ("deployments", || mid(with_deployments(Mode::Dark))),
+            ("comparison", || mid(with_compare(Mode::Dark))),
+            ("blame", || mid(with_blame(Mode::Dark))),
+            ("gist", || mid(with_gist(Mode::Dark))),
+            ("gists", || mid(with_gists(Mode::Dark))),
+            ("teams", || mid(with_teams(Mode::Dark))),
+            ("team", || mid(with_team(Mode::Dark))),
+            ("advisories", || mid(with_advisories(Mode::Dark))),
+            ("advisory", || mid(with_advisory(Mode::Dark))),
+            ("wiki", || mid(with_wiki(Mode::Dark))),
+            ("code search", || {
+                let results = crate::fixtures::code_results();
+                mid(with_search(
+                    Mode::Dark,
+                    ghtui_api::browse::SearchKind::Code,
+                    "q",
+                    results,
+                ))
             }),
         ]
     }

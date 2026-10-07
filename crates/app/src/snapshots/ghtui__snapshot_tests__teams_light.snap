@@ -1,6 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 865
+assertion_line: 897
 expression: "render(&with_teams(Mode::Light))"
 ---
 Buffer {
@@ -10,16 +10,16 @@ Buffer {
         "                                                                                                    ",
         "────────────────────────────────────────────────────────────────────────────────────────────────────",
         "                                                                                                    ",
-        "  ╭─ Teams  2 ──────────────────────────────────────────────────────────────────────────────────╮   ",
+        "  ╭─ Teams  3 ──────────────────────────────────────────────────────────────────────────────────╮   ",
         "  │▌Core                                                             7 members · 2 repositories │   ",
         "  │▌The Core team                                                                               │   ",
         "  ├─────────────────────────────────────────────────────────────────────────────────────────────┤   ",
         "  │ Security  Secret                                                 7 members · 2 repositories │   ",
         "  │ The Security team                                                                           │   ",
+        "  ├─────────────────────────────────────────────────────────────────────────────────────────────┤   ",
+        "  │ Triage                                                           7 members · 2 repositories │   ",
+        "  │ The Triage team                                                                             │   ",
         "  ╰─────────────────────────────────────────────────────────────────────────────────────────────╯   ",
-        "                                                                                                    ",
-        "                                                                                                    ",
-        "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
@@ -92,6 +92,22 @@ Buffer {
         x: 97, y: 9, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 2, y: 10, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 97, y: 10, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 2, y: 11, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 3, y: 11, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 4, y: 11, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: BOLD,
+        x: 10, y: 11, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 69, y: 11, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 95, y: 11, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 96, y: 11, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 97, y: 11, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 2, y: 12, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 3, y: 12, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 4, y: 12, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 19, y: 12, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 96, y: 12, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 97, y: 12, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 2, y: 13, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 97, y: 13, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 0, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 2, y: 29, fg: Rgb(50, 83, 131), bg: Rgb(237, 237, 244), underline: Reset, modifier: BOLD,
         x: 7, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
