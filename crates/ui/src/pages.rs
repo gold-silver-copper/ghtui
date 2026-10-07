@@ -3130,7 +3130,7 @@ pub fn branches(
             let mut segs = vec![Seg::linked(b.name.clone(), Role::Link, link)];
             if b.default {
                 segs.push(space());
-                segs.push(chip("default", Bg::SecondaryContainer));
+                segs.push(chip("Default", Bg::SecondaryContainer));
             }
             let mut right = Vec::new();
             if let Some((number, state)) = b.pr {
