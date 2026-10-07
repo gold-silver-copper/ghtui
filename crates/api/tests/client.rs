@@ -693,6 +693,23 @@ async fn partial_results_say_what_they_left_out() {
     assert!(gh.take_left_out().is_empty());
 }
 
+/// A REST search that timed out says it found only some results.
+#[tokio::test]
+async fn a_timed_out_search_says_so() {
+    let (gh, _) = github(vec![Reply::new(
+        200,
+        r#"{"total_count":0,"incomplete_results":true,"items":[]}"#,
+    )])
+    .await;
+    gh.search(ghtui_api::browse::SearchKind::Code, "x", None)
+        .await
+        .unwrap();
+    assert_eq!(
+        gh.take_left_out(),
+        ["the search took too long and found only some results"]
+    );
+}
+
 /// A comparison of one revision is against the default branch.
 #[tokio::test]
 async fn one_revision_compares_with_the_default_branch() {

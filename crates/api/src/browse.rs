@@ -2821,6 +2821,9 @@ pub(crate) mod rest_search {
     #[derive(Deserialize)]
     pub struct Page<T> {
         pub total_count: u64,
+        /// The search timed out and found only some of them.
+        #[serde(default)]
+        pub incomplete_results: bool,
         pub items: Vec<T>,
     }
 }
