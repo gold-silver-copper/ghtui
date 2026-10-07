@@ -2622,7 +2622,7 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
 /// cleanup.`, `Cleaning up orphan processes`) or once the step before
 /// has ended, whichever comes first. The lines cut from a long log
 /// (`cut`) only count: each step's first number is how many of them it has.
-fn step_lines<'a>(job: &Job, cut: &'a str, log: &'a str) -> Vec<(u32, usize, Vec<&'a str>)> {
+pub fn step_lines<'a>(job: &Job, cut: &'a str, log: &'a str) -> Vec<(u32, usize, Vec<&'a str>)> {
     let mut out: Vec<(u32, usize, Vec<&str>)> = job
         .steps
         .iter()
@@ -2721,17 +2721,37 @@ fn strip_escapes(text: &str) -> String {
     out
 }
 
-/// A log line as shown: group markers and errors stand out.
-fn log_seg(text: &str) -> Seg {
+/// A log line as shown, as GitHub shows it: its markers (`##[group]`,
+/// a composite action's `##[start-action]`, `##[error]`, `##[warning]`,
+/// `##[notice]`, `##[debug]`, `[command]`) as styles rather than text, and
+/// its color codes gone.
+pub fn log_seg(text: &str) -> Seg {
     let text = &strip_escapes(text);
     if let Some(group) = text.strip_prefix("##[group]") {
         Seg::new(format!("▸ {group}"), Role::Strong)
-    } else if text.starts_with("##[endgroup]") {
+    } else if text.starts_with("##[endgroup]") || text.starts_with("##[end-action ") {
         Seg::new("", Role::Meta)
+    } else if let Some(action) = text.strip_prefix("##[start-action ") {
+        // A composite action's own step: `display=Its name;id=…]`.
+        let display = action
+            .split(';')
+            .find_map(|field| field.strip_prefix("display="))
+            .unwrap_or(action)
+            .trim_end_matches(']');
+        Seg::new(format!("▸ {display}"), Role::Strong)
     } else if let Some(error) = text.strip_prefix("##[error]") {
         Seg::new(error.to_owned(), Role::Removed)
     } else if let Some(warning) = text.strip_prefix("##[warning]") {
         Seg::new(warning.to_owned(), Role::Accent)
+    } else if let Some(notice) = text.strip_prefix("##[notice]") {
+        Seg::new(notice.to_owned(), Role::Strong)
+    } else if let Some(debug) = text.strip_prefix("##[debug]") {
+        Seg::new(debug.to_owned(), Role::Meta)
+    } else if let Some(command) = text
+        .strip_prefix("##[command]")
+        .or_else(|| text.strip_prefix("[command]"))
+    {
+        Seg::new(command.to_owned(), Role::Syntax(Syntax::Function))
     } else {
         Seg::new(text.to_owned(), Role::Body)
     }
@@ -4396,6 +4416,41 @@ mod tests {
                 completed_at: None,
             }],
         }
+    }
+
+    /// A log's markers show as GitHub shows them, and text that only looks
+    /// like an escape (a literal `^[`) stays as it is.
+    #[test]
+    fn log_markers_show_as_styles() {
+        let seg = |line: &str| {
+            let s = log_seg(line);
+            (s.text, s.role)
+        };
+        assert_eq!(seg("##[notice]Deployed"), ("Deployed".into(), Role::Strong));
+        assert_eq!(
+            seg("##[debug]Loading env"),
+            ("Loading env".into(), Role::Meta)
+        );
+        assert_eq!(
+            seg("[command]/usr/bin/git version"),
+            (
+                "/usr/bin/git version".into(),
+                Role::Syntax(Syntax::Function)
+            )
+        );
+        assert_eq!(
+            seg("##[start-action display=Parse toolchain version;id=__x.parse]"),
+            ("▸ Parse toolchain version".into(), Role::Strong)
+        );
+        assert_eq!(
+            seg("##[end-action id=__x.parse;outcome=success]"),
+            (String::new(), Role::Meta)
+        );
+        assert_eq!(
+            seg("echo ^[[31m red"),
+            ("echo ^[[31m red".into(), Role::Body)
+        );
+        assert_eq!(seg("\u{1b}[31mred\u{1b}[0m"), ("red".into(), Role::Body));
     }
 
     /// A comparison's line counts come from the files GitHub listed, so

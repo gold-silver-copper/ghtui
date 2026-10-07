@@ -1,0 +1,114 @@
+---
+source: crates/ui/tests/job_logs.rs
+assertion_line: 91
+expression: "golden(\"rust-dist-big\")"
+---
+4667421 bytes, 42720 lines; 24542 cut
+
+step 1 Success Set up job: 18 cut, 0 lines
+
+step 2 Success Set up runner: 4 cut, 0 lines
+
+step 3 Skipped Install cargo in AWS CodeBuild: 0 cut, 0 lines
+
+step 4 Success disable git crlf conversion: 17 cut, 0 lines
+
+step 5 Success checkout the source code: 106 cut, 0 lines
+
+step 6 Skipped free up disk space: 0 cut, 0 lines
+
+step 7 Success print disk usage: 30 cut, 0 lines
+
+step 8 Skipped configure the PR in which the error message will be posted: 0 cut, 0 lines
+
+step 9 Success add extra environment variables: 39 cut, 0 lines
+
+step 10 Success ensure the channel matches the target branch: 28 cut, 0 lines
+
+step 11 Success collect CPU statistics: 27 cut, 0 lines
+
+step 12 Success show the current environment: 231 cut, 0 lines
+
+step 13 Success install awscli: 27 cut, 0 lines
+
+step 14 Success install sccache: 27 cut, 0 lines
+
+step 15 Success install clang: 27 cut, 0 lines
+
+step 16 Success install tidy: 27 cut, 0 lines
+
+step 17 Success install WIX: 27 cut, 0 lines
+
+step 18 Success disable git crlf conversion: 27 cut, 0 lines
+
+step 19 Success checkout submodules: 116 cut, 0 lines
+
+step 20 Success install MinGW: 27 cut, 0 lines
+
+step 21 Success install ninja: 27 cut, 0 lines
+
+step 22 Success enable ipv6 on Docker: 28 cut, 0 lines
+
+step 23 Success disable git crlf conversion: 27 cut, 0 lines
+
+step 24 Success ensure line endings are correct: 66 cut, 0 lines
+
+step 25 Success ensure backported commits are in upstream branches: 28 cut, 0 lines
+
+step 26 Success ensure the stable version number is correct: 28 cut, 0 lines
+
+step 27 Success show the current environment: 231 cut, 0 lines
+
+step 28 Success build citool: 229 cut, 0 lines
+
+step 29 Success run the build: 23073 cut, 17619 lines
+  Body: -- Installing: /checkout/obj/build/x86_64-unknown-linux-gnu/llvm/include/llvm/CodeGen/Mach
+  Body: -- Installing: /checkout/obj/build/x86_64-unknown-linux-gnu/llvm/include/llvm/CodeGen/Swif
+  Body:   network time: Wed, 07 Oct 2026 10:22:25 GMT
+  Meta: 
+
+step 30 Success create github artifacts: 0 cut, 40 lines
+  Strong: ▸ Run src/ci/scripts/create-doc-artifacts.sh
+  Body: src/ci/scripts/create-doc-artifacts.sh
+  Body: + '[' -n /home/ubuntu/actions-runner/_work/_temp/_runner_file_commands/set_env_47d5312e-16
+  Body: + echo DOC_ARTIFACT_NAME=doc-try-d4956bfc
+
+step 31 Success print disk usage: 0 cut, 41 lines
+  Strong: ▸ Run echo "disk usage:"
+  Body: echo "disk usage:"
+  Body: none             1.0M     0  1.0M   0% /run/credentials/systemd-networkd.service
+  Body: none             1.0M     0  1.0M   0% /run/credentials/getty@tty1.service
+
+step 32 Success upload artifacts to github: 0 cut, 36 lines
+  Strong: ▸ Run actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+  Body: with:
+  Meta: 
+  Body: No files were found with the provided path: obj/artifacts/doc. No artifacts will be upload
+
+step 33 Success upload artifacts to S3: 0 cut, 62 lines
+  Strong: ▸ Run src/ci/scripts/upload-artifacts.sh
+  Body: src/ci/scripts/upload-artifacts.sh
+  Body: upload: ../../../../../../tmp/tmp.1oiEApo2YT/reproducible-artifacts-nightly-x86_64-unknown
+  Body: upload: ../../../../../../tmp/tmp.1oiEApo2YT/rustc-nightly-x86_64-unknown-linux-gnu.tar.xz
+
+step 34 Success postprocess metrics into the summary: 0 cut, 252 lines
+  Strong: ▸ Run if [ -f build/metrics.json ]; then
+  Body: if [ -f build/metrics.json ]; then
+  Body: Recorded 6 bootstrap invocation(s)
+  Body: No test suites found in metrics
+
+step 35 Success upload job metrics to DataDog: 0 cut, 33 lines
+  Strong: ▸ Run ./build/citool/debug/citool upload-build-metrics build/cpu-usage.csv
+  Body: ./build/citool/debug/citool upload-build-metrics build/cpu-usage.csv
+  Body: [5.983709273182953, 6.831714196176748, 3.9375, 10.06922592825677, 1.5009380863039326, 0.65
+  Body: CPU usage average: 32.89316374194354
+
+step 70 Success Post checkout the source code: 0 cut, 93 lines
+  Body: Post job cleanup.
+  Syntax(Function): /usr/bin/git version
+  Syntax(Function): /usr/bin/git config --file /home/ubuntu/actions-runner/_work/rust/rust/.git/modules/src/to
+  Body: Removing credentials config '/home/ubuntu/actions-runner/_work/_temp/git-credentials-97813
+
+step 71 Success Complete job: 0 cut, 2 lines
+  Body: Cleaning up orphan processes
+  Body: Terminate orphan process: pid (2057) (python3)

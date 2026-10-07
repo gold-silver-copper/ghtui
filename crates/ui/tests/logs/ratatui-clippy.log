@@ -1,0 +1,592 @@
+﻿2026-10-07T04:25:05.8461907Z Current runner version: '2.337.0'
+2026-10-07T04:25:05.8482527Z ##[group]Runner Image Provisioner
+2026-10-07T04:25:05.8483272Z Hosted Compute Agent
+2026-10-07T04:25:05.8483750Z Version: 20260901.588
+2026-10-07T04:25:05.8484328Z Commit: f88ec8081b781fac6c440065ac7ff9e710ce3d0b
+2026-10-07T04:25:05.8484958Z Build Date: 2026-09-01T19:56:44Z
+2026-10-07T04:25:05.8485564Z Worker ID: {7b0a6caf-4394-4761-b9b7-e92831d080ed}
+2026-10-07T04:25:05.8486222Z Azure Region: centralus
+2026-10-07T04:25:05.8486693Z ##[endgroup]
+2026-10-07T04:25:05.8488368Z ##[group]Operating System
+2026-10-07T04:25:05.8488962Z Ubuntu
+2026-10-07T04:25:05.8489367Z 24.04.5
+2026-10-07T04:25:05.8490081Z LTS
+2026-10-07T04:25:05.8490513Z ##[endgroup]
+2026-10-07T04:25:05.8491065Z ##[group]Runner Image
+2026-10-07T04:25:05.8491601Z Image: ubuntu-24.04
+2026-10-07T04:25:05.8492051Z Version: 20260927.320.1
+2026-10-07T04:25:05.8493234Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260927.320/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-07T04:25:05.8494588Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260927.320
+2026-10-07T04:25:05.8495459Z ##[endgroup]
+2026-10-07T04:25:05.8496358Z ##[group]GITHUB_TOKEN Permissions
+2026-10-07T04:25:05.8498283Z Metadata: read
+2026-10-07T04:25:05.8498763Z ##[endgroup]
+2026-10-07T04:25:05.8500836Z Secret source: None
+2026-10-07T04:25:05.8501565Z Cache mode: write
+2026-10-07T04:25:05.8502499Z Prepare workflow directory
+2026-10-07T04:25:05.8718735Z Prepare all required actions
+2026-10-07T04:25:05.8748913Z Getting action download info
+2026-10-07T04:25:06.1402770Z Download action repository 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-10-07T04:25:06.2277989Z Download action repository 'dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772' (SHA:6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772)
+2026-10-07T04:25:06.4309276Z Download action repository 'Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6' (SHA:6323deb102c322ba6fcbdcafc7e3dddab59af2b6)
+2026-10-07T04:25:07.2231332Z Complete job name: Check Clippy (stable)
+2026-10-07T04:25:07.2805192Z ##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+2026-10-07T04:25:07.2806117Z with:
+2026-10-07T04:25:07.2806628Z   persist-credentials: false
+2026-10-07T04:25:07.2807254Z   repository: ratatui/ratatui
+2026-10-07T04:25:07.2811839Z   token: ***
+2026-10-07T04:25:07.2812338Z   ssh-strict: true
+2026-10-07T04:25:07.2812840Z   ssh-user: git
+2026-10-07T04:25:07.2813325Z   clean: true
+2026-10-07T04:25:07.2813848Z   sparse-checkout-cone-mode: true
+2026-10-07T04:25:07.2814446Z   fetch-depth: 1
+2026-10-07T04:25:07.2814938Z   fetch-tags: false
+2026-10-07T04:25:07.2815451Z   show-progress: true
+2026-10-07T04:25:07.2815962Z   lfs: false
+2026-10-07T04:25:07.2816445Z   submodules: false
+2026-10-07T04:25:07.2816977Z   set-safe-directory: true
+2026-10-07T04:25:07.2817573Z   allow-unsafe-pr-checkout: false
+2026-10-07T04:25:07.2818265Z ##[endgroup]
+2026-10-07T04:25:07.3465312Z Syncing repository: ratatui/ratatui
+2026-10-07T04:25:07.3466786Z ##[group]Getting Git version info
+2026-10-07T04:25:07.3467587Z Working directory is '/home/runner/work/ratatui/ratatui'
+2026-10-07T04:25:07.3468703Z [command]/usr/bin/git version
+2026-10-07T04:25:07.3520184Z git version 2.55.0
+2026-10-07T04:25:07.3532435Z ##[endgroup]
+2026-10-07T04:25:07.3539383Z Temporarily overriding HOME='/home/runner/work/_temp/e7c3f113-1600-4405-8da4-c1186cdaf389' before making global git config changes
+2026-10-07T04:25:07.3541920Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-07T04:25:07.3543856Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ratatui/ratatui
+2026-10-07T04:25:07.3927924Z Deleting the contents of '/home/runner/work/ratatui/ratatui'
+2026-10-07T04:25:07.3929556Z ##[group]Determining repository object format
+2026-10-07T04:25:07.3930812Z ##[endgroup]
+2026-10-07T04:25:07.3931673Z ##[group]Initializing the repository
+2026-10-07T04:25:07.3932942Z [command]/usr/bin/git init /home/runner/work/ratatui/ratatui
+2026-10-07T04:25:07.4823950Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-07T04:25:07.4825078Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-07T04:25:07.4826406Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-07T04:25:07.4827444Z hint: call:
+2026-10-07T04:25:07.4828145Z hint:
+2026-10-07T04:25:07.4829061Z hint: 	git config --global init.defaultBranch <name>
+2026-10-07T04:25:07.4830300Z hint:
+2026-10-07T04:25:07.4831310Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-07T04:25:07.4832914Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-07T04:25:07.4834192Z hint:
+2026-10-07T04:25:07.4834905Z hint: 	git branch -m <name>
+2026-10-07T04:25:07.4835733Z hint:
+2026-10-07T04:25:07.4836808Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-07T04:25:07.4838529Z Initialized empty Git repository in /home/runner/work/ratatui/ratatui/.git/
+2026-10-07T04:25:07.4840941Z [command]/usr/bin/git remote add origin https://github.com/ratatui/ratatui
+2026-10-07T04:25:07.4928386Z ##[endgroup]
+2026-10-07T04:25:07.4929784Z ##[group]Disabling automatic garbage collection
+2026-10-07T04:25:07.4930984Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-07T04:25:07.5116083Z ##[endgroup]
+2026-10-07T04:25:07.5117472Z ##[group]Setting up auth
+2026-10-07T04:25:07.5118398Z Removing SSH command configuration
+2026-10-07T04:25:07.5119881Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-07T04:25:07.5142085Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-07T04:25:07.5444198Z Removing HTTP extra header
+2026-10-07T04:25:07.5446406Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-07T04:25:07.5468759Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-07T04:25:07.5624100Z Removing includeIf entries pointing to credentials config files
+2026-10-07T04:25:07.5626422Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-07T04:25:07.5647582Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-07T04:25:07.5805289Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-63e70c9c-96c8-4668-bd24-a748d3ef3806.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-07T04:25:07.5914380Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/ratatui/ratatui/.git.path /home/runner/work/_temp/git-credentials-63e70c9c-96c8-4668-bd24-a748d3ef3806.config
+2026-10-07T04:25:07.5930673Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/ratatui/ratatui/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-63e70c9c-96c8-4668-bd24-a748d3ef3806.config
+2026-10-07T04:25:07.6121073Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-63e70c9c-96c8-4668-bd24-a748d3ef3806.config
+2026-10-07T04:25:07.6372030Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-63e70c9c-96c8-4668-bd24-a748d3ef3806.config
+2026-10-07T04:25:07.6608716Z ##[endgroup]
+2026-10-07T04:25:07.6610076Z ##[group]Fetching the repository
+2026-10-07T04:25:07.6613409Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +714f7a6fbc4b241a426b3a2857a49385255031a1:refs/remotes/pull/2805/merge
+2026-10-07T04:25:08.3655343Z From https://github.com/ratatui/ratatui
+2026-10-07T04:25:08.3656112Z  * [new ref]         714f7a6fbc4b241a426b3a2857a49385255031a1 -> pull/2805/merge
+2026-10-07T04:25:08.3660640Z ##[endgroup]
+2026-10-07T04:25:08.3661014Z ##[group]Determining the checkout info
+2026-10-07T04:25:08.3661639Z ##[endgroup]
+2026-10-07T04:25:08.3666385Z [command]/usr/bin/git sparse-checkout disable
+2026-10-07T04:25:08.3997345Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-07T04:25:08.4449886Z ##[group]Checking out the ref
+2026-10-07T04:25:08.4452099Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/2805/merge
+2026-10-07T04:25:08.5294236Z Note: switching to 'refs/remotes/pull/2805/merge'.
+2026-10-07T04:25:08.5294732Z 
+2026-10-07T04:25:08.5295090Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-07T04:25:08.5295684Z changes and commit them, and you can discard any commits you make in this
+2026-10-07T04:25:08.5296244Z state without impacting any branches by switching back to a branch.
+2026-10-07T04:25:08.5296672Z 
+2026-10-07T04:25:08.5296999Z If you want to create a new branch to retain commits you create, you may
+2026-10-07T04:25:08.5297553Z do so (now or later) by using -c with the switch command. Example:
+2026-10-07T04:25:08.5297912Z 
+2026-10-07T04:25:08.5298152Z   git switch -c <new-branch-name>
+2026-10-07T04:25:08.5298432Z 
+2026-10-07T04:25:08.5298671Z Or undo this operation with:
+2026-10-07T04:25:08.5298959Z 
+2026-10-07T04:25:08.5299173Z   git switch -
+2026-10-07T04:25:08.5299458Z 
+2026-10-07T04:25:08.5299968Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-07T04:25:08.5300357Z 
+2026-10-07T04:25:08.5300780Z HEAD is now at 714f7a6 Merge 955ff767a91847a91868fb179b99e80a88a3b295 into 9d16fa0de8642b06ed07db6e64b4ed132bbfac83
+2026-10-07T04:25:08.5302276Z ##[endgroup]
+2026-10-07T04:25:08.5334873Z [command]/usr/bin/git log -1 --format=%H
+2026-10-07T04:25:08.5353604Z 714f7a6fbc4b241a426b3a2857a49385255031a1
+2026-10-07T04:25:08.5361427Z ##[group]Removing auth
+2026-10-07T04:25:08.5362148Z Removing SSH command configuration
+2026-10-07T04:25:08.5364141Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-07T04:25:08.5390711Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-07T04:25:08.5545834Z Removing HTTP extra header
+2026-10-07T04:25:08.5546203Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-07T04:25:08.5567328Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-07T04:25:08.5722157Z Removing includeIf entries pointing to credentials config files
+2026-10-07T04:25:08.5724434Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-07T04:25:08.5798097Z includeif.gitdir:/home/runner/work/ratatui/ratatui/.git.path
+2026-10-07T04:25:08.5800956Z includeif.gitdir:/home/runner/work/ratatui/ratatui/.git/worktrees/*.path
+2026-10-07T04:25:08.5801287Z includeif.gitdir:/github/workspace/.git.path
+2026-10-07T04:25:08.5801533Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-07T04:25:08.5802171Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/ratatui/ratatui/.git.path
+2026-10-07T04:25:08.5811806Z /home/runner/work/_temp/git-credentials-63e70c9c-96c8-4668-bd24-a748d3ef3806.config
+2026-10-07T04:25:08.5818056Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/ratatui/ratatui/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-63e70c9c\-96c8\-4668\-bd24\-a748d3ef3806\.config
+2026-10-07T04:25:08.6345517Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/ratatui/ratatui/.git/worktrees/*.path
+2026-10-07T04:25:08.6362932Z /home/runner/work/_temp/git-credentials-63e70c9c-96c8-4668-bd24-a748d3ef3806.config
+2026-10-07T04:25:08.6368778Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/ratatui/ratatui/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-63e70c9c\-96c8\-4668\-bd24\-a748d3ef3806\.config
+2026-10-07T04:25:08.6906264Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-10-07T04:25:08.6923661Z /github/runner_temp/git-credentials-63e70c9c-96c8-4668-bd24-a748d3ef3806.config
+2026-10-07T04:25:08.6929552Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-63e70c9c\-96c8\-4668\-bd24\-a748d3ef3806\.config
+2026-10-07T04:25:08.8088687Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-07T04:25:08.8129224Z /github/runner_temp/git-credentials-63e70c9c-96c8-4668-bd24-a748d3ef3806.config
+2026-10-07T04:25:08.8136478Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-63e70c9c\-96c8\-4668\-bd24\-a748d3ef3806\.config
+2026-10-07T04:25:08.9336766Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-07T04:25:08.9505818Z Removing credentials config '/home/runner/work/_temp/git-credentials-63e70c9c-96c8-4668-bd24-a748d3ef3806.config'
+2026-10-07T04:25:08.9737151Z ##[endgroup]
+2026-10-07T04:25:09.0543055Z ##[group]Run dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+2026-10-07T04:25:09.0543377Z with:
+2026-10-07T04:25:09.0543547Z   toolchain: stable
+2026-10-07T04:25:09.0543721Z   components: clippy
+2026-10-07T04:25:09.0543897Z ##[endgroup]
+2026-10-07T04:25:09.0590356Z ##[start-action display=Parse toolchain version;id=__dtolnay_rust-toolchain.parse]
+2026-10-07T04:25:09.1783519Z ##[group]Run if [[ -z $toolchain ]]; then
+2026-10-07T04:25:09.1783776Z [36;1mif [[ -z $toolchain ]]; then[0m
+2026-10-07T04:25:09.1784076Z [36;1m  # GitHub does not enforce `required: true` inputs itself. https://github.com/actions/runner/issues/1070[0m
+2026-10-07T04:25:09.1784384Z [36;1m  echo "'toolchain' is a required input" >&2[0m
+2026-10-07T04:25:09.1784549Z [36;1m  exit 1[0m
+2026-10-07T04:25:09.1784739Z [36;1melif [[ $toolchain =~ ^stable' '[0-9]+' '(year|month|week|day)s?' 'ago$ ]]; then[0m
+2026-10-07T04:25:09.1784967Z [36;1m  if [[ Linux == macOS ]]; then[0m
+2026-10-07T04:25:09.1785293Z [36;1m    echo "toolchain=1.$((($(date -v-$(sed 's/stable \([0-9]*\) \(.\).*/\1\2/' <<< $toolchain) +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT[0m
+2026-10-07T04:25:09.1785568Z [36;1m  else[0m
+2026-10-07T04:25:09.1785786Z [36;1m    echo "toolchain=1.$((($(date --date "${toolchain#stable }" +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT[0m
+2026-10-07T04:25:09.1786031Z [36;1m  fi[0m
+2026-10-07T04:25:09.1786205Z [36;1melif [[ $toolchain =~ ^stable' 'minus' '[0-9]+' 'releases?$ ]]; then[0m
+2026-10-07T04:25:09.1786495Z [36;1m  echo "toolchain=1.$((($(date +%s)/60/60/24-16569)/7/6-${toolchain//[^0-9]/}))" >> $GITHUB_OUTPUT[0m
+2026-10-07T04:25:09.1786744Z [36;1melif [[ $toolchain =~ ^1\.[0-9]+$ ]]; then[0m
+2026-10-07T04:25:09.1787033Z [36;1m  echo "toolchain=1.$((i=${toolchain#1.}, c=($(date +%s)/60/60/24-16569)/7/6, i+9*i*(10*i<=c)+90*i*(100*i<=c)))" >> $GITHUB_OUTPUT[0m
+2026-10-07T04:25:09.1787300Z [36;1melse[0m
+2026-10-07T04:25:09.1787443Z [36;1m  echo "toolchain=$toolchain" >> $GITHUB_OUTPUT[0m
+2026-10-07T04:25:09.1787608Z [36;1mfi[0m
+2026-10-07T04:25:09.2566338Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-07T04:25:09.2566532Z env:
+2026-10-07T04:25:09.2566642Z   toolchain: stable
+2026-10-07T04:25:09.2566761Z ##[endgroup]
+2026-10-07T04:25:09.2965910Z ##[end-action id=__dtolnay_rust-toolchain.parse;outcome=success;conclusion=success;duration_ms=237]
+2026-10-07T04:25:09.2973587Z ##[start-action display=Construct rustup command line;id=__dtolnay_rust-toolchain.flags]
+2026-10-07T04:25:09.3526962Z ##[group]Run echo "targets=$(for t in ${targets//,/ }; do echo -n ' --target' $t; done)" >> $GITHUB_OUTPUT
+2026-10-07T04:25:09.3527303Z [36;1mecho "targets=$(for t in ${targets//,/ }; do echo -n ' --target' $t; done)" >> $GITHUB_OUTPUT[0m
+2026-10-07T04:25:09.3527620Z [36;1mecho "components=$(for c in ${components//,/ }; do echo -n ' --component' $c; done)" >> $GITHUB_OUTPUT[0m
+2026-10-07T04:25:09.3527867Z [36;1mecho "downgrade=" >> $GITHUB_OUTPUT[0m
+2026-10-07T04:25:09.3569995Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-07T04:25:09.3570166Z env:
+2026-10-07T04:25:09.3570267Z   targets: 
+2026-10-07T04:25:09.3570371Z   components: clippy
+2026-10-07T04:25:09.3570483Z ##[endgroup]
+2026-10-07T04:25:09.4178541Z ##[end-action id=__dtolnay_rust-toolchain.flags;outcome=success;conclusion=success;duration_ms=120]
+2026-10-07T04:25:09.4180386Z ##[start-action display=Set $CARGO_HOME;id=__dtolnay_rust-toolchain.__run]
+2026-10-07T04:25:09.5266194Z ##[group]Run echo CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV
+2026-10-07T04:25:09.5266582Z [36;1mecho CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV[0m
+2026-10-07T04:25:09.5311420Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-07T04:25:09.5311600Z ##[endgroup]
+2026-10-07T04:25:09.5372713Z ##[end-action id=__dtolnay_rust-toolchain.__run;outcome=success;conclusion=success;duration_ms=119]
+2026-10-07T04:25:09.5374068Z ##[start-action display=Install rustup if needed;id=__dtolnay_rust-toolchain.__run_2]
+2026-10-07T04:25:09.5392027Z ##[group]Run if ! command -v rustup &>/dev/null; then
+2026-10-07T04:25:09.5392224Z [36;1mif ! command -v rustup &>/dev/null; then[0m
+2026-10-07T04:25:09.5392618Z [36;1m  curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail https://sh.rustup.rs | sh -s -- --default-toolchain none -y[0m
+2026-10-07T04:25:09.5393001Z [36;1m  echo "$CARGO_HOME/bin" >> $GITHUB_PATH[0m
+2026-10-07T04:25:09.5393150Z [36;1mfi[0m
+2026-10-07T04:25:09.5435989Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-07T04:25:09.5436161Z env:
+2026-10-07T04:25:09.5436272Z   CARGO_HOME: /home/runner/.cargo
+2026-10-07T04:25:09.5436405Z ##[endgroup]
+2026-10-07T04:25:09.5495778Z ##[end-action id=__dtolnay_rust-toolchain.__run_2;outcome=success;conclusion=success;duration_ms=12]
+2026-10-07T04:25:09.5497000Z ##[start-action display=Install rustup if needed on windows;id=__dtolnay_rust-toolchain.__run_3]
+2026-10-07T04:25:09.5500644Z ##[end-action id=__dtolnay_rust-toolchain.__run_3;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-10-07T04:25:09.5506128Z ##[start-action display=rustup toolchain install stable;id=__dtolnay_rust-toolchain.__run_4]
+2026-10-07T04:25:09.5520395Z ##[group]Run rustup toolchain install stable --component clippy --profile minimal --no-self-update
+2026-10-07T04:25:09.5520735Z [36;1mrustup toolchain install stable --component clippy --profile minimal --no-self-update[0m
+2026-10-07T04:25:09.5561987Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-07T04:25:09.5562154Z env:
+2026-10-07T04:25:09.5562263Z   CARGO_HOME: /home/runner/.cargo
+2026-10-07T04:25:09.5562404Z   RUSTUP_PERMIT_COPY_RENAME: 1
+2026-10-07T04:25:09.5562531Z ##[endgroup]
+2026-10-07T04:25:09.7372294Z info: syncing channel updates for stable-x86_64-unknown-linux-gnu
+2026-10-07T04:25:09.9167025Z info: latest update on 2026-10-01 for version 1.99.0 (b940084d7 2026-09-28)
+2026-10-07T04:25:09.9240410Z info: removing previous version of component rustfmt
+2026-10-07T04:25:09.9256064Z info: removing previous version of component clippy
+2026-10-07T04:25:09.9268541Z info: removing previous version of component cargo
+2026-10-07T04:25:09.9310574Z info: removing previous version of component rust-std
+2026-10-07T04:25:09.9348323Z info: removing previous version of component rustc
+2026-10-07T04:25:09.9388898Z info: downloading 5 components
+2026-10-07T04:25:16.3515869Z 
+2026-10-07T04:25:16.3570215Z   stable-x86_64-unknown-linux-gnu updated - rustc 1.99.0 (b940084d7 2026-09-28) (from rustc 1.98.1 (48a229cea 2026-09-01))
+2026-10-07T04:25:16.3570671Z 
+2026-10-07T04:25:16.3613107Z ##[end-action id=__dtolnay_rust-toolchain.__run_4;outcome=success;conclusion=success;duration_ms=6810]
+2026-10-07T04:25:16.3618078Z ##[start-action display=rustup default stable;id=__dtolnay_rust-toolchain.__run_5]
+2026-10-07T04:25:16.3633042Z ##[group]Run rustup default stable
+2026-10-07T04:25:16.3633223Z [36;1mrustup default stable[0m
+2026-10-07T04:25:16.3681845Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-07T04:25:16.3682019Z env:
+2026-10-07T04:25:16.3682133Z   CARGO_HOME: /home/runner/.cargo
+2026-10-07T04:25:16.3682272Z ##[endgroup]
+2026-10-07T04:25:16.3771088Z info: using existing install for stable-x86_64-unknown-linux-gnu
+2026-10-07T04:25:16.3776493Z info: default toolchain set to stable-x86_64-unknown-linux-gnu
+2026-10-07T04:25:16.3776633Z 
+2026-10-07T04:25:16.3825325Z   stable-x86_64-unknown-linux-gnu unchanged - rustc 1.99.0 (b940084d7 2026-09-28)
+2026-10-07T04:25:16.3825602Z 
+2026-10-07T04:25:16.3827702Z info: note that the toolchain 'stable-x86_64-unknown-linux-gnu' is currently in use (overridden by '/home/runner/work/ratatui/ratatui/rust-toolchain.toml')
+2026-10-07T04:25:16.3838194Z ##[end-action id=__dtolnay_rust-toolchain.__run_5;outcome=success;conclusion=success;duration_ms=21]
+2026-10-07T04:25:16.3839767Z ##[start-action display=Create cachekey;id=__dtolnay_rust-toolchain.rustc-version]
+2026-10-07T04:25:16.3853743Z ##[group]Run DATE=$(rustc +stable --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')
+2026-10-07T04:25:16.3854181Z [36;1mDATE=$(rustc +stable --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')[0m
+2026-10-07T04:25:16.3854514Z [36;1mHASH=$(rustc +stable --version --verbose | sed -ne 's/^commit-hash: //p')[0m
+2026-10-07T04:25:16.3854779Z [36;1mecho "cachekey=$(echo $DATE$HASH | head -c12)" >> $GITHUB_OUTPUT[0m
+2026-10-07T04:25:16.3896751Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-07T04:25:16.3896927Z env:
+2026-10-07T04:25:16.3897046Z   CARGO_HOME: /home/runner/.cargo
+2026-10-07T04:25:16.3897181Z ##[endgroup]
+2026-10-07T04:25:16.4136632Z ##[end-action id=__dtolnay_rust-toolchain.rustc-version;outcome=success;conclusion=success;duration_ms=29]
+2026-10-07T04:25:16.4138407Z ##[start-action display=Disable incremental compilation;id=__dtolnay_rust-toolchain.__run_6]
+2026-10-07T04:25:16.4152706Z ##[group]Run if [ -z "${CARGO_INCREMENTAL+set}" ]; then
+2026-10-07T04:25:16.4152931Z [36;1mif [ -z "${CARGO_INCREMENTAL+set}" ]; then[0m
+2026-10-07T04:25:16.4153107Z [36;1m  echo CARGO_INCREMENTAL=0 >> $GITHUB_ENV[0m
+2026-10-07T04:25:16.4153262Z [36;1mfi[0m
+2026-10-07T04:25:16.4199826Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-07T04:25:16.4200004Z env:
+2026-10-07T04:25:16.4200117Z   CARGO_HOME: /home/runner/.cargo
+2026-10-07T04:25:16.4200266Z ##[endgroup]
+2026-10-07T04:25:16.4261166Z ##[end-action id=__dtolnay_rust-toolchain.__run_6;outcome=success;conclusion=success;duration_ms=12]
+2026-10-07T04:25:16.4262528Z ##[start-action display=Enable colors in Cargo output;id=__dtolnay_rust-toolchain.__run_7]
+2026-10-07T04:25:16.4275477Z ##[group]Run if [ -z "${CARGO_TERM_COLOR+set}" ]; then
+2026-10-07T04:25:16.4275674Z [36;1mif [ -z "${CARGO_TERM_COLOR+set}" ]; then[0m
+2026-10-07T04:25:16.4275851Z [36;1m  echo CARGO_TERM_COLOR=always >> $GITHUB_ENV[0m
+2026-10-07T04:25:16.4276014Z [36;1mfi[0m
+2026-10-07T04:25:16.4318179Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-07T04:25:16.4318350Z env:
+2026-10-07T04:25:16.4318464Z   CARGO_HOME: /home/runner/.cargo
+2026-10-07T04:25:16.4318598Z   CARGO_INCREMENTAL: 0
+2026-10-07T04:25:16.4318713Z ##[endgroup]
+2026-10-07T04:25:16.4376317Z ##[end-action id=__dtolnay_rust-toolchain.__run_7;outcome=success;conclusion=success;duration_ms=11]
+2026-10-07T04:25:16.4377668Z ##[start-action display=Enable Cargo sparse registry;id=__dtolnay_rust-toolchain.__run_8]
+2026-10-07T04:25:16.4390600Z ##[group]Run # implemented in 1.66, stabilized in 1.68, made default in 1.70
+2026-10-07T04:25:16.4390872Z [36;1m# implemented in 1.66, stabilized in 1.68, made default in 1.70[0m
+2026-10-07T04:25:16.4391234Z [36;1mif [ -z "${CARGO_REGISTRIES_CRATES_IO_PROTOCOL+set}" -o -f "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol ]; then[0m
+2026-10-07T04:25:16.4391607Z [36;1m  if rustc +stable --version --verbose | grep -q '^release: 1\.6[89]\.'; then[0m
+2026-10-07T04:25:16.4391904Z [36;1m    touch "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true[0m
+2026-10-07T04:25:16.4392175Z [36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse >> $GITHUB_ENV[0m
+2026-10-07T04:25:16.4392431Z [36;1m  elif rustc +stable --version --verbose | grep -q '^release: 1\.6[67]\.'; then[0m
+2026-10-07T04:25:16.4392720Z [36;1m    touch "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true[0m
+2026-10-07T04:25:16.4392987Z [36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git >> $GITHUB_ENV[0m
+2026-10-07T04:25:16.4393165Z [36;1m  fi[0m
+2026-10-07T04:25:16.4393269Z [36;1mfi[0m
+2026-10-07T04:25:16.4433300Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-07T04:25:16.4433471Z env:
+2026-10-07T04:25:16.4433582Z   CARGO_HOME: /home/runner/.cargo
+2026-10-07T04:25:16.4433720Z   CARGO_INCREMENTAL: 0
+2026-10-07T04:25:16.4433840Z   CARGO_TERM_COLOR: always
+2026-10-07T04:25:16.4434067Z ##[endgroup]
+2026-10-07T04:25:16.4651109Z ##[end-action id=__dtolnay_rust-toolchain.__run_8;outcome=success;conclusion=success;duration_ms=27]
+2026-10-07T04:25:16.4652750Z ##[start-action display=Work around spurious network errors in curl 8.0;id=__dtolnay_rust-toolchain.__run_9]
+2026-10-07T04:25:16.4667145Z ##[group]Run # https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation
+2026-10-07T04:25:16.4667650Z [36;1m# https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation[0m
+2026-10-07T04:25:16.4667971Z [36;1mif rustc +stable --version --verbose | grep -q '^release: 1\.7[01]\.'; then[0m
+2026-10-07T04:25:16.4668213Z [36;1m  echo CARGO_HTTP_MULTIPLEXING=false >> $GITHUB_ENV[0m
+2026-10-07T04:25:16.4668378Z [36;1mfi[0m
+2026-10-07T04:25:16.4713414Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-07T04:25:16.4713586Z env:
+2026-10-07T04:25:16.4713700Z   CARGO_HOME: /home/runner/.cargo
+2026-10-07T04:25:16.4713843Z   CARGO_INCREMENTAL: 0
+2026-10-07T04:25:16.4713964Z   CARGO_TERM_COLOR: always
+2026-10-07T04:25:16.4714086Z ##[endgroup]
+2026-10-07T04:25:16.4852817Z ##[end-action id=__dtolnay_rust-toolchain.__run_9;outcome=success;conclusion=success;duration_ms=19]
+2026-10-07T04:25:16.4855323Z ##[start-action display=rustc +stable --version --verbose;id=__dtolnay_rust-toolchain.__run_10]
+2026-10-07T04:25:16.4867905Z ##[group]Run rustc +stable --version --verbose
+2026-10-07T04:25:16.4868099Z [36;1mrustc +stable --version --verbose[0m
+2026-10-07T04:25:16.4909985Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-07T04:25:16.4910156Z env:
+2026-10-07T04:25:16.4910271Z   CARGO_HOME: /home/runner/.cargo
+2026-10-07T04:25:16.4910408Z   CARGO_INCREMENTAL: 0
+2026-10-07T04:25:16.4910530Z   CARGO_TERM_COLOR: always
+2026-10-07T04:25:16.4910655Z ##[endgroup]
+2026-10-07T04:25:16.5037339Z rustc 1.99.0 (b940084d7 2026-09-28)
+2026-10-07T04:25:16.5037604Z binary: rustc
+2026-10-07T04:25:16.5037846Z commit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4
+2026-10-07T04:25:16.5038116Z commit-date: 2026-09-28
+2026-10-07T04:25:16.5038313Z host: x86_64-unknown-linux-gnu
+2026-10-07T04:25:16.5038515Z release: 1.99.0
+2026-10-07T04:25:16.5039235Z LLVM version: 23.1.1
+2026-10-07T04:25:16.5048561Z ##[end-action id=__dtolnay_rust-toolchain.__run_10;outcome=success;conclusion=success;duration_ms=19]
+2026-10-07T04:25:16.5137046Z ##[group]Run Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+2026-10-07T04:25:16.5137416Z with:
+2026-10-07T04:25:16.5137532Z   prefix-key: v0-rust
+2026-10-07T04:25:16.5137660Z   add-job-id-key: true
+2026-10-07T04:25:16.5137792Z   add-rust-environment-hash-key: true
+2026-10-07T04:25:16.5137947Z   cache-targets: true
+2026-10-07T04:25:16.5138071Z   cache-all-crates: false
+2026-10-07T04:25:16.5138205Z   cache-workspace-crates: false
+2026-10-07T04:25:16.5138338Z   save-if: true
+2026-10-07T04:25:16.5138450Z   cache-provider: github
+2026-10-07T04:25:16.5138570Z   cache-bin: true
+2026-10-07T04:25:16.5138679Z   lookup-only: false
+2026-10-07T04:25:16.5138795Z   cmd-format: {0}
+2026-10-07T04:25:16.5138917Z env:
+2026-10-07T04:25:16.5139026Z   CARGO_HOME: /home/runner/.cargo
+2026-10-07T04:25:16.5139162Z   CARGO_INCREMENTAL: 0
+2026-10-07T04:25:16.5139282Z   CARGO_TERM_COLOR: always
+2026-10-07T04:25:16.5139405Z ##[endgroup]
+2026-10-07T04:25:16.6903561Z ##[group]Cache Configuration
+2026-10-07T04:25:16.6904020Z Cache Provider:
+2026-10-07T04:25:16.6904269Z     github
+2026-10-07T04:25:16.6904697Z Workspaces:
+2026-10-07T04:25:16.6904916Z     /home/runner/work/ratatui/ratatui
+2026-10-07T04:25:16.6905139Z Cache Paths:
+2026-10-07T04:25:16.6905327Z     /home/runner/.cargo/bin
+2026-10-07T04:25:16.6905556Z     /home/runner/.cargo/.crates.toml
+2026-10-07T04:25:16.6905789Z     /home/runner/.cargo/.crates2.json
+2026-10-07T04:25:16.6906018Z     /home/runner/.cargo/registry
+2026-10-07T04:25:16.6906235Z     /home/runner/.cargo/git
+2026-10-07T04:25:16.6906451Z     /home/runner/work/ratatui/ratatui/target
+2026-10-07T04:25:16.6906684Z Restore Key:
+2026-10-07T04:25:16.6906883Z     v0-rust-lint-clippy-Linux-x64-c7b3ef7d
+2026-10-07T04:25:16.6907125Z Cache Key:
+2026-10-07T04:25:16.6907335Z     v0-rust-lint-clippy-Linux-x64-c7b3ef7d-88f73a16
+2026-10-07T04:25:16.6907593Z .. Prefix:
+2026-10-07T04:25:16.6907787Z   - v0-rust-lint-clippy-Linux-x64
+2026-10-07T04:25:16.6908008Z .. Environment considered:
+2026-10-07T04:25:16.6908223Z   - Rust Versions:
+2026-10-07T04:25:16.6908507Z     - 1.99.0 x86_64-unknown-linux-gnu b940084d7eb6a299eb4bfeb8e34901bc051e7ac4
+2026-10-07T04:25:16.6908837Z   - CARGO_HOME
+2026-10-07T04:25:16.6909009Z   - CARGO_INCREMENTAL
+2026-10-07T04:25:16.6909194Z   - CARGO_TERM_COLOR
+2026-10-07T04:25:16.6909379Z .. Lockfiles considered:
+2026-10-07T04:25:16.6909763Z   - /home/runner/work/ratatui/ratatui/.cargo/config.toml
+2026-10-07T04:25:16.6910054Z   - /home/runner/work/ratatui/ratatui/Cargo.lock
+2026-10-07T04:25:16.6910409Z   - /home/runner/work/ratatui/ratatui/examples/apps/advanced-widget-impl/Cargo.toml
+2026-10-07T04:25:16.6910858Z   - /home/runner/work/ratatui/ratatui/examples/apps/async-github/Cargo.toml
+2026-10-07T04:25:16.6911282Z   - /home/runner/work/ratatui/ratatui/examples/apps/calendar-explorer/Cargo.toml
+2026-10-07T04:25:16.6911682Z   - /home/runner/work/ratatui/ratatui/examples/apps/canvas/Cargo.toml
+2026-10-07T04:25:16.6912077Z   - /home/runner/work/ratatui/ratatui/examples/apps/chart/Cargo.toml
+2026-10-07T04:25:16.6912473Z   - /home/runner/work/ratatui/ratatui/examples/apps/color-explorer/Cargo.toml
+2026-10-07T04:25:16.6912886Z   - /home/runner/work/ratatui/ratatui/examples/apps/colors-rgb/Cargo.toml
+2026-10-07T04:25:16.6913315Z   - /home/runner/work/ratatui/ratatui/examples/apps/constraint-explorer/Cargo.toml
+2026-10-07T04:25:16.6913727Z   - /home/runner/work/ratatui/ratatui/examples/apps/constraints/Cargo.toml
+2026-10-07T04:25:16.6914153Z   - /home/runner/work/ratatui/ratatui/examples/apps/custom-widget/Cargo.toml
+2026-10-07T04:25:16.6914545Z   - /home/runner/work/ratatui/ratatui/examples/apps/demo/Cargo.toml
+2026-10-07T04:25:16.6914894Z   - /home/runner/work/ratatui/ratatui/examples/apps/demo2/Cargo.toml
+2026-10-07T04:25:16.6915263Z   - /home/runner/work/ratatui/ratatui/examples/apps/flex/Cargo.toml
+2026-10-07T04:25:16.6915634Z   - /home/runner/work/ratatui/ratatui/examples/apps/gauge/Cargo.toml
+2026-10-07T04:25:16.6916407Z   - /home/runner/work/ratatui/ratatui/examples/apps/hello-world/Cargo.toml
+2026-10-07T04:25:16.6916849Z   - /home/runner/work/ratatui/ratatui/examples/apps/hyperlink/Cargo.toml
+2026-10-07T04:25:16.6917392Z   - /home/runner/work/ratatui/ratatui/examples/apps/inline/Cargo.toml
+2026-10-07T04:25:16.6917732Z   - /home/runner/work/ratatui/ratatui/examples/apps/input-form/Cargo.toml
+2026-10-07T04:25:16.6918133Z   - /home/runner/work/ratatui/ratatui/examples/apps/minimal/Cargo.toml
+2026-10-07T04:25:16.6918531Z   - /home/runner/work/ratatui/ratatui/examples/apps/modifiers/Cargo.toml
+2026-10-07T04:25:16.6918929Z   - /home/runner/work/ratatui/ratatui/examples/apps/mouse-drawing/Cargo.toml
+2026-10-07T04:25:16.6919341Z   - /home/runner/work/ratatui/ratatui/examples/apps/panic/Cargo.toml
+2026-10-07T04:25:16.6919855Z   - /home/runner/work/ratatui/ratatui/examples/apps/popup/Cargo.toml
+2026-10-07T04:25:16.6920238Z   - /home/runner/work/ratatui/ratatui/examples/apps/release-header/Cargo.toml
+2026-10-07T04:25:16.6920652Z   - /home/runner/work/ratatui/ratatui/examples/apps/scrollbar/Cargo.toml
+2026-10-07T04:25:16.6921036Z   - /home/runner/work/ratatui/ratatui/examples/apps/table/Cargo.toml
+2026-10-07T04:25:16.6921426Z   - /home/runner/work/ratatui/ratatui/examples/apps/todo-list/Cargo.toml
+2026-10-07T04:25:16.6921819Z   - /home/runner/work/ratatui/ratatui/examples/apps/tracing/Cargo.toml
+2026-10-07T04:25:16.6922219Z   - /home/runner/work/ratatui/ratatui/examples/apps/user-input/Cargo.toml
+2026-10-07T04:25:16.6922643Z   - /home/runner/work/ratatui/ratatui/examples/apps/volatility-surface/Cargo.toml
+2026-10-07T04:25:16.6923047Z   - /home/runner/work/ratatui/ratatui/examples/apps/weather/Cargo.toml
+2026-10-07T04:25:16.6923448Z   - /home/runner/work/ratatui/ratatui/examples/apps/widget-ref-container/Cargo.toml
+2026-10-07T04:25:16.6923845Z   - /home/runner/work/ratatui/ratatui/examples/concepts/state/Cargo.toml
+2026-10-07T04:25:16.6924186Z   - /home/runner/work/ratatui/ratatui/ratatui-core/Cargo.toml
+2026-10-07T04:25:16.6924507Z   - /home/runner/work/ratatui/ratatui/ratatui-crossterm/Cargo.toml
+2026-10-07T04:25:16.6924834Z   - /home/runner/work/ratatui/ratatui/ratatui-macros/Cargo.toml
+2026-10-07T04:25:16.6925151Z   - /home/runner/work/ratatui/ratatui/ratatui-termina/Cargo.toml
+2026-10-07T04:25:16.6925470Z   - /home/runner/work/ratatui/ratatui/ratatui-termion/Cargo.toml
+2026-10-07T04:25:16.6925799Z   - /home/runner/work/ratatui/ratatui/ratatui-termwiz/Cargo.toml
+2026-10-07T04:25:16.6926138Z   - /home/runner/work/ratatui/ratatui/ratatui-widgets/Cargo.toml
+2026-10-07T04:25:16.6926472Z   - /home/runner/work/ratatui/ratatui/ratatui/Cargo.toml
+2026-10-07T04:25:16.6926788Z   - /home/runner/work/ratatui/ratatui/rust-toolchain.toml
+2026-10-07T04:25:16.6927094Z   - /home/runner/work/ratatui/ratatui/xtask/Cargo.toml
+2026-10-07T04:25:16.6927545Z ##[endgroup]
+2026-10-07T04:25:16.6927651Z 
+2026-10-07T04:25:16.6927732Z ... Restoring cache ...
+2026-10-07T04:25:16.8423509Z Cache hit for restore-key: v0-rust-lint-clippy-Linux-x64-c7b3ef7d-46f3f84f
+2026-10-07T04:25:17.9911028Z Received 109051904 of 361878314 (30.1%), 104.0 MBs/sec
+2026-10-07T04:25:18.9889383Z Received 268435456 of 361878314 (74.2%), 128.0 MBs/sec
+2026-10-07T04:25:19.4109217Z Received 361878314 of 361878314 (100.0%), 142.5 MBs/sec
+2026-10-07T04:25:19.4109570Z Cache Size: ~345 MB (361878314 B)
+2026-10-07T04:25:19.4157288Z [command]/usr/bin/tar -xf /home/runner/work/_temp/760744ac-3227-4b75-b361-9088b2b0e6bc/cache.tzst -P -C /home/runner/work/ratatui/ratatui --use-compress-program unzstd
+2026-10-07T04:25:22.2928042Z Cache restored successfully
+2026-10-07T04:25:22.3065227Z Restored from cache key "v0-rust-lint-clippy-Linux-x64-c7b3ef7d-46f3f84f" full match: false.
+2026-10-07T04:25:22.4082703Z ##[group]Run cargo xtask clippy
+2026-10-07T04:25:22.4082881Z [36;1mcargo xtask clippy[0m
+2026-10-07T04:25:22.4131176Z shell: /usr/bin/bash -e {0}
+2026-10-07T04:25:22.4131311Z env:
+2026-10-07T04:25:22.4131425Z   CARGO_HOME: /home/runner/.cargo
+2026-10-07T04:25:22.4131561Z   CARGO_INCREMENTAL: 0
+2026-10-07T04:25:22.4131682Z   CARGO_TERM_COLOR: always
+2026-10-07T04:25:22.4131811Z   CACHE_ON_FAILURE: false
+2026-10-07T04:25:22.4131933Z   RUSTUP_TOOLCHAIN: stable
+2026-10-07T04:25:22.4132182Z ##[endgroup]
+2026-10-07T04:25:22.4688674Z [1m[92m    Updating[0m crates.io index
+2026-10-07T04:25:23.1177818Z [1m[92m   Compiling[0m xtask v0.0.0 (/home/runner/work/ratatui/ratatui/xtask)
+2026-10-07T04:25:23.4411602Z [1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.99s
+2026-10-07T04:25:23.4583559Z [1m[92m     Running[0m `target/debug/xtask clippy`
+2026-10-07T04:25:23.4623220Z [32m INFO[0m [2mxtask[0m[2m:[0m running command: Cmd(["cargo", "clippy", "--package", "ratatui-crossterm", "--no-default-features", "--features", "serde,underline-color,scrolling-regions,unstable,unstable-backend-writer,crossterm_0_28", "--", "-D", "warnings"])
+2026-10-07T04:25:23.8994933Z [1m[92m    Checking[0m ratatui-core v0.1.2 (/home/runner/work/ratatui/ratatui/ratatui-core)
+2026-10-07T04:25:24.2746589Z [1m[92m    Checking[0m ratatui-crossterm v0.1.2 (/home/runner/work/ratatui/ratatui/ratatui-crossterm)
+2026-10-07T04:25:24.3283842Z [1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.84s
+2026-10-07T04:25:24.3412304Z [32m INFO[0m [2mxtask[0m[2m:[0m running command: Cmd(["cargo", "clippy", "--package", "ratatui-crossterm", "--no-default-features", "--features", "serde,underline-color,scrolling-regions,unstable,unstable-backend-writer,crossterm_0_29", "--", "-D", "warnings"])
+2026-10-07T04:25:24.4187240Z [1m[92m    Checking[0m ratatui-crossterm v0.1.2 (/home/runner/work/ratatui/ratatui/ratatui-crossterm)
+2026-10-07T04:25:24.4738621Z [1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+2026-10-07T04:25:24.4840342Z [32m INFO[0m [2mxtask[0m[2m:[0m running command: Cmd(["cargo", "clippy", "--all-features", "--all-targets", "--tests", "--benches", "--workspace", "--exclude", "ratatui-crossterm", "--", "-D", "warnings"])
+2026-10-07T04:25:25.7883215Z [1m[92m    Checking[0m ratatui-core v0.1.2 (/home/runner/work/ratatui/ratatui/ratatui-core)
+2026-10-07T04:25:25.7970454Z [1m[92m    Checking[0m xtask v0.0.0 (/home/runner/work/ratatui/ratatui/xtask)
+2026-10-07T04:25:26.6965918Z [1m[92m    Checking[0m ratatui-widgets v0.3.2 (/home/runner/work/ratatui/ratatui/ratatui-widgets)
+2026-10-07T04:25:26.6966603Z [1m[92m    Checking[0m ratatui-termina v0.1.0 (/home/runner/work/ratatui/ratatui/ratatui-termina)
+2026-10-07T04:25:26.6980899Z [1m[92m    Checking[0m ratatui-termion v0.1.2 (/home/runner/work/ratatui/ratatui/ratatui-termion)
+2026-10-07T04:25:26.8231591Z [1m[92m    Checking[0m ratatui-termwiz v0.1.2 (/home/runner/work/ratatui/ratatui/ratatui-termwiz)
+2026-10-07T04:25:26.8301237Z [1m[92m    Checking[0m ratatui-crossterm v0.1.2 (/home/runner/work/ratatui/ratatui/ratatui-crossterm)
+2026-10-07T04:25:27.4264105Z [1m[92m    Checking[0m ratatui-macros v0.7.2 (/home/runner/work/ratatui/ratatui/ratatui-macros)
+2026-10-07T04:25:27.4522041Z [1m[92m    Checking[0m ratatui v0.30.2 (/home/runner/work/ratatui/ratatui/ratatui)
+2026-10-07T04:25:27.5271618Z [1m[92m    Checking[0m ratatui-state-examples v0.0.0 (/home/runner/work/ratatui/ratatui/examples/concepts/state)
+2026-10-07T04:25:27.9041457Z [1m[92m    Checking[0m gauge v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/gauge)
+2026-10-07T04:25:27.9091149Z [1m[92m    Checking[0m inline v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/inline)
+2026-10-07T04:25:27.9440828Z [1m[92m    Checking[0m release-header v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/release-header)
+2026-10-07T04:25:27.9881760Z [1m[92m    Checking[0m hyperlink v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/hyperlink)
+2026-10-07T04:25:27.9929498Z [1m[92m    Checking[0m user-input v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/user-input)
+2026-10-07T04:25:28.0531414Z [1m[92m    Checking[0m panic v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/panic)
+2026-10-07T04:25:28.1691225Z [1m[92m    Checking[0m demo2 v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/demo2)
+2026-10-07T04:25:28.1961233Z [1m[92m    Checking[0m advanced-widget-impl v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/advanced-widget-impl)
+2026-10-07T04:25:28.3281364Z [1m[92m    Checking[0m custom-widget v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/custom-widget)
+2026-10-07T04:25:28.3731317Z [1m[92m    Checking[0m calendar-explorer v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/calendar-explorer)
+2026-10-07T04:25:28.4021491Z [1m[92m    Checking[0m chart v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/chart)
+2026-10-07T04:25:28.4921582Z [1m[92m    Checking[0m colors-rgb v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/colors-rgb)
+2026-10-07T04:25:28.4940454Z [1m[92m    Checking[0m todo-list v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/todo-list)
+2026-10-07T04:25:28.5533146Z [1m[92m    Checking[0m async-github v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/async-github)
+2026-10-07T04:25:28.5641134Z [1m[92m    Checking[0m minimal v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/minimal)
+2026-10-07T04:25:28.5682422Z [1m[92m    Checking[0m hello-world v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/hello-world)
+2026-10-07T04:25:28.6051222Z [1m[92m    Checking[0m demo v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/demo)
+2026-10-07T04:25:28.6171058Z [1m[92m    Checking[0m modifiers v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/modifiers)
+2026-10-07T04:25:28.7231278Z [1m[92m    Checking[0m scrollbar v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/scrollbar)
+2026-10-07T04:25:28.7877223Z [1m[92m    Checking[0m popup v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/popup)
+2026-10-07T04:25:28.8661574Z [1m[92m    Checking[0m weather v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/weather)
+2026-10-07T04:25:28.9381755Z [1m[92m    Checking[0m color-explorer v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/color-explorer)
+2026-10-07T04:25:29.0100691Z [1m[92m    Checking[0m table v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/table)
+2026-10-07T04:25:29.0991823Z [1m[92m    Checking[0m mouse-drawing v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/mouse-drawing)
+2026-10-07T04:25:29.3151724Z [1m[92m    Checking[0m constraints v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/constraints)
+2026-10-07T04:25:29.3451286Z [1m[92m    Checking[0m canvas v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/canvas)
+2026-10-07T04:25:29.3511384Z [1m[92m    Checking[0m widget-ref-container v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/widget-ref-container)
+2026-10-07T04:25:29.5231912Z [1m[92m    Checking[0m tracing v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/tracing)
+2026-10-07T04:25:29.6632359Z [1m[92m    Checking[0m volatility-surface v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/volatility-surface)
+2026-10-07T04:25:29.8021156Z [1m[92m    Checking[0m flex v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/flex)
+2026-10-07T04:25:29.9079020Z [1m[92m    Checking[0m input-form v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/input-form)
+2026-10-07T04:25:30.2447083Z [1m[92m    Checking[0m constraint-explorer v0.0.0 (/home/runner/work/ratatui/ratatui/examples/apps/constraint-explorer)
+2026-10-07T04:25:31.4014029Z [1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 6.89s
+2026-10-07T04:25:31.4515603Z Post job cleanup.
+2026-10-07T04:25:31.5224701Z ##[group]Cache Configuration
+2026-10-07T04:25:31.5225003Z Cache Provider:
+2026-10-07T04:25:31.5225181Z     github
+2026-10-07T04:25:31.5225354Z Workspaces:
+2026-10-07T04:25:31.5225532Z     /home/runner/work/ratatui/ratatui
+2026-10-07T04:25:31.5225750Z Cache Paths:
+2026-10-07T04:25:31.5225914Z     /home/runner/.cargo/bin
+2026-10-07T04:25:31.5226126Z     /home/runner/.cargo/.crates.toml
+2026-10-07T04:25:31.5226344Z     /home/runner/.cargo/.crates2.json
+2026-10-07T04:25:31.5226564Z     /home/runner/.cargo/registry
+2026-10-07T04:25:31.5227125Z     /home/runner/.cargo/git
+2026-10-07T04:25:31.5227354Z     /home/runner/work/ratatui/ratatui/target
+2026-10-07T04:25:31.5227573Z Restore Key:
+2026-10-07T04:25:31.5227766Z     v0-rust-lint-clippy-Linux-x64-c7b3ef7d
+2026-10-07T04:25:31.5227991Z Cache Key:
+2026-10-07T04:25:31.5228201Z     v0-rust-lint-clippy-Linux-x64-c7b3ef7d-88f73a16
+2026-10-07T04:25:31.5228458Z .. Prefix:
+2026-10-07T04:25:31.5228701Z   - v0-rust-lint-clippy-Linux-x64
+2026-10-07T04:25:31.5228927Z .. Environment considered:
+2026-10-07T04:25:31.5229114Z   - Rust Versions:
+2026-10-07T04:25:31.5229392Z     - 1.99.0 x86_64-unknown-linux-gnu b940084d7eb6a299eb4bfeb8e34901bc051e7ac4
+2026-10-07T04:25:31.5229851Z   - CARGO_HOME
+2026-10-07T04:25:31.5230021Z   - CARGO_INCREMENTAL
+2026-10-07T04:25:31.5230228Z   - CARGO_TERM_COLOR
+2026-10-07T04:25:31.5230411Z .. Lockfiles considered:
+2026-10-07T04:25:31.5230648Z   - /home/runner/work/ratatui/ratatui/.cargo/config.toml
+2026-10-07T04:25:31.5230933Z   - /home/runner/work/ratatui/ratatui/Cargo.lock
+2026-10-07T04:25:31.5231310Z   - /home/runner/work/ratatui/ratatui/examples/apps/advanced-widget-impl/Cargo.toml
+2026-10-07T04:25:31.5231755Z   - /home/runner/work/ratatui/ratatui/examples/apps/async-github/Cargo.toml
+2026-10-07T04:25:31.5232179Z   - /home/runner/work/ratatui/ratatui/examples/apps/calendar-explorer/Cargo.toml
+2026-10-07T04:25:31.5232589Z   - /home/runner/work/ratatui/ratatui/examples/apps/canvas/Cargo.toml
+2026-10-07T04:25:31.5232964Z   - /home/runner/work/ratatui/ratatui/examples/apps/chart/Cargo.toml
+2026-10-07T04:25:31.5233357Z   - /home/runner/work/ratatui/ratatui/examples/apps/color-explorer/Cargo.toml
+2026-10-07T04:25:31.5233743Z   - /home/runner/work/ratatui/ratatui/examples/apps/colors-rgb/Cargo.toml
+2026-10-07T04:25:31.5234016Z   - /home/runner/work/ratatui/ratatui/examples/apps/constraint-explorer/Cargo.toml
+2026-10-07T04:25:31.5234282Z   - /home/runner/work/ratatui/ratatui/examples/apps/constraints/Cargo.toml
+2026-10-07T04:25:31.5234539Z   - /home/runner/work/ratatui/ratatui/examples/apps/custom-widget/Cargo.toml
+2026-10-07T04:25:31.5234785Z   - /home/runner/work/ratatui/ratatui/examples/apps/demo/Cargo.toml
+2026-10-07T04:25:31.5235016Z   - /home/runner/work/ratatui/ratatui/examples/apps/demo2/Cargo.toml
+2026-10-07T04:25:31.5235241Z   - /home/runner/work/ratatui/ratatui/examples/apps/flex/Cargo.toml
+2026-10-07T04:25:31.5235466Z   - /home/runner/work/ratatui/ratatui/examples/apps/gauge/Cargo.toml
+2026-10-07T04:25:31.5235702Z   - /home/runner/work/ratatui/ratatui/examples/apps/hello-world/Cargo.toml
+2026-10-07T04:25:31.5235953Z   - /home/runner/work/ratatui/ratatui/examples/apps/hyperlink/Cargo.toml
+2026-10-07T04:25:31.5236190Z   - /home/runner/work/ratatui/ratatui/examples/apps/inline/Cargo.toml
+2026-10-07T04:25:31.5236427Z   - /home/runner/work/ratatui/ratatui/examples/apps/input-form/Cargo.toml
+2026-10-07T04:25:31.5236669Z   - /home/runner/work/ratatui/ratatui/examples/apps/minimal/Cargo.toml
+2026-10-07T04:25:31.5236907Z   - /home/runner/work/ratatui/ratatui/examples/apps/modifiers/Cargo.toml
+2026-10-07T04:25:31.5237156Z   - /home/runner/work/ratatui/ratatui/examples/apps/mouse-drawing/Cargo.toml
+2026-10-07T04:25:31.5237401Z   - /home/runner/work/ratatui/ratatui/examples/apps/panic/Cargo.toml
+2026-10-07T04:25:31.5237628Z   - /home/runner/work/ratatui/ratatui/examples/apps/popup/Cargo.toml
+2026-10-07T04:25:31.5238053Z   - /home/runner/work/ratatui/ratatui/examples/apps/release-header/Cargo.toml
+2026-10-07T04:25:31.5238306Z   - /home/runner/work/ratatui/ratatui/examples/apps/scrollbar/Cargo.toml
+2026-10-07T04:25:31.5238537Z   - /home/runner/work/ratatui/ratatui/examples/apps/table/Cargo.toml
+2026-10-07T04:25:31.5238776Z   - /home/runner/work/ratatui/ratatui/examples/apps/todo-list/Cargo.toml
+2026-10-07T04:25:31.5239011Z   - /home/runner/work/ratatui/ratatui/examples/apps/tracing/Cargo.toml
+2026-10-07T04:25:31.5239250Z   - /home/runner/work/ratatui/ratatui/examples/apps/user-input/Cargo.toml
+2026-10-07T04:25:31.5239512Z   - /home/runner/work/ratatui/ratatui/examples/apps/volatility-surface/Cargo.toml
+2026-10-07T04:25:31.5239983Z   - /home/runner/work/ratatui/ratatui/examples/apps/weather/Cargo.toml
+2026-10-07T04:25:31.5240242Z   - /home/runner/work/ratatui/ratatui/examples/apps/widget-ref-container/Cargo.toml
+2026-10-07T04:25:31.5240506Z   - /home/runner/work/ratatui/ratatui/examples/concepts/state/Cargo.toml
+2026-10-07T04:25:31.5240737Z   - /home/runner/work/ratatui/ratatui/ratatui-core/Cargo.toml
+2026-10-07T04:25:31.5240958Z   - /home/runner/work/ratatui/ratatui/ratatui-crossterm/Cargo.toml
+2026-10-07T04:25:31.5241179Z   - /home/runner/work/ratatui/ratatui/ratatui-macros/Cargo.toml
+2026-10-07T04:25:31.5241397Z   - /home/runner/work/ratatui/ratatui/ratatui-termina/Cargo.toml
+2026-10-07T04:25:31.5241611Z   - /home/runner/work/ratatui/ratatui/ratatui-termion/Cargo.toml
+2026-10-07T04:25:31.5241827Z   - /home/runner/work/ratatui/ratatui/ratatui-termwiz/Cargo.toml
+2026-10-07T04:25:31.5242038Z   - /home/runner/work/ratatui/ratatui/ratatui-widgets/Cargo.toml
+2026-10-07T04:25:31.5242237Z   - /home/runner/work/ratatui/ratatui/ratatui/Cargo.toml
+2026-10-07T04:25:31.5242435Z   - /home/runner/work/ratatui/ratatui/rust-toolchain.toml
+2026-10-07T04:25:31.5242627Z   - /home/runner/work/ratatui/ratatui/xtask/Cargo.toml
+2026-10-07T04:25:31.5242896Z ##[endgroup]
+2026-10-07T04:25:31.5242965Z 
+2026-10-07T04:25:32.2511603Z ... Cleaning /home/runner/work/ratatui/ratatui/target ...
+2026-10-07T04:25:32.3272459Z ... Cleaning cargo registry (cache-all-crates: false) ...
+2026-10-07T04:25:32.8411115Z ... Cleaning cargo/bin ...
+2026-10-07T04:25:32.8429342Z ... Cleaning cargo git cache ...
+2026-10-07T04:25:32.8432812Z ... Saving cache ...
+2026-10-07T04:25:32.8539087Z [command]/usr/bin/tar --posix -cf cache.tzst --exclude cache.tzst -P -C /home/runner/work/ratatui/ratatui --files-from manifest.txt --use-compress-program zstdmt
+2026-10-07T04:25:35.7551974Z Sent 160530648 of 361857240 (44.4%), 152.9 MBs/sec
+2026-10-07T04:25:36.0396307Z Sent 361857240 of 361857240 (100.0%), 268.6 MBs/sec
+2026-10-07T04:25:36.3688113Z Post job cleanup.
+2026-10-07T04:25:36.4177047Z [command]/usr/bin/git version
+2026-10-07T04:25:36.4232939Z git version 2.55.0
+2026-10-07T04:25:36.4251760Z Temporarily overriding HOME='/home/runner/work/_temp/cf191470-67fe-4137-98ca-2a7fe8876216' before making global git config changes
+2026-10-07T04:25:36.4252157Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-07T04:25:36.4255250Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ratatui/ratatui
+2026-10-07T04:25:36.4798151Z Removing SSH command configuration
+2026-10-07T04:25:36.4798737Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-07T04:25:36.4815292Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-07T04:25:36.4980090Z Removing HTTP extra header
+2026-10-07T04:25:36.4982715Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-07T04:25:36.5003895Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-07T04:25:36.5157274Z Removing includeIf entries pointing to credentials config files
+2026-10-07T04:25:36.5160936Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-07T04:25:36.5182079Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-07T04:25:36.5437018Z Cleaning up orphan processes
