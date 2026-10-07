@@ -54,7 +54,7 @@ pub fn title(screen: &Screen) -> String {
         Screen::Diff(d) => match &d.of {
             DiffOf::Pr(pr) => format!("#{} files", pr.number),
             DiffOf::Commit(_, oid) => format!("{} files", short_sha(oid)),
-            DiffOf::Range(_, from, to) => format!("{}...{} files", short_sha(from), short_sha(to)),
+            DiffOf::Range(_, from, to) => format!("{}..{} files", short_sha(from), short_sha(to)),
         },
     }
 }
