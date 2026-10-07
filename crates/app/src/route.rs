@@ -533,485 +533,389 @@ fn list_url(base: &str, query: &str) -> String {
 impl Target {
     /// Parses a github.com URL (or a ghtui link). Other URLs are external.
     pub fn from_url(s: &str) -> Target {
-        let external = || Target::External(s.to_owned());
-        let with_scheme = if s.starts_with("github.com/") {
-            format!("https://{s}")
-        } else {
-            s.to_owned()
-        };
-        let Ok(parsed) = url::Url::parse(&with_scheme) else {
-            return external();
-        };
-        if !matches!(parsed.scheme(), "https" | "http") {
-            return external();
-        }
-        if parsed.host_str() == Some("gist.github.com") {
-            return gist(&parsed).map_or_else(external, Target::Page);
-        }
-        if !matches!(parsed.host_str(), Some("github.com" | "www.github.com")) {
-            return external();
-        }
-        let param = |name: &str| {
-            parsed
-                .query_pairs()
-                .find(|(k, _)| k == name)
-                .map(|(_, v)| v.into_owned())
-        };
-        let (query, kind, tab) = (param("q"), param("type"), param("tab"));
-        let repos = || {
-            ProfileTab::Repositories(match param("sort").as_deref() {
-                Some("name") => RepoSort::Name,
-                Some("stargazers") => RepoSort::Stars,
-                _ => RepoSort::Updated,
-            })
-        };
-        let segments: Vec<String> = parsed
-            .path_segments()
-            .map(|s| s.filter(|p| !p.is_empty()).map(decode).collect())
-            .unwrap_or_default();
-        let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
-        let repo = |o: &str, r: &str| RepoId::parse(&format!("{o}/{r}"));
-        let route = match segments.as_slice() {
-            [] | ["dashboard"] => Route::Home,
-            ["search"] => Route::Search {
-                kind: match kind.as_deref().map(str::to_ascii_lowercase).as_deref() {
-                    None | Some("repositories") => SearchKind::Repos,
-                    Some("issues") => SearchKind::Issues,
-                    Some("pullrequests") => SearchKind::Pulls,
-                    Some("users") => SearchKind::Users,
-                    Some("discussions") => SearchKind::Discussions,
-                    Some("commits") => SearchKind::Commits,
-                    Some("code") => SearchKind::Code,
-                    // Topics: the repositories tagged with one.
-                    Some("topics") => {
-                        let topic = query.unwrap_or_default();
-                        let topic = topic.trim();
-                        let query = if topic.is_empty() {
-                            String::new()
-                        } else {
-                            format!("topic:{topic}")
-                        };
-                        return Target::Page(Route::Search {
-                            kind: SearchKind::Repos,
-                            query,
-                        });
-                    }
-                    // Wikis, packages, the marketplace…
-                    Some(_) => return external(),
-                },
-                query: query.unwrap_or_default(),
-            },
-            ["topics", topic] => Route::Search {
-                kind: SearchKind::Repos,
-                query: format!("topic:{topic}"),
-            },
-            // The dashboards of your pull requests and issues: searches.
-            [list @ ("pulls" | "issues"), rest @ ..] => {
-                let (kind, is) = if *list == "pulls" {
-                    (SearchKind::Pulls, "pr")
-                } else {
-                    (SearchKind::Issues, "issue")
-                };
-                let whose = match rest {
-                    [] => "author:@me",
-                    ["assigned"] => "assignee:@me",
-                    ["mentioned"] => "mentions:@me",
-                    ["review-requested"] if *list == "pulls" => "review-requested:@me",
-                    _ => return external(),
-                };
-                Route::Search {
-                    kind,
-                    query: query
-                        .unwrap_or_else(|| format!("is:open is:{is} {whose} archived:false")),
-                }
-            }
-            ["stars", login] => Route::User {
-                login: (*login).to_owned(),
-                tab: ProfileTab::Stars,
-            },
-            ["orgs", login] => Route::user(login),
-            ["advisories"] => Route::Advisories(None),
-            ["advisories", ghsa] => Route::Advisory {
-                repo: None,
-                ghsa: (*ghsa).to_owned(),
-            },
-            ["orgs", org, "teams"] => Route::Teams((*org).to_owned()),
-            // Its members, repositories and child teams are on its page.
-            // GitHub's form for a new team.
-            ["orgs", _, "teams", "new"] => return external(),
-            ["orgs", org, "teams", slug, ..] => Route::Team {
-                org: (*org).to_owned(),
-                slug: (*slug).to_owned(),
-            },
-            ["orgs", org, "discussions", rest @ ..] => {
-                match discussions(DiscussionsOf::Org((*org).to_owned()), rest) {
-                    Some(route) => route,
-                    None => return external(),
-                }
-            }
-            ["orgs", login, page @ ("repositories" | "people")] => Route::User {
-                login: (*login).to_owned(),
-                tab: if *page == "people" {
-                    ProfileTab::People
-                } else {
-                    repos()
-                },
-            },
-            [login] if !RESERVED.contains(login) => Route::User {
-                login: (*login).to_owned(),
-                tab: match tab.as_deref() {
-                    None | Some("overview") => ProfileTab::Overview,
-                    Some("repositories") => repos(),
-                    Some("stars") => ProfileTab::Stars,
-                    Some("followers") => ProfileTab::Followers,
-                    Some("following") => ProfileTab::Following,
-                    // Packages and projects need scopes gh doesn't grant.
-                    Some(_) => return external(),
-                },
-            },
-            // GitHub's own pages: settings, apps, the marketplace…
-            [first, ..] if RESERVED.contains(first) => return external(),
-            [o, r] => match repo(o, r) {
-                Some(repo) => Route::Repo(repo),
-                None => return external(),
-            },
-            [o, r, kind @ ("tree" | "blob"), rev, path @ ..] => {
-                let Some(repo) = repo(o, r) else {
-                    return external();
-                };
-                let (rev, path) = ((*rev).to_owned(), path.join("/"));
-                if *kind == "tree" {
-                    Route::Tree { repo, rev, path }
-                } else {
-                    let lines = parsed.fragment().and_then(line_range);
-                    Route::Blob {
-                        repo,
-                        rev,
-                        path,
-                        lines,
-                    }
-                }
-            }
-            [o, r, list @ ("issues" | "pulls")] => {
-                let Some(repo) = repo(o, r) else {
-                    return external();
-                };
-                let query = query.map_or_else(|| OPEN.to_owned(), |q| strip_is(&q));
-                if *list == "issues" {
-                    Route::Issues { repo, query }
-                } else {
-                    Route::Pulls { repo, query }
-                }
-            }
-            // A label's issues.
-            [o, r, "labels", label] => match repo(o, r) {
-                Some(repo) => {
-                    let label = if label.contains(char::is_whitespace) {
-                        format!("\"{label}\"")
-                    } else {
-                        (*label).to_owned()
-                    };
-                    Route::Issues {
-                        repo,
-                        query: format!("{OPEN} label:{label}"),
-                    }
-                }
-                None => return external(),
-            },
-            [
-                o,
-                r,
-                page @ ("actions" | "stargazers" | "watchers" | "forks" | "network"),
-            ] => {
-                let Some(repo) = repo(o, r) else {
-                    return external();
-                };
-                match *page {
-                    "actions" => Route::Actions(repo),
-                    "stargazers" => Route::Stargazers(repo),
-                    "watchers" => Route::Watchers(repo),
-                    "forks" => Route::Forks(repo),
-                    // The network graph.
-                    _ => return external(),
-                }
-            }
-            [o, r, "network", "members"] => match repo(o, r) {
-                Some(repo) => Route::Forks(repo),
-                None => return external(),
-            },
-            [o, r, "releases", "tag", tag @ ..] if !tag.is_empty() => match repo(o, r) {
-                Some(repo) => Route::Release {
-                    repo,
-                    tag: tag.join("/"),
-                },
-                None => return external(),
-            },
-            // Assets are downloads; writing wiki pages, and the form for a
-            // new advisory, are on GitHub.
-            [_, _, "releases", "download", ..]
-            | [_, _, "wiki", .., "_new" | "_edit" | "_compare"]
-            | [_, _, "security", "advisories", "new"] => return external(),
-            // A wiki's own pages but its list (history, comparisons).
-            [_, _, "wiki", special, ..] if special.starts_with('_') && *special != "_pages" => {
-                return external();
-            }
-            [o, r, "releases", ..] => match repo(o, r) {
-                Some(repo) => Route::Releases(repo),
-                None => return external(),
-            },
-            [o, r, "tags"] => match repo(o, r) {
-                Some(repo) => Route::Tags(repo),
-                None => return external(),
-            },
-            // A milestone by its title is in the list.
-            [o, r, "milestones", ..] => match repo(o, r) {
-                Some(repo) => Route::Milestones {
-                    repo,
-                    closed: param("state").as_deref() == Some("closed"),
-                },
-                None => return external(),
-            },
-            [o, r, "milestone", n] => match (repo(o, r), n.parse()) {
-                (Some(repo), Ok(number)) => Route::Milestone { repo, number },
-                _ => return external(),
-            },
-            // A comparison's patch and diff are downloads.
-            [_, _, "compare", .., last] if last.ends_with(".patch") || last.ends_with(".diff") => {
-                return external();
-            }
-            [o, r, "compare", rest @ ..] => {
-                let Some(repo) = repo(o, r) else {
-                    return external();
-                };
-                let spec = rest.join("/");
-                // Without revisions it's the form for opening a pull
-                // request.
-                if spec.is_empty() {
-                    return external();
-                }
-                // Its files, from one commit to the other (`a..b`; with
-                // three dots it's from their merge base, which the
-                // comparison page finds).
-                if parsed.fragment() == Some("files")
-                    && !spec.contains("...")
-                    && let Some((from, to)) = spec.split_once("..")
-                    && is_full_sha(from)
-                    && is_full_sha(to)
-                {
-                    return Target::Files(DiffOf::Range(repo, from.to_owned(), to.to_owned()));
-                }
-                Route::Compare { repo, spec }
-            }
-            [o, r, "blame", rev, path @ ..] if !path.is_empty() => match repo(o, r) {
-                Some(repo) => Route::Blame {
-                    repo,
-                    rev: (*rev).to_owned(),
-                    path: path.join("/"),
-                    lines: parsed.fragment().and_then(line_range),
-                },
-                None => return external(),
-            },
-            // The security overview's part ghtui can show: advisories.
-            [o, r, "security"] | [o, r, "security", "advisories"] => match repo(o, r) {
-                Some(repo) => Route::Advisories(Some(repo)),
-                None => return external(),
-            },
-            [o, r, "security", "advisories", ghsa] => match repo(o, r) {
-                Some(repo) => Route::Advisory {
-                    repo: Some(repo),
-                    ghsa: (*ghsa).to_owned(),
-                },
-                None => return external(),
-            },
-            // A page's revisions and history: the page.
-            [o, r, "wiki", rest @ ..] => match repo(o, r) {
-                Some(repo) => Route::Wiki {
-                    repo,
-                    page: rest.first().map(|p| (*p).to_owned()),
-                },
-                None => return external(),
-            },
-            [o, r, "deployments", rest @ ..] => {
-                let Some(repo) = repo(o, r) else {
-                    return external();
-                };
-                let environment = match rest {
-                    [] => None,
-                    ["activity_log"] => param("environments_filter"),
-                    [env] => Some((*env).to_owned()),
-                    _ => return external(),
-                };
-                Route::Deployments { repo, environment }
-            }
-            // All, active, stale, yours: one list.
-            [o, r, "branches", ..] => match repo(o, r) {
-                Some(repo) => Route::Branches(repo),
-                None => return external(),
-            },
-            [o, r, "commits", rest @ ..] => {
-                let Some(repo) = repo(o, r) else {
-                    return external();
-                };
-                let (rev, path) = match rest {
-                    [] => ("HEAD".to_owned(), String::new()),
-                    [rev, path @ ..] => ((*rev).to_owned(), path.join("/")),
-                };
-                Route::Commits { repo, rev, path }
-            }
-            [o, r, "discussions", rest @ ..] => {
-                match repo(o, r).and_then(|repo| discussions(DiscussionsOf::Repo(repo), rest)) {
-                    Some(route) => route,
-                    None => return external(),
-                }
-            }
-            [o, r, "actions", "runs", run, rest @ ..] => {
-                let (Some(repo), Ok(run)) = (repo(o, r), run.parse()) else {
-                    return external();
-                };
-                match rest {
-                    // The run's workflow file shows on the run's page.
-                    [] | ["workflow"] => Route::WorkflowRun {
-                        repo,
-                        run,
-                        attempt: None,
-                    },
-                    ["attempts", n] => match n.parse() {
-                        Ok(n) => Route::WorkflowRun {
-                            repo,
-                            run,
-                            attempt: Some(n),
-                        },
-                        Err(_) => return external(),
-                    },
-                    ["job", job] => match job.parse() {
-                        Ok(job) => Route::Job {
-                            repo,
-                            run: Some(run),
-                            job,
-                            step: parsed.fragment().and_then(step_line),
-                            query: query.unwrap_or_default(),
-                        },
-                        Err(_) => return external(),
-                    },
-                    _ => return external(),
-                }
-            }
-            // A check run's URL, which is its job's for Actions.
-            [o, r, "runs", job] | [o, r, "runs", _, "jobs", job] => {
-                match (repo(o, r), job.parse()) {
-                    (Some(repo), Ok(job)) => Route::Job {
-                        repo,
-                        run: None,
-                        job,
-                        step: parsed.fragment().and_then(step_line),
-                        query: query.unwrap_or_default(),
-                    },
-                    _ => return external(),
-                }
-            }
-            [o, r, "actions", "workflows", file] => match repo(o, r) {
-                Some(repo) => Route::Workflow {
-                    repo,
-                    file: (*file).to_owned(),
-                },
-                None => return external(),
-            },
-            // A check run's logs, from a pull request's checks.
-            [o, r, "commit", _, "checks", job, ..] => match (repo(o, r), job.parse()) {
-                (Some(repo), Ok(job)) => Route::Job {
-                    repo,
-                    run: None,
-                    job,
-                    step: None,
-                    query: String::new(),
-                },
-                _ => return external(),
-            },
-            [o, r, "commit", sha, "checks"] => match repo(o, r) {
-                Some(repo) => Route::CommitChecks {
-                    repo,
-                    oid: (*sha).to_owned(),
-                },
-                None => return external(),
-            },
-            [o, r, "git", "commit", sha] => match repo(o, r) {
-                Some(repo) => Route::Commit {
-                    repo,
-                    oid: (*sha).to_owned(),
-                },
-                None => return external(),
-            },
-            // A commit's patch is a download; its diff is the diff viewer.
-            [_, _, "commit", sha] if sha.ends_with(".patch") => return external(),
-            [o, r, "commit", sha] if sha.ends_with(".diff") => match repo(o, r) {
-                Some(repo) => {
-                    let sha = sha.trim_end_matches(".diff").to_owned();
-                    return Target::Files(DiffOf::Commit(repo, sha));
-                }
-                None => return external(),
-            },
-            [o, r, "pull", n] if n.ends_with(".diff") => {
-                match (repo(o, r), n.trim_end_matches(".diff").parse()) {
-                    (Some(repo), Ok(number)) => {
-                        return Target::Files(DiffOf::Pr(PrRef { repo, number }));
-                    }
-                    _ => return external(),
-                }
-            }
-            [o, r, "commit", sha] => {
-                let Some(repo) = repo(o, r) else {
-                    return external();
-                };
-                // GitHub anchors a commit's files as `#diff-…`.
-                let to_files = parsed
-                    .fragment()
-                    .is_some_and(|f| f == "files" || f.starts_with("diff-"));
-                if to_files && is_full_sha(sha) {
-                    return Target::Files(DiffOf::Commit(repo, (*sha).to_owned()));
-                }
-                Route::Commit {
-                    repo,
-                    oid: (*sha).to_owned(),
-                }
-            }
-            [o, r, "issues", n] => match (repo(o, r), n.parse()) {
-                (Some(repo), Ok(number)) => Route::Issue { repo, number },
-                _ => return external(),
-            },
-            [o, r, "pull", n, rest @ ..] => {
-                let (Some(repo), Ok(number)) = (repo(o, r), n.parse()) else {
-                    return external();
-                };
-                let pr = PrRef { repo, number };
-                // Review comments are threads in the diff.
-                let review_comment = parsed.fragment().is_some_and(|f| {
-                    f.strip_prefix("discussion_r")
-                        .or_else(|| f.strip_prefix('r'))
-                        .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
-                });
-                match rest {
-                    [] if review_comment => return Target::Files(DiffOf::Pr(pr)),
-                    [] => Route::pr(pr),
-                    ["commits" | "changes", sha] => Route::Commit {
-                        repo: pr.repo,
-                        oid: (*sha).to_owned(),
-                    },
-                    ["files" | "changes", ..] => return Target::Files(DiffOf::Pr(pr)),
-                    ["commits", ..] => Route::Pr {
-                        pr,
-                        tab: PrTab::Commits,
-                    },
-                    ["checks", ..] => Route::Pr {
-                        pr,
-                        tab: PrTab::Checks,
-                    },
-                    _ => return external(),
-                }
-            }
-            _ => return external(),
-        };
-        Target::Page(route)
+        parse(s).unwrap_or_else(|| Target::External(s.to_owned()))
     }
+}
+
+/// What a URL opens in ghtui, or `None` for the browser.
+fn parse(s: &str) -> Option<Target> {
+    let with_scheme = if s.starts_with("github.com/") {
+        format!("https://{s}")
+    } else {
+        s.to_owned()
+    };
+    let parsed = url::Url::parse(&with_scheme).ok()?;
+    if !matches!(parsed.scheme(), "https" | "http") {
+        return None;
+    }
+    if parsed.host_str() == Some("gist.github.com") {
+        return gist(&parsed).map(Target::Page);
+    }
+    if !matches!(parsed.host_str(), Some("github.com" | "www.github.com")) {
+        return None;
+    }
+    let param = |name: &str| param(&parsed, name);
+    let (query, kind, tab) = (param("q"), param("type"), param("tab"));
+    let repos = || {
+        ProfileTab::Repositories(match param("sort").as_deref() {
+            Some("name") => RepoSort::Name,
+            Some("stargazers") => RepoSort::Stars,
+            _ => RepoSort::Updated,
+        })
+    };
+    let segments: Vec<String> = parsed
+        .path_segments()
+        .map(|s| s.filter(|p| !p.is_empty()).map(decode).collect())
+        .unwrap_or_default();
+    let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
+    let route = match segments.as_slice() {
+        [] | ["dashboard"] => Route::Home,
+        ["search"] => Route::Search {
+            kind: match kind.as_deref().map(str::to_ascii_lowercase).as_deref() {
+                None | Some("repositories") => SearchKind::Repos,
+                Some("issues") => SearchKind::Issues,
+                Some("pullrequests") => SearchKind::Pulls,
+                Some("users") => SearchKind::Users,
+                Some("discussions") => SearchKind::Discussions,
+                Some("commits") => SearchKind::Commits,
+                Some("code") => SearchKind::Code,
+                // Topics: the repositories tagged with one.
+                Some("topics") => {
+                    let topic = query.unwrap_or_default();
+                    let topic = topic.trim();
+                    let query = if topic.is_empty() {
+                        String::new()
+                    } else {
+                        format!("topic:{topic}")
+                    };
+                    return Some(Target::Page(Route::Search {
+                        kind: SearchKind::Repos,
+                        query,
+                    }));
+                }
+                // Wikis, packages, the marketplace…
+                Some(_) => return None,
+            },
+            query: query.unwrap_or_default(),
+        },
+        ["topics", topic] => Route::Search {
+            kind: SearchKind::Repos,
+            query: format!("topic:{topic}"),
+        },
+        // The dashboards of your pull requests and issues: searches.
+        [list @ ("pulls" | "issues"), rest @ ..] => {
+            let (kind, is) = if *list == "pulls" {
+                (SearchKind::Pulls, "pr")
+            } else {
+                (SearchKind::Issues, "issue")
+            };
+            let whose = match rest {
+                [] => "author:@me",
+                ["assigned"] => "assignee:@me",
+                ["mentioned"] => "mentions:@me",
+                ["review-requested"] if *list == "pulls" => "review-requested:@me",
+                _ => return None,
+            };
+            Route::Search {
+                kind,
+                query: query.unwrap_or_else(|| format!("is:open is:{is} {whose} archived:false")),
+            }
+        }
+        ["stars", login] => Route::User {
+            login: (*login).to_owned(),
+            tab: ProfileTab::Stars,
+        },
+        ["orgs", login] => Route::user(login),
+        ["advisories"] => Route::Advisories(None),
+        ["advisories", ghsa] => Route::Advisory {
+            repo: None,
+            ghsa: (*ghsa).to_owned(),
+        },
+        ["orgs", org, "teams"] => Route::Teams((*org).to_owned()),
+        // GitHub's form for a new team.
+        ["orgs", _, "teams", "new"] => return None,
+        // Its members, repositories and child teams are on its page.
+        ["orgs", org, "teams", slug, ..] => Route::Team {
+            org: (*org).to_owned(),
+            slug: (*slug).to_owned(),
+        },
+        ["orgs", org, "discussions", rest @ ..] => {
+            discussions(DiscussionsOf::Org((*org).to_owned()), rest)?
+        }
+        ["orgs", login, page @ ("repositories" | "people")] => Route::User {
+            login: (*login).to_owned(),
+            tab: if *page == "people" {
+                ProfileTab::People
+            } else {
+                repos()
+            },
+        },
+        [login] if !RESERVED.contains(login) => Route::User {
+            login: (*login).to_owned(),
+            tab: match tab.as_deref() {
+                None | Some("overview") => ProfileTab::Overview,
+                Some("repositories") => repos(),
+                Some("stars") => ProfileTab::Stars,
+                Some("followers") => ProfileTab::Followers,
+                Some("following") => ProfileTab::Following,
+                // Packages and projects need scopes gh doesn't grant.
+                Some(_) => return None,
+            },
+        },
+        // GitHub's own pages: settings, apps, the marketplace…
+        [first, ..] if RESERVED.contains(first) => return None,
+        [o, r, rest @ ..] => return repo_page(RepoId::parse(&format!("{o}/{r}"))?, rest, &parsed),
+        _ => return None,
+    };
+    Some(Target::Page(route))
+}
+
+/// A query parameter's value.
+fn param(url: &url::Url, name: &str) -> Option<String> {
+    url.query_pairs()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v.into_owned())
+}
+
+/// A repository's page, from what follows `/<owner>/<repo>` in its URL.
+fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
+    let param = |name: &str| param(url, name);
+    let fragment = url.fragment();
+    let route = match rest {
+        [] => Route::Repo(repo),
+        [kind @ ("tree" | "blob"), rev, path @ ..] => {
+            let (rev, path) = ((*rev).to_owned(), path.join("/"));
+            if *kind == "tree" {
+                Route::Tree { repo, rev, path }
+            } else {
+                Route::Blob {
+                    repo,
+                    rev,
+                    path,
+                    lines: fragment.and_then(line_range),
+                }
+            }
+        }
+        [list @ ("issues" | "pulls")] => {
+            let query = param("q").map_or_else(|| OPEN.to_owned(), |q| strip_is(&q));
+            if *list == "issues" {
+                Route::Issues { repo, query }
+            } else {
+                Route::Pulls { repo, query }
+            }
+        }
+        // A label's issues.
+        ["labels", label] => {
+            let label = if label.contains(char::is_whitespace) {
+                format!("\"{label}\"")
+            } else {
+                (*label).to_owned()
+            };
+            Route::Issues {
+                repo,
+                query: format!("{OPEN} label:{label}"),
+            }
+        }
+        ["actions"] => Route::Actions(repo),
+        ["stargazers"] => Route::Stargazers(repo),
+        ["watchers"] => Route::Watchers(repo),
+        ["forks"] | ["network", "members"] => Route::Forks(repo),
+        ["releases", "tag", tag @ ..] if !tag.is_empty() => Route::Release {
+            repo,
+            tag: tag.join("/"),
+        },
+        // The network graph is a picture. Assets are downloads; writing
+        // wiki pages, and the form for a new advisory, are on GitHub.
+        ["network"]
+        | ["releases", "download", ..]
+        | ["wiki", .., "_new" | "_edit" | "_compare"]
+        | ["security", "advisories", "new"] => return None,
+        // A wiki's own pages but its list (history, comparisons).
+        ["wiki", special, ..] if special.starts_with('_') && *special != "_pages" => return None,
+        ["releases", ..] => Route::Releases(repo),
+        ["tags"] => Route::Tags(repo),
+        // A milestone by its title is in the list.
+        ["milestones", ..] => Route::Milestones {
+            repo,
+            closed: param("state").as_deref() == Some("closed"),
+        },
+        ["milestone", n] => Route::Milestone {
+            repo,
+            number: n.parse().ok()?,
+        },
+        // A comparison's patch and diff are downloads.
+        ["compare", .., last] if last.ends_with(".patch") || last.ends_with(".diff") => {
+            return None;
+        }
+        ["compare", rest @ ..] => {
+            let spec = rest.join("/");
+            // Without revisions it's the form for opening a pull request.
+            if spec.is_empty() {
+                return None;
+            }
+            // Its files, from one commit to the other (`a..b`; with three
+            // dots it's from their merge base, which the comparison page
+            // finds).
+            if fragment == Some("files")
+                && !spec.contains("...")
+                && let Some((from, to)) = spec.split_once("..")
+                && is_full_sha(from)
+                && is_full_sha(to)
+            {
+                return Some(Target::Files(DiffOf::Range(
+                    repo,
+                    from.to_owned(),
+                    to.to_owned(),
+                )));
+            }
+            Route::Compare { repo, spec }
+        }
+        ["blame", rev, path @ ..] if !path.is_empty() => Route::Blame {
+            repo,
+            rev: (*rev).to_owned(),
+            path: path.join("/"),
+            lines: fragment.and_then(line_range),
+        },
+        // The security overview's part ghtui can show: advisories.
+        ["security"] | ["security", "advisories"] => Route::Advisories(Some(repo)),
+        ["security", "advisories", ghsa] => Route::Advisory {
+            repo: Some(repo),
+            ghsa: (*ghsa).to_owned(),
+        },
+        // A page's revisions and history: the page.
+        ["wiki", rest @ ..] => Route::Wiki {
+            repo,
+            page: rest.first().map(|p| (*p).to_owned()),
+        },
+        ["deployments", rest @ ..] => {
+            let environment = match rest {
+                [] => None,
+                ["activity_log"] => param("environments_filter"),
+                [env] => Some((*env).to_owned()),
+                _ => return None,
+            };
+            Route::Deployments { repo, environment }
+        }
+        // All, active, stale, yours: one list.
+        ["branches", ..] => Route::Branches(repo),
+        ["commits", rest @ ..] => {
+            let (rev, path) = match rest {
+                [] => ("HEAD".to_owned(), String::new()),
+                [rev, path @ ..] => ((*rev).to_owned(), path.join("/")),
+            };
+            Route::Commits { repo, rev, path }
+        }
+        ["discussions", rest @ ..] => discussions(DiscussionsOf::Repo(repo), rest)?,
+        ["actions", "runs", run, rest @ ..] => {
+            let run = run.parse().ok()?;
+            match rest {
+                // The run's workflow file shows on the run's page.
+                [] | ["workflow"] => Route::WorkflowRun {
+                    repo,
+                    run,
+                    attempt: None,
+                },
+                ["attempts", n] => Route::WorkflowRun {
+                    repo,
+                    run,
+                    attempt: Some(n.parse().ok()?),
+                },
+                ["job", job] => Route::Job {
+                    repo,
+                    run: Some(run),
+                    job: job.parse().ok()?,
+                    step: fragment.and_then(step_line),
+                    query: param("q").unwrap_or_default(),
+                },
+                _ => return None,
+            }
+        }
+        // A check run's URL, which is its job's for Actions.
+        ["runs", job] | ["runs", _, "jobs", job] => Route::Job {
+            repo,
+            run: None,
+            job: job.parse().ok()?,
+            step: fragment.and_then(step_line),
+            query: param("q").unwrap_or_default(),
+        },
+        ["actions", "workflows", file] => Route::Workflow {
+            repo,
+            file: (*file).to_owned(),
+        },
+        // A check run's logs, from a pull request's checks.
+        ["commit", _, "checks", job, ..] => Route::Job {
+            repo,
+            run: None,
+            job: job.parse().ok()?,
+            step: None,
+            query: String::new(),
+        },
+        ["commit", sha, "checks"] => Route::CommitChecks {
+            repo,
+            oid: (*sha).to_owned(),
+        },
+        ["git", "commit", sha] => Route::Commit {
+            repo,
+            oid: (*sha).to_owned(),
+        },
+        // A commit's patch is a download; its diff is the diff viewer.
+        ["commit", sha] if sha.ends_with(".patch") => return None,
+        ["commit", sha] if sha.ends_with(".diff") => {
+            let sha = sha.trim_end_matches(".diff").to_owned();
+            return Some(Target::Files(DiffOf::Commit(repo, sha)));
+        }
+        ["pull", n] if n.ends_with(".diff") => {
+            let number = n.trim_end_matches(".diff").parse().ok()?;
+            return Some(Target::Files(DiffOf::Pr(PrRef { repo, number })));
+        }
+        ["commit", sha] => {
+            // GitHub anchors a commit's files as `#diff-…`.
+            let to_files = fragment.is_some_and(|f| f == "files" || f.starts_with("diff-"));
+            if to_files && is_full_sha(sha) {
+                return Some(Target::Files(DiffOf::Commit(repo, (*sha).to_owned())));
+            }
+            Route::Commit {
+                repo,
+                oid: (*sha).to_owned(),
+            }
+        }
+        ["issues", n] => Route::Issue {
+            repo,
+            number: n.parse().ok()?,
+        },
+        ["pull", n, rest @ ..] => {
+            let pr = PrRef {
+                repo,
+                number: n.parse().ok()?,
+            };
+            // Review comments are threads in the diff.
+            let review_comment = fragment.is_some_and(|f| {
+                f.strip_prefix("discussion_r")
+                    .or_else(|| f.strip_prefix('r'))
+                    .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+            });
+            match rest {
+                [] if review_comment => return Some(Target::Files(DiffOf::Pr(pr))),
+                [] => Route::pr(pr),
+                ["commits" | "changes", sha] => Route::Commit {
+                    repo: pr.repo,
+                    oid: (*sha).to_owned(),
+                },
+                ["files" | "changes", ..] => return Some(Target::Files(DiffOf::Pr(pr))),
+                ["commits", ..] => Route::Pr {
+                    pr,
+                    tab: PrTab::Commits,
+                },
+                ["checks", ..] => Route::Pr {
+                    pr,
+                    tab: PrTab::Checks,
+                },
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    Some(Target::Page(route))
 }
 
 fn is_full_sha(s: &str) -> bool {
