@@ -74,7 +74,7 @@ pub mod url {
         format!("{BASE}/search?q={}&type={kind}", encode(query))
     }
     pub fn commit(repo: &RepoId, oid: &str) -> String {
-        format!("{BASE}/{repo}/commit/{oid}")
+        at_rev(repo, "commit", oid, "")
     }
     pub fn compare(repo: &RepoId, from: &str, to: &str) -> String {
         format!("{}/compare/{from}..{to}", self::repo(repo))

@@ -1788,6 +1788,23 @@ pub(crate) mod tests {
         );
     }
 
+    /// A commit named by a slashed ref (`commit/feature%2Fx`) and its
+    /// checks lead back to that ref.
+    #[test]
+    fn commits_named_by_slashed_refs_round_trip() {
+        let (repo, oid) = (RepoId::new("o", "r"), "feature/x".to_owned());
+        for route in [
+            Route::Commit {
+                repo: repo.clone(),
+                oid: oid.clone(),
+            },
+            Route::CommitChecks { repo, oid },
+        ] {
+            let url = route.url();
+            assert_eq!(Target::from_url(&url), Target::Page(route), "{url}");
+        }
+    }
+
     /// The links the branch and tag lists put on a ref (`url::tree(repo,
     /// name, "")`) open that ref.
     #[test]
