@@ -745,6 +745,81 @@ async fn one_revision_compares_with_the_default_branch() {
     );
 }
 
+/// A comparison whose newest commit listed isn't the head its permalink
+/// names, or that lists other than min(total, 250) commits, doesn't add
+/// up, and says so (the 250-commit bug's shape: the oldest page, not the
+/// newest).
+#[tokio::test]
+async fn a_comparison_is_checked_against_itself() {
+    let compare = |permalink_head: &str, total: u64| {
+        format!(
+            r#"{{"permalink_url":"https://github.com/o/r/compare/o:bcf4368...o:{permalink_head}","status":"ahead","ahead_by":{total},"behind_by":0,"total_commits":{total},"base_commit":{{"sha":"b"}},"merge_base_commit":{{"sha":"m"}},"commits":[{{"sha":"d2d91f754c87458c6d07863eca20f3ea8ae319ce","commit":{{"message":"m"}}}}]}}"#
+        )
+    };
+    let (gh, _) = github(vec![
+        Reply::new(200, compare("d2d91f7", 1)),
+        Reply::new(200, compare("efd1e47", 20)),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    gh.compare(&repo, "a...b").await.unwrap();
+    assert_eq!(gh.take_doubts(), Vec::<String>::new());
+    gh.compare(&repo, "v0.26.0...v0.26.1").await.unwrap();
+    let doubts = gh.take_doubts();
+    assert!(
+        doubts[0].contains("the newest commit listed is d2d91f7, but the head is efd1e47"),
+        "{doubts:?}"
+    );
+    assert!(
+        doubts[1].contains("1 commits are listed of 20, not 20"),
+        "{doubts:?}"
+    );
+}
+
+/// Checks for a commit other than the PR's head don't add up.
+#[tokio::test]
+async fn a_prs_checks_are_for_its_head() {
+    let (gh, _) = github(vec![Reply::new(
+        200,
+        r#"{"data":{"repository":{"pullRequest":{"headRefOid":"new0000","commits":{"nodes":[{"commit":{"oid":"old0000","statusCheckRollup":null}}]}}}}}"#,
+    )])
+    .await;
+    let checks = gh.pr_checks(&PrRef::parse("o/r#7").unwrap()).await.unwrap();
+    assert_eq!(checks.oid, "old0000");
+    let doubts = gh.take_doubts();
+    assert!(
+        doubts[0].contains("o/r#7's checks are for old0000, but its head is new0000"),
+        "{doubts:?}"
+    );
+}
+
+/// A page shorter than its size that says there are more, or with more
+/// items than the total, doesn't add up.
+#[tokio::test]
+async fn a_list_page_is_checked_against_itself() {
+    let (gh, _) = github(vec![Reply::new(
+        200,
+        r#"{"data":{"user":{"gists":{"totalCount":1,"pageInfo":{"hasNextPage":true,"endCursor":"c"},"nodes":[
+            {"name":"a","description":null,"updatedAt":"2026-10-01T00:00:00Z","stargazerCount":0,"files":[],"comments":{"totalCount":0}},
+            {"name":"b","description":null,"updatedAt":"2026-10-01T00:00:00Z","stargazerCount":0,"files":[],"comments":{"totalCount":0}}]}}}}"#,
+    )])
+    .await;
+    gh.gists("me", None).await.unwrap();
+    let doubts = gh.take_doubts();
+    assert!(
+        doubts
+            .iter()
+            .any(|d| d.contains("me's gists: a page of 2 (of 30) says there are more")),
+        "{doubts:?}"
+    );
+    assert!(
+        doubts
+            .iter()
+            .any(|d| d.contains("me's gists: a page of 2, of 1 in all")),
+        "{doubts:?}"
+    );
+}
+
 /// A category the repository doesn't have is not found, not every
 /// discussion under its name.
 #[tokio::test]

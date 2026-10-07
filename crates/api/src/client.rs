@@ -67,6 +67,8 @@ pub struct GitHub {
     /// What partial GraphQL results left out (GitHub's errors beside the
     /// data), not yet reported.
     left_out: Arc<Mutex<Vec<String>>>,
+    /// Where GitHub's answers didn't add up, not yet reported.
+    doubts: Arc<Mutex<Vec<String>>>,
 }
 
 struct Http {
@@ -132,6 +134,7 @@ impl GitHub {
             limits: Arc::default(),
             rejected: Arc::default(),
             left_out: Arc::default(),
+            doubts: Arc::default(),
         }
     }
 
@@ -157,6 +160,61 @@ impl GitHub {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         )
+    }
+
+    /// Where GitHub's answers didn't add up since this was last asked: a
+    /// comparison whose last commit isn't its head, more items than the
+    /// total, … (see [`Self::doubt`]).
+    pub fn take_doubts(&self) -> Vec<String> {
+        std::mem::take(
+            &mut *self
+                .doubts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    /// Notes that an answer doesn't add up: logged, and reported. What's
+    /// shown is still GitHub's answer; this says not to trust it.
+    fn doubt(&self, what: String) {
+        tracing::warn!(what, "GitHub's answer doesn't add up");
+        let mut doubts = self
+            .doubts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !doubts.contains(&what) {
+            doubts.push(what);
+        }
+    }
+
+    /// Checks a page of a list adds up: no more items than GitHub counts.
+    fn check_page<T: browse::Page>(&self, list: &T, what: impl std::fmt::Display) {
+        let (items, total) = list.counts();
+        if items as u64 > total {
+            self.doubt(format!("{what}: a page of {items}, of {total} in all"));
+        }
+    }
+
+    /// Checks a GraphQL list's page adds up: a short page is the last
+    /// (nulls count: they're items the token can't see).
+    fn check_connection<T>(
+        &self,
+        page: &browse::wire::Connection<T>,
+        size: usize,
+        what: impl std::fmt::Display,
+    ) {
+        let n = page.nodes.len();
+        if page.page_info.has_next_page && n < size {
+            self.doubt(format!(
+                "{what}: a page of {n} (of {size}) says there are more"
+            ));
+        }
+        if n as u64 > page.total_count {
+            self.doubt(format!(
+                "{what}: a page of {n}, of {} in all",
+                page.total_count
+            ));
+        }
     }
 
     /// Notes a REST search that timed out, so found only some results.
@@ -1160,21 +1218,31 @@ impl GitHub {
             _ => return Err(ApiError::NotFound(format!("{repo}@{rev}"))),
         };
         Ok(self
-            .kept_if(first, &browse::keys::history(repo, rev, path), history)
+            .kept_page(first, &browse::keys::history(repo, rev, path), history)
             .await)
     }
 
     /// The checks on a pull request's head commit.
     pub async fn pr_checks(&self, pr: &PrRef) -> Result<browse::Checks, ApiError> {
         let op = browse::PrChecksQuery::build(number_vars(pr)?);
-        let head = self
+        let pr_checks = self
             .graphql(op)
             .await?
             .repository
             .and_then(|r| r.pull_request)
-            .and_then(|p| nodes(p.commits.nodes).next())
+            .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
+        let want = pr_checks.head_ref_oid.0;
+        let head = nodes(pr_checks.commits.nodes)
+            .next()
             .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
         let checks = self.all_checks(&pr.repo, head.commit).await?.into_checks();
+        if checks.oid != want {
+            self.doubt(format!(
+                "{pr}'s checks are for {}, but its head is {}",
+                text_short(&checks.oid),
+                text_short(&want)
+            ));
+        }
         Ok(self.kept(&browse::keys::pr_checks(pr), checks).await)
     }
 
@@ -1319,7 +1387,7 @@ impl GitHub {
                 .filter(|_| more),
         };
         Ok(self
-            .kept_if(first, &browse::keys::users(list), results)
+            .kept_page(first, &browse::keys::users(list), results)
             .await)
     }
 
@@ -1345,7 +1413,7 @@ impl GitHub {
             .repositories
             .into_results();
         Ok(self
-            .kept_if(first, &browse::keys::owner_repos(login, sort), repos)
+            .kept_page(first, &browse::keys::owner_repos(login, sort), repos)
             .await)
     }
 
@@ -1369,7 +1437,7 @@ impl GitHub {
             .starred_repositories
             .into_results();
         Ok(self
-            .kept_if(first, &browse::keys::starred(login), stars)
+            .kept_page(first, &browse::keys::starred(login), stars)
             .await)
     }
 
@@ -1389,7 +1457,9 @@ impl GitHub {
             .ok_or_else(|| ApiError::NotFound(repo.to_string()))?
             .forks
             .into_results();
-        Ok(self.kept_if(first, &browse::keys::forks(repo), forks).await)
+        Ok(self
+            .kept_page(first, &browse::keys::forks(repo), forks)
+            .await)
     }
 
     /// A repository's releases, newest first, 20 at a time from `after`;
@@ -1409,7 +1479,7 @@ impl GitHub {
             .releases
             .into_results();
         Ok(self
-            .kept_if(first, &browse::keys::releases(repo), releases)
+            .kept_page(first, &browse::keys::releases(repo), releases)
             .await)
     }
 
@@ -1446,7 +1516,7 @@ impl GitHub {
             .and_then(|r| r.refs)
             .ok_or_else(|| ApiError::NotFound(repo.to_string()))?
             .into_results();
-        Ok(self.kept_if(first, &browse::keys::tags(repo), tags).await)
+        Ok(self.kept_page(first, &browse::keys::tags(repo), tags).await)
     }
 
     /// Branches by name, 30 at a time from `after`, each with its latest
@@ -1470,9 +1540,10 @@ impl GitHub {
             .map(str::to_owned);
         let wire: browse::wire::Connection<browse::wire_branches::Branch> =
             at(&data, "/repository/refs", || repo.to_string())?;
+        self.check_connection(&wire, 30, format!("{repo}'s branches"));
         let branches = wire.into_results(|b| b.into_info(repo, default.as_deref()));
         Ok(self
-            .kept_if(first, &browse::keys::branches(repo), branches)
+            .kept_page(first, &browse::keys::branches(repo), branches)
             .await)
     }
 
@@ -1500,13 +1571,14 @@ impl GitHub {
         let (open, closed_count) = (count("open"), count("closed"));
         let wire: browse::wire::Connection<browse::wire_milestones::Milestone> =
             at(&data, "/repository/milestones", || repo.to_string())?;
+        self.check_connection(&wire, 25, format!("{repo}'s milestones"));
         let list = browse::MilestoneList {
             open,
             closed: closed_count,
             results: wire.into_results(browse::wire_milestones::Milestone::into_info),
         };
         Ok(self
-            .kept_if(first, &browse::keys::milestones(repo, closed), list)
+            .kept_page(first, &browse::keys::milestones(repo, closed), list)
             .await)
     }
 
@@ -1555,7 +1627,7 @@ impl GitHub {
             unsearchable,
         };
         Ok(self
-            .kept_if(first, &browse::keys::milestone(repo, number), detail)
+            .kept_page(first, &browse::keys::milestone(repo, number), detail)
             .await)
     }
     /// Deployments, newest first, 25 at a time from `after`, to one
@@ -1576,6 +1648,7 @@ impl GitHub {
             .await?;
         let wire: browse::wire::Connection<browse::wire_deployments::Deployment> =
             at(&data, "/repository/deployments", || repo.to_string())?;
+        self.check_connection(&wire, 25, format!("{repo}'s deployments"));
         let list = browse::DeploymentList {
             environments: at::<browse::wire::Counted<browse::wire::Name>>(
                 &data,
@@ -1586,7 +1659,7 @@ impl GitHub {
             results: wire.into_results(browse::wire_deployments::Deployment::into_info),
         };
         Ok(self
-            .kept_if(first, &browse::keys::deployments(repo, environment), list)
+            .kept_page(first, &browse::keys::deployments(repo, environment), list)
             .await)
     }
     /// Compares two revisions, as a compare URL names them (`a...b`,
@@ -1610,7 +1683,30 @@ impl GitHub {
             encode_path(head)
         );
         let wire: browse::rest_compare::Compare = self.rest_json(&path).await?;
+        let head = wire
+            .permalink_url
+            .rsplit_once("...")
+            .and_then(|(_, head)| head.rsplit(':').next())
+            .filter(|head| !head.is_empty())
+            .map(str::to_owned);
         let comparison = wire.into_comparison(direct);
+        // The head is the newest commit listed (or, behind, the merge base).
+        if let Some(head) = head
+            && !comparison.to.starts_with(&head)
+        {
+            self.doubt(format!(
+                "comparing {spec}, the newest commit listed is {}, but the head is {head}",
+                text_short(&comparison.to)
+            ));
+        }
+        let listed = comparison.commits.len() as u64;
+        let expected = comparison.total_commits.min(browse::COMPARE_COMMITS);
+        if listed != expected {
+            self.doubt(format!(
+                "comparing {spec}, {listed} commits are listed of {}, not {expected}",
+                comparison.total_commits
+            ));
+        }
         Ok(self
             .kept(&browse::keys::compare(repo, spec), comparison)
             .await)
@@ -1662,9 +1758,10 @@ impl GitHub {
             .await?;
         let wire: browse::wire::Connection<browse::wire_gists::Gist> =
             at(&data, "/user/gists", || format!("{login}'s gists"))?;
+        self.check_connection(&wire, 30, format!("{login}'s gists"));
         let gists = wire.into_results(browse::wire_gists::Gist::into_summary);
         Ok(self
-            .kept_if(first, &browse::keys::gists(login), gists)
+            .kept_page(first, &browse::keys::gists(login), gists)
             .await)
     }
     /// The teams in an organization you can see (its members see them),
@@ -1683,8 +1780,11 @@ impl GitHub {
             .await?;
         let wire: browse::wire::Connection<browse::wire_teams::Team> =
             at(&data, "/organization/teams", || org.to_owned())?;
+        self.check_connection(&wire, 30, format!("{org}'s teams"));
         let teams = wire.into_results(browse::wire_teams::Team::into_summary);
-        Ok(self.kept_if(first, &browse::keys::teams(org), teams).await)
+        Ok(self
+            .kept_page(first, &browse::keys::teams(org), teams)
+            .await)
     }
 
     /// A team: its members, repositories and child teams.
@@ -1732,7 +1832,7 @@ impl GitHub {
             next,
         };
         Ok(self
-            .kept_if(first, &browse::keys::advisories(repo), list)
+            .kept_page(first, &browse::keys::advisories(repo), list)
             .await)
     }
 
@@ -1878,7 +1978,7 @@ impl GitHub {
             next: next_page(page, wire.total_count),
         };
         Ok(self
-            .kept_if(page == 1, &browse::keys::workflow_runs(repo, file), runs)
+            .kept_page(page == 1, &browse::keys::workflow_runs(repo, file), runs)
             .await)
     }
 
@@ -1898,6 +1998,14 @@ impl GitHub {
             return Err(ApiError::NotFound(format!("{repo}@{rev}")));
         };
         let checks = self.all_checks(repo, commit).await?.into_checks();
+        // A full commit ID names the commit checked.
+        if rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit()) && checks.oid != rev {
+            self.doubt(format!(
+                "the checks asked for {} are for {}",
+                text_short(rev),
+                text_short(&checks.oid)
+            ));
+        }
         Ok(self
             .kept(&browse::keys::commit_checks(repo, rev), checks)
             .await)
@@ -1996,6 +2104,7 @@ impl GitHub {
                 .cloned()
                 .unwrap_or_default(),
         )?;
+        self.check_connection(&page, 25, format!("{repo}'s discussions"));
         let list = browse::DiscussionList {
             categories: {
                 let total = categories.total;
@@ -2012,7 +2121,7 @@ impl GitHub {
             results: page.into_results(w::Summary::into_summary),
         };
         Ok(self
-            .kept_if(first, &browse::keys::discussions(of, category), list)
+            .kept_page(first, &browse::keys::discussions(of, category), list)
             .await)
     }
 
@@ -2053,8 +2162,10 @@ impl GitHub {
                 )
                 .await?;
             let heads: Connection<Name> = at(&data, "/repository/heads", || repo.to_string())?;
+            self.check_connection(&heads, 100, format!("{repo}'s branches"));
             if page == 0 {
                 let tags: Connection<Name> = at(&data, "/repository/tags", || repo.to_string())?;
+                self.check_connection(&tags, 100, format!("{repo}'s tags"));
                 let tags = tags.into_results(|n| n.name);
                 (refs.tags, refs.tag_total) = (tags.items, tags.total);
             }
@@ -2077,6 +2188,17 @@ impl GitHub {
     }
 
     /// [`Self::kept`] for a list's first page; later pages aren't cached.
+    /// A list's page, checked it adds up, then kept if it's the first.
+    async fn kept_page<T: Serialize + Clone + Send + browse::Page + 'static>(
+        &self,
+        first: bool,
+        key: &str,
+        value: T,
+    ) -> T {
+        self.check_page(&value, key);
+        self.kept_if(first, key, value).await
+    }
+
     async fn kept_if<T: Serialize + Clone + Send + 'static>(
         &self,
         first: bool,
@@ -2157,6 +2279,11 @@ fn rest_page(after: Option<&str>) -> u64 {
 /// The cursor for the page after `page` of `total` items, if there is one.
 fn next_page(page: u64, total: u64) -> Option<String> {
     (page.saturating_mul(REST_PAGE) < total).then(|| page.saturating_add(1).to_string())
+}
+
+/// A commit ID shortened, as GitHub shows it.
+fn text_short(oid: &str) -> &str {
+    oid.get(..7).unwrap_or(oid)
 }
 
 /// The `after` cursor in a `Link` header's `rel="next"` URL.
