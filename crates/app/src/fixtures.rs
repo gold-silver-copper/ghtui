@@ -877,7 +877,7 @@ pub fn workflow_run() -> WorkflowRun {
 }
 
 /// A job whose test step failed, and its log.
-pub fn job() -> (Job, String) {
+pub fn job() -> (Job, ghtui_api::browse::JobLog) {
     let step = |number, name: &str, outcome, start: &str, end: &str| Step {
         number,
         name: name.into(),
@@ -930,6 +930,10 @@ pub fn job() -> (Job, String) {
     ]
     .map(|(at, line)| format!("2026-10-03T12:{at}000000Z {line}\n"))
     .concat();
+    let log = ghtui_api::browse::JobLog {
+        text: log,
+        ..Default::default()
+    };
     (job, log)
 }
 

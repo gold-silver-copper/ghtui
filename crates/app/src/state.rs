@@ -547,6 +547,9 @@ impl State {
             Need::Pr(pr) => self.ensure_pr(&pr, force),
             Need::Data(key) => {
                 let remote = self.data.entry(key.clone()).or_default();
+                // What was still running is checked again whenever it's
+                // wanted (going back to it, switching to its tab).
+                let force = force || remote.data.as_ref().is_some_and(Data::running);
                 if !remote.begin(force) {
                     return Vec::new();
                 }
@@ -1782,6 +1785,52 @@ pub(crate) mod tests {
             "{text:#?}"
         );
         assert!(!text.iter().any(|l| l.contains("Compiling")));
+    }
+
+    /// A running job, and its log (which GitHub doesn't have until the
+    /// job ends), are fetched again when their page is back on screen.
+    #[test]
+    fn a_running_jobs_log_is_checked_again() {
+        let mut s = with_repo();
+        let job_route = Route::Job {
+            repo: repo(),
+            run: Some(7),
+            job: 2,
+            step: None,
+            query: String::new(),
+        };
+        let _ = s.push(job_route);
+        let (mut job, _) = crate::fixtures::job();
+        job.outcome = ghtui_api::browse::CheckOutcome::Pending;
+        let running = ghtui_api::browse::JobLog {
+            running: true,
+            ..Default::default()
+        };
+        fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
+        fetched(
+            &mut s,
+            DataKey::JobLog(repo(), 2),
+            Data::Log(Arc::new(running)),
+        );
+        let _ = s.push(Route::Repo(repo()));
+        let fetched_keys = |cmds: Vec<Cmd>| -> Vec<DataKey> {
+            fetches(cmds)
+                .into_iter()
+                .filter_map(|c| match c {
+                    Cmd::Api(Api::Fetch { key, .. }) => Some(key),
+                    _ => None,
+                })
+                .collect()
+        };
+        let keys = fetched_keys(s.back());
+        assert!(keys.contains(&DataKey::JobLog(repo(), 2)), "{keys:?}");
+        assert!(keys.contains(&DataKey::Job(repo(), 2)), "{keys:?}");
+        // A finished one isn't.
+        let (job, log) = crate::fixtures::job();
+        fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
+        fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
+        let _ = s.push(Route::Repo(repo()));
+        assert_eq!(fetched_keys(s.back()), Vec::new());
     }
 
     /// A link to a comment opens its conversation scrolled to it.
