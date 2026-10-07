@@ -118,13 +118,13 @@ fragments! {
 fragments! {
     counted:
     LabelConnection = "LabelConnection" => Label,
+    ReviewCommentConnection = "PullRequestReviewCommentConnection" => ReviewComment,
 }
 
 // Lists of nodes, and their nodes' types.
 fragments! {
     nodes:
     CommitRollupConnection = "PullRequestCommitConnection" => CommitRollupNode,
-    ReviewCommentConnection = "PullRequestReviewCommentConnection" => ReviewComment,
     PendingReviewConnection = "PullRequestReviewConnection" => PendingReview,
     ReviewCommitConnection = "PullRequestReviewConnection" => ReviewCommit,
 }
@@ -481,7 +481,12 @@ pub struct ReviewThread {
     pub viewer_can_reply: bool,
     pub viewer_can_resolve: bool,
     pub viewer_can_unresolve: bool,
-    #[arguments(first: 100)]
+    /// The first comment: it's on the line the thread is about.
+    #[arguments(first: 1)]
+    #[cynic(rename = "comments", alias)]
+    pub first_comment: ReviewCommentConnection,
+    /// The newest replies, oldest first; with how many there are in all.
+    #[arguments(last: 99)]
     pub comments: ReviewCommentConnection,
 }
 

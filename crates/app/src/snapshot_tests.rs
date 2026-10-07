@@ -1569,10 +1569,10 @@ pub(crate) mod diff {
                 vec![
                     comment("c1", "alice", "Should this say \"2D\" or \"two-dimensional\"? The rest of the docs spell it out.", false),
                     comment("c2", "octocat", "Good point, I'll spell it out.", true),
-                ],
+                ].into(),
             ),
-            thread("t2", Some(10), true, false, vec![comment("c3", "bob", "Looks fine now.", false)]),
-            thread("t3", None, false, true, vec![comment("c4", "carol", "Please add tests for this file.", false)]),
+            thread("t2", Some(10), true, false, vec![comment("c3", "bob", "Looks fine now.", false)].into()),
+            thread("t3", None, false, true, vec![comment("c4", "carol", "Please add tests for this file.", false)].into()),
         ]);
         diff.set_review(ghtui_store::ReviewState {
             pending: vec![ghtui_store::DraftComment {

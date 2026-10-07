@@ -280,6 +280,10 @@ impl DocFile {
             for line in text::wrap(&body, wrap) {
                 self.push_thread_row(index, ThreadRowKind::Body, line);
             }
+            if c == 0 && ann.left_out > 0 {
+                let gap = format!("… {} more replies on GitHub (o)", ann.left_out);
+                self.push_thread_row(index, ThreadRowKind::Gap, gap);
+            }
         }
         if let Some(error) = &ann.error {
             for line in text::wrap(&format!("GitHub rejected this: {error}"), wrap) {
@@ -1690,6 +1694,7 @@ pub(crate) mod tests {
                     created_at: String::new(),
                     pending: false,
                 }],
+                left_out: 0,
                 error: None,
                 can_reply: true,
                 can_resolve: true,
@@ -1715,6 +1720,36 @@ pub(crate) mod tests {
             let row = line_row(file, |l| l.new == Some(5)).unwrap();
             assert!(matches!(file.rows()[row + 1], Row::Thread(_)));
             assert_eq!(doc.annotation_at(Pos { file: 0, row }), Some(0));
+        }
+
+        /// A long thread says how many replies between its first comment
+        /// and its newest weren't fetched.
+        #[test]
+        fn a_long_threads_left_out_replies_show() {
+            let mut doc = doc();
+            let mut long = ann("file", Side::Right, None);
+            long.left_out = 120;
+            doc.set_annotations(vec![long]);
+            let file = &doc.files[0];
+            let texts: Vec<(ThreadRowKind, String)> = file
+                .rows()
+                .iter()
+                .filter_map(|r| match r {
+                    Row::Thread(t) => file
+                        .thread_row(*t)
+                        .map(|t| (t.kind.clone(), t.text.clone())),
+                    _ => None,
+                })
+                .collect();
+            // After the first comment's body, before the footer.
+            assert_eq!(
+                texts.get(3),
+                Some(&(
+                    ThreadRowKind::Gap,
+                    "… 120 more replies on GitHub (o)".to_owned()
+                )),
+                "{texts:?}"
+            );
         }
 
         #[test]
