@@ -20,6 +20,7 @@ mod snapshot_tests;
 mod state;
 mod tabs;
 mod view;
+mod wiki;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

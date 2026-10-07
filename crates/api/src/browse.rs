@@ -2633,6 +2633,21 @@ impl rest_advisories::Advisory {
         }
     }
 }
+// ---- wikis -------------------------------------------------------------------------------------
+
+/// A wiki page (or, without one, the wiki's list of pages), read from
+/// the wiki's git repository.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiPage {
+    /// Its title (the file's name, without its extension).
+    pub title: Option<String>,
+    pub text: Option<String>,
+    /// Whether the text is Markdown (wikis may use other markups).
+    pub markdown: bool,
+    /// Every page's title, in order.
+    pub pages: Vec<String>,
+    pub sidebar: Option<String>,
+}
 // ---- discussions ------------------------------------------------------------------------------
 
 /// Whose discussions: a repository's, or an organization's (which GitHub

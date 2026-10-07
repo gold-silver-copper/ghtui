@@ -142,6 +142,7 @@ impl State {
             | Route::Release { repo, .. }
             | Route::Tags(repo)
             | Route::Branches(repo)
+            | Route::Wiki { repo, .. }
             | Route::Deployments { repo, .. }
             | Route::Milestones { repo, .. }
             | Route::Milestone { repo, .. }

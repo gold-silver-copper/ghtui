@@ -12,7 +12,7 @@ use ghtui_api::browse::{
     EntryKind, Gist, GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobSummary,
     MilestoneDetail, MilestoneInfo, MilestoneList, PrActivity, Profile, Release, RepoOverview,
     RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TeamDetail,
-    TeamSummary, TreeEntry, UserSummary, Workflow, WorkflowRun,
+    TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -1026,6 +1026,66 @@ pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
             let link = link_seg(page, r.clone(), r.clone(), Role::Link);
             page.wrapped(vec![link], 0, Frame::None);
         }
+    }
+}
+// ---- wikis -------------------------------------------------------------------------------------
+
+/// A wiki's `[[Page]]` and `[[Text|Page]]` links as Markdown links.
+fn wiki_links(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some((before, after)) = rest.split_once("[[")
+        && let Some((inner, tail)) = after.split_once("]]")
+    {
+        let (label, target) = inner.split_once('|').unwrap_or((inner, inner));
+        out.push_str(before);
+        out.push_str(&format!("[{label}]({})", target.trim().replace(' ', "-")));
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
+}
+/// A wiki page, then the wiki's pages and its sidebar. Without a page,
+/// just the pages.
+pub fn wiki(page: &mut Page, repo: &RepoId, w: &WikiPage) {
+    let base = LinkBase::wiki(repo);
+    if let (Some(title), Some(text)) = (&w.title, &w.text) {
+        page.wrapped(vec![Seg::new(title.clone(), Role::Title)], 0, Frame::None);
+        page.rule(0, Frame::None);
+        if w.markdown {
+            markdown::render(page, &wiki_links(text), Some(&base), Frame::None);
+        } else {
+            for line in text.lines() {
+                page.wrapped(vec![Seg::new(line.to_owned(), Role::Body)], 0, Frame::None);
+            }
+        }
+        page.blank();
+    }
+    let title = vec![Seg::new(format!("Pages  {}", w.pages.len()), Role::Strong)];
+    list_box(
+        page,
+        title,
+        Vec::new(),
+        &w.pages,
+        "No pages yet.",
+        |page, title| {
+            let target = format!(
+                "{}/wiki/{}",
+                url::repo(repo),
+                url::encode_path(&title.replace(' ', "-"))
+            );
+            item(page, target, |page, link| {
+                page.box_line(
+                    vec![Seg::linked(title.clone(), Role::Link, link)],
+                    Vec::new(),
+                    0,
+                );
+            });
+        },
+    );
+    if let Some(sidebar) = &w.sidebar {
+        page.blank();
+        markdown::render(page, &wiki_links(sidebar), Some(&base), Frame::None);
     }
 }
 // ---- teams -------------------------------------------------------------------------------------
@@ -3760,6 +3820,16 @@ pub fn home(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wiki_links_become_markdown() {
+        assert_eq!(wiki_links("See [[FAQ]]."), "See [FAQ](FAQ).");
+        assert_eq!(
+            wiki_links("[[Start here|Getting started]]"),
+            "[Start here](Getting-started)"
+        );
+        assert_eq!(wiki_links("[[unclosed"), "[[unclosed");
+    }
 
     #[test]
     fn compact_numbers() {

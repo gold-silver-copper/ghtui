@@ -9,7 +9,7 @@ use ghtui_api::browse::{
     IssueState, IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList,
     MonthActivity, PrActivity, Profile, Readme, Release, RepoOverview, RepoSummary, Results,
     ReviewSummary, RunSummary, SearchResults, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary,
-    TreeEntry, UserSummary, Week, Workflow, WorkflowRun,
+    TreeEntry, UserSummary, Week, WikiPage, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
@@ -453,6 +453,18 @@ pub fn advisories() -> Vec<Advisory> {
     low.severity = "low".into();
     low.summary = "Deep JSON bodies can crash the process".into();
     vec![advisory(), low]
+}
+/// A wiki's Home, with links to its other pages.
+pub fn wiki() -> WikiPage {
+    WikiPage {
+        title: Some("Home".into()),
+        text: Some(
+            "Welcome to the wiki.\n\nSee [Getting started](Getting-started) and [[FAQ]].".into(),
+        ),
+        markdown: true,
+        pages: vec!["FAQ".into(), "Getting started".into(), "Home".into()],
+        sidebar: Some("**[Home](Home)** · [FAQ](FAQ)".into()),
+    }
 }
 fn label(name: &str, color: &str) -> Label {
     Label {

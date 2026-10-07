@@ -304,6 +304,40 @@ impl Repo {
             merge_base: from,
         })
     }
+    /// Fetches the remote's default branch into `into` (a ref name).
+    pub async fn fetch_head(&self, into: &str) -> Result<(), GitError> {
+        let _guard = repo_lock(&self.path).lock_owned().await;
+        let refspec = format!("+HEAD:{into}");
+        let args = [
+            "fetch",
+            "--no-tags",
+            "--no-write-fetch-head",
+            &self.remote,
+            &refspec,
+        ];
+        deadline("fetch", Duration::from_secs(120), self.run(&args))
+            .await
+            .map(drop)
+    }
+
+    /// Every file's path at `rev`.
+    pub async fn file_names(&self, rev: &str) -> Result<Vec<String>, GitError> {
+        let out = self
+            .run(&["ls-tree", "-r", "-z", "--name-only", rev])
+            .await?;
+        Ok(out
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .map(str::to_owned)
+            .collect())
+    }
+
+    /// A file's text at `rev` (fetched, in a partial clone, if it isn't
+    /// here).
+    pub async fn file_text(&self, rev: &str, path: &str) -> Result<String, GitError> {
+        self.run(&["cat-file", "blob", &format!("{rev}:{path}")])
+            .await
+    }
     /// Fetches one commit by SHA (e.g. a head that was force-pushed away).
     /// GitHub serves commits it still has even when no ref points at them.
     pub async fn fetch_commit(&self, sha: &str) -> Result<(), GitError> {

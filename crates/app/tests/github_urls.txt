@@ -184,8 +184,10 @@ https://github.com/rust-lang/rust/actions                                   Acti
 https://github.com/rust-lang/rust/actions/caches                            external session
 https://github.com/rust-lang/rust/discussions                               Discussions
 https://github.com/rust-lang/rust/discussions/categories/ideas              Discussions
-https://github.com/rust-lang/rust/wiki                                      todo Wiki
-https://github.com/rust-lang/rust/wiki/Home                                 todo Wiki
+https://github.com/rust-lang/rust/wiki                                      Wiki
+https://github.com/rust-lang/rust/wiki/Home                                 Wiki
+https://github.com/rust-lang/rust/wiki/_pages                               Wiki
+https://github.com/rust-lang/rust/wiki/_new                                 external session
 https://github.com/rust-lang/rust/security                                  Advisories
 https://github.com/rust-lang/rust/security/advisories                       Advisories
 https://github.com/rust-lang/rust/pulse                                     external rare
