@@ -1,10 +1,9 @@
-//! Who wrote or committed a commit. Kept apart from the decoders so that
-//! [`Login`]'s field is private to this module: a decoder can make one only
-//! from the `user { login }` GitHub linked, not from any string at hand.
+//! Who wrote or committed a commit. A module of its own so that [`Login`]'s
+//! field is private to it: a decoder can't make one from any string at hand.
 
 use serde::{Deserialize, Serialize};
 
-use crate::browse::{GitActor, UserLogin};
+use crate::browse::GitActor;
 
 /// Who wrote or committed a commit, as GitHub knows them. Kept externally
 /// tagged in the cache: a login and a git name must not read back alike.
@@ -13,14 +12,13 @@ pub enum Person {
     /// The account GitHub linked to the commit's email: the only kind of
     /// person a profile link may be built from.
     User(Login),
-    /// Only git's name for them, with no account behind it. Never a URL.
+    /// Only git's name for them, with no account behind it.
     Git(String),
     /// No author, or an empty name.
     Unknown,
 }
 
 impl Person {
-    /// The login, when GitHub linked an account.
     pub fn login(&self) -> Option<&str> {
         match self {
             Person::User(Login(login)) => Some(login),
@@ -37,9 +35,9 @@ impl Person {
     }
 }
 
-/// A login GitHub gave for a commit's account. Made only from GitHub's
-/// [`UserLogin`], by [`Login::unchecked`], or read back from the cache
-/// (`Deserialize`, which only the store should use).
+/// The login GitHub linked to a commit's email. Made only from a
+/// [`GitActor`]'s `user`, by [`Login::unchecked`], or read back from the
+/// cache (`Deserialize`, which only the store should use).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Login(String);
 
@@ -50,16 +48,10 @@ impl Login {
     }
 }
 
-impl From<UserLogin> for Login {
-    fn from(user: UserLogin) -> Login {
-        Login(user.login)
-    }
-}
-
 impl From<Option<GitActor>> for Person {
     fn from(actor: Option<GitActor>) -> Person {
         match actor {
-            Some(GitActor { user: Some(u), .. }) => Person::User(u.into()),
+            Some(GitActor { user: Some(u), .. }) => Person::User(Login(u.login)),
             Some(GitActor { name: Some(n), .. }) if !n.is_empty() => Person::Git(n),
             _ => Person::Unknown,
         }
