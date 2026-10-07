@@ -315,16 +315,32 @@ async fn fetches_and_caches_pull_request() {
 async fn a_root_nulled_by_a_timeout_says_githubs_message_once() {
     let timeout =
         "Something went wrong while executing your query. This may be the result of a timeout.";
-    let (gh, _) = github(vec![Reply::new(
-        200,
-        format!(
-            r#"{{"data":{{"repository":{{"pullRequest":null}},"rateLimit":null}},
-            "errors":[{{"path":["repository","pullRequest"],"message":"{timeout}"}}]}}"#
+    let (gh, _) = github(vec![
+        Reply::new(
+            200,
+            format!(
+                r#"{{"data":{{"repository":{{"pullRequest":null}},"rateLimit":null}},
+                "errors":[{{"path":["repository","pullRequest"],"message":"{timeout}"}}]}}"#
+            ),
         ),
-    )])
+        // A sibling root's NOT_FOUND (a user's login isn't an organization)
+        // doesn't make the timed-out user not found.
+        Reply::new(
+            200,
+            format!(
+                r#"{{"data":{{"user":null,"organization":null,"user_readme":null,"org_readme":null}},
+                "errors":[{{"path":["user"],"message":"{timeout}"}},
+                          {{"type":"NOT_FOUND","path":["organization"],"message":"Could not resolve to an Organization with the login of 'u'."}}]}}"#
+            ),
+        ),
+    ])
     .await;
     let pr = PrRef::parse("o/r#9").unwrap();
     match gh.pull_request(&pr).await {
+        Err(ApiError::GraphQl(errors)) => assert_eq!(errors, [timeout]),
+        other => panic!("{other:?}"),
+    }
+    match gh.profile("u").await {
         Err(ApiError::GraphQl(errors)) => assert_eq!(errors, [timeout]),
         other => panic!("{other:?}"),
     }
