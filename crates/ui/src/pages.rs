@@ -300,6 +300,25 @@ fn list_box<T>(
     page.box_bottom();
 }
 
+/// A page of a list in a box: `title`, the items (or `empty`), and "Load
+/// more" while there's more.
+fn paged_box<T>(
+    page: &mut Page,
+    title: Vec<Seg>,
+    right: Vec<Seg>,
+    list: &Results<T>,
+    empty: &str,
+    row: impl FnMut(&mut Page, &T),
+) {
+    page.box_top(title, right);
+    if list.items.is_empty() {
+        empty_row(page, empty);
+    }
+    box_rows(page, &list.items, row);
+    more_row(page, list.next.is_some(), list.items.len(), list.total);
+    page.box_bottom();
+}
+
 /// `prefix` then `segs` wrapped inside a box, continuation lines aligned
 /// after the prefix.
 fn hanging(page: &mut Page, prefix: Seg, segs: Vec<Seg>, frame: Frame) {
@@ -1161,16 +1180,14 @@ pub fn teams(page: &mut Page, org: &str, list: Option<&Results<TeamSummary>>) {
         format!("Teams  {}", compact(l.total)),
         Role::Strong,
     )];
-    page.box_top(title, Vec::new());
-    if l.items.is_empty() {
-        empty_row(
-            page,
-            "No teams you can see: an organization's teams show to its members.",
-        );
-    }
-    box_rows(page, &l.items, |page, t| team_row(page, org, t));
-    more_row(page, l.next.is_some(), l.items.len(), l.total);
-    page.box_bottom();
+    paged_box(
+        page,
+        title,
+        Vec::new(),
+        l,
+        "No teams you can see: an organization's teams show to its members.",
+        |page, t| team_row(page, org, t),
+    );
 }
 
 /// A team: its description and parent, then its members, repositories
@@ -1340,11 +1357,7 @@ pub fn gists(page: &mut Page, login: &str, list: Option<&Results<GistSummary>>, 
         format!("Gists  {}", compact(l.total)),
         Role::Strong,
     )];
-    page.box_top(title, Vec::new());
-    if l.items.is_empty() {
-        empty_row(page, "No public gists.");
-    }
-    box_rows(page, &l.items, |page, g| {
+    paged_box(page, title, Vec::new(), l, "No public gists.", |page, g| {
         item(page, format!("{GIST}/{login}/{}", g.id), |page, link| {
             let name = g.files.first().cloned().unwrap_or_else(|| g.id.clone());
             let right = vec![Seg::new(time::ago_iso(&g.updated_at, now), Role::Meta)];
@@ -1361,8 +1374,6 @@ pub fn gists(page: &mut Page, login: &str, list: Option<&Results<GistSummary>>, 
             body(page, vec![Seg::new(meta, Role::Meta)]);
         });
     });
-    more_row(page, l.next.is_some(), l.items.len(), l.total);
-    page.box_bottom();
 }
 // ---- lists --------------------------------------------------------------------------
 
@@ -1500,13 +1511,14 @@ pub fn people_list(page: &mut Page, title: &str, people: Option<&Results<UserSum
         return;
     };
     let title = format!("{title}  {}", compact(r.total));
-    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
-    if r.items.is_empty() {
-        empty_row(page, "Nobody here yet.");
-    }
-    box_rows(page, &r.items, user_row);
-    more_row(page, r.next.is_some(), r.items.len(), r.total);
-    page.box_bottom();
+    paged_box(
+        page,
+        vec![Seg::new(title, Role::Strong)],
+        Vec::new(),
+        r,
+        "Nobody here yet.",
+        user_row,
+    );
 }
 
 /// A list of repositories (forks…) that loads more.
@@ -1530,15 +1542,9 @@ fn repo_list_box(
         page.line(vec![Seg::new("Loading…", Role::Meta)]);
         return;
     };
-    page.box_top(title, right);
-    if r.items.is_empty() {
-        empty_row(page, empty);
-    }
-    box_rows(page, &r.items, |page, repo| {
+    paged_box(page, title, right, r, empty, |page, repo| {
         repo_row(page, repo, now, show_owner);
     });
-    more_row(page, r.next.is_some(), r.items.len(), r.total);
-    page.box_bottom();
 }
 
 fn more_row(page: &mut Page, next: bool, shown: usize, total: u64) {
@@ -2808,11 +2814,7 @@ pub fn workflow(
         format!("Runs  {}", compact(r.total)),
         Role::Strong,
     )];
-    page.box_top(title, Vec::new());
-    if r.items.is_empty() {
-        empty_row(page, "No runs yet.");
-    }
-    box_rows(page, &r.items, |page, run| {
+    paged_box(page, title, Vec::new(), r, "No runs yet.", |page, run| {
         item(
             page,
             format!("{}/actions/runs/{}", url::repo(repo), run.id),
@@ -2845,8 +2847,6 @@ pub fn workflow(
             },
         );
     });
-    more_row(page, r.next.is_some(), r.items.len(), r.total);
-    page.box_bottom();
 }
 
 /// A commit's checks.
@@ -2896,32 +2896,33 @@ pub fn discussions(
         format!("Discussions  {}", compact(r.total)),
         Role::Strong,
     )];
-    page.box_top(title, Vec::new());
-    if r.items.is_empty() {
-        empty_row(page, "No discussions yet.");
-    }
-    box_rows(page, &r.items, |page, d| {
-        item(page, format!("{base}/{}", d.number), |page, link| {
-            let mut segs = vec![Seg::linked(d.title.clone(), Role::Strong, link)];
-            if d.answered {
-                segs.push(space());
-                segs.push(chip("✓ Answered", Bg::SuccessContainer));
-            }
-            body(page, segs);
-            let meta = format!(
-                "#{} · {} · {} · {} · ▲ {} · updated {}",
-                d.number,
-                d.category,
-                d.author,
-                plural(d.comments, "comment"),
-                d.upvotes,
-                time::ago_iso(&d.updated_at, now)
-            );
-            body(page, vec![Seg::new(meta, Role::Meta)]);
-        });
-    });
-    more_row(page, r.next.is_some(), r.items.len(), r.total);
-    page.box_bottom();
+    paged_box(
+        page,
+        title,
+        Vec::new(),
+        r,
+        "No discussions yet.",
+        |page, d| {
+            item(page, format!("{base}/{}", d.number), |page, link| {
+                let mut segs = vec![Seg::linked(d.title.clone(), Role::Strong, link)];
+                if d.answered {
+                    segs.push(space());
+                    segs.push(chip("✓ Answered", Bg::SuccessContainer));
+                }
+                body(page, segs);
+                let meta = format!(
+                    "#{} · {} · {} · {} · ▲ {} · updated {}",
+                    d.number,
+                    d.category,
+                    d.author,
+                    plural(d.comments, "comment"),
+                    d.upvotes,
+                    time::ago_iso(&d.updated_at, now)
+                );
+                body(page, vec![Seg::new(meta, Role::Meta)]);
+            });
+        },
+    );
 }
 
 /// A discussion: its post, then its comments (the answer marked) with their
@@ -3043,20 +3044,21 @@ pub fn releases(page: &mut Page, repo: &RepoId, list: Option<&Results<Release>>,
         return;
     };
     let title = format!("Releases  {}", compact(l.total));
-    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
-    if l.items.is_empty() {
-        empty_row(page, "No releases yet.");
-    }
-    box_rows(page, &l.items, |page, r| {
-        item(page, url::release(repo, &r.tag), |page, link| {
-            let mut segs = vec![Seg::linked(r.name.clone(), Role::Link, link)];
-            release_chips(&mut segs, r);
-            body(page, segs);
-            body(page, vec![Seg::new(release_meta(r, now), Role::Meta)]);
-        });
-    });
-    more_row(page, l.next.is_some(), l.items.len(), l.total);
-    page.box_bottom();
+    paged_box(
+        page,
+        vec![Seg::new(title, Role::Strong)],
+        Vec::new(),
+        l,
+        "No releases yet.",
+        |page, r| {
+            item(page, url::release(repo, &r.tag), |page, link| {
+                let mut segs = vec![Seg::linked(r.name.clone(), Role::Link, link)];
+                release_chips(&mut segs, r);
+                body(page, segs);
+                body(page, vec![Seg::new(release_meta(r, now), Role::Meta)]);
+            });
+        },
+    );
 }
 
 /// A release: its notes and its assets (downloads stay on GitHub).
@@ -3124,31 +3126,32 @@ pub fn tags(page: &mut Page, repo: &RepoId, list: Option<&Results<TagInfo>>, now
         return;
     };
     let title = format!("Tags  {}", compact(l.total));
-    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
-    if l.items.is_empty() {
-        empty_row(page, "No tags yet.");
-    }
-    box_rows(page, &l.items, |page, t| {
-        item(page, url::tree(repo, &t.name, ""), |page, link| {
-            let mut right = Vec::new();
-            if let Some(date) = &t.date {
-                right.push(Seg::new(time::ago_iso(date, now), Role::Meta));
-            }
-            if let Some(oid) = &t.oid {
-                right.push(Seg::new(
-                    format!("  {}", crate::text::short_sha(oid)),
-                    Role::Code,
-                ));
-            }
-            page.box_line(
-                vec![Seg::linked(t.name.clone(), Role::Link, link)],
-                right,
-                0,
-            );
-        });
-    });
-    more_row(page, l.next.is_some(), l.items.len(), l.total);
-    page.box_bottom();
+    paged_box(
+        page,
+        vec![Seg::new(title, Role::Strong)],
+        Vec::new(),
+        l,
+        "No tags yet.",
+        |page, t| {
+            item(page, url::tree(repo, &t.name, ""), |page, link| {
+                let mut right = Vec::new();
+                if let Some(date) = &t.date {
+                    right.push(Seg::new(time::ago_iso(date, now), Role::Meta));
+                }
+                if let Some(oid) = &t.oid {
+                    right.push(Seg::new(
+                        format!("  {}", crate::text::short_sha(oid)),
+                        Role::Code,
+                    ));
+                }
+                page.box_line(
+                    vec![Seg::linked(t.name.clone(), Role::Link, link)],
+                    right,
+                    0,
+                );
+            });
+        },
+    );
 }
 
 /// A repository's branches by name: each one's latest commit and pull
@@ -3165,50 +3168,51 @@ pub fn branches(
         return;
     };
     let title = format!("Branches  {}", compact(l.total));
-    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
-    if l.items.is_empty() {
-        empty_row(page, "No branches.");
-    }
-    box_rows(page, &l.items, |page, b| {
-        item(page, url::tree(repo, &b.name, ""), |page, link| {
-            let mut segs = vec![Seg::linked(b.name.clone(), Role::Link, link)];
-            if b.default {
-                segs.push(space());
-                segs.push(chip("Default", Bg::SecondaryContainer));
-            }
-            let mut right = Vec::new();
-            if let Some((number, state)) = b.pr {
-                let (icon, role) = issue_icon(icons, state, true);
-                right.push(Seg::new(format!("{icon} "), role));
-                right.push(link_seg(
-                    page,
-                    format!("#{number}"),
-                    url::pull(&PrRef {
-                        repo: repo.clone(),
-                        number,
-                    }),
-                    Role::Link,
-                ));
-                right.push(Seg::new("  ", Role::Meta));
-            }
-            if let Some(date) = &b.date {
-                right.push(Seg::new(time::ago_iso(date, now), Role::Meta));
-            }
-            page.box_line(segs, right, 0);
-            let mut meta = Vec::new();
-            if let Some(oid) = &b.oid {
-                let sha = crate::text::short_sha(oid);
-                meta.push(link_seg(page, sha, url::commit(repo, oid), Role::Code));
-                meta.push(Seg::new(" ", Role::Meta));
-            }
-            let what = [b.headline.as_deref(), b.author.as_deref()];
-            let text = what.into_iter().flatten().collect::<Vec<_>>().join(" · ");
-            meta.push(Seg::new(text, Role::Meta));
-            body(page, meta);
-        });
-    });
-    more_row(page, l.next.is_some(), l.items.len(), l.total);
-    page.box_bottom();
+    paged_box(
+        page,
+        vec![Seg::new(title, Role::Strong)],
+        Vec::new(),
+        l,
+        "No branches.",
+        |page, b| {
+            item(page, url::tree(repo, &b.name, ""), |page, link| {
+                let mut segs = vec![Seg::linked(b.name.clone(), Role::Link, link)];
+                if b.default {
+                    segs.push(space());
+                    segs.push(chip("Default", Bg::SecondaryContainer));
+                }
+                let mut right = Vec::new();
+                if let Some((number, state)) = b.pr {
+                    let (icon, role) = issue_icon(icons, state, true);
+                    right.push(Seg::new(format!("{icon} "), role));
+                    right.push(link_seg(
+                        page,
+                        format!("#{number}"),
+                        url::pull(&PrRef {
+                            repo: repo.clone(),
+                            number,
+                        }),
+                        Role::Link,
+                    ));
+                    right.push(Seg::new("  ", Role::Meta));
+                }
+                if let Some(date) = &b.date {
+                    right.push(Seg::new(time::ago_iso(date, now), Role::Meta));
+                }
+                page.box_line(segs, right, 0);
+                let mut meta = Vec::new();
+                if let Some(oid) = &b.oid {
+                    let sha = crate::text::short_sha(oid);
+                    meta.push(link_seg(page, sha, url::commit(repo, oid), Role::Code));
+                    meta.push(Seg::new(" ", Role::Meta));
+                }
+                let what = [b.headline.as_deref(), b.author.as_deref()];
+                let text = what.into_iter().flatten().collect::<Vec<_>>().join(" · ");
+                meta.push(Seg::new(text, Role::Meta));
+                body(page, meta);
+            });
+        },
+    );
 }
 // ---- comparisons ------------------------------------------------------------------------------
 
@@ -3326,11 +3330,7 @@ pub fn deployments(
         format!("Deployments  {}", compact(r.total)),
         Role::Strong,
     )];
-    page.box_top(title, Vec::new());
-    if r.items.is_empty() {
-        empty_row(page, "No deployments.");
-    }
-    box_rows(page, &r.items, |page, d| {
+    paged_box(page, title, Vec::new(), r, "No deployments.", |page, d| {
         let target = d
             .log_url
             .clone()
@@ -3366,8 +3366,6 @@ pub fn deployments(
             body(page, meta);
         });
     });
-    more_row(page, r.next.is_some(), r.items.len(), r.total);
-    page.box_bottom();
 }
 // ---- milestones -------------------------------------------------------------------------------
 
@@ -3432,11 +3430,7 @@ pub fn milestones(
         format!("Milestones  {}", compact(r.total)),
         Role::Strong,
     )];
-    page.box_top(title, Vec::new());
-    if r.items.is_empty() {
-        empty_row(page, "No milestones.");
-    }
-    box_rows(page, &r.items, |page, m| {
+    paged_box(page, title, Vec::new(), r, "No milestones.", |page, m| {
         let target = format!("{}/milestone/{}", url::repo(repo), m.number);
         item(page, target, |page, link| {
             let right = vec![Seg::new(due(m), Role::Meta)];
@@ -3456,8 +3450,6 @@ pub fn milestones(
             }
         });
     });
-    more_row(page, r.next.is_some(), r.items.len(), r.total);
-    page.box_bottom();
 }
 
 /// A milestone: how far along it is, its description, and its issues and
