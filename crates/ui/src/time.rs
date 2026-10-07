@@ -1,12 +1,35 @@
 //! Relative times from GitHub's ISO 8601 timestamps, without a date library.
 
-/// Parses `YYYY-MM-DDTHH:MM:SSZ` (GitHub always returns UTC) to Unix seconds.
+/// Parses `YYYY-MM-DDTHH:MM:SS`, with optional fractional seconds, then
+/// `Z` or an offset (`+05:30`, `-0700`), to Unix seconds. GraphQL returns
+/// UTC, but REST doesn't always: commit search gives the committer's zone.
 fn parse_iso8601(s: &str) -> Option<u64> {
     let shape = matches!(
         s.as_bytes(),
-        [_, _, _, _, b'-', _, _, b'-', _, _, b'T', _, _, b':', ..]
+        [
+            _,
+            _,
+            _,
+            _,
+            b'-',
+            _,
+            _,
+            b'-',
+            _,
+            _,
+            b'T',
+            _,
+            _,
+            b':',
+            _,
+            _,
+            b':',
+            _,
+            _,
+            ..
+        ]
     );
-    if s.len() < 20 || !shape {
+    if !shape {
         return None;
     }
     let num = |range: std::ops::Range<usize>| s.get(range)?.parse::<i64>().ok();
@@ -15,8 +38,28 @@ fn parse_iso8601(s: &str) -> Option<u64> {
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
+    let zone = s
+        .get(19..)?
+        .trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
+    let offset = match zone.as_bytes() {
+        [b'Z'] => 0,
+        [sign @ (b'+' | b'-'), ..] => {
+            let digits: String = zone.chars().skip(1).filter(|c| *c != ':').collect();
+            let (h, m) = (digits.get(0..2)?, digits.get(2..4)?);
+            if digits.len() != 4 {
+                return None;
+            }
+            let minutes = h.parse::<i64>().ok()? * 60 + m.parse::<i64>().ok()?;
+            if *sign == b'+' {
+                minutes * 60
+            } else {
+                -minutes * 60
+            }
+        }
+        _ => return None,
+    };
     let days = days_from_civil(year, month, day);
-    u64::try_from(days * 86_400 + hour * 3600 + min * 60 + sec).ok()
+    u64::try_from(days * 86_400 + hour * 3600 + min * 60 + sec - offset).ok()
 }
 
 /// Days since 1970-01-01 (Howard Hinnant's algorithm).
@@ -88,6 +131,37 @@ mod tests {
         assert_eq!(parse_iso8601("2026-10-03T12:34:56Z"), Some(1_791_030_896));
         assert_eq!(parse_iso8601("not a date"), None);
         assert_eq!(parse_iso8601("2026-13-01T00:00:00Z"), None);
+    }
+
+    /// Offsets, fractions and day boundaries: every form is the same
+    /// instant (2026-10-03T12:34:56Z).
+    #[test]
+    fn parses_offsets_and_fractions() {
+        let utc = Some(1_791_030_896);
+        for s in [
+            "2026-10-03T12:34:56Z",
+            "2026-10-03T12:34:56.000Z",
+            "2026-10-03T12:34:56.123456Z",
+            "2026-10-03T05:34:56-07:00",
+            "2026-10-03T05:34:56.000-07:00",
+            "2026-10-03T18:04:56+05:30",
+            "2026-10-03T18:04:56+0530",
+            "2026-10-04T01:34:56+13:00",
+            "2026-10-02T23:34:56-13:00",
+        ] {
+            assert_eq!(parse_iso8601(s), utc, "{s}");
+        }
+        assert_eq!(
+            parse_iso8601("2027-01-01T00:30:00+01:00"),
+            parse_iso8601("2026-12-31T23:30:00Z")
+        );
+        for bad in [
+            "2026-10-03T12:34:56",
+            "2026-10-03T12:34:56+7",
+            "2026-10-03T12:34:56 UTC",
+        ] {
+            assert_eq!(parse_iso8601(bad), None, "{bad}");
+        }
     }
 
     #[test]
