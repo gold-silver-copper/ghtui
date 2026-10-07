@@ -2759,8 +2759,6 @@ impl wire_deployments::Deployment {
 /// the diff between them is from and to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Comparison {
-    /// `diverged`, `ahead`, `behind`, `identical`.
-    pub status: String,
     pub ahead: u64,
     pub behind: u64,
     pub total_commits: u64,
@@ -2808,7 +2806,6 @@ pub(crate) mod rest_compare {
         /// `…/compare/owner:bcf4368...owner:efd1e47`.
         #[serde(default)]
         pub permalink_url: String,
-        pub status: String,
         pub ahead_by: u64,
         pub behind_by: u64,
         pub total_commits: u64,
@@ -2835,7 +2832,6 @@ impl rest_compare::Compare {
             self.merge_base_commit.sha
         };
         Comparison {
-            status: self.status,
             ahead: self.ahead_by,
             behind: self.behind_by,
             total_commits: self.total_commits,
@@ -3160,6 +3156,17 @@ pub struct AdvisoryPackage {
     pub patched: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Low,
+    Medium,
+    High,
+    Critical,
+    #[serde(other)]
+    Unknown,
+}
+
 /// A security advisory: GitHub's reviewed database's, or a repository's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Advisory {
@@ -3167,8 +3174,7 @@ pub struct Advisory {
     pub cve: Option<String>,
     pub summary: String,
     pub description: String,
-    /// `low`, `medium`, `high`, `critical`.
-    pub severity: String,
+    pub severity: Severity,
     pub published_at: Option<String>,
     pub updated_at: Option<String>,
     pub withdrawn_at: Option<String>,
@@ -3224,7 +3230,7 @@ pub(crate) mod rest_advisories {
         pub cve_id: Option<String>,
         pub summary: String,
         pub description: Option<String>,
-        pub severity: Option<String>,
+        pub severity: Option<super::Severity>,
         pub published_at: Option<String>,
         pub updated_at: Option<String>,
         pub withdrawn_at: Option<String>,
@@ -3247,7 +3253,7 @@ impl rest_advisories::Advisory {
             cve: self.cve_id,
             summary: self.summary,
             description: self.description.unwrap_or_default(),
-            severity: self.severity.unwrap_or_else(|| "unknown".into()),
+            severity: self.severity.unwrap_or(Severity::Unknown),
             published_at: self.published_at,
             updated_at: self.updated_at,
             withdrawn_at: self.withdrawn_at,
