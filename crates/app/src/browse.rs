@@ -454,7 +454,7 @@ macro_rules! picked {
         impl Picked for $t {
             fn pick(data: &Data) -> Option<&Self> {
                 match data {
-                    Data::$variant(x) => Some(&**x),
+                    Data::$variant(x) => Some(std::borrow::Borrow::borrow(x)),
                     _ => None,
                 }
             }
@@ -463,8 +463,9 @@ macro_rules! picked {
 }
 
 picked!(
-    Repo => RepoOverview, Tree => [TreeEntry], Blob => Blob, Search => SearchResults,
-    PrActivity => PrActivity, Profile => Profile, Repos => [RepoSummary], Refs => Refs,
+    Repo => RepoOverview, Readme => Option<Box<Readme>>, Tree => [TreeEntry], Blob => Blob,
+    Search => SearchResults, Issue => Option<Box<IssueDetail>>, PrActivity => PrActivity,
+    Profile => Profile, Repos => [RepoSummary], Refs => Refs,
     LastCommits => HashMap<String, CommitInfo>, Commit => CommitDetail,
     History => Results<CommitInfo>, Checks => Checks, Users => Results<UserSummary>,
     RepoPage => Results<RepoSummary>, Releases => Results<Release>,
@@ -476,26 +477,6 @@ picked!(
     Gists => Results<GistSummary>, Blame => Blame, Compare => Comparison,
     Deployments => DeploymentList, Milestones => MilestoneList, Milestone => MilestoneDetail,
 );
-
-/// A README, or `None` when there's none.
-impl Picked for Option<Box<Readme>> {
-    fn pick(data: &Data) -> Option<&Self> {
-        match data {
-            Data::Readme(readme) => Some(readme),
-            _ => None,
-        }
-    }
-}
-
-/// An issue, or `None` while redirecting to the pull request it is.
-impl Picked for Option<Box<IssueDetail>> {
-    fn pick(data: &Data) -> Option<&Self> {
-        match data {
-            Data::Issue(issue) => Some(issue),
-            _ => None,
-        }
-    }
-}
 
 /// A page's needs as the page shows them, failing with the key that
 /// tries again.
