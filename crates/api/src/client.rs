@@ -1190,8 +1190,9 @@ impl GitHub {
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "rev": rev }),
             )
             .await?;
+        let commit: Value = at(&data, "/repository/object", || format!("{repo}@{rev}"))?;
         for (i, name) in names.iter().enumerate() {
-            let node = data.pointer(&format!("/repository/object/e{i}/nodes/0"));
+            let node = commit.pointer(&format!("/e{i}/nodes/0"));
             let Some(node) = node.filter(|n| !n.is_null()) else {
                 continue;
             };
@@ -2076,11 +2077,8 @@ impl GitHub {
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "category": category_id }),
             )
             .await?;
-        let page: browse::wire::Connection<w::Summary> = serde_json::from_value(
-            data.pointer("/repository/discussions")
-                .cloned()
-                .unwrap_or_default(),
-        )?;
+        let page: browse::wire::Connection<w::Summary> =
+            at(&data, "/repository/discussions", || repo.to_string())?;
         self.check_connection(&page, 25, format!("{repo}'s discussions"));
         let list = browse::DiscussionList {
             categories: categories.map(|c| browse::DiscussionCategory {
