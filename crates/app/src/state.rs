@@ -1694,6 +1694,42 @@ pub(crate) mod tests {
         }
     }
 
+    /// `/` on a job filters its log: only the lines with what's typed, in
+    /// every step.
+    #[test]
+    fn a_jobs_log_filters() {
+        let mut s = with_repo();
+        let job_route = Route::Job {
+            repo: repo(),
+            run: Some(7),
+            job: 2,
+            step: None,
+            query: String::new(),
+        };
+        let _ = s.push(job_route);
+        let (job, log) = crate::fixtures::job();
+        fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
+        fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
+        press(&mut s, "/");
+        press(&mut s, "Syncing");
+        press(&mut s, "<Enter>");
+        assert!(matches!(route(&s), Route::Job { query, .. } if query == "Syncing"));
+        let Screen::Page(p) = s.screen() else {
+            panic!()
+        };
+        let text: Vec<String> = p
+            .page
+            .lines
+            .iter()
+            .map(|l| l.segs.iter().map(|s| s.text.as_str()).collect())
+            .collect();
+        assert!(
+            text.iter().any(|l| l.contains("Syncing repository")),
+            "{text:#?}"
+        );
+        assert!(!text.iter().any(|l| l.contains("Compiling")));
+    }
+
     /// People and repository lists load more like any list.
     #[test]
     fn every_list_appends_its_next_page() {

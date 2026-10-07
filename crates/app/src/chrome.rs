@@ -88,7 +88,7 @@ impl State {
                     DiffOf::Pr(pr) => pr,
                     DiffOf::Commit(repo, oid) => {
                         self.commit_tabs(repo, oid, &mut c);
-                        c.active = Some(1);
+                        c.active = Some(2);
                         return c;
                     }
                 };
@@ -133,6 +133,9 @@ impl State {
             | Route::Releases(repo)
             | Route::Release { repo, .. }
             | Route::Tags(repo)
+            | Route::WorkflowRun { repo, .. }
+            | Route::Job { repo, .. }
+            | Route::Workflow { repo, .. }
             | Route::Actions(repo) => {
                 repo_crumbs(repo, c);
                 self.repo_tabs(repo, c);
@@ -140,7 +143,10 @@ impl State {
                 c.active = Some(match route {
                     Route::Issues { .. } | Route::Issue { .. } => 1,
                     Route::Pulls { .. } => pulls,
-                    Route::Actions(_) => pulls + 1,
+                    Route::Actions(_)
+                    | Route::WorkflowRun { .. }
+                    | Route::Job { .. }
+                    | Route::Workflow { .. } => pulls + 1,
                     _ => 0,
                 });
             }
@@ -154,10 +160,10 @@ impl State {
                 });
                 c.title = Some(pr.clone());
             }
-            Route::Commit { repo, oid } => {
+            Route::Commit { repo, oid } | Route::CommitChecks { repo, oid } => {
                 repo_crumbs(repo, c);
                 self.commit_tabs(repo, oid, c);
-                c.active = Some(0);
+                c.active = Some(usize::from(matches!(route, Route::CommitChecks { .. })));
             }
             Route::User { login, tab } => {
                 c.crumb(login, None);
@@ -318,6 +324,13 @@ impl State {
         c.tabs.push((
             new_tab("◷", "Commit", None),
             Target::Page(Route::Commit {
+                repo: repo.clone(),
+                oid: full.to_owned(),
+            }),
+        ));
+        c.tabs.push((
+            new_tab("✓", "Checks", None),
+            Target::Page(Route::CommitChecks {
                 repo: repo.clone(),
                 oid: full.to_owned(),
             }),

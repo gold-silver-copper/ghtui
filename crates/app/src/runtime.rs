@@ -741,6 +741,23 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
             Data::Release(Box::new(v))
         }),
         DataKey::Tags(repo) => at(gh.cached(&keys::tags(repo))?, |v| Data::Tags(Box::new(v))),
+        DataKey::Run(repo, run, attempt) => at(gh.cached(&keys::run(repo, *run, *attempt))?, |v| {
+            Data::Run(Box::new(v))
+        }),
+        DataKey::Job(repo, job) => at(gh.cached(&keys::job(repo, *job))?, |v| {
+            Data::Job(Box::new(v))
+        }),
+        DataKey::Workflow(repo, file) => at(gh.cached(&keys::workflow(repo, file))?, |v| {
+            Data::Workflow(Box::new(v))
+        }),
+        DataKey::WorkflowRuns(repo, file) => {
+            at(gh.cached(&keys::workflow_runs(repo, file))?, |v| {
+                Data::Runs(Box::new(v))
+            })
+        }
+        DataKey::CommitChecks(repo, oid) => at(gh.cached(&keys::commit_checks(repo, oid))?, |v| {
+            Data::Checks(Box::new(v))
+        }),
         DataKey::BranchChecks(repo) => at(gh.cached(&keys::branch_checks(repo))?, |v| {
             Data::Checks(Box::new(v))
         }),
@@ -753,7 +770,7 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
             })
         }
         // Files aren't cached; they can be large.
-        DataKey::Blob(..) | DataKey::Files(..) => return None,
+        DataKey::Blob(..) | DataKey::Files(..) | DataKey::JobLog(..) => return None,
     })
 }
 
@@ -774,6 +791,9 @@ async fn fetch_more(gh: &GitHub, key: &DataKey, after: String) -> Result<Data, A
         DataKey::Stars(login) => Data::RepoPage(Box::new(gh.starred(login, Some(after)).await?)),
         DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, Some(after)).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, Some(after)).await?)),
+        DataKey::WorkflowRuns(repo, file) => {
+            Data::Runs(Box::new(gh.workflow_runs(repo, file, Some(after)).await?))
+        }
         other => return Err(ApiError::NotFound(format!("more of {other:?}"))),
     })
 }
@@ -806,6 +826,18 @@ pub(crate) async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> 
         DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, None).await?)),
         DataKey::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, None).await?)),
+        DataKey::Run(repo, run, attempt) => {
+            Data::Run(Box::new(gh.workflow_run(repo, *run, *attempt).await?))
+        }
+        DataKey::Job(repo, job) => Data::Job(Box::new(gh.job(repo, *job).await?)),
+        DataKey::JobLog(repo, job) => Data::Log(Arc::new(gh.job_log(repo, *job).await?)),
+        DataKey::Workflow(repo, file) => Data::Workflow(Box::new(gh.workflow(repo, file).await?)),
+        DataKey::WorkflowRuns(repo, file) => {
+            Data::Runs(Box::new(gh.workflow_runs(repo, file, None).await?))
+        }
+        DataKey::CommitChecks(repo, oid) => {
+            Data::Checks(Box::new(gh.commit_checks(repo, oid).await?))
+        }
         DataKey::BranchChecks(repo) => Data::Checks(Box::new(gh.branch_checks(repo).await?)),
         DataKey::History(repo, rev, path) => {
             Data::History(Box::new(gh.history(repo, rev, path, None).await?))

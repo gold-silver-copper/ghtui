@@ -8,8 +8,9 @@ use std::collections::HashMap;
 
 use ghtui_api::browse::{
     Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, Contributions,
-    EntryKind, IssueDetail, IssueState, IssueSummary, PrActivity, Profile, Release, RepoOverview,
-    RepoSort, RepoSummary, Results, SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary,
+    EntryKind, IssueDetail, IssueState, IssueSummary, Job, JobSummary, PrActivity, Profile,
+    Release, RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults,
+    TagInfo, TreeEntry, UserSummary, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -1713,6 +1714,390 @@ fn check_row(page: &mut Page, check: &CheckItem, now: u64) {
         Some(url) => item(page, url.clone(), |page, link| row(page, Some(link))),
         None => row(page, None),
     }
+}
+
+// ---- actions ----------------------------------------------------------------------------------
+
+/// How long something took, or how long ago it started while it runs.
+fn took(
+    start: Option<&String>,
+    end: Option<&String>,
+    outcome: CheckOutcome,
+    now: u64,
+) -> Option<String> {
+    match (start, end, outcome) {
+        (Some(s), Some(e), _) => time::duration_iso(s, e),
+        (Some(s), None, CheckOutcome::Pending) => {
+            Some(format!("started {}", time::ago_iso(s, now)))
+        }
+        _ => None,
+    }
+}
+
+fn outcome_title(page: &mut Page, title: String, outcome: CheckOutcome) {
+    let (mark, role) = outcome_mark(outcome);
+    page.wrapped(
+        vec![
+            Seg::new(format!("{mark} "), role),
+            Seg::new(title, Role::Title),
+        ],
+        0,
+        Frame::None,
+    );
+}
+
+/// A workflow run: what it ran for, and its jobs, failures first. Re-runs
+/// and cancelling write, so they stay on GitHub.
+pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64) {
+    outcome_title(page, format!("{} #{}", run.name, run.number), run.outcome);
+    if !run.title.is_empty() {
+        page.wrapped(
+            vec![Seg::new(run.title.clone(), Role::Body)],
+            0,
+            Frame::None,
+        );
+    }
+    let mut meta = vec![Seg::new(format!("{} · ", run.event), Role::Meta)];
+    if let Some(branch) = &run.branch {
+        meta.push(link_seg(
+            page,
+            branch.clone(),
+            url::tree(repo, branch, ""),
+            Role::Code,
+        ));
+        meta.push(Seg::new(" · ", Role::Meta));
+    }
+    let sha = crate::text::short_sha(&run.sha);
+    meta.push(link_seg(page, sha, url::commit(repo, &run.sha), Role::Code));
+    if let Some(actor) = &run.actor {
+        meta.push(Seg::new(" · ", Role::Meta));
+        meta.push(link_seg(
+            page,
+            actor.clone(),
+            url::user(actor),
+            Role::Strong,
+        ));
+    }
+    if let Some(at) = &run.started_at {
+        meta.push(Seg::new(
+            format!(" · started {}", time::ago_iso(at, now)),
+            Role::Meta,
+        ));
+    }
+    if let Some(d) = took(
+        run.started_at.as_ref(),
+        run.updated_at.as_ref(),
+        run.outcome,
+        now,
+    )
+    .filter(|_| run.outcome != CheckOutcome::Pending)
+    {
+        meta.push(Seg::new(format!(" · took {d}"), Role::Meta));
+    }
+    page.wrapped(meta, 0, Frame::None);
+    let file = run.path.rsplit('/').next().unwrap_or(&run.path).to_owned();
+    let mut facts = Vec::new();
+    if !file.is_empty() {
+        let workflow = format!(
+            "{}/actions/workflows/{}",
+            url::repo(repo),
+            url::encode_path(&file)
+        );
+        facts.push(Seg::new("Workflow ", Role::Meta));
+        facts.push(link_seg(page, file, workflow, Role::Link));
+        facts.push(Seg::new("   ", Role::Meta));
+    }
+    if run.attempt > 1 {
+        facts.push(Seg::new(format!("Attempt {}   ", run.attempt), Role::Meta));
+    }
+    facts.push(Seg::new(
+        "Re-running and cancelling are on GitHub (o)",
+        Role::Meta,
+    ));
+    page.wrapped(facts, 0, Frame::None);
+    page.blank();
+    let mut jobs: Vec<&JobSummary> = run.jobs.iter().collect();
+    jobs.sort_by(|a, b| (a.outcome, &a.name).cmp(&(b.outcome, &b.name)));
+    let title = vec![Seg::new(format!("Jobs  {}", jobs.len()), Role::Strong)];
+    list_box(page, title, Vec::new(), &jobs, "No jobs.", |page, job| {
+        let target = format!("{}/actions/runs/{}/job/{}", url::repo(repo), run.id, job.id);
+        item(page, target, |page, link| {
+            let (mark, role) = outcome_mark(job.outcome);
+            let right = took(
+                job.started_at.as_ref(),
+                job.completed_at.as_ref(),
+                job.outcome,
+                now,
+            )
+            .map_or_else(Vec::new, |t| vec![Seg::new(t, Role::Meta)]);
+            let segs = vec![
+                Seg::new(format!("{mark} "), role),
+                Seg::linked(job.name.clone(), Role::Strong, link),
+            ];
+            page.box_line(segs, right, 0);
+        });
+    });
+}
+
+/// A log line without its timestamp, and when it was written (ISO 8601).
+fn log_line(line: &str) -> (Option<&str>, &str) {
+    match line.split_once(' ') {
+        Some((at, rest))
+            if at.len() >= 20 && at.ends_with('Z') && at.as_bytes().get(4) == Some(&b'-') =>
+        {
+            (Some(at), rest)
+        }
+        _ => (None, line),
+    }
+}
+
+/// Which step each log line belongs to, by when it was written (GitHub's
+/// one log for a job doesn't mark steps).
+fn step_lines<'a>(job: &Job, log: &'a str) -> Vec<(u32, Vec<&'a str>)> {
+    let mut out: Vec<(u32, Vec<&str>)> = job.steps.iter().map(|s| (s.number, Vec::new())).collect();
+    let mut current = 0;
+    for raw in log.lines() {
+        let (at, text) = log_line(raw);
+        if let Some(at) = at {
+            // The last step started by then (timestamps carry fractions;
+            // the step's start is to the second).
+            let second = at.get(..19).unwrap_or(at);
+            if let Some(i) = job.steps.iter().rposition(|s| {
+                s.started_at
+                    .as_deref()
+                    .is_some_and(|start| start.get(..19).unwrap_or(start) <= second)
+            }) {
+                current = i;
+            }
+        }
+        if let Some((_, lines)) = out.get_mut(current) {
+            lines.push(text);
+        }
+    }
+    out
+}
+
+/// A log line as shown: group markers and errors stand out.
+fn log_seg(text: &str) -> Seg {
+    if let Some(group) = text.strip_prefix("##[group]") {
+        Seg::new(format!("▸ {group}"), Role::Strong)
+    } else if text.starts_with("##[endgroup]") {
+        Seg::new("", Role::Meta)
+    } else if let Some(error) = text.strip_prefix("##[error]") {
+        Seg::new(error.to_owned(), Role::Removed)
+    } else if let Some(warning) = text.strip_prefix("##[warning]") {
+        Seg::new(warning.to_owned(), Role::Accent)
+    } else {
+        Seg::new(text.to_owned(), Role::Body)
+    }
+}
+
+/// How many lines of a step's log show.
+const STEP_LINES: usize = 400;
+
+/// A job: its steps, each collapsed to its outcome, failing ones (and the
+/// one a link points at) expanded with their log. With `query`, only the
+/// log lines that contain it, under their steps.
+pub fn job(page: &mut Page, repo: &RepoId, job: &Job, log: Option<&str>, at: JobAt<'_>, now: u64) {
+    outcome_title(page, job.name.clone(), job.outcome);
+    let mut meta = Vec::new();
+    let run = format!("{}/actions/runs/{}", url::repo(repo), job.run_id);
+    meta.push(link_seg(
+        page,
+        format!("Run {}", job.run_id),
+        run,
+        Role::Link,
+    ));
+    if let Some(d) = took(
+        job.started_at.as_ref(),
+        job.completed_at.as_ref(),
+        job.outcome,
+        now,
+    ) {
+        meta.push(Seg::new(format!(" · {d}"), Role::Meta));
+    }
+    page.wrapped(meta, 0, Frame::None);
+    page.blank();
+    if !at.query.is_empty() {
+        filter_field(page, at.query, at.keys);
+        page.blank();
+    }
+    let lines = log.map(|log| step_lines(job, log));
+    let title = vec![Seg::new(
+        format!("Steps  {}", job.steps.len()),
+        Role::Strong,
+    )];
+    let right = vec![Seg::new(
+        format!("{} filters the log", at.keys.filter),
+        Role::Meta,
+    )];
+    page.box_top(title, right);
+    for (n, step) in job.steps.iter().enumerate() {
+        if n > 0 {
+            page.box_rule();
+        }
+        let target = format!(
+            "{}/actions/runs/{}/job/{}#step:{}:1",
+            url::repo(repo),
+            job.run_id,
+            job.id,
+            step.number
+        );
+        item(page, target, |page, link| {
+            let (mark, role) = outcome_mark(step.outcome);
+            let right = took(
+                step.started_at.as_ref(),
+                step.completed_at.as_ref(),
+                step.outcome,
+                now,
+            )
+            .map_or_else(Vec::new, |t| vec![Seg::new(t, Role::Meta)]);
+            let segs = vec![
+                Seg::new(format!("{mark} "), role),
+                Seg::linked(step.name.clone(), Role::Strong, link),
+            ];
+            page.box_line(segs, right, 0);
+        });
+        let pointed = at.step.map(|(s, _)| s) == Some(step.number);
+        let open = pointed || step.outcome == CheckOutcome::Failure || !at.query.is_empty();
+        if !open {
+            continue;
+        }
+        let Some(lines) = &lines else {
+            body(page, vec![Seg::new("Loading the log…", Role::Meta)]);
+            continue;
+        };
+        let step_lines: Vec<(usize, &str)> = lines
+            .iter()
+            .find(|(n, _)| *n == step.number)
+            .map(|(_, l)| l.iter().copied().enumerate().collect())
+            .unwrap_or_default();
+        let shown: Vec<(usize, &str)> = if at.query.is_empty() {
+            step_lines
+        } else {
+            let q = at.query.to_lowercase();
+            step_lines
+                .into_iter()
+                .filter(|(_, l)| l.to_lowercase().contains(&q))
+                .collect()
+        };
+        let skip = shown.len().saturating_sub(STEP_LINES);
+        if skip > 0 {
+            body(
+                page,
+                vec![Seg::new(
+                    format!("… {skip} earlier lines (o shows them all on GitHub)"),
+                    Role::Meta,
+                )],
+            );
+        }
+        let width = shown.last().map_or(1, |(i, _)| (i + 1).to_string().len());
+        for (i, text) in shown.into_iter().skip(skip) {
+            if pointed && at.step.map(|(_, l)| l as usize) == Some(i + 1) && page.jump.is_none() {
+                page.jump = Some(page.lines.len());
+            }
+            let number = Seg::new(
+                format!("{:>width$}  ", i + 1),
+                Role::Syntax(Syntax::Comment),
+            );
+            page.push(PageLine {
+                segs: vec![number, log_seg(text)],
+                frame: Frame::Body,
+                tone: Tone::Code,
+                ..PageLine::default()
+            });
+        }
+        if pointed && page.jump.is_none() {
+            page.jump = Some(page.lines.len().saturating_sub(1));
+        }
+    }
+    page.box_bottom();
+}
+
+/// Where a job page is: the step a link points at, the log's filter.
+#[derive(Clone, Copy)]
+pub struct JobAt<'a> {
+    pub step: Option<(u32, u32)>,
+    pub query: &'a str,
+    pub keys: Keys<'a>,
+}
+
+/// A workflow and its runs, newest first.
+pub fn workflow(
+    page: &mut Page,
+    repo: &RepoId,
+    wf: Option<&Workflow>,
+    runs: Option<&Results<RunSummary>>,
+    now: u64,
+) {
+    if let Some(wf) = wf {
+        let mut title = vec![Seg::new(wf.name.clone(), Role::Title)];
+        if wf.state != "active" {
+            title.push(space());
+            title.push(chip(wf.state.replace('_', " "), Bg::SecondaryContainer));
+        }
+        page.wrapped(title, 0, Frame::None);
+        let file = link_seg(
+            page,
+            wf.path.clone(),
+            url::blob(repo, "HEAD", &wf.path),
+            Role::Code,
+        );
+        page.wrapped(vec![file], 0, Frame::None);
+        page.blank();
+    }
+    let Some(r) = runs else {
+        page.line(vec![Seg::new("Loading runs…", Role::Meta)]);
+        return;
+    };
+    let title = vec![Seg::new(
+        format!("Runs  {}", compact(r.total)),
+        Role::Strong,
+    )];
+    page.box_top(title, Vec::new());
+    if r.items.is_empty() {
+        empty_row(page, "No runs yet.");
+    }
+    box_rows(page, &r.items, |page, run| {
+        item(
+            page,
+            format!("{}/actions/runs/{}", url::repo(repo), run.id),
+            |page, link| {
+                let (mark, role) = outcome_mark(run.outcome);
+                let title = if run.title.is_empty() {
+                    format!("Run #{}", run.number)
+                } else {
+                    run.title.clone()
+                };
+                page.box_line(
+                    vec![
+                        Seg::new(format!("{mark} "), role),
+                        Seg::linked(title, Role::Strong, link),
+                    ],
+                    Vec::new(),
+                    0,
+                );
+                let mut meta = format!("#{} · {}", run.number, run.event);
+                if let Some(b) = &run.branch {
+                    meta.push_str(&format!(" · {b}"));
+                }
+                if let Some(a) = &run.actor {
+                    meta.push_str(&format!(" · {a}"));
+                }
+                if let Some(at) = &run.created_at {
+                    meta.push_str(&format!(" · {}", time::ago_iso(at, now)));
+                }
+                body(page, vec![Seg::new(meta, Role::Meta)]);
+            },
+        );
+    });
+    more_row(page, r.next.is_some(), r.items.len(), r.total);
+    page.box_bottom();
+}
+
+/// A commit's checks.
+pub fn commit_checks(page: &mut Page, c: Option<&Checks>, now: u64) {
+    checks(page, c, now);
 }
 
 // ---- releases and tags ---------------------------------------------------------------------

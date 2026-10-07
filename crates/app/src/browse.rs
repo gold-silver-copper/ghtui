@@ -5,9 +5,9 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blob, Checks, CommitDetail, CommitInfo, IssueDetail, PrActivity, Profile, Refs, Release,
-    RepoOverview, RepoSort, RepoSummary, Results, SearchKind, SearchResults, TagInfo, TreeEntry,
-    UserList, UserSummary,
+    Blob, Checks, CommitDetail, CommitInfo, IssueDetail, Job, PrActivity, Profile, Refs, Release,
+    RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo,
+    TreeEntry, UserList, UserSummary, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::page::{Link, Page, Role, Seg};
@@ -50,6 +50,15 @@ pub enum DataKey {
     Releases(RepoId),
     Release(RepoId, String),
     Tags(RepoId),
+    /// A workflow run (an attempt of it, or the latest).
+    Run(RepoId, u64, Option<u64>),
+    Job(RepoId, u64),
+    /// A job's log (not cached: it's big).
+    JobLog(RepoId, u64),
+    Workflow(RepoId, String),
+    /// A workflow's runs.
+    WorkflowRuns(RepoId, String),
+    CommitChecks(RepoId, String),
     /// Someone's own repositories, in an order.
     OwnerRepos(String, RepoSort),
     /// What someone starred.
@@ -78,6 +87,11 @@ pub enum Data {
     /// A page of a list of repositories.
     RepoPage(Box<Results<RepoSummary>>),
     Releases(Box<Results<Release>>),
+    Run(Box<WorkflowRun>),
+    Job(Box<Job>),
+    Log(Arc<String>),
+    Workflow(Box<Workflow>),
+    Runs(Box<Results<RunSummary>>),
     Release(Box<Release>),
     Tags(Box<Results<TagInfo>>),
 }
@@ -91,6 +105,7 @@ impl Data {
             Data::Users(r) => r.next.as_deref(),
             Data::RepoPage(r) => r.next.as_deref(),
             Data::Releases(r) => r.next.as_deref(),
+            Data::Runs(r) => r.next.as_deref(),
             Data::Tags(r) => r.next.as_deref(),
             _ => None,
         }
@@ -104,6 +119,7 @@ impl Data {
             (Data::Users(a), Data::Users(b)) => extend(a, *b),
             (Data::RepoPage(a), Data::RepoPage(b)) => extend(a, *b),
             (Data::Releases(a), Data::Releases(b)) => extend(a, *b),
+            (Data::Runs(a), Data::Runs(b)) => extend(a, *b),
             (Data::Tags(a), Data::Tags(b)) => extend(a, *b),
             _ => {}
         }
@@ -120,6 +136,7 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Watchers(repo) => Some(DataKey::Users(UserList::Watchers(repo.clone()))),
         Route::Forks(repo) => Some(DataKey::Forks(repo.clone())),
         Route::Releases(repo) => Some(DataKey::Releases(repo.clone())),
+        Route::Workflow { repo, file } => Some(DataKey::WorkflowRuns(repo.clone(), file.clone())),
         Route::User { login, tab } => {
             let login = login.to_lowercase();
             Some(match tab {
@@ -186,6 +203,27 @@ pub fn needs(route: &Route) -> Vec<Need> {
         ],
         Route::Pr { pr, .. } => vec![Need::Pr(pr.clone()), Need::Data(K::PrActivity(pr.clone()))],
         Route::Actions(repo) => vec![header(repo), Need::Data(K::BranchChecks(repo.clone()))],
+        Route::WorkflowRun { repo, run, attempt } => {
+            vec![
+                header(repo),
+                Need::Data(K::Run(repo.clone(), *run, *attempt)),
+            ]
+        }
+        Route::Job { repo, job, .. } => vec![
+            header(repo),
+            Need::Data(K::Job(repo.clone(), *job)),
+            Need::Data(K::JobLog(repo.clone(), *job)),
+        ],
+        Route::Workflow { repo, file } => vec![
+            header(repo),
+            Need::Data(K::Workflow(repo.clone(), file.clone())),
+            Need::Data(K::WorkflowRuns(repo.clone(), file.clone())),
+        ],
+        Route::CommitChecks { repo, oid } => vec![
+            header(repo),
+            Need::Data(K::Commit(repo.clone(), oid.clone())),
+            Need::Data(K::CommitChecks(repo.clone(), oid.clone())),
+        ],
         Route::Release { repo, tag } => {
             vec![
                 header(repo),
@@ -250,6 +288,7 @@ impl PageScreen {
                 | Route::Blob { .. }
                 | Route::Commit { .. }
                 | Route::Release { .. }
+                | Route::Job { .. }
                 | Route::Pr {
                     tab: PrTab::Conversation,
                     ..
@@ -567,6 +606,56 @@ impl State {
                     Some(Data::Releases(r)) => pages::releases(&mut page, repo, Some(r), now),
                     _ if matches!(route, Route::Tags(_)) => pages::tags(&mut page, repo, None, now),
                     _ => pages::releases(&mut page, repo, None, now),
+                }
+            }
+            Route::WorkflowRun { repo, run, attempt } => {
+                match self.get(&DataKey::Run(repo.clone(), *run, *attempt)) {
+                    Some(Data::Run(r)) => pages::workflow_run(&mut page, repo, r, now),
+                    _ => missing(&mut page, &route.title()),
+                }
+            }
+            Route::Job {
+                repo,
+                job,
+                step,
+                query,
+                ..
+            } => match self.get(&DataKey::Job(repo.clone(), *job)) {
+                Some(Data::Job(j)) => {
+                    let log = match self.get(&DataKey::JobLog(repo.clone(), *job)) {
+                        Some(Data::Log(log)) => Some(log.as_str()),
+                        _ => None,
+                    };
+                    let at = pages::JobAt {
+                        step: *step,
+                        query,
+                        keys,
+                    };
+                    pages::job(&mut page, repo, j, log, at, now);
+                }
+                _ => missing(&mut page, &route.title()),
+            },
+            Route::Workflow { repo, file } => {
+                let wf = match self.get(&DataKey::Workflow(repo.clone(), file.clone())) {
+                    Some(Data::Workflow(w)) => Some(&**w),
+                    _ => None,
+                };
+                let runs = match self.get(&DataKey::WorkflowRuns(repo.clone(), file.clone())) {
+                    Some(Data::Runs(r)) => Some(&**r),
+                    _ => None,
+                };
+                if wf.is_none() && runs.is_none() && matches!(error, Some((_, false))) {
+                    missing(&mut page, &route.title());
+                } else {
+                    pages::workflow(&mut page, repo, wf, runs, now);
+                }
+            }
+            Route::CommitChecks { repo, oid } => {
+                let checks = self.checks(&DataKey::CommitChecks(repo.clone(), oid.clone()));
+                if checks.is_none() && matches!(error, Some((_, false))) {
+                    missing(&mut page, "the checks");
+                } else {
+                    pages::commit_checks(&mut page, checks, now);
                 }
             }
             Route::Release { repo, tag } => {

@@ -436,6 +436,24 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Tags(repo)
         | Route::Actions(repo) => Route::Repo(repo.clone()),
         Route::Release { repo, .. } => Route::Releases(repo.clone()),
+        Route::WorkflowRun { repo, .. }
+        | Route::Workflow { repo, .. }
+        | Route::Job {
+            repo, run: None, ..
+        } => Route::Actions(repo.clone()),
+        Route::Job {
+            repo,
+            run: Some(run),
+            ..
+        } => Route::WorkflowRun {
+            repo: repo.clone(),
+            run: *run,
+            attempt: None,
+        },
+        Route::CommitChecks { repo, oid } => Route::Commit {
+            repo: repo.clone(),
+            oid: oid.clone(),
+        },
         // A commit's history leads up to it.
         Route::Commit { repo, oid } => Route::Commits {
             repo: repo.clone(),
@@ -699,6 +717,17 @@ impl State {
         let q = input.trim();
         let mut out = Vec::new();
         if sb.filter {
+            // A job's log filters by its text alone.
+            if let Some(Route::Job { .. }) = self.route() {
+                let pick = Pick::Filter(q.to_owned());
+                let what = if q.is_empty() {
+                    "show the whole log"
+                } else {
+                    "lines with this"
+                };
+                out.push(suggestion("⌕", q, what, "↵", pick));
+                return out;
+            }
             if !q.is_empty() {
                 let pick = Pick::Filter(q.to_owned());
                 out.push(suggestion("⌕", q, "filter this list", "↵", pick));

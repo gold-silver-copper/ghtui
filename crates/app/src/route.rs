@@ -48,6 +48,31 @@ pub enum Route {
     },
     /// The checks on the default branch.
     Actions(RepoId),
+    /// A workflow run, or one attempt of it.
+    WorkflowRun {
+        repo: RepoId,
+        run: u64,
+        attempt: Option<u64>,
+    },
+    /// A job: its steps and its log. `step` is the step and line a link
+    /// points at (expanded and scrolled to); `query` filters the log.
+    Job {
+        repo: RepoId,
+        run: Option<u64>,
+        job: u64,
+        step: Option<(u32, u32)>,
+        query: String,
+    },
+    /// A workflow, by its file name, and its runs.
+    Workflow {
+        repo: RepoId,
+        file: String,
+    },
+    /// The checks on a commit.
+    CommitChecks {
+        repo: RepoId,
+        oid: String,
+    },
     Stargazers(RepoId),
     Watchers(RepoId),
     Forks(RepoId),
@@ -142,6 +167,40 @@ impl Route {
                 PrTab::Checks => links::pull_tab(pr, "checks"),
             },
             Route::Actions(repo) => format!("{}/actions", links::repo(repo)),
+            Route::WorkflowRun { repo, run, attempt } => {
+                let url = format!("{}/actions/runs/{run}", links::repo(repo));
+                match attempt {
+                    Some(n) => format!("{url}/attempts/{n}"),
+                    None => url,
+                }
+            }
+            Route::Job {
+                repo,
+                run,
+                job,
+                step,
+                query,
+            } => {
+                let mut url = match run {
+                    Some(run) => format!("{}/actions/runs/{run}/job/{job}", links::repo(repo)),
+                    None => format!("{}/runs/{job}", links::repo(repo)),
+                };
+                if !query.is_empty() {
+                    url.push_str(&format!("?q={}", links::encode(query)));
+                }
+                if let Some((step, line)) = step {
+                    url.push_str(&format!("#step:{step}:{line}"));
+                }
+                url
+            }
+            Route::Workflow { repo, file } => {
+                format!(
+                    "{}/actions/workflows/{}",
+                    links::repo(repo),
+                    links::encode_path(file)
+                )
+            }
+            Route::CommitChecks { repo, oid } => format!("{}/checks", links::commit(repo, oid)),
             Route::Stargazers(repo) => format!("{}/stargazers", links::repo(repo)),
             Route::Watchers(repo) => format!("{}/watchers", links::repo(repo)),
             Route::Forks(repo) => format!("{}/forks", links::repo(repo)),
@@ -183,6 +242,10 @@ impl Route {
             Route::Issue { repo, number } => format!("{repo}#{number}"),
             Route::Pr { pr, .. } => pr.to_string(),
             Route::Actions(repo) => format!("{repo} · Actions"),
+            Route::WorkflowRun { repo, run, .. } => format!("{repo} · Run {run}"),
+            Route::Job { repo, job, .. } => format!("{repo} · Job {job}"),
+            Route::Workflow { repo, file } => format!("{repo} · {file}"),
+            Route::CommitChecks { repo, oid } => format!("{repo}@{} · Checks", short_sha(oid)),
             Route::Stargazers(repo) => format!("{repo} · Stargazers"),
             Route::Watchers(repo) => format!("{repo} · Watchers"),
             Route::Forks(repo) => format!("{repo} · Forks"),
@@ -208,6 +271,10 @@ impl Route {
             | Route::Issue { repo, .. }
             | Route::Commits { repo, .. }
             | Route::Actions(repo)
+            | Route::WorkflowRun { repo, .. }
+            | Route::Job { repo, .. }
+            | Route::Workflow { repo, .. }
+            | Route::CommitChecks { repo, .. }
             | Route::Stargazers(repo)
             | Route::Watchers(repo)
             | Route::Forks(repo)
@@ -225,7 +292,8 @@ impl Route {
         match self {
             Route::Issues { query, .. }
             | Route::Pulls { query, .. }
-            | Route::Search { query, .. } => Some(query),
+            | Route::Search { query, .. }
+            | Route::Job { query, .. } => Some(query),
             _ => None,
         }
     }
@@ -242,6 +310,13 @@ impl Route {
                 query,
             },
             Route::Search { kind, .. } => Route::Search { kind: *kind, query },
+            Route::Job { repo, run, job, .. } => Route::Job {
+                repo: repo.clone(),
+                run: *run,
+                job: *job,
+                step: None,
+                query,
+            },
             _ => return None,
         })
     }
@@ -452,6 +527,76 @@ impl Target {
                 };
                 Route::Commits { repo, rev, path }
             }
+            [o, r, "actions", "runs", run, rest @ ..] => {
+                let (Some(repo), Ok(run)) = (repo(o, r), run.parse()) else {
+                    return external();
+                };
+                match rest {
+                    // The run's workflow file shows on the run's page.
+                    [] | ["workflow"] => Route::WorkflowRun {
+                        repo,
+                        run,
+                        attempt: None,
+                    },
+                    ["attempts", n] => match n.parse() {
+                        Ok(n) => Route::WorkflowRun {
+                            repo,
+                            run,
+                            attempt: Some(n),
+                        },
+                        Err(_) => return external(),
+                    },
+                    ["job", job] => match job.parse() {
+                        Ok(job) => Route::Job {
+                            repo,
+                            run: Some(run),
+                            job,
+                            step: parsed.fragment().and_then(step_line),
+                            query: query.unwrap_or_default(),
+                        },
+                        Err(_) => return external(),
+                    },
+                    _ => return external(),
+                }
+            }
+            // A check run's URL, which is its job's for Actions.
+            [o, r, "runs", job] | [o, r, "runs", _, "jobs", job] => {
+                match (repo(o, r), job.parse()) {
+                    (Some(repo), Ok(job)) => Route::Job {
+                        repo,
+                        run: None,
+                        job,
+                        step: parsed.fragment().and_then(step_line),
+                        query: query.unwrap_or_default(),
+                    },
+                    _ => return external(),
+                }
+            }
+            [o, r, "actions", "workflows", file] => match repo(o, r) {
+                Some(repo) => Route::Workflow {
+                    repo,
+                    file: (*file).to_owned(),
+                },
+                None => return external(),
+            },
+            // A check run's logs, from a pull request's checks.
+            [o, r, "commit", _, "checks", job, ..] => match (repo(o, r), job.parse()) {
+                (Some(repo), Ok(job)) => Route::Job {
+                    repo,
+                    run: None,
+                    job,
+                    step: None,
+                    query: String::new(),
+                },
+                _ => return external(),
+            },
+            [o, r, "commit", sha, "checks"] => match repo(o, r) {
+                Some(repo) => Route::CommitChecks {
+                    repo,
+                    oid: (*sha).to_owned(),
+                },
+                None => return external(),
+            },
             [o, r, "git", "commit", sha] => match repo(o, r) {
                 Some(repo) => Route::Commit {
                     repo,
@@ -529,6 +674,14 @@ fn is_full_sha(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// `step:3:12`, as GitHub links a line of a job's log.
+fn step_line(fragment: &str) -> Option<(u32, u32)> {
+    let mut parts = fragment.strip_prefix("step:")?.split(':');
+    let step = parts.next()?.parse().ok()?;
+    let line = parts.next().and_then(|l| l.parse().ok()).unwrap_or(1);
+    Some((step, line))
+}
+
 /// `L10` or `L10-L20` (as GitHub writes line links), in order.
 fn line_range(fragment: &str) -> Option<(u32, u32)> {
     let line = |s: &str| s.strip_prefix('L')?.parse::<u32>().ok().filter(|&n| n > 0);
@@ -585,6 +738,7 @@ const RESERVED: &[&str] = &[
     "topics",
     "trending",
     "trust-center",
+    "user-attachments",
     "users",
     "why-github",
 ];
@@ -855,10 +1009,14 @@ pub(crate) mod tests {
                 tab: ProfileTab::Repositories(RepoSort::Updated)
             }
         );
-        assert!(matches!(
-            Target::from_url("https://github.com/o/r/actions/runs/9"),
-            Target::External(_)
-        ));
+        assert_eq!(
+            page("https://github.com/o/r/actions/runs/9"),
+            Route::WorkflowRun {
+                repo: pr.repo.clone(),
+                run: 9,
+                attempt: None
+            }
+        );
         assert!(matches!(
             Target::from_url("https://github.com/o/r/milestone/3"),
             Target::External(_)

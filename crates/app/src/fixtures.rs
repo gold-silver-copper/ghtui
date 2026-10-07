@@ -3,9 +3,10 @@
 use crossterm::event::KeyEvent;
 use ghtui_api::browse::{
     Asset, Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, Contributed,
-    Contributions, EntryKind, IssueDetail, IssueState, IssueSummary, MonthActivity, PrActivity,
-    Profile, Readme, Release, RepoOverview, RepoSummary, Results, ReviewSummary, SearchResults,
-    TagInfo, TreeEntry, UserSummary, Week,
+    Contributions, EntryKind, IssueDetail, IssueState, IssueSummary, Job, JobSummary,
+    MonthActivity, PrActivity, Profile, Readme, Release, RepoOverview, RepoSummary, Results,
+    ReviewSummary, RunSummary, SearchResults, Step, TagInfo, TreeEntry, UserSummary, Week,
+    Workflow, WorkflowRun,
 };
 use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
@@ -654,6 +655,132 @@ pub fn tags() -> Results<TagInfo> {
         ],
         next: None,
     }
+}
+
+/// A workflow run with a failed job, one still going, and passes.
+pub fn workflow_run() -> WorkflowRun {
+    let job = |id, name: &str, outcome, end: Option<&str>| JobSummary {
+        id,
+        name: name.into(),
+        outcome,
+        started_at: Some("2026-10-03T12:00:00Z".into()),
+        completed_at: end.map(|e| format!("2026-10-03T12:{e}Z")),
+    };
+    WorkflowRun {
+        id: 7,
+        name: "CI".into(),
+        title: "Theme: generate syntax palette from seed".into(),
+        number: 412,
+        attempt: 2,
+        event: "pull_request".into(),
+        branch: Some("syntax-palette".into()),
+        sha: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
+        outcome: CheckOutcome::Failure,
+        actor: Some("octocat".into()),
+        started_at: Some("2026-10-03T12:00:00Z".into()),
+        updated_at: Some("2026-10-03T12:04:12Z".into()),
+        path: ".github/workflows/ci.yml".into(),
+        jobs: vec![
+            job(1, "fmt", CheckOutcome::Success, Some("00:14")),
+            job(2, "test (ubuntu)", CheckOutcome::Failure, Some("04:12")),
+            job(3, "test (macos)", CheckOutcome::Pending, None),
+        ],
+    }
+}
+
+/// A job whose test step failed, and its log.
+pub fn job() -> (Job, String) {
+    let step = |number, name: &str, outcome, start: &str, end: &str| Step {
+        number,
+        name: name.into(),
+        outcome,
+        started_at: Some(format!("2026-10-03T12:{start}Z")),
+        completed_at: Some(format!("2026-10-03T12:{end}Z")),
+    };
+    let job = Job {
+        id: 2,
+        run_id: 7,
+        name: "test (ubuntu)".into(),
+        outcome: CheckOutcome::Failure,
+        started_at: Some("2026-10-03T12:00:00Z".into()),
+        completed_at: Some("2026-10-03T12:04:12Z".into()),
+        steps: vec![
+            step(1, "Set up job", CheckOutcome::Success, "00:00", "00:02"),
+            step(
+                2,
+                "Run actions/checkout@v4",
+                CheckOutcome::Success,
+                "00:02",
+                "00:05",
+            ),
+            step(3, "cargo test", CheckOutcome::Failure, "00:05", "04:11"),
+            step(
+                4,
+                "Post Run actions/checkout@v4",
+                CheckOutcome::Success,
+                "04:11",
+                "04:12",
+            ),
+        ],
+    };
+    let log = [
+        ("00:00:01.1", "Current runner version: '2.319.1'"),
+        ("00:02:01.0", "##[group]Run actions/checkout@v4"),
+        ("00:02:02.0", "Syncing repository: gold-silver-copper/ghtui"),
+        ("00:04:00.0", "##[endgroup]"),
+        ("00:05:00.5", "##[group]Run cargo test"),
+        ("00:05:01.0", "   Compiling ghtui v0.1.0"),
+        (
+            "04:10:00.0",
+            "test theme::tests::heat_levels_stay_apart ... FAILED",
+        ),
+        (
+            "04:10:00.1",
+            "##[error]Process completed with exit code 101.",
+        ),
+        ("04:11:00.0", "Post job cleanup."),
+    ]
+    .map(|(at, line)| format!("2026-10-03T12:{at}000000Z {line}\n"))
+    .concat();
+    (job, log)
+}
+
+/// A workflow's runs.
+pub fn workflow_runs() -> (Workflow, Results<RunSummary>) {
+    let run = |id, number, title: &str, outcome| RunSummary {
+        id,
+        title: title.into(),
+        number,
+        event: "push".into(),
+        branch: Some("main".into()),
+        outcome,
+        actor: Some("octocat".into()),
+        created_at: Some("2026-10-03T12:00:00Z".into()),
+    };
+    let workflow = Workflow {
+        name: "CI".into(),
+        path: ".github/workflows/ci.yml".into(),
+        state: "active".into(),
+    };
+    let runs = Results {
+        total: 412,
+        items: vec![
+            run(
+                7,
+                412,
+                "Theme: generate syntax palette from seed",
+                CheckOutcome::Failure,
+            ),
+            run(
+                6,
+                411,
+                "Hunk headers name the enclosing scope",
+                CheckOutcome::Success,
+            ),
+        ],
+        next: Some("2".into()),
+    };
+    (workflow, runs)
 }
 
 pub fn user_results() -> SearchResults {

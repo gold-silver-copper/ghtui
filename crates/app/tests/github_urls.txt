@@ -45,15 +45,15 @@ https://github.com/rust-lang/rust/pull/163850/commits/843fa25bf60fce1e05ce7d16c9
 https://github.com/rust-lang/rust/commit/843fa25bf60fce1e05ce7d16c965df0d36f3a6fe Commit
 https://github.com/octocat/Hello-World/commit/6dcb09b5b57875f334f61aebed695e2e4193db5e#commitcomment-1 Commit
 # CheckSuite, CheckRun (its url and permalink)
-https://github.com/rust-lang/rust/commit/8d1a76430406c877b35d0b627e7f796dcf0dfeca/checks?check_suite_id=101542091168 todo CommitChecks
-https://github.com/rust-lang/rust/runs/112349439173                         todo Job
+https://github.com/rust-lang/rust/commit/8d1a76430406c877b35d0b627e7f796dcf0dfeca/checks?check_suite_id=101542091168 CommitChecks
+https://github.com/rust-lang/rust/runs/112349439173                         Job
 # WorkflowRun, Workflow, WorkflowRunFile, CheckRun.detailsUrl
-https://github.com/rust-lang/rust/actions/runs/37486756971                  todo WorkflowRun
-https://github.com/rust-lang/rust/actions/runs/37486756971/attempts/2       todo WorkflowRun
-https://github.com/rust-lang/rust/actions/runs/37486756971/job/112349439173 todo Job
-https://github.com/rust-lang/rust/actions/runs/37486756971/job/112349439173#step:4:12 todo Job
-https://github.com/rust-lang/rust/actions/runs/37486756971/workflow         todo WorkflowRun
-https://github.com/rust-lang/rust/actions/workflows/ci.yml                  todo Workflow
+https://github.com/rust-lang/rust/actions/runs/37486756971                  WorkflowRun
+https://github.com/rust-lang/rust/actions/runs/37486756971/attempts/2       WorkflowRun
+https://github.com/rust-lang/rust/actions/runs/37486756971/job/112349439173 Job
+https://github.com/rust-lang/rust/actions/runs/37486756971/job/112349439173#step:4:12 Job
+https://github.com/rust-lang/rust/actions/runs/37486756971/workflow         WorkflowRun
+https://github.com/rust-lang/rust/actions/workflows/ci.yml                  Workflow
 # Milestone
 https://github.com/rust-lang/rust/milestone/147                             todo Milestone
 # Release, ReleaseAsset (url and downloadUrl)
@@ -110,9 +110,9 @@ https://github.com/octocat/Hello-World/milestones/v1.0                      todo
 https://github.com/octocat/Hello-World/milestones                           todo Milestones
 https://github.com/octocat/Hello-World/pull/1347                            Pr
 https://github.com/octocat/Hello-World/issues/1347#issuecomment-1           Issue
-https://github.com/octocat/Hello-World/actions/runs/5                       todo WorkflowRun
-https://github.com/octocat/Hello-World/actions/runs/5/job/399444496         todo Job
-https://github.com/octo-org/octo-repo/runs/29679449/jobs/399444496          todo Job
+https://github.com/octocat/Hello-World/actions/runs/5                       WorkflowRun
+https://github.com/octocat/Hello-World/actions/runs/5/job/399444496         Job
+https://github.com/octo-org/octo-repo/runs/29679449/jobs/399444496          Job
 https://github.com/octo-org/octo-repo/blob/master/.github/workflows/161335  Blob
 https://github.com/octocat/Hello-World/releases/v1.0.0                      Releases
 https://github.com/octocat/Hello-World/git/commit/7638417db6d59f3c431d3e1f261cc637155684cd Commit
@@ -272,3 +272,8 @@ https://avatars.githubusercontent.com/u/1024025                             exte
 https://user-images.githubusercontent.com/1/abc.png                         external download
 
 # ---- (d) found by the live crawl ----------------------------------------------
+https://github.com/rust-lang/rust/commit/fbc187d77f9fb679d00c91dbad01a4412b5b11a5/checks/112266616044/logs Job
+https://github.com/user-attachments/assets/c5c659f4-e721-4527-af4a-3165f8b588f6  external download
+https://github.com/tokio-rs/tokio/discussions/new                           external session
+https://help.github.com/en/github/managing-security-vulnerabilities         external not-github
+https://github.com/rust-lang/rustfmt/actions/workflows/test.yml?query=branch%3Amain Workflow
