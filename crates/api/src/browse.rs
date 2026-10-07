@@ -1943,6 +1943,127 @@ impl wire_deployments::Deployments {
         }
     }
 }
+// ---- comparisons ------------------------------------------------------------------------------
+
+/// Two revisions compared: the commits from one to the other, and what
+/// the diff between them is from and to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Comparison {
+    /// `diverged`, `ahead`, `behind`, `identical`.
+    pub status: String,
+    pub ahead: u64,
+    pub behind: u64,
+    pub total_commits: u64,
+    /// Oldest first.
+    pub commits: Vec<CommitInfo>,
+    /// The diff's ends: the merge base (or, for `a..b`, the base) and the
+    /// head, as full commit IDs.
+    pub from: String,
+    pub to: String,
+    pub files: u64,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+pub(crate) mod rest_compare {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Sha {
+        pub sha: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Login {
+        pub login: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Signature {
+        pub name: Option<String>,
+        pub date: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Message {
+        pub message: String,
+        pub author: Option<Signature>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Commit {
+        pub sha: String,
+        pub commit: Message,
+        pub author: Option<Login>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct File {
+        #[serde(default)]
+        pub additions: u64,
+        #[serde(default)]
+        pub deletions: u64,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Compare {
+        pub status: String,
+        pub ahead_by: u64,
+        pub behind_by: u64,
+        pub total_commits: u64,
+        pub base_commit: Sha,
+        pub merge_base_commit: Sha,
+        pub commits: Vec<Commit>,
+        #[serde(default)]
+        pub files: Vec<File>,
+    }
+}
+
+impl rest_compare::Compare {
+    /// `direct`: `a..b`, the diff from the base itself, not the merge base.
+    pub(crate) fn into_comparison(self, direct: bool) -> Comparison {
+        let to = self.commits.last().map(|c| c.sha.clone());
+        let from = if direct {
+            self.base_commit.sha
+        } else {
+            self.merge_base_commit.sha
+        };
+        Comparison {
+            status: self.status,
+            ahead: self.ahead_by,
+            behind: self.behind_by,
+            total_commits: self.total_commits,
+            to: to.unwrap_or_else(|| from.clone()),
+            from,
+            files: self.files.len() as u64,
+            additions: self.files.iter().map(|f| f.additions).sum(),
+            deletions: self.files.iter().map(|f| f.deletions).sum(),
+            commits: self
+                .commits
+                .into_iter()
+                .map(|c| {
+                    let author = c.commit.author;
+                    CommitInfo {
+                        headline: c
+                            .commit
+                            .message
+                            .lines()
+                            .next()
+                            .unwrap_or_default()
+                            .to_owned(),
+                        author: c
+                            .author
+                            .map(|a| a.login)
+                            .or_else(|| author.as_ref().and_then(|a| a.name.clone()))
+                            .unwrap_or_default(),
+                        date: author.and_then(|a| a.date).unwrap_or_default(),
+                        oid: c.sha,
+                    }
+                })
+                .collect(),
+        }
+    }
+}
 // ---- discussions ------------------------------------------------------------------------------
 
 /// Whose discussions: a repository's, or an organization's (which GitHub
@@ -3207,6 +3328,9 @@ pub mod keys {
     }
     pub fn branches(repo: &RepoId) -> String {
         format!("branches:{repo}")
+    }
+    pub fn compare(repo: &RepoId, spec: &str) -> String {
+        format!("compare:{repo}:{spec}")
     }
     pub fn deployments(repo: &RepoId, environment: Option<&str>) -> String {
         format!("deployments:{repo}:{environment:?}")

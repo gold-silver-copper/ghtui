@@ -8,10 +8,10 @@ use std::collections::HashMap;
 
 use ghtui_api::browse::{
     Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo,
-    Contributions, DeploymentList, DiscussionDetail, DiscussionList, EntryKind, IssueDetail,
-    IssueState, IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList,
-    PrActivity, Profile, Release, RepoOverview, RepoSort, RepoSummary, Results, RunSummary,
-    SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary, Workflow, WorkflowRun,
+    Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList, EntryKind,
+    IssueDetail, IssueState, IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo,
+    MilestoneList, PrActivity, Profile, Release, RepoOverview, RepoSort, RepoSummary, Results,
+    RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -74,6 +74,9 @@ pub mod url {
     }
     pub fn commit(repo: &RepoId, oid: &str) -> String {
         format!("{BASE}/{repo}/commit/{oid}")
+    }
+    pub fn compare(repo: &RepoId, from: &str, to: &str) -> String {
+        format!("{}/compare/{from}...{to}", self::repo(repo))
     }
     pub fn release(repo: &RepoId, tag: &str) -> String {
         format!("{BASE}/{repo}/releases/tag/{}", encode_path(tag))
@@ -2474,6 +2477,66 @@ pub fn branches(
     });
     more_row(page, l.next.is_some(), l.items.len(), l.total);
     page.box_bottom();
+}
+// ---- comparisons ------------------------------------------------------------------------------
+
+/// Two revisions compared: how they differ, a link to the files changed,
+/// and the commits from one to the other, oldest first.
+pub fn compare(page: &mut Page, repo: &RepoId, spec: &str, c: &Comparison, now: u64) {
+    let (base, head) = spec
+        .split_once("...")
+        .or_else(|| spec.split_once(".."))
+        .unwrap_or((spec, ""));
+    page.wrapped(
+        vec![
+            Seg::new("Comparing ", Role::Title),
+            Seg::new(base.to_owned(), Role::Code),
+            Seg::new(if spec.contains("...") { "..." } else { ".." }, Role::Meta),
+            Seg::new(head.to_owned(), Role::Code),
+        ],
+        0,
+        Frame::None,
+    );
+    let status = match c.status.as_str() {
+        "identical" => "These are identical.".to_owned(),
+        "behind" => format!("{head} is {} behind {base}.", plural(c.behind, "commit")),
+        "ahead" => format!("{head} is {} ahead of {base}.", plural(c.ahead, "commit")),
+        _ => format!(
+            "{head} is {} ahead of and {} behind {base}.",
+            plural(c.ahead, "commit"),
+            plural(c.behind, "commit")
+        ),
+    };
+    page.wrapped(vec![Seg::new(status, Role::Meta)], 0, Frame::None);
+    let files = format!("{}#files", url::compare(repo, &c.from, &c.to));
+    let changed = if c.files == 1 {
+        "1 file changed".to_owned()
+    } else {
+        format!("{} files changed", c.files)
+    };
+    let mut segs = vec![link_seg(page, format!("± {changed}"), files, Role::Link)];
+    segs.push(Seg::new("  ", Role::Meta));
+    segs.extend(changes(c.additions, c.deletions));
+    page.wrapped(segs, 0, Frame::None);
+    page.blank();
+    if c.commits.is_empty() {
+        empty_box(
+            page,
+            Seg::new("◷ Commits", Role::Meta),
+            "No commits between these.",
+        );
+        return;
+    }
+    let shown = c.commits.len();
+    if (shown as u64) < c.total_commits {
+        let more = format!(
+            "The first {shown} of {} commits (o shows them all on GitHub).",
+            c.total_commits
+        );
+        page.wrapped(vec![Seg::new(more, Role::Meta)], 0, Frame::None);
+        page.blank();
+    }
+    commit_rows(page, repo, &c.commits, None, now);
 }
 // ---- deployments ------------------------------------------------------------------------------
 

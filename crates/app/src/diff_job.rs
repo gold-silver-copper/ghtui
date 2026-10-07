@@ -179,6 +179,7 @@ async fn run_inner(
     let mut refs = match of {
         DiffOf::Pr(pr) => repo.fetch_pr(pr.number, base_ref, &progress).await?,
         DiffOf::Commit(_, oid) => repo.commit_refs(oid, &progress).await?,
+        DiffOf::Range(_, from, to) => repo.range_refs(from, to, &progress).await?,
     };
     if let Some((from, to)) = range {
         refs.merge_base = repo.rev_parse(&from).await?;

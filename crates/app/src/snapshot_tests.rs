@@ -493,6 +493,20 @@ fn with_deployments(mode: Mode) -> State {
     );
     state
 }
+/// Two tags compared.
+fn with_compare(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Compare {
+        repo: ghtui(),
+        spec: "v0.1.0...v0.2.0".into(),
+    };
+    open(
+        &mut state,
+        route,
+        Data::Compare(Box::new(fixtures::comparison())),
+    );
+    state
+}
 /// A branch's commits.
 fn with_history(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -766,6 +780,11 @@ fn milestone_light() {
 #[test]
 fn deployments_dark() {
     insta::assert_snapshot!(render(&with_deployments(Mode::Dark)));
+}
+
+#[test]
+fn compare_light() {
+    insta::assert_snapshot!(render(&with_compare(Mode::Light)));
 }
 
 #[test]
@@ -1654,11 +1673,11 @@ mod links {
     use ghtui_ui::pages::ProfileTab;
 
     use super::{
-        press, with_actions, with_branches, with_commit, with_deployments, with_discussion,
-        with_discussions, with_file, with_forks, with_history, with_inbox, with_issue, with_issues,
-        with_job, with_milestone, with_milestones, with_pr, with_pr_checks, with_profile,
-        with_release, with_releases, with_repo, with_repo_search, with_run, with_stargazers,
-        with_tags, with_workflow,
+        press, with_actions, with_branches, with_commit, with_compare, with_deployments,
+        with_discussion, with_discussions, with_file, with_forks, with_history, with_inbox,
+        with_issue, with_issues, with_job, with_milestone, with_milestones, with_pr,
+        with_pr_checks, with_profile, with_release, with_releases, with_repo, with_repo_search,
+        with_run, with_stargazers, with_tags, with_workflow,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1726,6 +1745,7 @@ mod links {
             ("release", with_release(Mode::Dark)),
             ("tags", with_tags(Mode::Dark)),
             ("branches", with_branches(Mode::Dark)),
+            ("compare", with_compare(Mode::Dark)),
             ("deployments", with_deployments(Mode::Dark)),
             ("milestones", with_milestones(Mode::Dark)),
             ("milestone", with_milestone(Mode::Dark)),

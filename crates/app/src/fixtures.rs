@@ -3,7 +3,7 @@
 use crossterm::event::KeyEvent;
 use ghtui_api::browse::{
     Asset, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo,
-    Contributed, Contributions, DeploymentInfo, DeploymentList, DiscussionCategory,
+    Comparison, Contributed, Contributions, DeploymentInfo, DeploymentList, DiscussionCategory,
     DiscussionComment, DiscussionDetail, DiscussionList, DiscussionSummary, EntryKind, IssueDetail,
     IssueState, IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList,
     MonthActivity, PrActivity, Profile, Readme, Release, RepoOverview, RepoSummary, Results,
@@ -897,6 +897,31 @@ pub fn deployments() -> DeploymentList {
             ],
             next: None,
         },
+    }
+}
+/// Two tags compared: the first of many commits.
+pub fn comparison() -> Comparison {
+    let commit = |oid: char, headline: &str, date: &str| CommitInfo {
+        oid: oid.to_string().repeat(40),
+        headline: headline.into(),
+        author: "octocat".into(),
+        date: date.into(),
+    };
+    Comparison {
+        status: "ahead".into(),
+        ahead: 120,
+        behind: 0,
+        total_commits: 120,
+        commits: vec![
+            commit('a', "Branches are a page", "2026-10-01T10:00:00Z"),
+            commit('b', "Milestones are pages", "2026-10-01T12:00:00Z"),
+            commit('c', "Deployments are a page", "2026-10-02T12:00:00Z"),
+        ],
+        from: "1".repeat(40),
+        to: "c".repeat(40),
+        files: 14,
+        additions: 812,
+        deletions: 40,
     }
 }
 /// A page of discussions with two categories.

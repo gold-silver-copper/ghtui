@@ -1432,6 +1432,30 @@ impl GitHub {
         }
         Ok(list)
     }
+    /// Compares two revisions, as a compare URL names them (`a...b`,
+    /// `a..b`, `owner:branch`, `owner:repo:branch`): up to 250 commits and
+    /// 300 files.
+    pub async fn compare(&self, repo: &RepoId, spec: &str) -> Result<browse::Comparison, ApiError> {
+        let (base, head, direct) = match spec.split_once("...") {
+            Some((base, head)) => (base, head, false),
+            None => match spec.split_once("..") {
+                Some((base, head)) => (base, head, true),
+                None => return Err(ApiError::NotFound(format!("{repo} compare {spec}"))),
+            },
+        };
+        let path = format!(
+            "/repos/{}/{}/compare/{}...{}?per_page=250",
+            repo.owner,
+            repo.name,
+            encode_path(base),
+            encode_path(head)
+        );
+        let wire: browse::rest_compare::Compare = self.rest_json(&path).await?;
+        let comparison = wire.into_comparison(direct);
+        Ok(self
+            .kept(&browse::keys::compare(repo, spec), comparison)
+            .await)
+    }
     /// A workflow run (one attempt of it, or the latest) and its jobs.
     pub async fn workflow_run(
         &self,
