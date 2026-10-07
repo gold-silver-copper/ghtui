@@ -2784,6 +2784,10 @@ pub fn job(
         filter_field(page, at.query, at.keys);
         page.blank();
     }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "said under each open step, or in place of the steps"
+    )]
     let log = log.text("the log");
     let lines = match log {
         Ok(log) if !log.running => Some(step_lines(job, &log.cut, &log.text)),

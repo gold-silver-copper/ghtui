@@ -4,9 +4,9 @@ use crate::page::{Page, Role, Seg};
 use crate::pages::{flash, loading_box};
 
 /// One need of a page, as exactly one of loading, failed (and why) or
-/// ready. Pages can't look inside: [`Fetched::show`] (or [`Fetched::text`])
-/// says what isn't ready, so a failure can't pass for "Loading…" or for
-/// "there's none".
+/// ready. Pages can't look inside: [`Fetched::show`] says what isn't
+/// ready, so a failure can't pass for "Loading…" or for "there's none".
+/// Outside this crate only `Remote::fetched` makes one.
 #[derive(Debug)]
 pub struct Fetched<'a, T: ?Sized> {
     data: Option<&'a T>,
@@ -25,7 +25,8 @@ impl<T: ?Sized> Clone for Fetched<'_, T> {
 impl<T: ?Sized> Copy for Fetched<'_, T> {}
 
 impl<'a, T: ?Sized> Fetched<'a, T> {
-    pub fn ready(data: &'a T) -> Self {
+    /// Data a page already has (a part of another need).
+    pub(crate) fn ready(data: &'a T) -> Self {
         let (data, error, retry) = (Some(data), None, "");
         Self { data, error, retry }
     }
@@ -43,8 +44,9 @@ impl<'a, T: ?Sized> Fetched<'a, T> {
         Self { data, error, retry }
     }
 
-    /// The part of the data `f` picks, failing when it isn't there.
-    pub fn pick<U: ?Sized>(self, f: impl FnOnce(&'a T) -> Option<&'a U>) -> Fetched<'a, U> {
+    /// The part of the data `f` picks, failing when it isn't there. A
+    /// plain `fn`, so it can't pick data from outside the fetch.
+    pub fn pick<U: ?Sized>(self, f: fn(&'a T) -> Option<&'a U>) -> Fetched<'a, U> {
         let picked = self.data.map(f);
         let wrong = matches!(picked, Some(None)).then_some("unexpected data from GitHub");
         let (data, error, retry) = (picked.flatten(), self.error.or(wrong), self.retry);
@@ -71,7 +73,7 @@ impl<'a, T: ?Sized> Fetched<'a, T> {
         loading: impl FnOnce(&mut Page),
     ) -> Option<&'a T> {
         let retry = self.retry;
-        match (self.error.is_some(), self.text(what)) {
+        match (self.error.is_some(), self.said(what)) {
             (_, Ok(data)) => return Some(data),
             (true, Err(why)) => flash(page, &format!("{why}. {retry} tries again.")),
             (false, Err(_)) => loading(page),
@@ -80,7 +82,13 @@ impl<'a, T: ?Sized> Fetched<'a, T> {
     }
 
     /// The data, or what to say instead, for a state shown inside a row.
+    /// Disallowed by clippy.toml: `.ok()` would drop what to say, so each
+    /// use says where it's said.
     pub fn text(self, what: &str) -> Result<&'a T, String> {
+        self.said(what)
+    }
+
+    fn said(self, what: &str) -> Result<&'a T, String> {
         match (self.data, self.error) {
             (Some(data), _) => Ok(data),
             (None, Some(err)) => Err(format!("Couldn't load {what}: {err}")),

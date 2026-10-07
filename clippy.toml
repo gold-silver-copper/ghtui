@@ -14,5 +14,6 @@ disallowed-methods = [
     { path = "ratatui::restore", reason = "panics without a terminal: use `restore_terminal`" },
     # A page shows each need as loading, failed (and why) or ready.
     { path = "ghtui_ui::fetched::Fetched::ready_unchecked", reason = "says nothing of a failure: use `show`, or say why silence is right" },
+    { path = "ghtui_ui::fetched::Fetched::text", reason = "`.ok()` drops what to say: use `show`, or say where the text is shown" },
     { path = "ghtui_ui::fetched::Fetched::new_unchecked", reason = "only a fetch's owner (`Remote::fetched`) knows how it's going" },
 ]
