@@ -1109,20 +1109,6 @@ impl State {
         }
     }
 
-    /// `of`'s diff, and its screen only while it's the one on top: all a
-    /// reply about `of` may change.
-    pub(crate) fn addressed(
-        &mut self,
-        of: &DiffOf,
-    ) -> Option<(&mut DiffState, Option<&mut DiffScreen>)> {
-        let State { screens, diffs, .. } = self;
-        let screen = match screens.last_mut() {
-            Screen::Diff(screen) if screen.of == *of => Some(&mut **screen),
-            _ => None,
-        };
-        Some((diffs.get_mut(of)?, screen))
-    }
-
     pub(crate) fn diff_parts(&mut self) -> Option<(&mut DiffScreen, &mut DiffState)> {
         let State { screens, diffs, .. } = self;
         let Screen::Diff(screen) = screens.last_mut() else {

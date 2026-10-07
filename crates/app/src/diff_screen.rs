@@ -1,6 +1,6 @@
 //! The diff screen: file tree plus diff, and its key handling.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use ghtui_api::model::{NodeId, PatchFile, PrRef, RepoId, ReviewThread, ViewedFiles};
@@ -19,7 +19,7 @@ use crate::diff_job::{DiffFiles, JobId, JobMsg, next_job};
 use crate::join;
 use crate::keymap::Action;
 use crate::review::{annotations, on_submitted};
-use crate::state::{Api, Cmd, DiffMsg, Git, Overlay, Problem, State};
+use crate::state::{Api, Cmd, DiffMsg, Git, Overlay, Problem, Screen, State};
 
 /// What GitHub says about your last submitted review of a PR.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -886,76 +886,93 @@ fn on_job(diff: &mut DiffState, screen: Option<&mut DiffScreen>, msg: JobMsg) {
     }
 }
 
-/// Changes the inputs of `of`'s diff, if it's still open.
-fn edit(state: &mut State, of: &DiffOf, f: impl FnOnce(&mut DiffInputs)) {
-    if let Some(diff) = state.diffs.get_mut(of) {
-        diff.edit(f);
-    }
-}
-
-/// A message for a diff screen.
+/// A message for a diff screen. The composer's and the Submit dialog's
+/// replies answer that dialog; any other reaches only `of`'s diff, its
+/// screen while on top, and the status bar.
 #[must_use]
 pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
-    if let DiffMsg::Job(job, msg) = msg {
-        if let Some((diff, screen)) = state.addressed(of)
-            && diff.job == job
-        {
-            on_job(diff, screen, msg);
-        }
-        return Vec::new();
-    }
-    // The rest is about reviewing a pull request.
-    let DiffOf::Pr(pr) = of.clone() else {
-        return Vec::new();
-    };
-    match msg {
+    match (msg, of) {
         // The text stays in the composer, with GitHub's reason.
-        DiffMsg::Replied(Err(err)) => {
+        (DiffMsg::Replied(Err(err)), _) => {
             if let Some(Overlay::Compose(compose)) = &mut state.overlay {
                 compose.sending = false;
                 compose.error = Some(err.to_string());
             }
+            Vec::new()
         }
-        DiffMsg::Replied(Ok(())) => {
+        (DiffMsg::Replied(Ok(())), DiffOf::Pr(pr)) => {
             state.overlay = None;
             state.info("Reply posted");
-            return vec![Cmd::Api(Api::FetchThreads(pr))];
+            vec![Cmd::Api(Api::FetchThreads(pr.clone()))]
         }
+        (DiffMsg::ReviewSubmitted(outcome), DiffOf::Pr(pr)) => on_submitted(state, pr, &outcome),
+        (msg, of) => {
+            let State {
+                screens,
+                diffs,
+                notice,
+                problems,
+                ..
+            } = state;
+            let screen = match screens.last_mut() {
+                Screen::Diff(screen) if screen.of == *of => Some(&mut **screen),
+                _ => None,
+            };
+            let Some(diff) = diffs.get_mut(of) else {
+                return Vec::new();
+            };
+            on_reply(of, diff, screen, notice, problems, msg)
+        }
+    }
+}
+
+/// A reply about `of`: it changes `diff`, `screen` (only while `of` is on
+/// top) and the status bar, and nothing else.
+fn on_reply(
+    of: &DiffOf,
+    diff: &mut DiffState,
+    screen: Option<&mut DiffScreen>,
+    notice: &mut Option<Notice>,
+    problems: &mut BTreeMap<Problem, String>,
+    msg: DiffMsg,
+) -> Vec<Cmd> {
+    let mut error = |text: String| *notice = Some(Notice::Error(text));
+    match msg {
+        DiffMsg::Job(job, msg) if diff.job == job => on_job(diff, screen, msg),
         DiffMsg::LastReview(result) => {
             let last = match result {
                 Ok(None) => LastReview::None,
                 Ok(Some(commit)) => LastReview::At(Oid::new(commit)),
                 Err(err) => LastReview::Failed(err.to_string()),
             };
-            edit(state, of, |i| i.last_review = last);
+            diff.edit(|i| i.last_review = last);
         }
         DiffMsg::SinceReady(old_head, Ok(hashes)) => {
-            if let Some((diff, Some(screen))) = state.addressed(of) {
+            if let Some(screen) = screen {
                 preserving_position(screen, &mut diff.doc, |doc| {
                     doc.set_since(Some(hashes), true);
                 });
-                state.info(format!(
+                let said = format!(
                     "Showing changes since your review of {}",
                     short_sha(&old_head)
-                ));
+                );
+                *notice = Some(Notice::Info(said));
             }
         }
         DiffMsg::SinceReady(_, Err(err)) => {
-            tracing::warn!(%pr, ?err, "comparing with the last review failed");
-            state.error(format!("Couldn't compare with your last review: {err}"));
+            tracing::warn!(%of, ?err, "comparing with the last review failed");
+            error(format!("Couldn't compare with your last review: {err}"));
         }
-        DiffMsg::CommitsListed(Ok(commits)) => edit(state, of, |i| i.commits = commits),
+        DiffMsg::CommitsListed(Ok(commits)) => diff.edit(|i| i.commits = commits),
         DiffMsg::CommitsListed(Err(err)) => {
-            tracing::warn!(%pr, ?err, "listing commits failed");
-            state.error(format!("Couldn't list commits: {err}"));
+            tracing::warn!(%of, ?err, "listing commits failed");
+            error(format!("Couldn't list commits: {err}"));
         }
         DiffMsg::ViewedLoaded(result) => match *result {
-            Ok(viewed) => {
-                edit(state, of, |i| i.viewed = Some(viewed));
-            }
+            Ok(viewed) => diff.edit(|i| i.viewed = Some(viewed)),
             Err(err) => {
-                tracing::warn!(%pr, %err, "viewed state fetch failed");
-                state.error(format!("Couldn't load viewed files: {err}"));
+                tracing::warn!(%of, %err, "viewed state fetch failed");
+                error(format!("Couldn't load viewed files: {err}"));
             }
         },
         DiffMsg::ViewedSaved {
@@ -964,53 +981,54 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
             result,
         } => {
             if let Err(err) = result {
-                tracing::warn!(%pr, %err, "viewed state update failed");
-                edit(state, of, |i| i.set_viewed(path, previous));
-                state.error(format!("GitHub didn't save “viewed”: {err}"));
+                tracing::warn!(%of, %err, "viewed state update failed");
+                diff.edit(|i| i.set_viewed(path, previous));
+                error(format!("GitHub didn't save “viewed”: {err}"));
             }
         }
+        // Anything done before it arrived is kept, and saved.
         DiffMsg::ReviewLoaded(Ok(saved)) => {
-            // Anything done before it arrived is kept, and saved.
-            if let Some(diff) = state.diffs.get_mut(of) {
-                let mut changed = false;
-                let save = diff.edit_review(&pr, |i| changed = i.merge_saved_review(saved));
-                return if changed { save } else { Vec::new() };
-            }
+            let DiffOf::Pr(pr) = of else {
+                return Vec::new();
+            };
+            let mut changed = false;
+            let save = diff.edit_review(pr, |i| changed = i.merge_saved_review(saved));
+            return if changed { save } else { Vec::new() };
         }
         DiffMsg::ReviewLoaded(Err(err)) => {
-            tracing::warn!(%pr, ?err, "reading review state failed");
-            state.problems.insert(
+            tracing::warn!(%of, ?err, "reading review state failed");
+            problems.insert(
                 Problem::Drafts,
-                format!("Drafts for {pr} are not being saved: {err}"),
+                format!("Drafts for {of} are not being saved: {err}"),
             );
         }
-        DiffMsg::ThreadsLoaded(Ok(threads)) => {
-            edit(state, of, |i| i.threads = threads);
-        }
+        DiffMsg::ThreadsLoaded(Ok(threads)) => diff.edit(|i| i.threads = threads),
         DiffMsg::ThreadsLoaded(Err(err)) => {
-            tracing::warn!(%pr, %err, "review threads fetch failed");
-            state.error(format!("Couldn't load review threads: {err}"));
+            tracing::warn!(%of, %err, "review threads fetch failed");
+            error(format!("Couldn't load review threads: {err}"));
         }
         DiffMsg::PatchesLoaded(Ok(patches)) => {
             let commentable = |f: PatchFile| Some((f.filename, Commentable::from_patch(&f.patch?)));
             let patches = Arc::new(patches.into_iter().filter_map(commentable).collect());
-            edit(state, of, |i| i.patches = patches);
+            diff.edit(|i| i.patches = patches);
         }
         // The local fallback covers commenting; just note it.
         DiffMsg::PatchesLoaded(Err(err)) => {
-            tracing::warn!(%pr, %err, "GitHub patches unavailable; using local hunks");
+            tracing::warn!(%of, %err, "GitHub patches unavailable; using local hunks");
         }
         DiffMsg::ResolvedSet {
             thread_id,
             resolved,
             result: Err(err),
         } => {
-            edit(state, of, |i| i.set_resolved(&thread_id, !resolved));
-            state.error(format!("GitHub didn't save that: {err}"));
+            diff.edit(|i| i.set_resolved(&thread_id, !resolved));
+            error(format!("GitHub didn't save that: {err}"));
         }
-        // Jobs are handled above.
-        DiffMsg::ResolvedSet { .. } | DiffMsg::Job(..) => {}
-        DiffMsg::ReviewSubmitted(outcome) => return on_submitted(state, &pr, &outcome),
+        // The dialogs' replies are answered in `update`; an old job's are dropped.
+        DiffMsg::ResolvedSet { .. }
+        | DiffMsg::Job(..)
+        | DiffMsg::Replied(_)
+        | DiffMsg::ReviewSubmitted(_) => {}
     }
     Vec::new()
 }
