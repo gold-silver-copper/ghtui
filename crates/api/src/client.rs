@@ -553,7 +553,12 @@ impl GitHub {
     }
 
     /// The PR's node ID and the viewer's pending review on it, if any.
-    pub async fn pending_review(&self, pr: &PrRef) -> Result<(NodeId, Option<NodeId>), ApiError> {
+    /// The PR's node ID, and your pending review on it, if any, with the
+    /// commit that review is on.
+    pub async fn pending_review(
+        &self,
+        pr: &PrRef,
+    ) -> Result<(NodeId, Option<(NodeId, Option<String>)>), ApiError> {
         let op = queries::PendingReviewQuery::build(number_vars(pr)?);
         let pr_node = self
             .graphql(op)
@@ -563,7 +568,7 @@ impl GitHub {
             .ok_or_else(|| ApiError::NotFound(pr.to_string()))?;
         let review = nodes(pr_node.reviews.and_then(|r| r.nodes))
             .next()
-            .map(|r| NodeId::from(r.id));
+            .map(|r| (NodeId::from(r.id), r.commit.map(|c| c.oid.0)));
         Ok((pr_node.id.into(), review))
     }
 

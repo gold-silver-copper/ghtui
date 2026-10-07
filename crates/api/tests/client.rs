@@ -744,6 +744,23 @@ async fn an_unknown_discussion_category_is_not_found() {
     assert!(matches!(result, Err(ApiError::NotFound(_))), "{result:?}");
 }
 
+/// A pending review comes with the commit it's on, so comments for another
+/// diff aren't added to it.
+#[tokio::test]
+async fn a_pending_review_says_its_commit() {
+    let (gh, seen) = github(vec![Reply::new(
+        200,
+        r#"{"data":{"repository":{"pullRequest":{"id":"PR_1","reviews":{"nodes":[{"id":"R_1","commit":{"oid":"abc"}}]}}}}}"#,
+    )])
+    .await;
+    let (_, pending) = gh
+        .pending_review(&PrRef::parse("o/r#7").unwrap())
+        .await
+        .unwrap();
+    assert_eq!(pending, Some((NodeId::new("R_1"), Some("abc".into()))));
+    assert!(seen.lock().unwrap()[0].body.contains("commit"));
+}
+
 #[tokio::test]
 async fn review_submission_calls() {
     use ghtui_api::model::{NewThread, ReviewEvent, Side};

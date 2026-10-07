@@ -120,7 +120,7 @@ fragments! {
     CommitRollupConnection = "PullRequestCommitConnection" => CommitRollupNode,
     LabelConnection = "LabelConnection" => Label,
     ReviewCommentConnection = "PullRequestReviewCommentConnection" => ReviewComment,
-    ReviewIdConnection = "PullRequestReviewConnection" => ReviewId,
+    PendingReviewConnection = "PullRequestReviewConnection" => PendingReview,
     ReviewCommitConnection = "PullRequestReviewConnection" => ReviewCommit,
 }
 
@@ -498,6 +498,14 @@ pub struct CommitOid {
     pub oid: GitObjectId,
 }
 
+/// Your pending review, and the commit it's on.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
+pub struct PendingReview {
+    pub id: cynic::Id,
+    pub commit: Option<CommitOid>,
+}
+
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 #[cynic(
     graphql_type = "PullRequestReviewCommentState",
@@ -548,7 +556,7 @@ pub struct PrPendingReview {
     pub id: cynic::Id,
     /// Only the viewer's own pending review is visible.
     #[arguments(states: [PENDING], first: 1)]
-    pub reviews: Option<ReviewIdConnection>,
+    pub reviews: Option<PendingReviewConnection>,
 }
 
 // ---- review mutations --------------------------------------------------------

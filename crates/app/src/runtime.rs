@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind, MouseEventKind};
 use futures::StreamExt;
-use ghtui_api::model::{PrRef, RepoId, ReviewEvent};
+use ghtui_api::model::{NodeId, PrRef, RepoId, ReviewEvent};
 use ghtui_api::{ApiError, GitHub};
 use ghtui_store::{DraftComment, ReviewState, Reviews};
 use ghtui_ui::bars::Notice;
@@ -1027,7 +1027,13 @@ async fn submit_review(
 ) -> SubmitOutcome {
     let mut outcome = SubmitOutcome::default();
     let review_id = match gh.pending_review(pr).await {
-        Ok((_, Some(existing))) => existing,
+        Ok((_, Some(pending))) => match reusable(pending, head) {
+            Ok(existing) => existing,
+            Err(message) => {
+                outcome.error = Some(message);
+                return outcome;
+            }
+        },
         Ok((pr_id, None)) => match gh.start_review(&pr_id, head).await {
             Ok(id) => id,
             Err(err) => {
@@ -1057,6 +1063,20 @@ async fn submit_review(
         Err(err) => outcome.error = Some(format!("Couldn't submit: {}", api_message(&err))),
     }
     outcome
+}
+
+/// Your pending review, if it's on `head`. One on another commit has its
+/// comments placed on that commit's lines, and the drafts' line numbers are
+/// from this diff, so they're not mixed; nor is the pending review
+/// discarded, since it may hold comments written on GitHub.
+fn reusable((id, commit): (NodeId, Option<String>), head: &str) -> Result<NodeId, String> {
+    match commit {
+        Some(commit) if commit != head => Err(format!(
+            "You have a pending review on another commit ({}): finish or discard it on GitHub, then submit again",
+            ghtui_ui::text::short_sha(&commit)
+        )),
+        _ => Ok(id),
+    }
 }
 
 /// A temporary file holding `text` for the editor: created exclusively
@@ -1139,6 +1159,15 @@ mod tests {
             rx.recv().await,
             Some(Msg::Diff(p, DiffMsg::ThreadsLoaded(Err(ApiError::Internal(_))))) if p == DiffOf::Pr(pr.clone())
         ));
+    }
+
+    #[test]
+    fn a_pending_review_on_another_commit_is_not_reused() {
+        let id = || NodeId::new("R_1");
+        assert_eq!(reusable((id(), Some("abc".into())), "abc"), Ok(id()));
+        assert_eq!(reusable((id(), None), "abc"), Ok(id()));
+        let err = reusable((id(), Some("0123456789".into())), "abc").unwrap_err();
+        assert!(err.contains("another commit (0123456)"), "{err}");
     }
 
     #[cfg(unix)]
