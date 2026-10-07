@@ -33,8 +33,7 @@ pub async fn run(gh: &GitHub) {
     let long = pr("rust-lang/rust#160692");
     let detail = gh.pull_request(&long).await.unwrap();
     let activity = gh.pr_activity(&long).await.unwrap();
-    assert_eq!(activity.total_commits, 229);
-    assert!(activity.commits.len() as u64 <= activity.total_commits);
+    assert_eq!(activity.commits.total, 229);
     let checks = gh.pr_checks(&long).await.unwrap();
     assert_eq!(checks.oid, detail.head_oid);
     gh.review_threads(&long).await.unwrap();
@@ -49,7 +48,7 @@ pub async fn run(gh: &GitHub) {
     // A PR with more than 100 comments: the newest are kept, and the
     // count says how many there are.
     let talky = gh.pr_activity(&pr("rust-lang/rust#158734")).await.unwrap();
-    assert!(talky.total_comments > 100, "{}", talky.total_comments);
+    assert!(talky.comments.total > 100, "{}", talky.comments.total);
     assert_eq!(talky.comments.len(), 100);
     no_doubts(gh, "a PR with many comments");
 
@@ -85,11 +84,9 @@ pub async fn run(gh: &GitHub) {
 
     // A discussion whose newer comments' IDs overflow GraphQL's Int, so
     // come back null.
-    let discussion = gh
-        .discussion(&DiscussionsOf::Repo(cli.clone()), 14603)
+    gh.discussion(&DiscussionsOf::Repo(cli.clone()), 14603)
         .await
         .unwrap();
-    assert!(discussion.comments.len() as u64 <= discussion.total_comments);
     no_doubts(gh, "a discussion");
 
     // A commit search, whose dates carry offsets.

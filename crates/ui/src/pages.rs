@@ -1285,7 +1285,7 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
         Role::Strong,
     )];
     list_box(page, title, Vec::new(), &d.members, "No members.", user_row);
-    more_here(page, d.members.total, d.members.len(), "member", "members");
+    more_here(page, &d.members, "member", "members");
     page.blank();
     let title = vec![Seg::new(
         format!("Repositories  {}", shown(d.repos.len(), t.repos)),
@@ -1311,13 +1311,7 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
             });
         },
     );
-    more_here(
-        page,
-        d.repos.total,
-        d.repos.len(),
-        "repository",
-        "repositories",
-    );
+    more_here(page, &d.repos, "repository", "repositories");
     if !d.children.is_empty() {
         page.blank();
         let title = vec![Seg::new(
@@ -1327,13 +1321,7 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
         list_box(page, title, Vec::new(), &d.children, "", |page, c| {
             team_row(page, org, c);
         });
-        more_here(
-            page,
-            d.children.total,
-            d.children.len(),
-            "child team",
-            "child teams",
-        );
+        more_here(page, &d.children, "child team", "child teams");
     }
 }
 // ---- gists -------------------------------------------------------------------------------------
@@ -2018,7 +2006,7 @@ pub fn issue(
             format!(
                 " opened this issue {} · {}",
                 time::ago_iso(&d.created_at, now),
-                plural(d.total_comments.max(d.comments.len() as u64), "comment")
+                plural(d.comments.total, "comment")
             ),
             Role::Meta,
         ),
@@ -2057,13 +2045,7 @@ pub fn issue(
         now,
     };
     talk.said(page, &d.author, "opened", &d.created_at, &d.body, true);
-    earlier_here(
-        page,
-        d.total_comments,
-        d.comments.len(),
-        "comment",
-        "comments",
-    );
+    earlier_here(page, &d.comments, "comment", "comments");
     for c in &d.comments {
         connector(page);
         talk.comment(page, c);
@@ -2082,7 +2064,7 @@ pub fn issue(
             );
             label_list(a, &d.labels);
             milestone_aside(a, &d.repo, d.milestone.as_ref());
-            let earlier = d.total_comments > d.comments.len() as u64;
+            let earlier = d.comments.left_out() > 0;
             people(a, "Participants", &participants, maybe_others(earlier), "");
         });
     }
@@ -2223,14 +2205,8 @@ pub fn pr_conversation(
     }) else {
         return;
     };
-    earlier_here(
-        page,
-        a.total_comments,
-        a.comments.len(),
-        "comment",
-        "comments",
-    );
-    earlier_here(page, a.total_reviews, a.reviews.len(), "review", "reviews");
+    earlier_here(page, &a.comments, "comment", "comments");
+    earlier_here(page, &a.reviews, "review", "reviews");
     let mut entries: Vec<(&str, Entry<'_>)> = a
         .comments
         .iter()
@@ -2275,7 +2251,7 @@ pub fn pr_conversation(
     if let Some(width) = aside {
         let reviewers = unique(a.reviews.iter().map(|r| &r.author));
         page.build_aside(width, |side| {
-            let earlier = a.total_reviews > a.reviews.len() as u64;
+            let earlier = a.reviews.left_out() > 0;
             people(
                 side,
                 "Reviewers",
@@ -2325,7 +2301,7 @@ pub fn pr_commits(
     let Some(a) = activity.show(page, "commits") else {
         return;
     };
-    earlier_here(page, a.total_commits, a.commits.len(), "commit", "commits");
+    earlier_here(page, &a.commits, "commit", "commits");
     commit_rows(page, &pr.repo, &a.commits, None, now);
 }
 
@@ -2623,7 +2599,7 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
             page.box_line(segs, right, 0);
         });
     });
-    left_out(page, run.jobs.total, run.jobs.len(), "job", "jobs");
+    left_out(page, &run.jobs, "job", "jobs");
 }
 
 /// Which step each log line belongs to. GitHub's one log for a job
@@ -3126,7 +3102,7 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
         format!(
             "  ▲ {} · {}",
             d.upvotes,
-            plural(d.total_comments.max(d.comments.len() as u64), "comment")
+            plural(d.comments.total, "comment")
         ),
         Role::Meta,
     ));
@@ -3169,33 +3145,21 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
                 badge,
             );
         }
-        more_here(page, c.total_replies, c.replies.len(), "reply", "replies");
+        more_here(page, &c.replies, "reply", "replies");
     }
-    more_here(
-        page,
-        d.total_comments,
-        d.comments.len(),
-        "comment",
-        "comments",
-    );
+    more_here(page, &d.comments, "comment", "comments");
 }
 
 /// What a conversation leaves out: `… 12 more replies on GitHub (o)`.
-fn more_here(page: &mut Page, total: u64, shown: usize, one: &str, many: &str) {
-    left_out(
-        page,
-        total,
-        shown,
-        &format!("more {one}"),
-        &format!("more {many}"),
-    );
+fn more_here<T>(page: &mut Page, list: &Capped<T>, one: &str, many: &str) {
+    left_out(page, list, &format!("more {one}"), &format!("more {many}"));
 }
 
 /// The older part of a conversation that isn't shown (only its newest
 /// comments are fetched): `… 120 earlier comments on GitHub (o)`.
-fn earlier_here(page: &mut Page, total: u64, shown: usize, one: &str, many: &str) {
+fn earlier_here<T>(page: &mut Page, list: &Capped<T>, one: &str, many: &str) {
     let (one, many) = (format!("earlier {one}"), format!("earlier {many}"));
-    left_out(page, total, shown, &one, &many);
+    left_out(page, list, &one, &many);
 }
 
 /// A capped list's count: `20 of 45`, or `45` when all are here.
@@ -3207,8 +3171,8 @@ fn count_of<T>(list: &Capped<T>) -> String {
     }
 }
 
-fn left_out(page: &mut Page, total: u64, shown: usize, one: &str, many: &str) {
-    let rest = total.saturating_sub(shown as u64);
+fn left_out<T>(page: &mut Page, list: &Capped<T>, one: &str, many: &str) {
+    let rest = list.left_out();
     if rest > 0 {
         let what = if rest == 1 { one } else { many };
         let text = format!("… {rest} {what} on GitHub (o)");
@@ -3307,7 +3271,7 @@ pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
         });
     });
     page.box_bottom();
-    more_here(page, r.assets.total, r.assets.len(), "asset", "assets");
+    more_here(page, &r.assets, "asset", "assets");
 }
 
 /// A repository's tags, each linked to its code.

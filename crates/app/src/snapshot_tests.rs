@@ -188,7 +188,7 @@ fn long_conversations_say_what_is_left_out() {
             .join("\n")
     };
     let mut issue = fixtures::issue();
-    issue.total_comments = 120;
+    issue.comments.total = 120;
     let mut state = with_issue(Mode::Dark);
     let route = Route::Issue {
         repo: ghtui(),
@@ -200,9 +200,9 @@ fn long_conversations_say_what_is_left_out() {
 
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
     let mut activity = fixtures::activity();
-    activity.total_comments = 101;
-    activity.total_reviews = 3;
-    activity.total_commits = 250;
+    activity.comments.total = 101;
+    activity.reviews.total = 3;
+    activity.commits.total = 250;
     let mut state = with_pr(Mode::Dark);
     fetched(
         &mut state,
@@ -236,13 +236,15 @@ fn long_conversations_say_what_is_left_out() {
 fn a_dismissed_review_reads_as_dismissed() {
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
     let mut activity = fixtures::activity();
-    activity.reviews = vec![ghtui_api::browse::ReviewSummary {
-        author: "hubot".into(),
-        state: ghtui_api::model::ReviewState::Dismissed,
-        body: String::new(),
-        submitted_at: "2026-10-01T10:00:00Z".into(),
-    }];
-    activity.total_reviews = 1;
+    activity.reviews = ghtui_api::model::Capped::new(
+        vec![ghtui_api::browse::ReviewSummary {
+            author: "hubot".into(),
+            state: ghtui_api::model::ReviewState::Dismissed,
+            body: String::new(),
+            submitted_at: "2026-10-01T10:00:00Z".into(),
+        }],
+        1,
+    );
     let mut state = with_pr(Mode::Dark);
     fetched(
         &mut state,
@@ -2589,7 +2591,7 @@ fn stretch(state: &mut State) {
             Some(Data::Issue(Some(d))) => {
                 d.title = awful(40);
                 d.body = format!("{}\n\n```\n{}\n```", awful(30), "x".repeat(5000));
-                for c in &mut d.comments {
+                for c in d.comments.iter_mut() {
                     c.author = "a".repeat(39);
                     c.body = awful(20);
                 }
