@@ -593,7 +593,14 @@ fn compare_tabs(
     ));
     if let Some((from, to)) = range {
         c.tabs.push((
-            new_tab("±", "Files changed", comparison.map(|cmp| cmp.files)),
+            new_tab(
+                "±",
+                "Files changed",
+                // A count GitHub capped would read as exact.
+                comparison
+                    .filter(|cmp| !cmp.files_capped)
+                    .map(|cmp| cmp.files),
+            ),
             Target::Files(DiffOf::Range(repo.clone(), from.to_owned(), to.to_owned())),
         ));
     }
