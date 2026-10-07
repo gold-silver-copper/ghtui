@@ -164,6 +164,15 @@ impl GitHub {
         )
     }
 
+    /// Notes a REST search that timed out, so found only some results.
+    fn note_incomplete(&self, incomplete: bool) {
+        if incomplete {
+            self.leave_out(vec![
+                "the search took too long and found only some results".to_owned(),
+            ]);
+        }
+    }
+
     /// Notes a partial result's errors to report.
     fn leave_out(&self, errors: Vec<String>) {
         if errors.is_empty() {
@@ -863,6 +872,7 @@ impl GitHub {
         if kind == Kind::Commits {
             let page: browse::rest_search::Page<browse::rest_search::Commit> =
                 self.rest_json(&path).await?;
+            self.note_incomplete(page.incomplete_results);
             return Ok(SearchResults::Commits(Results {
                 next: next(page.total_count),
                 total: page.total_count,
@@ -875,6 +885,7 @@ impl GitHub {
         }
         let page: browse::rest_search::Page<browse::rest_search::Code> =
             self.rest_json(&path).await?;
+        self.note_incomplete(page.incomplete_results);
         Ok(SearchResults::Code(Results {
             next: next(page.total_count),
             total: page.total_count,
