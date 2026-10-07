@@ -550,12 +550,14 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 }
             }
         }
+        // It opens now, and fills in once git has listed the commits.
         Action::PickCommits => {
-            if diff.inputs().commits.is_empty() {
-                state.info("Listing commits…");
-                return vec![Cmd::Git(Git::ListCommits(pr))];
+            let unlisted = diff.inputs().commits.is_empty();
+            let mut cmds = state.open_picker(picker::Kind::Commits { mark: None });
+            if unlisted {
+                cmds.push(Cmd::Git(Git::ListCommits(pr)));
             }
-            state.open_picker(picker::Kind::Commits { mark: None })
+            cmds
         }
         // `c` on a thread replies to it.
         Action::Comment

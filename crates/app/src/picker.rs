@@ -379,6 +379,9 @@ impl State {
                 Some(Choice::Commits(PickItem::Commit(i))),
             ));
         }
+        if diff.inputs().commits.is_empty() {
+            rows.push((item("Listing commits…", ""), None));
+        }
         rows
     }
 }

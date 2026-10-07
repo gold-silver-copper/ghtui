@@ -3444,6 +3444,69 @@ pub(crate) mod tests {
                     [Cmd::Git(Git::LoadDiff { range: None, .. })]
                 ));
             }
+
+            fn one_commit() -> Vec<ghtui_git::repo::Commit> {
+                vec![ghtui_git::repo::Commit {
+                    oid: Oid::new("a".repeat(40)),
+                    subject: "first".into(),
+                }]
+            }
+
+            /// Commits that arrive after you've left the diff are kept
+            /// for it, but open no picker over the page you're on.
+            #[test]
+            fn commits_listed_after_leaving_the_diff_open_no_picker() {
+                let (mut s, pr) = diff_state(120);
+                assert!(matches!(
+                    &act(&mut s, Action::PickCommits)[..],
+                    [Cmd::Git(Git::ListCommits(_))]
+                ));
+                // The picker opens at once, saying it's listing; leave it,
+                // then the diff.
+                let Some(Overlay::Picker(p)) = &s.overlay else {
+                    panic!("no picker")
+                };
+                assert!(s.picker_rows(p).last().is_some_and(|(_, c)| c.is_none()));
+                press(&mut s, "<Esc>");
+                assert!(s.overlay.is_none());
+                act(&mut s, Action::Back);
+                assert!(matches!(s.screen(), Screen::Page(_)));
+                diff_msg(&mut s, &pr, DiffMsg::CommitsListed(Ok(one_commit())));
+                assert!(
+                    s.overlay.is_none(),
+                    "a commit picker opened over the page: {:?}",
+                    s.overlay.as_ref().map(|o| match o {
+                        Overlay::Picker(p) => format!("Picker({})", p.title()),
+                        _ => "another overlay".to_owned(),
+                    })
+                );
+                assert_eq!(s.diffs[&DiffOf::Pr(pr)].inputs().commits.len(), 1);
+            }
+
+            /// Commits that arrive while you're writing a comment leave the
+            /// composer, and what's in it, alone.
+            #[test]
+            fn commits_listed_while_composing_keep_the_composer() {
+                use crate::review::{Compose, ComposeTarget};
+                let (mut s, pr) = diff_state(120);
+                act(&mut s, Action::PickCommits);
+                let target = ComposeTarget::Reply {
+                    thread_id: NodeId::new("t"),
+                };
+                s.overlay = Some(Overlay::Compose(Box::new(Compose::new(
+                    &s.theme,
+                    target,
+                    "half a reply",
+                ))));
+                diff_msg(&mut s, &pr, DiffMsg::CommitsListed(Ok(one_commit())));
+                match &s.overlay {
+                    Some(Overlay::Compose(c)) => assert_eq!(c.text(), "half a reply"),
+                    Some(Overlay::Picker(p)) => {
+                        panic!("the composer was replaced by a {} picker", p.title())
+                    }
+                    _ => panic!("the composer is gone"),
+                }
+            }
         }
 
         mod review {

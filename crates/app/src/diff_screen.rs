@@ -18,7 +18,6 @@ use ratatui::layout::Rect;
 use crate::diff_job::{DiffFiles, JobId, JobMsg, next_job};
 use crate::join;
 use crate::keymap::Action;
-use crate::picker;
 use crate::review::{annotations, on_submitted};
 use crate::state::{Api, Cmd, DiffMsg, Git, Overlay, Problem, State};
 
@@ -973,11 +972,7 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
             tracing::warn!(%pr, ?err, "comparing with the last review failed");
             state.error(format!("Couldn't compare with your last review: {err}"));
         }
-        DiffMsg::CommitsListed(Ok(commits)) => {
-            edit(state, of, |i| i.commits = commits);
-            state.notice = None;
-            return state.open_picker(picker::Kind::Commits { mark: None });
-        }
+        DiffMsg::CommitsListed(Ok(commits)) => edit(state, of, |i| i.commits = commits),
         DiffMsg::CommitsListed(Err(err)) => {
             tracing::warn!(%pr, ?err, "listing commits failed");
             state.error(format!("Couldn't list commits: {err}"));
