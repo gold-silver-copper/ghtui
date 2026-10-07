@@ -1,0 +1,13 @@
+{
+  "request": "POST /graphql",
+  "body": {
+    "query": "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { discussion(number: $number) { number title body author { login } createdAt category { name } isAnswered upvoteCount comments(first: 50) { totalCount nodes { databaseId author { login } body createdAt isAnswer upvoteCount replies(first: 30) { totalCount nodes { databaseId author { login } body createdAt } } } } } } }",
+    "variables": {
+      "name": "cli",
+      "number": 14603,
+      "owner": "cli"
+    }
+  },
+  "status": 200,
+  "response": "{\"data\":{\"repository\":{\"discussion\":{\"number\":14603,\"title\":\"https://github.com/cli/cli.git\",\"body\":\"https://github.com/cli/cli.git\",\"author\":{\"login\":\"shohan2day-star\"},\"createdAt\":\"2026-10-05T19:35:09Z\",\"category\":{\"name\":\"General\"},\"isAnswered\":null,\"upvoteCount\":1,\"comments\":{\"totalCount\":4,\"nodes\":[{\"databaseId\":18765024,\"author\":{\"login\":\"shohan2day-star\"},\"body\":\"Gift me\",\"createdAt\":\"2026-10-05T19:35:36Z\",\"isAnswer\":false,\"upvoteCount\":1,\"replies\":{\"totalCount\":0,\"nodes\":[]}},{\"databaseId\":18765028,\"author\":{\"login\":\"shohan2day-star\"},\"body\":\"Gift me boss\",\"createdAt\":\"2026-10-05T19:35:49Z\",\"isAnswer\":false,\"upvoteCount\":1,\"replies\":{\"totalCount\":0,\"nodes\":[]}},{\"databaseId\":18765038,\"author\":{\"login\":\"shohan2day-star\"},\"body\":\"[](url)https://github.com/cli/cli.git\",\"createdAt\":\"2026-10-05T19:36:45Z\",\"isAnswer\":false,\"upvoteCount\":1,\"replies\":{\"totalCount\":0,\"nodes\":[]}},{\"databaseId\":18779877,\"author\":{\"login\":\"iamtywishcedis\"},\"body\":\"Essay Question:\\n\\nDiscuss the role of composers in the development of music, explaining how their creativity, personal experiences, cultural background, historical events, technical skills, and use of technology influence their musical works. In your answer, discuss what makes a composer successful and how composers use music to express emotions, ideas, and social or cultural messages. Support your discussion with relevant examples of composers and their works.\",\"createdAt\":\"2026-10-06T15:33:27Z\",\"isAnswer\":false,\"upvoteCount\":1,\"replies\":{\"totalCount\":0,\"nodes\":[]}}]}}}}}"
+}

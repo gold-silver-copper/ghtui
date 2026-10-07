@@ -69,6 +69,8 @@ pub struct GitHub {
     left_out: Arc<Mutex<Vec<String>>>,
     /// Where GitHub's answers didn't add up, not yet reported.
     doubts: Arc<Mutex<Vec<String>>>,
+    /// Where responses are recorded, for the corpus (never by the app).
+    recorder: Option<Arc<crate::corpus::Recorder>>,
 }
 
 struct Http {
@@ -135,7 +137,17 @@ impl GitHub {
             rejected: Arc::default(),
             left_out: Arc::default(),
             doubts: Arc::default(),
+            recorder: None,
         }
+    }
+
+    /// Records every response into `dir`, for the corpus. The token isn't
+    /// recorded: only the request's method, path and body, and the
+    /// response's status, `Link` header and body.
+    #[must_use]
+    pub fn recording(mut self, dir: std::path::PathBuf) -> Self {
+        self.recorder = Some(Arc::new(crate::corpus::Recorder(dir)));
+        self
     }
 
     async fn client(&self) -> Result<&reqwest::Client, ApiError> {
@@ -317,6 +329,24 @@ impl GitHub {
                 .text()
                 .await
                 .map_err(|e| ApiError::Network(e.to_string()))?;
+            if let Some(recorder) = &self.recorder {
+                let (request, sent) = match request {
+                    Request::Get { path, .. } => (format!("GET {path}"), None),
+                    Request::Post { path, body, .. } => (format!("POST {path}"), Some(*body)),
+                };
+                let link = headers
+                    .get(header::LINK)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_owned);
+                let recorded = crate::corpus::Recorded {
+                    request,
+                    body: sent.cloned(),
+                    status: status.as_u16(),
+                    link,
+                    response: body.clone(),
+                };
+                recorder.record(&recorded, sent);
+            }
             return Ok(Response {
                 status,
                 headers,

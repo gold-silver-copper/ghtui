@@ -1,0 +1,15 @@
+{
+  "request": "POST /graphql",
+  "body": {
+    "operationName": "ThreadsQuery",
+    "query": "query ThreadsQuery($owner: String!, $name: String!, $number: Int!, $after: String) {\n  repository(owner: $owner, name: $name) {\n    pullRequest(number: $number) {\n      reviewThreads(first: 100, after: $after) {\n        pageInfo {\n          hasNextPage\n          endCursor\n        }\n        nodes {\n          id\n          path\n          diffSide\n          startDiffSide\n          line\n          startLine\n          originalLine\n          originalStartLine\n          isOutdated\n          isResolved\n          subjectType\n          viewerCanReply\n          viewerCanResolve\n          viewerCanUnresolve\n          first_comment: comments(first: 1) {\n            totalCount\n            nodes {\n              id\n              author {\n                login\n              }\n              body\n              createdAt\n              url\n              originalCommit {\n                oid\n              }\n              state\n            }\n          }\n          comments(last: 99) {\n            totalCount\n            nodes {\n              id\n              author {\n                login\n              }\n              body\n              createdAt\n              url\n              originalCommit {\n                oid\n              }\n              state\n            }\n          }\n        }\n      }\n    }\n  }\n}\n",
+    "variables": {
+      "after": null,
+      "name": "rust",
+      "number": 160692,
+      "owner": "rust-lang"
+    }
+  },
+  "status": 200,
+  "response": "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]}}}}}"
+}

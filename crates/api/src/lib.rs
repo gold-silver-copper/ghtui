@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod browse;
 mod client;
+pub mod corpus;
 pub mod model;
 pub mod queries;
 #[cfg(test)]

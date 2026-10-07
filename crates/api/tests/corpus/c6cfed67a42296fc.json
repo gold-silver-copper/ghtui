@@ -1,0 +1,14 @@
+{
+  "request": "POST /graphql",
+  "body": {
+    "operationName": "PullRequestQuery",
+    "query": "query PullRequestQuery($owner: String!, $name: String!, $number: Int!) {\n  repository(owner: $owner, name: $name) {\n    pullRequest(number: $number) {\n      __typename\n      ... {\n        number\n        title\n        url\n        isDraft\n        state\n        updatedAt\n        author {\n          login\n        }\n        repository {\n          nameWithOwner\n        }\n        additions\n        deletions\n        reviewDecision\n        commits(last: 1) {\n          nodes {\n            commit {\n              statusCheckRollup {\n                state\n              }\n            }\n          }\n        }\n        comments {\n          totalCount\n        }\n      }\n      body\n      createdAt\n      baseRefName\n      headRefName\n      baseRefOid\n      headRefOid\n      headRepository {\n        nameWithOwner\n      }\n      changedFiles\n      mergeable\n      labels(first: 20) {\n        totalCount\n        nodes {\n          name\n          color\n        }\n      }\n      milestone {\n        number\n        title\n      }\n    }\n  }\n}\n",
+    "variables": {
+      "name": "rust",
+      "number": 160692,
+      "owner": "rust-lang"
+    }
+  },
+  "status": 200,
+  "response": "{\"data\":{\"repository\":{\"pullRequest\":{\"__typename\":\"PullRequest\",\"number\":160692,\"title\":\"Clippy subtree update\",\"url\":\"https://github.com/rust-lang/rust/pull/160692\",\"isDraft\":false,\"state\":\"MERGED\",\"updatedAt\":\"2026-08-07T23:03:05Z\",\"author\":{\"login\":\"flip1995\"},\"repository\":{\"nameWithOwner\":\"rust-lang/rust\"},\"additions\":16219,\"deletions\":7262,\"reviewDecision\":\"REVIEW_REQUIRED\",\"commits\":{\"nodes\":[{\"commit\":{\"statusCheckRollup\":{\"state\":\"SUCCESS\"}}}]},\"comments\":{\"totalCount\":11},\"body\":\"r? @samueltardieu \\r\\n\\r\\n`Cargo.lock` update due to the removal of the rustc-semver dependency.\",\"createdAt\":\"2026-08-07T11:33:33Z\",\"baseRefName\":\"main\",\"headRefName\":\"clippy-subtree-update\",\"baseRefOid\":\"ae45457594a670c59cd4d5591eaa243d9a3d44d5\",\"headRefOid\":\"9e7db05c303aa06c15baa8d9c6c9b98adcaae23d\",\"headRepository\":{\"nameWithOwner\":\"flip1995/rust\"},\"changedFiles\":1105,\"mergeable\":\"UNKNOWN\",\"labels\":{\"totalCount\":2,\"nodes\":[{\"name\":\"merged-by-bors\",\"color\":\"dae4e4\"},{\"name\":\"T-clippy\",\"color\":\"bfd4f2\"}]},\"milestone\":{\"number\":147,\"title\":\"1.99.0\"}}}}}"
+}
