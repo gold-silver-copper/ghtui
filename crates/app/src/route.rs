@@ -320,12 +320,18 @@ impl Target {
             [] | ["dashboard"] => Route::Home,
             ["search"] => Route::Search {
                 kind: match kind.as_deref().map(str::to_ascii_lowercase).as_deref() {
+                    None | Some("repositories") => SearchKind::Repos,
                     Some("issues") => SearchKind::Issues,
                     Some("pullrequests") => SearchKind::Pulls,
                     Some("users") => SearchKind::Users,
-                    _ => SearchKind::Repos,
+                    // Wikis, packages, the marketplace…
+                    Some(_) => return external(),
                 },
                 query: query.unwrap_or_default(),
+            },
+            ["stars", login] => Route::User {
+                login: (*login).to_owned(),
+                tab: ProfileTab::Stars,
             },
             ["orgs", login] => Route::user(login),
             ["orgs", login, page @ ("repositories" | "people")] => Route::User {
@@ -339,13 +345,17 @@ impl Target {
             [login] if !RESERVED.contains(login) => Route::User {
                 login: (*login).to_owned(),
                 tab: match tab.as_deref() {
+                    None | Some("overview") => ProfileTab::Overview,
                     Some("repositories") => repos(),
                     Some("stars") => ProfileTab::Stars,
                     Some("followers") => ProfileTab::Followers,
                     Some("following") => ProfileTab::Following,
-                    _ => ProfileTab::Overview,
+                    // Packages and projects need scopes gh doesn't grant.
+                    Some(_) => return external(),
                 },
             },
+            // GitHub's own pages: settings, apps, the marketplace…
+            [first, ..] if RESERVED.contains(first) => return external(),
             [o, r] => match repo(o, r) {
                 Some(repo) => Route::Repo(repo),
                 None => return external(),
@@ -406,7 +416,9 @@ impl Target {
                     "actions" => Route::Actions(repo),
                     "stargazers" => Route::Stargazers(repo),
                     "watchers" => Route::Watchers(repo),
-                    _ => Route::Forks(repo),
+                    "forks" => Route::Forks(repo),
+                    // The network graph.
+                    _ => return external(),
                 }
             }
             [o, r, "network", "members"] => match repo(o, r) {
@@ -439,6 +451,30 @@ impl Target {
                     [rev, path @ ..] => ((*rev).to_owned(), path.join("/")),
                 };
                 Route::Commits { repo, rev, path }
+            }
+            [o, r, "git", "commit", sha] => match repo(o, r) {
+                Some(repo) => Route::Commit {
+                    repo,
+                    oid: (*sha).to_owned(),
+                },
+                None => return external(),
+            },
+            // A commit's patch is a download; its diff is the diff viewer.
+            [_, _, "commit", sha] if sha.ends_with(".patch") => return external(),
+            [o, r, "commit", sha] if sha.ends_with(".diff") => match repo(o, r) {
+                Some(repo) => {
+                    let sha = sha.trim_end_matches(".diff").to_owned();
+                    return Target::Files(DiffOf::Commit(repo, sha));
+                }
+                None => return external(),
+            },
+            [o, r, "pull", n] if n.ends_with(".diff") => {
+                match (repo(o, r), n.trim_end_matches(".diff").parse()) {
+                    (Some(repo), Ok(number)) => {
+                        return Target::Files(DiffOf::Pr(PrRef { repo, number }));
+                    }
+                    _ => return external(),
+                }
             }
             [o, r, "commit", sha] => {
                 let Some(repo) = repo(o, r) else {
@@ -506,20 +542,51 @@ fn line_range(fragment: &str) -> Option<(u32, u32)> {
 /// Top-level github.com paths that aren't users.
 const RESERVED: &[&str] = &[
     "about",
+    "account",
+    "advisories",
+    "apps",
     "codespaces",
+    "collections",
+    "contact",
+    "copilot",
+    "customer-stories",
+    "enterprise",
+    "enterprises",
+    "events",
     "explore",
     "features",
+    "github-copilot",
     "issues",
+    "join",
+    "licenses",
     "login",
+    "logout",
     "marketplace",
+    "mcp",
     "new",
     "notifications",
+    "open-source",
+    "organizations",
+    "partners",
     "pricing",
     "pulls",
+    "readme",
+    "repos",
+    "resources",
+    "security",
+    "sessions",
     "settings",
+    "signup",
+    "site",
+    "solutions",
     "sponsors",
+    "stars",
+    "team",
     "topics",
     "trending",
+    "trust-center",
+    "users",
+    "why-github",
 ];
 
 fn decode(segment: &str) -> String {
@@ -601,7 +668,7 @@ fn valid_login(s: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn page(url: &str) -> Route {
@@ -800,6 +867,74 @@ mod tests {
             Target::from_url("https://example.com/o/r"),
             Target::External(_)
         ));
+    }
+
+    /// Why a github.com link may open the browser (see the corpus).
+    pub(crate) const REASONS: [&str; 6] = [
+        "download",
+        "session",
+        "scope",
+        "not-github",
+        "no-api",
+        "rare",
+    ];
+
+    /// The corpus in `tests/github_urls.txt`: every kind of GitHub link,
+    /// and what it must open.
+    pub(crate) fn corpus() -> Vec<(&'static str, &'static str, Option<&'static str>)> {
+        include_str!("../tests/github_urls.txt")
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(|line| {
+                let mut words = line.split_whitespace();
+                let url = words.next().unwrap();
+                let expect = words
+                    .next()
+                    .unwrap_or_else(|| panic!("no expectation: {line}"));
+                (url, expect, words.next())
+            })
+            .collect()
+    }
+
+    /// A route's variant, as the corpus names it.
+    pub(crate) fn variant(route: &Route) -> String {
+        format!("{route:?}")
+            .split(|c: char| !c.is_alphanumeric())
+            .next()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    /// Whether `target` is what the corpus says (`todo` pages aren't built
+    /// yet, so they still open the browser).
+    pub(crate) fn as_expected(target: &Target, expect: &str, reason: Option<&str>) -> bool {
+        match (expect, target) {
+            ("external", Target::External(_)) => reason.is_some_and(|r| REASONS.contains(&r)),
+            ("todo", Target::External(_)) | ("files", Target::Files(_)) => true,
+            (variant_name, Target::Page(route)) => variant(route) == variant_name,
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn every_github_link_does_what_the_corpus_says() {
+        let mut wrong = Vec::new();
+        for (url, expect, reason) in corpus() {
+            let target = Target::from_url(url);
+            if !as_expected(&target, expect, reason) {
+                wrong.push(format!(
+                    "{url}\n    expected {expect} {}, got {target:?}",
+                    reason.unwrap_or("")
+                ));
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} wrong:\n{}",
+            wrong.len(),
+            wrong.join("\n")
+        );
     }
 
     #[test]
@@ -1002,7 +1137,61 @@ mod tests {
             ]
         }
 
+        /// A corpus URL with its owner and repository, numbers and commit
+        /// IDs swapped for `owner`, `name`, `number` and `sha`.
+        fn vary(url: &str, owner: &str, name: &str, number: u64, sha: &str) -> String {
+            let Ok(mut parsed) = url::Url::parse(url) else {
+                return url.to_owned();
+            };
+            let segments: Vec<String> = parsed
+                .path_segments()
+                .map(|s| s.map(str::to_owned).collect())
+                .unwrap_or_default();
+            let repo_page = parsed.host_str() == Some("github.com")
+                && segments.len() >= 2
+                && segments
+                    .first()
+                    .is_some_and(|s| !RESERVED.contains(&s.as_str()) && s != "orgs");
+            let varied: Vec<String> = segments
+                .iter()
+                .enumerate()
+                .map(|(i, s)| match (i, repo_page) {
+                    (0, true) => owner.to_owned(),
+                    (1, true) => name.to_owned(),
+                    _ if s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit()) => {
+                        sha.to_owned()
+                    }
+                    _ if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) => {
+                        number.to_string()
+                    }
+                    _ => s.clone(),
+                })
+                .collect();
+            parsed.set_path(&varied.join("/"));
+            parsed.to_string()
+        }
+
         proptest! {
+            /// Any owner, repository, number or commit in a corpus URL opens
+            /// the same kind of page (or the browser, if its kind does), and
+            /// every page's URL leads back to it.
+            #[test]
+            fn corpus_shapes_hold_for_any_names(
+                owner in segment(),
+                name in segment(),
+                number in 1..u64::MAX,
+                sha in "[0-9a-f]{40}",
+            ) {
+                for (url, expect, reason) in corpus() {
+                    let varied = vary(url, &owner, &name, number, &sha);
+                    let target = Target::from_url(&varied);
+                    prop_assert!(as_expected(&target, expect, reason), "{varied}: {target:?}, not {expect}");
+                    if let Target::Page(route) = &target {
+                        prop_assert_eq!(Target::from_url(&route.url()), Target::Page(route.clone()), "{}", varied);
+                    }
+                }
+            }
+
             /// Every page's URL leads back to it.
             #[test]
             fn urls_round_trip(route in route()) {

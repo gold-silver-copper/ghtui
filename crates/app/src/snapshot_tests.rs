@@ -1478,14 +1478,35 @@ mod links {
     use crate::route::Target;
     use crate::state::{Screen, State};
 
-    /// github.com pages ghtui leaves to the browser, by path. Each entry
-    /// says why; the list only shrinks.
-    const EXTERNAL: &[&str] = &[
-        // A check's logs and re-runs.
-        "/actions/runs/",
-        // A release's assets: downloads.
-        "/releases/download/",
-    ];
+    /// A link's shape: on github.com its first four path segments, with
+    /// the owner and repository, numbers and commit IDs as wildcards; on
+    /// GitHub's other hosts (raw files, gists, avatars) the host.
+    fn shape(url: &str) -> Vec<String> {
+        let Ok(parsed) = url::Url::parse(url) else {
+            return vec![url.to_owned()];
+        };
+        let mut shape = vec![parsed.host_str().unwrap_or_default().to_owned()];
+        if parsed.host_str() != Some("github.com") {
+            return shape;
+        }
+        let segments = parsed.path_segments().into_iter().flatten();
+        for (i, s) in segments.take(4).enumerate() {
+            let wild = i < 2 || s.bytes().any(|b| b.is_ascii_digit());
+            shape.push(if wild { "*".into() } else { s.to_owned() });
+        }
+        shape
+    }
+
+    /// Whether the corpus says links shaped like `url` open the browser
+    /// (or will open a page once it's built).
+    fn external_in_corpus(url: &str) -> bool {
+        let wanted = shape(url);
+        crate::route::tests::corpus()
+            .iter()
+            .any(|(entry, expect, _)| {
+                matches!(*expect, "external" | "todo") && shape(entry) == wanted
+            })
+    }
 
     /// Every page ghtui has a fixture for.
     fn pages() -> Vec<(&'static str, State)> {
@@ -1522,15 +1543,9 @@ mod links {
         ]
     }
 
-    fn deliberately_external(url: &str) -> bool {
-        let path = url.trim_start_matches("https://github.com");
-        EXTERNAL
-            .iter()
-            .any(|p| path.starts_with(p) || path.contains(p))
-    }
-
     /// Every github.com link on ghtui's pages (and their tabs) opens a
-    /// ghtui page, apart from [`EXTERNAL`].
+    /// ghtui page, unless the corpus (`tests/github_urls.txt`) says links of
+    /// its shape open the browser, and why.
     #[test]
     fn github_links_stay_in_ghtui() {
         let mut leaving = Vec::new();
@@ -1542,9 +1557,22 @@ mod links {
             let links = p.page.links.iter().filter_map(|l| l.url());
             let targets = links.map(Target::from_url).chain(tabs);
             for target in targets {
+                // A page of a kind the corpus has an example of.
+                let kind = match &target {
+                    Target::Page(route) => Some(crate::route::tests::variant(route)),
+                    Target::Files(_) => Some("files".to_owned()),
+                    Target::External(_) => None,
+                };
+                if let Some(kind) = kind
+                    && !crate::route::tests::corpus()
+                        .iter()
+                        .any(|(_, e, _)| *e == kind)
+                {
+                    leaving.push(format!("{name}: no {kind} in the corpus"));
+                }
                 if let Target::External(url) = target
-                    && url.starts_with("https://github.com/")
-                    && !deliberately_external(&url)
+                    && url.contains("github")
+                    && !external_in_corpus(&url)
                 {
                     leaving.push(format!("{name}: {url}"));
                 }

@@ -1,0 +1,274 @@
+# Every kind of github.com link, and what it must do in ghtui.
+#
+# Each line: a real example URL, then what it opens:
+#   <Route>             a ghtui page (the `Route` variant's name)
+#   files               the diff viewer
+#   external <reason>   the browser, for one of these reasons:
+#     download    a file to save (archives, release assets, raw files, .patch)
+#     session     needs a browser session, writes, or needs rights the token
+#                 doesn't give (settings, login, new issue, security alerts)
+#     scope       needs a token scope gh doesn't grant by default
+#                 (read:project, read:packages)
+#     not-github  not repository or user content (GitHub's marketing, docs
+#                 and other sites)
+#     no-api      the API doesn't expose it
+#     rare        rare and costly to build for what it shows
+#
+# Sources, in the order the PR describes: (a) GraphQL types with a URL,
+# from scripts/url-inventory.sh; (b) `html_url` shapes in GitHub's REST API
+# description; (c) website views, from GitHub's docs and
+# scripts/page-links.sh; (d) shapes the live crawl (link_crawl) found.
+
+# ---- (a) GraphQL types with a URL -------------------------------------------
+
+# Repository, RepositoryInfo, RepositoryOwner
+https://github.com/rust-lang/rust                                           Repo
+# User, Actor, Bot (apps' users), Mannequin
+https://github.com/torvalds                                                 User
+https://github.com/apps/octoapp                                             external rare
+# Organization
+https://github.com/github                                                   User
+https://github.com/orgs/github                                              User
+# Issue, IssueComment, ClosedEvent, CrossReferencedEvent
+https://github.com/rust-lang/rust/issues/163852                             Issue
+https://github.com/rust-lang/rust/issues/163852#issuecomment-1234567        Issue
+https://github.com/rust-lang/rust/issues/163852#event-32577814911           Issue
+# PullRequest, PullRequestReview, PullRequestReviewComment, MergedEvent,
+# ReadyForReviewEvent, ConvertToDraftEvent, ReviewDismissedEvent
+https://github.com/rust-lang/rust/pull/163850                               Pr
+https://github.com/rust-lang/rust/pull/163850#event-32567170504             Pr
+https://github.com/rust-lang/rust/pull/163831#pullrequestreview-5424959584  Pr
+https://github.com/octocat/Hello-World/pull/1#discussion_r1                 Pr
+https://github.com/octocat/Hello-World/pull/1#discussion-diff-1             Pr
+# PullRequestCommit, Commit, CommitComment
+https://github.com/rust-lang/rust/pull/163850/commits/843fa25bf60fce1e05ce7d16c965df0d36f3a6fe Commit
+https://github.com/rust-lang/rust/commit/843fa25bf60fce1e05ce7d16c965df0d36f3a6fe Commit
+https://github.com/octocat/Hello-World/commit/6dcb09b5b57875f334f61aebed695e2e4193db5e#commitcomment-1 Commit
+# CheckSuite, CheckRun (its url and permalink)
+https://github.com/rust-lang/rust/commit/8d1a76430406c877b35d0b627e7f796dcf0dfeca/checks?check_suite_id=101542091168 todo CommitChecks
+https://github.com/rust-lang/rust/runs/112349439173                         todo Job
+# WorkflowRun, Workflow, WorkflowRunFile, CheckRun.detailsUrl
+https://github.com/rust-lang/rust/actions/runs/37486756971                  todo WorkflowRun
+https://github.com/rust-lang/rust/actions/runs/37486756971/attempts/2       todo WorkflowRun
+https://github.com/rust-lang/rust/actions/runs/37486756971/job/112349439173 todo Job
+https://github.com/rust-lang/rust/actions/runs/37486756971/job/112349439173#step:4:12 todo Job
+https://github.com/rust-lang/rust/actions/runs/37486756971/workflow         todo WorkflowRun
+https://github.com/rust-lang/rust/actions/workflows/ci.yml                  todo Workflow
+# Milestone
+https://github.com/rust-lang/rust/milestone/147                             todo Milestone
+# Release, ReleaseAsset (url and downloadUrl)
+https://github.com/rust-lang/rust/releases/tag/1.99.0                       Release
+https://github.com/rust-lang/rust/releases/download/1.99.0/rust.tar.gz      external download
+# Label, RepositoryTopic, License
+https://github.com/rust-lang/rust/labels/A-attributes                       Issues
+https://github.com/topics/rust                                              todo Topic
+https://github.com/licenses/mit                                             external not-github
+# CodeOfConduct, ContributingGuidelines (files in the repository)
+https://github.com/rust-lang/rust/blob/main/CODE_OF_CONDUCT.md              Blob
+https://github.com/rust-lang/rust/blob/main/CONTRIBUTING.md                 Blob
+# RepositoryContactLink: a new issue, or another site
+https://github.com/rust-lang/rust-clippy/issues/new/choose                  external session
+# FundingLink, SocialAccount: other sites
+# Discussion, DiscussionComment
+https://github.com/cli/cli/discussions/14603                                todo Discussion
+https://github.com/cli/cli/discussions/14603#discussioncomment-18765024     todo Discussion
+https://github.com/orgs/community/discussions/12345                         todo Discussion
+# Gist
+https://gist.github.com/1162032                                             todo Gist
+https://gist.github.com/octocat/1162032                                     todo Gist
+https://gist.github.com/octocat                                             todo Gists
+# Team
+https://github.com/orgs/github/teams/justice-league                         todo Team
+https://github.com/orgs/rust-lang/teams                                     todo Teams
+# SecurityAdvisoryReference, SecurityAdvisory permalink
+https://github.com/advisories/GHSA-6r3q-mjv7-xr8m                           todo Advisory
+https://github.com/corazawaf/coraza/security/advisories/GHSA-6r3q-mjv7-xr8m todo Advisory
+# MergeQueue
+https://github.com/rust-lang/rust/queue/main                                external rare
+# Enterprise, EnterpriseUserAccount
+https://github.com/enterprises/octo-enterprise                              external session
+# MarketplaceListing, MarketplaceCategory, SponsorsListing
+https://github.com/marketplace/dependabot-preview                           external not-github
+https://github.com/marketplace/category/security                            external not-github
+https://github.com/sponsors/torvalds                                        external rare
+# Project, ProjectV2, ProjectCard, ProjectColumn
+https://github.com/orgs/octocat/projects/1/views/1                          external scope
+https://github.com/users/octocat/projects/3                                 external scope
+https://github.com/octocat/Hello-World/projects/1                           external scope
+# Package, PackageFile
+https://github.com/octocat/octo-name-repo/packages/40201                    external scope
+https://github.com/orgs/github/packages/container/package/hello_docker      external scope
+https://github.com/users/octocat/packages/container/package/hello_docker    external scope
+# MigrationSource
+https://import.github.com/octocat/socm/import                               external session
+# Contributions (CreatedCommitContribution etc.) link to these:
+https://github.com/torvalds?tab=overview&from=2026-09-01&to=2026-09-30      User
+
+# ---- (b) REST API description (html_url shapes) ------------------------------
+
+https://github.com/octocat/Hello-World/milestones/v1.0                      todo Milestones
+https://github.com/octocat/Hello-World/milestones                           todo Milestones
+https://github.com/octocat/Hello-World/pull/1347                            Pr
+https://github.com/octocat/Hello-World/issues/1347#issuecomment-1           Issue
+https://github.com/octocat/Hello-World/actions/runs/5                       todo WorkflowRun
+https://github.com/octocat/Hello-World/actions/runs/5/job/399444496         todo Job
+https://github.com/octo-org/octo-repo/runs/29679449/jobs/399444496          todo Job
+https://github.com/octo-org/octo-repo/blob/master/.github/workflows/161335  Blob
+https://github.com/octocat/Hello-World/releases/v1.0.0                      Releases
+https://github.com/octocat/Hello-World/git/commit/7638417db6d59f3c431d3e1f261cc637155684cd Commit
+https://github.com/octocat/Hello-World/blob/6dcb09b5b57875f334f61aebed695e2e4193db5e/file1.txt Blob
+https://github.com/octokit/octokit.rb/tree/master/lib/octokit               Tree
+https://github.com/github/hello-world/deployments/activity_log?environments_filter=staging todo Deployments
+https://github.com/octocat/Hello-World/deployments                          todo Deployments
+https://github.com/octocat/Hello-World/security/dependabot/1                external session
+https://github.com/octocat/hello-world/code-scanning/42                     external session
+https://github.com/owner/private-repo/security/secret-scanning/42           external session
+https://github.com/owner/repo/secret_scanning_exemptions/1                  external session
+https://github.com/octocat/Hello-World/invitations                          external session
+https://github.com/organizations/octo-org/settings/installations/1          external session
+https://github.com/settings/connections/applications/abc                    external session
+https://github.com/octocat/hello-world/copilot/tasks/abc-123                external session
+https://github.com/copilot/spaces/octo-org/3                                external session
+https://github.com/repos/octocat/Hello-World/pulls/53                       external no-api
+https://uploads.github.com                                                  external not-github
+
+# ---- (c) website views --------------------------------------------------------
+
+# Home and dashboards
+https://github.com/                                                         Home
+https://github.com/dashboard                                                Home
+https://github.com/pulls                                                    todo Search
+https://github.com/pulls/assigned                                           todo Search
+https://github.com/pulls/review-requested                                   todo Search
+https://github.com/pulls/mentioned                                          todo Search
+https://github.com/issues                                                   todo Search
+https://github.com/issues/assigned                                          todo Search
+https://github.com/issues/mentioned                                         todo Search
+https://github.com/notifications                                            external session
+# Search, every type
+https://github.com/search?q=tui&type=repositories                           Search
+https://github.com/search?q=tui&type=issues                                 Search
+https://github.com/search?q=tui&type=pullrequests                           Search
+https://github.com/search?q=tui&type=users                                  Search
+https://github.com/search?q=tui&type=discussions                            todo Search
+https://github.com/search?q=tui&type=commits                                todo Search
+https://github.com/search?q=tui&type=code                                   todo Search
+https://github.com/search?q=tui&type=topics                                 todo Topic
+https://github.com/search?q=tui&type=wikis                                  external no-api
+https://github.com/search?q=tui&type=registrypackages                       external scope
+https://github.com/search?q=tui&type=marketplace                            external not-github
+# Profiles
+https://github.com/torvalds?tab=repositories                                User
+https://github.com/torvalds?tab=repositories&sort=stargazers                User
+https://github.com/torvalds?tab=stars                                       User
+https://github.com/torvalds?tab=followers                                   User
+https://github.com/torvalds?tab=following                                   User
+https://github.com/torvalds?tab=packages                                    external scope
+https://github.com/torvalds?tab=projects                                    external scope
+https://github.com/stars/torvalds                                           User
+https://github.com/orgs/rust-lang/repositories                              User
+https://github.com/orgs/rust-lang/people                                    User
+https://github.com/orgs/rust-lang/projects                                  external scope
+https://github.com/orgs/rust-lang/packages                                  external scope
+https://github.com/orgs/rust-lang/discussions                               todo Discussions
+# A repository's tabs and lists
+https://github.com/rust-lang/rust/issues                                    Issues
+https://github.com/rust-lang/rust/issues?q=is%3Aclosed+label%3Abug          Issues
+https://github.com/rust-lang/rust/issues/views/1                            external rare
+https://github.com/rust-lang/rust/pulls                                     Pulls
+https://github.com/rust-lang/rust/pulls?q=is%3Amerged                       Pulls
+https://github.com/rust-lang/rust/actions                                   Actions
+https://github.com/rust-lang/rust/actions/caches                            external session
+https://github.com/rust-lang/rust/discussions                               todo Discussions
+https://github.com/rust-lang/rust/discussions/categories/ideas              todo Discussions
+https://github.com/rust-lang/rust/wiki                                      todo Wiki
+https://github.com/rust-lang/rust/wiki/Home                                 todo Wiki
+https://github.com/rust-lang/rust/security                                  todo Advisories
+https://github.com/rust-lang/rust/security/advisories                       todo Advisories
+https://github.com/rust-lang/rust/pulse                                     external rare
+https://github.com/rust-lang/rust/graphs/contributors                       external rare
+https://github.com/rust-lang/rust/graphs/commit-activity                    external rare
+https://github.com/rust-lang/rust/graphs/code-frequency                     external rare
+https://github.com/rust-lang/rust/network                                   external rare
+https://github.com/rust-lang/rust/network/dependencies                      external rare
+https://github.com/rust-lang/rust/network/members                           Forks
+https://github.com/rust-lang/rust/community                                 external rare
+https://github.com/rust-lang/rust/activity                                  external rare
+https://github.com/rust-lang/rust/custom-properties                         external session
+https://github.com/rust-lang/rust/attestations                              external rare
+https://github.com/rust-lang/rust/settings                                  external session
+https://github.com/rust-lang/rust/branches                                  todo Branches
+https://github.com/rust-lang/rust/tags                                      Tags
+https://github.com/rust-lang/rust/releases                                  Releases
+https://github.com/rust-lang/rust/releases/latest                           Releases
+https://github.com/rust-lang/rust/stargazers                                Stargazers
+https://github.com/rust-lang/rust/watchers                                  Watchers
+https://github.com/rust-lang/rust/forks                                     Forks
+https://github.com/rust-lang/rust/milestones                                todo Milestones
+# Code
+https://github.com/rust-lang/rust/tree/main                                 Tree
+https://github.com/rust-lang/rust/tree/main/compiler                        Tree
+https://github.com/rust-lang/rust/tree/8d1a76430406c877b35d0b627e7f796dcf0dfeca Tree
+https://github.com/rust-lang/rust/blob/main/README.md                       Blob
+https://github.com/rust-lang/rust/blob/main/README.md?plain=1               Blob
+https://github.com/rust-lang/rust/blob/main/README.md#L10-L20               Blob
+https://github.com/rust-lang/rust/blob/8d1a76430406c877b35d0b627e7f796dcf0dfeca/README.md#L3 Blob
+https://github.com/rust-lang/rust/blame/main/README.md                      todo Blame
+https://github.com/rust-lang/rust/blame/8d1a76430406c877b35d0b627e7f796dcf0dfeca/README.md#L5 todo Blame
+https://github.com/rust-lang/rust/raw/main/README.md                        external download
+https://github.com/rust-lang/rust/raw/refs/heads/main/README.md             external download
+https://raw.githubusercontent.com/rust-lang/rust/main/README.md             external download
+https://github.com/rust-lang/rust/archive/refs/heads/main.zip               external download
+https://github.com/rust-lang/rust/archive/refs/tags/1.99.0.tar.gz           external download
+https://github.com/rust-lang/rust/commits/main                              Commits
+https://github.com/rust-lang/rust/commits/main/compiler                     Commits
+https://github.com/rust-lang/rust/commits                                   Commits
+https://github.com/rust-lang/rust/commit/8d1a76430406c877b35d0b627e7f796dcf0dfeca#diff-0123abcd files
+https://github.com/rust-lang/rust/commit/8d1a76430406c877b35d0b627e7f796dcf0dfeca.diff files
+https://github.com/rust-lang/rust/commit/8d1a76430406c877b35d0b627e7f796dcf0dfeca.patch external download
+https://github.com/rust-lang/rust/compare/1.98.0...1.99.0                   todo Compare
+https://github.com/rust-lang/rust/compare/1.98.0..1.99.0                    todo Compare
+https://github.com/rust-lang/rust/compare/rust-lang:88d9e12...rust-lang:b940084 todo Compare
+https://github.com/rust-lang/rust/compare/main...ytmimi:rust:subtree        todo Compare
+https://github.com/rust-lang/rust/compare                                   external session
+https://github.com/rust-lang/rust/find/main                                 external rare
+https://github.com/rust-lang/rust/edit/main/README.md                       external session
+https://github.com/rust-lang/rust/new/main                                  external session
+https://github.com/rust-lang/rust/fork                                      external session
+# A pull request's views
+https://github.com/rust-lang/rust/pull/163831/files                         files
+https://github.com/rust-lang/rust/pull/163831/files#diff-5e8f3c2b           files
+https://github.com/rust-lang/rust/pull/163831/files/843fa25..8d1a764        files
+https://github.com/rust-lang/rust/pull/163831/changes                       files
+https://github.com/rust-lang/rust/pull/163831/commits                       Pr
+https://github.com/rust-lang/rust/pull/163831/checks                        Pr
+https://github.com/rust-lang/rust/pull/163831.diff                          files
+https://github.com/rust-lang/rust/pull/163831.patch                         external download
+# Issues: new ones are written in the browser
+https://github.com/rust-lang/rust/issues/new                                external session
+https://github.com/rust-lang/rust/issues/new/choose                         external session
+# GitHub's own site, accounts and settings
+https://github.com/login                                                    external session
+https://github.com/signup                                                   external session
+https://github.com/settings/profile                                         external session
+https://github.com/settings/tokens                                          external session
+https://github.com/new                                                      external session
+https://github.com/codespaces                                               external session
+https://github.com/marketplace                                              external not-github
+https://github.com/features/actions                                         external not-github
+https://github.com/pricing                                                  external not-github
+https://github.com/enterprise                                               external not-github
+https://github.com/about                                                    external not-github
+https://github.com/security                                                 external not-github
+https://github.com/trending                                                 external no-api
+https://github.com/trending/rust?since=weekly                               external no-api
+https://github.com/explore                                                  external no-api
+https://github.com/collections                                              external no-api
+https://github.com/topics                                                   external no-api
+https://docs.github.com/en/actions                                          external not-github
+https://github.blog/                                                        external not-github
+https://objects.githubusercontent.com/github-production-release-asset/123   external download
+https://avatars.githubusercontent.com/u/1024025                             external download
+https://user-images.githubusercontent.com/1/abc.png                         external download
+
+# ---- (d) found by the live crawl ----------------------------------------------
