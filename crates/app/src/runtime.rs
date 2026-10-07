@@ -183,7 +183,7 @@ impl Effects {
             Git::LoadDiff {
                 of,
                 job,
-                base_ref,
+                base,
                 range,
             } => {
                 if let Some((_, handle)) = self.jobs.remove(&of) {
@@ -195,7 +195,7 @@ impl Effects {
                     of: of.clone(),
                     job,
                 };
-                let run = diff_job::run(self.git.clone(), base_ref, range, out, control.clone());
+                let run = diff_job::run(self.git.clone(), base, range, out, control.clone());
                 let handle = spawn_guarded(&self.tx, replies, |_| run);
                 self.jobs.insert(of, (control, handle));
             }
