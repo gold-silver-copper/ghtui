@@ -7,6 +7,81 @@ use serde::{Deserialize, Serialize};
 
 use crate::queries::{self as q, nodes};
 
+/// Some of a list: the items fetched, and how many GitHub has. A list
+/// fetched with `first:` or `last:` is kept as one of these, so what shows
+/// it can say what it left out ("+3", "20 of 45").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Capped<T> {
+    pub items: Vec<T>,
+    /// Never fewer than `items`.
+    pub total: u64,
+}
+
+impl<T> Capped<T> {
+    /// `items` of `total` (raised to the items' count if GitHub said fewer).
+    pub fn new(items: Vec<T>, total: u64) -> Self {
+        let total = total.max(items.len() as u64);
+        Self { items, total }
+    }
+
+    /// From a connection's total and nodes; its null nodes (ones your
+    /// token can't see) count as left out.
+    pub(crate) fn from_nodes<N>(
+        total: i32,
+        list: Option<Vec<Option<N>>>,
+        f: impl FnMut(N) -> T,
+    ) -> Self {
+        Self::new(
+            nodes(list).map(f).collect(),
+            u64::try_from(total).unwrap_or_default(),
+        )
+    }
+
+    /// How many GitHub has that aren't here.
+    pub fn left_out(&self) -> u64 {
+        self.total.saturating_sub(self.items.len() as u64)
+    }
+}
+
+impl<T> Default for Capped<T> {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            total: 0,
+        }
+    }
+}
+
+/// All of a list.
+impl<T> From<Vec<T>> for Capped<T> {
+    fn from(items: Vec<T>) -> Self {
+        Self::new(items, 0)
+    }
+}
+
+impl<T> std::ops::Deref for Capped<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &[T] {
+        &self.items
+    }
+}
+
+impl<T> std::ops::DerefMut for Capped<T> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        &mut self.items
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Capped<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.iter()
+    }
+}
+
 /// A GitHub GraphQL node ID (`PR_kwDO…`, `PRRT_…`): what mutations name
 /// things by. Its own type so it can't be mixed up with a path, a SHA or
 /// another string.
@@ -202,7 +277,7 @@ pub struct PrDetail {
     pub head_repo: Option<String>,
     pub changed_files: u64,
     pub mergeable: Mergeable,
-    pub labels: Vec<Label>,
+    pub labels: Capped<Label>,
     #[serde(default)]
     pub milestone: Option<MilestoneRef>,
 }
@@ -355,13 +430,13 @@ pub(crate) fn author(actor: Option<q::Actor>) -> String {
     actor.map_or_else(|| "ghost".to_owned(), |a| a.login)
 }
 
-pub(crate) fn labels(labels: Option<q::LabelConnection>) -> Vec<Label> {
-    nodes(labels.and_then(|l| l.nodes))
-        .map(|l| Label {
+pub(crate) fn labels(labels: Option<q::LabelConnection>) -> Capped<Label> {
+    labels.map_or_else(Capped::default, |l| {
+        Capped::from_nodes(l.total_count, l.nodes, |l| Label {
             name: l.name,
             color: l.color,
         })
-        .collect()
+    })
 }
 
 fn pr_ref(name_with_owner: &str, number: i32) -> Option<PrRef> {

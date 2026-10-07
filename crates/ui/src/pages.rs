@@ -15,8 +15,8 @@ use ghtui_api::browse::{
     TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
-    ChecksState, Inbox, Label, Mergeable, MilestoneRef, PrDetail, PrRef, PrState, PrSummary,
-    RepoId, ReviewDecision,
+    Capped, ChecksState, Inbox, Label, Mergeable, MilestoneRef, PrDetail, PrRef, PrState,
+    PrSummary, RepoId, ReviewDecision,
 };
 use ghtui_theme::{Bg, Syntax};
 
@@ -155,13 +155,21 @@ fn space() -> Seg {
     Seg::new(" ", Role::Body)
 }
 
-fn labels(segs: &mut Vec<Seg>, labels: &[Label]) {
+fn labels(segs: &mut Vec<Seg>, labels: &Capped<Label>) {
     for l in labels {
         segs.push(space());
         segs.push(Seg::new(
             format!(" {} ", l.name),
             Role::Label(l.color.clone()),
         ));
+    }
+    more_chips(segs, labels);
+}
+
+/// ` +3` after chips, for the ones GitHub has that weren't fetched.
+fn more_chips<T>(segs: &mut Vec<Seg>, list: &Capped<T>) {
+    if list.left_out() > 0 {
+        segs.push(Seg::new(format!(" +{}", list.left_out()), Role::Meta));
     }
 }
 
@@ -506,6 +514,7 @@ fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_layout: bool)
             topics.push(topic);
             topics.push(space());
         }
+        more_chips(&mut topics, &o.topics);
         page.blank();
         page.wrapped(topics, 0, Frame::None);
     }
@@ -690,6 +699,16 @@ fn file_box(page: &mut Page, dir: Listing<'_>, title: (Vec<Seg>, Vec<Seg>), cx: 
                     }
                     page.box_line(segs, right, 0);
                 });
+            }
+            let past = entries
+                .len()
+                .saturating_sub(ghtui_api::browse::LAST_COMMIT_ENTRIES);
+            if commits.is_some() && past > 0 {
+                let text = format!(
+                    "Latest commits are for the first {} entries; not the last {past}",
+                    ghtui_api::browse::LAST_COMMIT_ENTRIES
+                );
+                body(page, vec![Seg::new(text, Role::Meta)]);
             }
         }
     }
@@ -953,13 +972,20 @@ fn severity_chip(severity: &str) -> Seg {
 }
 
 /// A repository's security advisories, or GitHub's newest reviewed ones.
-pub fn advisories(page: &mut Page, repo: Option<&RepoId>, list: Option<&Vec<Advisory>>, now: u64) {
+pub fn advisories(
+    page: &mut Page,
+    repo: Option<&RepoId>,
+    list: Option<&Results<Advisory>>,
+    now: u64,
+) {
     let Some(l) = list else {
         page.line(vec![Seg::new("Loading advisories…", Role::Meta)]);
         return;
     };
+    // GitHub doesn't count them; `+` while there are more pages.
+    let more = if l.next.is_some() { "+" } else { "" };
     let title = vec![Seg::new(
-        format!("Security advisories  {}", l.len()),
+        format!("Security advisories  {}{more}", l.items.len()),
         Role::Strong,
     )];
     let empty = if repo.is_some() {
@@ -967,7 +993,7 @@ pub fn advisories(page: &mut Page, repo: Option<&RepoId>, list: Option<&Vec<Advi
     } else {
         "No advisories."
     };
-    list_box(page, title, Vec::new(), l, empty, |page, a| {
+    list_box(page, title, Vec::new(), &l.items, empty, |page, a| {
         let target = match repo {
             Some(repo) => format!("{}/security/advisories/{}", url::repo(repo), a.ghsa),
             None => format!("{}/advisories/{}", url::BASE, a.ghsa),
@@ -1229,6 +1255,7 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
         Role::Strong,
     )];
     list_box(page, title, Vec::new(), &d.members, "No members.", user_row);
+    more_here(page, d.members.total, d.members.len(), "member", "members");
     page.blank();
     let title = vec![Seg::new(
         format!("Repositories  {}", shown(d.repos.len(), t.repos)),
@@ -1254,15 +1281,29 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
             });
         },
     );
+    more_here(
+        page,
+        d.repos.total,
+        d.repos.len(),
+        "repository",
+        "repositories",
+    );
     if !d.children.is_empty() {
         page.blank();
         let title = vec![Seg::new(
-            format!("Child teams  {}", d.children.len()),
+            format!("Child teams  {}", count_of(&d.children)),
             Role::Strong,
         )];
         list_box(page, title, Vec::new(), &d.children, "", |page, c| {
             team_row(page, org, c);
         });
+        more_here(
+            page,
+            d.children.total,
+            d.children.len(),
+            "child team",
+            "child teams",
+        );
     }
 }
 // ---- gists -------------------------------------------------------------------------------------
@@ -1893,14 +1934,29 @@ fn add_comment(page: &mut Page, keys: Keys<'_>) {
     });
 }
 
-fn people(page: &mut Page, heading: &str, logins: &[String], none: &str) {
+/// The sidebar's list of people; `more` says who else there may be.
+fn people(page: &mut Page, heading: &str, logins: &[String], more: Option<String>, none: &str) {
     aside_heading(page, heading);
-    if logins.is_empty() {
+    if logins.is_empty() && more.is_none() {
         page.line(vec![Seg::new(none, Role::Meta)]);
     }
     for login in logins {
         page.link_line(login.clone(), url::user(login), Role::Link, 0);
     }
+    if let Some(more) = more {
+        page.line(vec![Seg::new(more, Role::Meta)]);
+    }
+}
+
+/// "and 3 more on GitHub", for what a capped list left out.
+fn and_more<T>(list: &Capped<T>) -> Option<String> {
+    (list.left_out() > 0).then(|| format!("and {} more on GitHub", list.left_out()))
+}
+
+/// For people found in a conversation's comments, when its earlier ones
+/// weren't loaded.
+fn maybe_others(earlier: bool) -> Option<String> {
+    earlier.then(|| "and maybe others, earlier on GitHub".to_owned())
 }
 
 /// The sidebar's milestone, linked to its page.
@@ -1915,7 +1971,7 @@ fn milestone_aside(page: &mut Page, repo: &RepoId, m: Option<&MilestoneRef>) {
     }
 }
 
-fn label_list(page: &mut Page, l: &[Label]) {
+fn label_list(page: &mut Page, l: &Capped<Label>) {
     aside_heading(page, "Labels");
     if l.is_empty() {
         page.line(vec![Seg::new("None yet", Role::Meta)]);
@@ -1976,6 +2032,12 @@ pub fn issue(
             }
             segs.push(link_seg(page, a.clone(), url::user(a), Role::Link));
         }
+        if d.assignees.left_out() > 0 {
+            segs.push(Seg::new(
+                format!(" and {} more", d.assignees.left_out()),
+                Role::Meta,
+            ));
+        }
         page.line(segs);
     }
     let talk = Conversation {
@@ -2000,10 +2062,17 @@ pub fn issue(
         let participants =
             unique(std::iter::once(&d.author).chain(d.comments.iter().map(|c| &c.author)));
         page.build_aside(width, |a| {
-            people(a, "Assignees", &d.assignees, "No one assigned");
+            people(
+                a,
+                "Assignees",
+                &d.assignees,
+                and_more(&d.assignees),
+                "No one assigned",
+            );
             label_list(a, &d.labels);
             milestone_aside(a, &d.repo, d.milestone.as_ref());
-            people(a, "Participants", &participants, "");
+            let earlier = d.total_comments > d.comments.len() as u64;
+            people(a, "Participants", &participants, maybe_others(earlier), "");
         });
     }
 }
@@ -2192,7 +2261,14 @@ pub fn pr_conversation(
     if let Some(width) = aside {
         let reviewers = unique(a.reviews.iter().map(|r| &r.author));
         page.build_aside(width, |side| {
-            people(side, "Reviewers", &reviewers, "No reviews");
+            let earlier = a.total_reviews > a.reviews.len() as u64;
+            people(
+                side,
+                "Reviewers",
+                &reviewers,
+                maybe_others(earlier),
+                "No reviews",
+            );
             label_list(side, &d.labels);
             milestone_aside(side, &pr.repo, d.milestone.as_ref());
             aside_heading(side, "Size");
@@ -2959,6 +3035,7 @@ pub fn discussions(
             };
             segs.push(link_seg(page, c.name.clone(), target, role));
         }
+        more_chips(&mut segs, &l.categories);
         page.wrapped(segs, 0, Frame::None);
         page.blank();
     }
@@ -3088,6 +3165,15 @@ fn earlier_here(page: &mut Page, total: u64, shown: usize, one: &str, many: &str
     left_out(page, total, shown, &one, &many);
 }
 
+/// A capped list's count: `20 of 45`, or `45` when all are here.
+fn count_of<T>(list: &Capped<T>) -> String {
+    if list.left_out() > 0 {
+        format!("{} of {}", list.len(), list.total)
+    } else {
+        list.total.to_string()
+    }
+}
+
 fn left_out(page: &mut Page, total: u64, shown: usize, one: &str, many: &str) {
     let rest = total.saturating_sub(shown as u64);
     if rest > 0 {
@@ -3181,7 +3267,7 @@ pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
         None => page.line(vec![Seg::new("No release notes.", Role::Meta)]),
     }
     page.blank();
-    let title = Seg::new(format!("Assets  {}", r.assets.len()), Role::Strong);
+    let title = Seg::new(format!("Assets  {}", count_of(&r.assets)), Role::Strong);
     if r.assets.is_empty() {
         empty_box(page, title, "No assets.");
         return;
@@ -3205,6 +3291,7 @@ pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
         });
     });
     page.box_bottom();
+    more_here(page, r.assets.total, r.assets.len(), "asset", "assets");
 }
 
 /// A repository's tags, each linked to its code.
@@ -3350,6 +3437,10 @@ pub fn compare(page: &mut Page, repo: &RepoId, spec: &str, c: &Comparison, now: 
     let mut segs = vec![link_seg(page, format!("± {changed}"), files, Role::Link)];
     segs.push(Seg::new("  ", Role::Meta));
     segs.extend(changes(c.additions, c.deletions));
+    if c.files_capped {
+        // The lines counted are those of the files GitHub listed.
+        segs.push(Seg::new(format!(" in the first {}", c.files), Role::Meta));
+    }
     page.wrapped(segs, 0, Frame::None);
     page.blank();
     if c.commits.is_empty() {
@@ -3410,6 +3501,7 @@ pub fn deployments(
                 role(environment == Some(env.as_str())),
             ));
         }
+        more_chips(&mut segs, &l.environments);
         page.wrapped(segs, 0, Frame::None);
         page.blank();
     }
@@ -3634,7 +3726,7 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
         Role::Meta,
     )];
     if !d.parents.is_empty() {
-        let noun = if d.parents.len() == 1 {
+        let noun = if d.parents.total == 1 {
             "parent"
         } else {
             "parents"
@@ -3646,6 +3738,12 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
             }
             let short = crate::text::short_sha(parent);
             ids.push(link_seg(page, short, url::commit(repo, parent), Role::Code));
+        }
+        if d.parents.left_out() > 0 {
+            ids.push(Seg::new(
+                format!(" + {} more", d.parents.left_out()),
+                Role::Meta,
+            ));
         }
     }
     page.wrapped(ids, 0, Frame::None);
@@ -3751,6 +3849,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
             }
             orgs.push(link_seg(page, org.clone(), url::user(org), Role::Link));
         }
+        more_chips(&mut orgs, &p.orgs);
         page.wrapped(orgs, 0, Frame::None);
     }
     if tab == ProfileTab::Overview
@@ -4066,7 +4165,7 @@ pub fn home(
                     author: p.author.clone(),
                     updated_at: p.updated_at.clone(),
                     comments: p.comments,
-                    labels: Vec::new(),
+                    labels: Capped::default(),
                     created_at: String::new(),
                     review: p.review,
                     checks: p.checks,
@@ -4270,6 +4369,33 @@ mod tests {
                 completed_at: None,
             }],
         }
+    }
+
+    /// A comparison's line counts come from the files GitHub listed, so
+    /// past 300 files they say so.
+    #[test]
+    fn a_capped_comparison_says_its_counts_are_partial() {
+        let c = Comparison {
+            status: "ahead".into(),
+            ahead: 1,
+            behind: 0,
+            total_commits: 0,
+            commits: Vec::new(),
+            from: "a".into(),
+            to: "b".into(),
+            files: 300,
+            files_capped: true,
+            additions: 10,
+            deletions: 2,
+        };
+        let mut page = Page::new(100);
+        compare(&mut page, &RepoId::new("o", "r"), "a...b", &c, 0);
+        let text: Vec<String> = page.lines.iter().map(PageLine::text).collect();
+        assert!(
+            text.iter()
+                .any(|l| l.contains("300+ files changed  +10 −2 in the first 300")),
+            "{text:#?}"
+        );
     }
 
     /// A log cut to its last 2 MB keeps GitHub's line numbers: a link to
@@ -4500,7 +4626,7 @@ mod tests {
             closed_issues: 9,
             closed_prs: 4,
             license: Some("MIT".into()),
-            topics: vec!["tui".into()],
+            topics: vec!["tui".into()].into(),
             default_branch: Some("main".into()),
             last_commit: None,
             commits: 10,

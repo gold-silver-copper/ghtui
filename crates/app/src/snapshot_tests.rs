@@ -120,7 +120,8 @@ pub(crate) fn pr_detail() -> PrDetail {
                 name: "theme".into(),
                 color: "7057ff".into(),
             },
-        ],
+        ]
+        .into(),
     }
 }
 
@@ -329,7 +330,13 @@ fn with_team(mode: Mode) -> State {
 fn with_advisories(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
     let route = Route::Advisories(Some(ghtui()));
-    open(&mut state, route, Data::Advisories(fixtures::advisories()));
+    let items = fixtures::advisories();
+    let list = ghtui_api::browse::Results {
+        total: items.len() as u64,
+        items,
+        next: None,
+    };
+    open(&mut state, route, Data::Advisories(Box::new(list)));
     state
 }
 

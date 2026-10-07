@@ -406,6 +406,22 @@ impl GitHub {
         Ok(serde_json::from_str(&self.rest_get(path).await?)?)
     }
 
+    /// A page of a list GitHub pages by cursor (`after=`, in the `Link`
+    /// header), and the cursor for the next page, if there is one.
+    async fn rest_cursor_page<T: DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<(T, Option<String>), ApiError> {
+        let response = self.send(&Request::Get { path, etag: None }).await?;
+        check_status(&response)?;
+        let next = response
+            .headers
+            .get(header::LINK)
+            .and_then(|v| v.to_str().ok())
+            .and_then(next_after);
+        Ok((serde_json::from_str(&response.body)?, next))
+    }
+
     pub async fn viewer_login(&self) -> Result<String, ApiError> {
         #[derive(serde::Deserialize)]
         struct User {
@@ -1043,7 +1059,26 @@ impl GitHub {
         dir: &str,
         names: &[String],
     ) -> Result<std::collections::HashMap<String, browse::CommitInfo>, ApiError> {
-        let names = names.get(..100).unwrap_or(names);
+        let names = names.get(..browse::LAST_COMMIT_ENTRIES).unwrap_or(names);
+        let mut out = std::collections::HashMap::new();
+        // 100 `history` fields a query.
+        for names in names.chunks(100) {
+            self.last_commits_of(repo, rev, dir, names, &mut out)
+                .await?;
+        }
+        Ok(self
+            .kept(&browse::keys::last_commits(repo, rev, dir), out)
+            .await)
+    }
+
+    async fn last_commits_of(
+        &self,
+        repo: &RepoId,
+        rev: &str,
+        dir: &str,
+        names: &[String],
+        out: &mut std::collections::HashMap<String, browse::CommitInfo>,
+    ) -> Result<(), ApiError> {
         let paths: Vec<String> = names
             .iter()
             .map(|name| {
@@ -1061,7 +1096,6 @@ impl GitHub {
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "rev": rev }),
             )
             .await?;
-        let mut out = std::collections::HashMap::new();
         for (i, name) in names.iter().enumerate() {
             let field = |path: &str| {
                 data.pointer(&format!("/repository/object/e{i}/nodes/0/{path}"))
@@ -1087,9 +1121,7 @@ impl GitHub {
                 },
             );
         }
-        Ok(self
-            .kept(&browse::keys::last_commits(repo, rev, dir), out)
-            .await)
+        Ok(())
     }
 
     /// A commit, by a revision GitHub can resolve (a short or full SHA).
@@ -1545,13 +1577,12 @@ impl GitHub {
         let wire: browse::wire::Connection<browse::wire_deployments::Deployment> =
             at(&data, "/repository/deployments", || repo.to_string())?;
         let list = browse::DeploymentList {
-            environments: data
-                .pointer("/repository/environments/nodes")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|n| Some(n.get("name")?.as_str()?.to_owned()))
-                .collect(),
+            environments: at::<browse::wire::Counted<browse::wire::Name>>(
+                &data,
+                "/repository/environments",
+                || repo.to_string(),
+            )?
+            .into_capped(|n| Some(n.name)),
             results: wire.into_results(browse::wire_deployments::Deployment::into_info),
         };
         Ok(self
@@ -1675,20 +1706,34 @@ impl GitHub {
     pub async fn advisories(
         &self,
         repo: Option<&RepoId>,
-    ) -> Result<Vec<browse::Advisory>, ApiError> {
-        let path = match repo {
+        after: Option<String>,
+    ) -> Result<browse::Results<browse::Advisory>, ApiError> {
+        let first = after.is_none();
+        let mut path = match repo {
             Some(r) => format!(
-                "/repos/{}/{}/security-advisories?state=published&per_page=100",
+                "/repos/{}/{}/security-advisories?state=published&per_page={REST_PAGE}",
                 r.owner, r.name
             ),
-            None => "/advisories?type=reviewed&per_page=50".to_owned(),
+            None => format!("/advisories?type=reviewed&per_page={REST_PAGE}"),
         };
-        let wire: Vec<browse::rest_advisories::Advisory> = self.rest_json(&path).await?;
-        let list: Vec<browse::Advisory> = wire
+        if let Some(after) = &after {
+            path.push_str(&format!("&after={}", encode_query(after)));
+        }
+        let (wire, next): (Vec<browse::rest_advisories::Advisory>, _) =
+            self.rest_cursor_page(&path).await?;
+        let items: Vec<browse::Advisory> = wire
             .into_iter()
             .map(browse::rest_advisories::Advisory::into_advisory)
             .collect();
-        Ok(self.kept(&browse::keys::advisories(repo), list).await)
+        // GitHub doesn't say how many there are.
+        let list = browse::Results {
+            total: items.len() as u64,
+            items,
+            next,
+        };
+        Ok(self
+            .kept_if(first, &browse::keys::advisories(repo), list)
+            .await)
     }
 
     /// A security advisory: a repository's, or from GitHub's database.
@@ -1921,15 +1966,21 @@ impl GitHub {
         let repo = self.discussions_repo(of).await?;
         let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name });
         let data = self.graphql_json(raw::DISCUSSION_CATEGORIES, vars).await?;
-        let categories: w::Nodes<w::Category> = serde_json::from_value(
-            data.pointer("/repository/discussionCategories")
-                .cloned()
-                .unwrap_or_default(),
-        )?;
-        let categories: Vec<w::Category> = categories.into_iter().collect();
+        let categories: browse::wire::Counted<w::Category> =
+            at(&data, "/repository/discussionCategories", || {
+                repo.to_string()
+            })?;
+        let categories = categories.into_capped(Some);
         let category_id = match category {
             Some(slug) => match categories.iter().find(|c| c.slug == slug) {
                 Some(c) => Some(c.id.clone()),
+                None if categories.left_out() > 0 => {
+                    return Err(ApiError::NotFound(format!(
+                        "{repo}'s category {slug} (or it's past the first {} of {})",
+                        categories.len(),
+                        categories.total
+                    )));
+                }
                 None => return Err(ApiError::NotFound(format!("{repo}'s category {slug}"))),
             },
             None => None,
@@ -1946,13 +1997,18 @@ impl GitHub {
                 .unwrap_or_default(),
         )?;
         let list = browse::DiscussionList {
-            categories: categories
-                .into_iter()
-                .map(|c| browse::DiscussionCategory {
-                    name: c.name,
-                    slug: c.slug,
-                })
-                .collect(),
+            categories: {
+                let total = categories.total;
+                let items = categories
+                    .items
+                    .into_iter()
+                    .map(|c| browse::DiscussionCategory {
+                        name: c.name,
+                        slug: c.slug,
+                    })
+                    .collect();
+                crate::model::Capped::new(items, total)
+            },
             results: page.into_results(w::Summary::into_summary),
         };
         Ok(self
@@ -2101,6 +2157,20 @@ fn rest_page(after: Option<&str>) -> u64 {
 /// The cursor for the page after `page` of `total` items, if there is one.
 fn next_page(page: u64, total: u64) -> Option<String> {
     (page.saturating_mul(REST_PAGE) < total).then(|| page.saturating_add(1).to_string())
+}
+
+/// The `after` cursor in a `Link` header's `rel="next"` URL.
+fn next_after(link: &str) -> Option<String> {
+    let next = link.split(',').find(|l| l.contains("rel=\"next\""))?;
+    let url = next.split(['<', '>']).nth(1)?;
+    let query = url.split_once('?')?.1;
+    let after = query.split('&').find_map(|kv| kv.strip_prefix("after="))?;
+    Some(
+        url::form_urlencoded::parse(format!("a={after}").as_bytes())
+            .next()?
+            .1
+            .into_owned(),
+    )
 }
 
 /// Percent-encodes a query string's value (spaces as `+`).

@@ -114,11 +114,16 @@ fragments! {
     UnresolvePayload = "UnresolveReviewThreadPayload",
 }
 
+// Lists of nodes and their totals, and their nodes' types.
+fragments! {
+    counted:
+    LabelConnection = "LabelConnection" => Label,
+}
+
 // Lists of nodes, and their nodes' types.
 fragments! {
     nodes:
     CommitRollupConnection = "PullRequestCommitConnection" => CommitRollupNode,
-    LabelConnection = "LabelConnection" => Label,
     ReviewCommentConnection = "PullRequestReviewCommentConnection" => ReviewComment,
     PendingReviewConnection = "PullRequestReviewConnection" => PendingReview,
     ReviewCommitConnection = "PullRequestReviewConnection" => ReviewCommit,

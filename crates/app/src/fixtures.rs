@@ -124,7 +124,7 @@ pub fn overview() -> RepoOverview {
         closed_issues: 41,
         closed_prs: 112,
         license: Some("MIT".into()),
-        topics: vec!["tui".into(), "github".into(), "rust".into()],
+        topics: vec!["tui".into(), "github".into(), "rust".into()].into(),
         default_branch: Some("main".into()),
         last_commit: Some(CommitInfo {
             oid: "fedcba9876543210fedcba9876543210fedcba98".into(),
@@ -202,7 +202,7 @@ pub fn commit() -> CommitDetail {
         authored_at: "2026-01-14T10:00:00Z".into(),
         committer: Some("hubot".into()),
         committed_at: "2026-01-15T09:30:00Z".into(),
-        parents: vec!["1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into()],
+        parents: vec!["1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into()].into(),
         additions: 445,
         deletions: 71,
         changed_files: Some(20),
@@ -416,13 +416,15 @@ pub fn team() -> TeamDetail {
         members: vec![
             member("octocat", Some("The Octocat")),
             member("hubot", None),
-        ],
+        ]
+        .into(),
         repos: vec![TeamRepo {
             repo: RepoId::new("gold-silver-copper", "ghtui"),
             description: "GitHub in the terminal".into(),
             stars: 1200,
-        }],
-        children: vec![team_summary("core-docs", "Core docs", false)],
+        }]
+        .into(),
+        children: vec![team_summary("core-docs", "Core docs", false)].into(),
     }
 }
 /// A high-severity advisory with one package.
@@ -494,9 +496,9 @@ pub fn issue_summary(number: u64, is_pr: bool, state: IssueState) -> IssueSummar
         updated_at: "2026-10-03T09:00:00Z".into(),
         comments: number % 3,
         labels: if number.is_multiple_of(2) {
-            vec![label("bug", "d73a4a")]
+            vec![label("bug", "d73a4a")].into()
         } else {
-            Vec::new()
+            Vec::new().into()
         },
         created_at: "2026-09-29T09:00:00Z".into(),
         review: None,
@@ -525,8 +527,8 @@ pub fn issue() -> IssueDetail {
         state: IssueState::Open,
         author: "octocat".into(),
         created_at: "2026-10-01T12:00:00Z".into(),
-        labels: vec![label("bug", "d73a4a"), label("ui", "1d76db")],
-        assignees: vec!["hubot".into()],
+        labels: vec![label("bug", "d73a4a"), label("ui", "1d76db")].into(),
+        assignees: vec!["hubot".into()].into(),
         milestone: Some(ghtui_api::model::MilestoneRef {
             number: 3,
             title: "Links".into(),
@@ -610,7 +612,7 @@ pub fn profile() -> Profile {
             "@octocat@hachyderm.io".into(),
             "https://hachyderm.io/@octocat".into(),
         )],
-        orgs: vec!["github".into(), "ratatui".into()],
+        orgs: vec!["github".into(), "ratatui".into()].into(),
         verified: false,
         people: Vec::new(),
         people_count: 0,
@@ -726,7 +728,7 @@ pub fn org_profile() -> Profile {
         status: None,
         pronouns: None,
         socials: Vec::new(),
-        orgs: Vec::new(),
+        orgs: Vec::new().into(),
         verified: true,
         people: vec!["joshka".into(), "orhun".into(), "kdheepak".into()],
         people_count: 14,
@@ -800,8 +802,9 @@ pub fn release(full: bool) -> Release {
                 asset("ghtui-x86_64-linux.tar.gz", 4_200_000, 1_312),
                 asset("ghtui-aarch64-macos.tar.gz", 3_900_000, 845),
             ]
+            .into()
         } else {
-            Vec::new()
+            Vec::new().into()
         },
     }
 }
@@ -1077,7 +1080,7 @@ pub fn deployments() -> DeploymentList {
         environment_url: url.map(Into::into),
     };
     DeploymentList {
-        environments: vec!["production".into(), "staging".into()],
+        environments: vec!["production".into(), "staging".into()].into(),
         results: Results {
             total: 3,
             items: vec![
@@ -1142,7 +1145,8 @@ pub fn discussions() -> DiscussionList {
                 name: "Q&A".into(),
                 slug: "q-a".into(),
             },
-        ],
+        ]
+        .into(),
         results: Results {
             total: 48,
             items: vec![

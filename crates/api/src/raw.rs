@@ -16,7 +16,7 @@ pub(crate) const DISCUSSION_SEARCH: &str = "query($q: String!, $after: String) {
 pub(crate) const BRANCHES: &str = "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { defaultBranchRef { name } refs(refPrefix: \"refs/heads/\", first: 30, after: $after, orderBy: {field: ALPHABETICAL, direction: ASC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name target { ... on Commit { oid messageHeadline committedDate author { name user { login } } } } associatedPullRequests(first: 10, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number state headRefName repository { nameWithOwner } } } } } } }";
 
 /// Deployments, newest first, and the environments.
-pub(crate) const DEPLOYMENTS: &str = "query($owner: String!, $name: String!, $after: String, $envs: [String!]) { repository(owner: $owner, name: $name) { environments(first: 50) { nodes { name } } deployments(first: 25, after: $after, environments: $envs, orderBy: {field: CREATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { environment state createdAt creator { login } ref { name } commitOid latestStatus { logUrl environmentUrl } } } } }";
+pub(crate) const DEPLOYMENTS: &str = "query($owner: String!, $name: String!, $after: String, $envs: [String!]) { repository(owner: $owner, name: $name) { environments(first: 50) { totalCount nodes { name } } deployments(first: 25, after: $after, environments: $envs, orderBy: {field: CREATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { environment state createdAt creator { login } ref { name } commitOid latestStatus { logUrl environmentUrl } } } } }";
 
 /// A file's blame.
 pub(crate) const BLAME: &str = "query($owner: String!, $name: String!, $rev: String!, $path: String!) { repository(owner: $owner, name: $name) { object(expression: $rev) { ... on Commit { blame(path: $path) { ranges { startingLine endingLine age commit { oid messageHeadline committedDate author { name user { login } } } } } } } } }";
@@ -28,7 +28,7 @@ pub(crate) const GISTS: &str = "query($login: String!, $after: String) { user(lo
 pub(crate) const DISCUSSION_URLS: &str = "query($q: String!, $after: String) { search(type: DISCUSSION, query: $q, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on Discussion { url repository { nameWithOwner } } } } }";
 
 /// A repository's discussion categories.
-pub(crate) const DISCUSSION_CATEGORIES: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { discussionCategories(first: 50) { nodes { id name slug } } } }";
+pub(crate) const DISCUSSION_CATEGORIES: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { discussionCategories(first: 50) { totalCount nodes { id name slug } } } }";
 
 /// A repository's discussions, most recently updated first.
 pub(crate) const DISCUSSIONS: &str = "query($owner: String!, $name: String!, $after: String, $category: ID) { repository(owner: $owner, name: $name) { discussions(first: 25, after: $after, categoryId: $category, orderBy: {field: UPDATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { number title author { login } category { name } comments { totalCount } isAnswered upvoteCount updatedAt } } } }";
@@ -97,6 +97,6 @@ pub(crate) fn teams() -> String {
 /// A team: its members, repositories and child teams.
 pub(crate) fn team() -> String {
     format!(
-        "query($org: String!, $slug: String!) {{ organization(login: $org) {{ team(slug: $slug) {{ {TEAM} parentTeam {{ {TEAM} }} memberList: members(first: 50) {{ nodes {{ login name }} }} repoList: repositories(first: 50) {{ nodes {{ nameWithOwner description stargazerCount }} }} childTeams(first: 50) {{ nodes {{ {TEAM} }} }} }} }} }}"
+        "query($org: String!, $slug: String!) {{ organization(login: $org) {{ team(slug: $slug) {{ {TEAM} parentTeam {{ {TEAM} }} memberList: members(first: 50) {{ totalCount nodes {{ login name }} }} repoList: repositories(first: 50) {{ totalCount nodes {{ nameWithOwner description stargazerCount }} }} childTeams(first: 50) {{ totalCount nodes {{ {TEAM} }} }} }} }} }}"
     )
 }
