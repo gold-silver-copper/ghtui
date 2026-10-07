@@ -7,6 +7,7 @@ pub mod corpus;
 #[doc(hidden)]
 pub mod fuzz;
 pub mod model;
+mod person;
 pub mod queries;
 #[cfg(test)]
 mod query_check;
