@@ -151,10 +151,10 @@ mod tests {
 
     #[test]
     fn rejects_typos_and_bad_values() {
-        assert!(Config::parse("[theme]\nmood = \"dark\"").is_err());
-        assert!(Config::parse("[theme]\nmode = \"dim\"").is_err());
+        Config::parse("[theme]\nmood = \"dark\"").unwrap_err();
+        Config::parse("[theme]\nmode = \"dim\"").unwrap_err();
         let bad_seed = Config::parse("[theme]\nseed = \"blue\"").unwrap();
-        assert!(bad_seed.seed().is_err());
+        bad_seed.seed().unwrap_err();
     }
 
     #[test]

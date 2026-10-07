@@ -177,8 +177,8 @@ mod tests {
 
     #[test]
     fn rejects_garbage() {
-        assert!(parse_raw("nonsense\0").is_err());
-        assert!(parse_raw(&format!(":100644 100644 {A} {B} Z\0x\0")).is_err());
+        parse_raw("nonsense\0").unwrap_err();
+        parse_raw(&format!(":100644 100644 {A} {B} Z\0x\0")).unwrap_err();
         assert_eq!(parse_raw("").unwrap(), Vec::new());
     }
 

@@ -129,7 +129,9 @@ impl Repo {
             cmd.args(["clone", "--bare", "--filter=blob:none", "--progress", url])
                 .arg(&tmp);
             if let Err(err) = run_with_progress(cmd, "clone", progress, STALL).await {
-                std::fs::remove_dir_all(&tmp).ok();
+                // The clone's error is the one to report; a half-made
+                // directory left behind is removed on the next try.
+                let _ = std::fs::remove_dir_all(&tmp);
                 return Err(err);
             }
             std::fs::rename(&tmp, &path)?;
