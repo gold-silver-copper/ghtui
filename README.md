@@ -244,7 +244,7 @@ never does something else. Less common actions have no key: they're in the
 | `alt-→`               | Forward (back and forward go through history)                 |
 | `PgUp` `PgDn`         | Page up / down                                                |
 | `Home` `End` (`g` `G`) | Top / bottom                                                 |
-| `1`–`4`               | Tab by number                                                 |
+| `1`–`9`               | Tab by number                                                 |
 | `Space` `?`           | Everything you can do here, with its keys                     |
 | `/`                   | Search (on a list: filter it; in the diff: search the diff)   |
 | `f`                   | Find a file                                                   |
