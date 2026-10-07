@@ -2506,13 +2506,18 @@ fn step_lines<'a>(job: &Job, log: &'a str) -> Vec<(u32, Vec<&'a str>)> {
         let (time, text) = log_line(raw.trim_start_matches('\u{feff}'));
         if let Some(time) = time {
             let t = time.get(..19).unwrap_or(time);
-            let starts = text.starts_with("##[group]Run ")
+            let run = text.strip_prefix("##[group]");
+            let marks = run.is_some_and(|r| r.starts_with("Run "))
                 || text == "Post job cleanup."
                 || text == "Cleaning up orphan processes";
             while let (Some(current), Some(next)) = (
                 ran.get(at).and_then(|&i| job.steps.get(i)),
                 ran.get(at + 1).and_then(|&i| job.steps.get(i)),
             ) {
+                // A step named after what it runs starts at its own `Run`
+                // line, not a composite action's inner ones.
+                let starts =
+                    marks && run.is_none_or(|r| !next.name.starts_with("Run ") || r == next.name);
                 let next_started =
                     second(next.started_at.as_ref()).is_some_and(|s| s.as_str() <= t);
                 let ended = second(current.completed_at.as_ref()).is_some_and(|s| s.as_str() < t);
@@ -4105,6 +4110,47 @@ mod tests {
 
     fn job_page(page: &mut Page, job: &Job, log: &str, at: JobAt<'_>) {
         super::job(page, &RepoId::new("o", "r"), job, Some(log), at, 0);
+    }
+
+    /// A composite action's inner `Run` lines stay in its step, even in
+    /// the second the next step starts.
+    #[test]
+    fn inner_run_lines_stay_in_their_step() {
+        let step = |number, name: &str, start: &str, end: &str| ghtui_api::browse::Step {
+            number,
+            name: name.into(),
+            outcome: CheckOutcome::Success,
+            started_at: Some(format!("2026-10-05T17:42:{start}Z")),
+            completed_at: Some(format!("2026-10-05T17:42:{end}Z")),
+        };
+        let job = Job {
+            id: 1,
+            run_id: 1,
+            name: String::new(),
+            outcome: CheckOutcome::Success,
+            started_at: None,
+            completed_at: None,
+            steps: vec![
+                step(1, "Run ./build", "00", "05"),
+                step(2, "Run ./test", "05", "09"),
+            ],
+        };
+        let log = [
+            "2026-10-05T17:42:00.1Z ##[group]Run ./build",
+            "2026-10-05T17:42:05.1Z ##[group]Run inner",
+            "2026-10-05T17:42:05.2Z still building",
+            "2026-10-05T17:42:05.5Z ##[group]Run ./test",
+        ]
+        .join("\n");
+        let lines = step_lines(&job, &log);
+        let of = |n: u32| {
+            lines
+                .iter()
+                .find(|(s, _)| *s == n)
+                .map(|(_, l)| l.len())
+                .unwrap_or_default()
+        };
+        assert_eq!((of(1), of(2)), (3, 1));
     }
 
     #[test]
