@@ -954,7 +954,8 @@ pub fn workflow_runs() -> (Workflow, Results<RunSummary>) {
     (workflow, runs)
 }
 
-/// The default branch and two others, one with a merged pull request.
+/// Three branches by name: the default and two others, one with a merged
+/// pull request.
 pub fn branches() -> Results<BranchInfo> {
     let branch = |name: &str, default, headline: &str, pr| BranchInfo {
         name: name.into(),
@@ -969,16 +970,16 @@ pub fn branches() -> Results<BranchInfo> {
         total: 14,
         items: vec![
             branch(
-                "main",
-                true,
-                "Checks show each check's latest run once",
-                None,
-            ),
-            branch(
                 "links",
                 false,
                 "Discussions are pages",
                 Some((6, IssueState::Open)),
+            ),
+            branch(
+                "main",
+                true,
+                "Checks show each check's latest run once",
+                None,
             ),
             branch(
                 "tabs",
