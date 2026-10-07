@@ -171,6 +171,64 @@ fn with_pr(mode: Mode) -> State {
     state
 }
 
+/// A conversation longer than what's fetched (its newest comments,
+/// reviews and commits) says how much is left out, and its tabs count it
+/// all.
+#[test]
+fn long_conversations_say_what_is_left_out() {
+    let text = |state: &State| -> String {
+        let crate::state::Screen::Page(p) = state.screen() else {
+            panic!("not a page");
+        };
+        p.page
+            .lines
+            .iter()
+            .map(ghtui_ui::page::PageLine::text)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut issue = fixtures::issue();
+    issue.total_comments = 120;
+    let mut state = with_issue(Mode::Dark);
+    let route = Route::Issue {
+        repo: ghtui(),
+        number: 14,
+    };
+    open(&mut state, route, Data::Issue(Some(Box::new(issue))));
+    assert!(text(&state).contains("… 119 earlier comments on GitHub (o)"));
+    assert!(text(&state).contains("120 comments"));
+
+    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let mut activity = fixtures::activity();
+    activity.total_comments = 101;
+    activity.total_reviews = 3;
+    activity.total_commits = 250;
+    let mut state = with_pr(Mode::Dark);
+    fetched(
+        &mut state,
+        DataKey::PrActivity(pr),
+        Data::PrActivity(Box::new(activity)),
+    );
+    let page = text(&state);
+    assert!(
+        page.contains("… 100 earlier comments on GitHub (o)"),
+        "{page}"
+    );
+    assert!(page.contains("… 1 earlier review on GitHub (o)"), "{page}");
+    let tabs = state.chrome().tabs;
+    let count = |label: &str| {
+        tabs.iter()
+            .find(|(t, _)| t.label == label)
+            .and_then(|(t, _)| t.count)
+    };
+    assert_eq!(
+        (count("Conversation"), count("Commits")),
+        (Some(101), Some(250))
+    );
+    press(&mut state, "2");
+    assert!(text(&state).contains("… 248 earlier commits on GitHub (o)"));
+}
+
 /// Pushes `route` and delivers `data` for its page's own fetch (its last).
 fn open(state: &mut State, route: Route, data: Data) {
     let Some(Need::Data(key)) = needs(&route).pop() else {

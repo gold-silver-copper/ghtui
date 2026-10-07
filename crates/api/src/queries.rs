@@ -53,6 +53,15 @@ macro_rules! fragments {
             pub id: cynic::Id,
         }
     )*};
+    // A page of nodes and how many there are in all.
+    (counted: $($name:ident = $graphql:literal => $ty:ident),* $(,)?) => {$(
+        #[derive(cynic::QueryFragment, Debug)]
+        #[cynic(graphql_type = $graphql, schema_module = "schema")]
+        pub struct $name {
+            pub total_count: i32,
+            pub nodes: Option<Vec<Option<$ty>>>,
+        }
+    )*};
     (nodes: $($name:ident = $graphql:literal => $ty:ident),* $(,)?) => {$(
         #[derive(cynic::QueryFragment, Debug)]
         #[cynic(graphql_type = $graphql, schema_module = "schema")]
