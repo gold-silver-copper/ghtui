@@ -556,35 +556,112 @@ cargo test --workspace
 scripts/check-tls-deps.sh
 ```
 
-UI snapshot tests (`crates/app/src/snapshots/`) render full screens through
-ratatui's `TestBackend`, in light, dark and 256-color modes. They include cell
-styles, so color changes appear in review. To accept intentional changes:
-`INSTA_UPDATE=always cargo test -p ghtui`, then review the diff.
+### What the tests check
 
-The API client is tested against a scripted local HTTP server
-(`crates/api/tests/client.rs`): ETag revalidation, retries, rate limits, and
-error mapping. Git operations are tested against throwaway repositories
-served over `file://` with filtering enabled (`crates/git/tests/repo.rs`). Those
-tests cover partial clones, prefetch, lazy fetch, every file status, and a
-check that your clone only gains `refs/ghtui/*`. Neither suite needs network
-access.
+ghtui shows what GitHub says, so most of its bugs are GitHub's data read
+wrongly: the oldest page shown as the newest, a list cut short as if whole, a
+diff from the wrong base. The tests come at that from several sides.
+
+- **Every query, against GitHub's schema** (`crates/api/src/query_check.rs`).
+  Every GraphQL query ghtui sends, typed or raw (`crates/api/src/raw.rs`), is
+  parsed and checked: each field and argument exists, each variable is
+  declared, no list asks for more than 100, the worst-case node count stays
+  under GitHub's 500,000, and every field with `first:` or `last:` either
+  pages or fetches its total, so the page can say what it left out. `last:`
+  with a descending order (the oldest N, not the newest), even the schema's
+  default order, fails. The few lists allowed without a total are listed in
+  the test, each with its reason.
+- **Real responses, replayed** (`crates/api/tests/corpus.rs`). Recorded
+  GitHub responses for a long PR, a merged one, one with 275 comments, a
+  comparison of 250+ commits, a repository with 267 branches, an archived
+  one, a deleted author, a bot, and more, replayed through the real client
+  offline, checking each case and that nothing doesn't add up. A scripted
+  local server (`crates/api/tests/client.rs`) covers ETag revalidation,
+  retries, rate limits and error mapping.
+- **What GitHub's answers say of themselves.** At run time, cheap checks
+  report (as a notice, and in the log) an answer that doesn't add up: a
+  comparison whose newest commit isn't its head, more items than the total,
+  a short page that says there are more, checks for another commit than
+  the head, a PR diff whose head or file count isn't GitHub's.
+- **git as the oracle** (`crates/git/tests/`). Real repositories served
+  over `file://`, as GitHub serves them: partial clones and lazy fetches;
+  merge-commit, squash, rebase, force-push and criss-cross histories checked
+  against `git merge-base --all`, `git rev-list --count` and `git diff
+  --raw`; every kind of change (binary, rename with changes, mode only,
+  submodule, CRLF, no newline at the end, Unicode paths) with git's line
+  counts and git's own hunks as ghtui's commentable ranges.
+- **Snapshots** (`crates/app/src/snapshots/`) render full screens through
+  ratatui's `TestBackend`, in light, dark and 256-color modes, with cell
+  styles, so color changes show in review. To accept intentional changes:
+  `INSTA_UPDATE=always cargo test -p ghtui`, then review the diff. Job logs
+  have golden summaries too (`crates/ui/tests/job_logs.rs`, from real logs
+  in `crates/ui/tests/logs/`): which lines land in which step, and how.
+- **Properties** (proptest): random sequences of keys, resizes,
+  navigation and data arriving fresh, cached, failed, twice or as an
+  overlapping next page never panic, always render, keep the selection on
+  an item, never show an item twice, and never let a cached copy replace
+  fresher data. Markdown and diffs lay out in bounds at any size, whatever
+  the text (CJK, emoji, ZWJ sequences, flags, combining marks); every
+  page's URL leads back to it; every screen renders at 1×1, 20×5 and 80×24
+  with awful data.
+- **Fuzzing** (`fuzz/`, needs nightly and `cargo-fuzz`): `cargo +nightly
+  fuzz run <target>` for `markdown`, `file_diff`, `route` (any URL; a
+  page's URL round-trips; wiki links), `wire` (any JSON as each of
+  GitHub's wire shapes, made into ghtui's models) and `job_log`.
 
 Panics are kept out by construction: workspace lints reject `unwrap`,
 `expect`, indexing, string slicing, truncating casts and ratatui's unclipped
-buffer writes outside tests. Property tests (proptest) check that arbitrary
-Markdown and diffs lay out, render at any size and stay in bounds, that every
-page's URL leads back to it, and that key notation round-trips; a test renders
-every screen at every size up to 12×12. Fuzz targets for the Markdown renderer
-and the diff pipeline live in `fuzz/` (`cargo +nightly fuzz run markdown`,
-`cargo +nightly fuzz run file_diff`; needs `cargo-fuzz`).
+buffer writes outside tests.
+
+### Against live GitHub
+
+The contract suite turns what ghtui assumes of GitHub into dated, checked
+facts, on data that doesn't change (old tags, merged PRs): how comparisons
+page, how refs sort, that a long PR's last commit is its head, that search
+stops at 1,000, that commit search dates carry offsets, how merged PRs
+diff, which lists come oldest or newest first. It only reads:
+
+```sh
+cargo test -p ghtui-api --test contract -- --ignored contract
+```
+
+Without a token (`GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`) each test
+passes without checking. A nightly workflow (`.github/workflows/nightly.yml`)
+runs it, and the link crawl below, with a read-only token from the
+`CONTRACT_TOKEN` repository secret, and skips cleanly without one.
+
+The same suite records the corpora the offline tests replay. GitHub keeps
+job logs for 90 days, so the recorded ones outlive their job IDs:
+
+```sh
+# Responses: look them over, then replace tests/corpus with them (a
+# request whose text changed has a new name, and the replay answers a
+# request it has no response for with a 404 saying so).
+GHTUI_RECORD=~/corpus cargo test -p ghtui-api --test contract -- --ignored contract_record_corpus
+rm crates/api/tests/corpus/*.json && cp ~/corpus/*.json crates/api/tests/corpus/
+# Job logs: into crates/ui/tests/logs, gzipping those over 200 KB.
+GHTUI_RECORD=~/logs cargo test -p ghtui-api --test contract -- --ignored contract_record_logs
+```
 
 `crates/app/tests/github_urls.txt` lists every kind of github.com link with
 what it must open (a page, the diff viewer, or the browser and why); a test
 checks each one, a property test checks each shape with any names and
 numbers, and another checks every link on every page fixture against it. A
-crawl of real GitHub pages finds links whose shapes it lacks (network; run by
-hand: `GHTUI_CRAWL_OUT=crawl.txt cargo test --release -p ghtui -- --ignored
+crawl of real GitHub pages finds links whose shapes it lacks (network:
+`GHTUI_CRAWL_OUT=crawl.txt cargo test --release -p ghtui -- --ignored
 --nocapture link_crawl`; a relative path is under the temporary directory).
+
+### What no test pins down
+
+Mutation testing and coverage are run by hand, not gated:
+
+```sh
+cargo mutants -p ghtui-api
+cargo mutants -p ghtui -f crates/app/src/route.rs -f crates/app/src/diff_job.rs
+cargo llvm-cov --workspace --html
+```
+
+### Performance
 
 Performance targets, as timing tests
 (`cargo test --release -p ghtui -- --ignored --nocapture`):
