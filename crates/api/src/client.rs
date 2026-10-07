@@ -227,7 +227,7 @@ impl GitHub {
         let mut list = first;
         let mut seen = std::collections::HashSet::new();
         for _ in 1..max {
-            let Some(after) = list.next.clone() else {
+            let Some(after) = list.next.take() else {
                 break;
             };
             if !seen.insert(after.clone()) {
