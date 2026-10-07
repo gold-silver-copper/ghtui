@@ -400,7 +400,7 @@ pub struct PageScreen {
 }
 
 impl PageScreen {
-    pub fn new(route: Route) -> Self {
+    pub fn new(route: Route, anchor: Option<String>) -> Self {
         // Lists start on their first row; reading pages (issues, pull
         // requests, files) start with nothing selected.
         let list = !matches!(
@@ -425,7 +425,7 @@ impl PageScreen {
             built: None,
             fresh: list,
             jumped: false,
-            anchor: None,
+            anchor,
         }
     }
 
