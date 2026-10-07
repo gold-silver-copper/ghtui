@@ -440,6 +440,16 @@ fn with_tags(mode: Mode) -> State {
     state
 }
 
+/// A repository's branches.
+fn with_branches(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    open(
+        &mut state,
+        Route::Branches(ghtui()),
+        Data::Branches(Box::new(fixtures::branches())),
+    );
+    state
+}
 /// A branch's commits.
 fn with_history(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -698,6 +708,11 @@ fn release_light() {
 #[test]
 fn tags_dark() {
     insta::assert_snapshot!(render(&with_tags(Mode::Dark)));
+}
+
+#[test]
+fn branches_light() {
+    insta::assert_snapshot!(render(&with_branches(Mode::Light)));
 }
 
 #[test]
@@ -1581,10 +1596,10 @@ mod links {
     use ghtui_ui::pages::ProfileTab;
 
     use super::{
-        press, with_actions, with_commit, with_discussion, with_discussions, with_file, with_forks,
-        with_history, with_inbox, with_issue, with_issues, with_job, with_pr, with_pr_checks,
-        with_profile, with_release, with_releases, with_repo, with_repo_search, with_run,
-        with_stargazers, with_tags, with_workflow,
+        press, with_actions, with_branches, with_commit, with_discussion, with_discussions,
+        with_file, with_forks, with_history, with_inbox, with_issue, with_issues, with_job,
+        with_pr, with_pr_checks, with_profile, with_release, with_releases, with_repo,
+        with_repo_search, with_run, with_stargazers, with_tags, with_workflow,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1651,6 +1666,7 @@ mod links {
             ("releases", with_releases(Mode::Dark)),
             ("release", with_release(Mode::Dark)),
             ("tags", with_tags(Mode::Dark)),
+            ("branches", with_branches(Mode::Dark)),
             ("run", with_run(Mode::Dark)),
             ("discussions", with_discussions(Mode::Dark)),
             ("discussion", with_discussion(Mode::Dark)),

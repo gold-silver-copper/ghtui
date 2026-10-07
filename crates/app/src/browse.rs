@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blob, Checks, CommitDetail, CommitInfo, DiscussionDetail, DiscussionList, DiscussionsOf,
-    IssueDetail, Job, PrActivity, Profile, Refs, Release, RepoOverview, RepoSort, RepoSummary,
-    Results, RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserList, UserSummary,
-    Workflow, WorkflowRun,
+    Blob, BranchInfo, Checks, CommitDetail, CommitInfo, DiscussionDetail, DiscussionList,
+    DiscussionsOf, IssueDetail, Job, PrActivity, Profile, Refs, Release, RepoOverview, RepoSort,
+    RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserList,
+    UserSummary, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::page::{Link, Page, Role, Seg};
@@ -51,6 +51,7 @@ pub enum DataKey {
     Releases(RepoId),
     Release(RepoId, String),
     Tags(RepoId),
+    Branches(RepoId),
     Discussions(DiscussionsOf, Option<String>),
     Discussion(DiscussionsOf, u64),
     /// A workflow run (an attempt of it, or the latest).
@@ -99,6 +100,7 @@ pub enum Data {
     Runs(Box<Results<RunSummary>>),
     Release(Box<Release>),
     Tags(Box<Results<TagInfo>>),
+    Branches(Box<Results<BranchInfo>>),
 }
 
 impl Data {
@@ -113,6 +115,7 @@ impl Data {
             Data::Runs(r) => r.next.as_deref(),
             Data::Discussions(d) => d.results.next.as_deref(),
             Data::Tags(r) => r.next.as_deref(),
+            Data::Branches(r) => r.next.as_deref(),
             _ => None,
         }
     }
@@ -128,6 +131,7 @@ impl Data {
             (Data::Runs(a), Data::Runs(b)) => extend(a, *b),
             (Data::Discussions(a), Data::Discussions(b)) => extend(&mut a.results, b.results),
             (Data::Tags(a), Data::Tags(b)) => extend(a, *b),
+            (Data::Branches(a), Data::Branches(b)) => extend(a, *b),
             _ => {}
         }
     }
@@ -159,6 +163,7 @@ pub fn paged(route: &Route) -> Option<DataKey> {
             })
         }
         Route::Tags(repo) => Some(DataKey::Tags(repo.clone())),
+        Route::Branches(repo) => Some(DataKey::Branches(repo.clone())),
         _ => route
             .search()
             .map(|(kind, query)| DataKey::Search(kind, query)),
@@ -255,7 +260,8 @@ pub fn needs(route: &Route) -> Vec<Need> {
         | Route::Watchers(repo)
         | Route::Forks(repo)
         | Route::Releases(repo)
-        | Route::Tags(repo) => std::iter::once(header(repo))
+        | Route::Tags(repo)
+        | Route::Branches(repo) => std::iter::once(header(repo))
             .chain(paged(route).map(Need::Data))
             .collect(),
         Route::Commit { repo, oid } => {
@@ -633,6 +639,11 @@ impl State {
                     _ => pages::releases(&mut page, repo, None, now),
                 }
             }
+            Route::Branches(repo) => match self.get(&DataKey::Branches(repo.clone())) {
+                Some(Data::Branches(b)) => pages::branches(&mut page, repo, Some(b), icons, now),
+                None if matches!(error, Some((_, false))) => missing(&mut page, "the branches"),
+                _ => pages::branches(&mut page, repo, None, icons, now),
+            },
             Route::Discussions { of, category } => {
                 let list = match self.get(&DataKey::Discussions(of.clone(), category.clone())) {
                     Some(Data::Discussions(d)) => Some(&**d),
