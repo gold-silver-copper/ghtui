@@ -839,7 +839,8 @@ pub fn blame(
         return;
     };
     let file = link_seg(page, "File", url::blob(repo, rev, path), Role::Link);
-    let info = format!("Blame · {}", plural(blame.ranges.len() as u64, "change"));
+    let commits = unique(blame.ranges.iter().map(|r| &r.oid)).len() as u64;
+    let info = format!("Blame · {}", plural(commits, "commit"));
     page.box_top(vec![Seg::new(info, Role::Meta)], vec![file]);
     let lines = markdown::highlighted(text, ghtui_diff::Language::from_path(path));
     let width = lines.len().to_string().len();
@@ -873,11 +874,11 @@ pub fn blame(
             Role::Syntax(Syntax::Comment),
         ));
         gutter.append(&mut segs);
-        if is_marked(n) && page.jump.is_none() {
-            page.jump = Some(page.lines.len());
-        }
         if range.is_some_and(|r| r.start as usize == n && n > 1) {
             page.box_rule();
+        }
+        if is_marked(n) && page.jump.is_none() {
+            page.jump = Some(page.lines.len());
         }
         page.push(PageLine {
             segs: gutter,
@@ -4159,6 +4160,46 @@ mod tests {
                 .unwrap_or_default()
         };
         assert_eq!((of(1), of(2)), (3, 1));
+    }
+
+    /// A blame scrolls to the linked line, not the rule above its run.
+    #[test]
+    fn a_blame_jumps_to_its_line() {
+        let range = |start, end, oid: &str| ghtui_api::browse::BlameRange {
+            start,
+            end,
+            age: 1,
+            oid: oid.into(),
+            headline: String::new(),
+            author: "octocat".into(),
+            date: "2026-10-01T00:00:00Z".into(),
+        };
+        let blame = Blame {
+            ranges: vec![range(1, 2, "aaaaaaa"), range(3, 3, "bbbbbbb")],
+        };
+        let blob = Blob {
+            path: "a.txt".into(),
+            text: Some("one\ntwo\nthree\n".into()),
+            size: 14,
+            truncated: false,
+        };
+        let repo = RepoId::new("o", "r");
+        let at = FileAt {
+            repo: &repo,
+            rev: "main",
+            path: "a.txt",
+            lines: Some((3, 3)),
+        };
+        let mut page = Page::new(100);
+        super::blame(&mut page, at, Some(&blob), Some(&blame), Keys::default(), 0);
+        let line = page
+            .jump
+            .and_then(|j| page.lines.get(j))
+            .map(PageLine::text);
+        assert!(
+            line.as_deref().is_some_and(|l| l.contains("three")),
+            "{line:?}"
+        );
     }
 
     #[test]

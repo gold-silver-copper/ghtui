@@ -1,6 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 811
+assertion_line: 882
 expression: "render(&with_blame(Mode::Dark))"
 ---
 Buffer {
@@ -12,7 +12,7 @@ Buffer {
         "                                                                                                    ",
         "   ⎇ main ▾   ghtui / src / main.rs                                              ⌕ Go to file  f    ",
         "                                                                                                    ",
-        "  ╭─ Blame · 3 changes ────────────────────────────────────────────────────────────────── File ─╮   ",
+        "  ╭─ Blame · 2 commits ────────────────────────────────────────────────────────────────── File ─╮   ",
         "  │ aaaaaaa octocat        1y ago  1  use std::io;                                              │   ",
         "  │                                2                                                            │   ",
         "  │                                3  /// Says hello.                                           │   ",
