@@ -600,13 +600,11 @@ impl State {
         let title = route.title();
         match route {
             Route::Home => {
-                let repos = f.get(&DataKey::ViewerRepos);
-                let viewer = self.viewer.as_deref();
                 pages::home(
                     &mut page,
                     f.of(Some(&self.inbox)),
-                    repos,
-                    viewer,
+                    f.get(&DataKey::ViewerRepos),
+                    self.viewer.as_deref(),
                     icons,
                     now,
                 );
@@ -796,10 +794,8 @@ impl State {
                 query,
                 ..
             } => {
-                if let Some(j) = f
-                    .get(&DataKey::Job(repo.clone(), *job))
-                    .show(&mut page, &title)
-                {
+                let key = DataKey::Job(repo.clone(), *job);
+                if let Some(j) = f.get(&key).show(&mut page, &title) {
                     let log = f.get(&DataKey::JobLog(repo.clone(), *job));
                     let at = pages::JobAt {
                         step: *step,
