@@ -509,6 +509,8 @@ fn up(state: &State, route: &Route) -> Option<Route> {
             query: crate::route::OPEN.into(),
         },
         Route::User { .. } | Route::Search { .. } => Route::Home,
+        Route::Gist { owner, .. } => Route::Gists(owner.clone()?),
+        Route::Gists(login) => Route::user(login),
     })
 }
 

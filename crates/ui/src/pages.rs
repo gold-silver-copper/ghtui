@@ -8,10 +8,11 @@ use std::collections::HashMap;
 
 use ghtui_api::browse::{
     Blame, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo,
-    Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList, EntryKind,
-    IssueDetail, IssueState, IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo,
-    MilestoneList, PrActivity, Profile, Release, RepoOverview, RepoSort, RepoSummary, Results,
-    RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary, Workflow, WorkflowRun,
+    Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList, EntryKind, Gist,
+    GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobSummary, MilestoneDetail,
+    MilestoneInfo, MilestoneList, PrActivity, Profile, Release, RepoOverview, RepoSort,
+    RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserSummary,
+    Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -882,6 +883,122 @@ pub fn blame(
             ..PageLine::default()
         });
     }
+    page.box_bottom();
+}
+// ---- gists -------------------------------------------------------------------------------------
+
+const GIST: &str = "https://gist.github.com";
+
+/// A gist: who and when, its description, and each of its files.
+pub fn gist(page: &mut Page, g: &Gist, now: u64) {
+    let first = g.files.first().map_or(g.id.as_str(), |f| f.name.as_str());
+    let mut title = Vec::new();
+    if let Some(owner) = &g.owner {
+        title.push(link_seg(
+            page,
+            owner.clone(),
+            format!("{GIST}/{owner}"),
+            Role::Link,
+        ));
+        title.push(Seg::new(" / ", Role::Meta));
+    }
+    title.push(Seg::new(first.to_owned(), Role::Title));
+    if !g.public {
+        title.push(space());
+        title.push(chip("Secret", Bg::SecondaryContainer));
+    }
+    page.wrapped(title, 0, Frame::None);
+    let meta = format!(
+        "created {} · updated {} · {} · {}",
+        time::ago_iso(&g.created_at, now),
+        time::ago_iso(&g.updated_at, now),
+        plural(g.files.len() as u64, "file"),
+        plural(g.comments, "comment"),
+    );
+    page.wrapped(vec![Seg::new(meta, Role::Meta)], 0, Frame::None);
+    if !g.description.is_empty() {
+        page.wrapped(
+            vec![Seg::new(g.description.clone(), Role::Body)],
+            0,
+            Frame::None,
+        );
+    }
+    for f in &g.files {
+        page.blank();
+        let mut info = vec![Seg::new(f.name.clone(), Role::Strong)];
+        let mut facts = vec![crate::text::size(f.size)];
+        if let Some(language) = &f.language {
+            facts.push(language.clone());
+        }
+        info.push(Seg::new(format!("  {}", facts.join(" · ")), Role::Meta));
+        page.box_top(info, Vec::new());
+        match &f.text {
+            Some(text) if f.name.to_ascii_lowercase().ends_with(".md") => {
+                markdown::render(page, text, None, Frame::Body);
+            }
+            Some(text) => {
+                let lines = markdown::highlighted(text, ghtui_diff::Language::from_path(&f.name));
+                let width = lines.len().to_string().len();
+                for (i, mut segs) in lines.into_iter().enumerate() {
+                    segs.insert(
+                        0,
+                        Seg::new(
+                            format!("{:>width$}  ", i + 1),
+                            Role::Syntax(Syntax::Comment),
+                        ),
+                    );
+                    page.push(PageLine {
+                        segs,
+                        frame: Frame::Body,
+                        tone: Tone::Code,
+                        ..PageLine::default()
+                    });
+                }
+            }
+            None => empty_row(page, "Too large to show here. o opens it on GitHub."),
+        }
+        if f.truncated {
+            body(
+                page,
+                vec![Seg::new("Only the beginning is shown.", Role::Meta)],
+            );
+        }
+        page.box_bottom();
+    }
+}
+
+/// Someone's public gists, most recently updated first.
+pub fn gists(page: &mut Page, login: &str, list: Option<&Results<GistSummary>>, now: u64) {
+    let Some(l) = list else {
+        page.line(vec![Seg::new("Loading gists…", Role::Meta)]);
+        return;
+    };
+    let title = vec![Seg::new(
+        format!("Gists  {}", compact(l.total)),
+        Role::Strong,
+    )];
+    page.box_top(title, Vec::new());
+    if l.items.is_empty() {
+        empty_row(page, "No public gists.");
+    }
+    box_rows(page, &l.items, |page, g| {
+        item(page, format!("{GIST}/{login}/{}", g.id), |page, link| {
+            let name = g.files.first().cloned().unwrap_or_else(|| g.id.clone());
+            let right = vec![Seg::new(time::ago_iso(&g.updated_at, now), Role::Meta)];
+            page.box_line(vec![Seg::linked(name, Role::Strong, link)], right, 0);
+            if !g.description.is_empty() {
+                body(page, vec![Seg::new(g.description.clone(), Role::Body)]);
+            }
+            let meta = format!(
+                "{} · {} · ★ {}",
+                plural(g.files.len() as u64, "file"),
+                plural(g.comments, "comment"),
+                compact(g.stars)
+            );
+            body(page, vec![Seg::new(meta, Role::Meta)]);
+        });
+    });
+    more_row(page, l.next.is_some(), l.items.len(), l.total);
     page.box_bottom();
 }
 // ---- lists --------------------------------------------------------------------------

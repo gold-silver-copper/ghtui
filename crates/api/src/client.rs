@@ -1480,6 +1480,42 @@ impl GitHub {
             .kept(&browse::keys::blame(repo, rev, path), blame)
             .await)
     }
+    /// A gist and its files. REST, since GraphQL finds gists only through
+    /// their owners, and a gist's URL may not name its owner.
+    pub async fn gist(&self, id: &str) -> Result<browse::Gist, ApiError> {
+        let wire: browse::rest_gists::Gist = self
+            .rest_json(&format!("/gists/{}", encode_path(id)))
+            .await?;
+        let gist = wire.into_gist();
+        Ok(self.kept(&browse::keys::gist(id), gist).await)
+    }
+
+    /// Someone's public gists, most recently updated first, 30 at a time
+    /// from `after`.
+    pub async fn gists(
+        &self,
+        login: &str,
+        after: Option<String>,
+    ) -> Result<browse::Results<browse::GistSummary>, ApiError> {
+        let first = after.is_none();
+        let data = self
+            .graphql_json(
+                "query($login: String!, $after: String) { user(login: $login) { gists(first: 30, after: $after, privacy: PUBLIC, orderBy: {field: UPDATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name description updatedAt stargazerCount files(limit: 5) { name } comments { totalCount } } } } }",
+                serde_json::json!({ "login": login, "after": after }),
+            )
+            .await?;
+        let wire: browse::wire_gists::Gists = serde_json::from_value(
+            data.pointer("/user/gists")
+                .filter(|g| !g.is_null())
+                .cloned()
+                .ok_or_else(|| ApiError::NotFound(format!("{login}'s gists")))?,
+        )?;
+        let gists = wire.into_results();
+        if first {
+            return Ok(self.kept(&browse::keys::gists(login), gists).await);
+        }
+        Ok(gists)
+    }
     /// A workflow run (one attempt of it, or the latest) and its jobs.
     pub async fn workflow_run(
         &self,

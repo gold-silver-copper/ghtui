@@ -99,6 +99,13 @@ pub enum Route {
     },
     Tags(RepoId),
     Branches(RepoId),
+    /// A gist, by its ID (its owner, when the URL names them).
+    Gist {
+        owner: Option<String>,
+        id: String,
+    },
+    /// Someone's gists.
+    Gists(String),
     /// Two revisions compared, as the URL names them (`a...b`, `a..b`).
     Compare {
         repo: RepoId,
@@ -267,6 +274,11 @@ impl Route {
             Route::Discussion { of, number } => format!("{}/{number}", discussions_url(of)),
             Route::Tags(repo) => format!("{}/tags", links::repo(repo)),
             Route::Branches(repo) => format!("{}/branches", links::repo(repo)),
+            Route::Gist { owner, id } => match owner {
+                Some(owner) => format!("{GIST}/{owner}/{id}"),
+                None => format!("{GIST}/{id}"),
+            },
+            Route::Gists(login) => format!("{GIST}/{login}"),
             Route::Compare { repo, spec } => {
                 format!("{}/compare/{}", links::repo(repo), links::encode_path(spec))
             }
@@ -335,6 +347,8 @@ impl Route {
             Route::Discussion { of, number } => format!("{} · Discussion {number}", of_title(of)),
             Route::Tags(repo) => format!("{repo} · Tags"),
             Route::Branches(repo) => format!("{repo} · Branches"),
+            Route::Gist { id, .. } => format!("Gist {}", id.get(..7).unwrap_or(id)),
+            Route::Gists(login) => format!("@{login} · Gists"),
             Route::Compare { repo, spec } => format!("{repo} · {spec}"),
             Route::Deployments { repo, .. } => format!("{repo} · Deployments"),
             Route::Milestones { repo, .. } => format!("{repo} · Milestones"),
@@ -387,6 +401,8 @@ impl Route {
             Route::Home
             | Route::User { .. }
             | Route::Search { .. }
+            | Route::Gist { .. }
+            | Route::Gists(_)
             | Route::Discussions {
                 of: DiscussionsOf::Org(_),
                 ..
@@ -477,9 +493,13 @@ impl Target {
         let Ok(parsed) = url::Url::parse(&with_scheme) else {
             return external();
         };
-        if !matches!(parsed.scheme(), "https" | "http")
-            || !matches!(parsed.host_str(), Some("github.com" | "www.github.com"))
-        {
+        if !matches!(parsed.scheme(), "https" | "http") {
+            return external();
+        }
+        if parsed.host_str() == Some("gist.github.com") {
+            return gist(&parsed).map_or_else(external, Target::Page);
+        }
+        if !matches!(parsed.host_str(), Some("github.com" | "www.github.com")) {
             return external();
         }
         let param = |name: &str| {
@@ -890,6 +910,43 @@ fn is_full_sha(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+const GIST: &str = "https://gist.github.com";
+
+/// gist.github.com's own pages, not people's gists.
+const GIST_PAGES: &[&str] = &[
+    "discover", "starred", "search", "auth", "login", "join", "mine",
+];
+
+/// Whether a gist.github.com path segment is a gist's ID (numbers for old
+/// gists, 20 or 32 hex digits for newer) rather than someone's login.
+fn is_gist_id(s: &str) -> bool {
+    s.bytes().all(|b| b.is_ascii_digit())
+        || (matches!(s.len(), 20 | 32) && s.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// A gist.github.com page: a gist (`/<id>`, `/<owner>/<id>`) or someone's
+/// gists (`/<owner>`). Raw files and embeds are downloads.
+fn gist(parsed: &url::Url) -> Option<Route> {
+    let segments: Vec<&str> = parsed.path_segments()?.filter(|s| !s.is_empty()).collect();
+    Some(match segments.as_slice() {
+        [first, ..] if GIST_PAGES.contains(first) => return None,
+        [id] if is_gist_id(id) => Route::Gist {
+            owner: None,
+            id: (*id).to_owned(),
+        },
+        [login] => Route::Gists((*login).to_owned()),
+        [owner, id] if is_gist_id(id) => Route::Gist {
+            owner: Some((*owner).to_owned()),
+            id: (*id).to_owned(),
+        },
+        // Revisions, forks, stars: the gist.
+        [owner, id, "revisions" | "forks" | "stargazers"] if is_gist_id(id) => Route::Gist {
+            owner: Some((*owner).to_owned()),
+            id: (*id).to_owned(),
+        },
+        _ => return None,
+    })
+}
 /// The comparison a range of files is from.
 pub fn compare_url(of: &DiffOf) -> String {
     match of {
@@ -1510,6 +1567,17 @@ pub(crate) mod tests {
                 repo().prop_map(Route::Releases),
                 repo().prop_map(Route::Tags),
                 repo().prop_map(Route::Branches),
+                (prop::option::of(segment()), "[0-9a-f]{20}|[0-9]{1,8}")
+                    .prop_filter("an owner isn't a gist ID or a gist page", |(o, _)| {
+                        o.as_deref()
+                            .is_none_or(|o| !is_gist_id(o) && !GIST_PAGES.contains(&o))
+                    })
+                    .prop_map(|(owner, id)| Route::Gist { owner, id }),
+                segment()
+                    .prop_filter("not a gist ID or a gist page", |l| {
+                        !is_gist_id(l) && !GIST_PAGES.contains(&l.as_str())
+                    })
+                    .prop_map(Route::Gists),
                 (
                     repo(),
                     rev.clone(),

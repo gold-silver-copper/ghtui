@@ -6,10 +6,10 @@ use std::collections::HashMap;
 
 use ghtui_api::browse::{
     Blame, Blob, BranchInfo, Checks, CommitDetail, CommitInfo, Comparison, DeploymentList,
-    DiscussionDetail, DiscussionList, DiscussionsOf, IssueDetail, Job, MilestoneDetail,
-    MilestoneList, PrActivity, Profile, Refs, Release, RepoOverview, RepoSort, RepoSummary,
-    Results, RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserList, UserSummary,
-    Workflow, WorkflowRun,
+    DiscussionDetail, DiscussionList, DiscussionsOf, Gist, GistSummary, IssueDetail, Job,
+    MilestoneDetail, MilestoneList, PrActivity, Profile, Refs, Release, RepoOverview, RepoSort,
+    RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserList,
+    UserSummary, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::page::{Link, Page, Role, Seg};
@@ -53,6 +53,8 @@ pub enum DataKey {
     Release(RepoId, String),
     Tags(RepoId),
     Branches(RepoId),
+    Gist(String),
+    Gists(String),
     Blame(RepoId, String, String),
     Compare(RepoId, String),
     Deployments(RepoId, Option<String>),
@@ -107,6 +109,8 @@ pub enum Data {
     Release(Box<Release>),
     Tags(Box<Results<TagInfo>>),
     Branches(Box<Results<BranchInfo>>),
+    Gist(Box<Gist>),
+    Gists(Box<Results<GistSummary>>),
     Blame(Box<Blame>),
     Compare(Box<Comparison>),
     Deployments(Box<DeploymentList>),
@@ -127,6 +131,7 @@ impl Data {
             Data::Discussions(d) => d.results.next.as_deref(),
             Data::Tags(r) => r.next.as_deref(),
             Data::Branches(r) => r.next.as_deref(),
+            Data::Gists(r) => r.next.as_deref(),
             Data::Deployments(d) => d.results.next.as_deref(),
             Data::Milestones(m) => m.results.next.as_deref(),
             Data::Milestone(m) => m.items.next.as_deref(),
@@ -146,6 +151,7 @@ impl Data {
             (Data::Discussions(a), Data::Discussions(b)) => extend(&mut a.results, b.results),
             (Data::Tags(a), Data::Tags(b)) => extend(a, *b),
             (Data::Branches(a), Data::Branches(b)) => extend(a, *b),
+            (Data::Gists(a), Data::Gists(b)) => extend(a, *b),
             (Data::Deployments(a), Data::Deployments(b)) => extend(&mut a.results, b.results),
             (Data::Milestones(a), Data::Milestones(b)) => extend(&mut a.results, b.results),
             (Data::Milestone(a), Data::Milestone(b)) => extend(&mut a.items, b.items),
@@ -181,6 +187,7 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         }
         Route::Tags(repo) => Some(DataKey::Tags(repo.clone())),
         Route::Branches(repo) => Some(DataKey::Branches(repo.clone())),
+        Route::Gists(login) => Some(DataKey::Gists(login.to_lowercase())),
         Route::Compare { repo, spec } => Some(DataKey::Compare(repo.clone(), spec.clone())),
         Route::Deployments { repo, environment } => {
             Some(DataKey::Deployments(repo.clone(), environment.clone()))
@@ -235,6 +242,8 @@ pub fn needs(route: &Route) -> Vec<Need> {
             std::iter::once(header(repo)).chain(list).collect()
         }
         Route::Search { .. } => list.into_iter().collect(),
+        Route::Gists(_) => paged(route).map(Need::Data).into_iter().collect(),
+        Route::Gist { id, .. } => vec![Need::Data(K::Gist(id.clone()))],
         Route::Issue { repo, number } => {
             vec![header(repo), Need::Data(K::Issue(repo.clone(), *number))]
         }
@@ -729,6 +738,15 @@ impl State {
                     _ => missing(&mut page, &route.title()),
                 }
             }
+            Route::Gist { id, .. } => match self.get(&DataKey::Gist(id.clone())) {
+                Some(Data::Gist(g)) => pages::gist(&mut page, g, now),
+                _ => missing(&mut page, &route.title()),
+            },
+            Route::Gists(login) => match self.get(&DataKey::Gists(login.to_lowercase())) {
+                Some(Data::Gists(g)) => pages::gists(&mut page, login, Some(g), now),
+                None if matches!(error, Some((_, false))) => missing(&mut page, "the gists"),
+                _ => pages::gists(&mut page, login, None, now),
+            },
             Route::Deployments { repo, environment } => {
                 let list = match self.get(&DataKey::Deployments(repo.clone(), environment.clone()))
                 {

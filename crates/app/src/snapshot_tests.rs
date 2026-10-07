@@ -224,6 +224,24 @@ fn with_blame(mode: Mode) -> State {
     fetched(&mut state, key, Data::Blame(Box::new(fixtures::blame())));
     state
 }
+/// A gist.
+fn with_gist(mode: Mode) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    let route = Route::Gist {
+        owner: Some("octocat".into()),
+        id: "6cad326836d38bd3a7ae".into(),
+    };
+    open(&mut state, route, Data::Gist(Box::new(fixtures::gist())));
+    state
+}
+
+/// Someone's gists.
+fn with_gists(mode: Mode) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    let route = Route::Gists("octocat".into());
+    open(&mut state, route, Data::Gists(Box::new(fixtures::gists())));
+    state
+}
 /// The repository's open issues.
 fn with_issues(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -809,6 +827,16 @@ fn compare_light() {
 #[test]
 fn blame_dark() {
     insta::assert_snapshot!(render(&with_blame(Mode::Dark)));
+}
+
+#[test]
+fn gist_light() {
+    insta::assert_snapshot!(render(&with_gist(Mode::Light)));
+}
+
+#[test]
+fn gists_dark() {
+    insta::assert_snapshot!(render(&with_gists(Mode::Dark)));
 }
 
 #[test]
@@ -1698,10 +1726,10 @@ mod links {
 
     use super::{
         press, with_actions, with_blame, with_branches, with_commit, with_compare,
-        with_deployments, with_discussion, with_discussions, with_file, with_forks, with_history,
-        with_inbox, with_issue, with_issues, with_job, with_milestone, with_milestones, with_pr,
-        with_pr_checks, with_profile, with_release, with_releases, with_repo, with_repo_search,
-        with_run, with_stargazers, with_tags, with_workflow,
+        with_deployments, with_discussion, with_discussions, with_file, with_forks, with_gist,
+        with_gists, with_history, with_inbox, with_issue, with_issues, with_job, with_milestone,
+        with_milestones, with_pr, with_pr_checks, with_profile, with_release, with_releases,
+        with_repo, with_repo_search, with_run, with_stargazers, with_tags, with_workflow,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1769,6 +1797,8 @@ mod links {
             ("release", with_release(Mode::Dark)),
             ("tags", with_tags(Mode::Dark)),
             ("branches", with_branches(Mode::Dark)),
+            ("gist", with_gist(Mode::Dark)),
+            ("gists", with_gists(Mode::Dark)),
             ("blame", with_blame(Mode::Dark)),
             ("compare", with_compare(Mode::Dark)),
             ("deployments", with_deployments(Mode::Dark)),
