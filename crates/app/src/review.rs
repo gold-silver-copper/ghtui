@@ -375,21 +375,22 @@ pub fn outdated_to_map(threads: &[ReviewThread]) -> Vec<OutdatedThread> {
 pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcome) -> Vec<Cmd> {
     let mut cmds = vec![Cmd::Api(Api::FetchThreads(pr.clone()))];
     if let Some(diff) = state.diffs.get_mut(&DiffOf::Pr(pr.clone())) {
-        diff.review
-            .pending
-            .retain(|d| !outcome.accepted.contains(&d.id));
-        for draft in &mut diff.review.pending {
-            draft.error = outcome
-                .rejected
-                .iter()
-                .find(|(id, _)| *id == draft.id)
-                .map(|(_, reason)| reason.clone());
-        }
-        if outcome.submitted {
-            diff.review.last_reviewed_head = diff.head().map(|h| h.to_string());
-        }
-        diff.refresh_annotations();
-        cmds.push(Cmd::SaveReview(pr.clone(), diff.review.clone()));
+        let head = diff.head().map(|h| h.to_string());
+        cmds.extend(diff.edit_review(pr, |i| {
+            i.review
+                .pending
+                .retain(|d| !outcome.accepted.contains(&d.id));
+            for draft in &mut i.review.pending {
+                draft.error = outcome
+                    .rejected
+                    .iter()
+                    .find(|(id, _)| *id == draft.id)
+                    .map(|(_, reason)| reason.clone());
+            }
+            if outcome.submitted {
+                i.review.last_reviewed_head = head;
+            }
+        }));
     }
     if outcome.submitted {
         state.overlay = None;
@@ -528,10 +529,10 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 return Vec::new();
             }
             diff.since_requested = true;
-            if diff.last_review == LastReview::Unknown {
+            if diff.inputs().last_review == LastReview::Unknown {
                 let Some(login) = viewer else {
                     // Without a login, only the local record can say.
-                    diff.last_review = LastReview::None;
+                    diff.edit(|i| i.last_review = LastReview::None);
                     return start_since_review(state);
                 };
                 state.info("Looking up your last review…");
@@ -540,7 +541,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             start_since_review(state)
         }
         Action::PickCommits => {
-            if diff.commits.is_empty() {
+            if diff.inputs().commits.is_empty() {
                 state.info("Listing commits…");
                 return vec![Cmd::Git(Git::ListCommits(pr))];
             }
@@ -582,16 +583,16 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             if let Some(ann) = &annotation
                 && let AnnotationKey::Draft(id) = ann.key
             {
-                if let Some(d) = diff.review.pending.iter_mut().find(|d| d.id == id) {
-                    d.line = None;
-                    d.start_line = None;
-                    d.start_side = None;
-                    d.error = None;
-                }
-                diff.refresh_annotations();
-                let save = Cmd::SaveReview(pr, diff.review.clone());
+                let save = diff.edit_review(&pr, |i| {
+                    if let Some(d) = i.review.pending.iter_mut().find(|d| d.id == id) {
+                        d.line = None;
+                        d.start_line = None;
+                        d.start_side = None;
+                        d.error = None;
+                    }
+                });
                 state.info("Now a comment on the file");
-                return vec![save];
+                return save;
             }
             let Some(file) = diff.doc.files().get(cursor.file) else {
                 return Vec::new();
@@ -648,10 +649,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 return notice(state, Notice::Info("You can't change this thread".into()));
             }
             // Optimistic; rolled back if GitHub refuses.
-            if let Some(t) = diff.threads.iter_mut().find(|t| t.id == thread_id) {
-                t.resolved = resolved;
-            }
-            diff.refresh_annotations();
+            diff.edit(|i| i.set_resolved(&thread_id, resolved));
             vec![Cmd::Api(Api::SetResolved {
                 pr,
                 thread_id,
@@ -665,33 +663,33 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                     Notice::Info("Move to a draft comment to delete it".into()),
                 );
             };
-            let Some(at) = diff.review.pending.iter().position(|d| d.id == id) else {
+            let Some(at) = diff.inputs().review.pending.iter().position(|d| d.id == id) else {
                 return Vec::new();
             };
-            diff.deleted = Some(diff.review.pending.remove(at));
-            diff.refresh_annotations();
-            let save = Cmd::SaveReview(pr, diff.review.clone());
+            let save = diff.edit_review(&pr, |i| i.deleted = Some(i.review.pending.remove(at)));
             let undo = state.first_key(Action::UndoDelete);
             state.info(format!("Draft deleted · {undo} brings it back"));
-            vec![save]
+            save
         }
         Action::UndoDelete => {
-            let Some(mut draft) = diff.deleted.take() else {
+            let Some(mut draft) = diff.inputs().deleted.clone() else {
                 return notice(state, Notice::Info("No deleted draft to bring back".into()));
             };
-            if diff.review.pending.iter().any(|d| d.id == draft.id) {
-                draft.id = diff.review.next_draft_id();
-            }
-            diff.review.pending.push(draft);
-            diff.refresh_annotations();
-            let save = Cmd::SaveReview(pr, diff.review.clone());
+            let save = diff.edit_review(&pr, |i| {
+                if i.review.pending.iter().any(|d| d.id == draft.id) {
+                    draft.id = i.review.next_draft_id();
+                }
+                i.review.pending.push(draft);
+                i.deleted = None;
+            });
             state.info("Draft restored");
-            vec![save]
+            save
         }
         // On a thread or draft (the diff handles the rest).
         Action::Open => {
+            let pending = &diff.inputs().review.pending;
             let draft = annotation.and_then(|a| match a.key {
-                AnnotationKey::Draft(id) => diff.review.pending.iter().find(|d| d.id == id),
+                AnnotationKey::Draft(id) => pending.iter().find(|d| d.id == id),
                 AnnotationKey::Thread(_) => None,
             });
             if let Some(draft) = draft {
@@ -723,9 +721,10 @@ pub(crate) fn start_since_review(state: &mut State) -> Vec<Cmd> {
     let Some(pr) = screen.of.pr().cloned() else {
         return Vec::new();
     };
-    let old = match &diff.last_review {
+    let inputs = diff.inputs();
+    let old = match &inputs.last_review {
         LastReview::At(oid) => Some(oid.to_string()),
-        LastReview::Unknown | LastReview::None => diff.review.last_reviewed_head.clone(),
+        LastReview::Unknown | LastReview::None => inputs.review.last_reviewed_head.clone(),
     };
     let head = diff.head();
     let problem = match (&old, &head) {
@@ -784,7 +783,8 @@ pub(crate) fn apply_commit_choice(
             let j = mark.unwrap_or(i);
             let (first, last) = (i.min(j), i.max(j));
             // The picker's indices, into the list it showed.
-            let (Some(from), Some(to)) = (diff.commits.get(first), diff.commits.get(last)) else {
+            let commits = &diff.inputs().commits;
+            let (Some(from), Some(to)) = (commits.get(first), commits.get(last)) else {
                 return Vec::new();
             };
             let (from, to) = (&from.oid, &to.oid);
@@ -891,32 +891,30 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             })]
         }
         ComposeTarget::Draft { id } => {
-            if let Some(d) = diff.review.pending.iter_mut().find(|d| d.id == id) {
-                d.body = body;
-                d.error = None;
-            }
-            diff.refresh_annotations();
-            let save = Cmd::SaveReview(pr, diff.review.clone());
+            let save = diff.edit_review(&pr, |i| {
+                if let Some(d) = i.review.pending.iter_mut().find(|d| d.id == id) {
+                    d.body = body;
+                    d.error = None;
+                }
+            });
             state.overlay = None;
-            vec![save]
+            save
         }
         ComposeTarget::Conversation { .. } => Vec::new(),
         target @ (ComposeTarget::Line { .. } | ComposeTarget::File { .. }) => {
             let head = diff.head().unwrap_or_default();
-            let id = diff.review.next_draft_id();
+            let id = diff.inputs().review.next_draft_id();
             let Some(draft) = draft(&target, &body, id, &head) else {
                 return Vec::new();
             };
-            diff.review.pending.push(draft);
-            diff.refresh_annotations();
-            let save = Cmd::SaveReview(pr, diff.review.clone());
-            let count = diff.review.pending.len();
+            let save = diff.edit_review(&pr, |i| i.review.pending.push(draft));
+            let count = diff.inputs().review.pending.len();
             state.overlay = None;
             state.info(format!(
                 "Added to your review ({count} pending). Submit with {}",
                 state.first_key(Action::SubmitReview)
             ));
-            vec![save]
+            save
         }
     }
 }
@@ -955,7 +953,7 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                 return vec![Cmd::Api(Api::SubmitReview {
                     pr: pr.clone(),
                     head: diff.head().unwrap_or_default(),
-                    drafts: diff.review.pending.clone(),
+                    drafts: diff.inputs().review.pending.clone(),
                     event,
                     body,
                 })];

@@ -363,7 +363,7 @@ impl State {
                 Some(Choice::Commits(PickItem::SinceReview)),
             ),
         ];
-        for (i, c) in diff.commits.iter().enumerate() {
+        for (i, c) in diff.inputs().commits.iter().enumerate() {
             let hint = if mark == Some(i) { "range start" } else { "" };
             rows.push((
                 item(format!("{} {}", short_sha(&c.oid), c.subject), hint),

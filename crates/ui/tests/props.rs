@@ -134,7 +134,7 @@ proptest! {
         row in 0usize..200,
     ) {
         let diff = FileDiff::compute("src/lib.rs", Some(old.as_bytes()), Some(new.as_bytes()));
-        let mut doc = Doc::new(vec![modified("src/lib.rs")], &HashSet::new());
+        let mut doc = Doc::new(vec![modified("src/lib.rs")], &HashSet::new(), Default::default());
         doc.set_diff(0, Arc::new(diff));
         doc.set_options(ViewOptions { split, ..ViewOptions::default() });
         doc.toggle_full(0);

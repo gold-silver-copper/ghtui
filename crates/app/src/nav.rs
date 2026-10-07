@@ -1447,7 +1447,7 @@ impl State {
             }
             None => {}
         }
-        let pending = diff.review.pending.len();
+        let pending = diff.inputs().review.pending.len();
         if pending > 0 {
             out.push((Action::SubmitReview, format!("submit ({pending} pending)")));
         }

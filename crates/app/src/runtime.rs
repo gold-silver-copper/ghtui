@@ -391,7 +391,6 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 pr,
                 pull_request_id,
                 path,
-                file,
                 viewed,
                 previous,
             } => {
@@ -399,7 +398,7 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 Msg::Diff(
                     pr.into(),
                     DiffMsg::ViewedSaved {
-                        file,
+                        path,
                         previous,
                         result,
                     },
@@ -546,11 +545,11 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             Msg::Diff(pr.clone().into(), DiffMsg::ViewedLoaded(Box::new(api())))
         }
         Cmd::Api(Api::SetViewed {
-            pr, file, previous, ..
+            pr, path, previous, ..
         }) => Msg::Diff(
             pr.clone().into(),
             DiffMsg::ViewedSaved {
-                file: *file,
+                path: path.clone(),
                 previous: *previous,
                 result: api(),
             },

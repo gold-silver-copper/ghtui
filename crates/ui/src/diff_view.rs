@@ -266,7 +266,7 @@ impl DiffView<'_> {
         let blocks = file.blocks();
         let reviewed = blocks
             .iter()
-            .filter(|b| self.doc.reviewed.contains(&b.hash))
+            .filter(|b| self.doc.inputs.reviewed.contains(&b.hash))
             .count();
         if reviewed > 0 {
             right.push(Span::styled(
@@ -393,7 +393,7 @@ impl DiffView<'_> {
         let reviewed = entries
             .iter()
             .filter_map(|e| file.block_of(*e))
-            .any(|b| self.doc.reviewed.contains(&b.hash));
+            .any(|b| self.doc.inputs.reviewed.contains(&b.hash));
         let reviewed = if reviewed {
             Span::styled("✓", theme.style(Fg::Success, bg))
         } else {
@@ -403,7 +403,7 @@ impl DiffView<'_> {
             .iter()
             .flat_map(|e| file.entry_lines(*e, self.doc.opts.whitespace))
             .flat_map(|pos| file.annotations_at(pos))
-            .filter_map(|i| self.doc.annotations.get(*i as usize));
+            .filter_map(|i| self.doc.annotations().get(*i as usize));
         let (mut any, mut draft, mut open) = (false, false, false);
         for a in anns {
             any = true;
@@ -503,7 +503,7 @@ impl DiffView<'_> {
         let Some(row) = file.thread_row(t) else {
             return;
         };
-        let Some(ann) = self.doc.annotations.get(row.ann as usize) else {
+        let Some(ann) = self.doc.annotations().get(row.ann as usize) else {
             return;
         };
         fill(buf, area, theme, PANE);
