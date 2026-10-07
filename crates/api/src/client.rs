@@ -33,6 +33,12 @@ pub enum ApiError {
     RateLimited(u64),
     #[error("not found: {0}")]
     NotFound(String),
+    /// It was there, and GitHub has since dropped it.
+    #[error("{0}")]
+    Gone(String),
+    /// Reading through git (a wiki) failed.
+    #[error("git: {0}")]
+    Git(String),
     #[error("GitHub returned {status}: {message}")]
     Http { status: u16, message: String },
     #[error("GraphQL: {}", .0.join("; "))]
@@ -805,10 +811,7 @@ impl GitHub {
             expression: "HEAD:".into(),
         });
         let (data, readme) = tokio::join!(self.graphql(op), self.readme(repo));
-        let readme = readme.unwrap_or_else(|err| {
-            tracing::debug!(%repo, %err, "no readme");
-            None
-        });
+        let readme = readme?;
         let overview = data?
             .repository
             .and_then(|r| r.into_overview(readme))
@@ -1951,7 +1954,7 @@ impl GitHub {
             })
             .await?;
         if response.status == StatusCode::GONE {
-            return Err(ApiError::NotFound(
+            return Err(ApiError::Gone(
                 "this log has expired (GitHub keeps logs for the repository's retention period, 90 days by default)".into(),
             ));
         }

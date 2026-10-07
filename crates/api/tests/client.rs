@@ -1007,7 +1007,7 @@ async fn a_jobs_log_says_why_it_isnt_there() {
     ])
     .await;
     match gh.job_log(&repo, 2).await {
-        Err(ApiError::NotFound(why)) => assert!(why.contains("expired"), "{why}"),
+        Err(ApiError::Gone(why)) => assert!(why.contains("expired"), "{why}"),
         other => panic!("{other:?}"),
     }
 }
@@ -1192,4 +1192,34 @@ async fn requests_carry_the_token_and_github_headers() {
     );
     assert_eq!(seen[0].header("x-github-api-version"), Some("2022-11-28"));
     assert!(seen[0].header("user-agent").unwrap().starts_with("ghtui/"));
+}
+
+/// A README that couldn't be fetched isn't reported (or kept) as none.
+#[tokio::test]
+async fn a_failed_readme_isnt_taken_for_no_readme() {
+    let recorded: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/corpus/74a258eefceb212d.json"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let overview = recorded["response"].as_str().unwrap().to_owned();
+    let (gh, _) = github(vec![
+        Reply::new(200, overview).on("/graphql"),
+        Reply::new(502, r#"{"message":"bad gateway"}"#).on("/readme"),
+        Reply::new(502, r#"{"message":"bad gateway"}"#).on("/readme"),
+        Reply::new(502, r#"{"message":"bad gateway"}"#).on("/readme"),
+    ])
+    .await;
+    let repo = RepoId::new("atom", "atom");
+    // Either the failure surfaces, or the overview doesn't claim no README.
+    if let Ok(overview) = gh.repo(&repo).await {
+        assert!(
+            overview.readme.is_some(),
+            "the README failed with a 502, but the overview says there is none: {:?}",
+            overview.readme
+        );
+    }
 }
