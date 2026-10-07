@@ -1297,6 +1297,28 @@ async fn an_organizations_discussions_are_found_past_the_fifth_page() {
     );
 }
 
+/// A search that never finds an organization's repository stops at its
+/// thousand results: the count says it stopped short, so it's just not
+/// found, not data left out.
+#[tokio::test]
+async fn an_organizations_discussions_not_found_leave_nothing_out() {
+    let other = r#"{"url":"https://github.com/acme/app/discussions/1","repository":{"nameWithOwner":"acme/app"}}"#;
+    let replies = (1..=12).map(|n| {
+        Reply::new(
+            200,
+            format!(
+                r#"{{"data":{{"search":{{"discussionCount":2000,"pageInfo":{{"hasNextPage":true,"endCursor":"c{n}"}},"nodes":[{other}]}}}}}}"#
+            ),
+        )
+    });
+    let (gh, seen) = github(replies.collect()).await;
+    let of = ghtui_api::browse::DiscussionsOf::Org("acme".into());
+    let result = gh.discussion(&of, 9).await;
+    assert!(matches!(result, Err(ApiError::NotFound(_))), "{result:?}");
+    assert_eq!(seen.lock().unwrap().len(), 10);
+    assert_eq!(gh.take_left_out(), Vec::<String>::new());
+}
+
 /// A cursor GitHub hands back twice ends the reading instead of asking for
 /// the same page again and again.
 #[tokio::test]
