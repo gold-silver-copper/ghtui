@@ -1723,6 +1723,77 @@ pub(crate) mod tests {
         }
     }
 
+    /// A ref with slashes in it (`feature/x`, `dependabot/cargo/serde-1.0`,
+    /// a `release/1.0` tag) is one revision: the page's URL leads back to
+    /// that revision, not to its first segment with the rest as a path.
+    #[test]
+    fn refs_with_slashes_round_trip_through_urls() {
+        let repo = RepoId::new("o", "r");
+        let mut wrong = Vec::new();
+        for rev in ["feature/x", "dependabot/cargo/serde-1.0", "release/1.0"] {
+            for route in [
+                Route::Tree {
+                    repo: repo.clone(),
+                    rev: rev.into(),
+                    path: String::new(),
+                },
+                Route::Tree {
+                    repo: repo.clone(),
+                    rev: rev.into(),
+                    path: "src".into(),
+                },
+                Route::blob(repo.clone(), rev.into(), "src/lib.rs".into()),
+                Route::Blame {
+                    repo: repo.clone(),
+                    rev: rev.into(),
+                    path: "src/lib.rs".into(),
+                    lines: None,
+                },
+                Route::Commits {
+                    repo: repo.clone(),
+                    rev: rev.into(),
+                    path: String::new(),
+                },
+                Route::Commits {
+                    repo: repo.clone(),
+                    rev: rev.into(),
+                    path: "src".into(),
+                },
+            ] {
+                let url = route.url();
+                let back = Target::from_url(&url);
+                if back != Target::Page(route.clone()) {
+                    wrong.push(format!(
+                        "{url}\n    expected {route:?}\n    got      {back:?}"
+                    ));
+                }
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} URLs lose their ref:\n{}",
+            wrong.len(),
+            wrong.join("\n")
+        );
+    }
+
+    /// The links the branch and tag lists put on a ref (`url::tree(repo,
+    /// name, "")`) open that ref.
+    #[test]
+    fn branch_links_open_the_branch() {
+        let repo = RepoId::new("o", "r");
+        let url = ghtui_ui::pages::url::tree(&repo, "dependabot/cargo/serde-1.0", "");
+        assert_eq!(
+            Target::from_url(&url),
+            Target::Page(Route::Tree {
+                repo,
+                rev: "dependabot/cargo/serde-1.0".into(),
+                path: String::new(),
+            }),
+            "{url}"
+        );
+    }
+
     #[test]
     fn palette_input() {
         let repo = RepoId::new("o", "r");
@@ -1811,9 +1882,10 @@ pub(crate) mod tests {
         }
 
         fn route() -> impl Strategy<Value = Route> {
-            // A valid one-segment git ref name.
-            let rev = "[A-Za-z0-9_-][A-Za-z0-9._-]{0,11}"
-                .prop_filter("valid ref name", |r| !r.contains("..") && !r.ends_with('.'));
+            // A valid git ref name, of one to three segments (`feature/x`).
+            let rev = prop::collection::vec("[A-Za-z0-9_-][A-Za-z0-9._-]{0,7}", 1..=3)
+                .prop_map(|s| s.join("/"))
+                .prop_filter("valid ref name", |r| valid_rev(r));
             prop_oneof![
                 Just(Route::Home),
                 repo().prop_map(Route::Actions),
