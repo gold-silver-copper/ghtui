@@ -416,17 +416,25 @@ const THREADS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
     {"id":"T1","path":"src/a.rs","diffSide":"RIGHT","startDiffSide":"RIGHT","line":12,"startLine":10,
      "originalLine":12,"originalStartLine":10,"isOutdated":false,"isResolved":false,"subjectType":"LINE",
      "viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":false,
-     "comments":{"nodes":[
+     "first_comment":{"totalCount":150,"nodes":[
        {"id":"C1","author":{"login":"alice"},"body":"Why?","createdAt":"2026-10-01T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r1","originalCommit":{"oid":"abc"},"state":"SUBMITTED"},
+        "url":"https://github.com/o/r/pull/7#discussion_r1","originalCommit":{"oid":"abc"},"state":"SUBMITTED"}]},
+     "comments":{"totalCount":150,"nodes":[
        {"id":"C2","author":null,"body":"Because.","createdAt":"2026-10-02T00:00:00Z",
         "url":"https://github.com/o/r/pull/7#discussion_r2","originalCommit":{"oid":"abc"},"state":"PENDING"}]}},
     {"id":"T2","path":"src/b.rs","diffSide":"LEFT","startDiffSide":null,"line":null,"startLine":null,
      "originalLine":5,"originalStartLine":null,"isOutdated":true,"isResolved":true,"subjectType":"LINE",
-     "viewerCanReply":true,"viewerCanResolve":false,"viewerCanUnresolve":true,"comments":{"nodes":[]}},
+     "viewerCanReply":true,"viewerCanResolve":false,"viewerCanUnresolve":true,
+     "first_comment":{"totalCount":0,"nodes":[]},"comments":{"totalCount":0,"nodes":[]}},
     {"id":"T3","path":"README.md","diffSide":"RIGHT","startDiffSide":null,"line":null,"startLine":null,
      "originalLine":null,"originalStartLine":null,"isOutdated":false,"isResolved":false,"subjectType":"FILE",
-     "viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":false,"comments":{"nodes":[]}}
+     "viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":false,
+     "first_comment":{"totalCount":1,"nodes":[
+       {"id":"C3","author":{"login":"bob"},"body":"Typo","createdAt":"2026-10-03T00:00:00Z",
+        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED"}]},
+     "comments":{"totalCount":1,"nodes":[
+       {"id":"C3","author":{"login":"bob"},"body":"Typo","createdAt":"2026-10-03T00:00:00Z",
+        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED"}]}}
   ]}}}}}"#;
 
 #[tokio::test]
@@ -443,7 +451,13 @@ async fn decodes_review_threads() {
         (t1.side, t1.line, t1.start_line),
         (Side::Right, Some(12), Some(10))
     );
+    // A long thread: its first comment and newest replies, and how many
+    // replies between them were left out.
     assert_eq!(t1.comments.len(), 2);
+    assert_eq!(t1.comments.left_out(), 148);
+    // A short one's first comment is also among its newest: once.
+    assert_eq!(threads[2].comments.len(), 1);
+    assert_eq!(threads[2].comments.left_out(), 0);
     assert_eq!(t1.comments[1].author, "ghost");
     assert!(t1.comments[1].pending);
     assert_eq!(t1.comments[0].original_commit.as_deref(), Some("abc"));

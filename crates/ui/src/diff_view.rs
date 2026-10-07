@@ -580,11 +580,11 @@ impl DiffView<'_> {
                     ));
                 }
             }
-            ThreadRowKind::Body | ThreadRowKind::Error => {
-                let style = if row.kind == ThreadRowKind::Error {
-                    theme.error(bg)
-                } else {
-                    theme.body(bg)
+            ThreadRowKind::Body | ThreadRowKind::Gap | ThreadRowKind::Error => {
+                let style = match row.kind {
+                    ThreadRowKind::Error => theme.error(bg),
+                    ThreadRowKind::Gap => theme.meta(bg),
+                    _ => theme.body(bg),
                 };
                 spans.push(Span::styled(text::truncate(&row.text, room), style));
             }

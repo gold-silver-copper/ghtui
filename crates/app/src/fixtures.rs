@@ -80,7 +80,8 @@ pub(crate) fn thread(id: &str, line: Option<u32>, resolved: bool, outdated: bool
             url: String::new(),
             original_commit: Some("abc".into()),
             pending: false,
-        }],
+        }]
+        .into(),
     }
 }
 

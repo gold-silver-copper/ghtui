@@ -357,7 +357,8 @@ pub struct ReviewThread {
     pub can_reply: bool,
     pub can_resolve: bool,
     pub can_unresolve: bool,
-    pub comments: Vec<ReviewComment>,
+    /// The first comment and the newest replies.
+    pub comments: Capped<ReviewComment>,
 }
 
 /// GitHub's patch for one file (from REST `pulls/{n}/files`).
@@ -519,8 +520,8 @@ impl ReviewThread {
             can_reply: t.viewer_can_reply,
             can_resolve: t.viewer_can_resolve,
             can_unresolve: t.viewer_can_unresolve,
-            comments: nodes(t.comments.nodes)
-                .map(|c| ReviewComment {
+            comments: {
+                let comment = |c: q::ReviewComment| ReviewComment {
                     id: c.id.into(),
                     author: author(c.author),
                     body: c.body,
@@ -528,8 +529,21 @@ impl ReviewThread {
                     url: c.url.0,
                     original_commit: c.original_commit.map(|o| o.oid.0),
                     pending: c.state == q::ReviewCommentState::Pending,
-                })
-                .collect(),
+                };
+                let mut items: Vec<ReviewComment> =
+                    nodes(t.first_comment.nodes).map(comment).collect();
+                let first = items.first().map(|c| c.id.clone());
+                // In a short thread the first is among the newest too.
+                items.extend(
+                    nodes(t.comments.nodes)
+                        .map(comment)
+                        .filter(|c| first.as_ref() != Some(&c.id)),
+                );
+                Capped::new(
+                    items,
+                    u64::try_from(t.comments.total_count).unwrap_or_default(),
+                )
+            },
         }
     }
 }

@@ -42,6 +42,9 @@ pub struct Annotation {
     pub moved: bool,
     pub file_level: bool,
     pub comments: Vec<AnnotationComment>,
+    /// Replies on GitHub between the first comment and the rest, not
+    /// fetched (a thread brings its first comment and its newest 99).
+    pub left_out: u64,
     /// For drafts: GitHub's reason for rejecting it last time.
     pub error: Option<String>,
     pub can_reply: bool,
@@ -80,6 +83,8 @@ pub enum ThreadRowKind {
         first: bool,
     },
     Body,
+    /// The replies left out, after the first comment.
+    Gap,
     /// Why GitHub rejected a draft.
     Error,
     Footer,

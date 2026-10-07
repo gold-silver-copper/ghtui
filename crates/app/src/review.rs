@@ -319,6 +319,7 @@ pub fn annotations(
                         pending: c.pending,
                     })
                     .collect(),
+                left_out: t.comments.left_out(),
                 error: None,
                 can_reply: t.can_reply,
                 can_resolve: t.can_resolve,
@@ -343,6 +344,7 @@ pub fn annotations(
             created_at: String::new(),
             pending: false,
         }],
+        left_out: 0,
         error: d.error.clone(),
         can_reply: false,
         can_resolve: false,
