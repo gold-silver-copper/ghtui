@@ -10,6 +10,7 @@ use ghtui_store::{Cached, HttpEntry, Store};
 use http::{HeaderMap, HeaderValue, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 
 use crate::auth::Token;
 use crate::browse;
@@ -398,87 +399,49 @@ impl GitHub {
     /// Runs a GraphQL query. Partial results are accepted (and their errors
     /// kept to report, see [`Self::take_left_out`]); a response without
     /// data is an error.
-    pub async fn graphql<Q, V>(&self, op: cynic::Operation<Q, V>) -> Result<Q, ApiError>
-    where
-        Q: DeserializeOwned + 'static,
-        V: Serialize,
-    {
-        let (data, errors) = self.graphql_raw(op).await?;
-        match data {
-            Some(data) => {
-                self.leave_out(errors);
-                Ok(data)
-            }
-            None if errors.is_empty() => Err(ApiError::Decode("no data".into())),
-            None => Err(ApiError::GraphQl(errors)),
-        }
+    pub async fn graphql<Q: DeserializeOwned, V: Serialize>(
+        &self,
+        op: cynic::Operation<Q, V>,
+    ) -> Result<Q, ApiError> {
+        let idempotent = op.query.trim_start().starts_with("query");
+        let reply = self.ask(&serde_json::to_value(&op)?, idempotent).await?;
+        self.leave_out(reply.errors);
+        Ok(serde_json::from_value(reply.data)?)
     }
 
     /// Runs a GraphQL mutation. Any error fails it, with GitHub's messages:
     /// a rejected mutation comes back as data with a null field plus errors.
-    async fn mutate<Q, V>(&self, op: cynic::Operation<Q, V>) -> Result<Q, ApiError>
-    where
-        Q: DeserializeOwned + 'static,
-        V: Serialize,
-    {
-        match self.graphql_raw(op).await? {
-            (_, errors) if !errors.is_empty() => Err(ApiError::GraphQl(errors)),
-            (Some(data), _) => Ok(data),
-            (None, _) => Err(ApiError::Decode("no data".into())),
-        }
-    }
-
-    async fn graphql_raw<Q, V>(
+    async fn mutate<Q: DeserializeOwned, V: Serialize>(
         &self,
         op: cynic::Operation<Q, V>,
-    ) -> Result<(Option<Q>, Vec<String>), ApiError>
-    where
-        Q: DeserializeOwned + 'static,
-        V: Serialize,
-    {
-        let idempotent = op.query.trim_start().starts_with("query");
-        let parsed: cynic::GraphQlResponse<Q> = self
-            .post_graphql(&serde_json::to_value(&op)?, idempotent)
-            .await?;
-        let errors = parsed
-            .errors
-            .unwrap_or_default()
-            .into_iter()
-            .map(|e| e.message)
-            .collect();
-        Ok((parsed.data, errors))
+    ) -> Result<Q, ApiError> {
+        let mut reply = self.ask(&serde_json::to_value(&op)?, false).await?;
+        reply.errors.append(&mut reply.absent);
+        if !reply.errors.is_empty() {
+            return Err(ApiError::GraphQl(reply.errors));
+        }
+        Ok(serde_json::from_value(reply.data)?)
     }
 
     /// Runs a query given as text (built at run time, or read as JSON),
     /// returning its data. Public for the contract tests.
-    pub async fn graphql_json(
-        &self,
-        query: &str,
-        variables: serde_json::Value,
-    ) -> Result<serde_json::Value, ApiError> {
+    pub async fn graphql_json(&self, query: &str, variables: Value) -> Result<Value, ApiError> {
         let body = serde_json::json!({ "query": query, "variables": variables });
-        let mut parsed: serde_json::Value = self.post_graphql(&body, true).await?;
-        let errors: Vec<String> = parsed
-            .get("errors")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|e| e.get("message")?.as_str().map(str::to_owned))
-            .collect();
-        match parsed.get_mut("data").map(serde_json::Value::take) {
-            Some(data) if !data.is_null() => {
-                self.leave_out(errors);
-                Ok(data)
-            }
-            _ => Err(ApiError::GraphQl(errors)),
-        }
+        let reply = self.ask(&body, true).await?;
+        self.leave_out(reply.errors);
+        Ok(reply.data)
     }
 
-    async fn post_graphql<T: DeserializeOwned>(
-        &self,
-        body: &serde_json::Value,
-        idempotent: bool,
-    ) -> Result<T, ApiError> {
+    /// Posts a GraphQL request: the one place that reads GitHub's errors,
+    /// setting aside the NOT_FOUND ones that explain a null in the data.
+    /// A response without data is an error.
+    async fn ask(&self, body: &Value, idempotent: bool) -> Result<Reply, ApiError> {
+        #[derive(serde::Deserialize)]
+        struct Wire {
+            #[serde(default)]
+            data: Value,
+            errors: Option<Vec<GqlError>>,
+        }
         let response = self
             .send(&Request::Post {
                 path: "/graphql",
@@ -487,7 +450,22 @@ impl GitHub {
             })
             .await?;
         check_status(&response)?;
-        Ok(serde_json::from_str(&response.body)?)
+        let wire: Wire = serde_json::from_str(&response.body)?;
+        let errors = wire.errors.unwrap_or_default();
+        if wire.data.is_null() {
+            return Err(match messages(errors) {
+                errors if errors.is_empty() => ApiError::Decode("no data".into()),
+                errors => ApiError::GraphQl(errors),
+            });
+        }
+        let (absent, errors) = errors
+            .into_iter()
+            .partition(|e| e.explains_null(&wire.data));
+        Ok(Reply {
+            data: wire.data,
+            errors: messages(errors),
+            absent: messages(absent),
+        })
     }
 
     /// GETs a REST path, revalidating with the cached ETag. A 304 serves the
@@ -2262,6 +2240,46 @@ impl GitHub {
     }
 }
 
+/// A GraphQL response with data: GitHub's errors beside it, and apart
+/// from them the NOT_FOUND ones that explain a null in it.
+struct Reply {
+    data: Value,
+    errors: Vec<String>,
+    absent: Vec<String>,
+}
+
+/// One of GitHub's GraphQL errors: what it says, its type (`NOT_FOUND`,
+/// `FORBIDDEN`, …) and where in the query it is.
+#[derive(Debug, serde::Deserialize)]
+struct GqlError {
+    message: String,
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    path: Option<Vec<Value>>,
+}
+
+impl GqlError {
+    /// Whether this is GitHub's NOT_FOUND for what `data` holds as null (or
+    /// doesn't hold): the reason it's absent.
+    fn explains_null(&self, data: &Value) -> bool {
+        self.kind.as_deref() == Some("NOT_FOUND")
+            && self
+                .path
+                .iter()
+                .flatten()
+                .try_fold(data, |at, step| match step {
+                    Value::String(key) => at.get(key),
+                    Value::Number(i) => at.get(usize::try_from(i.as_u64()?).ok()?),
+                    _ => None,
+                })
+                .is_none_or(Value::is_null)
+    }
+}
+
+fn messages(errors: Vec<GqlError>) -> Vec<String> {
+    errors.into_iter().map(|e| e.message).collect()
+}
+
 /// What's at `pointer` in a GraphQL response's data, or `what` not found
 /// (missing or null).
 fn at<T: DeserializeOwned>(
@@ -2460,5 +2478,25 @@ mod tests {
             next_page(2, REST_PAGE, 2 * REST_PAGE + 1).as_deref(),
             Some("3")
         );
+    }
+
+    /// A NOT_FOUND explains a null (or missing) value at its path, through
+    /// keys and list indexes; one at the root, or without a type, doesn't.
+    #[test]
+    fn a_not_found_explains_only_the_null_it_points_at() {
+        let data = serde_json::json!({"a": [{"b": 1}, null], "c": null});
+        let error = |kind: Option<&str>, path: serde_json::Value| GqlError {
+            message: String::new(),
+            kind: kind.map(str::to_owned),
+            path: serde_json::from_value(path).ok(),
+        };
+        let found = Some("NOT_FOUND");
+        assert!(error(found, serde_json::json!(["a", 1])).explains_null(&data));
+        assert!(error(found, serde_json::json!(["c"])).explains_null(&data));
+        assert!(error(found, serde_json::json!(["d"])).explains_null(&data));
+        assert!(!error(found, serde_json::json!(["a", 0])).explains_null(&data));
+        assert!(!error(found, serde_json::json!([])).explains_null(&data));
+        assert!(!error(None, serde_json::json!(["c"])).explains_null(&data));
+        assert!(!error(Some("FORBIDDEN"), serde_json::json!(["c"])).explains_null(&data));
     }
 }

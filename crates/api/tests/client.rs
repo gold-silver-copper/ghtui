@@ -1401,3 +1401,139 @@ async fn an_uncounted_discussion_search_is_an_error() {
     assert_eq!(seen.lock().unwrap().len(), 1);
     assert_eq!(gh.take_left_out(), Vec::<String>::new());
 }
+
+/// GitHub's answer for a root it can't resolve: the root is null and one
+/// NOT_FOUND error, pathed at it (`path` as JSON), says why.
+fn root_not_found(data: &str, path: &str, message: &str) -> Reply {
+    Reply::new(
+        200,
+        format!(
+            r#"{{"data":{data},"errors":[{{"type":"NOT_FOUND","path":{path},"message":"{message}"}}]}}"#
+        ),
+    )
+}
+
+#[tokio::test]
+async fn a_missing_pull_request_isnt_also_left_out() {
+    let (gh, _) = github(vec![root_not_found(
+        r#"{"repository":{"pullRequest":null},"rateLimit":null}"#,
+        r#"["repository","pullRequest"]"#,
+        "Could not resolve to a PullRequest with the number of 999999.",
+    )])
+    .await;
+    let pr = PrRef::parse("o/r#999999").unwrap();
+    assert!(matches!(
+        gh.pull_request(&pr).await,
+        Err(ApiError::NotFound(_))
+    ));
+    assert_eq!(gh.take_left_out(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_missing_repository_isnt_also_left_out() {
+    let (gh, _) = github(vec![root_not_found(
+        r#"{"repository":null,"rateLimit":null}"#,
+        r#"["repository"]"#,
+        "Could not resolve to a Repository with the name 'nosuch/repo'.",
+    )])
+    .await;
+    let repo = RepoId::new("nosuch", "repo");
+    assert!(matches!(gh.repo(&repo).await, Err(ApiError::NotFound(_))));
+    assert_eq!(gh.take_left_out(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_missing_repositorys_milestones_arent_also_left_out() {
+    let (gh, _) = github(vec![root_not_found(
+        r#"{"repository":null}"#,
+        r#"["repository"]"#,
+        "Could not resolve to a Repository with the name 'nosuch/repo'.",
+    )])
+    .await;
+    let repo = RepoId::new("nosuch", "repo");
+    assert!(matches!(
+        gh.milestones(&repo, false, None).await,
+        Err(ApiError::NotFound(_))
+    ));
+    assert_eq!(gh.take_left_out(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_missing_profile_isnt_also_left_out() {
+    let (gh, _) = github(vec![root_not_found(
+        r#"{"user":null,"organization":null,"user_readme":null,"org_readme":null}"#,
+        r#"["user"]"#,
+        "Could not resolve to a User with the login of 'nosuch'.",
+    )])
+    .await;
+    let got = gh.profile("nosuch").await;
+    assert!(matches!(got, Err(ApiError::NotFound(_))), "{:?}", got.err());
+    assert_eq!(gh.take_left_out(), Vec::<String>::new());
+}
+
+/// An organization's profile: GitHub's NOT_FOUND for the user of the same
+/// login (and the README it doesn't have) only explains those nulls.
+#[tokio::test]
+async fn an_organizations_profile_leaves_nothing_out() {
+    let (gh, _) = github(vec![Reply::new(
+        200,
+        r#"{"data":{"user":null,"organization":{"login":"o","name":null,"description":null,"location":null,"websiteUrl":null,"pinnedItems":{"nodes":[]},"repositories":{"totalCount":0,"nodes":[]},"isVerified":false,"membersWithRole":{"totalCount":0,"nodes":[]}},"user_readme":null,"org_readme":null},
+            "errors":[{"type":"NOT_FOUND","path":["user"],"message":"Could not resolve to a User with the login of 'o'."},
+                      {"type":"NOT_FOUND","path":["user_readme"],"message":"Could not resolve to a Repository with the name 'o/o'."}]}"#,
+    )])
+    .await;
+    let got = gh.profile("o").await;
+    assert!(got.is_ok(), "{:?}", got.err());
+    assert_eq!(gh.take_left_out(), Vec::<String>::new());
+}
+
+/// Only a NOT_FOUND explains a null: what the token may not see is still
+/// left out, beside a repository that was found.
+#[tokio::test]
+async fn a_forbidden_field_beside_a_found_repo_is_still_left_out() {
+    let forbidden = "Resource not accessible by integration";
+    let (gh, _) = github(vec![Reply::new(
+        200,
+        format!(
+            r#"{{"data":{{"repository":{{"heads":{{"totalCount":0,"pageInfo":{{"hasNextPage":false,"endCursor":null}},"nodes":[null]}},"tags":{{"totalCount":0,"pageInfo":{{"hasNextPage":false,"endCursor":null}},"nodes":[]}}}}}},"errors":[{{"type":"FORBIDDEN","path":["repository","heads","nodes",0],"message":"{forbidden}"}}]}}"#
+        ),
+    )])
+    .await;
+    gh.refs(&RepoId::new("o", "r")).await.unwrap();
+    assert_eq!(gh.take_left_out(), [forbidden]);
+}
+
+/// A NOT_FOUND pathed at something the data does hold explains no null, so
+/// it is still left out.
+#[tokio::test]
+async fn a_not_found_on_a_present_field_is_still_left_out() {
+    let odd = "Could not resolve to a Ref.";
+    let (gh, _) = github(vec![Reply::new(
+        200,
+        format!(
+            r#"{{"data":{{"repository":{{"heads":{{"totalCount":0,"pageInfo":{{"hasNextPage":false,"endCursor":null}},"nodes":[]}},"tags":{{"totalCount":0,"pageInfo":{{"hasNextPage":false,"endCursor":null}},"nodes":[]}}}}}},"errors":[{{"type":"NOT_FOUND","path":["repository","heads"],"message":"{odd}"}}]}}"#
+        ),
+    )])
+    .await;
+    gh.refs(&RepoId::new("o", "r")).await.unwrap();
+    assert_eq!(gh.take_left_out(), [odd]);
+}
+
+/// A mutation fails on any error, a NOT_FOUND that explains its null too.
+#[tokio::test]
+async fn a_mutation_answered_with_not_found_still_fails() {
+    let (gh, _) = github(vec![root_not_found(
+        r#"{"markFileAsViewed":null}"#,
+        r#"["markFileAsViewed"]"#,
+        "Could not resolve to a node with the global id of 'bad'.",
+    )])
+    .await;
+    match gh.set_viewed(&NodeId::new("bad"), "x", true).await {
+        Err(ApiError::GraphQl(errors)) => assert_eq!(
+            errors,
+            ["Could not resolve to a node with the global id of 'bad'."]
+        ),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(gh.take_left_out(), Vec::<String>::new());
+}
