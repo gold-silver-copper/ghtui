@@ -104,20 +104,29 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
     if diff.since_requested && diff.inputs().last_review != LastReview::Unknown {
         diff.since_requested = false;
         let local = diff.inputs().review.last_reviewed_head.clone();
-        let old = match &diff.inputs().last_review {
-            LastReview::At(oid) => Some(oid.to_string()),
+        let (old, unasked) = match &diff.inputs().last_review {
+            LastReview::At(oid) => (Some(oid.to_string()), String::new()),
             LastReview::Failed(err) if local.is_none() => {
                 let message = format!("Couldn't look up your last review: {err}");
                 state.error(message);
                 return cmds;
             }
-            LastReview::Unknown | LastReview::None | LastReview::Failed(_) => local,
+            // Only the review made here can say, and GitHub may know a later one.
+            LastReview::Failed(err) => (
+                local,
+                format!("Couldn't ask GitHub ({err}); going by the review made here. "),
+            ),
+            LastReview::Unknown | LastReview::None => (local, String::new()),
         };
         match old {
-            None => state.info("You haven't reviewed this PR yet"),
-            Some(old) if *old == *head => state.info("Nothing new: you reviewed the current head"),
+            None => state.info(format!("{unasked}You haven't reviewed this PR yet")),
+            Some(old) if *old == *head => {
+                state.info(format!(
+                    "{unasked}Nothing new: you reviewed the current head"
+                ));
+            }
             Some(old_head) => {
-                state.info("Comparing with your last review…");
+                state.info(format!("{unasked}Comparing with your last review…"));
                 cmds.push(Cmd::Git(Git::SinceReview(Joined((pr.clone(), old_head)))));
             }
         }

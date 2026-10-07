@@ -3360,6 +3360,33 @@ pub(crate) mod tests {
                 );
             }
 
+            /// Going by the review made here when GitHub can't be asked
+            /// says so: GitHub may know a later one.
+            #[test]
+            fn a_failed_review_lookup_says_so_beside_the_local_one() {
+                let (mut s, pr) = diff_state(120);
+                s.viewer = Some("me".into());
+                s.diffs
+                    .get_mut(&DiffOf::Pr(pr.clone()))
+                    .unwrap()
+                    .edit(|i| i.review.last_reviewed_head = Some("old".into()));
+                act(&mut s, Action::ToggleSinceReview);
+                let cmds = diff_msg(
+                    &mut s,
+                    &pr,
+                    DiffMsg::LastReview(Err(ApiError::Network("offline".into()))),
+                );
+                assert!(
+                    matches!(&cmds[..], [Cmd::Git(Git::SinceReview(j))] if j.get().1 == "old"),
+                    "{cmds:?}"
+                );
+                assert!(
+                    matches!(&s.notice, Some(Notice::Info(m)) if m.contains("offline") && m.contains("made here")),
+                    "{:?}",
+                    s.notice
+                );
+            }
+
             #[test]
             fn commit_picker_loads_a_range_and_blocks_comments() {
                 let (mut s, pr) = diff_state(120);
