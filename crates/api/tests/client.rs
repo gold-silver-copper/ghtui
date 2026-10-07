@@ -1563,6 +1563,31 @@ async fn a_mutation_answered_with_a_bare_error_still_fails() {
     }
 }
 
+/// A repository gone while a commit's checks are paged is not found, not
+/// the checks of the pages fetched so far.
+#[tokio::test]
+async fn a_repository_gone_between_check_pages_is_not_found() {
+    let contexts =
+        r#"{"totalCount":2,"pageInfo":{"hasNextPage":true,"endCursor":"p2"},"nodes":[]}"#;
+    let (gh, _) = github(vec![
+        Reply::new(
+            200,
+            format!(
+                r#"{{"data":{{"repository":{{"object":{{"__typename":"Commit","oid":"abc","statusCheckRollup":{{"contexts":{contexts}}}}}}}}}}}"#
+            ),
+        ),
+        root_not_found(
+            r#"{"repository":null}"#,
+            r#"["repository"]"#,
+            "Could not resolve to a Repository with the name 'o/r'.",
+        ),
+    ])
+    .await;
+    let result = gh.commit_checks(&RepoId::new("o", "r"), "main").await;
+    assert!(matches!(result, Err(ApiError::NotFound(_))), "{result:?}");
+    assert_eq!(gh.take_left_out(), Vec::<String>::new());
+}
+
 /// A NOT_FOUND pathed at something the data does hold explains no null, so
 /// it is still left out.
 #[tokio::test]
