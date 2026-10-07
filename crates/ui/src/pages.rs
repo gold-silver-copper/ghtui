@@ -2592,7 +2592,7 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
             page.box_line(segs, right, 0);
         });
     });
-    left_out(page, &run.jobs, "job", "jobs");
+    more_here(page, &run.jobs, "job", "jobs");
 }
 
 /// Which step each log line belongs to. GitHub's one log for a job
@@ -4307,6 +4307,43 @@ mod tests {
         let mut page = Page::new(100);
         job_page(&mut page, &job, log, at);
         assert!(page.lines.iter().any(|l| l.text().ends_with("cd src")));
+    }
+
+    /// A run's jobs past what's fetched read like any capped list's.
+    #[test]
+    fn a_runs_jobs_left_out_are_more_on_github() {
+        let job = ghtui_api::browse::JobSummary {
+            id: 1,
+            name: "build".into(),
+            outcome: CheckOutcome::Success,
+            started_at: None,
+            completed_at: None,
+        };
+        let run = WorkflowRun {
+            id: 1,
+            name: "CI".into(),
+            title: "t".into(),
+            number: 1,
+            attempt: 1,
+            event: "push".into(),
+            branch: None,
+            sha: "abc".into(),
+            outcome: CheckOutcome::Success,
+            actor: None,
+            started_at: None,
+            updated_at: None,
+            path: ".github/workflows/ci.yml".into(),
+            jobs: Capped::new(vec![job], 51),
+        };
+        let mut page = Page::new(100);
+        workflow_run(&mut page, &RepoId::new("o", "r"), &run, 0);
+        let texts: Vec<String> = page.lines.iter().map(PageLine::text).collect();
+        assert!(
+            texts
+                .iter()
+                .any(|t| t.contains("… 50 more jobs on GitHub (o)")),
+            "{texts:#?}"
+        );
     }
 
     fn job_page(page: &mut Page, job: &Job, log: &str, at: JobAt<'_>) {
