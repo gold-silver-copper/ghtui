@@ -2108,7 +2108,6 @@ pub(crate) mod wire {
     use serde::Deserialize;
 
     use super::Results;
-    pub use super::UserLogin as Login;
 
     #[derive(Deserialize)]
     pub struct Name {
@@ -2134,7 +2133,7 @@ pub(crate) mod wire {
     pub struct RestCommit {
         pub sha: String,
         pub commit: Message,
-        pub author: Option<Login>,
+        pub author: Option<super::UserLogin>,
     }
 
     /// Which signature dates a REST commit.
@@ -2279,7 +2278,7 @@ pub(crate) mod wire {
 pub(crate) mod rest_actions {
     use serde::Deserialize;
 
-    pub use super::wire::Login as Actor;
+    pub use super::UserLogin as Actor;
 
     #[derive(Deserialize)]
     pub struct Run {
@@ -2641,7 +2640,7 @@ pub struct DeploymentList {
 pub(crate) mod wire_deployments {
     use serde::Deserialize;
 
-    pub use super::wire::{Login, Name};
+    pub use super::{UserLogin, wire::Name};
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -2656,7 +2655,7 @@ pub(crate) mod wire_deployments {
         pub environment: Option<String>,
         pub state: Option<String>,
         pub created_at: String,
-        pub creator: Option<Login>,
+        pub creator: Option<UserLogin>,
         #[serde(rename = "ref")]
         pub branch: Option<Name>,
         pub commit_oid: String,
@@ -2884,7 +2883,7 @@ pub(crate) mod rest_gists {
 
     use serde::Deserialize;
 
-    pub use super::wire::Login;
+    pub use super::UserLogin;
 
     #[derive(Deserialize)]
     pub struct File {
@@ -2899,7 +2898,7 @@ pub(crate) mod rest_gists {
     #[derive(Deserialize)]
     pub struct Gist {
         pub id: String,
-        pub owner: Option<Login>,
+        pub owner: Option<UserLogin>,
         pub description: Option<String>,
         pub public: bool,
         pub created_at: String,
@@ -3121,7 +3120,7 @@ pub struct Advisory {
 pub(crate) mod rest_advisories {
     use serde::Deserialize;
 
-    pub use super::wire::Login;
+    pub use super::UserLogin;
 
     #[derive(Deserialize)]
     pub struct Package {
@@ -3152,7 +3151,7 @@ pub(crate) mod rest_advisories {
     #[derive(Deserialize)]
     pub struct Credit {
         pub login: Option<String>,
-        pub user: Option<Login>,
+        pub user: Option<UserLogin>,
     }
 
     #[derive(Deserialize)]
@@ -3363,14 +3362,14 @@ pub(crate) mod wire_discussions {
     use serde::Deserialize;
 
     pub use super::wire::{Count, Name, RepoName};
-    pub use crate::queries::Actor as Login;
+    pub use crate::queries::Actor;
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Summary {
         pub number: u64,
         pub title: String,
-        pub author: Option<Login>,
+        pub author: Option<Actor>,
         pub category: Name,
         pub comments: Count,
         pub is_answered: Option<bool>,
@@ -3389,7 +3388,7 @@ pub(crate) mod wire_discussions {
     #[serde(rename_all = "camelCase")]
     pub struct Reply {
         pub database_id: Option<u64>,
-        pub author: Option<Login>,
+        pub author: Option<Actor>,
         pub body: String,
         pub created_at: String,
     }
@@ -3406,7 +3405,7 @@ pub(crate) mod wire_discussions {
     #[serde(rename_all = "camelCase")]
     pub struct WireComment {
         pub database_id: Option<u64>,
-        pub author: Option<Login>,
+        pub author: Option<Actor>,
         pub body: String,
         pub created_at: String,
         pub is_answer: bool,
@@ -3428,7 +3427,7 @@ pub(crate) mod wire_discussions {
         pub number: u64,
         pub title: String,
         pub body: String,
-        pub author: Option<Login>,
+        pub author: Option<Actor>,
         pub created_at: String,
         pub category: Name,
         pub is_answered: Option<bool>,
