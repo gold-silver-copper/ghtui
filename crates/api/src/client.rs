@@ -406,9 +406,9 @@ impl GitHub {
         self.find(op, "", Some).await
     }
 
-    /// Runs a query for the one thing `pick`ed from its data: the one place
-    /// a typed query calls `subject` not found, when nothing is picked and
-    /// GitHub said it wasn't there, or said nothing else.
+    /// Runs a query for the one thing `pick`ed from its data. Nothing picked
+    /// is `subject` not found when GitHub's only errors (if any) said what
+    /// wasn't there, and GitHub's other errors otherwise.
     async fn find<Q: DeserializeOwned, V: Serialize, T>(
         &self,
         op: cynic::Operation<Q, V>,
@@ -421,9 +421,7 @@ impl GitHub {
                 self.leave_out(reply.errors);
                 Ok(found)
             }
-            None if !reply.absent.is_empty() || reply.errors.is_empty() => {
-                Err(ApiError::NotFound(subject.to_string()))
-            }
+            None if reply.errors.is_empty() => Err(ApiError::NotFound(subject.to_string())),
             None => Err(ApiError::GraphQl(reply.errors)),
         }
     }
@@ -434,8 +432,7 @@ impl GitHub {
         &self,
         op: cynic::Operation<Q, V>,
     ) -> Result<Q, ApiError> {
-        let mut reply = self.ask(&serde_json::to_value(&op)?, false).await?;
-        reply.errors.append(&mut reply.absent);
+        let reply = self.ask(&serde_json::to_value(&op)?, false).await?;
         if !reply.errors.is_empty() {
             return Err(ApiError::GraphQl(reply.errors));
         }
@@ -451,9 +448,10 @@ impl GitHub {
         Ok(reply.data)
     }
 
-    /// Posts a GraphQL request: the one place that reads GitHub's errors,
-    /// setting aside the NOT_FOUND ones that explain a null in the data.
-    /// A response without data is an error.
+    /// Posts a GraphQL request: the one place that reads GitHub's errors.
+    /// A query's NOT_FOUND that explains a null in the data is dropped (the
+    /// null says it); a mutation (not `idempotent`) keeps every error. A
+    /// response without data is an error.
     async fn ask(&self, body: &Value, idempotent: bool) -> Result<Reply, ApiError> {
         #[derive(serde::Deserialize)]
         struct Wire {
@@ -477,13 +475,12 @@ impl GitHub {
                 errors => ApiError::GraphQl(errors),
             });
         }
-        let (absent, errors) = errors
+        let errors = errors
             .into_iter()
-            .partition(|e| e.explains_null(&wire.data));
+            .filter(|e| !(idempotent && e.explains_null(&wire.data)));
         Ok(Reply {
-            data: wire.data,
             errors: messages(errors),
-            absent: messages(absent),
+            data: wire.data,
         })
     }
 
@@ -2218,12 +2215,11 @@ impl Unrooted for queries::SearchQuery {}
 impl Unrooted for browse::BrowseSearch {}
 impl Unrooted for browse::ViewerReposQuery {}
 
-/// A GraphQL response with data: GitHub's errors beside it, and apart
-/// from them the NOT_FOUND ones that explain a null in it.
+/// A GraphQL response with data, and GitHub's errors beside it that the
+/// data doesn't already say.
 struct Reply {
     data: Value,
     errors: Vec<String>,
-    absent: Vec<String>,
 }
 
 /// One of GitHub's GraphQL errors: what it says, its type (`NOT_FOUND`,
@@ -2254,7 +2250,7 @@ impl GqlError {
     }
 }
 
-fn messages(errors: Vec<GqlError>) -> Vec<String> {
+fn messages(errors: impl IntoIterator<Item = GqlError>) -> Vec<String> {
     errors.into_iter().map(|e| e.message).collect()
 }
 
