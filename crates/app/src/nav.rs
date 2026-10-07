@@ -85,18 +85,19 @@ impl State {
         self.forward.clear();
         let mut cmds = self.record_visit(&route);
         self.screens
-            .push(Screen::Page(Box::new(PageScreen::new(route))));
+            .push(Screen::Page(Box::new(PageScreen::new(route, None))));
         if let Some(route) = self.route().cloned() {
             cmds.extend(self.ensure_route(&route, true));
         }
         cmds
     }
 
-    /// Replaces the page on screen (switching tabs, changing a filter).
+    /// Replaces the page on screen (switching tabs, changing a filter), to
+    /// go to `anchor` once loaded.
     #[must_use]
-    pub fn replace(&mut self, route: Route, force: bool) -> Vec<Cmd> {
+    pub fn replace(&mut self, route: Route, force: bool, anchor: Option<String>) -> Vec<Cmd> {
         match self.screen_mut() {
-            Screen::Page(p) => **p = PageScreen::new(route.clone()),
+            Screen::Page(p) => **p = PageScreen::new(route.clone(), anchor),
             Screen::Diff(_) => return self.push(route),
         }
         let mut cmds = self.ensure_route(&route, force);
@@ -565,7 +566,7 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
         Screen::Page(_) => None,
     };
     match (target, diff_of) {
-        (Target::Page(route), None) => state.replace(route, false),
+        (Target::Page(route), None) => state.replace(route, false, None),
         (Target::Page(route), Some(diff_pr)) => {
             // From the files back to the pull request's other tabs.
             state.screens.pop();
@@ -578,7 +579,7 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
                 _ => false,
             };
             if same {
-                state.replace(route, false)
+                state.replace(route, false, None)
             } else {
                 state.push(route)
             }
@@ -987,7 +988,7 @@ fn choose(state: &mut State, pick: Pick) -> Vec<Cmd> {
         Pick::Url(url) => state.open_url(&url, false),
         Pick::Search(kind, query) => state.push(Route::Search { kind, query }),
         Pick::Filter(query) => match state.route().and_then(|r| r.with_query(query.clone())) {
-            Some(route) => state.replace(route, true),
+            Some(route) => state.replace(route, true, None),
             None => state.push(Route::Search {
                 kind: SearchKind::Issues,
                 query,
@@ -1036,7 +1037,7 @@ fn set_list_state(state: &mut State, which: &str) -> Vec<Cmd> {
         return Vec::new();
     };
     match route.with_query(with_state(&query, which)) {
-        Some(r) if r != route => state.replace(r, true),
+        Some(r) if r != route => state.replace(r, true, None),
         _ => Vec::new(),
     }
 }
@@ -1064,7 +1065,7 @@ fn cycle_sort(state: &mut State) -> Vec<Cmd> {
             tab: ProfileTab::Repositories(next),
         };
         state.info(format!("Sorted: {}", next.label()));
-        return state.replace(route, true);
+        return state.replace(route, true, None);
     }
     let Some((route, query)) = list_query(state) else {
         state.info("Only lists can be sorted");
@@ -1088,7 +1089,7 @@ fn cycle_sort(state: &mut State) -> Vec<Cmd> {
     }
     state.info(format!("Sorted: {label}"));
     match route.with_query(words.join(" ")) {
-        Some(r) => state.replace(r, true),
+        Some(r) => state.replace(r, true, None),
         None => Vec::new(),
     }
 }

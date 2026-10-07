@@ -94,7 +94,7 @@ impl State {
     pub fn open_tab(&mut self, target: Target) -> Vec<Cmd> {
         let first = match &target {
             Target::External(_) => return self.go(target),
-            Target::Page(route) => Screen::Page(Box::new(PageScreen::new(route.clone()))),
+            Target::Page(route) => Screen::Page(Box::new(PageScreen::new(route.clone(), None))),
             Target::Files(of) => Screen::Diff(Box::new(DiffScreen::new(of.clone(), self.size.0))),
         };
         let left = self.swap_in(Tab::new(first));
@@ -266,7 +266,7 @@ impl State {
         };
         let screen = |target: Target, width| match target {
             Target::Files(of) => Some(Screen::Diff(Box::new(DiffScreen::new(of, width)))),
-            Target::Page(route) => Some(Screen::Page(Box::new(PageScreen::new(route)))),
+            Target::Page(route) => Some(Screen::Page(Box::new(PageScreen::new(route, None)))),
             Target::External(_) => None,
         };
         let width = self.size.0;

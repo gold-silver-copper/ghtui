@@ -455,7 +455,7 @@ pub struct State {
 impl State {
     pub fn new(theme: Theme, icons: Icons, keymap: Keymap, size: (u16, u16)) -> Self {
         let mut state = Self {
-            screens: Screens::new(Screen::Page(Box::new(PageScreen::new(Route::Home)))),
+            screens: Screens::new(Screen::Page(Box::new(PageScreen::new(Route::Home, None)))),
             forward: Vec::new(),
             before: Vec::new(),
             after: Vec::new(),
@@ -821,7 +821,11 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                         number,
                     })
             {
-                return state.replace(Route::pr(PrRef { repo, number }), true);
+                let anchor = match state.screen() {
+                    Screen::Page(p) => p.anchor.clone(),
+                    Screen::Diff(_) => None,
+                };
+                return state.replace(Route::pr(PrRef { repo, number }), true, anchor);
             }
         }
         Msg::FetchedMore(key, result) => {
@@ -1741,6 +1745,31 @@ pub(crate) mod tests {
             s.restore_tabs(&[issue(2).url(), issue(3).url()]);
             let _ = s.start_at(Target::from_url(url));
             s.anchor_at(url);
+            assert_eq!(anchor(&s).as_deref(), Some("issuecomment-5"));
+        }
+
+        /// A comment's link on an issue number that's a pull request keeps
+        /// its anchor through GitHub's redirect to the pull request.
+        #[test]
+        fn an_issue_link_redirected_to_its_pr_keeps_the_anchor() {
+            let url = "https://github.com/o/r/issues/7#issuecomment-5";
+            let mut s = state();
+            let _ = s.open_url(url, true);
+            let anchor = |s: &State| match s.screen() {
+                Screen::Page(p) => p.anchor.clone(),
+                Screen::Diff(_) => None,
+            };
+            assert_eq!(anchor(&s).as_deref(), Some("issuecomment-5"));
+            let _ = fetched(
+                &mut s,
+                DataKey::Issue(RepoId::new("o", "r"), 7),
+                Data::Issue(None),
+            );
+            assert_eq!(
+                s.route(),
+                Some(&Route::pr(PrRef::parse("o/r#7").unwrap())),
+                "redirected"
+            );
             assert_eq!(anchor(&s).as_deref(), Some("issuecomment-5"));
         }
 
