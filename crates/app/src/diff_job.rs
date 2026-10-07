@@ -219,8 +219,8 @@ async fn run_inner(
         .partition(|(_, f)| !collapsed(f));
     let order = expanded.into_iter().chain(collapsed).map(|(i, _)| i);
     control.fill(order);
-    // Listed means git is there for the work that waited on the listing
-    // (if it opened: if not, the job fails once the files are shown).
+    // Git is there for the work that waits on the listing (if it doesn't
+    // open, the job fails once the files are shown).
     let repo = Arc::new(repo);
     let reader = repo.blob_reader().map(Arc::new);
     if let Ok(reader) = &reader {
