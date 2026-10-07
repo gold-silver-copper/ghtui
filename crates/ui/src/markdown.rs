@@ -16,7 +16,7 @@ use crate::page::{Frame, Page, PageLine, Role, Seg, Tone};
 pub struct LinkBase {
     pub repo: String,
     pub rev: String,
-    /// Directory of the document, without a trailing slash ("" for root).
+    /// Directory of the document, URL-encoded, no trailing slash ("" for root).
     pub dir: String,
     /// A wiki page: relative links name other pages.
     pub wiki: bool,
@@ -28,7 +28,7 @@ impl LinkBase {
         Self {
             repo: repo.to_string(),
             rev: rev.into(),
-            dir: path.rsplit_once('/').map_or("", |(d, _)| d).to_owned(),
+            dir: crate::pages::url::encode_path(path.rsplit_once('/').map_or("", |(d, _)| d)),
             wiki: false,
         }
     }
@@ -728,6 +728,17 @@ mod tests {
         assert_eq!(
             resolved("/LICENSE"),
             "https://github.com/o/r/blob/feature%2Fx/LICENSE"
+        );
+    }
+
+    /// A document in a directory whose name a URL must escape (`C#`) links
+    /// within that directory, not to a fragment of it.
+    #[test]
+    fn links_from_an_escaped_directory_stay_in_it() {
+        let base = LinkBase::new("o/r", "main", "docs/C#/README.md");
+        assert_eq!(
+            resolve(Some(&base), "a.md").unwrap(),
+            "https://github.com/o/r/blob/main/docs/C%23/a.md"
         );
     }
 
