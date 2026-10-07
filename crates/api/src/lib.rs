@@ -4,6 +4,8 @@ pub mod auth;
 pub mod browse;
 mod client;
 pub mod corpus;
+#[doc(hidden)]
+pub mod fuzz;
 pub mod model;
 pub mod queries;
 #[cfg(test)]

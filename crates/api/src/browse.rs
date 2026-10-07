@@ -3514,7 +3514,7 @@ pub struct ContributedIssue {
 const ACTIVITY_MONTHS: usize = 3;
 
 impl WireContributions {
-    fn into_contributions(self) -> Contributions {
+    pub(crate) fn into_contributions(self) -> Contributions {
         let calendar = self.contribution_calendar;
         let weeks = calendar
             .weeks

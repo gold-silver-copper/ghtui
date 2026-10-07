@@ -13,6 +13,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+ghtui = { path = "../crates/app" }
+ghtui-api = { path = "../crates/api" }
 ghtui-diff = { path = "../crates/diff" }
 ghtui-ui = { path = "../crates/ui" }
 ghtui-git = { path = "../crates/git" }
@@ -29,6 +31,27 @@ bench = false
 [[bin]]
 name = "file_diff"
 path = "fuzz_targets/file_diff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "route"
+path = "fuzz_targets/route.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wire"
+path = "fuzz_targets/wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "job_log"
+path = "fuzz_targets/job_log.rs"
 test = false
 doc = false
 bench = false
