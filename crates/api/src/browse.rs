@@ -2313,6 +2313,186 @@ impl wire_gists::Gists {
         }
     }
 }
+// ---- teams -------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamSummary {
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub secret: bool,
+    pub members: u64,
+    pub repos: u64,
+}
+
+/// A repository a team has access to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamRepo {
+    pub repo: RepoId,
+    pub description: String,
+    pub stars: u64,
+}
+
+/// A team: its members, repositories and child teams (the first 50 of
+/// each).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamDetail {
+    pub team: TeamSummary,
+    pub parent: Option<TeamSummary>,
+    pub members: Vec<UserSummary>,
+    pub repos: Vec<TeamRepo>,
+    pub children: Vec<TeamSummary>,
+}
+
+pub(crate) mod wire_teams {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Count {
+        pub total_count: u64,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Team {
+        pub slug: String,
+        pub name: String,
+        pub description: Option<String>,
+        pub privacy: Option<String>,
+        pub members: Option<Count>,
+        pub repositories: Option<Count>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct PageInfo {
+        pub has_next_page: bool,
+        pub end_cursor: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Teams {
+        pub total_count: u64,
+        pub page_info: PageInfo,
+        pub nodes: Vec<Option<Team>>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Member {
+        pub login: String,
+        pub name: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Members {
+        pub nodes: Vec<Option<Member>>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Repo {
+        pub name_with_owner: String,
+        pub description: Option<String>,
+        pub stargazer_count: u64,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Repos {
+        pub nodes: Vec<Option<Repo>>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Children {
+        pub nodes: Vec<Option<Team>>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Detail {
+        #[serde(flatten)]
+        pub team: Team,
+        pub parent_team: Option<Team>,
+        #[serde(rename = "memberList")]
+        pub member_list: Members,
+        #[serde(rename = "repoList")]
+        pub repo_list: Repos,
+        pub child_teams: Children,
+    }
+}
+
+impl wire_teams::Team {
+    pub(crate) fn into_summary(self) -> TeamSummary {
+        TeamSummary {
+            slug: self.slug,
+            name: self.name,
+            description: self.description.unwrap_or_default(),
+            secret: self.privacy.as_deref() == Some("SECRET"),
+            members: self.members.map_or(0, |c| c.total_count),
+            repos: self.repositories.map_or(0, |c| c.total_count),
+        }
+    }
+}
+
+impl wire_teams::Teams {
+    pub(crate) fn into_results(self) -> Results<TeamSummary> {
+        Results {
+            total: self.total_count,
+            items: self
+                .nodes
+                .into_iter()
+                .flatten()
+                .map(wire_teams::Team::into_summary)
+                .collect(),
+            next: self
+                .page_info
+                .end_cursor
+                .filter(|_| self.page_info.has_next_page),
+        }
+    }
+}
+
+impl wire_teams::Detail {
+    pub(crate) fn into_detail(self) -> TeamDetail {
+        TeamDetail {
+            team: self.team.into_summary(),
+            parent: self.parent_team.map(wire_teams::Team::into_summary),
+            members: self
+                .member_list
+                .nodes
+                .into_iter()
+                .flatten()
+                .map(|m| UserSummary {
+                    login: m.login,
+                    name: m.name,
+                    bio: None,
+                    is_org: false,
+                })
+                .collect(),
+            repos: self
+                .repo_list
+                .nodes
+                .into_iter()
+                .flatten()
+                .filter_map(|r| {
+                    Some(TeamRepo {
+                        repo: RepoId::parse(&r.name_with_owner)?,
+                        description: r.description.unwrap_or_default(),
+                        stars: r.stargazer_count,
+                    })
+                })
+                .collect(),
+            children: self
+                .child_teams
+                .nodes
+                .into_iter()
+                .flatten()
+                .map(wire_teams::Team::into_summary)
+                .collect(),
+        }
+    }
+}
 // ---- discussions ------------------------------------------------------------------------------
 
 /// Whose discussions: a repository's, or an organization's (which GitHub
@@ -3577,6 +3757,12 @@ pub mod keys {
     }
     pub fn branches(repo: &RepoId) -> String {
         format!("branches:{repo}")
+    }
+    pub fn teams(org: &str) -> String {
+        format!("teams:{org}")
+    }
+    pub fn team(org: &str, slug: &str) -> String {
+        format!("team:{org}/{slug}")
     }
     pub fn gist(id: &str) -> String {
         format!("gist:{id}")

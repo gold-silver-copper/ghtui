@@ -8,8 +8,8 @@ use ghtui_api::browse::{
     Blame, Blob, BranchInfo, Checks, CommitDetail, CommitInfo, Comparison, DeploymentList,
     DiscussionDetail, DiscussionList, DiscussionsOf, Gist, GistSummary, IssueDetail, Job,
     MilestoneDetail, MilestoneList, PrActivity, Profile, Refs, Release, RepoOverview, RepoSort,
-    RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserList,
-    UserSummary, Workflow, WorkflowRun,
+    RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TeamDetail, TeamSummary,
+    TreeEntry, UserList, UserSummary, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::page::{Link, Page, Role, Seg};
@@ -53,6 +53,8 @@ pub enum DataKey {
     Release(RepoId, String),
     Tags(RepoId),
     Branches(RepoId),
+    Teams(String),
+    Team(String, String),
     Gist(String),
     Gists(String),
     Blame(RepoId, String, String),
@@ -109,6 +111,8 @@ pub enum Data {
     Release(Box<Release>),
     Tags(Box<Results<TagInfo>>),
     Branches(Box<Results<BranchInfo>>),
+    Teams(Box<Results<TeamSummary>>),
+    Team(Box<TeamDetail>),
     Gist(Box<Gist>),
     Gists(Box<Results<GistSummary>>),
     Blame(Box<Blame>),
@@ -131,6 +135,7 @@ impl Data {
             Data::Discussions(d) => d.results.next.as_deref(),
             Data::Tags(r) => r.next.as_deref(),
             Data::Branches(r) => r.next.as_deref(),
+            Data::Teams(r) => r.next.as_deref(),
             Data::Gists(r) => r.next.as_deref(),
             Data::Deployments(d) => d.results.next.as_deref(),
             Data::Milestones(m) => m.results.next.as_deref(),
@@ -151,6 +156,7 @@ impl Data {
             (Data::Discussions(a), Data::Discussions(b)) => extend(&mut a.results, b.results),
             (Data::Tags(a), Data::Tags(b)) => extend(a, *b),
             (Data::Branches(a), Data::Branches(b)) => extend(a, *b),
+            (Data::Teams(a), Data::Teams(b)) => extend(a, *b),
             (Data::Gists(a), Data::Gists(b)) => extend(a, *b),
             (Data::Deployments(a), Data::Deployments(b)) => extend(&mut a.results, b.results),
             (Data::Milestones(a), Data::Milestones(b)) => extend(&mut a.results, b.results),
@@ -187,6 +193,7 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         }
         Route::Tags(repo) => Some(DataKey::Tags(repo.clone())),
         Route::Branches(repo) => Some(DataKey::Branches(repo.clone())),
+        Route::Teams(org) => Some(DataKey::Teams(org.to_lowercase())),
         Route::Gists(login) => Some(DataKey::Gists(login.to_lowercase())),
         Route::Compare { repo, spec } => Some(DataKey::Compare(repo.clone(), spec.clone())),
         Route::Deployments { repo, environment } => {
@@ -242,7 +249,8 @@ pub fn needs(route: &Route) -> Vec<Need> {
             std::iter::once(header(repo)).chain(list).collect()
         }
         Route::Search { .. } => list.into_iter().collect(),
-        Route::Gists(_) => paged(route).map(Need::Data).into_iter().collect(),
+        Route::Gists(_) | Route::Teams(_) => paged(route).map(Need::Data).into_iter().collect(),
+        Route::Team { org, slug } => vec![Need::Data(K::Team(org.to_lowercase(), slug.clone()))],
         Route::Gist { id, .. } => vec![Need::Data(K::Gist(id.clone()))],
         Route::Issue { repo, number } => {
             vec![header(repo), Need::Data(K::Issue(repo.clone(), *number))]
@@ -735,6 +743,17 @@ impl State {
             Route::Compare { repo, spec } => {
                 match self.get(&DataKey::Compare(repo.clone(), spec.clone())) {
                     Some(Data::Compare(c)) => pages::compare(&mut page, repo, spec, c, now),
+                    _ => missing(&mut page, &route.title()),
+                }
+            }
+            Route::Teams(org) => match self.get(&DataKey::Teams(org.to_lowercase())) {
+                Some(Data::Teams(t)) => pages::teams(&mut page, org, Some(t)),
+                None if matches!(error, Some((_, false))) => missing(&mut page, "the teams"),
+                _ => pages::teams(&mut page, org, None),
+            },
+            Route::Team { org, slug } => {
+                match self.get(&DataKey::Team(org.to_lowercase(), slug.clone())) {
+                    Some(Data::Team(t)) => pages::team(&mut page, org, t),
                     _ => missing(&mut page, &route.title()),
                 }
             }

@@ -8,7 +8,8 @@ use ghtui_api::browse::{
     DiscussionSummary, EntryKind, Gist, GistFile, GistSummary, IssueDetail, IssueState,
     IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList, MonthActivity,
     PrActivity, Profile, Readme, Release, RepoOverview, RepoSummary, Results, ReviewSummary,
-    RunSummary, SearchResults, Step, TagInfo, TreeEntry, UserSummary, Week, Workflow, WorkflowRun,
+    RunSummary, SearchResults, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary, TreeEntry,
+    UserSummary, Week, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
@@ -370,6 +371,52 @@ pub fn gists() -> Results<GistSummary> {
             gist("9257657", ".gitignore", ""),
         ],
         next: Some("g1".into()),
+    }
+}
+fn team_summary(slug: &str, name: &str, secret: bool) -> TeamSummary {
+    TeamSummary {
+        slug: slug.into(),
+        name: name.into(),
+        description: format!("The {name} team"),
+        secret,
+        members: 7,
+        repos: 2,
+    }
+}
+
+/// Two teams.
+pub fn teams() -> Results<TeamSummary> {
+    Results {
+        total: 2,
+        items: vec![
+            team_summary("core", "Core", false),
+            team_summary("security", "Security", true),
+        ],
+        next: None,
+    }
+}
+
+/// A team with a parent, two members, a repository and a child team.
+pub fn team() -> TeamDetail {
+    let member = |login: &str, name: Option<&str>| UserSummary {
+        login: login.into(),
+        name: name.map(Into::into),
+        bio: None,
+        is_org: false,
+    };
+    TeamDetail {
+        team: team_summary("core", "Core", false),
+        parent: Some(team_summary("maintainers", "Maintainers", false)),
+        members: vec![
+            member("octocat", Some("The Octocat")),
+            member("hubot", None),
+        ],
+        repos: vec![TeamRepo {
+            repo: RepoId::new("gold-silver-copper", "ghtui"),
+            description: "GitHub in the terminal".into(),
+            stars: 1200,
+        }],
+        children: vec![team_summary("core-docs", "Core docs", false)],
     }
 }
 fn label(name: &str, color: &str) -> Label {

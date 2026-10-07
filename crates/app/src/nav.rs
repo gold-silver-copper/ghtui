@@ -510,7 +510,8 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         },
         Route::User { .. } | Route::Search { .. } => Route::Home,
         Route::Gist { owner, .. } => Route::Gists(owner.clone()?),
-        Route::Gists(login) => Route::user(login),
+        Route::Gists(login) | Route::Teams(login) => Route::user(login),
+        Route::Team { org, .. } => Route::Teams(org.clone()),
     })
 }
 

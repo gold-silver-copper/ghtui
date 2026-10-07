@@ -764,6 +764,10 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Gists(login) => at(gh.cached(&keys::gists(login))?, |v| {
             Data::Gists(Box::new(v))
         }),
+        DataKey::Teams(org) => at(gh.cached(&keys::teams(org))?, |v| Data::Teams(Box::new(v))),
+        DataKey::Team(org, slug) => at(gh.cached(&keys::team(org, slug))?, |v| {
+            Data::Team(Box::new(v))
+        }),
         DataKey::Branches(repo) => at(gh.cached(&keys::branches(repo))?, |v| {
             Data::Branches(Box::new(v))
         }),
@@ -828,6 +832,7 @@ async fn fetch_more(gh: &GitHub, key: &DataKey, after: String) -> Result<Data, A
         DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, Some(after)).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, Some(after)).await?)),
         DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, Some(after)).await?)),
+        DataKey::Teams(org) => Data::Teams(Box::new(gh.teams(org, Some(after)).await?)),
         DataKey::Gists(login) => Data::Gists(Box::new(gh.gists(login, Some(after)).await?)),
         DataKey::Deployments(repo, env) => Data::Deployments(Box::new(
             gh.deployments(repo, env.as_deref(), Some(after)).await?,
@@ -874,6 +879,8 @@ pub(crate) async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> 
         DataKey::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, None).await?)),
         DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, None).await?)),
+        DataKey::Teams(org) => Data::Teams(Box::new(gh.teams(org, None).await?)),
+        DataKey::Team(org, slug) => Data::Team(Box::new(gh.team(org, slug).await?)),
         DataKey::Gist(id) => Data::Gist(Box::new(gh.gist(id).await?)),
         DataKey::Gists(login) => Data::Gists(Box::new(gh.gists(login, None).await?)),
         DataKey::Blame(repo, rev, path) => Data::Blame(Box::new(gh.blame(repo, rev, path).await?)),

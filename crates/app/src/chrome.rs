@@ -190,6 +190,15 @@ impl State {
                 }
                 c.crumb("Gist", None);
             }
+            Route::Teams(org) => {
+                c.crumb(org, Some(Target::Page(Route::user(org))));
+                c.crumb("Teams", None);
+            }
+            Route::Team { org, slug } => {
+                c.crumb(org, Some(Target::Page(Route::user(org))));
+                c.crumb("Teams", Some(Target::Page(Route::Teams(org.clone()))));
+                c.crumb(slug, None);
+            }
             Route::Gists(login) => {
                 c.crumb(login, Some(Target::Page(Route::user(login))));
                 c.crumb("Gists", None);

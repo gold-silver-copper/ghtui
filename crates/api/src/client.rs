@@ -108,6 +108,10 @@ impl Request<'_> {
     }
 }
 
+/// A team's fields, as [`browse::wire_teams::Team`] reads them.
+const TEAM: &str =
+    "slug name description privacy members { totalCount } repositories { totalCount }";
+
 /// A milestone's fields, as [`browse::wire_milestones::Milestone`] reads them.
 const MILESTONE: &str = "number title description dueOn closed closedAt updatedAt openIssues: issues(states: OPEN) { totalCount } doneIssues: issues(states: CLOSED) { totalCount } openPrs: pullRequests(states: OPEN) { totalCount } donePrs: pullRequests(states: [CLOSED, MERGED]) { totalCount }";
 impl GitHub {
@@ -1515,6 +1519,50 @@ impl GitHub {
             return Ok(self.kept(&browse::keys::gists(login), gists).await);
         }
         Ok(gists)
+    }
+    /// The teams in an organization you can see (its members see them),
+    /// by name, 30 at a time from `after`.
+    pub async fn teams(
+        &self,
+        org: &str,
+        after: Option<String>,
+    ) -> Result<browse::Results<browse::TeamSummary>, ApiError> {
+        let first = after.is_none();
+        let data = self
+            .graphql_json(
+                &format!("query($org: String!, $after: String) {{ organization(login: $org) {{ teams(first: 30, after: $after, orderBy: {{field: NAME, direction: ASC}}) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ {TEAM} }} }} }} }}"),
+                serde_json::json!({ "org": org, "after": after }),
+            )
+            .await?;
+        let wire: browse::wire_teams::Teams = serde_json::from_value(
+            data.pointer("/organization/teams")
+                .filter(|t| !t.is_null())
+                .cloned()
+                .ok_or_else(|| ApiError::NotFound(org.to_owned()))?,
+        )?;
+        let teams = wire.into_results();
+        if first {
+            return Ok(self.kept(&browse::keys::teams(org), teams).await);
+        }
+        Ok(teams)
+    }
+
+    /// A team: its members, repositories and child teams.
+    pub async fn team(&self, org: &str, slug: &str) -> Result<browse::TeamDetail, ApiError> {
+        let data = self
+            .graphql_json(
+                &format!("query($org: String!, $slug: String!) {{ organization(login: $org) {{ team(slug: $slug) {{ {TEAM} parentTeam {{ {TEAM} }} memberList: members(first: 50) {{ nodes {{ login name }} }} repoList: repositories(first: 50) {{ nodes {{ nameWithOwner description stargazerCount }} }} childTeams(first: 50) {{ nodes {{ {TEAM} }} }} }} }} }}"),
+                serde_json::json!({ "org": org, "slug": slug }),
+            )
+            .await?;
+        let wire: browse::wire_teams::Detail = serde_json::from_value(
+            data.pointer("/organization/team")
+                .filter(|t| !t.is_null())
+                .cloned()
+                .ok_or_else(|| ApiError::NotFound(format!("{org}/{slug}")))?,
+        )?;
+        let team = wire.into_detail();
+        Ok(self.kept(&browse::keys::team(org, slug), team).await)
     }
     /// A workflow run (one attempt of it, or the latest) and its jobs.
     pub async fn workflow_run(

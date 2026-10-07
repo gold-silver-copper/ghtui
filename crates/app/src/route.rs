@@ -99,6 +99,12 @@ pub enum Route {
     },
     Tags(RepoId),
     Branches(RepoId),
+    /// An organization's teams.
+    Teams(String),
+    Team {
+        org: String,
+        slug: String,
+    },
     /// A gist, by its ID (its owner, when the URL names them).
     Gist {
         owner: Option<String>,
@@ -274,6 +280,8 @@ impl Route {
             Route::Discussion { of, number } => format!("{}/{number}", discussions_url(of)),
             Route::Tags(repo) => format!("{}/tags", links::repo(repo)),
             Route::Branches(repo) => format!("{}/branches", links::repo(repo)),
+            Route::Teams(org) => format!("{}/orgs/{org}/teams", links::BASE),
+            Route::Team { org, slug } => format!("{}/orgs/{org}/teams/{slug}", links::BASE),
             Route::Gist { owner, id } => match owner {
                 Some(owner) => format!("{GIST}/{owner}/{id}"),
                 None => format!("{GIST}/{id}"),
@@ -347,6 +355,8 @@ impl Route {
             Route::Discussion { of, number } => format!("{} · Discussion {number}", of_title(of)),
             Route::Tags(repo) => format!("{repo} · Tags"),
             Route::Branches(repo) => format!("{repo} · Branches"),
+            Route::Teams(org) => format!("@{org} · Teams"),
+            Route::Team { org, slug } => format!("@{org}/{slug}"),
             Route::Gist { id, .. } => format!("Gist {}", id.get(..7).unwrap_or(id)),
             Route::Gists(login) => format!("@{login} · Gists"),
             Route::Compare { repo, spec } => format!("{repo} · {spec}"),
@@ -403,6 +413,8 @@ impl Route {
             | Route::Search { .. }
             | Route::Gist { .. }
             | Route::Gists(_)
+            | Route::Teams(_)
+            | Route::Team { .. }
             | Route::Discussions {
                 of: DiscussionsOf::Org(_),
                 ..
@@ -571,6 +583,12 @@ impl Target {
                 tab: ProfileTab::Stars,
             },
             ["orgs", login] => Route::user(login),
+            ["orgs", org, "teams"] => Route::Teams((*org).to_owned()),
+            // Its members, repositories and child teams are on its page.
+            ["orgs", org, "teams", slug, ..] => Route::Team {
+                org: (*org).to_owned(),
+                slug: (*slug).to_owned(),
+            },
             ["orgs", org, "discussions", rest @ ..] => {
                 match discussions(DiscussionsOf::Org((*org).to_owned()), rest) {
                     Some(route) => route,
@@ -1567,6 +1585,8 @@ pub(crate) mod tests {
                 repo().prop_map(Route::Releases),
                 repo().prop_map(Route::Tags),
                 repo().prop_map(Route::Branches),
+                segment().prop_map(Route::Teams),
+                (segment(), segment()).prop_map(|(org, slug)| Route::Team { org, slug }),
                 (prop::option::of(segment()), "[0-9a-f]{20}|[0-9]{1,8}")
                     .prop_filter("an owner isn't a gist ID or a gist page", |(o, _)| {
                         o.as_deref()
