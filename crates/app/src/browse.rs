@@ -12,6 +12,7 @@ use ghtui_api::browse::{
     TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{PrRef, RepoId};
+use ghtui_ui::Fetched;
 use ghtui_ui::page::{Link, Page, Role, Seg};
 use ghtui_ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
 
@@ -437,69 +438,101 @@ impl PageScreen {
     }
 }
 
+/// A kind of data a page shows, as kept in [`Data`].
+pub trait Picked {
+    fn pick(data: &Data) -> Option<&Self>;
+}
+
+macro_rules! picked {
+    ($($variant:ident => $t:ty),* $(,)?) => {$(
+        impl Picked for $t {
+            fn pick(data: &Data) -> Option<&Self> {
+                match data {
+                    Data::$variant(x) => Some(&**x),
+                    _ => None,
+                }
+            }
+        }
+    )*};
+}
+
+picked!(
+    Repo => RepoOverview, Tree => [TreeEntry], Blob => Blob, Search => SearchResults,
+    PrActivity => PrActivity, Profile => Profile, Repos => [RepoSummary], Refs => Refs,
+    LastCommits => HashMap<String, CommitInfo>, Commit => CommitDetail,
+    History => Results<CommitInfo>, Checks => Checks, Users => Results<UserSummary>,
+    RepoPage => Results<RepoSummary>, Releases => Results<Release>,
+    Discussions => DiscussionList, Discussion => DiscussionDetail, Run => WorkflowRun, Job => Job,
+    Log => ghtui_api::browse::JobLog, Workflow => Workflow, Runs => Results<RunSummary>,
+    Release => Release, Tags => Results<TagInfo>, Branches => Results<BranchInfo>,
+    Wiki => WikiPage, Advisories => Results<Advisory>, Advisory => Advisory,
+    Teams => Results<TeamSummary>, Team => TeamDetail, Gist => Gist,
+    Gists => Results<GistSummary>, Blame => Blame, Compare => Comparison,
+    Deployments => DeploymentList, Milestones => MilestoneList, Milestone => MilestoneDetail,
+);
+
+/// An issue, or `None` while redirecting to the pull request it is.
+impl Picked for Option<Box<IssueDetail>> {
+    fn pick(data: &Data) -> Option<&Self> {
+        match data {
+            Data::Issue(issue) => Some(issue),
+            _ => None,
+        }
+    }
+}
+
+/// A page's needs as the page shows them, failing with the key that
+/// tries again.
+struct Needs<'a> {
+    state: &'a State,
+    retry: &'a str,
+}
+
+impl<'a> Needs<'a> {
+    fn of<T>(&self, remote: Option<&'a Remote<T>>) -> Fetched<'a, T> {
+        Remote::fetched(remote, self.retry)
+    }
+
+    fn get<T: Picked + ?Sized>(&self, key: &DataKey) -> Fetched<'a, T> {
+        self.of(self.state.data.get(key)).pick(T::pick)
+    }
+
+    /// The list the route loads more of.
+    fn paged<T: Picked + ?Sized>(&self, route: &Route) -> Fetched<'a, T> {
+        let remote = paged(route).and_then(|key| self.state.data.get(&key));
+        self.of(remote).pick(T::pick)
+    }
+}
+
 impl State {
     pub fn get(&self, key: &DataKey) -> Option<&Data> {
         self.data.get(key).and_then(|r| r.data.as_ref())
     }
 
+    /// `key`'s data, if it's there: for what isn't a page.
+    pub fn picked<T: Picked + ?Sized>(&self, key: &DataKey) -> Option<&T> {
+        self.get(key).and_then(T::pick)
+    }
+
     pub fn overview(&self, repo: &RepoId) -> Option<&RepoOverview> {
-        match self.get(&DataKey::Repo(repo.clone()))? {
-            Data::Repo(o) => Some(o),
-            _ => None,
-        }
+        self.picked(&DataKey::Repo(repo.clone()))
     }
 
     pub fn search_results(&self, route: &Route) -> Option<&SearchResults> {
         let (kind, query) = route.search()?;
-        match self.get(&DataKey::Search(kind, query))? {
-            Data::Search(r) => Some(r),
-            _ => None,
-        }
+        self.picked(&DataKey::Search(kind, query))
     }
 
     pub fn activity(&self, pr: &PrRef) -> Option<&PrActivity> {
-        match self.get(&DataKey::PrActivity(pr.clone()))? {
-            Data::PrActivity(a) => Some(a),
-            _ => None,
-        }
-    }
-
-    /// The latest commit of each entry in a directory, once loaded.
-    pub fn last_commits(
-        &self,
-        repo: &RepoId,
-        rev: &str,
-        path: &str,
-    ) -> Option<&HashMap<String, CommitInfo>> {
-        match self.get(&DataKey::LastCommits(
-            repo.clone(),
-            rev.to_owned(),
-            path.to_owned(),
-        ))? {
-            Data::LastCommits(m) => Some(m),
-            _ => None,
-        }
-    }
-
-    pub fn checks(&self, key: &DataKey) -> Option<&Checks> {
-        match self.get(key)? {
-            Data::Checks(c) => Some(c),
-            _ => None,
-        }
+        self.picked(&DataKey::PrActivity(pr.clone()))
     }
 
     pub fn commit(&self, repo: &RepoId, oid: &str) -> Option<&CommitDetail> {
-        match self.get(&DataKey::Commit(repo.clone(), oid.to_owned()))? {
-            Data::Commit(c) => Some(c),
-            _ => None,
-        }
+        self.picked(&DataKey::Commit(repo.clone(), oid.to_owned()))
     }
 
     pub fn profile(&self, login: &str) -> Option<&Profile> {
-        match self.get(&DataKey::Profile(login.to_lowercase()))? {
-            Data::Profile(p) => Some(p),
-            _ => None,
-        }
+        self.picked(&DataKey::Profile(login.to_lowercase()))
     }
 
     /// How a page's fetches are going (the ones that have started).
@@ -511,11 +544,14 @@ impl State {
         })
     }
 
-    /// The first refresh error among a page's needs, and whether the page
-    /// has data despite it.
-    fn page_error(&self, route: &Route) -> Option<(String, bool)> {
-        self.fetches(route)
-            .find_map(|r| Some((r.error?, r.data.is_some())))
+    /// Why the page's needs that show a copy couldn't refresh it.
+    fn stale_errors(&self, route: &Route) -> Option<String> {
+        let errors: Vec<String> = self
+            .fetches(route)
+            .filter(|r| r.data.is_some())
+            .filter_map(|r| r.error)
+            .collect();
+        (!errors.is_empty()).then(|| errors.join("; "))
     }
 
     /// When the oldest cached copy on the page was fetched, while one is
@@ -550,7 +586,6 @@ impl State {
     /// Builds the page for `route`, `width` columns wide in all.
     pub fn build_page(&self, route: &Route, width: u16, now: u64) -> Page {
         let icons = self.icons;
-        let error = self.page_error(route);
         let (comment, find_file, filter) = (
             self.first_key(Action::Comment),
             self.first_key(Action::FindFile),
@@ -574,67 +609,48 @@ impl State {
         let mut page = Page::new(pages::main_width(width, aside));
         page.compact = self.compact();
         let retry = self.first_key(Action::Refresh);
-        let missing = |page: &mut Page, what: &str| match &error {
-            Some((err, false)) => {
-                pages::flash(
-                    page,
-                    &format!("Couldn't load {what}: {err}. {retry} tries again."),
-                );
-            }
-            _ => pages::loading_box(page, vec![Seg::new("Loading…", Role::Meta)]),
+        let f = Needs {
+            state: self,
+            retry: &retry,
         };
+        let title = route.title();
         match route {
             Route::Home => {
-                let repos = match self.get(&DataKey::ViewerRepos) {
-                    Some(Data::Repos(r)) => Some(r.as_slice()),
-                    _ => None,
-                };
-                // A failed first load (nothing cached) says why, instead of
-                // empty boxes that look like they're still loading.
-                if matches!(error, Some((_, false))) {
-                    missing(&mut page, "your home page");
-                    if self.inbox.data.is_none() {
-                        return page;
-                    }
-                }
+                let repos = f.get(&DataKey::ViewerRepos);
+                let viewer = self.viewer.as_deref();
                 pages::home(
                     &mut page,
-                    self.inbox.data.as_ref(),
+                    f.of(Some(&self.inbox)),
                     repos,
-                    self.viewer.as_deref(),
+                    viewer,
                     icons,
                     now,
                 );
             }
             Route::Repo(repo) => {
-                let overview = self.overview(repo);
-                pages::repo_title(&mut page, repo, overview);
-                match overview {
-                    Some(o) => {
-                        let commits = self.last_commits(repo, "HEAD", "");
-                        pages::repo_code(&mut page, repo, o, commits, aside, cx);
-                    }
-                    None => missing(&mut page, "the repository"),
+                let key = DataKey::Repo(repo.clone());
+                #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
+                let buttons = f.get(&key).ready_unchecked();
+                pages::repo_title(&mut page, repo, buttons);
+                if let Some(o) = f.get(&key).show(&mut page, "the repository") {
+                    let key = DataKey::LastCommits(repo.clone(), "HEAD".into(), String::new());
+                    #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
+                    let commits = f.get(&key).ready_unchecked();
+                    pages::repo_code(&mut page, repo, o, commits, aside, cx);
                 }
             }
             Route::Tree { repo, rev, path } => {
-                let key = DataKey::Tree(repo.clone(), rev.clone(), path.clone());
-                let entries = match self.get(&key) {
-                    Some(Data::Tree(entries)) => Some(entries.as_slice()),
-                    _ => None,
-                };
-                let commits = self.last_commits(repo, rev, path);
+                let key = DataKey::LastCommits(repo.clone(), rev.clone(), path.clone());
+                #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
+                let commits = f.get(&key).ready_unchecked();
                 let dir = pages::Listing {
                     repo,
                     rev,
                     path,
-                    entries,
+                    entries: f.get(&DataKey::Tree(repo.clone(), rev.clone(), path.clone())),
                     commits,
                 };
                 pages::repo_dir(&mut page, dir, cx);
-                if entries.is_none() && matches!(error, Some((_, false))) {
-                    missing(&mut page, "the directory");
-                }
             }
             Route::Blob {
                 repo,
@@ -643,17 +659,14 @@ impl State {
                 lines,
             } => {
                 let key = DataKey::Blob(repo.clone(), rev.clone(), path.clone());
-                match self.get(&key) {
-                    Some(Data::Blob(blob)) => {
-                        let file = pages::FileAt {
-                            repo,
-                            rev,
-                            path,
-                            lines: *lines,
-                        };
-                        pages::file(&mut page, file, blob, keys);
-                    }
-                    _ => missing(&mut page, "the file"),
+                if let Some(blob) = f.get(&key).show(&mut page, "the file") {
+                    let file = pages::FileAt {
+                        repo,
+                        rev,
+                        path,
+                        lines: *lines,
+                    };
+                    pages::file(&mut page, file, blob, keys);
                 }
             }
             Route::Blame {
@@ -662,208 +675,133 @@ impl State {
                 path,
                 lines,
             } => {
-                let blob = match self.get(&DataKey::Blob(repo.clone(), rev.clone(), path.clone())) {
-                    Some(Data::Blob(b)) => Some(&**b),
-                    _ => None,
-                };
-                let blame = match self.get(&DataKey::Blame(repo.clone(), rev.clone(), path.clone()))
-                {
-                    Some(Data::Blame(b)) => Some(&**b),
-                    _ => None,
-                };
+                let blob = f.get(&DataKey::Blob(repo.clone(), rev.clone(), path.clone()));
+                let blame = f.get(&DataKey::Blame(repo.clone(), rev.clone(), path.clone()));
                 let file = pages::FileAt {
                     repo,
                     rev,
                     path,
                     lines: *lines,
                 };
-                if blob.is_none() && matches!(error, Some((_, false))) {
-                    missing(&mut page, "the file");
-                } else {
-                    pages::blame(&mut page, file, blob, blame, keys, now);
-                }
+                pages::blame(&mut page, file, blob, blame, keys, now);
             }
             Route::Issues { repo, query } | Route::Pulls { repo, query } => {
                 let is_pr = matches!(route, Route::Pulls { .. });
-                let counts = self.overview(repo).map(|o| {
+                #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
+                let overview = f
+                    .get::<RepoOverview>(&DataKey::Repo(repo.clone()))
+                    .ready_unchecked();
+                let counts = overview.map(|o| {
                     if is_pr {
                         (o.open_prs, o.closed_prs)
                     } else {
                         (o.open_issues, o.closed_issues)
                     }
                 });
-                let results = match self.search_results(route) {
-                    Some(SearchResults::Issues(r)) => Some(r),
+                let results = f.paged(route).pick(|r| match r {
+                    SearchResults::Issues(r) => Some(r),
                     _ => None,
-                };
-                if results.is_none() && matches!(error, Some((_, false))) {
-                    missing(&mut page, "the list");
-                } else {
-                    pages::issue_list(&mut page, query, counts, is_pr, results, cx);
-                }
+                });
+                pages::issue_list(&mut page, query, counts, is_pr, results, cx);
             }
             Route::Search { kind, query } => {
-                let results = self.search_results(route);
-                if results.is_none() && matches!(error, Some((_, false))) {
-                    missing(&mut page, "results");
-                } else {
-                    pages::search(&mut page, *kind, query, results, icons, keys, now);
+                let results = f.paged(route);
+                pages::search(&mut page, *kind, query, results, icons, keys, now);
+            }
+            Route::Issue { repo, number } => {
+                let issue =
+                    f.get::<Option<Box<IssueDetail>>>(&DataKey::Issue(repo.clone(), *number));
+                match issue.show(&mut page, &format!("{repo}#{number}")) {
+                    Some(Some(issue)) => pages::issue(&mut page, issue, icons, keys, aside, now),
+                    // Redirecting to the pull request.
+                    Some(None) => page.line(vec![Seg::new("Loading…", Role::Meta)]),
+                    None => {}
                 }
             }
-            Route::Issue { repo, number } => match self.get(&DataKey::Issue(repo.clone(), *number))
-            {
-                Some(Data::Issue(Some(issue))) => {
-                    pages::issue(&mut page, issue, icons, keys, aside, now);
-                }
-                // Redirecting to the pull request.
-                Some(Data::Issue(None)) => page.line(vec![Seg::new("Loading…", Role::Meta)]),
-                _ => missing(&mut page, &format!("{repo}#{number}")),
-            },
             Route::Pr { pr, tab } => {
-                let detail = self.prs.get(pr).and_then(|r| r.data.as_ref());
-                let activity = self.activity(pr);
-                match (detail, tab) {
-                    (Some(d), PrTab::Conversation) => {
-                        pages::pr_conversation(&mut page, pr, d, activity, aside, cx);
+                let activity = f.get(&DataKey::PrActivity(pr.clone()));
+                if let Some(d) = f.of(self.prs.get(pr)).show(&mut page, &pr.to_string()) {
+                    match tab {
+                        PrTab::Conversation => {
+                            pages::pr_conversation(&mut page, pr, d, activity, aside, cx);
+                        }
+                        PrTab::Commits => pages::pr_commits(&mut page, pr, d, activity, now),
+                        PrTab::Checks => {
+                            let checks = f.get(&DataKey::PrChecks(pr.clone()));
+                            pages::pr_checks(&mut page, pr, d, checks, now);
+                        }
                     }
-                    (Some(d), PrTab::Commits) => pages::pr_commits(&mut page, pr, d, activity, now),
-                    (Some(d), PrTab::Checks) => {
-                        let checks = self.checks(&DataKey::PrChecks(pr.clone()));
-                        pages::pr_checks(&mut page, pr, d, checks, now);
-                    }
-                    (None, _) => missing(&mut page, &pr.to_string()),
                 }
             }
-            Route::Stargazers(_) | Route::Watchers(_) | Route::Forks(_) => {
-                let data = paged(route).and_then(|key| self.get(&key));
-                let title = match route {
-                    Route::Stargazers(_) => "Stargazers",
-                    Route::Watchers(_) => "Watchers",
-                    _ => "Forks",
-                };
-                match data {
-                    None if matches!(error, Some((_, false))) => {
-                        missing(&mut page, &title.to_lowercase());
-                    }
-                    Some(Data::RepoPage(r)) => pages::repos(&mut page, title, Some(r), now),
-                    Some(Data::Users(r)) => pages::people_list(&mut page, title, Some(r)),
-                    _ => pages::people_list(&mut page, title, None),
-                }
-            }
-            Route::Releases(repo) | Route::Tags(repo) => {
-                let data = paged(route).and_then(|key| self.get(&key));
-                match data {
-                    None if matches!(error, Some((_, false))) => missing(&mut page, "the list"),
-                    Some(Data::Tags(t)) => pages::tags(&mut page, repo, Some(t), now),
-                    Some(Data::Releases(r)) => pages::releases(&mut page, repo, Some(r), now),
-                    _ if matches!(route, Route::Tags(_)) => pages::tags(&mut page, repo, None, now),
-                    _ => pages::releases(&mut page, repo, None, now),
-                }
-            }
-            Route::Branches(repo) => match self.get(&DataKey::Branches(repo.clone())) {
-                Some(Data::Branches(b)) => pages::branches(&mut page, repo, Some(b), icons, now),
-                None if matches!(error, Some((_, false))) => missing(&mut page, "the branches"),
-                _ => pages::branches(&mut page, repo, None, icons, now),
-            },
+            Route::Stargazers(_) => pages::people_list(&mut page, "Stargazers", f.paged(route)),
+            Route::Watchers(_) => pages::people_list(&mut page, "Watchers", f.paged(route)),
+            Route::Forks(_) => pages::repos(&mut page, "Forks", f.paged(route), now),
+            Route::Releases(repo) => pages::releases(&mut page, repo, f.paged(route), now),
+            Route::Tags(repo) => pages::tags(&mut page, repo, f.paged(route), now),
+            Route::Branches(repo) => pages::branches(&mut page, repo, f.paged(route), icons, now),
             Route::Milestones { repo, closed } => {
-                match self.get(&DataKey::Milestones(repo.clone(), *closed)) {
-                    Some(Data::Milestones(m)) => {
-                        pages::milestones(&mut page, repo, Some(m), *closed, now);
-                    }
-                    None if matches!(error, Some((_, false))) => {
-                        missing(&mut page, "the milestones");
-                    }
-                    _ => pages::milestones(&mut page, repo, None, *closed, now),
-                }
+                pages::milestones(&mut page, repo, f.paged(route), *closed, now);
             }
-            Route::Milestone { repo, number } => {
-                match self.get(&DataKey::Milestone(repo.clone(), *number)) {
-                    Some(Data::Milestone(m)) => pages::milestone(&mut page, repo, m, icons, now),
-                    _ => missing(&mut page, &route.title()),
+            Route::Milestone { repo, .. } => {
+                if let Some(m) = f.paged(route).show(&mut page, &title) {
+                    pages::milestone(&mut page, repo, m, icons, now);
                 }
             }
             Route::Compare { repo, spec } => {
-                match self.get(&DataKey::Compare(repo.clone(), spec.clone())) {
-                    Some(Data::Compare(c)) => pages::compare(&mut page, repo, spec, c, now),
-                    _ => missing(&mut page, &route.title()),
+                if let Some(c) = f.paged(route).show(&mut page, &title) {
+                    pages::compare(&mut page, repo, spec, c, now);
                 }
             }
             Route::Wiki { repo, page: name } => {
-                match self.get(&DataKey::Wiki(repo.clone(), name.clone())) {
-                    Some(Data::Wiki(w)) => pages::wiki(&mut page, repo, w),
-                    _ => missing(&mut page, &route.title()),
+                let key = DataKey::Wiki(repo.clone(), name.clone());
+                if let Some(w) = f.get(&key).show(&mut page, &title) {
+                    pages::wiki(&mut page, repo, w);
                 }
             }
-            Route::Advisories(repo) => match self.get(&DataKey::Advisories(repo.clone())) {
-                Some(Data::Advisories(list)) => {
-                    pages::advisories(&mut page, repo.as_ref(), Some(list), now);
-                }
-                None if matches!(error, Some((_, false))) => missing(&mut page, "the advisories"),
-                _ => pages::advisories(&mut page, repo.as_ref(), None, now),
-            },
+            Route::Advisories(repo) => {
+                pages::advisories(&mut page, repo.as_ref(), f.paged(route), now);
+            }
             Route::Advisory { repo, ghsa } => {
-                match self.get(&DataKey::Advisory(repo.clone(), ghsa.clone())) {
-                    Some(Data::Advisory(a)) => pages::advisory(&mut page, a, now),
-                    _ => missing(&mut page, ghsa),
+                let key = DataKey::Advisory(repo.clone(), ghsa.clone());
+                if let Some(a) = f.get(&key).show(&mut page, ghsa) {
+                    pages::advisory(&mut page, a, now);
                 }
             }
-            Route::Teams(org) => match self.get(&DataKey::Teams(org.to_lowercase())) {
-                Some(Data::Teams(t)) => pages::teams(&mut page, org, Some(t)),
-                None if matches!(error, Some((_, false))) => missing(&mut page, "the teams"),
-                _ => pages::teams(&mut page, org, None),
-            },
+            Route::Teams(org) => pages::teams(&mut page, org, f.paged(route)),
             Route::Team { org, slug } => {
-                match self.get(&DataKey::Team(org.to_lowercase(), slug.clone())) {
-                    Some(Data::Team(t)) => pages::team(&mut page, org, t),
-                    _ => missing(&mut page, &route.title()),
+                let key = DataKey::Team(org.to_lowercase(), slug.clone());
+                if let Some(t) = f.get(&key).show(&mut page, &title) {
+                    pages::team(&mut page, org, t);
                 }
             }
-            Route::Gist { id, .. } => match self.get(&DataKey::Gist(id.clone())) {
-                Some(Data::Gist(g)) => pages::gist(&mut page, g, now),
-                _ => missing(&mut page, &route.title()),
-            },
-            Route::Gists(login) => match self.get(&DataKey::Gists(login.to_lowercase())) {
-                Some(Data::Gists(g)) => pages::gists(&mut page, login, Some(g), now),
-                None if matches!(error, Some((_, false))) => missing(&mut page, "the gists"),
-                _ => pages::gists(&mut page, login, None, now),
-            },
-            Route::Deployments { repo, environment } => {
-                let list = match self.get(&DataKey::Deployments(repo.clone(), environment.clone()))
-                {
-                    Some(Data::Deployments(d)) => Some(&**d),
-                    _ => None,
-                };
-                if list.is_none() && matches!(error, Some((_, false))) {
-                    missing(&mut page, "the deployments");
-                } else {
-                    pages::deployments(&mut page, repo, list, environment.as_deref(), now);
+            Route::Gist { id, .. } => {
+                if let Some(g) = f.get(&DataKey::Gist(id.clone())).show(&mut page, &title) {
+                    pages::gist(&mut page, g, now);
                 }
+            }
+            Route::Gists(login) => pages::gists(&mut page, login, f.paged(route), now),
+            Route::Deployments { repo, environment } => {
+                let env = environment.as_deref();
+                pages::deployments(&mut page, repo, f.paged(route), env, now);
             }
             Route::Discussions { of, category } => {
-                let list = match self.get(&DataKey::Discussions(of.clone(), category.clone())) {
-                    Some(Data::Discussions(d)) => Some(&**d),
-                    _ => None,
+                let list = f.paged(route);
+                let base = Route::Discussions {
+                    of: of.clone(),
+                    category: None,
                 };
-                if list.is_none() && matches!(error, Some((_, false))) {
-                    missing(&mut page, "the discussions");
-                } else {
-                    let base = Route::Discussions {
-                        of: of.clone(),
-                        category: None,
-                    };
-                    pages::discussions(&mut page, &base.url(), list, category.as_deref(), now);
-                }
+                pages::discussions(&mut page, &base.url(), list, category.as_deref(), now);
             }
             Route::Discussion { of, number } => {
-                match self.get(&DataKey::Discussion(of.clone(), *number)) {
-                    Some(Data::Discussion(d)) => pages::discussion(&mut page, d, now),
-                    _ => missing(&mut page, &route.title()),
+                let key = DataKey::Discussion(of.clone(), *number);
+                if let Some(d) = f.get(&key).show(&mut page, &title) {
+                    pages::discussion(&mut page, d, now);
                 }
             }
             Route::WorkflowRun { repo, run, attempt } => {
-                match self.get(&DataKey::Run(repo.clone(), *run, *attempt)) {
-                    Some(Data::Run(r)) => pages::workflow_run(&mut page, repo, r, now),
-                    _ => missing(&mut page, &route.title()),
+                let key = DataKey::Run(repo.clone(), *run, *attempt);
+                if let Some(r) = f.get(&key).show(&mut page, &title) {
+                    pages::workflow_run(&mut page, repo, r, now);
                 }
             }
             Route::Job {
@@ -872,16 +810,12 @@ impl State {
                 step,
                 query,
                 ..
-            } => match self.get(&DataKey::Job(repo.clone(), *job)) {
-                Some(Data::Job(j)) => {
-                    let log = self
-                        .data
-                        .get(&DataKey::JobLog(repo.clone(), *job))
-                        .and_then(|r| match (&r.data, &r.error) {
-                            (Some(Data::Log(log)), _) => Some(Ok(&**log)),
-                            (_, Some(err)) => Some(Err(err.as_str())),
-                            _ => None,
-                        });
+            } => {
+                if let Some(j) = f
+                    .get(&DataKey::Job(repo.clone(), *job))
+                    .show(&mut page, &title)
+                {
+                    let log = f.get(&DataKey::JobLog(repo.clone(), *job));
                     let at = pages::JobAt {
                         step: *step,
                         query,
@@ -889,62 +823,36 @@ impl State {
                     };
                     pages::job(&mut page, repo, j, log, at, now);
                 }
-                _ => missing(&mut page, &route.title()),
-            },
+            }
             Route::Workflow { repo, file } => {
-                let wf = match self.get(&DataKey::Workflow(repo.clone(), file.clone())) {
-                    Some(Data::Workflow(w)) => Some(&**w),
-                    _ => None,
-                };
-                let runs = match self.get(&DataKey::WorkflowRuns(repo.clone(), file.clone())) {
-                    Some(Data::Runs(r)) => Some(&**r),
-                    _ => None,
-                };
-                if wf.is_none() && runs.is_none() && matches!(error, Some((_, false))) {
-                    missing(&mut page, &route.title());
-                } else {
-                    pages::workflow(&mut page, repo, wf, runs, now);
-                }
+                let wf = f.get(&DataKey::Workflow(repo.clone(), file.clone()));
+                pages::workflow(&mut page, repo, wf, f.paged(route), now);
             }
             Route::CommitChecks { repo, oid } => {
-                let checks = self.checks(&DataKey::CommitChecks(repo.clone(), oid.clone()));
-                if checks.is_none() && matches!(error, Some((_, false))) {
-                    missing(&mut page, "the checks");
-                } else {
-                    pages::commit_checks(&mut page, checks, now);
-                }
+                let checks = f.get(&DataKey::CommitChecks(repo.clone(), oid.clone()));
+                pages::commit_checks(&mut page, checks, now);
             }
             Route::Release { repo, tag } => {
-                match self.get(&DataKey::Release(repo.clone(), tag.clone())) {
-                    Some(Data::Release(r)) => pages::release(&mut page, repo, r, now),
-                    _ => missing(&mut page, &route.title()),
+                let key = DataKey::Release(repo.clone(), tag.clone());
+                if let Some(r) = f.get(&key).show(&mut page, &title) {
+                    pages::release(&mut page, repo, r, now);
                 }
             }
             Route::Actions(repo) => {
-                let checks = self.checks(&DataKey::BranchChecks(repo.clone()));
-                if checks.is_none() && matches!(error, Some((_, false))) {
-                    missing(&mut page, "the checks");
-                } else {
-                    let branch = self
-                        .overview(repo)
-                        .and_then(|o| o.default_branch.as_deref());
-                    pages::actions(&mut page, branch, checks, now);
-                }
+                let checks = f.get(&DataKey::BranchChecks(repo.clone()));
+                #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
+                let overview = f
+                    .get::<RepoOverview>(&DataKey::Repo(repo.clone()))
+                    .ready_unchecked();
+                let branch = overview.and_then(|o| o.default_branch.as_deref());
+                pages::actions(&mut page, branch, checks, now);
             }
             Route::Commits { repo, rev, path } => {
-                let key = DataKey::History(repo.clone(), rev.clone(), path.clone());
-                let history = match self.get(&key) {
-                    Some(Data::History(h)) => Some(&**h),
-                    _ => None,
-                };
-                if history.is_none() && matches!(error, Some((_, false))) {
-                    missing(&mut page, "the commits");
-                } else {
-                    pages::commit_history(&mut page, repo, rev, path, history, now);
-                }
+                pages::commit_history(&mut page, repo, rev, path, f.paged(route), now);
             }
-            Route::Commit { repo, oid } => match self.commit(repo, oid) {
-                Some(c) => {
+            Route::Commit { repo, oid } => {
+                let key = DataKey::Commit(repo.clone(), oid.clone());
+                if let Some(c) = f.get::<CommitDetail>(&key).show(&mut page, &title) {
                     let files = Route::Commit {
                         repo: repo.clone(),
                         oid: c.oid.clone(),
@@ -952,23 +860,20 @@ impl State {
                     let files = format!("{}#files", files.url());
                     pages::commit(&mut page, repo, c, &files, now);
                 }
-                None => missing(&mut page, &route.title()),
-            },
-            Route::User { login, tab } => match self.profile(login) {
-                Some(p) => {
-                    let list = match paged(route).map(|key| (self.get(&key), key)) {
-                        Some((Some(Data::RepoPage(r)), _)) => ProfileList::Repos(Some(r)),
-                        Some((Some(Data::Users(r)), _)) => ProfileList::People(Some(r)),
-                        Some((_, DataKey::Users(_))) => ProfileList::People(None),
-                        Some(_) => ProfileList::Repos(None),
+            }
+            Route::User { login, tab } => {
+                let key = DataKey::Profile(login.to_lowercase());
+                if let Some(p) = f.get(&key).show(&mut page, &format!("@{login}")) {
+                    let list = match paged(route) {
+                        Some(key @ DataKey::Users(_)) => ProfileList::People(f.get(&key)),
+                        Some(key) => ProfileList::Repos(f.get(&key)),
                         None => ProfileList::None,
                     };
                     pages::profile(&mut page, p, *tab, list, now);
                 }
-                _ => missing(&mut page, &format!("@{login}")),
-            },
+            }
         }
-        if let Some((err, true)) = error {
+        if let Some(err) = self.stale_errors(route) {
             // A flash banner on top; what's below is the cached copy.
             let when = self
                 .page_cached_at(route)

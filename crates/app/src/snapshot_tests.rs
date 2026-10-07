@@ -2624,3 +2624,159 @@ fn every_screen_renders_at_odd_sizes() {
         }
     }
 }
+
+/// The page's lines, as text.
+fn page_text(state: &State) -> String {
+    let crate::state::Screen::Page(p) = state.screen() else {
+        panic!("not a page");
+    };
+    p.page
+        .lines
+        .iter()
+        .map(ghtui_ui::page::PageLine::text)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Delivers a failed fetch of `key`.
+fn failed(state: &mut State, key: DataKey) {
+    update(
+        state,
+        Msg::Fetched {
+            key,
+            result: Err(ghtui_api::ApiError::Network("timed out".into())),
+            cached_at: None,
+        },
+    );
+}
+
+/// A blame whose query fails says so, under the file that loaded.
+#[test]
+fn a_failed_blame_says_why_instead_of_loading() {
+    let mut state = with_repo(Mode::Dark, ColorDepth::TrueColor);
+    let (repo, rev, path) = (ghtui(), "main".to_owned(), "src/main.rs".to_owned());
+    let blob = DataKey::Blob(repo.clone(), rev.clone(), path.clone());
+    let route = Route::Blame {
+        repo,
+        rev,
+        path,
+        lines: None,
+    };
+    let _ = state.push(route.clone());
+    fetched(&mut state, blob, Data::Blob(Box::new(fixtures::blob())));
+    let Some(Need::Data(key)) = needs(&route).pop() else {
+        panic!("a blame fetches its blame");
+    };
+    failed(&mut state, key);
+    let text = page_text(&state);
+    assert!(!text.contains("Loading the blame…"), "{text}");
+    assert!(text.contains("timed out"), "{text}");
+}
+
+/// A pull request whose checks fail to load says so on its Checks tab.
+#[test]
+fn failed_pr_checks_say_why_instead_of_loading() {
+    let mut state = with_pr(Mode::Dark);
+    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let _ = state.push(Route::Pr {
+        pr: pr.clone(),
+        tab: PrTab::Checks,
+    });
+    update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(pr_detail()))));
+    let activity = Data::PrActivity(Box::new(fixtures::activity()));
+    fetched(&mut state, DataKey::PrActivity(pr.clone()), activity);
+    failed(&mut state, DataKey::PrChecks(pr));
+    let text = page_text(&state);
+    assert!(!text.contains("Loading checks…"), "{text}");
+    assert!(text.contains("timed out"), "{text}");
+}
+
+/// A workflow whose runs fail to load says so under the workflow.
+#[test]
+fn failed_workflow_runs_say_why_instead_of_loading() {
+    let mut state = with_repo(Mode::Dark, ColorDepth::TrueColor);
+    let _ = state.push(Route::Workflow {
+        repo: ghtui(),
+        file: "ci.yml".into(),
+    });
+    let (workflow, _) = fixtures::workflow_runs();
+    let key = DataKey::Workflow(ghtui(), "ci.yml".into());
+    fetched(&mut state, key, Data::Workflow(Box::new(workflow)));
+    failed(&mut state, DataKey::WorkflowRuns(ghtui(), "ci.yml".into()));
+    let text = page_text(&state);
+    assert!(!text.contains("Loading runs…"), "{text}");
+    assert!(text.contains("timed out"), "{text}");
+}
+
+/// Every page whose needs all fail says why, and nothing on it looks
+/// like it's still loading.
+#[test]
+fn every_route_says_why_when_its_needs_fail() {
+    let urls = [
+        "https://github.com/",
+        "https://github.com/o/r",
+        "https://github.com/o/r/tree/main/src",
+        "https://github.com/o/r/blob/main/src/main.rs",
+        "https://github.com/o/r/blame/main/src/main.rs",
+        "https://github.com/o/r/issues",
+        "https://github.com/o/r/pulls",
+        "https://github.com/search?q=tui&type=repositories",
+        "https://github.com/o/r/issues/1",
+        "https://github.com/o/r/pull/2",
+        "https://github.com/o/r/pull/2/commits",
+        "https://github.com/o/r/pull/2/checks",
+        "https://github.com/o/r/stargazers",
+        "https://github.com/o/r/watchers",
+        "https://github.com/o/r/forks",
+        "https://github.com/o/r/releases",
+        "https://github.com/o/r/releases/tag/v1",
+        "https://github.com/o/r/tags",
+        "https://github.com/o/r/branches",
+        "https://github.com/o/r/milestones",
+        "https://github.com/o/r/milestone/1",
+        "https://github.com/o/r/compare/a...b",
+        "https://github.com/o/r/wiki",
+        "https://github.com/o/r/security/advisories",
+        "https://github.com/o/r/security/advisories/GHSA-2222-3333-4444",
+        "https://github.com/orgs/o/teams",
+        "https://github.com/orgs/o/teams/t",
+        "https://gist.github.com/o/0123456789abcdef0123",
+        "https://gist.github.com/o",
+        "https://github.com/o/r/deployments",
+        "https://github.com/o/r/discussions",
+        "https://github.com/o/r/discussions/3",
+        "https://github.com/o/r/actions",
+        "https://github.com/o/r/actions/runs/4",
+        "https://github.com/o/r/actions/runs/4/job/5",
+        "https://github.com/o/r/actions/workflows/ci.yml",
+        "https://github.com/o/r/commit/0123456789abcdef0123456789abcdef01234567/checks",
+        "https://github.com/o/r/commits/main",
+        "https://github.com/o/r/commit/0123456789abcdef0123456789abcdef01234567",
+        "https://github.com/o",
+        "https://github.com/o?tab=followers",
+        "https://github.com/o?tab=repositories",
+    ];
+    for url in urls {
+        let crate::route::Target::Page(route) = crate::route::Target::from_url(url) else {
+            panic!("{url} isn't a page");
+        };
+        let mut state = state(Mode::Dark, ColorDepth::TrueColor);
+        let _ = state.push(route.clone());
+        let err = || ghtui_api::ApiError::Network("timed out".into());
+        for need in needs(&route) {
+            let msg = match need {
+                Need::Inbox => Msg::Inbox(Err(err())),
+                Need::Pr(pr) => Msg::Pr(pr, Box::new(Err(err()))),
+                Need::Data(key) => Msg::Fetched {
+                    key,
+                    result: Err(err()),
+                    cached_at: None,
+                },
+            };
+            update(&mut state, msg);
+        }
+        let text = page_text(&state);
+        assert!(text.contains("timed out"), "{url}:\n{text}");
+        assert!(!text.contains("Loading"), "{url}:\n{text}");
+    }
+}

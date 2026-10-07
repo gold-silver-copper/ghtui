@@ -22,7 +22,7 @@ use ghtui_theme::{Bg, Syntax};
 
 use crate::markdown::{self, LinkBase};
 use crate::page::{ASIDE_GAP, Frame, Link, Page, PageLine, Role, Seg, Tone};
-use crate::{Icons, cols, time};
+use crate::{Fetched, Icons, cols, time};
 
 // ---- URLs ----------------------------------------------------------------------
 
@@ -327,6 +327,28 @@ fn paged_box<T>(
     page.box_bottom();
 }
 
+/// A list, once it's loaded, in a box titled `name` and its total.
+fn paged_list<T>(
+    page: &mut Page,
+    name: &str,
+    list: Fetched<'_, Results<T>>,
+    empty: &str,
+    row: impl FnMut(&mut Page, &T),
+) {
+    let Some(l) = list.show(page, &name.to_lowercase()) else {
+        return;
+    };
+    let title = format!("{name}  {}", compact(l.total));
+    paged_box(
+        page,
+        vec![Seg::new(title, Role::Strong)],
+        Vec::new(),
+        l,
+        empty,
+        row,
+    );
+}
+
 /// `prefix` then `segs` wrapped inside a box, continuation lines aligned
 /// after the prefix.
 fn hanging(page: &mut Page, prefix: Seg, segs: Vec<Seg>, frame: Frame) {
@@ -418,7 +440,7 @@ pub struct Listing<'a> {
     pub repo: &'a RepoId,
     pub rev: &'a str,
     pub path: &'a str,
-    pub entries: Option<&'a [TreeEntry]>,
+    pub entries: Fetched<'a, [TreeEntry]>,
     pub commits: Option<&'a HashMap<String, CommitInfo>>,
 }
 
@@ -651,10 +673,12 @@ fn file_box(page: &mut Page, dir: Listing<'_>, title: (Vec<Seg>, Vec<Seg>), cx: 
         commits,
     } = dir;
     let PageCtx { icons, now, .. } = cx;
+    let Some(entries) = entries.show(page, "the directory") else {
+        return;
+    };
     page.box_top(title.0, title.1);
     // GitHub's columns: name, the latest commit's message, its age.
     let name_w = entries
-        .unwrap_or_default()
         .iter()
         .map(|e| crate::text::width(&e.name))
         .max()
@@ -668,9 +692,8 @@ fn file_box(page: &mut Page, dir: Listing<'_>, title: (Vec<Seg>, Vec<Seg>), cx: 
         });
     }
     match entries {
-        Some([]) => empty_row(page, "This directory is empty."),
-        None => skeleton(page),
-        Some(entries) => {
+        [] => empty_row(page, "This directory is empty."),
+        entries => {
             for e in entries {
                 let (icon, icon_role, is_tree) = match e.kind {
                     EntryKind::Dir => (icons.folder(), Role::Accent, true),
@@ -763,7 +786,7 @@ pub fn repo_code(
         repo,
         rev: &rev,
         path: "",
-        entries: Some(&o.entries),
+        entries: Fetched::ready(&o.entries),
         commits,
     };
     file_box(page, dir, title, cx);
@@ -877,8 +900,8 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
 pub fn blame(
     page: &mut Page,
     at: FileAt<'_>,
-    blob: Option<&Blob>,
-    blame: Option<&Blame>,
+    blob: Fetched<'_, Blob>,
+    blame: Fetched<'_, Blame>,
     keys: Keys<'_>,
     now: u64,
 ) {
@@ -889,8 +912,10 @@ pub fn blame(
         lines: marked,
     } = at;
     code_toolbar(page, repo, rev, path, true, None, keys);
-    let (Some(blob), Some(blame)) = (blob, blame) else {
-        page.line(vec![Seg::new("Loading the blame…", Role::Meta)]);
+    let Some(blob) = blob.show(page, "the file") else {
+        return;
+    };
+    let Some(blame) = blame.show(page, "the blame") else {
         return;
     };
     let Some(text) = &blob.text else {
@@ -975,11 +1000,10 @@ fn severity_chip(severity: &str) -> Seg {
 pub fn advisories(
     page: &mut Page,
     repo: Option<&RepoId>,
-    list: Option<&Results<Advisory>>,
+    list: Fetched<'_, Results<Advisory>>,
     now: u64,
 ) {
-    let Some(l) = list else {
-        page.line(vec![Seg::new("Loading advisories…", Role::Meta)]);
+    let Some(l) = list.show(page, "advisories") else {
         return;
     };
     // GitHub doesn't count them; `+` while there are more pages.
@@ -1197,20 +1221,11 @@ fn team_row(page: &mut Page, org: &str, t: &TeamSummary) {
 }
 
 /// An organization's teams, the ones you can see.
-pub fn teams(page: &mut Page, org: &str, list: Option<&Results<TeamSummary>>) {
-    let Some(l) = list else {
-        page.line(vec![Seg::new("Loading teams…", Role::Meta)]);
-        return;
-    };
-    let title = vec![Seg::new(
-        format!("Teams  {}", compact(l.total)),
-        Role::Strong,
-    )];
-    paged_box(
+pub fn teams(page: &mut Page, org: &str, list: Fetched<'_, Results<TeamSummary>>) {
+    paged_list(
         page,
-        title,
-        Vec::new(),
-        l,
+        "Teams",
+        list,
         "No teams you can see: an organization's teams show to its members.",
         |page, t| team_row(page, org, t),
     );
@@ -1389,16 +1404,8 @@ pub fn gist(page: &mut Page, g: &Gist, now: u64) {
 }
 
 /// Someone's public gists, most recently updated first.
-pub fn gists(page: &mut Page, login: &str, list: Option<&Results<GistSummary>>, now: u64) {
-    let Some(l) = list else {
-        page.line(vec![Seg::new("Loading gists…", Role::Meta)]);
-        return;
-    };
-    let title = vec![Seg::new(
-        format!("Gists  {}", compact(l.total)),
-        Role::Strong,
-    )];
-    paged_box(page, title, Vec::new(), l, "No public gists.", |page, g| {
+pub fn gists(page: &mut Page, login: &str, list: Fetched<'_, Results<GistSummary>>, now: u64) {
+    paged_list(page, "Gists", list, "No public gists.", |page, g| {
         item(page, format!("{GIST}/{login}/{}", g.id), |page, link| {
             let name = g.files.first().cloned().unwrap_or_else(|| g.id.clone());
             let right = vec![Seg::new(time::ago_iso(&g.updated_at, now), Role::Meta)];
@@ -1546,27 +1553,15 @@ fn user_row(page: &mut Page, u: &UserSummary) {
 }
 
 /// A list of people (stargazers, watchers, followers…) that loads more.
-pub fn people_list(page: &mut Page, title: &str, people: Option<&Results<UserSummary>>) {
-    let Some(r) = people else {
-        page.line(vec![Seg::new("Loading…", Role::Meta)]);
-        return;
-    };
-    let title = format!("{title}  {}", compact(r.total));
-    paged_box(
-        page,
-        vec![Seg::new(title, Role::Strong)],
-        Vec::new(),
-        r,
-        "Nobody here yet.",
-        user_row,
-    );
+pub fn people_list(page: &mut Page, title: &str, people: Fetched<'_, Results<UserSummary>>) {
+    paged_list(page, title, people, "Nobody here yet.", user_row);
 }
 
 /// A list of repositories (forks…) that loads more.
-pub fn repos(page: &mut Page, title: &str, repos: Option<&Results<RepoSummary>>, now: u64) {
-    let total = repos.map_or(String::new(), |r| format!("  {}", compact(r.total)));
-    let title = vec![Seg::new(format!("{title}{total}"), Role::Strong)];
-    repo_list_box(page, title, Vec::new(), repos, true, "None yet.", now);
+pub fn repos(page: &mut Page, title: &str, repos: Fetched<'_, Results<RepoSummary>>, now: u64) {
+    paged_list(page, title, repos, "None yet.", |page, r| {
+        repo_row(page, r, now, true);
+    });
 }
 
 /// Repositories in a box that loads more.
@@ -1574,13 +1569,12 @@ fn repo_list_box(
     page: &mut Page,
     title: Vec<Seg>,
     right: Vec<Seg>,
-    repos: Option<&Results<RepoSummary>>,
+    repos: Fetched<'_, Results<RepoSummary>>,
     show_owner: bool,
     empty: &str,
     now: u64,
 ) {
-    let Some(r) = repos else {
-        page.line(vec![Seg::new("Loading…", Role::Meta)]);
+    let Some(r) = repos.show(page, "repositories") else {
         return;
     };
     paged_box(page, title, right, r, empty, |page, repo| {
@@ -1659,7 +1653,7 @@ pub fn issue_list(
     query: &str,
     counts: Option<(u64, u64)>,
     is_pr: bool,
-    results: Option<&Results<IssueSummary>>,
+    results: Fetched<'_, Results<IssueSummary>>,
     cx: PageCtx<'_>,
 ) {
     let PageCtx { icons, keys, now } = cx;
@@ -1698,19 +1692,21 @@ pub fn issue_list(
         Link::Sort,
         Role::Meta,
     );
+    let Some(r) = results.show_or(page, "the list", |page| {
+        page.box_top(title.clone(), vec![sort.clone()]);
+        skeleton(page);
+        page.box_bottom();
+    }) else {
+        return;
+    };
     page.box_top(title, vec![sort]);
-    match results {
-        None => skeleton(page),
-        Some(r) if r.items.is_empty() => {
-            empty_row(page, "No results matched your search.");
-        }
-        Some(r) => {
-            box_rows(page, &r.items, |page, i| {
-                issue_row(page, i, false, icons, now);
-            });
-            more_row(page, r.next.is_some(), r.items.len(), r.total);
-        }
+    if r.items.is_empty() {
+        empty_row(page, "No results matched your search.");
     }
+    box_rows(page, &r.items, |page, i| {
+        issue_row(page, i, false, icons, now);
+    });
+    more_row(page, r.next.is_some(), r.items.len(), r.total);
     page.box_bottom();
 }
 
@@ -1720,7 +1716,7 @@ pub fn search(
     page: &mut Page,
     kind: SearchKind,
     query: &str,
-    results: Option<&SearchResults>,
+    results: Fetched<'_, SearchResults>,
     icons: Icons,
     keys: Keys<'_>,
     now: u64,
@@ -1735,8 +1731,7 @@ pub fn search(
         SearchKind::Commits => "commit",
         SearchKind::Code => "code",
     };
-    let Some(results) = results else {
-        loading_box(page, vec![Seg::new("Searching…", Role::Meta)]);
+    let Some(results) = results.show(page, "results") else {
         return;
     };
     let (total, shown) = results.counts();
@@ -2188,7 +2183,7 @@ pub fn pr_conversation(
     page: &mut Page,
     pr: &PrRef,
     d: &PrDetail,
-    activity: Option<&PrActivity>,
+    activity: Fetched<'_, PrActivity>,
     aside: Option<u16>,
     cx: PageCtx<'_>,
 ) {
@@ -2206,9 +2201,7 @@ pub fn pr_conversation(
         now,
     };
     talk.said(page, op, "opened", &d.created_at, &d.body, true);
-    let Some(a) = activity else {
-        connector(page);
-        page.line(vec![Seg::new("   Loading the conversation…", Role::Meta)]);
+    let Some(a) = activity.show(page, "the conversation") else {
         return;
     };
     earlier_here(
@@ -2283,14 +2276,14 @@ pub fn pr_conversation(
 }
 
 /// A pull request's Checks tab: the checks on its head.
-pub fn pr_checks(page: &mut Page, pr: &PrRef, d: &PrDetail, c: Option<&Checks>, now: u64) {
+pub fn pr_checks(page: &mut Page, pr: &PrRef, d: &PrDetail, c: Fetched<'_, Checks>, now: u64) {
     pr_summary(page, pr, d, now);
     page.blank();
     checks(page, c, now);
 }
 
 /// A repository's Actions tab: the checks on its default branch.
-pub fn actions(page: &mut Page, branch: Option<&str>, c: Option<&Checks>, now: u64) {
+pub fn actions(page: &mut Page, branch: Option<&str>, c: Fetched<'_, Checks>, now: u64) {
     let mut title = vec![Seg::new("Actions", Role::Title)];
     if let Some(branch) = branch {
         title.push(Seg::new(format!("  checks on {branch}"), Role::Meta));
@@ -2304,13 +2297,11 @@ pub fn pr_commits(
     page: &mut Page,
     pr: &PrRef,
     d: &PrDetail,
-    activity: Option<&PrActivity>,
+    activity: Fetched<'_, PrActivity>,
     now: u64,
 ) {
     pr_summary(page, pr, d, now);
-    let Some(a) = activity else {
-        page.blank();
-        page.line(vec![Seg::new("Loading commits…", Role::Meta)]);
+    let Some(a) = activity.show(page, "commits") else {
         return;
     };
     earlier_here(page, a.total_commits, a.commits.len(), "commit", "commits");
@@ -2365,7 +2356,7 @@ pub fn commit_history(
     repo: &RepoId,
     rev: &str,
     path: &str,
-    history: Option<&Results<CommitInfo>>,
+    history: Fetched<'_, Results<CommitInfo>>,
     now: u64,
 ) {
     let mut title = vec![Seg::new("Commits", Role::Title)];
@@ -2377,8 +2368,7 @@ pub fn commit_history(
     title.push(Seg::new(at, Role::Meta));
     page.wrapped(title, 0, Frame::None);
     page.blank();
-    let Some(h) = history else {
-        page.line(vec![Seg::new("Loading commits…", Role::Meta)]);
+    let Some(h) = history.show(page, "commits") else {
         return;
     };
     if h.items.is_empty() {
@@ -2403,9 +2393,8 @@ fn outcome_mark(o: CheckOutcome) -> (&'static str, Role) {
 
 /// The checks on a commit, grouped by workflow or app, failures first.
 /// Each links to its details on GitHub (logs, re-runs).
-pub fn checks(page: &mut Page, checks: Option<&Checks>, now: u64) {
-    let Some(c) = checks else {
-        page.line(vec![Seg::new("Loading checks…", Role::Meta)]);
+pub fn checks(page: &mut Page, checks: Fetched<'_, Checks>, now: u64) {
+    let Some(c) = checks.show(page, "checks") else {
         return;
     };
     let sha = crate::text::short_sha(&c.oid);
@@ -2763,13 +2752,12 @@ const STEP_LINES: usize = 400;
 /// A job: its steps, each collapsed to its outcome, failing ones (and the
 /// one a link points at) expanded with their log. With `query`, only the
 /// log lines that contain it, under their steps.
-/// A job's page. `log` is `None` while it loads, and the error if it
-/// couldn't.
+/// A job's page, and its log.
 pub fn job(
     page: &mut Page,
     repo: &RepoId,
     job: &Job,
-    log: Option<Result<&JobLog, &str>>,
+    log: Fetched<'_, JobLog>,
     at: JobAt<'_>,
     now: u64,
 ) {
@@ -2796,8 +2784,9 @@ pub fn job(
         filter_field(page, at.query, at.keys);
         page.blank();
     }
+    let log = log.text("the log");
     let lines = match log {
-        Some(Ok(log)) if !log.running => Some(step_lines(job, &log.cut, &log.text)),
+        Ok(log) if !log.running => Some(step_lines(job, &log.cut, &log.text)),
         _ => None,
     };
     let title = vec![Seg::new(
@@ -2811,13 +2800,10 @@ pub fn job(
     page.box_top(title, right);
     // GitHub drops an old job's steps; its log may be gone too.
     if job.steps.is_empty() {
-        let text = match log {
-            None => "Loading the log…".to_owned(),
-            Some(Err(err)) => format!("Couldn't load the log: {err}"),
-            Some(Ok(l)) if l.running => {
-                "The job is still running (o follows it on GitHub)".to_owned()
-            }
-            Some(Ok(_)) => "GitHub lists no steps for this job (o shows it on GitHub)".to_owned(),
+        let text = match &log {
+            Err(why) => why.clone(),
+            Ok(l) if l.running => "The job is still running (o follows it on GitHub)".to_owned(),
+            Ok(_) => "GitHub lists no steps for this job (o shows it on GitHub)".to_owned(),
         };
         empty_row(page, &text);
     }
@@ -2853,10 +2839,9 @@ pub fn job(
             continue;
         }
         let Some(lines) = &lines else {
-            let text = match log {
-                None => "Loading the log…".to_owned(),
-                Some(Err(err)) => format!("Couldn't load the log: {err}"),
-                Some(Ok(_)) => "The job is still running: GitHub has its log once it ends (o follows it on GitHub)".to_owned(),
+            let text = match &log {
+                Err(why) => why.clone(),
+                Ok(_) => "The job is still running: GitHub has its log once it ends (o follows it on GitHub)".to_owned(),
             };
             body(page, vec![Seg::new(text, Role::Meta)]);
             continue;
@@ -2965,11 +2950,11 @@ pub struct JobAt<'a> {
 pub fn workflow(
     page: &mut Page,
     repo: &RepoId,
-    wf: Option<&Workflow>,
-    runs: Option<&Results<RunSummary>>,
+    wf: Fetched<'_, Workflow>,
+    runs: Fetched<'_, Results<RunSummary>>,
     now: u64,
 ) {
-    if let Some(wf) = wf {
+    if let Some(wf) = wf.show(page, "the workflow") {
         let mut title = vec![Seg::new(wf.name.clone(), Role::Title)];
         if wf.state != "active" {
             title.push(space());
@@ -2985,15 +2970,7 @@ pub fn workflow(
         page.wrapped(vec![file], 0, Frame::None);
         page.blank();
     }
-    let Some(r) = runs else {
-        page.line(vec![Seg::new("Loading runs…", Role::Meta)]);
-        return;
-    };
-    let title = vec![Seg::new(
-        format!("Runs  {}", compact(r.total)),
-        Role::Strong,
-    )];
-    paged_box(page, title, Vec::new(), r, "No runs yet.", |page, run| {
+    paged_list(page, "Runs", runs, "No runs yet.", |page, run| {
         item(
             page,
             format!("{}/actions/runs/{}", url::repo(repo), run.id),
@@ -3029,7 +3006,7 @@ pub fn workflow(
 }
 
 /// A commit's checks.
-pub fn commit_checks(page: &mut Page, c: Option<&Checks>, now: u64) {
+pub fn commit_checks(page: &mut Page, c: Fetched<'_, Checks>, now: u64) {
     checks(page, c, now);
 }
 
@@ -3040,12 +3017,11 @@ pub fn commit_checks(page: &mut Page, c: Option<&Checks>, now: u64) {
 pub fn discussions(
     page: &mut Page,
     base: &str,
-    list: Option<&DiscussionList>,
+    list: Fetched<'_, DiscussionList>,
     category: Option<&str>,
     now: u64,
 ) {
-    let Some(l) = list else {
-        page.line(vec![Seg::new("Loading discussions…", Role::Meta)]);
+    let Some(l) = list.show(page, "discussions") else {
         return;
     };
     if !l.categories.is_empty() {
@@ -3244,27 +3220,15 @@ fn release_meta(r: &Release, now: u64) -> String {
 }
 
 /// A repository's releases, newest first, each linked to its page.
-pub fn releases(page: &mut Page, repo: &RepoId, list: Option<&Results<Release>>, now: u64) {
-    let Some(l) = list else {
-        page.line(vec![Seg::new("Loading releases…", Role::Meta)]);
-        return;
-    };
-    let title = format!("Releases  {}", compact(l.total));
-    paged_box(
-        page,
-        vec![Seg::new(title, Role::Strong)],
-        Vec::new(),
-        l,
-        "No releases yet.",
-        |page, r| {
-            item(page, url::release(repo, &r.tag), |page, link| {
-                let mut segs = vec![Seg::linked(r.name.clone(), Role::Link, link)];
-                release_chips(&mut segs, r);
-                body(page, segs);
-                body(page, vec![Seg::new(release_meta(r, now), Role::Meta)]);
-            });
-        },
-    );
+pub fn releases(page: &mut Page, repo: &RepoId, list: Fetched<'_, Results<Release>>, now: u64) {
+    paged_list(page, "Releases", list, "No releases yet.", |page, r| {
+        item(page, url::release(repo, &r.tag), |page, link| {
+            let mut segs = vec![Seg::linked(r.name.clone(), Role::Link, link)];
+            release_chips(&mut segs, r);
+            body(page, segs);
+            body(page, vec![Seg::new(release_meta(r, now), Role::Meta)]);
+        });
+    });
 }
 
 /// A release: its notes and its assets (downloads stay on GitHub).
@@ -3327,38 +3291,26 @@ pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
 }
 
 /// A repository's tags, each linked to its code.
-pub fn tags(page: &mut Page, repo: &RepoId, list: Option<&Results<TagInfo>>, now: u64) {
-    let Some(l) = list else {
-        page.line(vec![Seg::new("Loading tags…", Role::Meta)]);
-        return;
-    };
-    let title = format!("Tags  {}", compact(l.total));
-    paged_box(
-        page,
-        vec![Seg::new(title, Role::Strong)],
-        Vec::new(),
-        l,
-        "No tags yet.",
-        |page, t| {
-            item(page, url::tree(repo, &t.name, ""), |page, link| {
-                let mut right = Vec::new();
-                if let Some(date) = &t.date {
-                    right.push(Seg::new(time::ago_iso(date, now), Role::Meta));
-                }
-                if let Some(oid) = &t.oid {
-                    right.push(Seg::new(
-                        format!("  {}", crate::text::short_sha(oid)),
-                        Role::Code,
-                    ));
-                }
-                page.box_line(
-                    vec![Seg::linked(t.name.clone(), Role::Link, link)],
-                    right,
-                    0,
-                );
-            });
-        },
-    );
+pub fn tags(page: &mut Page, repo: &RepoId, list: Fetched<'_, Results<TagInfo>>, now: u64) {
+    paged_list(page, "Tags", list, "No tags yet.", |page, t| {
+        item(page, url::tree(repo, &t.name, ""), |page, link| {
+            let mut right = Vec::new();
+            if let Some(date) = &t.date {
+                right.push(Seg::new(time::ago_iso(date, now), Role::Meta));
+            }
+            if let Some(oid) = &t.oid {
+                right.push(Seg::new(
+                    format!("  {}", crate::text::short_sha(oid)),
+                    Role::Code,
+                ));
+            }
+            page.box_line(
+                vec![Seg::linked(t.name.clone(), Role::Link, link)],
+                right,
+                0,
+            );
+        });
+    });
 }
 
 /// A repository's branches by name: each one's latest commit and pull
@@ -3366,60 +3318,48 @@ pub fn tags(page: &mut Page, repo: &RepoId, list: Option<&Results<TagInfo>>, now
 pub fn branches(
     page: &mut Page,
     repo: &RepoId,
-    list: Option<&Results<BranchInfo>>,
+    list: Fetched<'_, Results<BranchInfo>>,
     icons: Icons,
     now: u64,
 ) {
-    let Some(l) = list else {
-        page.line(vec![Seg::new("Loading branches…", Role::Meta)]);
-        return;
-    };
-    let title = format!("Branches  {}", compact(l.total));
-    paged_box(
-        page,
-        vec![Seg::new(title, Role::Strong)],
-        Vec::new(),
-        l,
-        "No branches.",
-        |page, b| {
-            item(page, url::tree(repo, &b.name, ""), |page, link| {
-                let mut segs = vec![Seg::linked(b.name.clone(), Role::Link, link)];
-                if b.default {
-                    segs.push(space());
-                    segs.push(chip("Default", Bg::SecondaryContainer));
-                }
-                let mut right = Vec::new();
-                if let Some((number, state)) = b.pr {
-                    let (icon, role) = issue_icon(icons, state, true);
-                    right.push(Seg::new(format!("{icon} "), role));
-                    right.push(link_seg(
-                        page,
-                        format!("#{number}"),
-                        url::pull(&PrRef {
-                            repo: repo.clone(),
-                            number,
-                        }),
-                        Role::Link,
-                    ));
-                    right.push(Seg::new("  ", Role::Meta));
-                }
-                if let Some(date) = &b.date {
-                    right.push(Seg::new(time::ago_iso(date, now), Role::Meta));
-                }
-                page.box_line(segs, right, 0);
-                let mut meta = Vec::new();
-                if let Some(oid) = &b.oid {
-                    let sha = crate::text::short_sha(oid);
-                    meta.push(link_seg(page, sha, url::commit(repo, oid), Role::Code));
-                    meta.push(Seg::new(" ", Role::Meta));
-                }
-                let what = [b.headline.as_deref(), b.author.as_deref()];
-                let text = what.into_iter().flatten().collect::<Vec<_>>().join(" · ");
-                meta.push(Seg::new(text, Role::Meta));
-                body(page, meta);
-            });
-        },
-    );
+    paged_list(page, "Branches", list, "No branches.", |page, b| {
+        item(page, url::tree(repo, &b.name, ""), |page, link| {
+            let mut segs = vec![Seg::linked(b.name.clone(), Role::Link, link)];
+            if b.default {
+                segs.push(space());
+                segs.push(chip("Default", Bg::SecondaryContainer));
+            }
+            let mut right = Vec::new();
+            if let Some((number, state)) = b.pr {
+                let (icon, role) = issue_icon(icons, state, true);
+                right.push(Seg::new(format!("{icon} "), role));
+                right.push(link_seg(
+                    page,
+                    format!("#{number}"),
+                    url::pull(&PrRef {
+                        repo: repo.clone(),
+                        number,
+                    }),
+                    Role::Link,
+                ));
+                right.push(Seg::new("  ", Role::Meta));
+            }
+            if let Some(date) = &b.date {
+                right.push(Seg::new(time::ago_iso(date, now), Role::Meta));
+            }
+            page.box_line(segs, right, 0);
+            let mut meta = Vec::new();
+            if let Some(oid) = &b.oid {
+                let sha = crate::text::short_sha(oid);
+                meta.push(link_seg(page, sha, url::commit(repo, oid), Role::Code));
+                meta.push(Seg::new(" ", Role::Meta));
+            }
+            let what = [b.headline.as_deref(), b.author.as_deref()];
+            let text = what.into_iter().flatten().collect::<Vec<_>>().join(" · ");
+            meta.push(Seg::new(text, Role::Meta));
+            body(page, meta);
+        });
+    });
 }
 // ---- comparisons ------------------------------------------------------------------------------
 
@@ -3501,12 +3441,11 @@ pub fn compare(page: &mut Page, repo: &RepoId, spec: &str, c: &Comparison, now: 
 pub fn deployments(
     page: &mut Page,
     repo: &RepoId,
-    list: Option<&DeploymentList>,
+    list: Fetched<'_, DeploymentList>,
     environment: Option<&str>,
     now: u64,
 ) {
-    let Some(l) = list else {
-        page.line(vec![Seg::new("Loading deployments…", Role::Meta)]);
+    let Some(l) = list.show(page, "deployments") else {
         return;
     };
     let base = format!("{}/deployments", url::repo(repo));
@@ -3609,12 +3548,11 @@ fn due(m: &MilestoneInfo) -> String {
 pub fn milestones(
     page: &mut Page,
     repo: &RepoId,
-    list: Option<&MilestoneList>,
+    list: Fetched<'_, MilestoneList>,
     closed: bool,
     now: u64,
 ) {
-    let Some(l) = list else {
-        page.line(vec![Seg::new("Loading milestones…", Role::Meta)]);
+    let Some(l) = list.show(page, "milestones") else {
         return;
     };
     let base = format!("{}/milestones", url::repo(repo));
@@ -3810,8 +3748,8 @@ pub enum ProfileTab {
 /// The list a profile tab shows, once loaded.
 #[derive(Debug, Clone, Copy)]
 pub enum ProfileList<'a> {
-    Repos(Option<&'a Results<RepoSummary>>),
-    People(Option<&'a Results<UserSummary>>),
+    Repos(Fetched<'a, Results<RepoSummary>>),
+    People(Fetched<'a, Results<UserSummary>>),
     /// The overview's are in the profile.
     None,
 }
@@ -3944,10 +3882,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
             people_list(page, title, people);
             return;
         }
-        (_, ProfileList::None) => {
-            page.line(vec![Seg::new("Loading…", Role::Meta)]);
-            return;
-        }
+        (_, ProfileList::None) => return,
     }
     // The overview: pinned (or popular) repositories, then the rest.
     let (title, repos, show_owner) = if p.pinned.is_empty() {
@@ -4195,8 +4130,8 @@ fn top_languages(repos: &[RepoSummary]) -> Vec<(String, usize)> {
 
 pub fn home(
     page: &mut Page,
-    inbox: Option<&Inbox>,
-    repos: Option<&[RepoSummary]>,
+    inbox: Fetched<'_, Inbox>,
+    repos: Fetched<'_, [RepoSummary]>,
     viewer: Option<&str>,
     icons: Icons,
     now: u64,
@@ -4232,26 +4167,26 @@ pub fn home(
                 issue_row(page, &summary, true, icons, now);
             });
         };
-    match inbox {
-        Some(inbox) => {
-            pr_box(
-                page,
-                "Review requests",
-                inbox.review_requested_total,
-                &inbox.review_requested,
-                "is:open is:pr review-requested:@me archived:false",
-                "Nothing is waiting for your review.",
-            );
-            pr_box(
-                page,
-                "Your pull requests",
-                inbox.authored_total,
-                &inbox.authored,
-                "is:open is:pr author:@me archived:false",
-                "You have no open pull requests.",
-            );
-        }
-        None => loading_box(page, vec![Seg::new("Review requests", Role::Strong)]),
+    let review_requests = vec![Seg::new("Review requests", Role::Strong)];
+    if let Some(inbox) = inbox.show_or(page, "your pull requests", |page| {
+        loading_box(page, review_requests);
+    }) {
+        pr_box(
+            page,
+            "Review requests",
+            inbox.review_requested_total,
+            &inbox.review_requested,
+            "is:open is:pr review-requested:@me archived:false",
+            "Nothing is waiting for your review.",
+        );
+        pr_box(
+            page,
+            "Your pull requests",
+            inbox.authored_total,
+            &inbox.authored,
+            "is:open is:pr author:@me archived:false",
+            "You have no open pull requests.",
+        );
     }
     let all = viewer.map(|login| {
         link_seg(
@@ -4262,15 +4197,13 @@ pub fn home(
         )
     });
     let title = vec![Seg::new("Your repositories", Role::Strong)];
-    match repos {
-        Some(repos) => {
-            let empty = "You don't have any repositories yet.";
-            let all = Vec::from_iter(all);
-            list_box(page, title, all, repos, empty, |page, r| {
-                repo_row(page, r, now, true);
-            });
-        }
-        None => loading_box(page, title),
+    let loading = |page: &mut Page| loading_box(page, title.clone());
+    if let Some(repos) = repos.show_or(page, "your repositories", loading) {
+        let empty = "You don't have any repositories yet.";
+        let all = Vec::from_iter(all);
+        list_box(page, title, all, repos, empty, |page, r| {
+            repo_row(page, r, now, true);
+        });
     }
 }
 
@@ -4409,7 +4342,14 @@ mod tests {
             text: log.into(),
             ..JobLog::default()
         };
-        super::job(page, &RepoId::new("o", "r"), job, Some(Ok(&log)), at, 0);
+        super::job(
+            page,
+            &RepoId::new("o", "r"),
+            job,
+            Fetched::ready(&log),
+            at,
+            0,
+        );
     }
 
     fn one_step_job(outcome: CheckOutcome) -> Job {
@@ -4442,19 +4382,19 @@ mod tests {
             query: "",
             keys: Keys::default(),
         };
-        let expired = "not found: this log has expired";
+        let expired = "this log has expired";
         super::job(
             &mut page,
             &RepoId::new("o", "r"),
             &job,
-            Some(Err(expired)),
+            Fetched::failed(expired),
             at,
             0,
         );
         let text: Vec<String> = page.lines.iter().map(PageLine::text).collect();
         assert!(
             text.iter()
-                .any(|l| l.contains("Couldn't load the log: not found: this log has expired")),
+                .any(|l| l.contains("Couldn't load the log: this log has expired")),
             "{text:#?}"
         );
     }
@@ -4548,7 +4488,7 @@ mod tests {
                 &mut page,
                 &RepoId::new("o", "r"),
                 &job,
-                Some(Ok(&log)),
+                Fetched::ready(&log),
                 at,
                 0,
             );
@@ -4571,14 +4511,14 @@ mod tests {
     /// than loading forever.
     #[test]
     fn a_log_that_isnt_there_says_why() {
-        let text = |job: &Job, log: Result<&JobLog, &str>| {
+        let text = |job: &Job, log: Fetched<'_, JobLog>| {
             let mut page = Page::new(120);
             let at = JobAt {
                 step: Some((1, 1)),
                 query: "",
                 keys: Keys::default(),
             };
-            super::job(&mut page, &RepoId::new("o", "r"), job, Some(log), at, 0);
+            super::job(&mut page, &RepoId::new("o", "r"), job, log, at, 0);
             page.lines
                 .iter()
                 .map(PageLine::text)
@@ -4589,14 +4529,17 @@ mod tests {
             running: true,
             ..JobLog::default()
         };
-        let page = text(&one_step_job(CheckOutcome::Pending), Ok(&running));
+        let page = text(
+            &one_step_job(CheckOutcome::Pending),
+            Fetched::ready(&running),
+        );
         assert!(page.contains("still running"), "{page}");
         let page = text(
             &one_step_job(CheckOutcome::Failure),
-            Err("not found: this log has expired"),
+            Fetched::failed("this log has expired"),
         );
         assert!(
-            page.contains("Couldn't load the log: not found: this log has expired"),
+            page.contains("Couldn't load the log: this log has expired"),
             "{page}"
         );
     }
@@ -4671,7 +4614,8 @@ mod tests {
             lines: Some((3, 3)),
         };
         let mut page = Page::new(100);
-        super::blame(&mut page, at, Some(&blob), Some(&blame), Keys::default(), 0);
+        let (blob, blame) = (Fetched::ready(&blob), Fetched::ready(&blame));
+        super::blame(&mut page, at, blob, blame, Keys::default(), 0);
         let line = page
             .jump
             .and_then(|j| page.lines.get(j))
