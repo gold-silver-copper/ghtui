@@ -287,6 +287,34 @@ pub struct Results<T> {
     pub next: Option<String>,
 }
 
+/// A list's page and its total, for checking they add up.
+pub trait Page {
+    /// Items on this page, and how many GitHub counts in all.
+    fn counts(&self) -> (usize, u64);
+}
+
+impl<T> Page for Results<T> {
+    fn counts(&self) -> (usize, u64) {
+        (self.items.len(), self.total)
+    }
+}
+
+macro_rules! page_in {
+    ($($list:ty => $field:ident),* $(,)?) => {$(
+        impl Page for $list {
+            fn counts(&self) -> (usize, u64) {
+                self.$field.counts()
+            }
+        }
+    )*};
+}
+page_in! {
+    MilestoneList => results,
+    MilestoneDetail => items,
+    DeploymentList => results,
+    DiscussionList => results,
+}
+
 /// No results (without asking `T` for a default).
 impl<T> Default for Results<T> {
     fn default() -> Self {
@@ -1175,6 +1203,8 @@ pub struct RepoPrChecks {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequest", schema_module = "schema")]
 pub struct PrChecks {
+    /// What the newest commit should be.
+    pub head_ref_oid: GitObjectId,
     #[arguments(last: 1)]
     pub commits: PrHeadCommits,
 }
@@ -2357,6 +2387,9 @@ pub struct Comparison {
 /// How many files GitHub lists in a comparison at most.
 const COMPARE_FILES: usize = 300;
 
+/// How many commits GitHub lists in a comparison at most (the newest).
+pub const COMPARE_COMMITS: u64 = 250;
+
 pub(crate) mod rest_compare {
     use serde::Deserialize;
 
@@ -2396,6 +2429,10 @@ pub(crate) mod rest_compare {
 
     #[derive(Deserialize)]
     pub struct Compare {
+        /// Names the comparison's ends by short SHA:
+        /// `…/compare/owner:bcf4368...owner:efd1e47`.
+        #[serde(default)]
+        pub permalink_url: String,
         pub status: String,
         pub ahead_by: u64,
         pub behind_by: u64,
