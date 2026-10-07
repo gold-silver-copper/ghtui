@@ -1313,6 +1313,24 @@ pub(crate) mod diff {
         insta::assert_snapshot!(render(&s));
     }
 
+    /// A link to a file in a diff (`#diff-<hash>`, maybe with a line) goes
+    /// to that file once the files are listed.
+    #[test]
+    fn diff_links_go_to_their_file() {
+        let mut s = state(Mode::Dark, ColorDepth::TrueColor);
+        let hash = crate::diff_screen::path_hash("notes.txt");
+        let url = format!("https://github.com/o/r/pull/7/files#diff-{hash}R1");
+        let _ = s.follow(&ghtui_ui::page::Link::Url(url));
+        s.diffs.insert(DiffOf::Pr(pr()), diff_state());
+        let _ = s.settle_diff();
+        let Screen::Diff(d) = s.screen() else {
+            panic!("the link didn't open a diff");
+        };
+        let doc = &s.diffs[&d.of].doc;
+        assert_eq!(doc.files()[d.cursor.file].meta.path(), "notes.txt");
+        assert_eq!(d.anchor, None);
+    }
+
     #[test]
     fn diff_dark() {
         insta::assert_snapshot!(render(&diff_at(Mode::Dark, 0, 4)));
