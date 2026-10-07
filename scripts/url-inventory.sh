@@ -1,6 +1,6 @@
 #!/bin/sh
 # Prints a real github.com URL for every GraphQL type that has one, from
-# public objects in busy repositories, for crates/app/tests/github_urls.toml.
+# public objects in busy repositories, for crates/app/tests/github_urls.txt.
 # Run by hand (needs `gh auth`); not part of the test suite. Projects (v2)
 # need the read:project scope, which gh tokens lack by default.
 #
