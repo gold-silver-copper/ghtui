@@ -635,7 +635,6 @@ impl State {
             },
             DiffOf::Commit(..) | DiffOf::Range(..) => crate::diff_job::PrBase::default(),
         };
-        // Every input is fetched again.
         let diff = DiffState::fresh();
         let job = diff.job;
         self.diffs.insert(of.clone(), diff);

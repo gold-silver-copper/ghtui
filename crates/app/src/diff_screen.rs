@@ -176,8 +176,7 @@ pub struct RangeView {
     pub to: String,
 }
 
-/// What GitHub and the saved review say of a PR's diff; it outlasts every
-/// rebuild of the diff.
+/// What GitHub and the saved review say of a PR's diff; it outlasts rebuilds.
 #[derive(Debug, Default)]
 pub struct DiffInputs {
     /// GitHub's viewed state and the PR's node ID.
@@ -257,8 +256,7 @@ pub struct DiffState {
     pub moves_requested: bool,
     /// "Since my last review" was asked for and is waiting on data.
     pub since_requested: bool,
-    /// Showing a sub-range of commits instead of the whole PR; changed
-    /// only by [`DiffState::restart`].
+    /// Showing a sub-range of commits instead of the whole PR.
     range: Option<RangeView>,
     /// Files we've already asked the job to prioritize.
     requested: HashSet<usize>,
@@ -267,16 +265,10 @@ pub struct DiffState {
 }
 
 impl DiffState {
-    /// A new job's diff of the whole PR, knowing nothing yet: every input
-    /// is fetched again.
+    /// A new diff of the whole PR that knows nothing yet: all is fetched again.
     pub fn fresh() -> Self {
-        Self::start(DiffInputs::default(), None)
-    }
-
-    /// A new job's diff of `range` (`None`: the whole PR), with `inputs`.
-    fn start(inputs: DiffInputs, range: Option<RangeView>) -> Self {
         Self {
-            inputs,
+            inputs: DiffInputs::default(),
             doc: Doc::default(),
             tree: Vec::new(),
             refs: None,
@@ -285,7 +277,7 @@ impl DiffState {
             mapping_requested: false,
             moves_requested: false,
             since_requested: false,
-            range,
+            range: None,
             requested: HashSet::new(),
             job: next_job(),
         }
@@ -293,7 +285,11 @@ impl DiffState {
 
     /// Starts over for a different commit range, with the same inputs.
     pub fn restart(&mut self, range: Option<RangeView>) {
-        *self = Self::start(std::mem::take(&mut self.inputs), range);
+        *self = Self {
+            inputs: std::mem::take(&mut self.inputs),
+            range,
+            ..Self::fresh()
+        };
     }
 
     /// The commit range shown, if not the whole PR.
