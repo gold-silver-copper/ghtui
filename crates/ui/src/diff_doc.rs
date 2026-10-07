@@ -933,6 +933,14 @@ impl Doc {
         }
     }
 
+    /// Where annotation `ann` (an index into the annotations) first shows:
+    /// its line, or its file's header for a file-level thread.
+    pub fn annotation_pos(&self, ann: u32) -> Option<Pos> {
+        (0..self.total)
+            .map(|g| self.to_pos(g))
+            .find(|p| self.annotation_at(*p) == Some(ann))
+    }
+
     /// Whether a row is where an unresolved thread starts: its first row,
     /// or the line of a collapsed one.
     fn is_open_thread_start(&self, pos: Pos) -> bool {

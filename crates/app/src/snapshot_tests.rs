@@ -1331,6 +1331,36 @@ pub(crate) mod diff {
         assert_eq!(d.anchor, None);
     }
 
+    /// A link to a review comment (`#discussion_r<id>`) opens the diff at
+    /// its thread once the threads are in.
+    #[test]
+    fn review_comment_links_go_to_their_thread() {
+        let mut s = state(Mode::Dark, ColorDepth::TrueColor);
+        let url = "https://github.com/o/r/pull/7#discussion_r42".to_owned();
+        let _ = s.follow(&ghtui_ui::page::Link::Url(url));
+        s.diffs.insert(DiffOf::Pr(pr()), diff_state());
+        let _ = s.settle_diff();
+        let Screen::Diff(d) = s.screen() else {
+            panic!("the link didn't open a diff");
+        };
+        assert!(d.anchor.is_some(), "waits for the threads");
+        let mut thread = crate::fixtures::thread("t", Some(3), false, false);
+        thread.comments[0].url = "https://github.com/o/r/pull/7#discussion_r42".into();
+        if let Some(diff) = s.diffs.get_mut(&DiffOf::Pr(pr())) {
+            diff.set_threads(vec![
+                crate::fixtures::thread("u", Some(1), false, false),
+                thread,
+            ]);
+        }
+        let _ = s.settle_diff();
+        let Screen::Diff(d) = s.screen() else {
+            panic!("not a diff");
+        };
+        let doc = &s.diffs[&d.of].doc;
+        assert_eq!(d.anchor, None);
+        assert_eq!(doc.annotation_at(d.cursor), Some(1), "the second thread");
+    }
+
     #[test]
     fn diff_dark() {
         insta::assert_snapshot!(render(&diff_at(Mode::Dark, 0, 4)));
