@@ -1702,6 +1702,26 @@ pub(crate) mod tests {
             );
         }
 
+        /// A comment's link keeps its anchor however it's opened: in a new
+        /// tab, or from the command line after reopened tabs.
+        #[test]
+        fn anchors_survive_every_way_in() {
+            let anchor = |s: &State| match s.screen() {
+                Screen::Page(p) => p.anchor.clone(),
+                Screen::Diff(_) => None,
+            };
+            let url = "https://github.com/o/r/issues/1#issuecomment-5";
+            let mut s = state();
+            let _ = s.open_url(url, true);
+            assert_eq!(s.tab_count(), 2);
+            assert_eq!(anchor(&s).as_deref(), Some("issuecomment-5"));
+            let mut s = state();
+            s.restore_tabs(&[issue(2).url(), issue(3).url()]);
+            let _ = s.start_at(Target::from_url(url));
+            s.anchor_at(url);
+            assert_eq!(anchor(&s).as_deref(), Some("issuecomment-5"));
+        }
+
         /// A capital hint letter follows the link in a new tab.
         #[test]
         fn capital_hints_open_a_tab() {
