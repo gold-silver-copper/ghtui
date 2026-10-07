@@ -15,8 +15,8 @@ use crate::queries::{self as q, nodes};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capped<T> {
     pub items: Vec<T>,
-    /// Never fewer than `items`; private, so a list's count comes only
-    /// from `new` (or `from`, which claims all of it).
+    /// Private, so a list's count comes only from `new` (or `from`, which
+    /// claims all of it); read as never fewer than `items`.
     total: u64,
 }
 
@@ -51,7 +51,7 @@ impl<T> Capped<T> {
 
     /// How many GitHub has.
     pub fn total(&self) -> u64 {
-        self.total
+        self.total.max(self.items.len() as u64)
     }
 
     /// How many GitHub has that aren't here.
@@ -605,6 +605,13 @@ mod tests {
         assert_eq!(state(open), IssueState::Open);
         let merged = serde_json::json!({ "isDraft": true, "state": "MERGED" });
         assert_eq!(state(merged), IssueState::Merged);
+    }
+
+    /// A count decoded as fewer than its items still reads as no fewer.
+    #[test]
+    fn a_decoded_count_is_never_fewer_than_its_items() {
+        let list: Capped<u8> = serde_json::from_str(r#"{"items":[1,2,3],"total":1}"#).unwrap();
+        assert_eq!((list.total(), list.left_out()), (3, 0));
     }
 
     #[test]
