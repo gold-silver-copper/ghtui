@@ -1013,6 +1013,20 @@ async fn a_jobs_log_says_why_it_isnt_there() {
     }
 }
 
+/// A job that's completed without saying how isn't running, so its log is
+/// fetched rather than waited for.
+#[tokio::test]
+async fn a_completed_job_without_a_conclusion_has_its_log_fetched() {
+    let (gh, seen) = github(vec![
+        Reply::new(200, job_json("completed", "null")),
+        Reply::new(200, "2026-10-01T00:00:00.0000000Z done\n"),
+    ])
+    .await;
+    let log = gh.job_log(&RepoId::new("o", "r"), 2).await.unwrap();
+    assert!(!log.running, "{log:?}");
+    assert_eq!(seen.lock().unwrap().len(), 2);
+}
+
 /// A pending review comes with the commit it's on, so comments for another
 /// diff aren't added to it.
 #[tokio::test]
