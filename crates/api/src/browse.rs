@@ -298,6 +298,10 @@ pub enum SearchResults {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Comment {
+    /// GitHub's number for it, which its links' anchors use
+    /// (`#issuecomment-…`, `#discussioncomment-…`).
+    #[serde(default)]
+    pub id: Option<u64>,
     pub author: String,
     pub body: String,
     pub created_at: String,
@@ -805,6 +809,7 @@ pub struct IssueFull {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "IssueComment", schema_module = "schema")]
 pub struct WireComment {
+    pub database_id: Option<i32>,
     pub author: Option<Actor>,
     pub body: String,
     pub created_at: DateTime,
@@ -1596,6 +1601,242 @@ pub struct CommitChecksQuery {
 pub struct RepoCommitChecks {
     #[arguments(expression: $expression)]
     pub object: Option<ChecksTarget>,
+}
+
+// ---- discussions ------------------------------------------------------------------------------
+
+/// Whose discussions: a repository's, or an organization's (which GitHub
+/// keeps in one of its repositories).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DiscussionsOf {
+    Repo(RepoId),
+    Org(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscussionCategory {
+    pub name: String,
+    pub slug: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscussionSummary {
+    pub number: u64,
+    pub title: String,
+    pub author: String,
+    pub category: String,
+    pub comments: u64,
+    pub answered: bool,
+    pub upvotes: u64,
+    /// ISO 8601.
+    pub updated_at: String,
+}
+
+/// A page of discussions, and the categories to filter by.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscussionList {
+    pub categories: Vec<DiscussionCategory>,
+    pub results: Results<DiscussionSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscussionDetail {
+    /// The repository it's in.
+    pub repo: RepoId,
+    pub number: u64,
+    pub title: String,
+    pub body: String,
+    pub author: String,
+    pub created_at: String,
+    pub category: String,
+    pub answered: bool,
+    pub upvotes: u64,
+    pub comments: Vec<DiscussionComment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscussionComment {
+    pub comment: Comment,
+    pub upvotes: u64,
+    /// The answer to a question.
+    pub answer: bool,
+    pub replies: Vec<Comment>,
+}
+
+pub(crate) mod wire_discussions {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Login {
+        pub login: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct PageInfo {
+        pub has_next_page: bool,
+        pub end_cursor: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Name {
+        pub name: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Count {
+        pub total_count: u64,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Summary {
+        pub number: u64,
+        pub title: String,
+        pub author: Option<Login>,
+        pub category: Name,
+        pub comments: Count,
+        pub is_answered: Option<bool>,
+        pub upvote_count: u64,
+        pub updated_at: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Summaries {
+        pub total_count: u64,
+        pub page_info: PageInfo,
+        pub nodes: Vec<Option<Summary>>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Category {
+        pub id: String,
+        pub name: String,
+        pub slug: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Categories {
+        pub nodes: Vec<Option<Category>>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Reply {
+        pub database_id: Option<u64>,
+        pub author: Option<Login>,
+        pub body: String,
+        pub created_at: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Replies {
+        pub nodes: Vec<Option<Reply>>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct WireComment {
+        pub database_id: Option<u64>,
+        pub author: Option<Login>,
+        pub body: String,
+        pub created_at: String,
+        pub is_answer: bool,
+        pub upvote_count: u64,
+        pub replies: Replies,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Comments {
+        pub nodes: Vec<Option<WireComment>>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Detail {
+        pub number: u64,
+        pub title: String,
+        pub body: String,
+        pub author: Option<Login>,
+        pub created_at: String,
+        pub category: Name,
+        pub is_answered: Option<bool>,
+        pub upvote_count: u64,
+        pub comments: Comments,
+    }
+}
+
+fn login(a: Option<wire_discussions::Login>) -> String {
+    a.map_or_else(|| "ghost".into(), |a| a.login)
+}
+
+impl wire_discussions::Summaries {
+    pub(crate) fn into_results(self) -> Results<DiscussionSummary> {
+        Results {
+            total: self.total_count,
+            items: self
+                .nodes
+                .into_iter()
+                .flatten()
+                .map(|d| DiscussionSummary {
+                    number: d.number,
+                    title: d.title,
+                    author: login(d.author),
+                    category: d.category.name,
+                    comments: d.comments.total_count,
+                    answered: d.is_answered.unwrap_or(false),
+                    upvotes: d.upvote_count,
+                    updated_at: d.updated_at,
+                })
+                .collect(),
+            next: self
+                .page_info
+                .end_cursor
+                .filter(|_| self.page_info.has_next_page),
+        }
+    }
+}
+
+impl wire_discussions::Detail {
+    pub(crate) fn into_detail(self, repo: RepoId) -> DiscussionDetail {
+        let comment = |id, author, body, created_at| Comment {
+            id,
+            author: login(author),
+            body,
+            created_at,
+        };
+        DiscussionDetail {
+            repo,
+            number: self.number,
+            title: self.title,
+            body: self.body,
+            author: login(self.author),
+            created_at: self.created_at,
+            category: self.category.name,
+            answered: self.is_answered.unwrap_or(false),
+            upvotes: self.upvote_count,
+            comments: self
+                .comments
+                .nodes
+                .into_iter()
+                .flatten()
+                .map(|c| DiscussionComment {
+                    upvotes: c.upvote_count,
+                    answer: c.is_answer,
+                    replies: c
+                        .replies
+                        .nodes
+                        .into_iter()
+                        .flatten()
+                        .map(|r| comment(r.database_id, r.author, r.body, r.created_at))
+                        .collect(),
+                    comment: comment(c.database_id, c.author, c.body, c.created_at),
+                })
+                .collect(),
+        }
+    }
 }
 
 // ---- profiles ------------------------------------------------------------------------
@@ -2600,6 +2841,12 @@ pub mod keys {
     pub fn commit_checks(repo: &RepoId, rev: &str) -> String {
         format!("commit-checks:{repo}@{rev}")
     }
+    pub fn discussions(of: &super::DiscussionsOf, category: Option<&str>) -> String {
+        format!("discussions:{of:?}:{category:?}")
+    }
+    pub fn discussion(of: &super::DiscussionsOf, number: u64) -> String {
+        format!("discussion:{of:?}#{number}")
+    }
     pub fn pr_checks(pr: &PrRef) -> String {
         format!("pr-checks:{pr}")
     }
@@ -2850,6 +3097,7 @@ impl IssueFull {
 fn comments(c: IssueComments) -> Vec<Comment> {
     nodes(c.nodes)
         .map(|c| Comment {
+            id: c.database_id.map(count),
             author: author(c.author),
             body: c.body,
             created_at: c.created_at.0,

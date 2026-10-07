@@ -303,6 +303,31 @@ fn with_org(mode: Mode) -> State {
     state
 }
 
+/// A repository's discussions.
+fn with_discussions(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let of = ghtui_api::browse::DiscussionsOf::Repo(ghtui());
+    let route = Route::Discussions { of, category: None };
+    open(
+        &mut state,
+        route,
+        Data::Discussions(Box::new(fixtures::discussions())),
+    );
+    state
+}
+
+/// A discussion.
+fn with_discussion(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let of = ghtui_api::browse::DiscussionsOf::Repo(ghtui());
+    let route = Route::Discussion { of, number: 14603 };
+    open(
+        &mut state,
+        route,
+        Data::Discussion(Box::new(fixtures::discussion())),
+    );
+    state
+}
 /// A workflow run.
 fn with_run(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -617,6 +642,16 @@ fn profile_overview_256_dark() {
     let mut state = with_profile(Mode::Dark, ProfileTab::Overview);
     state.theme = Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::Ansi256);
     insta::assert_snapshot!(render(&sized(state, 100, 80)));
+}
+
+#[test]
+fn discussions_dark() {
+    insta::assert_snapshot!(render(&with_discussions(Mode::Dark)));
+}
+
+#[test]
+fn discussion_light() {
+    insta::assert_snapshot!(render(&sized(with_discussion(Mode::Light), 100, 50)));
 }
 
 #[test]
@@ -1546,10 +1581,10 @@ mod links {
     use ghtui_ui::pages::ProfileTab;
 
     use super::{
-        press, with_actions, with_commit, with_file, with_forks, with_history, with_inbox,
-        with_issue, with_issues, with_job, with_pr, with_pr_checks, with_profile, with_release,
-        with_releases, with_repo, with_repo_search, with_run, with_stargazers, with_tags,
-        with_workflow,
+        press, with_actions, with_commit, with_discussion, with_discussions, with_file, with_forks,
+        with_history, with_inbox, with_issue, with_issues, with_job, with_pr, with_pr_checks,
+        with_profile, with_release, with_releases, with_repo, with_repo_search, with_run,
+        with_stargazers, with_tags, with_workflow,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1617,6 +1652,8 @@ mod links {
             ("release", with_release(Mode::Dark)),
             ("tags", with_tags(Mode::Dark)),
             ("run", with_run(Mode::Dark)),
+            ("discussions", with_discussions(Mode::Dark)),
+            ("discussion", with_discussion(Mode::Dark)),
             ("job", with_job(Mode::Dark, None)),
             ("workflow", with_workflow(Mode::Dark)),
         ]

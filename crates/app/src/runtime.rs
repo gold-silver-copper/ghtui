@@ -744,6 +744,13 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Run(repo, run, attempt) => at(gh.cached(&keys::run(repo, *run, *attempt))?, |v| {
             Data::Run(Box::new(v))
         }),
+        DataKey::Discussions(of, category) => at(
+            gh.cached(&keys::discussions(of, category.as_deref()))?,
+            |v| Data::Discussions(Box::new(v)),
+        ),
+        DataKey::Discussion(of, n) => at(gh.cached(&keys::discussion(of, *n))?, |v| {
+            Data::Discussion(Box::new(v))
+        }),
         DataKey::Job(repo, job) => at(gh.cached(&keys::job(repo, *job))?, |v| {
             Data::Job(Box::new(v))
         }),
@@ -789,6 +796,9 @@ async fn fetch_more(gh: &GitHub, key: &DataKey, after: String) -> Result<Data, A
             Data::RepoPage(Box::new(gh.owner_repos(login, *sort, Some(after)).await?))
         }
         DataKey::Stars(login) => Data::RepoPage(Box::new(gh.starred(login, Some(after)).await?)),
+        DataKey::Discussions(of, category) => Data::Discussions(Box::new(
+            gh.discussions(of, category.as_deref(), Some(after)).await?,
+        )),
         DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, Some(after)).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, Some(after)).await?)),
         DataKey::WorkflowRuns(repo, file) => {
@@ -829,6 +839,10 @@ pub(crate) async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> 
         DataKey::Run(repo, run, attempt) => {
             Data::Run(Box::new(gh.workflow_run(repo, *run, *attempt).await?))
         }
+        DataKey::Discussions(of, category) => Data::Discussions(Box::new(
+            gh.discussions(of, category.as_deref(), None).await?,
+        )),
+        DataKey::Discussion(of, n) => Data::Discussion(Box::new(gh.discussion(of, *n).await?)),
         DataKey::Job(repo, job) => Data::Job(Box::new(gh.job(repo, *job).await?)),
         DataKey::JobLog(repo, job) => Data::Log(Arc::new(gh.job_log(repo, *job).await?)),
         DataKey::Workflow(repo, file) => Data::Workflow(Box::new(gh.workflow(repo, file).await?)),

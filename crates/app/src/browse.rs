@@ -5,9 +5,10 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blob, Checks, CommitDetail, CommitInfo, IssueDetail, Job, PrActivity, Profile, Refs, Release,
-    RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo,
-    TreeEntry, UserList, UserSummary, Workflow, WorkflowRun,
+    Blob, Checks, CommitDetail, CommitInfo, DiscussionDetail, DiscussionList, DiscussionsOf,
+    IssueDetail, Job, PrActivity, Profile, Refs, Release, RepoOverview, RepoSort, RepoSummary,
+    Results, RunSummary, SearchKind, SearchResults, TagInfo, TreeEntry, UserList, UserSummary,
+    Workflow, WorkflowRun,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::page::{Link, Page, Role, Seg};
@@ -50,6 +51,8 @@ pub enum DataKey {
     Releases(RepoId),
     Release(RepoId, String),
     Tags(RepoId),
+    Discussions(DiscussionsOf, Option<String>),
+    Discussion(DiscussionsOf, u64),
     /// A workflow run (an attempt of it, or the latest).
     Run(RepoId, u64, Option<u64>),
     Job(RepoId, u64),
@@ -87,6 +90,8 @@ pub enum Data {
     /// A page of a list of repositories.
     RepoPage(Box<Results<RepoSummary>>),
     Releases(Box<Results<Release>>),
+    Discussions(Box<DiscussionList>),
+    Discussion(Box<DiscussionDetail>),
     Run(Box<WorkflowRun>),
     Job(Box<Job>),
     Log(Arc<String>),
@@ -106,6 +111,7 @@ impl Data {
             Data::RepoPage(r) => r.next.as_deref(),
             Data::Releases(r) => r.next.as_deref(),
             Data::Runs(r) => r.next.as_deref(),
+            Data::Discussions(d) => d.results.next.as_deref(),
             Data::Tags(r) => r.next.as_deref(),
             _ => None,
         }
@@ -120,6 +126,7 @@ impl Data {
             (Data::RepoPage(a), Data::RepoPage(b)) => extend(a, *b),
             (Data::Releases(a), Data::Releases(b)) => extend(a, *b),
             (Data::Runs(a), Data::Runs(b)) => extend(a, *b),
+            (Data::Discussions(a), Data::Discussions(b)) => extend(&mut a.results, b.results),
             (Data::Tags(a), Data::Tags(b)) => extend(a, *b),
             _ => {}
         }
@@ -136,6 +143,9 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Watchers(repo) => Some(DataKey::Users(UserList::Watchers(repo.clone()))),
         Route::Forks(repo) => Some(DataKey::Forks(repo.clone())),
         Route::Releases(repo) => Some(DataKey::Releases(repo.clone())),
+        Route::Discussions { of, category } => {
+            Some(DataKey::Discussions(of.clone(), category.clone()))
+        }
         Route::Workflow { repo, file } => Some(DataKey::WorkflowRuns(repo.clone(), file.clone())),
         Route::User { login, tab } => {
             let login = login.to_lowercase();
@@ -203,6 +213,17 @@ pub fn needs(route: &Route) -> Vec<Need> {
         ],
         Route::Pr { pr, .. } => vec![Need::Pr(pr.clone()), Need::Data(K::PrActivity(pr.clone()))],
         Route::Actions(repo) => vec![header(repo), Need::Data(K::BranchChecks(repo.clone()))],
+        Route::Discussions { of, .. } | Route::Discussion { of, .. } => {
+            let header = match of {
+                DiscussionsOf::Repo(repo) => Some(header(repo)),
+                DiscussionsOf::Org(_) => None,
+            };
+            let own = match route {
+                Route::Discussion { number, .. } => Some(K::Discussion(of.clone(), *number)),
+                _ => paged(route),
+            };
+            header.into_iter().chain(own.map(Need::Data)).collect()
+        }
         Route::WorkflowRun { repo, run, attempt } => {
             vec![
                 header(repo),
@@ -274,8 +295,10 @@ pub struct PageScreen {
     /// Nothing has been selected or scrolled yet: select the first visible
     /// item once the page has items.
     pub fresh: bool,
-    /// The page has been scrolled to its [`Page::jump`] (once).
+    /// The page has been scrolled to its [`Page::jump`] or anchor (once).
     pub jumped: bool,
+    /// The `#fragment` of the link that opened it: a comment to scroll to.
+    pub anchor: Option<String>,
 }
 
 impl PageScreen {
@@ -288,6 +311,7 @@ impl PageScreen {
                 | Route::Blob { .. }
                 | Route::Commit { .. }
                 | Route::Release { .. }
+                | Route::Discussion { .. }
                 | Route::Job { .. }
                 | Route::Pr {
                     tab: PrTab::Conversation,
@@ -302,6 +326,7 @@ impl PageScreen {
             built: None,
             fresh: list,
             jumped: false,
+            anchor: None,
         }
     }
 
@@ -608,6 +633,27 @@ impl State {
                     _ => pages::releases(&mut page, repo, None, now),
                 }
             }
+            Route::Discussions { of, category } => {
+                let list = match self.get(&DataKey::Discussions(of.clone(), category.clone())) {
+                    Some(Data::Discussions(d)) => Some(&**d),
+                    _ => None,
+                };
+                if list.is_none() && matches!(error, Some((_, false))) {
+                    missing(&mut page, "the discussions");
+                } else {
+                    let base = Route::Discussions {
+                        of: of.clone(),
+                        category: None,
+                    };
+                    pages::discussions(&mut page, &base.url(), list, category.as_deref(), now);
+                }
+            }
+            Route::Discussion { of, number } => {
+                match self.get(&DataKey::Discussion(of.clone(), *number)) {
+                    Some(Data::Discussion(d)) => pages::discussion(&mut page, d, now),
+                    _ => missing(&mut page, &route.title()),
+                }
+            }
             Route::WorkflowRun { repo, run, attempt } => {
                 match self.get(&DataKey::Run(repo.clone(), *run, *attempt)) {
                     Some(Data::Run(r)) => pages::workflow_run(&mut page, repo, r, now),
@@ -731,6 +777,9 @@ impl State {
             }
             if let Some(jump) = &mut page.jump {
                 *jump += n;
+            }
+            for line in page.anchors.values_mut() {
+                *line += n;
             }
         }
         page

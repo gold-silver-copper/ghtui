@@ -3,7 +3,8 @@
 use crossterm::event::KeyEvent;
 use ghtui_api::browse::{
     Asset, Blob, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo, Contributed,
-    Contributions, EntryKind, IssueDetail, IssueState, IssueSummary, Job, JobSummary,
+    Contributions, DiscussionCategory, DiscussionComment, DiscussionDetail, DiscussionList,
+    DiscussionSummary, EntryKind, IssueDetail, IssueState, IssueSummary, Job, JobSummary,
     MonthActivity, PrActivity, Profile, Readme, Release, RepoOverview, RepoSummary, Results,
     ReviewSummary, RunSummary, SearchResults, Step, TagInfo, TreeEntry, UserSummary, Week,
     Workflow, WorkflowRun,
@@ -350,6 +351,7 @@ pub fn issue() -> IssueDetail {
         labels: vec![label("bug", "d73a4a"), label("ui", "1d76db")],
         assignees: vec!["hubot".into()],
         comments: vec![Comment {
+            id: Some(1_000_001),
             author: "hubot".into(),
             body: "Agreed. 120 columns, centered?".into(),
             created_at: "2026-10-02T12:00:00Z".into(),
@@ -362,6 +364,7 @@ pub fn activity() -> PrActivity {
     PrActivity {
         id: NodeId::new("PR_12"),
         comments: vec![Comment {
+            id: Some(1_000_001),
             author: "hubot".into(),
             body: "Does this cover the 256-color fallback?".into(),
             created_at: "2026-10-01T09:00:00Z".into(),
@@ -783,6 +786,78 @@ pub fn workflow_runs() -> (Workflow, Results<RunSummary>) {
     (workflow, runs)
 }
 
+/// A page of discussions with two categories.
+pub fn discussions() -> DiscussionList {
+    let summary = |number, title: &str, category: &str, answered| DiscussionSummary {
+        number,
+        title: title.into(),
+        author: "octocat".into(),
+        category: category.into(),
+        comments: 3,
+        answered,
+        upvotes: 12,
+        updated_at: "2026-10-03T12:00:00Z".into(),
+    };
+    DiscussionList {
+        categories: vec![
+            DiscussionCategory {
+                name: "Ideas".into(),
+                slug: "ideas".into(),
+            },
+            DiscussionCategory {
+                name: "Q&A".into(),
+                slug: "q-a".into(),
+            },
+        ],
+        results: Results {
+            total: 48,
+            items: vec![
+                summary(14603, "How do I review a PR offline?", "Q&A", true),
+                summary(14590, "Show the contribution graph", "Ideas", false),
+            ],
+            next: Some("d1".into()),
+        },
+    }
+}
+
+/// A question with an answer and a reply.
+pub fn discussion() -> DiscussionDetail {
+    let comment = |id, author: &str, body: &str| Comment {
+        id: Some(id),
+        author: author.into(),
+        body: body.into(),
+        created_at: "2026-10-03T12:00:00Z".into(),
+    };
+    DiscussionDetail {
+        repo: RepoId::new("cli", "cli"),
+        number: 14603,
+        title: "How do I review a PR offline?".into(),
+        body: "I'm on a plane a lot. Can I review without a connection?".into(),
+        author: "octocat".into(),
+        created_at: "2026-10-02T12:00:00Z".into(),
+        category: "Q&A".into(),
+        answered: true,
+        upvotes: 12,
+        comments: vec![
+            DiscussionComment {
+                comment: comment(
+                    18765024,
+                    "hubot",
+                    "Fetch the PR first; the diff then works offline.",
+                ),
+                upvotes: 5,
+                answer: true,
+                replies: vec![comment(18765030, "octocat", "That works, thanks!")],
+            },
+            DiscussionComment {
+                comment: comment(18765100, "monalisa", "Drafts are saved locally too."),
+                upvotes: 1,
+                answer: false,
+                replies: Vec::new(),
+            },
+        ],
+    }
+}
 pub fn user_results() -> SearchResults {
     SearchResults::Users(Results {
         total: 1,

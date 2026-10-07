@@ -1730,6 +1730,42 @@ pub(crate) mod tests {
         assert!(!text.iter().any(|l| l.contains("Compiling")));
     }
 
+    /// A link to a comment opens its conversation scrolled to it.
+    #[test]
+    fn comment_links_scroll_to_the_comment() {
+        let mut s = state();
+        s.size = (100, 12);
+        let comment = "https://github.com/cli/cli/discussions/14603#discussioncomment-18765100";
+        let _ = s.follow(&ghtui_ui::page::Link::Url(comment.into()));
+        let of = ghtui_api::browse::DiscussionsOf::Repo(RepoId::new("cli", "cli"));
+        let detail = Data::Discussion(Box::new(crate::fixtures::discussion()));
+        fetched(&mut s, DataKey::Discussion(of, 14603), detail);
+        let Screen::Page(p) = s.screen() else {
+            panic!()
+        };
+        let line = p.page.anchors["discussioncomment-18765100"];
+        assert!(
+            p.scroll > 0 && p.scroll <= line && line < p.scroll + 10,
+            "{} vs {line}",
+            p.scroll
+        );
+
+        // Issue comments too.
+        let mut s = with_repo();
+        s.size = (100, 12);
+        let url = format!(
+            "https://github.com/{}/issues/14#issuecomment-1000001",
+            repo()
+        );
+        let _ = s.follow(&ghtui_ui::page::Link::Url(url));
+        let issue = Data::Issue(Some(Box::new(crate::fixtures::issue())));
+        fetched(&mut s, DataKey::Issue(repo(), 14), issue);
+        let Screen::Page(p) = s.screen() else {
+            panic!()
+        };
+        assert!(p.page.anchors.contains_key("issuecomment-1000001"));
+        assert!(p.scroll > 0);
+    }
     /// People and repository lists load more like any list.
     #[test]
     fn every_list_appends_its_next_page() {

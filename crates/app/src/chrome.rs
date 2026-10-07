@@ -3,7 +3,7 @@
 //! title for pull requests. Both the view and mouse handling use
 //! [`State::layout`], so clicks land where things are drawn.
 
-use ghtui_api::browse::{RepoSort, SearchKind};
+use ghtui_api::browse::{DiscussionsOf, RepoSort, SearchKind};
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::chrome::{Crumb, PageTab};
 use ghtui_ui::pages::{PrTab, ProfileTab};
@@ -165,6 +165,18 @@ impl State {
                 self.commit_tabs(repo, oid, c);
                 c.active = Some(usize::from(matches!(route, Route::CommitChecks { .. })));
             }
+            // A repository's discussions: its tabs, none of them active
+            // (ghtui doesn't know which repositories have discussions on).
+            Route::Discussions { of, .. } | Route::Discussion { of, .. } => match of {
+                DiscussionsOf::Repo(repo) => {
+                    repo_crumbs(repo, c);
+                    self.repo_tabs(repo, c);
+                }
+                DiscussionsOf::Org(org) => {
+                    c.crumb(org, Some(Target::Page(Route::user(org))));
+                    c.crumb("Discussions", None);
+                }
+            },
             Route::User { login, tab } => {
                 c.crumb(login, None);
                 let profile = self.profile(login);

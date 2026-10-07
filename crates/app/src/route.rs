@@ -1,6 +1,6 @@
 //! Routes: the pages ghtui shows, addressed by their github.com URLs.
 
-use ghtui_api::browse::{RepoSort, SearchKind};
+use ghtui_api::browse::{DiscussionsOf, RepoSort, SearchKind};
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::pages::url as links;
 use ghtui_ui::pages::{PrTab, ProfileTab};
@@ -48,6 +48,15 @@ pub enum Route {
     },
     /// The checks on the default branch.
     Actions(RepoId),
+    /// Discussions, in a category (by its slug) if given.
+    Discussions {
+        of: DiscussionsOf,
+        category: Option<String>,
+    },
+    Discussion {
+        of: DiscussionsOf,
+        number: u64,
+    },
     /// A workflow run, or one attempt of it.
     WorkflowRun {
         repo: RepoId,
@@ -206,6 +215,15 @@ impl Route {
             Route::Forks(repo) => format!("{}/forks", links::repo(repo)),
             Route::Releases(repo) => format!("{}/releases", links::repo(repo)),
             Route::Release { repo, tag } => links::release(repo, tag),
+            Route::Discussions { of, category } => match category {
+                Some(slug) => format!(
+                    "{}/categories/{}",
+                    discussions_url(of),
+                    links::encode_path(slug)
+                ),
+                None => discussions_url(of),
+            },
+            Route::Discussion { of, number } => format!("{}/{number}", discussions_url(of)),
             Route::Tags(repo) => format!("{}/tags", links::repo(repo)),
             Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
             Route::Commit { repo, oid } => links::commit(repo, oid),
@@ -251,6 +269,8 @@ impl Route {
             Route::Forks(repo) => format!("{repo} · Forks"),
             Route::Releases(repo) => format!("{repo} · Releases"),
             Route::Release { repo, tag } => format!("{repo} {tag}"),
+            Route::Discussions { of, .. } => format!("{} · Discussions", of_title(of)),
+            Route::Discussion { of, number } => format!("{} · Discussion {number}", of_title(of)),
             Route::Tags(repo) => format!("{repo} · Tags"),
             Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
             Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
@@ -280,10 +300,28 @@ impl Route {
             | Route::Forks(repo)
             | Route::Releases(repo)
             | Route::Release { repo, .. }
+            | Route::Discussions {
+                of: DiscussionsOf::Repo(repo),
+                ..
+            }
+            | Route::Discussion {
+                of: DiscussionsOf::Repo(repo),
+                ..
+            }
             | Route::Tags(repo)
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
-            Route::Home | Route::User { .. } | Route::Search { .. } => None,
+            Route::Home
+            | Route::User { .. }
+            | Route::Search { .. }
+            | Route::Discussions {
+                of: DiscussionsOf::Org(_),
+                ..
+            }
+            | Route::Discussion {
+                of: DiscussionsOf::Org(_),
+                ..
+            } => None,
         }
     }
 
@@ -409,6 +447,12 @@ impl Target {
                 tab: ProfileTab::Stars,
             },
             ["orgs", login] => Route::user(login),
+            ["orgs", org, "discussions", rest @ ..] => {
+                match discussions(DiscussionsOf::Org((*org).to_owned()), rest) {
+                    Some(route) => route,
+                    None => return external(),
+                }
+            }
             ["orgs", login, page @ ("repositories" | "people")] => Route::User {
                 login: (*login).to_owned(),
                 tab: if *page == "people" {
@@ -526,6 +570,12 @@ impl Target {
                     [rev, path @ ..] => ((*rev).to_owned(), path.join("/")),
                 };
                 Route::Commits { repo, rev, path }
+            }
+            [o, r, "discussions", rest @ ..] => {
+                match repo(o, r).and_then(|repo| discussions(DiscussionsOf::Repo(repo), rest)) {
+                    Some(route) => route,
+                    None => return external(),
+                }
             }
             [o, r, "actions", "runs", run, rest @ ..] => {
                 let (Some(repo), Ok(run)) = (repo(o, r), run.parse()) else {
@@ -672,6 +722,36 @@ impl Target {
 
 fn is_full_sha(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// A discussions page from what follows `/discussions` in its URL.
+fn discussions(of: DiscussionsOf, rest: &[&str]) -> Option<Route> {
+    Some(match rest {
+        [] => Route::Discussions { of, category: None },
+        ["categories", slug] => Route::Discussions {
+            of,
+            category: Some((*slug).to_owned()),
+        },
+        [n] => Route::Discussion {
+            of,
+            number: n.parse().ok()?,
+        },
+        _ => return None,
+    })
+}
+
+fn discussions_url(of: &DiscussionsOf) -> String {
+    match of {
+        DiscussionsOf::Repo(repo) => format!("{}/discussions", links::repo(repo)),
+        DiscussionsOf::Org(org) => format!("{}/orgs/{org}/discussions", links::BASE),
+    }
+}
+
+fn of_title(of: &DiscussionsOf) -> String {
+    match of {
+        DiscussionsOf::Repo(repo) => repo.to_string(),
+        DiscussionsOf::Org(org) => format!("@{org}"),
+    }
 }
 
 /// `step:3:12`, as GitHub links a line of a job's log.
