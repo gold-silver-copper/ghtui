@@ -768,6 +768,14 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Team(org, slug) => at(gh.cached(&keys::team(org, slug))?, |v| {
             Data::Team(Box::new(v))
         }),
+        DataKey::Advisories(repo) => at(gh.cached(&keys::advisories(repo.as_ref()))?, |v| {
+            Data::Advisories(v)
+        }),
+        DataKey::Advisory(repo, ghsa) => {
+            at(gh.cached(&keys::advisory(repo.as_ref(), ghsa))?, |v| {
+                Data::Advisory(Box::new(v))
+            })
+        }
         DataKey::Branches(repo) => at(gh.cached(&keys::branches(repo))?, |v| {
             Data::Branches(Box::new(v))
         }),
@@ -879,6 +887,10 @@ pub(crate) async fn fetch(gh: &GitHub, key: &DataKey) -> Result<Data, ApiError> 
         DataKey::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, None).await?)),
         DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, None).await?)),
+        DataKey::Advisories(repo) => Data::Advisories(gh.advisories(repo.as_ref()).await?),
+        DataKey::Advisory(repo, ghsa) => {
+            Data::Advisory(Box::new(gh.advisory(repo.as_ref(), ghsa).await?))
+        }
         DataKey::Teams(org) => Data::Teams(Box::new(gh.teams(org, None).await?)),
         DataKey::Team(org, slug) => Data::Team(Box::new(gh.team(org, slug).await?)),
         DataKey::Gist(id) => Data::Gist(Box::new(gh.gist(id).await?)),

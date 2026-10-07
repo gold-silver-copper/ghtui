@@ -2,14 +2,14 @@
 
 use crossterm::event::KeyEvent;
 use ghtui_api::browse::{
-    Asset, Blame, BlameRange, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment,
-    CommitDetail, CommitInfo, Comparison, Contributed, Contributions, DeploymentInfo,
-    DeploymentList, DiscussionCategory, DiscussionComment, DiscussionDetail, DiscussionList,
-    DiscussionSummary, EntryKind, Gist, GistFile, GistSummary, IssueDetail, IssueState,
-    IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList, MonthActivity,
-    PrActivity, Profile, Readme, Release, RepoOverview, RepoSummary, Results, ReviewSummary,
-    RunSummary, SearchResults, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary, TreeEntry,
-    UserSummary, Week, Workflow, WorkflowRun,
+    Advisory, AdvisoryPackage, Asset, Blame, BlameRange, Blob, BranchInfo, CheckItem, CheckOutcome,
+    Checks, Comment, CommitDetail, CommitInfo, Comparison, Contributed, Contributions,
+    DeploymentInfo, DeploymentList, DiscussionCategory, DiscussionComment, DiscussionDetail,
+    DiscussionList, DiscussionSummary, EntryKind, Gist, GistFile, GistSummary, IssueDetail,
+    IssueState, IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList,
+    MonthActivity, PrActivity, Profile, Readme, Release, RepoOverview, RepoSummary, Results,
+    ReviewSummary, RunSummary, SearchResults, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary,
+    TreeEntry, UserSummary, Week, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
@@ -418,6 +418,41 @@ pub fn team() -> TeamDetail {
         }],
         children: vec![team_summary("core-docs", "Core docs", false)],
     }
+}
+/// A high-severity advisory with one package.
+pub fn advisory() -> Advisory {
+    Advisory {
+        ghsa: "GHSA-6r3q-mjv7-xr8m".into(),
+        cve: Some("CVE-2026-41510".into()),
+        summary: "Silent argument drop allows bypassing rules".into(),
+        description: "Requests with many arguments skip the rules that read them.".into(),
+        severity: "high".into(),
+        published_at: Some("2026-10-02T12:00:00Z".into()),
+        updated_at: Some("2026-10-02T12:00:00Z".into()),
+        withdrawn_at: None,
+        cvss: Some((
+            "7.2".into(),
+            "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:N/I:L/A:L".into(),
+        )),
+        cwes: vec!["CWE-693 Protection Mechanism Failure".into()],
+        packages: vec![AdvisoryPackage {
+            ecosystem: "go".into(),
+            name: "github.com/corazawaf/coraza/v3".into(),
+            vulnerable: Some(">= 3.0.0, < 3.8.1".into()),
+            patched: Some("3.8.1".into()),
+        }],
+        credits: vec!["octocat".into()],
+        references: vec!["https://nvd.nist.gov/vuln/detail/CVE-2026-41510".into()],
+    }
+}
+
+/// A repository's two advisories.
+pub fn advisories() -> Vec<Advisory> {
+    let mut low = advisory();
+    low.ghsa = "GHSA-6gcq-wc29-5xf2".into();
+    low.severity = "low".into();
+    low.summary = "Deep JSON bodies can crash the process".into();
+    vec![advisory(), low]
 }
 fn label(name: &str, color: &str) -> Label {
     Label {

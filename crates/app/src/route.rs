@@ -99,6 +99,13 @@ pub enum Route {
     },
     Tags(RepoId),
     Branches(RepoId),
+    /// A repository's security advisories, or GitHub's newest.
+    Advisories(Option<RepoId>),
+    /// A security advisory: a repository's, or from GitHub's database.
+    Advisory {
+        repo: Option<RepoId>,
+        ghsa: String,
+    },
     /// An organization's teams.
     Teams(String),
     Team {
@@ -280,6 +287,14 @@ impl Route {
             Route::Discussion { of, number } => format!("{}/{number}", discussions_url(of)),
             Route::Tags(repo) => format!("{}/tags", links::repo(repo)),
             Route::Branches(repo) => format!("{}/branches", links::repo(repo)),
+            Route::Advisories(repo) => match repo {
+                Some(repo) => format!("{}/security/advisories", links::repo(repo)),
+                None => format!("{}/advisories", links::BASE),
+            },
+            Route::Advisory { repo, ghsa } => match repo {
+                Some(repo) => format!("{}/security/advisories/{ghsa}", links::repo(repo)),
+                None => format!("{}/advisories/{ghsa}", links::BASE),
+            },
             Route::Teams(org) => format!("{}/orgs/{org}/teams", links::BASE),
             Route::Team { org, slug } => format!("{}/orgs/{org}/teams/{slug}", links::BASE),
             Route::Gist { owner, id } => match owner {
@@ -355,6 +370,9 @@ impl Route {
             Route::Discussion { of, number } => format!("{} · Discussion {number}", of_title(of)),
             Route::Tags(repo) => format!("{repo} · Tags"),
             Route::Branches(repo) => format!("{repo} · Branches"),
+            Route::Advisories(Some(repo)) => format!("{repo} · Security"),
+            Route::Advisories(None) => "Advisories".to_owned(),
+            Route::Advisory { ghsa, .. } => ghsa.clone(),
             Route::Teams(org) => format!("@{org} · Teams"),
             Route::Team { org, slug } => format!("@{org}/{slug}"),
             Route::Gist { id, .. } => format!("Gist {}", id.get(..7).unwrap_or(id)),
@@ -401,6 +419,10 @@ impl Route {
             }
             | Route::Tags(repo)
             | Route::Branches(repo)
+            | Route::Advisories(Some(repo))
+            | Route::Advisory {
+                repo: Some(repo), ..
+            }
             | Route::Blame { repo, .. }
             | Route::Compare { repo, .. }
             | Route::Deployments { repo, .. }
@@ -415,6 +437,8 @@ impl Route {
             | Route::Gists(_)
             | Route::Teams(_)
             | Route::Team { .. }
+            | Route::Advisories(None)
+            | Route::Advisory { repo: None, .. }
             | Route::Discussions {
                 of: DiscussionsOf::Org(_),
                 ..
@@ -583,6 +607,11 @@ impl Target {
                 tab: ProfileTab::Stars,
             },
             ["orgs", login] => Route::user(login),
+            ["advisories"] => Route::Advisories(None),
+            ["advisories", ghsa] => Route::Advisory {
+                repo: None,
+                ghsa: (*ghsa).to_owned(),
+            },
             ["orgs", org, "teams"] => Route::Teams((*org).to_owned()),
             // Its members, repositories and child teams are on its page.
             ["orgs", org, "teams", slug, ..] => Route::Team {
@@ -745,6 +774,18 @@ impl Target {
                     rev: (*rev).to_owned(),
                     path: path.join("/"),
                     lines: parsed.fragment().and_then(line_range),
+                },
+                None => return external(),
+            },
+            // The security overview's part ghtui can show: advisories.
+            [o, r, "security"] | [o, r, "security", "advisories"] => match repo(o, r) {
+                Some(repo) => Route::Advisories(Some(repo)),
+                None => return external(),
+            },
+            [o, r, "security", "advisories", ghsa] => match repo(o, r) {
+                Some(repo) => Route::Advisory {
+                    repo: Some(repo),
+                    ghsa: (*ghsa).to_owned(),
                 },
                 None => return external(),
             },
@@ -1585,6 +1626,9 @@ pub(crate) mod tests {
                 repo().prop_map(Route::Releases),
                 repo().prop_map(Route::Tags),
                 repo().prop_map(Route::Branches),
+                prop::option::of(repo()).prop_map(Route::Advisories),
+                (prop::option::of(repo()), "GHSA(-[2-9a-z]{4}){3}")
+                    .prop_map(|(repo, ghsa)| Route::Advisory { repo, ghsa }),
                 segment().prop_map(Route::Teams),
                 (segment(), segment()).prop_map(|(org, slug)| Route::Team { org, slug }),
                 (prop::option::of(segment()), "[0-9a-f]{20}|[0-9]{1,8}")

@@ -7,12 +7,12 @@
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blame, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail, CommitInfo,
-    Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList, EntryKind, Gist,
-    GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobSummary, MilestoneDetail,
-    MilestoneInfo, MilestoneList, PrActivity, Profile, Release, RepoOverview, RepoSort,
-    RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TeamDetail, TeamSummary,
-    TreeEntry, UserSummary, Workflow, WorkflowRun,
+    Advisory, Blame, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail,
+    CommitInfo, Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList,
+    EntryKind, Gist, GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobSummary,
+    MilestoneDetail, MilestoneInfo, MilestoneList, PrActivity, Profile, Release, RepoOverview,
+    RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TeamDetail,
+    TeamSummary, TreeEntry, UserSummary, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
     ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrState, PrSummary, RepoId,
@@ -884,6 +884,149 @@ pub fn blame(
         });
     }
     page.box_bottom();
+}
+// ---- security advisories ----------------------------------------------------------------------
+
+fn severity_chip(severity: &str) -> Seg {
+    let bg = match severity {
+        "critical" | "high" => Bg::ErrorContainer,
+        "medium" => Bg::TertiaryContainer,
+        _ => Bg::SecondaryContainer,
+    };
+    let mut name = severity.to_owned();
+    if let Some(first) = name.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    chip(name, bg)
+}
+
+/// A repository's security advisories, or GitHub's newest reviewed ones.
+pub fn advisories(page: &mut Page, repo: Option<&RepoId>, list: Option<&Vec<Advisory>>, now: u64) {
+    let Some(l) = list else {
+        page.line(vec![Seg::new("Loading advisories…", Role::Meta)]);
+        return;
+    };
+    let title = vec![Seg::new(
+        format!("Security advisories  {}", l.len()),
+        Role::Strong,
+    )];
+    let empty = if repo.is_some() {
+        "No published advisories."
+    } else {
+        "No advisories."
+    };
+    list_box(page, title, Vec::new(), l, empty, |page, a| {
+        let target = match repo {
+            Some(repo) => format!("{}/security/advisories/{}", url::repo(repo), a.ghsa),
+            None => format!("{}/advisories/{}", url::BASE, a.ghsa),
+        };
+        item(page, target, |page, link| {
+            let segs = vec![
+                severity_chip(&a.severity),
+                space(),
+                Seg::linked(a.summary.clone(), Role::Strong, link),
+            ];
+            hanging(page, Seg::new("", Role::Meta), segs, Frame::Body);
+            let mut meta = a.ghsa.clone();
+            if let Some(at) = &a.published_at {
+                meta.push_str(&format!(" · published {}", time::ago_iso(at, now)));
+            }
+            let packages = unique(a.packages.iter().map(|p| &p.name));
+            if !packages.is_empty() {
+                meta.push_str(&format!(" · {}", packages.join(", ")));
+            }
+            body(page, vec![Seg::new(meta, Role::Meta)]);
+        });
+    });
+}
+
+/// A security advisory: what's affected and fixed, how severe, and its
+/// description, credits and references.
+pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
+    page.wrapped(
+        vec![Seg::new(a.summary.clone(), Role::Title)],
+        0,
+        Frame::None,
+    );
+    let mut segs = vec![severity_chip(&a.severity)];
+    if a.withdrawn_at.is_some() {
+        segs.push(space());
+        segs.push(chip("Withdrawn", Bg::SecondaryContainer));
+    }
+    let mut meta = format!("  {}", a.ghsa);
+    if let Some(cve) = &a.cve {
+        meta.push_str(&format!(" · {cve}"));
+    }
+    if let Some(at) = &a.published_at {
+        meta.push_str(&format!(" · published {}", time::ago_iso(at, now)));
+    }
+    if let Some(at) = &a.updated_at {
+        meta.push_str(&format!(" · updated {}", time::ago_iso(at, now)));
+    }
+    segs.push(Seg::new(meta, Role::Meta));
+    page.wrapped(segs, 0, Frame::None);
+    if let Some((score, vector)) = &a.cvss {
+        page.wrapped(
+            vec![Seg::new(format!("CVSS {score}  {vector}"), Role::Meta)],
+            0,
+            Frame::None,
+        );
+    }
+    if !a.cwes.is_empty() {
+        page.wrapped(
+            vec![Seg::new(a.cwes.join(" · "), Role::Meta)],
+            0,
+            Frame::None,
+        );
+    }
+    page.blank();
+    let title = vec![Seg::new(
+        format!("Affected packages  {}", a.packages.len()),
+        Role::Strong,
+    )];
+    list_box(
+        page,
+        title,
+        Vec::new(),
+        &a.packages,
+        "None listed.",
+        |page, p| {
+            let right = vec![Seg::new(p.ecosystem.clone(), Role::Meta)];
+            page.box_line(vec![Seg::new(p.name.clone(), Role::Strong)], right, 0);
+            let mut facts = Vec::new();
+            if let Some(v) = &p.vulnerable {
+                facts.push(format!("Affected {v}"));
+            }
+            facts.push(format!(
+                "Patched {}",
+                p.patched.as_deref().unwrap_or("in no version yet")
+            ));
+            body(page, vec![Seg::new(facts.join(" · "), Role::Meta)]);
+        },
+    );
+    if !a.description.trim().is_empty() {
+        page.blank();
+        markdown::render(page, &a.description, None, Frame::None);
+    }
+    if !a.credits.is_empty() {
+        page.blank();
+        let mut segs = vec![Seg::new("Credits  ", Role::Strong)];
+        for (i, login) in a.credits.iter().enumerate() {
+            if i > 0 {
+                segs.push(Seg::new(", ", Role::Meta));
+            }
+            segs.push(link_seg(page, login.clone(), url::user(login), Role::Link));
+        }
+        page.wrapped(segs, 0, Frame::None);
+    }
+    if !a.references.is_empty() {
+        page.blank();
+        aside_heading(page, "References");
+        for r in &a.references {
+            let link = link_seg(page, r.clone(), r.clone(), Role::Link);
+            page.wrapped(vec![link], 0, Frame::None);
+        }
+    }
 }
 // ---- teams -------------------------------------------------------------------------------------
 

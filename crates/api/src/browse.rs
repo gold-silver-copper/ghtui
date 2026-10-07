@@ -2493,6 +2493,146 @@ impl wire_teams::Detail {
         }
     }
 }
+// ---- security advisories ----------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdvisoryPackage {
+    pub ecosystem: String,
+    pub name: String,
+    pub vulnerable: Option<String>,
+    pub patched: Option<String>,
+}
+
+/// A security advisory: GitHub's reviewed database's, or a repository's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Advisory {
+    pub ghsa: String,
+    pub cve: Option<String>,
+    pub summary: String,
+    pub description: String,
+    /// `low`, `medium`, `high`, `critical`.
+    pub severity: String,
+    pub published_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub withdrawn_at: Option<String>,
+    /// The CVSS score (as GitHub writes it) and vector.
+    pub cvss: Option<(String, String)>,
+    /// `CWE-79 Cross-site Scripting`…
+    pub cwes: Vec<String>,
+    pub packages: Vec<AdvisoryPackage>,
+    pub credits: Vec<String>,
+    pub references: Vec<String>,
+}
+
+pub(crate) mod rest_advisories {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Package {
+        pub ecosystem: Option<String>,
+        pub name: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Vulnerability {
+        pub package: Option<Package>,
+        pub vulnerable_version_range: Option<String>,
+        #[serde(alias = "first_patched_version")]
+        pub patched_versions: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Cvss {
+        pub score: Option<f64>,
+        pub vector_string: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Cwe {
+        pub cwe_id: String,
+        pub name: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Login {
+        pub login: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Credit {
+        pub login: Option<String>,
+        pub user: Option<Login>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Advisory {
+        pub ghsa_id: String,
+        pub cve_id: Option<String>,
+        pub summary: String,
+        pub description: Option<String>,
+        pub severity: Option<String>,
+        pub published_at: Option<String>,
+        pub updated_at: Option<String>,
+        pub withdrawn_at: Option<String>,
+        pub cvss: Option<Cvss>,
+        #[serde(default)]
+        pub cwes: Option<Vec<Cwe>>,
+        #[serde(default)]
+        pub vulnerabilities: Option<Vec<Vulnerability>>,
+        #[serde(default)]
+        pub credits: Option<Vec<Credit>>,
+        #[serde(default)]
+        pub references: Option<Vec<String>>,
+    }
+}
+
+impl rest_advisories::Advisory {
+    pub(crate) fn into_advisory(self) -> Advisory {
+        Advisory {
+            ghsa: self.ghsa_id,
+            cve: self.cve_id,
+            summary: self.summary,
+            description: self.description.unwrap_or_default(),
+            severity: self.severity.unwrap_or_else(|| "unknown".into()),
+            published_at: self.published_at,
+            updated_at: self.updated_at,
+            withdrawn_at: self.withdrawn_at,
+            cvss: self
+                .cvss
+                .and_then(|c| Some((format!("{:.1}", c.score?), c.vector_string?))),
+            cwes: self
+                .cwes
+                .into_iter()
+                .flatten()
+                .map(|c| format!("{} {}", c.cwe_id, c.name))
+                .collect(),
+            packages: self
+                .vulnerabilities
+                .into_iter()
+                .flatten()
+                .map(|v| {
+                    let package = v.package;
+                    AdvisoryPackage {
+                        ecosystem: package
+                            .as_ref()
+                            .and_then(|p| p.ecosystem.clone())
+                            .unwrap_or_default(),
+                        name: package.and_then(|p| p.name).unwrap_or_default(),
+                        vulnerable: v.vulnerable_version_range,
+                        patched: v.patched_versions,
+                    }
+                })
+                .collect(),
+            credits: self
+                .credits
+                .into_iter()
+                .flatten()
+                .filter_map(|c| c.login.or(c.user.map(|u| u.login)))
+                .collect(),
+            references: self.references.unwrap_or_default(),
+        }
+    }
+}
 // ---- discussions ------------------------------------------------------------------------------
 
 /// Whose discussions: a repository's, or an organization's (which GitHub
@@ -3757,6 +3897,12 @@ pub mod keys {
     }
     pub fn branches(repo: &RepoId) -> String {
         format!("branches:{repo}")
+    }
+    pub fn advisories(repo: Option<&RepoId>) -> String {
+        format!("advisories:{repo:?}")
+    }
+    pub fn advisory(repo: Option<&RepoId>, ghsa: &str) -> String {
+        format!("advisory:{repo:?}:{ghsa}")
     }
     pub fn teams(org: &str) -> String {
         format!("teams:{org}")

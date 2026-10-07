@@ -263,6 +263,28 @@ fn with_team(mode: Mode) -> State {
     open(&mut state, route, Data::Team(Box::new(fixtures::team())));
     state
 }
+/// A repository's security advisories.
+fn with_advisories(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Advisories(Some(ghtui()));
+    open(&mut state, route, Data::Advisories(fixtures::advisories()));
+    state
+}
+
+/// A security advisory from GitHub's database.
+fn with_advisory(mode: Mode) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    let route = Route::Advisory {
+        repo: None,
+        ghsa: "GHSA-6r3q-mjv7-xr8m".into(),
+    };
+    open(
+        &mut state,
+        route,
+        Data::Advisory(Box::new(fixtures::advisory())),
+    );
+    state
+}
 /// The repository's open issues.
 fn with_issues(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -868,6 +890,16 @@ fn teams_light() {
 #[test]
 fn team_dark() {
     insta::assert_snapshot!(render(&with_team(Mode::Dark)));
+}
+
+#[test]
+fn advisories_dark() {
+    insta::assert_snapshot!(render(&with_advisories(Mode::Dark)));
+}
+
+#[test]
+fn advisory_light() {
+    insta::assert_snapshot!(render(&sized(with_advisory(Mode::Light), 100, 40)));
 }
 
 #[test]
@@ -1756,12 +1788,12 @@ mod links {
     use ghtui_ui::pages::ProfileTab;
 
     use super::{
-        press, with_actions, with_blame, with_branches, with_commit, with_compare,
-        with_deployments, with_discussion, with_discussions, with_file, with_forks, with_gist,
-        with_gists, with_history, with_inbox, with_issue, with_issues, with_job, with_milestone,
-        with_milestones, with_pr, with_pr_checks, with_profile, with_release, with_releases,
-        with_repo, with_repo_search, with_run, with_stargazers, with_tags, with_team, with_teams,
-        with_workflow,
+        press, with_actions, with_advisories, with_advisory, with_blame, with_branches,
+        with_commit, with_compare, with_deployments, with_discussion, with_discussions, with_file,
+        with_forks, with_gist, with_gists, with_history, with_inbox, with_issue, with_issues,
+        with_job, with_milestone, with_milestones, with_pr, with_pr_checks, with_profile,
+        with_release, with_releases, with_repo, with_repo_search, with_run, with_stargazers,
+        with_tags, with_team, with_teams, with_workflow,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1829,6 +1861,8 @@ mod links {
             ("release", with_release(Mode::Dark)),
             ("tags", with_tags(Mode::Dark)),
             ("branches", with_branches(Mode::Dark)),
+            ("advisories", with_advisories(Mode::Dark)),
+            ("advisory", with_advisory(Mode::Dark)),
             ("teams", with_teams(Mode::Dark)),
             ("team", with_team(Mode::Dark)),
             ("gist", with_gist(Mode::Dark)),

@@ -5,11 +5,11 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use ghtui_api::browse::{
-    Blame, Blob, BranchInfo, Checks, CommitDetail, CommitInfo, Comparison, DeploymentList,
-    DiscussionDetail, DiscussionList, DiscussionsOf, Gist, GistSummary, IssueDetail, Job,
-    MilestoneDetail, MilestoneList, PrActivity, Profile, Refs, Release, RepoOverview, RepoSort,
-    RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo, TeamDetail, TeamSummary,
-    TreeEntry, UserList, UserSummary, Workflow, WorkflowRun,
+    Advisory, Blame, Blob, BranchInfo, Checks, CommitDetail, CommitInfo, Comparison,
+    DeploymentList, DiscussionDetail, DiscussionList, DiscussionsOf, Gist, GistSummary,
+    IssueDetail, Job, MilestoneDetail, MilestoneList, PrActivity, Profile, Refs, Release,
+    RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo,
+    TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::page::{Link, Page, Role, Seg};
@@ -53,6 +53,8 @@ pub enum DataKey {
     Release(RepoId, String),
     Tags(RepoId),
     Branches(RepoId),
+    Advisories(Option<RepoId>),
+    Advisory(Option<RepoId>, String),
     Teams(String),
     Team(String, String),
     Gist(String),
@@ -111,6 +113,8 @@ pub enum Data {
     Release(Box<Release>),
     Tags(Box<Results<TagInfo>>),
     Branches(Box<Results<BranchInfo>>),
+    Advisories(Vec<Advisory>),
+    Advisory(Box<Advisory>),
     Teams(Box<Results<TeamSummary>>),
     Team(Box<TeamDetail>),
     Gist(Box<Gist>),
@@ -249,6 +253,13 @@ pub fn needs(route: &Route) -> Vec<Need> {
             std::iter::once(header(repo)).chain(list).collect()
         }
         Route::Search { .. } => list.into_iter().collect(),
+        Route::Advisories(repo) | Route::Advisory { repo, .. } => {
+            let own = match route {
+                Route::Advisory { ghsa, .. } => K::Advisory(repo.clone(), ghsa.clone()),
+                _ => K::Advisories(repo.clone()),
+            };
+            repo.iter().map(header).chain([Need::Data(own)]).collect()
+        }
         Route::Gists(_) | Route::Teams(_) => paged(route).map(Need::Data).into_iter().collect(),
         Route::Team { org, slug } => vec![Need::Data(K::Team(org.to_lowercase(), slug.clone()))],
         Route::Gist { id, .. } => vec![Need::Data(K::Gist(id.clone()))],
@@ -744,6 +755,19 @@ impl State {
                 match self.get(&DataKey::Compare(repo.clone(), spec.clone())) {
                     Some(Data::Compare(c)) => pages::compare(&mut page, repo, spec, c, now),
                     _ => missing(&mut page, &route.title()),
+                }
+            }
+            Route::Advisories(repo) => match self.get(&DataKey::Advisories(repo.clone())) {
+                Some(Data::Advisories(list)) => {
+                    pages::advisories(&mut page, repo.as_ref(), Some(list), now);
+                }
+                None if matches!(error, Some((_, false))) => missing(&mut page, "the advisories"),
+                _ => pages::advisories(&mut page, repo.as_ref(), None, now),
+            },
+            Route::Advisory { repo, ghsa } => {
+                match self.get(&DataKey::Advisory(repo.clone(), ghsa.clone())) {
+                    Some(Data::Advisory(a)) => pages::advisory(&mut page, a, now),
+                    _ => missing(&mut page, ghsa),
                 }
             }
             Route::Teams(org) => match self.get(&DataKey::Teams(org.to_lowercase())) {
