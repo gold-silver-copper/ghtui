@@ -203,27 +203,41 @@ enum Fit {
     Icons,
 }
 
-fn fit(area: Rect, tabs: &[PageTab], active: Option<usize>) -> Fit {
+/// How much each tab shows: everything if it fits; else no counts; else
+/// the inactive tabs from the right shrink to their icons until it fits.
+fn fit(area: Rect, tabs: &[PageTab], active: Option<usize>) -> Vec<Fit> {
     let room = area.width.saturating_sub(PAD_X);
-    for level in [Fit::Full, Fit::NoCounts, Fit::Icons] {
-        let total = tabs
-            .iter()
+    let total = |levels: &[Fit]| {
+        tabs.iter()
+            .zip(levels)
             .enumerate()
-            .map(|(i, t)| tab_width(t, level, active == Some(i)).saturating_add(1))
-            .fold(0, u16::saturating_add);
-        if total <= room {
-            return level;
+            .map(|(i, (t, &level))| tab_width(t, level, active == Some(i)).saturating_add(1))
+            .fold(0, u16::saturating_add)
+    };
+    let mut levels = vec![Fit::Full; tabs.len()];
+    if total(&levels) <= room {
+        return levels;
+    }
+    levels.fill(Fit::NoCounts);
+    for i in (0..tabs.len()).rev() {
+        if total(&levels) <= room {
+            break;
+        }
+        if active != Some(i)
+            && let Some(level) = levels.get_mut(i)
+        {
+            *level = Fit::Icons;
         }
     }
-    Fit::Icons
+    levels
 }
 
 /// Each tab's rectangle on the label row.
 pub fn tab_layout(area: Rect, tabs: &[PageTab], active: Option<usize>) -> Vec<Rect> {
-    let level = fit(area, tabs, active);
+    let levels = fit(area, tabs, active);
     let mut x = area.x.saturating_add(PAD_X.min(area.width));
     let mut out = Vec::new();
-    for (i, tab) in tabs.iter().enumerate() {
+    for (i, (tab, &level)) in tabs.iter().zip(&levels).enumerate() {
         let w = tab_width(tab, level, active == Some(i));
         let w = w.min(area.right().saturating_sub(x));
         out.push(Rect::new(x, area.y, w, 1));
@@ -280,11 +294,12 @@ impl Widget for TabBar<'_> {
             let rule = "─".repeat(usize::from(under.width));
             put(buf, under.x, under.y, &rule, theme.separator(BAR));
         }
-        let level = fit(labels, self.tabs, self.active);
-        for (i, (tab, r)) in self
+        let levels = fit(labels, self.tabs, self.active);
+        for (i, ((tab, r), &level)) in self
             .tabs
             .iter()
             .zip(tab_layout(labels, self.tabs, self.active))
+            .zip(&levels)
             .enumerate()
         {
             let active = self.active == Some(i);
