@@ -211,27 +211,13 @@ impl Route {
                 rev,
                 path,
                 lines,
-            } => {
-                let url = links::blob(repo, rev, path);
-                match lines {
-                    None => url,
-                    Some((a, b)) if a == b => format!("{url}#L{a}"),
-                    Some((a, b)) => format!("{url}#L{a}-L{b}"),
-                }
-            }
+            } => lined(links::blob(repo, rev, path), *lines),
             Route::Blame {
                 repo,
                 rev,
                 path,
                 lines,
-            } => {
-                let url = links::blame(repo, rev, path);
-                match lines {
-                    None => url,
-                    Some((a, b)) if a == b => format!("{url}#L{a}"),
-                    Some((a, b)) => format!("{url}#L{a}-L{b}"),
-                }
-            }
+            } => lined(links::blame(repo, rev, path), *lines),
             Route::Issues { repo, query } => list_url(&links::issues(repo), query),
             Route::Pulls { repo, query } => list_url(&links::pulls(repo), query),
             Route::Issue { repo, number } => links::issue(repo, *number),
@@ -677,6 +663,15 @@ fn param(url: &url::Url, name: &str) -> Option<String> {
     url.query_pairs()
         .find(|(k, _)| k == name)
         .map(|(_, v)| v.into_owned())
+}
+
+/// `url` at a file's `lines`, if any.
+fn lined(url: String, lines: Option<(u32, u32)>) -> String {
+    match lines {
+        None => url,
+        Some((a, b)) if a == b => format!("{url}#L{a}"),
+        Some((a, b)) => format!("{url}#L{a}-L{b}"),
+    }
 }
 
 /// A page at a revision, from what follows its view: the rev is one
