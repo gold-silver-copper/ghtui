@@ -1347,7 +1347,7 @@ impl GitHub {
         let first = after.is_none();
         let data = self
             .graphql_json(
-                "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { defaultBranchRef { name } refs(refPrefix: \"refs/heads/\", first: 30, after: $after, orderBy: {field: ALPHABETICAL, direction: ASC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name target { ... on Commit { oid messageHeadline committedDate author { name user { login } } } } associatedPullRequests(first: 1, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number state } } } } } }",
+                "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { defaultBranchRef { name } refs(refPrefix: \"refs/heads/\", first: 30, after: $after, orderBy: {field: ALPHABETICAL, direction: ASC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name target { ... on Commit { oid messageHeadline committedDate author { name user { login } } } } associatedPullRequests(first: 10, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number state headRefName repository { nameWithOwner } } } } } } }",
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after }),
             )
             .await?;
@@ -1357,7 +1357,7 @@ impl GitHub {
             .map(str::to_owned);
         let wire: browse::wire::Connection<browse::wire_branches::Branch> =
             at(&data, "/repository/refs", || repo.to_string())?;
-        let branches = wire.into_results(|b| b.into_info(default.as_deref()));
+        let branches = wire.into_results(|b| b.into_info(repo, default.as_deref()));
         Ok(self
             .kept_if(first, &browse::keys::branches(repo), branches)
             .await)

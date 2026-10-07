@@ -1349,6 +1349,28 @@ fn latest_runs(items: Vec<CheckItem>) -> Vec<CheckItem> {
 mod tests {
     use super::*;
 
+    /// A branch's pull request is one in its own repository from that
+    /// branch: GitHub also lists forks' PRs whose head it is.
+    #[test]
+    fn a_branchs_pr_is_its_own() {
+        let branch: wire_branches::Branch = serde_json::from_value(serde_json::json!({
+            "name": "trunk",
+            "target": null,
+            "associatedPullRequests": { "nodes": [
+                { "number": 1, "state": "MERGED", "headRefName": "trunk",
+                  "repository": { "nameWithOwner": "someone/cli-fork" } },
+                { "number": 9, "state": "OPEN", "headRefName": "other",
+                  "repository": { "nameWithOwner": "cli/cli" } },
+                { "number": 7, "state": "CLOSED", "headRefName": "trunk",
+                  "repository": { "nameWithOwner": "CLI/cli" } },
+            ] },
+        }))
+        .unwrap();
+        let info = branch.into_info(&RepoId::new("cli", "cli"), Some("trunk"));
+        assert_eq!(info.pr, Some((7, IssueState::Closed)));
+        assert!(info.default);
+    }
+
     /// A gist file without a name (GitHub's schema allows it) doesn't
     /// spoil the list.
     #[test]
@@ -1587,6 +1609,12 @@ pub(crate) mod wire {
     #[derive(Deserialize)]
     pub struct Name {
         pub name: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct RepoName {
+        pub name_with_owner: String,
     }
 
     #[derive(Deserialize)]
@@ -1837,7 +1865,7 @@ pub struct BranchInfo {
 pub(crate) mod wire_branches {
     use serde::Deserialize;
 
-    pub use super::wire::{Login, Nodes};
+    pub use super::wire::{Login, Nodes, RepoName};
 
     #[derive(Deserialize)]
     pub struct Author {
@@ -1855,9 +1883,12 @@ pub(crate) mod wire_branches {
     }
 
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     pub struct Pr {
         pub number: u64,
         pub state: String,
+        pub head_ref_name: String,
+        pub repository: RepoName,
     }
 
     #[derive(Deserialize)]
@@ -1870,8 +1901,10 @@ pub(crate) mod wire_branches {
 }
 
 impl wire_branches::Branch {
-    /// The branch, marked the default if it's `default`.
-    pub(crate) fn into_info(self, default: Option<&str>) -> BranchInfo {
+    /// The branch, marked the default if it's `default`, with its newest
+    /// pull request in `repo` (GitHub's list also has forks' PRs whose
+    /// head is this branch).
+    pub(crate) fn into_info(self, repo: &RepoId, default: Option<&str>) -> BranchInfo {
         let (oid, headline, date, author) = match self.target {
             Some(c) => (
                 c.oid,
@@ -1881,14 +1914,25 @@ impl wire_branches::Branch {
             ),
             None => (None, None, None, None),
         };
-        let pr = self.associated_pull_requests.into_iter().next().map(|p| {
-            let state = match p.state.as_str() {
-                "MERGED" => IssueState::Merged,
-                "CLOSED" => IssueState::Closed,
-                _ => IssueState::Open,
-            };
-            (p.number, state)
-        });
+        let name = self.name.as_str();
+        let ours = |p: &wire_branches::Pr| {
+            p.head_ref_name == name
+                && p.repository
+                    .name_with_owner
+                    .eq_ignore_ascii_case(&repo.to_string())
+        };
+        let pr = self
+            .associated_pull_requests
+            .into_iter()
+            .find(ours)
+            .map(|p| {
+                let state = match p.state.as_str() {
+                    "MERGED" => IssueState::Merged,
+                    "CLOSED" => IssueState::Closed,
+                    _ => IssueState::Open,
+                };
+                (p.number, state)
+            });
         BranchInfo {
             default: default == Some(self.name.as_str()),
             name: self.name,
@@ -2818,7 +2862,7 @@ pub struct DiscussionComment {
 pub(crate) mod wire_discussions {
     use serde::Deserialize;
 
-    pub use super::wire::{Count, Login, Name, Nodes};
+    pub use super::wire::{Count, Login, Name, Nodes, RepoName};
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -2889,12 +2933,6 @@ pub(crate) mod wire_discussions {
         pub is_answered: Option<bool>,
         pub upvote_count: u64,
         pub comments: Comments,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct RepoName {
-        pub name_with_owner: String,
     }
 
     /// A discussion a search found, and where.
