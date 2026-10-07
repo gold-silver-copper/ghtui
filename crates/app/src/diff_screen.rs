@@ -32,6 +32,8 @@ pub enum LastReview {
     None,
     /// The head commit it was on.
     At(Oid),
+    /// GitHub couldn't say, and why: asked again next time.
+    Failed(String),
 }
 
 /// What a diff screen shows: a pull request's changes, or one commit's.
@@ -945,12 +947,12 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
             return vec![Cmd::Api(Api::FetchThreads(pr))];
         }
         DiffMsg::LastReview(result) => {
-            let commit = result.unwrap_or_else(|err| {
-                tracing::warn!(%pr, %err, "last review lookup failed");
-                None
-            });
             if let Some(diff) = state.diffs.get_mut(of) {
-                let last = commit.map_or(LastReview::None, |c| LastReview::At(Oid::new(c)));
+                let last = match result {
+                    Ok(None) => LastReview::None,
+                    Ok(Some(commit)) => LastReview::At(Oid::new(commit)),
+                    Err(err) => LastReview::Failed(err.to_string()),
+                };
                 diff.edit(|i| i.last_review = last);
             }
         }

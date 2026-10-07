@@ -103,11 +103,15 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
     // "Since my last review", compared with the whole PR's diff.
     if diff.since_requested && diff.inputs().last_review != LastReview::Unknown {
         diff.since_requested = false;
+        let local = diff.inputs().review.last_reviewed_head.clone();
         let old = match &diff.inputs().last_review {
             LastReview::At(oid) => Some(oid.to_string()),
-            LastReview::Unknown | LastReview::None => {
-                diff.inputs().review.last_reviewed_head.clone()
+            LastReview::Failed(err) if local.is_none() => {
+                let message = format!("Couldn't look up your last review: {err}");
+                state.error(message);
+                return cmds;
             }
+            LastReview::Unknown | LastReview::None | LastReview::Failed(_) => local,
         };
         match old {
             None => state.info("You haven't reviewed this PR yet"),

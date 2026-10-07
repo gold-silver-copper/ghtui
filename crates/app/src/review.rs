@@ -529,12 +529,17 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 return Vec::new();
             }
             diff.since_requested = true;
-            if diff.inputs().last_review == LastReview::Unknown {
+            if matches!(
+                diff.inputs().last_review,
+                LastReview::Unknown | LastReview::Failed(_)
+            ) {
                 let Some(login) = viewer else {
                     // Without a login, only the local record can say.
                     diff.edit(|i| i.last_review = LastReview::None);
                     return Vec::new();
                 };
+                // Asked again: not known until GitHub answers.
+                diff.edit(|i| i.last_review = LastReview::Unknown);
                 state.info("Looking up your last review…");
                 return vec![Cmd::Api(Api::FetchLastReview { pr, login })];
             }
