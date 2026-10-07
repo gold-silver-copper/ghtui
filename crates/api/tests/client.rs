@@ -633,7 +633,7 @@ async fn branches_page_by_name() {
             .map(|n| format!(r#"{{"name":"{n}"}}"#))
             .collect();
         let heads = format!(
-            r#"{{"totalCount":3,"pageInfo":{{"hasNextPage":{},"endCursor":{}}},"nodes":[{}]}}"#,
+            r#"{{"totalCount":1050,"pageInfo":{{"hasNextPage":{},"endCursor":{}}},"nodes":[{}]}}"#,
             next.is_some(),
             next.map_or("null".to_owned(), |c| format!("\"{c}\"")),
             nodes.join(",")
@@ -653,8 +653,8 @@ async fn branches_page_by_name() {
     let refs = gh.refs(&RepoId::new("o", "r")).await.unwrap();
     assert_eq!(*refs.branches, ["a", "b", "c"]);
     assert_eq!(
-        (refs.branches.total, refs.tags.len(), refs.tags.total),
-        (3, 2, 7)
+        (refs.branches.total(), refs.tags.len(), refs.tags.total()),
+        (1050, 2, 7)
     );
     let seen = seen.lock().unwrap();
     assert!(seen[0].query().contains("ALPHABETICAL"));
@@ -1357,7 +1357,7 @@ async fn a_runs_jobs_past_the_cap_are_counted() {
         .workflow_run(&RepoId::new("o", "r"), 9, None)
         .await
         .unwrap();
-    assert_eq!((run.jobs.len(), run.jobs.total), (1000, 1050));
+    assert_eq!((run.jobs.len(), run.jobs.total()), (1000, 1050));
     assert!(
         gh.take_left_out().is_empty(),
         "the total says what's left out"

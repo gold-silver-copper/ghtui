@@ -409,7 +409,8 @@ pub fn teams() -> Results<TeamSummary> {
     }
 }
 
-/// A team with a parent, two members, a repository and a child team.
+/// A team with a parent, two of its seven members, one of its two
+/// repositories and a child team.
 pub fn team() -> TeamDetail {
     let member = |login: &str, name: Option<&str>| UserSummary {
         login: login.into(),
@@ -420,17 +421,21 @@ pub fn team() -> TeamDetail {
     TeamDetail {
         team: team_summary("core", "Core", false),
         parent: Some(team_summary("maintainers", "Maintainers", false)),
-        members: vec![
-            member("octocat", Some("The Octocat")),
-            member("hubot", None),
-        ]
-        .into(),
-        repos: vec![TeamRepo {
-            repo: RepoId::new("gold-silver-copper", "ghtui"),
-            description: "GitHub in the terminal".into(),
-            stars: 1200,
-        }]
-        .into(),
+        members: Capped::new(
+            vec![
+                member("octocat", Some("The Octocat")),
+                member("hubot", None),
+            ],
+            7,
+        ),
+        repos: Capped::new(
+            vec![TeamRepo {
+                repo: RepoId::new("gold-silver-copper", "ghtui"),
+                description: "GitHub in the terminal".into(),
+                stars: 1200,
+            }],
+            2,
+        ),
         children: vec![team_summary("core-docs", "Core docs", false)].into(),
     }
 }

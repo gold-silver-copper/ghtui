@@ -2129,7 +2129,7 @@ impl GitHub {
                     return Err(ApiError::NotFound(format!(
                         "{repo}'s category {slug} (or it's past the first {} of {})",
                         categories.len(),
-                        categories.total
+                        categories.total()
                     )));
                 }
                 None => return Err(ApiError::NotFound(format!("{repo}'s category {slug}"))),

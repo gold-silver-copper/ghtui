@@ -5,7 +5,8 @@
 
 use ghtui_api::browse::{IssueState, RepoSort, SearchKind, SearchResults};
 use ghtui_api::model::{
-    ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrSummary, RepoId, ReviewDecision,
+    Capped, ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrSummary, RepoId,
+    ReviewDecision,
 };
 use ghtui_api::rate_limit::{Bucket, RateLimits};
 use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
@@ -188,7 +189,7 @@ fn long_conversations_say_what_is_left_out() {
             .join("\n")
     };
     let mut issue = fixtures::issue();
-    issue.comments.total = 120;
+    issue.comments = Capped::new(issue.comments.items, 120);
     let mut state = with_issue(Mode::Dark);
     let route = Route::Issue {
         repo: ghtui(),
@@ -200,9 +201,9 @@ fn long_conversations_say_what_is_left_out() {
 
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
     let mut activity = fixtures::activity();
-    activity.comments.total = 101;
-    activity.reviews.total = 3;
-    activity.commits.total = 250;
+    activity.comments = Capped::new(activity.comments.items, 101);
+    activity.reviews = Capped::new(activity.reviews.items, 3);
+    activity.commits = Capped::new(activity.commits.items, 250);
     let mut state = with_pr(Mode::Dark);
     fetched(
         &mut state,

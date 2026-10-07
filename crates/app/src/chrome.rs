@@ -476,11 +476,11 @@ impl State {
         let activity = self.activity(pr);
         let detail = self.prs.get(pr).and_then(|r| r.data.as_ref());
         c.tabs.push((
-            new_tab("◌", "Conversation", activity.map(|a| a.comments.total)),
+            new_tab("◌", "Conversation", activity.map(|a| a.comments.total())),
             Target::Page(Route::pr(pr.clone())),
         ));
         c.tabs.push((
-            new_tab("◷", "Commits", activity.map(|a| a.commits.total)),
+            new_tab("◷", "Commits", activity.map(|a| a.commits.total())),
             Target::Page(Route::Pr {
                 pr: pr.clone(),
                 tab: PrTab::Commits,

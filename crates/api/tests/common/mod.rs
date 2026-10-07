@@ -33,7 +33,7 @@ pub async fn run(gh: &GitHub) {
     let long = pr("rust-lang/rust#160692");
     let detail = gh.pull_request(&long).await.unwrap();
     let activity = gh.pr_activity(&long).await.unwrap();
-    assert_eq!(activity.commits.total, 229);
+    assert_eq!(activity.commits.total(), 229);
     let checks = gh.pr_checks(&long).await.unwrap();
     assert_eq!(checks.oid, detail.head_oid);
     gh.review_threads(&long).await.unwrap();
@@ -48,7 +48,7 @@ pub async fn run(gh: &GitHub) {
     // A PR with more than 100 comments: the newest are kept, and the
     // count says how many there are.
     let talky = gh.pr_activity(&pr("rust-lang/rust#158734")).await.unwrap();
-    assert!(talky.comments.total > 100, "{}", talky.comments.total);
+    assert!(talky.comments.total() > 100, "{}", talky.comments.total());
     assert_eq!(talky.comments.len(), 100);
     no_doubts(gh, "a PR with many comments");
 
@@ -62,8 +62,8 @@ pub async fn run(gh: &GitHub) {
     // A repository with many branches.
     let cli = RepoId::new("cli", "cli");
     let refs = gh.refs(&cli).await.unwrap();
-    assert!(refs.branches.total > 100);
-    assert_eq!(refs.branches.len() as u64, refs.branches.total.min(1000));
+    assert!(refs.branches.total() > 100);
+    assert_eq!(refs.branches.len() as u64, refs.branches.total().min(1000));
     let branches = gh.branches(&cli, None).await.unwrap();
     assert!(branches.next.is_some() && branches.items.len() == 30);
     no_doubts(gh, "many branches");
