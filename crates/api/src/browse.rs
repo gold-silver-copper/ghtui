@@ -1473,6 +1473,189 @@ fn latest_runs(items: Vec<CheckItem>) -> Vec<CheckItem> {
 #[cfg(test)]
 mod tests {
 
+    /// A tag's commit, lightweight or annotated; a tree's entries by kind,
+    /// directories first, then by name whatever its case.
+    #[test]
+    fn tags_and_tree_entries() {
+        let tags: TagRefs = serde_json::from_value(serde_json::json!({
+            "totalCount": 3,
+            "pageInfo": {"hasNextPage": true, "endCursor": "c"},
+            "nodes": [
+                {"name": "light", "target": {"__typename": "Commit", "oid": "a1", "committedDate": "2026-01-01T00:00:00Z"}},
+                {"name": "annotated", "target": {"__typename": "Tag", "target": {"__typename": "Commit", "oid": "b2", "committedDate": "2026-02-01T00:00:00Z"}}},
+                {"name": "tree", "target": {"__typename": "Tree"}}
+            ]
+        }))
+        .unwrap();
+        let tags = tags.into_results();
+        let got: Vec<(&str, Option<&str>)> = tags
+            .items
+            .iter()
+            .map(|t| (t.name.as_str(), t.oid.as_deref()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("light", Some("a1")),
+                ("annotated", Some("b2")),
+                ("tree", None)
+            ]
+        );
+        assert_eq!((tags.total, tags.next.as_deref()), (3, Some("c")));
+
+        let tree: Tree = serde_json::from_value(serde_json::json!({"entries": [
+            {"name": "b.txt", "path": "b.txt", "type": "blob", "mode": 0o100_644, "size": 5},
+            {"name": "link", "path": "link", "type": "blob", "mode": 0o120_000, "size": 4},
+            {"name": "Zdir", "path": "Zdir", "type": "tree", "mode": 0o040_000, "size": 0},
+            {"name": "sub", "path": "sub", "type": "commit", "mode": 0o160_000, "size": 0},
+            {"name": "a.txt", "path": null, "type": "blob", "mode": 0o100_644, "size": 1}
+        ]}))
+        .unwrap();
+        let got: Vec<(String, EntryKind, Option<u64>)> = entries(tree)
+            .into_iter()
+            .map(|e| (e.path, e.kind, e.size))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("Zdir".into(), EntryKind::Dir, None),
+                ("a.txt".into(), EntryKind::File, Some(1)),
+                ("b.txt".into(), EntryKind::File, Some(5)),
+                ("link".into(), EntryKind::Symlink, None),
+                ("sub".into(), EntryKind::Submodule, None),
+            ]
+        );
+    }
+
+    /// A month's activity: commits summed per repository, most first; a PR
+    /// reviewed twice once; months newest first, three of them; and with
+    /// more repositories than fetched, every month's commits short.
+    #[test]
+    fn activity_is_grouped_by_month() {
+        let item = |at: &str, number: u32| serde_json::json!({"occurredAt": at, "pullRequest": {"number": number, "title": "t", "repository": {"nameWithOwner": "o/r"}}});
+        let commits = |repo: &str, days: &[(&str, u32)]| {
+            serde_json::json!({"repository": {"nameWithOwner": repo}, "contributions": {
+                "totalCount": days.len(),
+                "nodes": days.iter().map(|(at, n)| serde_json::json!({"occurredAt": at, "commitCount": n})).collect::<Vec<_>>()
+            }})
+        };
+        let wire: WireContributions = serde_json::from_value(serde_json::json!({
+            "contributionCalendar": {"totalContributions": 9, "weeks": []},
+            "commitContributionsByRepository": [
+                commits("o/a", &[("2026-10-02T00:00:00Z", 2), ("2026-10-01T00:00:00Z", 3)]),
+                commits("o/b", &[("2026-10-03T00:00:00Z", 7)]),
+            ],
+            "totalRepositoriesWithContributedCommits": 3,
+            "pullRequestContributions": {"totalCount": 1, "nodes": [item("2026-07-01T00:00:00Z", 1)]},
+            "issueContributions": {"totalCount": 0, "nodes": []},
+            "pullRequestReviewContributions": {"totalCount": 3, "nodes": [
+                item("2026-09-05T00:00:00Z", 5), item("2026-09-04T00:00:00Z", 5), item("2026-08-01T00:00:00Z", 6)
+            ]},
+        }))
+        .unwrap();
+        let c = wire.into_contributions();
+        let months: Vec<&str> = c.activity.iter().map(|m| m.month.as_str()).collect();
+        assert_eq!(months, ["2026-10", "2026-09", "2026-08"]);
+        assert_eq!(
+            c.activity[0].commits,
+            [("o/b".to_owned(), 7), ("o/a".to_owned(), 5)]
+        );
+        assert_eq!(c.activity[1].reviews.len(), 1);
+        assert_eq!(c.short.commits.as_deref(), Some(Short::EVERY_MONTH));
+        assert_eq!(
+            (c.short.pulls.as_ref(), c.short.reviews.as_ref()),
+            (None, None)
+        );
+    }
+
+    /// How REST names a run's, job's or step's outcome (found by mutation
+    /// testing: no test pinned it).
+    #[test]
+    fn rest_outcomes() {
+        for (status, conclusion, outcome) in [
+            ("completed", Some("success"), CheckOutcome::Success),
+            ("completed", Some("skipped"), CheckOutcome::Skipped),
+            ("completed", Some("cancelled"), CheckOutcome::Cancelled),
+            ("completed", Some("neutral"), CheckOutcome::Neutral),
+            ("completed", Some("stale"), CheckOutcome::Neutral),
+            ("completed", Some("failure"), CheckOutcome::Failure),
+            ("completed", Some("timed_out"), CheckOutcome::Failure),
+            ("in_progress", None, CheckOutcome::Pending),
+            ("queued", None, CheckOutcome::Pending),
+        ] {
+            assert_eq!(
+                rest_outcome(status, conclusion),
+                outcome,
+                "{status} {conclusion:?}"
+            );
+        }
+    }
+
+    /// A search's next page and counts, whatever it searched.
+    #[test]
+    fn search_results_page_and_count() {
+        let user = UserSummary {
+            login: "a".into(),
+            name: None,
+            bio: None,
+            is_org: false,
+        };
+        let users = Results {
+            total: 40,
+            items: vec![user; 2],
+            next: Some("c2".into()),
+        };
+        let r = SearchResults::Users(users);
+        assert_eq!((r.next(), r.counts()), (Some("c2"), (40, 2)));
+        let empty = SearchResults::Repos(Results::default());
+        assert_eq!((empty.next(), empty.counts()), (None, (0, 0)));
+    }
+
+    /// A commit's checks past the first page are counted, not dropped;
+    /// blank summaries are none.
+    #[test]
+    fn checks_count_what_wasnt_fetched() {
+        let run = |name: &str, title: &str| {
+            serde_json::json!({"__typename": "CheckRun", "name": name, "status": "COMPLETED",
+                "conclusion": "SUCCESS", "startedAt": null, "completedAt": null, "title": title,
+                "detailsUrl": null, "checkSuite": null})
+        };
+        let commit: ChecksCommit = serde_json::from_value(serde_json::json!({
+            "oid": "abc",
+            "statusCheckRollup": {"contexts": {"totalCount": 5,
+                "pageInfo": {"hasNextPage": true, "endCursor": "c"},
+                "nodes": [run("a", "  "), run("b", "Built")]}}
+        }))
+        .unwrap();
+        let checks = commit.into_checks();
+        assert_eq!((checks.items.len(), checks.total), (2, 5));
+        assert_eq!(checks.items[0].summary, None);
+        assert_eq!(checks.items[1].summary.as_deref(), Some("Built"));
+    }
+
+    /// Only a line that starts with GitHub's timestamp has one.
+    #[test]
+    fn log_lines_split_off_their_timestamps() {
+        use super::log::split;
+        assert_eq!(
+            split("2026-10-05T17:42:01.1234567Z hello there"),
+            (Some("2026-10-05T17:42:01.1234567Z"), "hello there")
+        );
+        assert_eq!(
+            split("\u{feff}2026-10-05T17:42:01.1Z x"),
+            (Some("2026-10-05T17:42:01.1Z"), "x")
+        );
+        for line in [
+            "hello there",
+            "2026-10-05 short",
+            "2026/10/05T17:42:01.1234Z x",
+            "20261005T17:42:01.12345Z x",
+            "2026-10-05T17:42:01.12345+ x",
+        ] {
+            assert_eq!(split(line).0, None, "{line}");
+        }
+    }
+
     /// A profile's activity lists are its newest, and where GitHub has
     /// more than came, the counts say they may be short.
     #[test]

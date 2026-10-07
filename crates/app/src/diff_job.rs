@@ -522,6 +522,91 @@ mod tests {
         assert_eq!(paths, ["b.txt"]);
     }
 
+    /// An outdated comment's line, found again where it moved: from the
+    /// commit it was written on (fetched by SHA once force-pushed away) to
+    /// the head. A line that changed stays outdated.
+    #[tokio::test]
+    async fn outdated_lines_map_to_where_they_moved() {
+        use std::path::Path;
+        use std::process::Command;
+
+        fn git(dir: &Path, args: &[&str]) -> String {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_AUTHOR_NAME", "T")
+                .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
+                .env("GIT_COMMITTER_NAME", "T")
+                .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        }
+        let lines = |n: u32| (1..=n).map(|i| format!("line {i}\n")).collect::<String>();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let origin = tmp.path().join("origin");
+        std::fs::create_dir_all(&origin).unwrap();
+        git(&origin, &["init", "-q", "-b", "main"]);
+        git(&origin, &["config", "uploadpack.allowFilter", "true"]);
+        git(
+            &origin,
+            &["config", "uploadpack.allowAnySHA1InWant", "true"],
+        );
+        std::fs::write(origin.join("a.txt"), lines(20)).unwrap();
+        git(&origin, &["add", "."]);
+        git(&origin, &["commit", "-q", "-m", "base"]);
+        git(&origin, &["checkout", "-q", "-b", "feature"]);
+        std::fs::write(
+            origin.join("a.txt"),
+            lines(20).replace("line 3\n", "three\n"),
+        )
+        .unwrap();
+        git(&origin, &["commit", "-qam", "v1"]);
+        let written_on = git(&origin, &["rev-parse", "HEAD"]);
+        // Force-pushed: v1 is gone from every branch; v2 adds two lines on
+        // top and changes line 15.
+        git(&origin, &["reset", "-q", "--hard", "main"]);
+        let v2 = format!(
+            "new 1\nnew 2\n{}",
+            lines(20)
+                .replace("line 3\n", "three\n")
+                .replace("line 15\n", "fifteen\n")
+        );
+        std::fs::write(origin.join("a.txt"), v2).unwrap();
+        git(&origin, &["commit", "-qam", "v2"]);
+        git(&origin, &["update-ref", "refs/pull/1/head", "feature"]);
+
+        let repo = Repo::open_cache(
+            &tmp.path().join("cache"),
+            "o",
+            "r",
+            &format!("file://{}", origin.display()),
+            Credentials::Ambient,
+            &|_| {},
+        )
+        .await
+        .unwrap();
+        let head = repo.fetch_pr(1, "main", None, &|_| {}).await.unwrap().head;
+        let reader = repo.blob_reader().unwrap();
+        let map = |line| map_outdated(&repo, &reader, &head, "a.txt", &written_on, line);
+        assert_eq!(map(10).await, Some(12));
+        assert_eq!(map(3).await, Some(5), "\"three\" is unchanged since");
+        assert_eq!(map(15).await, None, "line 15 changed");
+        assert_eq!(
+            map_outdated(&repo, &reader, &head, "a.txt", &"f".repeat(40), 1).await,
+            None
+        );
+    }
+
     /// "Since my last review" against a real force-push and rebase: the
     /// PR is rebased onto a `main` that moved on, and gains one change.
     /// Only that change is new; the rebase and the old change aren't.

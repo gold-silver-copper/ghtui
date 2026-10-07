@@ -2457,3 +2457,19 @@ fn check_status(response: &Response) -> Result<(), ApiError> {
         message,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A REST list has another page while the pages so far hold fewer than
+    /// its total.
+    #[test]
+    fn rest_lists_page_to_their_total() {
+        assert_eq!(next_page(1, 0), None);
+        assert_eq!(next_page(1, REST_PAGE), None);
+        assert_eq!(next_page(1, REST_PAGE + 1).as_deref(), Some("2"));
+        assert_eq!(next_page(2, 2 * REST_PAGE), None);
+        assert_eq!(next_page(2, 2 * REST_PAGE + 1).as_deref(), Some("3"));
+    }
+}

@@ -1230,6 +1230,102 @@ pub(crate) mod tests {
         ));
     }
 
+    /// Each name a URL holds is checked as what it names (pinned after
+    /// mutation testing found the checks untested).
+    #[test]
+    fn names_in_urls_are_checked() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        for (url, opens) in [
+            (
+                "https://github.com/advisories/GHSA-abcd-efgh-2345".to_owned(),
+                true,
+            ),
+            ("https://github.com/advisories/GHSB-1".to_owned(), false),
+            ("https://github.com/advisories/GHSA-".to_owned(), false),
+            (
+                "https://github.com/o/r/security/advisories/GHSA-a%20b".to_owned(),
+                false,
+            ),
+            (
+                "https://github.com/o/r/blame/main/src/a.rs".to_owned(),
+                true,
+            ),
+            (
+                "https://github.com/o/r/blame/a..b/src/a.rs".to_owned(),
+                false,
+            ),
+            ("https://github.com/o/r/blame/main".to_owned(), false),
+            ("https://github.com/o/r/wiki/Some%20Page".to_owned(), true),
+            ("https://github.com/o/r/wiki/a%01b".to_owned(), false),
+            (
+                "https://github.com/o/r/actions/workflows/ci.yml".to_owned(),
+                true,
+            ),
+            (
+                "https://github.com/o/r/actions/workflows/c%20i.yml".to_owned(),
+                false,
+            ),
+            (
+                "https://github.com/o/r/deployments/staging%20eu".to_owned(),
+                true,
+            ),
+            ("https://github.com/o/r/deployments/a%01".to_owned(), false),
+            ("https://github.com/o/r/commits/main/src".to_owned(), true),
+            ("https://github.com/o/r/commits/a@{1}".to_owned(), false),
+            (format!("https://github.com/o/r/pull/1/commits/{sha}"), true),
+            (
+                "https://github.com/o/r/discussions/categories/q-a".to_owned(),
+                true,
+            ),
+            (
+                "https://github.com/o/r/discussions/categories/q%20a".to_owned(),
+                false,
+            ),
+            (
+                "https://gist.github.com/octocat/0123456789abcdef0123".to_owned(),
+                true,
+            ),
+            (
+                "https://gist.github.com/octo.cat/0123456789abcdef0123".to_owned(),
+                false,
+            ),
+            (
+                "https://gist.github.com/octocat/0123456789abcdef0123/revisions".to_owned(),
+                true,
+            ),
+            (
+                "https://gist.github.com/oc%20t/0123456789abcdef0123/revisions".to_owned(),
+                false,
+            ),
+        ] {
+            let target = Target::from_url(&url);
+            assert_eq!(
+                matches!(target, Target::Page(_)),
+                opens,
+                "{url}: {target:?}"
+            );
+        }
+        // Not a commit under a PR: the PR's commits.
+        assert!(matches!(
+            Target::from_url("https://github.com/o/r/pull/1/commits/a%20b"),
+            Target::Page(Route::Pr {
+                tab: PrTab::Commits,
+                ..
+            })
+        ));
+        // A full SHA's files open the diff; a short one, its page.
+        assert!(matches!(
+            Target::from_url(&format!("https://github.com/o/r/commit/{sha}#diff-1")),
+            Target::Files(_)
+        ));
+        assert!(matches!(
+            Target::from_url("https://github.com/o/r/commit/0123456#diff-1"),
+            Target::Page(Route::Commit { .. })
+        ));
+        assert!(!valid_rev("a b") && !valid_rev("a~1") && !valid_rev("a.") && valid_rev("v1.2/x"));
+        assert!(valid_ghsa("GHSA-2345") && !valid_ghsa("ghsa-1") && !valid_ghsa("GHSA-1 2"));
+    }
+
     fn page(url: &str) -> Route {
         match Target::from_url(url) {
             Target::Page(route) => route,
