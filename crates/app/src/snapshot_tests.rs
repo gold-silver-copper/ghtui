@@ -229,6 +229,43 @@ fn long_conversations_say_what_is_left_out() {
     assert!(text(&state).contains("… 248 earlier commits on GitHub (o)"));
 }
 
+/// A dismissed review, with the state the API gives it (pinned by
+/// ghtui-api's `a_dismissed_reviews_wire_spelling`), reads as dismissed in
+/// the conversation, not as a plain review.
+#[test]
+fn a_dismissed_review_reads_as_dismissed() {
+    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let mut activity = fixtures::activity();
+    activity.reviews = vec![ghtui_api::browse::ReviewSummary {
+        author: "hubot".into(),
+        state: ghtui_api::model::ReviewState::Dismissed,
+        body: String::new(),
+        submitted_at: "2026-10-01T10:00:00Z".into(),
+    }];
+    activity.total_reviews = 1;
+    let mut state = with_pr(Mode::Dark);
+    fetched(
+        &mut state,
+        DataKey::PrActivity(pr),
+        Data::PrActivity(Box::new(activity)),
+    );
+    let crate::state::Screen::Page(p) = state.screen() else {
+        panic!("not a page");
+    };
+    let page = p
+        .page
+        .lines
+        .iter()
+        .map(ghtui_ui::page::PageLine::text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let hubot: Vec<&str> = page.lines().filter(|l| l.contains("hubot")).collect();
+    assert!(
+        page.contains("had a review dismissed"),
+        "hubot's lines: {hubot:?}"
+    );
+}
+
 /// Pushes `route` and delivers `data` for its page's own fetch (its last).
 fn open(state: &mut State, route: Route, data: Data) {
     let Some(Need::Data(key)) = needs(&route).pop() else {

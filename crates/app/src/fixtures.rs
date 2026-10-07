@@ -566,13 +566,13 @@ pub fn activity() -> PrActivity {
         reviews: vec![
             ReviewSummary {
                 author: "monalisa".into(),
-                state: "approved".into(),
+                state: ghtui_api::model::ReviewState::Approved,
                 body: String::new(),
                 submitted_at: "2026-10-02T09:00:00Z".into(),
             },
             ReviewSummary {
                 author: "hubot".into(),
-                state: "commented".into(),
+                state: ghtui_api::model::ReviewState::Commented,
                 body: "Yes: every role is checked at both depths.".into(),
                 submitted_at: "2026-10-01T10:00:00Z".into(),
             },

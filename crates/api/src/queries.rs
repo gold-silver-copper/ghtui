@@ -4,7 +4,7 @@
 
 use ghtui_schema::schema;
 
-use crate::model::{Side, ViewedState};
+use crate::model::{Mergeable, ReviewDecision, ReviewState, Side, ViewedState};
 
 #[derive(cynic::Scalar, Debug, Clone)]
 #[cynic(graphql_type = "DateTime", schema_module = "schema")]
@@ -197,7 +197,7 @@ pub struct PrSummary {
     pub repository: RepositoryName,
     pub additions: i32,
     pub deletions: i32,
-    pub review_decision: Option<PullRequestReviewDecision>,
+    pub review_decision: Option<ReviewDecision>,
     #[arguments(last: 1)]
     pub commits: CommitRollupConnection,
     pub comments: CommentCount,
@@ -249,14 +249,6 @@ pub enum PullRequestState {
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy)]
-#[cynic(graphql_type = "PullRequestReviewDecision", schema_module = "schema")]
-pub enum PullRequestReviewDecision {
-    Approved,
-    ChangesRequested,
-    ReviewRequired,
-}
-
-#[derive(cynic::Enum, Debug, Clone, Copy)]
 #[cynic(graphql_type = "StatusState", schema_module = "schema")]
 pub enum StatusState {
     Error,
@@ -303,18 +295,10 @@ pub struct PrDetail {
     pub head_ref_oid: GitObjectId,
     pub head_repository: Option<RepositoryName>,
     pub changed_files: i32,
-    pub mergeable: MergeableState,
+    pub mergeable: Mergeable,
     #[arguments(first: 20)]
     pub labels: Option<LabelConnection>,
     pub milestone: Option<MilestoneName>,
-}
-
-#[derive(cynic::Enum, Debug, Clone, Copy)]
-#[cynic(graphql_type = "MergeableState", schema_module = "schema")]
-pub enum MergeableState {
-    Conflicting,
-    Mergeable,
-    Unknown,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -749,16 +733,6 @@ pub struct PrReviews {
 pub struct ReviewCommit {
     pub state: ReviewState,
     pub commit: Option<CommitOid>,
-}
-
-#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
-#[cynic(graphql_type = "PullRequestReviewState", schema_module = "schema")]
-pub enum ReviewState {
-    Approved,
-    ChangesRequested,
-    Commented,
-    Dismissed,
-    Pending,
 }
 
 #[cfg(test)]

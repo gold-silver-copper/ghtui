@@ -702,7 +702,7 @@ impl GitHub {
             .into_iter()
             .flatten()
             .rev()
-            .find(|r| r.state != queries::ReviewState::Pending)
+            .find(|r| r.state != crate::model::ReviewState::Pending)
             .and_then(|r| r.commit)
             .map(|c| c.oid.0))
     }
