@@ -980,14 +980,13 @@ pub fn append(results: &mut SearchResults, more: SearchResults) {
         (SearchResults::Repos(a), SearchResults::Repos(b)) => extend(a, b),
         (SearchResults::Issues(a), SearchResults::Issues(b)) => extend(a, b),
         (SearchResults::Users(a), SearchResults::Users(b)) => extend(a, b),
+        (SearchResults::Discussions(a), SearchResults::Discussions(b)) => extend(a, b),
+        (SearchResults::Commits(a), SearchResults::Commits(b)) => extend(a, b),
+        (SearchResults::Code(a), SearchResults::Code(b)) => extend(a, b),
         _ => {}
     }
 }
 
 pub fn next_cursor(results: &SearchResults) -> Option<&str> {
-    match results {
-        SearchResults::Repos(r) => r.next.as_deref(),
-        SearchResults::Issues(r) => r.next.as_deref(),
-        SearchResults::Users(r) => r.next.as_deref(),
-    }
+    results.next()
 }

@@ -3,13 +3,14 @@
 use crossterm::event::KeyEvent;
 use ghtui_api::browse::{
     Advisory, AdvisoryPackage, Asset, Blame, BlameRange, Blob, BranchInfo, CheckItem, CheckOutcome,
-    Checks, Comment, CommitDetail, CommitInfo, Comparison, Contributed, Contributions,
-    DeploymentInfo, DeploymentList, DiscussionCategory, DiscussionComment, DiscussionDetail,
-    DiscussionList, DiscussionSummary, EntryKind, Gist, GistFile, GistSummary, IssueDetail,
-    IssueState, IssueSummary, Job, JobSummary, MilestoneDetail, MilestoneInfo, MilestoneList,
-    MonthActivity, PrActivity, Profile, Readme, Release, RepoOverview, RepoSummary, Results,
-    ReviewSummary, RunSummary, SearchResults, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary,
-    TreeEntry, UserSummary, Week, WikiPage, Workflow, WorkflowRun,
+    Checks, CodeHit, Comment, CommitDetail, CommitHit, CommitInfo, Comparison, Contributed,
+    Contributions, DeploymentInfo, DeploymentList, DiscussionCategory, DiscussionComment,
+    DiscussionDetail, DiscussionHit, DiscussionList, DiscussionSummary, EntryKind, Gist, GistFile,
+    GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobSummary, MilestoneDetail,
+    MilestoneInfo, MilestoneList, MonthActivity, PrActivity, Profile, Readme, Release,
+    RepoOverview, RepoSummary, Results, ReviewSummary, RunSummary, SearchResults, Step, TagInfo,
+    TeamDetail, TeamRepo, TeamSummary, TreeEntry, UserSummary, Week, WikiPage, Workflow,
+    WorkflowRun,
 };
 use ghtui_api::model::{Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
@@ -1161,6 +1162,53 @@ pub fn discussion() -> DiscussionDetail {
             },
         ],
     }
+}
+/// A discussion search's result.
+pub fn discussion_results() -> SearchResults {
+    let summary = discussions().results.items.remove(0);
+    SearchResults::Discussions(Results {
+        total: 6065,
+        items: vec![DiscussionHit {
+            repo: RepoId::new("cli", "cli"),
+            summary,
+        }],
+        next: Some("2".into()),
+    })
+}
+
+/// A commit search's results.
+pub fn commit_results() -> SearchResults {
+    let hit = |oid: char, headline: &str| CommitHit {
+        repo: RepoId::new("ratatui", "ratatui"),
+        commit: CommitInfo {
+            oid: oid.to_string().repeat(40),
+            headline: headline.into(),
+            author: "octocat".into(),
+            date: "2026-10-01T12:00:00Z".into(),
+        },
+    };
+    SearchResults::Commits(Results {
+        total: 60,
+        items: vec![
+            hit('a', "perf(terminal): skip a redundant clear"),
+            hit('b', "feat: a tui widget"),
+        ],
+        next: Some("2".into()),
+    })
+}
+
+/// A code search's results.
+pub fn code_results() -> SearchResults {
+    let hit = |path: &str| CodeHit {
+        repo: RepoId::new("ratatui", "ratatui"),
+        path: path.into(),
+        sha: "f60d17e29bb58b7e699e9befbb97298ec22aac14".into(),
+    };
+    SearchResults::Code(Results {
+        total: 158,
+        items: vec![hit("ratatui-termina/src/lib.rs"), hit("src/terminal.rs")],
+        next: Some("2".into()),
+    })
 }
 pub fn user_results() -> SearchResults {
     SearchResults::Users(Results {

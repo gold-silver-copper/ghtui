@@ -153,9 +153,9 @@ https://github.com/search?q=tui&type=repositories                           Sear
 https://github.com/search?q=tui&type=issues                                 Search
 https://github.com/search?q=tui&type=pullrequests                           Search
 https://github.com/search?q=tui&type=users                                  Search
-https://github.com/search?q=tui&type=discussions                            todo Search
-https://github.com/search?q=tui&type=commits                                todo Search
-https://github.com/search?q=tui&type=code                                   todo Search
+https://github.com/search?q=tui&type=discussions                            Search
+https://github.com/search?q=tui&type=commits                                Search
+https://github.com/search?q=tui&type=code                                   Search
 https://github.com/search?q=tui&type=topics                                 Search
 https://github.com/search?q=tui&type=wikis                                  external no-api
 https://github.com/search?q=tui&type=registrypackages                       external scope

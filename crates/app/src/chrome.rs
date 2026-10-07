@@ -290,16 +290,16 @@ impl State {
             }
             Route::Search { kind, query } => {
                 c.crumb("Search", None);
-                let total = self.search_results(route).map(|r| match r {
-                    ghtui_api::browse::SearchResults::Repos(r) => r.total,
-                    ghtui_api::browse::SearchResults::Issues(r) => r.total,
-                    ghtui_api::browse::SearchResults::Users(r) => r.total,
-                });
+                let total = self.search_results(route).map(|r| r.counts().0);
                 let kinds = [
-                    (SearchKind::Repos, "▤", "Repositories"),
+                    // Short, so all seven fit.
+                    (SearchKind::Repos, "▤", "Repos"),
                     (SearchKind::Issues, "◉", "Issues"),
-                    (SearchKind::Pulls, "⇄", "Pull requests"),
+                    (SearchKind::Pulls, "⇄", "PRs"),
                     (SearchKind::Users, "⚇", "Users"),
+                    (SearchKind::Discussions, "◈", "Discussions"),
+                    (SearchKind::Commits, "◷", "Commits"),
+                    (SearchKind::Code, "<>", "Code"),
                 ];
                 for (i, (k, icon, label)) in kinds.into_iter().enumerate() {
                     if k == *kind {

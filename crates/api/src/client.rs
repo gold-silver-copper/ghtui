@@ -757,6 +757,14 @@ impl GitHub {
             Kind::Issues => (SearchType::Issue, " is:issue"),
             Kind::Pulls => (SearchType::Issue, " is:pr"),
             Kind::Users => (SearchType::User, ""),
+            Kind::Discussions | Kind::Commits | Kind::Code => {
+                let results = self.search_other(kind, query, after).await?;
+                if first_page {
+                    self.remember(&browse::keys::search(kind, query), results.clone())
+                        .await;
+                }
+                return Ok(results);
+            }
         };
         let api_query = if query.contains("is:issue") || query.contains("is:pr") {
             query.to_owned()
@@ -769,6 +777,99 @@ impl GitHub {
                 .await;
         }
         Ok(results)
+    }
+
+    /// A page of a discussion search (GraphQL), or of a commit or code
+    /// search (REST only), 30 at a time; REST pages by number.
+    async fn search_other(
+        &self,
+        kind: browse::SearchKind,
+        query: &str,
+        after: Option<String>,
+    ) -> Result<browse::SearchResults, ApiError> {
+        use browse::{Results, SearchKind as Kind, SearchResults};
+        if kind == Kind::Discussions {
+            let data = self
+                .graphql_json(
+                    "query($q: String!, $after: String) { search(type: DISCUSSION, query: $q, first: 30, after: $after) { discussionCount pageInfo { hasNextPage endCursor } nodes { ... on Discussion { repository { nameWithOwner } number title author { login } category { name } comments { totalCount } isAnswered upvoteCount updatedAt } } } }",
+                    serde_json::json!({ "q": query, "after": after }),
+                )
+                .await?;
+            let search = data.get("search").cloned().unwrap_or_default();
+            let repos: Vec<Option<RepoId>> = search
+                .pointer("/nodes")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|n| n.get("number").is_some())
+                .map(|n| {
+                    n.pointer("/repository/nameWithOwner")?
+                        .as_str()
+                        .and_then(RepoId::parse)
+                })
+                .collect();
+            let mut wire = search;
+            if let Some(obj) = wire.as_object_mut() {
+                let count = obj.remove("discussionCount").unwrap_or_default();
+                obj.insert("totalCount".into(), count);
+                if let Some(serde_json::Value::Array(nodes)) = obj.get_mut("nodes") {
+                    nodes.retain(|n| n.get("number").is_some());
+                }
+            }
+            let page: browse::wire_discussions::Summaries = serde_json::from_value(wire)?;
+            let page = page.into_results();
+            return Ok(SearchResults::Discussions(Results {
+                total: page.total,
+                items: page
+                    .items
+                    .into_iter()
+                    .zip(repos)
+                    .filter_map(|(summary, repo)| {
+                        Some(browse::DiscussionHit {
+                            repo: repo?,
+                            summary,
+                        })
+                    })
+                    .collect(),
+                next: page.next,
+            }));
+        }
+        let number: u64 = after.as_deref().and_then(|a| a.parse().ok()).unwrap_or(1);
+        let what = if kind == Kind::Commits {
+            "commits"
+        } else {
+            "code"
+        };
+        let path = format!(
+            "/search/{what}?q={}&per_page=30&page={number}",
+            encode_query(query)
+        );
+        // GitHub serves the first 1000 results.
+        let next = |total: u64| (number * 30 < total.min(1000)).then(|| (number + 1).to_string());
+        if kind == Kind::Commits {
+            let page: browse::rest_search::Page<browse::rest_search::Commit> =
+                self.rest_json(&path).await?;
+            return Ok(SearchResults::Commits(Results {
+                next: next(page.total_count),
+                total: page.total_count,
+                items: page
+                    .items
+                    .into_iter()
+                    .filter_map(browse::rest_search::Commit::into_hit)
+                    .collect(),
+            }));
+        }
+        let page: browse::rest_search::Page<browse::rest_search::Code> =
+            self.rest_json(&path).await?;
+        Ok(SearchResults::Code(Results {
+            next: next(page.total_count),
+            total: page.total_count,
+            items: page
+                .items
+                .into_iter()
+                .filter_map(browse::rest_search::Code::into_hit)
+                .collect(),
+        }))
     }
 
     /// A page of a search, as GitHub's API takes it.
@@ -806,11 +907,13 @@ impl GitHub {
                 items: items.filter_map(BrowseItem::into_issue).collect(),
                 next,
             }),
-            Kind::Users => SearchResults::Users(Results {
-                total: count(conn.user_count),
-                items: items.filter_map(BrowseItem::into_user).collect(),
-                next,
-            }),
+            Kind::Users | Kind::Discussions | Kind::Commits | Kind::Code => {
+                SearchResults::Users(Results {
+                    total: count(conn.user_count),
+                    items: items.filter_map(BrowseItem::into_user).collect(),
+                    next,
+                })
+            }
         };
         Ok(results)
     }
@@ -1898,6 +2001,19 @@ impl GitHub {
             self.mutate(browse::RemoveStar::build(vars)).await.map(drop)
         }
     }
+}
+
+/// Percent-encodes a query string's value.
+fn encode_query(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                char::from(b).to_string()
+            }
+            b' ' => "+".to_owned(),
+            b => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 /// Percent-encodes a ref for a URL path (branch names may contain `/`).

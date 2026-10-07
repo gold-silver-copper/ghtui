@@ -1010,6 +1010,27 @@ fn search_dark() {
 }
 
 #[test]
+fn search_discussions_dark() {
+    let results = fixtures::discussion_results();
+    let state = with_search(Mode::Dark, SearchKind::Discussions, "offline", results);
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn search_commits_light() {
+    let results = fixtures::commit_results();
+    let state = with_search(Mode::Light, SearchKind::Commits, "tui", results);
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
+fn search_code_dark() {
+    let results = fixtures::code_results();
+    let state = with_search(Mode::Dark, SearchKind::Code, "Terminal", results);
+    insta::assert_snapshot!(render(&state));
+}
+
+#[test]
 fn search_users_light() {
     let results = fixtures::user_results();
     let state = with_search(Mode::Light, SearchKind::Users, "octocat", results);
@@ -1807,8 +1828,8 @@ mod links {
         with_commit, with_compare, with_deployments, with_discussion, with_discussions, with_file,
         with_forks, with_gist, with_gists, with_history, with_inbox, with_issue, with_issues,
         with_job, with_milestone, with_milestones, with_pr, with_pr_checks, with_profile,
-        with_release, with_releases, with_repo, with_repo_search, with_run, with_stargazers,
-        with_tags, with_team, with_teams, with_wiki, with_workflow,
+        with_release, with_releases, with_repo, with_repo_search, with_run, with_search,
+        with_stargazers, with_tags, with_team, with_teams, with_wiki, with_workflow,
     };
     use crate::route::Target;
     use crate::state::{Screen, State};
@@ -1876,6 +1897,33 @@ mod links {
             ("release", with_release(Mode::Dark)),
             ("tags", with_tags(Mode::Dark)),
             ("branches", with_branches(Mode::Dark)),
+            (
+                "discussion search",
+                with_search(
+                    Mode::Dark,
+                    ghtui_api::browse::SearchKind::Discussions,
+                    "q",
+                    crate::fixtures::discussion_results(),
+                ),
+            ),
+            (
+                "commit search",
+                with_search(
+                    Mode::Dark,
+                    ghtui_api::browse::SearchKind::Commits,
+                    "q",
+                    crate::fixtures::commit_results(),
+                ),
+            ),
+            (
+                "code search",
+                with_search(
+                    Mode::Dark,
+                    ghtui_api::browse::SearchKind::Code,
+                    "q",
+                    crate::fixtures::code_results(),
+                ),
+            ),
             ("wiki", with_wiki(Mode::Dark)),
             ("advisories", with_advisories(Mode::Dark)),
             ("advisory", with_advisory(Mode::Dark)),
