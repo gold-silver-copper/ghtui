@@ -3,12 +3,15 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-/// Columns `s` takes on screen. Characters that are never drawn don't
-/// count: ratatui drops control characters (and anything of zero width,
-/// bidi overrides included, so GitHub text can't reorder what's shown).
+/// Columns `s` takes on screen, measured as ratatui draws it: a grapheme
+/// at a time (so an emoji sequence joined to a flag is two, not the one
+/// `unicode-width` makes of the whole string). Characters that are never
+/// drawn don't count: ratatui drops control characters (and anything of
+/// zero width, bidi overrides included, so GitHub text can't reorder
+/// what's shown).
 pub fn width(s: &str) -> usize {
-    if !s.contains(char::is_control) {
-        return UnicodeWidthStr::width(s);
+    if s.is_ascii() {
+        return s.bytes().filter(|b| !b.is_ascii_control()).count();
     }
     s.graphemes(true)
         .filter(|g| !g.contains(char::is_control))

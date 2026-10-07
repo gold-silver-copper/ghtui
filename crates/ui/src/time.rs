@@ -106,6 +106,36 @@ pub fn duration_iso(start: &str, end: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Relative times at each boundary, on both sides of it.
+    #[test]
+    fn relative_time_boundaries() {
+        const NOW: u64 = 1_800_000_000;
+        let (m, h, d) = (60, 3600, 86_400);
+        for (ago_secs, shown) in [
+            (0, "just now"),
+            (59, "just now"),
+            (60, "1m ago"),
+            (119, "1m ago"),
+            (h - 1, "59m ago"),
+            (h, "1h ago"),
+            (d - 1, "23h ago"),
+            (23 * h + 59 * m, "23h ago"),
+            (d, "1d ago"),
+            (4 * d, "4d ago"),
+            (13 * d, "13d ago"),
+            (14 * d - 1, "13d ago"),
+            (14 * d, "2w ago"),
+            (30 * d, "4w ago"),
+            (364 * d, "52w ago"),
+            (365 * d, "1y ago"),
+            (3 * 365 * d, "3y ago"),
+        ] {
+            assert_eq!(ago(NOW - ago_secs, NOW), shown, "{ago_secs}s");
+        }
+        // A time ahead of the clock (a skewed clock) is now.
+        assert_eq!(ago(NOW + 3600, NOW), "just now");
+    }
+
     #[test]
     fn durations() {
         let at = |s: &str| format!("2026-01-01T{s}Z");

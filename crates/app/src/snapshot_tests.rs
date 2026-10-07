@@ -2516,3 +2516,93 @@ fn to_html(buf: &ratatui::buffer::Buffer) -> String {
     out.push_str("</pre>");
     out
 }
+
+/// Text at its worst: long, wide (CJK), with emoji, ZWJ sequences, flags,
+/// stacked combining marks and a right-to-left override.
+fn awful(n: usize) -> String {
+    "漢字かな 👩‍👩‍👧‍👦 🇯🇵 e\u{301}\u{302}\u{303} \u{202e}rtl\u{202c} Ｆｕｌｌ ".repeat(n)
+}
+
+/// Stretches what's on the screens' data to its worst.
+fn stretch(state: &mut State) {
+    for remote in state.data.values_mut() {
+        match &mut remote.data {
+            Some(Data::Issue(Some(d))) => {
+                d.title = awful(40);
+                d.body = format!("{}\n\n```\n{}\n```", awful(30), "x".repeat(5000));
+                for c in &mut d.comments {
+                    c.author = "a".repeat(39);
+                    c.body = awful(20);
+                }
+            }
+            Some(Data::Branches(r)) => {
+                for b in &mut r.items {
+                    b.name = format!("feature/{}", awful(10));
+                    b.headline = Some(awful(20));
+                }
+            }
+            Some(Data::Blob(b)) => {
+                b.text = Some(format!("{}\n{}\n", "y".repeat(10_000), awful(50)));
+            }
+            Some(Data::Repo(o)) => {
+                o.summary.description = Some(awful(30));
+                o.topics = vec![awful(2); 30].into();
+            }
+            _ => {}
+        }
+    }
+    state.data_gen += 1;
+}
+
+/// Every screen, with ordinary and with awful data, renders at any size
+/// (one cell, a phone, a classic terminal) without panicking or drawing
+/// outside the screen.
+#[test]
+fn every_screen_renders_at_odd_sizes() {
+    type Build = fn() -> State;
+    let builders: Vec<(&str, Build)> = vec![
+        ("home", || with_inbox(Mode::Dark, ColorDepth::TrueColor)),
+        ("pr", || with_pr(Mode::Dark)),
+        ("repo", || with_repo(Mode::Dark, ColorDepth::TrueColor)),
+        ("file", || with_file(Mode::Dark)),
+        ("blame", || with_blame(Mode::Dark)),
+        ("gist", || with_gist(Mode::Dark)),
+        ("teams", || with_team(Mode::Dark)),
+        ("advisory", || with_advisory(Mode::Dark)),
+        ("wiki", || with_wiki(Mode::Dark)),
+        ("issues", || with_issues(Mode::Dark)),
+        ("commit", || with_commit(Mode::Dark)),
+        ("checks", || with_pr_checks(Mode::Dark)),
+        ("actions", || with_actions(Mode::Dark)),
+        ("tabs", || with_tabs(Mode::Dark, 9)),
+        ("org", || with_org(Mode::Dark)),
+        ("discussion", || with_discussion(Mode::Dark)),
+        ("run", || with_run(Mode::Dark)),
+        ("job", || with_job(Mode::Dark, Some((3, 2)))),
+        ("releases", || with_releases(Mode::Dark)),
+        ("branches", || with_branches(Mode::Dark)),
+        ("milestone", || with_milestone(Mode::Dark)),
+        ("deployments", || with_deployments(Mode::Dark)),
+        ("compare", || with_compare(Mode::Dark)),
+        ("history", || with_history(Mode::Dark)),
+        ("issue", || with_issue(Mode::Dark)),
+        ("profile", || with_profile(Mode::Dark, ProfileTab::Overview)),
+        ("search", || with_repo_search(Mode::Dark)),
+    ];
+    for (name, build) in builders {
+        for awful_data in [false, true] {
+            for (w, h) in [(1, 1), (20, 5), (80, 24), (3, 40), (200, 2)] {
+                let mut state = build();
+                if awful_data {
+                    stretch(&mut state);
+                }
+                update(&mut state, Msg::Resize(w, h));
+                let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+                terminal
+                    .draw(|frame| view(&state, frame, NOW))
+                    .unwrap_or_else(|e| panic!("{name} at {w}x{h}: {e}"));
+                assert_eq!(terminal.backend().buffer().area.width, w, "{name}");
+            }
+        }
+    }
+}

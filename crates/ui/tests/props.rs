@@ -1,5 +1,7 @@
 //! Properties over arbitrary input from GitHub: Markdown and diffs lay out
-//! and render without panicking, and stay inside their bounds.
+//! and render without panicking, and stay inside their bounds, whatever
+//! the text: wide (CJK), emoji, ZWJ sequences, flags, stacked combining
+//! marks.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -29,6 +31,11 @@ fn source() -> impl Strategy<Value = String> {
             1 => Just("漢字".to_owned()),
             1 => Just("e\u{301}".to_owned()),
             1 => Just("\u{202e}".to_owned()),
+            1 => Just("👩‍👩‍👧‍👦".to_owned()),
+            1 => Just("🇯🇵".to_owned()),
+            1 => Just("a\u{301}\u{302}\u{303}\u{304}".to_owned()),
+            1 => Just("Ｆｕｌｌ、".to_owned()),
+            1 => Just("\u{200d}".to_owned()),
             1 => any::<char>().prop_map(String::from),
         ],
         0..30,
@@ -93,6 +100,24 @@ proptest! {
         for line in page.lines.iter().filter(|l| l.tone != Tone::Code) {
             let used = usize::from(line.indent) + ghtui_ui::text::width(&line.text());
             prop_assert!(used <= usize::from(page.width), "{used} > {}: {:?}", page.width, line.text());
+        }
+    }
+
+    /// Cutting and wrapping text keep to the width asked for, in cells,
+    /// and never split a grapheme (an emoji family, a flag, a letter and
+    /// its marks).
+    #[test]
+    fn text_fits_its_width(text in prop_oneof![any::<String>(), source()], max in 1usize..40) {
+        use ghtui_ui::text::{graphemes, truncate, width, wrap};
+        let cut = truncate(&text, max);
+        prop_assert!(width(&cut) <= max, "{} > {max}: {cut:?}", width(&cut));
+        for line in wrap(&text, max) {
+            // A grapheme wider than the line (a wide one in one cell) is
+            // the one thing that may not fit.
+            let widest = graphemes(&line).map(|(_, w)| w).max().unwrap_or(0);
+            prop_assert!(width(&line) <= max.max(widest), "{} > {max}: {line:?}", width(&line));
+            let whole: Vec<&str> = graphemes(&line).map(|(g, _)| g).collect();
+            prop_assert_eq!(whole.concat(), line.clone());
         }
     }
 
