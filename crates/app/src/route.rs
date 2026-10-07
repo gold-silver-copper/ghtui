@@ -225,8 +225,7 @@ impl Route {
                 path,
                 lines,
             } => {
-                // The first `/blob/` follows the repository.
-                let url = links::blob(repo, rev, path).replacen("/blob/", "/blame/", 1);
+                let url = links::blame(repo, rev, path);
                 match lines {
                     None => url,
                     Some((a, b)) if a == b => format!("{url}#L{a}"),
@@ -1445,6 +1444,14 @@ pub(crate) mod tests {
             compare_url(&DiffOf::Range(pr.repo.clone(), sha.into(), other.clone())),
             format!("https://github.com/o/r/compare/{sha}...{other}")
         );
+        // A repository (or owner) named `blob` keeps its blame.
+        let blame = Route::Blame {
+            repo: RepoId::new("blob", "blob"),
+            rev: "main".into(),
+            path: "f".into(),
+            lines: None,
+        };
+        assert_eq!(page(&blame.url()), blame);
         assert!(matches!(
             Target::from_url("https://github.com/settings/tokens"),
             Target::External(_)
