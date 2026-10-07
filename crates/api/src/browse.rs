@@ -1303,6 +1303,21 @@ fn latest_runs(items: Vec<CheckItem>) -> Vec<CheckItem> {
 mod tests {
     use super::*;
 
+    /// A gist file without a name (GitHub's schema allows it) doesn't
+    /// spoil the list.
+    #[test]
+    fn gist_files_may_lack_names() {
+        let gists: wire_gists::Gists = serde_json::from_value(serde_json::json!({
+            "totalCount": 1,
+            "pageInfo": { "hasNextPage": false, "endCursor": null },
+            "nodes": [{ "name": "abc", "description": null, "updatedAt": "2026-10-01T00:00:00Z",
+                "stargazerCount": 0, "files": [{ "name": null }, { "name": "a.rs" }],
+                "comments": { "totalCount": 0 } }],
+        }))
+        .unwrap();
+        assert_eq!(gists.into_results().items[0].files, ["a.rs"]);
+    }
+
     /// A comparison's head is the newest commit GitHub lists, or, with
     /// none listed (the head is behind or at the base), the merge base.
     #[test]
@@ -1571,6 +1586,8 @@ pub(crate) mod rest_actions {
     #[derive(Deserialize)]
     pub struct Jobs {
         pub jobs: Vec<Job>,
+        #[serde(default)]
+        pub total_count: u64,
     }
 
     #[derive(Deserialize)]
@@ -2333,7 +2350,7 @@ pub(crate) mod wire_gists {
 
     #[derive(Deserialize)]
     pub struct Name {
-        pub name: String,
+        pub name: Option<String>,
     }
 
     #[derive(Deserialize)]
@@ -2385,7 +2402,7 @@ impl wire_gists::Gists {
                         .into_iter()
                         .flatten()
                         .flatten()
-                        .map(|f| f.name)
+                        .filter_map(|f| f.name)
                         .collect(),
                     updated_at: g.updated_at,
                     stars: g.stargazer_count,

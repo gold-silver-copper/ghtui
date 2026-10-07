@@ -10,7 +10,7 @@
 use std::sync::{Arc, Mutex};
 
 use ghtui_api::auth::Token;
-use ghtui_api::model::{NodeId, PrRef};
+use ghtui_api::model::{NodeId, PrRef, RepoId};
 use ghtui_api::{ApiError, GitHub};
 use ghtui_store::Store;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -21,6 +21,9 @@ struct Reply {
     status: u16,
     headers: Vec<(&'static str, String)>,
     body: String,
+    /// Only for a request whose line contains this (for requests made
+    /// concurrently, which arrive in any order).
+    path: Option<&'static str>,
 }
 
 impl Reply {
@@ -29,7 +32,13 @@ impl Reply {
             status,
             headers: Vec::new(),
             body: body.into(),
+            path: None,
         }
+    }
+
+    fn on(mut self, path: &'static str) -> Self {
+        self.path = Some(path);
+        self
     }
 
     fn header(mut self, name: &'static str, value: impl Into<String>) -> Self {
@@ -69,7 +78,7 @@ async fn serve(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<Seen>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let queue = Arc::new(Mutex::new(replies.into_iter()));
+    let queue = Arc::new(Mutex::new(replies));
     let seen_task = seen.clone();
     tokio::spawn(async move {
         loop {
@@ -92,13 +101,19 @@ async fn serve(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<Seen>>>) {
                         }
                     };
                     buf.drain(..len);
+                    let line = request.request_line.clone();
                     seen.lock().unwrap().push(request);
 
-                    let reply = queue
-                        .lock()
-                        .unwrap()
-                        .next()
-                        .unwrap_or_else(|| Reply::new(500, "script exhausted"));
+                    let reply = {
+                        let mut queue = queue.lock().unwrap();
+                        let next = queue
+                            .iter()
+                            .position(|r| r.path.is_none_or(|p| line.contains(p)));
+                        next.map_or_else(
+                            || Reply::new(500, "script exhausted"),
+                            |i| queue.remove(i),
+                        )
+                    };
                     let mut out = format!(
                         "HTTP/1.1 {} X\r\ncontent-length: {}\r\n",
                         reply.status,
@@ -464,6 +479,48 @@ async fn patches_paginate_until_a_short_page() {
             .contains("/repos/o/r/pulls/7/files?per_page=100&page=1")
     );
     assert!(seen[1].request_line.contains("page=2"));
+}
+
+/// A run's jobs come a page at a time until there are as many as GitHub
+/// counts.
+#[tokio::test]
+async fn a_runs_jobs_paginate() {
+    let job = |id: u64| {
+        format!(
+            r#"{{"id":{id},"run_id":9,"name":"j{id}","status":"completed","conclusion":"success"}}"#
+        )
+    };
+    let page = |ids: std::ops::Range<u64>| {
+        let jobs: Vec<String> = ids.map(job).collect();
+        format!(r#"{{"total_count":102,"jobs":[{}]}}"#, jobs.join(","))
+    };
+    let (gh, seen) = github(vec![
+        Reply::new(200, r#"{"id":9,"run_number":1,"event":"push","head_sha":"abc","status":"completed","conclusion":"success"}"#)
+            .on("/runs/9 "),
+        Reply::new(200, page(0..100)).on("jobs?per_page=100 "),
+        Reply::new(200, page(100..102)).on("page=2"),
+    ])
+    .await;
+    let run = gh
+        .workflow_run(&RepoId::new("o", "r"), 9, None)
+        .await
+        .unwrap();
+    assert_eq!(run.jobs.len(), 102);
+    assert_eq!(seen.lock().unwrap().len(), 3);
+}
+
+/// A category the repository doesn't have is not found, not every
+/// discussion under its name.
+#[tokio::test]
+async fn an_unknown_discussion_category_is_not_found() {
+    let (gh, _) = github(vec![Reply::new(
+        200,
+        r#"{"data":{"repository":{"discussionCategories":{"nodes":[{"id":"C1","name":"Ideas","slug":"ideas"}]}}}}"#,
+    )])
+    .await;
+    let of = ghtui_api::browse::DiscussionsOf::Repo(RepoId::new("o", "r"));
+    let result = gh.discussions(&of, Some("nope"), None).await;
+    assert!(matches!(result, Err(ApiError::NotFound(_))), "{result:?}");
 }
 
 #[tokio::test]

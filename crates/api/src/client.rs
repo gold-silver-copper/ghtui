@@ -1725,7 +1725,22 @@ impl GitHub {
             self.rest_json::<browse::rest_actions::Run>(&path),
             self.rest_json::<browse::rest_actions::Jobs>(&jobs_path)
         );
-        let run = wire?.into_run(jobs?.jobs);
+        let browse::rest_actions::Jobs {
+            mut jobs,
+            total_count,
+        } = jobs?;
+        // Big matrices have more than a page of jobs (up to 1,000 here).
+        let mut page = 2;
+        while (jobs.len() as u64) < total_count && page <= 10 {
+            let more: browse::rest_actions::Jobs =
+                self.rest_json(&format!("{jobs_path}&page={page}")).await?;
+            if more.jobs.is_empty() {
+                break;
+            }
+            jobs.extend(more.jobs);
+            page += 1;
+        }
+        let run = wire?.into_run(jobs);
         Ok(self
             .kept(&browse::keys::run(repo, run.id, attempt), run)
             .await)
@@ -1892,9 +1907,13 @@ impl GitHub {
                 .unwrap_or_default(),
         )?;
         let categories: Vec<w::Category> = categories.nodes.into_iter().flatten().collect();
-        let category_id = category
-            .and_then(|slug| categories.iter().find(|c| c.slug == slug))
-            .map(|c| c.id.clone());
+        let category_id = match category {
+            Some(slug) => match categories.iter().find(|c| c.slug == slug) {
+                Some(c) => Some(c.id.clone()),
+                None => return Err(ApiError::NotFound(format!("{repo}'s category {slug}"))),
+            },
+            None => None,
+        };
         let data = self
             .graphql_json(
                 "query($owner: String!, $name: String!, $after: String, $category: ID) { repository(owner: $owner, name: $name) { discussions(first: 25, after: $after, categoryId: $category, orderBy: {field: UPDATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { number title author { login } category { name } comments { totalCount } isAnswered upvoteCount updatedAt } } } }",
