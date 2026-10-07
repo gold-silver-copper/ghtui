@@ -3373,8 +3373,13 @@ pub fn milestone(page: &mut Page, repo: &RepoId, d: &MilestoneDetail, icons: Ico
     } else {
         chip("Open", Bg::SuccessContainer)
     };
+    // The chip says it's closed; the date says when.
+    let when = match &m.closed_at {
+        Some(at) if m.closed => day(at),
+        _ => due(m),
+    };
     page.wrapped(
-        vec![state, Seg::new(format!("  {}", due(m)), Role::Meta)],
+        vec![state, Seg::new(format!("  {when}"), Role::Meta)],
         0,
         Frame::None,
     );
