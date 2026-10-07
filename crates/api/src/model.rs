@@ -15,8 +15,9 @@ use crate::queries::{self as q, nodes};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capped<T> {
     pub items: Vec<T>,
-    /// Never fewer than `items`.
-    pub total: u64,
+    /// Never fewer than `items`; private, so a list's count comes only
+    /// from `new` (or `from`, which claims all of it).
+    total: u64,
 }
 
 impl<T> Capped<T> {
@@ -46,6 +47,11 @@ impl<T> Capped<T> {
             items,
             total: self.total,
         }
+    }
+
+    /// How many GitHub has.
+    pub fn total(&self) -> u64 {
+        self.total
     }
 
     /// How many GitHub has that aren't here.

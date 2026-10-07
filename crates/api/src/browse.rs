@@ -1469,7 +1469,7 @@ impl RollupContexts {
 
 /// A commit's checks from its rollup's contexts, the newest run of each.
 pub(crate) fn checks(oid: String, contexts: Capped<RollupContext>) -> Checks {
-    let fetched = contexts.items.len() as u64;
+    let left_out = contexts.left_out();
     let items = contexts
         .items
         .into_iter()
@@ -1482,7 +1482,7 @@ pub(crate) fn checks(oid: String, contexts: Capped<RollupContext>) -> Checks {
     let items = latest_runs(items);
     // Those past the pages read may be earlier runs too; count them as
     // checks still to show.
-    let total = items.len() as u64 + contexts.total.saturating_sub(fetched);
+    let total = items.len() as u64 + left_out;
     Checks { oid, items, total }
 }
 

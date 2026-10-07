@@ -1273,22 +1273,15 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
         page.wrapped(vec![Seg::new("Part of ", Role::Meta), link], 0, Frame::None);
     }
     page.blank();
-    let shown = |n: usize, total: u64| {
-        if (n as u64) < total {
-            format!("{n} of {total}")
-        } else {
-            total.to_string()
-        }
-    };
     let title = vec![Seg::new(
-        format!("Members  {}", shown(d.members.len(), t.members)),
+        format!("Members  {}", count_of(&d.members)),
         Role::Strong,
     )];
     list_box(page, title, Vec::new(), &d.members, "No members.", user_row);
     more_here(page, &d.members, "member", "members");
     page.blank();
     let title = vec![Seg::new(
-        format!("Repositories  {}", shown(d.repos.len(), t.repos)),
+        format!("Repositories  {}", count_of(&d.repos)),
         Role::Strong,
     )];
     list_box(
@@ -2006,7 +1999,7 @@ pub fn issue(
             format!(
                 " opened this issue {} · {}",
                 time::ago_iso(&d.created_at, now),
-                plural(d.comments.total, "comment")
+                plural(d.comments.total(), "comment")
             ),
             Role::Meta,
         ),
@@ -3102,7 +3095,7 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
         format!(
             "  ▲ {} · {}",
             d.upvotes,
-            plural(d.comments.total, "comment")
+            plural(d.comments.total(), "comment")
         ),
         Role::Meta,
     ));
@@ -3165,9 +3158,9 @@ fn earlier_here<T>(page: &mut Page, list: &Capped<T>, one: &str, many: &str) {
 /// A capped list's count: `20 of 45`, or `45` when all are here.
 fn count_of<T>(list: &Capped<T>) -> String {
     if list.left_out() > 0 {
-        format!("{} of {}", list.len(), list.total)
+        format!("{} of {}", list.len(), list.total())
     } else {
-        list.total.to_string()
+        list.total().to_string()
     }
 }
 
@@ -3675,7 +3668,7 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
         Role::Meta,
     )];
     if !d.parents.is_empty() {
-        let noun = if d.parents.total == 1 {
+        let noun = if d.parents.total() == 1 {
             "parent"
         } else {
             "parents"
