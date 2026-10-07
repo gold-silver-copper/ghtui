@@ -230,7 +230,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
 
 fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, screen: &DiffScreen) {
     let theme = ctx.theme;
-    let lay = diff_screen::layout(content, screen.tree_visible);
+    let lay = diff_screen::layout(content, screen.prefs.tree_visible);
     fill(buf, content, theme, Bg::Surface);
     let Some(diff) = state.diffs.get(&screen.of) else {
         return;

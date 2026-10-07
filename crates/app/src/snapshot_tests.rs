@@ -1237,7 +1237,7 @@ pub(crate) mod diff {
     use ghtui_ui::diff_doc::{Doc, Pos};
 
     use super::{NOW, Terminal, TestBackend, press, render, state, view};
-    use crate::diff_screen::{DiffOf, DiffScreen, DiffState, Pane};
+    use crate::diff_screen::{DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
     use crate::fixtures::diff_msg;
     use crate::state::{DiffMsg, Msg, Screen, State, update};
 
@@ -1292,7 +1292,7 @@ pub(crate) mod diff {
     /// Opens a diff screen on `diff`, as wide as the terminal.
     fn open_diff(s: &mut State, diff: DiffState, cursor: Pos, focus: Pane) {
         s.diffs.insert(DiffOf::Pr(pr()), diff);
-        let mut screen = DiffScreen::new(DiffOf::Pr(pr()), s.size.0);
+        let mut screen = DiffScreen::new(DiffOf::Pr(pr()), DiffPrefs::fit(s.size.0));
         screen.cursor = cursor;
         screen.focus = focus;
         s.screens.push(Screen::Diff(Box::new(screen)));
@@ -1389,8 +1389,10 @@ pub(crate) mod diff {
         s.size = (110, 34);
         let of = commit_of();
         s.diffs.insert(of.clone(), diff_state());
-        s.screens
-            .push(Screen::Diff(Box::new(DiffScreen::new(of, s.size.0))));
+        s.screens.push(Screen::Diff(Box::new(DiffScreen::new(
+            of,
+            DiffPrefs::fit(s.size.0),
+        ))));
         let _ = s.settle_diff();
         insta::assert_snapshot!(render(&s));
     }
@@ -1449,7 +1451,7 @@ pub(crate) mod diff {
         let mut s = state(Mode::Dark, ColorDepth::TrueColor);
         let of = commit_of();
         s.diffs.insert(of.clone(), diff_state());
-        let mut screen = DiffScreen::new(of, s.size.0);
+        let mut screen = DiffScreen::new(of, DiffPrefs::fit(s.size.0));
         screen.anchor = Some("discussion_r42".into());
         s.screens.push(Screen::Diff(Box::new(screen)));
         let _ = s.settle_diff();

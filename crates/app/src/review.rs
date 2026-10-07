@@ -755,7 +755,6 @@ pub(crate) fn apply_commit_choice(
     choice: PickItem,
     mark: Option<usize>,
 ) -> Vec<Cmd> {
-    let width = state.size.0;
     let pr = match state.screen() {
         Screen::Diff(screen) => match screen.of.pr() {
             Some(pr) => pr.clone(),
@@ -805,7 +804,7 @@ pub(crate) fn apply_commit_choice(
     // Since your review: compared once the whole PR is back.
     diff.since_requested = since;
     let job = diff.job;
-    *screen = DiffScreen::new(pr.clone().into(), width);
+    *screen = DiffScreen::new(pr.clone().into(), screen.prefs);
     vec![Cmd::Git(Git::LoadDiff {
         of: pr.into(),
         job,

@@ -9,7 +9,7 @@ use ghtui_ui::page::Link;
 use ghtui_ui::text::short_sha;
 
 use crate::browse::PageScreen;
-use crate::diff_screen::{DiffOf, DiffScreen};
+use crate::diff_screen::{DiffOf, DiffPrefs, DiffScreen};
 use crate::route::{Route, Target};
 use crate::state::{Cmd, Screen, Screens, State};
 
@@ -92,10 +92,11 @@ impl State {
     /// just open there.
     #[must_use]
     pub fn open_tab(&mut self, target: Target) -> Vec<Cmd> {
+        let prefs = DiffPrefs::fit(self.size.0);
         let first = match &target {
             Target::External(_) => return self.go(target),
             Target::Page(route) => Screen::Page(Box::new(PageScreen::new(route.clone(), None))),
-            Target::Files(of) => Screen::Diff(Box::new(DiffScreen::new(of.clone(), self.size.0))),
+            Target::Files(of) => Screen::Diff(Box::new(DiffScreen::new(of.clone(), prefs))),
         };
         let left = self.swap_in(Tab::new(first));
         self.before.push(left);
@@ -264,18 +265,18 @@ impl State {
         let Some(first) = targets.next() else {
             return;
         };
-        let screen = |target: Target, width| match target {
-            Target::Files(of) => Some(Screen::Diff(Box::new(DiffScreen::new(of, width)))),
+        let screen = |target: Target, prefs| match target {
+            Target::Files(of) => Some(Screen::Diff(Box::new(DiffScreen::new(of, prefs)))),
             Target::Page(route) => Some(Screen::Page(Box::new(PageScreen::new(route, None)))),
             Target::External(_) => None,
         };
-        let width = self.size.0;
-        if let Some(first) = screen(first, width) {
+        let prefs = DiffPrefs::fit(self.size.0);
+        if let Some(first) = screen(first, prefs) {
             self.screens = Screens::new(first);
             self.forward.clear();
         }
         self.after = targets
-            .filter_map(|t| screen(t, width))
+            .filter_map(|t| screen(t, prefs))
             .map(Tab::new)
             .collect();
     }
