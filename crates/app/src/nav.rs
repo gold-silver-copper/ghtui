@@ -92,8 +92,7 @@ impl State {
         cmds
     }
 
-    /// Replaces the page on screen (switching tabs, changing a filter), to
-    /// go to `anchor` once loaded.
+    /// Replaces the page on screen (switching tabs, changing a filter).
     #[must_use]
     pub fn replace(&mut self, route: Route, force: bool, anchor: Option<String>) -> Vec<Cmd> {
         match self.screen_mut() {
