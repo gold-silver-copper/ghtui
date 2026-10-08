@@ -6,7 +6,7 @@
 //! and outdated threads that can't be mapped onto the current diff, sit
 //! under the file header.
 
-use ghtui_diff::anchor::Side;
+use ghtui_diff::anchor::{LinePos, Side};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AnnotationKey {
@@ -58,11 +58,12 @@ impl Annotation {
     }
 
     /// Placed on a line (as opposed to under the file header).
-    pub fn on_line(&self) -> Option<u32> {
+    pub fn on_line(&self) -> Option<LinePos> {
         if self.file_level || self.outdated {
             None
         } else {
-            self.line
+            let side = self.side;
+            self.line.map(|line| LinePos { side, line })
         }
     }
 
