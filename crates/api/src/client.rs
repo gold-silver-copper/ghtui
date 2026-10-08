@@ -1345,7 +1345,8 @@ impl GitHub {
         let query = raw::users(root, field);
         let wire: browse::wire::Connection<browse::wire::Person> =
             self.graphql_json(&query, vars, &who, "/node/list").await?;
-        self.check_connection(&wire, 30, format!("{who}'s people"));
+        let people = field.trim_end_matches("WithRole");
+        self.check_connection(&wire, 30, format!("{who}'s {people}"));
         let results = wire.into_results(browse::wire::Person::into_summary);
         Ok(self
             .kept_page(first, &browse::keys::users(list), results)
@@ -2425,8 +2426,8 @@ fn check_status(response: &Response, path: &str) -> Result<(), ApiError> {
     }
     if status == StatusCode::NOT_FOUND {
         let path = path.split('?').next().unwrap_or(path);
-        let path = path.strip_prefix("/repos/").unwrap_or(path);
-        return Err(ApiError::NotFound(path.to_owned()));
+        let asked = path.strip_prefix("/repos/").or(path.strip_prefix('/'));
+        return Err(ApiError::NotFound(asked.unwrap_or(path).to_owned()));
     }
     let message = serde_json::from_str::<Message>(&response.body)
         .map_or_else(|_| response.body.chars().take(200).collect(), |m| m.message);
