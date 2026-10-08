@@ -64,8 +64,9 @@ fn inbox() -> Inbox {
                 None,
                 Some(ChecksState::Pending),
             ),
-        ],
-        authored: vec![
+        ]
+        .into(),
+        authored: Capped::new(vec![
             summary(
                 "gold-silver-copper/ghtui#12",
                 "Theme: generate syntax palette from seed",
@@ -80,9 +81,7 @@ fn inbox() -> Inbox {
                 Some(ReviewDecision::ChangesRequested),
                 None,
             ),
-        ],
-        review_requested_total: 2,
-        authored_total: 31,
+        ], 31),
     }
 }
 
@@ -158,10 +157,13 @@ fn with_inbox(mode: Mode, depth: ColorDepth) -> State {
     fetched(
         &mut state,
         DataKey::ViewerRepos,
-        Data::Repos(vec![
-            fixtures::repo_summary("gold-silver-copper/ghtui", 1234),
-            fixtures::repo_summary("gold-silver-copper/fux", 87),
-        ]),
+        Data::Repos(
+            vec![
+                fixtures::repo_summary("gold-silver-copper/ghtui", 1234),
+                fixtures::repo_summary("gold-silver-copper/fux", 87),
+            ]
+            .into(),
+        ),
     );
     state
 }
@@ -2952,7 +2954,7 @@ fn sample(key: &DataKey) -> Data {
         K::Issue(..) => Data::Issue(Some(Box::new(fixtures::issue()))),
         K::PrActivity(_) => Data::PrActivity(Box::new(fixtures::activity())),
         K::Profile(_) => Data::Profile(Box::new(fixtures::profile())),
-        K::ViewerRepos => Data::Repos(vec![fixtures::repo_summary("o/r", 1)]),
+        K::ViewerRepos => Data::Repos(vec![fixtures::repo_summary("o/r", 1)].into()),
         K::Files(..) => Data::Files(Arc::new(vec!["README.md".into()]), false),
         K::Refs(_) => Data::Refs(Box::default()),
         K::LastCommits(..) => Data::LastCommits(Arc::new(fixtures::last_commits())),

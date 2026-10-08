@@ -69,9 +69,7 @@ pub struct CheckItem {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Checks {
     pub oid: String,
-    pub items: Vec<CheckItem>,
-    /// All of them, when there are more than were fetched.
-    pub total: u64,
+    pub items: Capped<CheckItem>,
 }
 
 /// A commit's page.
@@ -464,8 +462,7 @@ pub struct Profile {
     pub following: Option<u64>,
     pub is_org: bool,
     pub pinned: Vec<RepoSummary>,
-    pub repos: Vec<RepoSummary>,
-    pub repo_count: u64,
+    pub repos: Capped<RepoSummary>,
     #[serde(default)]
     pub star_count: u64,
     /// The profile README, as markdown.
@@ -485,11 +482,9 @@ pub struct Profile {
     /// An organization's verified domain badge.
     #[serde(default)]
     pub verified: bool,
-    /// An organization's first public members, and how many there are.
+    /// An organization's first public members.
     #[serde(default)]
-    pub people: Vec<String>,
-    #[serde(default)]
-    pub people_count: u64,
+    pub people: Capped<String>,
     /// A user's contributions in the last year.
     #[serde(default)]
     pub contributions: Option<Contributions>,
@@ -1483,7 +1478,10 @@ pub(crate) fn checks(oid: String, contexts: Capped<RollupContext>) -> Checks {
     // Those past the pages read may be earlier runs too; count them as
     // checks still to show.
     let total = items.len() as u64 + left_out;
-    Checks { oid, items, total }
+    Checks {
+        oid,
+        items: Capped::new(items, total),
+    }
 }
 
 /// The latest run of each check. A workflow that runs again on the same
@@ -1700,7 +1698,7 @@ mod tests {
         }))
         .unwrap();
         let checks = commit.into_checks();
-        assert_eq!((checks.items.len(), checks.total), (2, 5));
+        assert_eq!((checks.items.len(), checks.items.total()), (2, 5));
         assert_eq!(checks.items[0].summary, None);
         assert_eq!(checks.items[1].summary.as_deref(), Some("Built"));
     }
@@ -2811,9 +2809,8 @@ impl wire_deployments::Deployment {
 pub struct Comparison {
     pub ahead: u64,
     pub behind: u64,
-    pub total_commits: u64,
     /// Oldest first.
-    pub commits: Vec<CommitInfo>,
+    pub commits: Capped<CommitInfo>,
     /// The diff's ends: the merge base (or, for `a..b`, the base) and the
     /// head, as full commit IDs.
     pub from: String,
@@ -2884,18 +2881,19 @@ impl rest_compare::Compare {
         Comparison {
             ahead: self.ahead_by,
             behind: self.behind_by,
-            total_commits: self.total_commits,
             to,
             from,
             files: self.files.len() as u64,
             files_capped: self.files.len() >= COMPARE_FILES,
             additions: self.files.iter().map(|f| f.additions).sum(),
             deletions: self.files.iter().map(|f| f.deletions).sum(),
-            commits: self
-                .commits
-                .into_iter()
-                .map(|c| c.into_info(wire::Dated::Authored))
-                .collect(),
+            commits: Capped::new(
+                self.commits
+                    .into_iter()
+                    .map(|c| c.into_info(wire::Dated::Authored))
+                    .collect(),
+                self.total_commits,
+            ),
         }
     }
 }
@@ -4919,12 +4917,11 @@ fn pinned(p: Pinned) -> Vec<RepoSummary> {
         .collect()
 }
 
-pub(crate) fn repo_list(list: RepoList) -> (Vec<RepoSummary>, u64) {
-    let total = count(list.total_count);
+pub(crate) fn repo_list(list: RepoList) -> Capped<RepoSummary> {
     let repos = nodes(list.nodes)
         .filter_map(RepoCard::into_summary)
         .collect();
-    (repos, total)
+    Capped::new(repos, count(list.total_count))
 }
 
 fn readme_text(object: Option<ReadmeObject>) -> Option<String> {
@@ -4937,7 +4934,6 @@ fn readme_text(object: Option<ReadmeObject>) -> Option<String> {
 impl ProfileQuery {
     pub(crate) fn into_profile(self) -> Option<Profile> {
         if let Some(u) = self.user {
-            let (repos, repo_count) = repo_list(u.repositories);
             let status = u.status.and_then(|s| {
                 let text = [s.emoji, s.message]
                     .into_iter()
@@ -4958,8 +4954,7 @@ impl ProfileQuery {
                     o.login
                 }),
                 verified: false,
-                people: Vec::new(),
-                people_count: 0,
+                people: Capped::default(),
                 contributions: Some(u.contributions_collection.into_contributions()),
                 login: u.login,
                 name: u.name.filter(|n| !n.is_empty()),
@@ -4971,13 +4966,11 @@ impl ProfileQuery {
                 following: Some(count(u.following.total_count)),
                 is_org: false,
                 pinned: pinned(u.pinned_items),
-                repos,
-                repo_count,
+                repos: repo_list(u.repositories),
                 star_count: count(u.starred_repositories.total_count),
             });
         }
         let o = self.organization?;
-        let (repos, repo_count) = repo_list(o.repositories);
         Some(Profile {
             login: o.login,
             name: o.name.filter(|n| !n.is_empty()),
@@ -4989,8 +4982,7 @@ impl ProfileQuery {
             following: None,
             is_org: true,
             pinned: pinned(o.pinned_items),
-            repos,
-            repo_count,
+            repos: repo_list(o.repositories),
             star_count: 0,
             readme: readme_text(self.org_readme.and_then(|r| r.object)),
             status: None,
@@ -4998,8 +4990,11 @@ impl ProfileQuery {
             socials: Vec::new(),
             orgs: Vec::new().into(),
             verified: o.is_verified,
-            people: nodes(o.members_with_role.nodes).map(|u| u.login).collect(),
-            people_count: count(o.members_with_role.total_count),
+            people: Capped::from_nodes(
+                o.members_with_role.total_count,
+                o.members_with_role.nodes,
+                |u| u.login,
+            ),
             contributions: None,
         })
     }

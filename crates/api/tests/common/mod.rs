@@ -55,7 +55,7 @@ pub async fn run(gh: &GitHub) {
     // A comparison of more than 250 commits: the newest 250.
     let rust = RepoId::new("rust-lang", "rust");
     let big = gh.compare(&rust, "1.98.0...1.99.0").await.unwrap();
-    assert!(big.total_commits > 250);
+    assert!(big.commits.total() > 250);
     assert_eq!(big.commits.len(), 250);
     no_doubts(gh, "a big comparison");
 

@@ -67,9 +67,7 @@ impl State {
         let mut c = Chrome::default();
         // Right: review requests and you.
         if let Some(inbox) = &self.inbox.data {
-            let n = inbox
-                .review_requested_total
-                .max(inbox.review_requested.len() as u64);
+            let n = inbox.review_requested.total();
             if n > 0 {
                 c.right.push((
                     format!("⇄ {n} to review"),
@@ -252,7 +250,7 @@ impl State {
                     (
                         "▤",
                         "Repositories",
-                        profile.map(|p| p.repo_count),
+                        profile.map(|p| p.repos.total()),
                         ProfileTab::Repositories(sort),
                     ),
                 ];
@@ -260,7 +258,7 @@ impl State {
                     tabs.push((
                         "⚇",
                         "People",
-                        profile.map(|p| p.people_count),
+                        profile.map(|p| p.people.total()),
                         ProfileTab::People,
                     ));
                 } else {
@@ -589,7 +587,7 @@ fn compare_tabs(
     c: &mut Chrome,
 ) {
     c.tabs.push((
-        new_tab("◷", "Commits", comparison.map(|cmp| cmp.total_commits)),
+        new_tab("◷", "Commits", comparison.map(|cmp| cmp.commits.total())),
         Target::Page(Route::Compare {
             repo: repo.clone(),
             spec: spec.to_owned(),

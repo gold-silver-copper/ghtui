@@ -329,11 +329,9 @@ pub struct PrSummary {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Inbox {
-    pub authored: Vec<PrSummary>,
-    pub review_requested: Vec<PrSummary>,
-    /// Total matches on GitHub; the lists hold the most recently updated.
-    pub authored_total: u64,
-    pub review_requested_total: u64,
+    /// The most recently updated of GitHub's matches.
+    pub authored: Capped<PrSummary>,
+    pub review_requested: Capped<PrSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -540,15 +538,15 @@ impl PrSummary {
     }
 }
 
-/// PRs from one search, and GitHub's total match count.
-pub(crate) fn search_results(conn: q::SearchConnection) -> (Vec<PrSummary>, u64) {
+/// PRs from one search, of GitHub's total match count.
+pub(crate) fn search_results(conn: q::SearchConnection) -> Capped<PrSummary> {
     let prs = nodes(conn.nodes)
         .filter_map(|item| match item {
             q::SearchItem::PullRequest(pr) => PrSummary::from_wire(pr),
             q::SearchItem::Other => None,
         })
         .collect();
-    (prs, count(conn.issue_count))
+    Capped::new(prs, count(conn.issue_count))
 }
 
 impl PrDetail {
