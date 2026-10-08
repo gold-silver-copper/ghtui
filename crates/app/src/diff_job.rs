@@ -400,10 +400,7 @@ pub async fn map_outdated(
     original_line: u32,
 ) -> Option<u32> {
     let original = format!("{original_commit}:{path}");
-    if let Err(err) = repo
-        .ensure(&Oid::parse(original_commit).ok()?, &|_| {})
-        .await
-    {
+    if let Err(err) = async { repo.ensure(&Oid::parse(original_commit)?, &|_| {}).await }.await {
         tracing::info!(%err, original_commit, "original commit unavailable");
         return None;
     }
