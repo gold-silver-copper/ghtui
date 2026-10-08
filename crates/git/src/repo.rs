@@ -584,6 +584,18 @@ mod tests {
         assert_eq!(*seen.lock().unwrap(), ["Receiving objects: 1%"]);
     }
 
+    /// One that keeps printing progress runs as long as it needs, however
+    /// much longer than the silence it would be given up after.
+    #[tokio::test]
+    async fn moving_commands_outlast_the_stall_window() {
+        let mut cmd = Command::new("sh");
+        let script = "for i in 1 2 3 4 5 6 7 8 9 10; do echo \"Receiving objects: ${i}0%\" >&2; sleep 0.1; done";
+        cmd.args(["-c", script]);
+        let result =
+            run_with_progress(cmd, "fetch", None, &|_| {}, Duration::from_millis(300)).await;
+        assert!(result.is_ok(), "{result:?}");
+    }
+
     #[test]
     fn git_gives_up_on_dead_connections() {
         let cmd = git(None);
