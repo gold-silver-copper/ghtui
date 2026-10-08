@@ -74,7 +74,7 @@ impl Annotation {
 }
 
 /// What a thread row shows.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadRowKind {
     /// A collapsed thread under a file header: one summary line.
     Summary,
