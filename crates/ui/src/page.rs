@@ -100,7 +100,8 @@ pub enum Role {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Seg {
-    pub text: String,
+    /// Tabs already turned to spaces, so it's measured as it's drawn.
+    text: String,
     pub role: Role,
     /// Index into [`Page::links`].
     pub link: Option<u32>,
@@ -108,19 +109,19 @@ pub struct Seg {
 
 impl Seg {
     pub fn new(text: impl Into<String>, role: Role) -> Self {
+        Self::linked(text, role, None)
+    }
+
+    pub fn linked(text: impl Into<String>, role: Role, link: impl Into<Option<u32>>) -> Self {
         Self {
-            text: text.into(),
+            text: text::expand_tabs(text),
             role,
-            link: None,
+            link: link.into(),
         }
     }
 
-    pub fn linked(text: impl Into<String>, role: Role, link: u32) -> Self {
-        Self {
-            text: text.into(),
-            role,
-            link: Some(link),
-        }
+    pub fn text(&self) -> &str {
+        &self.text
     }
 }
 
@@ -555,7 +556,7 @@ fn lay_out<'a>(out: &mut Vec<(u16, String, &'a Seg)>, segs: &'a [Seg], mut x: u1
         if room == 0 {
             break;
         }
-        let shown = text::truncate(&seg.text.replace('\t', "    "), room);
+        let shown = text::truncate(&seg.text, room);
         let w = text::width(&shown);
         room = room.saturating_sub(w);
         out.push((x, shown, seg));

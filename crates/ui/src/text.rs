@@ -56,6 +56,23 @@ pub fn is_hidden(c: char) -> bool {
         )
 }
 
+/// `s` with each tab turned into the spaces to the next stop of four,
+/// counted from the start of its line.
+pub fn expand_tabs(s: impl Into<String>) -> String {
+    let s = s.into();
+    if !s.contains('\t') {
+        return s;
+    }
+    let mut col = 0;
+    graphemes(&s)
+        .map(|g| {
+            let (g, w) = untab(g, col);
+            col = if g.contains('\n') { 0 } else { col + w };
+            g
+        })
+        .collect()
+}
+
 /// What a terminal draws as one character (an emoji with its modifiers,
 /// a letter with its accents), with its width.
 pub fn graphemes(s: &str) -> impl Iterator<Item = (&str, usize)> {

@@ -177,11 +177,7 @@ impl Renderer<'_> {
 
     /// Inline `text` in `role`, linked where the text around it is.
     fn seg(&mut self, text: impl Into<String>, role: Role) {
-        self.inline.push(Seg {
-            text: text.into(),
-            role,
-            link: self.link,
-        });
+        self.inline.push(Seg::linked(text, role, self.link));
     }
 
     /// A link to `url` from the content, unless it mustn't have it.
@@ -192,7 +188,7 @@ impl Renderer<'_> {
 
     fn flush(&mut self) {
         let mut segs = std::mem::take(&mut self.inline);
-        if segs.iter().all(|s| s.text.trim().is_empty()) && self.pending_marker.is_none() {
+        if segs.iter().all(|s| s.text().trim().is_empty()) && self.pending_marker.is_none() {
             return;
         }
         if let Some(marker) = self.pending_marker.take() {
@@ -248,7 +244,7 @@ impl Renderer<'_> {
             };
             if BLOCK_TAGS.contains(&name.as_str()) {
                 // An empty line keeps its list marker for the text to come.
-                if self.inline.iter().all(|s| s.text.trim().is_empty()) {
+                if self.inline.iter().all(|s| s.text().trim().is_empty()) {
                     self.inline.clear();
                 } else {
                     self.flush();
@@ -273,11 +269,11 @@ impl Renderer<'_> {
                     let link = self
                         .link
                         .or_else(|| attr(tag, "src").and_then(|s| self.link_to(&s)));
-                    self.inline.push(Seg {
-                        text: format!("[image: {}]", decode_entities(&alt)),
-                        role: Role::Meta,
+                    self.inline.push(Seg::linked(
+                        format!("[image: {}]", decode_entities(&alt)),
+                        Role::Meta,
                         link,
-                    });
+                    ));
                 }
             } else if lower.starts_with("a ") || lower == "a" {
                 self.link = attr(tag, "href").and_then(|h| self.link_to(&h));
@@ -504,7 +500,7 @@ impl Renderer<'_> {
         let cols = rows.iter().map(Vec::len).max().unwrap_or(0);
         let width = |cell: &Vec<Seg>| {
             cell.iter()
-                .map(|s| crate::text::width(&s.text))
+                .map(|s| crate::text::width(s.text()))
                 .sum::<usize>()
         };
         let mut widths = vec![0usize; cols];
@@ -555,6 +551,8 @@ fn attr(tag: &str, name: &str) -> Option<String> {
 
 /// `code`'s lines as highlighted segments.
 pub(crate) fn highlighted(code: &str, lang: Option<Language>) -> Vec<Vec<Seg>> {
+    // Tab stops are counted across the line's tokens.
+    let code = crate::text::expand_tabs(code);
     let text = Text::new(code.as_bytes());
     let spans = highlight(lang, &text);
     let plain = |s: &str| Seg::new(s, Role::Syntax(Syntax::Default));

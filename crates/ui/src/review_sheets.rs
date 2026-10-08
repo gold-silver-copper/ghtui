@@ -101,7 +101,7 @@ impl Widget for ComposeSheet<'_> {
                     Span::styled(" ", theme.body(bg)),
                     Span::styled(
                         text::truncate(
-                            &line.replace('\t', "    "),
+                            &text::expand_tabs(line.as_str()),
                             usize::from(r.width).saturating_sub(8),
                         ),
                         theme.body(bg),
