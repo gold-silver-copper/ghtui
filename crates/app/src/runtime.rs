@@ -362,16 +362,10 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 let result = fetch(&gh, &key, Some(after.clone())).await;
                 Msg::FetchedMore(key, after, result)
             }
-            Api::AddComment {
-                subject_id,
-                body,
-                refresh,
-            } => Msg::Commented(refresh, gh.add_comment(&subject_id, &body).await),
-            Api::SetStarred { repo, id, starred } => Msg::Starred {
-                result: gh.set_starred(&id, starred).await,
-                repo,
-                starred,
-            },
+            Api::Change(change) => {
+                let result = gh.change(&change).await;
+                Msg::Changed(change, result)
+            }
             Api::Suggest(q) => {
                 let result = gh
                     .search(ghtui_api::browse::SearchKind::Repos, &q, None)
@@ -541,12 +535,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Cmd::Api(Api::FetchMore { key, after }) => {
             Msg::FetchedMore(key.clone(), after.clone(), api())
         }
-        Cmd::Api(Api::AddComment { refresh, .. }) => Msg::Commented(refresh.clone(), api()),
-        Cmd::Api(Api::SetStarred { repo, starred, .. }) => Msg::Starred {
-            repo: repo.clone(),
-            starred: *starred,
-            result: api(),
-        },
+        Cmd::Api(Api::Change(change)) => Msg::Changed(change.clone(), api()),
         Cmd::Api(Api::Suggest(q)) => Msg::Suggested(q.clone(), api()),
         Cmd::Api(Api::FetchViewed(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::ViewedLoaded(Box::new(api())))

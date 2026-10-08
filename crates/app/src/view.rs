@@ -14,7 +14,7 @@ use ratatui::widgets::Widget;
 
 use ghtui_ui::diff_view::{DiffView, Keys};
 use ghtui_ui::file_tree::{FileTree, TREE_BG};
-use ghtui_ui::review_sheets::{ComposeSheet, SubmitSheet};
+use ghtui_ui::review_sheets::{ComposeSheet, ConfirmSheet, SubmitSheet};
 
 use crate::diff_screen::{self, DiffScreen, Pane};
 use crate::keymap::Action;
@@ -167,7 +167,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             );
         }
         Some(Overlay::Submit(dialog)) => {
-            let pending = state.diff().map_or(&[][..], |d| &d.inputs().review.pending);
+            let pending = dialog.drafts(state).unwrap_or_default();
             let rejected = pending.iter().filter(|p| p.error.is_some()).count();
             SubmitSheet {
                 ctx,
@@ -177,6 +177,21 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 rejected,
                 error: dialog.error.as_deref(),
                 sending: dialog.sending,
+                quick: dialog.quick,
+            }
+            .render(area, buf);
+        }
+        Some(Overlay::Confirm(confirm)) => {
+            let choices: Vec<String> = confirm.choices.iter().map(|(l, _)| l.clone()).collect();
+            let busy = confirm.busy();
+            ConfirmSheet {
+                ctx,
+                title: &confirm.title,
+                facts: &confirm.facts,
+                choices: &choices,
+                selected: confirm.selected,
+                error: confirm.error.as_deref(),
+                sending: busy.as_deref(),
             }
             .render(area, buf);
         }

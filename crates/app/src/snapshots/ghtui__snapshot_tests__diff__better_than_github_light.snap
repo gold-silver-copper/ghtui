@@ -1,6 +1,5 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 1005
 expression: "render(&better_than_github(Mode::Light))"
 ---
 Buffer {
@@ -17,7 +16,7 @@ Buffer {
         "   M math.rs         +2 −9      3   3    }                                                                    ",
         "   M util.rs         +3 −0      4   4                                                                         ",
         "                                5      - pub fn clamp(value: i32, low: i32, high: i32) -> i32 {               ",
-        "                                       ↳ moved to src/util.rs:2 · M to jump                                   ",
+        "                                       ↳ moved to src/util.rs:2 · J to jump                                   ",
         "                                6      -     value.max(low).min(high)                                         ",
         "                                7      - }                                                                    ",
         "                                8      -                                                                      ",
@@ -33,7 +32,7 @@ Buffer {
         "                                       @@ -1,1 +1,4 @@ fn clamp                                               ",
         "                                1   1    // helpers                                                           ",
         "                                    2  + pub fn clamp(value: i32, low: i32, high: i32) -> i32 {               ",
-        "                                       ↳ moved from src/math.rs:5 · M to jump                                 ",
+        "                                       ↳ moved from src/math.rs:5 · J to jump                                 ",
         "                                    3  +     value.max(low).min(high)                                         ",
         "  ⠋ Diffing 2/2 files   space menu   n/p change   ⇧↓ file   v viewed   c comment               API 4987/5000  ",
     ],

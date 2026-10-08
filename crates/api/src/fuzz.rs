@@ -26,7 +26,7 @@ pub fn decode(shape: u8, json: &[u8]) {
         };
     }
     match shape % SHAPES {
-        0 => model!(q::PrDetail, model::PrDetail::from_wire),
+        0 => model!(q::RepositoryWithPr, model::PrDetail::from_wire),
         1 => model!(q::PrSummary, model::PrSummary::from_wire),
         2 => model!(q::ReviewThread, model::ReviewThread::from_wire),
         3 => model!(b::ChecksCommit, b::ChecksCommit::into_checks),

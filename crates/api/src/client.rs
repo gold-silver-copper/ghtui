@@ -421,7 +421,7 @@ impl GitHub {
 
     /// Runs a GraphQL mutation. Any error fails it, with GitHub's messages:
     /// a rejected mutation comes back as data with a null field plus errors.
-    async fn mutate<Q: DeserializeOwned, V: Serialize>(
+    pub(crate) async fn mutate<Q: DeserializeOwned, V: Serialize>(
         &self,
         op: cynic::Operation<Q, V>,
     ) -> Result<Q, ApiError> {
@@ -520,6 +520,20 @@ impl GitHub {
         Ok(response.body)
     }
 
+    /// POSTs to a REST path with an empty body, for an action (re-run,
+    /// cancel) that only has to succeed. Never sent twice.
+    pub(crate) async fn rest_post(&self, path: &str) -> Result<(), ApiError> {
+        let body = serde_json::json!({});
+        let response = self
+            .send(&Request::Post {
+                path,
+                body: &body,
+                idempotent: false,
+            })
+            .await?;
+        check_status(&response, path)
+    }
+
     /// GETs a REST path and decodes its JSON.
     async fn rest_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
         Ok(serde_json::from_str(&self.rest_get(path).await?)?)
@@ -586,7 +600,7 @@ impl GitHub {
     pub async fn pull_request(&self, pr: &PrRef) -> Result<PrDetail, ApiError> {
         let op = queries::PullRequestQuery::build(number_vars(pr)?);
         let detail = self
-            .find(op, pr, |q| PrDetail::from_wire(q.repository?.pull_request?))
+            .find(op, pr, |q| PrDetail::from_wire(q.repository?))
             .await?;
         Ok(self.kept(&pr_key(pr), detail).await)
     }
@@ -2110,26 +2124,6 @@ impl GitHub {
         let data = self.graphql(browse::ViewerReposQuery::build(())).await?;
         let (repos, _) = browse::repo_list(data.viewer.repositories);
         Ok(self.kept(browse::keys::VIEWER_REPOS, repos).await)
-    }
-
-    /// Comments on an issue or pull request (by node ID).
-    pub async fn add_comment(&self, subject_id: &NodeId, body: &str) -> Result<(), ApiError> {
-        let op = browse::AddComment::build(browse::AddCommentVariables {
-            subject: subject_id.gql(),
-            body: body.to_owned(),
-        });
-        self.mutate(op).await.map(drop)
-    }
-
-    pub async fn set_starred(&self, repo_id: &NodeId, starred: bool) -> Result<(), ApiError> {
-        let vars = browse::StarVariables {
-            starrable: repo_id.gql(),
-        };
-        if starred {
-            self.mutate(browse::AddStar::build(vars)).await.map(drop)
-        } else {
-            self.mutate(browse::RemoveStar::build(vars)).await.map(drop)
-        }
     }
 }
 

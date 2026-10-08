@@ -7,6 +7,7 @@
 use ghtui_schema::schema;
 use serde::{Deserialize, Serialize};
 
+use crate::change::MergeMethod;
 use crate::queries::{self as q, nodes};
 
 /// Some of a list: the items fetched, and how many GitHub has. A list
@@ -267,6 +268,24 @@ pub enum ChecksState {
     Pending,
 }
 
+/// Whether a pull request can merge now, and if not, why.
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[cynic(graphql_type = "MergeStateStatus", schema_module = "schema")]
+pub enum MergeState {
+    /// Its branch is behind its base, which requires it to be up to date.
+    Behind,
+    /// Something it needs is missing: approvals, checks.
+    Blocked,
+    Clean,
+    /// It conflicts with its base.
+    Dirty,
+    Draft,
+    HasHooks,
+    Unknown,
+    /// Some checks didn't pass, but they aren't required.
+    Unstable,
+}
+
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 #[cynic(graphql_type = "MergeableState", schema_module = "schema")]
 pub enum Mergeable {
@@ -319,6 +338,8 @@ pub struct Inbox {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrDetail {
+    /// What changes name it by.
+    pub id: NodeId,
     pub summary: PrSummary,
     pub body: String,
     pub created_at: String,
@@ -330,6 +351,11 @@ pub struct PrDetail {
     pub head_repo: Option<String>,
     pub changed_files: u64,
     pub mergeable: Mergeable,
+    pub merge_state: MergeState,
+    /// You may bring its branch up to date with its base.
+    pub can_update_branch: bool,
+    /// The ways the repository allows merging, yours first.
+    pub merge_methods: Vec<MergeMethod>,
     pub labels: Capped<Label>,
     #[serde(default)]
     pub milestone: Option<MilestoneRef>,
@@ -526,8 +552,21 @@ pub(crate) fn search_results(conn: q::SearchConnection) -> (Vec<PrSummary>, u64)
 }
 
 impl PrDetail {
-    pub(crate) fn from_wire(pr: q::PrDetail) -> Option<Self> {
+    pub(crate) fn from_wire(repo: q::RepositoryWithPr) -> Option<Self> {
+        let default = repo.viewer_default_merge_method;
+        let allowed = [
+            (MergeMethod::Merge, repo.merge_commit_allowed),
+            (MergeMethod::Squash, repo.squash_merge_allowed),
+            (MergeMethod::Rebase, repo.rebase_merge_allowed),
+        ];
+        let mut merge_methods: Vec<MergeMethod> = allowed
+            .into_iter()
+            .filter_map(|(m, ok)| ok.then_some(m))
+            .collect();
+        merge_methods.sort_by_key(|m| *m != default);
+        let pr = repo.pull_request?;
         Some(Self {
+            id: pr.id.into(),
             summary: PrSummary::from_wire(pr.summary)?,
             body: pr.body,
             created_at: pr.created_at.0,
@@ -538,6 +577,9 @@ impl PrDetail {
             head_repo: pr.head_repository.map(|r| r.name_with_owner),
             changed_files: count(pr.changed_files),
             mergeable: pr.mergeable,
+            merge_state: pr.merge_state_status,
+            can_update_branch: pr.viewer_can_update_branch,
+            merge_methods,
             labels: labels(pr.labels),
             milestone: pr.milestone.map(MilestoneRef::from_wire),
         })

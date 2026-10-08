@@ -1590,9 +1590,9 @@ fn more_row(page: &mut Page, next: bool, shown: usize, total: u64) {
 }
 
 /// The filter field above a list: `⌕ is:open label:bug`.
-fn filter_field(page: &mut Page, query: &str, keys: Keys<'_>) {
+fn filter_field(page: &mut Page, query: &str, keys: Keys<'_>, verb: &str) {
     let width = usize::from(page.room(Frame::None, 0));
-    let hint = format!("{} to filter ", keys.filter);
+    let hint = format!("{} to {verb} ", keys.filter);
     let text = format!(" ⌕ {query}");
     let pad = width.saturating_sub(crate::text::width(&text) + crate::text::width(&hint));
     let link = page.link(Link::Filter);
@@ -1653,7 +1653,7 @@ pub fn issue_list(
     cx: PageCtx<'_>,
 ) {
     let PageCtx { icons, keys, now } = cx;
-    filter_field(page, query, keys);
+    filter_field(page, query, keys, "filter");
     let state = list_state(query);
     let mut title = Vec::new();
     let closed_kind = if is_pr {
@@ -1717,7 +1717,7 @@ pub fn search(
     keys: Keys<'_>,
     now: u64,
 ) {
-    filter_field(page, query, keys);
+    filter_field(page, query, keys, "filter");
     let noun = match kind {
         SearchKind::Repos => "repository",
         SearchKind::Issues => "issue",
@@ -2566,10 +2566,6 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
     if run.attempt > 1 {
         facts.push(Seg::new(format!("Attempt {}   ", run.attempt), Role::Meta));
     }
-    facts.push(Seg::new(
-        "Re-running and cancelling are on GitHub (o)",
-        Role::Meta,
-    ));
     page.wrapped(facts, 0, Frame::None);
     page.blank();
     let mut jobs: Vec<&JobSummary> = run.jobs.iter().collect();
@@ -2740,6 +2736,44 @@ pub fn log_seg(text: &str) -> Seg {
     }
 }
 
+/// `seg` with each match of `query` (lowercase; case doesn't matter in
+/// the text, for ASCII) picked out.
+fn highlight(seg: Seg, query: &str) -> Vec<Seg> {
+    let q = query.as_bytes();
+    if q.is_empty() {
+        return vec![seg];
+    }
+    let text = seg.text.as_bytes();
+    let mut out = Vec::new();
+    let (mut from, mut i) = (0, 0);
+    while i + q.len() <= text.len() {
+        let hit = text
+            .get(i..i + q.len())
+            .is_some_and(|w| w.eq_ignore_ascii_case(q));
+        // A match of a whole UTF-8 string starts and ends on characters.
+        let (Some(before), Some(found)) = (seg.text.get(from..i), seg.text.get(i..i + q.len()))
+        else {
+            i += 1;
+            continue;
+        };
+        if hit {
+            if !before.is_empty() {
+                out.push(Seg::new(before, seg.role.clone()));
+            }
+            out.push(Seg::new(found, Role::Chip(Bg::TertiaryContainer)));
+            i += q.len();
+            from = i;
+        } else {
+            i += 1;
+        }
+    }
+    match seg.text.get(from..) {
+        Some(rest) if !rest.is_empty() => out.push(Seg::new(rest, seg.role.clone())),
+        _ => {}
+    }
+    if out.is_empty() { vec![seg] } else { out }
+}
+
 /// How many lines of a step's log show.
 const STEP_LINES: usize = 400;
 
@@ -2775,7 +2809,7 @@ pub fn job(
     page.wrapped(meta, 0, Frame::None);
     page.blank();
     if !at.query.is_empty() {
-        filter_field(page, at.query, at.keys);
+        filter_field(page, at.query, at.keys, "search");
         page.blank();
     }
     #[expect(
@@ -2792,7 +2826,7 @@ pub fn job(
         Role::Strong,
     )];
     let right = vec![Seg::new(
-        format!("{} filters the log", at.keys.filter),
+        format!("{} searches the log", at.keys.filter),
         Role::Meta,
     )];
     page.box_top(title, right);
@@ -2832,22 +2866,13 @@ pub fn job(
             page.box_line(segs, right, 0);
         });
         let pointed = at.step.map(|(s, _)| s) == Some(step.number);
-        let open = pointed || step.outcome == CheckOutcome::Failure || !at.query.is_empty();
-        if !open {
-            continue;
-        }
-        let Some(lines) = &lines else {
-            let text = match &log {
-                Err(why) => why.clone(),
-                Ok(_) => "The job is still running: GitHub has its log once it ends (o follows it on GitHub)".to_owned(),
-            };
-            body(page, vec![Seg::new(text, Role::Meta)]);
-            continue;
-        };
+        let failed = step.outcome == CheckOutcome::Failure;
+        let q = at.query.to_lowercase();
+        let matches = |line: &str| !q.is_empty() && strip_escapes(line).to_lowercase().contains(&q);
         // Numbered from the step's first line, cut ones included.
-        let (cut, step_lines): (usize, Vec<(usize, &str)>) = lines
-            .iter()
-            .find(|(n, _, _)| *n == step.number)
+        let (cut, shown): (usize, Vec<(usize, &str)>) = lines
+            .as_ref()
+            .and_then(|lines| lines.iter().find(|(n, _, _)| *n == step.number))
             .map(|(_, cut, l)| {
                 (
                     *cut,
@@ -2859,22 +2884,36 @@ pub fn job(
                 )
             })
             .unwrap_or_default();
-        let shown: Vec<(usize, &str)> = if at.query.is_empty() {
-            step_lines
-        } else {
-            let q = at.query.to_lowercase();
-            step_lines
-                .into_iter()
-                .filter(|(_, l)| strip_escapes(l).to_lowercase().contains(&q))
-                .collect()
+        let found = shown.iter().any(|(_, l)| matches(l));
+        if !(pointed || failed || found) {
+            continue;
+        }
+        if lines.is_none() {
+            let text = match &log {
+                Err(why) => why.clone(),
+                Ok(_) => "The job is still running: GitHub has its log once it ends (o follows it on GitHub)".to_owned(),
+            };
+            body(page, vec![Seg::new(text, Role::Meta)]);
+            continue;
+        }
+        // Where the page opens: the line a link points at; else the first
+        // search match; else a failed step's first error (or its end).
+        let at_line = |l: u32| shown.iter().position(|(i, _)| i + 1 == l as usize);
+        let first_error = || {
+            let error = shown
+                .iter()
+                .position(|(_, l)| strip_escapes(l).starts_with("##[error]"));
+            error.or(shown.len().checked_sub(1))
         };
-        // The last lines, or the ones around the line a link points at.
-        let linked = at
-            .step
-            .filter(|_| pointed)
-            .and_then(|(_, l)| shown.iter().position(|(i, _)| i + 1 == l as usize));
+        let focus = match at.step {
+            Some((_, l)) if pointed => at_line(l),
+            _ if page.jump.is_some() => None,
+            _ if !q.is_empty() => shown.iter().position(|(_, l)| matches(l)),
+            _ if failed => first_error(),
+            _ => None,
+        };
         let last = shown.len().saturating_sub(STEP_LINES);
-        let skip = linked.map_or(last, |p| last.min(p.saturating_sub(5)));
+        let skip = focus.map_or(last, |p| last.min(p.saturating_sub(5)));
         let later = shown.len().saturating_sub(skip + STEP_LINES);
         let note = |page: &mut Page, n: usize, when: &str| {
             if n > 0 {
@@ -2899,30 +2938,33 @@ pub fn job(
                 ),
             );
         }
-        if at.query.is_empty() {
-            note(page, cut + skip, "earlier");
-        } else {
-            if cut > 0 {
-                cut_note(
-                    page,
-                    format!(
-                        "… {cut} earlier lines weren't loaded, so aren't filtered (o shows them on GitHub)"
-                    ),
-                );
-            }
+        if cut > 0 && !q.is_empty() {
+            cut_note(
+                page,
+                format!(
+                    "… {cut} earlier lines weren't loaded, so aren't searched (o shows them on GitHub)"
+                ),
+            );
             note(page, skip, "earlier");
+        } else {
+            note(page, cut + skip, "earlier");
         }
         let width = shown.last().map_or(1, |(i, _)| (i + 1).to_string().len());
-        for (i, text) in shown.into_iter().skip(skip).take(STEP_LINES) {
-            if pointed && at.step.map(|(_, l)| l as usize) == Some(i + 1) && page.jump.is_none() {
+        for (n, (i, text)) in shown.iter().enumerate().skip(skip).take(STEP_LINES) {
+            if focus == Some(n) && page.jump.is_none() {
                 page.jump = Some(page.lines.len());
+            }
+            if matches(text) {
+                page.marks.push(page.lines.len());
             }
             let number = Seg::new(
                 format!("{:>width$}  ", i + 1),
                 Role::Syntax(Syntax::Comment),
             );
+            let mut segs = vec![number];
+            segs.extend(highlight(log_seg(text), &q));
             page.push(PageLine {
-                segs: vec![number, log_seg(text)],
+                segs,
                 frame: Frame::Body,
                 tone: Tone::Code,
                 ..PageLine::default()

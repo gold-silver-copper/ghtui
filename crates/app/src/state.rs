@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ghtui_api::ApiError;
-use ghtui_api::model::{Inbox, NodeId, PrDetail, PrRef, RepoId, ViewedFiles};
+use ghtui_api::change::Change;
+use ghtui_api::model::{Inbox, NodeId, PrDetail, PrRef, ViewedFiles};
 use ghtui_api::rate_limit::RateLimits;
 use ghtui_diff::FileDiff;
 use ghtui_git::Oid;
@@ -18,6 +19,7 @@ use ghtui_ui::diff_doc::Viewed;
 use ghtui_ui::{Ctx, Fetched, Icons};
 use ratatui_textarea::TextArea;
 
+use crate::act;
 use crate::browse::{self, Data, DataKey, Need};
 use crate::diff_job::{JobId, JobMsg};
 use crate::diff_screen::{self, DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
@@ -50,12 +52,8 @@ pub enum Msg {
     },
     /// The next page of a list, asked for after the cursor.
     FetchedMore(DataKey, String, Result<Data, ApiError>),
-    Commented(DataKey, Result<(), ApiError>),
-    Starred {
-        repo: RepoId,
-        starred: bool,
-        result: Result<(), ApiError>,
-    },
+    /// GitHub's answer to a change.
+    Changed(Change, Result<(), ApiError>),
     Mouse(MouseEvent),
     Timer(Timer),
     /// The search box's input settled; fetch live suggestions if it's
@@ -162,17 +160,8 @@ pub enum Api {
         key: DataKey,
         after: String,
     },
-    /// Comment on an issue or pull request, then refresh `refresh`.
-    AddComment {
-        subject_id: NodeId,
-        body: String,
-        refresh: DataKey,
-    },
-    SetStarred {
-        repo: RepoId,
-        id: NodeId,
-        starred: bool,
-    },
+    /// Change something on GitHub, answered by [`Msg::Changed`].
+    Change(Change),
     /// Search repositories for the search box's suggestions.
     Suggest(String),
     SaveVisits(Vec<Visit>),
@@ -263,6 +252,8 @@ pub enum Timer {
     Spin,
     /// Relative times ("3m ago") move on.
     Minute,
+    /// Fetch again what's on screen and still running.
+    Live,
 }
 
 /// Braille spinner frames.
@@ -439,6 +430,8 @@ pub enum Overlay {
     Compose(Box<Compose>),
     /// Submitting the review.
     Submit(Box<SubmitDialog>),
+    /// Asking before a change to GitHub.
+    Confirm(Box<act::Confirm>),
 }
 
 pub struct State {
@@ -479,6 +472,8 @@ pub struct State {
     /// The spinner's frame, and whether its next frame is scheduled.
     pub spinner: usize,
     pub spinning: bool,
+    /// [`Timer::Live`] is scheduled.
+    pub live: bool,
     pub quit: bool,
 }
 
@@ -510,6 +505,7 @@ impl State {
             notice_id: 0,
             spinner: 0,
             spinning: false,
+            live: false,
             quit: false,
         };
         state.sync_page();
@@ -708,6 +704,27 @@ impl State {
         cmds
     }
 
+    /// What's on screen and still running (a run, a job, its log,
+    /// checks), to fetch again until it's done. A list extended with Load
+    /// more isn't: fetching it again would cut it back to its first page.
+    pub fn running_here(&self) -> Vec<DataKey> {
+        let Screen::Page(p) = self.screen() else {
+            return Vec::new();
+        };
+        browse::needs(&p.route)
+            .into_iter()
+            .filter_map(|need| match need {
+                Need::Data(key) => Some(key),
+                _ => None,
+            })
+            .filter(|key| {
+                self.data
+                    .get(key)
+                    .is_some_and(|r| !r.extended && r.data.as_ref().is_some_and(Data::running))
+            })
+            .collect()
+    }
+
     /// What's loading on the visible screen, for the status bar.
     pub fn busy(&self) -> Option<String> {
         match self.screen() {
@@ -753,16 +770,13 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
             | Msg::Pr(..)
             | Msg::Fetched { .. }
             | Msg::FetchedMore(..)
-            | Msg::Commented(..)
-            | Msg::Starred { .. }
+            | Msg::Changed(..)
     ) {
         state.data_gen += 1;
     }
     // A write changes what GitHub shows, wherever it shows it.
     let wrote = match &msg {
-        Msg::Commented(_, r)
-        | Msg::Starred { result: r, .. }
-        | Msg::Diff(_, DiffMsg::Replied(r)) => r.is_ok(),
+        Msg::Changed(_, r) | Msg::Diff(_, DiffMsg::Replied(r)) => r.is_ok(),
         // Drafts GitHub accepted wait in a pending review there.
         Msg::Diff(_, DiffMsg::ReviewSubmitted(o)) => o.error.is_none() || !o.accepted.is_empty(),
         _ => false,
@@ -801,8 +815,15 @@ pub fn timers(state: &mut State, last_notice: &mut Option<Notice>) -> Vec<Cmd> {
         state.spinning = true;
         cmds.push(Cmd::Timer(Timer::Spin, 90));
     }
+    if !state.live && !state.running_here().is_empty() {
+        state.live = true;
+        cmds.push(Cmd::Timer(Timer::Live, LIVE_MS));
+    }
     cmds
 }
+
+/// How often what's running on screen is fetched again.
+const LIVE_MS: u64 = 5_000;
 
 #[must_use]
 fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
@@ -880,33 +901,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 Err(err) => state.error(format!("Couldn't load more: {err}")),
             }
         }
-        Msg::Commented(key, Ok(())) => {
-            state.overlay = None;
-            state.info("Comment posted");
-            return state.ensure(Need::Data(key), false);
-        }
-        Msg::Commented(_, Err(err)) => {
-            if let Some(Overlay::Compose(compose)) = &mut state.overlay {
-                compose.sending = false;
-                compose.error = Some(err.to_string());
-            }
-        }
-        Msg::Starred {
-            repo,
-            starred,
-            result: Ok(()),
-        } => {
-            let verb = if starred { "Starred" } else { "Unstarred" };
-            state.info(format!("{verb} {repo}"));
-        }
-        Msg::Starred {
-            repo,
-            starred,
-            result: Err(err),
-        } => {
-            nav::set_starred(state, &repo, !starred);
-            state.error(format!("GitHub didn't save that: {err}"));
-        }
+        Msg::Changed(change, result) => return act::on_changed(state, &change, result),
         Msg::Mouse(ev) => return nav::on_mouse(state, ev),
         Msg::Timer(Timer::ExpireNotice(id)) => {
             if id == state.notice_id {
@@ -916,6 +911,14 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Timer(Timer::Spin) => {
             state.spinning = false;
             state.spinner = state.spinner.wrapping_add(1);
+        }
+        Msg::Timer(Timer::Live) => {
+            state.live = false;
+            let mut cmds = Vec::new();
+            for key in state.running_here() {
+                cmds.extend(state.ensure(Need::Data(key), true));
+            }
+            return cmds;
         }
         Msg::Timer(Timer::Minute) => {
             state.data_gen += 1;
@@ -960,6 +963,7 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         Some(Overlay::Menu(_)) => return nav::on_menu_key(state, key),
         Some(Overlay::Compose(_)) => return on_compose_key(state, key),
         Some(Overlay::Submit(_)) => return on_submit_key(state, key),
+        Some(Overlay::Confirm(_)) => return act::on_confirm_key(state, key),
         None => {}
     }
     // Any keypress dismisses the last notice; Esc on an error does only
@@ -1077,6 +1081,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Refresh => return state.load_visible(true),
         Action::Copy => return nav::copy_link(state),
         Action::OpenInBrowser => return state.go(Target::External(state.here_url())),
+        _ if act::ACTIONS.contains(&action) => return act::act(state, action),
         _ if diff.is_some() => return diff_action(state, action),
         _ => return nav::page_action(state, action),
     }
@@ -1162,6 +1167,7 @@ pub(crate) mod tests {
     use ghtui_api::browse::IssueState;
     use ghtui_api::browse::SearchResults;
     use ghtui_api::model::PrSummary;
+    use ghtui_api::model::RepoId;
     use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode};
     use ghtui_ui::annotations::AnnotationKey;
     use ghtui_ui::overlays::PALETTE_ROWS;
@@ -1670,15 +1676,12 @@ pub(crate) mod tests {
             &mut state,
             Msg::FetchedMore(key.clone(), "2".into(), Ok(page(20, None))),
         );
-        let result = Ok(());
-        update(
-            &mut state,
-            Msg::Starred {
-                repo: repo(),
-                starred: true,
-                result,
-            },
-        );
+        let star = Change::Star {
+            repo: repo(),
+            id: NodeId::new("R_1"),
+            starred: true,
+        };
+        update(&mut state, Msg::Changed(star, Ok(())));
         assert!(!state.load_visible(false).contains(&refetch));
         let Some(Data::Runs(runs)) = state.get(&key) else {
             panic!()
@@ -2083,10 +2086,11 @@ pub(crate) mod tests {
         }
     }
 
-    /// `/` on a job filters its log: only the lines with what's typed, in
-    /// every step.
+    /// `/` on a job searches its log: the steps with a match open, the
+    /// page opens at the first match, every match is picked out, and `n`
+    /// `p` go through them. Nothing is hidden.
     #[test]
-    fn a_jobs_log_filters() {
+    fn a_jobs_log_search_goes_through_its_matches() {
         let mut s = with_repo();
         let job_route = Route::Job {
             repo: repo(),
@@ -2100,23 +2104,60 @@ pub(crate) mod tests {
         fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
         fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
         press(&mut s, "/");
-        press(&mut s, "Syncing");
+        press(&mut s, "TEST");
         press(&mut s, "<Enter>");
-        assert!(matches!(route(&s), Route::Job { query, .. } if query == "Syncing"));
+        assert!(matches!(route(&s), Route::Job { query, .. } if query == "TEST"));
         let Screen::Page(p) = s.screen() else {
             panic!()
         };
-        let text: Vec<String> = p
-            .page()
-            .lines
+        let page = p.page();
+        let line =
+            |i: usize| -> String { page.lines[i].segs.iter().map(|s| s.text.as_str()).collect() };
+        assert!(!page.marks.is_empty());
+        for &m in &page.marks {
+            assert!(line(m).to_lowercase().contains("test"), "{}", line(m));
+            let picked = page.lines[m].segs.iter().any(|s| {
+                s.text.eq_ignore_ascii_case("test")
+                    && s.role == ghtui_ui::page::Role::Chip(Bg::TertiaryContainer)
+            });
+            assert!(picked, "{}", line(m));
+        }
+        // The failed step's other lines are still there.
+        assert!((0..page.lines.len()).any(|i| line(i).contains("Compiling")));
+        assert_eq!(page.jump, page.marks.first().copied());
+        let n = page.marks.len();
+        assert!(n > 1, "{n}");
+        press(&mut s, "n");
+        assert_eq!(s.notice, Some(Notice::Info(format!("Match 2 of {n}"))));
+        press(&mut s, "p");
+        assert_eq!(s.notice, Some(Notice::Info(format!("Match 1 of {n}"))));
+    }
+
+    /// A failed job opens at its failing step's first error.
+    #[test]
+    fn a_failed_job_opens_at_its_first_error() {
+        let mut s = with_repo();
+        let _ = s.push(Route::Job {
+            repo: repo(),
+            run: Some(7),
+            job: 2,
+            step: None,
+            query: String::new(),
+        });
+        let (job, log) = crate::fixtures::job();
+        fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
+        fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
+        let Screen::Page(p) = s.screen() else {
+            panic!()
+        };
+        let page = p.page();
+        let jump = page.jump.expect("it opens at a line");
+        let text: String = page.lines[jump]
+            .segs
             .iter()
-            .map(|l| l.segs.iter().map(|s| s.text.as_str()).collect())
+            .map(|s| s.text.as_str())
             .collect();
-        assert!(
-            text.iter().any(|l| l.contains("Syncing repository")),
-            "{text:#?}"
-        );
-        assert!(!text.iter().any(|l| l.contains("Compiling")));
+        assert!(text.contains("exit code 101"), "{text}");
     }
 
     /// A running job, and its log (which GitHub doesn't have until the
@@ -2462,23 +2503,17 @@ pub(crate) mod tests {
         assert_eq!(route(&state), Route::Repo(repo()));
 
         let cmds = press(&mut state, "s");
-        assert_eq!(
-            cmds,
-            vec![Cmd::Api(Api::SetStarred {
-                repo: repo(),
-                id: NodeId::new("R_ghtui"),
-                starred: true
-            })]
-        );
+        let star = Change::Star {
+            repo: repo(),
+            id: NodeId::new("R_ghtui"),
+            starred: true,
+        };
+        assert_eq!(cmds, vec![Cmd::Api(Api::Change(star.clone()))]);
         assert!(state.overview(&repo()).unwrap().starred);
         assert_eq!(state.overview(&repo()).unwrap().summary.stars, 1235);
         update(
             &mut state,
-            Msg::Starred {
-                repo: repo(),
-                starred: true,
-                result: Err(ApiError::Network("down".into())),
-            },
+            Msg::Changed(star, Err(ApiError::Network("down".into()))),
         );
         assert!(!state.overview(&repo()).unwrap().starred, "rolled back");
         assert_eq!(state.overview(&repo()).unwrap().summary.stars, 1234);
@@ -2642,25 +2677,23 @@ pub(crate) mod tests {
             &mut state,
             Msg::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
         );
-        assert_eq!(
-            cmds,
-            vec![Cmd::Api(Api::AddComment {
-                subject_id: NodeId::new("I_14"),
-                body: "Thanks!".into(),
-                refresh: key.clone()
-            })]
-        );
-        let cmds = update(&mut state, Msg::Commented(key.clone(), Ok(())));
+        let comment = Change::Comment {
+            subject: NodeId::new("I_14"),
+            body: "Thanks!".into(),
+        };
+        assert_eq!(cmds, vec![Cmd::Api(Api::Change(comment.clone()))]);
+        let cmds = update(&mut state, Msg::Changed(comment.clone(), Ok(())));
         assert!(state.overlay.is_none());
-        let refetch = vec![Cmd::Api(Api::Fetch {
+        let refetch = Cmd::Api(Api::Fetch {
             key: key.clone(),
             cached: false,
-        })];
-        assert_eq!(cmds, refetch);
+        });
+        assert!(cmds.contains(&refetch), "{cmds:?}");
         // Another comment, posted while that fetch is on its way: the fetch
         // may miss it, so the page is fetched again once it lands.
-        let cmds = update(&mut state, Msg::Commented(key.clone(), Ok(())));
-        assert_eq!(cmds, Vec::new());
+        let cmds = update(&mut state, Msg::Changed(comment, Ok(())));
+        assert!(!cmds.contains(&refetch));
+        let refetch = vec![refetch];
         let issue = || Data::Issue(Some(Box::new(crate::fixtures::issue())));
         assert_eq!(fetched(&mut state, key.clone(), issue()), refetch);
         assert_eq!(fetched(&mut state, key, issue()), Vec::new(), "only once");
@@ -3184,13 +3217,13 @@ pub(crate) mod tests {
         assert!(
             !cmds
                 .iter()
-                .any(|c| matches!(c, Cmd::Api(Api::SetStarred { .. }))),
+                .any(|c| matches!(c, Cmd::Api(Api::Change(Change::Star { .. })))),
             "{cmds:?}"
         );
         let cmds = state.follow(&ghtui_ui::page::Link::Star);
         assert!(
             cmds.iter()
-                .any(|c| matches!(c, Cmd::Api(Api::SetStarred { .. })))
+                .any(|c| matches!(c, Cmd::Api(Api::Change(Change::Star { .. }))))
         );
     }
 

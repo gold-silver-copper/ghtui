@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ghtui_api::browse::{DiscussionsOf, RepoSummary, SearchKind};
+use ghtui_api::change::Change;
 use ghtui_api::model::RepoId;
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::chrome::{self, KeyRow, SuggestRow};
@@ -240,6 +241,8 @@ pub struct PageScreen {
     jumped: Option<Option<(usize, Option<usize>)>>,
     /// The `#fragment` of the link that opened it: a comment to scroll to.
     pub anchor: Option<String>,
+    /// The search match last gone to, by its index in [`Page::marks`].
+    mark: Option<usize>,
 }
 
 impl PageScreen {
@@ -269,6 +272,7 @@ impl PageScreen {
             fresh: list,
             jumped: None,
             anchor,
+            mark: None,
         }
     }
 
@@ -488,6 +492,21 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Hints | Action::HintsBrowser => {
             start_hints(state, action == Action::HintsBrowser);
         }
+        Action::NextHunk | Action::PrevHunk => {
+            let next = action == Action::NextHunk;
+            match step_mark(p, next) {
+                Some((n, of)) => state.info(format!("Match {n} of {of}")),
+                None if p.page.marks.is_empty() => {
+                    let search = state.first_key(Action::Search);
+                    state.info(format!("No matches here: {search} searches a job's log"));
+                }
+                None => state.info(if next {
+                    "No later match"
+                } else {
+                    "No earlier match"
+                }),
+            }
+        }
         Action::Star => return star(state),
         Action::Comment => return comment_with(state, ""),
         Action::Branch => return state.open_finder(true),
@@ -496,6 +515,24 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
         _ => state.info(action.not_here()),
     }
     Vec::new()
+}
+
+/// Scrolls to the next (or previous) search match on the page: which
+/// one it is, of how many. Before any, the one the page opened at is.
+fn step_mark(p: &mut PageScreen, next: bool) -> Option<(usize, usize)> {
+    let marks = &p.page.marks;
+    let at = (p.mark.filter(|&m| m < marks.len()))
+        .or_else(|| marks.iter().position(|&m| Some(m) == p.page.jump));
+    let n = match (at, next) {
+        (None, true) => 0,
+        (None, false) => return None,
+        (Some(at), true) => at + 1,
+        (Some(at), false) => at.checked_sub(1)?,
+    };
+    p.scroll = marks.get(n)?.saturating_sub(MARGIN);
+    p.mark = Some(n);
+    p.fresh = false;
+    Some((n + 1, marks.len()))
 }
 
 /// Goes to the page above this one.
@@ -882,9 +919,9 @@ impl State {
             if let Some(Route::Job { .. }) = self.route() {
                 let pick = Pick::Filter(q.to_owned());
                 let what = if q.is_empty() {
-                    "show the whole log"
+                    "clear the search"
                 } else {
-                    "lines with this"
+                    "search the log"
                 };
                 out.push(suggestion("⌕", q, what, "↵", pick));
                 return out;
@@ -1190,7 +1227,7 @@ pub fn star(state: &mut State) -> Vec<Cmd> {
     };
     let (id, starred) = (overview.id.clone(), !overview.starred);
     set_starred(state, &repo, starred);
-    vec![Cmd::Api(Api::SetStarred { repo, id, starred })]
+    vec![Cmd::Api(Api::Change(Change::Star { repo, id, starred }))]
 }
 
 /// Shows a repository as starred or not (optimistically, before GitHub
@@ -1221,31 +1258,22 @@ fn comment_with(state: &mut State, text: &str) -> Vec<Cmd> {
             let key = DataKey::Issue(repo.clone(), *number);
             match state.get(&key) {
                 Some(Data::Issue(Some(issue))) => {
-                    Some((issue.id.clone(), format!("{repo}#{number}"), key))
+                    Some((issue.id.clone(), format!("{repo}#{number}")))
                 }
                 _ => None,
             }
         }
-        Some(Route::Pr { pr, .. }) => {
-            let key = DataKey::PrActivity(pr.clone());
-            state
-                .activity(pr)
-                .map(|a| (a.id.clone(), pr.to_string(), key))
-        }
+        Some(Route::Pr { pr, .. }) => state.activity(pr).map(|a| (a.id.clone(), pr.to_string())),
         _ => {
             state.info("Comments go on issues and pull requests");
             return Vec::new();
         }
     };
-    let Some((subject_id, name, refresh)) = target else {
+    let Some((subject_id, name)) = target else {
         state.info("Still loading");
         return Vec::new();
     };
-    let target = ComposeTarget::Conversation {
-        subject_id,
-        name,
-        refresh,
-    };
+    let target = ComposeTarget::Conversation { subject_id, name };
     state.compose(target, text)
 }
 
@@ -1340,6 +1368,17 @@ impl State {
                 None
             }
         };
+        for (action, label, why) in crate::act::doables(self) {
+            let short = match action {
+                Action::Merge => "merge",
+                Action::Approve => "approve",
+                Action::Rerun => "re-run",
+                _ => "",
+            };
+            let mut change = doable("Change", action, &label, short);
+            change.unavailable = why;
+            out.push(change);
+        }
         let go = |action, label: &str, short| doable("Go", action, label, short);
         if !self.chrome().tabs.is_empty() {
             out.push(go(Action::NextTab, "Next tab", "tabs"));

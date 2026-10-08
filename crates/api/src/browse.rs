@@ -11,9 +11,9 @@ use crate::model::{
     ReviewState, author, count, labels,
 };
 use crate::queries::{
-    Actor, AddCommentPayload, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount,
-    GitObjectId, IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount, RefCount,
-    RepositoryName, StarPayload, StatusState, UnstarPayload, Uri, UserCount, fragments, nodes,
+    Actor, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount, GitObjectId,
+    IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount, RefCount,
+    RepositoryName, StatusState, Uri, UserCount, fragments, nodes,
 };
 use ghtui_schema::schema;
 
@@ -4534,54 +4534,6 @@ pub struct ViewerRepos {
         ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]
     )]
     pub repositories: RepoList,
-}
-
-// ---- comments --------------------------------------------------------------------------
-
-#[derive(cynic::QueryVariables, Debug)]
-pub struct AddCommentVariables {
-    pub subject: cynic::Id,
-    pub body: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "AddCommentVariables"
-)]
-pub struct AddComment {
-    #[arguments(input: { subjectId: $subject, body: $body })]
-    pub add_comment: Option<AddCommentPayload>,
-}
-
-// ---- starring -----------------------------------------------------------------------------
-
-#[derive(cynic::QueryVariables, Debug)]
-pub struct StarVariables {
-    pub starrable: cynic::Id,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "StarVariables"
-)]
-pub struct AddStar {
-    #[arguments(input: { starrableId: $starrable })]
-    pub add_star: Option<StarPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "StarVariables"
-)]
-pub struct RemoveStar {
-    #[arguments(input: { starrableId: $starrable })]
-    pub remove_star: Option<UnstarPayload>,
 }
 
 /// Cache keys for browsed pages.

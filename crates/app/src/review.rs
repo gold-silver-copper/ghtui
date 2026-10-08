@@ -7,7 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ghtui_api::model::{NewThread, ReviewEvent, ReviewThread, Side as ApiSide};
 use ghtui_api::model::{NodeId, PrRef};
 use ghtui_diff::anchor::{AnchorError, LinePos, Side};
-use ghtui_store::{DraftComment, DraftSide};
+use ghtui_store::{DraftComment, DraftSide, ReviewState};
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::annotations::{Annotation, AnnotationComment, AnnotationKey};
 use ghtui_ui::bars::Notice;
@@ -19,6 +19,7 @@ use crate::diff_screen::{self, DiffOf, LastReview};
 use crate::keymap::Action;
 use crate::picker::{self, PickItem};
 use crate::state::{Api, Cmd, Git, OutdatedThread, Overlay, Screen, State};
+use ghtui_api::change::Change;
 
 /// What a comment being written will be attached to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,11 +41,7 @@ pub enum ComposeTarget {
     Draft { id: u64 },
     /// A comment on an issue or pull request's conversation, posted right
     /// away; `refresh` is the page data to reload after.
-    Conversation {
-        subject_id: NodeId,
-        name: String,
-        refresh: crate::browse::DataKey,
-    },
+    Conversation { subject_id: NodeId, name: String },
 }
 
 /// A suggested change and what it replaces.
@@ -106,22 +103,40 @@ impl Compose {
 }
 
 pub struct SubmitDialog {
+    pub pr: PrRef,
     pub event: ReviewEvent,
     pub input: TextArea<'static>,
     pub sending: bool,
     pub error: Option<String>,
+    /// Enter submits: opened to approve from the pull request's page.
+    pub quick: bool,
+    /// Your saved review (its drafts go with it), read from disk when the
+    /// pull request's diff isn't open to hold it.
+    pub saved: Option<ReviewState>,
 }
 
 impl SubmitDialog {
-    pub fn new(theme: &Theme) -> Self {
+    pub fn new(theme: &Theme, pr: PrRef) -> Self {
         let mut input = editor(theme, "");
         input.set_placeholder_text("Summary (optional for comments and approvals)");
         input.set_placeholder_style(theme.meta(Bg::ContainerHigh));
         Self {
+            pr,
             event: ReviewEvent::Comment,
             input,
             sending: false,
             error: None,
+            quick: false,
+            saved: None,
+        }
+    }
+
+    /// Your pending drafts, wherever they're held: `None` while they're
+    /// still being read.
+    pub fn drafts<'a>(&'a self, state: &'a State) -> Option<&'a [DraftComment]> {
+        match state.diffs.get(&DiffOf::Pr(self.pr.clone())) {
+            Some(diff) => Some(&diff.inputs().review.pending),
+            None => self.saved.as_ref().map(|s| s.pending.as_slice()),
         }
     }
 
@@ -373,28 +388,45 @@ pub fn outdated_to_map(threads: &[ReviewThread]) -> Vec<OutdatedThread> {
 /// local queue, rejected ones keep their text and GitHub's reason.
 #[must_use]
 pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcome) -> Vec<Cmd> {
+    let apply = |review: &mut ReviewState, head: Option<String>| {
+        review.pending.retain(|d| !outcome.accepted.contains(&d.id));
+        for draft in &mut review.pending {
+            draft.error = outcome
+                .rejected
+                .iter()
+                .find(|(id, _)| *id == draft.id)
+                .map(|(_, reason)| reason.clone());
+        }
+        if outcome.submitted {
+            review.last_reviewed_head = head;
+        }
+    };
     let mut cmds = vec![Cmd::Api(Api::FetchThreads(pr.clone()))];
     if let Some(diff) = state.diffs.get_mut(&DiffOf::Pr(pr.clone())) {
         let head = diff.head().map(|h| h.to_string());
-        cmds.extend(diff.edit_review(pr, |i| {
-            i.review
-                .pending
-                .retain(|d| !outcome.accepted.contains(&d.id));
-            for draft in &mut i.review.pending {
-                draft.error = outcome
-                    .rejected
-                    .iter()
-                    .find(|(id, _)| *id == draft.id)
-                    .map(|(_, reason)| reason.clone());
-            }
-            if outcome.submitted {
-                i.review.last_reviewed_head = head;
-            }
-        }));
+        cmds.extend(diff.edit_review(pr, |i| apply(&mut i.review, head)));
+    } else if let Some(Overlay::Submit(dialog)) = &mut state.overlay
+        && let Some(saved) = &mut dialog.saved
+    {
+        // Without the diff, the dialog holds what's saved: save it back.
+        let head = (state.prs.get(pr))
+            .and_then(|r| r.data.as_ref())
+            .map(|d| d.head_oid.clone());
+        apply(saved, head);
+        cmds.push(Cmd::SaveReview(pr.clone(), saved.clone()));
     }
     if outcome.submitted {
+        let approved = matches!(
+            &state.overlay,
+            Some(Overlay::Submit(d)) if d.event == ReviewEvent::Approve
+        );
         state.overlay = None;
-        state.info("Review submitted");
+        state.info(if approved {
+            format!("Approved {pr}")
+        } else {
+            "Review submitted".to_owned()
+        });
+        cmds.extend(state.load_visible(false));
     } else if let Some(Overlay::Submit(dialog)) = &mut state.overlay {
         dialog.sending = false;
         dialog.error = Some(match (&outcome.error, outcome.rejected.len()) {
@@ -433,10 +465,7 @@ pub(crate) fn on_edited(
         }
         EditPurpose::Summary => {
             if let Some(Overlay::Submit(dialog)) = &mut state.overlay {
-                let event = dialog.event;
-                **dialog = SubmitDialog::new(theme);
-                dialog.event = event;
-                dialog.input.insert_str(text.trim_end());
+                dialog.input = editor(theme, text.trim_end());
             }
         }
         EditPurpose::Suggest {
@@ -710,7 +739,10 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             if diff.refs.is_none() {
                 return notice(state, Notice::Error("The diff hasn't loaded yet".into()));
             }
-            state.overlay = Some(Overlay::Submit(Box::new(SubmitDialog::new(&state.theme))));
+            state.overlay = Some(Overlay::Submit(Box::new(SubmitDialog::new(
+                &state.theme,
+                pr,
+            ))));
             Vec::new()
         }
         _ => notice(state, Notice::Info(action.not_here())),
@@ -829,18 +861,13 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     }
     let target = compose.target.clone();
-    if let ComposeTarget::Conversation {
-        subject_id,
-        refresh,
-        ..
-    } = target
-    {
+    if let ComposeTarget::Conversation { subject_id, .. } = target {
         compose.sending = true;
-        return vec![Cmd::Api(Api::AddComment {
-            subject_id,
+        let change = Change::Comment {
+            subject: subject_id,
             body,
-            refresh,
-        })];
+        };
+        return vec![Cmd::Api(Api::Change(change))];
     }
     let Some((screen, diff)) = state.diff_parts() else {
         return Vec::new();
@@ -907,33 +934,75 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                 text: dialog.input.lines().join("\n"),
             }];
         }
-        KeyCode::Char('s') if ctrl => {
-            let event = dialog.event;
-            let body = dialog.input.lines().join("\n");
-            if event == ReviewEvent::RequestChanges && body.trim().is_empty() {
-                dialog.error = Some("Requesting changes needs a summary".into());
-                return Vec::new();
-            }
-            dialog.sending = true;
-            dialog.error = None;
-            if let Some((screen, diff)) = state.diff_parts()
-                && let Some(pr) = screen.of.pr()
-            {
-                return vec![Cmd::Api(Api::SubmitReview {
-                    pr: pr.clone(),
-                    head: diff.head().unwrap_or_default(),
-                    drafts: diff.inputs().review.pending.clone(),
-                    event,
-                    body,
-                })];
-            }
-        }
+        KeyCode::Char('s') if ctrl => return submit(state),
+        KeyCode::Enter if dialog.quick => return submit(state),
         _ => {
             dialog.error = None;
             dialog.input.input(key);
         }
     }
     Vec::new()
+}
+
+/// Submits the review in the dialog, with your drafts, on the head they
+/// were written against: the diff's, or the pull request's from its page.
+#[must_use]
+fn submit(state: &mut State) -> Vec<Cmd> {
+    let Some(Overlay::Submit(dialog)) = &state.overlay else {
+        return Vec::new();
+    };
+    let (event, body, pr) = (
+        dialog.event,
+        dialog.input.lines().join("\n"),
+        dialog.pr.clone(),
+    );
+    let drafts = dialog.drafts(state).map(<[DraftComment]>::to_vec);
+    let head = match state.diffs.get(&DiffOf::Pr(pr.clone())) {
+        Some(diff) => diff.head(),
+        None => (state.prs.get(&pr))
+            .and_then(|r| r.data.as_ref())
+            .map(|d| ghtui_git::Oid::new(d.head_oid.clone())),
+    };
+    let problem = match (&drafts, &head) {
+        _ if event == ReviewEvent::RequestChanges && body.trim().is_empty() => {
+            Some("Requesting changes needs a summary")
+        }
+        (None, _) => Some("Still reading your saved drafts; try again in a moment"),
+        (_, None) => Some("The pull request hasn't loaded yet"),
+        _ => None,
+    };
+    let Some(Overlay::Submit(dialog)) = &mut state.overlay else {
+        return Vec::new();
+    };
+    if let Some(problem) = problem {
+        dialog.error = Some(problem.into());
+        return Vec::new();
+    }
+    dialog.sending = true;
+    dialog.error = None;
+    vec![Cmd::Api(Api::SubmitReview {
+        pr,
+        head: head.unwrap_or_default(),
+        drafts: drafts.unwrap_or_default(),
+        event,
+        body,
+    })]
+}
+
+/// Opens the review dialog set to approve, from anywhere `pr` is on
+/// screen. Your saved drafts go with it; without its diff open, they're
+/// read from disk first.
+#[must_use]
+pub(crate) fn open_approve(state: &mut State, pr: PrRef) -> Vec<Cmd> {
+    let mut dialog = SubmitDialog::new(&state.theme, pr.clone());
+    dialog.event = ReviewEvent::Approve;
+    dialog.quick = true;
+    state.overlay = Some(Overlay::Submit(Box::new(dialog)));
+    if state.diffs.contains_key(&DiffOf::Pr(pr.clone())) {
+        Vec::new()
+    } else {
+        vec![Cmd::LoadReview(pr)]
+    }
 }
 
 #[cfg(test)]
@@ -1044,7 +1113,7 @@ mod tests {
             ghtui_theme::Mode::Dark,
             ghtui_theme::ColorDepth::TrueColor,
         );
-        let mut dialog = SubmitDialog::new(&theme);
+        let mut dialog = SubmitDialog::new(&theme, PrRef::parse("o/r#1").unwrap());
         dialog.cycle(true);
         assert_eq!(dialog.event, ReviewEvent::Approve);
         dialog.cycle(true);
