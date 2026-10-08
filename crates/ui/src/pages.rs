@@ -366,9 +366,8 @@ impl<T> Rows<T> for Results<T> {
         &self.items
     }
     fn rest(&self) -> Rest {
-        // A total no more than what's here means GitHub didn't count.
-        // With no next page, GitHub stopped listing short of its count
-        // (search stops at 1000; hidden items aren't listed).
+        // A total no more than what's here means GitHub didn't count; more
+        // with no next page, that it stopped short (search stops at 1000).
         let len = self.items.len() as u64;
         let counted = self.total > len;
         match self.next {
@@ -1651,24 +1650,6 @@ pub fn people_list(page: &mut Page, title: &str, people: Fetched<'_, Results<Use
 pub fn repos(page: &mut Page, title: &str, repos: Fetched<'_, Results<RepoSummary>>, now: u64) {
     paged_list(page, title, repos, "None yet.", |page, r| {
         repo_row(page, r, now, true);
-    });
-}
-
-/// Repositories in a box that loads more.
-fn repo_list_box(
-    page: &mut Page,
-    title: Vec<Seg>,
-    right: Vec<Seg>,
-    repos: Fetched<'_, Results<RepoSummary>>,
-    show_owner: bool,
-    empty: &str,
-    now: u64,
-) {
-    let Some(r) = repos.show(page, "repositories") else {
-        return;
-    };
-    list_box(page, title, right, r, empty, |page, repo| {
-        repo_row(page, repo, now, show_owner);
     });
 }
 
@@ -3893,35 +3874,26 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
     page.blank();
     match (tab, list) {
         (ProfileTab::Overview, _) => {}
-        (ProfileTab::Repositories(sort), ProfileList::Repos(repos)) => {
-            let title = vec![Seg::new(
-                format!("Repositories  {}", compact(p.repos.total())),
-                Role::Strong,
-            )];
-            let sort = link_seg(
-                page,
-                format!("Sort: {}", sort.label()),
-                Link::Sort,
-                Role::Link,
-            );
-            repo_list_box(
-                page,
-                title,
-                vec![sort],
-                repos,
-                false,
-                "No public repositories yet.",
-                now,
-            );
-            return;
-        }
-        (_, ProfileList::Repos(repos)) => {
-            let title = vec![Seg::new(
-                format!("Starred  {}", compact(p.star_count)),
-                Role::Strong,
-            )];
-            let sort = vec![Seg::new("Recently starred", Role::Meta)];
-            repo_list_box(page, title, sort, repos, true, "Nothing starred yet.", now);
+        (tab, ProfileList::Repos(repos)) => {
+            let (title, sort, show_owner, empty) = match tab {
+                ProfileTab::Repositories(sort) => {
+                    let sort = format!("Sort: {}", sort.label());
+                    let sort = link_seg(page, sort, Link::Sort, Role::Link);
+                    let title = format!("Repositories  {}", compact(p.repos.total()));
+                    (title, sort, false, "No public repositories yet.")
+                }
+                _ => {
+                    let sort = Seg::new("Recently starred", Role::Meta);
+                    let title = format!("Starred  {}", compact(p.star_count));
+                    (title, sort, true, "Nothing starred yet.")
+                }
+            };
+            if let Some(r) = repos.show(page, "repositories") {
+                let title = vec![Seg::new(title, Role::Strong)];
+                list_box(page, title, vec![sort], r, empty, |page, repo| {
+                    repo_row(page, repo, now, show_owner);
+                });
+            }
             return;
         }
         (tab, ProfileList::People(people)) => {
