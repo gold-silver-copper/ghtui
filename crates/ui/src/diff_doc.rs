@@ -26,7 +26,7 @@ use ghtui_git::files::{ChangedFile, is_lockfile};
 pub use ghtui_api::model::ViewedState as Viewed;
 
 use crate::annotations::{Annotation, AnnotationKey, ThreadRow, ThreadRowKind};
-use crate::{idx, text};
+use crate::{idx, page};
 
 /// Thread text wraps at this width unless the view says otherwise.
 const DEFAULT_WRAP: u16 = 72;
@@ -244,11 +244,11 @@ impl DocFile {
                 comment.author.clone(),
             );
             let body = if comment.body.trim().is_empty() {
-                "(no text)".to_owned()
+                "(no text)"
             } else {
-                comment.body.replace("\r\n", "\n")
+                &comment.body
             };
-            for line in text::wrap(&body, wrap) {
+            for line in page::wrap(body, wrap) {
                 self.push_thread_row(index, ThreadRowKind::Body, line);
             }
             if c == 0 && ann.left_out > 0 {
@@ -257,7 +257,7 @@ impl DocFile {
             }
         }
         if let Some(error) = &ann.error {
-            for line in text::wrap(&format!("GitHub rejected this: {error}"), wrap) {
+            for line in page::wrap(&format!("GitHub rejected this: {error}"), wrap) {
                 self.push_thread_row(index, ThreadRowKind::Error, line);
             }
         }

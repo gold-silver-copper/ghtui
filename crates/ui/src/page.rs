@@ -411,6 +411,15 @@ impl Page {
     }
 }
 
+/// `text` wrapped to `max` columns as a page wraps it: blank lines and
+/// indentation kept, tabs turned to spaces, words longer than a line broken.
+pub fn wrap(text: &str, max: usize) -> Vec<String> {
+    wrap_segs(vec![Seg::new(text.trim_end(), Role::Body)], max.max(1))
+        .into_iter()
+        .map(|line| line.into_iter().map(|s| s.text).collect())
+        .collect()
+}
+
 /// Splits segments into lines of at most `width` columns, breaking at
 /// spaces (or mid-word for words longer than a line). Newlines in segment
 /// text force breaks.
@@ -857,9 +866,11 @@ mod tests {
     }
 
     #[test]
-    fn newlines_and_long_words() {
-        let lines = wrap_segs(vec![Seg::new("a\nabcdefghij", Role::Body)], 4);
-        assert_eq!(texts(&lines), ["a", "abcd", "efgh", "ij"]);
+    fn wraps_words() {
+        assert_eq!(wrap("one two three", 7), ["one two", "three"]);
+        assert_eq!(wrap("a\n\nabcdefghij", 4), ["a", "", "abcd", "efgh", "ij"]);
+        assert_eq!(wrap("", 4), [""]);
+        assert_eq!(wrap("a\r\n\tb", 10), ["a", "    b"]);
     }
 
     #[test]
