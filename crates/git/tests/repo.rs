@@ -490,6 +490,10 @@ async fn lists_pr_commits_oldest_first() {
 /// A read cancelled halfway (its task aborted) must not leave the rest of
 /// its reply for the next read to parse. Paths with spaces work too.
 #[tokio::test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "cancels a blob read, not a git command"
+)]
 async fn blob_reader_survives_cancelled_reads() {
     let f = fixture();
     let big: Vec<u8> = (0..4_000_000u32).map(|i| b'a' + (i % 26) as u8).collect();
