@@ -367,23 +367,12 @@ pub async fn since_review_hashes(
         };
         let (old, new) = (read(&file.old_oid).await?, read(&file.new_oid).await?);
         let path = file.path().to_owned();
-        let diff = tokio::task::spawn_blocking(move || {
-            let diff = FileDiff::compute_plain(&path, old.as_deref(), new.as_deref());
-            match &diff.content {
-                ghtui_diff::Content::Text(text) => ghtui_diff::blocks::change_blocks(
-                    &path,
-                    text,
-                    text.lines(ghtui_diff::Whitespace::Exact),
-                )
-                .into_iter()
-                .map(|b| b.hash)
-                .collect(),
-                _ => Vec::new(),
-            }
-        })
-        .await
-        .unwrap_or_default();
-        hashes.extend(diff);
+        let plain = move || FileDiff::compute_plain(&path, old.as_deref(), new.as_deref());
+        let diff = tokio::task::spawn_blocking(plain).await.map(|d| d.content);
+        if let Ok(ghtui_diff::Content::Text(text)) = diff {
+            let exact = text.alignment(ghtui_diff::Whitespace::Exact);
+            hashes.extend(exact.blocks.iter().map(|b| b.hash.clone()));
+        }
     }
     Ok(hashes)
 }
@@ -712,16 +701,13 @@ mod tests {
         let ghtui_diff::Content::Text(text) = &diff.content else {
             panic!()
         };
-        let blocks = ghtui_diff::blocks::change_blocks(
-            "a.txt",
-            text,
-            text.lines(ghtui_diff::Whitespace::Exact),
-        );
+        let exact = text.alignment(ghtui_diff::Whitespace::Exact);
+        let blocks = &exact.blocks;
         let new_blocks: Vec<String> = blocks
             .iter()
             .filter(|b| !seen.contains(&b.hash))
             .map(|b| {
-                text.line(text.lines[b.entries.end as usize - 1].shown())
+                text.line(exact.lines[b.entries.end as usize - 1].shown())
                     .to_owned()
             })
             .collect();

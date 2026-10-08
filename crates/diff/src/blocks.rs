@@ -5,14 +5,18 @@
 //! sits. That makes it the unit for "reviewed" marks and for "changes since
 //! my last review" (a block whose hash appeared in the earlier diff isn't
 //! new, however the lines around it moved or the base was rebased).
+//! It names an exact change: a whitespace-ignoring block that alone lies in
+//! one exact block takes its hash, so marks hold in either mode.
 
+use std::collections::HashMap;
 use std::ops::Range;
 
-use crate::file::TextDiff;
+use crate::file::{Alignment, TextDiff};
 use crate::hunks::DiffLine;
 use crate::sat_u32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ChangeBlock {
     /// Alignment entries of the block.
     pub entries: Range<u32>,
@@ -21,7 +25,7 @@ pub struct ChangeBlock {
     pub formatting_only: bool,
 }
 
-pub fn change_blocks(path: &str, text: &TextDiff, lines: &[DiffLine]) -> Vec<ChangeBlock> {
+pub(crate) fn change_blocks(path: &str, text: &TextDiff, lines: &[DiffLine]) -> Vec<ChangeBlock> {
     let is_context = |l: &DiffLine| !l.is_change();
     let mut out = Vec::new();
     let mut end = 0;
@@ -61,6 +65,28 @@ pub fn change_blocks(path: &str, text: &TextDiff, lines: &[DiffLine]) -> Vec<Cha
     out
 }
 
+/// Names each of `ignoring`'s blocks that alone lies in one exact block (a
+/// line is the same entry in both) after it; others stay new.
+pub(crate) fn name_after(exact: &Alignment, ignoring: &mut Alignment) {
+    let names: HashMap<DiffLine, &String> = (exact.blocks.iter())
+        .flat_map(|b| b.entries.clone().map(move |e| (e, &b.hash)))
+        .filter_map(|(e, hash)| Some((*exact.lines.get(e as usize)?, hash)))
+        .collect();
+    let name = |e: u32| ignoring.lines.get(e as usize).and_then(|l| names.get(l));
+    let mut takers = HashMap::new();
+    for (i, b) in ignoring.blocks.iter().enumerate() {
+        let (first, mut rest) = (name(b.entries.start), b.entries.clone().map(name));
+        if let Some(h) = first.filter(|_| rest.all(|n| n == first)) {
+            takers.entry(h).and_modify(|t| *t = None).or_insert(Some(i));
+        }
+    }
+    for (hash, i) in takers {
+        if let Some(b) = i.and_then(|i| ignoring.blocks.get_mut(i)) {
+            b.hash.clone_from(hash);
+        }
+    }
+}
+
 /// FNV-1a: stable across builds and platforms (unlike `DefaultHasher`),
 /// which matters because block hashes are persisted.
 pub(crate) struct Fnv(pub u64);
@@ -86,7 +112,7 @@ mod tests {
 
     fn blocks(path: &str, old: &str, new: &str) -> Vec<ChangeBlock> {
         let text = text_diff(path, old, new);
-        change_blocks(path, &text, text.lines(Whitespace::Exact))
+        text.alignment(Whitespace::Exact).blocks.clone()
     }
 
     #[test]
@@ -120,5 +146,15 @@ mod tests {
             !pure_add[0].formatting_only,
             "an added blank line is a change"
         );
+    }
+
+    #[test]
+    fn an_exact_change_split_by_ignoring_whitespace_names_no_part() {
+        let text = text_diff("x.rs", "a\n  b\nc\n", "A\n    b\nC\n");
+        let exact = &text.alignment(Whitespace::Exact).blocks;
+        let parts = &text.alignment(Whitespace::Ignore).blocks;
+        assert_eq!((exact.len(), parts.len()), (1, 2));
+        assert_ne!(parts[0].hash, parts[1].hash);
+        assert!(parts.iter().all(|p| p.hash != exact[0].hash));
     }
 }

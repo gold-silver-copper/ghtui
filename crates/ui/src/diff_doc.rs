@@ -15,7 +15,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use ghtui_diff::anchor::{Commentable, LinePos, RangeSource};
-use ghtui_diff::blocks::{ChangeBlock, change_blocks};
+use ghtui_diff::blocks::ChangeBlock;
 use ghtui_diff::moves::Move;
 use ghtui_diff::{
     CONTEXT, Content, DiffLine, FileDiff, TextDiff, Whitespace, counts, hunks, segments_by,
@@ -140,10 +140,6 @@ pub struct ViewOptions {
     pub wrap: u16,
 }
 
-/// A maximal run of changed lines: the unit marked "reviewed", folded when
-/// formatting-only, and compared for "since my last review".
-pub type Block = ChangeBlock;
-
 /// Inputs for rebuilding one file's rows besides the file itself.
 struct Extras<'a> {
     anns: &'a [(u32, &'a Annotation)],
@@ -170,9 +166,14 @@ pub struct DocFile {
     rows: Vec<Row>,
     /// The header of each visible segment.
     headers: Vec<HunkHeader>,
-    blocks: Vec<Block>,
+    /// Maximal runs of changed lines: the unit marked "reviewed", folded
+    /// when formatting-only, and compared for "since my last review".
+    blocks: Vec<ChangeBlock>,
     /// Folded blocks the user opened (by first entry).
     pub unfolded: HashSet<u32>,
+    /// The alignment every entry index here refers to. Only `rebuild`
+    /// changes it, dropping the windows and unfolds made in the other.
+    whitespace: Whitespace,
     thread_rows: Vec<ThreadRow>,
     /// Line annotations by anchor.
     by_line: HashMap<LinePos, Vec<u32>>,
@@ -189,7 +190,7 @@ impl DocFile {
         &self.headers
     }
 
-    pub fn blocks(&self) -> &[Block] {
+    pub fn blocks(&self) -> &[ChangeBlock] {
         &self.blocks
     }
 
@@ -204,8 +205,13 @@ impl DocFile {
         }
     }
 
+    /// The alignment the rows were built from.
+    pub fn alignment(&self) -> Option<&ghtui_diff::Alignment> {
+        self.text().map(|t| t.alignment(self.whitespace))
+    }
+
     /// The block containing alignment entry `entry`.
-    pub fn block_of(&self, entry: u32) -> Option<&Block> {
+    pub fn block_of(&self, entry: u32) -> Option<&ChangeBlock> {
         self.blocks.iter().find(|b| b.entries.contains(&entry))
     }
 
@@ -268,6 +274,11 @@ impl DocFile {
     }
 
     fn rebuild(&mut self, opts: ViewOptions, extras: &Extras<'_>) {
+        if opts.whitespace != self.whitespace {
+            self.windows.clear();
+            self.unfolded.clear();
+            self.whitespace = opts.whitespace;
+        }
         let (anns, open) = (extras.anns, extras.open);
         self.rows.clear();
         self.headers.clear();
@@ -300,7 +311,9 @@ impl DocFile {
             Some(Content::TooLarge { .. }) => Some(Note::TooLarge),
             Some(Content::Submodule { .. }) => Some(Note::Submodule),
             Some(Content::Error(_)) => Some(Note::Error),
-            Some(Content::Text(text)) if !text.has_changes(opts.whitespace) && !self.full => {
+            Some(Content::Text(_))
+                if self.alignment().is_some_and(|a| a.blocks.is_empty()) && !self.full =>
+            {
                 Some(Note::NoChanges)
             }
             Some(Content::Text(_)) => None,
@@ -314,8 +327,9 @@ impl DocFile {
         let Some(Content::Text(text)) = diff.as_deref().map(|d| &d.content) else {
             return;
         };
-        let lines = text.lines(opts.whitespace);
-        self.blocks = change_blocks(self.meta.path(), text, lines);
+        let a = text.alignment(self.whitespace);
+        let lines = &a.lines;
+        self.blocks.clone_from(&a.blocks);
         let fold_of: Vec<Option<FoldReason>> = self
             .blocks
             .iter()
@@ -409,7 +423,7 @@ impl DocFile {
             }
             push(&mut self.rows, at..seg.end);
             if !self.by_line.is_empty() || !extras.moves.is_empty() {
-                self.insert_extras(first_new_row, extras, wrap, opts.whitespace);
+                self.insert_extras(first_new_row, extras, wrap);
             }
             next_hidden = idx(seg.end);
         }
@@ -425,13 +439,7 @@ impl DocFile {
     /// After the rows from `from`: inserts "moved from/to" rows after the
     /// first line of each moved block, and open line annotations after the
     /// rows showing their lines.
-    fn insert_extras(
-        &mut self,
-        from: usize,
-        extras: &Extras<'_>,
-        wrap: usize,
-        whitespace: Whitespace,
-    ) {
+    fn insert_extras(&mut self, from: usize, extras: &Extras<'_>, wrap: usize) {
         let (anns, open) = (extras.anns, extras.open);
         let tail = self.rows.split_off(from);
         for row in tail {
@@ -446,7 +454,7 @@ impl DocFile {
                 }
             }
             let mut here: Vec<u32> = Vec::new();
-            for pos in self.shows(row, whitespace) {
+            for pos in self.shows(row) {
                 for i in self.annotations_at(pos) {
                     if !here.contains(i) {
                         here.push(*i);
@@ -471,14 +479,14 @@ impl DocFile {
 
     /// The line a line, gap or fold row stands for: the one a unified row
     /// shows, a split row's right half unless empty, a fold's first.
-    fn line_of(&self, row: Row, whitespace: Whitespace) -> Option<LinePos> {
+    fn line_of(&self, row: Row) -> Option<LinePos> {
         let entry = match row {
             Row::Line(e) | Row::Gap { start: e, .. } => e,
             Row::Split { left, right } => right.or(left)?,
             Row::Fold { block, .. } => self.blocks.get(block as usize)?.entries.start,
             _ => return None,
         };
-        let lines = self.text()?.lines(whitespace);
+        let lines = &self.alignment()?.lines;
         lines.get(entry as usize).map(|l| l.shown())
     }
 
@@ -489,20 +497,20 @@ impl DocFile {
     }
 
     /// What row `i` holds the cursor on, to find again in rebuilt rows.
-    fn held(&self, i: usize, whitespace: Whitespace, anns: &[Annotation]) -> Held {
+    fn held(&self, i: usize, anns: &[Annotation]) -> Held {
         let row = self.rows.get(i).copied().unwrap_or(Row::Header);
         let top = Held::Top(i.min(1));
         match row {
             Row::Header | Row::Note(_) => top,
             Row::Line(_) | Row::Split { .. } | Row::Gap { .. } | Row::Fold { .. } => {
-                self.line_of(row, whitespace).map_or(top, Held::Line)
+                self.line_of(row).map_or(top, Held::Line)
             }
             Row::Hunk { .. } => (self.rows.iter().skip(i + 1))
-                .find_map(|r| self.line_of(*r, whitespace))
+                .find_map(|r| self.line_of(*r))
                 .map_or(top, Held::Line),
             Row::NoNewline | Row::Moved { .. } | Row::Spacer => i
                 .checked_sub(1)
-                .map_or(top, |prev| self.held(prev, whitespace, anns)),
+                .map_or(top, |prev| self.held(prev, anns)),
             Row::Thread(t) => {
                 let Some(ann) = self.thread_row(t).and_then(|r| anns.get(r.ann as usize)) else {
                     return top;
@@ -519,11 +527,7 @@ impl DocFile {
 
     /// Every line a row shows: both halves of a split row, all of a gap or
     /// a folded block.
-    pub(crate) fn shows(
-        &self,
-        row: Row,
-        whitespace: Whitespace,
-    ) -> impl Iterator<Item = LinePos> + '_ {
+    pub(crate) fn shows(&self, row: Row) -> impl Iterator<Item = LinePos> + '_ {
         let one = |e: Option<u32>| e.map_or(0..0, |e| e..e.saturating_add(1));
         let (a, b) = match row {
             Row::Line(e) => (one(Some(e)), 0..0),
@@ -541,7 +545,7 @@ impl DocFile {
             | Row::Moved { .. }
             | Row::Spacer => (0..0, 0..0),
         };
-        let lines = self.text().map_or(&[][..], |t| t.lines(whitespace));
+        let lines = self.alignment().map_or(&[][..], |a| a.lines.as_slice());
         a.chain(b)
             .filter_map(|e| lines.get(e as usize))
             .flat_map(|l| l.lines())
@@ -726,6 +730,7 @@ impl Doc {
                     headers: Vec::new(),
                     blocks: Vec::new(),
                     unfolded: HashSet::new(),
+                    whitespace: Whitespace::default(),
                     thread_rows: Vec::new(),
                     by_line: HashMap::new(),
                     local_commentable: None,
@@ -941,7 +946,7 @@ impl Doc {
     pub fn line_at(&self, pos: Pos) -> Option<LinePos> {
         let file = self.files.get(pos.file)?;
         match self.row(pos)? {
-            row @ (Row::Line(_) | Row::Split { .. }) => file.line_of(row, self.opts.whitespace),
+            row @ (Row::Line(_) | Row::Split { .. }) => file.line_of(row),
             _ => None,
         }
     }
@@ -953,7 +958,7 @@ impl Doc {
         match self.row(pos)? {
             Row::Thread(t) => file.thread_row(t).map(|r| r.ann),
             row @ (Row::Line(_) | Row::Split { .. }) => file
-                .shows(row, self.opts.whitespace)
+                .shows(row)
                 .find_map(|pos| file.annotations_at(pos).first().copied()),
             _ => None,
         }
@@ -1032,14 +1037,7 @@ impl Doc {
         });
     }
 
-    /// Changes view options. Expansion windows index the alignment, so they
-    /// reset when the whitespace mode changes.
     pub fn set_options(&mut self, opts: ViewOptions) {
-        if opts.whitespace != self.opts.whitespace {
-            for file in &mut self.files {
-                file.windows.clear();
-            }
-        }
         self.opts = opts;
         self.rebuild_all();
     }
@@ -1059,12 +1057,11 @@ impl Doc {
     #[expect(clippy::single_range_in_vec_init, reason = "a list of one window")]
     pub fn expand(&mut self, pos: Pos) {
         let Some(row) = self.row(pos) else { return };
-        let whitespace = self.opts.whitespace;
         let Some(file) = self.files.get_mut(pos.file) else {
             return;
         };
-        let Some(text) = file.text() else { return };
-        let len = idx(text.lines(whitespace).len());
+        let Some(a) = file.alignment() else { return };
+        let len = idx(a.lines.len());
         let step = EXPAND_STEP;
         let windows = match row {
             Row::Gap { start, end } if end - start <= 2 * step => vec![start..end],
@@ -1107,7 +1104,7 @@ impl Doc {
     pub fn anchor(&self, pos: Pos) -> Anchor {
         let pos = self.clamp(pos);
         let file = self.files.get(pos.file);
-        let held = |f: &DocFile| f.held(pos.row, self.opts.whitespace, self.annotations());
+        let held = |f: &DocFile| f.held(pos.row, self.annotations());
         Anchor {
             path: file.map(|f| f.meta.path().to_owned()).unwrap_or_default(),
             held: file.map_or(Held::Top(0), held),
@@ -1122,7 +1119,6 @@ impl Doc {
             return self.clamp(Pos::default());
         };
         let at = |row| self.clamp(Pos { file: index, row });
-        let whitespace = self.opts.whitespace;
         let rows = file.rows.iter().enumerate();
         let line = match anchor.held {
             Held::Top(row) => return at(row),
@@ -1138,7 +1134,7 @@ impl Doc {
                 }
             }
         };
-        let shown = rows.flat_map(|(i, r)| file.shows(*r, whitespace).map(move |p| (p, i)));
+        let shown = rows.flat_map(|(i, r)| file.shows(*r).map(move |p| (p, i)));
         // A line shows in one row only.
         let here = shown.filter(|(p, _)| p.side == line.side && p.line >= line.line);
         at(here.min_by_key(|(p, _)| p.line).map_or(0, |(_, row)| row))
@@ -1162,8 +1158,9 @@ impl Doc {
         let Some(file) = self.files.get(pos.file) else {
             return Vec::new();
         };
-        let (Some(text), Some(e)) = (
+        let (Some(text), Some(a), Some(e)) = (
             file.text(),
+            file.alignment(),
             file.rows
                 .iter()
                 .skip(pos.row)
@@ -1171,7 +1168,7 @@ impl Doc {
         ) else {
             return Vec::new();
         };
-        new_line_near(text.lines(self.opts.whitespace), e as usize)
+        new_line_near(&a.lines, e as usize)
             .map(|n| text.scope(n))
             .unwrap_or_default()
     }
@@ -1290,8 +1287,8 @@ impl Doc {
     }
 
     pub fn file_counts(&self, file: &DocFile) -> (u32, u32) {
-        match (file.text(), file.diff.as_deref()) {
-            (Some(text), _) => counts(text.lines(self.opts.whitespace)),
+        match (file.alignment(), file.diff.as_deref()) {
+            (Some(a), _) => counts(&a.lines),
             (None, Some(d)) => (d.additions, d.deletions),
             (None, None) => (0, 0),
         }
@@ -1309,7 +1306,7 @@ impl Doc {
     }
 
     /// The block under `pos`, if it's on a changed line.
-    pub fn block_at(&self, pos: Pos) -> Option<&Block> {
+    pub fn block_at(&self, pos: Pos) -> Option<&ChangeBlock> {
         let file = self.files.get(pos.file)?;
         file.block_of(self.row(pos)?.entries().next()?)
     }
@@ -1319,13 +1316,12 @@ impl Doc {
         let Some(file) = self.files.get(pos.file) else {
             return String::new();
         };
-        let whitespace = self.opts.whitespace;
         let text = |p: LinePos| file.text().map_or("", |t| t.line(p));
         match self.row(pos) {
             Some(Row::Header) => file.meta.path().to_owned(),
-            Some(row @ Row::Line(_)) => file.line_of(row, whitespace).map_or("", text).to_owned(),
+            Some(row @ Row::Line(_)) => file.line_of(row).map_or("", text).to_owned(),
             Some(row @ Row::Split { .. }) => {
-                let halves: Vec<&str> = file.shows(row, whitespace).map(text).collect();
+                let halves: Vec<&str> = file.shows(row).map(text).collect();
                 halves.join("\n")
             }
             _ => String::new(),
@@ -1443,7 +1439,7 @@ pub(crate) mod tests {
 
     /// The first row whose (first) line matches.
     fn line_row(file: &DocFile, matches: impl Fn(&DiffLine) -> bool) -> Option<usize> {
-        let lines = &file.text()?.lines;
+        let lines = &file.alignment()?.lines;
         file.rows().iter().position(|r| {
             r.entries()
                 .next()
@@ -1936,6 +1932,89 @@ pub(crate) mod tests {
             assert_ne!(old.files[0].rows()[1], Row::Note(Note::NothingNew));
         }
 
+        /// A change that both reindents a line and edits the next one: one
+        /// block with whitespace shown, one smaller block without it.
+        fn reindent_and_edit() -> Doc {
+            one(
+                "x.rs",
+                "fn a() {\n  x();\n  y();\n}\n",
+                "fn a() {\n    x();\n  z();\n}\n",
+            )
+        }
+
+        fn hashes(doc: &Doc) -> HashSet<String> {
+            doc.files[0]
+                .blocks()
+                .iter()
+                .map(|b| b.hash.clone())
+                .collect()
+        }
+
+        #[test]
+        fn since_review_ignoring_whitespace_knows_what_was_seen() {
+            // The earlier diff was the same change, so nothing is new.
+            let seen = hashes(&reindent_and_edit());
+            let mut doc = reindent_and_edit();
+            doc.set_options(view(false, Whitespace::Ignore));
+            doc.set_since(Some(seen), true);
+            assert!(!doc.has_new_changes(0), "{}", kinds(&doc.files[0]));
+            assert_eq!(doc.files[0].rows()[1], Row::Note(Note::NothingNew));
+        }
+
+        #[test]
+        fn since_review_ignoring_whitespace_shows_a_change_joined_to_a_seen_one() {
+            // Ignoring whitespace joins the seen +b and the new +c into one
+            // block, which must not pass as seen.
+            let seen = hashes(&one("x.rs", "a\n", "b\na\n"));
+            let mut doc = one("x.rs", "a\n", "b\na\nc\n a\n");
+            doc.set_options(view(false, Whitespace::Ignore));
+            doc.set_since(Some(seen), true);
+            assert!(doc.has_new_changes(0), "{}", kinds(&doc.files[0]));
+        }
+
+        #[test]
+        fn reviewed_marks_survive_ignoring_whitespace() {
+            let mut doc = reindent_and_edit();
+            doc.set_inputs(DocInputs {
+                reviewed: hashes(&doc),
+                ..Default::default()
+            });
+            doc.set_options(view(false, Whitespace::Ignore));
+            let blocks = doc.files[0].blocks();
+            assert!(!blocks.is_empty());
+            assert!(
+                blocks.iter().all(|b| doc.inputs.reviewed.contains(&b.hash)),
+                "a change marked reviewed shows as unreviewed once whitespace is ignored"
+            );
+        }
+
+        #[test]
+        fn opening_a_fold_opens_nothing_else_once_whitespace_is_ignored() {
+            let old = "a\n b\n c\nk\nm\nfoo(\nx)\n";
+            let mut doc = one("x.rs", old, "a\n  b\n  c\nk\nN\nm\nfoo(x)\n");
+            // Entry 6 starts the added N in this alignment, and the
+            // formatting-only foo(x) once whitespace is ignored.
+            let seen = doc.files[0].block_of(6).map(|b| b.hash.clone());
+            doc.set_since(Some(seen.into_iter().collect()), true);
+            let n = doc.files[0].rows().iter().position(|r| {
+                *r == Row::Fold {
+                    block: 1,
+                    reason: FoldReason::Seen,
+                }
+            });
+            assert!(doc.unfold(Pos {
+                file: 0,
+                row: n.unwrap()
+            }));
+            doc.set_options(view(false, Whitespace::Ignore));
+            assert_eq!(
+                kinds(&doc.files[0]).matches('F').count(),
+                2,
+                "{}",
+                kinds(&doc.files[0])
+            );
+        }
+
         #[test]
         fn moved_blocks_get_rows_and_jump_targets() {
             let block = "fn helper(x: u32) -> u32 {\n    let y = x * 2;\n    y + 1\n}\n";
@@ -1959,10 +2038,7 @@ pub(crate) mod tests {
                     .iter()
                     .map(|f| f.text().unwrap().clone())
                     .collect();
-                detect_moves(&[
-                    (0, &texts[0], texts[0].lines(Whitespace::Exact)),
-                    (1, &texts[1], texts[1].lines(Whitespace::Exact)),
-                ])
+                detect_moves(&[(0, &texts[0]), (1, &texts[1])])
             };
             assert_eq!(moves.len(), 1);
             doc.set_moves(moves);

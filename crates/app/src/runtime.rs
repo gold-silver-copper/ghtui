@@ -217,9 +217,7 @@ impl Effects {
                         let inputs: Vec<_> = files
                             .iter()
                             .filter_map(|(i, d)| match &d.content {
-                                ghtui_diff::Content::Text(t) => {
-                                    Some((*i, &**t, t.lines(ghtui_diff::Whitespace::Exact)))
-                                }
+                                ghtui_diff::Content::Text(t) => Some((*i, &**t)),
                                 _ => None,
                             })
                             .collect();

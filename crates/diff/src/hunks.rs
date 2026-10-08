@@ -9,7 +9,7 @@ use crate::text::Text;
 
 /// One entry of an alignment: a line on both sides, or on one. Line
 /// numbers are 1-based, as in files and in GitHub's comment API.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DiffLine {
     Context { old: u32, new: u32 },
     Removed(u32),

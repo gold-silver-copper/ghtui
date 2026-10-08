@@ -1,7 +1,7 @@
 //! Diff rendering, unified or split. Only the visible rows are laid out, so
 //! cost per frame depends on the terminal height, not the size of the PR.
 
-use ghtui_diff::{Content, DiffLine, Span as TokenSpan, TokenKind};
+use ghtui_diff::{Content, DiffLine, Span as TokenSpan, TokenKind, Whitespace};
 use ghtui_git::files::{FileStatus, MODE_SUBMODULE, MODE_SYMLINK};
 use ghtui_theme::{Bg, DiffBg, Fg, Syntax};
 use ratatui::buffer::Buffer;
@@ -327,7 +327,7 @@ impl DiffView<'_> {
                 let meta = &file.meta;
                 let whitespace_only = file
                     .text()
-                    .is_some_and(|t| t.has_changes(ghtui_diff::Whitespace::Exact));
+                    .is_some_and(|t| !t.alignment(Whitespace::Exact).blocks.is_empty());
                 if whitespace_only {
                     "Only whitespace changed (whitespace is being ignored).".to_owned()
                 } else if meta.status == FileStatus::Renamed {
@@ -366,7 +366,7 @@ impl DiffView<'_> {
             return String::new();
         };
         let line = f.text().and_then(|t| {
-            let l = t.lines.get(entries.start as usize)?;
+            let l = (t.alignment(Whitespace::Exact).lines).get(entries.start as usize)?;
             Some(if from { l.right() } else { l.left() }?.line)
         });
         let way = if from { "to" } else { "from" };
@@ -398,7 +398,7 @@ impl DiffView<'_> {
             Span::styled(" ", theme.body(bg))
         };
         let anns = file
-            .shows(row, self.doc.opts.whitespace)
+            .shows(row)
             .flat_map(|pos| file.annotations_at(pos))
             .filter_map(|i| self.doc.annotations().get(*i as usize));
         let (mut any, mut draft, mut open) = (false, false, false);
@@ -448,9 +448,10 @@ impl DiffView<'_> {
         let (Some(file), Some(row)) = (self.doc.files.get(pos.file), self.doc.row(pos)) else {
             return;
         };
-        let Some(text) = file.text() else { return };
-        let lines = text.lines(self.doc.opts.whitespace);
-        let line = entry.and_then(|e| Some((e, lines.get(e as usize)?)));
+        let (Some(text), Some(a)) = (file.text(), file.alignment()) else {
+            return;
+        };
+        let line = entry.and_then(|e| Some((e, a.lines.get(e as usize)?)));
         let moved = line.is_some_and(|(e, _)| self.doc.move_at_entry(pos.file, e).is_some());
         let diff_bg = match line {
             Some(_) if moved => DiffBg::Moved,
@@ -484,7 +485,7 @@ impl DiffView<'_> {
         let used = text::spans_width(&spans);
         let room = usize::from(area.width).saturating_sub(used + 1);
         // No emphasis on moved lines: the whole block is the change.
-        let emphasis = match text.intraline(self.doc.opts.whitespace).get(&e) {
+        let emphasis = match a.intraline.get(&e) {
             Some(ranges) if !moved => ranges.as_slice(),
             _ => &[],
         };
