@@ -461,7 +461,7 @@ impl State {
     }
 
     /// How a page's fetches are going (the ones that have started).
-    fn fetches(&self, route: &Route) -> impl Iterator<Item = Remote<()>> {
+    pub(crate) fn fetches(&self, route: &Route) -> impl Iterator<Item = Remote<()>> {
         needs(route).into_iter().filter_map(|need| match need {
             Need::Inbox => Some(self.inbox.status()),
             Need::Pr(pr) => self.prs.get(&pr).map(Remote::status),
@@ -492,12 +492,8 @@ impl State {
         }
     }
 
-    pub fn page_loading_more(&self, route: &Route) -> bool {
-        self.fetches(route).any(|r| r.loading_more())
-    }
-
     pub fn page_loading(&self, route: &Route) -> bool {
-        self.fetches(route).any(|r| r.loading())
+        self.fetches(route).any(|r| r.loading)
     }
 
     /// The first key that runs `action` here, as people write it.
