@@ -1,6 +1,7 @@
 //! A computed file diff, ready to render.
 
 use crate::anchor::{Commentable, HunkRange, LinePos, Side};
+use crate::blocks::{self, ChangeBlock};
 use crate::highlight::{Language, Span, highlight};
 use crate::hunks::{Algorithm, DiffLine, Whitespace, align};
 use crate::intraline::{IntraLine, intraline};
@@ -31,6 +32,15 @@ pub enum Content {
     Error(String),
 }
 
+/// One lining up of the old and new text, with its intra-line changes (when
+/// rendered) and its blocks, named after the exact change (see [`blocks`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Alignment {
+    pub lines: Vec<DiffLine>,
+    pub intraline: IntraLine,
+    pub blocks: Vec<ChangeBlock>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextDiff {
     // Read through a `LinePos`, so a line is always read from its own side.
@@ -39,25 +49,20 @@ pub struct TextDiff {
     /// Per-line spans; empty when unhighlighted.
     old_spans: Vec<Vec<Span>>,
     new_spans: Vec<Vec<Span>>,
-    /// Full alignment comparing lines exactly.
-    pub lines: Vec<DiffLine>,
-    /// Full alignment ignoring whitespace.
-    pub lines_ignoring_whitespace: Vec<DiffLine>,
+    exact: Alignment,
+    ignoring_whitespace: Alignment,
     /// GitHub-style commentable ranges (Myers, 3 lines of context), used when
     /// GitHub's own patch isn't available.
     pub local_ranges: Vec<HunkRange>,
     /// Named scopes of the new side (functions, types...), outermost first.
     pub scopes: Vec<Scope>,
-    /// Changed token ranges on paired lines, for each alignment.
-    pub intraline: IntraLine,
-    pub intraline_ignoring_whitespace: IntraLine,
 }
 
 impl TextDiff {
-    pub fn lines(&self, whitespace: Whitespace) -> &[DiffLine] {
+    pub fn alignment(&self, whitespace: Whitespace) -> &Alignment {
         match whitespace {
-            Whitespace::Exact => &self.lines,
-            Whitespace::Ignore => &self.lines_ignoring_whitespace,
+            Whitespace::Exact => &self.exact,
+            Whitespace::Ignore => &self.ignoring_whitespace,
         }
     }
 
@@ -65,17 +70,6 @@ impl TextDiff {
     /// `["impl Doc", "fn offset"]`.
     pub fn scope(&self, line: u32) -> Vec<&str> {
         scope::path(&self.scopes, line)
-    }
-
-    pub fn intraline(&self, whitespace: Whitespace) -> &IntraLine {
-        match whitespace {
-            Whitespace::Exact => &self.intraline,
-            Whitespace::Ignore => &self.intraline_ignoring_whitespace,
-        }
-    }
-
-    pub fn has_changes(&self, whitespace: Whitespace) -> bool {
-        self.lines(whitespace).iter().any(|l| l.is_change())
     }
 
     fn side(&self, side: Side) -> (&Text, &[Vec<Span>]) {
@@ -185,11 +179,7 @@ impl FileDiff {
         let lines = align(&old, &new, Algorithm::Histogram, Whitespace::Exact);
         let (additions, deletions) = counts(&lines);
         let changed = additions + deletions > 0;
-        let lines_ignoring_whitespace = if changed {
-            align(&old, &new, Algorithm::Histogram, Whitespace::Ignore)
-        } else {
-            lines.clone()
-        };
+        let ignoring = changed.then(|| align(&old, &new, Algorithm::Histogram, Whitespace::Ignore));
         // Only highlight files with changes to show.
         let (local_ranges, old_spans, new_spans, scopes) = if changed && rich {
             let lang = Language::from_path(path);
@@ -204,17 +194,20 @@ impl FileDiff {
             new,
             old_spans,
             new_spans,
-            lines,
-            lines_ignoring_whitespace,
+            exact: Alignment::default(),
+            ignoring_whitespace: Alignment::default(),
             local_ranges,
             scopes,
-            intraline: IntraLine::new(),
-            intraline_ignoring_whitespace: IntraLine::new(),
         };
-        if rich {
-            text.intraline = intraline(&text, &text.lines);
-            text.intraline_ignoring_whitespace = intraline(&text, &text.lines_ignoring_whitespace);
-        }
+        let alignment = |lines: Vec<DiffLine>| Alignment {
+            intraline: intraline(&text, if rich { lines.as_slice() } else { &[] }),
+            blocks: blocks::change_blocks(path, &text, &lines),
+            lines,
+        };
+        let exact = alignment(lines);
+        let mut ignoring = ignoring.map_or_else(|| exact.clone(), alignment);
+        blocks::name_after(&exact, &mut ignoring);
+        (text.exact, text.ignoring_whitespace) = (exact, ignoring);
         Self {
             content: Content::Text(Box::new(text)),
             additions,
@@ -246,7 +239,7 @@ pub(crate) mod tests {
         let Content::Text(text) = &diff.content else {
             panic!("{diff:?}")
         };
-        assert!(text.has_changes(Whitespace::Exact));
+        assert!(!text.alignment(Whitespace::Exact).blocks.is_empty());
         let new = |line| LinePos {
             side: Side::Right,
             line,

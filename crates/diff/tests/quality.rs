@@ -17,7 +17,7 @@ fn show(path: &str, old: &str, new: &str) -> String {
         panic!("not a text diff");
     };
     let mut out = String::new();
-    for (i, line) in (0u32..).zip(text.lines(Whitespace::Exact)) {
+    for (i, line) in (0u32..).zip(&text.alignment(Whitespace::Exact).lines) {
         let sign = match line {
             DiffLine::Context { .. } => continue,
             DiffLine::Removed(_) => '-',
@@ -27,7 +27,8 @@ fn show(path: &str, old: &str, new: &str) -> String {
         let mut shown = String::new();
         let mut at = 0;
         for &(a, b) in text
-            .intraline(Whitespace::Exact)
+            .alignment(Whitespace::Exact)
+            .intraline
             .get(&i)
             .into_iter()
             .flatten()
@@ -196,7 +197,8 @@ fn scope_of_change(path: &str, old: &str, new: &str) -> Vec<String> {
         panic!("not a text diff");
     };
     let line = text
-        .lines(Whitespace::Exact)
+        .alignment(Whitespace::Exact)
+        .lines
         .iter()
         .find_map(|l| match l {
             DiffLine::Added(n) => Some(*n),

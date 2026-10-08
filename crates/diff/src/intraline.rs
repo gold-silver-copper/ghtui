@@ -513,7 +513,7 @@ mod tests {
             "keep\nfn unrelated() {}\nstruct Gone;\nlet total = compute(alpha, beta);\nkeep\n",
             "keep\nlet total = compute(alpha, gamma);\nkeep\n",
         );
-        let lines = text.lines(Whitespace::Exact);
+        let lines = &text.alignment(Whitespace::Exact).lines;
         let map = intraline(&text, lines);
         let added = lines
             .iter()
@@ -533,7 +533,7 @@ mod tests {
             "keep\nalpha beta\ngamma delta\nkeep\n",
             "keep\nalpha BETA\ngamma delta epsilon\nkeep\n",
         );
-        let map = intraline(&text, text.lines(Whitespace::Exact));
+        let map = intraline(&text, &text.alignment(Whitespace::Exact).lines);
         assert_eq!(map.len(), 4, "{map:?}");
     }
 }

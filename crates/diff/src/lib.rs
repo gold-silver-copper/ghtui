@@ -14,7 +14,7 @@ pub mod moves;
 pub mod scope;
 pub mod text;
 
-pub use file::{CONTEXT, Content, FileDiff, TextDiff, counts};
+pub use file::{Alignment, CONTEXT, Content, FileDiff, TextDiff, counts};
 pub use highlight::{Language, Span, TokenKind, highlight};
 pub use hunks::{
     Algorithm, DiffLine, Hunk, Whitespace, align, diff_lines, hunks, segments, segments_by,

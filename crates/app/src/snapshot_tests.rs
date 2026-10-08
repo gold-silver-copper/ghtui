@@ -1764,10 +1764,7 @@ pub(crate) mod diff {
             .iter()
             .map(|f| f.text().unwrap().clone())
             .collect();
-        let moves = ghtui_diff::moves::detect_moves(&[
-            (0, &texts[0], texts[0].lines(ghtui_diff::Whitespace::Exact)),
-            (1, &texts[1], texts[1].lines(ghtui_diff::Whitespace::Exact)),
-        ]);
+        let moves = ghtui_diff::moves::detect_moves(&[(0, &texts[0]), (1, &texts[1])]);
         assert_eq!(moves.len(), 1);
         doc.set_moves(moves);
         let mut s = state(mode, ColorDepth::TrueColor);

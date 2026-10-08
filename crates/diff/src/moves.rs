@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use crate::file::TextDiff;
-use crate::hunks::DiffLine;
+use crate::hunks::{DiffLine, Whitespace};
 use crate::sat_u32;
 
 pub const MIN_LINES: usize = 3;
@@ -33,8 +33,11 @@ fn trivial(line: &str) -> bool {
     line.chars().filter(|c| c.is_alphanumeric()).count() < 2
 }
 
-/// Moves among `files`: `(file index, text, alignment)`.
-pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
+/// Moves among `files`: `(file index, text)`, in their exact alignments.
+pub fn detect_moves(files: &[(usize, &TextDiff)]) -> Vec<Move> {
+    let files: Vec<_> = (files.iter())
+        .map(|&(i, t)| (i, t, &t.alignment(Whitespace::Exact).lines))
+        .collect();
     // Every added line, by content.
     let mut added: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
     for (fi, (_, text, lines)) in files.iter().enumerate() {
@@ -49,7 +52,7 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
         files.iter().map(|(_, _, l)| vec![false; l.len()]).collect();
     let mut moves = Vec::new();
 
-    for (file_index, text, lines) in files {
+    for &(file_index, text, lines) in &files {
         let mut e = 0;
         while let Some(line) = lines.get(e) {
             let content = text.line(line.shown());
@@ -97,7 +100,7 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
             let used = used_added.get_mut(tf).into_iter().flatten();
             used.skip(te).take(n).for_each(|used| *used = true);
             moves.push(Move {
-                from: (*file_index, sat_u32(e)..sat_u32(e + n)),
+                from: (file_index, sat_u32(e)..sat_u32(e + n)),
                 to: (target, sat_u32(te)..sat_u32(te + n)),
             });
             e += n;
@@ -110,7 +113,6 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
 mod tests {
     use super::*;
     use crate::file::tests::text_diff as text;
-    use crate::hunks::Whitespace;
 
     const BLOCK: &str = "fn helper(x: u32) -> u32 {\n    let y = x * 2;\n    y + 1\n}\n";
 
@@ -122,10 +124,7 @@ mod tests {
             "fn main() {}\n",
         );
         let b = text("b.rs", "// b\n", &format!("// b\n{BLOCK}"));
-        let moves = detect_moves(&[
-            (0, &a, a.lines(Whitespace::Exact)),
-            (1, &b, b.lines(Whitespace::Exact)),
-        ]);
+        let moves = detect_moves(&[(0, &a), (1, &b)]);
         assert_eq!(moves.len(), 1, "{moves:?}");
         assert_eq!(moves[0].from.0, 0);
         assert_eq!(moves[0].to.0, 1);
@@ -138,15 +137,15 @@ mod tests {
         let old = format!("{BLOCK}mod inner {{\n}}\n");
         let new = format!("mod inner {{\n{indented}}}\n");
         let t = text("a.rs", &old, &new);
-        let moves = detect_moves(&[(0, &t, t.lines(Whitespace::Exact))]);
+        let moves = detect_moves(&[(0, &t)]);
         assert_eq!(moves.len(), 1, "{moves:?}");
     }
 
     #[test]
     fn ignores_small_or_trivial_matches() {
         let t = text("a.rs", "x\n}\n}\n}\ny\n", "y\n}\n}\n}\nx\n");
-        assert!(detect_moves(&[(0, &t, t.lines(Whitespace::Exact))]).is_empty());
+        assert!(detect_moves(&[(0, &t)]).is_empty());
         let short = text("a.rs", "let a = 1;\nkeep\n", "keep\nlet a = 1;\n");
-        assert!(detect_moves(&[(0, &short, short.lines(Whitespace::Exact))]).is_empty());
+        assert!(detect_moves(&[(0, &short)]).is_empty());
     }
 }
