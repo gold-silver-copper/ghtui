@@ -7,6 +7,7 @@ use ghtui_api::browse::{
     CommitDetail, Comparison, DiscussionsOf, Profile, RepoSort, SearchKind, SearchResults,
 };
 use ghtui_api::model::{PrRef, RepoId};
+use ghtui_git::Oid;
 use ghtui_ui::chrome::{Crumb, PageTab};
 use ghtui_ui::pages::{PrTab, ProfileTab};
 use ratatui::layout::Rect;
@@ -96,7 +97,7 @@ impl State {
                     }
                     DiffOf::Range(repo, from, to) => {
                         let spec = format!("{from}..{to}");
-                        compare_tabs(repo, &spec, Some((from, to)), None, &mut c);
+                        compare_tabs(repo, &spec, Some((from.clone(), to.clone())), None, &mut c);
                         c.active = Some(1);
                         return c;
                     }
@@ -404,10 +405,13 @@ impl State {
                 oid: full.to_owned(),
             }),
         ));
-        c.tabs.push((
-            new_tab("±", "Files changed", detail.and_then(|d| d.changed_files)),
-            Target::Files(DiffOf::Commit(repo.clone(), full.to_owned())),
-        ));
+        // A short SHA or a ref has files once its full ID is known.
+        if let Ok(oid) = Oid::parse(full) {
+            c.tabs.push((
+                new_tab("±", "Files changed", detail.and_then(|d| d.changed_files)),
+                Target::Files(DiffOf::Commit(repo.clone(), oid)),
+            ));
+        }
     }
 
     /// A comparison's tabs: its commits, and its files once known.
@@ -417,7 +421,8 @@ impl State {
             Some(Data::Compare(cmp)) => Some(&**cmp),
             _ => None,
         };
-        let range = comparison.map(|cmp| (cmp.from.as_str(), cmp.to.as_str()));
+        let range = comparison
+            .and_then(|cmp| Some((Oid::parse(&cmp.from).ok()?, Oid::parse(&cmp.to).ok()?)));
         compare_tabs(repo, spec, range, comparison, c);
         c.active = Some(0);
     }
@@ -579,7 +584,7 @@ fn section(route: &Route) -> Section {
 fn compare_tabs(
     repo: &RepoId,
     spec: &str,
-    range: Option<(&str, &str)>,
+    range: Option<(Oid, Oid)>,
     comparison: Option<&Comparison>,
     c: &mut Chrome,
 ) {
@@ -600,7 +605,7 @@ fn compare_tabs(
                     .filter(|cmp| !cmp.files_capped)
                     .map(|cmp| cmp.files),
             ),
-            Target::Files(DiffOf::Range(repo.clone(), from.to_owned(), to.to_owned())),
+            Target::Files(DiffOf::Range(repo.clone(), from, to)),
         ));
     }
 }

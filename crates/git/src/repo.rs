@@ -188,7 +188,7 @@ impl Repo {
         &self,
         number: u64,
         base_branch: &str,
-        base_oid: Option<&str>,
+        base_oid: Option<&Oid>,
         progress: Progress<'_>,
     ) -> Result<PrRefs, GitError> {
         let head_ref = Self::ref_name(number, "head");
@@ -199,10 +199,7 @@ impl Repo {
         self.fetch(&[&head_spec, &base_spec], progress).await?;
         let head = self.rev_parse(&head_ref).await?;
         let base = match base_oid {
-            Some(oid) => {
-                self.fetch_commit(oid, progress).await?;
-                self.rev_parse(oid).await?
-            }
+            Some(oid) => self.ensure(oid, progress).await.map(|()| oid.clone())?,
             None => self.rev_parse(&base_ref).await?,
         };
         let merge_base = self.merge_base(&base, &head).await?;
@@ -214,7 +211,7 @@ impl Repo {
     }
 
     pub async fn merge_base(&self, a: &str, b: &str) -> Result<Oid, GitError> {
-        Ok(Oid::new(self.run(&["merge-base", a, b]).await?.trim()))
+        Oid::parse(self.run(&["merge-base", a, b]).await?.trim())
     }
 
     /// Commits in `from..to`, oldest first.
@@ -230,9 +227,11 @@ impl Repo {
         Ok(out
             .lines()
             .filter_map(|l| l.split_once('\u{1f}'))
-            .map(|(sha, subject)| Commit {
-                oid: Oid::new(sha),
-                subject: subject.to_owned(),
+            .filter_map(|(sha, subject)| {
+                Some(Commit {
+                    oid: Oid::parse(sha).ok()?,
+                    subject: subject.to_owned(),
+                })
             })
             .collect())
     }
@@ -246,7 +245,7 @@ impl Repo {
                 &format!("{rev}^{{commit}}"),
             ])
             .await?;
-        Ok(Oid::new(out.trim()))
+        Oid::parse(out.trim())
     }
 
     /// Pins `sha` as `refs/ghtui/pr/<N>/seen/<sha>` so force-pushes and
@@ -269,15 +268,14 @@ impl Repo {
 
     /// A commit against its first parent, the empty tree for a root commit;
     /// fetched by SHA if it isn't here.
-    pub async fn commit_refs(&self, sha: &str, progress: Progress<'_>) -> Result<PrRefs, GitError> {
-        self.fetch_commit(sha, progress).await?;
-        let head = self.rev_parse(sha).await?;
-        let parent = match self.rev_parse(&format!("{sha}^")).await {
+    pub async fn commit_refs(&self, oid: &Oid, progress: Progress<'_>) -> Result<PrRefs, GitError> {
+        self.ensure(oid, progress).await?;
+        let parent = match self.rev_parse(&format!("{oid}^")).await {
             Ok(parent) => parent,
-            Err(_) => Oid::new(EMPTY_TREE),
+            Err(_) => Oid::parse(EMPTY_TREE)?,
         };
         Ok(PrRefs {
-            head,
+            head: oid.clone(),
             base: parent.clone(),
             merge_base: parent,
         })
@@ -287,18 +285,16 @@ impl Repo {
     /// isn't here.
     pub async fn range_refs(
         &self,
-        from: &str,
-        to: &str,
+        from: &Oid,
+        to: &Oid,
         progress: Progress<'_>,
     ) -> Result<PrRefs, GitError> {
-        for sha in [from, to] {
-            self.fetch_commit(sha, progress).await?;
-        }
-        let from = self.rev_parse(from).await?;
+        self.ensure(from, progress).await?;
+        self.ensure(to, progress).await?;
         Ok(PrRefs {
-            head: self.rev_parse(to).await?,
+            head: to.clone(),
             base: from.clone(),
-            merge_base: from,
+            merge_base: from.clone(),
         })
     }
     /// Fetches the remote's default branch into `into` (a ref name).
@@ -343,19 +339,15 @@ impl Repo {
         self.run(&["cat-file", "blob", &format!("{rev}:{path}")])
             .await
     }
-    /// Fetches one commit by SHA (e.g. a head that was force-pushed away).
-    /// GitHub serves commits it still has even when no ref points at them.
-    /// Does nothing when `sha` already resolves here, even as a short SHA
-    /// or a branch name; only a full SHA is fetched.
-    pub async fn fetch_commit(&self, sha: &str, progress: Progress<'_>) -> Result<(), GitError> {
-        if self.has(sha).await {
+    /// Makes sure a commit is here, fetching it by SHA if it isn't (e.g. a
+    /// head that was force-pushed away). GitHub serves commits it still has
+    /// even when no ref points at them.
+    pub async fn ensure(&self, oid: &Oid, progress: Progress<'_>) -> Result<(), GitError> {
+        if self.has(oid).await {
             return Ok(());
         }
-        if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(GitError::Parse(format!("not a commit id: {sha}")));
-        }
-        progress(format!("Fetching {}", sha.get(..7).unwrap_or(sha)));
-        self.fetch(&[sha], progress).await
+        progress(format!("Fetching {}", oid.get(..7).unwrap_or(oid)));
+        self.fetch(&[oid], progress).await
     }
 
     /// Files changed from `from` to `to`, with rename detection. In a

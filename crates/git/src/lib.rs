@@ -42,32 +42,44 @@ pub enum GitError {
     Stalled { what: String, secs: u64 },
 }
 
-/// A git object ID: the full hex SHA. Its own type so it can't be mixed up
-/// with a ref name, a path or a GraphQL node ID; reads as a `&str`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Oid(String);
+pub use oid::Oid;
 
-impl Oid {
-    pub fn new(sha: impl Into<String>) -> Self {
-        Self(sha.into())
+mod oid {
+    use crate::GitError;
+
+    /// A git object ID: 40 hex digits, lowercased. Its own type so it can't
+    /// be mixed up with a ref name, a short SHA, a path or a GraphQL node
+    /// ID; reads as a `&str`. [`Oid::parse`] is the only way to make one.
+    #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+    pub struct Oid(String);
+
+    impl Oid {
+        /// Exactly 40 hex digits, in either case.
+        pub fn parse(s: &str) -> Result<Oid, GitError> {
+            if s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+                Ok(Oid(s.to_ascii_lowercase()))
+            } else {
+                Err(GitError::Parse(format!("not a commit id: {s}")))
+            }
+        }
+
+        /// The all-zero ID git uses for a side that doesn't exist.
+        pub fn is_zero(&self) -> bool {
+            self.0.bytes().all(|b| b == b'0')
+        }
     }
 
-    /// The all-zero ID git uses for a side that doesn't exist.
-    pub fn is_zero(&self) -> bool {
-        self.0.bytes().all(|b| b == b'0')
+    impl std::ops::Deref for Oid {
+        type Target = str;
+        fn deref(&self) -> &str {
+            &self.0
+        }
     }
-}
 
-impl std::ops::Deref for Oid {
-    type Target = str;
-    fn deref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for Oid {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+    impl std::fmt::Display for Oid {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(&self.0)
+        }
     }
 }
 

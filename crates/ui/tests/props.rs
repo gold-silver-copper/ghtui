@@ -44,6 +44,7 @@ fn source() -> impl Strategy<Value = String> {
     prop::collection::vec(line, 0..25).prop_map(|lines| lines.join("\n"))
 }
 
+#[expect(clippy::unwrap_used, reason = "a fixture's IDs are 40 hex digits")]
 fn modified(path: &str) -> ChangedFile {
     ChangedFile {
         status: FileStatus::Modified,
@@ -51,8 +52,8 @@ fn modified(path: &str) -> ChangedFile {
         new_path: Some(path.into()),
         old_mode: 0o100644,
         new_mode: 0o100644,
-        old_oid: ghtui_git::Oid::new("1".repeat(40)),
-        new_oid: ghtui_git::Oid::new("2".repeat(40)),
+        old_oid: ghtui_git::Oid::parse(&"1".repeat(40)).unwrap(),
+        new_oid: ghtui_git::Oid::parse(&"2".repeat(40)).unwrap(),
         similarity: None,
     }
 }

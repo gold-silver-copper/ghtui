@@ -640,7 +640,7 @@ impl State {
         );
         Some(crate::diff_job::PrBase {
             branch: d.base_ref.clone(),
-            oid: done.then(|| d.base_oid.clone()).filter(|o| !o.is_empty()),
+            oid: done.then(|| Oid::parse(&d.base_oid).ok()).flatten(),
         })
     }
 
@@ -1994,6 +1994,28 @@ pub(crate) mod tests {
             assert_eq!((again.active_tab(), route(&again)), (0, issue(1)));
         }
 
+        /// A tab opened from a link to a commit's `.diff` by a short SHA
+        /// or a ref reopens on what it showed, not on something else.
+        #[test]
+        fn a_tab_from_a_short_commit_diff_link_reopens_on_it() {
+            for link in [
+                "https://github.com/o/r/commit/abc1234.diff",
+                "https://github.com/o/r/commit/main.diff",
+            ] {
+                let mut s = state();
+                s.restore_tabs(&[link.to_owned()]);
+                let shown = (s.tab_titles(), matches!(s.screen(), Screen::Diff(_)));
+                let urls = s.tab_urls();
+                let mut again = state();
+                again.restore_tabs(&urls);
+                let reopened = (
+                    again.tab_titles(),
+                    matches!(again.screen(), Screen::Diff(_)),
+                );
+                assert_eq!(reopened, shown, "{link} saved as {urls:?}");
+            }
+        }
+
         /// A tab on a branch with a slash in its name (`feature/x`)
         /// reopens on that branch, not on `feature` with `x` as a path.
         #[test]
@@ -2331,7 +2353,7 @@ pub(crate) mod tests {
     #[test]
     fn a_commit_diff_has_no_review() {
         let mut s = state();
-        let of = DiffOf::Commit(RepoId::new("o", "r"), "a".repeat(40));
+        let of = DiffOf::Commit(RepoId::new("o", "r"), Oid::parse(&"a".repeat(40)).unwrap());
         let cmds = s.open_diff(of.clone());
         assert!(matches!(
             &cmds[..],
@@ -2875,7 +2897,7 @@ pub(crate) mod tests {
         let mut state = state();
         let pr = PrRef::parse("o/r#1").unwrap();
         let detail = crate::snapshot_tests::pr_detail();
-        let head = ghtui_git::Oid::new(detail.head_oid.clone());
+        let head = ghtui_git::Oid::parse(&detail.head_oid).unwrap();
         let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
         let cmds = state.open_diff(DiffOf::Pr(pr.clone()));
         let job = cmds
@@ -2887,8 +2909,8 @@ pub(crate) mod tests {
             .unwrap();
         let refs = ghtui_git::repo::PrRefs {
             head,
-            base: ghtui_git::Oid::new("b".repeat(40)),
-            merge_base: ghtui_git::Oid::new("b".repeat(40)),
+            base: ghtui_git::Oid::parse(&"b".repeat(40)).unwrap(),
+            merge_base: ghtui_git::Oid::parse(&"b".repeat(40)).unwrap(),
         };
         let files = crate::diff_job::DiffFiles {
             refs,
@@ -2915,9 +2937,9 @@ pub(crate) mod tests {
     /// git's listing of a PR's diff: at `head`, with no files.
     fn no_files(job: crate::diff_job::JobId, head: &str) -> DiffMsg {
         let refs = ghtui_git::repo::PrRefs {
-            head: ghtui_git::Oid::new(head.to_owned()),
-            base: ghtui_git::Oid::new("b".repeat(40)),
-            merge_base: ghtui_git::Oid::new("b".repeat(40)),
+            head: ghtui_git::Oid::parse(head).unwrap(),
+            base: ghtui_git::Oid::parse(&"b".repeat(40)).unwrap(),
+            merge_base: ghtui_git::Oid::parse(&"b".repeat(40)).unwrap(),
         };
         let files = crate::diff_job::DiffFiles {
             refs,
@@ -3031,9 +3053,12 @@ pub(crate) mod tests {
         let cmds = act(&mut state, Action::Refresh);
         assert_eq!(load(&cmds), None, "started from the PR it had: {cmds:?}");
         detail.summary.state = ghtui_api::browse::IssueState::Merged;
-        detail.base_oid = "m".repeat(40);
+        detail.base_oid = "c".repeat(40);
         let cmds = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
-        assert_eq!(load(&cmds).and_then(|b| b.oid), Some("m".repeat(40)));
+        assert_eq!(
+            load(&cmds).and_then(|b| b.oid),
+            Oid::parse(&"c".repeat(40)).ok()
+        );
     }
 
     /// A diff you've left isn't checked when its PR refreshes (on the PR's
@@ -3076,7 +3101,11 @@ pub(crate) mod tests {
         let head = detail.head_oid.clone();
         let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
         let job = start_pr_diff(&mut state, &pr);
-        let _ = diff_msg(&mut state, &pr, DiffMsg::LastReview(Ok(Some("old".into()))));
+        let _ = diff_msg(
+            &mut state,
+            &pr,
+            DiffMsg::LastReview(Ok(Some("a".repeat(40)))),
+        );
         let _ = act(&mut state, Action::ToggleSinceReview);
         assert!(
             matches!(&state.notice, Some(Notice::Info(m)) if m.contains("once the diff has loaded")),
@@ -3850,15 +3879,17 @@ pub(crate) mod tests {
                 assert!(
                     matches!(&cmds[..], [Cmd::Api(Api::FetchLastReview { login, .. })] if login == "me")
                 );
-                let cmds = diff_msg(&mut s, &pr, DiffMsg::LastReview(Ok(Some("old".into()))));
-                assert!(matches!(&cmds[..], [Cmd::Git(Git::SinceReview(j))] if j.get().2 == "old"));
+                let cmds = diff_msg(&mut s, &pr, DiffMsg::LastReview(Ok(Some("a".repeat(40)))));
+                assert!(
+                    matches!(&cmds[..], [Cmd::Git(Git::SinceReview(j))] if j.get().2 == "a".repeat(40))
+                );
 
                 // Nothing in the old diff matched: everything is new.
                 let job = s.diffs[&DiffOf::Pr(pr.clone())].job;
                 diff_msg(
                     &mut s,
                     &pr,
-                    DiffMsg::Job(job, JobMsg::Since("old".into(), Ok(Default::default()))),
+                    DiffMsg::Job(job, JobMsg::Since("a".repeat(40), Ok(Default::default()))),
                 );
                 assert!(s.diffs[&DiffOf::Pr(pr.clone())].doc.since_active());
                 assert_eq!(s.chrome().tabs[3].0.label, "Files · since your review");
@@ -3903,7 +3934,7 @@ pub(crate) mod tests {
                     .get_mut(&DiffOf::Pr(pr.clone()))
                     .unwrap()
                     .since_requested = true;
-                diff_msg(&mut s, &pr, DiffMsg::LastReview(Ok(Some("h".into()))));
+                diff_msg(&mut s, &pr, DiffMsg::LastReview(Ok(Some("e".repeat(40)))));
                 assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("current head")));
             }
 
@@ -3977,11 +4008,11 @@ pub(crate) mod tests {
                     &pr,
                     DiffMsg::CommitsListed(Ok(vec![
                         ghtui_git::repo::Commit {
-                            oid: Oid::new("a".repeat(40)),
+                            oid: Oid::parse(&"a".repeat(40)).unwrap(),
                             subject: "first".into(),
                         },
                         ghtui_git::repo::Commit {
-                            oid: Oid::new("b".repeat(40)),
+                            oid: Oid::parse(&"b".repeat(40)).unwrap(),
                             subject: "second".into(),
                         },
                     ])),
@@ -4090,7 +4121,10 @@ pub(crate) mod tests {
                 };
                 assert_eq!(review.pending.len(), 1);
                 let draft = &review.pending[0];
-                assert_eq!((draft.line, draft.commit.as_str()), (Some(14), "h"));
+                assert_eq!(
+                    (draft.line, draft.commit.as_str()),
+                    (Some(14), &*"e".repeat(40))
+                );
                 assert!(
                     s.diffs[&DiffOf::Pr(pr.clone())]
                         .doc
@@ -4267,7 +4301,7 @@ pub(crate) mod tests {
                         .review
                         .last_reviewed_head
                         .as_deref(),
-                    Some("h")
+                    Some(&*"e".repeat(40))
                 );
             }
 
@@ -4350,7 +4384,7 @@ pub(crate) mod tests {
                     &pr,
                     DiffMsg::ThreadsLoaded(Ok(vec![thread("old", None, false, true)])),
                 );
-                assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated(j)) if j.get().3.len() == 1 && &*j.get().2 == "h")));
+                assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated(j)) if j.get().3.len() == 1 && *j.get().2 == "e".repeat(40))));
                 let ann = &s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations()[0];
                 assert!(
                     ann.outdated && ann.on_line().is_none(),
@@ -4422,9 +4456,9 @@ pub(crate) mod tests {
             fn deliver(s: &mut State, pr: &PrRef, job: crate::diff_job::JobId) {
                 let files = DiffFiles {
                     refs: ghtui_git::repo::PrRefs {
-                        head: Oid::new("h"),
-                        base: Oid::new("b"),
-                        merge_base: Oid::new("m"),
+                        head: Oid::parse(&"e".repeat(40)).unwrap(),
+                        base: Oid::parse(&"b".repeat(40)).unwrap(),
+                        merge_base: Oid::parse(&"c".repeat(40)).unwrap(),
                     },
                     files: vec![ghtui_git::files::ChangedFile {
                         status: ghtui_git::files::FileStatus::Modified,
@@ -4432,8 +4466,8 @@ pub(crate) mod tests {
                         new_path: Some(PATH.into()),
                         old_mode: 0o100644,
                         new_mode: 0o100644,
-                        old_oid: Oid::new("1".repeat(40)),
-                        new_oid: Oid::new("2".repeat(40)),
+                        old_oid: Oid::parse(&"1".repeat(40)).unwrap(),
+                        new_oid: Oid::parse(&"2".repeat(40)).unwrap(),
                         similarity: None,
                     }],
                     generated: std::collections::HashSet::new(),
@@ -4506,7 +4540,7 @@ pub(crate) mod tests {
                     s,
                     pr,
                     DiffMsg::CommitsListed(Ok(vec![ghtui_git::repo::Commit {
-                        oid: Oid::new("a".repeat(40)),
+                        oid: Oid::parse(&"a".repeat(40)).unwrap(),
                         subject: "first".into(),
                     }])),
                 );
