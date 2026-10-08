@@ -1648,3 +1648,43 @@ async fn a_mutation_answered_with_not_found_still_fails() {
     }
     assert_eq!(gh.take_left_out(), Vec::<String>::new());
 }
+
+/// A raw query's root nulled by SSO (FORBIDDEN) isn't called not found: the
+/// branches fail with GitHub's reason, said once, not also left out.
+#[tokio::test]
+async fn a_raw_root_nulled_by_sso_says_why_once() {
+    let sso = "Resource protected by organization SAML enforcement.";
+    let (gh, _) = github(vec![Reply::new(
+        200,
+        format!(
+            r#"{{"data":{{"repository":null}},"errors":[{{"type":"FORBIDDEN","path":["repository"],"message":"{sso}"}}]}}"#
+        ),
+    )])
+    .await;
+    match gh.branches(&RepoId::new("o", "r"), None).await {
+        Err(ApiError::GraphQl(errors)) => assert_eq!(errors, [sso]),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(gh.take_left_out(), Vec::<String>::new());
+}
+
+/// A missing repository's stargazers are not found by the repository's
+/// name, not by ghtui's debug output.
+#[tokio::test]
+async fn missing_stargazers_name_the_repository() {
+    let (gh, _) = github(vec![root_not_found(
+        r#"{"node":null}"#,
+        r#"["node"]"#,
+        "Could not resolve to a Repository with the name 'o/r'.",
+    )])
+    .await;
+    let list = ghtui_api::browse::UserList::Stargazers(RepoId::new("o", "r"));
+    match gh.users(&list, None).await {
+        Err(err @ ApiError::NotFound(_)) => {
+            let said = err.to_string();
+            assert!(said.contains("o/r") && !said.contains("RepoId"), "{said}");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(gh.take_left_out(), Vec::<String>::new());
+}
