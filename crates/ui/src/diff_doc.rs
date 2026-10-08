@@ -231,42 +231,40 @@ impl DocFile {
                     )
                 })
                 .unwrap_or_default();
-            self.push_thread_row(index, ThreadRowKind::Summary, first);
+            self.push_thread_rows(index, ThreadRowKind::Summary, &first, usize::MAX);
             return;
         }
         for (c, comment) in ann.comments.iter().enumerate() {
-            self.push_thread_row(
-                index,
-                ThreadRowKind::Head {
-                    comment: c,
-                    first: c == 0,
-                },
-                comment.author.clone(),
-            );
+            let head = ThreadRowKind::Head {
+                comment: c,
+                first: c == 0,
+            };
+            self.push_thread_rows(index, head, &comment.author, usize::MAX);
             let body = if comment.body.trim().is_empty() {
                 "(no text)"
             } else {
                 &comment.body
             };
-            for line in page::wrap(body, wrap) {
-                self.push_thread_row(index, ThreadRowKind::Body, line);
-            }
+            self.push_thread_rows(index, ThreadRowKind::Body, body, wrap);
             if c == 0 && ann.left_out > 0 {
                 let gap = format!("… {} more replies on GitHub (o)", ann.left_out);
-                self.push_thread_row(index, ThreadRowKind::Gap, gap);
+                self.push_thread_rows(index, ThreadRowKind::Gap, &gap, usize::MAX);
             }
         }
         if let Some(error) = &ann.error {
-            for line in page::wrap(&format!("GitHub rejected this: {error}"), wrap) {
-                self.push_thread_row(index, ThreadRowKind::Error, line);
-            }
+            let error = format!("GitHub rejected this: {error}");
+            self.push_thread_rows(index, ThreadRowKind::Error, &error, wrap);
         }
-        self.push_thread_row(index, ThreadRowKind::Footer, String::new());
+        self.push_thread_rows(index, ThreadRowKind::Footer, "", usize::MAX);
     }
 
-    fn push_thread_row(&mut self, ann: u32, kind: ThreadRowKind, text: String) {
-        self.rows.push(Row::Thread(idx(self.thread_rows.len())));
-        self.thread_rows.push(ThreadRow { ann, kind, text });
+    /// `text` as rows of `kind`, wrapped to `wrap` columns as a page wraps
+    /// it, so tabs are spaces and each row is measured as it's drawn.
+    fn push_thread_rows(&mut self, ann: u32, kind: ThreadRowKind, text: &str, wrap: usize) {
+        for text in page::wrap(text, wrap) {
+            self.rows.push(Row::Thread(idx(self.thread_rows.len())));
+            self.thread_rows.push(ThreadRow { ann, kind, text });
+        }
     }
 
     fn rebuild(&mut self, opts: ViewOptions, extras: &Extras<'_>) {
@@ -1779,9 +1777,7 @@ pub(crate) mod tests {
                 .rows()
                 .iter()
                 .filter_map(|r| match r {
-                    Row::Thread(t) => file
-                        .thread_row(*t)
-                        .map(|t| (t.kind.clone(), t.text.clone())),
+                    Row::Thread(t) => file.thread_row(*t).map(|t| (t.kind, t.text.clone())),
                     _ => None,
                 })
                 .collect();
