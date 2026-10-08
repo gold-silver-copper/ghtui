@@ -1740,6 +1740,18 @@ pub(crate) mod tests {
         assert_eq!(h.next, None, "the next page was dropped");
     }
 
+    /// Home's inbox from the disk cache is from an earlier session: going
+    /// back to Home fetches it.
+    #[test]
+    fn going_back_home_fetches_a_cached_inbox() {
+        let mut state = state();
+        let (value, fetched_at) = (Inbox::default(), 0);
+        state.inbox = Remote::cached(Some(ghtui_store::Cached { value, fetched_at }));
+        let _ = state.start_at(Target::Page(Route::Repo(repo())));
+        let cmds = state.back();
+        assert!(cmds.contains(&Cmd::Api(Api::FetchInbox)), "{cmds:?}");
+    }
+
     /// Live suggestions answer in any order: an answer for an older input
     /// doesn't replace the one for what's typed.
     #[test]
