@@ -1039,7 +1039,10 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::FindFile => return state.open_finder(false),
         Action::Menu => nav::open_menu(state),
         Action::CommandPalette => return state.open_picker(picker::Kind::Commands),
-        Action::Messages => return state.open_picker(picker::Kind::Messages),
+        Action::Messages => {
+            let kept = state.messages.iter().rev().cloned().collect();
+            return state.open_picker(picker::Kind::Messages(kept));
+        }
         Action::Refresh => return state.load_visible(true),
         Action::Copy => return nav::copy_link(state),
         Action::OpenInBrowser => return state.go(Target::External(state.here_url())),
@@ -2911,6 +2914,27 @@ pub(crate) mod tests {
         assert_eq!(rows[0].0.label, "boom");
         let cmds = press(&mut state, "<Enter>");
         assert!(matches!(&cmds[..], [Cmd::Copy(t)] if t == "boom"));
+    }
+
+    /// A message arriving while the list is open doesn't move the choice
+    /// to another message.
+    #[test]
+    fn a_new_message_keeps_the_chosen_one() {
+        let mut state = with_repo();
+        let mut last = None;
+        for text in ["one", "two"] {
+            state.error(text);
+            let _ = timers(&mut state, &mut last);
+        }
+        act(&mut state, Action::Messages);
+        press(&mut state, "<Down>");
+        state.error("three");
+        let _ = timers(&mut state, &mut last);
+        let cmds = press(&mut state, "<Enter>");
+        assert!(
+            matches!(&cmds[..], [Cmd::Copy(t)] if t == "one"),
+            "{cmds:?}"
+        );
     }
 
     #[test]

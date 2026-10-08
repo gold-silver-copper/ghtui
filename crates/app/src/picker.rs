@@ -35,8 +35,8 @@ pub enum Kind {
     DiffFiles,
     /// The diff's commits; `mark` is where a range starts.
     Commits { mark: Option<usize> },
-    /// Recent notices and errors, newest first.
-    Messages,
+    /// Recent notices and errors, newest first, as they were on opening.
+    Messages(Vec<(u64, Notice)>),
 }
 
 pub struct Picker {
@@ -52,7 +52,7 @@ impl Picker {
             Kind::Files { .. } | Kind::DiffFiles => "Go to file",
             Kind::Branches { .. } => "Switch branches/tags",
             Kind::Commits { .. } => "Commits",
-            Kind::Messages => "Messages",
+            Kind::Messages(_) => "Messages",
         }
     }
 }
@@ -88,6 +88,20 @@ fn item(label: impl Into<String>, hint: impl Into<String>) -> PaletteItem {
     }
 }
 
+/// Notices that match `q`; choosing one copies it.
+fn message_rows(kept: &[(u64, Notice)], q: &str, now: u64) -> Rows {
+    let rows = kept.iter().filter_map(|(at, notice)| {
+        let (text, kind) = match notice {
+            Notice::Info(text) => (text, ""),
+            Notice::Error(text) => (text, "error · "),
+        };
+        fuzzy_score(q, text)?;
+        let hint = format!("{kind}{}", ghtui_ui::time::ago(*at, now));
+        Some((item(text, hint), Some(Choice::Copy(text.to_owned()))))
+    });
+    rows.collect()
+}
+
 impl State {
     #[must_use]
     pub fn open_picker(&mut self, kind: Kind) -> Vec<Cmd> {
@@ -96,7 +110,7 @@ impl State {
             Kind::Files { .. } | Kind::DiffFiles => "Type a file name",
             Kind::Branches { .. } => "Find a branch or tag",
             Kind::Commits { .. } => "space marks a range start · ↵ views · esc cancels",
-            Kind::Messages => "↵ copies a message",
+            Kind::Messages(_) => "↵ copies a message",
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
@@ -161,26 +175,8 @@ impl State {
             } => self.branch_rows(q, repo, rev, path, *file),
             Kind::DiffFiles => self.diff_file_rows(q),
             Kind::Commits { mark } => self.commit_rows(*mark),
-            Kind::Messages => self.message_rows(q),
+            Kind::Messages(kept) => message_rows(kept, q, (self.clock)()),
         }
-    }
-
-    /// Recent notices, newest first; choosing one copies it.
-    fn message_rows(&self, q: &str) -> Rows {
-        let now = (self.clock)();
-        self.messages
-            .iter()
-            .rev()
-            .filter_map(|(at, notice)| {
-                let (text, kind) = match notice {
-                    Notice::Info(text) => (text, ""),
-                    Notice::Error(text) => (text, "error · "),
-                };
-                fuzzy_score(q, text)?;
-                let hint = format!("{kind}{}", ghtui_ui::time::ago(*at, now));
-                Some((item(text, hint), Some(Choice::Copy(text.to_owned()))))
-            })
-            .collect()
     }
 
     /// Palette entries: somewhere to go, what you can do here (the menu's
