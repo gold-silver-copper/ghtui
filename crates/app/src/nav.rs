@@ -809,8 +809,23 @@ pub struct SearchBox {
     pub filter: bool,
     pub selected: usize,
     /// Live repository suggestions, and the input they're for.
-    pub remote: Vec<RepoSummary>,
-    pub remote_for: String,
+    remote: Vec<RepoSummary>,
+    remote_for: String,
+}
+
+impl SearchBox {
+    /// What's typed, trimmed.
+    pub(crate) fn query(&self) -> String {
+        self.input.lines().join("").trim().to_owned()
+    }
+
+    /// Live suggestions for `q`, kept only if it's still what's typed.
+    pub(crate) fn suggested(&mut self, q: String, repos: Vec<RepoSummary>) {
+        if q == self.query() {
+            self.remote = repos;
+            self.remote_for = q;
+        }
+    }
 }
 
 /// What choosing a suggestion does.
@@ -861,8 +876,7 @@ impl State {
     /// The search box's suggestions: rows to draw, and what choosing each
     /// item does (headings have none).
     pub fn suggestions(&self, sb: &SearchBox) -> Vec<(SuggestRow, Option<Pick>)> {
-        let input = sb.input.lines().join("");
-        let q = input.trim();
+        let q: &str = &sb.query();
         let mut out = Vec::new();
         if sb.filter {
             // A job's log filters by its text alone.
@@ -1040,7 +1054,7 @@ pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         _ => {
             sb.input.input(key);
             sb.selected = 0;
-            let q = sb.input.lines().join("").trim().to_owned();
+            let q = sb.query();
             if !sb.filter && q.chars().count() >= 2 && route::parse_input(&q, None).is_none() {
                 vec![Cmd::SuggestLater(q)]
             } else {

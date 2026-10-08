@@ -919,15 +919,14 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::SuggestDue(q) => {
             if let Some(Overlay::Search(sb)) = &state.overlay
-                && sb.input.lines().join("").trim() == q
+                && sb.query() == q
             {
                 return vec![Cmd::Api(Api::Suggest(q))];
             }
         }
         Msg::Suggested(q, result) => {
             if let (Some(Overlay::Search(sb)), Ok(repos)) = (&mut state.overlay, result) {
-                sb.remote = repos;
-                sb.remote_for = q;
+                sb.suggested(q, repos);
             }
         }
         Msg::RateLimits(limits) => state.rate_limits = limits,
@@ -1697,6 +1696,36 @@ pub(crate) mod tests {
             oids,
             ["c0", "c1", "d0", "d1"],
             "the refreshed list then its own next page"
+        );
+    }
+
+    /// Live suggestions answer in any order: an answer for an older input
+    /// doesn't replace the one for what's typed.
+    #[test]
+    fn an_older_suggestion_reply_does_not_replace_a_newer_one() {
+        let mut state = with_repo();
+        press(&mut state, "/");
+        press(&mut state, "ra");
+        let cmds = update(&mut state, Msg::SuggestDue("ra".into()));
+        assert_eq!(cmds, vec![Cmd::Api(Api::Suggest("ra".into()))]);
+        press(&mut state, "t");
+        let cmds = update(&mut state, Msg::SuggestDue("rat".into()));
+        assert_eq!(cmds, vec![Cmd::Api(Api::Suggest("rat".into()))]);
+        let repos = |name: &str| Ok(vec![crate::fixtures::repo_summary(name, 5)]);
+        update(&mut state, Msg::Suggested("rat".into(), repos("o/ratatui")));
+        update(&mut state, Msg::Suggested("ra".into(), repos("o/rails")));
+        let sb = overlay!(state, Search);
+        let picks: Vec<nav::Pick> = state
+            .suggestions(sb)
+            .into_iter()
+            .filter_map(|(_, p)| p)
+            .collect();
+        assert_eq!(
+            picks.last(),
+            Some(&nav::Pick::Go(Target::Page(Route::Repo(RepoId::new(
+                "o", "ratatui"
+            ))))),
+            "the suggestions for `rat` vanished"
         );
     }
 
