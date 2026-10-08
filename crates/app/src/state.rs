@@ -48,8 +48,8 @@ pub enum Msg {
         result: Result<Data, ApiError>,
         cached_at: Option<u64>,
     },
-    /// The next page of a list.
-    FetchedMore(DataKey, Result<Data, ApiError>),
+    /// The next page of a list, asked for after the cursor.
+    FetchedMore(DataKey, String, Result<Data, ApiError>),
     Commented(DataKey, Result<(), ApiError>),
     Starred {
         repo: RepoId,
@@ -274,22 +274,28 @@ pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦"
 #[derive(Debug)]
 pub struct Remote<T> {
     pub data: Option<T>,
-    pub loading: bool,
     pub error: Option<String>,
     /// When `data` was fetched, while it's a copy from the cache.
     pub cached_at: Option<u64>,
-    /// The next page of a list is on its way.
-    pub loading_more: bool,
+    asked: Option<Asked>,
+}
+
+/// What a Remote is waiting on: one thing at a time, so a refresh replaces a
+/// next page asked for before it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Asked {
+    Fetch,
+    /// The next page, after this cursor.
+    More(String),
 }
 
 impl<T> Default for Remote<T> {
     fn default() -> Self {
         Self {
             data: None,
-            loading: false,
             error: None,
             cached_at: None,
-            loading_more: false,
+            asked: None,
         }
     }
 }
@@ -302,7 +308,7 @@ impl<T> Remote<T> {
     )]
     pub fn fetched<'a>(remote: Option<&'a Self>, retry: &'a str) -> Fetched<'a, T> {
         let (data, loading, error) = remote.map_or((None, false, None), |r| {
-            (r.data.as_ref(), r.loading, r.error.as_deref())
+            (r.data.as_ref(), r.loading(), r.error.as_deref())
         });
         Fetched::new_unchecked(data, loading, error, retry)
     }
@@ -319,35 +325,64 @@ impl<T> Remote<T> {
     pub fn status(&self) -> Remote<()> {
         Remote {
             data: self.data.as_ref().map(|_| ()),
-            loading: self.loading,
             error: self.error.clone(),
             cached_at: self.cached_at,
-            loading_more: self.loading_more,
+            asked: self.asked.clone(),
         }
+    }
+
+    pub fn loading(&self) -> bool {
+        self.asked == Some(Asked::Fetch)
+    }
+
+    pub fn loading_more(&self) -> bool {
+        matches!(self.asked, Some(Asked::More(_)))
     }
 
     /// Starts a fetch, unless one is running or (without `force`) the
     /// data is good.
     fn begin(&mut self, force: bool) -> bool {
-        if self.loading || (!force && self.data.is_some() && self.error.is_none()) {
+        if self.loading() || (!force && self.data.is_some() && self.error.is_none()) {
             return false;
         }
-        self.loading = true;
+        self.asked = Some(Asked::Fetch);
         true
     }
 
     pub(crate) fn finish(&mut self, result: Result<T, ApiError>) {
-        self.loading = false;
+        self.asked = None;
         match result {
             Ok(data) => {
                 self.data = Some(data);
                 self.error = None;
                 self.cached_at = None;
-                // A next page asked for before this belongs to the old list.
-                self.loading_more = false;
             }
             Err(err) => self.error = Some(err.to_string()),
         }
+    }
+}
+
+impl Remote<Data> {
+    /// Asks for the next page, unless something is on its way or there is
+    /// none: the cursor to ask after.
+    pub(crate) fn ask_more(&mut self) -> Option<String> {
+        let data = self.data.as_ref().filter(|_| self.asked.is_none())?;
+        let after = data.next_cursor()?.to_owned();
+        self.asked = Some(Asked::More(after.clone()));
+        Some(after)
+    }
+
+    /// Appends the next page, if it's the one still asked for.
+    fn answer_more(&mut self, after: String, more: Result<Data, ApiError>) -> Result<(), ApiError> {
+        if self.asked != Some(Asked::More(after)) {
+            return Ok(());
+        }
+        self.asked = None;
+        let more = more?;
+        if let Some(data) = &mut self.data {
+            data.append(more);
+        }
+        Ok(())
     }
 }
 
@@ -683,7 +718,7 @@ impl State {
             Screen::Diff(screen)
                 if !self.diffs.contains_key(&screen.of)
                     && (screen.of.pr())
-                        .is_none_or(|pr| self.prs.get(pr).is_none_or(|r| !r.loading)) =>
+                        .is_none_or(|pr| self.prs.get(pr).is_none_or(|r| !r.loading())) =>
             {
                 self.start_diff(&screen.of.clone())
             }
@@ -834,18 +869,11 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 return state.replace(Route::pr(PrRef { repo, number }), true, anchor);
             }
         }
-        Msg::FetchedMore(key, result) => {
-            let Some(remote) = state.data.get_mut(&key).filter(|r| r.loading_more) else {
-                return Vec::new();
-            };
-            remote.loading_more = false;
-            match result {
-                Ok(more) => {
-                    if let Some(data) = &mut remote.data {
-                        data.append(more);
-                    }
-                }
-                Err(err) => state.error(format!("Couldn't load more: {err}")),
+        Msg::FetchedMore(key, after, result) => {
+            if let Some(r) = state.data.get_mut(&key)
+                && let Err(err) = r.answer_more(after, result)
+            {
+                state.error(format!("Couldn't load more: {err}"));
             }
         }
         Msg::Commented(key, Ok(())) => {
@@ -1595,7 +1623,7 @@ pub(crate) mod tests {
         }
         update(
             &mut state,
-            Msg::FetchedMore(key.clone(), Ok(Data::History(Box::new(more)))),
+            Msg::FetchedMore(key.clone(), "h1".into(), Ok(Data::History(Box::new(more)))),
         );
         let Some(Data::History(h)) = state.get(&key) else {
             panic!()
@@ -1608,6 +1636,68 @@ pub(crate) mod tests {
             p.selected_link(),
             Some(ghtui_ui::page::Link::Url(_))
         ));
+    }
+
+    /// A next page asked for before a refresh belongs to the old list: it
+    /// lands after the refreshed list's own Load more, and must neither be
+    /// appended to the new list nor make that newer page be dropped.
+    #[test]
+    fn a_next_page_from_before_a_refresh_is_not_appended() {
+        let mut state = with_repo();
+        let url = format!("https://github.com/{}/commits/main/src", repo());
+        let Target::Page(route) = Target::from_url(&url) else {
+            panic!("{url}");
+        };
+        let key = DataKey::History(repo(), "main".into(), "src".into());
+        let _ = state.go(Target::Page(route));
+        // Commits named `c0`, `c1`, ...
+        let page = |c: char, next: Option<&str>| {
+            let mut page = crate::fixtures::history(next);
+            for (i, commit) in page.items.iter_mut().enumerate() {
+                commit.oid = format!("{c}{i}");
+            }
+            Data::History(Box::new(page))
+        };
+        fetched(&mut state, key.clone(), page('a', Some("h1")));
+        press(&mut state, "G");
+        let old = press(&mut state, "<Enter>");
+        assert_eq!(
+            old,
+            vec![Cmd::Api(Api::FetchMore {
+                key: key.clone(),
+                after: "h1".into()
+            })]
+        );
+        // r, and the refreshed list arrives before the old next page.
+        let _ = press(&mut state, "r");
+        fetched(&mut state, key.clone(), page('c', Some("h2")));
+        press(&mut state, "G");
+        let new = press(&mut state, "<Enter>");
+        assert_eq!(
+            new,
+            vec![Cmd::Api(Api::FetchMore {
+                key: key.clone(),
+                after: "h2".into()
+            })]
+        );
+        // The page after the old list's h1, then the one after h2.
+        update(
+            &mut state,
+            Msg::FetchedMore(key.clone(), "h1".into(), Ok(page('b', None))),
+        );
+        update(
+            &mut state,
+            Msg::FetchedMore(key.clone(), "h2".into(), Ok(page('d', None))),
+        );
+        let Some(Data::History(h)) = state.get(&key) else {
+            panic!()
+        };
+        let oids: Vec<&str> = h.items.iter().map(|c| c.oid.as_str()).collect();
+        assert_eq!(
+            oids,
+            ["c0", "c1", "d0", "d1"],
+            "the refreshed list then its own next page"
+        );
     }
 
     /// A profile's repositories sort by name and stars as well as last
@@ -2458,7 +2548,7 @@ pub(crate) mod tests {
         }
         update(
             &mut state,
-            Msg::FetchedMore(key.clone(), Ok(Data::Search(Box::new(more)))),
+            Msg::FetchedMore(key.clone(), "c1".into(), Ok(Data::Search(Box::new(more)))),
         );
         let Some(Data::Search(results)) = state.get(&key) else {
             panic!()
@@ -2493,6 +2583,7 @@ pub(crate) mod tests {
             &mut state,
             Msg::FetchedMore(
                 key.clone(),
+                "c2".into(),
                 Ok(Data::Search(Box::new(crate::fixtures::issue_results(None)))),
             ),
         );

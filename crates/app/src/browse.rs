@@ -493,11 +493,11 @@ impl State {
     }
 
     pub fn page_loading_more(&self, route: &Route) -> bool {
-        self.fetches(route).any(|r| r.loading_more)
+        self.fetches(route).any(|r| r.loading_more())
     }
 
     pub fn page_loading(&self, route: &Route) -> bool {
-        self.fetches(route).any(|r| r.loading)
+        self.fetches(route).any(|r| r.loading())
     }
 
     /// The first key that runs `action` here, as people write it.

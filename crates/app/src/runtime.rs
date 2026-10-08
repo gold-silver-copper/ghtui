@@ -359,8 +359,8 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 }
             }
             Api::FetchMore { key, after } => {
-                let result = fetch(&gh, &key, Some(after)).await;
-                Msg::FetchedMore(key, result)
+                let result = fetch(&gh, &key, Some(after.clone())).await;
+                Msg::FetchedMore(key, after, result)
             }
             Api::AddComment {
                 subject_id,
@@ -538,7 +538,9 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             result: api(),
             cached_at: None,
         },
-        Cmd::Api(Api::FetchMore { key, .. }) => Msg::FetchedMore(key.clone(), api()),
+        Cmd::Api(Api::FetchMore { key, after }) => {
+            Msg::FetchedMore(key.clone(), after.clone(), api())
+        }
         Cmd::Api(Api::AddComment { refresh, .. }) => Msg::Commented(refresh.clone(), api()),
         Cmd::Api(Api::SetStarred { repo, starred, .. }) => Msg::Starred {
             repo: repo.clone(),
