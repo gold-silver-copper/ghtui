@@ -40,11 +40,11 @@ pub enum LastReview {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DiffOf {
     Pr(PrRef),
-    /// A commit (its full ID) against its first parent.
-    Commit(RepoId, String),
-    /// From one commit to another (full IDs), as `a..b`: a comparison's
+    /// A commit against its first parent.
+    Commit(RepoId, Oid),
+    /// From one commit to another, as `a..b`: a comparison's
     /// files, from the merge base its page found.
-    Range(RepoId, String, String),
+    Range(RepoId, Oid, Oid),
 }
 
 impl DiffOf {
@@ -968,7 +968,8 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
             if let Some(diff) = state.diffs.get_mut(of) {
                 let last = match result {
                     Ok(None) => LastReview::None,
-                    Ok(Some(commit)) => LastReview::At(Oid::new(commit)),
+                    Ok(Some(commit)) => Oid::parse(&commit)
+                        .map_or_else(|e| LastReview::Failed(e.to_string()), LastReview::At),
                     Err(err) => LastReview::Failed(err.to_string()),
                 };
                 diff.edit(|i| i.last_review = last);

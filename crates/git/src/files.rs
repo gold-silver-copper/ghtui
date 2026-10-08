@@ -103,8 +103,8 @@ pub fn parse_raw(out: &str) -> Result<Vec<ChangedFile>, GitError> {
             new_path,
             old_mode: mode(old_mode)?,
             new_mode: mode(new_mode)?,
-            old_oid: Oid::new(old_oid),
-            new_oid: Oid::new(new_oid),
+            old_oid: Oid::parse(old_oid)?,
+            new_oid: Oid::parse(new_oid)?,
             similarity,
         });
     }

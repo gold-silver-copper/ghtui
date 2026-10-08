@@ -1308,11 +1308,11 @@ pub(crate) mod diff {
             new_path: new.map(Into::into),
             old_mode: modes.0,
             new_mode: modes.1,
-            old_oid: Oid::new("1".repeat(40)),
+            old_oid: Oid::parse(&"1".repeat(40)).unwrap(),
             new_oid: if new.is_some() {
-                Oid::new("2".repeat(40))
+                Oid::parse(&"2".repeat(40)).unwrap()
             } else {
-                Oid::new(ZERO_OID)
+                Oid::parse(ZERO_OID).unwrap()
             },
             similarity: (status == FileStatus::Renamed).then_some(94),
         }
@@ -1323,9 +1323,9 @@ pub(crate) mod diff {
 
     fn loaded(doc: &Doc) -> DiffState {
         let refs = PrRefs {
-            head: Oid::new("h"),
-            base: Oid::new("b"),
-            merge_base: Oid::new("m"),
+            head: Oid::parse(&"e".repeat(40)).unwrap(),
+            base: Oid::parse(&"b".repeat(40)).unwrap(),
+            merge_base: Oid::parse(&"c".repeat(40)).unwrap(),
         };
         DiffState::fresh().with_doc(refs, doc)
     }
@@ -1420,7 +1420,10 @@ pub(crate) mod diff {
     }
 
     pub(super) fn commit_of() -> DiffOf {
-        DiffOf::Commit(super::ghtui(), crate::fixtures::commit().oid)
+        DiffOf::Commit(
+            super::ghtui(),
+            Oid::parse(&crate::fixtures::commit().oid).unwrap(),
+        )
     }
 
     /// A commit's files: its tabs instead of a pull request's.
@@ -3183,7 +3186,7 @@ mod changes {
             cmds,
             vec![Cmd::Api(Api::SubmitReview {
                 pr: pr(),
-                head: ghtui_git::Oid::new(pr_detail().head_oid),
+                head: ghtui_git::Oid::parse(&pr_detail().head_oid).unwrap(),
                 drafts: vec![draft],
                 event: ReviewEvent::Approve,
                 body: "LGTM".into(),

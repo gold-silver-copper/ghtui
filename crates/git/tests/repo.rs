@@ -12,6 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use ghtui_git::Oid;
 use ghtui_git::credentials::Credentials;
 use ghtui_git::files::{ChangedFile, FileStatus, MODE_EXECUTABLE, MODE_SUBMODULE, MODE_SYMLINK};
 use ghtui_git::repo::{PrRefs, Repo};
@@ -394,10 +395,9 @@ async fn fetches_force_pushed_commits_by_sha() {
     // Still local thanks to the earlier fetch: `has` sees it without fetching.
     assert!(repo.has(&old_head).await);
     assert!(!repo.has("0123456789012345678901234567890123456789").await);
-    assert!(repo.fetch_commit("not-a-sha", &|_| {}).await.is_err());
-    // Fetching a known commit by SHA works (the server allows any SHA here),
-    // and its files read through the blob reader (blobs fetch lazily).
-    repo.fetch_commit(&old_head, &|_| {}).await.unwrap();
+    Oid::parse("not-a-sha").unwrap_err();
+    // Its files read through the blob reader (blobs fetch lazily).
+    repo.ensure(&old_head, &|_| {}).await.unwrap();
     let reader = repo.blob_reader().unwrap();
     let lib = reader
         .read(&format!("{old_head}:src/lib.rs"))
@@ -413,30 +413,28 @@ async fn fetches_force_pushed_commits_by_sha() {
 async fn commits_diff_against_their_parent() {
     let f = fixture();
     let repo = cache_repo(&f).await;
-    let later = git(&f.origin, &["rev-parse", "main"]);
+    let later = Oid::parse(&git(&f.origin, &["rev-parse", "main"])).unwrap();
     let refs = repo.commit_refs(&later, &|_| {}).await.unwrap();
-    assert_eq!(*refs.head, later);
+    assert_eq!(refs.head, later);
     let files = changed_files(&repo, &refs).await;
     assert_eq!(files.len(), 1);
     assert_eq!(find(&files, "later.txt").status, FileStatus::Added);
-    // A short SHA that resolves here opens without a fetch.
-    let short = repo
-        .commit_refs(later.get(..7).unwrap(), &|_| {})
-        .await
-        .unwrap();
-    assert_eq!(*short.head, later);
 
     // Unreferenced on the server: fetched by SHA.
-    let loose = git(
+    let loose = Oid::parse(&git(
         &f.origin,
         &["commit-tree", "main^{tree}", "-p", "main", "-m", "loose"],
-    );
+    ))
+    .unwrap();
     assert!(!repo.has(&loose).await);
     let refs = repo.commit_refs(&loose, &|_| {}).await.unwrap();
-    assert_eq!(*refs.merge_base, later);
+    assert_eq!(refs.merge_base, later);
     assert!(changed_files(&repo, &refs).await.is_empty());
 
-    let root = repo.commit_refs(&f.branch_point, &|_| {}).await.unwrap();
+    let root = repo
+        .commit_refs(&Oid::parse(&f.branch_point).unwrap(), &|_| {})
+        .await
+        .unwrap();
     assert_eq!(&*root.merge_base, ghtui_git::repo::EMPTY_TREE);
     assert!(changed_files(&repo, &root).await.len() > 5);
 }
@@ -465,7 +463,7 @@ async fn merged_prs_diff_from_their_own_base() {
             git(&f.origin, &["commit", "-q", "-m", "Squashed #7"]);
         }
         let merged = repo
-            .fetch_pr(7, "main", Some(&base_before), &|_| {})
+            .fetch_pr(7, "main", Some(&Oid::parse(&base_before).unwrap()), &|_| {})
             .await
             .unwrap();
         assert_eq!(
@@ -552,7 +550,7 @@ async fn fetching_a_commit_by_sha_reports_gits_progress() {
         &["commit-tree", &tree, "-p", "main", "-m", "loose"],
     );
     let seen = std::sync::Mutex::new(Vec::new());
-    repo.commit_refs(&loose, &|l| seen.lock().unwrap().push(l))
+    repo.commit_refs(&Oid::parse(&loose).unwrap(), &|l| seen.lock().unwrap().push(l))
         .await
         .unwrap();
     let commit_lines = seen.into_inner().unwrap();

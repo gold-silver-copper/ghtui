@@ -920,7 +920,9 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
         }
         ComposeTarget::Conversation { .. } => Vec::new(),
         target @ (ComposeTarget::Line { .. } | ComposeTarget::File { .. }) => {
-            let head = diff.head().unwrap_or_default();
+            let Some(head) = diff.head() else {
+                return Vec::new();
+            };
             let id = diff.inputs().review.next_draft_id();
             let Some(draft) = draft(&target, &body, id, &head) else {
                 return Vec::new();
@@ -988,7 +990,7 @@ fn submit(state: &mut State) -> Vec<Cmd> {
         Some(diff) => diff.head(),
         None => (state.prs.get(&pr))
             .and_then(|r| r.data.as_ref())
-            .map(|d| ghtui_git::Oid::new(d.head_oid.clone())),
+            .and_then(|d| ghtui_git::Oid::parse(&d.head_oid).ok()),
     };
     let problem = match (&drafts, &head) {
         _ if event == ReviewEvent::RequestChanges && body.trim().is_empty() => {
@@ -1001,16 +1003,16 @@ fn submit(state: &mut State) -> Vec<Cmd> {
     let Some(Overlay::Submit(dialog)) = &mut state.overlay else {
         return Vec::new();
     };
-    if let Some(problem) = problem {
-        dialog.error = Some(problem.into());
+    let (None, Some(drafts), Some(head)) = (problem, drafts, head) else {
+        dialog.error = problem.map(Into::into);
         return Vec::new();
-    }
+    };
     dialog.sending = true;
     dialog.error = None;
     vec![Cmd::Api(Api::SubmitReview {
         pr,
-        head: head.unwrap_or_default(),
-        drafts: drafts.unwrap_or_default(),
+        head,
+        drafts,
         event,
         body,
     })]

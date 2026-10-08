@@ -213,7 +213,12 @@ async fn a_merged_pr_in_every_way() {
         }
         let repo = origin.cache().await;
         let refs = repo
-            .fetch_pr(7, "main", Some(&base), &|_| {})
+            .fetch_pr(
+                7,
+                "main",
+                Some(&ghtui_git::Oid::parse(&base).unwrap()),
+                &|_| {},
+            )
             .await
             .unwrap();
         check(&origin, &repo, &refs, &branched, 2).await;

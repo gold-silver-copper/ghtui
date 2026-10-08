@@ -136,7 +136,7 @@ pub type CommitRange = Option<(String, String)>;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PrBase {
     pub branch: String,
-    pub oid: Option<String>,
+    pub oid: Option<Oid>,
 }
 
 /// Runs the job. Its helper tasks belong to it: dropping (aborting) the
@@ -188,7 +188,7 @@ async fn run_inner(
     };
     let mut refs = match of {
         DiffOf::Pr(pr) => {
-            repo.fetch_pr(pr.number, &base.branch, base.oid.as_deref(), &progress)
+            repo.fetch_pr(pr.number, &base.branch, base.oid.as_ref(), &progress)
                 .await?
         }
         DiffOf::Commit(_, oid) => repo.commit_refs(oid, &progress).await?,
@@ -340,7 +340,7 @@ pub async fn since_review_hashes(
     number: u64,
     old_head: &str,
 ) -> Result<HashSet<String>, GitError> {
-    repo.fetch_commit(old_head, &|_| {}).await?;
+    repo.ensure(&Oid::parse(old_head)?, &|_| {}).await?;
     let base = repo
         .rev_parse(&format!("refs/ghtui/pr/{number}/base"))
         .await?;
@@ -400,7 +400,10 @@ pub async fn map_outdated(
     original_line: u32,
 ) -> Option<u32> {
     let original = format!("{original_commit}:{path}");
-    if let Err(err) = repo.fetch_commit(original_commit, &|_| {}).await {
+    if let Err(err) = repo
+        .ensure(&Oid::parse(original_commit).ok()?, &|_| {})
+        .await
+    {
         tracing::info!(%err, original_commit, "original commit unavailable");
         return None;
     }
@@ -509,7 +512,7 @@ mod tests {
         let out = JobTx { tx, of, job: 1 };
         let base = PrBase {
             branch: "main".into(),
-            oid: Some(base),
+            oid: Some(Oid::parse(&base).unwrap()),
         };
         run(ctx, base, None, out, Arc::default()).await;
         let mut listed = None;

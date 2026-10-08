@@ -412,9 +412,9 @@ fn joined_diff_work_is_the_same_in_every_arrival_order() {
             let msg = match step {
                 0 => {
                     let refs = PrRefs {
-                        head: Oid::new(detail.head_oid.clone()),
-                        base: Oid::new("b".repeat(40)),
-                        merge_base: Oid::new("b".repeat(40)),
+                        head: Oid::parse(&detail.head_oid.clone()).unwrap(),
+                        base: Oid::parse(&"b".repeat(40)).unwrap(),
+                        merge_base: Oid::parse(&"b".repeat(40)).unwrap(),
                     };
                     let files = DiffFiles {
                         refs,

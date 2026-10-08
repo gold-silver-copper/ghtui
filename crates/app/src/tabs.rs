@@ -124,7 +124,7 @@ impl State {
                 DiffOf::Pr(pr) => Target::Page(Route::pr(pr.clone())),
                 DiffOf::Commit(repo, oid) => Target::Page(Route::Commit {
                     repo: repo.clone(),
-                    oid: oid.clone(),
+                    oid: oid.to_string(),
                 }),
                 DiffOf::Range(repo, from, to) => Target::Page(Route::Compare {
                     repo: repo.clone(),

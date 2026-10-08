@@ -260,6 +260,9 @@ https://github.com/rust-lang/rust/commits/automation%2Fbors%2Ftry            Com
 https://github.com/rust-lang/rust/commits                                   Commits
 https://github.com/rust-lang/rust/commit/8d1a76430406c877b35d0b627e7f796dcf0dfeca#diff-0123abcd files
 https://github.com/rust-lang/rust/commit/8d1a76430406c877b35d0b627e7f796dcf0dfeca.diff files
+# A short SHA or a ref names no commit until resolved: its page.
+https://github.com/rust-lang/rust/commit/8d1a764.diff Commit
+https://github.com/rust-lang/rust/commit/master.diff Commit
 https://github.com/rust-lang/rust/commit/8d1a76430406c877b35d0b627e7f796dcf0dfeca.patch external download
 https://github.com/rust-lang/rust/compare/1.98.0...1.99.0                   Compare
 https://github.com/rust-lang/rust/compare/1.98.0..1.99.0                    Compare

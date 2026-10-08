@@ -2,6 +2,7 @@
 
 use ghtui_api::browse::{DiscussionsOf, RepoSort, SearchKind};
 use ghtui_api::model::{PrRef, RepoId};
+use ghtui_git::Oid;
 use ghtui_ui::pages::url as links;
 use ghtui_ui::pages::{PrTab, ProfileTab};
 use ghtui_ui::text::short_sha;
@@ -778,14 +779,10 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             if fragment == Some("files")
                 && !spec.contains("...")
                 && let Some((from, to)) = spec.split_once("..")
-                && is_full_sha(from)
-                && is_full_sha(to)
+                && let Ok(from) = Oid::parse(from)
+                && let Ok(to) = Oid::parse(to)
             {
-                return Some(Target::Files(DiffOf::Range(
-                    repo,
-                    from.to_owned(),
-                    to.to_owned(),
-                )));
+                return Some(Target::Files(DiffOf::Range(repo, from, to)));
             }
             Route::Compare { repo, spec }
         }
@@ -875,23 +872,24 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
         },
         // A commit's patch is a download; its diff is the diff viewer.
         ["commit", sha] if sha.ends_with(".patch") => return None,
-        ["commit", sha] if sha.ends_with(".diff") => {
-            let sha = sha.trim_end_matches(".diff").to_owned();
-            return Some(Target::Files(DiffOf::Commit(repo, sha)));
-        }
         ["pull", n] if n.ends_with(".diff") => {
             let number = n.trim_end_matches(".diff").parse().ok()?;
             return Some(Target::Files(DiffOf::Pr(PrRef { repo, number })));
         }
-        ["commit", sha] => {
-            // GitHub anchors a commit's files as `#diff-…`.
-            let to_files = fragment.is_some_and(|f| f == "files" || f.starts_with("diff-"));
-            if to_files && is_full_sha(sha) {
-                return Some(Target::Files(DiffOf::Commit(repo, (*sha).to_owned())));
+        // GitHub anchors a commit's files as `#diff-…`. A short SHA or a
+        // ref names no commit until resolved: its page.
+        ["commit", rev] => {
+            let (rev, diff) = rev
+                .strip_suffix(".diff")
+                .map_or((*rev, false), |r| (r, true));
+            if (diff || fragment.is_some_and(|f| f == "files" || f.starts_with("diff-")))
+                && let Ok(oid) = Oid::parse(rev)
+            {
+                return Some(Target::Files(DiffOf::Commit(repo, oid)));
             }
             Route::Commit {
                 repo,
-                oid: (*sha).to_owned(),
+                oid: rev.to_owned(),
             }
         }
         ["issues", n] => Route::Issue {
@@ -931,10 +929,6 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
         _ => return None,
     };
     Some(Target::Page(route))
-}
-
-fn is_full_sha(s: &str) -> bool {
-    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 const GIST: &str = "https://gist.github.com";
@@ -1470,7 +1464,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             Target::from_url(&format!("https://github.com/o/r/commit/{sha}#diff-abc")),
-            Target::Files(DiffOf::Commit(pr.repo.clone(), sha.into()))
+            Target::Files(DiffOf::Commit(pr.repo.clone(), Oid::parse(sha).unwrap()))
         );
         assert_eq!(
             page("https://github.com/search?q=tui+lang%3Arust&type=repositories"),
@@ -1548,7 +1542,11 @@ pub(crate) mod tests {
             Target::from_url(&format!(
                 "https://github.com/o/r/compare/{sha}..{other}#files"
             )),
-            Target::Files(DiffOf::Range(pr.repo.clone(), sha.into(), other.clone()))
+            Target::Files(DiffOf::Range(
+                pr.repo.clone(),
+                Oid::parse(sha).unwrap(),
+                Oid::parse(&other).unwrap()
+            ))
         );
         // Three dots diff from the merge base, which the comparison finds.
         assert_eq!(
@@ -1561,7 +1559,11 @@ pub(crate) mod tests {
             }
         );
         assert_eq!(
-            compare_url(&DiffOf::Range(pr.repo.clone(), sha.into(), other.clone())),
+            compare_url(&DiffOf::Range(
+                pr.repo.clone(),
+                Oid::parse(sha).unwrap(),
+                Oid::parse(&other).unwrap()
+            )),
             format!("https://github.com/o/r/compare/{sha}..{other}")
         );
         // A topic search without a topic is an empty search, not `topic:`.
