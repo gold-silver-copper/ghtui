@@ -759,12 +759,15 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         state.data_gen += 1;
     }
     // A write changes what GitHub shows, wherever it shows it.
-    if matches!(
-        msg,
-        Msg::Commented(_, Ok(()))
-            | Msg::Starred { result: Ok(()), .. }
-            | Msg::Diff(_, DiffMsg::Replied(Ok(())) | DiffMsg::ReviewSubmitted(_))
-    ) {
+    let wrote = match &msg {
+        Msg::Commented(_, r)
+        | Msg::Starred { result: r, .. }
+        | Msg::Diff(_, DiffMsg::Replied(r)) => r.is_ok(),
+        // Drafts GitHub accepted wait in a pending review there.
+        Msg::Diff(_, DiffMsg::ReviewSubmitted(o)) => o.error.is_none() || !o.accepted.is_empty(),
+        _ => false,
+    };
+    if wrote {
         state.inbox.stale = true;
         state.prs.values_mut().for_each(|r| r.stale = true);
         state.data.values_mut().for_each(|r| r.stale = true);
@@ -1685,6 +1688,29 @@ pub(crate) mod tests {
             state.load_visible(true).contains(&refetch),
             "r refetches it"
         );
+    }
+
+    /// A review GitHub turned down whole changed nothing there, so what's
+    /// held stays fresh; one that went through makes it stale.
+    #[test]
+    fn only_a_review_that_went_through_counts_as_a_write() {
+        let mut state = with_repo();
+        let key = DataKey::Issue(repo(), 14);
+        let _ = state.push(issue(14));
+        let issue = Data::Issue(Some(Box::new(crate::fixtures::issue())));
+        fetched(&mut state, key.clone(), issue);
+        let of = DiffOf::Pr(PrRef::parse("o/r#1").unwrap());
+        let mut outcome = crate::review::SubmitOutcome {
+            error: Some("Couldn't reach the PR".into()),
+            ..Default::default()
+        };
+        let submitted = |o| Msg::Diff(of.clone(), DiffMsg::ReviewSubmitted(o));
+        update(&mut state, submitted(outcome.clone()));
+        assert_eq!(state.load_visible(false), Vec::new());
+        outcome.accepted.push(1);
+        update(&mut state, submitted(outcome));
+        let refetch = Cmd::Api(Api::Fetch { key, cached: false });
+        assert!(state.load_visible(false).contains(&refetch));
     }
 
     /// A next page asked for before a refresh belongs to the old list: it
