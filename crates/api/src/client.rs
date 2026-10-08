@@ -576,15 +576,13 @@ impl GitHub {
             self.search_prs("is:open is:pr review-requested:@me archived:false sort:updated-desc"),
         )?;
         let inbox = Inbox {
-            authored: authored.0,
-            authored_total: authored.1,
-            review_requested: requested.0,
-            review_requested_total: requested.1,
+            authored,
+            review_requested: requested,
         };
         Ok(self.kept(INBOX_KEY, inbox).await)
     }
 
-    async fn search_prs(&self, query: &str) -> Result<(Vec<PrSummary>, u64), ApiError> {
+    async fn search_prs(&self, query: &str) -> Result<Capped<PrSummary>, ApiError> {
         let op = queries::SearchQuery::build(queries::SearchVariables {
             query: query.to_owned(),
             first: queries::INBOX_PAGE,
@@ -1651,11 +1649,11 @@ impl GitHub {
             ));
         }
         let listed = comparison.commits.len() as u64;
-        let expected = comparison.total_commits.min(browse::COMPARE_COMMITS);
+        let expected = comparison.commits.total().min(browse::COMPARE_COMMITS);
         if listed != expected {
             self.doubt(format!(
                 "comparing {spec}, {listed} commits are listed of {}, not {expected}",
-                comparison.total_commits
+                comparison.commits.total()
             ));
         }
         Ok(self
@@ -2120,9 +2118,9 @@ impl GitHub {
     }
 
     /// Repositories you own or contribute to, most recently pushed first.
-    pub async fn viewer_repos(&self) -> Result<Vec<browse::RepoSummary>, ApiError> {
+    pub async fn viewer_repos(&self) -> Result<Capped<browse::RepoSummary>, ApiError> {
         let data = self.graphql(browse::ViewerReposQuery::build(())).await?;
-        let (repos, _) = browse::repo_list(data.viewer.repositories);
+        let repos = browse::repo_list(data.viewer.repositories);
         Ok(self.kept(browse::keys::VIEWER_REPOS, repos).await)
     }
 }

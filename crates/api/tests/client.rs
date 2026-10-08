@@ -820,7 +820,7 @@ async fn checks_page_to_a_checks_newest_run() {
         .unwrap();
     let test = checks.items.iter().find(|c| c.name == "test").unwrap();
     assert_eq!(test.outcome, ghtui_api::browse::CheckOutcome::Success);
-    assert_eq!((checks.items.len(), checks.total), (2, 2));
+    assert_eq!((checks.items.len(), checks.items.total()), (2, 2));
     assert_eq!(seen.lock().unwrap()[1].json()["variables"]["after"], "p2");
 }
 

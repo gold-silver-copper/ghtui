@@ -11,7 +11,7 @@ use ghtui_api::browse::{
     RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo,
     TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage, Workflow, WorkflowRun,
 };
-use ghtui_api::model::{PrRef, RepoId};
+use ghtui_api::model::{Capped, PrRef, RepoId};
 use ghtui_ui::Fetched;
 use ghtui_ui::page::{Page, PageLine, Role, Seg};
 use ghtui_ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
@@ -99,7 +99,7 @@ pub enum Data {
     Issue(Option<Box<IssueDetail>>),
     PrActivity(Box<PrActivity>),
     Profile(Box<Profile>),
-    Repos(Vec<RepoSummary>),
+    Repos(Capped<RepoSummary>),
     /// Paths, and whether GitHub cut the list short.
     Files(Arc<Vec<String>>, bool),
     Refs(Box<Refs>),
@@ -408,7 +408,7 @@ macro_rules! picked {
 picked!(
     Repo => RepoOverview, Readme => Option<Box<Readme>>, Tree => [TreeEntry], Blob => Blob,
     Search => SearchResults, Issue => Option<Box<IssueDetail>>, PrActivity => PrActivity,
-    Profile => Profile, Repos => [RepoSummary], Refs => Refs,
+    Profile => Profile, Repos => Capped<RepoSummary>, Refs => Refs,
     LastCommits => HashMap<String, CommitInfo>, Commit => CommitDetail,
     History => Results<CommitInfo>, Checks => Checks, Users => Results<UserSummary>,
     RepoPage => Results<RepoSummary>, Releases => Results<Release>,

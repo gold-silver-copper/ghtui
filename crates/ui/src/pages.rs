@@ -2459,12 +2459,9 @@ pub fn checks(page: &mut Page, checks: Fetched<'_, Checks>, now: u64) {
         }
     }
     summary.push(Seg::new(format!("   on {sha}"), Role::Meta));
-    let shown = c.items.len() as u64;
-    if c.total > shown {
-        summary.push(Seg::new(
-            format!(" · {shown} of {} shown", c.total),
-            Role::Meta,
-        ));
+    if c.items.left_out() > 0 {
+        let shown = format!(" · {} shown", count_of(&c.items));
+        summary.push(Seg::new(shown, Role::Meta));
     }
     page.wrapped(summary, 0, Frame::None);
     page.blank();
@@ -3480,16 +3477,7 @@ pub fn compare(page: &mut Page, repo: &RepoId, spec: &str, c: &Comparison, now: 
         );
         return;
     }
-    let shown = c.commits.len();
-    if (shown as u64) < c.total_commits {
-        let more = format!(
-            "The latest {shown} of {} commits (o shows them all on GitHub).",
-            c.total_commits
-        );
-        page.wrapped(vec![Seg::new(more, Role::Meta)], 0, Frame::None);
-        page.blank();
-    }
-    commit_rows(page, repo, &Whole(&c.commits), now);
+    commit_rows(page, repo, &c.commits, now);
 }
 // ---- deployments ------------------------------------------------------------------------------
 
@@ -3885,7 +3873,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
         (ProfileTab::Overview, _) => {}
         (ProfileTab::Repositories(sort), ProfileList::Repos(repos)) => {
             let title = vec![Seg::new(
-                format!("Repositories  {}", compact(p.repo_count)),
+                format!("Repositories  {}", compact(p.repos.total())),
                 Role::Strong,
             )];
             let sort = link_seg(
@@ -3927,7 +3915,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
     }
     // The overview: pinned (or popular) repositories, then the rest.
     let (title, repos, show_owner) = if p.pinned.is_empty() {
-        let mut popular = p.repos.clone();
+        let mut popular = p.repos.items.clone();
         popular.sort_by_key(|r| std::cmp::Reverse(r.stars));
         popular.truncate(6);
         ("Popular repositories", popular, false)
@@ -3955,7 +3943,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
         page.blank();
         let title = vec![
             Seg::new("People", Role::Strong),
-            Seg::new(format!("  {}", compact(p.people_count)), Role::Meta),
+            Seg::new(format!("  {}", compact(p.people.total())), Role::Meta),
         ];
         page.box_top(title, Vec::new());
         if p.people.is_empty() {
@@ -3970,6 +3958,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
             }
             page.wrapped(people, 0, Frame::Body);
         }
+        rest_row(page, p.people.len(), p.people.rest());
         page.box_bottom();
         let languages = top_languages(&p.repos);
         if !languages.is_empty() {
@@ -4172,25 +4161,24 @@ fn top_languages(repos: &[RepoSummary]) -> Vec<(String, usize)> {
 pub fn home(
     page: &mut Page,
     inbox: Fetched<'_, Inbox>,
-    repos: Fetched<'_, [RepoSummary]>,
+    repos: Fetched<'_, Capped<RepoSummary>>,
     viewer: Option<&str>,
     icons: Icons,
     now: u64,
 ) {
     let pr_box =
-        |page: &mut Page, title: &str, total: u64, prs: &[PrSummary], query: &str, empty: &str| {
+        |page: &mut Page, title: &str, prs: &Capped<PrSummary>, query: &str, empty: &str| {
             let all = link_seg(
                 page,
                 "View all",
                 url::search(SearchKind::Pulls, query),
                 Role::Link,
             );
-            let total = compact(total.max(prs.len() as u64));
             let title = vec![
                 Seg::new(title.to_owned(), Role::Strong),
-                Seg::new(format!("  {total}"), Role::Meta),
+                Seg::new(format!("  {}", count_of(prs)), Role::Meta),
             ];
-            list_box(page, title, vec![all], &Whole(prs), empty, |page, p| {
+            list_box(page, title, vec![all], prs, empty, |page, p| {
                 let summary = IssueSummary {
                     repo: p.pr.repo.clone(),
                     number: p.pr.number,
@@ -4215,7 +4203,6 @@ pub fn home(
         pr_box(
             page,
             "Review requests",
-            inbox.review_requested_total,
             &inbox.review_requested,
             "is:open is:pr review-requested:@me archived:false",
             "Nothing is waiting for your review.",
@@ -4223,7 +4210,6 @@ pub fn home(
         pr_box(
             page,
             "Your pull requests",
-            inbox.authored_total,
             &inbox.authored,
             "is:open is:pr author:@me archived:false",
             "You have no open pull requests.",
@@ -4242,7 +4228,7 @@ pub fn home(
     if let Some(repos) = repos.show_or(page, "your repositories", loading) {
         let empty = "You don't have any repositories yet.";
         let all = Vec::from_iter(all);
-        list_box(page, title, all, &Whole(repos), empty, |page, r| {
+        list_box(page, title, all, repos, empty, |page, r| {
             repo_row(page, r, now, true);
         });
     }
@@ -4517,8 +4503,7 @@ mod tests {
         let c = Comparison {
             ahead: 1,
             behind: 0,
-            total_commits: 0,
-            commits: Vec::new(),
+            commits: Capped::default(),
             from: "a".into(),
             to: "b".into(),
             files: 300,

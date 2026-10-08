@@ -1212,8 +1212,7 @@ pub(crate) mod tests {
         update(
             &mut state,
             Msg::Inbox(Ok(Inbox {
-                review_requested: Vec::new(),
-                authored: (1..=n).map(summary).collect(),
+                authored: (1..=n).map(summary).collect::<Vec<_>>().into(),
                 ..Inbox::default()
             })),
         );
@@ -1522,7 +1521,10 @@ pub(crate) mod tests {
             result,
             cached_at: None,
         };
-        update(&mut state, fetched(Ok(Data::Repos(Vec::new()))));
+        update(
+            &mut state,
+            fetched(Ok(Data::Repos(ghtui_api::model::Capped::default()))),
+        );
         let _ = state.load_visible(true);
         update(&mut state, Msg::Inbox(Err(ApiError::RateLimited(30))));
         update(&mut state, fetched(Err(ApiError::RateLimited(30))));
@@ -1906,6 +1908,38 @@ pub(crate) mod tests {
                 key,
                 after: "c1".into()
             })]
+        );
+    }
+
+    /// An organization's People box shows a few members; it says how many
+    /// it left out, as every other cut-short list does.
+    #[test]
+    fn org_people_say_how_many_are_left_out() {
+        let mut state = state();
+        let _ = state.push(Route::user("ratatui"));
+        // 3 of 14 members.
+        fetched(
+            &mut state,
+            DataKey::Profile("ratatui".into()),
+            Data::Profile(Box::new(crate::fixtures::org_profile())),
+        );
+        let lines: Vec<String> = page(&state)
+            .page
+            .lines
+            .iter()
+            .map(ghtui_ui::page::PageLine::text)
+            .collect();
+        let people = lines
+            .iter()
+            .position(|l| l.contains("People"))
+            .unwrap_or_else(|| panic!("{lines:#?}"));
+        assert!(
+            lines
+                .iter()
+                .skip(people)
+                .take_while(|l| !l.contains("Top languages"))
+                .any(|l| l.contains("11 more")),
+            "{lines:#?}"
         );
     }
 

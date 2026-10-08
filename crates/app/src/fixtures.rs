@@ -294,8 +294,7 @@ pub fn checks() -> Checks {
     });
     Checks {
         oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
-        total: items.len() as u64,
-        items,
+        items: items.into(),
     }
 }
 
@@ -611,11 +610,13 @@ pub fn profile() -> Profile {
         following: Some(9),
         is_org: false,
         pinned: vec![repo_summary("octocat/Hello-World", 3100)],
-        repos: vec![
-            repo_summary("octocat/Spoon-Knife", 13_000),
-            repo_summary("octocat/linguist", 640),
-        ],
-        repo_count: 8,
+        repos: Capped::new(
+            vec![
+                repo_summary("octocat/Spoon-Knife", 13_000),
+                repo_summary("octocat/linguist", 640),
+            ],
+            8,
+        ),
         star_count: 120,
         readme: Some("### Hi there 👋\n\nI'm the Octocat. I like **terminals**.\n".into()),
         status: Some("🐙 Reviewing pull requests".into()),
@@ -626,8 +627,7 @@ pub fn profile() -> Profile {
         )],
         orgs: vec!["github".into(), "ratatui".into()].into(),
         verified: false,
-        people: Vec::new(),
-        people_count: 0,
+        people: Capped::default(),
         contributions: Some(contributions()),
     }
 }
@@ -710,7 +710,7 @@ pub fn contributions() -> Contributions {
 pub fn profile_repos() -> Results<RepoSummary> {
     Results {
         total: 8,
-        items: profile().repos,
+        items: profile().repos.items,
         next: Some("p1".into()),
     }
 }
@@ -736,8 +736,7 @@ pub fn org_profile() -> Profile {
         following: None,
         is_org: true,
         pinned: Vec::new(),
-        repos,
-        repo_count: 24,
+        repos: Capped::new(repos, 24),
         star_count: 0,
         readme: Some(
             "Welcome to **Ratatui**. Start with the [tutorial](https://ratatui.rs).\n".into(),
@@ -747,8 +746,7 @@ pub fn org_profile() -> Profile {
         socials: Vec::new(),
         orgs: Vec::new().into(),
         verified: true,
-        people: vec!["joshka".into(), "orhun".into(), "kdheepak".into()],
-        people_count: 14,
+        people: Capped::new(vec!["joshka".into(), "orhun".into(), "kdheepak".into()], 14),
         contributions: None,
     }
 }
@@ -1126,12 +1124,14 @@ pub fn comparison() -> Comparison {
     Comparison {
         ahead: 120,
         behind: 0,
-        total_commits: 120,
-        commits: vec![
-            commit('a', "Branches are a page", "2026-10-01T10:00:00Z"),
-            commit('b', "Milestones are pages", "2026-10-01T12:00:00Z"),
-            commit('c', "Deployments are a page", "2026-10-02T12:00:00Z"),
-        ],
+        commits: Capped::new(
+            vec![
+                commit('a', "Branches are a page", "2026-10-01T10:00:00Z"),
+                commit('b', "Milestones are pages", "2026-10-01T12:00:00Z"),
+                commit('c', "Deployments are a page", "2026-10-02T12:00:00Z"),
+            ],
+            120,
+        ),
         from: "1".repeat(40),
         to: "c".repeat(40),
         files: 14,
