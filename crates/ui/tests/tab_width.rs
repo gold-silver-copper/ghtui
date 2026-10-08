@@ -34,8 +34,9 @@ fn theme() -> Theme {
     Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor)
 }
 
-/// A paragraph with a tab in it wraps to show every word, instead of
-/// being measured with the tab as nothing and cut short when drawn.
+/// A paragraph with a tab in it wraps to show every word, the tab as the
+/// spaces to the next stop, instead of being measured as nothing and cut
+/// short or dropped when drawn.
 #[test]
 fn a_paragraph_with_tabs_wraps_instead_of_losing_its_end() {
     let mut page = Page::new(20);
@@ -56,7 +57,7 @@ fn a_paragraph_with_tabs_wraps_instead_of_losing_its_end() {
     }
     .render(area, &mut buf);
     let shown = rows(&buf).join("\n");
-    for word in ["aaaa", "bbbb", "cccc", "dddd", "eeee"] {
+    for word in ["aaaa    bbbb", "cccc", "dddd", "eeee"] {
         assert!(shown.contains(word), "{word} is shown:\n{shown}");
     }
     assert!(!shown.contains('…'), "nothing is cut:\n{shown}");
@@ -72,8 +73,8 @@ fn a_review_comment_keeps_its_tabs() {
         new_path: Some(path.into()),
         old_mode: 0o100644,
         new_mode: 0o100644,
-        old_oid: ghtui_git::Oid::new("1".repeat(40)),
-        new_oid: ghtui_git::Oid::new("2".repeat(40)),
+        old_oid: ghtui_git::Oid::parse(&"1".repeat(40)).unwrap(),
+        new_oid: ghtui_git::Oid::parse(&"2".repeat(40)).unwrap(),
         similarity: None,
     };
     let mut doc = Doc::new(vec![file], &HashSet::new(), DocInputs::default());
