@@ -475,7 +475,7 @@ impl GitHub {
                 idempotent,
             })
             .await?;
-        check_status(&response)?;
+        check_status(&response, "/graphql")?;
         let wire: Wire = serde_json::from_str(&response.body)?;
         let errors = wire.errors.unwrap_or_default();
         if wire.data.is_null() {
@@ -514,7 +514,7 @@ impl GitHub {
         {
             return Ok(cached.body);
         }
-        check_status(&response)?;
+        check_status(&response, path)?;
         if let Some(etag) = response
             .headers
             .get(header::ETAG)
@@ -543,7 +543,7 @@ impl GitHub {
         path: &str,
     ) -> Result<(T, Option<String>), ApiError> {
         let response = self.send(&Request::Get { path, etag: None }).await?;
-        check_status(&response)?;
+        check_status(&response, path)?;
         let next = response
             .headers
             .get(header::LINK)
@@ -1858,7 +1858,7 @@ impl GitHub {
                 "this log has expired (GitHub keeps logs for the repository's retention period, 90 days by default)".into(),
             ));
         }
-        check_status(&response)?;
+        check_status(&response, &path)?;
         let (cut, text) = browse::log::cut(&response.body);
         Ok(browse::JobLog {
             text: text.to_owned(),
@@ -2387,7 +2387,9 @@ async fn backoff(attempt: u32) {
     tokio::time::sleep(Duration::from_millis(250 << attempt)).await;
 }
 
-fn check_status(response: &Response) -> Result<(), ApiError> {
+/// A failed response's error. A 404 names what was asked for at `path`
+/// (`o/r/actions/jobs/2`): GitHub's message only says "Not Found".
+fn check_status(response: &Response, path: &str) -> Result<(), ApiError> {
     #[derive(serde::Deserialize)]
     struct Message {
         message: String,
@@ -2399,11 +2401,13 @@ fn check_status(response: &Response) -> Result<(), ApiError> {
     if status == StatusCode::UNAUTHORIZED {
         return Err(ApiError::Unauthorized);
     }
+    if status == StatusCode::NOT_FOUND {
+        let path = path.split('?').next().unwrap_or(path);
+        let path = path.strip_prefix("/repos/").unwrap_or(path);
+        return Err(ApiError::NotFound(path.to_owned()));
+    }
     let message = serde_json::from_str::<Message>(&response.body)
         .map_or_else(|_| response.body.chars().take(200).collect(), |m| m.message);
-    if status == StatusCode::NOT_FOUND {
-        return Err(ApiError::NotFound(message));
-    }
     Err(ApiError::Http {
         status: status.as_u16(),
         message,

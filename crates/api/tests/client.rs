@@ -1668,6 +1668,23 @@ async fn a_raw_root_nulled_by_sso_says_why_once() {
     assert_eq!(gh.take_left_out(), Vec::<String>::new());
 }
 
+/// A REST 404 says what wasn't found, not GitHub's bare "Not Found".
+#[tokio::test]
+async fn a_missing_job_names_what_wasnt_found() {
+    let (gh, _) = github(vec![Reply::new(
+        404,
+        r#"{"message":"Not Found","documentation_url":"https://docs.github.com/rest/actions/workflow-jobs#get-a-job-for-a-workflow-run","status":"404"}"#,
+    )])
+    .await;
+    match gh.job(&RepoId::new("o", "r"), 2).await {
+        Err(err @ ApiError::NotFound(_)) => {
+            let said = err.to_string();
+            assert!(said.contains("o/r"), "{said}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
 /// A missing repository's stargazers are not found by the repository's
 /// name, not by ghtui's debug output.
 #[tokio::test]
