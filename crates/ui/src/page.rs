@@ -237,12 +237,12 @@ impl Page {
         self.links.get(i as usize)
     }
 
-    /// The item following `link` nearest item `near`.
+    /// The item following `link` nearest item `near`; any takes the place of "Load more".
     pub fn find(&self, link: &Link, near: usize) -> Option<usize> {
         let same = |l: &Link| match (l, link) {
             // An edited comment is still the same comment.
             (Link::Quote { at, .. }, Link::Quote { at: was, .. }) => at == was,
-            _ => l == link,
+            _ => l == link || *link == Link::More,
         };
         let items = self.items.iter().enumerate();
         let found = items.filter(|(_, it)| self.target(it.link).is_some_and(same));
