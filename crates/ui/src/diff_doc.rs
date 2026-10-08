@@ -253,7 +253,7 @@ impl DocFile {
             };
             self.push_thread_rows(index, ThreadRowKind::Body, body, wrap);
             if c == 0 && ann.left_out > 0 {
-                let gap = format!("… {} more replies on GitHub (o)", ann.left_out);
+                let gap = crate::pages::left_out_text(ann.left_out, "more reply", "more replies");
                 self.push_thread_rows(index, ThreadRowKind::Gap, &gap, usize::MAX);
             }
         }
