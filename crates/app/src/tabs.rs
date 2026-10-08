@@ -102,7 +102,6 @@ impl State {
         self.before.push(left);
         let mut cmds = match &target {
             Target::Page(route) => self.record_visit(route),
-            Target::Files(DiffOf::Pr(pr)) => self.ensure_pr(pr, false),
             _ => Vec::new(),
         };
         cmds.extend(self.load_visible(false));
