@@ -345,13 +345,14 @@ impl Repo {
     }
     /// Fetches one commit by SHA (e.g. a head that was force-pushed away).
     /// GitHub serves commits it still has even when no ref points at them.
-    /// Does nothing when the commit is already here.
+    /// Does nothing when `sha` already resolves here, even as a short SHA
+    /// or a branch name; only a full SHA is fetched.
     pub async fn fetch_commit(&self, sha: &str, progress: Progress<'_>) -> Result<(), GitError> {
-        if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(GitError::Parse(format!("not a commit id: {sha}")));
-        }
         if self.has(sha).await {
             return Ok(());
+        }
+        if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(GitError::Parse(format!("not a commit id: {sha}")));
         }
         progress(format!("Fetching {}", sha.get(..7).unwrap_or(sha)));
         self.fetch(&[sha], progress).await

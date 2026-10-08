@@ -419,6 +419,12 @@ async fn commits_diff_against_their_parent() {
     let files = changed_files(&repo, &refs).await;
     assert_eq!(files.len(), 1);
     assert_eq!(find(&files, "later.txt").status, FileStatus::Added);
+    // A short SHA that resolves here opens without a fetch.
+    let short = repo
+        .commit_refs(later.get(..7).unwrap(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(*short.head, later);
 
     // Unreferenced on the server: fetched by SHA.
     let loose = git(
