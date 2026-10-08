@@ -508,9 +508,9 @@ impl DocFile {
             Row::Hunk { .. } => (self.rows.iter().skip(i + 1))
                 .find_map(|r| self.line_of(*r))
                 .map_or(top, Held::Line),
-            Row::NoNewline | Row::Moved { .. } | Row::Spacer => i
-                .checked_sub(1)
-                .map_or(top, |prev| self.held(prev, anns)),
+            Row::NoNewline | Row::Moved { .. } | Row::Spacer => {
+                i.checked_sub(1).map_or(top, |prev| self.held(prev, anns))
+            }
             Row::Thread(t) => {
                 let Some(ann) = self.thread_row(t).and_then(|r| anns.get(r.ann as usize)) else {
                     return top;

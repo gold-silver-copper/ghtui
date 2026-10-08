@@ -545,12 +545,13 @@ async fn fetching_a_commit_by_sha_reports_gits_progress() {
     git(&f.origin, &["add", "loose.txt"]);
     let tree = git(&f.origin, &["write-tree"]);
     git(&f.origin, &["reset", "-q"]);
-    let loose = git(
+    let loose = Oid::parse(&git(
         &f.origin,
         &["commit-tree", &tree, "-p", "main", "-m", "loose"],
-    );
+    ))
+    .unwrap();
     let seen = std::sync::Mutex::new(Vec::new());
-    repo.commit_refs(&Oid::parse(&loose).unwrap(), &|l| seen.lock().unwrap().push(l))
+    repo.commit_refs(&loose, &|l| seen.lock().unwrap().push(l))
         .await
         .unwrap();
     let commit_lines = seen.into_inner().unwrap();
