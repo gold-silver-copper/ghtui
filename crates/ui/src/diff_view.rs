@@ -9,7 +9,6 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
-use unicode_width::UnicodeWidthChar;
 
 use ghtui_diff::anchor::{LinePos, Side};
 
@@ -19,7 +18,6 @@ use crate::{Ctx, PAD_X, chips, cols, fill, inset, key_hints, render_split, text,
 
 const PANE: Bg = Bg::Surface;
 const HEADER: Bg = Bg::ContainerHigh;
-const TAB_WIDTH: usize = 4;
 
 pub(crate) fn syntax_role(kind: TokenKind) -> Syntax {
     match kind {
@@ -284,7 +282,7 @@ impl DiffView<'_> {
         }
         if !scope.is_empty() {
             // What's left between the file name and the counts.
-            let used: usize = left.iter().chain(&right).map(Span::width).sum();
+            let used = text::spans_width(left.iter().chain(&right));
             let room = usize::from(area.width).saturating_sub(used + 2 * usize::from(PAD_X) + 5);
             left.push(Span::styled(
                 format!(" › {}", scope_label(scope, room)),
@@ -483,7 +481,7 @@ impl DiffView<'_> {
             ));
         }
         spans.push(Span::styled("  ", theme.body(bg)));
-        let used: usize = spans.iter().map(Span::width).sum();
+        let used = text::spans_width(&spans);
         let room = usize::from(area.width).saturating_sub(used + 1);
         // No emphasis on moved lines: the whole block is the change.
         let emphasis = match text.intraline(self.doc.opts.whitespace).get(&e) {
@@ -552,7 +550,7 @@ impl DiffView<'_> {
                 spans.extend(self.state_chips(ann, bg));
                 let n = ann.comments.len();
                 let tail = format!("  {n} comment{}", if n == 1 { "" } else { "s" });
-                let used: usize = spans.iter().map(Span::width).sum();
+                let used = text::spans_width(&spans);
                 let text_room = room.saturating_sub(used + text::width(&tail));
                 spans.push(Span::styled(
                     text::truncate(&row.text, text_room),
@@ -790,22 +788,17 @@ fn code_spans(
         };
         let mut piece = String::new();
         let mut truncated = false;
-        for c in slice.chars() {
-            let w = match c {
-                '\t' => TAB_WIDTH - used % TAB_WIDTH,
-                c if text::is_hidden(c) => 1,
-                c => c.width().unwrap_or(0),
+        for g in text::graphemes(slice) {
+            let (g, w) = match text::untab(g, used) {
+                // Shown, never acted on: see `text::is_hidden`.
+                (g, _) if g.contains(text::is_hidden) => ("�", 1),
+                drawn => drawn,
             };
             if used + w > room {
                 truncated = true;
                 break;
             }
-            match c {
-                '\t' => piece.extend(std::iter::repeat_n(' ', w)),
-                // Shown, never acted on: see `text::is_hidden`.
-                c if text::is_hidden(c) => piece.push('�'),
-                c => piece.push(c),
-            }
+            piece.push_str(g);
             used += w;
         }
         if !piece.is_empty() {

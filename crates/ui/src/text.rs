@@ -1,22 +1,40 @@
 //! Width-aware text helpers.
 
+use ratatui::buffer::CellWidth;
+use ratatui::text::Span;
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
-/// Columns `s` takes on screen, measured as ratatui draws it: a grapheme
-/// at a time (so an emoji sequence joined to a flag is two, not the one
-/// `unicode-width` makes of the whole string). Characters that are never
-/// drawn don't count: ratatui drops control characters (and anything of
-/// zero width, bidi overrides included, so GitHub text can't reorder
-/// what's shown).
+/// Columns `s` takes on screen, measured by ratatui's own rule a grapheme
+/// at a time, so what fits is what's drawn (an emoji sequence joined to a
+/// flag is two; a halfwidth sound mark takes a cell of its own). Characters
+/// that are never drawn don't count: ratatui drops control characters, tabs
+/// included (see `untab`), and anything of zero width, bidi overrides
+/// included, so GitHub text can't reorder what's shown.
 pub fn width(s: &str) -> usize {
     if s.is_ascii() {
         return s.bytes().filter(|b| !b.is_ascii_control()).count();
     }
     s.graphemes(true)
         .filter(|g| !g.contains(char::is_control))
-        .map(UnicodeWidthStr::width)
+        .map(|g| usize::from(g.cell_width()))
         .sum()
+}
+
+/// Columns `spans` take on screen.
+pub fn spans_width<'a, 'b: 'a>(spans: impl IntoIterator<Item = &'a Span<'b>>) -> usize {
+    spans.into_iter().map(|s| width(&s.content)).sum()
+}
+
+/// A grapheme from `graphemes` as drawn at column `col`: a tab is the
+/// spaces to the next stop of four.
+pub fn untab((g, w): (&str, usize), col: usize) -> (&str, usize) {
+    const TAB: &str = "    ";
+    match g {
+        "\t" => TAB
+            .get(col % TAB.len()..)
+            .map_or((TAB, 4), |s| (s, s.len())),
+        _ => (g, w),
+    }
 }
 
 /// Characters that change or hide what code means without showing
