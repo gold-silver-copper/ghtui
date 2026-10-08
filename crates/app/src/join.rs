@@ -103,6 +103,7 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
     // "Since my last review", compared with the whole PR's diff.
     if diff.since_requested && diff.inputs().last_review != LastReview::Unknown {
         diff.since_requested = false;
+        let job = diff.job;
         let local = diff.inputs().review.last_reviewed_head.clone();
         let (old, unasked) = match &diff.inputs().last_review {
             LastReview::At(oid) => (Some(oid.to_string()), String::new()),
@@ -127,7 +128,8 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
             }
             Some(old_head) => {
                 state.info(format!("{unasked}Comparing with your last review…"));
-                cmds.push(Cmd::Git(Git::SinceReview(Joined((pr.clone(), old_head)))));
+                let since = Joined((pr.clone(), job, old_head));
+                cmds.push(Cmd::Git(Git::SinceReview(since)));
             }
         }
     }

@@ -909,6 +909,23 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
                 diff.error = Some(error.to_string());
             }
         }
+        JobMsg::Since(old_head, Ok(hashes)) => {
+            if let Some((screen, diff)) = state.diff_parts()
+                && screen.of == *of
+            {
+                preserving_position(screen, &mut diff.doc, |doc| {
+                    doc.set_since(Some(hashes), true);
+                });
+                state.info(format!(
+                    "Showing changes since your review of {}",
+                    short_sha(&old_head)
+                ));
+            }
+        }
+        JobMsg::Since(_, Err(err)) => {
+            tracing::warn!(%of, ?err, "comparing with the last review failed");
+            state.error(format!("Couldn't compare with your last review: {err}"));
+        }
     }
     Vec::new()
 }
@@ -955,23 +972,6 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
                 };
                 diff.edit(|i| i.last_review = last);
             }
-        }
-        DiffMsg::SinceReady(old_head, Ok(hashes)) => {
-            if let Some((screen, diff)) = state.diff_parts()
-                && screen.of == *of
-            {
-                preserving_position(screen, &mut diff.doc, |doc| {
-                    doc.set_since(Some(hashes), true);
-                });
-                state.info(format!(
-                    "Showing changes since your review of {}",
-                    short_sha(&old_head)
-                ));
-            }
-        }
-        DiffMsg::SinceReady(_, Err(err)) => {
-            tracing::warn!(%pr, ?err, "comparing with the last review failed");
-            state.error(format!("Couldn't compare with your last review: {err}"));
         }
         DiffMsg::CommitsListed(Ok(commits)) => {
             edit(state, of, |i| i.commits = commits);

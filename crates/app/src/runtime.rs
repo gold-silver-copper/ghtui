@@ -230,12 +230,11 @@ impl Effects {
                 });
             }
             Git::SinceReview(joined) => {
-                let (pr, old_head) = joined.into_inner();
+                let (pr, job, old_head) = joined.into_inner();
                 let Some(git) = self.job_git(&DiffOf::Pr(pr.clone())) else {
-                    let _ = self.tx.send(Msg::Diff(
-                        pr.into(),
-                        DiffMsg::SinceReady(old_head, Err(Failure::msg("the diff isn't ready"))),
-                    ));
+                    let result = Err(Failure::msg("the diff isn't ready"));
+                    let msg = DiffMsg::Job(job, JobMsg::Since(old_head, result));
+                    let _ = self.tx.send(Msg::Diff(pr.into(), msg));
                     return;
                 };
                 spawn_guarded(&self.tx, replies, |tx| async move {
@@ -244,7 +243,8 @@ impl Effects {
                         diff_job::since_review_hashes(&repo, &reader, pr.number, &old_head)
                             .await
                             .map_err(Failure::from);
-                    let _ = tx.send(Msg::Diff(pr.into(), DiffMsg::SinceReady(old_head, result)));
+                    let msg = DiffMsg::Job(job, JobMsg::Since(old_head, result));
+                    let _ = tx.send(Msg::Diff(pr.into(), msg));
                 });
             }
             Git::ListCommits(pr) => {
@@ -605,8 +605,9 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             Msg::Diff(of.clone(), DiffMsg::Job(*job, JobMsg::Moves(Vec::new())))
         }
         Cmd::Git(Git::SinceReview(joined)) => {
-            let (pr, old) = joined.get();
-            Msg::Diff(pr.clone().into(), DiffMsg::SinceReady(old.clone(), git()))
+            let (pr, job, old) = joined.get();
+            let msg = DiffMsg::Job(*job, JobMsg::Since(old.clone(), git()));
+            Msg::Diff(pr.clone().into(), msg)
         }
         Cmd::Git(Git::ListCommits(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::CommitsListed(git()))
