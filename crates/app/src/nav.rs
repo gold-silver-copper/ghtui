@@ -1751,11 +1751,7 @@ impl State {
                 .selected_link()
                 .and_then(Link::url)
                 .map_or_else(|| p.route.url(), str::to_owned),
-            Screen::Diff(d) => match &d.of {
-                DiffOf::Pr(pr) => format!("{}/files", pr.url()),
-                DiffOf::Commit(repo, oid) => pages::url::commit(repo, oid),
-                DiffOf::Range(..) => crate::route::compare_url(&d.of),
-            },
+            Screen::Diff(d) => d.of.url(),
         }
     }
 }
