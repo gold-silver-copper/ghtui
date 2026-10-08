@@ -198,16 +198,9 @@ impl State {
             Link::Branch => self.open_finder(true),
             Link::FindFile => self.open_finder(false),
             Link::State(state) => set_list_state(self, state),
-            Link::Quote(n) => {
-                let quote = match self.screen() {
-                    Screen::Page(p) => p.page.quotes.get(*n as usize).cloned(),
-                    Screen::Diff(_) => None,
-                };
-                let Some(quote) = quote else {
-                    return Vec::new();
-                };
-                let mut text = format!("> @{} wrote:\n", quote.author);
-                for line in quote.body.trim().lines() {
+            Link::Quote { author, body } => {
+                let mut text = format!("> @{author} wrote:\n");
+                for line in body.trim().lines() {
                     text.push_str(&format!("> {line}\n"));
                 }
                 text.push('\n');
@@ -1481,7 +1474,7 @@ fn describe(link: &Link) -> String {
         Link::State(state) => format!("Show {state}"),
         Link::Branch => "Switch branches".into(),
         Link::FindFile => "Go to file".into(),
-        Link::Quote(_) => "Quote reply".into(),
+        Link::Quote { .. } => "Quote reply".into(),
     }
 }
 
