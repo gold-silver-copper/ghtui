@@ -952,9 +952,10 @@ impl Doc {
         let file = self.files.get(pos.file)?;
         match self.row(pos)? {
             Row::Thread(t) => file.thread_row(t).map(|r| r.ann),
-            row => file
+            row @ (Row::Line(_) | Row::Split { .. }) => file
                 .shows(row, self.opts.whitespace)
                 .find_map(|pos| file.annotations_at(pos).first().copied()),
+            _ => None,
         }
     }
 
@@ -1735,6 +1736,24 @@ pub(crate) mod tests {
             let row = line_row(file, |l| l.right().is_some_and(|p| p.line == 5)).unwrap();
             assert!(matches!(file.rows()[row + 1], Row::Thread(_)));
             assert_eq!(doc.annotation_at(Pos { file: 0, row }), Some(0));
+        }
+
+        /// A fold row is not on the thread it hides, so Enter on it opens
+        /// the fold and doesn't act on the thread.
+        #[test]
+        fn a_fold_is_not_on_the_thread_it_hides() {
+            let mut doc = one(
+                "a.txt",
+                "a\nfoo(\n    x,\n    y\n);\nb\n",
+                "a\nfoo(x, y);\nb\n",
+            );
+            set_annotations(&mut doc, vec![ann("t", Side::Right, Some(2))]);
+            let rows = doc.files[0].rows();
+            let fold = rows.iter().position(|r| matches!(r, Row::Fold { .. }));
+            let thread = rows.iter().position(|r| matches!(r, Row::Thread(_)));
+            let at = |row| doc.annotation_at(Pos { file: 0, row });
+            assert_eq!(fold.and_then(at), None, "{}", rows_of(&doc));
+            assert_eq!(thread.and_then(at), Some(0), "{}", rows_of(&doc));
         }
 
         /// A long thread says how many replies between its first comment
