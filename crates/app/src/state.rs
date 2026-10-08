@@ -3839,6 +3839,24 @@ pub(crate) mod tests {
             }
 
             #[test]
+            fn since_review_finishing_after_you_left_is_dropped() {
+                let (mut s, pr) = diff_state(120);
+                s.viewer = Some("me".into());
+                act(&mut s, Action::ToggleSinceReview);
+                diff_msg(&mut s, &pr, DiffMsg::LastReview(Ok(Some("old".into()))));
+                let _ = s.back();
+                s.notice = None;
+                let job = s.diffs[&DiffOf::Pr(pr.clone())].job;
+                diff_msg(
+                    &mut s,
+                    &pr,
+                    DiffMsg::Job(job, JobMsg::Since("old".into(), Ok(Default::default()))),
+                );
+                assert!(!s.diffs[&DiffOf::Pr(pr.clone())].doc.since_active());
+                assert_eq!(s.notice, None);
+            }
+
+            #[test]
             fn since_review_without_a_review_says_so() {
                 let (mut s, pr) = diff_state(120);
                 s.viewer = Some("me".into());
