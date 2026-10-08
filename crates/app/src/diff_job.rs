@@ -339,9 +339,7 @@ pub async fn since_review_hashes(
     number: u64,
     old_head: &str,
 ) -> Result<HashSet<String>, GitError> {
-    if !repo.has(old_head).await {
-        repo.fetch_commit(old_head).await?;
-    }
+    repo.fetch_commit(old_head, &|_| {}).await?;
     let base = repo
         .rev_parse(&format!("refs/ghtui/pr/{number}/base"))
         .await?;
@@ -401,9 +399,7 @@ pub async fn map_outdated(
     original_line: u32,
 ) -> Option<u32> {
     let original = format!("{original_commit}:{path}");
-    if !repo.has(original_commit).await
-        && let Err(err) = repo.fetch_commit(original_commit).await
-    {
+    if let Err(err) = repo.fetch_commit(original_commit, &|_| {}).await {
         tracing::info!(%err, original_commit, "original commit unavailable");
         return None;
     }

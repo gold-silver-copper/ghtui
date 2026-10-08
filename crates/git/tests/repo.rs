@@ -394,10 +394,10 @@ async fn fetches_force_pushed_commits_by_sha() {
     // Still local thanks to the earlier fetch: `has` sees it without fetching.
     assert!(repo.has(&old_head).await);
     assert!(!repo.has("0123456789012345678901234567890123456789").await);
-    assert!(repo.fetch_commit("not-a-sha").await.is_err());
+    assert!(repo.fetch_commit("not-a-sha", &|_| {}).await.is_err());
     // Fetching a known commit by SHA works (the server allows any SHA here),
     // and its files read through the blob reader (blobs fetch lazily).
-    repo.fetch_commit(&old_head).await.unwrap();
+    repo.fetch_commit(&old_head, &|_| {}).await.unwrap();
     let reader = repo.blob_reader().unwrap();
     let lib = reader
         .read(&format!("{old_head}:src/lib.rs"))
@@ -513,4 +513,38 @@ async fn blob_reader_survives_cancelled_reads() {
     assert_eq!(spaced.unwrap().as_deref(), Some(&b"spaced\n"[..]));
     let again = reader.read(&format!("{head}:big.txt")).await;
     assert_eq!(again.unwrap().map(|b| b.len()), Some(big.len()));
+}
+
+/// Fetching a commit by SHA is watched the way fetching a PR is: git's own
+/// transfer progress reaches the caller, so a slow but moving download is
+/// shown moving (and judged by whether it moves), not cut off by a clock.
+#[tokio::test]
+async fn fetching_a_commit_by_sha_reports_gits_progress() {
+    let f = fixture();
+    let repo = cache_repo(&f).await;
+    // Anything git itself printed, beyond ghtui's own "Fetching ..." line.
+    let from_git = |lines: &[String]| lines.iter().any(|l| !l.starts_with("Fetching "));
+
+    let seen = std::sync::Mutex::new(Vec::new());
+    repo.fetch_pr(7, "main", None, &|l| seen.lock().unwrap().push(l))
+        .await
+        .unwrap();
+    let pr_lines = seen.into_inner().unwrap();
+    assert!(from_git(&pr_lines), "{pr_lines:?}");
+
+    // Unreferenced on the server, with a blob the cache hasn't seen.
+    write(&f.origin, "loose.txt", numbered(500).as_bytes());
+    git(&f.origin, &["add", "loose.txt"]);
+    let tree = git(&f.origin, &["write-tree"]);
+    git(&f.origin, &["reset", "-q"]);
+    let loose = git(
+        &f.origin,
+        &["commit-tree", &tree, "-p", "main", "-m", "loose"],
+    );
+    let seen = std::sync::Mutex::new(Vec::new());
+    repo.commit_refs(&loose, &|l| seen.lock().unwrap().push(l))
+        .await
+        .unwrap();
+    let commit_lines = seen.into_inner().unwrap();
+    assert!(from_git(&commit_lines), "{commit_lines:?}");
 }

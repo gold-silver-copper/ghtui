@@ -13,7 +13,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::process::Command;
+use tokio::process::{Child, Command};
+use tokio::task::JoinHandle;
 
 use crate::blobs::BlobReader;
 use crate::credentials::Credentials;
@@ -128,7 +129,7 @@ impl Repo {
             credentials.apply(&mut cmd);
             cmd.args(["clone", "--bare", "--filter=blob:none", "--progress", url])
                 .arg(&tmp);
-            if let Err(err) = run_with_progress(cmd, "clone", progress, STALL).await {
+            if let Err(err) = run_with_progress(cmd, "clone", None, progress, STALL).await {
                 // The clone's error is the one to report; a half-made
                 // directory left behind is removed on the next try.
                 let _ = std::fs::remove_dir_all(&tmp);
@@ -192,27 +193,14 @@ impl Repo {
     ) -> Result<PrRefs, GitError> {
         let head_ref = Self::ref_name(number, "head");
         let base_ref = Self::ref_name(number, "base");
-        {
-            let _guard = repo_lock(&self.path).lock_owned().await;
-            progress(format!("Fetching #{number}"));
-            let mut cmd = self.cmd();
-            cmd.args([
-                "fetch",
-                "--no-tags",
-                "--no-write-fetch-head",
-                "--progress",
-                &self.remote,
-                &format!("+refs/pull/{number}/head:{head_ref}"),
-                &format!("+refs/heads/{base_branch}:{base_ref}"),
-            ]);
-            run_with_progress(cmd, "fetch", progress, STALL).await?;
-        }
+        progress(format!("Fetching #{number}"));
+        let head_spec = format!("+refs/pull/{number}/head:{head_ref}");
+        let base_spec = format!("+refs/heads/{base_branch}:{base_ref}");
+        self.fetch(&[&head_spec, &base_spec], progress).await?;
         let head = self.rev_parse(&head_ref).await?;
         let base = match base_oid {
             Some(oid) => {
-                if !self.has(oid).await {
-                    self.fetch_commit(oid).await?;
-                }
+                self.fetch_commit(oid, progress).await?;
                 self.rev_parse(oid).await?
             }
             None => self.rev_parse(&base_ref).await?,
@@ -282,10 +270,7 @@ impl Repo {
     /// A commit against its first parent, the empty tree for a root commit;
     /// fetched by SHA if it isn't here.
     pub async fn commit_refs(&self, sha: &str, progress: Progress<'_>) -> Result<PrRefs, GitError> {
-        if !self.has(sha).await {
-            progress(format!("Fetching {}", sha.get(..7).unwrap_or(sha)));
-            self.fetch_commit(sha).await?;
-        }
+        self.fetch_commit(sha, progress).await?;
         let head = self.rev_parse(sha).await?;
         let parent = match self.rev_parse(&format!("{sha}^")).await {
             Ok(parent) => parent,
@@ -307,10 +292,7 @@ impl Repo {
         progress: Progress<'_>,
     ) -> Result<PrRefs, GitError> {
         for sha in [from, to] {
-            if !self.has(sha).await {
-                progress(format!("Fetching {}", sha.get(..7).unwrap_or(sha)));
-                self.fetch_commit(sha).await?;
-            }
+            self.fetch_commit(sha, progress).await?;
         }
         let from = self.rev_parse(from).await?;
         Ok(PrRefs {
@@ -320,17 +302,25 @@ impl Repo {
         })
     }
     /// Fetches the remote's default branch into `into` (a ref name).
-    pub async fn fetch_head(&self, into: &str) -> Result<(), GitError> {
+    pub async fn fetch_head(&self, into: &str, progress: Progress<'_>) -> Result<(), GitError> {
+        self.fetch(&[&format!("+HEAD:{into}")], progress).await
+    }
+
+    /// Fetches `refspecs` (refs, or commits by SHA) from the remote,
+    /// reporting git's progress. Every fetch of refs or commits goes
+    /// through here, so each is given up on only when it goes quiet.
+    async fn fetch(&self, refspecs: &[&str], progress: Progress<'_>) -> Result<(), GitError> {
         let _guard = repo_lock(&self.path).lock_owned().await;
-        let refspec = format!("+HEAD:{into}");
-        let args = [
+        let mut cmd = self.cmd();
+        cmd.args([
             "fetch",
             "--no-tags",
             "--no-write-fetch-head",
+            "--progress",
             &self.remote,
-            &refspec,
-        ];
-        deadline("fetch", Duration::from_secs(120), self.run(&args))
+        ])
+        .args(refspecs);
+        run_with_progress(cmd, "fetch", None, progress, STALL)
             .await
             .map(drop)
     }
@@ -355,21 +345,16 @@ impl Repo {
     }
     /// Fetches one commit by SHA (e.g. a head that was force-pushed away).
     /// GitHub serves commits it still has even when no ref points at them.
-    pub async fn fetch_commit(&self, sha: &str) -> Result<(), GitError> {
+    /// Does nothing when the commit is already here.
+    pub async fn fetch_commit(&self, sha: &str, progress: Progress<'_>) -> Result<(), GitError> {
         if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(GitError::Parse(format!("not a commit id: {sha}")));
         }
-        let _guard = repo_lock(&self.path).lock_owned().await;
-        let args = [
-            "fetch",
-            "--no-tags",
-            "--no-write-fetch-head",
-            &self.remote,
-            sha,
-        ];
-        deadline("fetch", Duration::from_secs(120), self.run(&args))
-            .await
-            .map(drop)
+        if self.has(sha).await {
+            return Ok(());
+        }
+        progress(format!("Fetching {}", sha.get(..7).unwrap_or(sha)));
+        self.fetch(&[sha], progress).await
     }
 
     /// Files changed from `from` to `to`, with rename detection. In a
@@ -428,11 +413,12 @@ impl Repo {
             "--no-write-fetch-head",
             "--recurse-submodules=no",
             "--filter=blob:none",
+            "--progress",
             "--stdin",
             &self.remote,
         ]);
-        let fetch = run_with_stdin(cmd, "fetch --stdin", missing.join("\n") + "\n");
-        deadline("fetch --stdin", Duration::from_secs(600), fetch).await?;
+        let input = Some(missing.join("\n") + "\n");
+        run_with_progress(cmd, "fetch --stdin", input, &|_| {}, STALL).await?;
         Ok(missing.len())
     }
 
@@ -478,43 +464,41 @@ async fn run_with_stdin(mut cmd: Command, what: &str, input: String) -> Result<S
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
-    let mut stdin = piped(child.stdin.take(), "stdin")?;
-    let writer = tokio::spawn(async move {
-        let _ = stdin.write_all(input.as_bytes()).await;
-    });
+    let writer = feed(&mut child, input)?;
     let output = child.wait_with_output().await?;
     let _ = writer.await;
     stdout(&output, what)
 }
 
-/// `run`, abandoned (and its git killed) after `limit`.
-async fn deadline<T>(
-    what: &str,
-    limit: Duration,
-    run: impl Future<Output = Result<T, GitError>>,
-) -> Result<T, GitError> {
-    tokio::time::timeout(limit, run).await.unwrap_or_else(|_| {
-        Err(GitError::Stalled {
-            what: what.to_owned(),
-            secs: limit.as_secs(),
-        })
-    })
+/// Writes `input` to `child`'s piped stdin from its own task, so git can
+/// fill its output pipes while it reads.
+fn feed(child: &mut Child, input: String) -> Result<JoinHandle<()>, GitError> {
+    let mut stdin = piped(child.stdin.take(), "stdin")?;
+    Ok(tokio::spawn(async move {
+        let _ = stdin.write_all(input.as_bytes()).await;
+    }))
 }
 
 /// How long a network operation may go without printing progress before
 /// it's given up on.
 const STALL: Duration = Duration::from_secs(180);
 
-/// Runs `cmd`, reporting the latest `--progress` line from stderr, and
-/// gives up if it goes quiet for `stall` (normally [`STALL`]).
+/// Runs `cmd` (writing `input` to its stdin, if any), reporting the
+/// latest `--progress` line from stderr, and gives up if it goes quiet for
+/// `stall` (normally [`STALL`]).
 async fn run_with_progress(
     mut cmd: Command,
     what: &str,
+    input: Option<String>,
     progress: Progress<'_>,
     stall: Duration,
 ) -> Result<String, GitError> {
+    if input.is_some() {
+        cmd.stdin(Stdio::piped());
+    }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
+    let writer = input.map(|input| feed(&mut child, input)).transpose()?;
     let mut stderr = piped(child.stderr.take(), "stderr")?;
     let mut stdout = piped(child.stdout.take(), "stdout")?;
     let out_task = tokio::spawn(async move {
@@ -550,6 +534,9 @@ async fn run_with_progress(
             }
         }
     }
+    if let Some(writer) = writer {
+        let _ = writer.await;
+    }
     let status = child.wait().await?;
     let stdout = out_task.await.unwrap_or_default();
     if !status.success() {
@@ -583,6 +570,7 @@ mod tests {
         let result = run_with_progress(
             cmd,
             "fetch",
+            None,
             &|line| seen.lock().unwrap().push(line),
             Duration::from_millis(300),
         )
