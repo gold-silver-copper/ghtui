@@ -2146,12 +2146,12 @@ pub(crate) mod tests {
         };
         let page = p.page();
         let line =
-            |i: usize| -> String { page.lines[i].segs.iter().map(|s| s.text.as_str()).collect() };
+            |i: usize| -> String { page.lines[i].text() };
         assert!(!page.marks.is_empty());
         for &m in &page.marks {
             assert!(line(m).to_lowercase().contains("test"), "{}", line(m));
             let picked = page.lines[m].segs.iter().any(|s| {
-                s.text.eq_ignore_ascii_case("test")
+                s.text().eq_ignore_ascii_case("test")
                     && s.role == ghtui_ui::page::Role::Chip(Bg::TertiaryContainer)
             });
             assert!(picked, "{}", line(m));
@@ -2189,7 +2189,7 @@ pub(crate) mod tests {
         let text: String = page.lines[jump]
             .segs
             .iter()
-            .map(|s| s.text.as_str())
+            .map(ghtui_ui::page::Seg::text)
             .collect();
         assert!(text.contains("exit code 101"), "{text}");
     }

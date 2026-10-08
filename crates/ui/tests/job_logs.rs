@@ -38,7 +38,7 @@ fn read_log(name: &str) -> String {
 
 fn shown(line: &str) -> String {
     let seg = log_seg(line);
-    let text: String = seg.text.chars().take(90).collect();
+    let text: String = seg.text().chars().take(90).collect();
     format!("{:?}: {text}", seg.role)
 }
 

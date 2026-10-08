@@ -255,7 +255,7 @@ pub fn loading_box(page: &mut Page, title: Vec<Seg>) {
 pub fn flash(page: &mut Page, text: &str) {
     let width = usize::from(page.room(Frame::None, 0));
     for line in crate::page::wrap_segs(vec![Seg::new(text, Role::Body)], width.saturating_sub(4)) {
-        let text: String = line.iter().map(|s| s.text.as_str()).collect();
+        let text: String = line.iter().map(Seg::text).collect();
         let pad = width.saturating_sub(crate::text::width(&text) + 2);
         page.line(vec![Seg::new(
             format!("  {text}{}", " ".repeat(pad)),
@@ -371,7 +371,7 @@ fn paged_list<T>(
 /// `prefix` then `segs` wrapped inside a box, continuation lines aligned
 /// after the prefix.
 fn hanging(page: &mut Page, prefix: Seg, segs: Vec<Seg>, frame: Frame) {
-    let width = cols(crate::text::width(&prefix.text));
+    let width = cols(crate::text::width(prefix.text()));
     let start = page.lines.len();
     page.wrapped(segs, width, frame);
     if let Some(first) = page.lines.get_mut(start) {
@@ -2743,7 +2743,7 @@ fn highlight(seg: Seg, query: &str) -> Vec<Seg> {
     if q.is_empty() {
         return vec![seg];
     }
-    let text = seg.text.as_bytes();
+    let text = seg.text().as_bytes();
     let mut out = Vec::new();
     let (mut from, mut i) = (0, 0);
     while i + q.len() <= text.len() {
@@ -2751,7 +2751,7 @@ fn highlight(seg: Seg, query: &str) -> Vec<Seg> {
             .get(i..i + q.len())
             .is_some_and(|w| w.eq_ignore_ascii_case(q));
         // A match of a whole UTF-8 string starts and ends on characters.
-        let (Some(before), Some(found)) = (seg.text.get(from..i), seg.text.get(i..i + q.len()))
+        let (Some(before), Some(found)) = (seg.text().get(from..i), seg.text().get(i..i + q.len()))
         else {
             i += 1;
             continue;
@@ -2767,7 +2767,7 @@ fn highlight(seg: Seg, query: &str) -> Vec<Seg> {
             i += 1;
         }
     }
-    match seg.text.get(from..) {
+    match seg.text().get(from..) {
         Some(rest) if !rest.is_empty() => out.push(Seg::new(rest, seg.role.clone())),
         _ => {}
     }
@@ -4460,7 +4460,7 @@ mod tests {
     fn log_markers_show_as_styles() {
         let seg = |line: &str| {
             let s = log_seg(line);
-            (s.text, s.role)
+            (s.text().to_owned(), s.role)
         };
         assert_eq!(seg("##[notice]Deployed"), ("Deployed".into(), Role::Strong));
         assert_eq!(
