@@ -301,11 +301,13 @@ fn unique<'a>(names: impl IntoIterator<Item = &'a String>) -> Vec<String> {
 }
 
 /// What a list in a box leaves out, said after its rows.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Rest {
     All,
     /// This many are only on GitHub.
     OnGitHub(u64),
+    /// This many are only on GitHub, listed at this URL.
+    At(u64, String),
     /// Another page loads; of `total`, if GitHub counted them.
     NextPage {
         total: Option<u64>,
@@ -340,6 +342,21 @@ impl<T> Rows<T> for Capped<T> {
         match self.left_out() {
             0 => Rest::All,
             n => Rest::OnGitHub(n),
+        }
+    }
+}
+
+/// A capped list whose rest GitHub lists at a page of its own (if known).
+struct At<'a, T>(&'a Capped<T>, Option<String>);
+
+impl<T> Rows<T> for At<'_, T> {
+    fn rows(&self) -> &[T] {
+        self.0
+    }
+    fn rest(&self) -> Rest {
+        match (self.0.rest(), &self.1) {
+            (Rest::OnGitHub(n), Some(url)) => Rest::At(n, url.clone()),
+            (rest, _) => rest,
         }
     }
 }
@@ -379,24 +396,25 @@ fn box_rows<T>(page: &mut Page, list: &impl Rows<T>, mut row: impl FnMut(&mut Pa
 
 /// After a list's `shown` rows, what it left out.
 fn rest_row(page: &mut Page, shown: usize, rest: Rest) {
-    match rest {
-        Rest::All => {}
+    let (target, text) = match rest {
+        Rest::All => return,
         Rest::OnGitHub(n) => {
             page.box_rule();
-            empty_row(page, &left_out_text(n, "more", "more"));
+            return empty_row(page, &left_out_text(n, "more", "more"));
         }
+        Rest::At(n, url) => (Link::from(url), format!("… {n} more on GitHub")),
         Rest::NextPage { total } => {
-            page.box_rule();
             let of = total.map_or_else(
                 || format!("{shown} so far"),
                 |total| format!("{shown} of {}", compact(total)),
             );
-            item(page, Link::More, |page, link| {
-                let text = format!("Load more  ({of})");
-                body(page, vec![Seg::linked(text, Role::Link, link)]);
-            });
+            (Link::More, format!("Load more  ({of})"))
         }
-    }
+    };
+    page.box_rule();
+    item(page, target, |page, link| {
+        body(page, vec![Seg::linked(text, Role::Link, link)]);
+    });
 }
 
 /// A list's count: `45`, `20 of 45` when the rest are only on GitHub, or
@@ -405,7 +423,7 @@ fn count_of<T>(list: &impl Rows<T>) -> String {
     let len = list.rows().len();
     match list.rest() {
         Rest::All => len.to_string(),
-        Rest::OnGitHub(n) => format!("{len} of {}", len as u64 + n),
+        Rest::OnGitHub(n) | Rest::At(n, _) => format!("{len} of {}", len as u64 + n),
         Rest::NextPage { total: Some(total) } => compact(total),
         Rest::NextPage { total: None } => format!("{len}+"),
     }
@@ -4172,17 +4190,12 @@ pub fn home(
 ) {
     let pr_box =
         |page: &mut Page, title: &str, prs: &Capped<PrSummary>, query: &str, empty: &str| {
-            let all = link_seg(
-                page,
-                "View all",
-                url::search(SearchKind::Pulls, query),
-                Role::Link,
-            );
+            let prs = At(prs, Some(url::search(SearchKind::Pulls, query)));
             let title = vec![
                 Seg::new(title.to_owned(), Role::Strong),
-                Seg::new(format!("  {}", count_of(prs)), Role::Meta),
+                Seg::new(format!("  {}", count_of(&prs)), Role::Meta),
             ];
-            list_box(page, title, vec![all], prs, empty, |page, p| {
+            list_box(page, title, Vec::new(), &prs, empty, |page, p| {
                 let summary = IssueSummary {
                     repo: p.pr.repo.clone(),
                     number: p.pr.number,
@@ -4219,22 +4232,21 @@ pub fn home(
             "You have no open pull requests.",
         );
     }
-    let all = viewer.map(|login| {
-        link_seg(
-            page,
-            "View all",
-            format!("{}?tab=repositories", url::user(login)),
-            Role::Link,
-        )
-    });
+    let all = viewer.map(|login| format!("{}?tab=repositories", url::user(login)));
     let title = vec![Seg::new("Your repositories", Role::Strong)];
     let loading = |page: &mut Page| loading_box(page, title.clone());
     if let Some(repos) = repos.show_or(page, "your repositories", loading) {
         let empty = "You don't have any repositories yet.";
-        let all = Vec::from_iter(all);
-        list_box(page, title, all, repos, empty, |page, r| {
-            repo_row(page, r, now, true);
-        });
+        list_box(
+            page,
+            title,
+            Vec::new(),
+            &At(repos, all),
+            empty,
+            |page, r| {
+                repo_row(page, r, now, true);
+            },
+        );
     }
 }
 

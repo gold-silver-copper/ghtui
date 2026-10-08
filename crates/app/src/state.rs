@@ -1532,6 +1532,27 @@ pub(crate) mod tests {
         assert_eq!(first.matches("rate limited").count(), 1, "{first}");
     }
 
+    /// Home's boxes show a few of your pull requests; the rest are a
+    /// row that opens them, not the dashboard `o` opens.
+    #[test]
+    fn home_links_the_pull_requests_it_left_out() {
+        let mut state = state();
+        update(
+            &mut state,
+            Msg::Inbox(Ok(Inbox {
+                authored: ghtui_api::model::Capped::new(vec![summary(1)], 31),
+                ..Inbox::default()
+            })),
+        );
+        press(&mut state, "G");
+        assert_eq!(selected_text(&state).trim(), "… 30 more on GitHub");
+        let cmds = press(&mut state, "o");
+        let [Cmd::OpenUrl(url)] = cmds.as_slice() else {
+            panic!("{cmds:?}")
+        };
+        assert!(url.contains("author:@me"), "{url}");
+    }
+
     #[test]
     fn browser_and_copy_use_the_selection_or_the_page() {
         let mut state = with_inbox(1);
