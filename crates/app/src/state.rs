@@ -1994,17 +1994,29 @@ pub(crate) mod tests {
             assert_eq!((again.active_tab(), route(&again)), (0, issue(1)));
         }
 
-        /// A tab opened from a link to a commit's `.diff` by a short SHA
-        /// or a ref reopens on what it showed, not on something else.
+        /// A tab opened from a link to a commit's or a range's diff
+        /// reopens on what it showed: a diff by full ids stays a diff, and
+        /// a short SHA or a ref (which open the commit page) stay pages.
         #[test]
-        fn a_tab_from_a_short_commit_diff_link_reopens_on_it() {
-            for link in [
-                "https://github.com/o/r/commit/abc1234.diff",
-                "https://github.com/o/r/commit/main.diff",
+        fn a_tab_from_a_diff_link_reopens_on_it() {
+            let (a, b) = ("a".repeat(40), "b".repeat(40));
+            for (link, diff) in [
+                (
+                    "https://github.com/o/r/commit/abc1234.diff".to_owned(),
+                    false,
+                ),
+                ("https://github.com/o/r/commit/main.diff".to_owned(), false),
+                (format!("https://github.com/o/r/commit/{a}.diff"), true),
+                (format!("https://github.com/o/r/commit/{a}#files"), true),
+                (
+                    format!("https://github.com/o/r/compare/{a}..{b}#files"),
+                    true,
+                ),
             ] {
                 let mut s = state();
-                s.restore_tabs(&[link.to_owned()]);
+                s.restore_tabs(std::slice::from_ref(&link));
                 let shown = (s.tab_titles(), matches!(s.screen(), Screen::Diff(_)));
+                assert_eq!(shown.1, diff, "{link}");
                 let urls = s.tab_urls();
                 let mut again = state();
                 again.restore_tabs(&urls);
