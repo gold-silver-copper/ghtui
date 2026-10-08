@@ -1943,6 +1943,34 @@ pub(crate) mod tests {
         );
     }
 
+    /// A list that stops short of GitHub's count, as a milestone's past
+    /// search's 1000 does, keeps the count and says what's left out.
+    #[test]
+    fn a_list_cut_short_keeps_its_count() {
+        let mut state = with_repo();
+        let (repo, number) = (repo(), 3);
+        let _ = state.push(Route::Milestone {
+            repo: repo.clone(),
+            number,
+        });
+        let mut milestone = crate::fixtures::milestone();
+        milestone.items.total = 1500;
+        milestone.items.next = None;
+        fetched(
+            &mut state,
+            DataKey::Milestone(repo, number),
+            Data::Milestone(Box::new(milestone)),
+        );
+        let text: String = page(&state)
+            .page
+            .lines
+            .iter()
+            .map(|l| l.text() + "\n")
+            .collect();
+        assert!(text.contains("2 of 1500"), "{text}");
+        assert!(text.contains("1498 more on GitHub"), "{text}");
+    }
+
     /// A profile's repositories sort by name and stars as well as last
     /// update, and `/` there searches that owner's repositories.
     #[test]
