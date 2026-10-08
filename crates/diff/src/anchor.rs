@@ -9,7 +9,7 @@
 //! Comments are anchored by real file line numbers and a side, never by
 //! rendered row positions.
 
-use crate::hunks::{Algorithm, LineKind, Whitespace, align, diff_lines};
+use crate::hunks::{Algorithm, DiffLine, Whitespace, align, diff_lines};
 use crate::text::Text;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -153,10 +153,11 @@ pub fn parse_patch_headers(patch: &str) -> Vec<HunkRange> {
 /// outdated.
 pub fn map_line(old: &Text, new: &Text, line: u32) -> Option<u32> {
     align(old, new, Algorithm::Histogram, Whitespace::Exact)
-        .iter()
-        .find(|l| l.old == Some(line))
-        .filter(|l| l.kind == LineKind::Context)
-        .and_then(|l| l.new)
+        .into_iter()
+        .find_map(|l| match l {
+            DiffLine::Context { old, new } if old == line => Some(new),
+            _ => None,
+        })
 }
 
 #[cfg(test)]

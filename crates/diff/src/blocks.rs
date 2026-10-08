@@ -9,7 +9,7 @@
 use std::ops::Range;
 
 use crate::file::TextDiff;
-use crate::hunks::{DiffLine, LineKind};
+use crate::hunks::DiffLine;
 use crate::sat_u32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,7 +22,7 @@ pub struct ChangeBlock {
 }
 
 pub fn change_blocks(path: &str, text: &TextDiff, lines: &[DiffLine]) -> Vec<ChangeBlock> {
-    let is_context = |l: &DiffLine| l.kind == LineKind::Context;
+    let is_context = |l: &DiffLine| !l.is_change();
     let mut out = Vec::new();
     let mut end = 0;
     for run in lines.chunk_by(|a, b| is_context(a) == is_context(b)) {
@@ -36,8 +36,8 @@ pub fn change_blocks(path: &str, text: &TextDiff, lines: &[DiffLine]) -> Vec<Cha
         let (mut removed, mut added) = (String::new(), String::new());
         let (mut has_removed, mut has_added) = (false, false);
         for l in run {
-            let line = text.text(l);
-            let (sign, squeezed): (&[u8], &mut String) = if l.kind == LineKind::Added {
+            let line = text.line(l.shown());
+            let (sign, squeezed): (&[u8], &mut String) = if let DiffLine::Added(_) = l {
                 has_added = true;
                 (b"\n+", &mut added)
             } else {
@@ -50,10 +50,8 @@ pub fn change_blocks(path: &str, text: &TextDiff, lines: &[DiffLine]) -> Vec<Cha
         }
         // Gaining or losing the final newline is a real change (and has
         // its own marker), not formatting.
-        let touches_end = text.old.missing_final_newline != text.new.missing_final_newline
-            && run.iter().any(|l| {
-                l.old == Some(sat_u32(text.old.len())) || l.new == Some(sat_u32(text.new.len()))
-            });
+        let touches_end = text.final_newline_changed()
+            && run.iter().flat_map(|l| l.lines()).any(|p| text.is_last(p));
         out.push(ChangeBlock {
             entries: sat_u32(start)..sat_u32(end),
             hash: format!("{:016x}", hasher.0),

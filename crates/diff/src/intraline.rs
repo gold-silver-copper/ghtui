@@ -13,7 +13,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::file::TextDiff;
 use crate::highlight::Span;
-use crate::hunks::{DiffLine, LineKind};
+use crate::hunks::DiffLine;
 use crate::sat_u32;
 
 /// Above this share of changed characters, a pair isn't highlighted.
@@ -412,10 +412,9 @@ fn cost(emphasis: &BlockEmphasis, old: &Side<'_>, new: &Side<'_>) -> usize {
 /// only when it emphasises less, so an ordinary edit looks as it always has
 /// and reflowed code shows just what changed.
 pub fn intraline(text: &TextDiff, lines: &[DiffLine]) -> IntraLine {
-    let starts = |run: &[DiffLine], kind| run.first().is_some_and(|l| l.kind == kind);
     // Runs of one kind, with the alignment entry each starts at.
     let mut runs = lines
-        .chunk_by(|a, b| a.kind == b.kind)
+        .chunk_by(|a, b| std::mem::discriminant(a) == std::mem::discriminant(b))
         .scan(0, |end, run| {
             let start = *end;
             *end += run.len();
@@ -424,23 +423,19 @@ pub fn intraline(text: &TextDiff, lines: &[DiffLine]) -> IntraLine {
         .peekable();
     let mut out = IntraLine::new();
     while let Some((removed_start, removed)) = runs.next() {
-        if !starts(removed, LineKind::Removed) {
+        if !matches!(removed.first(), Some(DiffLine::Removed(_))) {
             continue;
         }
-        let Some((added_start, added)) = runs.next_if(|(_, run)| starts(run, LineKind::Added))
+        let Some((added_start, added)) =
+            runs.next_if(|(_, run)| matches!(run.first(), Some(DiffLine::Added(_))))
         else {
             continue;
         };
-        let old: Side<'_> = removed
-            .iter()
-            .filter_map(|l| l.old)
-            .map(|o| (text.old.line_no(o), text.old_spans(o)))
-            .collect();
-        let new: Side<'_> = added
-            .iter()
-            .filter_map(|l| l.new)
-            .map(|n| (text.new.line_no(n), text.new_spans(n)))
-            .collect();
+        let side = |run: &[DiffLine]| -> Side<'_> {
+            let line = |l: &DiffLine| (text.line(l.shown()), text.spans(l.shown()));
+            run.iter().map(line).collect()
+        };
+        let (old, new) = (side(removed), side(added));
         let lines = per_line(&old, &new);
         let best = match whole_block(&old, &new) {
             Some(block) if cost(&block, &old, &new) < cost(&lines, &old, &new) => block,
@@ -522,10 +517,10 @@ mod tests {
         let map = intraline(&text, lines);
         let added = lines
             .iter()
-            .position(|l| l.kind == LineKind::Added)
+            .position(|l| matches!(l, DiffLine::Added(_)))
             .map(sat_u32)
             .unwrap();
-        let new_line = text.new.line(1);
+        let new_line = text.line(lines[added as usize].shown());
         assert_eq!(changed(new_line, &map[&added]), ["gamma"]);
         assert!(similarity("abc def", "abc deg") > 0.5);
         assert!(similarity("fn unrelated() {}", "let total = 1;") < 0.5);

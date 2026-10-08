@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use crate::file::TextDiff;
-use crate::hunks::{DiffLine, LineKind};
+use crate::hunks::DiffLine;
 use crate::sat_u32;
 
 pub const MIN_LINES: usize = 3;
@@ -39,8 +39,8 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
     let mut added: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
     for (fi, (_, text, lines)) in files.iter().enumerate() {
         for (e, line) in lines.iter().enumerate() {
-            let content = key(text.text(line));
-            if line.kind == LineKind::Added && !content.is_empty() {
+            let content = key(text.line(line.shown()));
+            if matches!(line, DiffLine::Added(_)) && !content.is_empty() {
                 added.entry(content).or_default().push((fi, e));
             }
         }
@@ -52,7 +52,8 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
     for (file_index, text, lines) in files {
         let mut e = 0;
         while let Some(line) = lines.get(e) {
-            if line.kind != LineKind::Removed || trivial(text.text(line)) {
+            let content = text.line(line.shown());
+            if !matches!(line, DiffLine::Removed(_)) || trivial(content) {
                 e += 1;
                 continue;
             }
@@ -60,10 +61,7 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
             // added lines, over every candidate start.
             // (target file, its position in `files`, target entry, length)
             let mut best: Option<(usize, usize, usize, usize)> = None;
-            for &(tf, te) in added
-                .get(key(text.text(line)))
-                .map_or(&[][..], Vec::as_slice)
-            {
+            for &(tf, te) in added.get(key(content)).map_or(&[][..], Vec::as_slice) {
                 let (Some((target, ttext, tlines)), Some(used)) =
                     (files.get(tf), used_added.get(tf))
                 else {
@@ -77,10 +75,9 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
                     .skip(e)
                     .zip(tlines.iter().zip(used).skip(te))
                     .take_while(|(l, (t, used))| {
-                        l.kind == LineKind::Removed
-                            && t.kind == LineKind::Added
+                        matches!((l, t), (DiffLine::Removed(_), DiffLine::Added(_)))
                             && !**used
-                            && key(text.text(l)) == key(ttext.text(t))
+                            && key(text.line(l.shown())) == key(ttext.line(t.shown()))
                     })
                     .count();
                 if best.is_none_or(|(.., len)| n > len) {
@@ -89,7 +86,7 @@ pub fn detect_moves(files: &[(usize, &TextDiff, &[DiffLine])]) -> Vec<Move> {
             }
             let chars = |n| -> usize {
                 let run = lines.iter().skip(e).take(n);
-                run.map(|l| key(text.text(l)).len()).sum()
+                run.map(|l| key(text.line(l.shown())).len()).sum()
             };
             let Some((target, tf, te, n)) =
                 best.filter(|&(.., n)| n >= MIN_LINES && chars(n) >= MIN_CHARS)

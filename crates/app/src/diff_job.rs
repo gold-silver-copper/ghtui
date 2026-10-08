@@ -721,7 +721,7 @@ mod tests {
             .iter()
             .filter(|b| !seen.contains(&b.hash))
             .map(|b| {
-                text.text(&text.lines[b.entries.end as usize - 1])
+                text.line(text.lines[b.entries.end as usize - 1].shown())
                     .to_owned()
             })
             .collect();

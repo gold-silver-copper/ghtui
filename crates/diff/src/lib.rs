@@ -17,8 +17,8 @@ pub mod text;
 pub use file::{CONTEXT, Content, FileDiff, TextDiff, counts};
 pub use highlight::{Language, Span, TokenKind, highlight};
 pub use hunks::{
-    Algorithm, DiffLine, Hunk, LineKind, Whitespace, align, counts_before, diff_lines, hunk,
-    segments, segments_by,
+    Algorithm, DiffLine, Hunk, Whitespace, align, diff_lines, hunks, segments, segments_by,
+    side_counts,
 };
 pub use text::{Text, is_binary};
 
