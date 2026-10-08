@@ -1945,7 +1945,7 @@ pub(crate) mod tests {
             Data::Profile(Box::new(crate::fixtures::org_profile())),
         );
         let lines: Vec<String> = page(&state)
-            .page
+            .page()
             .lines
             .iter()
             .map(ghtui_ui::page::PageLine::text)
@@ -1983,7 +1983,7 @@ pub(crate) mod tests {
             Data::Milestone(Box::new(milestone)),
         );
         let text: String = page(&state)
-            .page
+            .page()
             .lines
             .iter()
             .map(|l| l.text() + "\n")
@@ -2259,8 +2259,7 @@ pub(crate) mod tests {
             panic!()
         };
         let page = p.page();
-        let line =
-            |i: usize| -> String { page.lines[i].text() };
+        let line = |i: usize| -> String { page.lines[i].text() };
         assert!(!page.marks.is_empty());
         for &m in &page.marks {
             assert!(line(m).to_lowercase().contains("test"), "{}", line(m));
