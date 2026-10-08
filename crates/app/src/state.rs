@@ -952,7 +952,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
 #[must_use]
 fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        state.quit = true;
+        state.quit = crate::review::may_discard(state, "ctrl-c", "quit and discard");
         return Vec::new();
     }
     match &mut state.overlay {
@@ -4178,6 +4178,25 @@ pub(crate) mod tests {
                     "{:?}",
                     s.notice
                 );
+            }
+
+            #[test]
+            fn typed_text_survives_one_esc_or_ctrl_c() {
+                let (mut s, _) = diff_state(120);
+                to_line(&mut s, "origin");
+                press(&mut s, "cnit<C-c>");
+                assert!(!s.quit);
+                assert!(matches!(&s.overlay, Some(Overlay::Compose(c)) if c.text() == "nit"));
+                press(&mut s, "<C-c>");
+                assert!(s.quit);
+
+                let (mut s, _) = diff_state(120);
+                press(&mut s, "alooks good<Esc>");
+                assert!(
+                    matches!(&s.overlay, Some(Overlay::Submit(d)) if d.input.lines() == ["looks good"])
+                );
+                press(&mut s, "!<Esc><Esc>");
+                assert!(s.overlay.is_none());
             }
 
             #[test]
