@@ -1851,10 +1851,10 @@ impl Conversation<'_> {
         }
         let start = page.lines.len();
         let who = login_seg(page, author, Role::Strong);
-        let when = time::ago_iso(when, self.now);
+        let ago = time::ago_iso(when, self.now);
         let right = Vec::from_iter(chip);
         page.box_top(
-            vec![who, Seg::new(format!(" {verb} {when}"), Role::Meta)],
+            vec![who, Seg::new(format!(" {verb} {ago}"), Role::Meta)],
             right,
         );
         if body.trim().is_empty() {
@@ -1866,6 +1866,7 @@ impl Conversation<'_> {
         // The whole comment is a row: Enter quote-replies, as GitHub's `r` does.
         let quote = page.link(Link::Quote {
             author: author.to_owned(),
+            at: when.to_owned(),
             body: body.to_owned(),
         });
         page.item(start, quote);

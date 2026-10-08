@@ -199,13 +199,9 @@ impl State {
             Link::Branch => self.open_finder(true),
             Link::FindFile => self.open_finder(false),
             Link::State(state) => set_list_state(self, state),
-            Link::Quote { author, body } => {
-                let mut text = format!("> @{author} wrote:\n");
-                for line in body.trim().lines() {
-                    text.push_str(&format!("> {line}\n"));
-                }
-                text.push('\n');
-                comment_with(self, &text)
+            Link::Quote { author, body, .. } => {
+                let quoted: String = body.trim().lines().map(|l| format!("> {l}\n")).collect();
+                comment_with(self, &format!("> @{author} wrote:\n{quoted}\n"))
             }
         }
     }
@@ -298,17 +294,15 @@ impl PageScreen {
         let find = |i: usize| self.page.find(old.target(old.items.get(i)?.link)?, i);
         // A fresh page selects its first visible item again.
         self.selected = self.selected.filter(|_| !self.fresh).and_then(find);
-        // The item starting nearest the top, if nearer than the page's top.
-        let near = |(_, it): &(usize, &Item)| it.start.abs_diff(self.scroll);
-        let items = old.items.iter().enumerate();
-        let top = items.filter(|it| near(it) < self.scroll).min_by_key(near);
-        if let Some((i, it)) = top
-            && let Some(now) = find(i).and_then(|n| self.page.items.get(n))
-        {
-            self.scroll = self
-                .scroll
-                .saturating_add(now.start)
-                .saturating_sub(it.start);
+        // The item still there starting nearest the top, if nearer than
+        // the page's top, keeps its place on screen.
+        let off = |it: &Item| it.start.abs_diff(self.scroll);
+        let mut near: Vec<_> = old.items.iter().enumerate().collect();
+        near.sort_by_key(|&(_, it)| off(it));
+        let mut kept = near.into_iter().filter(|&(_, it)| off(it) < self.scroll);
+        let moved = kept.find_map(|(i, it)| Some((it, self.page.items.get(find(i)?)?)));
+        if let Some((it, now)) = moved {
+            self.scroll = (self.scroll + now.start).saturating_sub(it.start);
         }
         // Following the same content isn't moving away from a jump.
         if self.jumped == Some(Some(before)) {
