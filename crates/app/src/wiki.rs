@@ -76,7 +76,7 @@ pub async fn page(
     .await
     .map_err(|e| failed(&e))?;
     // Offline, the pages fetched before still read.
-    if let Err(err) = wiki.fetch_head(HEAD).await
+    if let Err(err) = wiki.fetch_head(HEAD, &quiet).await
         && !wiki.has(HEAD).await
     {
         return Err(failed(&err));
