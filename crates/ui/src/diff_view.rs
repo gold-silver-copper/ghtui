@@ -388,20 +388,19 @@ impl DiffView<'_> {
     }
 
     /// The two marker cells before line numbers: reviewed, and threads.
-    fn marks(&self, file: &DocFile, entries: &[u32], bg: Bg) -> [Span<'static>; 2] {
+    fn marks(&self, file: &DocFile, row: Row, bg: Bg) -> [Span<'static>; 2] {
         let theme = self.ctx.theme;
-        let reviewed = entries
-            .iter()
-            .filter_map(|e| file.block_of(*e))
+        let reviewed = row
+            .entries()
+            .filter_map(|e| file.block_of(e))
             .any(|b| self.doc.inputs.reviewed.contains(&b.hash));
         let reviewed = if reviewed {
             Span::styled("✓", theme.style(Fg::Success, bg))
         } else {
             Span::styled(" ", theme.body(bg))
         };
-        let anns = entries
-            .iter()
-            .flat_map(|e| file.entry_lines(*e, self.doc.opts.whitespace))
+        let anns = file
+            .shows(row, self.doc.opts.whitespace)
             .flat_map(|pos| file.annotations_at(pos))
             .filter_map(|i| self.doc.annotations().get(*i as usize));
         let (mut any, mut draft, mut open) = (false, false, false);
@@ -464,9 +463,8 @@ impl DiffView<'_> {
         fill(buf, area, theme, bg);
         let mut spans = Vec::new();
         if side != Some(Side::Right) {
-            let entries: Vec<u32> = row.entries().collect();
             spans.push(Span::styled(" ", theme.body(bg)));
-            spans.extend(self.marks(file, &entries, bg));
+            spans.extend(self.marks(file, row, bg));
         }
         let Some((e, line)) = line else {
             Line::from(spans).render(area, buf);

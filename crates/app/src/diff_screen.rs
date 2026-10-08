@@ -412,14 +412,15 @@ fn tree_list_height(tree: Rect) -> usize {
     usize::from(tree.height.saturating_sub(3))
 }
 
-/// Runs `change` on the document, keeping the cursor and the top of the
-/// view on the same source lines.
+/// Runs `change` on the document, keeping the cursor, the top of the view
+/// and the selection on the same lines and threads.
 pub fn preserving_position(screen: &mut DiffScreen, doc: &mut Doc, change: impl FnOnce(&mut Doc)) {
-    let cursor = doc.anchor(screen.cursor);
-    let top = doc.anchor(screen.top);
+    let [cursor, top] = [screen.cursor, screen.top].map(|p| doc.anchor(p));
+    let selection = screen.selection.map(|p| doc.anchor(p));
     change(doc);
     screen.cursor = doc.locate(cursor);
     screen.top = doc.locate(top);
+    screen.selection = selection.map(|a| doc.locate(a));
 }
 
 /// Handles `action` on the diff screen. Those that don't work here say

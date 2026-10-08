@@ -3390,7 +3390,7 @@ pub(crate) mod tests {
         use super::*;
         use crate::diff_screen::DiffScreen;
         use ghtui_api::model::{ViewedFiles, ViewedState};
-        use ghtui_ui::diff_doc::Viewed;
+        use ghtui_ui::diff_doc::{Doc, Pos, Row, Viewed};
 
         /// A diff screen on o/r#7 built from the snapshot fixture, before
         /// its saved review is read.
@@ -3443,6 +3443,65 @@ pub(crate) mod tests {
             assert!(narrow.diffs.values().next().unwrap().doc.opts().split);
             let (wide, _) = diff_state(220);
             assert!(wide.diffs.values().next().unwrap().doc.opts().split);
+        }
+
+        /// Where the cursor is, and the document it's in.
+        fn cursor(s: &State) -> (Pos, &Doc) {
+            let screen = screen(s);
+            (screen.cursor, &s.diffs[&screen.of].doc)
+        }
+
+        /// The cursor on a removed line stays on it when the view turns
+        /// split, though the split row also shows the added line beside it.
+        #[test]
+        fn a_removed_line_keeps_the_cursor_across_split() {
+            let (mut s, _) = diff_state(120);
+            let (_, doc) = cursor(&s);
+            let rows = doc.files()[0].rows().len();
+            let removed = (0..rows)
+                .map(|row| Pos { file: 0, row })
+                .find(|p| doc.row_text(*p) == "/// A point.")
+                .expect("the unified view shows the removed line");
+            if let Screen::Diff(d) = s.screens.last_mut() {
+                d.cursor = removed;
+            }
+            act(&mut s, Action::ToggleSplit);
+            let (pos, doc) = cursor(&s);
+            assert!(doc.opts().split);
+            let text = doc.row_text(pos);
+            assert!(
+                text.lines().any(|l| l == "/// A point."),
+                "the cursor left the removed line for {pos:?}: {text:?}"
+            );
+        }
+
+        /// The cursor on a review thread stays on that thread when the
+        /// rows are rebuilt (here: the view turns split).
+        #[test]
+        fn a_thread_row_keeps_the_cursor_across_a_rebuild() {
+            let (mut s, pr) = diff_state(120);
+            diff_msg(
+                &mut s,
+                &pr,
+                DiffMsg::ThreadsLoaded(Ok(vec![thread("t", Some(14), false, false)])),
+            );
+            let (_, doc) = cursor(&s);
+            let rows = doc.files()[0].rows().len();
+            let on_thread = (0..rows)
+                .map(|row| Pos { file: 0, row })
+                .find(|p| matches!(doc.row(*p), Some(Row::Thread(_))))
+                .expect("the thread has a row");
+            if let Screen::Diff(d) = s.screens.last_mut() {
+                d.cursor = on_thread;
+            }
+            act(&mut s, Action::ToggleSplit);
+            let (pos, doc) = cursor(&s);
+            assert!(doc.opts().split);
+            assert!(
+                matches!(doc.row(pos), Some(Row::Thread(_))),
+                "the cursor left the thread for {pos:?}: {:?}",
+                doc.row(pos)
+            );
         }
 
         #[test]
@@ -4209,7 +4268,7 @@ pub(crate) mod tests {
                 let mapped = JobMsg::Mapped(vec![(NodeId::new("old"), Some(4))]);
                 diff_msg(&mut s, &pr, DiffMsg::Job(job, mapped));
                 let ann = &s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations()[0];
-                assert_eq!((ann.on_line(), ann.moved), (Some(4), true));
+                assert_eq!((ann.on_line().map(|p| p.line), ann.moved), (Some(4), true));
             }
 
             /// Outdated threads are mapped onto each job's head: another

@@ -218,19 +218,6 @@ impl DocFile {
         self.by_line.get(&pos).map_or(&[], Vec::as_slice)
     }
 
-    /// The lines an alignment entry shows: removed lines are on the left,
-    /// added on the right, context on both.
-    pub fn entry_lines(
-        &self,
-        entry: u32,
-        whitespace: Whitespace,
-    ) -> impl Iterator<Item = LinePos> + use<> {
-        let line = self
-            .text()
-            .and_then(|t| t.lines(whitespace).get(entry as usize).copied());
-        line.into_iter().flat_map(DiffLine::lines)
-    }
-
     fn push_annotation(&mut self, index: u32, ann: &Annotation, open: bool, wrap: usize) {
         if !open {
             let first = ann
@@ -295,11 +282,7 @@ impl DocFile {
             opts.wrap
         });
         for (i, ann) in anns {
-            if let Some(line) = ann.on_line() {
-                let pos = LinePos {
-                    side: ann.side,
-                    line,
-                };
+            if let Some(pos) = ann.on_line() {
                 self.by_line.entry(pos).or_default().push(*i);
             }
         }
@@ -465,12 +448,10 @@ impl DocFile {
                 }
             }
             let mut here: Vec<u32> = Vec::new();
-            for e in entries {
-                for pos in self.entry_lines(e, whitespace) {
-                    for i in self.annotations_at(pos) {
-                        if !here.contains(i) {
-                            here.push(*i);
-                        }
+            for pos in self.shows(row, whitespace) {
+                for i in self.annotations_at(pos) {
+                    if !here.contains(i) {
+                        here.push(*i);
                     }
                 }
             }
@@ -490,23 +471,82 @@ impl DocFile {
         max.to_string().len().max(3)
     }
 
-    /// The source line a row shows.
-    fn row_line(&self, row: Row, whitespace: Whitespace) -> Option<LinePos> {
-        let text = self.text()?;
-        let lines = text.lines(whitespace);
-        let entry = |e: u32| lines.get(e as usize).map(|l| l.shown());
+    /// The line a line, gap or fold row stands for: the one a unified row
+    /// shows, a split row's right half unless empty, a fold's first.
+    fn line_of(&self, row: Row, whitespace: Whitespace) -> Option<LinePos> {
+        let entry = match row {
+            Row::Line(e) | Row::Gap { start: e, .. } => e,
+            Row::Split { left, right } => right.or(left)?,
+            Row::Fold { block, .. } => self.blocks.get(block as usize)?.entries.start,
+            _ => return None,
+        };
+        let lines = self.text()?.lines(whitespace);
+        lines.get(entry as usize).map(|l| l.shown())
+    }
+
+    /// The thread a row is part of.
+    fn key_at<'a>(&self, row: Row, anns: &'a [Annotation]) -> Option<&'a AnnotationKey> {
+        let Row::Thread(t) = row else { return None };
+        anns.get(self.thread_row(t)?.ann as usize).map(|a| &a.key)
+    }
+
+    /// What row `i` holds the cursor on, to find again in rebuilt rows.
+    fn held(&self, i: usize, whitespace: Whitespace, anns: &[Annotation]) -> Held {
+        let row = self.rows.get(i).copied().unwrap_or(Row::Header);
+        let top = Held::Top(i.min(1));
         match row {
-            Row::Line(e) | Row::Gap { start: e, .. } => entry(e),
-            Row::Split { left, right } => right.or(left).and_then(entry),
-            Row::Hunk { seg } => {
-                // The first line after the header.
-                let pos = self.rows.iter().position(|r| *r == Row::Hunk { seg })?;
-                self.rows
-                    .get(pos + 1)
-                    .and_then(|r| self.row_line(*r, whitespace))
+            Row::Header | Row::Note(_) => top,
+            Row::Line(_) | Row::Split { .. } | Row::Gap { .. } | Row::Fold { .. } => {
+                self.line_of(row, whitespace).map_or(top, Held::Line)
             }
-            _ => None,
+            Row::Hunk { .. } => (self.rows.iter().skip(i + 1))
+                .find_map(|r| self.line_of(*r, whitespace))
+                .map_or(top, Held::Line),
+            Row::NoNewline | Row::Moved { .. } | Row::Spacer => i
+                .checked_sub(1)
+                .map_or(top, |prev| self.held(prev, whitespace, anns)),
+            Row::Thread(t) => {
+                let Some(ann) = self.thread_row(t).and_then(|r| anns.get(r.ann as usize)) else {
+                    return top;
+                };
+                let same = |r: &&Row| self.key_at(**r, anns) == Some(&ann.key);
+                Held::Thread {
+                    key: ann.key.clone(),
+                    nth: self.rows.iter().take(i).filter(same).count(),
+                    line: ann.on_line(),
+                }
+            }
         }
+    }
+
+    /// Every line a row shows: both halves of a split row, all of a gap or
+    /// a folded block.
+    pub(crate) fn shows(
+        &self,
+        row: Row,
+        whitespace: Whitespace,
+    ) -> impl Iterator<Item = LinePos> + '_ {
+        let one = |e: Option<u32>| e.map_or(0..0, |e| e..e.saturating_add(1));
+        let (a, b) = match row {
+            Row::Line(e) => (one(Some(e)), 0..0),
+            Row::Split { left, right } => (one(left), one(right)),
+            Row::Gap { start, end } => (start..end, 0..0),
+            Row::Fold { block, .. } => {
+                let block = self.blocks.get(block as usize);
+                (block.map_or(0..0, |b| b.entries.clone()), 0..0)
+            }
+            Row::Header
+            | Row::Note(_)
+            | Row::Hunk { .. }
+            | Row::NoNewline
+            | Row::Thread(_)
+            | Row::Moved { .. }
+            | Row::Spacer => (0..0, 0..0),
+        };
+        let lines = self.text().map_or(&[][..], |t| t.lines(whitespace));
+        a.chain(b)
+            .filter_map(|e| lines.get(e as usize))
+            .flat_map(|l| l.lines())
     }
 }
 
@@ -594,12 +634,25 @@ pub struct Pos {
     pub row: usize,
 }
 
+/// What a row holds the cursor on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Held {
+    /// Row `0` or `1` of the file, above its lines.
+    Top(usize),
+    Line(LinePos),
+    /// The `nth` row of a thread, which is on `line`.
+    Thread {
+        key: AnnotationKey,
+        nth: usize,
+        line: Option<LinePos>,
+    },
+}
+
 /// A position described by content, to find again after rows change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Anchor {
-    file: usize,
-    line: Option<LinePos>,
-    row: usize,
+    path: String,
+    held: Held,
 }
 
 /// What a diff shows that isn't the diff; a [`Doc`] takes it only whole.
@@ -887,12 +940,8 @@ impl Doc {
     /// else on the right (in split view, the right half unless empty).
     pub fn line_at(&self, pos: Pos) -> Option<LinePos> {
         let file = self.files.get(pos.file)?;
-        let text = file.text()?;
-        let lines = text.lines(self.opts.whitespace);
-        let at = |e: u32| lines.get(e as usize).map(|l| l.shown());
         match self.row(pos)? {
-            Row::Line(e) => at(e),
-            Row::Split { left, right } => right.or(left).and_then(at),
+            row @ (Row::Line(_) | Row::Split { .. }) => file.line_of(row, self.opts.whitespace),
             _ => None,
         }
     }
@@ -903,9 +952,8 @@ impl Doc {
         let file = self.files.get(pos.file)?;
         match self.row(pos)? {
             Row::Thread(t) => file.thread_row(t).map(|r| r.ann),
-            row => row
-                .entries()
-                .flat_map(|e| file.entry_lines(e, self.opts.whitespace))
+            row => file
+                .shows(row, self.opts.whitespace)
                 .find_map(|pos| file.annotations_at(pos).first().copied()),
         }
     }
@@ -1057,52 +1105,42 @@ impl Doc {
 
     pub fn anchor(&self, pos: Pos) -> Anchor {
         let pos = self.clamp(pos);
-        let line = self
-            .files
-            .get(pos.file)
-            .zip(self.row(pos))
-            .and_then(|(f, r)| f.row_line(r, self.opts.whitespace));
+        let file = self.files.get(pos.file);
+        let held = |f: &DocFile| f.held(pos.row, self.opts.whitespace, self.annotations());
         Anchor {
-            file: pos.file,
-            line,
-            row: pos.row,
+            path: file.map(|f| f.meta.path().to_owned()).unwrap_or_default(),
+            held: file.map_or(Held::Top(0), held),
         }
     }
 
-    /// The row showing the anchored line, or the closest one after it.
+    /// The row holding what the anchor held: its thread, its line, or the
+    /// closest line after it.
     pub fn locate(&self, anchor: Anchor) -> Pos {
-        let Some(file) = self.files.get(anchor.file) else {
+        let mut files = self.files.iter().enumerate();
+        let Some((index, file)) = files.find(|(_, f)| f.meta.path() == anchor.path) else {
             return self.clamp(Pos::default());
         };
-        let Some(line) = anchor.line else {
-            return self.clamp(Pos {
-                file: anchor.file,
-                row: anchor.row.min(1),
-            });
+        let at = |row| self.clamp(Pos { file: index, row });
+        let whitespace = self.opts.whitespace;
+        let rows = file.rows.iter().enumerate();
+        let line = match anchor.held {
+            Held::Top(row) => return at(row),
+            Held::Line(line) => line,
+            Held::Thread { key, nth, line } => {
+                let anns = self.annotations();
+                let on = |(i, r): (usize, &Row)| (file.key_at(*r, anns) == Some(&key)).then_some(i);
+                let rows: Vec<usize> = rows.clone().filter_map(on).collect();
+                match (rows.get(nth).or(rows.first()), line) {
+                    (Some(row), _) => return at(*row),
+                    (None, Some(line)) => line,
+                    (None, None) => return at(1),
+                }
+            }
         };
-        let mut best: Option<(u32, usize)> = None;
-        for (i, row) in file.rows.iter().enumerate() {
-            if matches!(row, Row::Hunk { .. }) {
-                continue;
-            }
-            let Some(at) = file.row_line(*row, self.opts.whitespace) else {
-                continue;
-            };
-            if at == line {
-                return Pos {
-                    file: anchor.file,
-                    row: i,
-                };
-            }
-            if at.side == line.side && at.line > line.line && best.is_none_or(|(b, _)| at.line < b)
-            {
-                best = Some((at.line, i));
-            }
-        }
-        Pos {
-            file: anchor.file,
-            row: best.map_or(0, |(_, i)| i),
-        }
+        let shown = rows.flat_map(|(i, r)| file.shows(*r, whitespace).map(move |p| (p, i)));
+        // A line shows in one row only.
+        let here = shown.filter(|(p, _)| p.side == line.side && p.line >= line.line);
+        at(here.min_by_key(|(p, _)| p.line).map_or(0, |(_, row)| row))
     }
 
     pub fn total_rows(&self) -> usize {
@@ -1280,20 +1318,14 @@ impl Doc {
         let Some(file) = self.files.get(pos.file) else {
             return String::new();
         };
-        let lines = file.text().map(|t| (t, t.lines(self.opts.whitespace)));
-        // The text of entry `e` on `side`, or the side it shows.
-        let entry = |e: u32, side: Option<Side>| {
-            let (text, lines) = lines?;
-            let l = lines.get(e as usize)?;
-            Some(text.line(side.map_or(Some(l.shown()), |s| l.on(s))?))
-        };
-        let half = |e: Option<u32>, side| e.and_then(|e| entry(e, Some(side))).unwrap_or_default();
+        let whitespace = self.opts.whitespace;
+        let text = |p: LinePos| file.text().map_or("", |t| t.line(p));
         match self.row(pos) {
             Some(Row::Header) => file.meta.path().to_owned(),
-            Some(Row::Line(e)) => entry(e, None).unwrap_or_default().to_owned(),
-            Some(Row::Split { left, right }) => {
-                let (left, right) = (half(left, Side::Left), half(right, Side::Right));
-                format!("{left}\n{right}")
+            Some(row @ Row::Line(_)) => file.line_of(row, whitespace).map_or("", text).to_owned(),
+            Some(row @ Row::Split { .. }) => {
+                let halves: Vec<&str> = file.shows(row, whitespace).map(text).collect();
+                halves.join("\n")
             }
             _ => String::new(),
         }
