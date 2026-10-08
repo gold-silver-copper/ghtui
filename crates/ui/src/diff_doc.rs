@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
-use ghtui_diff::anchor::{Commentable, LinePos, RangeSource, Side};
+use ghtui_diff::anchor::{Commentable, LinePos, RangeSource};
 use ghtui_diff::blocks::{ChangeBlock, change_blocks};
 use ghtui_diff::moves::Move;
 use ghtui_diff::{
@@ -558,6 +558,14 @@ fn is_open(thread_open: &HashMap<AnnotationKey, bool>, ann: &Annotation) -> bool
         .unwrap_or_else(|| ann.open_by_default())
 }
 
+/// Either side of the line is its file's last, with no newline after it.
+fn ends_without_newline(text: &TextDiff, line: DiffLine) -> bool {
+    [line.left(), line.right()]
+        .into_iter()
+        .flatten()
+        .any(|p| text.ends_without_newline(p))
+}
+
 /// Rows for entries `range`: one each, or split.
 fn push_lines(
     rows: &mut Vec<Row>,
@@ -571,10 +579,7 @@ fn push_lines(
     }
     for e in range {
         rows.push(Row::Line(idx(e)));
-        if lines
-            .get(e)
-            .is_some_and(|l| text.ends_without_newline(l.shown()))
-        {
+        if lines.get(e).is_some_and(|&l| ends_without_newline(text, l)) {
             rows.push(Row::NoNewline);
         }
     }
@@ -588,10 +593,9 @@ fn push_split_rows(rows: &mut Vec<Row>, text: &TextDiff, lines: &[DiffLine], seg
             .get(e)
             .is_some_and(|l| l.is_change() && l.left().is_some() == removed)
     };
-    // A half ends without a newline when its own side's line does.
-    let ends = |e: Option<u32>, side| {
-        e.and_then(|e| lines.get(e as usize)?.on(side))
-            .is_some_and(|p| text.ends_without_newline(p))
+    let ends = |e: Option<u32>| {
+        e.and_then(|e| lines.get(e as usize))
+            .is_some_and(|&l| ends_without_newline(text, l))
     };
     let mut e = seg.start;
     while e < seg.end {
@@ -599,7 +603,7 @@ fn push_split_rows(rows: &mut Vec<Row>, text: &TextDiff, lines: &[DiffLine], seg
         if !line.is_change() {
             let (left, right) = (Some(idx(e)), Some(idx(e)));
             rows.push(Row::Split { left, right });
-            if ends(left, Side::Left) || ends(right, Side::Right) {
+            if ends(left) {
                 rows.push(Row::NoNewline);
             }
             e += 1;
@@ -618,7 +622,7 @@ fn push_split_rows(rows: &mut Vec<Row>, text: &TextDiff, lines: &[DiffLine], seg
         for i in 0..removed.max(added) {
             let left = (i < removed).then_some(idx(removed_start + i));
             let right = (i < added).then_some(idx(added_start + i));
-            missing_newline |= ends(left, Side::Left) || ends(right, Side::Right);
+            missing_newline |= ends(left) || ends(right);
             rows.push(Row::Split { left, right });
         }
         if missing_newline {
@@ -1384,6 +1388,7 @@ impl Doc {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use ghtui_diff::anchor::Side;
     use ghtui_git::files::{FileStatus, ZERO_OID};
 
     pub(crate) fn changed(path: &str) -> ChangedFile {
@@ -1669,6 +1674,13 @@ pub(crate) mod tests {
         assert_eq!(count(&doc), 1);
         doc.set_options(view(true, Whitespace::Exact));
         assert_eq!(count(&doc), 1);
+        // Ignoring whitespace, the old side's last line is context, and
+        // both views still mark it.
+        let mut doc = one("x.txt", "x\na\nb", "y\na\nb\n");
+        for split in [false, true] {
+            doc.set_options(view(split, Whitespace::Ignore));
+            assert_eq!(count(&doc), 1, "split: {split}");
+        }
     }
 
     #[test]
