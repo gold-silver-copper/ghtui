@@ -1579,6 +1579,7 @@ pub(crate) mod tests {
         );
         press(&mut state, "G");
         assert!(selected_text(&state).starts_with("Load more"));
+        let more_at = page(&state).selected;
         let cmds = press(&mut state, "<Enter>");
         assert_eq!(
             cmds,
@@ -1600,6 +1601,13 @@ pub(crate) mod tests {
             panic!()
         };
         assert_eq!((h.items.len(), h.next.as_deref()), (4, None));
+        // The first commit loaded takes the place of "Load more".
+        let p = page(&state);
+        assert_eq!(p.selected, more_at);
+        assert!(matches!(
+            p.selected_link(),
+            Some(ghtui_ui::page::Link::Url(_))
+        ));
     }
 
     /// A profile's repositories sort by name and stars as well as last
