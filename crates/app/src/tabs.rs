@@ -33,6 +33,15 @@ impl Tab {
     }
 }
 
+/// The link that reopens a screen: the only place a screen's link is
+/// written, for tabs and for `y`.
+pub fn url(screen: &Screen) -> String {
+    match screen {
+        Screen::Page(p) => p.route.url(),
+        Screen::Diff(d) => d.of.url(),
+    }
+}
+
 /// A screen's short name: `#42`, `owner/repo`, `@user`, a file's name.
 pub fn title(screen: &Screen) -> String {
     match screen {
@@ -236,10 +245,6 @@ impl State {
 
     /// The route on screen in each tab, in order, for reopening them.
     pub fn tab_urls(&self) -> Vec<String> {
-        let url = |screen: &Screen| match screen {
-            Screen::Page(p) => p.route.url(),
-            Screen::Diff(d) => d.of.url(),
-        };
         let before = self.before.iter().map(|t| url(t.screens.last()));
         let after = self.after.iter().map(|t| url(t.screens.last()));
         before

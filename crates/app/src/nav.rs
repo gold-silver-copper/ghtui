@@ -1746,13 +1746,11 @@ fn run_menu_row(state: &mut State, row: Option<Doable>) -> Vec<Cmd> {
 impl State {
     /// The link of the selection, or of the page.
     pub fn here_url(&self) -> String {
-        match self.screen() {
-            Screen::Page(p) => p
-                .selected_link()
-                .and_then(Link::url)
-                .map_or_else(|| p.route.url(), str::to_owned),
-            Screen::Diff(d) => d.of.url(),
-        }
+        let link = match self.screen() {
+            Screen::Page(p) => p.selected_link().and_then(Link::url),
+            Screen::Diff(_) => None,
+        };
+        link.map_or_else(|| crate::tabs::url(self.screen()), str::to_owned)
     }
 }
 
