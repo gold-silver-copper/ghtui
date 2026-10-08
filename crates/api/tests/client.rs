@@ -880,7 +880,8 @@ async fn one_revision_compares_with_the_default_branch() {
 }
 
 /// A comparison whose newest commit listed isn't the head its permalink
-/// names, or that lists other than min(total, 250) commits, doesn't add
+/// names, or that lists other than min(total, 250) commits (more as well
+/// as fewer), doesn't add
 /// up, and says so (the 250-commit bug's shape: the oldest page, not the
 /// newest).
 #[tokio::test]
@@ -893,6 +894,7 @@ async fn a_comparison_is_checked_against_itself() {
     let (gh, _) = github(vec![
         Reply::new(200, compare("d2d91f7", 1)),
         Reply::new(200, compare("efd1e47", 20)),
+        Reply::new(200, compare("d2d91f7", 0)),
     ])
     .await;
     let repo = RepoId::new("o", "r");
@@ -906,6 +908,13 @@ async fn a_comparison_is_checked_against_itself() {
     );
     assert!(
         doubts[1].contains("1 commits are listed of 20, not 20"),
+        "{doubts:?}"
+    );
+    // More listed than counted.
+    gh.compare(&repo, "c...d").await.unwrap();
+    let doubts = gh.take_doubts();
+    assert!(
+        doubts[0].contains("1 commits are listed of 0"),
         "{doubts:?}"
     );
 }
