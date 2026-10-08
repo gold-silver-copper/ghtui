@@ -147,7 +147,7 @@ your drafts.
   - Commits, grouped by day.
   - Checks: each check run and status on the head commit, grouped by
     workflow, failures first, with how long it took. A check opens its
-    job. Re-runs stay on GitHub.
+    job.
   - Files changed, which is the diff viewer below.
 - **Commit**: its message, author and committer, signature and parents, its
   Checks, and its Files changed in the diff viewer (against its first
@@ -160,7 +160,10 @@ your drafts.
 - **Actions** shows the checks on the default branch, like a pull request's.
   A **workflow run** lists its jobs, failures first; a **job** lists its
   steps with the failing ones (and the one a link points at) opened to their
-  log, and `/` filters the log. A **workflow** lists its runs.
+  log, scrolled to the first error. `/` searches the log: steps with a match
+  open, matches are picked out, and `n` `p` go from one to the next. A
+  **workflow** lists its runs. A run, a job or a log that's still going is
+  fetched again every few seconds until it ends.
 - **Releases** list a repository's releases; a **release** shows its notes and
   assets. **Tags**, **branches** (with each one's latest commit and pull
   request), **stargazers**, **watchers** and **forks** are lists too.
@@ -202,6 +205,33 @@ link, with an example and what it does, is listed in
 Pages show cached data first and refresh in the background. Pages are at
 most 140 columns wide and centered.
 
+## Acting on GitHub
+
+From a pull request (its page or its Files changed), an issue, a workflow
+run or a job, ghtui can change things on GitHub, not only show them. Each
+action is in the `Space` menu, where an action that can't apply says why
+(already merged, not a draft, still running…), and has a key:
+
+- **Merge** (`M`): a dialog first says what stands in the way (failed or
+  running checks, requested changes, a branch behind its base or in
+  conflict) and offers the merge methods the repository allows, yours
+  first. GitHub decides; if it refuses, its reason shows in the dialog.
+- **Approve** (`A`): the review dialog, set to approve, with an optional
+  comment; `Enter` sends it. Your saved draft comments for that pull
+  request go with it, as from the diff.
+- **Ready for review** (`W`) marks a draft ready. It's sent at once.
+- **Update branch** (`B`), when the branch is behind its base: merge the
+  base into it, or rebase it where the repository allows rebasing.
+- **Close or reopen** (`X`) an issue (as completed or not planned) or a pull
+  request. On a running workflow run or job, `X` cancels the run.
+- **Re-run** (`ctrl-r`) a finished run's failed jobs, all its jobs, or (on a
+  job) that job.
+
+Merging, closing, cancelling and updating a branch always ask first. After
+any change, what's on screen is fetched again, so it shows what GitHub
+has. A refusal shows GitHub's reason; when it's a missing permission, it
+says which one.
+
 ## Authentication
 
 ghtui looks for a token in this order:
@@ -213,6 +243,20 @@ ghtui looks for a token in this order:
 If none of these works, ghtui exits and tells you to run `gh auth login`. The
 token is held only in memory. It's never logged or written to disk, and its
 `Debug` output is redacted.
+
+**Permissions.** Reading needs only read access. Acting on GitHub needs
+write access where you act. With a classic token (`gh auth login` gives
+one), the `repo` scope covers everything. A fine-grained token needs:
+
+| Action                                  | Permission                          |
+| --------------------------------------- | ----------------------------------- |
+| Comment                                 | Issues or Pull requests: write      |
+| Review, approve, mark viewed            | Pull requests: write                |
+| Merge, update a branch                  | Contents: write, Pull requests: write |
+| Close or reopen a pull request, ready for review | Pull requests: write       |
+| Close or reopen an issue                | Issues: write                       |
+| Re-run or cancel a workflow run         | Actions: write                      |
+| Star                                    | Starring: write                     |
 
 **Git.** If you start ghtui inside a clone of the PR's repository (any remote
 pointing at it counts, so fork clones work), diffs are computed there with
@@ -251,6 +295,13 @@ never does something else. Less common actions have no key: they're in the
 | `b`                   | Switch branches or tags                                       |
 | `c`                   | Comment (on a review thread: reply)                           |
 | `s`                   | Star / unstar                                                 |
+| `M`                   | Merge the pull request (asks first, saying what stands in its way) |
+| `A`                   | Approve the pull request (with an optional comment)           |
+| `W`                   | Mark the draft pull request ready for review                  |
+| `B`                   | Update the pull request's branch from its base (asks first)   |
+| `X`                   | Close or reopen the issue or pull request; cancel a running workflow run (asks first) |
+| `ctrl-r`              | Re-run the workflow run, its failed jobs, or the job          |
+| `n` `p`               | In a job's log after a search: next / previous match          |
 | `o`                   | Open on GitHub in the browser                                 |
 | `y`                   | Copy the link                                                 |
 | `i`                   | Follow a link by its letters                                  |
@@ -284,7 +335,7 @@ Reviewing, in a pull request's Files changed tab:
 | `F`         | Show the whole file                                                          |
 | `S`         | Split or unified view                                                        |
 | `t`         | Show or hide the file tree                                                   |
-| `M`         | Jump to the other end of moved code                                          |
+| `J`         | Jump to the other end of moved code                                          |
 | `w`         | Ignore whitespace changes                                                    |
 | `a`         | Submit your review (Comment / Approve / Request changes)                     |
 | `Delete`    | Delete the draft comment                                                     |
@@ -690,10 +741,10 @@ Performance targets, as timing tests
   time out (HTTP 502) for busy accounts.
 - The cache isn't separated per GitHub account. After switching accounts, the
   previous account's cached pages show until the first refresh completes.
-- Actions, wikis, discussions, releases, notifications and code search
-  aren't pages yet; their links open in the browser.
-- Profiles list the 30 most recently pushed (and starred) repositories;
-  profile READMEs and the contribution graph aren't shown.
+- Notifications aren't a page yet; their links open in the browser.
+- Profiles list the 30 most recently pushed (and starred) repositories.
+- Merging doesn't offer auto-merge or merge queues, and a merge commit's
+  message is GitHub's default.
 - "Go to file" lists what GitHub's tree API returns in one request; for very
   large repositories GitHub cuts it short, and ghtui says so.
 - Live search suggestions use GitHub's search, which can take a second or two.
