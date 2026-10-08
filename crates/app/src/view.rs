@@ -78,7 +78,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             };
             PageView {
                 ctx,
-                page: &p.page,
+                page: p.page(),
                 scroll: p.scroll,
                 selected: p.selected,
                 hints: &hints,

@@ -3,6 +3,7 @@
 //! history, the search box with its suggestions, go to file, branches, the
 //! actions menu, and the keys hinted in the status bar.
 
+use std::mem;
 use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -10,14 +11,14 @@ use ghtui_api::browse::{DiscussionsOf, RepoSummary, SearchKind};
 use ghtui_api::model::RepoId;
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::chrome::{self, KeyRow, SuggestRow};
-use ghtui_ui::page::{self, HintLabel, Link};
+use ghtui_ui::page::{self, HintLabel, Item, Link, Page};
 use ghtui_ui::pages::{self, PrTab, ProfileTab};
 use ghtui_ui::{PAD_X, PAD_Y};
 use ratatui::layout::Rect;
 use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
-use crate::browse::{self, Data, DataKey, PageScreen};
+use crate::browse::{self, Data, DataKey};
 use crate::diff_screen::DiffOf;
 use crate::keymap::Action;
 use crate::picker::{fuzzy_score, move_in_list};
@@ -231,6 +232,97 @@ impl State {
 
 // ---- the page on screen -----------------------------------------------------------------
 
+/// The screen of one page: where it is, what's selected, and the page as
+/// last built.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageScreen {
+    pub route: Route,
+    /// The top row shown.
+    pub scroll: usize,
+    /// The selected item, if one is.
+    pub selected: Option<usize>,
+    page: Arc<Page>,
+    /// The data generation, width and density `page` was built for.
+    built: Option<(u64, u16, bool)>,
+    /// Nothing has been selected or scrolled yet: select the first visible
+    /// item once the page has items.
+    fresh: bool,
+    /// Where its [`Page::jump`] or anchor last left the scroll and the
+    /// selection: followed while both stay put, `Some(None)` once moved.
+    jumped: Option<Option<(usize, Option<usize>)>>,
+    /// The `#fragment` of the link that opened it: a comment to scroll to.
+    pub anchor: Option<String>,
+}
+
+impl PageScreen {
+    pub fn new(route: Route, anchor: Option<String>) -> Self {
+        // Lists start on their first row; reading pages (issues, pull
+        // requests, files) start with nothing selected.
+        let list = !matches!(
+            route,
+            Route::Issue { .. }
+                | Route::Blob { .. }
+                | Route::Blame { .. }
+                | Route::Commit { .. }
+                | Route::Release { .. }
+                | Route::Discussion { .. }
+                | Route::Job { .. }
+                | Route::Pr {
+                    tab: PrTab::Conversation,
+                    ..
+                }
+        );
+        Self {
+            route,
+            scroll: 0,
+            selected: None,
+            page: Arc::new(Page::default()),
+            built: None,
+            fresh: list,
+            jumped: None,
+            anchor,
+        }
+    }
+
+    /// The page as last built.
+    pub fn page(&self) -> &Page {
+        &self.page
+    }
+
+    /// Shows a new build of the page, keeping the selection and the view
+    /// on the same items.
+    fn show(&mut self, page: Page, built: (u64, u16, bool)) {
+        let old = mem::replace(&mut self.page, Arc::new(page));
+        self.built = Some(built);
+        let before = (self.scroll, self.selected);
+        let find = |i: usize| self.page.find(old.target(old.items.get(i)?.link)?, i);
+        // A fresh page selects its first visible item again.
+        self.selected = self.selected.filter(|_| !self.fresh).and_then(find);
+        // The item starting nearest the top, if nearer than the page's top.
+        let near = |(_, it): &(usize, &Item)| it.start.abs_diff(self.scroll);
+        let items = old.items.iter().enumerate();
+        let top = items.filter(|it| near(it) < self.scroll).min_by_key(near);
+        if let Some((i, it)) = top
+            && let Some(now) = find(i).and_then(|n| self.page.items.get(n))
+        {
+            self.scroll = self
+                .scroll
+                .saturating_add(now.start)
+                .saturating_sub(it.start);
+        }
+        // Following the same content isn't moving away from a jump.
+        if self.jumped == Some(Some(before)) {
+            self.jumped = Some(Some((self.scroll, self.selected)));
+        }
+    }
+
+    /// The selected item's link.
+    pub fn selected_link(&self) -> Option<&Link> {
+        let item = self.page.items.get(self.selected?)?;
+        self.page.target(item.link)
+    }
+}
+
 impl State {
     /// Where pages draw: the content area below a row of breathing room.
     pub fn page_area(&self) -> Rect {
@@ -259,18 +351,17 @@ impl State {
     /// keeps its scroll and selection valid.
     pub fn sync_page(&mut self) {
         let width = self.page_width();
-        let built = Some((self.data_gen, width, self.compact()));
+        let built = (self.data_gen, width, self.compact());
         let height = self.page_height();
         let rebuild = match self.screen() {
-            Screen::Page(p) if p.built != built => Some(p.route.clone()),
+            Screen::Page(p) if p.built != Some(built) => Some(p.route.clone()),
             Screen::Page(_) => None,
             Screen::Diff(_) => return,
         };
         let page = rebuild.map(|route| self.build_page(&route, width, (self.clock)()));
         if let Screen::Page(p) = self.screen_mut() {
             if let Some(page) = page {
-                p.page = Arc::new(page);
-                p.built = built;
+                p.show(page, built);
             }
             settle(p, height);
         }
@@ -284,7 +375,7 @@ fn visible(p: &PageScreen, item: usize, height: usize) -> bool {
         .is_some_and(|i| i.start < p.scroll + height && i.end > p.scroll)
 }
 
-/// Keeps a page's scroll in range and its selection on an item; a fresh
+/// Keeps a page's scroll in range and follows its jump or anchor; a fresh
 /// page selects its first visible item.
 fn settle(p: &mut PageScreen, height: usize) {
     let anchor = p
@@ -300,9 +391,6 @@ fn settle(p: &mut PageScreen, height: usize) {
         p.scroll = jump.saturating_sub(MARGIN);
     }
     p.scroll = p.scroll.min(max);
-    if p.selected.is_some_and(|s| s >= p.page.items.len()) {
-        p.selected = None;
-    }
     if p.fresh && p.selected.is_none() {
         p.selected = (0..p.page.items.len()).find(|&i| visible(p, i, height));
     }

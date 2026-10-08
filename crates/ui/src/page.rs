@@ -236,6 +236,14 @@ impl Page {
         self.links.get(i as usize)
     }
 
+    /// The item following `link` nearest item `near`.
+    pub fn find(&self, link: &Link, near: usize) -> Option<usize> {
+        let id = self.link_ids.get(link)?;
+        let items = self.items.iter().enumerate();
+        let found = items.filter(|(_, it)| it.link == *id).map(|(i, _)| i);
+        found.min_by_key(|i| i.abs_diff(near))
+    }
+
     pub fn push(&mut self, line: PageLine) {
         self.lines.push(line);
     }

@@ -18,12 +18,12 @@ use ghtui_ui::diff_doc::Viewed;
 use ghtui_ui::{Ctx, Fetched, Icons};
 use ratatui_textarea::TextArea;
 
-use crate::browse::{self, Data, DataKey, Need, PageScreen};
+use crate::browse::{self, Data, DataKey, Need};
 use crate::diff_job::{JobId, JobMsg};
 use crate::diff_screen::{self, DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
 use crate::join;
 use crate::keymap::{Action, Key, Keymap, Scope};
-use crate::nav::{self, Hints, Menu, SearchBox, Visit};
+use crate::nav::{self, Hints, Menu, PageScreen, SearchBox, Visit};
 use crate::picker::{self, Picker};
 use crate::review::{
     Compose, ComposeTarget, EditPurpose, SubmitDialog, SubmitOutcome, on_compose_key, on_edited,
@@ -1205,8 +1205,8 @@ pub(crate) mod tests {
     /// The text of the selected row's first line.
     fn selected_text(state: &State) -> String {
         let p = page(state);
-        let item = p.page.items[p.selected.expect("a selection")];
-        p.page.lines[item.start].text()
+        let item = p.page().items[p.selected.expect("a selection")];
+        p.page().lines[item.start].text()
     }
 
     /// Fetching `key`, the cached copy first.
@@ -1270,8 +1270,8 @@ pub(crate) mod tests {
     fn find(state: &State, text: &str) -> (u16, u16) {
         let p = page(state);
         let area = state.page_area();
-        let cols = ghtui_ui::page::columns(&p.page, area);
-        for (row, line) in p.page.lines.iter().enumerate().skip(p.scroll) {
+        let cols = ghtui_ui::page::columns(p.page(), area);
+        for (row, line) in p.page().lines.iter().enumerate().skip(p.scroll) {
             let at = line.text().find(text);
             if let Some(at) = at {
                 let x = cols.main_x + 2 + line.indent + u16::try_from(at).unwrap();
@@ -1309,7 +1309,7 @@ pub(crate) mod tests {
             Msg::Pr(pr.clone(), Box::new(Err(ApiError::Network("down".into())))),
         );
         let text: Vec<String> = page(&state)
-            .page
+            .page()
             .lines
             .iter()
             .map(ghtui_ui::page::PageLine::text)
@@ -1362,7 +1362,7 @@ pub(crate) mod tests {
         assert_eq!(p.selected, None, "nothing selected while reading");
         press(&mut state, "G");
         let p = page(&state);
-        assert_eq!(p.scroll, p.page.height() - state.page_height());
+        assert_eq!(p.scroll, p.page().height() - state.page_height());
         // Back up: rows get selected again once they're near.
         for _ in 0..20 {
             press(&mut state, "k");
@@ -1458,7 +1458,7 @@ pub(crate) mod tests {
                 cached_at: Some(0),
             },
         );
-        assert!(page(&state).page.lines[0].text().contains("The Octocat"));
+        assert!(page(&state).page().lines[0].text().contains("The Octocat"));
         let busy = state.busy().unwrap_or_default();
         assert!(busy.starts_with("Refreshing · cached "), "{busy}");
     }
@@ -1469,7 +1469,7 @@ pub(crate) mod tests {
         let _ = state.load_visible(true);
         update(&mut state, Msg::Inbox(Err(ApiError::RateLimited(30))));
         assert_eq!(state.inbox.data.as_ref().unwrap().authored.len(), 2);
-        let first = page(&state).page.lines[0].text();
+        let first = page(&state).page().lines[0].text();
         assert!(
             first.contains("Couldn't refresh") && first.contains("rate limited"),
             "{first}"
@@ -1489,7 +1489,7 @@ pub(crate) mod tests {
         let _ = state.load_visible(true);
         update(&mut state, Msg::Inbox(Err(ApiError::RateLimited(30))));
         update(&mut state, fetched(Err(ApiError::RateLimited(30))));
-        let first = page(&state).page.lines[0].text();
+        let first = page(&state).page().lines[0].text();
         assert_eq!(first.matches("rate limited").count(), 1, "{first}");
     }
 
@@ -1834,7 +1834,7 @@ pub(crate) mod tests {
             panic!()
         };
         let text: Vec<String> = p
-            .page
+            .page()
             .lines
             .iter()
             .map(|l| l.segs.iter().map(|s| s.text.as_str()).collect())
@@ -1905,7 +1905,7 @@ pub(crate) mod tests {
         let Screen::Page(p) = s.screen() else {
             panic!()
         };
-        let line = p.page.anchors["discussioncomment-18765100"];
+        let line = p.page().anchors["discussioncomment-18765100"];
         assert!(
             p.scroll > 0 && p.scroll <= line && line < p.scroll + 10,
             "{} vs {line}",
@@ -1925,7 +1925,7 @@ pub(crate) mod tests {
         let Screen::Page(p) = s.screen() else {
             panic!()
         };
-        assert!(p.page.anchors.contains_key("issuecomment-1000001"));
+        assert!(p.page().anchors.contains_key("issuecomment-1000001"));
         assert!(p.scroll > 0);
     }
 
@@ -1953,28 +1953,41 @@ pub(crate) mod tests {
                 },
             );
             moved(&mut s);
-            let at = page(&s).scroll;
+            let shown = |s: &State| {
+                let p = page(s);
+                let lines = p.page().lines.iter().skip(p.scroll).take(10);
+                (
+                    p.scroll,
+                    lines
+                        .map(ghtui_ui::page::PageLine::text)
+                        .collect::<Vec<_>>(),
+                )
+            };
+            let at = shown(&s);
             let mut issue = crate::fixtures::issue();
             issue.body.push_str(&"\n\nMore.".repeat(20));
             fetched(&mut s, key, Data::Issue(Some(Box::new(issue))));
-            let p = page(&s);
-            (at, p.scroll, p.page.anchors["issuecomment-1000001"])
+            (
+                at,
+                shown(&s),
+                page(&s).page().anchors["issuecomment-1000001"],
+            )
         };
-        let (before, after, line) = open(&|_| {});
+        let ((before, _), (after, _), line) = open(&|_| {});
         assert!(after > before, "{before} -> {after}");
         assert!(after <= line && line < after + 10, "{after} vs {line}");
-        let (before, after, _) = open(&|s| drop(press(s, "g")));
+        let ((before, _), (after, _), _) = open(&|s| drop(press(s, "g")));
         assert_eq!(after, before, "yanked back after scrolling");
         // Selecting an item on screen, as j can, is moving too.
         let select = |s: &mut State| {
             let Screen::Page(p) = s.screen_mut() else {
                 panic!("not on a page")
             };
-            let shown = p.page.items.iter().position(|i| i.end > p.scroll);
-            assert!(shown.is_some_and(|i| p.page.items[i].start < p.scroll + 10));
+            let shown = p.page().items.iter().position(|i| i.end > p.scroll);
+            assert!(shown.is_some_and(|i| p.page().items[i].start < p.scroll + 10));
             p.selected = shown;
         };
-        let (before, after, _) = open(&select);
+        let ((_, before), (_, after), _) = open(&select);
         assert_eq!(after, before, "yanked back after selecting");
     }
     /// People and repository lists load more like any list.
@@ -2935,6 +2948,42 @@ pub(crate) mod tests {
             matches!(&cmds[..], [Cmd::Copy(t)] if t == "one"),
             "{cmds:?}"
         );
+    }
+
+    /// The fresh copy of a cached list, with a new issue on top, keeps the
+    /// selection on the issue you picked.
+    #[test]
+    fn a_fresh_copy_keeps_the_selected_issue() {
+        let mut state = state();
+        let _ = state.push(issues("is:open"));
+        let (kind, query) = route(&state).search().unwrap();
+        let key = DataKey::Search(kind, query);
+        let list = |numbers: &[u64]| {
+            Data::Search(Box::new(SearchResults::Issues(
+                ghtui_api::browse::Results {
+                    total: numbers.len() as u64,
+                    items: numbers
+                        .iter()
+                        .map(|&n| crate::fixtures::issue_summary(n, false, IssueState::Open))
+                        .collect(),
+                    next: None,
+                },
+            )))
+        };
+        update(
+            &mut state,
+            Msg::Fetched {
+                key: key.clone(),
+                result: Ok(list(&[14, 11, 8])),
+                cached_at: Some(0),
+            },
+        );
+        while !selected_text(&state).contains("Issue 11") {
+            press(&mut state, "<Down>");
+        }
+        fetched(&mut state, key, list(&[20, 14, 11, 8]));
+        let text = selected_text(&state);
+        assert!(text.contains("Issue 11"), "{text}");
     }
 
     #[test]

@@ -8,8 +8,8 @@
 use ghtui_ui::page::Link;
 use ghtui_ui::text::short_sha;
 
-use crate::browse::PageScreen;
 use crate::diff_screen::{DiffOf, DiffPrefs, DiffScreen};
+use crate::nav::PageScreen;
 use crate::route::{Route, Target};
 use crate::state::{Cmd, Screen, Screens, State};
 
