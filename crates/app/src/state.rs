@@ -273,28 +273,22 @@ pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦"
 #[derive(Debug)]
 pub struct Remote<T> {
     pub data: Option<T>,
+    pub loading: bool,
     pub error: Option<String>,
     /// When `data` was fetched, while it's a copy from the cache.
     pub cached_at: Option<u64>,
-    asked: Option<Asked>,
-}
-
-/// What a Remote is waiting on: one thing at a time, so a refresh replaces a
-/// next page asked for before it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Asked {
-    Fetch,
-    /// The next page, after this cursor.
-    More(String),
+    /// The cursor a next page was asked after, while that page is on its way.
+    more: Option<String>,
 }
 
 impl<T> Default for Remote<T> {
     fn default() -> Self {
         Self {
             data: None,
+            loading: false,
             error: None,
             cached_at: None,
-            asked: None,
+            more: None,
         }
     }
 }
@@ -307,7 +301,7 @@ impl<T> Remote<T> {
     )]
     pub fn fetched<'a>(remote: Option<&'a Self>, retry: &'a str) -> Fetched<'a, T> {
         let (data, loading, error) = remote.map_or((None, false, None), |r| {
-            (r.data.as_ref(), r.loading(), r.error.as_deref())
+            (r.data.as_ref(), r.loading, r.error.as_deref())
         });
         Fetched::new_unchecked(data, loading, error, retry)
     }
@@ -324,38 +318,33 @@ impl<T> Remote<T> {
     pub fn status(&self) -> Remote<()> {
         Remote {
             data: self.data.as_ref().map(|_| ()),
+            loading: self.loading,
             error: self.error.clone(),
             cached_at: self.cached_at,
-            asked: self.asked.clone(),
+            more: self.more.clone(),
         }
     }
 
-    pub fn loading(&self) -> bool {
-        self.asked == Some(Asked::Fetch)
-    }
-
-    pub fn loading_more(&self) -> bool {
-        matches!(self.asked, Some(Asked::More(_)))
-    }
-
-    /// Starts a fetch, unless one is running or (without `force`) the
-    /// data is good: fetched this session (a disk-cache copy never is).
+    /// Starts a fetch, unless one is running or (without `force`) the data
+    /// is good: fetched here, not from the disk cache.
     fn begin(&mut self, force: bool) -> bool {
         let good = self.data.is_some() && self.error.is_none() && self.cached_at.is_none();
-        if self.loading() || (!force && good) {
+        if self.loading || (!force && good) {
             return false;
         }
-        self.asked = Some(Asked::Fetch);
+        self.loading = true;
         true
     }
 
     pub(crate) fn finish(&mut self, result: Result<T, ApiError>) {
-        self.asked = None;
+        self.loading = false;
         match result {
             Ok(data) => {
                 self.data = Some(data);
                 self.error = None;
                 self.cached_at = None;
+                // A next page asked for before this belongs to the old list.
+                self.more = None;
             }
             Err(err) => self.error = Some(err.to_string()),
         }
@@ -366,23 +355,9 @@ impl Remote<Data> {
     /// Asks for the next page, unless something is on its way or there is
     /// none: the cursor to ask after.
     pub(crate) fn ask_more(&mut self) -> Option<String> {
-        let data = self.data.as_ref().filter(|_| self.asked.is_none())?;
-        let after = data.next_cursor()?.to_owned();
-        self.asked = Some(Asked::More(after.clone()));
-        Some(after)
-    }
-
-    /// Appends the next page, if it's the one still asked for.
-    fn answer_more(&mut self, after: String, more: Result<Data, ApiError>) -> Result<(), ApiError> {
-        if self.asked != Some(Asked::More(after)) {
-            return Ok(());
-        }
-        self.asked = None;
-        let more = more?;
-        if let Some(data) = &mut self.data {
-            data.append(more);
-        }
-        Ok(())
+        let data = (self.data.as_ref()).filter(|_| !self.loading && self.more.is_none())?;
+        self.more = Some(data.next_cursor()?.to_owned());
+        self.more.clone()
     }
 }
 
@@ -718,7 +693,7 @@ impl State {
             Screen::Diff(screen)
                 if !self.diffs.contains_key(&screen.of)
                     && (screen.of.pr())
-                        .is_none_or(|pr| self.prs.get(pr).is_none_or(|r| !r.loading())) =>
+                        .is_none_or(|pr| self.prs.get(pr).is_none_or(|r| !r.loading)) =>
             {
                 self.start_diff(&screen.of.clone())
             }
@@ -735,7 +710,9 @@ impl State {
     /// What's loading on the visible screen, for the status bar.
     pub fn busy(&self) -> Option<String> {
         match self.screen() {
-            Screen::Page(p) if self.page_loading_more(&p.route) => Some("Loading more".into()),
+            Screen::Page(p) if self.fetches(&p.route).any(|r| r.more.is_some()) => {
+                Some("Loading more".into())
+            }
             Screen::Page(p) if self.page_loading(&p.route) => {
                 // Cached data on screen says how old it is.
                 Some(match self.page_cached_at(&p.route) {
@@ -870,10 +847,17 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             }
         }
         Msg::FetchedMore(key, after, result) => {
-            if let Some(r) = state.data.get_mut(&key)
-                && let Err(err) = r.answer_more(after, result)
-            {
-                state.error(format!("Couldn't load more: {err}"));
+            let Some(remote) = (state.data.get_mut(&key)).filter(|r| r.more == Some(after)) else {
+                return Vec::new();
+            };
+            remote.more = None;
+            match result {
+                Ok(more) => {
+                    if let Some(data) = &mut remote.data {
+                        data.append(more);
+                    }
+                }
+                Err(err) => state.error(format!("Couldn't load more: {err}")),
             }
         }
         Msg::Commented(key, Ok(())) => {
@@ -1697,6 +1681,43 @@ pub(crate) mod tests {
             ["c0", "c1", "d0", "d1"],
             "the refreshed list then its own next page"
         );
+    }
+
+    /// A refresh that fails leaves the list as it was, so the next page
+    /// asked for before it still belongs there.
+    #[test]
+    fn a_next_page_survives_a_failed_refresh() {
+        let mut state = with_repo();
+        let url = format!("https://github.com/{}/commits/main/src", repo());
+        let Target::Page(route) = Target::from_url(&url) else {
+            panic!("{url}");
+        };
+        let key = DataKey::History(repo(), "main".into(), "src".into());
+        let _ = state.go(Target::Page(route));
+        let page = |next: Option<&str>| Data::History(Box::new(crate::fixtures::history(next)));
+        fetched(&mut state, key.clone(), page(Some("h1")));
+        press(&mut state, "G");
+        press(&mut state, "<Enter>");
+        let _ = press(&mut state, "r");
+        let result = Err(ApiError::Network("offline".into()));
+        let cached_at = None;
+        update(
+            &mut state,
+            Msg::Fetched {
+                key: key.clone(),
+                result,
+                cached_at,
+            },
+        );
+        update(
+            &mut state,
+            Msg::FetchedMore(key.clone(), "h1".into(), Ok(page(None))),
+        );
+        let Some(Data::History(h)) = state.get(&key) else {
+            panic!()
+        };
+        // The same commits, so only the cursor moves.
+        assert_eq!(h.next, None, "the next page was dropped");
     }
 
     /// Live suggestions answer in any order: an answer for an older input

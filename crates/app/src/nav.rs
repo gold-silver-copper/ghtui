@@ -211,10 +211,10 @@ impl State {
         let Some(key) = self.route().and_then(browse::paged) else {
             return Vec::new();
         };
-        let Some(after) = self.data.get_mut(&key).and_then(Remote::ask_more) else {
-            return Vec::new();
-        };
-        vec![Cmd::Api(Api::FetchMore { key, after })]
+        let after = self.data.get_mut(&key).and_then(Remote::ask_more);
+        after.map_or_else(Vec::new, |after| {
+            vec![Cmd::Api(Api::FetchMore { key, after })]
+        })
     }
 }
 
@@ -822,8 +822,7 @@ impl SearchBox {
     /// Live suggestions for `q`, kept only if it's still what's typed.
     pub(crate) fn suggested(&mut self, q: String, repos: Vec<RepoSummary>) {
         if q == self.query() {
-            self.remote = repos;
-            self.remote_for = q;
+            (self.remote, self.remote_for) = (repos, q);
         }
     }
 }

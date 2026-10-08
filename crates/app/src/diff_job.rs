@@ -50,7 +50,6 @@ pub enum JobMsg {
     Failed(Failure),
     Moves(Vec<ghtui_diff::moves::Move>),
     Mapped(Vec<(ghtui_api::model::NodeId, Option<u32>)>),
-    /// Block hashes of the PR's diff at an old head, for "since my last review".
     Since(String, Result<HashSet<String>, Failure>),
 }
 
