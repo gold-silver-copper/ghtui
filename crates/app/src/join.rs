@@ -86,7 +86,7 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
     // that's fresh: a cached copy may be from before a push).
     if let Some(remote) = state.prs.get(pr)
         && let Some(detail) = remote.data.as_ref()
-        && !remote.loading
+        && !remote.loading()
         && remote.cached_at.is_none()
         && claim(&mut diff.joins.checked, (diff.job, detail.head_oid.clone()))
     {

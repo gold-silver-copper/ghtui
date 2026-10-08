@@ -211,17 +211,9 @@ impl State {
         let Some(key) = self.route().and_then(browse::paged) else {
             return Vec::new();
         };
-        let Some(remote) = self.data.get_mut(&key) else {
+        let Some(after) = self.data.get_mut(&key).and_then(Remote::ask_more) else {
             return Vec::new();
         };
-        let after = match &remote.data {
-            Some(data) if !remote.loading && !remote.loading_more => data.next_cursor(),
-            _ => None,
-        };
-        let Some(after) = after.map(str::to_owned) else {
-            return Vec::new();
-        };
-        remote.loading_more = true;
         vec![Cmd::Api(Api::FetchMore { key, after })]
     }
 }

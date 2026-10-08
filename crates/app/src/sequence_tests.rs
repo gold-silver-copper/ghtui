@@ -26,7 +26,7 @@ use crate::browse::{Data, DataKey};
 use crate::fixtures::{self, press};
 use crate::keymap::Keymap;
 use crate::route::Route;
-use crate::state::{Msg, Screen, State, update};
+use crate::state::{Msg, Remote, Screen, State, update};
 
 /// Totals at or above this mark fresh data; below, cached copies.
 const FRESH: u64 = 1_000_000;
@@ -272,19 +272,14 @@ fn apply(state: &mut State, model: &mut Model, event: &Event) {
             let route = &routes[*route];
             let key = key_of(route);
             // Asking for more first, as scrolling to the end does.
-            if let Some(remote) = state.data.get_mut(&key)
-                && remote
-                    .data
-                    .as_ref()
-                    .is_some_and(|d| d.next_cursor().is_some())
-            {
-                remote.loading_more = true;
-            }
+            let Some(after) = state.data.get_mut(&key).and_then(Remote::ask_more) else {
+                return;
+            };
             let end = model.ends.get(&key).copied().unwrap_or(0);
             let start = end.saturating_sub(u64::from(*overlap));
             let data = page(route, start, *len, FRESH + model.counter, *next);
             model.ends.insert(key.clone(), start + u64::from(*len));
-            update(state, Msg::FetchedMore(key, Ok(data)));
+            update(state, Msg::FetchedMore(key, after, Ok(data)));
         }
         Event::Fail(route) => {
             let key = key_of(&routes[*route]);
@@ -383,7 +378,7 @@ proptest! {
 fn joined_diff_work_is_the_same_in_every_arrival_order() {
     use crate::diff_job::{DiffFiles, JobMsg};
     use crate::diff_screen::DiffOf;
-    use crate::state::{Cmd, DiffMsg, Git, Remote};
+    use crate::state::{Cmd, DiffMsg, Git};
     use ghtui_api::model::PrRef;
     use ghtui_git::{Oid, repo::PrRefs};
 
