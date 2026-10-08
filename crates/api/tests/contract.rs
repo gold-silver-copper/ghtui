@@ -44,8 +44,10 @@ async fn rest(gh: &GitHub, path: &str) -> Value {
     serde_json::from_str(&gh.rest_get(path).await.unwrap()).unwrap()
 }
 
-async fn graphql(gh: &GitHub, query: &str) -> Value {
-    gh.graphql_json(query, json!({})).await.unwrap()
+async fn graphql(gh: &GitHub, query: &str, at: &str) -> Value {
+    gh.graphql_json(query, json!({}), "contract", at)
+        .await
+        .unwrap()
 }
 
 fn str_at<'a>(v: &'a Value, pointer: &str) -> &'a str {
@@ -95,8 +97,8 @@ async fn contract_branches_by_commit_date_are_by_name_backwards() {
             let query = format!(
                 r#"query {{ repository(owner: "cli", name: "cli") {{ refs(refPrefix: "refs/heads/", first: 30, orderBy: {{{order}}}) {{ nodes {{ name }} }} }} }}"#
             );
-            let data = graphql(&gh, &query).await;
-            data["repository"]["refs"]["nodes"]
+            let data = graphql(&gh, &query, "/repository/refs").await;
+            data["nodes"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -122,9 +124,10 @@ async fn contract_a_branch_has_other_repositories_prs() {
     let data = graphql(
         &gh,
         r#"query { repository(owner: "cli", name: "cli") { ref(qualifiedName: "refs/heads/trunk") { associatedPullRequests(first: 5, orderBy: {field: CREATED_AT, direction: ASC}) { nodes { repository { nameWithOwner } } } } } }"#,
+        "/repository/ref/associatedPullRequests/nodes",
     )
     .await;
-    let repos: Vec<&str> = data["repository"]["ref"]["associatedPullRequests"]["nodes"]
+    let repos: Vec<&str> = data
         .as_array()
         .unwrap()
         .iter()
@@ -142,9 +145,10 @@ async fn contract_a_long_prs_last_commit_is_its_head() {
     let data = graphql(
         &gh,
         r#"query { repository(owner: "rust-lang", name: "rust") { pullRequest(number: 160692) { headRefOid commits(last: 1) { totalCount nodes { commit { oid } } } } } }"#,
+        "/repository/pullRequest",
     )
     .await;
-    let pr = &data["repository"]["pullRequest"];
+    let pr = &data;
     assert!(pr["commits"]["totalCount"].as_u64().unwrap() > 200);
     let head = "9e7db05c303aa06c15baa8d9c6c9b98adcaae23d";
     assert_eq!(str_at(pr, "/headRefOid"), head);
@@ -166,9 +170,10 @@ async fn contract_a_search_stops_at_1000() {
     let data = graphql(
         &gh,
         r#"query { search(type: ISSUE, query: "repo:rust-lang/rust is:issue is:closed", first: 100, after: "Y3Vyc29yOjkwMA==") { issueCount pageInfo { hasNextPage } nodes { __typename } } }"#,
+        "/search",
     )
     .await;
-    let search = &data["search"];
+    let search = &data;
     assert!(search["issueCount"].as_u64().unwrap() > 1000);
     assert_eq!(search["nodes"].as_array().unwrap().len(), 100);
     assert_eq!(search["pageInfo"]["hasNextPage"], false);
@@ -211,9 +216,10 @@ async fn contract_a_merged_prs_diff_is_from_its_base_oid() {
     let data = graphql(
         &gh,
         r#"query { repository(owner: "cli", name: "cli") { pullRequest(number: 14592) { mergeCommit { parents { totalCount } } baseRefName baseRefOid headRefOid changedFiles } } }"#,
+        "/repository/pullRequest",
     )
     .await;
-    let pr = &data["repository"]["pullRequest"];
+    let pr = &data;
     assert_eq!(pr["mergeCommit"]["parents"]["totalCount"], 2);
     let (base, oid, head) = (
         str_at(pr, "/baseRefName"),

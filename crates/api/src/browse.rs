@@ -2286,6 +2286,27 @@ pub(crate) mod wire {
         }
     }
 
+    /// Someone in a list of people (stargazers, followers, members).
+    #[derive(Deserialize)]
+    pub struct Person {
+        pub login: String,
+        pub name: Option<String>,
+        pub bio: Option<String>,
+    }
+
+    impl Person {
+        /// A blank name or bio is none.
+        pub fn into_summary(self) -> super::UserSummary {
+            let text = |s: Option<String>| s.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
+            super::UserSummary {
+                login: self.login,
+                name: text(self.name),
+                bio: text(self.bio),
+                is_org: false,
+            }
+        }
+    }
+
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct RepoName {

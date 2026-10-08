@@ -415,15 +415,9 @@ impl GitHub {
         subject: impl std::fmt::Display,
         pick: impl FnOnce(Q) -> Option<T>,
     ) -> Result<T, ApiError> {
+        let read = |data| serde_json::from_value(data).map(pick);
         let reply = self.ask(&serde_json::to_value(&op)?, true).await?;
-        match pick(serde_json::from_value(reply.data)?) {
-            Some(found) => {
-                self.leave_out(reply.errors);
-                Ok(found)
-            }
-            None if reply.errors.is_empty() => Err(ApiError::NotFound(subject.to_string())),
-            None => Err(ApiError::GraphQl(reply.errors)),
-        }
+        reply.found(subject, read, |errors| self.leave_out(errors))
     }
 
     /// Runs a GraphQL mutation. Any error fails it, with GitHub's messages:
@@ -432,20 +426,35 @@ impl GitHub {
         &self,
         op: cynic::Operation<Q, V>,
     ) -> Result<Q, ApiError> {
-        let reply = self.ask(&serde_json::to_value(&op)?, false).await?;
-        if !reply.errors.is_empty() {
-            return Err(ApiError::GraphQl(reply.errors));
-        }
-        Ok(serde_json::from_value(reply.data)?)
+        self.ask(&serde_json::to_value(&op)?, false)
+            .await?
+            .mutation()
     }
 
-    /// Runs a query given as text (built at run time, or read as JSON),
-    /// returning its data. Public for the contract tests.
-    pub async fn graphql_json(&self, query: &str, variables: Value) -> Result<Value, ApiError> {
+    /// Runs a query given as text (built at run time, or read as JSON) for
+    /// the value at `at`, a JSON pointer into its data; a null there is
+    /// missing, which [`Reply::found`] explains. Point at the deepest value
+    /// you need. Public for the contract tests.
+    pub async fn graphql_json<T: DeserializeOwned>(
+        &self,
+        query: &str,
+        variables: Value,
+        subject: impl std::fmt::Display,
+        at: &str,
+    ) -> Result<T, ApiError> {
+        if !at.starts_with('/') {
+            return Err(ApiError::Internal(format!("{at:?} isn't a JSON pointer")));
+        }
         let body = serde_json::json!({ "query": query, "variables": variables });
+        let read = |mut data: Value| {
+            let value = data.pointer_mut(at).map(Value::take);
+            value
+                .filter(|v| !v.is_null())
+                .map(T::deserialize)
+                .transpose()
+        };
         let reply = self.ask(&body, true).await?;
-        self.leave_out(reply.errors);
-        Ok(reply.data)
+        reply.found(subject, read, |errors| self.leave_out(errors))
     }
 
     /// Posts a GraphQL request: the one place that reads GitHub's errors.
@@ -478,10 +487,8 @@ impl GitHub {
         let errors = errors
             .into_iter()
             .filter(|e| !(idempotent && e.explains_null(&wire.data)));
-        Ok(Reply {
-            errors: messages(errors),
-            data: wire.data,
-        })
+        let errors = messages(errors);
+        Ok(Reply::new(wire.data, errors))
     }
 
     /// GETs a REST path, revalidating with the cached ETag. A 304 serves the
@@ -949,13 +956,9 @@ impl GitHub {
     ) -> Result<browse::SearchResults, ApiError> {
         use browse::{Results, SearchKind as Kind, SearchResults};
         if kind == Kind::Discussions {
-            let data = self
-                .graphql_json(
-                    raw::DISCUSSION_SEARCH,
-                    serde_json::json!({ "q": query, "after": after }),
-                )
-                .await?;
-            let mut search = data.get("search").cloned().unwrap_or_default();
+            let vars = serde_json::json!({ "q": query, "after": after });
+            let mut search: Value =
+                (self.graphql_json(raw::DISCUSSION_SEARCH, vars, query, "/search")).await?;
             // A search's nodes may be other kinds, which come as `{}`.
             if let Some(serde_json::Value::Array(nodes)) = search.get_mut("nodes") {
                 nodes.retain(|n| n.get("number").is_some());
@@ -1184,13 +1187,10 @@ impl GitHub {
             })
             .collect();
         let query = raw::last_commits(&paths);
-        let data = self
-            .graphql_json(
-                &query,
-                serde_json::json!({ "owner": repo.owner, "name": repo.name, "rev": rev }),
-            )
-            .await?;
-        let commit: Value = at(&data, "/repository/object", || format!("{repo}@{rev}"))?;
+        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "rev": rev });
+        let commit: Value =
+            (self.graphql_json(&query, vars, format!("{repo}@{rev}"), "/repository/object"))
+                .await?;
         for (i, name) in names.iter().enumerate() {
             let node = commit.pointer(&format!("/e{i}/nodes/0"));
             let Some(node) = node.filter(|n| !n.is_null()) else {
@@ -1325,7 +1325,7 @@ impl GitHub {
     ) -> Result<browse::Results<browse::UserSummary>, ApiError> {
         use browse::UserList as L;
         let first = after.is_none();
-        let (root, field, vars) = match list {
+        let (root, field, vars, who) = match list {
             L::Stargazers(repo) | L::Watchers(repo) => (
                 "repository(owner: $owner, name: $name)",
                 if matches!(list, L::Stargazers(_)) {
@@ -1334,6 +1334,7 @@ impl GitHub {
                     "watchers"
                 },
                 serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after }),
+                repo.to_string(),
             ),
             L::Followers(login) | L::Following(login) => (
                 "user(login: $login)",
@@ -1343,54 +1344,20 @@ impl GitHub {
                     "following"
                 },
                 serde_json::json!({ "login": login, "after": after }),
+                login.clone(),
             ),
             L::People(login) => (
                 "organization(login: $login)",
                 "membersWithRole",
                 serde_json::json!({ "login": login, "after": after }),
+                login.clone(),
             ),
         };
         let query = raw::users(root, field);
-        let data = self.graphql_json(&query, vars).await?;
-        let list_json = data
-            .pointer("/node/list")
-            .ok_or_else(|| ApiError::NotFound(format!("{list:?}")))?;
-        let text = |v: &serde_json::Value, key: &str| {
-            v.get(key)
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_owned)
-        };
-        let items = list_json
-            .get("nodes")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|u| {
-                Some(browse::UserSummary {
-                    login: text(u, "login")?,
-                    name: text(u, "name"),
-                    bio: text(u, "bio"),
-                    is_org: false,
-                })
-            })
-            .collect();
-        let page_info = list_json.get("pageInfo");
-        let more = page_info
-            .and_then(|p| p.get("hasNextPage"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-        let results = browse::Results {
-            total: list_json
-                .get("totalCount")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
-            items,
-            next: page_info
-                .and_then(|p| text(p, "endCursor"))
-                .filter(|_| more),
-        };
+        let wire: browse::wire::Connection<browse::wire::Person> =
+            self.graphql_json(&query, vars, &who, "/node/list").await?;
+        self.check_connection(&wire, 30, format!("{who}'s people"));
+        let results = wire.into_results(browse::wire::Person::into_summary);
         Ok(self
             .kept_page(first, &browse::keys::users(list), results)
             .await)
@@ -1520,21 +1487,20 @@ impl GitHub {
         repo: &RepoId,
         after: Option<String>,
     ) -> Result<browse::Results<browse::BranchInfo>, ApiError> {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Wire {
+            default_branch_ref: Option<browse::wire::Name>,
+            refs: browse::wire::Connection<browse::wire_branches::Branch>,
+        }
         let first = after.is_none();
-        let data = self
-            .graphql_json(
-                raw::BRANCHES,
-                serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after }),
-            )
+        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after });
+        let wire: Wire = self
+            .graphql_json(raw::BRANCHES, vars, repo, "/repository")
             .await?;
-        let default = data
-            .pointer("/repository/defaultBranchRef/name")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned);
-        let wire: browse::wire::Connection<browse::wire_branches::Branch> =
-            at(&data, "/repository/refs", || repo.to_string())?;
-        self.check_connection(&wire, 30, format!("{repo}'s branches"));
-        let branches = wire.into_results(|b| b.into_info(repo, default.as_deref()));
+        self.check_connection(&wire.refs, 30, format!("{repo}'s branches"));
+        let default = wire.default_branch_ref.map(|r| r.name);
+        let branches = (wire.refs).into_results(|b| b.into_info(repo, default.as_deref()));
         Ok(self
             .kept_page(first, &browse::keys::branches(repo), branches)
             .await)
@@ -1548,27 +1514,22 @@ impl GitHub {
         closed: bool,
         after: Option<String>,
     ) -> Result<browse::MilestoneList, ApiError> {
+        use browse::wire::{Connection, Count};
+        #[derive(serde::Deserialize)]
+        struct Wire {
+            open: Count,
+            closed: Count,
+            milestones: Connection<browse::wire_milestones::Milestone>,
+        }
         let first = after.is_none();
         let query = raw::milestones(closed);
-        let data = self
-            .graphql_json(
-                &query,
-                serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after }),
-            )
-            .await?;
-        let count = |which: &str| {
-            data.pointer(&format!("/repository/{which}/totalCount"))
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or_default()
-        };
-        let (open, closed_count) = (count("open"), count("closed"));
-        let wire: browse::wire::Connection<browse::wire_milestones::Milestone> =
-            at(&data, "/repository/milestones", || repo.to_string())?;
-        self.check_connection(&wire, 25, format!("{repo}'s milestones"));
+        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after });
+        let wire: Wire = self.graphql_json(&query, vars, repo, "/repository").await?;
+        self.check_connection(&wire.milestones, 25, format!("{repo}'s milestones"));
         let list = browse::MilestoneList {
-            open,
-            closed: closed_count,
-            results: wire.into_results(browse::wire_milestones::Milestone::into_info),
+            open: wire.open.total_count,
+            closed: wire.closed.total_count,
+            results: (wire.milestones).into_results(browse::wire_milestones::Milestone::into_info),
         };
         Ok(self
             .kept_page(first, &browse::keys::milestones(repo, closed), list)
@@ -1585,15 +1546,10 @@ impl GitHub {
     ) -> Result<browse::MilestoneDetail, ApiError> {
         let first = after.is_none();
         let query = raw::milestone();
-        let data = self
-            .graphql_json(
-                &query,
-                serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number }),
-            )
-            .await?;
-        let wire: browse::wire_milestones::Milestone = at(&data, "/repository/milestone", || {
-            format!("{repo} milestone {number}")
-        })?;
+        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
+        let subject = format!("{repo} milestone {number}");
+        let wire: browse::wire_milestones::Milestone =
+            (self.graphql_json(&query, vars, subject, "/repository/milestone")).await?;
         let info = wire.into_info();
         // GitHub's search can't match a title with quotes in it.
         let unsearchable = info.title.contains('"');
@@ -1631,25 +1587,23 @@ impl GitHub {
         environment: Option<&str>,
         after: Option<String>,
     ) -> Result<browse::DeploymentList, ApiError> {
+        use browse::wire::{Connection, Counted, Name};
+        #[derive(serde::Deserialize)]
+        struct Wire {
+            deployments: Connection<browse::wire_deployments::Deployment>,
+            environments: Counted<Name>,
+        }
         let first = after.is_none();
         let environments = environment.map(|e| vec![e]);
-        let data = self
-            .graphql_json(
-                raw::DEPLOYMENTS,
-                serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "envs": environments }),
-            )
+        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "envs": environments });
+        let wire: Wire = self
+            .graphql_json(raw::DEPLOYMENTS, vars, repo, "/repository")
             .await?;
-        let wire: browse::wire::Connection<browse::wire_deployments::Deployment> =
-            at(&data, "/repository/deployments", || repo.to_string())?;
-        self.check_connection(&wire, 25, format!("{repo}'s deployments"));
+        self.check_connection(&wire.deployments, 25, format!("{repo}'s deployments"));
         let list = browse::DeploymentList {
-            environments: at::<browse::wire::Counted<browse::wire::Name>>(
-                &data,
-                "/repository/environments",
-                || repo.to_string(),
-            )?
-            .into_capped(|n| Some(n.name)),
-            results: wire.into_results(browse::wire_deployments::Deployment::into_info),
+            environments: wire.environments.into_capped(|n| Some(n.name)),
+            results: (wire.deployments)
+                .into_results(browse::wire_deployments::Deployment::into_info),
         };
         Ok(self
             .kept_page(first, &browse::keys::deployments(repo, environment), list)
@@ -1711,15 +1665,11 @@ impl GitHub {
         rev: &str,
         path: &str,
     ) -> Result<browse::Blame, ApiError> {
-        let data = self
-            .graphql_json(
-                raw::BLAME,
-                serde_json::json!({ "owner": repo.owner, "name": repo.name, "rev": rev, "path": path }),
-            )
-            .await?;
-        let wire: browse::wire_blame::Blame = at(&data, "/repository/object/blame", || {
-            format!("{repo}:{rev}:{path}")
-        })?;
+        let vars =
+            serde_json::json!({ "owner": repo.owner, "name": repo.name, "rev": rev, "path": path });
+        let subject = format!("{repo}:{rev}:{path}");
+        let wire: browse::wire_blame::Blame =
+            (self.graphql_json(raw::BLAME, vars, subject, "/repository/object/blame")).await?;
         let blame = wire.into_blame();
         Ok(self
             .kept(&browse::keys::blame(repo, rev, path), blame)
@@ -1743,14 +1693,10 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::Results<browse::GistSummary>, ApiError> {
         let first = after.is_none();
-        let data = self
-            .graphql_json(
-                raw::GISTS,
-                serde_json::json!({ "login": login, "after": after }),
-            )
-            .await?;
+        let vars = serde_json::json!({ "login": login, "after": after });
         let wire: browse::wire::Connection<browse::wire_gists::Gist> =
-            at(&data, "/user/gists", || format!("{login}'s gists"))?;
+            (self.graphql_json(raw::GISTS, vars, format!("{login}'s gists"), "/user/gists"))
+                .await?;
         self.check_connection(&wire, 30, format!("{login}'s gists"));
         let gists = wire.into_results(browse::wire_gists::Gist::into_summary);
         Ok(self
@@ -1765,14 +1711,9 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::Results<browse::TeamSummary>, ApiError> {
         let first = after.is_none();
-        let data = self
-            .graphql_json(
-                &raw::teams(),
-                serde_json::json!({ "org": org, "after": after }),
-            )
-            .await?;
+        let vars = serde_json::json!({ "org": org, "after": after });
         let wire: browse::wire::Connection<browse::wire_teams::Team> =
-            at(&data, "/organization/teams", || org.to_owned())?;
+            (self.graphql_json(&raw::teams(), vars, org, "/organization/teams")).await?;
         self.check_connection(&wire, 30, format!("{org}'s teams"));
         let teams = wire.into_results(browse::wire_teams::Team::into_summary);
         Ok(self
@@ -1782,14 +1723,14 @@ impl GitHub {
 
     /// A team: its members, repositories and child teams.
     pub async fn team(&self, org: &str, slug: &str) -> Result<browse::TeamDetail, ApiError> {
-        let data = self
-            .graphql_json(
-                &raw::team(),
-                serde_json::json!({ "org": org, "slug": slug }),
-            )
-            .await?;
-        let wire: browse::wire_teams::Detail =
-            at(&data, "/organization/team", || format!("{org}/{slug}"))?;
+        let vars = serde_json::json!({ "org": org, "slug": slug });
+        let wire: browse::wire_teams::Detail = (self.graphql_json(
+            &raw::team(),
+            vars,
+            format!("{org}/{slug}"),
+            "/organization/team",
+        ))
+        .await?;
         let team = wire.into_detail();
         Ok(self.kept(&browse::keys::team(org, slug), team).await)
     }
@@ -2023,9 +1964,9 @@ impl GitHub {
         // best-match order: look through the search's pages for them.
         let page = move |after| async move {
             let vars = serde_json::json!({ "q": format!("org:{org}"), "after": after });
-            let data = self.graphql_json(raw::DISCUSSION_URLS, vars).await?;
+            let subject = format!("{org}'s discussions");
             let search: browse::wire::Connection<browse::wire_discussions::Found> =
-                at(&data, "/search", || format!("{org}'s discussions"))?;
+                (self.graphql_json(raw::DISCUSSION_URLS, vars, subject, "/search")).await?;
             let mut found = search.filter_results(|n| {
                 (n.url.to_lowercase().starts_with(prefix))
                     .then(|| RepoId::parse(&n.repository?.name_with_owner))?
@@ -2051,11 +1992,9 @@ impl GitHub {
         let first = after.is_none();
         let repo = self.discussions_repo(of).await?;
         let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name });
-        let data = self.graphql_json(raw::DISCUSSION_CATEGORIES, vars).await?;
+        let at = "/repository/discussionCategories";
         let categories: browse::wire::Counted<w::Category> =
-            at(&data, "/repository/discussionCategories", || {
-                repo.to_string()
-            })?;
+            (self.graphql_json(raw::DISCUSSION_CATEGORIES, vars, &repo, at)).await?;
         let categories = categories.into_capped(Some);
         let category_id = match category {
             Some(slug) => match categories.iter().find(|c| c.slug == slug) {
@@ -2071,14 +2010,9 @@ impl GitHub {
             },
             None => None,
         };
-        let data = self
-            .graphql_json(
-                raw::DISCUSSIONS,
-                serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "category": category_id }),
-            )
-            .await?;
+        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "category": category_id });
         let page: browse::wire::Connection<w::Summary> =
-            at(&data, "/repository/discussions", || repo.to_string())?;
+            (self.graphql_json(raw::DISCUSSIONS, vars, &repo, "/repository/discussions")).await?;
         self.check_connection(&page, 25, format!("{repo}'s discussions"));
         let list = browse::DiscussionList {
             categories: categories.map(|c| browse::DiscussionCategory {
@@ -2099,15 +2033,10 @@ impl GitHub {
         number: u64,
     ) -> Result<browse::DiscussionDetail, ApiError> {
         let repo = self.discussions_repo(of).await?;
-        let data = self
-            .graphql_json(
-                raw::DISCUSSION,
-                serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number }),
-            )
-            .await?;
-        let wire: browse::wire_discussions::Detail = at(&data, "/repository/discussion", || {
-            format!("{repo} discussion {number}")
-        })?;
+        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
+        let subject = format!("{repo} discussion {number}");
+        let wire: browse::wire_discussions::Detail =
+            (self.graphql_json(raw::DISCUSSION, vars, subject, "/repository/discussion")).await?;
         let detail = wire.into_detail(repo);
         Ok(self
             .kept(&browse::keys::discussion(of, number), detail)
@@ -2119,23 +2048,31 @@ impl GitHub {
     /// sorts branches by name, backwards, so it isn't used for them.)
     pub async fn refs(&self, repo: &RepoId) -> Result<browse::Refs, ApiError> {
         use browse::wire::{Connection, Name};
+        /// The first page, which has the tags too.
+        #[derive(serde::Deserialize)]
+        struct Wire {
+            heads: Connection<Name>,
+            tags: Connection<Name>,
+        }
         let what = &format!("{repo}'s branches");
-        // The first page has the tags too.
-        let heads = move |after: Option<String>| async move {
-            let tags = after.is_none();
-            let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "tags": tags });
-            let data = self.graphql_json(raw::REFS, vars).await?;
-            let heads: Connection<Name> = at(&data, "/repository/heads", || repo.to_string())?;
+        let vars = |after: &Option<String>| serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "tags": after.is_none() });
+        let heads = |heads: Connection<Name>| {
             self.check_connection(&heads, 100, what);
-            Ok::<_, ApiError>((heads.into_results(|n| n.name), data))
+            heads.into_results(|n| n.name)
         };
-        let (first, data) = heads(None).await?;
-        let tags: Connection<Name> = at(&data, "/repository/tags", || repo.to_string())?;
-        self.check_connection(&tags, 100, format!("{repo}'s tags"));
-        let tags = tags.into_results(|n| n.name);
+        let first: Wire = self
+            .graphql_json(raw::REFS, vars(&None), repo, "/repository")
+            .await?;
+        self.check_connection(&first.tags, 100, format!("{repo}'s tags"));
+        let tags = first.tags.into_results(|n| n.name);
         let tags = Capped::new(tags.items, tags.total);
-        let more = |after| async move { Ok(heads(after).await?.0) };
-        let branches = self.more_pages(what, first, PAGES, more).await?;
+        let more = |after| async move {
+            let page = self.graphql_json(raw::REFS, vars(&after), repo, "/repository/heads");
+            Ok(heads(page.await?))
+        };
+        let branches = self
+            .more_pages(what, heads(first.heads), PAGES, more)
+            .await?;
         let refs = browse::Refs { branches, tags };
         Ok(self.kept(&browse::keys::refs(repo), refs).await)
     }
@@ -2215,11 +2152,54 @@ impl Unrooted for queries::SearchQuery {}
 impl Unrooted for browse::BrowseSearch {}
 impl Unrooted for browse::ViewerReposQuery {}
 
-/// A GraphQL response with data, and GitHub's errors beside it that the
-/// data doesn't already say.
-struct Reply {
-    data: Value,
-    errors: Vec<String>,
+use reply::Reply;
+mod reply {
+    use serde::de::DeserializeOwned;
+    use serde_json::Value;
+
+    use super::ApiError;
+
+    /// A GraphQL response with data, and GitHub's errors beside it that the
+    /// data doesn't already say.
+    pub(super) struct Reply {
+        data: Value,
+        errors: Vec<String>,
+    }
+
+    impl Reply {
+        pub(super) fn new(data: Value, errors: Vec<String>) -> Self {
+            Self { data, errors }
+        }
+
+        /// What a query `read`s from the data: the one place that decides
+        /// why a value is missing. Found, GitHub's errors are what it left
+        /// out; missing beside errors, they say why; missing without any,
+        /// `subject` is not found.
+        pub(super) fn found<T>(
+            self,
+            subject: impl std::fmt::Display,
+            read: impl FnOnce(Value) -> Result<Option<T>, serde_json::Error>,
+            leave_out: impl FnOnce(Vec<String>),
+        ) -> Result<T, ApiError> {
+            match read(self.data) {
+                Ok(Some(found)) => {
+                    leave_out(self.errors);
+                    Ok(found)
+                }
+                _ if !self.errors.is_empty() => Err(ApiError::GraphQl(self.errors)),
+                Ok(None) => Err(ApiError::NotFound(subject.to_string())),
+                Err(err) => Err(err.into()),
+            }
+        }
+
+        /// A mutation's data, or GitHub's errors if it has any.
+        pub(super) fn mutation<Q: DeserializeOwned>(self) -> Result<Q, ApiError> {
+            if !self.errors.is_empty() {
+                return Err(ApiError::GraphQl(self.errors));
+            }
+            Ok(serde_json::from_value(self.data)?)
+        }
+    }
 }
 
 /// One of GitHub's GraphQL errors: what it says, its type (`NOT_FOUND`,
@@ -2260,20 +2240,6 @@ fn messages(errors: impl IntoIterator<Item = GqlError>) -> Vec<String> {
             .unwrap_or_else(|| "an unexplained error".into())
     };
     errors.into_iter().map(said).collect()
-}
-
-/// What's at `pointer` in a GraphQL response's data, or `what` not found
-/// (missing or null).
-fn at<T: DeserializeOwned>(
-    data: &serde_json::Value,
-    pointer: &str,
-    what: impl FnOnce() -> String,
-) -> Result<T, ApiError> {
-    let value = data
-        .pointer(pointer)
-        .filter(|v| !v.is_null())
-        .ok_or_else(|| ApiError::NotFound(what()))?;
-    Ok(T::deserialize(value)?)
 }
 
 /// How many items a REST list page holds here.
