@@ -207,7 +207,7 @@ impl FileTree<'_> {
                     ],
                     None => Vec::new(),
                 };
-                let right_width = right.iter().map(Span::width).sum::<usize>();
+                let right_width = text::spans_width(&right);
                 let indent = " ".repeat(usize::from(*depth) * 2);
                 let room = usize::from(area.width)
                     .saturating_sub(indent.len())

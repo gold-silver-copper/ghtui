@@ -75,7 +75,7 @@ impl Widget for StatusBar<'_> {
         }
         if self.notice.is_none() {
             // As many hints as fit, whole.
-            let used: usize = right.iter().chain(&left).map(Span::width).sum();
+            let used = text::spans_width(right.iter().chain(&left));
             let mut room = usize::from(area.width.saturating_sub(2 * PAD_X))
                 .saturating_sub(used.saturating_add(1));
             for (i, (keys, what)) in self.hints.iter().enumerate() {

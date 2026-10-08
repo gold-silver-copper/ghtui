@@ -77,7 +77,7 @@ pub fn fill(buf: &mut Buffer, area: Rect, theme: &Theme, bg: Bg) {
 /// truncating the left side first when they don't fit.
 #[deny(clippy::arithmetic_side_effects)]
 fn render_split(area: Rect, buf: &mut Buffer, left: Vec<Span<'_>>, right: Vec<Span<'_>>, gap: u16) {
-    let right_width = cols(right.iter().map(Span::width).sum()).min(area.width);
+    let right_width = cols(text::spans_width(&right)).min(area.width);
     let left_area = Rect {
         width: area.width.saturating_sub(right_width.saturating_add(gap)),
         ..area
@@ -113,7 +113,7 @@ fn list_row(
 /// `left` cut to fit (with `…`) on the left of `row`, `hint` on its right.
 #[deny(clippy::arithmetic_side_effects)]
 fn label_hint(buf: &mut Buffer, row: Rect, left: &[Span<'_>], hint: Span<'_>) {
-    let hint_w = cols(hint.width()).min(row.width);
+    let hint_w = cols(text::width(&hint.content)).min(row.width);
     let gap = if hint_w > 0 {
         hint_w.saturating_add(2)
     } else {
