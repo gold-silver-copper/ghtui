@@ -1638,6 +1638,8 @@ impl GitHub {
             .and_then(|(_, head)| head.rsplit(':').next())
             .filter(|head| !head.is_empty())
             .map(str::to_owned);
+        // Counted on the wire: the comparison's list holds no more than its total.
+        let (listed, total) = (wire.commits.len() as u64, wire.total_commits);
         let comparison = wire.into_comparison(direct);
         // The head is the newest commit listed (or, behind, the merge base).
         if let Some(head) = head
@@ -1648,12 +1650,10 @@ impl GitHub {
                 text_short(&comparison.to)
             ));
         }
-        let listed = comparison.commits.len() as u64;
-        let expected = comparison.commits.total().min(browse::COMPARE_COMMITS);
+        let expected = total.min(browse::COMPARE_COMMITS);
         if listed != expected {
             self.doubt(format!(
-                "comparing {spec}, {listed} commits are listed of {}, not {expected}",
-                comparison.commits.total()
+                "comparing {spec}, {listed} commits are listed of {total}, not {expected}"
             ));
         }
         Ok(self
