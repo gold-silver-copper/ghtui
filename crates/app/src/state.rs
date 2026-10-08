@@ -121,7 +121,6 @@ pub enum DiffMsg {
     },
     ReviewSubmitted(SubmitOutcome),
     LastReview(Result<Option<String>, ApiError>),
-    SinceReady(String, Result<std::collections::HashSet<String>, Failure>),
     CommitsListed(Result<Vec<ghtui_git::repo::Commit>, Failure>),
 }
 
@@ -240,8 +239,8 @@ pub enum Git {
     /// Outdated threads mapped onto a job's head, answered as its [`JobMsg::Mapped`].
     MapOutdated(join::Joined<(PrRef, JobId, Oid, Vec<OutdatedThread>)>),
     /// Block hashes of the PR's diff at an old head, for "since my last
-    /// review".
-    SinceReview(join::Joined<(PrRef, String)>),
+    /// review"; answered as the job's [`JobMsg::Since`].
+    SinceReview(join::Joined<(PrRef, JobId, String)>),
     ListCommits(PrRef),
 }
 
@@ -3580,13 +3579,14 @@ pub(crate) mod tests {
                     matches!(&cmds[..], [Cmd::Api(Api::FetchLastReview { login, .. })] if login == "me")
                 );
                 let cmds = diff_msg(&mut s, &pr, DiffMsg::LastReview(Ok(Some("old".into()))));
-                assert!(matches!(&cmds[..], [Cmd::Git(Git::SinceReview(j))] if j.get().1 == "old"));
+                assert!(matches!(&cmds[..], [Cmd::Git(Git::SinceReview(j))] if j.get().2 == "old"));
 
                 // Nothing in the old diff matched: everything is new.
+                let job = s.diffs[&DiffOf::Pr(pr.clone())].job;
                 diff_msg(
                     &mut s,
                     &pr,
-                    DiffMsg::SinceReady("old".into(), Ok(Default::default())),
+                    DiffMsg::Job(job, JobMsg::Since("old".into(), Ok(Default::default()))),
                 );
                 assert!(s.diffs[&DiffOf::Pr(pr.clone())].doc.since_active());
                 assert_eq!(s.chrome().tabs[3].0.label, "Files · since your review");
@@ -3657,7 +3657,7 @@ pub(crate) mod tests {
                     DiffMsg::LastReview(Err(ApiError::Network("offline".into()))),
                 );
                 assert!(
-                    matches!(&cmds[..], [Cmd::Git(Git::SinceReview(j))] if j.get().1 == "old"),
+                    matches!(&cmds[..], [Cmd::Git(Git::SinceReview(j))] if j.get().2 == "old"),
                     "{cmds:?}"
                 );
                 assert!(
