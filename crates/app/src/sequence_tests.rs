@@ -314,10 +314,10 @@ fn check(state: &State, model: &Model) -> Result<(), TestCaseError> {
     // The selection is on an item.
     if let Screen::Page(p) = state.screen() {
         prop_assert!(
-            p.selected.is_none_or(|s| s < p.page.items.len()),
+            p.selected.is_none_or(|s| s < p.page().items.len()),
             "selected {:?} of {} items",
             p.selected,
-            p.page.items.len()
+            p.page().items.len()
         );
     }
     for (key, remote) in &state.data {

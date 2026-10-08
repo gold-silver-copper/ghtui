@@ -181,7 +181,7 @@ fn long_conversations_say_what_is_left_out() {
         let crate::state::Screen::Page(p) = state.screen() else {
             panic!("not a page");
         };
-        p.page
+        p.page()
             .lines
             .iter()
             .map(ghtui_ui::page::PageLine::text)
@@ -256,7 +256,7 @@ fn a_dismissed_review_reads_as_dismissed() {
         panic!("not a page");
     };
     let page = p
-        .page
+        .page()
         .lines
         .iter()
         .map(ghtui_ui::page::PageLine::text)
@@ -2178,7 +2178,7 @@ mod links {
             let Screen::Page(p) = s.screen() else {
                 return Vec::new();
             };
-            p.page
+            p.page()
                 .links
                 .iter()
                 .filter_map(|l| l.url())
@@ -2220,7 +2220,7 @@ mod links {
                 panic!("{name} isn't a page");
             };
             let tabs = s.chrome().tabs.into_iter().map(|(_, t)| t);
-            let links = p.page.links.iter().filter_map(|l| l.url());
+            let links = p.page().links.iter().filter_map(|l| l.url());
             let targets = links.map(Target::from_url).chain(tabs);
             for target in targets {
                 // A page of a kind the corpus has an example of.
@@ -2674,7 +2674,7 @@ fn page_text(state: &State) -> String {
     let crate::state::Screen::Page(p) = state.screen() else {
         panic!("not a page");
     };
-    p.page
+    p.page()
         .lines
         .iter()
         .map(ghtui_ui::page::PageLine::text)

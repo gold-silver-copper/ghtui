@@ -13,7 +13,7 @@ use ghtui_api::browse::{
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::Fetched;
-use ghtui_ui::page::{Link, Page, Role, Seg};
+use ghtui_ui::page::{Page, Role, Seg};
 use ghtui_ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
 
 use crate::keymap::Action;
@@ -383,65 +383,6 @@ pub fn needs(route: &Route) -> Vec<Need> {
 /// (fetched only when missing).
 pub fn is_header(route: &Route, need: &Need) -> bool {
     matches!(need, Need::Data(DataKey::Repo(_))) && !matches!(route, Route::Repo(_))
-}
-
-/// The screen of one page: where it is, what's selected, and the page as
-/// last built.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PageScreen {
-    pub route: Route,
-    /// The top row shown.
-    pub scroll: usize,
-    /// The selected item, if one is.
-    pub selected: Option<usize>,
-    pub page: Arc<Page>,
-    /// The data generation, width and density `page` was built for.
-    pub built: Option<(u64, u16, bool)>,
-    /// Nothing has been selected or scrolled yet: select the first visible
-    /// item once the page has items.
-    pub fresh: bool,
-    /// Where its [`Page::jump`] or anchor last left the scroll and the
-    /// selection: followed while both stay put, `Some(None)` once moved.
-    pub jumped: Option<Option<(usize, Option<usize>)>>,
-    /// The `#fragment` of the link that opened it: a comment to scroll to.
-    pub anchor: Option<String>,
-}
-
-impl PageScreen {
-    pub fn new(route: Route, anchor: Option<String>) -> Self {
-        // Lists start on their first row; reading pages (issues, pull
-        // requests, files) start with nothing selected.
-        let list = !matches!(
-            route,
-            Route::Issue { .. }
-                | Route::Blob { .. }
-                | Route::Blame { .. }
-                | Route::Commit { .. }
-                | Route::Release { .. }
-                | Route::Discussion { .. }
-                | Route::Job { .. }
-                | Route::Pr {
-                    tab: PrTab::Conversation,
-                    ..
-                }
-        );
-        Self {
-            route,
-            scroll: 0,
-            selected: None,
-            page: Arc::new(Page::default()),
-            built: None,
-            fresh: list,
-            jumped: None,
-            anchor,
-        }
-    }
-
-    /// The selected item's link.
-    pub fn selected_link(&self) -> Option<&Link> {
-        let item = self.page.items.get(self.selected?)?;
-        self.page.target(item.link)
-    }
 }
 
 /// A kind of data a page shows, as kept in [`Data`].
