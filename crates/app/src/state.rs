@@ -339,9 +339,10 @@ impl<T> Remote<T> {
     }
 
     /// Starts a fetch, unless one is running or (without `force`) the
-    /// data is good.
+    /// data is good: fetched this session (a disk-cache copy never is).
     fn begin(&mut self, force: bool) -> bool {
-        if self.loading() || (!force && self.data.is_some() && self.error.is_none()) {
+        let good = self.data.is_some() && self.error.is_none() && self.cached_at.is_none();
+        if self.loading() || (!force && good) {
             return false;
         }
         self.asked = Some(Asked::Fetch);
@@ -1725,6 +1726,27 @@ pub(crate) mod tests {
                 "o", "ratatui"
             ))))),
             "the suggestions for `rat` vanished"
+        );
+    }
+
+    /// `ghtui <pr>/files` with the PR in the disk cache: the cached copy is
+    /// from an earlier session, so the PR is fetched again (it may have
+    /// been merged or force-pushed since).
+    #[test]
+    fn a_pr_diff_opened_from_a_cached_pr_fetches_the_pr() {
+        let mut state = state();
+        let pr = PrRef::parse("o/r#1").unwrap();
+        state.prs.insert(
+            pr.clone(),
+            Remote::cached(Some(ghtui_store::Cached {
+                value: crate::snapshot_tests::pr_detail(),
+                fetched_at: 0,
+            })),
+        );
+        let cmds = state.start_at(Target::Files(DiffOf::Pr(pr.clone())));
+        assert!(
+            cmds.contains(&Cmd::Api(Api::FetchPr(pr))),
+            "the cached PR is never refreshed: {cmds:?}"
         );
     }
 
