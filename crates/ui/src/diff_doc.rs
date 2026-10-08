@@ -558,10 +558,11 @@ fn is_open(thread_open: &HashMap<AnnotationKey, bool>, ann: &Annotation) -> bool
         .unwrap_or_else(|| ann.open_by_default())
 }
 
-/// Either side of the line is its file's last, with no newline after it.
-fn ends_without_newline(text: &TextDiff, line: DiffLine) -> bool {
-    [line.left(), line.right()]
+/// Either side of entry `e` is its file's last line, with no newline after it.
+fn ends_without_newline(text: &TextDiff, lines: &[DiffLine], e: Option<u32>) -> bool {
+    e.and_then(|e| lines.get(e as usize))
         .into_iter()
+        .flat_map(|l| [l.left(), l.right()])
         .flatten()
         .any(|p| text.ends_without_newline(p))
 }
@@ -579,7 +580,7 @@ fn push_lines(
     }
     for e in range {
         rows.push(Row::Line(idx(e)));
-        if lines.get(e).is_some_and(|&l| ends_without_newline(text, l)) {
+        if ends_without_newline(text, lines, Some(idx(e))) {
             rows.push(Row::NoNewline);
         }
     }
@@ -593,10 +594,7 @@ fn push_split_rows(rows: &mut Vec<Row>, text: &TextDiff, lines: &[DiffLine], seg
             .get(e)
             .is_some_and(|l| l.is_change() && l.left().is_some() == removed)
     };
-    let ends = |e: Option<u32>| {
-        e.and_then(|e| lines.get(e as usize))
-            .is_some_and(|&l| ends_without_newline(text, l))
-    };
+    let ends = |e| ends_without_newline(text, lines, e);
     let mut e = seg.start;
     while e < seg.end {
         let Some(line) = lines.get(e) else { break };
