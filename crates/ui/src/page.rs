@@ -42,8 +42,11 @@ pub enum Link {
     Branch,
     /// Find a file in the repository.
     FindFile,
-    /// Reply quoting comment `n` of [`Page::quotes`].
-    Quote(u32),
+    /// Reply quoting `author`'s comment.
+    Quote {
+        author: String,
+        body: String,
+    },
 }
 
 impl Link {
@@ -65,13 +68,6 @@ impl From<&str> for Link {
     fn from(url: &str) -> Self {
         Link::Url(url.to_owned())
     }
-}
-
-/// A comment a quote reply quotes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Quote {
-    pub author: String,
-    pub body: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,8 +191,6 @@ pub struct Page {
     pub links: Vec<Link>,
     /// Each link's index in `links`.
     link_ids: HashMap<Link, u32>,
-    /// Comments quote replies quote, by [`Link::Quote`].
-    pub quotes: Vec<Quote>,
     /// Columns of the main column.
     pub width: u16,
     pub items: Vec<Item>,
@@ -235,16 +229,6 @@ impl Page {
     pub fn anchor(&mut self, name: impl Into<String>) {
         let line = self.lines.len();
         self.anchors.entry(name.into()).or_insert(line);
-    }
-
-    /// A link that quote-replies to a comment.
-    pub fn quote(&mut self, author: &str, body: &str) -> u32 {
-        let n = idx(self.quotes.len());
-        self.quotes.push(Quote {
-            author: author.to_owned(),
-            body: body.to_owned(),
-        });
-        self.link(Link::Quote(n))
     }
 
     /// What following link `i` does.
@@ -391,11 +375,9 @@ impl Page {
         let mut aside = Page::new(width);
         aside.links = std::mem::take(&mut self.links);
         aside.link_ids = std::mem::take(&mut self.link_ids);
-        aside.quotes = std::mem::take(&mut self.quotes);
         f(&mut aside);
         self.links = std::mem::take(&mut aside.links);
         self.link_ids = std::mem::take(&mut aside.link_ids);
-        self.quotes = std::mem::take(&mut aside.quotes);
         self.aside = aside.lines;
         self.aside_width = width;
     }

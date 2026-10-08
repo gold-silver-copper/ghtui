@@ -1864,7 +1864,10 @@ impl Conversation<'_> {
         }
         page.box_bottom();
         // The whole comment is a row: Enter quote-replies, as GitHub's `r` does.
-        let quote = page.quote(author, body);
+        let quote = page.link(Link::Quote {
+            author: author.to_owned(),
+            body: body.to_owned(),
+        });
         page.item(start, quote);
     }
 
