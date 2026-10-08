@@ -2986,6 +2986,45 @@ pub(crate) mod tests {
         assert!(text.contains("Issue 11"), "{text}");
     }
 
+    /// Editing the comment you selected keeps it selected, and the view on
+    /// it, when the fresh copy arrives.
+    #[test]
+    fn an_edited_comment_stays_selected() {
+        let mut s = with_repo();
+        s.size = (100, 12);
+        let _ = s.push(Route::Issue {
+            repo: repo(),
+            number: 14,
+        });
+        let key = DataKey::Issue(repo(), 14);
+        let mut issue = crate::fixtures::issue();
+        update(
+            &mut s,
+            Msg::Fetched {
+                key: key.clone(),
+                result: Ok(Data::Issue(Some(Box::new(issue.clone())))),
+                cached_at: Some(0),
+            },
+        );
+        let Screen::Page(p) = s.screen_mut() else {
+            panic!("not on a page")
+        };
+        let page_ = p.page();
+        let at = |i: &ghtui_ui::page::Item| page_.lines[i.start].text().contains("hubot");
+        let n = page_.items.iter().position(at).unwrap();
+        (p.selected, p.scroll) = (Some(n), page_.items[n].start);
+        let top = |s: &State| page(s).page().lines[page(s).scroll].text();
+        let before = (selected_text(&s), top(&s));
+        issue.body.push_str("\n\nEdited.");
+        issue.comments = vec![ghtui_api::browse::Comment {
+            body: "Edited.".into(),
+            ..issue.comments[0].clone()
+        }]
+        .into();
+        fetched(&mut s, key, Data::Issue(Some(Box::new(issue))));
+        assert_eq!((selected_text(&s), top(&s)), before);
+    }
+
     /// A failed refresh puts its banner above the cached copy without
     /// moving what you scrolled to.
     #[test]

@@ -42,9 +42,10 @@ pub enum Link {
     Branch,
     /// Find a file in the repository.
     FindFile,
-    /// Reply quoting `author`'s comment.
+    /// Reply quoting the comment `author` wrote `at` a time, its id.
     Quote {
         author: String,
+        at: String,
         body: String,
     },
 }
@@ -238,10 +239,14 @@ impl Page {
 
     /// The item following `link` nearest item `near`.
     pub fn find(&self, link: &Link, near: usize) -> Option<usize> {
-        let id = self.link_ids.get(link)?;
+        let same = |l: &Link| match (l, link) {
+            // An edited comment is still the same comment.
+            (Link::Quote { at, .. }, Link::Quote { at: was, .. }) => at == was,
+            _ => l == link,
+        };
         let items = self.items.iter().enumerate();
-        let found = items.filter(|(_, it)| it.link == *id).map(|(i, _)| i);
-        found.min_by_key(|i| i.abs_diff(near))
+        let found = items.filter(|(_, it)| self.target(it.link).is_some_and(same));
+        found.map(|(i, _)| i).min_by_key(|i| i.abs_diff(near))
     }
 
     pub fn push(&mut self, line: PageLine) {
