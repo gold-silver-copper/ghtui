@@ -10,6 +10,10 @@ use unicode_segmentation::UnicodeSegmentation;
 /// that are never drawn don't count: ratatui drops control characters, tabs
 /// included (see `untab`), and anything of zero width, bidi overrides
 /// included, so GitHub text can't reorder what's shown.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "ratatui's rule, a grapheme at a time"
+)]
 pub fn width(s: &str) -> usize {
     if s.is_ascii() {
         return s.bytes().filter(|b| !b.is_ascii_control()).count();

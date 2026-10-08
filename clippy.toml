@@ -14,6 +14,7 @@ disallowed-methods = [
     { path = "ratatui_core::text::Span::width", reason = "measures unlike ratatui draws: use `text::width`" },
     { path = "ratatui_core::text::Line::width", reason = "measures unlike ratatui draws: use `text::width`" },
     { path = "ratatui_core::text::Text::width", reason = "measures unlike ratatui draws: use `text::width`" },
+    { path = "ratatui_core::buffer::CellWidth::cell_width", reason = "measures unlike ratatui draws: use `text::width`" },
     # It prints its failure to stderr, which panics when the terminal is gone.
     { path = "ratatui::restore", reason = "panics without a terminal: use `restore_terminal`" },
     # A page shows each need as loading, failed (and why) or ready.
