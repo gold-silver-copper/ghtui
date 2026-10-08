@@ -412,15 +412,22 @@ fn tree_list_height(tree: Rect) -> usize {
     usize::from(tree.height.saturating_sub(3))
 }
 
-/// Runs `change` on the document, keeping the cursor, the top of the view
-/// and the selection on the same lines and threads.
-pub fn preserving_position(screen: &mut DiffScreen, doc: &mut Doc, change: impl FnOnce(&mut Doc)) {
+/// Runs `change` on the diff, keeping the cursor, the top of the view and
+/// the selection on the same lines and threads.
+pub fn preserving_position<R>(
+    screen: &mut DiffScreen,
+    diff: &mut DiffState,
+    change: impl FnOnce(&mut DiffState) -> R,
+) -> R {
+    let doc = &diff.doc;
     let [cursor, top] = [screen.cursor, screen.top].map(|p| doc.anchor(p));
     let selection = screen.selection.map(|p| doc.anchor(p));
-    change(doc);
+    let r = change(diff);
+    let doc = &diff.doc;
     screen.cursor = doc.locate(cursor);
     screen.top = doc.locate(top);
     screen.selection = selection.map(|a| doc.locate(a));
+    r
 }
 
 /// Handles `action` on the diff screen. Those that don't work here say
@@ -568,14 +575,14 @@ pub fn apply(
             let pos = screen.cursor;
             let rows = |doc: &Doc| doc.files().get(pos.file).map(|f| f.rows().len());
             let before = rows(&state.doc);
-            preserving_position(screen, &mut state.doc, |doc| doc.expand(pos));
+            preserving_position(screen, state, |d| d.doc.expand(pos));
             if rows(&state.doc) == before {
                 *notice = Some(Notice::Info("No more context here".into()));
             }
         }
         Action::FullFile => {
             let file = screen.cursor.file;
-            preserving_position(screen, &mut state.doc, |doc| doc.toggle_full(file));
+            preserving_position(screen, state, |d| d.doc.toggle_full(file));
         }
         Action::JumpMove => match state.doc.move_at(screen.cursor) {
             Some((mv, from)) => {
@@ -588,13 +595,11 @@ pub fn apply(
         Action::Open => match state.doc.row(screen.cursor) {
             Some(Row::Fold { .. }) => {
                 let pos = screen.cursor;
-                preserving_position(screen, &mut state.doc, |doc| {
-                    doc.unfold(pos);
-                });
+                preserving_position(screen, state, |d| d.doc.unfold(pos));
             }
             Some(Row::Gap { .. }) => {
                 let pos = screen.cursor;
-                preserving_position(screen, &mut state.doc, |doc| doc.expand(pos));
+                preserving_position(screen, state, |d| d.doc.expand(pos));
             }
             Some(Row::Header | Row::Note(Note::Collapsed | Note::Viewed))
                 if state
@@ -801,7 +806,7 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
     }
     let opts = screen.options(content);
     if state.doc.opts() != opts {
-        preserving_position(screen, &mut state.doc, |doc| doc.set_options(opts));
+        preserving_position(screen, state, |d| d.doc.set_options(opts));
     }
     let doc = &state.doc;
     if doc.is_empty() {
@@ -879,30 +884,20 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
                 diff.progress = Some(line);
             }
         }
+        // Only the file is kept: the new one has no lines yet.
         JobMsg::Files(files) => {
-            if let Some(diff) = state.diffs.get_mut(of) {
-                diff.set_files(*files);
-            }
+            change(state, of, |d| d.set_files(*files));
         }
         JobMsg::File(index, file) => {
             if let Some(diff) = state.diffs.get_mut(of) {
                 diff.set_file(index, file);
             }
         }
-        JobMsg::Moves(moves) => match state.diff_parts() {
-            Some((screen, diff)) if screen.of == *of => {
-                preserving_position(screen, &mut diff.doc, |doc| doc.set_moves(moves));
-            }
-            _ => {
-                if let Some(diff) = state.diffs.get_mut(of) {
-                    diff.doc.set_moves(moves);
-                }
-            }
-        },
+        JobMsg::Moves(moves) => {
+            change(state, of, |d| d.doc.set_moves(moves));
+        }
         JobMsg::Mapped(mapped) => {
-            if let Some(diff) = state.diffs.get_mut(of) {
-                diff.add_mapped(mapped);
-            }
+            change(state, of, |d| d.add_mapped(mapped));
         }
         JobMsg::Failed(error) => {
             if let Some(diff) = state.diffs.get_mut(of) {
@@ -914,9 +909,7 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
             if let Some((screen, diff)) = state.diff_parts()
                 && screen.of == *of
             {
-                preserving_position(screen, &mut diff.doc, |doc| {
-                    doc.set_since(Some(hashes), true);
-                });
+                preserving_position(screen, diff, |d| d.doc.set_since(Some(hashes), true));
                 state.info(format!(
                     "Showing changes since your review of {}",
                     short_sha(&old_head)
@@ -931,11 +924,18 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
     Vec::new()
 }
 
+/// Changes `of`'s diff, if it's still open; on screen, keeping the cursor
+/// where it is.
+fn change<R>(state: &mut State, of: &DiffOf, f: impl FnOnce(&mut DiffState) -> R) -> Option<R> {
+    match state.diff_parts() {
+        Some((screen, diff)) if screen.of == *of => Some(preserving_position(screen, diff, f)),
+        _ => state.diffs.get_mut(of).map(f),
+    }
+}
+
 /// Changes the inputs of `of`'s diff, if it's still open.
 fn edit(state: &mut State, of: &DiffOf, f: impl FnOnce(&mut DiffInputs)) {
-    if let Some(diff) = state.diffs.get_mut(of) {
-        diff.edit(f);
-    }
+    change(state, of, |d| d.edit(f));
 }
 
 /// A message for a diff screen.
@@ -1005,11 +1005,11 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
         }
         DiffMsg::ReviewLoaded(Ok(saved)) => {
             // Anything done before it arrived is kept, and saved.
-            if let Some(diff) = state.diffs.get_mut(of) {
-                let mut changed = false;
-                let save = diff.edit_review(&pr, |i| changed = i.merge_saved_review(saved));
-                return if changed { save } else { Vec::new() };
-            }
+            let mut changed = false;
+            let save = change(state, of, |d| {
+                d.edit_review(&pr, |i| changed = i.merge_saved_review(saved))
+            });
+            return save.filter(|_| changed).unwrap_or_default();
         }
         DiffMsg::ReviewLoaded(Err(err)) => {
             tracing::warn!(%pr, ?err, "reading review state failed");
