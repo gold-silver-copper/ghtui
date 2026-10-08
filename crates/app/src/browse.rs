@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use ghtui_api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckOutcome, Checks, CommitDetail, CommitInfo, Comparison,
@@ -13,7 +13,7 @@ use ghtui_api::browse::{
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::Fetched;
-use ghtui_ui::page::{Page, Role, Seg};
+use ghtui_ui::page::{Page, PageLine, Role, Seg};
 use ghtui_ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
 
 use crate::keymap::Action;
@@ -472,14 +472,9 @@ impl State {
     /// Why the page's needs that show a copy couldn't refresh it, each
     /// reason once (one outage fails them all alike).
     fn stale_errors(&self, route: &Route) -> Option<String> {
-        let mut errors: Vec<String> = self
-            .fetches(route)
-            .filter(|r| r.data.is_some())
-            .filter_map(|r| r.error)
-            .collect();
-        errors.sort();
-        errors.dedup();
-        (!errors.is_empty()).then(|| errors.join("; "))
+        let fetches = self.fetches(route).filter(|r| r.data.is_some());
+        let errors = BTreeSet::from_iter(fetches.filter_map(|r| r.error));
+        (!errors.is_empty()).then(|| Vec::from_iter(errors).join("; "))
     }
 
     /// When the oldest cached copy on the page was fetched, while one is
@@ -545,6 +540,7 @@ impl State {
             pages::flash(&mut page, &why);
             page.blank();
         }
+        let banner = page.lines.len();
         let retry = self.first_key(Action::Refresh);
         let f = Needs {
             state: self,
@@ -806,6 +802,9 @@ impl State {
                 }
             }
         }
+        // The sidebar starts beside the page, below the banner.
+        let pad = if page.aside.is_empty() { 0 } else { banner };
+        page.aside.splice(0..0, vec![PageLine::default(); pad]);
         page
     }
 }
