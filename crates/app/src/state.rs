@@ -3475,6 +3475,28 @@ pub(crate) mod tests {
             );
         }
 
+        /// Threads arriving above the cursor push its line down, and the
+        /// cursor goes with it.
+        #[test]
+        fn threads_arriving_keep_the_cursor_on_its_line() {
+            let (mut s, pr) = diff_state(120);
+            let (_, doc) = cursor(&s);
+            let rows = doc.files()[0].rows().len();
+            let last = (0..rows)
+                .map(|row| Pos { file: 0, row })
+                .rfind(|p| matches!(doc.row(*p), Some(Row::Line(_) | Row::Split { .. })))
+                .expect("the file shows lines");
+            let text = doc.row_text(last);
+            if let Screen::Diff(d) = s.screens.last_mut() {
+                d.cursor = last;
+            }
+            let threads = vec![thread("t", Some(14), false, false)];
+            diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(threads)));
+            let (pos, doc) = cursor(&s);
+            assert!(pos.row > last.row, "the thread is above the cursor");
+            assert_eq!(doc.row_text(pos), text);
+        }
+
         /// The cursor on a review thread stays on that thread when the
         /// rows are rebuilt (here: the view turns split).
         #[test]

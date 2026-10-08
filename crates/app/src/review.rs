@@ -516,11 +516,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 return notice(state, Notice::Error(format!("First {all}")));
             }
             let active = !diff.doc.since_active();
-            let mut known = false;
-            diff_screen::preserving_position(screen, &mut diff.doc, |doc| {
-                known = doc.show_since(active);
-            });
-            if known {
+            if diff_screen::preserving_position(screen, diff, |d| d.doc.show_since(active)) {
                 state.info(if active {
                     "Showing changes since your last review"
                 } else {
