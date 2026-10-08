@@ -1878,6 +1878,37 @@ pub(crate) mod tests {
         );
     }
 
+    /// Security advisories come a page at a time; past the first page,
+    /// the list offers the rest like any other list.
+    #[test]
+    fn advisories_load_more() {
+        let mut state = with_repo();
+        let route = Route::Advisories(Some(repo()));
+        let key = DataKey::Advisories(Some(repo()));
+        let cmds = state.go(Target::Page(route));
+        assert!(cmds.contains(&fetch(key.clone())), "{cmds:?}");
+        let list = ghtui_api::browse::Results {
+            total: 3,
+            items: crate::fixtures::advisories(),
+            next: Some("c1".into()),
+        };
+        fetched(&mut state, key.clone(), Data::Advisories(Box::new(list)));
+        press(&mut state, "G");
+        assert!(
+            selected_text(&state).starts_with("Load more"),
+            "{:?}",
+            selected_text(&state)
+        );
+        let cmds = press(&mut state, "<Enter>");
+        assert_eq!(
+            cmds,
+            vec![Cmd::Api(Api::FetchMore {
+                key,
+                after: "c1".into()
+            })]
+        );
+    }
+
     /// A profile's repositories sort by name and stars as well as last
     /// update, and `/` there searches that owner's repositories.
     #[test]

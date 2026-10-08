@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use ghtui_api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail,
     CommitInfo, Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList,
-    EntryKind, Gist, GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobLog, JobSummary,
+    EntryKind, Gist, GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobLog,
     MilestoneDetail, MilestoneInfo, MilestoneList, Person, PrActivity, Profile, Readme, Release,
     RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, Severity,
     Short, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow,
@@ -300,49 +300,133 @@ fn unique<'a>(names: impl IntoIterator<Item = &'a String>) -> Vec<String> {
     out
 }
 
-/// One row per item, ruled apart.
-fn box_rows<T>(page: &mut Page, items: &[T], mut row: impl FnMut(&mut Page, &T)) {
+/// What a list in a box leaves out, said after its rows.
+#[derive(Clone, Copy)]
+enum Rest {
+    All,
+    /// This many are only on GitHub.
+    OnGitHub(u64),
+    /// Another page loads; of `total`, if GitHub counted them.
+    NextPage {
+        total: Option<u64>,
+    },
+}
+
+/// A list drawn in a box: its rows and what it left out. A bare slice
+/// isn't one, so a cut-short list can't be drawn as if whole; [`Whole`]
+/// says a list is all there is.
+trait Rows<T> {
+    fn rows(&self) -> &[T];
+    fn rest(&self) -> Rest;
+}
+
+/// A list that is all there is.
+struct Whole<'a, T>(&'a [T]);
+
+impl<T> Rows<T> for Whole<'_, T> {
+    fn rows(&self) -> &[T] {
+        self.0
+    }
+    fn rest(&self) -> Rest {
+        Rest::All
+    }
+}
+
+impl<T> Rows<T> for Capped<T> {
+    fn rows(&self) -> &[T] {
+        self
+    }
+    fn rest(&self) -> Rest {
+        match self.left_out() {
+            0 => Rest::All,
+            n => Rest::OnGitHub(n),
+        }
+    }
+}
+
+impl<T> Rows<T> for Results<T> {
+    fn rows(&self) -> &[T] {
+        &self.items
+    }
+    fn rest(&self) -> Rest {
+        // A total no more than what's here means GitHub didn't count.
+        let counted = self.total > self.items.len() as u64;
+        match self.next {
+            Some(_) => Rest::NextPage {
+                total: counted.then_some(self.total),
+            },
+            None => Rest::All,
+        }
+    }
+}
+
+/// One row per item, ruled apart, then what the list left out: "Load
+/// more" while there's another page, or how many are only on GitHub.
+fn box_rows<T>(page: &mut Page, list: &impl Rows<T>, mut row: impl FnMut(&mut Page, &T)) {
+    let items = list.rows();
     for (n, item) in items.iter().enumerate() {
         if n > 0 && !page.compact {
             page.box_rule();
         }
         row(page, item);
     }
+    rest_row(page, items.len(), list.rest());
 }
 
-/// A box of `items`, a row each, saying `empty` when there are none.
+/// After a list's `shown` rows, what it left out.
+fn rest_row(page: &mut Page, shown: usize, rest: Rest) {
+    match rest {
+        Rest::All => {}
+        Rest::OnGitHub(n) => {
+            page.box_rule();
+            empty_row(page, &left_out_text(n, "more", "more"));
+        }
+        Rest::NextPage { total } => {
+            page.box_rule();
+            let of = total.map_or_else(
+                || format!("{shown} so far"),
+                |total| format!("{shown} of {}", compact(total)),
+            );
+            item(page, Link::More, |page, link| {
+                let text = format!("Load more  ({of})");
+                body(page, vec![Seg::linked(text, Role::Link, link)]);
+            });
+        }
+    }
+}
+
+/// A list's count: `45`, `20 of 45` when the rest are only on GitHub, or
+/// GitHub's total (`20+` uncounted) while more pages load.
+fn count_of<T>(list: &impl Rows<T>) -> String {
+    let len = list.rows().len();
+    match list.rest() {
+        Rest::All => len.to_string(),
+        Rest::OnGitHub(n) => format!("{len} of {}", len as u64 + n),
+        Rest::NextPage { total: Some(total) } => compact(total),
+        Rest::NextPage { total: None } => format!("{len}+"),
+    }
+}
+
+/// `… 12 more replies on GitHub (o)`: what a list left out.
+pub(crate) fn left_out_text(n: u64, one: &str, many: &str) -> String {
+    format!("… {n} {} on GitHub (o)", if n == 1 { one } else { many })
+}
+
+/// A box of a list, a row each, saying `empty` when there are none and
+/// what it left out.
 fn list_box<T>(
     page: &mut Page,
     title: Vec<Seg>,
     right: Vec<Seg>,
-    items: &[T],
+    list: &impl Rows<T>,
     empty: &str,
     row: impl FnMut(&mut Page, &T),
 ) {
     page.box_top(title, right);
-    if items.is_empty() {
+    if list.rows().is_empty() {
         empty_row(page, empty);
     }
-    box_rows(page, items, row);
-    page.box_bottom();
-}
-
-/// A page of a list in a box: `title`, the items (or `empty`), and "Load
-/// more" while there's more.
-fn paged_box<T>(
-    page: &mut Page,
-    title: Vec<Seg>,
-    right: Vec<Seg>,
-    list: &Results<T>,
-    empty: &str,
-    row: impl FnMut(&mut Page, &T),
-) {
-    page.box_top(title, right);
-    if list.items.is_empty() {
-        empty_row(page, empty);
-    }
-    box_rows(page, &list.items, row);
-    more_row(page, list.next.is_some(), list.items.len(), list.total);
+    box_rows(page, list, row);
     page.box_bottom();
 }
 
@@ -357,8 +441,8 @@ fn paged_list<T>(
     let Some(l) = list.show(page, &name.to_lowercase()) else {
         return;
     };
-    let title = format!("{name}  {}", compact(l.total));
-    paged_box(
+    let title = format!("{name}  {}", count_of(l));
+    list_box(
         page,
         vec![Seg::new(title, Role::Strong)],
         Vec::new(),
@@ -1018,21 +1102,12 @@ pub fn advisories(
     list: Fetched<'_, Results<Advisory>>,
     now: u64,
 ) {
-    let Some(l) = list.show(page, "advisories") else {
-        return;
-    };
-    // GitHub doesn't count them; `+` while there are more pages.
-    let more = if l.next.is_some() { "+" } else { "" };
-    let title = vec![Seg::new(
-        format!("Security advisories  {}{more}", l.items.len()),
-        Role::Strong,
-    )];
     let empty = if repo.is_some() {
         "No published advisories."
     } else {
         "No advisories."
     };
-    list_box(page, title, Vec::new(), &l.items, empty, |page, a| {
+    paged_list(page, "Security advisories", list, empty, |page, a| {
         let target = match repo {
             Some(repo) => format!("{}/security/advisories/{}", url::repo(repo), a.ghsa),
             None => format!("{}/advisories/{}", url::BASE, a.ghsa),
@@ -1105,7 +1180,7 @@ pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
         page,
         title,
         Vec::new(),
-        &a.packages,
+        &Whole(&a.packages),
         "None listed.",
         |page, p| {
             let right = vec![Seg::new(p.ecosystem.clone(), Role::Meta)];
@@ -1184,7 +1259,7 @@ pub fn wiki(page: &mut Page, repo: &RepoId, w: &WikiPage) {
         page,
         title,
         Vec::new(),
-        &w.pages,
+        &Whole(&w.pages),
         "No pages yet.",
         |page, title| {
             let target = format!(
@@ -1278,7 +1353,6 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
         Role::Strong,
     )];
     list_box(page, title, Vec::new(), &d.members, "No members.", user_row);
-    more_here(page, &d.members, "member", "members");
     page.blank();
     let title = vec![Seg::new(
         format!("Repositories  {}", count_of(&d.repos)),
@@ -1304,7 +1378,6 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
             });
         },
     );
-    more_here(page, &d.repos, "repository", "repositories");
     if !d.children.is_empty() {
         page.blank();
         let title = vec![Seg::new(
@@ -1314,7 +1387,6 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
         list_box(page, title, Vec::new(), &d.children, "", |page, c| {
             team_row(page, org, c);
         });
-        more_here(page, &d.children, "child team", "child teams");
     }
 }
 // ---- gists -------------------------------------------------------------------------------------
@@ -1573,19 +1645,8 @@ fn repo_list_box(
     let Some(r) = repos.show(page, "repositories") else {
         return;
     };
-    paged_box(page, title, right, r, empty, |page, repo| {
+    list_box(page, title, right, r, empty, |page, repo| {
         repo_row(page, repo, now, show_owner);
-    });
-}
-
-fn more_row(page: &mut Page, next: bool, shown: usize, total: u64) {
-    if !next {
-        return;
-    }
-    page.box_rule();
-    item(page, Link::More, |page, link| {
-        let text = format!("Load more  ({shown} of {})", compact(total));
-        body(page, vec![Seg::linked(text, Role::Link, link)]);
     });
 }
 
@@ -1695,15 +1756,10 @@ pub fn issue_list(
     }) else {
         return;
     };
-    page.box_top(title, vec![sort]);
-    if r.items.is_empty() {
-        empty_row(page, "No results matched your search.");
-    }
-    box_rows(page, &r.items, |page, i| {
+    let empty = "No results matched your search.";
+    list_box(page, title, vec![sort], r, empty, |page, i| {
         issue_row(page, i, false, icons, now);
     });
-    more_row(page, r.next.is_some(), r.items.len(), r.total);
-    page.box_bottom();
 }
 
 // ---- search -------------------------------------------------------------------------
@@ -1732,7 +1788,6 @@ pub fn search(
         return;
     };
     let (total, shown) = results.counts();
-    let next = results.next().is_some();
     page.box_top(
         vec![Seg::new(
             format!("{} {noun} results", compact(total)),
@@ -1744,12 +1799,12 @@ pub fn search(
         empty_row(page, "Your search did not match anything.");
     }
     match results {
-        SearchResults::Repos(r) => box_rows(page, &r.items, |page, r| repo_row(page, r, now, true)),
-        SearchResults::Issues(r) => box_rows(page, &r.items, |page, i| {
+        SearchResults::Repos(r) => box_rows(page, r, |page, r| repo_row(page, r, now, true)),
+        SearchResults::Issues(r) => box_rows(page, r, |page, i| {
             issue_row(page, i, true, icons, now);
         }),
-        SearchResults::Users(r) => box_rows(page, &r.items, user_row),
-        SearchResults::Discussions(r) => box_rows(page, &r.items, |page, hit| {
+        SearchResults::Users(r) => box_rows(page, r, user_row),
+        SearchResults::Discussions(r) => box_rows(page, r, |page, hit| {
             let d = &hit.summary;
             let target = format!("{}/discussions/{}", url::repo(&hit.repo), d.number);
             item(page, target, |page, link| {
@@ -1771,7 +1826,7 @@ pub fn search(
                 body(page, vec![Seg::new(meta, Role::Meta)]);
             });
         }),
-        SearchResults::Commits(r) => box_rows(page, &r.items, |page, hit| {
+        SearchResults::Commits(r) => box_rows(page, r, |page, hit| {
             let c = &hit.commit;
             item(page, url::commit(&hit.repo, &c.oid), |page, link| {
                 let right = vec![Seg::new(crate::text::short_sha(&c.oid), Role::Code)];
@@ -1789,7 +1844,7 @@ pub fn search(
                 body(page, vec![Seg::new(meta, Role::Meta)]);
             });
         }),
-        SearchResults::Code(r) => box_rows(page, &r.items, |page, hit| {
+        SearchResults::Code(r) => box_rows(page, r, |page, hit| {
             item(
                 page,
                 url::blob(&hit.repo, "HEAD", &hit.path),
@@ -1804,7 +1859,6 @@ pub fn search(
             );
         }),
     }
-    more_row(page, next, shown, total);
     page.box_bottom();
 }
 
@@ -1944,11 +1998,6 @@ fn people(page: &mut Page, heading: &str, logins: &[String], more: Option<String
     }
 }
 
-/// "and 3 more on GitHub", for what a capped list left out.
-fn and_more<T>(list: &Capped<T>) -> Option<String> {
-    (list.left_out() > 0).then(|| format!("and {} more on GitHub", list.left_out()))
-}
-
 /// For people found in a conversation's comments, when its earlier ones
 /// weren't loaded.
 fn maybe_others(earlier: bool) -> Option<String> {
@@ -2028,12 +2077,7 @@ pub fn issue(
             }
             segs.push(login_seg(page, a, Role::Link));
         }
-        if d.assignees.left_out() > 0 {
-            segs.push(Seg::new(
-                format!(" and {} more", d.assignees.left_out()),
-                Role::Meta,
-            ));
-        }
+        more_chips(&mut segs, &d.assignees);
         page.line(segs);
     }
     let talk = Conversation {
@@ -2056,7 +2100,8 @@ pub fn issue(
                 a,
                 "Assignees",
                 &d.assignees,
-                and_more(&d.assignees),
+                (d.assignees.left_out() > 0)
+                    .then(|| left_out_text(d.assignees.left_out(), "more", "more")),
                 "No one assigned",
             );
             label_list(a, &d.labels);
@@ -2298,21 +2343,21 @@ pub fn pr_commits(
     let Some(a) = activity.show(page, "commits") else {
         return;
     };
-    earlier_here(page, &a.commits, "commit", "commits");
-    commit_rows(page, &pr.repo, &a.commits, None, now);
+    commit_rows(page, &pr.repo, &a.commits, now);
 }
 
-/// Commits in boxes by day, each linked to its page; `more` adds a "Load
-/// more" row (shown so far, total).
-fn commit_rows(
-    page: &mut Page,
-    repo: &RepoId,
-    commits: &[CommitInfo],
-    more: Option<(usize, u64)>,
-    now: u64,
-) {
+/// Commits in boxes by day, each linked to its page: first how many
+/// earlier ones are only on GitHub, last "Load more" if another page loads.
+fn commit_rows(page: &mut Page, repo: &RepoId, commits: &impl Rows<CommitInfo>, now: u64) {
+    let rest = match commits.rest() {
+        Rest::OnGitHub(n) => {
+            left_out(page, n, "earlier commit", "earlier commits");
+            Rest::All
+        }
+        rest => rest,
+    };
     let mut current_day = String::new();
-    for c in commits {
+    for c in commits.rows() {
         let date = day(&c.date);
         if date == current_day {
             page.box_rule();
@@ -2337,10 +2382,8 @@ fn commit_rows(
             body(page, vec![Seg::new(committed, Role::Meta)]);
         });
     }
-    if let Some((shown, total)) = more {
-        more_row(page, true, shown, total);
-    }
     if !current_day.is_empty() {
+        rest_row(page, commits.rows().len(), rest);
         page.box_bottom();
     }
 }
@@ -2370,8 +2413,7 @@ pub fn commit_history(
         empty_box(page, Seg::new("◷ Commits", Role::Meta), "No commits here.");
         return;
     }
-    let more = h.next.is_some().then_some((h.items.len(), h.total));
-    commit_rows(page, repo, &h.items, more, now);
+    commit_rows(page, repo, h, now);
 }
 
 // ---- checks --------------------------------------------------------------------------------
@@ -2568,7 +2610,7 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
     }
     page.wrapped(facts, 0, Frame::None);
     page.blank();
-    let mut jobs: Vec<&JobSummary> = run.jobs.iter().collect();
+    let mut jobs = run.jobs.clone();
     jobs.sort_by(|a, b| (a.outcome, &a.name).cmp(&(b.outcome, &b.name)));
     let title = vec![Seg::new(
         format!("Jobs  {}", count_of(&run.jobs)),
@@ -2592,7 +2634,6 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
             page.box_line(segs, right, 0);
         });
     });
-    more_here(page, &run.jobs, "job", "jobs");
 }
 
 /// Which step each log line belongs to. GitHub's one log for a job
@@ -3089,10 +3130,10 @@ pub fn discussions(
     }
     let r = &l.results;
     let title = vec![Seg::new(
-        format!("Discussions  {}", compact(r.total)),
+        format!("Discussions  {}", count_of(r)),
         Role::Strong,
     )];
-    paged_box(
+    list_box(
         page,
         title,
         Vec::new(),
@@ -3191,30 +3232,20 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
 
 /// What a conversation leaves out: `… 12 more replies on GitHub (o)`.
 fn more_here<T>(page: &mut Page, list: &Capped<T>, one: &str, many: &str) {
-    left_out(page, list, &format!("more {one}"), &format!("more {many}"));
+    let (one, many) = (format!("more {one}"), format!("more {many}"));
+    left_out(page, list.left_out(), &one, &many);
 }
 
 /// The older part of a conversation that isn't shown (only its newest
 /// comments are fetched): `… 120 earlier comments on GitHub (o)`.
 fn earlier_here<T>(page: &mut Page, list: &Capped<T>, one: &str, many: &str) {
     let (one, many) = (format!("earlier {one}"), format!("earlier {many}"));
-    left_out(page, list, &one, &many);
+    left_out(page, list.left_out(), &one, &many);
 }
 
-/// A capped list's count: `20 of 45`, or `45` when all are here.
-fn count_of<T>(list: &Capped<T>) -> String {
-    if list.left_out() > 0 {
-        format!("{} of {}", list.len(), list.total())
-    } else {
-        list.total().to_string()
-    }
-}
-
-fn left_out<T>(page: &mut Page, list: &Capped<T>, one: &str, many: &str) {
-    let rest = list.left_out();
-    if rest > 0 {
-        let what = if rest == 1 { one } else { many };
-        let text = format!("… {rest} {what} on GitHub (o)");
+fn left_out(page: &mut Page, n: u64, one: &str, many: &str) {
+    if n > 0 {
+        let text = left_out_text(n, one, many);
         page.wrapped(vec![Seg::new(text, Role::Meta)], 2, Frame::None);
     }
 }
@@ -3286,31 +3317,34 @@ pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
         None => page.line(vec![Seg::new("No release notes.", Role::Meta)]),
     }
     page.blank();
-    let title = Seg::new(format!("Assets  {}", count_of(&r.assets)), Role::Strong);
-    if r.assets.is_empty() {
-        empty_box(page, title, "No assets.");
-        return;
-    }
-    page.box_top(vec![title], Vec::new());
-    box_rows(page, &r.assets, |page, a| {
-        item(page, a.url.clone(), |page, link| {
-            let right = vec![Seg::new(
-                format!(
-                    "{} · {} downloads",
-                    crate::text::size(a.size),
-                    compact(a.downloads)
-                ),
-                Role::Meta,
-            )];
-            page.box_line(
-                vec![Seg::linked(a.name.clone(), Role::Link, link)],
-                right,
-                0,
-            );
-        });
-    });
-    page.box_bottom();
-    more_here(page, &r.assets, "asset", "assets");
+    let title = vec![Seg::new(
+        format!("Assets  {}", count_of(&r.assets)),
+        Role::Strong,
+    )];
+    list_box(
+        page,
+        title,
+        Vec::new(),
+        &r.assets,
+        "No assets.",
+        |page, a| {
+            item(page, a.url.clone(), |page, link| {
+                let right = vec![Seg::new(
+                    format!(
+                        "{} · {} downloads",
+                        crate::text::size(a.size),
+                        compact(a.downloads)
+                    ),
+                    Role::Meta,
+                )];
+                page.box_line(
+                    vec![Seg::linked(a.name.clone(), Role::Link, link)],
+                    right,
+                    0,
+                );
+            });
+        },
+    );
 }
 
 /// A repository's tags, each linked to its code.
@@ -3455,7 +3489,7 @@ pub fn compare(page: &mut Page, repo: &RepoId, spec: &str, c: &Comparison, now: 
         page.wrapped(vec![Seg::new(more, Role::Meta)], 0, Frame::None);
         page.blank();
     }
-    commit_rows(page, repo, &c.commits, None, now);
+    commit_rows(page, repo, &Whole(&c.commits), now);
 }
 // ---- deployments ------------------------------------------------------------------------------
 
@@ -3501,10 +3535,10 @@ pub fn deployments(
     }
     let r = &l.results;
     let title = vec![Seg::new(
-        format!("Deployments  {}", compact(r.total)),
+        format!("Deployments  {}", count_of(r)),
         Role::Strong,
     )];
-    paged_box(page, title, Vec::new(), r, "No deployments.", |page, d| {
+    list_box(page, title, Vec::new(), r, "No deployments.", |page, d| {
         let target = d
             .log_url
             .clone()
@@ -3600,10 +3634,10 @@ pub fn milestones(
     page.blank();
     let r = &l.results;
     let title = vec![Seg::new(
-        format!("Milestones  {}", compact(r.total)),
+        format!("Milestones  {}", count_of(r)),
         Role::Strong,
     )];
-    paged_box(page, title, Vec::new(), r, "No milestones.", |page, m| {
+    list_box(page, title, Vec::new(), r, "No milestones.", |page, m| {
         let target = format!("{}/milestone/{}", url::repo(repo), m.number);
         item(page, target, |page, link| {
             let right = vec![Seg::new(due(m), Role::Meta)];
@@ -3654,23 +3688,17 @@ pub fn milestone(page: &mut Page, repo: &RepoId, d: &MilestoneDetail, icons: Ico
     page.blank();
     let r = &d.items;
     let title = vec![Seg::new(
-        format!("Issues and pull requests  {}", compact(r.total)),
+        format!("Issues and pull requests  {}", count_of(r)),
         Role::Strong,
     )];
-    page.box_top(title, Vec::new());
-    if d.unsearchable {
-        empty_row(
-            page,
-            "GitHub's search can't look up a title with quotes: o shows them on GitHub.",
-        );
-    } else if r.items.is_empty() {
-        empty_row(page, "Nothing in this milestone.");
-    }
-    box_rows(page, &r.items, |page, i| {
+    let empty = if d.unsearchable {
+        "GitHub's search can't look up a title with quotes: o shows them on GitHub."
+    } else {
+        "Nothing in this milestone."
+    };
+    list_box(page, title, Vec::new(), r, empty, |page, i| {
         issue_row(page, i, false, icons, now);
     });
-    more_row(page, r.next.is_some(), r.items.len(), r.total);
-    page.box_bottom();
 }
 // ---- commits -------------------------------------------------------------------------------
 
@@ -3727,12 +3755,7 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
             let short = crate::text::short_sha(parent);
             ids.push(link_seg(page, short, url::commit(repo, parent), Role::Code));
         }
-        if d.parents.left_out() > 0 {
-            ids.push(Seg::new(
-                format!(" + {} more", d.parents.left_out()),
-                Role::Meta,
-            ));
-        }
+        more_chips(&mut ids, &d.parents);
     }
     page.wrapped(ids, 0, Frame::None);
     page.blank();
@@ -3916,7 +3939,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
         page,
         title,
         Vec::new(),
-        &repos,
+        &Whole(&repos),
         "No public repositories yet.",
         |page, r| {
             repo_row(page, r, now, show_owner);
@@ -4167,7 +4190,7 @@ pub fn home(
                 Seg::new(title.to_owned(), Role::Strong),
                 Seg::new(format!("  {total}"), Role::Meta),
             ];
-            list_box(page, title, vec![all], prs, empty, |page, p| {
+            list_box(page, title, vec![all], &Whole(prs), empty, |page, p| {
                 let summary = IssueSummary {
                     repo: p.pr.repo.clone(),
                     number: p.pr.number,
@@ -4219,7 +4242,7 @@ pub fn home(
     if let Some(repos) = repos.show_or(page, "your repositories", loading) {
         let empty = "You don't have any repositories yet.";
         let all = Vec::from_iter(all);
-        list_box(page, title, all, repos, empty, |page, r| {
+        list_box(page, title, all, &Whole(repos), empty, |page, r| {
             repo_row(page, r, now, true);
         });
     }
@@ -4385,9 +4408,7 @@ mod tests {
         workflow_run(&mut page, &RepoId::new("o", "r"), &run, 0);
         let texts: Vec<String> = page.lines.iter().map(PageLine::text).collect();
         assert!(
-            texts
-                .iter()
-                .any(|t| t.contains("… 50 more jobs on GitHub (o)")),
+            texts.iter().any(|t| t.contains("… 50 more on GitHub (o)")),
             "{texts:#?}"
         );
     }
