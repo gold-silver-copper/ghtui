@@ -486,10 +486,7 @@ const STALL: Duration = Duration::from_secs(180);
 /// Runs `cmd` (writing `input` to its stdin, if any), reporting the
 /// latest `--progress` line from stderr, and gives up if it goes quiet for
 /// `stall` (normally [`STALL`]).
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the one place git is timed: by silence, not by the clock"
-)]
+#[expect(clippy::disallowed_methods, reason = "times silence, not the run")]
 async fn run_with_progress(
     mut cmd: Command,
     what: &str,
