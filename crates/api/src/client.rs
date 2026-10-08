@@ -399,7 +399,7 @@ impl GitHub {
     /// Runs a query whose root is never null, taking its data whole.
     /// Partial results are accepted (and their errors kept to report, see
     /// [`Self::take_left_out`]); a response without data is an error.
-    async fn graphql<Q: DeserializeOwned + Unrooted, V: Serialize>(
+    async fn graphql<Q: DeserializeOwned + cynic::QueryFragment + Unrooted, V: Serialize>(
         &self,
         op: cynic::Operation<Q, V>,
     ) -> Result<Q, ApiError> {
@@ -409,15 +409,14 @@ impl GitHub {
     /// Runs a query for the one thing `pick`ed from its data. Nothing picked
     /// is `subject` not found when GitHub's only errors (if any) said what
     /// wasn't there, and GitHub's other errors otherwise.
-    async fn find<Q: DeserializeOwned, V: Serialize, T>(
+    async fn find<Q: DeserializeOwned + cynic::QueryFragment, V: Serialize, T>(
         &self,
         op: cynic::Operation<Q, V>,
         subject: impl std::fmt::Display,
         pick: impl FnOnce(Q) -> Option<T>,
     ) -> Result<T, ApiError> {
-        let read = |data| serde_json::from_value(data).map(pick);
         let reply = self.ask(&serde_json::to_value(&op)?, true).await?;
-        reply.found(subject, read, |errors| self.leave_out(errors))
+        reply.picked(subject, pick, |errors| self.leave_out(errors))
     }
 
     /// Runs a GraphQL mutation. Any error fails it, with GitHub's messages:
@@ -442,19 +441,9 @@ impl GitHub {
         subject: impl std::fmt::Display,
         at: &str,
     ) -> Result<T, ApiError> {
-        if !at.starts_with('/') {
-            return Err(ApiError::Internal(format!("{at:?} isn't a JSON pointer")));
-        }
         let body = serde_json::json!({ "query": query, "variables": variables });
-        let read = |mut data: Value| {
-            let value = data.pointer_mut(at).map(Value::take);
-            value
-                .filter(|v| !v.is_null())
-                .map(T::deserialize)
-                .transpose()
-        };
         let reply = self.ask(&body, true).await?;
-        reply.found(subject, read, |errors| self.leave_out(errors))
+        reply.at(subject, at, |errors| self.leave_out(errors))
     }
 
     /// Posts a GraphQL request: the one place that reads GitHub's errors.
@@ -2171,11 +2160,44 @@ mod reply {
             Self { data, errors }
         }
 
+        /// What a typed query's data yields to `pick`; see [`Self::found`].
+        /// `Q` is a query's own type, so the whole data can't be taken as a
+        /// `Value` and its nulls explained by hand.
+        pub(super) fn picked<Q: DeserializeOwned + cynic::QueryFragment, T>(
+            self,
+            subject: impl std::fmt::Display,
+            pick: impl FnOnce(Q) -> Option<T>,
+            leave_out: impl FnOnce(Vec<String>),
+        ) -> Result<T, ApiError> {
+            self.found(subject, |d| serde_json::from_value(d).map(pick), leave_out)
+        }
+
+        /// The non-null value at `at`, a JSON pointer below the data's root
+        /// (never the whole data); see [`Self::found`].
+        pub(super) fn at<T: DeserializeOwned>(
+            self,
+            subject: impl std::fmt::Display,
+            at: &str,
+            leave_out: impl FnOnce(Vec<String>),
+        ) -> Result<T, ApiError> {
+            if at.len() < 2 || !at.starts_with('/') {
+                return Err(ApiError::Internal(format!("{at:?} is not below the root")));
+            }
+            let read = |mut data: Value| {
+                let value = data.pointer_mut(at).map(Value::take);
+                value
+                    .filter(|v| !v.is_null())
+                    .map(T::deserialize)
+                    .transpose()
+            };
+            self.found(subject, read, leave_out)
+        }
+
         /// What a query `read`s from the data: the one place that decides
         /// why a value is missing. Found, GitHub's errors are what it left
         /// out; missing beside errors, they say why; missing without any,
         /// `subject` is not found.
-        pub(super) fn found<T>(
+        fn found<T>(
             self,
             subject: impl std::fmt::Display,
             read: impl FnOnce(Value) -> Result<Option<T>, serde_json::Error>,
