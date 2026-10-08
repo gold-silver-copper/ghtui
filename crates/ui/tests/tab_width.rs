@@ -2,7 +2,16 @@
 //! halfwidth sound mark takes the same columns when wrapping or cutting a
 //! line as when the line reaches the screen.
 
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use ghtui_diff::FileDiff;
+use ghtui_diff::anchor::Side;
+use ghtui_git::files::{ChangedFile, FileStatus};
 use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
+use ghtui_ui::annotations::{Annotation, AnnotationComment, AnnotationKey};
+use ghtui_ui::diff_doc::{Doc, DocInputs, Pos};
+use ghtui_ui::diff_view::{DiffView, Keys};
 use ghtui_ui::markdown::render;
 use ghtui_ui::page::{Frame, Page, PageView};
 use ghtui_ui::{Ctx, Icons};
@@ -51,6 +60,89 @@ fn a_paragraph_with_tabs_wraps_instead_of_losing_its_end() {
         assert!(shown.contains(word), "{word} is shown:\n{shown}");
     }
     assert!(!shown.contains('…'), "nothing is cut:\n{shown}");
+}
+
+/// Tab-indented code in a review comment keeps its indentation.
+#[test]
+fn a_review_comment_keeps_its_tabs() {
+    let path = "main.go";
+    let file = ChangedFile {
+        status: FileStatus::Modified,
+        old_path: Some(path.into()),
+        new_path: Some(path.into()),
+        old_mode: 0o100644,
+        new_mode: 0o100644,
+        old_oid: ghtui_git::Oid::new("1".repeat(40)),
+        new_oid: ghtui_git::Oid::new("2".repeat(40)),
+        similarity: None,
+    };
+    let mut doc = Doc::new(vec![file], &HashSet::new(), DocInputs::default());
+    let diff = FileDiff::compute(path, Some(b"a\n"), Some(b"b\n"));
+    doc.set_diff(0, Arc::new(diff));
+    doc.set_inputs(DocInputs {
+        annotations: vec![Annotation {
+            key: AnnotationKey::Draft(1),
+            path: path.into(),
+            side: Side::Right,
+            line: None,
+            start_line: None,
+            original_line: None,
+            resolved: false,
+            outdated: false,
+            moved: false,
+            file_level: true,
+            comments: vec![AnnotationComment {
+                author: "alice".into(),
+                body: "Try:\n\tx := 1".into(),
+                created_at: String::new(),
+                pending: false,
+            }],
+            left_out: 0,
+            error: None,
+            can_reply: true,
+            can_resolve: false,
+            can_unresolve: false,
+        }],
+        ..DocInputs::default()
+    });
+    let theme = theme();
+    let area = Rect::new(0, 0, 60, 12);
+    let mut buf = Buffer::empty(area);
+    DiffView {
+        ctx: Ctx {
+            theme: &theme,
+            icons: Icons::default(),
+            now: 0,
+        },
+        doc: &doc,
+        cursor: Pos::default(),
+        top: Pos::default(),
+        keys: Keys {
+            show: "↵",
+            jump: "M",
+            expand: "e",
+            viewed: "v",
+            reply: "c",
+            resolve: "R",
+            delete: "del",
+            file_comment: "C",
+        },
+        selection: None,
+    }
+    .render(area, &mut buf);
+    let rows = rows(&buf);
+    let code = rows
+        .iter()
+        .find(|r| r.contains("x := 1"))
+        .unwrap_or_else(|| panic!("the code line is shown:\n{}", rows.join("\n")));
+    let try_row = rows
+        .iter()
+        .find(|r| r.contains("Try:"))
+        .unwrap_or_else(|| panic!("the first line is shown:\n{}", rows.join("\n")));
+    assert!(
+        code.find('x') > try_row.find('T'),
+        "the tab indents the code past the comment's margin:\n{try_row}\n{code}"
+    );
 }
 
 /// Halfwidth katakana with sound marks (ｶﾞ: each mark takes a cell of its

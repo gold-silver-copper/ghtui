@@ -10,7 +10,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::Widget;
 
-use crate::{Ctx, PAD_X, cols, fill, inset, key_hints, render_split, text};
+use crate::{Ctx, PAD_X, cols, fill, inset, key_hints, page, render_split, text};
 
 const BAR: Bg = Bg::Container;
 
@@ -114,7 +114,7 @@ impl Banner<'_> {
     fn lines(&self, width: u16) -> Vec<String> {
         let hint = self.hint.map_or(0, text::width);
         let room = usize::from(width.saturating_sub(2 * PAD_X + 2)).saturating_sub(hint);
-        text::wrap(self.text, room)
+        page::wrap(self.text, room)
     }
 
     /// Rows the banner takes at `width` (at most `max`).

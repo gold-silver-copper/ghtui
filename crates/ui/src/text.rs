@@ -114,48 +114,6 @@ pub fn size(bytes: u64) -> String {
     }
 }
 
-/// Greedy word wrap to `max` columns. Keeps blank lines (paragraph breaks)
-/// and hard-breaks words longer than a line.
-pub fn wrap(text: &str, max: usize) -> Vec<String> {
-    let max = max.max(1);
-    let mut lines = Vec::new();
-    for raw in text.lines() {
-        let raw = raw.trim_end();
-        if raw.is_empty() {
-            lines.push(String::new());
-            continue;
-        }
-        let mut line = String::new();
-        let mut used = 0;
-        for word in raw.split(' ') {
-            let w = width(word);
-            if used > 0 && used + 1 + w > max {
-                lines.push(std::mem::take(&mut line));
-                used = 0;
-            }
-            if w > max {
-                for (g, gw) in graphemes(word) {
-                    if used + gw > max {
-                        lines.push(std::mem::take(&mut line));
-                        used = 0;
-                    }
-                    line.push_str(g);
-                    used += gw;
-                }
-                continue;
-            }
-            if used > 0 {
-                line.push(' ');
-                used += 1;
-            }
-            line.push_str(word);
-            used += w;
-        }
-        lines.push(line);
-    }
-    lines
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,23 +137,5 @@ mod tests {
         assert_eq!(truncate("⚠️ Fix warning in build", 5), "⚠️ F…");
         assert_eq!(truncate("👨‍🍳👨‍🍳👨‍🍳", 5), "👨‍🍳👨‍🍳…");
         assert!(width(&truncate("❤️❤️❤️abcdef", 5)) <= 5);
-    }
-
-    #[test]
-    fn wraps_words() {
-        assert_eq!(wrap("one two three", 7), ["one two", "three"]);
-        assert_eq!(wrap("a\n\nb", 10), ["a", "", "b"]);
-        assert_eq!(wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
-        assert!(wrap("", 4).is_empty());
-    }
-
-    #[test]
-    fn wrapped_lines_fit() {
-        let text = "The quick brown fox jumps over the lazy dog, then keeps running far away.";
-        for max in 1..30 {
-            for line in wrap(text, max) {
-                assert!(width(&line) <= max, "{max}: {line:?}");
-            }
-        }
     }
 }

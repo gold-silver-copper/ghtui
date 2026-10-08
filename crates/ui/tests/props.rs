@@ -109,7 +109,8 @@ proptest! {
     /// its marks).
     #[test]
     fn text_fits_its_width(text in prop_oneof![any::<String>(), source()], max in 1usize..40) {
-        use ghtui_ui::text::{graphemes, truncate, width, wrap};
+        use ghtui_ui::page::wrap;
+        use ghtui_ui::text::{graphemes, truncate, width};
         let cut = truncate(&text, max);
         prop_assert!(width(&cut) <= max, "{} > {max}: {cut:?}", width(&cut));
         for line in wrap(&text, max) {
