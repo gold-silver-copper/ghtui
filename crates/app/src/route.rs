@@ -980,14 +980,6 @@ fn gist(parsed: &url::Url) -> Option<Route> {
         _ => return None,
     })
 }
-/// The comparison a range of files is from.
-pub fn compare_url(of: &DiffOf) -> String {
-    match of {
-        DiffOf::Range(repo, from, to) => format!("{}/compare/{from}..{to}", links::repo(repo)),
-        DiffOf::Pr(pr) => format!("{}/files", pr.url()),
-        DiffOf::Commit(repo, oid) => links::commit(repo, oid),
-    }
-}
 /// A discussions page from what follows `/discussions` in its URL.
 fn discussions(of: DiscussionsOf, rest: &[&str]) -> Option<Route> {
     Some(match rest {
@@ -1558,14 +1550,15 @@ pub(crate) mod tests {
                 spec: format!("{sha}...{other}")
             }
         );
-        assert_eq!(
-            compare_url(&DiffOf::Range(
-                pr.repo.clone(),
-                Oid::parse(sha).unwrap(),
-                Oid::parse(&other).unwrap()
-            )),
-            format!("https://github.com/o/r/compare/{sha}..{other}")
-        );
+        // A diff's link leads back to it.
+        let (from, to) = (Oid::parse(sha).unwrap(), Oid::parse(&other).unwrap());
+        for of in [
+            DiffOf::Pr(pr.clone()),
+            DiffOf::Commit(pr.repo.clone(), from.clone()),
+            DiffOf::Range(pr.repo.clone(), from, to),
+        ] {
+            assert_eq!(Target::from_url(&of.url()), Target::Files(of.clone()));
+        }
         // A topic search without a topic is an empty search, not `topic:`.
         assert_eq!(
             page("https://github.com/search?type=topics"),

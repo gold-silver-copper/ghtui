@@ -238,13 +238,7 @@ impl State {
     pub fn tab_urls(&self) -> Vec<String> {
         let url = |screen: &Screen| match screen {
             Screen::Page(p) => p.route.url(),
-            Screen::Diff(d) => match &d.of {
-                DiffOf::Pr(pr) => format!("{}/files", pr.url()),
-                DiffOf::Commit(repo, oid) => {
-                    format!("{}#files", ghtui_ui::pages::url::commit(repo, oid))
-                }
-                DiffOf::Range(..) => format!("{}#files", crate::route::compare_url(&d.of)),
-            },
+            Screen::Diff(d) => d.of.url(),
         };
         let before = self.before.iter().map(|t| url(t.screens.last()));
         let after = self.after.iter().map(|t| url(t.screens.last()));

@@ -12,6 +12,7 @@ use ghtui_store::ReviewState;
 use ghtui_ui::bars::Notice;
 use ghtui_ui::diff_doc::{Doc, DocInputs, Note, Pos, Row, ViewOptions, Viewed};
 use ghtui_ui::file_tree::{TreeRow, row_of_file, tree_rows};
+use ghtui_ui::pages::url as links;
 use ghtui_ui::text::short_sha;
 use ratatui::layout::Rect;
 
@@ -61,6 +62,16 @@ impl DiffOf {
         match self {
             DiffOf::Pr(pr) => &pr.repo,
             DiffOf::Commit(repo, _) | DiffOf::Range(repo, ..) => repo,
+        }
+    }
+
+    /// Its files on GitHub: the one place a diff's link is written, and
+    /// one that parses back to it.
+    pub fn url(&self) -> String {
+        match self {
+            DiffOf::Pr(pr) => format!("{}/files", pr.url()),
+            DiffOf::Commit(repo, oid) => format!("{}#files", links::commit(repo, oid)),
+            DiffOf::Range(repo, from, to) => format!("{}#files", links::compare(repo, from, to)),
         }
     }
 }
