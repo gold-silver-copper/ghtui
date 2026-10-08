@@ -16,6 +16,8 @@ disallowed-methods = [
     { path = "ghtui_ui::fetched::Fetched::ready_unchecked", reason = "says nothing of a failure: use `show`, or say why silence is right" },
     { path = "ghtui_ui::fetched::Fetched::text", reason = "`.ok()` drops what to say: use `show`, or say where the text is shown" },
     { path = "ghtui_ui::fetched::Fetched::new_unchecked", reason = "only a fetch's owner (`Remote::fetched`) knows how it's going" },
-    # A slow download that keeps moving isn't stuck.
-    { path = "tokio::time::timeout", reason = "a git command is judged by its progress: go through run_with_progress" },
+    # A slow download that keeps moving isn't stuck: work that reports
+    # progress is given up on when it goes quiet (`run_with_progress`).
+    { path = "tokio::time::timeout", reason = "judge work by its progress, not the clock" },
+    { path = "tokio::time::timeout_at", reason = "judge work by its progress, not the clock" },
 ]

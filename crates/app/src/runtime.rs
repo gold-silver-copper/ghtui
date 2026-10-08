@@ -59,12 +59,11 @@ pub async fn run(
     let result = drive(terminal, state, &mut effects, rx, initial, started).await;
     // Drafts saved just before quitting still reach the disk.
     drop(effects.save_review);
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "bounding the review writer's shutdown at exit, not a git command"
-    )]
-    let writer = tokio::time::timeout(Duration::from_secs(2), effects.writer);
-    if writer.await.is_err() {
+    #[expect(clippy::disallowed_methods, reason = "a file write: no progress")]
+    if tokio::time::timeout(Duration::from_secs(2), effects.writer)
+        .await
+        .is_err()
+    {
         tracing::warn!("review state was still being written at exit");
     }
     result
