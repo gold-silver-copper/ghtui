@@ -2986,6 +2986,30 @@ pub(crate) mod tests {
         assert!(text.contains("Issue 11"), "{text}");
     }
 
+    /// A failed refresh puts its banner above the cached copy without
+    /// moving what you scrolled to.
+    #[test]
+    fn a_failed_refresh_keeps_the_view() {
+        let mut state = with_inbox(40);
+        for _ in 0..25 {
+            press(&mut state, "<Down>");
+        }
+        let top = |state: &State| {
+            let p = page(state);
+            p.page().lines[p.scroll].text()
+        };
+        let before = top(&state);
+        assert!(page(&state).scroll > 0, "scrolled");
+        let _ = state.load_visible(true);
+        update(&mut state, Msg::Inbox(Err(ApiError::RateLimited(30))));
+        assert!(
+            page(&state).page().lines[0]
+                .text()
+                .contains("Couldn't refresh")
+        );
+        assert_eq!(top(&state), before);
+    }
+
     #[test]
     fn the_menu_lists_and_runs_what_you_can_do() {
         let mut state = with_repo();

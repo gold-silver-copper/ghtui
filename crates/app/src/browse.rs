@@ -536,6 +536,15 @@ impl State {
         };
         let mut page = Page::new(pages::main_width(width, aside));
         page.compact = self.compact();
+        if let Some(err) = self.stale_errors(route) {
+            // A flash banner on top; what's below is the cached copy.
+            let when = self
+                .page_cached_at(route)
+                .map_or_else(|| "before".to_owned(), |at| ghtui_ui::time::ago(at, now));
+            let why = format!("Couldn't refresh: {err}. Showing what was loaded {when}.");
+            pages::flash(&mut page, &why);
+            page.blank();
+        }
         let retry = self.first_key(Action::Refresh);
         let f = Needs {
             state: self,
@@ -795,30 +804,6 @@ impl State {
                     };
                     pages::profile(&mut page, p, *tab, list, now);
                 }
-            }
-        }
-        if let Some(err) = self.stale_errors(route) {
-            // A flash banner on top; what's below is the cached copy.
-            let when = self
-                .page_cached_at(route)
-                .map_or_else(|| "before".to_owned(), |at| ghtui_ui::time::ago(at, now));
-            let mut banner = Page::new(page.width);
-            pages::flash(
-                &mut banner,
-                &format!("Couldn't refresh: {err}. Showing what was loaded {when}."),
-            );
-            banner.blank();
-            let n = banner.lines.len();
-            page.lines.splice(0..0, banner.lines);
-            for item in &mut page.items {
-                item.start += n;
-                item.end += n;
-            }
-            if let Some(jump) = &mut page.jump {
-                *jump += n;
-            }
-            for line in page.anchors.values_mut() {
-                *line += n;
             }
         }
         page
