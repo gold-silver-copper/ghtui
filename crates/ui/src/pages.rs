@@ -350,11 +350,15 @@ impl<T> Rows<T> for Results<T> {
     }
     fn rest(&self) -> Rest {
         // A total no more than what's here means GitHub didn't count.
-        let counted = self.total > self.items.len() as u64;
+        // With no next page, GitHub stopped listing short of its count
+        // (search stops at 1000; hidden items aren't listed).
+        let len = self.items.len() as u64;
+        let counted = self.total > len;
         match self.next {
             Some(_) => Rest::NextPage {
                 total: counted.then_some(self.total),
             },
+            None if counted => Rest::OnGitHub(self.total - len),
             None => Rest::All,
         }
     }
