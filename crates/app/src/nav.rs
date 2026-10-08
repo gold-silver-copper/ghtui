@@ -18,7 +18,7 @@ use ratatui::layout::Rect;
 use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
-use crate::browse::{self, Data, DataKey};
+use crate::browse::{self, Data, DataKey, Need};
 use crate::diff_screen::DiffOf;
 use crate::keymap::Action;
 use crate::picker::{fuzzy_score, move_in_list};
@@ -137,7 +137,7 @@ impl State {
             Target::Files(of) => {
                 self.forward.clear();
                 let mut cmds = match &of {
-                    DiffOf::Pr(pr) => self.ensure_pr(pr, false),
+                    DiffOf::Pr(pr) => self.ensure(Need::Pr(pr.clone()), false),
                     DiffOf::Commit(..) | DiffOf::Range(..) => Vec::new(),
                 };
                 cmds.extend(self.open_diff(of));

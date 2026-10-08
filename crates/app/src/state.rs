@@ -281,6 +281,8 @@ pub struct Remote<T> {
     more: Option<String>,
     /// A write was made since the last fetch was asked for.
     stale: bool,
+    /// Pages were added with Load more: only asking refetches it.
+    extended: bool,
 }
 
 impl<T> Default for Remote<T> {
@@ -292,6 +294,7 @@ impl<T> Default for Remote<T> {
             cached_at: None,
             more: None,
             stale: false,
+            extended: false,
         }
     }
 }
@@ -326,14 +329,16 @@ impl<T> Remote<T> {
             cached_at: self.cached_at,
             more: self.more.clone(),
             stale: self.stale,
+            extended: self.extended,
         }
     }
 
     /// Starts a fetch, unless one is running or (without `force`) the data
-    /// is good: fetched here (not from the disk cache) since the last write.
+    /// is good: fetched here (not from the disk cache) since the last write,
+    /// or extended, which a refetch would cut back to its first page.
     fn begin(&mut self, force: bool) -> bool {
         let good = self.data.is_some() && self.error.is_none() && self.cached_at.is_none();
-        if self.loading || (!force && good && !self.stale) {
+        if self.loading || (!force && (self.extended || good && !self.stale)) {
             return false;
         }
         self.loading = true;
@@ -350,6 +355,7 @@ impl<T> Remote<T> {
                 self.cached_at = None;
                 // A next page asked for before this belongs to the old list.
                 self.more = None;
+                self.extended = false;
             }
             Err(err) => self.error = Some(err.to_string()),
         }
@@ -566,33 +572,23 @@ impl State {
 
     #[must_use]
     pub fn ensure(&mut self, need: Need, force: bool) -> Vec<Cmd> {
-        match need {
-            Need::Inbox if self.inbox.begin(force) => vec![Cmd::Api(Api::FetchInbox)],
-            Need::Pr(pr) => self.ensure_pr(&pr, force),
+        let (started, api) = match need {
+            Need::Inbox => (self.inbox.begin(force), Api::FetchInbox),
+            Need::Pr(pr) => (
+                self.prs.entry(pr.clone()).or_default().begin(force),
+                Api::FetchPr(pr),
+            ),
             Need::Data(key) => {
                 let remote = self.data.entry(key.clone()).or_default();
                 // What was still running is checked again whenever it's
                 // wanted (going back to it, switching to its tab).
-                let force = force || remote.data.as_ref().is_some_and(Data::running);
-                if !remote.begin(force) {
-                    return Vec::new();
-                }
-                vec![Cmd::Api(Api::Fetch {
-                    cached: remote.data.is_none(),
-                    key,
-                })]
+                let running = remote.data.as_ref().is_some_and(Data::running);
+                let cached = remote.data.is_none();
+                let force = force || (running && !remote.extended);
+                (remote.begin(force), Api::Fetch { cached, key })
             }
-            Need::Inbox => Vec::new(),
-        }
-    }
-
-    #[must_use]
-    pub fn ensure_pr(&mut self, pr: &PrRef, force: bool) -> Vec<Cmd> {
-        if self.prs.entry(pr.clone()).or_default().begin(force) {
-            vec![Cmd::Api(Api::FetchPr(pr.clone()))]
-        } else {
-            Vec::new()
-        }
+        };
+        started.then_some(Cmd::Api(api)).into_iter().collect()
     }
 
     /// Fetches needed for the visible screen. `force` refreshes data we
@@ -611,7 +607,7 @@ impl State {
             Screen::Diff(d) => {
                 let of = d.of.clone();
                 if let DiffOf::Pr(pr) = &of {
-                    cmds.extend(self.ensure_pr(pr, force));
+                    cmds.extend(self.ensure(Need::Pr(pr.clone()), force));
                 }
                 // Settling starts it (again); a PR's waits for the PR, which may have merged.
                 if force {
@@ -875,6 +871,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 Ok(more) => {
                     if let Some(data) = &mut remote.data {
                         data.append(more);
+                        remote.extended = true;
                     }
                 }
                 Err(err) => state.error(format!("Couldn't load more: {err}")),
@@ -1639,6 +1636,55 @@ pub(crate) mod tests {
             p.selected_link(),
             Some(ghtui_ui::page::Link::Url(_))
         ));
+    }
+
+    /// A list extended with Load more is fetched again only when asked: a
+    /// pending run or a write elsewhere would cut it back to its first page.
+    #[test]
+    fn an_extended_list_is_kept_until_asked() {
+        let mut state = with_repo();
+        let file = "ci.yml".to_owned();
+        let key = DataKey::WorkflowRuns(repo(), file.clone());
+        let _ = state.go(Target::Page(Route::Workflow { repo: repo(), file }));
+        let page = |id: u64, next: Option<&str>| {
+            let mut runs = crate::fixtures::workflow_runs().1;
+            for (i, run) in runs.items.iter_mut().enumerate() {
+                (run.id, run.outcome) = (id + i as u64, ghtui_api::browse::CheckOutcome::Pending);
+            }
+            runs.next = next.map(str::to_owned);
+            Data::Runs(Box::new(runs))
+        };
+        let refetch = Cmd::Api(Api::Fetch {
+            key: key.clone(),
+            cached: false,
+        });
+        fetched(&mut state, key.clone(), page(10, Some("2")));
+        assert!(state.load_visible(false).contains(&refetch), "pending runs");
+        fetched(&mut state, key.clone(), page(10, Some("2")));
+        press(&mut state, "G");
+        press(&mut state, "<Enter>");
+        update(
+            &mut state,
+            Msg::FetchedMore(key.clone(), "2".into(), Ok(page(20, None))),
+        );
+        let result = Ok(());
+        update(
+            &mut state,
+            Msg::Starred {
+                repo: repo(),
+                starred: true,
+                result,
+            },
+        );
+        assert!(!state.load_visible(false).contains(&refetch));
+        let Some(Data::Runs(runs)) = state.get(&key) else {
+            panic!()
+        };
+        assert_eq!(runs.items.len(), 4);
+        assert!(
+            state.load_visible(true).contains(&refetch),
+            "r refetches it"
+        );
     }
 
     /// A next page asked for before a refresh belongs to the old list: it
