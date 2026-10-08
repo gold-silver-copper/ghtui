@@ -18,7 +18,7 @@ use ghtui_diff::anchor::{Commentable, LinePos, RangeSource, Side};
 use ghtui_diff::blocks::{ChangeBlock, change_blocks};
 use ghtui_diff::moves::Move;
 use ghtui_diff::{
-    CONTEXT, Content, DiffLine, FileDiff, LineKind, TextDiff, Whitespace, counts, hunk, segments_by,
+    CONTEXT, Content, DiffLine, FileDiff, TextDiff, Whitespace, counts, hunks, segments_by,
 };
 use ghtui_git::files::{ChangedFile, is_lockfile};
 
@@ -33,13 +33,6 @@ const DEFAULT_WRAP: u16 = 72;
 
 /// Lines revealed per expansion step.
 const EXPAND_STEP: u32 = 20;
-
-/// Where a line sits on each side: its old number on the left, its new
-/// number on the right.
-pub(crate) fn sides(line: &DiffLine) -> (Option<LinePos>, Option<LinePos>) {
-    let at = |side, n: Option<u32>| n.map(|line| LinePos { side, line });
-    (at(Side::Left, line.old), at(Side::Right, line.new))
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Note {
@@ -122,8 +115,9 @@ fn new_line_near(lines: &[DiffLine], e: usize) -> Option<u32> {
     before
         .iter()
         .rev()
-        .find_map(|l| l.new)
-        .or_else(|| after.iter().find_map(|l| l.new))
+        .find_map(|l| l.right())
+        .or_else(|| after.iter().find_map(|l| l.right()))
+        .map(|p| p.line)
 }
 
 impl Row {
@@ -233,12 +227,8 @@ impl DocFile {
     ) -> impl Iterator<Item = LinePos> + use<> {
         let line = self
             .text()
-            .and_then(|t| t.lines(whitespace).get(entry as usize));
-        let (left, right) = line.map(sides).unwrap_or_default();
-        let kind = line.map(|l| l.kind);
-        let left = left.filter(|_| kind != Some(LineKind::Added));
-        let right = right.filter(|_| kind != Some(LineKind::Removed));
-        left.into_iter().chain(right)
+            .and_then(|t| t.lines(whitespace).get(entry as usize).copied());
+        line.into_iter().flat_map(DiffLine::lines)
     }
 
     fn push_annotation(&mut self, index: u32, ann: &Annotation, open: bool, wrap: usize) {
@@ -376,7 +366,7 @@ impl DocFile {
             let anything_new = lines
                 .iter()
                 .zip(&seen_entry)
-                .any(|(l, seen)| l.kind != LineKind::Context && !seen);
+                .any(|(l, seen)| l.is_change() && !seen);
             if !anything_new && !self.full {
                 self.rows.push(Row::Note(Note::NothingNew));
                 self.rows.push(Row::Spacer);
@@ -387,45 +377,33 @@ impl DocFile {
         // Commented lines are always visible.
         let mut windows = self.windows.clone();
         for (e, line) in lines.iter().enumerate() {
-            let (left, right) = sides(line);
-            if left
-                .into_iter()
-                .chain(right)
-                .any(|p| self.by_line.contains_key(&p))
-            {
+            if line.lines().any(|p| self.by_line.contains_key(&p)) {
                 let e = idx(e);
                 windows.push(e..e.saturating_add(1));
             }
         }
         let segs = segments_by(
             lines.len(),
-            |e| {
-                lines.get(e).is_some_and(|l| l.kind != LineKind::Context)
-                    && seen_entry.get(e) == Some(&false)
-            },
+            |e| lines.get(e).is_some_and(|l| l.is_change()) && seen_entry.get(e) == Some(&false),
             CONTEXT,
             &windows,
             self.full,
         );
-        let (mut seen, mut before) = (0usize, (0u32, 0u32));
         let mut next_hidden = 0u32;
-        for (s, seg) in segs.iter().enumerate() {
+        for ((s, seg), hunk) in segs.iter().enumerate().zip(hunks(lines, &segs)) {
             if idx(seg.start) > next_hidden {
                 self.rows.push(Row::Gap {
                     start: next_hidden,
                     end: idx(seg.start),
                 });
             }
-            let skipped = counts_in(lines.get(seen..seg.start).unwrap_or_default());
-            before = (before.0 + skipped.0, before.1 + skipped.1);
-            seen = seg.start;
             // Named by where its first change is.
             let first_change = seg
                 .clone()
-                .find(|&e| lines.get(e).is_some_and(|l| l.kind != LineKind::Context))
+                .find(|&e| lines.get(e).is_some_and(|l| l.is_change()))
                 .unwrap_or(seg.start);
             self.headers.push(HunkHeader {
-                range: hunk(lines, seg.clone(), before).header(),
+                range: hunk.header(),
                 scope: new_line_near(lines, first_change)
                     .map(|n| text.scope(n).into_iter().map(str::to_owned).collect())
                     .unwrap_or_default(),
@@ -508,19 +486,18 @@ impl DocFile {
 
     /// Columns for line numbers in this file (at least 3).
     pub fn number_width(&self) -> usize {
-        let max = self.text().map_or(0, |t| t.old.len().max(t.new.len()));
+        let max = self.text().map_or(0, TextDiff::max_lines);
         max.to_string().len().max(3)
     }
 
-    /// The source line a row shows: `(is_new_side, line)`.
-    fn row_line(&self, row: Row, whitespace: Whitespace) -> Option<(bool, u32)> {
+    /// The source line a row shows.
+    fn row_line(&self, row: Row, whitespace: Whitespace) -> Option<LinePos> {
         let text = self.text()?;
         let lines = text.lines(whitespace);
-        let entry = |e: u32| lines.get(e as usize);
-        let side = |l: &DiffLine| l.new.map(|n| (true, n)).or(l.old.map(|o| (false, o)));
+        let entry = |e: u32| lines.get(e as usize).map(|l| l.shown());
         match row {
-            Row::Line(e) | Row::Gap { start: e, .. } => entry(e).and_then(side),
-            Row::Split { left, right } => right.or(left).and_then(entry).and_then(side),
+            Row::Line(e) | Row::Gap { start: e, .. } => entry(e),
+            Row::Split { left, right } => right.or(left).and_then(entry),
             Row::Hunk { seg } => {
                 // The first line after the header.
                 let pos = self.rows.iter().position(|r| *r == Row::Hunk { seg })?;
@@ -541,25 +518,6 @@ fn is_open(thread_open: &HashMap<AnnotationKey, bool>, ann: &Annotation) -> bool
         .unwrap_or_else(|| ann.open_by_default())
 }
 
-fn counts_in(lines: &[DiffLine]) -> (u32, u32) {
-    lines.iter().fold((0, 0), |(o, n), l| {
-        (
-            o + u32::from(l.old.is_some()),
-            n + u32::from(l.new.is_some()),
-        )
-    })
-}
-
-fn ends_without_newline(text: &TextDiff, line: &DiffLine) -> bool {
-    let old_end = line.old == Some(idx(text.old.len()))
-        && text.old.missing_final_newline
-        && line.kind != LineKind::Added;
-    let new_end = line.new == Some(idx(text.new.len()))
-        && text.new.missing_final_newline
-        && line.kind != LineKind::Removed;
-    old_end || new_end
-}
-
 /// Rows for entries `range`: one each, or split.
 fn push_lines(
     rows: &mut Vec<Row>,
@@ -573,7 +531,10 @@ fn push_lines(
     }
     for e in range {
         rows.push(Row::Line(idx(e)));
-        if lines.get(e).is_some_and(|l| ends_without_newline(text, l)) {
+        if lines
+            .get(e)
+            .is_some_and(|l| text.ends_without_newline(l.shown()))
+        {
             rows.push(Row::NoNewline);
         }
     }
@@ -582,27 +543,34 @@ fn push_lines(
 /// Split rows: context lines pair with themselves; within a change, the
 /// removed and added runs are zipped side by side.
 fn push_split_rows(rows: &mut Vec<Row>, text: &TextDiff, lines: &[DiffLine], seg: Range<usize>) {
-    let is = |e: usize, kind: LineKind| lines.get(e).is_some_and(|l| l.kind == kind);
+    let is = |e: usize, removed| {
+        lines
+            .get(e)
+            .is_some_and(|l| l.is_change() && l.left().is_some() == removed)
+    };
+    // A half ends without a newline when its own side's line does.
+    let ends = |e: Option<u32>, side| {
+        e.and_then(|e| lines.get(e as usize)?.on(side))
+            .is_some_and(|p| text.ends_without_newline(p))
+    };
     let mut e = seg.start;
     while e < seg.end {
         let Some(line) = lines.get(e) else { break };
-        if line.kind == LineKind::Context {
-            rows.push(Row::Split {
-                left: Some(idx(e)),
-                right: Some(idx(e)),
-            });
-            if ends_without_newline(text, line) {
+        if !line.is_change() {
+            let (left, right) = (Some(idx(e)), Some(idx(e)));
+            rows.push(Row::Split { left, right });
+            if ends(left, Side::Left) || ends(right, Side::Right) {
                 rows.push(Row::NoNewline);
             }
             e += 1;
             continue;
         }
         let removed_start = e;
-        while e < seg.end && is(e, LineKind::Removed) {
+        while e < seg.end && is(e, true) {
             e += 1;
         }
         let added_start = e;
-        while e < seg.end && is(e, LineKind::Added) {
+        while e < seg.end && is(e, false) {
             e += 1;
         }
         let (removed, added) = (added_start - removed_start, e - added_start);
@@ -610,11 +578,7 @@ fn push_split_rows(rows: &mut Vec<Row>, text: &TextDiff, lines: &[DiffLine], seg
         for i in 0..removed.max(added) {
             let left = (i < removed).then_some(idx(removed_start + i));
             let right = (i < added).then_some(idx(added_start + i));
-            missing_newline |= [left, right].into_iter().flatten().any(|x| {
-                lines
-                    .get(x as usize)
-                    .is_some_and(|l| ends_without_newline(text, l))
-            });
+            missing_newline |= ends(left, Side::Left) || ends(right, Side::Right);
             rows.push(Row::Split { left, right });
         }
         if missing_newline {
@@ -634,7 +598,7 @@ pub struct Pos {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Anchor {
     file: usize,
-    line: Option<(bool, u32)>,
+    line: Option<LinePos>,
     row: usize,
 }
 
@@ -925,15 +889,7 @@ impl Doc {
         let file = self.files.get(pos.file)?;
         let text = file.text()?;
         let lines = text.lines(self.opts.whitespace);
-        let at = |e: u32| {
-            let l = lines.get(e as usize)?;
-            let (left, right) = sides(l);
-            if l.kind == LineKind::Removed {
-                left
-            } else {
-                right
-            }
-        };
+        let at = |e: u32| lines.get(e as usize).map(|l| l.shown());
         match self.row(pos)? {
             Row::Line(e) => at(e),
             Row::Split { left, right } => right.or(left).and_then(at),
@@ -1118,7 +1074,7 @@ impl Doc {
         let Some(file) = self.files.get(anchor.file) else {
             return self.clamp(Pos::default());
         };
-        let Some((new_side, line)) = anchor.line else {
+        let Some(line) = anchor.line else {
             return self.clamp(Pos {
                 file: anchor.file,
                 row: anchor.row.min(1),
@@ -1129,17 +1085,18 @@ impl Doc {
             if matches!(row, Row::Hunk { .. }) {
                 continue;
             }
-            let Some((side, l)) = file.row_line(*row, self.opts.whitespace) else {
+            let Some(at) = file.row_line(*row, self.opts.whitespace) else {
                 continue;
             };
-            if side == new_side && l == line {
+            if at == line {
                 return Pos {
                     file: anchor.file,
                     row: i,
                 };
             }
-            if side == new_side && l > line && best.is_none_or(|(b, _)| l < b) {
-                best = Some((l, i));
+            if at.side == line.side && at.line > line.line && best.is_none_or(|(b, _)| at.line < b)
+            {
+                best = Some((at.line, i));
             }
         }
         Pos {
@@ -1324,17 +1281,18 @@ impl Doc {
             return String::new();
         };
         let lines = file.text().map(|t| (t, t.lines(self.opts.whitespace)));
-        let entry = |e: u32| {
-            lines
-                .and_then(|(t, l)| l.get(e as usize).map(|line| t.text(line)))
-                .unwrap_or_default()
+        // The text of entry `e` on `side`, or the side it shows.
+        let entry = |e: u32, side: Option<Side>| {
+            let (text, lines) = lines?;
+            let l = lines.get(e as usize)?;
+            Some(text.line(side.map_or(Some(l.shown()), |s| l.on(s))?))
         };
+        let half = |e: Option<u32>, side| e.and_then(|e| entry(e, Some(side))).unwrap_or_default();
         match self.row(pos) {
             Some(Row::Header) => file.meta.path().to_owned(),
-            Some(Row::Line(e)) => entry(e).to_owned(),
+            Some(Row::Line(e)) => entry(e, None).unwrap_or_default().to_owned(),
             Some(Row::Split { left, right }) => {
-                let left = left.map(entry).unwrap_or_default();
-                let right = right.map(entry).unwrap_or_default();
+                let (left, right) = (half(left, Side::Left), half(right, Side::Right));
                 format!("{left}\n{right}")
             }
             _ => String::new(),
@@ -1620,7 +1578,7 @@ pub(crate) mod tests {
     #[test]
     fn anchors_keep_the_line_across_view_changes() {
         let mut doc = doc();
-        let row = line_row(&doc.files[0], |l| l.new == Some(44)).unwrap();
+        let row = line_row(&doc.files[0], |l| l.right().is_some_and(|p| p.line == 44)).unwrap();
         let anchor = doc.anchor(Pos { file: 0, row });
         doc.set_options(view(true, Whitespace::Exact));
         let pos = doc.locate(anchor);
@@ -1742,7 +1700,7 @@ pub(crate) mod tests {
             // File-level thread right after the header (head, 2 body, footer).
             assert!(rows_of(&doc).starts_with("HTTTT"), "{}", rows_of(&doc));
             // The line thread follows the row showing new line 5.
-            let row = line_row(file, |l| l.new == Some(5)).unwrap();
+            let row = line_row(file, |l| l.right().is_some_and(|p| p.line == 5)).unwrap();
             assert!(matches!(file.rows()[row + 1], Row::Thread(_)));
             assert_eq!(doc.annotation_at(Pos { file: 0, row }), Some(0));
         }
@@ -1781,7 +1739,9 @@ pub(crate) mod tests {
         fn commented_lines_are_always_visible() {
             let mut doc = doc();
             // Line 30 is far from both changes (5 and 45): normally hidden.
-            let visible = |doc: &Doc| line_row(&doc.files[0], |l| l.new == Some(30)).is_some();
+            let visible = |doc: &Doc| {
+                line_row(&doc.files[0], |l| l.right().is_some_and(|p| p.line == 30)).is_some()
+            };
             assert!(!visible(&doc));
             set_annotations(&mut doc, vec![ann("far", Side::Right, Some(30))]);
             assert!(visible(&doc));
@@ -1830,7 +1790,7 @@ pub(crate) mod tests {
             });
             set_annotations(&mut doc, vec![ann("old", Side::Left, Some(5))]);
             let file = &doc.files[0];
-            let at = line_row(file, |l| l.old == Some(5)).unwrap();
+            let at = line_row(file, |l| l.left().is_some_and(|p| p.line == 5)).unwrap();
             assert!(matches!(file.rows()[at + 1], Row::Thread(_)));
         }
 
@@ -1838,7 +1798,7 @@ pub(crate) mod tests {
         fn line_positions_for_comments() {
             let doc = doc();
             let file = &doc.files[0];
-            let removed = line_row(file, |l| l.kind == LineKind::Removed).unwrap();
+            let removed = line_row(file, |l| matches!(l, DiffLine::Removed(_))).unwrap();
             let pos = doc
                 .line_at(Pos {
                     file: 0,
@@ -1905,7 +1865,9 @@ pub(crate) mod tests {
             doc.set_since(Some(seen.clone()), true);
             let rows = kinds(&doc.files[0]);
             // The old change (line 5) is gone from view; the new one (45) shows.
-            let shows = |n: u32| line_row(&doc.files[0], |l| l.new == Some(n)).is_some();
+            let shows = |n: u32| {
+                line_row(&doc.files[0], |l| l.right().is_some_and(|p| p.line == n)).is_some()
+            };
             assert!(shows(45), "{rows}");
             assert!(!shows(5), "{rows}");
             assert!(doc.has_new_changes(0));

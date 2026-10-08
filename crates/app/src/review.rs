@@ -635,7 +635,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 );
             };
             let original: Vec<String> = (start.line..=end.line)
-                .map(|n| text.new.line_no(n).to_owned())
+                .map(|line| text.line(LinePos { line, ..start }).to_owned())
                 .collect();
             vec![Cmd::Edit {
                 text: original.join("\n") + "\n",

@@ -1,8 +1,8 @@
 //! A computed file diff, ready to render.
 
-use crate::anchor::{Commentable, HunkRange};
+use crate::anchor::{Commentable, HunkRange, LinePos, Side};
 use crate::highlight::{Language, Span, highlight};
-use crate::hunks::{Algorithm, DiffLine, LineKind, Whitespace, align};
+use crate::hunks::{Algorithm, DiffLine, Whitespace, align};
 use crate::intraline::{IntraLine, intraline};
 use crate::scope::{self, Scope};
 use crate::text::{Text, is_binary};
@@ -33,11 +33,12 @@ pub enum Content {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextDiff {
-    pub old: Text,
-    pub new: Text,
+    // Read through a `LinePos`, so a line is always read from its own side.
+    old: Text,
+    new: Text,
     /// Per-line spans; empty when unhighlighted.
-    pub old_spans: Vec<Vec<Span>>,
-    pub new_spans: Vec<Vec<Span>>,
+    old_spans: Vec<Vec<Span>>,
+    new_spans: Vec<Vec<Span>>,
     /// Full alignment comparing lines exactly.
     pub lines: Vec<DiffLine>,
     /// Full alignment ignoring whitespace.
@@ -74,33 +75,55 @@ impl TextDiff {
     }
 
     pub fn has_changes(&self, whitespace: Whitespace) -> bool {
-        self.lines(whitespace)
-            .iter()
-            .any(|l| l.kind != LineKind::Context)
+        self.lines(whitespace).iter().any(|l| l.is_change())
     }
 
-    /// The text of an alignment entry (the old side for removed lines).
-    pub fn text(&self, line: &DiffLine) -> &str {
-        match (line.kind, line.old, line.new) {
-            (LineKind::Removed, Some(o), _) => self.old.line_no(o),
-            (_, _, Some(n)) => self.new.line_no(n),
-            _ => "",
+    fn side(&self, side: Side) -> (&Text, &[Vec<Span>]) {
+        match side {
+            Side::Left => (&self.old, &self.old_spans),
+            Side::Right => (&self.new, &self.new_spans),
         }
     }
 
-    pub fn old_spans(&self, line: u32) -> &[Span] {
-        spans_at(&self.old_spans, line)
+    /// The text of a line, without its terminator.
+    pub fn line(&self, pos: LinePos) -> &str {
+        self.side(pos.side).0.line_no(pos.line)
     }
 
-    pub fn new_spans(&self, line: u32) -> &[Span] {
-        spans_at(&self.new_spans, line)
+    /// A line's highlighting; empty when unhighlighted.
+    pub fn spans(&self, pos: LinePos) -> &[Span] {
+        nth(self.side(pos.side).1, pos.line).map_or(&[], Vec::as_slice)
+    }
+
+    /// The line ended in `\r\n`.
+    pub fn crlf(&self, pos: LinePos) -> bool {
+        nth(&self.side(pos.side).0.crlf, pos.line) == Some(&true)
+    }
+
+    /// The last line of its side.
+    pub fn is_last(&self, pos: LinePos) -> bool {
+        pos.line as usize == self.side(pos.side).0.len()
+    }
+
+    /// The last line of its side, with no newline after it.
+    pub fn ends_without_newline(&self, pos: LinePos) -> bool {
+        self.is_last(pos) && self.side(pos.side).0.missing_final_newline
+    }
+
+    /// One side gained or lost its final newline.
+    pub fn final_newline_changed(&self) -> bool {
+        self.old.missing_final_newline != self.new.missing_final_newline
+    }
+
+    /// Lines in the longer side.
+    pub fn max_lines(&self) -> usize {
+        self.old.len().max(self.new.len())
     }
 }
 
-fn spans_at(spans: &[Vec<Span>], line: u32) -> &[Span] {
-    line.checked_sub(1)
-        .and_then(|i| spans.get(i as usize))
-        .map_or(&[], Vec::as_slice)
+/// Line `line`'s item (1-based) of a per-line list.
+fn nth<T>(items: &[T], line: u32) -> Option<&T> {
+    items.get(line.checked_sub(1)? as usize)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,10 +135,10 @@ pub struct FileDiff {
 
 /// Added and removed line counts of an alignment.
 pub fn counts(lines: &[DiffLine]) -> (u32, u32) {
-    lines.iter().fold((0, 0), |(a, d), l| match l.kind {
-        LineKind::Added => (a + 1, d),
-        LineKind::Removed => (a, d + 1),
-        LineKind::Context => (a, d),
+    lines.iter().fold((0, 0), |(a, d), l| match l {
+        DiffLine::Added(_) => (a + 1, d),
+        DiffLine::Removed(_) => (a, d + 1),
+        DiffLine::Context { .. } => (a, d),
     })
 }
 
@@ -224,8 +247,12 @@ pub(crate) mod tests {
             panic!("{diff:?}")
         };
         assert!(text.has_changes(Whitespace::Exact));
-        assert!(!text.new_spans(1).is_empty());
-        assert!(text.new_spans(99).is_empty());
+        let new = |line| LinePos {
+            side: Side::Right,
+            line,
+        };
+        assert!(!text.spans(new(1)).is_empty());
+        assert!(text.spans(new(99)).is_empty());
     }
 
     #[test]

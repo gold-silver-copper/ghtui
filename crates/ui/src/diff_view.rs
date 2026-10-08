@@ -1,7 +1,7 @@
 //! Diff rendering, unified or split. Only the visible rows are laid out, so
 //! cost per frame depends on the terminal height, not the size of the PR.
 
-use ghtui_diff::{Content, DiffLine, LineKind, Span as TokenSpan, TextDiff, TokenKind};
+use ghtui_diff::{Content, DiffLine, Span as TokenSpan, TokenKind};
 use ghtui_git::files::{FileStatus, MODE_SUBMODULE, MODE_SYMLINK};
 use ghtui_theme::{Bg, DiffBg, Fg, Syntax};
 use ratatui::buffer::Buffer;
@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthChar;
 use ghtui_diff::anchor::{LinePos, Side};
 
 use crate::annotations::{Annotation, ThreadRowKind};
-use crate::diff_doc::{Doc, DocFile, FoldReason, Note, Pos, Row, Viewed, sides};
+use crate::diff_doc::{Doc, DocFile, FoldReason, Note, Pos, Row, Viewed};
 use crate::{Ctx, PAD_X, chips, cols, fill, inset, key_hints, render_split, text, time};
 
 const PANE: Bg = Bg::Surface;
@@ -369,7 +369,7 @@ impl DiffView<'_> {
         };
         let line = f.text().and_then(|t| {
             let l = t.lines.get(entries.start as usize)?;
-            if from { l.new } else { l.old }
+            Some(if from { l.right() } else { l.left() }?.line)
         });
         let way = if from { "to" } else { "from" };
         match line {
@@ -423,13 +423,13 @@ impl DiffView<'_> {
     }
 
     /// Line numbers GitHub won't accept comments on are dimmed.
-    fn number_fg(&self, file_index: usize, pos: Option<LinePos>, kind: LineKind) -> Fg {
+    fn number_fg(&self, file_index: usize, pos: Option<LinePos>, line: &DiffLine) -> Fg {
         let commentable = match (pos, self.doc.commentable(file_index)) {
             (Some(pos), Some(c)) => c.is_commentable(pos),
             _ => true,
         };
         if commentable {
-            self.gutter_fg(kind)
+            self.gutter_fg(line)
         } else {
             Fg::Disabled
         }
@@ -457,7 +457,7 @@ impl DiffView<'_> {
         let moved = line.is_some_and(|(e, _)| self.doc.move_at_entry(pos.file, e).is_some());
         let diff_bg = match line {
             Some(_) if moved => DiffBg::Moved,
-            Some((_, l)) => diff_bg(l.kind),
+            Some((_, l)) => diff_bg(l),
             None => DiffBg::Context,
         };
         let bg = line_bg(diff_bg, cursor);
@@ -472,17 +472,16 @@ impl DiffView<'_> {
             Line::from(spans).render(area, buf);
             return;
         };
-        let (left, right) = sides(line);
-        let numbers = [(Side::Left, left), (Side::Right, right)]
+        let numbers = [Side::Left, Side::Right]
             .into_iter()
-            .filter(|(s, _)| side.is_none_or(|side| side == *s));
-        for (i, (_, at)) in numbers.enumerate() {
+            .filter(|s| side.is_none_or(|side| side == *s));
+        for (i, at) in numbers.map(|s| line.on(s)).enumerate() {
             if i > 0 {
                 spans.push(Span::styled(" ", theme.body(bg)));
             }
             spans.push(Span::styled(
                 number(at.map(|p| p.line), file.number_width()),
-                theme.style(self.number_fg(pos.file, at, line.kind), bg),
+                theme.style(self.number_fg(pos.file, at, line), bg),
             ));
         }
         spans.push(Span::styled("  ", theme.body(bg)));
@@ -493,7 +492,28 @@ impl DiffView<'_> {
             Some(ranges) if !moved => ranges.as_slice(),
             _ => &[],
         };
-        spans.extend(self.code(text, line, diff_bg, cursor, room, emphasis));
+        let (sign, sign_fg) = match line {
+            DiffLine::Context { .. } => (" ", Fg::OnSurfaceVariant),
+            DiffLine::Added(_) => ("+", Fg::DiffAddedSign),
+            DiffLine::Removed(_) => ("-", Fg::DiffRemovedSign),
+        };
+        spans.push(Span::styled(
+            sign,
+            theme.style(sign_fg, bg).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(" ", theme.body(bg)));
+        // Unified shows one line per entry; a split half shows its own side.
+        if let Some(at) = side.map_or(Some(line.shown()), |side| line.on(side)) {
+            let room = room.saturating_sub(2);
+            let (code, tokens) = (text.line(at), text.spans(at));
+            spans.extend(code_spans(
+                self.ctx, code, tokens, diff_bg, cursor, room, emphasis,
+            ));
+            // Line endings only matter where they changed.
+            if text.crlf(at) && line.is_change() {
+                spans.push(Span::styled("␍", theme.meta(bg)));
+            }
+        }
         Line::from(spans).render(area, buf);
     }
 
@@ -640,64 +660,15 @@ impl DiffView<'_> {
         out
     }
 
-    fn gutter_fg(&self, kind: LineKind) -> Fg {
+    fn gutter_fg(&self, line: &DiffLine) -> Fg {
         // When tints are indistinguishable (some 256-color palettes), carry
         // the change in the gutter instead.
         let marked = self.ctx.theme.diff_tints_collapse();
-        match kind {
-            LineKind::Added if marked => Fg::DiffAddedSign,
-            LineKind::Removed if marked => Fg::DiffRemovedSign,
+        match line {
+            DiffLine::Added(_) if marked => Fg::DiffAddedSign,
+            DiffLine::Removed(_) if marked => Fg::DiffRemovedSign,
             _ => Fg::OnSurfaceVariant,
         }
-    }
-
-    /// Sign, code and line-ending marker for one alignment entry.
-    fn code(
-        &self,
-        text: &TextDiff,
-        line: &DiffLine,
-        diff_bg: DiffBg,
-        cursor: bool,
-        room: usize,
-        emphasis: &[(u32, u32)],
-    ) -> Vec<Span<'static>> {
-        let theme = self.ctx.theme;
-        let bg = line_bg(diff_bg, cursor);
-        let (sign, sign_fg) = match line.kind {
-            LineKind::Context => (" ", Fg::OnSurfaceVariant),
-            LineKind::Added => ("+", Fg::DiffAddedSign),
-            LineKind::Removed => ("-", Fg::DiffRemovedSign),
-        };
-        let mut spans = vec![
-            Span::styled(sign, theme.style(sign_fg, bg).add_modifier(Modifier::BOLD)),
-            Span::styled(" ", theme.body(bg)),
-        ];
-        let (source, n, tokens) = match line.kind {
-            LineKind::Removed => {
-                let n = line.old.unwrap_or(1);
-                (&text.old, n, text.old_spans(n))
-            }
-            _ => {
-                let n = line.new.unwrap_or(1);
-                (&text.new, n, text.new_spans(n))
-            }
-        };
-        // 1-based; 0 never happens, and would show nothing.
-        let i = n.checked_sub(1).map_or(usize::MAX, |i| i as usize);
-        spans.extend(code_spans(
-            self.ctx,
-            source.line(i),
-            tokens,
-            diff_bg,
-            cursor,
-            room.saturating_sub(2),
-            emphasis,
-        ));
-        // Line endings only matter where they changed.
-        if source.crlf.get(i) == Some(&true) && line.kind != LineKind::Context {
-            spans.push(Span::styled("␍", theme.meta(bg)));
-        }
-        spans
     }
 }
 
@@ -724,11 +695,11 @@ fn sign_column(file: &DocFile) -> usize {
     3 + 2 * file.number_width() + 3
 }
 
-fn diff_bg(kind: LineKind) -> DiffBg {
-    match kind {
-        LineKind::Context => DiffBg::Context,
-        LineKind::Added => DiffBg::Added,
-        LineKind::Removed => DiffBg::Removed,
+fn diff_bg(line: &DiffLine) -> DiffBg {
+    match line {
+        DiffLine::Context { .. } => DiffBg::Context,
+        DiffLine::Added(_) => DiffBg::Added,
+        DiffLine::Removed(_) => DiffBg::Removed,
     }
 }
 
@@ -887,5 +858,82 @@ mod tests {
         let spans = code_spans(ctx, line, &[], DiffBg::Added, false, 80, &[]);
         let shown: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(shown, "if a� { b�c");
+    }
+
+    /// In split view with whitespace ignored, a re-indented line is one
+    /// row, and each half shows its own side's text: the old indentation
+    /// on the left, the new on the right.
+    #[test]
+    fn split_halves_show_their_own_side() {
+        use crate::diff_doc::ViewOptions;
+        use ghtui_diff::{FileDiff, Whitespace};
+        use std::collections::HashSet;
+        use std::sync::Arc;
+
+        let theme = Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor);
+        let ctx = Ctx {
+            theme: &theme,
+            icons: crate::Icons::default(),
+            now: 0,
+        };
+        let mut doc = Doc::new(
+            vec![crate::diff_doc::tests::changed("a.rs")],
+            &HashSet::new(),
+            Default::default(),
+        );
+        let (old, new) = ("a\n  b\nc\n", "a\n      b\nc\nd\n");
+        doc.set_diff(
+            0,
+            Arc::new(FileDiff::compute(
+                "a.rs",
+                Some(old.as_bytes()),
+                Some(new.as_bytes()),
+            )),
+        );
+        doc.set_options(ViewOptions {
+            split: true,
+            whitespace: Whitespace::Ignore,
+            wrap: 0,
+        });
+        let keys = Keys {
+            show: "s",
+            jump: "M",
+            expand: "e",
+            viewed: "v",
+            reply: "c",
+            resolve: "R",
+            delete: "d",
+            file_comment: "C",
+        };
+        let area = Rect::new(0, 0, 80, 12);
+        let mut buf = Buffer::empty(area);
+        DiffView {
+            ctx,
+            doc: &doc,
+            cursor: Pos::default(),
+            top: Pos::default(),
+            keys,
+            selection: None,
+        }
+        .render(area, &mut buf);
+        let row = |y: u16, xs: std::ops::Range<u16>| -> String {
+            xs.map(|x| buf[(x, y)].symbol()).collect()
+        };
+        let y = (0..area.height)
+            .find(|y| row(*y, 0..80).contains('b'))
+            .expect("the re-indented line is drawn");
+        let (left, right) = (row(y, 0..40), row(y, 40..80));
+        // Both halves lay out alike (number, sign, code), so the old line's
+        // two spaces of indent leave it four columns left of the new one.
+        let indent = |half: &str| {
+            half.find('b')
+                .unwrap_or(0)
+                .saturating_sub(half.find('2').unwrap_or(0))
+        };
+        assert_eq!(
+            indent(&left) + 4,
+            indent(&right),
+            "left half: {left:?}, right half: {right:?}"
+        );
     }
 }

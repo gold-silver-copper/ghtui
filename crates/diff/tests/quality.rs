@@ -7,7 +7,7 @@
     reason = "the rendering helper isn't a #[test] function, but a panic in it is still a test failure"
 )]
 
-use ghtui_diff::{Content, FileDiff, LineKind, Whitespace};
+use ghtui_diff::{Content, DiffLine, FileDiff, Whitespace};
 
 /// The changed lines of `old` → `new` (as `path`), `-`/`+` prefixed, with
 /// emphasised ranges in `⟦⟧`.
@@ -18,12 +18,12 @@ fn show(path: &str, old: &str, new: &str) -> String {
     };
     let mut out = String::new();
     for (i, line) in (0u32..).zip(text.lines(Whitespace::Exact)) {
-        let sign = match line.kind {
-            LineKind::Context => continue,
-            LineKind::Removed => '-',
-            LineKind::Added => '+',
+        let sign = match line {
+            DiffLine::Context { .. } => continue,
+            DiffLine::Removed(_) => '-',
+            DiffLine::Added(_) => '+',
         };
-        let content = text.text(line);
+        let content = text.line(line.shown());
         let mut shown = String::new();
         let mut at = 0;
         for &(a, b) in text
@@ -198,8 +198,10 @@ fn scope_of_change(path: &str, old: &str, new: &str) -> Vec<String> {
     let line = text
         .lines(Whitespace::Exact)
         .iter()
-        .find(|l| l.kind == LineKind::Added)
-        .and_then(|l| l.new)
+        .find_map(|l| match l {
+            DiffLine::Added(n) => Some(*n),
+            _ => None,
+        })
         .unwrap();
     text.scope(line).into_iter().map(str::to_owned).collect()
 }

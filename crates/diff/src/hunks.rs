@@ -3,23 +3,56 @@
 pub use imara_diff::Algorithm;
 use imara_diff::{Diff, InternedInput};
 
+use crate::anchor::{LinePos, Side};
 use crate::sat_u32;
 use crate::text::Text;
 
+/// One entry of an alignment: a line on both sides, or on one. Line
+/// numbers are 1-based, as in files and in GitHub's comment API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LineKind {
-    Context,
-    Removed,
-    Added,
+pub enum DiffLine {
+    Context { old: u32, new: u32 },
+    Removed(u32),
+    Added(u32),
 }
 
-/// One line of a hunk. Line numbers are 1-based, as in files and in
-/// GitHub's comment API.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DiffLine {
-    pub kind: LineKind,
-    pub old: Option<u32>,
-    pub new: Option<u32>,
+impl DiffLine {
+    /// The old-side line, unless added.
+    pub fn left(self) -> Option<LinePos> {
+        self.on(Side::Left)
+    }
+
+    /// The new-side line, unless removed.
+    pub fn right(self) -> Option<LinePos> {
+        self.on(Side::Right)
+    }
+
+    pub fn on(self, side: Side) -> Option<LinePos> {
+        let line = match (self, side) {
+            (Self::Context { old, .. } | Self::Removed(old), Side::Left) => old,
+            (Self::Context { new, .. } | Self::Added(new), Side::Right) => new,
+            _ => return None,
+        };
+        Some(LinePos { side, line })
+    }
+
+    /// Its lines, left then right.
+    pub fn lines(self) -> impl Iterator<Item = LinePos> {
+        self.left().into_iter().chain(self.right())
+    }
+
+    /// The line a unified view shows: the old one when removed, else the new.
+    pub fn shown(self) -> LinePos {
+        let (side, line) = match self {
+            Self::Removed(line) => (Side::Left, line),
+            Self::Context { new: line, .. } | Self::Added(line) => (Side::Right, line),
+        };
+        LinePos { side, line }
+    }
+
+    pub fn is_change(self) -> bool {
+        !matches!(self, Self::Context { .. })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,11 +112,6 @@ pub fn align(
     diff.postprocess_lines(&input);
 
     // Indices are 0-based, line numbers 1-based.
-    let line = |kind, old: Option<u32>, new: Option<u32>| DiffLine {
-        kind,
-        old: old.map(|o| o + 1),
-        new: new.map(|n| n + 1),
-    };
     let mut lines = Vec::with_capacity(old.len().max(new.len()));
     let (mut o, mut n) = (0, 0);
     // The context after the last change comes before an empty one at the end.
@@ -91,13 +119,12 @@ pub fn align(
     let end = (old_end..old_end, new_end..new_end);
     for (before, after) in diff.hunks().map(|h| (h.before, h.after)).chain([end]) {
         let context = (o..before.start).zip(n..);
-        lines.extend(context.map(|(o, n)| line(LineKind::Context, Some(o), Some(n))));
-        lines.extend(
-            before
-                .clone()
-                .map(|o| line(LineKind::Removed, Some(o), None)),
-        );
-        lines.extend(after.clone().map(|n| line(LineKind::Added, None, Some(n))));
+        lines.extend(context.map(|(o, n)| DiffLine::Context {
+            old: o + 1,
+            new: n + 1,
+        }));
+        lines.extend(before.clone().map(|o| DiffLine::Removed(o + 1)));
+        lines.extend(after.clone().map(|n| DiffLine::Added(n + 1)));
         (o, n) = (before.end, after.end);
     }
     lines
@@ -114,7 +141,7 @@ pub fn segments(
 ) -> Vec<std::ops::Range<usize>> {
     segments_by(
         lines.len(),
-        |i| lines.get(i).is_some_and(|l| l.kind != LineKind::Context),
+        |i| lines.get(i).is_some_and(|l| l.is_change()),
         context,
         windows,
         full,
@@ -165,21 +192,20 @@ pub fn segments_by(
         .collect()
 }
 
-/// Old and new lines that come before `index` in the alignment.
-pub fn counts_before(lines: &[DiffLine], index: usize) -> (u32, u32) {
-    lines.iter().take(index).fold((0, 0), |(o, n), l| {
+/// How many old and new lines `lines` show.
+pub fn side_counts(lines: &[DiffLine]) -> (u32, u32) {
+    lines.iter().fold((0, 0), |(o, n), l| {
         (
-            o + u32::from(l.old.is_some()),
-            n + u32::from(l.new.is_some()),
+            o + u32::from(l.left().is_some()),
+            n + u32::from(l.right().is_some()),
         )
     })
 }
 
 /// The hunk for `range`, given how many old/new lines precede it.
-pub fn hunk(lines: &[DiffLine], range: std::ops::Range<usize>, before: (u32, u32)) -> Hunk {
+fn hunk(lines: &[DiffLine], range: std::ops::Range<usize>, before: (u32, u32)) -> Hunk {
     let lines = lines.get(range).unwrap_or_default().to_vec();
-    let old_len = sat_u32(lines.iter().filter(|l| l.old.is_some()).count());
-    let new_len = sat_u32(lines.iter().filter(|l| l.new.is_some()).count());
+    let (old_len, new_len) = side_counts(&lines);
     let start = |seen: u32, len: u32| if len > 0 { seen + 1 } else { seen };
     Hunk {
         old_start: start(before.0, old_len),
@@ -190,22 +216,22 @@ pub fn hunk(lines: &[DiffLine], range: std::ops::Range<usize>, before: (u32, u32
     }
 }
 
+/// The hunks of `lines` for ranges `segs`, in order.
+pub fn hunks(lines: &[DiffLine], segs: &[std::ops::Range<usize>]) -> Vec<Hunk> {
+    let (mut seen, mut before) = (0, (0, 0));
+    let hunk_at = |seg: &std::ops::Range<usize>| {
+        let (o, n) = side_counts(lines.get(seen..seg.start).unwrap_or_default());
+        (seen, before) = (seg.start, (before.0 + o, before.1 + n));
+        hunk(lines, seg.clone(), before)
+    };
+    segs.iter().map(hunk_at).collect()
+}
+
 /// Diffs `old` against `new` and groups changes into hunks with `context`
 /// lines around them, as `git diff -U<context>` does.
 pub fn diff_lines(old: &Text, new: &Text, algorithm: Algorithm, context: u32) -> Vec<Hunk> {
     let lines = align(old, new, algorithm, Whitespace::Exact);
-    let mut seen = 0;
-    let mut counts = (0, 0);
-    segments(&lines, context, &[], false)
-        .into_iter()
-        .map(|range| {
-            let gap = lines.get(seen..range.start).unwrap_or_default();
-            let (o, n) = counts_before(gap, gap.len());
-            counts = (counts.0 + o, counts.1 + n);
-            seen = range.start;
-            hunk(&lines, range, counts)
-        })
-        .collect()
+    hunks(&lines, &segments(&lines, context, &[], false))
 }
 
 #[cfg(test)]
@@ -229,10 +255,10 @@ mod tests {
             out.push_str(&hunk.header());
             out.push('\n');
             for line in &hunk.lines {
-                let (sign, text) = match line.kind {
-                    LineKind::Context => (' ', new.line_no(line.new.unwrap())),
-                    LineKind::Added => ('+', new.line_no(line.new.unwrap())),
-                    LineKind::Removed => ('-', old.line_no(line.old.unwrap())),
+                let (sign, text) = match *line {
+                    DiffLine::Context { new: n, .. } => (' ', new.line_no(n)),
+                    DiffLine::Added(n) => ('+', new.line_no(n)),
+                    DiffLine::Removed(o) => ('-', old.line_no(o)),
                 };
                 out.push(sign);
                 out.push_str(text);
@@ -365,10 +391,10 @@ mod tests {
     fn kinds(lines: &[DiffLine]) -> String {
         lines
             .iter()
-            .map(|l| match l.kind {
-                LineKind::Context => ' ',
-                LineKind::Removed => '-',
-                LineKind::Added => '+',
+            .map(|l| match l {
+                DiffLine::Context { .. } => ' ',
+                DiffLine::Removed(_) => '-',
+                DiffLine::Added(_) => '+',
             })
             .collect()
     }
@@ -379,8 +405,7 @@ mod tests {
         let new = Text::new(b"a\nB\nc\nd\n");
         let lines = align(&old, &new, Algorithm::Histogram, Whitespace::Exact);
         assert_eq!(kinds(&lines), " -+ +");
-        assert_eq!(lines.iter().filter(|l| l.old.is_some()).count(), 3);
-        assert_eq!(lines.iter().filter(|l| l.new.is_some()).count(), 4);
+        assert_eq!(side_counts(&lines), (3, 4));
     }
 
     #[test]
