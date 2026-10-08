@@ -156,6 +156,8 @@ pub struct SubmitSheet<'a> {
     pub rejected: usize,
     pub error: Option<&'a str>,
     pub sending: bool,
+    /// Enter submits (opened to approve, from a pull request's page).
+    pub quick: bool,
 }
 
 impl Widget for SubmitSheet<'_> {
@@ -217,12 +219,108 @@ impl Widget for SubmitSheet<'_> {
             buf,
             self.sending.then_some("Submitting…"),
             self.error,
-            &[
-                ("⇥", "choose"),
-                ("ctrl-s", "submit"),
-                ("ctrl-e", "$EDITOR"),
-                ("esc", "cancel"),
-            ],
+            if self.quick {
+                &[
+                    ("↵", "submit"),
+                    ("⇥", "choose"),
+                    ("ctrl-e", "$EDITOR"),
+                    ("esc", "cancel"),
+                ]
+            } else {
+                &[
+                    ("⇥", "choose"),
+                    ("ctrl-s", "submit"),
+                    ("ctrl-e", "$EDITOR"),
+                    ("esc", "cancel"),
+                ]
+            },
+        );
+    }
+}
+
+/// Asks before a change to GitHub: what it is, what's worth knowing first
+/// (`facts`, each a problem or not), and the ways to do it, one chosen.
+pub struct ConfirmSheet<'a> {
+    pub ctx: Ctx<'a>,
+    pub title: &'a str,
+    pub facts: &'a [(String, bool)],
+    pub choices: &'a [String],
+    pub selected: usize,
+    pub error: Option<&'a str>,
+    /// What's happening while GitHub answers ("Merging…").
+    pub sending: Option<&'a str>,
+}
+
+impl Widget for ConfirmSheet<'_> {
+    fn render(self, screen: Rect, buf: &mut Buffer) {
+        let ctx = self.ctx;
+        let theme = ctx.theme;
+        let width = 76.min(screen.width.saturating_sub(4));
+        let error_rows: u16 = if self.error.is_some() { 3 } else { 0 };
+        let height = (2 * PAD_Y + 6)
+            .saturating_add(cols(self.facts.len()))
+            .saturating_add(error_rows);
+        let top = screen.height.saturating_sub(height) / 2;
+        let area = centered(screen, width, height, top);
+        fill(buf, area, theme, SHEET);
+        let inner = padded(area);
+        let row = |y: u16| Rect {
+            y,
+            height: 1,
+            ..inner
+        };
+        let mut y = inner.y;
+        let title = text::truncate(self.title, usize::from(inner.width));
+        Span::styled(title, theme.title(SHEET)).render(row(y), buf);
+        y = y.saturating_add(2);
+        for (fact, problem) in self.facts {
+            let style = if *problem {
+                theme.error(SHEET)
+            } else {
+                theme.meta(SHEET)
+            };
+            let fact = text::truncate(fact, usize::from(inner.width));
+            Span::styled(fact, style).render(row(y), buf);
+            y = y.saturating_add(1);
+        }
+        if !self.facts.is_empty() {
+            y = y.saturating_add(1);
+        }
+        // Filled button for the chosen way, tonal for the others.
+        let mut buttons: Vec<Span<'static>> = Vec::new();
+        for (i, label) in self.choices.iter().enumerate() {
+            let style = if i == self.selected {
+                theme.fill(Bg::Primary).add_modifier(Modifier::BOLD)
+            } else {
+                theme.fill(Bg::SecondaryContainer)
+            };
+            buttons.extend(chips::chip(ctx, format!(" {label} "), style, SHEET));
+            buttons.push(Span::styled("  ", theme.body(SHEET)));
+        }
+        Line::from(buttons).render(row(y), buf);
+        if let Some(error) = self.error {
+            let area = Rect {
+                y: y.saturating_add(2),
+                height: error_rows,
+                ..inner
+            };
+            ratatui::widgets::Paragraph::new(error.to_owned())
+                .style(theme.error(SHEET))
+                .wrap(ratatui::widgets::Wrap { trim: true })
+                .render(area, buf);
+        }
+        let hints: &[(&str, &str)] = if self.choices.len() > 1 {
+            &[("⇥", "choose"), ("↵", "do it"), ("esc", "cancel")]
+        } else {
+            &[("↵", "do it"), ("esc", "cancel")]
+        };
+        footer(
+            theme,
+            row(inner.bottom().saturating_sub(1)),
+            buf,
+            self.sending,
+            None,
+            hints,
         );
     }
 }

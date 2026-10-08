@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod browse;
+pub mod change;
 mod client;
 pub mod corpus;
 #[doc(hidden)]

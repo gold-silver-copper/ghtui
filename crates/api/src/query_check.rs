@@ -312,6 +312,7 @@ macro_rules! typed {
 /// The typed queries, as sent.
 fn typed() -> Vec<(&'static str, String)> {
     use crate::browse as b;
+    use crate::change as c;
     use crate::queries as q;
     typed! {
         Query q::SearchQuery, q::SearchVariables;
@@ -347,9 +348,16 @@ fn typed() -> Vec<(&'static str, String)> {
         Query b::ReleaseQuery, b::ReleaseVariables;
         Query b::TagsQuery, b::ListVariables;
         Query b::ViewerReposQuery, ();
-        Mutation b::AddComment, b::AddCommentVariables;
-        Mutation b::AddStar, b::StarVariables;
-        Mutation b::RemoveStar, b::StarVariables;
+        Mutation c::AddComment, c::AddCommentVariables;
+        Mutation c::AddStar, c::IdVariables;
+        Mutation c::RemoveStar, c::IdVariables;
+        Mutation c::MergePr, c::MergeVariables;
+        Mutation c::ClosePr, c::IdVariables;
+        Mutation c::ReopenPr, c::IdVariables;
+        Mutation c::CloseIssue, c::CloseIssueVariables;
+        Mutation c::ReopenIssue, c::IdVariables;
+        Mutation c::MarkReady, c::IdVariables;
+        Mutation c::UpdateBranch, c::UpdateBranchVariables;
     }
 }
 
@@ -424,7 +432,12 @@ fn the_check_catches_cut_lists_and_bad_fields() {
 /// [`crate::raw::all`].
 #[test]
 fn every_query_is_checked() {
-    let source = [include_str!("queries.rs"), include_str!("browse.rs")].concat();
+    let source = [
+        include_str!("queries.rs"),
+        include_str!("browse.rs"),
+        include_str!("change.rs"),
+    ]
+    .concat();
     let operations = source.matches("graphql_type = \"Query\"").count()
         + source.matches("graphql_type = \"Mutation\"").count();
     assert_eq!(typed().len(), operations);

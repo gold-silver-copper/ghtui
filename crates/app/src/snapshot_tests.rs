@@ -88,6 +88,13 @@ fn inbox() -> Inbox {
 
 pub(crate) fn pr_detail() -> PrDetail {
     PrDetail {
+        id: ghtui_api::model::NodeId::new("PR_12"),
+        merge_state: ghtui_api::model::MergeState::Dirty,
+        can_update_branch: true,
+        merge_methods: vec![
+            ghtui_api::change::MergeMethod::Squash,
+            ghtui_api::change::MergeMethod::Merge,
+        ],
         summary: summary(
             "gold-silver-copper/ghtui#12",
             "Theme: generate syntax palette from seed",
@@ -1582,6 +1589,15 @@ pub(crate) mod diff {
         insta::assert_snapshot!(render(&s));
     }
 
+    /// The pull request whose diff is on screen.
+    fn diff_pr(s: &State) -> ghtui_api::model::PrRef {
+        match s.screen() {
+            Screen::Diff(d) => d.of.pr().cloned(),
+            Screen::Page(_) => None,
+        }
+        .expect("a pull request's diff")
+    }
+
     fn with_threads(mode: Mode) -> State {
         use ghtui_api::model::{NodeId, ReviewComment, ReviewThread, Side};
         let mut s = diff_at(mode, 0, 0);
@@ -1691,7 +1707,7 @@ pub(crate) mod diff {
     #[test]
     fn submit_dialog_light() {
         let mut s = with_threads(Mode::Light);
-        let mut dialog = crate::review::SubmitDialog::new(&s.theme);
+        let mut dialog = crate::review::SubmitDialog::new(&s.theme, diff_pr(&s));
         dialog.cycle(true);
         dialog.input.insert_str("Nice work overall.");
         s.overlay = Some(crate::state::Overlay::Submit(Box::new(dialog)));
@@ -1892,7 +1908,7 @@ pub(crate) mod diff {
                 "submit",
                 Box::new(|| {
                     let mut s = with_threads(Mode::Light);
-                    let dialog = crate::review::SubmitDialog::new(&s.theme);
+                    let dialog = crate::review::SubmitDialog::new(&s.theme, diff_pr(&s));
                     s.overlay = Some(Overlay::Submit(Box::new(dialog)));
                     s
                 }),
@@ -2316,9 +2332,10 @@ mod keys {
                 s
             }),
             ("workflow run", || mid(with_run(Mode::Dark))),
+            // From the top: a failed job opens at its first error.
             ("job", || {
-                let mut s = mid(with_job(Mode::Dark, None));
-                press(&mut s, "j");
+                let mut s = super::sized(with_job(Mode::Dark, None), 100, 12);
+                press(&mut s, "gjj");
                 s
             }),
             ("workflow", || mid(with_workflow(Mode::Dark))),
@@ -2979,5 +2996,293 @@ fn sample(key: &DataKey) -> Data {
         K::JobLog(..) => Data::Log(Arc::new(fixtures::job().1)),
         K::Workflow(..) => Data::Workflow(Box::new(fixtures::workflow_runs().0)),
         K::WorkflowRuns(..) => Data::Runs(Box::new(fixtures::workflow_runs().1)),
+    }
+}
+
+/// Changing GitHub: each action asks first where it should, says why
+/// when it can't, sends one change, and ends up showing what GitHub says.
+mod changes {
+    use ghtui_api::ApiError;
+    use ghtui_api::browse::{CheckOutcome, IssueState};
+    use ghtui_api::change::{Change, MergeMethod};
+    use ghtui_api::model::{NodeId, PrRef, ReviewEvent};
+    use ghtui_store::{DraftComment, DraftSide, ReviewState};
+    use ghtui_theme::Mode;
+    use ghtui_ui::bars::Notice;
+
+    use super::{ghtui, pr_detail, render, with_job, with_pr, with_repo, with_run};
+    use crate::browse::{Data, DataKey};
+    use crate::fixtures::{fetched, press};
+    use crate::keymap::Action;
+    use crate::review::SubmitOutcome;
+    use crate::state::{Api, Cmd, DiffMsg, Msg, Overlay, State, Timer, timers, update};
+
+    fn pr() -> PrRef {
+        PrRef::parse("gold-silver-copper/ghtui#12").unwrap()
+    }
+
+    fn confirm(s: &State) -> &crate::act::Confirm {
+        match &s.overlay {
+            Some(Overlay::Confirm(c)) => c,
+            _ => panic!("no confirmation"),
+        }
+    }
+
+    fn info(s: &State) -> String {
+        match &s.notice {
+            Some(Notice::Info(text) | Notice::Error(text)) => text.clone(),
+            None => String::new(),
+        }
+    }
+
+    /// A pull request whose state is `state`.
+    fn pr_in(state: IssueState) -> State {
+        let mut s = with_pr(Mode::Dark);
+        let mut detail = pr_detail();
+        detail.summary.state = state;
+        update(&mut s, Msg::Pr(pr(), Box::new(Ok(detail))));
+        s
+    }
+
+    #[test]
+    fn merge_confirm_dark() {
+        let mut s = with_pr(Mode::Dark);
+        press(&mut s, "M");
+        insta::assert_snapshot!(render(&s));
+    }
+
+    /// Merging asks first, saying what stands in the way; a refusal stays
+    /// in the dialog, with the permission it needs; once GitHub says it's
+    /// merged, the pull request is fetched again.
+    #[test]
+    fn merging_asks_first_and_ends_up_as_github_has_it() {
+        let mut s = with_pr(Mode::Dark);
+        assert!(press(&mut s, "M").is_empty());
+        let c = confirm(&s);
+        let problems: Vec<&str> = (c.facts.iter())
+            .filter(|(_, p)| *p)
+            .map(|(f, _)| f.as_str())
+            .collect();
+        assert_eq!(
+            problems,
+            ["Some checks failed", "It conflicts with main"],
+            "{:?}",
+            c.facts
+        );
+        let methods: Vec<&str> = c.choices.iter().map(|(l, _)| l.as_str()).collect();
+        assert_eq!(methods, ["Squash and merge", "Create a merge commit"]);
+        press(&mut s, "<Tab>");
+        let merge = Change::Merge {
+            pr: NodeId::new("PR_12"),
+            method: MergeMethod::Merge,
+            head: pr_detail().head_oid,
+        };
+        assert_eq!(
+            press(&mut s, "<Enter>"),
+            vec![Cmd::Api(Api::Change(merge.clone()))]
+        );
+        assert!(confirm(&s).sending);
+        // Keys wait while it's sent.
+        assert!(press(&mut s, "<Enter>").is_empty());
+
+        let refused = ApiError::GraphQl(vec!["Must have push access to repository".into()]);
+        update(&mut s, Msg::Changed(merge.clone(), Err(refused)));
+        let error = confirm(&s).error.clone().unwrap_or_default();
+        assert!(error.contains("Must have push access"), "{error}");
+        assert!(error.contains("Contents: write"), "{error}");
+        assert!(!confirm(&s).sending);
+
+        press(&mut s, "<Enter>");
+        let cmds = update(&mut s, Msg::Changed(merge, Ok(())));
+        assert!(s.overlay.is_none());
+        assert_eq!(info(&s), "Merged");
+        assert!(
+            cmds.contains(&Cmd::Api(Api::FetchPr(pr()))),
+            "the pull request is fetched again: {cmds:?}"
+        );
+    }
+
+    /// An action that can't apply says why, on the key and in the menu
+    /// alike, and sends nothing.
+    #[test]
+    fn what_cant_be_done_says_why() {
+        let mut s = pr_in(IssueState::Merged);
+        assert!(press(&mut s, "M").is_empty());
+        assert!(s.overlay.is_none());
+        assert_eq!(info(&s), "It's merged");
+        let merge = (s.doables().into_iter())
+            .find(|d| d.action == Action::Merge)
+            .unwrap();
+        assert_eq!(merge.unavailable.as_deref(), Some("It's merged"));
+        press(&mut s, "X");
+        assert!(info(&s).contains("can't be reopened"), "{}", info(&s));
+
+        let mut s = with_pr(Mode::Dark);
+        press(&mut s, "W");
+        assert_eq!(info(&s), "It isn't a draft");
+        s.viewer = Some(pr_detail().summary.author);
+        press(&mut s, "A");
+        assert_eq!(info(&s), "You can't approve your own pull request");
+
+        let mut s = with_repo(Mode::Dark, ghtui_theme::ColorDepth::TrueColor);
+        press(&mut s, "M");
+        assert_eq!(info(&s), "That works on a pull request");
+        press(&mut s, "<C-r>");
+        assert_eq!(info(&s), "Re-running works on a workflow run or a job");
+    }
+
+    /// Marking a draft ready asks nothing: it's sent at once.
+    #[test]
+    fn a_draft_is_marked_ready_at_once() {
+        let mut s = pr_in(IssueState::Draft);
+        let cmds = press(&mut s, "W");
+        let ready = Change::ReadyForReview {
+            pr: NodeId::new("PR_12"),
+        };
+        assert_eq!(cmds, vec![Cmd::Api(Api::Change(ready.clone()))]);
+        update(&mut s, Msg::Changed(ready, Ok(())));
+        assert_eq!(info(&s), "Ready for review");
+    }
+
+    /// Approving from the pull request's page reads your saved drafts
+    /// first, submits them with the approval, and saves what's left.
+    #[test]
+    fn approving_from_the_page_takes_your_saved_drafts() {
+        let mut s = with_pr(Mode::Dark);
+        s.viewer = Some("me".into());
+        assert_eq!(press(&mut s, "A"), vec![Cmd::LoadReview(pr())]);
+        let Some(Overlay::Submit(dialog)) = &s.overlay else {
+            panic!("no dialog");
+        };
+        assert_eq!((dialog.event, dialog.quick), (ReviewEvent::Approve, true));
+        // Enter before the drafts are read waits for them.
+        assert!(press(&mut s, "<Enter>").is_empty());
+
+        let draft = DraftComment {
+            id: 3,
+            path: "src/lib.rs".into(),
+            body: "nit".into(),
+            side: DraftSide::Right,
+            line: Some(4),
+            start_line: None,
+            start_side: None,
+            commit: pr_detail().head_oid,
+            error: None,
+        };
+        let saved = ReviewState {
+            pending: vec![draft.clone()],
+            ..ReviewState::default()
+        };
+        update(
+            &mut s,
+            Msg::Diff(pr().into(), DiffMsg::ReviewLoaded(Ok(saved))),
+        );
+        press(&mut s, "LGTM");
+        let cmds = press(&mut s, "<Enter>");
+        assert_eq!(
+            cmds,
+            vec![Cmd::Api(Api::SubmitReview {
+                pr: pr(),
+                head: ghtui_git::Oid::new(pr_detail().head_oid),
+                drafts: vec![draft],
+                event: ReviewEvent::Approve,
+                body: "LGTM".into(),
+            })]
+        );
+        let outcome = SubmitOutcome {
+            accepted: vec![3],
+            submitted: true,
+            ..SubmitOutcome::default()
+        };
+        let cmds = update(
+            &mut s,
+            Msg::Diff(pr().into(), DiffMsg::ReviewSubmitted(outcome)),
+        );
+        assert!(s.overlay.is_none());
+        assert_eq!(info(&s), "Approved gold-silver-copper/ghtui#12");
+        let left = ReviewState {
+            last_reviewed_head: Some(pr_detail().head_oid),
+            ..ReviewState::default()
+        };
+        assert!(cmds.contains(&Cmd::SaveReview(pr(), left)), "{cmds:?}");
+    }
+
+    /// A finished run offers its failed jobs or all of them; a job adds
+    /// itself; a finished run has nothing to cancel.
+    #[test]
+    fn runs_rerun_and_cancel() {
+        let mut s = with_run(Mode::Dark);
+        press(&mut s, "<C-r>");
+        let choices: Vec<&str> = confirm(&s)
+            .choices
+            .iter()
+            .map(|(l, _)| l.as_str())
+            .collect();
+        assert_eq!(choices, ["Re-run failed jobs", "Re-run all jobs"]);
+        assert_eq!(
+            press(&mut s, "<Enter>"),
+            vec![Cmd::Api(Api::Change(Change::Rerun {
+                repo: ghtui(),
+                run: 7,
+                failed_only: true
+            }))]
+        );
+        let mut s = with_run(Mode::Dark);
+        press(&mut s, "X");
+        assert_eq!(info(&s), "It has finished: there's nothing to cancel");
+
+        let mut s = with_job(Mode::Dark, None);
+        press(&mut s, "<C-r>");
+        let first = confirm(&s).choices.first().map(|(l, _)| l.clone());
+        assert_eq!(first.as_deref(), Some("Re-run this job"));
+    }
+
+    /// While a job on screen is running, it's fetched again on a timer
+    /// (never two at once); once it's done, the timer stops.
+    #[test]
+    fn a_running_job_is_followed_until_it_ends() {
+        let mut s = with_job(Mode::Dark, None);
+        let live = Cmd::Timer(Timer::Live, 5_000);
+        assert!(
+            !timers(&mut s, &mut None).contains(&live),
+            "a finished job isn't followed"
+        );
+        let (mut job, mut log) = crate::fixtures::job();
+        job.outcome = CheckOutcome::Pending;
+        log.running = true;
+        fetched(
+            &mut s,
+            DataKey::Job(ghtui(), 2),
+            Data::Job(Box::new(job.clone())),
+        );
+        fetched(
+            &mut s,
+            DataKey::JobLog(ghtui(), 2),
+            Data::Log(std::sync::Arc::new(log)),
+        );
+        let mut last = s.notice.clone();
+        let cmds = timers(&mut s, &mut last);
+        assert!(cmds.contains(&live), "{cmds:?}");
+        assert!(
+            !timers(&mut s, &mut last).contains(&live),
+            "one timer at a time"
+        );
+        let cmds = update(&mut s, Msg::Timer(Timer::Live));
+        let fetch = |key| Cmd::Api(Api::Fetch { key, cached: false });
+        assert!(cmds.contains(&fetch(DataKey::Job(ghtui(), 2))), "{cmds:?}");
+        assert!(
+            cmds.contains(&fetch(DataKey::JobLog(ghtui(), 2))),
+            "{cmds:?}"
+        );
+        // It ends: no more fetching.
+        job.outcome = CheckOutcome::Failure;
+        let (_, log) = crate::fixtures::job();
+        fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
+        fetched(
+            &mut s,
+            DataKey::JobLog(ghtui(), 2),
+            Data::Log(std::sync::Arc::new(log)),
+        );
+        assert!(s.running_here().is_empty());
     }
 }

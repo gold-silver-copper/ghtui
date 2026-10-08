@@ -262,7 +262,11 @@ async fn tracks_rate_limit_headers() {
     assert_eq!(gh.rate_limits().rest.unwrap().remaining, 4321);
 }
 
-const PR_RESPONSE: &str = r#"{"data":{"repository":{"pullRequest":{
+const PR_RESPONSE: &str = r#"{"data":{"repository":{
+  "mergeCommitAllowed": true, "squashMergeAllowed": true, "rebaseMergeAllowed": false,
+  "viewerDefaultMergeMethod": "SQUASH",
+  "pullRequest":{
+  "id": "PR_7", "mergeStateStatus": "BEHIND", "viewerCanUpdateBranch": true,
   "number": 7, "title": "Add thing", "body": "Body text", "url": "https://github.com/o/r/pull/7",
   "isDraft": false, "state": "OPEN", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-02T00:00:00Z",
   "author": {"login": "alice"}, "repository": {"nameWithOwner": "o/r"},
@@ -279,7 +283,8 @@ const PR_RESPONSE: &str = r#"{"data":{"repository":{"pullRequest":{
 #[tokio::test]
 async fn fetches_and_caches_pull_request() {
     use ghtui_api::browse::IssueState;
-    use ghtui_api::model::{ChecksState, Mergeable, ReviewDecision};
+    use ghtui_api::change::MergeMethod;
+    use ghtui_api::model::{ChecksState, MergeState, Mergeable, ReviewDecision};
 
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(&dir.path().join("cache.redb"));
@@ -294,6 +299,13 @@ async fn fetches_and_caches_pull_request() {
     assert_eq!(detail.summary.review, Some(ReviewDecision::Approved));
     assert_eq!(detail.summary.checks, Some(ChecksState::Failing));
     assert_eq!(detail.mergeable, Mergeable::Yes);
+    // Yours first, then the rest the repository allows.
+    assert_eq!(
+        detail.merge_methods,
+        [MergeMethod::Squash, MergeMethod::Merge]
+    );
+    assert_eq!(detail.merge_state, MergeState::Behind);
+    assert!(detail.can_update_branch);
     assert_eq!(detail.labels[0].name, "bug");
     assert_eq!(detail.labels.left_out(), 2);
     assert_eq!(detail.head_oid, "bbb");
@@ -432,6 +444,84 @@ async fn set_viewed_sends_the_right_mutation() {
     assert_eq!(first["variables"]["pullRequestId"], "PR_kw1");
     assert_eq!(first["variables"]["path"], "src/a.rs");
     assert!(seen[1].query().contains("unmarkFileAsViewed"));
+}
+
+/// A change sends its mutation once, and a refusal is GitHub's message.
+#[tokio::test]
+async fn a_merge_sends_its_method_and_head_and_a_refusal_says_why() {
+    use ghtui_api::change::{Change, MergeMethod};
+    let (gh, seen) = github(vec![
+        Reply::new(200, r#"{"data":{"mergePullRequest":{"clientMutationId":null}}}"#),
+        Reply::new(
+            200,
+            r#"{"data":{"mergePullRequest":null},"errors":[{"type":"UNPROCESSABLE","message":"Pull Request is not mergeable"}]}"#,
+        ),
+    ])
+    .await;
+    let merge = Change::Merge {
+        pr: NodeId::new("PR_7"),
+        method: MergeMethod::Squash,
+        head: "bbb".into(),
+    };
+    gh.change(&merge).await.unwrap();
+    match gh.change(&merge).await {
+        Err(ApiError::GraphQl(errors)) => assert_eq!(errors, ["Pull Request is not mergeable"]),
+        other => panic!("{other:?}"),
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    let sent = seen[0].json();
+    assert!(seen[0].query().contains("mergePullRequest"));
+    assert_eq!(sent["variables"]["pr"], "PR_7");
+    assert_eq!(sent["variables"]["method"], "SQUASH");
+    assert_eq!(sent["variables"]["head"], "bbb");
+}
+
+/// Re-runs and cancels post to Actions' paths; a refusal (here, a token
+/// without the permission) is GitHub's status and message, never retried.
+#[tokio::test]
+async fn actions_changes_post_to_their_paths() {
+    use ghtui_api::change::Change;
+    let (gh, seen) = github(vec![
+        Reply::new(201, "{}"),
+        Reply::new(202, "{}"),
+        Reply::new(
+            403,
+            r#"{"message":"Resource not accessible by personal access token"}"#,
+        ),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    gh.change(&Change::Rerun {
+        repo: repo.clone(),
+        run: 5,
+        failed_only: true,
+    })
+    .await
+    .unwrap();
+    gh.change(&Change::CancelRun {
+        repo: repo.clone(),
+        run: 5,
+    })
+    .await
+    .unwrap();
+    match gh.change(&Change::RerunJob { repo, job: 9 }).await {
+        Err(ApiError::Http { status, message }) => {
+            assert_eq!(status, 403);
+            assert_eq!(message, "Resource not accessible by personal access token");
+        }
+        other => panic!("{other:?}"),
+    }
+    let lines: Vec<String> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|s| s.request_line.clone())
+        .collect();
+    assert_eq!(lines.len(), 3);
+    assert!(lines[0].starts_with("POST /repos/o/r/actions/runs/5/rerun-failed-jobs "));
+    assert!(lines[1].starts_with("POST /repos/o/r/actions/runs/5/cancel "));
+    assert!(lines[2].starts_with("POST /repos/o/r/actions/jobs/9/rerun "));
 }
 
 const THREADS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
@@ -1445,7 +1535,7 @@ fn root_not_found(data: &str, path: &str, message: &str) -> Reply {
 #[tokio::test]
 async fn a_missing_pull_request_isnt_also_left_out() {
     let (gh, _) = github(vec![root_not_found(
-        r#"{"repository":{"pullRequest":null},"rateLimit":null}"#,
+        r#"{"repository":{"pullRequest":null,"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"MERGE"},"rateLimit":null}"#,
         r#"["repository","pullRequest"]"#,
         "Could not resolve to a PullRequest with the number of 999999.",
     )])

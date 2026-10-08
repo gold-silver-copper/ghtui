@@ -1003,6 +1003,14 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
                 state.error(format!("GitHub didn't save “viewed”: {err}"));
             }
         }
+        // Approving from the pull request's page: its drafts go with it.
+        DiffMsg::ReviewLoaded(Ok(saved)) if !state.diffs.contains_key(of) => {
+            if let Some(Overlay::Submit(dialog)) = &mut state.overlay
+                && dialog.pr == pr
+            {
+                dialog.saved = Some(saved);
+            }
+        }
         DiffMsg::ReviewLoaded(Ok(saved)) => {
             // Anything done before it arrived is kept, and saved.
             let mut changed = false;

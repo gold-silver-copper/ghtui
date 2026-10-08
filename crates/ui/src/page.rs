@@ -204,6 +204,8 @@ pub struct Page {
     pub jump: Option<usize>,
     /// Named places a link's `#fragment` can point at (a comment), by line.
     pub anchors: HashMap<String, usize>,
+    /// The lines a search on the page matched, in order.
+    pub marks: Vec<usize>,
 }
 
 impl Page {

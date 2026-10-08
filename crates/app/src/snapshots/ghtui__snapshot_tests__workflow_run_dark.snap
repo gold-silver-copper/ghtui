@@ -1,6 +1,5 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 820
 expression: "render(&with_run(Mode::Dark))"
 ---
 Buffer {
@@ -13,7 +12,7 @@ Buffer {
         "  ✗ CI #412                                                                                         ",
         "  Theme: generate syntax palette from seed                                                          ",
         "  pull_request · syntax-palette · 0a1b2c3 · octocat · started just now · took 4m 12s                ",
-        "  Workflow ci.yml   Attempt 2   Re-running and cancelling are on GitHub (o)                         ",
+        "  Workflow ci.yml   Attempt 2                                                                       ",
         "                                                                                                    ",
         "  ╭─ Jobs  3 ───────────────────────────────────────────────────────────────────────────────────╮   ",
         "  │▌✗ test (ubuntu)                                                                      4m 12s │   ",
@@ -35,7 +34,7 @@ Buffer {
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
-        "  space menu   ↵ open   / search   f go to file   ←→ tabs   o browser                API 4987/5000  ",
+        "  space menu   ↵ open   / search   f go to file   ctrl-r re-run   ←→ tabs            API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
@@ -87,7 +86,7 @@ Buffer {
         x: 2, y: 7, fg: Rgb(196, 198, 207), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 11, y: 7, fg: Rgb(169, 199, 255), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 17, y: 7, fg: Rgb(196, 198, 207), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
-        x: 75, y: 7, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
+        x: 29, y: 7, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 2, y: 9, fg: Rgb(72, 76, 83), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 4, y: 9, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 5, y: 9, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: BOLD,
@@ -141,11 +140,11 @@ Buffer {
         x: 36, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 47, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 50, y: 29, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
-        x: 52, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 57, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 60, y: 29, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
-        x: 61, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 69, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 56, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 63, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 66, y: 29, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
+        x: 68, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 73, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 85, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 98, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
     ]

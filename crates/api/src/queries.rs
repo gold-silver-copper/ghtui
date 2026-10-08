@@ -4,7 +4,7 @@
 
 use ghtui_schema::schema;
 
-use crate::model::{Mergeable, ReviewDecision, ReviewState, Side, ViewedState};
+use crate::model::{MergeState, Mergeable, ReviewDecision, ReviewState, Side, ViewedState};
 
 #[derive(cynic::Scalar, Debug, Clone)]
 #[cynic(graphql_type = "DateTime", schema_module = "schema")]
@@ -93,6 +93,13 @@ fragments! {
     AddCommentPayload = "AddCommentPayload",
     StarPayload = "AddStarPayload",
     UnstarPayload = "RemoveStarPayload",
+    MergePayload = "MergePullRequestPayload",
+    ClosePrPayload = "ClosePullRequestPayload",
+    ReopenPrPayload = "ReopenPullRequestPayload",
+    CloseIssuePayload = "CloseIssuePayload",
+    ReopenIssuePayload = "ReopenIssuePayload",
+    ReadyPayload = "MarkPullRequestReadyForReviewPayload",
+    UpdateBranchPayload = "UpdatePullRequestBranchPayload",
 }
 
 // Node IDs, and the mutation results that carry them.
@@ -280,11 +287,16 @@ pub struct PullRequestQuery {
 pub struct RepositoryWithPr {
     #[arguments(number: $number)]
     pub pull_request: Option<PrDetail>,
+    pub merge_commit_allowed: bool,
+    pub squash_merge_allowed: bool,
+    pub rebase_merge_allowed: bool,
+    pub viewer_default_merge_method: crate::change::MergeMethod,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequest", schema_module = "schema")]
 pub struct PrDetail {
+    pub id: cynic::Id,
     #[cynic(spread)]
     pub summary: PrSummary,
     pub body: String,
@@ -296,6 +308,8 @@ pub struct PrDetail {
     pub head_repository: Option<RepositoryName>,
     pub changed_files: i32,
     pub mergeable: Mergeable,
+    pub merge_state_status: MergeState,
+    pub viewer_can_update_branch: bool,
     #[arguments(first: 20)]
     pub labels: Option<LabelConnection>,
     pub milestone: Option<MilestoneName>,

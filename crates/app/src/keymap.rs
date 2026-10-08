@@ -106,6 +106,12 @@ actions! {
     Menu              "actions_menu"      ["<Space>", "?"]     Global "Everything you can do here";
     CommandPalette    "command_palette"   [":", "<C-k>"]       Global "Command palette";
     Messages          "messages"          []                   Global "Recent messages and errors";
+    Merge             "merge"             ["M"]                Global "Merge the pull request";
+    Approve           "approve"           ["A"]                Global "Approve the pull request";
+    ReadyForReview    "ready_for_review"  ["W"]                Global "Mark the draft ready for review";
+    UpdateBranch      "update_branch"     ["B"]                Global "Update the branch from its base";
+    Close             "close"             ["X"]                Global "Close or reopen; on a running run, cancel it";
+    Rerun             "rerun"             ["<C-r>"]            Global "Re-run the workflow run or job";
     Quit              "quit"              ["q", "<C-c>"]       Global "Quit";
 
     Star              "star"              ["s"]                Page   "Star / unstar";
@@ -115,14 +121,14 @@ actions! {
     ToggleState       "toggle_state"      []                   Page   "Open / closed / all";
     Sort              "sort"              []                   Page   "Change the sort";
 
-    NextHunk          "next_hunk"         ["n"]                Diff   "Next change";
-    PrevHunk          "prev_hunk"         ["p"]                Diff   "Previous change";
+    NextHunk          "next_hunk"         ["n"]                Global "Next change (or search match)";
+    PrevHunk          "prev_hunk"         ["p"]                Global "Previous change (or search match)";
     NextFile          "next_file"         ["<S-Down>"]         Diff   "Next file";
     PrevFile          "prev_file"         ["<S-Up>"]           Diff   "Previous file";
     NextUnviewed      "next_unviewed"     ["U"]                Diff   "Next unviewed file";
     NextThread        "next_thread"       ["N"]                Diff   "Next unresolved thread";
     PrevThread        "prev_thread"       ["P"]                Diff   "Previous unresolved thread";
-    JumpMove          "jump_move"         ["M"]                Diff   "Jump to the other end of moved code";
+    JumpMove          "jump_move"         ["J"]                Diff   "Jump to the other end of moved code";
     SearchNext        "search_next"       []                   Diff   "Next search match";
     SearchPrev        "search_prev"       []                   Diff   "Previous search match";
     SwitchPane        "switch_pane"       ["<Tab>"]            Diff   "Switch between the file tree and the diff";
@@ -510,6 +516,13 @@ mod tests {
             ("`b`", &[Branch]),
             ("`c`", &[Comment]),
             ("`s`", &[Star]),
+            ("`M`", &[Merge]),
+            ("`A`", &[Approve]),
+            ("`W`", &[ReadyForReview]),
+            ("`B`", &[UpdateBranch]),
+            ("`X`", &[Close]),
+            ("`ctrl-r`", &[Rerun]),
+            ("`n` `p`", &[NextHunk, PrevHunk]),
             ("`o`", &[OpenInBrowser]),
             ("`y`", &[Copy]),
             ("`i`", &[Hints]),
@@ -540,7 +553,7 @@ mod tests {
             ("`F`", &[FullFile]),
             ("`S`", &[ToggleSplit]),
             ("`t`", &[ToggleTree]),
-            ("`M`", &[JumpMove]),
+            ("`J`", &[JumpMove]),
             ("`w`", &[IgnoreWhitespace]),
             ("`a`", &[SubmitReview]),
             ("`Delete`", &[DeleteDraft]),
@@ -560,6 +573,7 @@ mod tests {
             "alt-←" => "<A-Left>".to_owned(),
             "alt-→" => "<A-Right>".to_owned(),
             "ctrl-k" => "<C-k>".to_owned(),
+            "ctrl-r" => "<C-r>".to_owned(),
             "ctrl-c" => "<C-c>".to_owned(),
             "ctrl-z" => "<C-z>".to_owned(),
             "ctrl-w" => "<C-w>".to_owned(),
