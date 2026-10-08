@@ -59,7 +59,7 @@ pub struct Compose {
     /// A reply is being posted.
     pub sending: bool,
     pub error: Option<String>,
-    /// Esc was pressed once with text in the editor.
+    /// Esc or ctrl-c was pressed once with text in the editor.
     pub confirm_discard: bool,
 }
 
@@ -113,6 +113,8 @@ pub struct SubmitDialog {
     /// Your saved review (its drafts go with it), read from disk when the
     /// pull request's diff isn't open to hold it.
     pub saved: Option<ReviewState>,
+    /// Esc or ctrl-c was pressed once with a summary typed.
+    pub confirm_discard: bool,
 }
 
 impl SubmitDialog {
@@ -128,6 +130,7 @@ impl SubmitDialog {
             error: None,
             quick: false,
             saved: None,
+            confirm_discard: false,
         }
     }
 
@@ -825,12 +828,10 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        KeyCode::Esc if compose.text().trim().is_empty() || compose.confirm_discard => {
-            state.overlay = None;
-        }
         KeyCode::Esc => {
-            compose.confirm_discard = true;
-            compose.error = Some("Press esc again to discard this comment".into());
+            if may_discard(state, "esc", "discard") {
+                state.overlay = None;
+            }
         }
         KeyCode::Char('e') if ctrl => {
             return vec![Cmd::Edit {
@@ -846,6 +847,27 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         }
     }
     Vec::new()
+}
+
+/// Whether `key` may throw away the text typed in the composer or the
+/// review summary: the first press only warns, a second goes ahead.
+pub(crate) fn may_discard(state: &mut State, key: &str, verb: &str) -> bool {
+    let (text, armed, error, what) = match &mut state.overlay {
+        Some(Overlay::Compose(c)) => (c.text(), &mut c.confirm_discard, &mut c.error, "comment"),
+        Some(Overlay::Submit(d)) => (
+            d.input.lines().join("\n"),
+            &mut d.confirm_discard,
+            &mut d.error,
+            "summary",
+        ),
+        _ => return true,
+    };
+    if text.trim().is_empty() || *armed {
+        return true;
+    }
+    *armed = true;
+    *error = Some(format!("Press {key} again to {verb} this {what}"));
+    false
 }
 
 /// `ctrl-s` in the composer: drafts join the pending review (and are saved);
@@ -925,7 +947,11 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        KeyCode::Esc => state.overlay = None,
+        KeyCode::Esc => {
+            if may_discard(state, "esc", "discard") {
+                state.overlay = None;
+            }
+        }
         KeyCode::Tab => dialog.cycle(true),
         KeyCode::BackTab => dialog.cycle(false),
         KeyCode::Char('e') if ctrl => {
@@ -937,6 +963,7 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         KeyCode::Char('s') if ctrl => return submit(state),
         KeyCode::Enter if dialog.quick => return submit(state),
         _ => {
+            dialog.confirm_discard = false;
             dialog.error = None;
             dialog.input.input(key);
         }
