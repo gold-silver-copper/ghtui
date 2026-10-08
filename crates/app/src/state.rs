@@ -279,6 +279,8 @@ pub struct Remote<T> {
     pub cached_at: Option<u64>,
     /// The cursor a next page was asked after, while that page is on its way.
     more: Option<String>,
+    /// A write was made since the last fetch was asked for.
+    stale: bool,
 }
 
 impl<T> Default for Remote<T> {
@@ -289,6 +291,7 @@ impl<T> Default for Remote<T> {
             error: None,
             cached_at: None,
             more: None,
+            stale: false,
         }
     }
 }
@@ -322,17 +325,19 @@ impl<T> Remote<T> {
             error: self.error.clone(),
             cached_at: self.cached_at,
             more: self.more.clone(),
+            stale: self.stale,
         }
     }
 
     /// Starts a fetch, unless one is running or (without `force`) the data
-    /// is good: fetched here, not from the disk cache.
+    /// is good: fetched here (not from the disk cache) since the last write.
     fn begin(&mut self, force: bool) -> bool {
         let good = self.data.is_some() && self.error.is_none() && self.cached_at.is_none();
-        if self.loading || (!force && good) {
+        if self.loading || (!force && good && !self.stale) {
             return false;
         }
         self.loading = true;
+        self.stale = false;
         true
     }
 
@@ -757,6 +762,17 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     ) {
         state.data_gen += 1;
     }
+    // A write changes what GitHub shows, wherever it shows it.
+    if matches!(
+        msg,
+        Msg::Commented(_, Ok(()))
+            | Msg::Starred { result: Ok(()), .. }
+            | Msg::Diff(_, DiffMsg::Replied(Ok(())) | DiffMsg::ReviewSubmitted(_))
+    ) {
+        state.inbox.stale = true;
+        state.prs.values_mut().for_each(|r| r.stale = true);
+        state.data.values_mut().for_each(|r| r.stale = true);
+    }
     handle(state, msg)
 }
 
@@ -830,6 +846,10 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                     }
                 }
             }
+            // A write landed while this was on its way, so it may miss it.
+            if remote.stale && !is_pr {
+                return state.ensure(Need::Data(key), false);
+            }
             // GitHub redirects an issue number that's a pull request.
             if is_pr
                 && let DataKey::Issue(repo, number) = key
@@ -863,7 +883,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Commented(key, Ok(())) => {
             state.overlay = None;
             state.info("Comment posted");
-            return state.ensure(Need::Data(key), true);
+            return state.ensure(Need::Data(key), false);
         }
         Msg::Commented(_, Err(err)) => {
             if let Some(Overlay::Compose(compose)) = &mut state.overlay {
@@ -2548,7 +2568,18 @@ pub(crate) mod tests {
         );
         let cmds = update(&mut state, Msg::Commented(key.clone(), Ok(())));
         assert!(state.overlay.is_none());
-        assert_eq!(cmds, vec![Cmd::Api(Api::Fetch { key, cached: false })]);
+        let refetch = vec![Cmd::Api(Api::Fetch {
+            key: key.clone(),
+            cached: false,
+        })];
+        assert_eq!(cmds, refetch);
+        // Another comment, posted while that fetch is on its way: the fetch
+        // may miss it, so the page is fetched again once it lands.
+        let cmds = update(&mut state, Msg::Commented(key.clone(), Ok(())));
+        assert_eq!(cmds, Vec::new());
+        let issue = || Data::Issue(Some(Box::new(crate::fixtures::issue())));
+        assert_eq!(fetched(&mut state, key.clone(), issue()), refetch);
+        assert_eq!(fetched(&mut state, key, issue()), Vec::new(), "only once");
     }
 
     #[test]
