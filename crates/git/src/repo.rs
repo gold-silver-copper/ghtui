@@ -582,10 +582,12 @@ mod tests {
     #[tokio::test]
     async fn moving_commands_outlast_the_stall_window() {
         let mut cmd = Command::new("sh");
-        let script = "for i in 1 2 3 4 5 6 7 8 9 10; do echo \"Receiving objects: ${i}0%\" >&2; sleep 0.1; done";
+        // 1.5s of output, a line every 50ms: ten times inside the window, so
+        // a busy machine can't make it look quiet.
+        let script = "i=0; while [ $i -lt 30 ]; do echo \"Receiving objects: $i\" >&2; sleep 0.05; i=$((i+1)); done";
         cmd.args(["-c", script]);
         let result =
-            run_with_progress(cmd, "fetch", None, &|_| {}, Duration::from_millis(300)).await;
+            run_with_progress(cmd, "fetch", None, &|_| {}, Duration::from_millis(500)).await;
         assert!(result.is_ok(), "{result:?}");
     }
 
