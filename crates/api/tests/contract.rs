@@ -41,7 +41,7 @@ macro_rules! github {
 }
 
 async fn rest(gh: &GitHub, path: &str) -> Value {
-    serde_json::from_str(&gh.rest_get(path).await.unwrap()).unwrap()
+    serde_json::from_str(&gh.rest_get(path, path).await.unwrap()).unwrap()
 }
 
 async fn graphql(gh: &GitHub, query: &str, at: &str) -> Value {
@@ -358,7 +358,7 @@ async fn contract_record_logs() {
         let json = serde_json::to_string_pretty(&job).unwrap();
         std::fs::write(dir.join(format!("{name}.job.json")), json).unwrap();
         let path = format!("/repos/{}/{}/actions/jobs/{id}/logs", repo.owner, repo.name);
-        let log = gh.rest_get(&path).await.unwrap();
+        let log = gh.rest_get(&path, &path).await.unwrap();
         std::fs::write(dir.join(format!("{name}.log")), log).unwrap();
     }
 }

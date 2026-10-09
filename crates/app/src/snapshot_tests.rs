@@ -244,7 +244,7 @@ fn long_conversations_say_what_is_left_out() {
         (Some(101), Some(250))
     );
     press(&mut state, "2");
-    assert!(text(&state).contains("… 248 earlier commits on GitHub (o)"));
+    assert!(text(&state).contains("… 248 earlier commits"));
 }
 
 /// A dismissed review, with the state the API gives it (pinned by

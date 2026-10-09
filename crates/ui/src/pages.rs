@@ -401,7 +401,7 @@ fn rest_row(page: &mut Page, shown: usize, rest: Rest) {
             page.box_rule();
             return empty_row(page, &left_out_text(n, "more", "more"));
         }
-        Rest::At(n, url) => (Link::from(url), format!("… {n} more on GitHub")),
+        Rest::At(n, url) => (Link::from(url), format!("… {n} more")),
         Rest::NextPage { total } => {
             let of = total.map_or_else(
                 || format!("{shown} so far"),
@@ -2378,14 +2378,23 @@ pub fn pr_commits(
 }
 
 /// Commits in boxes by day, each linked to its page: first how many
-/// earlier ones are only on GitHub, last "Load more" if another page loads.
+/// earlier ones were left out, which opens the history from the oldest
+/// here back (oldest first, as a comparison and a PR list them), last
+/// "Load more" if another page loads.
 fn commit_rows(page: &mut Page, repo: &RepoId, commits: &impl Rows<CommitInfo>, now: u64) {
-    let rest = match commits.rest() {
-        Rest::OnGitHub(n) => {
-            left_out(page, n, "earlier commit", "earlier commits");
+    let rest = match (commits.rest(), commits.rows().first()) {
+        (Rest::OnGitHub(n), Some(oldest)) => {
+            let earlier = url::commits(repo, &oldest.oid, "");
+            let text = format!(
+                "… {n} earlier {}",
+                if n == 1 { "commit" } else { "commits" }
+            );
+            item(page, earlier, |page, link| {
+                page.wrapped(vec![Seg::linked(text, Role::Link, link)], 2, Frame::None);
+            });
             Rest::All
         }
-        rest => rest,
+        (rest, _) => rest,
     };
     let mut current_day = String::new();
     for c in commits.rows() {
@@ -3989,7 +3998,9 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
             }
             page.wrapped(people, 0, Frame::Body);
         }
-        rest_row(page, p.people.len(), p.people.rest());
+        // The rest are on the People tab.
+        let all = format!("{}/orgs/{}/people", url::BASE, p.login);
+        rest_row(page, p.people.len(), At(&p.people, Some(all)).rest());
         page.box_bottom();
         let languages = top_languages(&p.repos);
         if !languages.is_empty() {
@@ -4230,32 +4241,29 @@ pub fn home(
             page,
             "Review requests",
             &inbox.review_requested,
-            "is:open is:pr review-requested:@me archived:false",
+            Inbox::REVIEW_REQUESTED,
             "Nothing is waiting for your review.",
         );
         pr_box(
             page,
             "Your pull requests",
             &inbox.authored,
-            "is:open is:pr author:@me archived:false",
+            Inbox::AUTHORED,
             "You have no open pull requests.",
         );
     }
+    // The same list as your profile's Repositories tab, which opens the rest.
     let all = viewer.map(|login| format!("{}?tab=repositories", url::user(login)));
     let title = vec![Seg::new("Your repositories", Role::Strong)];
     let loading = |page: &mut Page| loading_box(page, title.clone());
     if let Some(repos) = repos.show_or(page, "your repositories", loading) {
         let empty = "You don't have any repositories yet.";
-        list_box(
-            page,
-            title,
-            Vec::new(),
-            &At(repos, all),
-            empty,
-            |page, r| {
-                repo_row(page, r, now, true);
-            },
-        );
+        let repos = At(repos, all);
+        let mut title = title;
+        title.push(Seg::new(format!("  {}", count_of(&repos)), Role::Meta));
+        list_box(page, title, Vec::new(), &repos, empty, |page, r| {
+            repo_row(page, r, now, true);
+        });
     }
 }
 
