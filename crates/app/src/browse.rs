@@ -41,6 +41,9 @@ pub enum DataKey {
     Files(RepoId, String),
     /// Branches and tags.
     Refs(RepoId),
+    /// The ref a plain URL's ref-and-path starts with (see
+    /// [`Route::Unsplit`]).
+    RefIn(RepoId, String),
     /// The latest commit of each entry in a directory.
     LastCommits(RepoId, String, String),
     /// A commit, by the revision linked.
@@ -103,6 +106,9 @@ pub enum Data {
     /// Paths, and whether GitHub cut the list short.
     Files(Arc<Vec<String>>, bool),
     Refs(Box<Refs>),
+    /// The ref a ref-and-path starts with, when longer than its first
+    /// segment.
+    RefIn(Option<String>),
     LastCommits(Arc<HashMap<String, CommitInfo>>),
     Commit(Box<CommitDetail>),
     History(Box<Results<CommitInfo>>),
@@ -284,6 +290,10 @@ pub fn needs(route: &Route) -> Vec<Need> {
             Need::Data(K::Blob(repo.clone(), rev.clone(), path.clone())),
             Need::Data(K::Blame(repo.clone(), rev.clone(), path.clone())),
         ],
+        Route::Unsplit { repo, spot, .. } => vec![
+            header(repo),
+            Need::Data(K::RefIn(repo.clone(), spot.clone())),
+        ],
         Route::Issues { repo, .. } | Route::Pulls { repo, .. } => {
             std::iter::once(header(repo)).chain(list).collect()
         }
@@ -408,7 +418,7 @@ macro_rules! picked {
 picked!(
     Repo => RepoOverview, Readme => Option<Box<Readme>>, Tree => [TreeEntry], Blob => Blob,
     Search => SearchResults, Issue => Option<Box<IssueDetail>>, PrActivity => PrActivity,
-    Profile => Profile, Repos => Capped<RepoSummary>, Refs => Refs,
+    Profile => Profile, Repos => Capped<RepoSummary>, Refs => Refs, RefIn => Option<String>,
     LastCommits => HashMap<String, CommitInfo>, Commit => CommitDetail,
     History => Results<CommitInfo>, Checks => Checks, Users => Results<UserSummary>,
     RepoPage => Results<RepoSummary>, Releases => Results<Release>,
@@ -613,6 +623,11 @@ impl State {
                     lines: *lines,
                 };
                 pages::blame(&mut page, file, blob, blame, keys, now);
+            }
+            // Shown until the ref is known, then replaced (`State::settle`).
+            Route::Unsplit { repo, spot, .. } => {
+                let key = DataKey::RefIn(repo.clone(), spot.clone());
+                let _ = f.get::<Option<String>>(&key).show(&mut page, "the branch");
             }
             Route::Issues { repo, query } | Route::Pulls { repo, query } => {
                 let is_pr = matches!(route, Route::Pulls { .. });

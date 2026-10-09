@@ -57,6 +57,18 @@ pub(crate) fn last_commits(paths: &[String]) -> String {
     )
 }
 
+/// Which of `names` are a branch or tag: one `ref` each (`$r0`, `$r1`…),
+/// null for a name that isn't one.
+pub(crate) fn refs_named(names: usize) -> String {
+    let params: String = (0..names).map(|i| format!(", $r{i}: String!")).collect();
+    let fields: String = (0..names)
+        .map(|i| format!("r{i}: ref(qualifiedName: $r{i}) {{ name }} "))
+        .collect();
+    format!(
+        "query($owner: String!, $name: String!{params}) {{ repository(owner: $owner, name: $name) {{ {fields}}} }}"
+    )
+}
+
 /// People in `field` of `root` (`repository(owner: $owner, name: $name)`
 /// or `user(login: $login)`), 30 at a time.
 pub(crate) fn users(root: &str, field: &str) -> String {
@@ -119,6 +131,7 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
             "last_commits",
             last_commits(&["src/a \"b\".rs".into(), "README.md".into()]),
         ),
+        ("refs_named", refs_named(3)),
         ("milestones(open)", milestones(false)),
         ("milestones(closed)", milestones(true)),
         ("milestone", milestone()),

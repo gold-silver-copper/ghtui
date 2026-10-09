@@ -101,6 +101,10 @@ impl State {
     /// just open there.
     #[must_use]
     pub fn open_tab(&mut self, target: Target) -> Vec<Cmd> {
+        let target = match target {
+            Target::Page(route) => Target::Page(self.followed(route)),
+            target => target,
+        };
         let prefs = DiffPrefs::fit(self.size.0);
         let first = match &target {
             Target::External(_) => return self.go(target),

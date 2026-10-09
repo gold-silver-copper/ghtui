@@ -678,8 +678,59 @@ impl State {
     /// diff) in bounds.
     #[must_use]
     pub fn settle(&mut self) -> Vec<Cmd> {
+        let mut cmds = self.settle_ref();
         self.sync_page();
-        self.settle_diff()
+        cmds.extend(self.settle_diff());
+        cmds
+    }
+
+    /// Opens the page an [`Route::Unsplit`] one is, once where its ref
+    /// ends is known.
+    #[must_use]
+    fn settle_ref(&mut self) -> Vec<Cmd> {
+        let Screen::Page(p) = self.screen() else {
+            return Vec::new();
+        };
+        let Some(route) = self.split(&p.route, None) else {
+            return Vec::new();
+        };
+        let anchor = p.anchor.clone();
+        self.replace(route, false, anchor)
+    }
+
+    /// `route` followed from the page on screen: split where its ref ends
+    /// if that's known, as when a page at a revision links to that
+    /// revision's files.
+    pub(crate) fn followed(&self, route: Route) -> Route {
+        let rev = (self.route())
+            .filter(|here| here.repo() == route.repo())
+            .and_then(Route::rev);
+        self.split(&route, rev).unwrap_or(route)
+    }
+
+    /// The page an [`Route::Unsplit`] one is, if where its ref ends is
+    /// known here: GitHub said, or its ref-and-path starts with the
+    /// repository's default branch or with `rev` (the revision of the page
+    /// that links to it). Git keeps a branch from being the start of
+    /// another, so a branch already known is the one (short of a tag that
+    /// extends it).
+    pub(crate) fn split(&self, route: &Route, rev: Option<&str>) -> Option<Route> {
+        let Route::Unsplit { repo, spot, .. } = route else {
+            return None;
+        };
+        let key = DataKey::RefIn(repo.clone(), spot.clone());
+        if let Some(found) = self.picked::<Option<String>>(&key) {
+            return route.split(found.as_deref());
+        }
+        let default = self
+            .overview(repo)
+            .and_then(|o| o.default_branch.as_deref());
+        let starts = |r: &&str| {
+            spot.strip_prefix(*r)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        };
+        let known = [rev, default].into_iter().flatten().find(starts)?;
+        route.split(Some(known))
     }
 
     /// Starts the diff on screen once it can and the joined work that's
@@ -2196,6 +2247,43 @@ pub(crate) mod tests {
             let _ = s.start_at(Target::from_url(url));
             s.anchor_at(url);
             assert_eq!(anchor(&s).as_deref(), Some("issuecomment-5"));
+        }
+
+        /// A plain link to a file on a slashed branch waits for GitHub to
+        /// say where the branch ends, then is that file, in its place.
+        /// Links at the default branch or at the revision on screen don't
+        /// ask.
+        #[test]
+        fn plain_links_open_the_branch_github_names() {
+            let mut s = with_repo();
+            let url = "https://github.com/gold-silver-copper/ghtui/blob/feature/x/src/lib.rs#L2";
+            let key = DataKey::RefIn(repo(), "feature/x/src/lib.rs".into());
+            assert_eq!(fetches(s.open_url(url, false)), vec![fetch(key.clone())]);
+            let depth = s.screens.len();
+            let cmds = fetched(&mut s, key, Data::RefIn(Some("feature/x".into())));
+            let file = Route::Blob {
+                repo: repo(),
+                rev: "feature/x".into(),
+                path: "src/lib.rs".into(),
+                lines: Some((2, 2)),
+            };
+            assert_eq!(route(&s), file);
+            assert_eq!(s.screens.len(), depth, "in its place");
+            let text = DataKey::Blob(repo(), "feature/x".into(), "src/lib.rs".into());
+            assert_eq!(fetches(cmds), vec![fetch(text)]);
+
+            let base = "https://github.com/gold-silver-copper/ghtui";
+            let _ = s.open_url(&format!("{base}/tree/feature/x/src"), false);
+            assert_eq!(
+                route(&s),
+                Route::Tree {
+                    repo: repo(),
+                    rev: "feature/x".into(),
+                    path: "src".into()
+                }
+            );
+            let _ = s.open_url(&format!("{base}/blob/main/README.md"), false);
+            assert_eq!(route(&s), blob("main", "README.md"));
         }
 
         /// A comment's link on an issue number that's a pull request keeps

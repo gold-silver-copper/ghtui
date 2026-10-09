@@ -132,6 +132,7 @@ impl State {
             | Route::Tree { repo, .. }
             | Route::Blob { repo, .. }
             | Route::Blame { repo, .. }
+            | Route::Unsplit { repo, .. }
             | Route::Issues { repo, .. }
             | Route::Pulls { repo, .. }
             | Route::Issue { repo, .. }
