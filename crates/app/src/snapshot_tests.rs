@@ -3359,6 +3359,28 @@ mod changes {
         assert_eq!(info(&s), "Ready for review");
     }
 
+    /// GitHub's answer goes back to what sent the change: a dialog or a
+    /// comment opened while it's on its way is left as it is.
+    #[test]
+    fn an_answer_goes_only_to_what_sent_it() {
+        let mut s = pr_in(IssueState::Draft);
+        let ready = Change::ReadyForReview {
+            pr: NodeId::new("PR_12"),
+        };
+        press(&mut s, "WX");
+        let refused = ApiError::GraphQl(vec!["Not now".into()]);
+        update(&mut s, Msg::Changed(ready.clone(), Err(refused)));
+        assert_eq!(confirm(&s).error, None);
+        assert!(info(&s).contains("Not now"), "{}", info(&s));
+        press(&mut s, "<Esc>Wc");
+        press(&mut s, "LGTM");
+        update(&mut s, Msg::Changed(ready, Ok(())));
+        assert!(
+            matches!(&s.overlay, Some(Overlay::Compose(c)) if c.text() == "LGTM"),
+            "the comment is still being written"
+        );
+    }
+
     /// Approving from the pull request's page reads your saved drafts
     /// first, submits them with the approval, and saves what's left.
     #[test]

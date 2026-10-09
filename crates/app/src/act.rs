@@ -690,10 +690,12 @@ pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 pub fn on_changed(state: &mut State, change: &Change, result: Result<(), ApiError>) -> Vec<Cmd> {
     match result {
         Ok(()) => {
-            if matches!(
-                state.overlay,
-                Some(Overlay::Confirm(_) | Overlay::Compose(_))
-            ) {
+            let sending = match &state.overlay {
+                Some(Overlay::Confirm(c)) => c.sending,
+                Some(Overlay::Compose(c)) => c.sending,
+                _ => false,
+            };
+            if sending {
                 state.overlay = None;
             }
             state.info(done(change));
@@ -720,7 +722,7 @@ pub fn on_changed(state: &mut State, change: &Change, result: Result<(), ApiErro
             }
             let text = failure(change, &err);
             match &mut state.overlay {
-                Some(Overlay::Confirm(confirm)) => {
+                Some(Overlay::Confirm(confirm)) if confirm.sending => {
                     confirm.sending = false;
                     confirm.error = Some(text);
                 }
