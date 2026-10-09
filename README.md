@@ -160,8 +160,9 @@ your drafts.
 - **Actions** shows the checks on the default branch, like a pull request's.
   A **workflow run** lists its jobs, failures first; a **job** lists its
   steps with the failing ones (and the one a link points at) opened to their
-  log, scrolled to the first error. `/` searches the log: steps with a match
-  open, matches are picked out, and `n` `p` go from one to the next. A
+  whole log, scrolled to the first error. `/` searches the log: steps with a
+  match open, matches are picked out, `n` `p` go from one to the next (the
+  one you're on is marked), and `Esc` ends the search where you were. A
   **workflow** lists its runs. A run, a job or a log that's still going is
   fetched again every few seconds until it ends.
 - **Releases** list a repository's releases; a **release** shows its notes and
@@ -284,13 +285,13 @@ never does something else. Less common actions have no key: they're in the
 | `↑` `↓` (`j` `k`)     | Move                                                          |
 | `←` `→` (`h` `l`)     | Previous / next tab, into and out of Files changed            |
 | `Enter`               | Open the selection (on a comment: quote reply)                |
-| `Esc` `⌫` `alt-←`     | Back (in the diff, a search or selection is cleared first)    |
+| `Esc` `⌫` `alt-←`     | Back (a search in the diff or a job's log, or a diff selection, is cleared first) |
 | `alt-→`               | Forward (back and forward go through history)                 |
 | `PgUp` `PgDn`         | Page up / down                                                |
 | `Home` `End` (`g` `G`) | Top / bottom                                                 |
 | `1`–`9`               | Tab by number                                                 |
 | `Space` `?`           | Everything you can do here, with its keys                     |
-| `/`                   | Search (on a list: filter it; in the diff: search the diff)   |
+| `/`                   | Search (on a list: filter it; in the diff or a job's log: search it) |
 | `f`                   | Find a file                                                   |
 | `b`                   | Switch branches or tags                                       |
 | `c`                   | Comment (on a review thread: reply)                           |
@@ -352,6 +353,9 @@ there's text).
 In the file tree, moving the selection scrolls the diff to that file;
 `<Enter>` returns focus to the diff. Other keys act on the diff, and `←`
 `→` still switch tabs.
+
+In the search box, go to file and the command palette, `ctrl-u` clears what's
+typed before the cursor.
 
 The command palette fuzzy-matches action names and descriptions. It also goes
 places: `owner/repo`, `owner/repo#123`, `@user`, or a github.com URL. On a

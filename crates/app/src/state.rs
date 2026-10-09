@@ -1005,9 +1005,7 @@ fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                 state.notice = Some(diff_screen::search(screen, diff, query));
             }
         }
-        _ => {
-            input.input(key);
-        }
+        _ => nav::type_into(input, key),
     }
     Vec::new()
 }
@@ -1030,6 +1028,11 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
                 (screen.search, screen.selection) = (None, None);
             }
             state.info("Cleared · esc again goes back");
+        }
+        // Esc ends a log search before it leaves, too.
+        Action::Back if matches!(state.route(), Some(Route::Job { query, .. }) if !query.is_empty()) =>
+        {
+            nav::search_log(state, "");
         }
         Action::Back => return state.back(),
         Action::Forward => return state.go_forward(),
@@ -2240,7 +2243,8 @@ pub(crate) mod tests {
 
     /// `/` on a job searches its log: the steps with a match open, the
     /// page opens at the first match, every match is picked out, and `n`
-    /// `p` go through them. Nothing is hidden.
+    /// `p` go through them. Nothing is hidden. Esc ends the search, back
+    /// on the same page as it was.
     #[test]
     fn a_jobs_log_search_goes_through_its_matches() {
         let mut s = with_repo();
@@ -2248,17 +2252,18 @@ pub(crate) mod tests {
             repo: repo(),
             run: Some(7),
             job: 2,
-            step: None,
+            step: Some((1, 1)),
             query: String::new(),
         };
-        let _ = s.push(job_route);
+        let _ = s.push(job_route.clone());
+        let depth = s.screens.len();
         let (job, log) = crate::fixtures::job();
         fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
         fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
         press(&mut s, "/");
         press(&mut s, "TEST");
         press(&mut s, "<Enter>");
-        assert!(matches!(route(&s), Route::Job { query, .. } if query == "TEST"));
+        assert!(matches!(route(&s), Route::Job { query, step: Some(_), .. } if query == "TEST"));
         let Screen::Page(p) = s.screen() else {
             panic!()
         };
@@ -2268,8 +2273,7 @@ pub(crate) mod tests {
         for &m in &page.marks {
             assert!(line(m).to_lowercase().contains("test"), "{}", line(m));
             let picked = page.lines[m].segs.iter().any(|s| {
-                s.text().eq_ignore_ascii_case("test")
-                    && s.role == ghtui_ui::page::Role::Chip(Bg::TertiaryContainer)
+                s.text().eq_ignore_ascii_case("test") && s.role == ghtui_ui::page::Role::Match
             });
             assert!(picked, "{}", line(m));
         }
@@ -2278,10 +2282,25 @@ pub(crate) mod tests {
         assert_eq!(page.jump, page.marks.first().copied());
         let n = page.marks.len();
         assert!(n > 1, "{n}");
+        assert_eq!(s.notice, Some(Notice::Info(format!("Match 1 of {n}"))));
         press(&mut s, "n");
         assert_eq!(s.notice, Some(Notice::Info(format!("Match 2 of {n}"))));
+        let Screen::Page(p) = s.screen() else {
+            panic!()
+        };
+        assert_eq!(p.current_match(), p.page().marks.get(1).copied());
         press(&mut s, "p");
         assert_eq!(s.notice, Some(Notice::Info(format!("Match 1 of {n}"))));
+        press(&mut s, "<Esc>");
+        assert_eq!(route(&s), job_route);
+        assert_eq!(s.screens.len(), depth);
+        press(&mut s, "/");
+        press(&mut s, "no such text");
+        press(&mut s, "<Enter>");
+        let none = Notice::Info("No matches for “no such text”".into());
+        assert_eq!(s.notice, Some(none.clone()));
+        press(&mut s, "n");
+        assert_eq!(s.notice, Some(none));
     }
 
     /// A failed job opens at its failing step's first error.

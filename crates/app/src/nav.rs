@@ -308,6 +308,19 @@ impl PageScreen {
         }
     }
 
+    /// The search match gone to, by its index in [`Page::marks`]: before
+    /// any, the one the page opened at.
+    fn mark_at(&self) -> Option<usize> {
+        let marks = &self.page.marks;
+        (self.mark.filter(|&m| m < marks.len()))
+            .or_else(|| marks.iter().position(|&m| Some(m) == self.page.jump))
+    }
+
+    /// The line of the search match gone to.
+    pub fn current_match(&self) -> Option<usize> {
+        self.page.marks.get(self.mark_at()?).copied()
+    }
+
     /// The selected item's link.
     pub fn selected_link(&self) -> Option<&Link> {
         let item = self.page.items.get(self.selected?)?;
@@ -499,8 +512,18 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             match step_mark(p, next) {
                 Some((n, of)) => state.info(format!("Match {n} of {of}")),
                 None if p.page.marks.is_empty() => {
+                    let query = match &p.route {
+                        Route::Job { query, .. } => Some(query.clone()),
+                        _ => None,
+                    };
                     let search = state.first_key(Action::Search);
-                    state.info(format!("No matches here: {search} searches a job's log"));
+                    state.info(match query {
+                        Some(q) if q.is_empty() => {
+                            format!("No search yet: {search} searches the log")
+                        }
+                        Some(q) => format!("No matches for “{q}”"),
+                        None => format!("No matches here: {search} searches a job's log"),
+                    });
                 }
                 None => state.info(if next {
                     "No later match"
@@ -522,15 +545,13 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
 /// Scrolls to the next (or previous) search match on the page: which
 /// one it is, of how many. Before any, the one the page opened at is.
 fn step_mark(p: &mut PageScreen, next: bool) -> Option<(usize, usize)> {
-    let marks = &p.page.marks;
-    let at = (p.mark.filter(|&m| m < marks.len()))
-        .or_else(|| marks.iter().position(|&m| Some(m) == p.page.jump));
-    let n = match (at, next) {
+    let n = match (p.mark_at(), next) {
         (None, true) => 0,
         (None, false) => return None,
         (Some(at), true) => at + 1,
         (Some(at), false) => at.checked_sub(1)?,
     };
+    let marks = &p.page.marks;
     p.scroll = marks.get(n)?.saturating_sub(MARGIN);
     p.mark = Some(n);
     p.fresh = false;
@@ -875,6 +896,16 @@ pub enum Pick {
     Filter(String),
 }
 
+/// A key typed into a one-line box. Ctrl-u clears what's before the
+/// cursor, as in a shell, rather than undoing.
+pub fn type_into(input: &mut TextArea<'_>, key: KeyEvent) {
+    if key.code == KeyCode::Char('u') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        input.delete_line_by_head();
+    } else {
+        input.input(key);
+    }
+}
+
 pub fn new_input(theme: &Theme, bg: Bg) -> TextArea<'static> {
     let mut input = TextArea::default();
     input.set_style(theme.body(bg));
@@ -887,7 +918,11 @@ impl State {
     /// `/`: GitHub search in the header, or the list's filter on a list.
     #[must_use]
     pub fn open_search(&mut self) -> Vec<Cmd> {
-        let filter_query = self.route().and_then(Route::list_query).map(str::to_owned);
+        // A job's log is searched on the page, like a list's filter.
+        let filter_query = match self.route() {
+            Some(Route::Job { query, .. }) => Some(query.clone()),
+            route => route.and_then(Route::list_query).map(str::to_owned),
+        };
         let mut input = new_input(&self.theme, Bg::ContainerHighest);
         if let Some(q) = &filter_query {
             input.insert_str(q);
@@ -1090,7 +1125,7 @@ pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             pick.map_or_else(Vec::new, |p| choose(state, p))
         }
         _ => {
-            sb.input.input(key);
+            type_into(&mut sb.input, key);
             sb.selected = 0;
             let q = sb.query();
             if !sb.filter && q.chars().count() >= 2 && route::parse_input(&q, None).is_none() {
@@ -1108,6 +1143,10 @@ fn choose(state: &mut State, pick: Pick) -> Vec<Cmd> {
         Pick::Go(target) => state.go(target),
         Pick::Url(url) => state.open_url(&url, false),
         Pick::Search(kind, query) => state.push(Route::Search { kind, query }),
+        Pick::Filter(query) if matches!(state.route(), Some(Route::Job { .. })) => {
+            search_log(state, &query);
+            Vec::new()
+        }
         Pick::Filter(query) => match state.route().and_then(|r| r.with_query(query.clone())) {
             Some(route) => state.replace(route, true, None),
             None => state.push(Route::Search {
@@ -1116,6 +1155,43 @@ fn choose(state: &mut State, pick: Pick) -> Vec<Cmd> {
             }),
         },
     }
+}
+
+/// Searches the job's log on screen for `query` (empty clears it) and
+/// says how it went. The page stays as it is: the same place in history,
+/// the step a link pointed at, nothing fetched again.
+pub fn search_log(state: &mut State, query: &str) {
+    let Screen::Page(p) = state.screen_mut() else {
+        return;
+    };
+    let Route::Job {
+        repo,
+        job,
+        query: q,
+        ..
+    } = &mut p.route
+    else {
+        return;
+    };
+    let log = DataKey::JobLog(repo.clone(), *job);
+    query.clone_into(q);
+    // Rebuilt, it opens at the first match, or where it opened before.
+    (p.built, p.mark, p.jumped) = (None, None, None);
+    state.sync_page();
+    let Screen::Page(p) = state.screen() else {
+        return;
+    };
+    let loaded = state
+        .picked::<ghtui_api::browse::JobLog>(&log)
+        .is_some_and(|l| !l.running);
+    let back = state.first_key(Action::Back);
+    let text = match (p.mark_at(), p.page.marks.len()) {
+        _ if query.is_empty() => format!("Cleared the search · {back} again goes back"),
+        (Some(at), of) => format!("Match {} of {of}", at + 1),
+        _ if loaded => format!("No matches for “{query}”"),
+        _ => format!("Searches for “{query}” once the log is in"),
+    };
+    state.info(text);
 }
 
 // ---- lists: state and sort ------------------------------------------------------------------
@@ -1451,10 +1527,29 @@ impl State {
         out.push(open);
         let route = &p.route;
         let list = route.search().map(|(_, q)| q);
-        out.push(match list {
-            Some(_) => here(Action::Search, "Filter this list", "filter"),
-            None => here(Action::Search, "Search or jump to…", "search"),
-        });
+        if let Route::Job { query, .. } = route {
+            out.push(here(Action::Search, "Search the log", "search"));
+            let why = if query.is_empty() {
+                Some("nothing is searched yet".to_owned())
+            } else if p.page.marks.is_empty() {
+                Some(format!("no line has “{query}”"))
+            } else {
+                None
+            };
+            for (action, label) in [
+                (Action::NextHunk, "Next match"),
+                (Action::PrevHunk, "Previous match"),
+            ] {
+                let mut row = here(action, label, "");
+                row.unavailable.clone_from(&why);
+                out.push(row);
+            }
+        } else {
+            out.push(match list {
+                Some(_) => here(Action::Search, "Filter this list", "filter"),
+                None => here(Action::Search, "Search or jump to…", "search"),
+            });
+        }
         if let Some(query) = &list {
             let show = format!("Show {}", next_list_state(query));
             out.push(here(Action::ToggleState, &show, "open/closed"));
@@ -1488,7 +1583,11 @@ impl State {
         let pair = |keys: &str, what: &str| (keys.to_owned(), what.to_owned());
         match &self.overlay {
             Some(Overlay::Search(sb)) => {
-                let enter = if sb.filter { "filter" } else { "go" };
+                let enter = match self.route() {
+                    _ if !sb.filter => "go",
+                    Some(Route::Job { .. }) => "search",
+                    _ => "filter",
+                };
                 return vec![pair("↵", enter), pair("↑↓", "choose"), pair("esc", "close")];
             }
             Some(Overlay::Hints(_)) => {
@@ -1715,6 +1814,7 @@ pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         (Some(query), code) => {
             match code {
                 KeyCode::Char(c) if typed => query.push(c),
+                KeyCode::Char('u') => query.clear(),
                 KeyCode::Backspace if query.pop().is_some() => {}
                 KeyCode::Backspace | KeyCode::Esc => menu.filter = None,
                 _ => return Vec::new(),

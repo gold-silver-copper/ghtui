@@ -2673,9 +2673,16 @@ pub fn step_lines<'a>(job: &Job, cut: &'a str, log: &'a str) -> Vec<(u32, usize,
                 ran.get(at + 1).and_then(|&i| job.steps.get(i)),
             ) {
                 // A step named after what it runs starts at its own `Run`
-                // line, not a composite action's inner ones.
-                let starts =
-                    marks && run.is_none_or(|r| !next.name.starts_with("Run ") || r == next.name);
+                // line, not a composite action's inner ones. Each step's
+                // log begins with its start line, so one that has none yet
+                // is the one this line starts.
+                let begun = ran
+                    .get(at)
+                    .and_then(|&i| out.get(i))
+                    .is_some_and(|(_, cut, lines)| *cut > 0 || !lines.is_empty());
+                let starts = marks
+                    && begun
+                    && run.is_none_or(|r| !next.name.starts_with("Run ") || r == next.name);
                 let next_started =
                     second(next.started_at.as_ref()).is_some_and(|s| s.as_str() <= t);
                 let ended = second(current.completed_at.as_ref()).is_some_and(|s| s.as_str() < t);
@@ -2683,10 +2690,6 @@ pub fn step_lines<'a>(job: &Job, cut: &'a str, log: &'a str) -> Vec<(u32, usize,
                     break;
                 }
                 at += 1;
-                // A start line starts one step.
-                if starts && !ended {
-                    break;
-                }
             }
         }
         if let Some((_, cut, lines)) = ran.get(at).and_then(|&i| out.get_mut(i)) {
@@ -2748,7 +2751,7 @@ fn strip_escapes(text: &str) -> String {
 pub fn log_seg(text: &str) -> Seg {
     let text = &strip_escapes(text);
     if let Some(group) = text.strip_prefix("##[group]") {
-        Seg::new(format!("▸ {group}"), Role::Strong)
+        Seg::new(format!("▾ {group}"), Role::Strong)
     } else if text.starts_with("##[endgroup]") || text.starts_with("##[end-action ") {
         Seg::new("", Role::Meta)
     } else if let Some(action) = text.strip_prefix("##[start-action ") {
@@ -2758,7 +2761,7 @@ pub fn log_seg(text: &str) -> Seg {
             .find_map(|field| field.strip_prefix("display="))
             .unwrap_or(action)
             .trim_end_matches(']');
-        Seg::new(format!("▸ {display}"), Role::Strong)
+        Seg::new(format!("▾ {display}"), Role::Strong)
     } else if let Some(error) = text.strip_prefix("##[error]") {
         Seg::new(error.to_owned(), Role::Removed)
     } else if let Some(warning) = text.strip_prefix("##[warning]") {
@@ -2801,7 +2804,7 @@ fn highlight(seg: Seg, query: &str) -> Vec<Seg> {
             if !before.is_empty() {
                 out.push(Seg::new(before, seg.role.clone()));
             }
-            out.push(Seg::new(found, Role::Chip(Bg::TertiaryContainer)));
+            out.push(Seg::new(found, Role::Match));
             i += q.len();
             from = i;
         } else {
@@ -2815,13 +2818,10 @@ fn highlight(seg: Seg, query: &str) -> Vec<Seg> {
     if out.is_empty() { vec![seg] } else { out }
 }
 
-/// How many lines of a step's log show.
-const STEP_LINES: usize = 400;
-
 /// A job: its steps, each collapsed to its outcome, failing ones (and the
-/// one a link points at) expanded with their log. With `query`, only the
-/// log lines that contain it, under their steps.
-/// A job's page, and its log.
+/// one a link points at) expanded with their whole log. With `query`, the
+/// steps whose log has it are expanded too, its matches picked out and
+/// marked for `n`/`p`.
 pub fn job(
     page: &mut Page,
     repo: &RepoId,
@@ -2880,6 +2880,13 @@ pub fn job(
         };
         empty_row(page, &text);
     }
+    let q = at.query.to_lowercase();
+    let matches = |line: &str| !q.is_empty() && strip_escapes(line).to_lowercase().contains(&q);
+    // With a match anywhere, the search decides where the page opens.
+    let searched = lines
+        .iter()
+        .flatten()
+        .any(|(_, _, l)| l.iter().any(|t| matches(t)));
     for (n, step) in job.steps.iter().enumerate() {
         if n > 0 {
             page.box_rule();
@@ -2908,8 +2915,6 @@ pub fn job(
         });
         let pointed = at.step.map(|(s, _)| s) == Some(step.number);
         let failed = step.outcome == CheckOutcome::Failure;
-        let q = at.query.to_lowercase();
-        let matches = |line: &str| !q.is_empty() && strip_escapes(line).to_lowercase().contains(&q);
         // Numbered from the step's first line, cut ones included.
         let (cut, shown): (usize, Vec<(usize, &str)>) = lines
             .as_ref()
@@ -2937,8 +2942,8 @@ pub fn job(
             body(page, vec![Seg::new(text, Role::Meta)]);
             continue;
         }
-        // Where the page opens: the line a link points at; else the first
-        // search match; else a failed step's first error (or its end).
+        // Where the page opens: the first search match; else the line a
+        // link points at; else a failed step's first error (or its end).
         let at_line = |l: u32| shown.iter().position(|(i, _)| i + 1 == l as usize);
         let first_error = || {
             let error = shown
@@ -2947,53 +2952,36 @@ pub fn job(
             error.or(shown.len().checked_sub(1))
         };
         let focus = match at.step {
+            _ if searched => shown.iter().position(|(_, l)| matches(l)),
             Some((_, l)) if pointed => at_line(l),
-            _ if page.jump.is_some() => None,
-            _ if !q.is_empty() => shown.iter().position(|(_, l)| matches(l)),
             _ if failed => first_error(),
             _ => None,
         };
-        let last = shown.len().saturating_sub(STEP_LINES);
-        let skip = focus.map_or(last, |p| last.min(p.saturating_sub(5)));
-        let later = shown.len().saturating_sub(skip + STEP_LINES);
-        let note = |page: &mut Page, n: usize, when: &str| {
-            if n > 0 {
-                let text = format!("… {n} {when} lines (o shows them all on GitHub)");
-                body(page, vec![Seg::new(text, Role::Meta)]);
-            }
-        };
-        let cut_note = |page: &mut Page, text: String| {
-            body(page, vec![Seg::new(text, Role::Meta)]);
-        };
-        if pointed
-            && let Some(l) = at
-                .step
-                .map(|(_, l)| l as usize)
-                .filter(|&l| l >= 1 && l <= cut)
-        {
-            page.jump = Some(page.lines.len());
-            cut_note(
-                page,
-                format!(
-                    "Line {l} is in the part of the log too long to load (o shows it on GitHub)"
-                ),
+        let pointed_cut = at
+            .step
+            .map(|(_, l)| l as usize)
+            .filter(|&l| pointed && !searched && l >= 1 && l <= cut);
+        if let Some(l) = pointed_cut {
+            page.jump.get_or_insert(page.lines.len());
+            let text = format!(
+                "Line {l} is in the part of the log too long to load (o shows it on GitHub)"
             );
+            body(page, vec![Seg::new(text, Role::Meta)]);
         }
-        if cut > 0 && !q.is_empty() {
-            cut_note(
-                page,
+        if cut > 0 {
+            let text = if q.is_empty() {
+                format!("… {cut} earlier lines (o shows them all on GitHub)")
+            } else {
                 format!(
                     "… {cut} earlier lines weren't loaded, so aren't searched (o shows them on GitHub)"
-                ),
-            );
-            note(page, skip, "earlier");
-        } else {
-            note(page, cut + skip, "earlier");
+                )
+            };
+            body(page, vec![Seg::new(text, Role::Meta)]);
         }
         let width = shown.last().map_or(1, |(i, _)| (i + 1).to_string().len());
-        for (n, (i, text)) in shown.iter().enumerate().skip(skip).take(STEP_LINES) {
-            if focus == Some(n) && page.jump.is_none() {
-                page.jump = Some(page.lines.len());
+        for (n, (i, text)) in shown.iter().enumerate() {
+            if focus == Some(n) {
+                page.jump.get_or_insert(page.lines.len());
             }
             if matches(text) {
                 page.marks.push(page.lines.len());
@@ -3011,9 +2999,8 @@ pub fn job(
                 ..PageLine::default()
             });
         }
-        note(page, later, "later");
-        if pointed && page.jump.is_none() {
-            page.jump = Some(page.lines.len().saturating_sub(1));
+        if pointed && !searched {
+            page.jump.get_or_insert(page.lines.len().saturating_sub(1));
         }
     }
     page.box_bottom();
@@ -4281,12 +4268,45 @@ mod tests {
         assert_eq!(of(4), ["##[group]Run cd src/ci/citool", "done"]);
         assert_eq!(of(8), ["Post job cleanup."]);
         assert_eq!(of(9), ["Cleaning up orphan processes"]);
+        // A start line just after the step before ended starts one step,
+        // not every step that started in that second.
+        let job = Job {
+            steps: vec![
+                step(1, CheckOutcome::Success, "48", "48"),
+                step(2, CheckOutcome::Success, "48", "49"),
+                step(3, CheckOutcome::Failure, "49", "49"),
+            ],
+            ..job
+        };
+        let log = [
+            "2026-10-05T17:42:48.10Z Current runner version",
+            "2026-10-05T17:42:49.10Z ##[group]Run ./prepare",
+            "2026-10-05T17:42:49.11Z prepared",
+            "2026-10-05T17:42:49.20Z ##[group]Run ./build",
+            "2026-10-05T17:42:49.21Z ##[error]boom",
+        ]
+        .join("\n");
+        let lines = step_lines(&job, "", &log);
+        let of = |n: u32| {
+            lines
+                .iter()
+                .find(|(s, _, _)| *s == n)
+                .map(|(_, _, l)| l.clone())
+        };
+        assert_eq!(
+            of(2).unwrap_or_default(),
+            ["##[group]Run ./prepare", "prepared"]
+        );
+        assert_eq!(
+            of(3).unwrap_or_default(),
+            ["##[group]Run ./build", "##[error]boom"]
+        );
     }
 
-    /// A link to a line far up a long step's log shows that line, not
-    /// just the step's last lines.
+    /// A long step's log shows whole: a link to a line far up opens there,
+    /// and a search sees (and opens at) matches anywhere in it.
     #[test]
-    fn a_linked_log_line_shows_in_a_long_step() {
+    fn a_long_steps_log_is_all_there_to_link_and_search() {
         let step = ghtui_api::browse::Step {
             number: 1,
             name: "Build".into(),
@@ -4303,24 +4323,32 @@ mod tests {
             completed_at: None,
             steps: vec![step],
         };
-        let log: String = (1..=1000)
-            .map(|n| format!("2026-10-05T17:42:01.0Z line {n}\n"))
+        let log: String = (1..=3000)
+            .map(|n| {
+                let needle = if n % 1000 == 0 { " needle" } else { "" };
+                format!("2026-10-05T17:42:01.0Z line {n}{needle}\n")
+            })
             .collect();
-        let text = |at: JobAt<'_>| {
+        let shown = |query: &str| {
             let mut page = Page::new(100);
+            let at = JobAt {
+                step: Some((1, 10)),
+                query,
+                keys: Keys::default(),
+            };
             job_page(&mut page, &job, &log, at);
             let lines: Vec<String> = page.lines.iter().map(PageLine::text).collect();
-            (lines, page.jump)
+            let at = |i: Option<usize>| i.and_then(|i| lines.get(i)).cloned().unwrap_or_default();
+            let marks: Vec<String> = page.marks.iter().map(|&m| at(Some(m))).collect();
+            (at(page.jump), marks)
         };
-        let at = JobAt {
-            step: Some((1, 10)),
-            query: "",
-            keys: Keys::default(),
-        };
-        let (lines, jump) = text(at);
-        assert!(lines.iter().any(|l| l.ends_with("line 10")), "{lines:?}");
-        assert!(jump.is_some_and(|j| lines.get(j).is_some_and(|l| l.ends_with("line 10"))));
-        assert!(lines.iter().any(|l| l.contains("later lines")));
+        let (jump, marks) = shown("");
+        assert!(jump.ends_with("line 10"), "{jump}");
+        assert!(marks.is_empty());
+        let (jump, marks) = shown("NEEDLE");
+        assert_eq!(marks.len(), 3, "{marks:?}");
+        assert!(jump.ends_with("line 1000 needle"), "{jump}");
+        assert!(marks[2].ends_with("line 3000 needle"));
     }
 
     /// The log's filter matches what shows, not the color codes around it.
@@ -4471,7 +4499,7 @@ mod tests {
         );
         assert_eq!(
             seg("##[start-action display=Parse toolchain version;id=__x.parse]"),
-            ("▸ Parse toolchain version".into(), Role::Strong)
+            ("▾ Parse toolchain version".into(), Role::Strong)
         );
         assert_eq!(
             seg("##[end-action id=__x.parse;outcome=success]"),
