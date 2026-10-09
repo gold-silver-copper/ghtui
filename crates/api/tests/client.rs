@@ -1831,12 +1831,19 @@ async fn a_blocked_repository_says_why_on_every_page() {
     let says_why = |err: ApiError| {
         let text = err.to_string();
         assert!(matches!(err, ApiError::Blocked(_)), "{err:?}");
-        assert!(text.contains("DMCA") && text.contains("/notice.md"), "{text}");
+        assert!(
+            text.contains("DMCA") && text.contains("/notice.md"),
+            "{text}"
+        );
     };
     let repo = RepoId::new("o", "r");
     let (gh, seen) = github(vec![Reply::new(200, missing), Reply::new(451, BLOCKED)]).await;
     says_why(gh.repo(&repo).await.unwrap_err());
-    assert!(seen.lock().unwrap()[1].request_line.starts_with("GET /repos/o/r "));
+    assert!(
+        seen.lock().unwrap()[1]
+            .request_line
+            .starts_with("GET /repos/o/r ")
+    );
     let (gh, _) = github(vec![Reply::new(451, BLOCKED)]).await;
     says_why(gh.workflow_runs(&repo, "ci.yml", None).await.unwrap_err());
 

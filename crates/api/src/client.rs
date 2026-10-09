@@ -471,7 +471,9 @@ impl GitHub {
         check_status(&response, "GitHub's GraphQL API")?;
         let wire: Wire = serde_json::from_str(&response.body)?;
         let errors = wire.errors.unwrap_or_default();
-        let missing_root = errors.iter().any(|e| e.is_root() && e.explains_null(&wire.data));
+        let missing_root = errors
+            .iter()
+            .any(|e| e.is_root() && e.explains_null(&wire.data));
         if idempotent
             && missing_root
             && let Some(blocked) = self.blocked(body).await
@@ -1916,12 +1918,16 @@ impl GitHub {
             "/repos/{}/{}/actions/runs/{}",
             repo.owner, repo.name, wire.run_id
         );
-        let run: browse::rest_actions::Run = self.rest_json(&base, format!("{repo}'s run {}", wire.run_id)).await?;
+        let run: browse::rest_actions::Run = self
+            .rest_json(&base, format!("{repo}'s run {}", wire.run_id))
+            .await?;
         let (attempt, latest) = (wire.run_attempt.unwrap_or(1), run.run_attempt.unwrap_or(1));
         // Re-run, it's a new job with the same name in a later attempt.
         let rerun = if latest > attempt {
             let path = format!("{base}/attempts/{latest}/jobs?per_page=100");
-            let jobs: browse::rest_actions::Jobs = self.rest_json(&path, format!("{repo}'s run {}'s jobs", wire.run_id)).await?;
+            let jobs: browse::rest_actions::Jobs = self
+                .rest_json(&path, format!("{repo}'s run {}'s jobs", wire.run_id))
+                .await?;
             (jobs.jobs.into_iter())
                 .find(|j| j.name == wire.name && j.id != wire.id)
                 .map(|j| j.id)
