@@ -27,5 +27,13 @@
       "started_at": "2026-08-18T11:13:12Z",
       "completed_at": "2026-08-18T11:13:12Z"
     }
-  ]
+  ],
+  "attempt": 1,
+  "run": {
+    "name": "Triage Scheduled Tasks",
+    "number": 6144,
+    "outcome": "Success",
+    "attempt": 1,
+    "rerun": null
+  }
 }

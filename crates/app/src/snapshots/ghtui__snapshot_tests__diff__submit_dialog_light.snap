@@ -1,6 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 936
+assertion_line: 1727
 expression: render(&s)
 ---
 Buffer {
@@ -20,7 +20,7 @@ Buffer {
         " A notes.txt                                                                                                  ",
         " D gone.py         Submit review                                                                              ",
         " M logo.png        1 pending comment, 1 previously rejected (fix or delete those first).                      ",
-        " M run.sh                                                                                    of the           ",
+        " M run.sh          Checking GitHub for your pending review…                                  of the           ",
         " M Cargo.lock        Comment      Approve      Request changes                                                ",
         " zz/                                                                                                          ",
         "   M pending.rs    Nice work overall.                                                                         ",
@@ -168,6 +168,8 @@ Buffer {
         x: 1, y: 14, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 2, y: 14, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 17, y: 14, fg: Rgb(25, 28, 32), bg: Rgb(231, 232, 238), underline: Reset, modifier: NONE,
+        x: 19, y: 14, fg: Rgb(67, 71, 78), bg: Rgb(231, 232, 238), underline: Reset, modifier: NONE,
+        x: 59, y: 14, fg: Rgb(25, 28, 32), bg: Rgb(231, 232, 238), underline: Reset, modifier: NONE,
         x: 93, y: 14, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 108, y: 14, fg: Rgb(25, 28, 32), bg: Rgb(249, 249, 255), underline: Reset, modifier: NONE,
         x: 0, y: 15, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,

@@ -350,13 +350,86 @@ pub struct PrDetail {
     pub changed_files: u64,
     pub mergeable: Mergeable,
     pub merge_state: MergeState,
-    /// You may bring its branch up to date with its base.
-    pub can_update_branch: bool,
+    /// Commits on its base its branch doesn't have; `None` once it's
+    /// closed, or if GitHub couldn't compare them.
+    pub behind_by: Option<u64>,
     /// The ways the repository allows merging, yours first.
     pub merge_methods: Vec<MergeMethod>,
     pub labels: Capped<Label>,
     #[serde(default)]
     pub milestone: Option<MilestoneRef>,
+    /// What GitHub lets you do to it.
+    pub may: PrPermits,
+}
+
+/// Your pending review on a pull request: what you started and haven't
+/// submitted, here or on github.com.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingReview {
+    pub id: NodeId,
+    /// The commit its comments are on.
+    pub commit: Option<String>,
+    /// Comments in it, which submitting it publishes.
+    pub comments: u64,
+}
+
+/// What GitHub lets you do to a pull request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrPermits {
+    /// Merge it: you can write to the repository.
+    pub merge: bool,
+    /// Merge it though branch protection blocks it.
+    pub merge_as_admin: bool,
+    pub close: bool,
+    pub reopen: bool,
+    /// Edit it, which marking a draft ready for review is.
+    pub edit: bool,
+    /// Push to its branch, which updating the branch does.
+    pub push_head: bool,
+}
+
+/// Whether GitHub would merge a pull request now, and if not, the first
+/// reason. The merge box and the merge action both read it, so they agree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Readiness {
+    Merged,
+    Closed,
+    Draft,
+    Conflicts,
+    /// GitHub is still working out whether it conflicts.
+    Checking,
+    /// The repository requires its branch to be up to date, and it isn't.
+    Behind,
+    /// A required review or check is missing.
+    Blocked,
+    /// Merging would work; failed checks that aren't required don't stop it.
+    Ready,
+}
+
+impl PrDetail {
+    pub fn readiness(&self) -> Readiness {
+        match (self.summary.state, self.mergeable, self.merge_state) {
+            (IssueState::Merged, ..) => Readiness::Merged,
+            (IssueState::Closed | IssueState::NotPlanned, ..) => Readiness::Closed,
+            (IssueState::Draft, ..) | (_, _, MergeState::Draft) => Readiness::Draft,
+            (_, Mergeable::Conflicting, _) | (_, _, MergeState::Dirty) => Readiness::Conflicts,
+            (_, Mergeable::Unknown, _) | (_, _, MergeState::Unknown) => Readiness::Checking,
+            (.., MergeState::Behind) => Readiness::Behind,
+            (.., MergeState::Blocked) => Readiness::Blocked,
+            (.., MergeState::Clean | MergeState::HasHooks | MergeState::Unstable) => {
+                Readiness::Ready
+            }
+        }
+    }
+
+    /// It's open and GitHub hasn't settled what it shows: whether it can
+    /// merge, or its checks. A page showing it fetches it again until it has.
+    pub fn settling(&self) -> bool {
+        matches!(self.summary.state, IssueState::Open | IssueState::Draft)
+            && (self.mergeable == Mergeable::Unknown
+                || self.merge_state == MergeState::Unknown
+                || self.summary.checks == Some(ChecksState::Pending))
+    }
 }
 
 /// The milestone an issue or pull request is in.
@@ -562,6 +635,7 @@ impl PrDetail {
             .filter_map(|(m, ok)| ok.then_some(m))
             .collect();
         merge_methods.sort_by_key(|m| *m != default);
+        let writes = q::RepositoryPermission::writes(repo.viewer_permission);
         let pr = repo.pull_request?;
         Some(Self {
             id: pr.id.into(),
@@ -576,10 +650,22 @@ impl PrDetail {
             changed_files: count(pr.changed_files),
             mergeable: pr.mergeable,
             merge_state: pr.merge_state_status,
-            can_update_branch: pr.viewer_can_update_branch,
+            behind_by: None,
             merge_methods,
             labels: labels(pr.labels),
             milestone: pr.milestone.map(MilestoneRef::from_wire),
+            may: PrPermits {
+                merge: writes,
+                merge_as_admin: pr.viewer_can_merge_as_admin,
+                close: pr.viewer_can_close,
+                reopen: pr.viewer_can_reopen,
+                edit: pr.viewer_can_update,
+                push_head: if pr.is_cross_repository {
+                    pr.viewer_did_author || (pr.maintainer_can_modify && writes)
+                } else {
+                    writes
+                },
+            },
         })
     }
 }

@@ -212,7 +212,8 @@ impl State {
             }
         }
         let scope = self.scope();
-        let mut order: Vec<Action> = self.doables().into_iter().map(|d| d.action).collect();
+        let doables = self.doables();
+        let mut order: Vec<Action> = doables.iter().map(|d| d.action).collect();
         order.extend(Action::ALL.iter().filter(|a| a.scope().overlaps(scope)));
         let mut actions: Vec<(usize, Action)> = Vec::new();
         for a in order {
@@ -229,8 +230,17 @@ impl State {
         actions.sort_by_key(|(score, _)| *score);
         // Good action matches first, then searching; scattered matches after.
         let (close, far): (Vec<_>, Vec<_>) = actions.into_iter().partition(|(s, _)| *s < 1000);
+        // What doesn't apply here says why, as in the menu.
         let action = |(_, a): (usize, Action)| {
-            let row = item(a.description(), self.key_here(a).unwrap_or_default());
+            let why = doables
+                .iter()
+                .find(|d| d.action == a)
+                .and_then(|d| d.unavailable.as_ref());
+            let label = match why {
+                Some(why) => format!("{} ({why})", a.description()),
+                None => a.description().to_owned(),
+            };
+            let row = item(label, self.key_here(a).unwrap_or_default());
             (row, Some(Choice::Action(a)))
         };
         out.extend(close.into_iter().map(action));

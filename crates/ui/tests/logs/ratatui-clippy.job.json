@@ -62,5 +62,13 @@
       "started_at": "2026-10-07T04:25:36Z",
       "completed_at": "2026-10-07T04:25:36Z"
     }
-  ]
+  ],
+  "attempt": 1,
+  "run": {
+    "name": "Continuous Integration",
+    "number": 7790,
+    "outcome": "Success",
+    "attempt": 1,
+    "rerun": null
+  }
 }

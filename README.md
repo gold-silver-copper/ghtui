@@ -220,17 +220,25 @@ action is in the `Space` menu, where an action that can't apply says why
   comment; `Enter` sends it. Your saved draft comments for that pull
   request go with it, as from the diff.
 - **Ready for review** (`W`) marks a draft ready. It's sent at once.
-- **Update branch** (`B`), when the branch is behind its base: merge the
-  base into it, or rebase it where the repository allows rebasing.
+- **Update branch** (`B`), when the branch is behind its base (whether or
+  not the repository suggests updating): merge the base into it, or rebase
+  it where the repository allows rebasing.
 - **Close or reopen** (`X`) an issue (as completed or not planned) or a pull
   request. On a running workflow run or job, `X` cancels the run.
 - **Re-run** (`ctrl-r`) a finished run's failed jobs, all its jobs, or (on a
   job) that job.
 
-Merging, closing, cancelling and updating a branch always ask first. After
-any change, what's on screen is fetched again, so it shows what GitHub
-has. A refusal shows GitHub's reason; when it's a missing permission, it
-says which one.
+Merging, closing, cancelling and updating a branch always ask first. What
+you may do comes from GitHub (your access to the repository, whether you
+can close or push to the branch), and what GitHub says stops a merge
+(conflicts, a blocked or out-of-date branch) is refused before asking;
+each says why, on the key, in the menu and in the command palette. After
+any change, the page follows GitHub until it shows it: an updated branch's
+new head, a merge, a cancel GitHub takes a minute to finish, or a re-run
+job's new attempt, which the page moves to. A pull request GitHub is
+still checking, or whose checks are running, is fetched again until it
+settles. A refusal shows GitHub's reason; when it's a missing permission,
+it says which one.
 
 ## Authentication
 
@@ -570,7 +578,10 @@ line numbers shift and clears when the change is edited.
 - **Pending comments** are kept locally (outside the cache, so a crash, a
   quit or clearing the cache doesn't lose them) until you submit. On submit, ghtui reuses your pending
   review on GitHub (or starts one on the head commit), adds each comment as
-  its own thread, and submits only if GitHub accepted every comment. A
+  its own thread, and submits only if GitHub accepted every comment. The
+  submit dialog says how many comments that pending review already holds
+  (ones written on github.com are published too), and won't submit if it
+  holds more than you were shown. A
   rejected comment keeps its text, shows GitHub's reason, and can be turned
   into a file comment with `C`. Accepted ones stay in GitHub's pending review
   until the next submit.

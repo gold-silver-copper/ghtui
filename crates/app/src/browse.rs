@@ -136,11 +136,15 @@ pub enum Data {
 }
 
 impl Data {
-    /// What was still running when fetched: a job, a run, a job's log, checks.
+    /// What was still running when fetched: a job (or its run), a run, a
+    /// job's log, checks.
     pub fn running(&self) -> bool {
         match self {
             Data::Log(log) => log.running,
-            Data::Job(job) => job.outcome == CheckOutcome::Pending,
+            // Its run going on can still change what it offers.
+            Data::Job(job) => {
+                job.outcome == CheckOutcome::Pending || job.run.outcome == CheckOutcome::Pending
+            }
             Data::Run(run) => run.outcome == CheckOutcome::Pending,
             Data::Checks(c) => c.items.iter().any(|i| i.outcome == CheckOutcome::Pending),
             Data::Runs(r) => r.items.iter().any(|r| r.outcome == CheckOutcome::Pending),

@@ -1065,6 +1065,14 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
         // Jobs are handled above.
         DiffMsg::ResolvedSet { .. } | DiffMsg::Job(..) => {}
         DiffMsg::ReviewSubmitted(outcome) => return on_submitted(state, &pr, &outcome),
+        DiffMsg::PendingReview(result) => match (result, &mut state.overlay) {
+            (Ok(n), Some(Overlay::Submit(dialog))) if dialog.pr == pr => {
+                dialog.on_github = Some(n);
+            }
+            (Ok(_), _) => {}
+            // Submitting checks again, and says what it finds.
+            (Err(err), _) => tracing::warn!(%pr, %err, "couldn't read the pending review"),
+        },
     }
     Vec::new()
 }

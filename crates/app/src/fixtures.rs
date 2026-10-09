@@ -136,6 +136,7 @@ pub fn overview() -> RepoOverview {
         commits: 412,
         parent: None,
         starred: false,
+        can_write: true,
         id: NodeId::new("R_ghtui"),
         has_issues: true,
         has_discussions: true,
@@ -552,6 +553,8 @@ pub fn issue() -> IssueDetail {
         }]
         .into(),
         id: NodeId::new("I_14"),
+        can_close: true,
+        can_reopen: true,
     }
 }
 
@@ -907,6 +910,14 @@ pub fn job() -> (Job, ghtui_api::browse::JobLog) {
     let job = Job {
         id: 2,
         run_id: 7,
+        attempt: 1,
+        run: ghtui_api::browse::JobRun {
+            name: "CI".into(),
+            number: 412,
+            outcome: CheckOutcome::Failure,
+            attempt: 1,
+            rerun: None,
+        },
         name: "test (ubuntu)".into(),
         outcome: CheckOutcome::Failure,
         started_at: Some("2026-10-03T12:00:00Z".into()),
