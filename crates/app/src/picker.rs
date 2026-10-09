@@ -456,7 +456,7 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         (KeyCode::Char('k'), Kind::Commits { .. }) => p.selected = p.selected.saturating_sub(1),
         (_, Kind::Commits { .. }) => {}
         _ => {
-            p.input.input(key);
+            crate::nav::type_into(&mut p.input, key);
             p.selected = 0;
         }
     }

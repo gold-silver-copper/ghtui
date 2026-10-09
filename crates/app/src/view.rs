@@ -81,6 +81,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 page: p.page(),
                 scroll: p.scroll,
                 selected: p.selected,
+                current: p.current_match(),
                 hints: &hints,
             }
             .render(state.page_area(), buf);

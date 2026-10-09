@@ -455,8 +455,7 @@ impl Route {
         match self {
             Route::Issues { query, .. }
             | Route::Pulls { query, .. }
-            | Route::Search { query, .. }
-            | Route::Job { query, .. } => Some(query),
+            | Route::Search { query, .. } => Some(query),
             _ => None,
         }
     }
@@ -473,13 +472,6 @@ impl Route {
                 query,
             },
             Route::Search { kind, .. } => Route::Search { kind: *kind, query },
-            Route::Job { repo, run, job, .. } => Route::Job {
-                repo: repo.clone(),
-                run: *run,
-                job: *job,
-                step: None,
-                query,
-            },
             _ => return None,
         })
     }

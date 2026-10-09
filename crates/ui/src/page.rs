@@ -96,6 +96,9 @@ pub enum Role {
     Label(String),
     /// A contribution graph cell, by level (0–4).
     Heat(u8),
+    /// What a search on the page matched; stronger on the current match's
+    /// line.
+    Match,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -637,12 +640,14 @@ pub struct HintLabel {
     pub label: String,
 }
 
-/// Renders a page scrolled to `scroll`, with `selected` item highlighted.
+/// Renders a page scrolled to `scroll`, with `selected` item highlighted
+/// and the search match on line `current` marked as the one gone to.
 pub struct PageView<'a> {
     pub ctx: Ctx<'a>,
     pub page: &'a Page,
     pub scroll: usize,
     pub selected: Option<usize>,
+    pub current: Option<usize>,
     pub hints: &'a [HintLabel],
 }
 
@@ -656,10 +661,19 @@ impl Widget for PageView<'_> {
             let i = self.scroll.saturating_add(row);
             if let Some(line) = self.page.lines.get(i) {
                 let sel = selected.is_some_and(|s| (s.start..s.end).contains(&i));
-                self.line(buf, line, layout.main_x, y, self.page.width, sel);
+                let here = self.current == Some(i);
+                self.line(
+                    buf,
+                    line,
+                    layout.main_x,
+                    y,
+                    self.page.width,
+                    sel || here,
+                    here,
+                );
             }
             if let (Some(ax), Some(line)) = (layout.aside_x, self.page.aside.get(i)) {
-                self.line(buf, line, ax, y, self.page.aside_width, false);
+                self.line(buf, line, ax, y, self.page.aside_width, false, false);
             }
         }
         self.scrollbar(area, buf);
@@ -689,7 +703,20 @@ impl Widget for PageView<'_> {
 }
 
 impl PageView<'_> {
-    fn line(&self, buf: &mut Buffer, line: &PageLine, x: u16, y: u16, width: u16, sel: bool) {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a line, where, and how it's marked"
+    )]
+    fn line(
+        &self,
+        buf: &mut Buffer,
+        line: &PageLine,
+        x: u16,
+        y: u16,
+        width: u16,
+        sel: bool,
+        current: bool,
+    ) {
         let theme = self.ctx.theme;
         let row = |x: u16, w: u16| Rect {
             x,
@@ -698,6 +725,7 @@ impl PageView<'_> {
             height: 1,
         };
         let inner_bg = match (line.tone, sel) {
+            _ if current => Bg::Selected,
             (Tone::Code, _) => CODE_BG,
             (Tone::Marked, _) => MARKED_BG,
             (Tone::Plain, true) => Bg::Selected,
@@ -760,8 +788,11 @@ impl PageView<'_> {
         }
         for (sx, shown, seg) in placed {
             let w = cols(text::width(&shown));
-            Line::from(Span::styled(shown, self.style(&seg.role, inner_bg)))
-                .render(row(sx, w), buf);
+            let style = match seg.role {
+                Role::Match if current => theme.fill(Bg::Primary),
+                _ => self.style(&seg.role, inner_bg),
+            };
+            Line::from(Span::styled(shown, style)).render(row(sx, w), buf);
         }
     }
 
@@ -815,6 +846,7 @@ impl PageView<'_> {
             Role::Chip(chip) => theme.fill(*chip),
             Role::Label(color) => theme.label_chip(color),
             Role::Heat(level) => theme.style(Fg::Heat(*level), bg),
+            Role::Match => theme.fill(Bg::TertiaryContainer),
         }
     }
 }
