@@ -274,6 +274,8 @@ pub struct Remote<T> {
     stale: bool,
     /// Pages were added with Load more: only asking refetches it.
     extended: bool,
+    /// Load more was asked for while the list reloaded: asked once it's in.
+    more_wanted: bool,
 }
 
 impl<T> Default for Remote<T> {
@@ -286,6 +288,7 @@ impl<T> Default for Remote<T> {
             more: None,
             stale: false,
             extended: false,
+            more_wanted: false,
         }
     }
 }
@@ -321,6 +324,7 @@ impl<T> Remote<T> {
             more: self.more.clone(),
             stale: self.stale,
             extended: self.extended,
+            more_wanted: self.more_wanted,
         }
     }
 
@@ -355,9 +359,14 @@ impl<T> Remote<T> {
 
 impl Remote<Data> {
     /// Asks for the next page, unless something is on its way or there is
-    /// none: the cursor to ask after.
+    /// none: the cursor to ask after. Asked while the list reloads, it's
+    /// asked again once the list is in.
     pub(crate) fn ask_more(&mut self) -> Option<String> {
-        let data = (self.data.as_ref()).filter(|_| !self.loading && self.more.is_none())?;
+        if self.loading {
+            self.more_wanted = self.data.is_some();
+            return None;
+        }
+        let data = (self.data.as_ref()).filter(|_| self.more.is_none())?;
         self.more = Some(data.next_cursor()?.to_owned());
         self.more.clone()
     }
@@ -599,6 +608,12 @@ impl State {
             Screen::Page(p) => {
                 let route = p.route.clone();
                 cmds.extend(self.ensure_route(&route, force));
+                // An issue or pull request list's open and closed counts
+                // are the header's, so refreshing the list refreshes them.
+                if force && let Route::Issues { repo, .. } | Route::Pulls { repo, .. } = &route {
+                    let header = Need::Data(DataKey::Repo(repo.clone()));
+                    cmds.extend(self.ensure(header, true));
+                }
             }
             Screen::Diff(d) => {
                 let of = d.of.clone();
@@ -869,6 +884,14 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             // A write landed while this was on its way, so it may miss it.
             if remote.stale && !is_pr {
                 return state.ensure(Need::Data(key), false);
+            }
+            // Load more, asked while it reloaded.
+            if !remote.loading
+                && std::mem::take(&mut remote.more_wanted)
+                && remote.error.is_none()
+                && let Some(after) = remote.ask_more()
+            {
+                return vec![Cmd::Api(Api::FetchMore { key, after })];
             }
             // GitHub redirects an issue number that's a pull request.
             if is_pr
@@ -1801,6 +1824,30 @@ pub(crate) mod tests {
         );
     }
 
+    /// Load more pressed while the list refreshes isn't dropped: it's
+    /// asked of the refreshed list once that's in.
+    #[test]
+    fn load_more_during_a_refresh_waits_for_it() {
+        let mut state = with_repo();
+        let url = format!("https://github.com/{}/commits/main/src", repo());
+        let Target::Page(route) = Target::from_url(&url) else {
+            panic!("{url}");
+        };
+        let key = DataKey::History(repo(), "main".into(), "src".into());
+        let _ = state.go(Target::Page(route));
+        let page = |next| Data::History(Box::new(crate::fixtures::history(next)));
+        fetched(&mut state, key.clone(), page(Some("h1")));
+        let _ = press(&mut state, "r");
+        press(&mut state, "G");
+        assert_eq!(press(&mut state, "<Enter>"), Vec::new());
+        let cmds = fetched(&mut state, key.clone(), page(Some("h2")));
+        let more = Cmd::Api(Api::FetchMore {
+            key,
+            after: "h2".into(),
+        });
+        assert_eq!(cmds, vec![more]);
+    }
+
     /// A refresh that fails leaves the list as it was, so the next page
     /// asked for before it still belongs there.
     #[test]
@@ -2625,6 +2672,13 @@ pub(crate) mod tests {
             "the header isn't fetched again"
         );
         assert_eq!(state.chrome().active, Some(1));
+        // r refreshes the list's counts too, which the header holds.
+        let cmds = fetches(press(&mut state, "r"));
+        let header = Cmd::Api(Api::Fetch {
+            key: DataKey::Repo(repo()),
+            cached: false,
+        });
+        assert!(cmds.contains(&header), "{cmds:?}");
 
         // `/` on a list edits its filter.
         press(&mut state, "/");
