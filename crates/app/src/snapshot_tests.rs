@@ -3048,7 +3048,7 @@ mod changes {
     use super::{ghtui, pr_detail, render, with_job, with_pr, with_repo, with_run};
     use crate::act::{By, Subject};
     use crate::browse::{Data, DataKey};
-    use crate::fixtures::{fetched, press};
+    use crate::fixtures::{answer, fetched, press};
     use crate::keymap::Action;
     use crate::review::SubmitOutcome;
     use crate::route::Route;
@@ -3063,14 +3063,6 @@ mod changes {
             Some(Overlay::Confirm(c)) => c,
             _ => panic!("no confirmation"),
         }
-    }
-
-    /// GitHub's answer to the one change `sent` holds.
-    fn answer(s: &mut State, sent: &[Cmd], result: Result<(), ApiError>) -> Vec<Cmd> {
-        let [Cmd::Api(Api::Change(change, by))] = sent else {
-            panic!("{sent:?}")
-        };
-        update(s, Msg::Changed(change.clone(), by.clone(), result))
     }
 
     fn info(s: &State) -> String {
@@ -3391,12 +3383,8 @@ mod changes {
     #[test]
     fn a_star_leaves_the_wait_for_another_change_alone() {
         let mut s = super::with_workflow(Mode::Dark);
-        let run = DataKey::Run(ghtui(), 7, None);
-        fetched(
-            &mut s,
-            run,
-            Data::Run(Box::new(crate::fixtures::workflow_run())),
-        );
+        let run = Data::Run(Box::new(crate::fixtures::workflow_run()));
+        fetched(&mut s, DataKey::Run(ghtui(), 7, None), run);
         let rerun = press(&mut s, "<C-r><Enter>");
         press(&mut s, "<Esc>");
         let star = |s: &mut State| {

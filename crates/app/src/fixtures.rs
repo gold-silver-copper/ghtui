@@ -1,6 +1,7 @@
 //! Page data and key presses for tests and snapshots.
 
 use crossterm::event::KeyEvent;
+use ghtui_api::ApiError;
 use ghtui_api::browse::{
     Advisory, AdvisoryPackage, Asset, Blame, BlameRange, Blob, BranchInfo, CheckItem, CheckOutcome,
     Checks, CodeHit, Comment, CommitDetail, CommitHit, CommitInfo, Comparison, Contributed,
@@ -16,7 +17,7 @@ use ghtui_api::model::{Capped, Label, NodeId, PrRef, RepoId, ReviewComment, Revi
 
 use crate::browse::{Data, DataKey};
 use crate::diff_screen::DiffOf;
-use crate::state::{Cmd, DiffMsg, Msg, State, update};
+use crate::state::{Api, Cmd, DiffMsg, Msg, State, update};
 
 /// Presses `keys`, in vim notation (`"jj"`, `"<Esc>/"`, `"<C-d>"`).
 pub(crate) fn press(state: &mut State, keys: &str) -> Vec<Cmd> {
@@ -34,6 +35,14 @@ pub(crate) fn press(state: &mut State, keys: &str) -> Vec<Cmd> {
         rest = tail;
     }
     cmds
+}
+
+/// GitHub's answer to the one change `sent` holds.
+pub(crate) fn answer(state: &mut State, sent: &[Cmd], result: Result<(), ApiError>) -> Vec<Cmd> {
+    let [Cmd::Api(Api::Change(change, by))] = sent else {
+        panic!("{sent:?}")
+    };
+    update(state, Msg::Changed(change.clone(), by.clone(), result))
 }
 
 /// Delivers freshly fetched page data.

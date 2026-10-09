@@ -1317,7 +1317,7 @@ impl State {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::fixtures::{diff_msg, fetched, press, thread};
+    use crate::fixtures::{answer, diff_msg, fetched, press, thread};
     use crate::picker::{Choice, fuzzy_score};
     use crate::route::OPEN;
     use ghtui_api::browse::IssueState;
@@ -3058,16 +3058,10 @@ pub(crate) mod tests {
             id: NodeId::new("R_ghtui"),
             starred: true,
         };
-        assert_eq!(
-            cmds,
-            vec![Cmd::Api(Api::Change(star.clone(), act::By::Star))]
-        );
+        assert_eq!(cmds, vec![Cmd::Api(Api::Change(star, act::By::Star))]);
         assert!(state.overview(&repo()).unwrap().starred);
         assert_eq!(state.overview(&repo()).unwrap().summary.stars, 1235);
-        update(
-            &mut state,
-            Msg::Changed(star, act::By::Star, Err(ApiError::Network("down".into()))),
-        );
+        answer(&mut state, &cmds, Err(ApiError::Network("down".into())));
         assert!(!state.overview(&repo()).unwrap().starred, "rolled back");
         assert_eq!(state.overview(&repo()).unwrap().summary.stars, 1234);
     }
@@ -3234,15 +3228,9 @@ pub(crate) mod tests {
             subject: NodeId::new("I_14"),
             body: "Thanks!".into(),
         };
-        let compose = act::By::Compose;
-        assert_eq!(
-            cmds,
-            vec![Cmd::Api(Api::Change(comment.clone(), compose.clone()))]
-        );
-        let cmds = update(
-            &mut state,
-            Msg::Changed(comment.clone(), compose.clone(), Ok(())),
-        );
+        let sent = vec![Cmd::Api(Api::Change(comment, act::By::Compose))];
+        assert_eq!(cmds, sent);
+        let cmds = answer(&mut state, &sent, Ok(()));
         assert!(state.overlay.is_none());
         let refetch = Cmd::Api(Api::Fetch {
             key: key.clone(),
@@ -3251,7 +3239,7 @@ pub(crate) mod tests {
         assert!(cmds.contains(&refetch), "{cmds:?}");
         // Another comment, posted while that fetch is on its way: the fetch
         // may miss it, so the page is fetched again once it lands.
-        let cmds = update(&mut state, Msg::Changed(comment, compose, Ok(())));
+        let cmds = answer(&mut state, &sent, Ok(()));
         assert!(!cmds.contains(&refetch));
         let refetch = vec![refetch];
         let issue = || Data::Issue(Some(Box::new(crate::fixtures::issue())));
