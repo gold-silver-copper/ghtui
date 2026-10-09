@@ -58,7 +58,8 @@ impl Visit {
 impl State {
     #[must_use]
     pub(crate) fn record_visit(&mut self, route: &Route) -> Vec<Cmd> {
-        if *route == Route::Home {
+        // An unsplit page is recorded as the page it turns out to be.
+        if matches!(route, Route::Home | Route::Unsplit { .. }) {
             return Vec::new();
         }
         let url = route.url();
@@ -86,6 +87,7 @@ impl State {
     /// Navigates to a page, keeping the current one in history.
     #[must_use]
     pub fn push(&mut self, route: Route) -> Vec<Cmd> {
+        let route = self.followed(route);
         self.forward.clear();
         let mut cmds = self.record_visit(&route);
         self.screens
@@ -606,6 +608,7 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         }
         | Route::Pulls { repo, .. }
         | Route::Commits { repo, .. }
+        | Route::Unsplit { repo, .. }
         | Route::Stargazers(repo)
         | Route::Watchers(repo)
         | Route::Forks(repo)

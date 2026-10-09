@@ -2079,6 +2079,42 @@ impl GitHub {
         Ok(self.kept(&browse::keys::refs(repo), refs).await)
     }
 
+    /// The ref a plain github.com URL's `spot` (`feature/x/src/lib.rs`)
+    /// starts with, as GitHub reads it: the longest leading run of
+    /// segments that names a branch or tag, in one query. `None` when no
+    /// run of two or more does: the ref is the first segment (a one-word
+    /// branch, a SHA). Refs deeper than [`REF_DEPTH`] segments aren't
+    /// looked for.
+    pub async fn ref_in(&self, repo: &RepoId, spot: &str) -> Result<Option<String>, ApiError> {
+        let segments: Vec<&str> = spot.split('/').collect();
+        let names: Vec<String> = (2..=segments.len().min(REF_DEPTH))
+            .filter_map(|n| segments.get(..n).map(|s| s.join("/")))
+            .collect();
+        if names.is_empty() {
+            return Ok(None);
+        }
+        let mut vars = serde_json::Map::new();
+        vars.insert("owner".into(), Value::from(repo.owner.as_str()));
+        vars.insert("name".into(), Value::from(repo.name.as_str()));
+        for (i, name) in names.iter().enumerate() {
+            vars.insert(format!("r{i}"), Value::from(name.as_str()));
+        }
+        let found: std::collections::HashMap<String, Option<browse::wire::Name>> = self
+            .graphql_json(
+                &raw::refs_named(names.len()),
+                vars.into(),
+                repo,
+                "/repository",
+            )
+            .await?;
+        Ok(names
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(i, _)| found.get(&format!("r{i}")).is_some_and(Option::is_some))
+            .map(|(_, name)| name.clone()))
+    }
+
     /// Saves a small value in the cache (e.g. recently visited pages).
     pub async fn remember<T: Serialize + Send + 'static>(&self, key: &str, value: T) {
         let store = self.store.clone();
@@ -2264,6 +2300,9 @@ const SEARCH_CAP: u64 = 1000;
 /// Pages of 100 read of a list GitHub can make long (checks, branches,
 /// jobs, search results): a thousand.
 const PAGES: u32 = 10;
+
+/// How many segments deep [`GitHub::ref_in`] looks for a ref.
+const REF_DEPTH: usize = 20;
 /// Pages of 100 of a PR's files (GitHub's own cap is 3000) or review
 /// threads.
 const FILE_PAGES: u32 = 30;

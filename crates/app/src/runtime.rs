@@ -842,7 +842,12 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         }
         // Files aren't cached; they can be large.
         // A wiki's clone is its cache.
-        DataKey::Blob(..) | DataKey::Files(..) | DataKey::JobLog(..) | DataKey::Wiki(..) => {
+        // Where a ref ends is asked anew each session.
+        DataKey::Blob(..)
+        | DataKey::Files(..)
+        | DataKey::JobLog(..)
+        | DataKey::Wiki(..)
+        | DataKey::RefIn(..) => {
             return None;
         }
     })
@@ -872,6 +877,7 @@ pub(crate) async fn fetch(
             Data::Files(std::sync::Arc::new(files), truncated)
         }
         DataKey::Refs(repo) => Data::Refs(Box::new(gh.refs(repo).await?)),
+        DataKey::RefIn(repo, spot) => Data::RefIn(gh.ref_in(repo, spot).await?),
         DataKey::Commit(repo, oid) => Data::Commit(Box::new(gh.commit(repo, oid).await?)),
         DataKey::PrChecks(pr) => Data::Checks(Box::new(gh.pr_checks(pr).await?)),
         DataKey::Users(list) => Data::Users(Box::new(gh.users(list, after).await?)),

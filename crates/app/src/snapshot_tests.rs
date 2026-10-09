@@ -1079,6 +1079,7 @@ fn file_lines_dark() {
     let crate::route::Target::Page(route) = crate::route::Target::from_url(url) else {
         panic!("{url}");
     };
+    let route = route.split(None).unwrap_or(route);
     open(&mut state, route, Data::Blob(Box::new(blob)));
     insta::assert_snapshot!(render(&state));
 }
@@ -2881,6 +2882,8 @@ fn every_route_says_why_when_its_needs_fail() {
         let crate::route::Target::Page(route) = crate::route::Target::from_url(url) else {
             panic!("{url} isn't a page");
         };
+        // The page a plain URL turns out to be.
+        let route = route.split(None).unwrap_or(route);
         let all = needs(&route);
         for failing in &all {
             let mut state = state(Mode::Dark, ColorDepth::TrueColor);
@@ -2957,6 +2960,7 @@ fn sample(key: &DataKey) -> Data {
         K::ViewerRepos => Data::Repos(vec![fixtures::repo_summary("o/r", 1)].into()),
         K::Files(..) => Data::Files(Arc::new(vec!["README.md".into()]), false),
         K::Refs(_) => Data::Refs(Box::default()),
+        K::RefIn(..) => Data::RefIn(None),
         K::LastCommits(..) => Data::LastCommits(Arc::new(fixtures::last_commits())),
         K::Commit(..) => Data::Commit(Box::new(fixtures::commit())),
         K::History(..) => Data::History(Box::new(fixtures::history(None))),
