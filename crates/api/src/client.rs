@@ -470,10 +470,14 @@ impl GitHub {
             .await?;
         check_status(&response, "GitHub's GraphQL API")?;
         let wire: Wire = serde_json::from_str(&response.body)?;
-        if idempotent && let Some(blocked) = self.blocked(body, &wire.data).await {
+        let errors = wire.errors.unwrap_or_default();
+        let missing_root = errors.iter().any(|e| e.is_root() && e.explains_null(&wire.data));
+        if idempotent
+            && missing_root
+            && let Some(blocked) = self.blocked(body).await
+        {
             return Err(blocked);
         }
-        let errors = wire.errors.unwrap_or_default();
         if wire.data.is_null() {
             return Err(match messages(errors) {
                 errors if errors.is_empty() => ApiError::Decode("no data".into()),
@@ -487,13 +491,11 @@ impl GitHub {
         Ok(Reply::new(wire.data, errors))
     }
 
-    /// Why GitHub's GraphQL API answered a query's `repository` with null,
-    /// when it isn't that the repository is missing: GraphQL calls a
-    /// blocked one missing; only REST says it's blocked, and why.
-    async fn blocked(&self, body: &Value, data: &Value) -> Option<ApiError> {
-        if !data.get("repository").is_some_and(Value::is_null) {
-            return None;
-        }
+    /// Why GitHub's GraphQL API found nothing for a query of a repository
+    /// (its `owner` and `name`), when it isn't that the repository is
+    /// missing: GraphQL calls a blocked one missing; only REST says it's
+    /// blocked, and why.
+    async fn blocked(&self, body: &Value) -> Option<ApiError> {
         let vars = body.get("variables")?;
         let (owner, name) = (vars.get("owner")?.as_str()?, vars.get("name")?.as_str()?);
         let path = format!("/repos/{}/{}", encode_path(owner), encode_path(name));
@@ -2283,6 +2285,12 @@ struct GqlError {
 }
 
 impl GqlError {
+    /// Whether it's about one of the query's roots (`repository`, or an
+    /// alias of it).
+    fn is_root(&self) -> bool {
+        self.path.as_ref().is_some_and(|p| p.len() == 1)
+    }
+
     /// Whether this is GitHub's NOT_FOUND for what `data` holds as null (or
     /// what's under a null): the reason it's absent.
     fn explains_null(&self, data: &Value) -> bool {
@@ -2499,7 +2507,7 @@ fn check_status(response: &Response, what: impl std::fmt::Display) -> Result<(),
 /// word for it: `dmca`, `tos`, …), with a link to the notice.
 fn blocked_text(block: Option<(&str, Option<&str>)>) -> String {
     let Some((reason, notice)) = block else {
-        return "GitHub blocks access to this repository for legal reasons.".into();
+        return "GitHub blocks access to this repository for legal reasons".into();
     };
     let why = match reason {
         "dmca" => "a DMCA takedown notice".to_owned(),
@@ -2507,8 +2515,8 @@ fn blocked_text(block: Option<(&str, Option<&str>)>) -> String {
         other => other.replace('_', " "),
     };
     match notice {
-        Some(url) => format!("GitHub blocks access to this repository because of {why}: {url}"),
-        None => format!("GitHub blocks access to this repository because of {why}."),
+        Some(url) => format!("GitHub blocks access to this repository because of {why} ({url})"),
+        None => format!("GitHub blocks access to this repository because of {why}"),
     }
 }
 

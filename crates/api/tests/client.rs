@@ -654,8 +654,6 @@ async fn an_organizations_discussions_are_found_past_the_first_page() {
             r#"{"data":{"search":{"discussionCount":9,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://github.com/orgs/acme/discussions/9","repository":{"nameWithOwner":"acme/community"}}]}}}"#,
         ),
         Reply::new(200, r#"{"data":{"repository":null}}"#),
-        // Not blocked: missing.
-        Reply::new(404, "{}"),
     ])
     .await;
     let of = ghtui_api::browse::DiscussionsOf::Org("acme".into());
@@ -664,7 +662,7 @@ async fn an_organizations_discussions_are_found_past_the_first_page() {
         matches!(result, Err(ApiError::NotFound(ref m)) if m.contains("acme/community")),
         "{result:?}"
     );
-    assert_eq!(seen.lock().unwrap().len(), 4);
+    assert_eq!(seen.lock().unwrap().len(), 3);
 }
 
 /// A searched pull request that's an open draft reads as a draft, through
