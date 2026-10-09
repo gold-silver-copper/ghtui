@@ -59,8 +59,9 @@ pub struct Compose {
     /// A reply is being posted.
     pub sending: bool,
     pub error: Option<String>,
-    /// Esc or ctrl-c was pressed once with text in the editor.
-    pub confirm_discard: bool,
+    /// The key (esc or ctrl-c) pressed once with text in the editor: only
+    /// that key, pressed again, throws the text away.
+    pub discard_armed: Option<&'static str>,
 }
 
 impl Compose {
@@ -71,7 +72,7 @@ impl Compose {
             preview: None,
             sending: false,
             error: None,
-            confirm_discard: false,
+            discard_armed: None,
         }
     }
 
@@ -113,8 +114,9 @@ pub struct SubmitDialog {
     /// Your saved review (its drafts go with it), read from disk when the
     /// pull request's diff isn't open to hold it.
     pub saved: Option<ReviewState>,
-    /// Esc or ctrl-c was pressed once with a summary typed.
-    pub confirm_discard: bool,
+    /// The key (esc or ctrl-c) pressed once with a summary typed: only that
+    /// key, pressed again, throws the summary away.
+    pub discard_armed: Option<&'static str>,
 }
 
 impl SubmitDialog {
@@ -130,7 +132,7 @@ impl SubmitDialog {
             error: None,
             quick: false,
             saved: None,
-            confirm_discard: false,
+            discard_armed: None,
         }
     }
 
@@ -841,7 +843,7 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         }
         KeyCode::Char('s') if ctrl => return save_compose(state),
         _ => {
-            compose.confirm_discard = false;
+            compose.discard_armed = None;
             compose.error = None;
             compose.input.input(key);
         }
@@ -850,22 +852,23 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 }
 
 /// Whether `key` may throw away the text typed in the composer or the
-/// review summary: the first press only warns, a second goes ahead.
-pub(crate) fn may_discard(state: &mut State, key: &str, verb: &str) -> bool {
+/// review summary: the first press only warns, a second of the same key
+/// goes ahead. Each key warns for itself, so esc then ctrl-c still asks.
+pub(crate) fn may_discard(state: &mut State, key: &'static str, verb: &str) -> bool {
     let (text, armed, error, what) = match &mut state.overlay {
-        Some(Overlay::Compose(c)) => (c.text(), &mut c.confirm_discard, &mut c.error, "comment"),
+        Some(Overlay::Compose(c)) => (c.text(), &mut c.discard_armed, &mut c.error, "comment"),
         Some(Overlay::Submit(d)) => (
             d.input.lines().join("\n"),
-            &mut d.confirm_discard,
+            &mut d.discard_armed,
             &mut d.error,
             "summary",
         ),
         _ => return true,
     };
-    if text.trim().is_empty() || *armed {
+    if text.trim().is_empty() || *armed == Some(key) {
         return true;
     }
-    *armed = true;
+    *armed = Some(key);
     *error = Some(format!("Press {key} again to {verb} this {what}"));
     false
 }
@@ -965,7 +968,7 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         KeyCode::Char('s') if ctrl => return submit(state),
         KeyCode::Enter if dialog.quick => return submit(state),
         _ => {
-            dialog.confirm_discard = false;
+            dialog.discard_armed = None;
             dialog.error = None;
             dialog.input.input(key);
         }

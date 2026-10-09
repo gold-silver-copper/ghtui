@@ -4340,7 +4340,7 @@ pub(crate) mod tests {
             }
 
             #[test]
-            fn typed_text_survives_one_esc_or_ctrl_c() {
+            fn typed_text_survives_one_press_of_each_discard_key() {
                 let (mut s, _) = diff_state(120);
                 to_line(&mut s, "origin");
                 press(&mut s, "cnit<C-c>");
@@ -4348,6 +4348,13 @@ pub(crate) mod tests {
                 assert!(matches!(&s.overlay, Some(Overlay::Compose(c)) if c.text() == "nit"));
                 press(&mut s, "<C-c>");
                 assert!(s.quit);
+
+                // Each key warns for itself: esc then ctrl-c still asks.
+                let (mut s, _) = diff_state(120);
+                to_line(&mut s, "origin");
+                press(&mut s, "cnit<Esc><C-c>");
+                assert!(!s.quit);
+                assert!(matches!(&s.overlay, Some(Overlay::Compose(c)) if c.text() == "nit"));
 
                 let (mut s, _) = diff_state(120);
                 press(&mut s, "alooks good<Esc>");
