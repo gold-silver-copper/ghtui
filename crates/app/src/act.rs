@@ -699,10 +699,10 @@ pub fn on_changed(state: &mut State, change: &Change, result: Result<(), ApiErro
                 state.overlay = None;
             }
             state.info(done(change));
-            let about = state.changing.take();
-            state.awaiting = (state.route())
-                .filter(|_| !matches!(change, Change::Comment { .. } | Change::Star { .. }))
-                .map(|route| Awaiting {
+            // A star or a comment isn't waited for.
+            if !matches!(change, Change::Comment { .. } | Change::Star { .. }) {
+                let about = state.changing.take();
+                state.awaiting = state.route().map(|route| Awaiting {
                     change: change.clone(),
                     route: route.clone(),
                     // The page it's on, if that's its own; a row's page.
@@ -712,10 +712,13 @@ pub fn on_changed(state: &mut State, change: &Change, result: Result<(), ApiErro
                     },
                     polls: 0,
                 });
+            }
             state.load_visible(false)
         }
         Err(err) => {
-            state.changing = None;
+            if !matches!(change, Change::Comment { .. } | Change::Star { .. }) {
+                state.changing = None;
+            }
             tracing::warn!(?change, %err, "a change to GitHub failed");
             if let Change::Star { repo, starred, .. } = change {
                 nav::set_starred(state, repo, !starred);

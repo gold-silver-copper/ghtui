@@ -3381,6 +3381,36 @@ mod changes {
         );
     }
 
+    /// A star answered while a re-run from a list's row is on its way, or
+    /// once GitHub accepted it, leaves the page following that run.
+    #[test]
+    fn a_star_leaves_the_wait_for_another_change_alone() {
+        let mut s = super::with_workflow(Mode::Dark);
+        let run = DataKey::Run(ghtui(), 7, None);
+        fetched(
+            &mut s,
+            run,
+            Data::Run(Box::new(crate::fixtures::workflow_run())),
+        );
+        press(&mut s, "<C-r>");
+        let rerun = confirm(&s).choices[0].1.clone();
+        press(&mut s, "<Enter><Esc>");
+        let star = |s: &mut State| match press(s, "s").pop() {
+            Some(Cmd::Api(Api::Change(star))) => update(s, Msg::Changed(star, Ok(()))),
+            other => panic!("{other:?}"),
+        };
+        star(&mut s);
+        update(&mut s, Msg::Changed(rerun, Ok(())));
+        let run = Some(Route::WorkflowRun {
+            repo: ghtui(),
+            run: 7,
+            attempt: None,
+        });
+        assert_eq!(s.awaiting.as_ref().map(|w| w.about.clone()), run);
+        star(&mut s);
+        assert_eq!(s.awaiting.map(|w| w.about), run);
+    }
+
     /// Approving from the pull request's page reads your saved drafts
     /// first, submits them with the approval, and saves what's left.
     #[test]
