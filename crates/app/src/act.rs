@@ -119,8 +119,14 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         state.info(elsewhere(action));
         return Vec::new();
     };
-    // A row's may be an old copy (from the cache, before a change).
-    let mut cmds = state.ensure(subject.need(), false);
+    // A row's may be an old copy (from the cache, before a change); a
+    // page keeps its own fresh.
+    let row = state.route().is_some_and(|r| Subject::of(r).is_none());
+    let mut cmds = if row {
+        state.ensure(subject.need(), false)
+    } else {
+        Vec::new()
+    };
     cmds.extend(act_on(state, subject, action));
     cmds
 }
