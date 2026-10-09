@@ -1545,7 +1545,7 @@ pub(crate) mod tests {
             })),
         );
         press(&mut state, "G");
-        assert_eq!(selected_text(&state).trim(), "… 30 more on GitHub");
+        assert_eq!(selected_text(&state).trim(), "… 30 more");
         let cmds = press(&mut state, "o");
         let [Cmd::OpenUrl(url)] = cmds.as_slice() else {
             panic!("{cmds:?}")

@@ -334,6 +334,14 @@ pub struct Inbox {
     pub review_requested: Capped<PrSummary>,
 }
 
+impl Inbox {
+    /// The searches for [`Inbox::authored`] and [`Inbox::review_requested`],
+    /// which also list them all.
+    pub const AUTHORED: &str = "is:open is:pr author:@me archived:false sort:updated-desc";
+    pub const REVIEW_REQUESTED: &str =
+        "is:open is:pr review-requested:@me archived:false sort:updated-desc";
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrDetail {
     /// What changes name it by.

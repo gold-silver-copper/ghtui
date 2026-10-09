@@ -4528,8 +4528,7 @@ pub struct ViewerRepos {
     #[arguments(
         first: 20,
         orderBy: { field: PUSHED_AT, direction: DESC },
-        affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER],
-        ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]
+        ownerAffiliations: [OWNER]
     )]
     pub repositories: RepoList,
 }

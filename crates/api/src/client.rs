@@ -612,8 +612,8 @@ impl GitHub {
     /// as two concurrent searches.
     pub async fn inbox(&self) -> Result<Inbox, ApiError> {
         let (authored, requested) = tokio::try_join!(
-            self.search_prs("is:open is:pr author:@me archived:false sort:updated-desc"),
-            self.search_prs("is:open is:pr review-requested:@me archived:false sort:updated-desc"),
+            self.search_prs(Inbox::AUTHORED),
+            self.search_prs(Inbox::REVIEW_REQUESTED),
         )?;
         let inbox = Inbox {
             authored,
@@ -2171,7 +2171,8 @@ impl GitHub {
         value
     }
 
-    /// Repositories you own or contribute to, most recently pushed first.
+    /// Repositories you own, most recently pushed first: your profile's
+    /// Repositories tab, which lists the rest.
     pub async fn viewer_repos(&self) -> Result<Capped<browse::RepoSummary>, ApiError> {
         let data = self.graphql(browse::ViewerReposQuery::build(())).await?;
         let repos = browse::repo_list(data.viewer.repositories);
