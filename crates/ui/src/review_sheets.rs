@@ -153,6 +153,9 @@ pub struct SubmitSheet<'a> {
     pub event: ReviewEvent,
     pub input: &'a TextArea<'static>,
     pub pending: usize,
+    /// Comments already in your pending review on GitHub; `None` until
+    /// GitHub says.
+    pub on_github: Option<u64>,
     pub rejected: usize,
     pub error: Option<&'a str>,
     pub sending: bool,
@@ -179,13 +182,32 @@ impl Widget for SubmitSheet<'_> {
         y = y.saturating_add(1);
         let s = if self.pending == 1 { "" } else { "s" };
         let pending = match (self.pending, self.rejected) {
-            (0, _) => "No pending comments.".to_owned(),
+            (0, _) => "No pending comments here.".to_owned(),
             (n, 0) => format!("{n} pending comment{s} will be added."),
             (n, r) => format!(
                 "{n} pending comment{s}, {r} previously rejected (fix or delete those first)."
             ),
         };
         Span::styled(pending, theme.meta(SHEET)).render(row(y), buf);
+        // What's on GitHub is published too, wherever it was written.
+        let on_github = match self.on_github {
+            None => Span::styled(
+                "Checking GitHub for your pending review…",
+                theme.meta(SHEET),
+            ),
+            Some(0) => Span::raw(""),
+            Some(n) => Span::styled(
+                if n == 1 {
+                    "Your pending review on GitHub holds 1 comment: it's published too.".to_owned()
+                } else {
+                    format!(
+                        "Your pending review on GitHub holds {n} comments: they're published too."
+                    )
+                },
+                theme.error(SHEET),
+            ),
+        };
+        on_github.render(row(y.saturating_add(1)), buf);
         y = y.saturating_add(2);
 
         // Filled button for the chosen action, tonal for the others.
@@ -310,9 +332,9 @@ impl Widget for ConfirmSheet<'_> {
                 .render(area, buf);
         }
         let hints: &[(&str, &str)] = if self.choices.len() > 1 {
-            &[("⇥", "choose"), ("↵", "do it"), ("esc", "cancel")]
+            &[("⇥", "choose"), ("↵", "do it"), ("esc", "back")]
         } else {
-            &[("↵", "do it"), ("esc", "cancel")]
+            &[("↵", "do it"), ("esc", "back")]
         };
         footer(
             theme,

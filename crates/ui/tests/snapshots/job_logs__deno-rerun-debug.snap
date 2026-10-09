@@ -1,6 +1,5 @@
 ---
 source: crates/ui/tests/job_logs.rs
-assertion_line: 91
 expression: "golden(\"deno-rerun-debug\")"
 ---
 67591 bytes, 938 lines; 0 cut
@@ -12,19 +11,19 @@ step 1 Success Set up job: 0 cut, 174 lines
   Meta: Loading env
 
 step 2 Success Configure git: 0 cut, 45 lines
-  Strong: ▸ Run git config --global core.symlinks true
+  Strong: ▾ Run git config --global core.symlinks true
   Body: git config --global core.symlinks true
   Meta: Result: '***'
   Meta: Loading env
 
 step 3 Success Clone repository: 0 cut, 214 lines
-  Strong: ▸ Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+  Strong: ▾ Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
   Body: with:
   Meta: Loading inputs
   Meta: Loading env
 
 step 4 Success Install Deno: 0 cut, 133 lines
-  Strong: ▸ Run denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
+  Strong: ▾ Run denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
   Body: with:
   Meta: deno run -A tools/check_deno_core_changes.js ead2af980a19edb0d0ffc8d24ecc51c0281a3dfa'
   Meta: Loading env
@@ -32,13 +31,13 @@ step 4 Success Install Deno: 0 cut, 133 lines
 step 5 Skipped Run GIT_MESSAGE=$(git log --format=%s -n 1 9f74de4c8cb68a55f2cfab43e82c7e4b6ef5771b): 0 cut, 0 lines
 
 step 6 Success Run git fetch --depth=1 origin ead2af980a19edb0d0ffc8d24ecc51c0281a3dfa: 0 cut, 124 lines
-  Strong: ▸ Run git fetch --depth=1 origin ead2af980a19edb0d0ffc8d24ecc51c0281a3dfa
+  Strong: ▾ Run git fetch --depth=1 origin ead2af980a19edb0d0ffc8d24ecc51c0281a3dfa
   Body: git fetch --depth=1 origin ead2af980a19edb0d0ffc8d24ecc51c0281a3dfa
   Meta: Result: 'deno run -A tools/check_docs_only_changes.js ead2af980a19edb0d0ffc8d24ecc51c0281a
   Meta: Loading env
 
 step 7 Success Run deno run -A tools/check_docs_only_changes.js ead2af980a19edb0d0ffc8d24ecc51c0281a3dfa: 0 cut, 83 lines
-  Strong: ▸ Run deno run -A tools/check_docs_only_changes.js ead2af980a19edb0d0ffc8d24ecc51c0281a3df
+  Strong: ▾ Run deno run -A tools/check_docs_only_changes.js ead2af980a19edb0d0ffc8d24ecc51c0281a3df
   Body: deno run -A tools/check_docs_only_changes.js ead2af980a19edb0d0ffc8d24ecc51c0281a3dfa
   Meta: Loading inputs
   Meta: Loading env

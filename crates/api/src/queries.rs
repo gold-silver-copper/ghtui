@@ -80,6 +80,7 @@ fragments! {
     IssueCount = "IssueConnection",
     PrCount = "PullRequestConnection",
     CommitCount = "CommitHistoryConnection",
+    ReviewCommentCount = "PullRequestReviewCommentConnection",
     FollowCount = "FollowerConnection",
     FollowingCount = "FollowingConnection",
     RefCount = "RefConnection",
@@ -291,6 +292,26 @@ pub struct RepositoryWithPr {
     pub squash_merge_allowed: bool,
     pub rebase_merge_allowed: bool,
     pub viewer_default_merge_method: crate::change::MergeMethod,
+    pub viewer_permission: Option<RepositoryPermission>,
+}
+
+/// What you may do in a repository.
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[cynic(graphql_type = "RepositoryPermission", schema_module = "schema")]
+pub enum RepositoryPermission {
+    Admin,
+    Maintain,
+    Write,
+    TriagePlus,
+    Triage,
+    Read,
+}
+
+impl RepositoryPermission {
+    /// It may push, merge, and re-run or cancel workflows.
+    pub fn writes(permission: Option<Self>) -> bool {
+        matches!(permission, Some(Self::Admin | Self::Maintain | Self::Write))
+    }
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -309,7 +330,13 @@ pub struct PrDetail {
     pub changed_files: i32,
     pub mergeable: Mergeable,
     pub merge_state_status: MergeState,
-    pub viewer_can_update_branch: bool,
+    pub viewer_can_close: bool,
+    pub viewer_can_reopen: bool,
+    pub viewer_can_update: bool,
+    pub viewer_can_merge_as_admin: bool,
+    pub viewer_did_author: bool,
+    pub maintainer_can_modify: bool,
+    pub is_cross_repository: bool,
     #[arguments(first: 20)]
     pub labels: Option<LabelConnection>,
     pub milestone: Option<MilestoneName>,
@@ -320,6 +347,57 @@ pub struct PrDetail {
 pub struct Label {
     pub name: String,
     pub color: String,
+}
+
+/// How far a branch is behind another.
+#[derive(cynic::QueryVariables, Debug)]
+pub struct BehindVariables {
+    pub owner: String,
+    pub name: String,
+    /// `refs/heads/main`.
+    pub base: String,
+    /// A commit or a branch (`owner:branch` in a fork).
+    pub head: String,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "BehindVariables"
+)]
+pub struct BehindQuery {
+    #[arguments(owner: $owner, name: $name)]
+    pub repository: Option<RepositoryBehind>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Repository",
+    schema_module = "schema",
+    variables = "BehindVariables"
+)]
+pub struct RepositoryBehind {
+    #[arguments(qualifiedName: $base)]
+    #[cynic(rename = "ref")]
+    pub base: Option<RefCompare>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Ref",
+    schema_module = "schema",
+    variables = "BehindVariables"
+)]
+pub struct RefCompare {
+    #[arguments(headRef: $head)]
+    pub compare: Option<Behind>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Comparison", schema_module = "schema")]
+pub struct Behind {
+    pub behind_by: i32,
 }
 
 // ---- viewed files ------------------------------------------------------------
@@ -512,6 +590,8 @@ pub struct CommitOid {
 pub struct PendingReview {
     pub id: cynic::Id,
     pub commit: Option<CommitOid>,
+    /// Comments in it, wherever they were written.
+    pub comments: ReviewCommentCount,
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]

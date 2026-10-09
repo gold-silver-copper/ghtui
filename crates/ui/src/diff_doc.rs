@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
-use ghtui_diff::anchor::{Commentable, LinePos, RangeSource};
+use ghtui_diff::anchor::{Commentable, LinePos, RangeSource, Side};
 use ghtui_diff::blocks::ChangeBlock;
 use ghtui_diff::moves::Move;
 use ghtui_diff::{
@@ -118,6 +118,17 @@ fn new_line_near(lines: &[DiffLine], e: usize) -> Option<u32> {
         .find_map(|l| l.right())
         .or_else(|| after.iter().find_map(|l| l.right()))
         .map(|p| p.line)
+}
+
+/// The half of a split row the cursor is on when it asks for `half`: that
+/// one, or the other when it's empty. With its alignment entry.
+fn split_half(left: Option<u32>, right: Option<u32>, half: Side) -> Option<(Side, u32)> {
+    let left = left.map(|e| (Side::Left, e));
+    let right = right.map(|e| (Side::Right, e));
+    match half {
+        Side::Left => left.or(right),
+        Side::Right => right.or(left),
+    }
 }
 
 impl Row {
@@ -478,16 +489,20 @@ impl DocFile {
     }
 
     /// The line a line, gap or fold row stands for: the one a unified row
-    /// shows, a split row's right half unless empty, a fold's first.
-    fn line_of(&self, row: Row) -> Option<LinePos> {
-        let entry = match row {
-            Row::Line(e) | Row::Gap { start: e, .. } => e,
-            Row::Split { left, right } => right.or(left)?,
-            Row::Fold { block, .. } => self.blocks.get(block as usize)?.entries.start,
+    /// shows, a fold's first; on a split row, the line in `half` (see
+    /// [`split_half`]), so a context line's left half is its old line.
+    fn line_of(&self, row: Row, half: Side) -> Option<LinePos> {
+        let (side, entry) = match row {
+            Row::Line(e) | Row::Gap { start: e, .. } => (None, e),
+            Row::Split { left, right } => {
+                let (side, e) = split_half(left, right, half)?;
+                (Some(side), e)
+            }
+            Row::Fold { block, .. } => (None, self.blocks.get(block as usize)?.entries.start),
             _ => return None,
         };
-        let lines = &self.alignment()?.lines;
-        lines.get(entry as usize).map(|l| l.shown())
+        let line = self.alignment()?.lines.get(entry as usize)?;
+        Some(side.and_then(|s| line.on(s)).unwrap_or(line.shown()))
     }
 
     /// The thread a row is part of.
@@ -496,21 +511,29 @@ impl DocFile {
         anns.get(self.thread_row(t)?.ann as usize).map(|a| &a.key)
     }
 
-    /// What row `i` holds the cursor on, to find again in rebuilt rows.
-    fn held(&self, i: usize, anns: &[Annotation]) -> Held {
+    /// What row `i` holds the cursor on (on `half` of a split row), to find
+    /// again in rebuilt rows.
+    fn held(&self, i: usize, anns: &[Annotation], half: Side) -> Held {
         let row = self.rows.get(i).copied().unwrap_or(Row::Header);
         let top = Held::Top(i.min(1));
         match row {
             Row::Header | Row::Note(_) => top,
             Row::Line(_) | Row::Split { .. } | Row::Gap { .. } | Row::Fold { .. } => {
-                self.line_of(row).map_or(top, Held::Line)
+                self.line_of(row, half).map_or(top, Held::Line)
             }
             Row::Hunk { .. } => (self.rows.iter().skip(i + 1))
-                .find_map(|r| self.line_of(*r))
+                .find_map(|r| self.line_of(*r, half))
                 .map_or(top, Held::Line),
-            Row::NoNewline | Row::Moved { .. } | Row::Spacer => {
-                i.checked_sub(1).map_or(top, |prev| self.held(prev, anns))
+            // A "moved" row belongs to the line above it on the side that
+            // moved: removed lines moved to, added lines moved from.
+            Row::Moved { from, .. } => {
+                let half = if from { Side::Left } else { Side::Right };
+                i.checked_sub(1)
+                    .map_or(top, |prev| self.held(prev, anns, half))
             }
+            Row::NoNewline | Row::Spacer => i
+                .checked_sub(1)
+                .map_or(top, |prev| self.held(prev, anns, half)),
             Row::Thread(t) => {
                 let Some(ann) = self.thread_row(t).and_then(|r| anns.get(r.ann as usize)) else {
                     return top;
@@ -657,6 +680,19 @@ enum Held {
 pub struct Anchor {
     path: String,
     held: Held,
+}
+
+impl Anchor {
+    /// The side of the line held, for the half of a split row to be on.
+    pub fn side(&self) -> Option<Side> {
+        match &self.held {
+            Held::Line(line)
+            | Held::Thread {
+                line: Some(line), ..
+            } => Some(line.side),
+            Held::Top(_) | Held::Thread { line: None, .. } => None,
+        }
+    }
 }
 
 /// What a diff shows that isn't the diff; a [`Doc`] takes it only whole.
@@ -856,10 +892,14 @@ impl Doc {
         })
     }
 
-    /// The move under the cursor: on a "moved" row or inside a moved block.
-    pub fn move_at(&self, pos: Pos) -> Option<(u32, bool)> {
+    /// The move under the cursor (on `half` of a split row): on a "moved"
+    /// row or inside a moved block.
+    pub fn move_at(&self, pos: Pos, half: Side) -> Option<(u32, bool)> {
         match self.row(pos)? {
             Row::Moved { mv, from } => Some((mv, from)),
+            Row::Split { left, right } => {
+                self.move_at_entry(pos.file, split_half(left, right, half)?.1)
+            }
             row => row.entries().find_map(|e| self.move_at_entry(pos.file, e)),
         }
     }
@@ -941,18 +981,41 @@ impl Doc {
             .or(f.local_commentable.as_ref())
     }
 
-    /// The line a row comments on: removed lines on the left, everything
-    /// else on the right (in split view, the right half unless empty).
-    pub fn line_at(&self, pos: Pos) -> Option<LinePos> {
+    /// The line a row comments on: in unified view, removed lines on the
+    /// left and everything else on the right; in split view, the line in
+    /// `half` (the other half's when that one is empty).
+    pub fn line_at(&self, pos: Pos, half: Side) -> Option<LinePos> {
         let file = self.files.get(pos.file)?;
         match self.row(pos)? {
-            row @ (Row::Line(_) | Row::Split { .. }) => file.line_of(row),
+            row @ (Row::Line(_) | Row::Split { .. }) => file.line_of(row, half),
             _ => None,
         }
     }
 
+    /// The half of a split row the cursor is on when it asks for `half`
+    /// (`None` on rows that aren't split).
+    pub fn half_at(&self, pos: Pos, half: Side) -> Option<Side> {
+        match self.row(pos)? {
+            Row::Split { left, right } => split_half(left, right, half).map(|(side, _)| side),
+            _ => None,
+        }
+    }
+
+    /// The annotation under the cursor: a thread row's own, or the first
+    /// one anchored on its line (`half`'s, on a split row).
+    pub fn annotation_under(&self, pos: Pos, half: Side) -> Option<u32> {
+        let file = self.files.get(pos.file)?;
+        match self.row(pos)? {
+            row @ Row::Split { .. } => {
+                let line = file.line_of(row, half)?;
+                file.annotations_at(line).first().copied()
+            }
+            _ => self.annotation_at(pos),
+        }
+    }
+
     /// The annotation a row belongs to: a thread row's own, or the first
-    /// one anchored on a line row.
+    /// one anchored on a line row (on either half of a split row).
     pub fn annotation_at(&self, pos: Pos) -> Option<u32> {
         let file = self.files.get(pos.file)?;
         match self.row(pos)? {
@@ -1101,10 +1164,11 @@ impl Doc {
         self.rebuild(pos.file);
     }
 
-    pub fn anchor(&self, pos: Pos) -> Anchor {
+    /// What the row at `pos` holds (on `half` of a split row).
+    pub fn anchor(&self, pos: Pos, half: Side) -> Anchor {
         let pos = self.clamp(pos);
         let file = self.files.get(pos.file);
-        let held = |f: &DocFile| f.held(pos.row, self.annotations());
+        let held = |f: &DocFile| f.held(pos.row, self.annotations(), half);
         Anchor {
             path: file.map(|f| f.meta.path().to_owned()).unwrap_or_default(),
             held: file.map_or(Held::Top(0), held),
@@ -1319,7 +1383,7 @@ impl Doc {
         let text = |p: LinePos| file.text().map_or("", |t| t.line(p));
         match self.row(pos) {
             Some(Row::Header) => file.meta.path().to_owned(),
-            Some(row @ Row::Line(_)) => file.line_of(row).map_or("", text).to_owned(),
+            Some(row @ Row::Line(_)) => file.line_of(row, Side::Right).map_or("", text).to_owned(),
             Some(row @ Row::Split { .. }) => {
                 let halves: Vec<&str> = file.shows(row).map(text).collect();
                 halves.join("\n")
@@ -1380,7 +1444,6 @@ impl Doc {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use ghtui_diff::anchor::Side;
     use ghtui_git::files::{FileStatus, ZERO_OID};
 
     pub(crate) fn changed(path: &str) -> ChangedFile {
@@ -1596,6 +1659,30 @@ pub(crate) mod tests {
         ));
     }
 
+    /// A removed line and the added line beside it are two places: each
+    /// half comments on its own line and is held across view changes.
+    #[test]
+    fn a_split_row_is_two_places() {
+        let mut doc = one("x.rs", "a\nold\nb\n", "a\nnew\nb\n");
+        doc.set_options(view(true, Whitespace::Exact));
+        let rows = doc.files[0].rows();
+        let paired = rows
+            .iter()
+            .position(|r| matches!(r, Row::Split { left: Some(l), right: Some(r) } if l != r))
+            .unwrap();
+        let at = |row| Pos { file: 0, row };
+        let line = |side, line| Some(LinePos { side, line });
+        assert_eq!(doc.line_at(at(paired), Side::Left), line(Side::Left, 2));
+        assert_eq!(doc.line_at(at(paired), Side::Right), line(Side::Right, 2));
+        // A context line's left half is its old line.
+        let context = paired - 1;
+        assert_eq!(doc.line_at(at(context), Side::Left), line(Side::Left, 1));
+        let anchors = [Side::Left, Side::Right].map(|half| doc.anchor(at(paired), half));
+        doc.set_options(view(false, Whitespace::Exact));
+        let [old, new] = anchors.map(|a| doc.row_text(doc.locate(a)));
+        assert_eq!((old.as_str(), new.as_str()), ("old", "new"));
+    }
+
     #[test]
     fn whitespace_mode_hides_whitespace_only_changes() {
         let mut doc = one("x.rs", "fn a() {\n  x();\n}\n", "fn a() {\n    x();\n}\n");
@@ -1609,7 +1696,7 @@ pub(crate) mod tests {
     fn anchors_keep_the_line_across_view_changes() {
         let mut doc = doc();
         let row = line_row(&doc.files[0], |l| l.right().is_some_and(|p| p.line == 44)).unwrap();
-        let anchor = doc.anchor(Pos { file: 0, row });
+        let anchor = doc.anchor(Pos { file: 0, row }, Side::Right);
         doc.set_options(view(true, Whitespace::Exact));
         let pos = doc.locate(anchor);
         assert!(
@@ -1852,24 +1939,31 @@ pub(crate) mod tests {
             let doc = doc();
             let file = &doc.files[0];
             let removed = line_row(file, |l| matches!(l, DiffLine::Removed(_))).unwrap();
+            // Unified rows have one line: the half asked for doesn't matter.
             let pos = doc
-                .line_at(Pos {
-                    file: 0,
-                    row: removed,
-                })
+                .line_at(
+                    Pos {
+                        file: 0,
+                        row: removed,
+                    },
+                    Side::Right,
+                )
                 .unwrap();
             assert_eq!((pos.side, pos.line), (Side::Left, 5));
             assert_eq!(
-                doc.line_at(Pos {
-                    file: 0,
-                    row: removed + 1
-                })
+                doc.line_at(
+                    Pos {
+                        file: 0,
+                        row: removed + 1
+                    },
+                    Side::Left
+                )
                 .unwrap()
                 .side,
                 Side::Right
             );
             assert_eq!(
-                doc.line_at(Pos { file: 0, row: 0 }),
+                doc.line_at(Pos { file: 0, row: 0 }, Side::Right),
                 None,
                 "headers aren't lines"
             );
@@ -2015,6 +2109,38 @@ pub(crate) mod tests {
             );
         }
 
+        /// The "moved to" row under a removed line paired with an added one
+        /// belongs to the removed line, in either view.
+        #[test]
+        fn a_moved_row_holds_the_line_that_moved() {
+            let block = "fn helper(x: u32) -> u32 {\n    let y = x * 2;\n    y + 1\n}\n";
+            let mut doc = Doc::new(
+                vec![changed("a.rs"), changed("b.rs")],
+                &HashSet::new(),
+                Default::default(),
+            );
+            let old = format!("fn main() {{}}\n{block}");
+            doc.set_diff(0, compute("a.rs", &old, "fn main() {}\nfn other() {}\n"));
+            doc.set_diff(1, compute("b.rs", "// b\n", &format!("// b\n{block}")));
+            let texts: Vec<_> = doc
+                .files
+                .iter()
+                .map(|f| f.text().unwrap().clone())
+                .collect();
+            doc.set_moves(detect_moves(&[(0, &texts[0]), (1, &texts[1])]));
+            doc.set_options(view(true, Whitespace::Exact));
+            let row = doc.files[0]
+                .rows()
+                .iter()
+                .position(|r| matches!(r, Row::Moved { from: true, .. }))
+                .unwrap();
+            let anchor = doc.anchor(Pos { file: 0, row }, Side::Right);
+            assert_eq!(anchor.side(), Some(Side::Left));
+            doc.set_options(view(false, Whitespace::Exact));
+            let text = doc.row_text(doc.locate(anchor));
+            assert!(text.contains("fn helper"), "{text}");
+        }
+
         #[test]
         fn moved_blocks_get_rows_and_jump_targets() {
             let block = "fn helper(x: u32) -> u32 {\n    let y = x * 2;\n    y + 1\n}\n";
@@ -2053,10 +2179,13 @@ pub(crate) mod tests {
                 .position(|r| matches!(r, Row::Moved { from: false, .. }))
                 .unwrap();
             let (mv, from) = doc
-                .move_at(Pos {
-                    file: 0,
-                    row: moved_from,
-                })
+                .move_at(
+                    Pos {
+                        file: 0,
+                        row: moved_from,
+                    },
+                    Side::Right,
+                )
                 .unwrap();
             let target = doc.move_target(mv, from).unwrap();
             assert_eq!(target.file, 1);

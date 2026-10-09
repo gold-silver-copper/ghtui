@@ -53,6 +53,7 @@ fn a_paragraph_with_tabs_wraps_instead_of_losing_its_end() {
         page: &page,
         scroll: 0,
         selected: None,
+        current: None,
         hints: &[],
     }
     .render(area, &mut buf);
@@ -117,6 +118,7 @@ fn a_review_comment_keeps_its_tabs() {
         },
         doc: &doc,
         cursor: Pos::default(),
+        half: Side::Right,
         top: Pos::default(),
         keys: Keys {
             show: "↵",

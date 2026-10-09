@@ -4,11 +4,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use ghtui_api::model::{NodeId, PatchFile, PrRef, RepoId, ReviewThread, ViewedFiles};
-use ghtui_diff::anchor::Commentable;
+use ghtui_diff::anchor::{Commentable, Side};
 use ghtui_diff::{FileDiff, Whitespace};
 use ghtui_git::Oid;
 use ghtui_git::repo::{Commit, PrRefs};
 use ghtui_store::ReviewState;
+use ghtui_ui::annotations::Annotation;
 use ghtui_ui::bars::Notice;
 use ghtui_ui::diff_doc::{Doc, DocInputs, Note, Pos, Row, ViewOptions, Viewed};
 use ghtui_ui::file_tree::{TreeRow, row_of_file, tree_rows};
@@ -127,6 +128,9 @@ impl DiffPrefs {
 pub struct DiffScreen {
     pub of: DiffOf,
     pub cursor: Pos,
+    /// The half of split rows the cursor is on (the other when that one
+    /// is empty); it follows the line held across view changes.
+    pub half: Side,
     pub top: Pos,
     pub prefs: DiffPrefs,
     pub focus: Pane,
@@ -147,6 +151,7 @@ impl DiffScreen {
         Self {
             of,
             cursor: Pos::default(),
+            half: Side::Right,
             top: Pos::default(),
             prefs,
             focus: Pane::Diff,
@@ -431,10 +436,11 @@ pub fn preserving_position<R>(
     change: impl FnOnce(&mut DiffState) -> R,
 ) -> R {
     let doc = &diff.doc;
-    let [cursor, top] = [screen.cursor, screen.top].map(|p| doc.anchor(p));
-    let selection = screen.selection.map(|p| doc.anchor(p));
+    let [cursor, top] = [screen.cursor, screen.top].map(|p| doc.anchor(p, screen.half));
+    let selection = screen.selection.map(|p| doc.anchor(p, screen.half));
     let r = change(diff);
     let doc = &diff.doc;
+    screen.half = cursor.side().unwrap_or(screen.half);
     screen.cursor = doc.locate(cursor);
     screen.top = doc.locate(top);
     screen.selection = selection.map(|a| doc.locate(a));
@@ -566,7 +572,10 @@ pub fn apply(
                 Some(pos) if matches!(action, Action::NextFile | Action::PrevFile) => {
                     jump(screen, pos);
                 }
-                Some(pos) => screen.cursor = pos,
+                Some(pos) => {
+                    screen.cursor = pos;
+                    face_thread(screen, state);
+                }
                 None => *notice = Some(Notice::Info(none.into())),
             }
         }
@@ -595,10 +604,17 @@ pub fn apply(
             let file = screen.cursor.file;
             preserving_position(screen, state, |d| d.doc.toggle_full(file));
         }
-        Action::JumpMove => match state.doc.move_at(screen.cursor) {
+        Action::OldSide | Action::NewSide if !state.doc.opts().split => {
+            *notice = Some(Notice::Info("Sides are split view's · S splits".into()));
+        }
+        Action::OldSide => screen.half = Side::Left,
+        Action::NewSide => screen.half = Side::Right,
+        Action::JumpMove => match state.doc.move_at(screen.cursor, screen.half) {
             Some((mv, from)) => {
                 if let Some(pos) = state.doc.move_target(mv, from) {
                     screen.cursor = pos;
+                    // From removed lines to where they were added, and back.
+                    screen.half = if from { Side::Right } else { Side::Left };
                 }
             }
             None => *notice = Some(Notice::Info("Not on moved code".into())),
@@ -645,6 +661,19 @@ pub fn apply(
         _ => *notice = Some(Notice::Info(action.not_here())),
     }
     cmds
+}
+
+/// Puts the cursor on the half of a split row where the thread under it
+/// is, so `c` replies to it.
+fn face_thread(screen: &mut DiffScreen, state: &DiffState) {
+    let doc = &state.doc;
+    let line = doc
+        .annotation_at(screen.cursor)
+        .and_then(|i| doc.annotations().get(i as usize))
+        .and_then(Annotation::on_line);
+    if let Some(line) = line {
+        screen.half = line.side;
+    }
 }
 
 /// Puts `pos` at the top of the view with the cursor on it.
@@ -825,7 +854,10 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
     }
     if let Some(anchor) = screen.anchor.take() {
         match anchor_pos(&anchor, state, screen.of.pr().is_some()) {
-            Some(Some(pos)) => screen.cursor = pos,
+            Some(Some(pos)) => {
+                screen.cursor = pos;
+                face_thread(screen, state);
+            }
             // A review comment waits for the threads.
             None => screen.anchor = Some(anchor),
             Some(None) => {}
@@ -1065,6 +1097,14 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
         // Jobs are handled above.
         DiffMsg::ResolvedSet { .. } | DiffMsg::Job(..) => {}
         DiffMsg::ReviewSubmitted(outcome) => return on_submitted(state, &pr, &outcome),
+        DiffMsg::PendingReview(result) => match (result, &mut state.overlay) {
+            (Ok(n), Some(Overlay::Submit(dialog))) if dialog.pr == pr => {
+                dialog.on_github = Some(n);
+            }
+            (Ok(_), _) => {}
+            // Submitting checks again, and says what it finds.
+            (Err(err), _) => tracing::warn!(%pr, %err, "couldn't read the pending review"),
+        },
     }
     Vec::new()
 }

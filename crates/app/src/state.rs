@@ -118,6 +118,8 @@ pub enum DiffMsg {
         result: Result<(), ApiError>,
     },
     ReviewSubmitted(SubmitOutcome),
+    /// How many comments your pending review on GitHub holds.
+    PendingReview(Result<u64, ApiError>),
     LastReview(Result<Option<String>, ApiError>),
     CommitsListed(Result<Vec<ghtui_git::repo::Commit>, Failure>),
 }
@@ -191,7 +193,12 @@ pub enum Api {
         drafts: Vec<DraftComment>,
         event: ReviewEvent,
         body: String,
+        /// The comments in your pending review on GitHub you were shown:
+        /// if it holds more, it isn't submitted.
+        seen: u64,
     },
+    /// How many comments your pending review on GitHub holds.
+    FetchPendingReview(PrRef),
     FetchLastReview {
         pr: PrRef,
         login: String,
@@ -274,6 +281,8 @@ pub struct Remote<T> {
     stale: bool,
     /// Pages were added with Load more: only asking refetches it.
     extended: bool,
+    /// Load more was asked for while the list reloaded: asked once it's in.
+    more_wanted: bool,
 }
 
 impl<T> Default for Remote<T> {
@@ -286,6 +295,7 @@ impl<T> Default for Remote<T> {
             more: None,
             stale: false,
             extended: false,
+            more_wanted: false,
         }
     }
 }
@@ -321,6 +331,7 @@ impl<T> Remote<T> {
             more: self.more.clone(),
             stale: self.stale,
             extended: self.extended,
+            more_wanted: self.more_wanted,
         }
     }
 
@@ -355,9 +366,14 @@ impl<T> Remote<T> {
 
 impl Remote<Data> {
     /// Asks for the next page, unless something is on its way or there is
-    /// none: the cursor to ask after.
+    /// none: the cursor to ask after. Asked while the list reloads, it's
+    /// asked again once the list is in.
     pub(crate) fn ask_more(&mut self) -> Option<String> {
-        let data = (self.data.as_ref()).filter(|_| !self.loading && self.more.is_none())?;
+        if self.loading {
+            self.more_wanted = self.data.is_some();
+            return None;
+        }
+        let data = (self.data.as_ref()).filter(|_| self.more.is_none())?;
         self.more = Some(data.next_cursor()?.to_owned());
         self.more.clone()
     }
@@ -474,6 +490,8 @@ pub struct State {
     pub spinning: bool,
     /// [`Timer::Live`] is scheduled.
     pub live: bool,
+    /// A change GitHub accepted that its page doesn't show yet.
+    pub awaiting: Option<act::Awaiting>,
     pub quit: bool,
 }
 
@@ -506,6 +524,7 @@ impl State {
             spinner: 0,
             spinning: false,
             live: false,
+            awaiting: None,
             quit: false,
         };
         state.sync_page();
@@ -599,6 +618,12 @@ impl State {
             Screen::Page(p) => {
                 let route = p.route.clone();
                 cmds.extend(self.ensure_route(&route, force));
+                // An issue or pull request list's open and closed counts
+                // are the header's, so refreshing the list refreshes them.
+                if force && let Route::Issues { repo, .. } | Route::Pulls { repo, .. } = &route {
+                    let header = Need::Data(DataKey::Repo(repo.clone()));
+                    cmds.extend(self.ensure(header, true));
+                }
             }
             Screen::Diff(d) => {
                 let of = d.of.clone();
@@ -678,8 +703,59 @@ impl State {
     /// diff) in bounds.
     #[must_use]
     pub fn settle(&mut self) -> Vec<Cmd> {
+        let mut cmds = self.settle_ref();
         self.sync_page();
-        self.settle_diff()
+        cmds.extend(self.settle_diff());
+        cmds
+    }
+
+    /// Opens the page an [`Route::Unsplit`] one is, once where its ref
+    /// ends is known.
+    #[must_use]
+    fn settle_ref(&mut self) -> Vec<Cmd> {
+        let Screen::Page(p) = self.screen() else {
+            return Vec::new();
+        };
+        let Some(route) = self.split(&p.route, None) else {
+            return Vec::new();
+        };
+        let anchor = p.anchor.clone();
+        self.replace(route, false, anchor)
+    }
+
+    /// `route` followed from the page on screen: split where its ref ends
+    /// if that's known, as when a page at a revision links to that
+    /// revision's files.
+    pub(crate) fn followed(&self, route: Route) -> Route {
+        let rev = (self.route())
+            .filter(|here| here.repo() == route.repo())
+            .and_then(Route::rev);
+        self.split(&route, rev).unwrap_or(route)
+    }
+
+    /// The page an [`Route::Unsplit`] one is, if where its ref ends is
+    /// known here: GitHub said, or its ref-and-path starts with the
+    /// repository's default branch or with `rev` (the revision of the page
+    /// that links to it). Git keeps a branch from being the start of
+    /// another, so a branch already known is the one (short of a tag that
+    /// extends it).
+    pub(crate) fn split(&self, route: &Route, rev: Option<&str>) -> Option<Route> {
+        let Route::Unsplit { repo, spot, .. } = route else {
+            return None;
+        };
+        let key = DataKey::RefIn(repo.clone(), spot.clone());
+        if let Some(found) = self.picked::<Option<String>>(&key) {
+            return route.split(found.as_deref());
+        }
+        let default = self
+            .overview(repo)
+            .and_then(|o| o.default_branch.as_deref());
+        let starts = |r: &&str| {
+            spot.strip_prefix(*r)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        };
+        let known = [rev, default].into_iter().flatten().find(starts)?;
+        route.split(Some(known))
     }
 
     /// Starts the diff on screen once it can and the joined work that's
@@ -705,28 +781,33 @@ impl State {
     }
 
     /// What's on screen and still running (a run, a job, its log,
-    /// checks), to fetch again until it's done. A list extended with Load
-    /// more isn't: fetching it again would cut it back to its first page.
-    pub fn running_here(&self) -> Vec<DataKey> {
+    /// checks, a pull request GitHub is still checking), to fetch again
+    /// until it's done. A list extended with Load more isn't: fetching it
+    /// again would cut it back to its first page.
+    pub fn running_here(&self) -> Vec<Need> {
         let Screen::Page(p) = self.screen() else {
             return Vec::new();
         };
         browse::needs(&p.route)
             .into_iter()
-            .filter_map(|need| match need {
-                Need::Data(key) => Some(key),
-                _ => None,
-            })
-            .filter(|key| {
-                self.data
+            .filter(|need| match need {
+                Need::Data(key) => self
+                    .data
                     .get(key)
-                    .is_some_and(|r| !r.extended && r.data.as_ref().is_some_and(Data::running))
+                    .is_some_and(|r| !r.extended && r.data.as_ref().is_some_and(Data::running)),
+                Need::Pr(pr) => (self.prs.get(pr))
+                    .and_then(|r| r.data.as_ref())
+                    .is_some_and(PrDetail::settling),
+                Need::Inbox => false,
             })
             .collect()
     }
 
     /// What's loading on the visible screen, for the status bar.
     pub fn busy(&self) -> Option<String> {
+        if let Some(waiting) = act::waiting(self) {
+            return Some(waiting);
+        }
         match self.screen() {
             Screen::Page(p) if self.fetches(&p.route).any(|r| r.more.is_some()) => {
                 Some("Loading more".into())
@@ -763,7 +844,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
 #[must_use]
 pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     // Pages are built from GitHub's data; only these change it.
-    if matches!(
+    let data = matches!(
         msg,
         Msg::Viewer(_)
             | Msg::Inbox(_)
@@ -771,7 +852,8 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
             | Msg::Fetched { .. }
             | Msg::FetchedMore(..)
             | Msg::Changed(..)
-    ) {
+    );
+    if data {
         state.data_gen += 1;
     }
     // A write changes what GitHub shows, wherever it shows it.
@@ -786,7 +868,11 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         state.prs.values_mut().for_each(|r| r.stale = true);
         state.data.values_mut().for_each(|r| r.stale = true);
     }
-    handle(state, msg)
+    let mut cmds = handle(state, msg);
+    if data {
+        cmds.extend(act::follow(state));
+    }
+    cmds
 }
 
 /// Timers the screen needs after an update: the notice expiring (errors
@@ -815,7 +901,7 @@ pub fn timers(state: &mut State, last_notice: &mut Option<Notice>) -> Vec<Cmd> {
         state.spinning = true;
         cmds.push(Cmd::Timer(Timer::Spin, 90));
     }
-    if !state.live && !state.running_here().is_empty() {
+    if !state.live && (!state.running_here().is_empty() || act::awaiting_here(state).is_some()) {
         state.live = true;
         cmds.push(Cmd::Timer(Timer::Live, LIVE_MS));
     }
@@ -870,6 +956,14 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             if remote.stale && !is_pr {
                 return state.ensure(Need::Data(key), false);
             }
+            // Load more, asked while it reloaded.
+            if !remote.loading
+                && std::mem::take(&mut remote.more_wanted)
+                && remote.error.is_none()
+                && let Some(after) = remote.ask_more()
+            {
+                return vec![Cmd::Api(Api::FetchMore { key, after })];
+            }
             // GitHub redirects an issue number that's a pull request.
             if is_pr
                 && let DataKey::Issue(repo, number) = key
@@ -915,8 +1009,10 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Timer(Timer::Live) => {
             state.live = false;
             let mut cmds = Vec::new();
-            for key in state.running_here() {
-                cmds.extend(state.ensure(Need::Data(key), true));
+            let mut needs = state.running_here();
+            needs.extend(act::poll(state));
+            for need in needs {
+                cmds.extend(state.ensure(need, true));
             }
             return cmds;
         }
@@ -1005,9 +1101,7 @@ fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                 state.notice = Some(diff_screen::search(screen, diff, query));
             }
         }
-        _ => {
-            input.input(key);
-        }
+        _ => nav::type_into(input, key),
     }
     Vec::new()
 }
@@ -1030,6 +1124,11 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
                 (screen.search, screen.selection) = (None, None);
             }
             state.info("Cleared · esc again goes back");
+        }
+        // Esc ends a log search before it leaves, too.
+        Action::Back if matches!(state.route(), Some(Route::Job { query, .. }) if !query.is_empty()) =>
+        {
+            nav::search_log(state, "");
         }
         Action::Back => return state.back(),
         Action::Forward => return state.go_forward(),
@@ -1094,7 +1193,11 @@ fn diff_action(state: &mut State, action: Action) -> Vec<Cmd> {
     let content = state.layout().content;
     let on_annotation = match (state.screen(), state.diff()) {
         (Screen::Diff(screen), Some(diff)) => {
-            screen.focus == Pane::Diff && diff.doc.annotation_at(screen.cursor).is_some()
+            screen.focus == Pane::Diff
+                && diff
+                    .doc
+                    .annotation_under(screen.cursor, screen.half)
+                    .is_some()
         }
         _ => false,
     };
@@ -1545,7 +1648,7 @@ pub(crate) mod tests {
             })),
         );
         press(&mut state, "G");
-        assert_eq!(selected_text(&state).trim(), "… 30 more on GitHub");
+        assert_eq!(selected_text(&state).trim(), "… 30 more");
         let cmds = press(&mut state, "o");
         let [Cmd::OpenUrl(url)] = cmds.as_slice() else {
             panic!("{cmds:?}")
@@ -1799,6 +1902,30 @@ pub(crate) mod tests {
             ["c0", "c1", "d0", "d1"],
             "the refreshed list then its own next page"
         );
+    }
+
+    /// Load more pressed while the list refreshes isn't dropped: it's
+    /// asked of the refreshed list once that's in.
+    #[test]
+    fn load_more_during_a_refresh_waits_for_it() {
+        let mut state = with_repo();
+        let url = format!("https://github.com/{}/commits/main/src", repo());
+        let Target::Page(route) = Target::from_url(&url) else {
+            panic!("{url}");
+        };
+        let key = DataKey::History(repo(), "main".into(), "src".into());
+        let _ = state.go(Target::Page(route));
+        let page = |next| Data::History(Box::new(crate::fixtures::history(next)));
+        fetched(&mut state, key.clone(), page(Some("h1")));
+        let _ = press(&mut state, "r");
+        press(&mut state, "G");
+        assert_eq!(press(&mut state, "<Enter>"), Vec::new());
+        let cmds = fetched(&mut state, key.clone(), page(Some("h2")));
+        let more = Cmd::Api(Api::FetchMore {
+            key,
+            after: "h2".into(),
+        });
+        assert_eq!(cmds, vec![more]);
     }
 
     /// A refresh that fails leaves the list as it was, so the next page
@@ -2198,6 +2325,43 @@ pub(crate) mod tests {
             assert_eq!(anchor(&s).as_deref(), Some("issuecomment-5"));
         }
 
+        /// A plain link to a file on a slashed branch waits for GitHub to
+        /// say where the branch ends, then is that file, in its place.
+        /// Links at the default branch or at the revision on screen don't
+        /// ask.
+        #[test]
+        fn plain_links_open_the_branch_github_names() {
+            let mut s = with_repo();
+            let url = "https://github.com/gold-silver-copper/ghtui/blob/feature/x/src/lib.rs#L2";
+            let key = DataKey::RefIn(repo(), "feature/x/src/lib.rs".into());
+            assert_eq!(fetches(s.open_url(url, false)), vec![fetch(key.clone())]);
+            let depth = s.screens.len();
+            let cmds = fetched(&mut s, key, Data::RefIn(Some("feature/x".into())));
+            let file = Route::Blob {
+                repo: repo(),
+                rev: "feature/x".into(),
+                path: "src/lib.rs".into(),
+                lines: Some((2, 2)),
+            };
+            assert_eq!(route(&s), file);
+            assert_eq!(s.screens.len(), depth, "in its place");
+            let text = DataKey::Blob(repo(), "feature/x".into(), "src/lib.rs".into());
+            assert_eq!(fetches(cmds), vec![fetch(text)]);
+
+            let base = "https://github.com/gold-silver-copper/ghtui";
+            let _ = s.open_url(&format!("{base}/tree/feature/x/src"), false);
+            assert_eq!(
+                route(&s),
+                Route::Tree {
+                    repo: repo(),
+                    rev: "feature/x".into(),
+                    path: "src".into()
+                }
+            );
+            let _ = s.open_url(&format!("{base}/blob/main/README.md"), false);
+            assert_eq!(route(&s), blob("main", "README.md"));
+        }
+
         /// A comment's link on an issue number that's a pull request keeps
         /// its anchor through GitHub's redirect to the pull request.
         #[test]
@@ -2236,7 +2400,8 @@ pub(crate) mod tests {
 
     /// `/` on a job searches its log: the steps with a match open, the
     /// page opens at the first match, every match is picked out, and `n`
-    /// `p` go through them. Nothing is hidden.
+    /// `p` go through them. Nothing is hidden. Esc ends the search, back
+    /// on the same page as it was.
     #[test]
     fn a_jobs_log_search_goes_through_its_matches() {
         let mut s = with_repo();
@@ -2244,17 +2409,18 @@ pub(crate) mod tests {
             repo: repo(),
             run: Some(7),
             job: 2,
-            step: None,
+            step: Some((1, 1)),
             query: String::new(),
         };
-        let _ = s.push(job_route);
+        let _ = s.push(job_route.clone());
+        let depth = s.screens.len();
         let (job, log) = crate::fixtures::job();
         fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
         fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
         press(&mut s, "/");
         press(&mut s, "TEST");
         press(&mut s, "<Enter>");
-        assert!(matches!(route(&s), Route::Job { query, .. } if query == "TEST"));
+        assert!(matches!(route(&s), Route::Job { query, step: Some(_), .. } if query == "TEST"));
         let Screen::Page(p) = s.screen() else {
             panic!()
         };
@@ -2264,8 +2430,7 @@ pub(crate) mod tests {
         for &m in &page.marks {
             assert!(line(m).to_lowercase().contains("test"), "{}", line(m));
             let picked = page.lines[m].segs.iter().any(|s| {
-                s.text().eq_ignore_ascii_case("test")
-                    && s.role == ghtui_ui::page::Role::Chip(Bg::TertiaryContainer)
+                s.text().eq_ignore_ascii_case("test") && s.role == ghtui_ui::page::Role::Match
             });
             assert!(picked, "{}", line(m));
         }
@@ -2274,10 +2439,25 @@ pub(crate) mod tests {
         assert_eq!(page.jump, page.marks.first().copied());
         let n = page.marks.len();
         assert!(n > 1, "{n}");
+        assert_eq!(s.notice, Some(Notice::Info(format!("Match 1 of {n}"))));
         press(&mut s, "n");
         assert_eq!(s.notice, Some(Notice::Info(format!("Match 2 of {n}"))));
+        let Screen::Page(p) = s.screen() else {
+            panic!()
+        };
+        assert_eq!(p.current_match(), p.page().marks.get(1).copied());
         press(&mut s, "p");
         assert_eq!(s.notice, Some(Notice::Info(format!("Match 1 of {n}"))));
+        press(&mut s, "<Esc>");
+        assert_eq!(route(&s), job_route);
+        assert_eq!(s.screens.len(), depth);
+        press(&mut s, "/");
+        press(&mut s, "no such text");
+        press(&mut s, "<Enter>");
+        let none = Notice::Info("No matches for “no such text”".into());
+        assert_eq!(s.notice, Some(none.clone()));
+        press(&mut s, "n");
+        assert_eq!(s.notice, Some(none));
     }
 
     /// A failed job opens at its failing step's first error.
@@ -2625,6 +2805,13 @@ pub(crate) mod tests {
             "the header isn't fetched again"
         );
         assert_eq!(state.chrome().active, Some(1));
+        // r refreshes the list's counts too, which the header holds.
+        let cmds = fetches(press(&mut state, "r"));
+        let header = Cmd::Api(Api::Fetch {
+            key: DataKey::Repo(repo()),
+            cached: false,
+        });
+        assert!(cmds.contains(&header), "{cmds:?}");
 
         // `/` on a list edits its filter.
         press(&mut state, "/");
@@ -4340,7 +4527,7 @@ pub(crate) mod tests {
             }
 
             #[test]
-            fn typed_text_survives_one_esc_or_ctrl_c() {
+            fn typed_text_survives_one_press_of_each_discard_key() {
                 let (mut s, _) = diff_state(120);
                 to_line(&mut s, "origin");
                 press(&mut s, "cnit<C-c>");
@@ -4348,6 +4535,13 @@ pub(crate) mod tests {
                 assert!(matches!(&s.overlay, Some(Overlay::Compose(c)) if c.text() == "nit"));
                 press(&mut s, "<C-c>");
                 assert!(s.quit);
+
+                // Each key warns for itself: esc then ctrl-c still asks.
+                let (mut s, _) = diff_state(120);
+                to_line(&mut s, "origin");
+                press(&mut s, "cnit<Esc><C-c>");
+                assert!(!s.quit);
+                assert!(matches!(&s.overlay, Some(Overlay::Compose(c)) if c.text() == "nit"));
 
                 let (mut s, _) = diff_state(120);
                 press(&mut s, "alooks good<Esc>");

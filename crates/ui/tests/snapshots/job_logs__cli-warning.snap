@@ -1,18 +1,17 @@
 ---
 source: crates/ui/tests/job_logs.rs
-assertion_line: 91
 expression: "golden(\"cli-warning\")"
 ---
 4151 bytes, 50 lines; 0 cut
 
 step 1 Success Set up job: 0 cut, 36 lines
   Body: Current runner version: '2.336.0'
-  Strong: ▸ Runner Image Provisioner
+  Strong: ▾ Runner Image Provisioner
   Body: Complete job name: no-response / noResponse
   Body: Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need
 
 step 2 Success Run lee-dohm/no-response@9bb0a4b5e6a45046f00353d5de7d90fb8bd773bb: 0 cut, 12 lines
-  Strong: ▸ Run lee-dohm/no-response@9bb0a4b5e6a45046f00353d5de7d90fb8bd773bb
+  Strong: ▾ Run lee-dohm/no-response@9bb0a4b5e6a45046f00353d5de7d90fb8bd773bb
   Body: with:
   Body: (node:2063) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and p
   Body: (Use `node --trace-deprecation ...` to show where the warning was created)

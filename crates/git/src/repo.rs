@@ -10,7 +10,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
@@ -129,7 +128,7 @@ impl Repo {
             credentials.apply(&mut cmd);
             cmd.args(["clone", "--bare", "--filter=blob:none", "--progress", url])
                 .arg(&tmp);
-            if let Err(err) = run_with_progress(cmd, "clone", None, progress, STALL).await {
+            if let Err(err) = run_with_progress(cmd, "clone", None, progress).await {
                 // The clone's error is the one to report; a half-made
                 // directory left behind is removed on the next try.
                 let _ = std::fs::remove_dir_all(&tmp);
@@ -303,8 +302,7 @@ impl Repo {
     }
 
     /// Fetches `refspecs` (refs, or commits by SHA) from the remote,
-    /// reporting git's progress. Every fetch of refs or commits goes
-    /// through here, so each is given up on only when it goes quiet.
+    /// reporting git's progress.
     async fn fetch(&self, refspecs: &[&str], progress: Progress<'_>) -> Result<(), GitError> {
         let _guard = repo_lock(&self.path).lock_owned().await;
         let mut cmd = self.cmd();
@@ -316,7 +314,7 @@ impl Repo {
             &self.remote,
         ])
         .args(refspecs);
-        run_with_progress(cmd, "fetch", None, progress, STALL)
+        run_with_progress(cmd, "fetch", None, progress)
             .await
             .map(drop)
     }
@@ -411,7 +409,7 @@ impl Repo {
             &self.remote,
         ]);
         let input = Some(missing.join("\n") + "\n");
-        run_with_progress(cmd, "fetch --stdin", input, &|_| {}, STALL).await?;
+        run_with_progress(cmd, "fetch --stdin", input, &|_| {}).await?;
         Ok(missing.len())
     }
 
@@ -472,20 +470,16 @@ fn feed(child: &mut Child, input: String) -> Result<JoinHandle<()>, GitError> {
     }))
 }
 
-/// How long a network operation may go without printing progress before
-/// it's given up on.
-const STALL: Duration = Duration::from_secs(180);
-
 /// Runs `cmd` (writing `input` to its stdin, if any), reporting the
-/// latest `--progress` line from stderr, and gives up if it goes quiet for
-/// `stall` (normally [`STALL`]).
-#[expect(clippy::disallowed_methods, reason = "times silence, not the run")]
+/// latest `--progress` line from stderr. It isn't timed: the transfer gives
+/// up when it goes quiet (see [`crate::git`]), and git's silence says
+/// nothing, since it prints nothing while a ref list or a packet of the
+/// pack is on its way.
 async fn run_with_progress(
     mut cmd: Command,
     what: &str,
     input: Option<String>,
     progress: Progress<'_>,
-    stall: Duration,
 ) -> Result<String, GitError> {
     if input.is_some() {
         cmd.stdin(Stdio::piped());
@@ -504,14 +498,7 @@ async fn run_with_progress(
     let mut chunk = [0u8; 4096];
     let mut line = Vec::new();
     loop {
-        let Ok(read) = tokio::time::timeout(stall, stderr.read(&mut chunk)).await else {
-            let _ = child.kill().await;
-            return Err(GitError::Stalled {
-                what: what.to_owned(),
-                secs: stall.as_secs(),
-            });
-        };
-        let n = read?;
+        let n = stderr.read(&mut chunk).await?;
         let Some(read) = chunk.get(..n).filter(|read| !read.is_empty()) else {
             break;
         };
@@ -553,48 +540,15 @@ async fn run_with_progress(
 mod tests {
     use super::*;
 
-    /// A network operation that goes quiet is given up on, not waited on
-    /// forever.
-    #[tokio::test]
-    async fn quiet_commands_stall_out() {
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", "echo 'Receiving objects: 1%' >&2; sleep 30"]);
-        let seen = Mutex::new(Vec::new());
-        let started = std::time::Instant::now();
-        let result = run_with_progress(
-            cmd,
-            "fetch",
-            None,
-            &|line| seen.lock().unwrap().push(line),
-            Duration::from_millis(300),
-        )
-        .await;
-        assert!(
-            matches!(result, Err(GitError::Stalled { .. })),
-            "{result:?}"
-        );
-        assert!(started.elapsed() < Duration::from_secs(5));
-        assert_eq!(*seen.lock().unwrap(), ["Receiving objects: 1%"]);
-    }
-
-    /// One that keeps printing progress runs as long as it needs, however
-    /// much longer than the silence it would be given up after.
-    #[tokio::test]
-    async fn moving_commands_outlast_the_stall_window() {
-        let mut cmd = Command::new("sh");
-        // 1.5s of output, a line every 50ms: ten times inside the window, so
-        // a busy machine can't make it look quiet.
-        let script = "i=0; while [ $i -lt 30 ]; do echo \"Receiving objects: $i\" >&2; sleep 0.05; i=$((i+1)); done";
-        cmd.args(["-c", script]);
-        let result =
-            run_with_progress(cmd, "fetch", None, &|_| {}, Duration::from_millis(500)).await;
-        assert!(result.is_ok(), "{result:?}");
-    }
-
+    /// A transfer is given up on when nothing arrives, however slowly it
+    /// moves otherwise: never for its speed.
     #[test]
-    fn git_gives_up_on_dead_connections() {
+    fn git_gives_up_only_on_quiet_connections() {
         let cmd = git(None);
         let envs: HashMap<_, _> = cmd.as_std().get_envs().collect();
-        assert!(envs.contains_key(std::ffi::OsStr::new("GIT_HTTP_LOW_SPEED_TIME")));
+        let env = |key: &str| envs.get(std::ffi::OsStr::new(key)).copied().flatten();
+        if std::env::var_os("GIT_HTTP_LOW_SPEED_LIMIT").is_none() {
+            assert_eq!(env("GIT_HTTP_LOW_SPEED_LIMIT"), Some("1".as_ref()));
+        }
     }
 }

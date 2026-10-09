@@ -137,6 +137,8 @@ pub struct RepoOverview {
     /// The repository this one was forked from.
     pub parent: Option<String>,
     pub starred: bool,
+    /// You may push to it, and re-run and cancel its workflows.
+    pub can_write: bool,
     /// Node ID, for starring.
     pub id: NodeId,
     pub has_issues: bool,
@@ -427,6 +429,8 @@ pub struct IssueDetail {
     pub comments: Capped<Comment>,
     /// Node ID, for commenting.
     pub id: NodeId,
+    pub can_close: bool,
+    pub can_reopen: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -645,6 +649,7 @@ pub struct RepoFull {
     pub default_branch_ref: Option<BranchRef>,
     pub parent: Option<RepositoryName>,
     pub viewer_has_starred: bool,
+    pub viewer_permission: Option<crate::queries::RepositoryPermission>,
     pub has_issues_enabled: bool,
     pub has_discussions_enabled: bool,
     pub has_wiki_enabled: bool,
@@ -950,6 +955,8 @@ pub struct IssueFull {
     #[arguments(last: 100)]
     pub comments: IssueComments,
     pub repository: RepositoryName,
+    pub viewer_can_close: bool,
+    pub viewer_can_reopen: bool,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -1642,19 +1649,25 @@ mod tests {
                     "conclusion": conclusion, "started_at": null, "completed_at": null}],
             }))
             .unwrap();
-            let job = job.into_job();
+            let run = || -> rest_actions::Run {
+                serde_json::from_value(serde_json::json!({
+                    "id": 1, "run_number": 3, "event": "push", "head_sha": "abc",
+                    "status": status, "conclusion": conclusion,
+                }))
+                .unwrap()
+            };
+            let job = job.into_job(run().into_job_run(None));
             assert_eq!(job.outcome, outcome, "{status} {conclusion:?}");
+            assert_eq!(
+                job.run.outcome, outcome,
+                "job's run {status} {conclusion:?}"
+            );
             assert_eq!(
                 job.steps[0].outcome, outcome,
                 "step {status} {conclusion:?}"
             );
-            let run: rest_actions::Run = serde_json::from_value(serde_json::json!({
-                "id": 1, "run_number": 3, "event": "push", "head_sha": "abc",
-                "status": status, "conclusion": conclusion,
-            }))
-            .unwrap();
             assert_eq!(
-                run.into_summary().outcome,
+                run().into_summary().outcome,
                 outcome,
                 "run {status} {conclusion:?}"
             );
@@ -2161,6 +2174,23 @@ pub struct Job {
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
     pub steps: Vec<Step>,
+    /// The attempt of its run it's in.
+    pub attempt: u64,
+    /// Its run, as it is now: a job can end while its run goes on.
+    pub run: JobRun,
+}
+
+/// The run a job is in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobRun {
+    /// The workflow's name.
+    pub name: String,
+    pub number: u64,
+    pub outcome: CheckOutcome,
+    /// Its latest attempt.
+    pub attempt: u64,
+    /// The job's ID in the latest attempt, once it's re-run there.
+    pub rerun: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2455,6 +2485,7 @@ pub(crate) mod rest_actions {
         pub completed_at: Option<String>,
         #[serde(default)]
         pub steps: Vec<Step>,
+        pub run_attempt: Option<u64>,
     }
 
     #[derive(Deserialize)]
@@ -2499,6 +2530,18 @@ impl rest_actions::Run {
         }
     }
 
+    /// What a job says of its run, with the job's ID in its latest
+    /// attempt if it was re-run there.
+    pub(crate) fn into_job_run(self, rerun: Option<u64>) -> JobRun {
+        JobRun {
+            name: self.name.unwrap_or_else(|| "Workflow".into()),
+            number: self.run_number,
+            outcome: CheckOutcome::of(self.status, self.conclusion),
+            attempt: self.run_attempt.unwrap_or(1),
+            rerun,
+        }
+    }
+
     pub(crate) fn into_summary(self) -> RunSummary {
         let outcome = CheckOutcome::of(self.status, self.conclusion);
         RunSummary {
@@ -2515,9 +2558,15 @@ impl rest_actions::Run {
 }
 
 impl rest_actions::Job {
-    pub(crate) fn into_job(self) -> Job {
+    pub(crate) fn outcome(&self) -> CheckOutcome {
+        CheckOutcome::of(self.status, self.conclusion)
+    }
+
+    pub(crate) fn into_job(self, run: JobRun) -> Job {
         Job {
-            outcome: CheckOutcome::of(self.status, self.conclusion),
+            outcome: self.outcome(),
+            attempt: self.run_attempt.unwrap_or(1),
+            run,
             id: self.id,
             run_id: self.run_id,
             name: self.name,
@@ -4528,8 +4577,7 @@ pub struct ViewerRepos {
     #[arguments(
         first: 20,
         orderBy: { field: PUSHED_AT, direction: DESC },
-        affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER],
-        ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]
+        ownerAffiliations: [OWNER]
     )]
     pub repositories: RepoList,
 }
@@ -4785,6 +4833,7 @@ impl RepoFull {
             commits,
             parent: self.parent.map(|p| p.name_with_owner),
             starred: self.viewer_has_starred,
+            can_write: crate::queries::RepositoryPermission::writes(self.viewer_permission),
             id: self.id.into(),
             has_issues: self.has_issues_enabled,
             has_discussions: self.has_discussions_enabled,
@@ -4867,6 +4916,8 @@ impl IssueFull {
             milestone: self.milestone.map(MilestoneRef::from_wire),
             comments: comments(self.comments),
             id: self.id.into(),
+            can_close: self.viewer_can_close,
+            can_reopen: self.viewer_can_reopen,
         })
     }
 }

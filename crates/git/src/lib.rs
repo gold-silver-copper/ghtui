@@ -38,8 +38,6 @@ pub enum GitError {
     Version(String),
     #[error("unexpected git output: {0}")]
     Parse(String),
-    #[error("git {what} stalled (no progress for {secs}s)")]
-    Stalled { what: String, secs: u64 },
 }
 
 pub use oid::Oid;
@@ -97,10 +95,17 @@ pub struct GitHubRepo {
     pub name: String,
 }
 
+/// How long a transfer may go with nothing arriving before it's given up
+/// on. A slow transfer that keeps moving is waited on however long it takes.
+/// What arrives is counted once decrypted, a TLS record (up to 16 KiB) at a
+/// time, so five minutes keeps a link down to about 55 B/s moving.
+const QUIET: u64 = 300;
+
 /// A `git` command with a predictable environment: never prompts (a prompt
 /// would hang behind the TUI, so HTTPS prompts are off and SSH runs in batch
 /// mode unless the user configured their own SSH command), gives up on a
-/// dead connection instead of waiting forever, and uses untranslated output.
+/// connection that goes quiet instead of waiting forever, and uses
+/// untranslated output.
 pub(crate) fn git(dir: Option<&Path>) -> Command {
     let mut cmd = Command::new("git");
     if let Some(dir) = dir {
@@ -110,15 +115,20 @@ pub(crate) fn git(dir: Option<&Path>) -> Command {
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .kill_on_drop(true);
-    // HTTPS: abort when under 1 KB/s for a minute.
+    // HTTPS: curl gives up when nothing arrives for QUIET seconds (under a
+    // byte a second), measured on the bytes themselves.
+    // git's own output can't tell: it prints nothing while a ref list or a
+    // 64 KiB packet of the pack is on its way.
+    let quiet = QUIET.to_string();
     for (key, value) in [
-        ("GIT_HTTP_LOW_SPEED_LIMIT", "1000"),
-        ("GIT_HTTP_LOW_SPEED_TIME", "60"),
+        ("GIT_HTTP_LOW_SPEED_LIMIT", "1"),
+        ("GIT_HTTP_LOW_SPEED_TIME", quiet.as_str()),
     ] {
         if std::env::var_os(key).is_none() {
             cmd.env(key, value);
         }
     }
+    // SSH: a link that stops answering for a minute is dead.
     if std::env::var_os("GIT_SSH_COMMAND").is_none() && std::env::var_os("GIT_SSH").is_none() {
         cmd.env(
             "GIT_SSH_COMMAND",

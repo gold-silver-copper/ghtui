@@ -144,6 +144,17 @@ pub enum Route {
         repo: RepoId,
         number: u64,
     },
+    /// A page at a revision from a plain github.com URL, which doesn't say
+    /// where the ref ends and the path starts (`tree/feature/x/src`).
+    /// GitHub takes the longest leading part naming a branch or tag; ghtui
+    /// finds it, then shows the page (see [`Route::split`]).
+    Unsplit {
+        repo: RepoId,
+        view: RevView,
+        /// The ref and the path, as the URL has them.
+        spot: String,
+        lines: Option<(u32, u32)>,
+    },
     /// A revision's commits, of `path` if it isn't empty.
     Commits {
         repo: RepoId,
@@ -163,6 +174,53 @@ pub enum Route {
         kind: SearchKind,
         query: String,
     },
+}
+
+/// The pages at a revision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RevView {
+    Tree,
+    Blob,
+    Blame,
+    Commits,
+}
+
+impl RevView {
+    fn name(self) -> &'static str {
+        match self {
+            RevView::Tree => "tree",
+            RevView::Blob => "blob",
+            RevView::Blame => "blame",
+            RevView::Commits => "commits",
+        }
+    }
+
+    /// The page at `rev` (blame needs a file).
+    fn at(
+        self,
+        repo: RepoId,
+        rev: String,
+        path: String,
+        lines: Option<(u32, u32)>,
+    ) -> Option<Route> {
+        Some(match self {
+            RevView::Tree => Route::Tree { repo, rev, path },
+            RevView::Blob => Route::Blob {
+                repo,
+                rev,
+                path,
+                lines,
+            },
+            RevView::Blame if path.is_empty() => return None,
+            RevView::Blame => Route::Blame {
+                repo,
+                rev,
+                path,
+                lines,
+            },
+            RevView::Commits => Route::Commits { repo, rev, path },
+        })
+    }
 }
 
 /// Where a link leads.
@@ -194,6 +252,41 @@ impl Route {
         }
     }
 
+    /// An [`Route::Unsplit`] page once its ref is known: `rev` if the
+    /// spot starts with it, else the first segment.
+    pub fn split(&self, rev: Option<&str>) -> Option<Route> {
+        let Route::Unsplit {
+            repo,
+            view,
+            spot,
+            lines,
+        } = self
+        else {
+            return None;
+        };
+        let after = |rev: &str| {
+            let rest = spot.strip_prefix(rev)?;
+            match rest.strip_prefix('/') {
+                Some(path) => Some(path.to_owned()),
+                None => rest.is_empty().then(String::new),
+            }
+        };
+        let at = |rev: &str| view.at(repo.clone(), rev.to_owned(), after(rev)?, *lines);
+        let first = spot.split('/').next().unwrap_or_default();
+        rev.and_then(at).or_else(|| at(first))
+    }
+
+    /// The revision a page is at.
+    pub fn rev(&self) -> Option<&str> {
+        match self {
+            Route::Tree { rev, .. }
+            | Route::Blob { rev, .. }
+            | Route::Blame { rev, .. }
+            | Route::Commits { rev, .. } => Some(rev),
+            _ => None,
+        }
+    }
+
     /// A profile's overview.
     pub fn user(login: &str) -> Route {
         Route::User {
@@ -219,6 +312,20 @@ impl Route {
                 path,
                 lines,
             } => lined(links::blame(repo, rev, path), *lines),
+            Route::Unsplit {
+                repo,
+                view,
+                spot,
+                lines,
+            } => lined(
+                format!(
+                    "{}/{}/{}",
+                    links::repo(repo),
+                    view.name(),
+                    links::encode_path(spot)
+                ),
+                *lines,
+            ),
             Route::Issues { repo, query } => list_url(&links::issues(repo), query),
             Route::Pulls { repo, query } => list_url(&links::pulls(repo), query),
             Route::Issue { repo, number } => links::issue(repo, *number),
@@ -347,6 +454,11 @@ impl Route {
                 format!("{}/{path}", repo.name)
             }
             Route::Blame { repo, path, .. } => format!("{}/{path} · Blame", repo.name),
+            // Most refs are one segment.
+            Route::Unsplit { repo, spot, .. } => match self.split(None) {
+                Some(page) => page.title(),
+                None => format!("{}/{spot}", repo.name),
+            },
             Route::Issues { repo, .. } => format!("{repo} · Issues"),
             Route::Pulls { repo, .. } => format!("{repo} · Pull requests"),
             Route::Issue { repo, number } => format!("{repo}#{number}"),
@@ -424,6 +536,7 @@ impl Route {
                 repo: Some(repo), ..
             }
             | Route::Blame { repo, .. }
+            | Route::Unsplit { repo, .. }
             | Route::Compare { repo, .. }
             | Route::Deployments { repo, .. }
             | Route::Milestones { repo, .. }
@@ -455,8 +568,7 @@ impl Route {
         match self {
             Route::Issues { query, .. }
             | Route::Pulls { query, .. }
-            | Route::Search { query, .. }
-            | Route::Job { query, .. } => Some(query),
+            | Route::Search { query, .. } => Some(query),
             _ => None,
         }
     }
@@ -473,13 +585,6 @@ impl Route {
                 query,
             },
             Route::Search { kind, .. } => Route::Search { kind: *kind, query },
-            Route::Job { repo, run, job, .. } => Route::Job {
-                repo: repo.clone(),
-                run: *run,
-                job: *job,
-                step: None,
-                query,
-            },
             _ => return None,
         })
     }
@@ -675,32 +780,38 @@ fn lined(url: String, lines: Option<(u32, u32)>) -> String {
     }
 }
 
-/// A page at a revision, from what follows its view: the rev is one
-/// segment (a ref's '/' comes escaped), the rest is the path.
+/// A page at a revision, from what follows its view. Where the ref ends
+/// is plain when it's the only segment, when its '/' came escaped (as
+/// ghtui writes it), or when it's `HEAD` or a full SHA; otherwise it's for
+/// GitHub to say ([`Route::Unsplit`]).
 fn rev_page(repo: RepoId, view: &str, rest: &[&str], fragment: Option<&str>) -> Option<Route> {
-    let (rev, path) = match rest {
-        [] if view == "commits" => ("HEAD".to_owned(), String::new()),
-        [rev, path @ ..] if valid_rev(rev) => ((*rev).to_owned(), path.join("/")),
+    let view = match view {
+        "tree" => RevView::Tree,
+        "blob" => RevView::Blob,
+        "blame" => RevView::Blame,
+        "commits" => RevView::Commits,
         _ => return None,
     };
     let lines = fragment.and_then(line_range);
-    Some(match view {
-        "tree" => Route::Tree { repo, rev, path },
-        "blob" => Route::Blob {
+    match rest {
+        [] if view == RevView::Commits => view.at(repo, "HEAD".into(), String::new(), lines),
+        [rev, ..] if !valid_rev(rev) => None,
+        [rev, path @ ..]
+            if path.is_empty()
+                || rev.contains('/')
+                || *rev == "HEAD"
+                || (rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit())) =>
+        {
+            view.at(repo, (*rev).to_owned(), path.join("/"), lines)
+        }
+        [_, ..] => Some(Route::Unsplit {
             repo,
-            rev,
-            path,
+            view,
+            spot: rest.join("/"),
             lines,
-        },
-        "blame" if !path.is_empty() => Route::Blame {
-            repo,
-            rev,
-            path,
-            lines,
-        },
-        "commits" => Route::Commits { repo, rev, path },
-        _ => return None,
-    })
+        }),
+        [] => None,
+    }
 }
 
 /// A repository's page, from what follows `/<owner>/<repo>` in its URL.
@@ -1323,6 +1434,14 @@ pub(crate) mod tests {
         assert!(valid_ghsa("GHSA-2345") && !valid_ghsa("ghsa-1") && !valid_ghsa("GHSA-1 2"));
     }
 
+    /// What `route`'s URL opens, once GitHub says where its ref ends.
+    fn reopened(route: &Route) -> Target {
+        match Target::from_url(&route.url()) {
+            Target::Page(r) => Target::Page(r.split(route.rev()).unwrap_or(r)),
+            target => target,
+        }
+    }
+
     fn page(url: &str) -> Route {
         match Target::from_url(url) {
             Target::Page(route) => route,
@@ -1337,22 +1456,22 @@ pub(crate) mod tests {
         assert_eq!(page("https://github.com/octocat"), Route::user("octocat"));
         assert_eq!(page("https://github.com/o/r"), Route::Repo(repo.clone()));
         assert_eq!(
-            page("https://github.com/o/r/tree/main/src/ui"),
-            Route::Tree {
+            page("https://github.com/o/r/tree/main/src/ui").split(Some("main")),
+            Some(Route::Tree {
                 repo: repo.clone(),
                 rev: "main".into(),
                 path: "src/ui".into()
-            }
+            })
         );
         assert_eq!(
-            page("https://github.com/o/r/blob/v1.0/a%20b.md#readme"),
-            Route::blob(repo.clone(), "v1.0".into(), "a b.md".into())
+            page("https://github.com/o/r/blob/v1.0/a%20b.md#readme").split(None),
+            Some(Route::blob(repo.clone(), "v1.0".into(), "a b.md".into()))
         );
         for (fragment, lines) in [("L7", (7, 7)), ("L20-L10", (10, 20)), ("L0", (0, 0))] {
             let url = format!("https://github.com/o/r/blob/main/a.rs#{fragment}");
             let expected = (lines.0 > 0).then_some(lines);
             assert!(
-                matches!(page(&url), Route::Blob { lines, .. } if lines == expected),
+                matches!(page(&url).split(None), Some(Route::Blob { lines, .. }) if lines == expected),
                 "{fragment}"
             );
         }
@@ -1404,8 +1523,8 @@ pub(crate) mod tests {
             path: path.into(),
         };
         assert_eq!(
-            page("https://github.com/o/r/commits/main/src/ui"),
-            commits("main", "src/ui")
+            page("https://github.com/o/r/commits/main/src/ui").split(None),
+            Some(commits("main", "src/ui"))
         );
         assert_eq!(page("https://github.com/o/r/commits"), commits("HEAD", ""));
         assert_eq!(
@@ -1586,7 +1705,7 @@ pub(crate) mod tests {
             path: "f".into(),
             lines: None,
         };
-        assert_eq!(page(&blame.url()), blame);
+        assert_eq!(reopened(&blame), Target::Page(blame));
         assert!(matches!(
             Target::from_url("https://github.com/settings/tokens"),
             Target::External(_)
@@ -1627,6 +1746,8 @@ pub(crate) mod tests {
 
     /// A route's variant, as the corpus names it.
     pub(crate) fn variant(route: &Route) -> String {
+        // An unsplit page opens its view's page.
+        let route = route.split(None).unwrap_or_else(|| route.clone());
         format!("{route:?}")
             .split(|c: char| !c.is_alphanumeric())
             .next()
@@ -1725,7 +1846,7 @@ pub(crate) mod tests {
                 tab: ProfileTab::Stars,
             },
         ] {
-            assert_eq!(page(&route.url()), route);
+            assert_eq!(reopened(&route), Target::Page(route));
         }
     }
 
@@ -1797,6 +1918,70 @@ pub(crate) mod tests {
         ] {
             let url = route.url();
             assert_eq!(Target::from_url(&url), Target::Page(route), "{url}");
+        }
+    }
+
+    /// A plain URL (`tree/feature/x/src`, as GitHub and `gh browse` write
+    /// them) doesn't say where its ref ends: the page waits for GitHub to
+    /// name the longest leading part that is a branch or tag, and is at
+    /// the first segment when none longer is. Escaped refs, `HEAD` and
+    /// full SHAs need no asking.
+    #[test]
+    fn plain_urls_wait_for_where_the_ref_ends() {
+        let repo = RepoId::new("o", "r");
+        let tree = |rev: &str, path: &str| Route::Tree {
+            repo: repo.clone(),
+            rev: rev.into(),
+            path: path.into(),
+        };
+        let split = |url: &str, rev: Option<&str>| {
+            let route = page(&format!("https://github.com/o/r/{url}"));
+            assert!(matches!(route, Route::Unsplit { .. }), "{url}: {route:?}");
+            route.split(rev)
+        };
+        assert_eq!(
+            split("tree/feature/x/src", Some("feature/x")),
+            Some(tree("feature/x", "src"))
+        );
+        assert_eq!(
+            split("tree/feature/x/src", None),
+            Some(tree("feature", "x/src"))
+        );
+        assert_eq!(
+            split("tree/release/1.0", Some("release/1.0")),
+            Some(tree("release/1.0", ""))
+        );
+        assert_eq!(
+            split("blob/deep/a/b/c/src/lib.rs#L3", Some("deep/a/b/c")),
+            Some(Route::Blob {
+                repo: repo.clone(),
+                rev: "deep/a/b/c".into(),
+                path: "src/lib.rs".into(),
+                lines: Some((3, 3)),
+            })
+        );
+        // A name that isn't where a segment ends is no answer.
+        assert_eq!(
+            split("tree/feature/xy", Some("feature/x")),
+            Some(tree("feature", "xy"))
+        );
+        // Blame needs a file.
+        assert!(matches!(
+            split("blame/feature/x", Some("feature/x")),
+            Some(Route::Blame { rev, path, .. }) if rev == "feature" && path == "x"
+        ));
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        for (url, rev, path) in [
+            ("tree/feature%2Fx/src".to_owned(), "feature/x", "src"),
+            ("tree/HEAD/src".to_owned(), "HEAD", "src"),
+            (format!("tree/{sha}/src"), sha, "src"),
+            ("tree/feature".to_owned(), "feature", ""),
+        ] {
+            assert_eq!(
+                page(&format!("https://github.com/o/r/{url}")),
+                tree(rev, path),
+                "{url}"
+            );
         }
     }
 
@@ -2126,7 +2311,8 @@ pub(crate) mod tests {
                     let target = Target::from_url(&varied);
                     prop_assert!(as_expected(&target, expect, reason), "{varied}: {target:?}, not {expect}");
                     if let Target::Page(route) = &target {
-                        prop_assert_eq!(Target::from_url(&route.url()), Target::Page(route.clone()), "{}", varied);
+                        let route = route.split(None).unwrap_or_else(|| route.clone());
+                        prop_assert_eq!(reopened(&route), Target::Page(route.clone()), "{}", varied);
                     }
                 }
             }
@@ -2134,7 +2320,7 @@ pub(crate) mod tests {
             /// Every page's URL leads back to it.
             #[test]
             fn urls_round_trip(route in route()) {
-                prop_assert_eq!(Target::from_url(&route.url()), Target::Page(route));
+                prop_assert_eq!(reopened(&route), Target::Page(route));
             }
 
             /// Whatever is typed, parsing doesn't panic.

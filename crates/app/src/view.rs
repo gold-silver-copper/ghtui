@@ -81,6 +81,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 page: p.page(),
                 scroll: p.scroll,
                 selected: p.selected,
+                current: p.current_match(),
                 hints: &hints,
             }
             .render(state.page_area(), buf);
@@ -174,6 +175,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 event: dialog.event,
                 input: &dialog.input,
                 pending: pending.len(),
+                on_github: dialog.on_github,
                 rejected,
                 error: dialog.error.as_deref(),
                 sending: dialog.sending,
@@ -301,6 +303,7 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
         ctx,
         doc: &diff.doc,
         cursor: screen.cursor,
+        half: screen.half,
         top: screen.top,
         keys: Keys {
             show: &show,

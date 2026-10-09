@@ -265,5 +265,13 @@
       "started_at": "2026-10-07T10:22:29Z",
       "completed_at": "2026-10-07T10:22:29Z"
     }
-  ]
+  ],
+  "attempt": 1,
+  "run": {
+    "name": "CI",
+    "number": 233127,
+    "outcome": "Success",
+    "attempt": 1,
+    "rerun": null
+  }
 }

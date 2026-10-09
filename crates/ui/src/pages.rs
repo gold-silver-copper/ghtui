@@ -16,8 +16,8 @@ use ghtui_api::browse::{
     WorkflowRun,
 };
 use ghtui_api::model::{
-    Capped, ChecksState, Inbox, Label, Mergeable, MilestoneRef, PrDetail, PrRef, PrSummary, RepoId,
-    ReviewDecision, ReviewState,
+    Capped, ChecksState, Inbox, Label, Mergeable, MilestoneRef, PrDetail, PrRef, PrSummary,
+    Readiness, RepoId, ReviewDecision, ReviewState,
 };
 use ghtui_theme::{Bg, Syntax};
 
@@ -401,7 +401,7 @@ fn rest_row(page: &mut Page, shown: usize, rest: Rest) {
             page.box_rule();
             return empty_row(page, &left_out_text(n, "more", "more"));
         }
-        Rest::At(n, url) => (Link::from(url), format!("… {n} more on GitHub")),
+        Rest::At(n, url) => (Link::from(url), format!("… {n} more")),
         Rest::NextPage { total } => {
             let of = total.map_or_else(
                 || format!("{shown} so far"),
@@ -2135,9 +2135,14 @@ fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
         }
         _ => d.head_ref.clone(),
     };
+    let wants = match s.state {
+        IssueState::Merged => " merged into ",
+        IssueState::Closed | IssueState::NotPlanned => " wanted to merge into ",
+        IssueState::Open | IssueState::Draft => " wants to merge into ",
+    };
     let segs = vec![
         author,
-        Seg::new(" wants to merge into ", Role::Meta),
+        Seg::new(wants, Role::Meta),
         chip(&d.base_ref, Bg::PrimaryContainer),
         Seg::new(" from ", Role::Meta),
         chip(head, Bg::PrimaryContainer),
@@ -2160,22 +2165,28 @@ fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
 /// GitHub's merge box: checks, reviews, conflicts.
 fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
     let s = &d.summary;
-    if matches!(s.state, IssueState::Merged | IssueState::Closed) {
+    let readiness = d.readiness();
+    if matches!(readiness, Readiness::Merged | Readiness::Closed) {
         return;
     }
     connector(page);
-    let (headline, role) = match (s.checks, d.mergeable) {
-        (_, Mergeable::Conflicting) => (
+    let (headline, role) = match (readiness, s.checks, s.review) {
+        (Readiness::Draft, ..) => ("This pull request is still a draft", Role::Meta),
+        (Readiness::Conflicts, ..) => (
             "This branch has conflicts that must be resolved",
             Role::Error,
         ),
-        (Some(ChecksState::Failing), _) => ("Some checks were not successful", Role::Error),
-        (Some(ChecksState::Pending), _) => ("Some checks haven't completed yet", Role::Accent),
-        _ => match s.review {
-            Some(ReviewDecision::ChangesRequested) => ("Changes requested", Role::Error),
-            Some(ReviewDecision::ReviewRequired) => ("Review required", Role::Accent),
-            _ => ("This branch can be merged", Role::Success),
-        },
+        (_, Some(ChecksState::Failing), _) => ("Some checks were not successful", Role::Error),
+        (_, Some(ChecksState::Pending), _) => ("Some checks haven't completed yet", Role::Accent),
+        (_, _, Some(ReviewDecision::ChangesRequested)) => ("Changes requested", Role::Error),
+        (_, _, Some(ReviewDecision::ReviewRequired)) => ("Review required", Role::Accent),
+        (Readiness::Checking, ..) => ("Checking whether it can be merged…", Role::Accent),
+        (Readiness::Behind, ..) => (
+            "This branch is out-of-date with the base branch",
+            Role::Error,
+        ),
+        (Readiness::Blocked, ..) => ("Merging is blocked", Role::Error),
+        _ => ("This branch can be merged", Role::Success),
     };
     page.box_top(vec![Seg::new(headline, role)], Vec::new());
     // Each row: passed, failed, or neither yet.
@@ -2190,16 +2201,33 @@ fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
         ChecksState::Pending => (None, "Some checks haven't completed yet"),
     });
     let conflicts = match d.mergeable {
-        Mergeable::Yes => (Some(true), "No conflicts with the base branch"),
-        Mergeable::Conflicting => (Some(false), "This branch has conflicts"),
-        Mergeable::Unknown => (None, "Checking for conflicts…"),
+        Mergeable::Yes => (Some(true), "No conflicts with the base branch".to_owned()),
+        Mergeable::Conflicting => (Some(false), "This branch has conflicts".to_owned()),
+        Mergeable::Unknown => (None, "Checking for conflicts…".to_owned()),
     };
-    for (ok, text) in [review, checks, Some(conflicts)].into_iter().flatten() {
-        let (icon, role) = match ok {
+    // Behind is a problem only where the repository requires it up to date.
+    let behind = d.behind_by.filter(|n| *n > 0).map(|n| {
+        let mark = if readiness == Readiness::Behind {
+            ("✗", Role::Error)
+        } else {
+            ("◦", Role::Meta)
+        };
+        let s = if n == 1 { "" } else { "s" };
+        (mark, format!("{n} commit{s} behind {}", d.base_ref))
+    });
+    let rows = [review, checks].into_iter().flatten();
+    let rows = rows
+        .map(|(ok, text)| (ok, text.to_owned()))
+        .chain([conflicts]);
+    let rows = rows.map(|(ok, text)| {
+        let mark = match ok {
             Some(true) => ("✓", Role::Success),
             Some(false) => ("✗", Role::Error),
             None => ("●", Role::Accent),
         };
+        (mark, text)
+    });
+    for ((icon, role), text) in rows.chain(behind) {
         body(
             page,
             vec![
@@ -2350,14 +2378,23 @@ pub fn pr_commits(
 }
 
 /// Commits in boxes by day, each linked to its page: first how many
-/// earlier ones are only on GitHub, last "Load more" if another page loads.
+/// earlier ones were left out, which opens the history from the oldest
+/// here back (oldest first, as a comparison and a PR list them), last
+/// "Load more" if another page loads.
 fn commit_rows(page: &mut Page, repo: &RepoId, commits: &impl Rows<CommitInfo>, now: u64) {
-    let rest = match commits.rest() {
-        Rest::OnGitHub(n) => {
-            left_out(page, n, "earlier commit", "earlier commits");
+    let rest = match (commits.rest(), commits.rows().first()) {
+        (Rest::OnGitHub(n), Some(oldest)) => {
+            let earlier = url::commits(repo, &oldest.oid, "");
+            let text = format!(
+                "… {n} earlier {}",
+                if n == 1 { "commit" } else { "commits" }
+            );
+            item(page, earlier, |page, link| {
+                page.wrapped(vec![Seg::linked(text, Role::Link, link)], 2, Frame::None);
+            });
             Rest::All
         }
-        rest => rest,
+        (rest, _) => rest,
     };
     let mut current_day = String::new();
     for c in commits.rows() {
@@ -2616,7 +2653,13 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
         format!("Jobs  {}", count_of(&run.jobs)),
         Role::Strong,
     )];
-    list_box(page, title, Vec::new(), &jobs, "No jobs.", |page, job| {
+    // A run just started (or re-run) has no jobs until GitHub queues them.
+    let none = if run.outcome == CheckOutcome::Pending {
+        "Waiting for GitHub to queue its jobs…"
+    } else {
+        "No jobs."
+    };
+    list_box(page, title, Vec::new(), &jobs, none, |page, job| {
         let target = format!("{}/actions/runs/{}/job/{}", url::repo(repo), run.id, job.id);
         item(page, target, |page, link| {
             let (mark, role) = outcome_mark(job.outcome);
@@ -2673,9 +2716,16 @@ pub fn step_lines<'a>(job: &Job, cut: &'a str, log: &'a str) -> Vec<(u32, usize,
                 ran.get(at + 1).and_then(|&i| job.steps.get(i)),
             ) {
                 // A step named after what it runs starts at its own `Run`
-                // line, not a composite action's inner ones.
-                let starts =
-                    marks && run.is_none_or(|r| !next.name.starts_with("Run ") || r == next.name);
+                // line, not a composite action's inner ones. Each step's
+                // log begins with its start line, so one that has none yet
+                // is the one this line starts.
+                let begun = ran
+                    .get(at)
+                    .and_then(|&i| out.get(i))
+                    .is_some_and(|(_, cut, lines)| *cut > 0 || !lines.is_empty());
+                let starts = marks
+                    && begun
+                    && run.is_none_or(|r| !next.name.starts_with("Run ") || r == next.name);
                 let next_started =
                     second(next.started_at.as_ref()).is_some_and(|s| s.as_str() <= t);
                 let ended = second(current.completed_at.as_ref()).is_some_and(|s| s.as_str() < t);
@@ -2683,10 +2733,6 @@ pub fn step_lines<'a>(job: &Job, cut: &'a str, log: &'a str) -> Vec<(u32, usize,
                     break;
                 }
                 at += 1;
-                // A start line starts one step.
-                if starts && !ended {
-                    break;
-                }
             }
         }
         if let Some((_, cut, lines)) = ran.get(at).and_then(|&i| out.get_mut(i)) {
@@ -2748,7 +2794,7 @@ fn strip_escapes(text: &str) -> String {
 pub fn log_seg(text: &str) -> Seg {
     let text = &strip_escapes(text);
     if let Some(group) = text.strip_prefix("##[group]") {
-        Seg::new(format!("▸ {group}"), Role::Strong)
+        Seg::new(format!("▾ {group}"), Role::Strong)
     } else if text.starts_with("##[endgroup]") || text.starts_with("##[end-action ") {
         Seg::new("", Role::Meta)
     } else if let Some(action) = text.strip_prefix("##[start-action ") {
@@ -2758,7 +2804,7 @@ pub fn log_seg(text: &str) -> Seg {
             .find_map(|field| field.strip_prefix("display="))
             .unwrap_or(action)
             .trim_end_matches(']');
-        Seg::new(format!("▸ {display}"), Role::Strong)
+        Seg::new(format!("▾ {display}"), Role::Strong)
     } else if let Some(error) = text.strip_prefix("##[error]") {
         Seg::new(error.to_owned(), Role::Removed)
     } else if let Some(warning) = text.strip_prefix("##[warning]") {
@@ -2801,7 +2847,7 @@ fn highlight(seg: Seg, query: &str) -> Vec<Seg> {
             if !before.is_empty() {
                 out.push(Seg::new(before, seg.role.clone()));
             }
-            out.push(Seg::new(found, Role::Chip(Bg::TertiaryContainer)));
+            out.push(Seg::new(found, Role::Match));
             i += q.len();
             from = i;
         } else {
@@ -2815,13 +2861,10 @@ fn highlight(seg: Seg, query: &str) -> Vec<Seg> {
     if out.is_empty() { vec![seg] } else { out }
 }
 
-/// How many lines of a step's log show.
-const STEP_LINES: usize = 400;
-
 /// A job: its steps, each collapsed to its outcome, failing ones (and the
-/// one a link points at) expanded with their log. With `query`, only the
-/// log lines that contain it, under their steps.
-/// A job's page, and its log.
+/// one a link points at) expanded with their whole log. With `query`, the
+/// steps whose log has it are expanded too, its matches picked out and
+/// marked for `n`/`p`.
 pub fn job(
     page: &mut Page,
     repo: &RepoId,
@@ -2835,10 +2878,19 @@ pub fn job(
     let run = format!("{}/actions/runs/{}", url::repo(repo), job.run_id);
     meta.push(link_seg(
         page,
-        format!("Run {}", job.run_id),
-        run,
+        format!("{} #{}", job.run.name, job.run.number),
+        run.clone(),
         Role::Link,
     ));
+    if job.run.attempt > 1 {
+        let of = format!(" · attempt {} of {}", job.attempt, job.run.attempt);
+        meta.push(Seg::new(of, Role::Meta));
+    }
+    if let Some(rerun) = job.run.rerun {
+        meta.push(Seg::new(" · ", Role::Meta));
+        let target = format!("{run}/job/{rerun}");
+        meta.push(link_seg(page, "its re-run", target, Role::Link));
+    }
     if let Some(d) = took(
         job.started_at.as_ref(),
         job.completed_at.as_ref(),
@@ -2846,6 +2898,9 @@ pub fn job(
         now,
     ) {
         meta.push(Seg::new(format!(" · {d}"), Role::Meta));
+    }
+    if job.outcome != CheckOutcome::Pending && job.run.outcome == CheckOutcome::Pending {
+        meta.push(Seg::new(" · its run is still going", Role::Meta));
     }
     page.wrapped(meta, 0, Frame::None);
     page.blank();
@@ -2880,6 +2935,13 @@ pub fn job(
         };
         empty_row(page, &text);
     }
+    let q = at.query.to_lowercase();
+    let matches = |line: &str| !q.is_empty() && strip_escapes(line).to_lowercase().contains(&q);
+    // With a match anywhere, the search decides where the page opens.
+    let searched = lines
+        .iter()
+        .flatten()
+        .any(|(_, _, l)| l.iter().any(|t| matches(t)));
     for (n, step) in job.steps.iter().enumerate() {
         if n > 0 {
             page.box_rule();
@@ -2892,7 +2954,11 @@ pub fn job(
             step.number
         );
         item(page, target, |page, link| {
-            let (mark, role) = outcome_mark(step.outcome);
+            let (mark, role) = match step.outcome {
+                // Queued: not running yet.
+                CheckOutcome::Pending if step.started_at.is_none() => ("○", Role::Meta),
+                outcome => outcome_mark(outcome),
+            };
             let right = took(
                 step.started_at.as_ref(),
                 step.completed_at.as_ref(),
@@ -2908,8 +2974,6 @@ pub fn job(
         });
         let pointed = at.step.map(|(s, _)| s) == Some(step.number);
         let failed = step.outcome == CheckOutcome::Failure;
-        let q = at.query.to_lowercase();
-        let matches = |line: &str| !q.is_empty() && strip_escapes(line).to_lowercase().contains(&q);
         // Numbered from the step's first line, cut ones included.
         let (cut, shown): (usize, Vec<(usize, &str)>) = lines
             .as_ref()
@@ -2937,8 +3001,8 @@ pub fn job(
             body(page, vec![Seg::new(text, Role::Meta)]);
             continue;
         }
-        // Where the page opens: the line a link points at; else the first
-        // search match; else a failed step's first error (or its end).
+        // Where the page opens: the first search match; else the line a
+        // link points at; else a failed step's first error (or its end).
         let at_line = |l: u32| shown.iter().position(|(i, _)| i + 1 == l as usize);
         let first_error = || {
             let error = shown
@@ -2947,53 +3011,36 @@ pub fn job(
             error.or(shown.len().checked_sub(1))
         };
         let focus = match at.step {
+            _ if searched => shown.iter().position(|(_, l)| matches(l)),
             Some((_, l)) if pointed => at_line(l),
-            _ if page.jump.is_some() => None,
-            _ if !q.is_empty() => shown.iter().position(|(_, l)| matches(l)),
             _ if failed => first_error(),
             _ => None,
         };
-        let last = shown.len().saturating_sub(STEP_LINES);
-        let skip = focus.map_or(last, |p| last.min(p.saturating_sub(5)));
-        let later = shown.len().saturating_sub(skip + STEP_LINES);
-        let note = |page: &mut Page, n: usize, when: &str| {
-            if n > 0 {
-                let text = format!("… {n} {when} lines (o shows them all on GitHub)");
-                body(page, vec![Seg::new(text, Role::Meta)]);
-            }
-        };
-        let cut_note = |page: &mut Page, text: String| {
-            body(page, vec![Seg::new(text, Role::Meta)]);
-        };
-        if pointed
-            && let Some(l) = at
-                .step
-                .map(|(_, l)| l as usize)
-                .filter(|&l| l >= 1 && l <= cut)
-        {
-            page.jump = Some(page.lines.len());
-            cut_note(
-                page,
-                format!(
-                    "Line {l} is in the part of the log too long to load (o shows it on GitHub)"
-                ),
+        let pointed_cut = at
+            .step
+            .map(|(_, l)| l as usize)
+            .filter(|&l| pointed && !searched && l >= 1 && l <= cut);
+        if let Some(l) = pointed_cut {
+            page.jump.get_or_insert(page.lines.len());
+            let text = format!(
+                "Line {l} is in the part of the log too long to load (o shows it on GitHub)"
             );
+            body(page, vec![Seg::new(text, Role::Meta)]);
         }
-        if cut > 0 && !q.is_empty() {
-            cut_note(
-                page,
+        if cut > 0 {
+            let text = if q.is_empty() {
+                format!("… {cut} earlier lines (o shows them all on GitHub)")
+            } else {
                 format!(
                     "… {cut} earlier lines weren't loaded, so aren't searched (o shows them on GitHub)"
-                ),
-            );
-            note(page, skip, "earlier");
-        } else {
-            note(page, cut + skip, "earlier");
+                )
+            };
+            body(page, vec![Seg::new(text, Role::Meta)]);
         }
         let width = shown.last().map_or(1, |(i, _)| (i + 1).to_string().len());
-        for (n, (i, text)) in shown.iter().enumerate().skip(skip).take(STEP_LINES) {
-            if focus == Some(n) && page.jump.is_none() {
-                page.jump = Some(page.lines.len());
+        for (n, (i, text)) in shown.iter().enumerate() {
+            if focus == Some(n) {
+                page.jump.get_or_insert(page.lines.len());
             }
             if matches(text) {
                 page.marks.push(page.lines.len());
@@ -3011,9 +3058,8 @@ pub fn job(
                 ..PageLine::default()
             });
         }
-        note(page, later, "later");
-        if pointed && page.jump.is_none() {
-            page.jump = Some(page.lines.len().saturating_sub(1));
+        if pointed && !searched {
+            page.jump.get_or_insert(page.lines.len().saturating_sub(1));
         }
     }
     page.box_bottom();
@@ -3952,7 +3998,9 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
             }
             page.wrapped(people, 0, Frame::Body);
         }
-        rest_row(page, p.people.len(), p.people.rest());
+        // The rest are on the People tab.
+        let all = format!("{}/orgs/{}/people", url::BASE, p.login);
+        rest_row(page, p.people.len(), At(&p.people, Some(all)).rest());
         page.box_bottom();
         let languages = top_languages(&p.repos);
         if !languages.is_empty() {
@@ -4193,38 +4241,46 @@ pub fn home(
             page,
             "Review requests",
             &inbox.review_requested,
-            "is:open is:pr review-requested:@me archived:false",
+            Inbox::REVIEW_REQUESTED,
             "Nothing is waiting for your review.",
         );
         pr_box(
             page,
             "Your pull requests",
             &inbox.authored,
-            "is:open is:pr author:@me archived:false",
+            Inbox::AUTHORED,
             "You have no open pull requests.",
         );
     }
+    // The same list as your profile's Repositories tab, which opens the rest.
     let all = viewer.map(|login| format!("{}?tab=repositories", url::user(login)));
     let title = vec![Seg::new("Your repositories", Role::Strong)];
     let loading = |page: &mut Page| loading_box(page, title.clone());
     if let Some(repos) = repos.show_or(page, "your repositories", loading) {
         let empty = "You don't have any repositories yet.";
-        list_box(
-            page,
-            title,
-            Vec::new(),
-            &At(repos, all),
-            empty,
-            |page, r| {
-                repo_row(page, r, now, true);
-            },
-        );
+        let repos = At(repos, all);
+        let mut title = title;
+        title.push(Seg::new(format!("  {}", count_of(&repos)), Role::Meta));
+        list_box(page, title, Vec::new(), &repos, empty, |page, r| {
+            repo_row(page, r, now, true);
+        });
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The run a test job is in: one attempt, finished.
+    fn finished_run() -> ghtui_api::browse::JobRun {
+        ghtui_api::browse::JobRun {
+            name: "CI".into(),
+            number: 1,
+            outcome: CheckOutcome::Success,
+            attempt: 1,
+            rerun: None,
+        }
+    }
 
     /// Steps that start in the second the one before ends still get their
     /// own lines, by the lines that start them.
@@ -4240,6 +4296,8 @@ mod tests {
         let job = Job {
             id: 1,
             run_id: 1,
+            attempt: 1,
+            run: finished_run(),
             name: String::new(),
             outcome: CheckOutcome::Success,
             started_at: None,
@@ -4281,12 +4339,45 @@ mod tests {
         assert_eq!(of(4), ["##[group]Run cd src/ci/citool", "done"]);
         assert_eq!(of(8), ["Post job cleanup."]);
         assert_eq!(of(9), ["Cleaning up orphan processes"]);
+        // A start line just after the step before ended starts one step,
+        // not every step that started in that second.
+        let job = Job {
+            steps: vec![
+                step(1, CheckOutcome::Success, "48", "48"),
+                step(2, CheckOutcome::Success, "48", "49"),
+                step(3, CheckOutcome::Failure, "49", "49"),
+            ],
+            ..job
+        };
+        let log = [
+            "2026-10-05T17:42:48.10Z Current runner version",
+            "2026-10-05T17:42:49.10Z ##[group]Run ./prepare",
+            "2026-10-05T17:42:49.11Z prepared",
+            "2026-10-05T17:42:49.20Z ##[group]Run ./build",
+            "2026-10-05T17:42:49.21Z ##[error]boom",
+        ]
+        .join("\n");
+        let lines = step_lines(&job, "", &log);
+        let of = |n: u32| {
+            lines
+                .iter()
+                .find(|(s, _, _)| *s == n)
+                .map(|(_, _, l)| l.clone())
+        };
+        assert_eq!(
+            of(2).unwrap_or_default(),
+            ["##[group]Run ./prepare", "prepared"]
+        );
+        assert_eq!(
+            of(3).unwrap_or_default(),
+            ["##[group]Run ./build", "##[error]boom"]
+        );
     }
 
-    /// A link to a line far up a long step's log shows that line, not
-    /// just the step's last lines.
+    /// A long step's log shows whole: a link to a line far up opens there,
+    /// and a search sees (and opens at) matches anywhere in it.
     #[test]
-    fn a_linked_log_line_shows_in_a_long_step() {
+    fn a_long_steps_log_is_all_there_to_link_and_search() {
         let step = ghtui_api::browse::Step {
             number: 1,
             name: "Build".into(),
@@ -4297,30 +4388,40 @@ mod tests {
         let job = Job {
             id: 1,
             run_id: 1,
+            attempt: 1,
+            run: finished_run(),
             name: String::new(),
             outcome: CheckOutcome::Success,
             started_at: None,
             completed_at: None,
             steps: vec![step],
         };
-        let log: String = (1..=1000)
-            .map(|n| format!("2026-10-05T17:42:01.0Z line {n}\n"))
+        let log: String = (1..=3000)
+            .map(|n| {
+                let needle = if n % 1000 == 0 { " needle" } else { "" };
+                format!("2026-10-05T17:42:01.0Z line {n}{needle}\n")
+            })
             .collect();
-        let text = |at: JobAt<'_>| {
+        let shown = |query: &str| {
             let mut page = Page::new(100);
+            let at = JobAt {
+                step: Some((1, 10)),
+                query,
+                keys: Keys::default(),
+            };
             job_page(&mut page, &job, &log, at);
             let lines: Vec<String> = page.lines.iter().map(PageLine::text).collect();
-            (lines, page.jump)
+            let at = |i: Option<usize>| i.and_then(|i| lines.get(i)).cloned().unwrap_or_default();
+            let marks: Vec<String> = page.marks.iter().map(|&m| at(Some(m))).collect();
+            (at(page.jump), marks)
         };
-        let at = JobAt {
-            step: Some((1, 10)),
-            query: "",
-            keys: Keys::default(),
-        };
-        let (lines, jump) = text(at);
-        assert!(lines.iter().any(|l| l.ends_with("line 10")), "{lines:?}");
-        assert!(jump.is_some_and(|j| lines.get(j).is_some_and(|l| l.ends_with("line 10"))));
-        assert!(lines.iter().any(|l| l.contains("later lines")));
+        let (jump, marks) = shown("");
+        assert!(jump.ends_with("line 10"), "{jump}");
+        assert!(marks.is_empty());
+        let (jump, marks) = shown("NEEDLE");
+        assert_eq!(marks.len(), 3, "{marks:?}");
+        assert!(jump.ends_with("line 1000 needle"), "{jump}");
+        assert!(marks[2].ends_with("line 3000 needle"));
     }
 
     /// The log's filter matches what shows, not the color codes around it.
@@ -4329,6 +4430,8 @@ mod tests {
         let job = Job {
             id: 1,
             run_id: 1,
+            attempt: 1,
+            run: finished_run(),
             name: String::new(),
             outcome: CheckOutcome::Success,
             started_at: None,
@@ -4406,6 +4509,8 @@ mod tests {
         Job {
             id: 1,
             run_id: 1,
+            attempt: 1,
+            run: finished_run(),
             name: String::new(),
             outcome,
             started_at: None,
@@ -4471,7 +4576,7 @@ mod tests {
         );
         assert_eq!(
             seg("##[start-action display=Parse toolchain version;id=__x.parse]"),
-            ("▸ Parse toolchain version".into(), Role::Strong)
+            ("▾ Parse toolchain version".into(), Role::Strong)
         );
         assert_eq!(
             seg("##[end-action id=__x.parse;outcome=success]"),
@@ -4606,6 +4711,8 @@ mod tests {
         let job = Job {
             id: 1,
             run_id: 1,
+            attempt: 1,
+            run: finished_run(),
             name: String::new(),
             outcome: CheckOutcome::Success,
             started_at: None,
@@ -4749,6 +4856,7 @@ mod tests {
             commits: 10,
             parent: None,
             starred: false,
+            can_write: false,
             id: ghtui_api::model::NodeId::new("R_1"),
             has_issues: true,
             has_discussions: false,
@@ -4923,6 +5031,7 @@ mod tests {
             commits: 1,
             parent: None,
             starred: false,
+            can_write: false,
             id: ghtui_api::model::NodeId::new("R_1"),
             has_issues: true,
             has_discussions: false,

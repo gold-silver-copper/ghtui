@@ -59,8 +59,9 @@ pub struct Compose {
     /// A reply is being posted.
     pub sending: bool,
     pub error: Option<String>,
-    /// Esc or ctrl-c was pressed once with text in the editor.
-    pub confirm_discard: bool,
+    /// The key (esc or ctrl-c) pressed once with text in the editor: only
+    /// that key, pressed again, throws the text away.
+    pub discard_armed: Option<&'static str>,
 }
 
 impl Compose {
@@ -71,7 +72,7 @@ impl Compose {
             preview: None,
             sending: false,
             error: None,
-            confirm_discard: false,
+            discard_armed: None,
         }
     }
 
@@ -113,8 +114,12 @@ pub struct SubmitDialog {
     /// Your saved review (its drafts go with it), read from disk when the
     /// pull request's diff isn't open to hold it.
     pub saved: Option<ReviewState>,
-    /// Esc or ctrl-c was pressed once with a summary typed.
-    pub confirm_discard: bool,
+    /// The key (esc or ctrl-c) pressed once with a summary typed: only that
+    /// key, pressed again, throws the summary away.
+    pub discard_armed: Option<&'static str>,
+    /// The comments your pending review on GitHub holds, which go with
+    /// it; `None` until GitHub says.
+    pub on_github: Option<u64>,
 }
 
 impl SubmitDialog {
@@ -130,7 +135,8 @@ impl SubmitDialog {
             error: None,
             quick: false,
             saved: None,
-            confirm_discard: false,
+            discard_armed: None,
+            on_github: None,
         }
     }
 
@@ -190,16 +196,23 @@ pub struct SubmitOutcome {
     pub submitted: bool,
     /// The submission as a whole failed.
     pub error: Option<String>,
+    /// The comments your pending review on GitHub held after, if known.
+    pub on_github: Option<u64>,
 }
 
 pub fn suggestion_body(suggested: &str) -> String {
     format!("```suggestion\n{}\n```", suggested.trim_end_matches('\n'))
 }
 
-/// Where a new comment goes, from the cursor or a visual selection. Lines
-/// GitHub won't accept become a file comment (with the reason); a range that
-/// crosses GitHub's hunks is refused.
-pub fn target(doc: &Doc, cursor: Pos, selection: Option<Pos>) -> Result<ComposeTarget, String> {
+/// Where a new comment goes, from the cursor or a visual selection (on
+/// `half` of split rows). Lines GitHub won't accept become a file comment
+/// (with the reason); a range that crosses GitHub's hunks is refused.
+pub fn target(
+    doc: &Doc,
+    cursor: Pos,
+    half: Side,
+    selection: Option<Pos>,
+) -> Result<ComposeTarget, String> {
     let file = doc.files().get(cursor.file).ok_or("No file here")?;
     let path = file.meta.path().to_owned();
     let (from, to) = match selection {
@@ -214,7 +227,7 @@ pub fn target(doc: &Doc, cursor: Pos, selection: Option<Pos>) -> Result<ComposeT
         }
     };
     let lines: Vec<LinePos> = (from..=to)
-        .filter_map(|g| doc.line_at(doc.to_pos(g)))
+        .filter_map(|g| doc.line_at(doc.to_pos(g), half))
         .collect();
     let (Some(&start), Some(&end)) = (lines.first(), lines.last()) else {
         return Ok(ComposeTarget::File { path, reason: None });
@@ -432,6 +445,7 @@ pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcom
         cmds.extend(state.load_visible(false));
     } else if let Some(Overlay::Submit(dialog)) = &mut state.overlay {
         dialog.sending = false;
+        dialog.on_github = outcome.on_github.or(dialog.on_github);
         dialog.error = Some(match (&outcome.error, outcome.rejected.len()) {
             (Some(err), _) => err.clone(),
             (None, n) => format!(
@@ -518,9 +532,9 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         state.info(format!("{}: on pull requests", action.description()));
         return Vec::new();
     };
-    let cursor = screen.cursor;
+    let (cursor, half) = (screen.cursor, screen.half);
     // The thread or draft under the cursor.
-    let at = diff.doc.annotation_at(cursor);
+    let at = diff.doc.annotation_under(cursor, half);
     let annotation = at
         .and_then(|i| diff.doc.annotations().get(i as usize))
         .cloned();
@@ -601,7 +615,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::Comment => {
             let selection = screen.selection.take();
-            match target(&diff.doc, cursor, selection) {
+            match target(&diff.doc, cursor, half, selection) {
                 Ok(target) => {
                     if let ComposeTarget::File {
                         reason: Some(reason),
@@ -640,7 +654,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::Suggest => {
             let selection = screen.selection.take();
-            let target = match target(&diff.doc, cursor, selection) {
+            let target = match target(&diff.doc, cursor, half, selection) {
                 Ok(target) => target,
                 Err(err) => return notice(state, Notice::Error(err)),
             };
@@ -744,9 +758,9 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             }
             state.overlay = Some(Overlay::Submit(Box::new(SubmitDialog::new(
                 &state.theme,
-                pr,
+                pr.clone(),
             ))));
-            Vec::new()
+            vec![Cmd::Api(Api::FetchPendingReview(pr))]
         }
         _ => notice(state, Notice::Info(action.not_here())),
     }
@@ -841,7 +855,7 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         }
         KeyCode::Char('s') if ctrl => return save_compose(state),
         _ => {
-            compose.confirm_discard = false;
+            compose.discard_armed = None;
             compose.error = None;
             compose.input.input(key);
         }
@@ -850,22 +864,23 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 }
 
 /// Whether `key` may throw away the text typed in the composer or the
-/// review summary: the first press only warns, a second goes ahead.
-pub(crate) fn may_discard(state: &mut State, key: &str, verb: &str) -> bool {
+/// review summary: the first press only warns, a second of the same key
+/// goes ahead. Each key warns for itself, so esc then ctrl-c still asks.
+pub(crate) fn may_discard(state: &mut State, key: &'static str, verb: &str) -> bool {
     let (text, armed, error, what) = match &mut state.overlay {
-        Some(Overlay::Compose(c)) => (c.text(), &mut c.confirm_discard, &mut c.error, "comment"),
+        Some(Overlay::Compose(c)) => (c.text(), &mut c.discard_armed, &mut c.error, "comment"),
         Some(Overlay::Submit(d)) => (
             d.input.lines().join("\n"),
-            &mut d.confirm_discard,
+            &mut d.discard_armed,
             &mut d.error,
             "summary",
         ),
         _ => return true,
     };
-    if text.trim().is_empty() || *armed {
+    if text.trim().is_empty() || *armed == Some(key) {
         return true;
     }
-    *armed = true;
+    *armed = Some(key);
     *error = Some(format!("Press {key} again to {verb} this {what}"));
     false
 }
@@ -965,7 +980,7 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         KeyCode::Char('s') if ctrl => return submit(state),
         KeyCode::Enter if dialog.quick => return submit(state),
         _ => {
-            dialog.confirm_discard = false;
+            dialog.discard_armed = None;
             dialog.error = None;
             dialog.input.input(key);
         }
@@ -980,10 +995,11 @@ fn submit(state: &mut State) -> Vec<Cmd> {
     let Some(Overlay::Submit(dialog)) = &state.overlay else {
         return Vec::new();
     };
-    let (event, body, pr) = (
+    let (event, body, pr, seen) = (
         dialog.event,
         dialog.input.lines().join("\n"),
         dialog.pr.clone(),
+        dialog.on_github.unwrap_or(0),
     );
     let drafts = dialog.drafts(state).map(<[DraftComment]>::to_vec);
     let head = match state.diffs.get(&DiffOf::Pr(pr.clone())) {
@@ -1015,6 +1031,7 @@ fn submit(state: &mut State) -> Vec<Cmd> {
         drafts,
         event,
         body,
+        seen,
     })]
 }
 
@@ -1027,11 +1044,11 @@ pub(crate) fn open_approve(state: &mut State, pr: PrRef) -> Vec<Cmd> {
     dialog.event = ReviewEvent::Approve;
     dialog.quick = true;
     state.overlay = Some(Overlay::Submit(Box::new(dialog)));
-    if state.diffs.contains_key(&DiffOf::Pr(pr.clone())) {
-        Vec::new()
-    } else {
-        vec![Cmd::LoadReview(pr)]
+    let mut cmds = vec![Cmd::Api(Api::FetchPendingReview(pr.clone()))];
+    if !state.diffs.contains_key(&DiffOf::Pr(pr.clone())) {
+        cmds.push(Cmd::LoadReview(pr));
     }
+    cmds
 }
 
 #[cfg(test)]

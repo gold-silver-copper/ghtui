@@ -43,8 +43,16 @@ impl std::fmt::Debug for Credentials {
 }
 
 impl Credentials {
-    /// Environment variables to set on a git command.
+    /// Environment variables to set on a git command, after the
+    /// configuration the user passes in `GIT_CONFIG_COUNT`.
     pub fn env(&self) -> Vec<(String, String)> {
+        let count = std::env::var("GIT_CONFIG_COUNT").ok();
+        self.env_after(count.and_then(|n| n.trim().parse().ok()).unwrap_or(0))
+    }
+
+    /// [`Self::env`], with `theirs` entries of the user's configuration
+    /// already in the environment: ours follow them, so theirs still count.
+    fn env_after(&self, theirs: usize) -> Vec<(String, String)> {
         // An empty helper value resets the list, so the user's configured
         // helpers can't answer (or prompt) for these requests.
         let helpers: &[&str] = match self {
@@ -52,8 +60,9 @@ impl Credentials {
             Credentials::GhHelper => &["", "!gh auth git-credential"],
             Credentials::AskPass { .. } => &[""],
         };
-        let mut env = vec![("GIT_CONFIG_COUNT".to_owned(), helpers.len().to_string())];
-        for (i, helper) in helpers.iter().enumerate() {
+        let count = theirs + helpers.len();
+        let mut env = vec![("GIT_CONFIG_COUNT".to_owned(), count.to_string())];
+        for (i, helper) in (theirs..).zip(helpers) {
             env.push((format!("GIT_CONFIG_KEY_{i}"), "credential.helper".into()));
             env.push((format!("GIT_CONFIG_VALUE_{i}"), (*helper).into()));
         }
@@ -92,7 +101,7 @@ mod tests {
 
     #[test]
     fn gh_helper_replaces_configured_helpers() {
-        let env = Credentials::GhHelper.env();
+        let env = Credentials::GhHelper.env_after(0);
         assert_eq!(get(&env, "GIT_CONFIG_COUNT"), Some("2"));
         assert_eq!(get(&env, "GIT_CONFIG_VALUE_0"), Some(""));
         assert_eq!(
@@ -100,6 +109,20 @@ mod tests {
             Some("!gh auth git-credential")
         );
         assert_eq!(get(&env, "GIT_ASKPASS"), None);
+    }
+
+    /// The user's own `GIT_CONFIG_COUNT` entries (a proxy, say) stay, and
+    /// ours come after them.
+    #[test]
+    fn the_users_config_entries_are_kept() {
+        let env = Credentials::GhHelper.env_after(2);
+        assert_eq!(get(&env, "GIT_CONFIG_COUNT"), Some("4"));
+        assert_eq!(get(&env, "GIT_CONFIG_KEY_0"), None);
+        assert_eq!(get(&env, "GIT_CONFIG_VALUE_2"), Some(""));
+        assert_eq!(
+            get(&env, "GIT_CONFIG_VALUE_3"),
+            Some("!gh auth git-credential")
+        );
     }
 
     #[test]

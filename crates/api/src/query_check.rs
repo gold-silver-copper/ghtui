@@ -317,6 +317,7 @@ fn typed() -> Vec<(&'static str, String)> {
     typed! {
         Query q::SearchQuery, q::SearchVariables;
         Query q::PullRequestQuery, q::NumberVariables;
+        Query q::BehindQuery, q::BehindVariables;
         Query q::PrFilesQuery, q::PageVariables;
         Mutation q::MarkFileAsViewed, q::ViewedVariables;
         Mutation q::UnmarkFileAsViewed, q::ViewedVariables;
