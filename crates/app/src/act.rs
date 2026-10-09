@@ -63,15 +63,10 @@ impl Confirm {
         }
     }
 
-    /// The change it sent, while GitHub answers.
-    fn sent(&self) -> Option<&Change> {
-        let (_, change) = self.choices.get(self.selected).filter(|_| self.sending)?;
-        Some(change)
-    }
-
     /// What's happening while GitHub answers.
     pub fn busy(&self) -> Option<String> {
-        Some(format!("{}…", doing(self.sent()?)))
+        let (_, change) = self.choices.get(self.selected).filter(|_| self.sending)?;
+        Some(format!("{}…", doing(change)))
     }
 }
 
@@ -713,7 +708,12 @@ pub fn on_changed(
 ) -> Vec<Cmd> {
     // The dialog or the composer that sent it, if it's still waiting.
     let sender = match (&by, &state.overlay) {
-        (By::Confirm(_), Some(Overlay::Confirm(c))) => c.sent() == Some(change),
+        (By::Confirm(_), Some(Overlay::Confirm(c))) => {
+            c.sending
+                && c.choices
+                    .get(c.selected)
+                    .is_some_and(|(_, sent)| sent == change)
+        }
         (By::Compose, Some(Overlay::Compose(c))) => c.sending,
         _ => false,
     };
