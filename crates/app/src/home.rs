@@ -510,7 +510,13 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             let Ok((kind, query)) = savable(state) else {
                 return Vec::new();
             };
-            let name = state.route().map(Route::title).unwrap_or_default();
+            let name = match state.route() {
+                Some(Route::Search { query, .. }) => query.clone(),
+                Some(Route::Issues { repo, .. }) => format!("Issues in {repo}"),
+                Some(Route::Pulls { repo, .. }) => format!("Pull requests in {repo}"),
+                Some(route) => route.title(),
+                None => String::new(),
+            };
             return state.open_picker_with(
                 picker::Kind::SectionTitle(picker::Titling::New { kind, query }),
                 &name,
