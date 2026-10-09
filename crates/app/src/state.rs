@@ -2913,6 +2913,25 @@ pub(crate) mod tests {
         );
     }
 
+    /// A comment's link given to the palette opens at the comment.
+    #[test]
+    fn palette_links_keep_their_anchor() {
+        let mut s = state();
+        let _ = s.open_picker(picker::Kind::Commands);
+        press(
+            &mut s,
+            "https://github.com/o/r/issues/1#issuecomment-5<Enter>",
+        );
+        assert_eq!(
+            route(&s),
+            Route::Issue {
+                repo: RepoId::new("o", "r"),
+                number: 1
+            }
+        );
+        assert_eq!(page(&s).anchor.as_deref(), Some("issuecomment-5"));
+    }
+
     #[test]
     fn palette_fuzzy_matches() {
         let state = state();

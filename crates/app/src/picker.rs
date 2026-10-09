@@ -83,6 +83,8 @@ pub enum PickItem {
 pub enum Choice {
     Action(Action),
     Go(Target),
+    /// Open this URL, at its `#fragment`.
+    Url(String),
     Search(String),
     DiffFile(usize),
     Commits(PickItem),
@@ -226,7 +228,14 @@ impl State {
                 Target::Files(of) => format!("Files changed in {of}"),
                 Target::External(url) => format!("Open {url}"),
             };
-            out.push((item(label, ""), Some(Choice::Go(target))));
+            // A URL keeps its `#fragment`.
+            let input = input.trim();
+            let choice = if input.contains("://") || input.starts_with("github.com/") {
+                Choice::Url(input.to_owned())
+            } else {
+                Choice::Go(target)
+            };
+            out.push((item(label, ""), Some(choice)));
         }
         // Open tabs, by title.
         if self.tab_count() > 1 {
@@ -517,6 +526,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
     match choice {
         Choice::Action(action) => apply(state, action),
         Choice::Go(target) => state.go(target),
+        Choice::Url(url) => state.open_url(&url, false),
         Choice::Search(query) => state.push(search_route(&query)),
         Choice::DiffFile(file) => {
             if let Screen::Diff(screen) = state.screen_mut() {
