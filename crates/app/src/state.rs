@@ -2089,21 +2089,27 @@ pub(crate) mod tests {
                 what: "Removed".into(),
             },
         );
+        let restore = Edit::Restore { at: 0, table };
         let cmds = press(&mut state, "<C-z>");
         assert!(
-            matches!(cmds.as_slice(), [Cmd::EditHome { edit: Edit::Restore { at: 0, table: t }, .. }] if *t == table),
+            matches!(cmds.as_slice(), [Cmd::EditHome { edit, .. }] if *edit == restore),
             "{cmds:?}"
         );
-        // A change GitHub's file refused says why.
+        // A change the file refused says why, and can be tried again.
         update(
             &mut state,
             Msg::HomeEdited {
-                edit: Edit::Remove { at: 0 },
+                edit: restore.clone(),
                 result: Err("config.toml changed since ghtui read it".into()),
                 what: String::new(),
             },
         );
         assert!(matches!(&state.notice, Some(Notice::Error(e)) if e.contains("changed since")));
+        let cmds = press(&mut state, "<C-z>");
+        assert!(
+            matches!(cmds.as_slice(), [Cmd::EditHome { edit, .. }] if *edit == restore),
+            "{cmds:?}"
+        );
     }
 
     /// Any list of issues, pull requests or repositories can be saved to

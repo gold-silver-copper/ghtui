@@ -539,7 +539,8 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Delete => Edit::Remove {
             at: at.unwrap_or_default(),
         },
-        Action::UndoDelete => match state.removed.take() {
+        // Kept until it's back: a write that fails can be tried again.
+        Action::UndoDelete => match state.removed.clone() {
             Some((at, table)) => Edit::Restore { at, table },
             None => return Vec::new(),
         },
@@ -588,8 +589,10 @@ impl State {
         match result {
             Ok((sections, removed)) => {
                 self.home = sections;
-                if let (Edit::Remove { at }, Some(table)) = (edit, removed) {
-                    self.removed = Some((*at, table));
+                match (edit, removed) {
+                    (Edit::Remove { at }, Some(table)) => self.removed = Some((*at, table)),
+                    (Edit::Restore { .. }, _) => self.removed = None,
+                    _ => {}
                 }
                 self.info(what);
             }
