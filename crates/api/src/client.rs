@@ -34,6 +34,10 @@ pub enum ApiError {
     RateLimited(u64),
     #[error("not found: {0}")]
     NotFound(String),
+    /// GitHub withholds it for a legal reason (a DMCA takedown, say), and
+    /// says which, with a link to the notice.
+    #[error("{0}")]
+    Blocked(String),
     /// It was there, and GitHub has since dropped it.
     #[error("{0}")]
     Gone(String),
@@ -464,8 +468,11 @@ impl GitHub {
                 idempotent,
             })
             .await?;
-        check_status(&response, "/graphql")?;
+        check_status(&response, "GitHub's GraphQL API")?;
         let wire: Wire = serde_json::from_str(&response.body)?;
+        if idempotent && let Some(blocked) = self.blocked(body, &wire.data).await {
+            return Err(blocked);
+        }
         let errors = wire.errors.unwrap_or_default();
         if wire.data.is_null() {
             return Err(match messages(errors) {
@@ -480,9 +487,36 @@ impl GitHub {
         Ok(Reply::new(wire.data, errors))
     }
 
+    /// Why GitHub's GraphQL API answered a query's `repository` with null,
+    /// when it isn't that the repository is missing: GraphQL calls a
+    /// blocked one missing; only REST says it's blocked, and why.
+    async fn blocked(&self, body: &Value, data: &Value) -> Option<ApiError> {
+        if !data.get("repository").is_some_and(Value::is_null) {
+            return None;
+        }
+        let vars = body.get("variables")?;
+        let (owner, name) = (vars.get("owner")?.as_str()?, vars.get("name")?.as_str()?);
+        let path = format!("/repos/{}/{}", encode_path(owner), encode_path(name));
+        let response = self
+            .send(&Request::Get {
+                path: &path,
+                etag: None,
+            })
+            .await;
+        let response = response.ok()?;
+        (response.status == StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS)
+            .then(|| check_status(&response, "").err())
+            .flatten()
+    }
+
     /// GETs a REST path, revalidating with the cached ETag. A 304 serves the
-    /// cached body (and doesn't count against the rate limit).
-    pub async fn rest_get(&self, path: &str) -> Result<String, ApiError> {
+    /// cached body (and doesn't count against the rate limit). `what` is
+    /// what's asked for, to name if it isn't there.
+    pub async fn rest_get(
+        &self,
+        path: &str,
+        what: impl std::fmt::Display,
+    ) -> Result<String, ApiError> {
         let cached = {
             let (store, key) = (self.store.clone(), path.to_owned());
             tokio::task::spawn_blocking(move || store.http_get(&key))
@@ -503,7 +537,7 @@ impl GitHub {
         {
             return Ok(cached.body);
         }
-        check_status(&response, path)?;
+        check_status(&response, what)?;
         if let Some(etag) = response
             .headers
             .get(header::ETAG)
@@ -531,12 +565,17 @@ impl GitHub {
                 idempotent: false,
             })
             .await?;
+        let path = path.strip_prefix("/repos/").unwrap_or(path);
         check_status(&response, path)
     }
 
     /// GETs a REST path and decodes its JSON.
-    async fn rest_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
-        Ok(serde_json::from_str(&self.rest_get(path).await?)?)
+    async fn rest_json<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        what: impl std::fmt::Display,
+    ) -> Result<T, ApiError> {
+        Ok(serde_json::from_str(&self.rest_get(path, what).await?)?)
     }
 
     /// A page of a list GitHub pages by cursor (`after=`, in the `Link`
@@ -544,9 +583,10 @@ impl GitHub {
     async fn rest_cursor_page<T: DeserializeOwned>(
         &self,
         path: &str,
+        what: impl std::fmt::Display,
     ) -> Result<(T, Option<String>), ApiError> {
         let response = self.send(&Request::Get { path, etag: None }).await?;
-        check_status(&response, path)?;
+        check_status(&response, what)?;
         let next = response
             .headers
             .get(header::LINK)
@@ -560,7 +600,7 @@ impl GitHub {
         struct User {
             login: String,
         }
-        let user: User = self.rest_json("/user").await?;
+        let user: User = self.rest_json("/user", "your account").await?;
         Ok(user.login)
     }
 
@@ -672,7 +712,7 @@ impl GitHub {
                 "/repos/{}/{}/pulls/{}/files?per_page=100&page={page}",
                 pr.repo.owner, pr.repo.name, pr.number
             );
-            let batch: Vec<PatchFile> = self.rest_json(&path).await?;
+            let batch: Vec<PatchFile> = self.rest_json(&path, format!("{pr}'s files")).await?;
             let next = (batch.len() == 100).then(|| page.saturating_add(1).to_string());
             Ok(browse::Results::uncounted(batch, next))
         };
@@ -841,7 +881,10 @@ impl GitHub {
             content: String,
         }
         let wire: Wire = match self
-            .rest_json(&format!("/repos/{}/{}/readme", repo.owner, repo.name))
+            .rest_json(
+                &format!("/repos/{}/{}/readme", repo.owner, repo.name),
+                format!("{repo}'s README"),
+            )
             .await
         {
             Ok(wire) => wire,
@@ -992,7 +1035,7 @@ impl GitHub {
         let next = |total: u64| next_page(number, REST_PAGE, total.min(SEARCH_CAP));
         if kind == Kind::Commits {
             let page: browse::rest_search::Page<browse::rest_search::Commit> =
-                self.rest_json(&path).await?;
+                self.rest_json(&path, "the search").await?;
             self.note_incomplete(page.incomplete_results);
             return Ok(SearchResults::Commits(Results {
                 next: next(page.total_count),
@@ -1005,7 +1048,7 @@ impl GitHub {
             }));
         }
         let page: browse::rest_search::Page<browse::rest_search::Code> =
-            self.rest_json(&path).await?;
+            self.rest_json(&path, "the search").await?;
         self.note_incomplete(page.incomplete_results);
         Ok(SearchResults::Code(Results {
             next: next(page.total_count),
@@ -1132,12 +1175,15 @@ impl GitHub {
             truncated: bool,
         }
         let wire: Wire = self
-            .rest_json(&format!(
-                "/repos/{}/{}/git/trees/{}?recursive=1",
-                repo.owner,
-                repo.name,
-                encode_path(rev)
-            ))
+            .rest_json(
+                &format!(
+                    "/repos/{}/{}/git/trees/{}?recursive=1",
+                    repo.owner,
+                    repo.name,
+                    encode_path(rev)
+                ),
+                format!("{repo}@{rev}"),
+            )
             .await?;
         let files: Vec<String> = wire
             .tree
@@ -1631,7 +1677,8 @@ impl GitHub {
             encode_path(base),
             encode_path(head)
         );
-        let wire: browse::rest_compare::Compare = self.rest_json(&path).await?;
+        let what = format!("{repo}'s comparison {spec}");
+        let wire: browse::rest_compare::Compare = self.rest_json(&path, what).await?;
         let head = wire
             .permalink_url
             .rsplit_once("...")
@@ -1681,7 +1728,7 @@ impl GitHub {
     /// their owners, and a gist's URL may not name its owner.
     pub async fn gist(&self, id: &str) -> Result<browse::Gist, ApiError> {
         let wire: browse::rest_gists::Gist = self
-            .rest_json(&format!("/gists/{}", encode_path(id)))
+            .rest_json(&format!("/gists/{}", encode_path(id)), format!("gist {id}"))
             .await?;
         let gist = wire.into_gist();
         Ok(self.kept(&browse::keys::gist(id), gist).await)
@@ -1756,7 +1803,7 @@ impl GitHub {
             path.push_str(&format!("&after={}", encode_query(after)));
         }
         let (wire, next): (Vec<browse::rest_advisories::Advisory>, _) =
-            self.rest_cursor_page(&path).await?;
+            self.rest_cursor_page(&path, "the advisories").await?;
         let items: Vec<browse::Advisory> = wire
             .into_iter()
             .map(browse::rest_advisories::Advisory::into_advisory)
@@ -1783,7 +1830,7 @@ impl GitHub {
             Some(r) => format!("/repos/{}/{}/security-advisories/{id}", r.owner, r.name),
             None => format!("/advisories/{id}"),
         };
-        let wire: browse::rest_advisories::Advisory = self.rest_json(&path).await?;
+        let wire: browse::rest_advisories::Advisory = self.rest_json(&path, ghsa).await?;
         let advisory = wire.into_advisory();
         Ok(self
             .kept(&browse::keys::advisory(repo, ghsa), advisory)
@@ -1802,9 +1849,10 @@ impl GitHub {
             None => base,
         };
         let jobs_path = &format!("{path}/jobs?per_page=100");
+        let (asked, jobs_asked) = (format!("{repo}'s run {run}"), format!("run {run}'s jobs"));
         let (wire, jobs) = tokio::join!(
-            self.rest_json::<browse::rest_actions::Run>(&path),
-            self.rest_json::<browse::rest_actions::Jobs>(jobs_path)
+            self.rest_json::<browse::rest_actions::Run>(&path, &asked),
+            self.rest_json::<browse::rest_actions::Jobs>(jobs_path, &jobs_asked)
         );
         // Big matrices have more than a page of jobs; an empty page is the last.
         let results = |page: u64, jobs: browse::rest_actions::Jobs| browse::Results {
@@ -1814,7 +1862,10 @@ impl GitHub {
         };
         let page = move |after: Option<String>| async move {
             let page = rest_page(after.as_deref());
-            let jobs = self.rest_json(&format!("{jobs_path}&page={page}")).await?;
+            let jobs_page = format!("{jobs_path}&page={page}");
+            let jobs = self
+                .rest_json(&jobs_page, format!("run {run}'s jobs"))
+                .await?;
             Ok(results(page, jobs))
         };
         let what = format!("run {run}'s jobs");
@@ -1830,7 +1881,8 @@ impl GitHub {
     /// A job and its steps.
     pub async fn job(&self, repo: &RepoId, job: u64) -> Result<browse::Job, ApiError> {
         let path = format!("/repos/{}/{}/actions/jobs/{job}", repo.owner, repo.name);
-        let job_wire: browse::rest_actions::Job = self.rest_json(&path).await?;
+        let what = format!("{repo}'s job {job}");
+        let job_wire: browse::rest_actions::Job = self.rest_json(&path, what).await?;
         let job = job_wire.into_job();
         Ok(self.kept(&browse::keys::job(repo, job.id), job).await)
     }
@@ -1860,7 +1912,7 @@ impl GitHub {
                 "this log has expired (GitHub keeps logs for the repository's retention period, 90 days by default)".into(),
             ));
         }
-        check_status(&response, &path)?;
+        check_status(&response, format!("{repo}'s job {job}'s log"))?;
         let (cut, text) = browse::log::cut(&response.body);
         Ok(browse::JobLog {
             text: text.to_owned(),
@@ -1877,7 +1929,8 @@ impl GitHub {
             repo.name,
             encode_path(file)
         );
-        let wire: browse::rest_actions::Workflow = self.rest_json(&path).await?;
+        let what = format!("{repo}'s workflow {file}");
+        let wire: browse::rest_actions::Workflow = self.rest_json(&path, what).await?;
         let workflow = browse::Workflow {
             name: wire.name,
             path: wire.path,
@@ -1905,7 +1958,8 @@ impl GitHub {
             repo.name,
             encode_path(file)
         );
-        let wire: browse::rest_actions::Runs = self.rest_json(&path).await?;
+        let what = format!("{repo}'s workflow {file}");
+        let wire: browse::rest_actions::Runs = self.rest_json(&path, what).await?;
         let runs = browse::Results {
             total: wire.total_count,
             items: wire
@@ -2402,12 +2456,19 @@ async fn backoff(attempt: u32) {
     tokio::time::sleep(Duration::from_millis(250 << attempt)).await;
 }
 
-/// A failed response's error. A 404 names what was asked for at `path`
-/// (`o/r/actions/jobs/2`): GitHub's message only says "Not Found".
-fn check_status(response: &Response, path: &str) -> Result<(), ApiError> {
+/// A failed response's error. A 404 names `what` was asked for: GitHub's
+/// message only says "Not Found". A 451 says why GitHub blocks it, and
+/// where its notice is.
+fn check_status(response: &Response, what: impl std::fmt::Display) -> Result<(), ApiError> {
     #[derive(serde::Deserialize)]
     struct Message {
         message: String,
+        block: Option<Block>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Block {
+        reason: Option<String>,
+        html_url: Option<String>,
     }
     let status = response.status;
     if status.is_success() {
@@ -2417,16 +2478,37 @@ fn check_status(response: &Response, path: &str) -> Result<(), ApiError> {
         return Err(ApiError::Unauthorized);
     }
     if status == StatusCode::NOT_FOUND {
-        let path = path.split('?').next().unwrap_or(path);
-        let asked = path.strip_prefix("/repos/").or(path.strip_prefix('/'));
-        return Err(ApiError::NotFound(asked.unwrap_or(path).to_owned()));
+        return Err(ApiError::NotFound(what.to_string()));
     }
-    let message = serde_json::from_str::<Message>(&response.body)
-        .map_or_else(|_| response.body.chars().take(200).collect(), |m| m.message);
+    let wire = serde_json::from_str::<Message>(&response.body).ok();
+    if status == StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS {
+        let block = wire.as_ref().and_then(|m| m.block.as_ref());
+        return Err(ApiError::Blocked(blocked_text(block.and_then(|b| {
+            Some((b.reason.as_deref()?, b.html_url.as_deref()))
+        }))));
+    }
+    let message = wire.map_or_else(|| response.body.chars().take(200).collect(), |m| m.message);
     Err(ApiError::Http {
         status: status.as_u16(),
         message,
     })
+}
+
+/// What a 451 says: GitHub blocks the repository, for `reason` (GitHub's
+/// word for it: `dmca`, `tos`, …), with a link to the notice.
+fn blocked_text(block: Option<(&str, Option<&str>)>) -> String {
+    let Some((reason, notice)) = block else {
+        return "GitHub blocks access to this repository for legal reasons.".into();
+    };
+    let why = match reason {
+        "dmca" => "a DMCA takedown notice".to_owned(),
+        "tos" => "a violation of its Terms of Service".to_owned(),
+        other => other.replace('_', " "),
+    };
+    match notice {
+        Some(url) => format!("GitHub blocks access to this repository because of {why}: {url}"),
+        None => format!("GitHub blocks access to this repository because of {why}."),
+    }
 }
 
 #[cfg(test)]

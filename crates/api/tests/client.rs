@@ -654,6 +654,8 @@ async fn an_organizations_discussions_are_found_past_the_first_page() {
             r#"{"data":{"search":{"discussionCount":9,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://github.com/orgs/acme/discussions/9","repository":{"nameWithOwner":"acme/community"}}]}}}"#,
         ),
         Reply::new(200, r#"{"data":{"repository":null}}"#),
+        // Not blocked: missing.
+        Reply::new(404, "{}"),
     ])
     .await;
     let of = ghtui_api::browse::DiscussionsOf::Org("acme".into());
@@ -662,7 +664,7 @@ async fn an_organizations_discussions_are_found_past_the_first_page() {
         matches!(result, Err(ApiError::NotFound(ref m)) if m.contains("acme/community")),
         "{result:?}"
     );
-    assert_eq!(seen.lock().unwrap().len(), 3);
+    assert_eq!(seen.lock().unwrap().len(), 4);
 }
 
 /// A searched pull request that's an open draft reads as a draft, through
@@ -1702,7 +1704,9 @@ async fn a_repository_gone_under_a_raw_query_is_not_found() {
         200,
         r#"{"data":{"repository":{"discussionCategories":{"totalCount":0,"nodes":[]}}}}"#,
     );
-    let (gh, _) = github(vec![categories, gone(), gone()]).await;
+    // Each is checked for being blocked, and isn't.
+    let missing = || Reply::new(404, "{}");
+    let (gh, _) = github(vec![categories, gone(), missing(), gone(), missing()]).await;
     let repo = RepoId::new("o", "r");
     let of = ghtui_api::browse::DiscussionsOf::Repo(repo.clone());
     let result = gh.discussions(&of, None, None).await;
@@ -1803,4 +1807,32 @@ async fn missing_stargazers_name_the_repository() {
         other => panic!("{other:?}"),
     }
     assert_eq!(gh.take_left_out(), Vec::<String>::new());
+}
+
+/// A repository GitHub blocks says so, why, and where the notice is, on
+/// every page: REST answers 451, and GraphQL calls it missing, so its
+/// "not found" is checked with REST.
+#[tokio::test]
+async fn a_blocked_repository_says_why_on_every_page() {
+    const BLOCKED: &str = r#"{"message":"Repository access blocked","block":{"reason":"dmca","created_at":"2025-01-03T15:17:52Z","html_url":"https://github.com/github/dmca/blob/master/2025/01/notice.md"}}"#;
+    let missing = r#"{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","path":["repository"],"message":"Could not resolve to a Repository with the name 'o/r'."}]}"#;
+    let says_why = |err: ApiError| {
+        let text = err.to_string();
+        assert!(matches!(err, ApiError::Blocked(_)), "{err:?}");
+        assert!(text.contains("DMCA") && text.contains("/notice.md"), "{text}");
+    };
+    let repo = RepoId::new("o", "r");
+    let (gh, seen) = github(vec![Reply::new(200, missing), Reply::new(451, BLOCKED)]).await;
+    says_why(gh.repo(&repo).await.unwrap_err());
+    assert!(seen.lock().unwrap()[1].request_line.starts_with("GET /repos/o/r "));
+    let (gh, _) = github(vec![Reply::new(451, BLOCKED)]).await;
+    says_why(gh.workflow_runs(&repo, "ci.yml", None).await.unwrap_err());
+
+    // One that's only missing is not found, by name.
+    let (gh, _) = github(vec![Reply::new(200, missing), Reply::new(404, "{}")]).await;
+    let err = gh.repo(&repo).await.unwrap_err();
+    assert_eq!(err.to_string(), "not found: o/r");
+    let (gh, _) = github(vec![Reply::new(404, r#"{"message":"Not Found"}"#)]).await;
+    let err = gh.job(&repo, 2).await.unwrap_err();
+    assert_eq!(err.to_string(), "not found: o/r's job 2");
 }
