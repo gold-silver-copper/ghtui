@@ -127,10 +127,13 @@ async fn run(started: Instant) -> Result<()> {
     let _log_guard = init_logging(&cache_dir);
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting");
 
+    // What the command line names, for its anchor (a comment, a file).
+    let named = match &cli.command {
+        Some(Command::Pr { target }) => Some(target.as_str()),
+        None => cli.target.as_deref(),
+    };
     let target = match (&cli.command, &cli.target) {
-        (Some(Command::Pr { target }), _) => {
-            Some(Target::Page(Route::pr(resolve_target(target).await?)))
-        }
+        (Some(Command::Pr { target }), _) => Some(resolve_pr(target).await?),
         (None, Some(target)) => Some(resolve_open(target).await?),
         (None, None) => None,
     };
@@ -182,7 +185,7 @@ async fn run(started: Instant) -> Result<()> {
             let external = matches!(target, Target::External(_));
             cmds.extend(state.start_at(target));
             // A link to a comment, a file in a diff, a review comment.
-            if let Some(url) = cli.target.as_deref().filter(|_| !external) {
+            if let Some(url) = named.filter(|_| !external) {
                 state.anchor_at(url);
             }
             cmds
@@ -279,6 +282,15 @@ async fn resolve_target(target: &str) -> Result<PrRef> {
         repo: RepoId::new(repo.owner, repo.name),
         number,
     })
+}
+
+/// The pull request `ghtui pr` opens: at the tab its URL names (Files
+/// changed for `/files`), else its conversation.
+async fn resolve_pr(target: &str) -> Result<Target> {
+    match Target::from_url(target) {
+        target @ (Target::Page(Route::Pr { .. }) | Target::Files(DiffOf::Pr(_))) => Ok(target),
+        _ => Ok(Target::Page(Route::pr(resolve_target(target).await?))),
+    }
 }
 
 /// The page to open from the command line.
