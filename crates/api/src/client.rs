@@ -15,7 +15,7 @@ use serde_json::Value;
 use crate::auth::Token;
 use crate::browse;
 use crate::model::{
-    Capped, Inbox, NewThread, NodeId, PatchFile, PendingReview, PrDetail, PrRef, PrSummary, RepoId,
+    Capped, ChecksState, NewThread, NodeId, PatchFile, PendingReview, PrDetail, PrRef, RepoId,
     ReviewEvent, ReviewThread, ViewedFiles,
 };
 use crate::queries::{self, nodes};
@@ -23,6 +23,8 @@ use crate::rate_limit::{RateLimits, retry_after};
 use crate::raw;
 
 const MAX_ATTEMPTS: u32 = 3;
+/// About when GitHub gives up on a request (it allows 10 seconds).
+const GITHUB_TIMEOUT: Duration = Duration::from_secs(9);
 /// Rate-limit waits longer than this are reported instead of slept through.
 const MAX_INLINE_WAIT_SECS: u64 = 10;
 
@@ -321,6 +323,7 @@ impl GitHub {
         loop {
             attempt += 1;
             let last = attempt >= MAX_ATTEMPTS;
+            let sent = std::time::Instant::now();
             let result = match request {
                 Request::Get { path, etag } => {
                     let mut get = client.get(format!("{}{path}", self.http.base_uri));
@@ -365,7 +368,10 @@ impl GitHub {
                 tokio::time::sleep(Duration::from_secs(wait.max(1))).await;
                 continue;
             }
-            if status.is_server_error() && !last && request.idempotent() {
+            // GitHub stops a request after 10 seconds: one that ran out of
+            // them would only run out again.
+            let timed_out = sent.elapsed() >= GITHUB_TIMEOUT;
+            if status.is_server_error() && !last && request.idempotent() && !timed_out {
                 tracing::debug!(%status, attempt, "server error; retrying");
                 backoff(attempt).await;
                 continue;
@@ -606,33 +612,6 @@ impl GitHub {
         }
         let user: User = self.rest_json("/user", "your account").await?;
         Ok(user.login)
-    }
-
-    pub fn cached_inbox(&self) -> Option<Cached<Inbox>> {
-        self.cached(INBOX_KEY)
-    }
-
-    /// My open PRs and the open PRs where my review is requested, fetched
-    /// as two concurrent searches.
-    pub async fn inbox(&self) -> Result<Inbox, ApiError> {
-        let (authored, requested) = tokio::try_join!(
-            self.search_prs(Inbox::AUTHORED),
-            self.search_prs(Inbox::REVIEW_REQUESTED),
-        )?;
-        let inbox = Inbox {
-            authored,
-            review_requested: requested,
-        };
-        Ok(self.kept(INBOX_KEY, inbox).await)
-    }
-
-    async fn search_prs(&self, query: &str) -> Result<Capped<PrSummary>, ApiError> {
-        let op = queries::SearchQuery::build(queries::SearchVariables {
-            query: query.to_owned(),
-            first: queries::INBOX_PAGE,
-        });
-        let data = self.graphql(op).await?;
-        Ok(crate::model::search_results(data.search))
     }
 
     pub fn cached_pull_request(&self, pr: &PrRef) -> Option<Cached<PrDetail>> {
@@ -986,12 +965,32 @@ impl GitHub {
             .await
     }
 
-    /// One page of search results (30 per page).
+    /// One page of search results: [`Self::search_showing`], whole.
     pub async fn search(
         &self,
         kind: browse::SearchKind,
         query: &str,
         after: Option<String>,
+    ) -> Result<browse::SearchResults, ApiError> {
+        self.search_showing(kind, query, after, |_| {}).await
+    }
+
+    /// One page of search results (30 per page). GitHub gives a request
+    /// 10 seconds and answers 502 past them, and a busy account's search
+    /// that also reads each pull request's checks runs out of them (25
+    /// with checks takes 5–6s across an organization like microsoft's, 50
+    /// times out). So the search reads none, `found` sees its page at
+    /// once, and the checks of the pull requests on it come from a second
+    /// request by ID, which takes 1–4s for 30. A search GitHub finds
+    /// nothing for is asked of REST too, which says why when it's a
+    /// mistake (a user or repository that isn't there) where GraphQL
+    /// quietly finds nothing.
+    pub async fn search_showing(
+        &self,
+        kind: browse::SearchKind,
+        query: &str,
+        after: Option<String>,
+        found: impl FnOnce(&browse::SearchResults) + Send,
     ) -> Result<browse::SearchResults, ApiError> {
         use browse::{SearchKind as Kind, SearchType};
         let first_page = after.is_none();
@@ -1003,11 +1002,9 @@ impl GitHub {
             Kind::Users => (SearchType::User, ""),
             Kind::Discussions | Kind::Commits | Kind::Code => {
                 let results = self.search_other(kind, query, after).await?;
-                if first_page {
-                    self.remember(&browse::keys::search(kind, query), results.clone())
-                        .await;
-                }
-                return Ok(results);
+                return Ok(self
+                    .kept_if(first_page, &browse::keys::search(kind, query), results)
+                    .await);
             }
         };
         let api_query = if query.contains("is:issue") || query.contains("is:pr") {
@@ -1015,12 +1012,73 @@ impl GitHub {
         } else {
             format!("{query}{is}")
         };
-        let results = self.search_as(kind, search_type, api_query, after).await?;
-        if first_page {
-            self.remember(&browse::keys::search(kind, query), results.clone())
-                .await;
+        let (mut results, prs) = self.search_as(kind, search_type, &api_query, after).await?;
+        if first_page
+            && results.counts().0 == 0
+            && kind != Kind::Users
+            && let Some(refused) = self.refusal(kind, &api_query).await
+        {
+            return Err(refused);
         }
-        Ok(results)
+        if !prs.is_empty() {
+            found(&results);
+            let checks = self.checks_of(prs).await;
+            if let browse::SearchResults::Issues(r) = &mut results {
+                for (item, checks) in r.items.iter_mut().zip(checks) {
+                    item.checks = item.checks.or(checks);
+                }
+            }
+        }
+        Ok(self
+            .kept_if(first_page, &browse::keys::search(kind, query), results)
+            .await)
+    }
+
+    /// The checks of each item, by its pull request's ID (`None`: not a
+    /// pull request). Checks are a decoration: without them, the rows still
+    /// show, so a failure is only logged.
+    async fn checks_of(&self, ids: Vec<Option<cynic::Id>>) -> Vec<Option<ChecksState>> {
+        let wanted: Vec<cynic::Id> = ids.iter().flatten().cloned().collect();
+        let op = queries::RollupsQuery::build(queries::NodesVariables { ids: wanted });
+        let by_id: std::collections::HashMap<String, Option<ChecksState>> =
+            match self.graphql(op).await {
+                Ok(q) => q
+                    .nodes
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|node| match node {
+                        queries::RollupNode::PullRequest(pr) => {
+                            Some((pr.id.into_inner(), crate::model::checks(&pr.commits)))
+                        }
+                        queries::RollupNode::Other => None,
+                    })
+                    .collect(),
+                Err(err) => {
+                    tracing::warn!(%err, "couldn't read the found pull requests' checks");
+                    Default::default()
+                }
+            };
+        ids.into_iter()
+            .map(|id| id.and_then(|id| by_id.get(id.inner()).copied().flatten()))
+            .collect()
+    }
+
+    /// GitHub's reason for refusing `query`, which GraphQL doesn't give:
+    /// asked of REST's search, which answers 422 with it.
+    async fn refusal(&self, kind: browse::SearchKind, query: &str) -> Option<ApiError> {
+        let what = match kind {
+            browse::SearchKind::Repos => "repositories",
+            _ => "issues",
+        };
+        let path = format!("/search/{what}?q={}&per_page=1", encode_query(query));
+        match self.rest_get(&path, "the search").await {
+            Err(err @ ApiError::Http { status: 422, .. }) => Some(err),
+            Err(err) => {
+                tracing::debug!(%err, "couldn't ask REST why a search found nothing");
+                None
+            }
+            Ok(_) => None,
+        }
     }
 
     /// A page of a discussion search (GraphQL), or of a commit or code
@@ -1094,17 +1152,18 @@ impl GitHub {
         }))
     }
 
-    /// A page of a search, as GitHub's API takes it.
+    /// A page of a search, as GitHub's API takes it, with each item's pull
+    /// request ID (for issues and pull requests).
     async fn search_as(
         &self,
         kind: browse::SearchKind,
         search_type: browse::SearchType,
-        query: String,
+        query: &str,
         after: Option<String>,
-    ) -> Result<browse::SearchResults, ApiError> {
+    ) -> Result<(browse::SearchResults, Vec<Option<cynic::Id>>), ApiError> {
         use browse::{BrowseItem, Results, SearchKind as Kind, SearchResults};
         let op = browse::BrowseSearch::build(browse::BrowseSearchVariables {
-            query,
+            query: query.to_owned(),
             kind: search_type,
             first: 30,
             after,
@@ -1113,6 +1172,7 @@ impl GitHub {
         let next = conn.page_info.next();
         let items = nodes(conn.nodes);
         let count = crate::model::count;
+        let mut prs = Vec::new();
         let results = match kind {
             Kind::Repos => SearchResults::Repos(Results {
                 total: count(conn.repository_count),
@@ -1126,7 +1186,17 @@ impl GitHub {
             }),
             Kind::Issues | Kind::Pulls => SearchResults::Issues(Results {
                 total: count(conn.issue_count),
-                items: items.filter_map(BrowseItem::into_issue).collect(),
+                items: items
+                    .filter_map(|i| {
+                        let id = match &i {
+                            BrowseItem::PullRequest(p) => Some(p.id.clone()),
+                            _ => None,
+                        };
+                        let issue = i.into_issue()?;
+                        prs.push(id);
+                        Some(issue)
+                    })
+                    .collect(),
                 next,
             }),
             Kind::Users | Kind::Discussions | Kind::Commits | Kind::Code => {
@@ -1137,7 +1207,10 @@ impl GitHub {
                 })
             }
         };
-        Ok(results)
+        if prs.iter().all(Option::is_none) {
+            prs.clear();
+        }
+        Ok((results, prs))
     }
 
     /// An issue; `None` when the number is a pull request (GitHub redirects
@@ -1642,10 +1715,11 @@ impl GitHub {
                 .search_as(
                     browse::SearchKind::Issues,
                     browse::SearchType::Issue,
-                    search,
+                    &search,
                     after,
                 )
                 .await?
+                .0
             {
                 browse::SearchResults::Issues(items) => items,
                 _ => browse::Results::default(),
@@ -2266,14 +2340,6 @@ impl GitHub {
         self.remember(key, value.clone()).await;
         value
     }
-
-    /// Repositories you own, most recently pushed first: your profile's
-    /// Repositories tab, which lists the rest.
-    pub async fn viewer_repos(&self) -> Result<Capped<browse::RepoSummary>, ApiError> {
-        let data = self.graphql(browse::ViewerReposQuery::build(())).await?;
-        let repos = browse::repo_list(data.viewer.repositories);
-        Ok(self.kept(browse::keys::VIEWER_REPOS, repos).await)
-    }
 }
 
 /// A query whose root GitHub never answers with null (`search`,
@@ -2281,9 +2347,8 @@ impl GitHub {
 /// about GitHub's schema: a query for one thing goes through
 /// [`GitHub::find`] instead.
 trait Unrooted {}
-impl Unrooted for queries::SearchQuery {}
+impl Unrooted for queries::RollupsQuery {}
 impl Unrooted for browse::BrowseSearch {}
-impl Unrooted for browse::ViewerReposQuery {}
 
 use reply::Reply;
 mod reply {
@@ -2516,8 +2581,6 @@ fn build_client(token: &str) -> Result<reqwest::Client, ApiError> {
         .map_err(|e| setup(&e))
 }
 
-const INBOX_KEY: &str = "inbox";
-
 fn pr_number(pr: &PrRef) -> Result<i32, ApiError> {
     i32::try_from(pr.number).map_err(|_| ApiError::NotFound(pr.to_string()))
 }
@@ -2570,6 +2633,13 @@ fn check_status(response: &Response, what: impl std::fmt::Display) -> Result<(),
     struct Message {
         message: String,
         block: Option<Block>,
+        /// What a 422 found wrong ("Validation Failed" says only that).
+        #[serde(default)]
+        errors: Vec<Detail>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Detail {
+        message: Option<String>,
     }
     #[derive(serde::Deserialize)]
     struct Block {
@@ -2593,7 +2663,21 @@ fn check_status(response: &Response, what: impl std::fmt::Display) -> Result<(),
             Some((b.reason.as_deref()?, b.html_url.as_deref()))
         }))));
     }
-    let message = wire.map_or_else(|| response.body.chars().take(200).collect(), |m| m.message);
+    let message = match wire {
+        Some(m) => {
+            let details: Vec<String> = m.errors.into_iter().filter_map(|d| d.message).collect();
+            if details.is_empty() {
+                m.message
+            } else {
+                details.join("; ")
+            }
+        }
+        // GitHub's gateway gave up: a page, not an answer.
+        None if matches!(status.as_u16(), 502 | 504) => {
+            "GitHub gave up on it (it stops after 10 seconds)".to_owned()
+        }
+        None => response.body.chars().take(200).collect(),
+    };
     Err(ApiError::Http {
         status: status.as_u16(),
         message,

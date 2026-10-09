@@ -44,9 +44,6 @@ pub struct Layout {
     pub status: Rect,
 }
 
-/// The search behind your review requests.
-pub const REVIEW_REQUESTS: &str = "is:open is:pr review-requested:@me archived:false";
-
 fn new_tab(icon: &'static str, label: &str, count: Option<u64>) -> PageTab {
     PageTab {
         icon,
@@ -66,17 +63,19 @@ impl State {
     fn screen_chrome(&self) -> Chrome {
         let mut c = Chrome::default();
         // Right: review requests and you.
-        if let Some(inbox) = &self.inbox.data {
-            let n = inbox.review_requested.total();
-            if n > 0 {
-                c.right.push((
-                    format!("⇄ {n} to review"),
-                    Target::Page(Route::Search {
-                        kind: SearchKind::Pulls,
-                        query: REVIEW_REQUESTS.into(),
-                    }),
-                ));
-            }
+        // Review requests, once their search (Home's first section, unless
+        // you changed it) is in.
+        let requests = DataKey::Search(SearchKind::Pulls, crate::home::REVIEW_REQUESTS.into());
+        if let Some(SearchResults::Issues(r)) = self.picked::<SearchResults>(&requests)
+            && r.total > 0
+        {
+            c.right.push((
+                format!("⇄ {} to review", r.total),
+                Target::Page(Route::Search {
+                    kind: SearchKind::Pulls,
+                    query: crate::home::REVIEW_REQUESTS.into(),
+                }),
+            ));
         }
         if let Some(login) = &self.viewer {
             c.right

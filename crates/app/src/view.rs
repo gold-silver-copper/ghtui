@@ -296,7 +296,7 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
         key(Action::ToggleViewed),
         key(Action::Comment),
         key(Action::ResolveThread),
-        key(Action::DeleteDraft),
+        key(Action::Delete),
         key(Action::FileComment),
     );
     DiffView {

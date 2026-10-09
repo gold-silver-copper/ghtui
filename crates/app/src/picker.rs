@@ -37,6 +37,17 @@ pub enum Kind {
     Commits { mark: Option<usize> },
     /// Recent notices and errors, newest first, as they were on opening.
     Messages(Vec<(u64, Notice)>),
+    /// A title for a Home section: the field is all of it.
+    SectionTitle(Titling),
+}
+
+/// What a section's title is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Titling {
+    /// A list saved to Home.
+    New { kind: SearchKind, query: String },
+    /// Home's section at `at`.
+    Rename { at: usize },
 }
 
 pub struct Picker {
@@ -53,6 +64,8 @@ impl Picker {
             Kind::Branches { .. } => "Switch branches/tags",
             Kind::Commits { .. } => "Commits",
             Kind::Messages(_) => "Messages",
+            Kind::SectionTitle(Titling::New { .. }) => "Save to Home",
+            Kind::SectionTitle(Titling::Rename { .. }) => "Rename the section",
         }
     }
 }
@@ -77,6 +90,8 @@ pub enum Choice {
     Copy(String),
     /// Go to open tab N (from 0).
     Tab(usize),
+    /// Title a Home section this.
+    Title(Titling, String),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -111,6 +126,7 @@ impl State {
             Kind::Branches { .. } => "Find a branch or tag",
             Kind::Commits { .. } => "space marks a range start · ↵ views · esc cancels",
             Kind::Messages(_) => "↵ copies a message",
+            Kind::SectionTitle(_) => "The section's title",
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
@@ -126,6 +142,16 @@ impl State {
             selected: 0,
         })));
         need.map_or_else(Vec::new, |key| self.ensure(Need::Data(key), false))
+    }
+
+    /// [`State::open_picker`], with `text` typed.
+    #[must_use]
+    pub fn open_picker_with(&mut self, kind: Kind, text: &str) -> Vec<Cmd> {
+        let cmds = self.open_picker(kind);
+        if let Some(Overlay::Picker(p)) = &mut self.overlay {
+            p.input.insert_str(text);
+        }
+        cmds
     }
 
     /// Go to file, or switch branches, for the code on screen.
@@ -176,6 +202,17 @@ impl State {
             Kind::DiffFiles => self.diff_file_rows(q),
             Kind::Commits { mark } => self.commit_rows(*mark),
             Kind::Messages(kept) => message_rows(kept, q, (self.clock)()),
+            Kind::SectionTitle(titling) => {
+                if q.is_empty() {
+                    return vec![(item("Type a title", ""), None)];
+                }
+                let label = match titling {
+                    Titling::New { query, .. } => format!("Add “{q}” to Home: {query}"),
+                    Titling::Rename { .. } => format!("Rename it “{q}”"),
+                };
+                let choice = Choice::Title(titling.clone(), q.to_owned());
+                vec![(item(label, "↵"), Some(choice))]
+            }
         }
     }
 
@@ -232,10 +269,12 @@ impl State {
         let (close, far): (Vec<_>, Vec<_>) = actions.into_iter().partition(|(s, _)| *s < 1000);
         // What doesn't apply here says why, as in the menu.
         let action = |(_, a): (usize, Action)| {
-            let why = doables
-                .iter()
-                .find(|d| d.action == a)
-                .and_then(|d| d.unavailable.as_ref());
+            let why = match doables.iter().find(|d| d.action == a) {
+                Some(d) => d.unavailable.clone(),
+                // Not offered here at all: why, for what has a reason.
+                None if crate::home::ACTIONS.contains(&a) => crate::home::unavailable(self, a),
+                None => None,
+            };
             let label = match why {
                 Some(why) => format!("{} ({why})", a.description()),
                 None => a.description().to_owned(),
@@ -492,6 +531,14 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
             vec![Cmd::Copy(text)]
         }
         Choice::Tab(i) => state.switch_to_tab(i),
+        Choice::Title(Titling::New { kind, query }, title) => {
+            let what = format!("Added “{title}” to Home");
+            state.edit_home(crate::home::Edit::Add { title, kind, query }, what)
+        }
+        Choice::Title(Titling::Rename { at }, title) => {
+            let what = format!("Renamed it “{title}”");
+            state.edit_home(crate::home::Edit::Rename { at, title }, what)
+        }
     }
 }
 

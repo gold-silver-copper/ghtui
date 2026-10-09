@@ -851,6 +851,8 @@ pub struct IssueCard {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequest", schema_module = "schema")]
 pub struct PrCard {
+    /// For its checks, read apart (see `GitHub::search`).
+    pub id: cynic::Id,
     pub number: i32,
     pub title: String,
     #[cynic(spread)]
@@ -4563,25 +4565,6 @@ pub struct Refs {
     pub tags: Capped<String>,
 }
 
-// ---- the viewer's repositories ---------------------------------------------------------
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", schema_module = "schema")]
-pub struct ViewerReposQuery {
-    pub viewer: ViewerRepos,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "User", schema_module = "schema")]
-pub struct ViewerRepos {
-    #[arguments(
-        first: 20,
-        orderBy: { field: PUSHED_AT, direction: DESC },
-        ownerAffiliations: [OWNER]
-    )]
-    pub repositories: RepoList,
-}
-
 /// Cache keys for browsed pages.
 pub mod keys {
     use super::SearchKind;
@@ -4707,7 +4690,6 @@ pub mod keys {
     pub const VISITS: &str = "visits";
     /// The tabs open when ghtui last quit.
     pub const TABS: &str = "tabs";
-    pub const VIEWER_REPOS: &str = "viewer-repos";
 }
 
 // ---- conversions ---------------------------------------------------------------------

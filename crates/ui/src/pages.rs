@@ -16,8 +16,8 @@ use ghtui_api::browse::{
     WorkflowRun,
 };
 use ghtui_api::model::{
-    Capped, ChecksState, Inbox, Label, Mergeable, MilestoneRef, PrDetail, PrRef, PrSummary,
-    Readiness, RepoId, ReviewDecision, ReviewState,
+    Capped, ChecksState, Label, Mergeable, MilestoneRef, PrDetail, PrRef, Readiness, RepoId,
+    ReviewDecision, ReviewState,
 };
 use ghtui_theme::{Bg, Syntax};
 
@@ -1554,7 +1554,23 @@ fn repo_row(page: &mut Page, r: &RepoSummary, now: u64, show_owner: bool) {
     });
 }
 
-fn issue_row(page: &mut Page, i: &IssueSummary, show_repo: bool, icons: Icons, now: u64) {
+/// Whether a list's search orders it by when its items were updated, so
+/// its rows say that time rather than when they were opened.
+fn by_update(query: &str) -> bool {
+    query
+        .split_whitespace()
+        .any(|w| w.starts_with("sort:updated"))
+}
+
+/// An issue's or pull request's row; with `updated`, it says when it was
+/// last updated (the list's order) rather than opened.
+fn issue_row(
+    page: &mut Page,
+    i: &IssueSummary,
+    (show_repo, updated): (bool, bool),
+    icons: Icons,
+    now: u64,
+) {
     let (icon, role) = issue_icon(icons, i.state, i.is_pr);
     let target = if i.is_pr {
         url::pull(&PrRef {
@@ -1585,7 +1601,7 @@ fn issue_row(page: &mut Page, i: &IssueSummary, show_repo: bool, icons: Icons, n
         labels(&mut segs, &i.labels);
         hanging(page, Seg::new(format!("{icon} "), role), segs, Frame::Body);
         // GitHub's second line: `#12 opened 3 days ago by octocat · Approved`.
-        let (verb, at) = if i.created_at.is_empty() {
+        let (verb, at) = if i.created_at.is_empty() || updated {
             ("updated", &i.updated_at)
         } else {
             ("opened", &i.created_at)
@@ -1760,8 +1776,9 @@ pub fn issue_list(
         return;
     };
     let empty = "No results matched your search.";
+    let updated = by_update(query);
     list_box(page, title, vec![sort], r, empty, |page, i| {
-        issue_row(page, i, false, icons, now);
+        issue_row(page, i, (false, updated), icons, now);
     });
 }
 
@@ -1804,7 +1821,7 @@ pub fn search(
     match results {
         SearchResults::Repos(r) => box_rows(page, r, |page, r| repo_row(page, r, now, true)),
         SearchResults::Issues(r) => box_rows(page, r, |page, i| {
-            issue_row(page, i, true, icons, now);
+            issue_row(page, i, (true, by_update(query)), icons, now);
         }),
         SearchResults::Users(r) => box_rows(page, r, user_row),
         SearchResults::Discussions(r) => box_rows(page, r, |page, hit| {
@@ -3733,8 +3750,9 @@ pub fn milestone(page: &mut Page, repo: &RepoId, d: &MilestoneDetail, icons: Ico
     } else {
         "Nothing in this milestone."
     };
+    // Most recently updated first.
     list_box(page, title, Vec::new(), r, empty, |page, i| {
-        issue_row(page, i, false, icons, now);
+        issue_row(page, i, (false, true), icons, now);
     });
 }
 // ---- commits -------------------------------------------------------------------------------
@@ -4200,71 +4218,134 @@ fn top_languages(repos: &[RepoSummary]) -> Vec<(String, usize)> {
 
 // ---- home -----------------------------------------------------------------------------------
 
-pub fn home(
-    page: &mut Page,
-    inbox: Fetched<'_, Inbox>,
-    repos: Fetched<'_, Capped<RepoSummary>>,
-    viewer: Option<&str>,
-    icons: Icons,
-    now: u64,
-) {
-    let pr_box =
-        |page: &mut Page, title: &str, prs: &Capped<PrSummary>, query: &str, empty: &str| {
-            let prs = At(prs, Some(url::search(SearchKind::Pulls, query)));
-            let title = vec![
-                Seg::new(title.to_owned(), Role::Strong),
-                Seg::new(format!("  {}", count_of(&prs)), Role::Meta),
-            ];
-            list_box(page, title, Vec::new(), &prs, empty, |page, p| {
-                let summary = IssueSummary {
-                    repo: p.pr.repo.clone(),
-                    number: p.pr.number,
-                    title: p.title.clone(),
-                    is_pr: true,
-                    state: p.state,
-                    author: p.author.clone(),
-                    updated_at: p.updated_at.clone(),
-                    comments: p.comments,
-                    labels: Capped::default(),
-                    created_at: String::new(),
-                    review: p.review,
-                    checks: p.checks,
-                };
-                issue_row(page, &summary, true, icons, now);
-            });
+/// One of Home's sections: the first rows of a search.
+pub struct HomeSection<'a> {
+    pub title: &'a str,
+    /// Its search, or what's wrong with how it's written.
+    pub search: Result<SectionSearch<'a>, &'a String>,
+}
+
+pub struct SectionSearch<'a> {
+    pub kind: SearchKind,
+    pub query: &'a str,
+    pub rows: usize,
+    pub results: Fetched<'a, SearchResults>,
+}
+
+/// The first rows of a search's results, the rest listed at `url`.
+struct Start<'a, T> {
+    list: &'a Results<T>,
+    rows: usize,
+    url: String,
+}
+
+impl<T> Rows<T> for Start<'_, T> {
+    fn rows(&self) -> &[T] {
+        self.list.items.get(..self.rows).unwrap_or(&self.list.items)
+    }
+    fn rest(&self) -> Rest {
+        let shown = self.rows().len() as u64;
+        let total = self.list.total.max(self.list.items.len() as u64);
+        match total - shown {
+            0 => Rest::All,
+            n => Rest::At(n, self.url.clone()),
+        }
+    }
+}
+
+/// Home: each section a box of its search's first rows, titled with how
+/// many of how many, ending in a row that opens the rest. A section that
+/// fails, or is written wrong, says why in its box; the others show.
+pub fn home(page: &mut Page, sections: &[HomeSection<'_>], icons: Icons, now: u64) {
+    if sections.is_empty() {
+        page.box_top(vec![Seg::new("Home", Role::Strong)], Vec::new());
+        empty_row(
+            page,
+            "No sections. Add a search from its list (in the Space menu), or as [[home]] in config.toml.",
+        );
+        page.box_bottom();
+    }
+    for (i, section) in sections.iter().enumerate() {
+        if i > 0 {
+            page.blank();
+        }
+        page.anchor(format!("section-{i}"));
+        let title = |count: Option<String>| {
+            let mut t = vec![Seg::new(section.title.to_owned(), Role::Strong)];
+            t.extend(count.map(|c| Seg::new(format!("  {c}"), Role::Meta)));
+            t
         };
-    let review_requests = vec![Seg::new("Review requests", Role::Strong)];
-    if let Some(inbox) = inbox.show_or(page, "your pull requests", |page| {
-        loading_box(page, review_requests);
-    }) {
-        pr_box(
-            page,
-            "Review requests",
-            &inbox.review_requested,
-            Inbox::REVIEW_REQUESTED,
-            "Nothing is waiting for your review.",
-        );
-        pr_box(
-            page,
-            "Your pull requests",
-            &inbox.authored,
-            Inbox::AUTHORED,
-            "You have no open pull requests.",
-        );
+        let failed = |page: &mut Page, why: &str| {
+            page.box_top(title(None), Vec::new());
+            section_note(page, i, why, Role::Error);
+            page.box_bottom();
+        };
+        let search = match &section.search {
+            Ok(search) => search,
+            Err(why) => {
+                failed(page, &format!("This section is written wrong: {why}."));
+                continue;
+            }
+        };
+        let loading = |page: &mut Page| loading_box(page, title(None));
+        let what = section.title.to_lowercase();
+        let Some(results) = search.results.show_with(page, &what, loading, failed) else {
+            continue;
+        };
+        let url = url::search(search.kind, search.query);
+        let noun = match search.kind {
+            SearchKind::Repos => "repositories",
+            SearchKind::Pulls => "pull requests",
+            _ => "issues",
+        };
+        let empty = format!("No {noun} match “{}”.", search.query);
+        let rows = search.rows;
+        match results {
+            SearchResults::Issues(list) => {
+                let start = Start { list, rows, url };
+                let title = title(Some(count_of(&start)));
+                section_box(page, title, &start, (i, &empty), |page, it| {
+                    issue_row(page, it, (true, by_update(search.query)), icons, now);
+                });
+            }
+            SearchResults::Repos(list) => {
+                let start = Start { list, rows, url };
+                let title = title(Some(count_of(&start)));
+                section_box(page, title, &start, (i, &empty), |page, r| {
+                    repo_row(page, r, now, true);
+                });
+            }
+            _ => failed(page, "GitHub sent the wrong kind of results"),
+        }
     }
-    // The same list as your profile's Repositories tab, which opens the rest.
-    let all = viewer.map(|login| format!("{}?tab=repositories", url::user(login)));
-    let title = vec![Seg::new("Your repositories", Role::Strong)];
-    let loading = |page: &mut Page| loading_box(page, title.clone());
-    if let Some(repos) = repos.show_or(page, "your repositories", loading) {
-        let empty = "You don't have any repositories yet.";
-        let repos = At(repos, all);
-        let mut title = title;
-        title.push(Seg::new(format!("  {}", count_of(&repos)), Role::Meta));
-        list_box(page, title, Vec::new(), &repos, empty, |page, r| {
-            repo_row(page, r, now, true);
-        });
+}
+
+/// A section's box of rows; with none, its `empty` note.
+fn section_box<T>(
+    page: &mut Page,
+    title: Vec<Seg>,
+    start: &Start<'_, T>,
+    (i, empty): (usize, &str),
+    row: impl FnMut(&mut Page, &T),
+) {
+    page.box_top(title, Vec::new());
+    if start.rows().is_empty() {
+        section_note(page, i, empty, Role::Meta);
     }
+    box_rows(page, start, row);
+    page.box_bottom();
+}
+
+/// A row that's section `i`'s own (opening its list, or saying what's
+/// wrong), so every section has a row to select and change it by.
+fn section_note(page: &mut Page, i: usize, text: &str, role: Role) {
+    item(page, Link::Section(i), |page, link| {
+        page.wrapped(
+            vec![Seg::linked(text.to_owned(), role, link)],
+            0,
+            Frame::Body,
+        );
+    });
 }
 
 #[cfg(test)]

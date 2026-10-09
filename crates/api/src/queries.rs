@@ -154,42 +154,41 @@ pub struct PageVariables {
     pub after: Option<String>,
 }
 
-// ---- inbox: my PRs and review requests ------------------------------------
+// ---- checks on the pull requests a search found ------------------------------
 
-/// Search results per inbox section. Larger pages with check rollups make
-/// GitHub's search time out (502) for busy accounts.
-pub const INBOX_PAGE: i32 = 25;
-
+/// Pull requests by ID, for their checks: a search finds them, and this
+/// reads their checks apart, so neither request runs into GitHub's
+/// 10-second limit (see `GitHub::search`).
 #[derive(cynic::QueryVariables, Debug)]
-pub struct SearchVariables {
-    pub query: String,
-    pub first: i32,
+pub struct NodesVariables {
+    pub ids: Vec<cynic::Id>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(
     graphql_type = "Query",
     schema_module = "schema",
-    variables = "SearchVariables"
+    variables = "NodesVariables"
 )]
-pub struct SearchQuery {
-    #[arguments(query: $query, type: ISSUE, first: $first)]
-    pub search: SearchConnection,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "SearchResultItemConnection", schema_module = "schema")]
-pub struct SearchConnection {
-    pub issue_count: i32,
-    pub nodes: Option<Vec<Option<SearchItem>>>,
+pub struct RollupsQuery {
+    #[arguments(ids: $ids)]
+    pub nodes: Vec<Option<RollupNode>>,
 }
 
 #[derive(cynic::InlineFragments, Debug)]
-#[cynic(graphql_type = "SearchResultItem", schema_module = "schema")]
-pub enum SearchItem {
-    PullRequest(PrSummary),
+#[cynic(graphql_type = "Node", schema_module = "schema")]
+pub enum RollupNode {
+    PullRequest(PrRollup),
     #[cynic(fallback)]
     Other,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequest", schema_module = "schema")]
+pub struct PrRollup {
+    pub id: cynic::Id,
+    #[arguments(last: 1)]
+    pub commits: CommitRollupConnection,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -833,20 +832,6 @@ pub struct ReviewCommit {
 mod tests {
     use super::*;
     use cynic::{MutationBuilder, QueryBuilder};
-
-    #[test]
-    fn search_query_shape() {
-        let op = SearchQuery::build(SearchVariables {
-            query: "is:pr".into(),
-            first: INBOX_PAGE,
-        });
-        assert!(
-            op.query
-                .contains("search(query: $query, type: ISSUE, first: $first)"),
-            "{}",
-            op.query
-        );
-    }
 
     #[test]
     fn viewed_mutations_shape() {

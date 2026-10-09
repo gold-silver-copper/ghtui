@@ -11,7 +11,7 @@ use ghtui_api::browse::{
     RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo,
     TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage, Workflow, WorkflowRun,
 };
-use ghtui_api::model::{Capped, PrRef, RepoId};
+use ghtui_api::model::{PrRef, RepoId};
 use ghtui_ui::Fetched;
 use ghtui_ui::page::{Page, PageLine, Role, Seg};
 use ghtui_ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
@@ -36,7 +36,6 @@ pub enum DataKey {
     Issue(RepoId, u64),
     PrActivity(PrRef),
     Profile(String),
-    ViewerRepos,
     /// Every file path at a revision ("Go to file").
     Files(RepoId, String),
     /// Branches and tags.
@@ -102,7 +101,6 @@ pub enum Data {
     Issue(Option<Box<IssueDetail>>),
     PrActivity(Box<PrActivity>),
     Profile(Box<Profile>),
-    Repos(Capped<RepoSummary>),
     /// Paths, and whether GitHub cut the list short.
     Files(Arc<Vec<String>>, bool),
     Refs(Box<Refs>),
@@ -258,11 +256,12 @@ pub fn paged(route: &Route) -> Option<DataKey> {
 /// What a page needs fetched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Need {
-    Inbox,
     Pr(PrRef),
     Data(DataKey),
 }
 
+/// What a page needs fetched, but Home's (its sections are the state's:
+/// [`State::needs`]).
 pub fn needs(route: &Route) -> Vec<Need> {
     use DataKey as K;
     let header = |repo: &RepoId| Need::Data(K::Repo(repo.clone()));
@@ -270,7 +269,7 @@ pub fn needs(route: &Route) -> Vec<Need> {
         .search()
         .map(|(kind, query)| Need::Data(K::Search(kind, query)));
     match route {
-        Route::Home => vec![Need::Inbox, Need::Data(K::ViewerRepos)],
+        Route::Home => Vec::new(),
         Route::Repo(repo) => vec![
             header(repo),
             Need::Data(K::Readme(repo.clone())),
@@ -422,7 +421,7 @@ macro_rules! picked {
 picked!(
     Repo => RepoOverview, Readme => Option<Box<Readme>>, Tree => [TreeEntry], Blob => Blob,
     Search => SearchResults, Issue => Option<Box<IssueDetail>>, PrActivity => PrActivity,
-    Profile => Profile, Repos => Capped<RepoSummary>, Refs => Refs, RefIn => Option<String>,
+    Profile => Profile, Refs => Refs, RefIn => Option<String>,
     LastCommits => HashMap<String, CommitInfo>, Commit => CommitDetail,
     History => Results<CommitInfo>, Checks => Checks, Users => Results<UserSummary>,
     RepoPage => Results<RepoSummary>, Releases => Results<Release>,
@@ -478,8 +477,7 @@ impl State {
 
     /// How a page's fetches are going (the ones that have started).
     pub(crate) fn fetches(&self, route: &Route) -> impl Iterator<Item = Remote<()>> {
-        needs(route).into_iter().filter_map(|need| match need {
-            Need::Inbox => Some(self.inbox.status()),
+        self.needs(route).into_iter().filter_map(|need| match need {
             Need::Pr(pr) => self.prs.get(&pr).map(Remote::status),
             Need::Data(key) => self.data.get(&key).map(Remote::status),
         })
@@ -561,14 +559,20 @@ impl State {
         let title = route.title();
         match route {
             Route::Home => {
-                pages::home(
-                    &mut page,
-                    f.of(Some(&self.inbox)),
-                    f.get(&DataKey::ViewerRepos),
-                    self.viewer.as_deref(),
-                    icons,
-                    now,
-                );
+                let sections: Vec<pages::HomeSection<'_>> = self
+                    .home
+                    .iter()
+                    .map(|s| pages::HomeSection {
+                        title: &s.title,
+                        search: s.search.as_ref().map(|q| pages::SectionSearch {
+                            kind: q.kind,
+                            query: &q.query,
+                            rows: q.rows,
+                            results: f.get(&q.key()),
+                        }),
+                    })
+                    .collect();
+                pages::home(&mut page, &sections, icons, now);
             }
             Route::Repo(repo) => {
                 let overview = f.get(&DataKey::Repo(repo.clone()));

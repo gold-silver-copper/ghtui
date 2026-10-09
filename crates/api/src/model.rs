@@ -327,21 +327,6 @@ pub struct PrSummary {
     pub checks: Option<ChecksState>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Inbox {
-    /// The most recently updated of GitHub's matches.
-    pub authored: Capped<PrSummary>,
-    pub review_requested: Capped<PrSummary>,
-}
-
-impl Inbox {
-    /// The searches for [`Inbox::authored`] and [`Inbox::review_requested`],
-    /// which also list them all.
-    pub const AUTHORED: &str = "is:open is:pr author:@me archived:false sort:updated-desc";
-    pub const REVIEW_REQUESTED: &str =
-        "is:open is:pr review-requested:@me archived:false sort:updated-desc";
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrDetail {
     /// What changes name it by.
@@ -552,7 +537,7 @@ pub struct NewThread {
 
 // ---- conversions from the wire types ---------------------------------------
 
-fn checks(commits: &q::CommitRollupConnection) -> Option<ChecksState> {
+pub(crate) fn checks(commits: &q::CommitRollupConnection) -> Option<ChecksState> {
     let rollup = commits
         .nodes
         .as_ref()?
@@ -617,17 +602,6 @@ impl PrSummary {
             checks: checks(&pr.commits),
         })
     }
-}
-
-/// PRs from one search, of GitHub's total match count.
-pub(crate) fn search_results(conn: q::SearchConnection) -> Capped<PrSummary> {
-    let prs = nodes(conn.nodes)
-        .filter_map(|item| match item {
-            q::SearchItem::PullRequest(pr) => PrSummary::from_wire(pr),
-            q::SearchItem::Other => None,
-        })
-        .collect();
-    Capped::new(prs, count(conn.issue_count))
 }
 
 impl PrDetail {

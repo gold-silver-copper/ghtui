@@ -34,7 +34,7 @@ Buffer {
         "                                           Added  notes.txt                                                                                                                                      +2 −0  ",
         "                                                    @@ -0,0 +1,2 @@                                                                                                                                     ",
         "                                                                                                                             1  + first                                                                 ",
-        "  ⠋ Diffing 7/8 files   space menu   n/p change   ⇧↓ file   v viewed   c comment   a submit review   ←→ tabs   o browser                                                                 API 4987/5000  ",
+        "  ⠋ Diffing 7/8 files   space menu   n/p change   ⇧↓ file   v viewed   c comment   a submit review   M merge   A approve                                                                 API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
@@ -480,7 +480,7 @@ Buffer {
         x: 84, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 98, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 101, y: 29, fg: Rgb(50, 83, 131), bg: Rgb(237, 237, 244), underline: Reset, modifier: BOLD,
-        x: 103, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 102, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 108, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 111, y: 29, fg: Rgb(50, 83, 131), bg: Rgb(237, 237, 244), underline: Reset, modifier: BOLD,
         x: 112, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,

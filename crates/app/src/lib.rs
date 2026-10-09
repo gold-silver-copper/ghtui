@@ -11,6 +11,7 @@ mod diff_job;
 mod diff_screen;
 #[cfg(test)]
 mod fixtures;
+mod home;
 mod join;
 mod keymap;
 mod nav;
@@ -165,7 +166,16 @@ async fn run(started: Instant) -> Result<()> {
             format!("Drafts are not being saved: {err}"),
         );
     }
-    state.inbox = Remote::cached(gh.cached_inbox());
+    // Home's sections, shown from the cache at once.
+    state.home = home::sections(config.home.as_deref());
+    state.config_path = config_path.clone();
+    for need in state.home_needs() {
+        if let browse::Need::Data(key) = need {
+            let cached = runtime::cached_data(&gh, &key)
+                .map(|(value, fetched_at)| ghtui_store::Cached { value, fetched_at });
+            state.data.insert(key, Remote::cached(cached));
+        }
+    }
     let tabs = gh
         .cached::<Vec<String>>(ghtui_api::browse::keys::TABS)
         .map(|c| c.value)

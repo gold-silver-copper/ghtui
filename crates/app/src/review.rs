@@ -708,7 +708,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 resolved,
             })]
         }
-        Action::DeleteDraft => {
+        Action::Delete => {
             let Some(AnnotationKey::Draft(id)) = annotation.map(|a| a.key) else {
                 return notice(
                     state,

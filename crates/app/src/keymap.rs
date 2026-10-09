@@ -112,6 +112,8 @@ actions! {
     UpdateBranch      "update_branch"     ["B"]                Global "Update the branch from its base";
     Close             "close"             ["X"]                Global "Close or reopen; on a running run, cancel it";
     Rerun             "rerun"             ["<C-r>"]            Global "Re-run the workflow run or job";
+    Delete            "delete"            ["<Delete>"]         Global "Delete the selection (a draft comment, a Home section)";
+    UndoDelete        "undo_delete"       ["<C-z>"]            Global "Bring back what was just deleted";
     Quit              "quit"              ["q", "<C-c>"]       Global "Quit";
 
     Star              "star"              ["s"]                Page   "Star / unstar";
@@ -120,6 +122,10 @@ actions! {
     HintsBrowser      "hints_browser"     ["I"]                Page   "Follow a link, in the browser";
     ToggleState       "toggle_state"      []                   Page   "Open / closed / all";
     Sort              "sort"              []                   Page   "Change the sort";
+    SaveSection       "save_to_home"      []                   Page   "Save this list as a Home section";
+    RenameSection     "rename_section"    []                   Page   "Rename the Home section";
+    MoveSectionUp     "move_section_up"   ["<A-Up>"]           Page   "Move the Home section up";
+    MoveSectionDown   "move_section_down" ["<A-Down>"]         Page   "Move the Home section down";
 
     NextHunk          "next_hunk"         ["n"]                Global "Next change (or search match)";
     PrevHunk          "prev_hunk"         ["p"]                Global "Previous change (or search match)";
@@ -147,8 +153,6 @@ actions! {
     Suggest           "suggest"           []                   Diff   "Suggest a change (opens $EDITOR)";
     FileComment       "file_comment"      ["C"]                Diff   "Comment on the whole file";
     ResolveThread     "resolve"           ["R"]                Diff   "Resolve or unresolve the thread";
-    DeleteDraft       "delete_draft"      ["<Delete>"]         Diff   "Delete the draft comment";
-    UndoDelete        "undo_delete"       ["<C-z>"]            Diff   "Bring back the draft just deleted";
     SubmitReview      "submit_review"     ["a"]                Diff   "Submit your review";
 }
 
@@ -524,6 +528,9 @@ mod tests {
             ("`B`", &[UpdateBranch]),
             ("`X`", &[Close]),
             ("`ctrl-r`", &[Rerun]),
+            ("`alt-↑` `alt-↓`", &[MoveSectionUp, MoveSectionDown]),
+            ("`Delete`", &[Delete]),
+            ("`ctrl-z`", &[UndoDelete]),
             ("`n` `p`", &[NextHunk, PrevHunk]),
             ("`o`", &[OpenInBrowser]),
             ("`y`", &[Copy]),
@@ -559,7 +566,7 @@ mod tests {
             ("`J`", &[JumpMove]),
             ("`w`", &[IgnoreWhitespace]),
             ("`a`", &[SubmitReview]),
-            ("`Delete`", &[DeleteDraft]),
+            ("`Delete`", &[Delete]),
             ("`ctrl-z`", &[UndoDelete]),
         ];
         let notation = |shown: &str| match shown {
@@ -577,6 +584,8 @@ mod tests {
             "PgDn" => "<PageDown>".to_owned(),
             "alt-←" => "<A-Left>".to_owned(),
             "alt-→" => "<A-Right>".to_owned(),
+            "alt-↑" => "<A-Up>".to_owned(),
+            "alt-↓" => "<A-Down>".to_owned(),
             "ctrl-k" => "<C-k>".to_owned(),
             "ctrl-r" => "<C-r>".to_owned(),
             "ctrl-c" => "<C-c>".to_owned(),
