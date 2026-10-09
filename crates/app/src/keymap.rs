@@ -125,6 +125,8 @@ actions! {
     PrevHunk          "prev_hunk"         ["p"]                Global "Previous change (or search match)";
     NextFile          "next_file"         ["<S-Down>"]         Diff   "Next file";
     PrevFile          "prev_file"         ["<S-Up>"]           Diff   "Previous file";
+    OldSide           "old_side"          ["<S-Left>"]         Diff   "Old side of a split row (for comments)";
+    NewSide           "new_side"          ["<S-Right>"]        Diff   "New side of a split row (for comments)";
     NextUnviewed      "next_unviewed"     ["U"]                Diff   "Next unviewed file";
     NextThread        "next_thread"       ["N"]                Diff   "Next unresolved thread";
     PrevThread        "prev_thread"       ["P"]                Diff   "Previous unresolved thread";
@@ -541,6 +543,7 @@ mod tests {
             ("`n` `p`", &[NextHunk, PrevHunk]),
             ("`N` `P`", &[NextThread, PrevThread]),
             ("`⇧↓` `⇧↑`", &[NextFile, PrevFile]),
+            ("`⇧←` `⇧→`", &[OldSide, NewSide]),
             ("`⇥`", &[SwitchPane]),
             ("`U`", &[NextUnviewed]),
             ("`v`", &[ToggleViewed]),
@@ -568,6 +571,8 @@ mod tests {
             "⇥" => "<Tab>".to_owned(),
             "⇧↓" => "<S-Down>".to_owned(),
             "⇧↑" => "<S-Up>".to_owned(),
+            "⇧←" => "<S-Left>".to_owned(),
+            "⇧→" => "<S-Right>".to_owned(),
             "PgUp" => "<PageUp>".to_owned(),
             "PgDn" => "<PageDown>".to_owned(),
             "alt-←" => "<A-Left>".to_owned(),

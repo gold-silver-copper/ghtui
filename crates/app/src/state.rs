@@ -1094,7 +1094,11 @@ fn diff_action(state: &mut State, action: Action) -> Vec<Cmd> {
     let content = state.layout().content;
     let on_annotation = match (state.screen(), state.diff()) {
         (Screen::Diff(screen), Some(diff)) => {
-            screen.focus == Pane::Diff && diff.doc.annotation_at(screen.cursor).is_some()
+            screen.focus == Pane::Diff
+                && diff
+                    .doc
+                    .annotation_under(screen.cursor, screen.half)
+                    .is_some()
         }
         _ => false,
     };

@@ -198,10 +198,15 @@ pub fn suggestion_body(suggested: &str) -> String {
     format!("```suggestion\n{}\n```", suggested.trim_end_matches('\n'))
 }
 
-/// Where a new comment goes, from the cursor or a visual selection. Lines
-/// GitHub won't accept become a file comment (with the reason); a range that
-/// crosses GitHub's hunks is refused.
-pub fn target(doc: &Doc, cursor: Pos, selection: Option<Pos>) -> Result<ComposeTarget, String> {
+/// Where a new comment goes, from the cursor or a visual selection (on
+/// `half` of split rows). Lines GitHub won't accept become a file comment
+/// (with the reason); a range that crosses GitHub's hunks is refused.
+pub fn target(
+    doc: &Doc,
+    cursor: Pos,
+    half: Side,
+    selection: Option<Pos>,
+) -> Result<ComposeTarget, String> {
     let file = doc.files().get(cursor.file).ok_or("No file here")?;
     let path = file.meta.path().to_owned();
     let (from, to) = match selection {
@@ -216,7 +221,7 @@ pub fn target(doc: &Doc, cursor: Pos, selection: Option<Pos>) -> Result<ComposeT
         }
     };
     let lines: Vec<LinePos> = (from..=to)
-        .filter_map(|g| doc.line_at(doc.to_pos(g)))
+        .filter_map(|g| doc.line_at(doc.to_pos(g), half))
         .collect();
     let (Some(&start), Some(&end)) = (lines.first(), lines.last()) else {
         return Ok(ComposeTarget::File { path, reason: None });
@@ -520,9 +525,9 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         state.info(format!("{}: on pull requests", action.description()));
         return Vec::new();
     };
-    let cursor = screen.cursor;
+    let (cursor, half) = (screen.cursor, screen.half);
     // The thread or draft under the cursor.
-    let at = diff.doc.annotation_at(cursor);
+    let at = diff.doc.annotation_under(cursor, half);
     let annotation = at
         .and_then(|i| diff.doc.annotations().get(i as usize))
         .cloned();
@@ -603,7 +608,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::Comment => {
             let selection = screen.selection.take();
-            match target(&diff.doc, cursor, selection) {
+            match target(&diff.doc, cursor, half, selection) {
                 Ok(target) => {
                     if let ComposeTarget::File {
                         reason: Some(reason),
@@ -642,7 +647,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::Suggest => {
             let selection = screen.selection.take();
-            let target = match target(&diff.doc, cursor, selection) {
+            let target = match target(&diff.doc, cursor, half, selection) {
                 Ok(target) => target,
                 Err(err) => return notice(state, Notice::Error(err)),
             };

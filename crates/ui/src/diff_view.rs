@@ -52,6 +52,8 @@ pub struct DiffView<'a> {
     pub ctx: Ctx<'a>,
     pub doc: &'a Doc,
     pub cursor: Pos,
+    /// The half of a split row the cursor asks for.
+    pub half: Side,
     /// First visible row.
     pub top: Pos,
     pub keys: Keys<'a>,
@@ -137,8 +139,11 @@ impl DiffView<'_> {
             }
             Row::Line(e) => self.line(pos, Some(e), None, cursor, area, buf),
             Row::Split { left, right } => {
-                // Two halves with a column of context tint between them.
-                fill(buf, area, theme, line_bg(DiffBg::Context, cursor));
+                // Two halves with a column of context tint between them;
+                // the cursor is on one half.
+                fill(buf, area, theme, line_bg(DiffBg::Context, false));
+                let on = self.doc.half_at(pos, self.half);
+                let cursor = |side| cursor && on == Some(side);
                 let half = area.width.saturating_sub(1) / 2;
                 let right_area = Rect {
                     x: area.x + half + 1,
@@ -149,8 +154,13 @@ impl DiffView<'_> {
                     width: half,
                     ..area
                 };
-                self.line(pos, left, Some(Side::Left), cursor, left_area, buf);
-                self.line(pos, right, Some(Side::Right), cursor, right_area, buf);
+                let halves = [
+                    (left, Side::Left, left_area),
+                    (right, Side::Right, right_area),
+                ];
+                for (entry, side, area) in halves {
+                    self.line(pos, entry, Some(side), cursor(side), area, buf);
+                }
             }
             Row::Thread(t) => self.thread_row(file, t, cursor, area, buf),
             Row::Fold { block, reason } => {
@@ -385,13 +395,15 @@ impl DiffView<'_> {
         (a.min(b)..=a.max(b)).contains(&g)
     }
 
-    /// The two marker cells before line numbers: reviewed, and threads.
-    fn marks(&self, file: &DocFile, row: Row, bg: Bg) -> [Span<'static>; 2] {
+    /// The two marker cells before line numbers: reviewed, and threads (on
+    /// `side`'s lines only, in a split half; reviewed on the left half).
+    fn marks(&self, file: &DocFile, row: Row, side: Option<Side>, bg: Bg) -> [Span<'static>; 2] {
         let theme = self.ctx.theme;
-        let reviewed = row
-            .entries()
-            .filter_map(|e| file.block_of(e))
-            .any(|b| self.doc.inputs.reviewed.contains(&b.hash));
+        let reviewed = side != Some(Side::Right)
+            && row
+                .entries()
+                .filter_map(|e| file.block_of(e))
+                .any(|b| self.doc.inputs.reviewed.contains(&b.hash));
         let reviewed = if reviewed {
             Span::styled("✓", theme.style(Fg::Success, bg))
         } else {
@@ -399,6 +411,7 @@ impl DiffView<'_> {
         };
         let anns = file
             .shows(row)
+            .filter(|pos| side.is_none_or(|side| pos.side == side))
             .flat_map(|pos| file.annotations_at(pos))
             .filter_map(|i| self.doc.annotations().get(*i as usize));
         let (mut any, mut draft, mut open) = (false, false, false);
@@ -432,9 +445,10 @@ impl DiffView<'_> {
         }
     }
 
-    /// Alignment entry `entry` of the row at `pos`: the row's marks (except
-    /// on a split row's right half), line numbers (both in unified view,
-    /// `side`'s in split view) and code.
+    /// Alignment entry `entry` of the row at `pos`: the row's marks (a
+    /// split half's own), line numbers (both in unified view, `side`'s in
+    /// split view) and code. Both halves of a split row start alike, so
+    /// their code gets the same room.
     fn line(
         &self,
         pos: Pos,
@@ -461,10 +475,8 @@ impl DiffView<'_> {
         let bg = line_bg(diff_bg, cursor);
         fill(buf, area, theme, bg);
         let mut spans = Vec::new();
-        if side != Some(Side::Right) {
-            spans.push(Span::styled(" ", theme.body(bg)));
-            spans.extend(self.marks(file, row, bg));
-        }
+        spans.push(Span::styled(" ", theme.body(bg)));
+        spans.extend(self.marks(file, row, side, bg));
         let Some((e, line)) = line else {
             Line::from(spans).render(area, buf);
             return;
@@ -903,6 +915,7 @@ mod tests {
             ctx,
             doc: &doc,
             cursor: Pos::default(),
+            half: Side::Right,
             top: Pos::default(),
             keys,
             selection: None,

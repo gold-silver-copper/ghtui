@@ -117,6 +117,7 @@ fn a_review_comment_keeps_its_tabs() {
         },
         doc: &doc,
         cursor: Pos::default(),
+        half: Side::Right,
         top: Pos::default(),
         keys: Keys {
             show: "↵",

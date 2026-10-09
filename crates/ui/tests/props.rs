@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use ghtui_diff::FileDiff;
+use ghtui_diff::anchor::Side;
 use ghtui_git::files::{ChangedFile, FileStatus};
 use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
 use ghtui_ui::diff_doc::{Doc, Pos, ViewOptions};
@@ -81,6 +82,7 @@ fn render_doc(doc: &Doc, cursor: Pos, width: u16, height: u16) {
         ctx,
         doc,
         cursor,
+        half: Side::Left,
         top: cursor,
         keys,
         selection: Some((Pos::default(), cursor)),
@@ -131,6 +133,7 @@ proptest! {
         new in source(),
         query in "[a-z]{1,3}",
         split in any::<bool>(),
+        left in any::<bool>(),
         width in 1u16..160,
         height in 1u16..30,
         row in 0usize..200,
@@ -143,9 +146,13 @@ proptest! {
         doc.toggle_full(0);
         let pos = doc.clamp(Pos { file: 0, row });
         prop_assert_eq!(doc.to_pos(doc.to_global(pos)), pos);
-        // A row showing a line is found again at a row showing that line.
-        if let Some(line) = doc.line_at(pos) {
-            prop_assert_eq!(doc.line_at(doc.locate(doc.anchor(pos))), Some(line));
+        // A row showing a line is found again at a row showing that line,
+        // on the half that shows it.
+        let half = if left { Side::Left } else { Side::Right };
+        if let Some(line) = doc.line_at(pos, half) {
+            let anchor = doc.anchor(pos, half);
+            let half = anchor.side().unwrap_or(half);
+            prop_assert_eq!(doc.line_at(doc.locate(anchor), half), Some(line));
         }
         let _ = doc.search(&query, pos, true);
         let _ = doc.search(&query, pos, false);

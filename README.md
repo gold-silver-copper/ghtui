@@ -323,6 +323,7 @@ Reviewing, in a pull request's Files changed tab:
 | `n` `p`     | Next / previous change (after a search: next / previous match)               |
 | `N` `P`     | Next / previous unresolved thread                                            |
 | `⇧↓` `⇧↑`   | Next / previous file                                                         |
+| `⇧←` `⇧→`   | Split view: the old / new half of the row, for comments and replies          |
 | `⇥`         | Switch between the file tree and the diff                                    |
 | `U`         | Next unviewed file                                                           |
 | `v`         | Mark the file viewed, synced with GitHub; viewed files collapse              |
@@ -502,6 +503,9 @@ Notes:
    whitespace-insensitive. Rows are rebuilt from it when you switch between
    split and unified, toggle whitespace, expand context or show the full file.
    An anchor keeps the cursor on the same source line through every change.
+   In split view the cursor is on one half of a row, so a removed line and the
+   added line beside it are each their own place to comment and to come back
+   to.
 
 **Viewed and reviewed.** "Viewed" is GitHub's per-file state, read with
 `viewerViewedState` and changed with `markFileAsViewed` /

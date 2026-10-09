@@ -301,6 +301,7 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
         ctx,
         doc: &diff.doc,
         cursor: screen.cursor,
+        half: screen.half,
         top: screen.top,
         keys: Keys {
             show: &show,

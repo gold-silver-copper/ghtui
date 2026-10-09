@@ -10,8 +10,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use ghtui_api::browse::{DiscussionsOf, RepoSummary, SearchKind};
 use ghtui_api::change::Change;
 use ghtui_api::model::RepoId;
+use ghtui_diff::anchor::Side;
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::chrome::{self, KeyRow, SuggestRow};
+use ghtui_ui::diff_doc::Row;
 use ghtui_ui::page::{self, HintLabel, Item, Link, Page};
 use ghtui_ui::pages::{self, PrTab, ProfileTab};
 use ghtui_ui::{PAD_X, PAD_Y};
@@ -1316,6 +1318,8 @@ const DIFF_DOABLES: &[(&str, &[(Action, &str)])] = {
                 (A::NextThread, ""),
                 (A::PrevThread, ""),
                 (A::JumpMove, ""),
+                (A::OldSide, ""),
+                (A::NewSide, ""),
                 (A::FindFile, ""),
                 (A::SwitchPane, ""),
             ],
@@ -1555,7 +1559,7 @@ impl State {
         let mut out = Vec::new();
         let here = diff
             .doc
-            .annotation_at(screen.cursor)
+            .annotation_under(screen.cursor, screen.half)
             .and_then(|i| diff.doc.annotations().get(i as usize));
         match here {
             Some(a) if a.is_draft() => {
@@ -1567,6 +1571,19 @@ impl State {
                 out.push((Action::ResolveThread, "resolve".to_owned()));
             }
             None => {}
+        }
+        // A removed line beside an added one: the other is a key away.
+        if let Some(Row::Split {
+            left: Some(left),
+            right: Some(right),
+        }) = diff.doc.row(screen.cursor)
+            && left != right
+        {
+            match diff.doc.half_at(screen.cursor, screen.half) {
+                Some(Side::Left) => out.push((Action::NewSide, "new side".to_owned())),
+                Some(Side::Right) => out.push((Action::OldSide, "old side".to_owned())),
+                None => {}
+            }
         }
         let pending = diff.inputs().review.pending.len();
         if pending > 0 {
