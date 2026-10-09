@@ -2350,14 +2350,23 @@ pub fn pr_commits(
 }
 
 /// Commits in boxes by day, each linked to its page: first how many
-/// earlier ones are only on GitHub, last "Load more" if another page loads.
+/// earlier ones were left out, which opens the history from the oldest
+/// here back (oldest first, as a comparison and a PR list them), last
+/// "Load more" if another page loads.
 fn commit_rows(page: &mut Page, repo: &RepoId, commits: &impl Rows<CommitInfo>, now: u64) {
-    let rest = match commits.rest() {
-        Rest::OnGitHub(n) => {
-            left_out(page, n, "earlier commit", "earlier commits");
+    let rest = match (commits.rest(), commits.rows().first()) {
+        (Rest::OnGitHub(n), Some(oldest)) => {
+            let earlier = url::commits(repo, &oldest.oid, "");
+            let text = format!(
+                "… {n} earlier {}",
+                if n == 1 { "commit" } else { "commits" }
+            );
+            item(page, earlier, |page, link| {
+                page.wrapped(vec![Seg::linked(text, Role::Link, link)], 2, Frame::None);
+            });
             Rest::All
         }
-        rest => rest,
+        (rest, _) => rest,
     };
     let mut current_day = String::new();
     for c in commits.rows() {
