@@ -15,8 +15,8 @@ use serde_json::Value;
 use crate::auth::Token;
 use crate::browse;
 use crate::model::{
-    Capped, Inbox, NewThread, NodeId, PatchFile, PrDetail, PrRef, PrSummary, RepoId, ReviewEvent,
-    ReviewThread, ViewedFiles,
+    Capped, Inbox, NewThread, NodeId, PatchFile, PendingReview, PrDetail, PrRef, PrSummary, RepoId,
+    ReviewEvent, ReviewThread, ViewedFiles,
 };
 use crate::queries::{self, nodes};
 use crate::rate_limit::{RateLimits, retry_after};
@@ -597,10 +597,37 @@ impl GitHub {
 
     pub async fn pull_request(&self, pr: &PrRef) -> Result<PrDetail, ApiError> {
         let op = queries::PullRequestQuery::build(number_vars(pr)?);
-        let detail = self
+        let mut detail = self
             .find(op, pr, |q| PrDetail::from_wire(q.repository?))
             .await?;
+        // GitHub says a branch is behind only when the repository requires
+        // it up to date; it may be behind anyway.
+        if matches!(
+            detail.summary.state,
+            browse::IssueState::Open | browse::IssueState::Draft
+        ) {
+            detail.behind_by = self.behind_by(pr, &detail).await;
+        }
         Ok(self.kept(&pr_key(pr), detail).await)
+    }
+
+    /// How many commits on its base `detail`'s branch doesn't have, if
+    /// GitHub can compare them (its branch may be gone).
+    async fn behind_by(&self, pr: &PrRef, detail: &PrDetail) -> Option<u64> {
+        let op = queries::BehindQuery::build(queries::BehindVariables {
+            owner: pr.repo.owner.clone(),
+            name: pr.repo.name.clone(),
+            base: format!("refs/heads/{}", detail.base_ref),
+            head: detail.head_oid.clone(),
+        });
+        let behind = self.find(op, pr, |q| q.repository?.base?.compare).await;
+        match behind {
+            Ok(b) => u64::try_from(b.behind_by).ok(),
+            Err(err) => {
+                tracing::debug!(%pr, %err, "couldn't compare the branch with its base");
+                None
+            }
+        }
     }
 
     /// Viewed state of every file in the PR (paginated, 100 per page).
@@ -681,18 +708,20 @@ impl GitHub {
         Ok(files.await?.items)
     }
 
-    /// The PR's node ID and the viewer's pending review on it, if any.
-    /// The PR's node ID, and your pending review on it, if any, with the
-    /// commit that review is on.
+    /// The PR's node ID, and your pending review on it, if any.
     pub async fn pending_review(
         &self,
         pr: &PrRef,
-    ) -> Result<(NodeId, Option<(NodeId, Option<String>)>), ApiError> {
+    ) -> Result<(NodeId, Option<PendingReview>), ApiError> {
         let op = queries::PendingReviewQuery::build(number_vars(pr)?);
         let pr_node = self.find(op, pr, |q| q.repository?.pull_request).await?;
         let review = nodes(pr_node.reviews.and_then(|r| r.nodes))
             .next()
-            .map(|r| (NodeId::from(r.id), r.commit.map(|c| c.oid.0)));
+            .map(|r| PendingReview {
+                id: r.id.into(),
+                commit: r.commit.map(|c| c.oid.0),
+                comments: u64::try_from(r.comments.total_count).unwrap_or(0),
+            });
         Ok((pr_node.id.into(), review))
     }
 
@@ -1827,19 +1856,43 @@ impl GitHub {
             .await)
     }
 
-    /// A job and its steps.
+    /// A job, its steps, and its run as it is now.
     pub async fn job(&self, repo: &RepoId, job: u64) -> Result<browse::Job, ApiError> {
-        let path = format!("/repos/{}/{}/actions/jobs/{job}", repo.owner, repo.name);
-        let job_wire: browse::rest_actions::Job = self.rest_json(&path).await?;
-        let job = job_wire.into_job();
+        let wire = self.job_wire(repo, job).await?;
+        let base = format!(
+            "/repos/{}/{}/actions/runs/{}",
+            repo.owner, repo.name, wire.run_id
+        );
+        let run: browse::rest_actions::Run = self.rest_json(&base).await?;
+        let (attempt, latest) = (wire.run_attempt.unwrap_or(1), run.run_attempt.unwrap_or(1));
+        // Re-run, it's a new job with the same name in a later attempt.
+        let rerun = if latest > attempt {
+            let path = format!("{base}/attempts/{latest}/jobs?per_page=100");
+            let jobs: browse::rest_actions::Jobs = self.rest_json(&path).await?;
+            (jobs.jobs.into_iter())
+                .find(|j| j.name == wire.name && j.id != wire.id)
+                .map(|j| j.id)
+        } else {
+            None
+        };
+        let job = wire.into_job(run.into_job_run(rerun));
         Ok(self.kept(&browse::keys::job(repo, job.id), job).await)
+    }
+
+    async fn job_wire(
+        &self,
+        repo: &RepoId,
+        job: u64,
+    ) -> Result<browse::rest_actions::Job, ApiError> {
+        let path = format!("/repos/{}/{}/actions/jobs/{job}", repo.owner, repo.name);
+        self.rest_json(&path).await
     }
 
     /// A job's log (see [`browse::JobLog`]), never cached: logs are big.
     /// A running job has none yet (GitHub writes it when the job ends), and
     /// one past the repository's retention has expired.
     pub async fn job_log(&self, repo: &RepoId, job: u64) -> Result<browse::JobLog, ApiError> {
-        if self.job(repo, job).await?.outcome == browse::CheckOutcome::Pending {
+        if self.job_wire(repo, job).await?.outcome() == browse::CheckOutcome::Pending {
             return Ok(browse::JobLog {
                 running: true,
                 ..browse::JobLog::default()

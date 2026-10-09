@@ -75,7 +75,11 @@ pub fn decode(shape: u8, json: &[u8]) {
         28 => model!(b::IssueFull, b::IssueFull::into_detail),
         29 => model!(b::WirePrActivity, b::WirePrActivity::into_activity),
         30 => model!(b::ProfileQuery, b::ProfileQuery::into_profile),
-        31 => model!(b::rest_actions::Job, b::rest_actions::Job::into_job),
+        31 => model!(
+            (b::rest_actions::Job, b::rest_actions::Run),
+            |(job, run): (b::rest_actions::Job, b::rest_actions::Run)| job
+                .into_job(run.into_job_run(None))
+        ),
         32 => model!(b::CommitHistory, b::CommitHistory::into_results),
         _ => model!(
             wire::Connection<b::wire_branches::Branch>,

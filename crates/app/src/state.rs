@@ -118,6 +118,8 @@ pub enum DiffMsg {
         result: Result<(), ApiError>,
     },
     ReviewSubmitted(SubmitOutcome),
+    /// How many comments your pending review on GitHub holds.
+    PendingReview(Result<u64, ApiError>),
     LastReview(Result<Option<String>, ApiError>),
     CommitsListed(Result<Vec<ghtui_git::repo::Commit>, Failure>),
 }
@@ -191,7 +193,12 @@ pub enum Api {
         drafts: Vec<DraftComment>,
         event: ReviewEvent,
         body: String,
+        /// The comments in your pending review on GitHub you were shown:
+        /// if it holds more, it isn't submitted.
+        seen: u64,
     },
+    /// How many comments your pending review on GitHub holds.
+    FetchPendingReview(PrRef),
     FetchLastReview {
         pr: PrRef,
         login: String,
@@ -474,6 +481,8 @@ pub struct State {
     pub spinning: bool,
     /// [`Timer::Live`] is scheduled.
     pub live: bool,
+    /// A change GitHub accepted that its page doesn't show yet.
+    pub awaiting: Option<act::Awaiting>,
     pub quit: bool,
 }
 
@@ -506,6 +515,7 @@ impl State {
             spinner: 0,
             spinning: false,
             live: false,
+            awaiting: None,
             quit: false,
         };
         state.sync_page();
@@ -756,28 +766,33 @@ impl State {
     }
 
     /// What's on screen and still running (a run, a job, its log,
-    /// checks), to fetch again until it's done. A list extended with Load
-    /// more isn't: fetching it again would cut it back to its first page.
-    pub fn running_here(&self) -> Vec<DataKey> {
+    /// checks, a pull request GitHub is still checking), to fetch again
+    /// until it's done. A list extended with Load more isn't: fetching it
+    /// again would cut it back to its first page.
+    pub fn running_here(&self) -> Vec<Need> {
         let Screen::Page(p) = self.screen() else {
             return Vec::new();
         };
         browse::needs(&p.route)
             .into_iter()
-            .filter_map(|need| match need {
-                Need::Data(key) => Some(key),
-                _ => None,
-            })
-            .filter(|key| {
-                self.data
+            .filter(|need| match need {
+                Need::Data(key) => self
+                    .data
                     .get(key)
-                    .is_some_and(|r| !r.extended && r.data.as_ref().is_some_and(Data::running))
+                    .is_some_and(|r| !r.extended && r.data.as_ref().is_some_and(Data::running)),
+                Need::Pr(pr) => (self.prs.get(pr))
+                    .and_then(|r| r.data.as_ref())
+                    .is_some_and(PrDetail::settling),
+                Need::Inbox => false,
             })
             .collect()
     }
 
     /// What's loading on the visible screen, for the status bar.
     pub fn busy(&self) -> Option<String> {
+        if let Some(waiting) = act::waiting(self) {
+            return Some(waiting);
+        }
         match self.screen() {
             Screen::Page(p) if self.fetches(&p.route).any(|r| r.more.is_some()) => {
                 Some("Loading more".into())
@@ -814,7 +829,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
 #[must_use]
 pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     // Pages are built from GitHub's data; only these change it.
-    if matches!(
+    let data = matches!(
         msg,
         Msg::Viewer(_)
             | Msg::Inbox(_)
@@ -822,7 +837,8 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
             | Msg::Fetched { .. }
             | Msg::FetchedMore(..)
             | Msg::Changed(..)
-    ) {
+    );
+    if data {
         state.data_gen += 1;
     }
     // A write changes what GitHub shows, wherever it shows it.
@@ -837,7 +853,11 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         state.prs.values_mut().for_each(|r| r.stale = true);
         state.data.values_mut().for_each(|r| r.stale = true);
     }
-    handle(state, msg)
+    let mut cmds = handle(state, msg);
+    if data {
+        cmds.extend(act::follow(state));
+    }
+    cmds
 }
 
 /// Timers the screen needs after an update: the notice expiring (errors
@@ -866,7 +886,7 @@ pub fn timers(state: &mut State, last_notice: &mut Option<Notice>) -> Vec<Cmd> {
         state.spinning = true;
         cmds.push(Cmd::Timer(Timer::Spin, 90));
     }
-    if !state.live && !state.running_here().is_empty() {
+    if !state.live && (!state.running_here().is_empty() || act::awaiting_here(state).is_some()) {
         state.live = true;
         cmds.push(Cmd::Timer(Timer::Live, LIVE_MS));
     }
@@ -966,8 +986,10 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Timer(Timer::Live) => {
             state.live = false;
             let mut cmds = Vec::new();
-            for key in state.running_here() {
-                cmds.extend(state.ensure(Need::Data(key), true));
+            let mut needs = state.running_here();
+            needs.extend(act::poll(state));
+            for need in needs {
+                cmds.extend(state.ensure(need, true));
             }
             return cmds;
         }

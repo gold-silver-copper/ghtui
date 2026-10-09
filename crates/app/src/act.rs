@@ -2,18 +2,20 @@
 //! draft ready, updating a branch, approving, re-running and cancelling
 //! runs. What an action does where you are is decided once, by [`plan`]:
 //! the key, the menu and the command palette all ask it, so they can't
-//! disagree. Every change goes to GitHub as a [`Change`] and comes back as
-//! [`Msg::Changed`], handled by [`on_changed`].
+//! disagree, and it asks GitHub's own word on what you may do. Every
+//! change goes to GitHub as a [`Change`] and comes back as
+//! [`Msg::Changed`], handled by [`on_changed`]; the page then follows
+//! GitHub ([`follow`]) until it shows the change.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ghtui_api::ApiError;
 use ghtui_api::browse::{CheckOutcome, IssueState, Job, WorkflowRun};
 use ghtui_api::change::{Change, CloseReason, MergeMethod};
 use ghtui_api::model::{
-    ChecksState, MergeState, Mergeable, PrDetail, PrRef, RepoId, ReviewDecision,
+    ChecksState, MergeState, PrDetail, PrRef, Readiness, RepoId, ReviewDecision,
 };
 
-use crate::browse::DataKey;
+use crate::browse::{DataKey, Need};
 use crate::keymap::Action;
 use crate::nav;
 use crate::route::Route;
@@ -33,6 +35,9 @@ pub const ACTIONS: [Action; 6] = [
 /// ways to make it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Confirm {
+    /// What asked for it: planned again as GitHub's answers arrive, so
+    /// the facts stay true and a change that no longer applies closes.
+    pub action: Action,
     pub title: String,
     /// Each with whether it's a problem.
     pub facts: Vec<(String, bool)>,
@@ -45,6 +50,7 @@ pub struct Confirm {
 impl Confirm {
     fn new(title: String, facts: Vec<(String, bool)>, choices: Vec<(String, Change)>) -> Self {
         Self {
+            action: Action::Close,
             title,
             facts,
             choices,
@@ -60,6 +66,20 @@ impl Confirm {
         Some(format!("{}…", doing(change)))
     }
 }
+
+/// A change GitHub accepted that the page it was made on doesn't show
+/// yet: GitHub can take a while (a cancel, a minute or more). While that
+/// page is on screen, what it's about is fetched again until it shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Awaiting {
+    pub change: Change,
+    pub route: Route,
+    polls: u32,
+}
+
+/// How many times a page is fetched again for a change before giving up:
+/// a few minutes, at the live refresh's pace.
+const POLLS: u32 = 40;
 
 /// What an action does here.
 #[derive(Debug)]
@@ -118,6 +138,21 @@ fn subject(state: &State) -> Option<Subject> {
 }
 
 fn plan(state: &State, action: Action) -> Result<Plan, String> {
+    let mut plan = plan_here(state, action)?;
+    // GitHub hasn't shown the last change yet: what's on screen is old.
+    if let Some(waiting) = awaiting_here(state) {
+        return Err(format!(
+            "GitHub hasn't shown the last change yet ({}): wait a moment",
+            doing(&waiting.change).to_lowercase()
+        ));
+    }
+    if let Plan::Ask(confirm) = &mut plan {
+        confirm.action = action;
+    }
+    Ok(plan)
+}
+
+fn plan_here(state: &State, action: Action) -> Result<Plan, String> {
     let elsewhere = || match action {
         Action::Close => "Closing works on an issue, a pull request or a running workflow run",
         Action::Rerun => "Re-running works on a workflow run or a job",
@@ -144,6 +179,12 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
             let name = format!("{repo}#{number}");
             let issue_id = issue.id.clone();
             Ok(Plan::Ask(match issue.state {
+                IssueState::Open | IssueState::Draft if !issue.can_close => {
+                    return Err(
+                        "GitHub doesn't let you close it: that takes its author or triage access"
+                            .into(),
+                    );
+                }
                 IssueState::Open | IssueState::Draft => Confirm::new(
                     format!("Close {name}?"),
                     Vec::new(),
@@ -164,6 +205,9 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                         ),
                     ],
                 ),
+                _ if !issue.can_reopen => {
+                    return Err("GitHub doesn't let you reopen it".into());
+                }
                 IssueState::Closed | IssueState::NotPlanned | IssueState::Merged => Confirm::new(
                     format!("Reopen {name}?"),
                     Vec::new(),
@@ -175,14 +219,25 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
             let run = state
                 .picked::<WorkflowRun>(&DataKey::Run(repo.clone(), run, attempt))
                 .ok_or("The run hasn't loaded yet")?;
-            run_plan(&repo, run.id, run.outcome, None, action)
-                .ok_or_else(|| elsewhere().to_owned())?
+            let about = RunAbout {
+                id: run.id,
+                name: format!("{} #{}", run.name, run.number),
+                outcome: run.outcome,
+            };
+            run_plan(state, &repo, &about, None, action).ok_or_else(|| elsewhere().to_owned())?
         }
         Subject::Job(repo, job) => {
             let job = state
                 .picked::<Job>(&DataKey::Job(repo.clone(), job))
                 .ok_or("The job hasn't loaded yet")?;
-            run_plan(&repo, job.run_id, job.outcome, Some(job), action)
+            // A job can end while its run goes on: it's the run that's
+            // cancelled or re-run.
+            let about = RunAbout {
+                id: job.run_id,
+                name: format!("{} #{}", job.run.name, job.run.number),
+                outcome: job.run.outcome,
+            };
+            run_plan(state, &repo, &about, Some(job), action)
                 .ok_or_else(|| elsewhere().to_owned())?
         }
     }
@@ -201,14 +256,29 @@ fn pr_plan(
         IssueState::Merged => "It's merged".to_owned(),
         _ => format!("It's closed: {} reopens it", key(Action::Close)),
     };
+    let readiness = d.readiness();
     Some(match action {
-        Action::Merge if d.summary.state == IssueState::Draft => Err(format!(
+        Action::Merge if readiness == Readiness::Draft => Err(format!(
             "A draft can't be merged: {} marks it ready for review",
             key(Action::ReadyForReview)
         )),
         Action::Merge | Action::UpdateBranch | Action::Approve if !open => Err(not_open()),
+        Action::Merge if !d.may.merge => Err(format!("Merging takes write access to {}", pr.repo)),
         Action::Merge if d.merge_methods.is_empty() => {
             Err("The repository allows no way of merging".into())
+        }
+        Action::Merge | Action::UpdateBranch if readiness == Readiness::Conflicts => Err(format!(
+            "It conflicts with {}: resolve that on GitHub",
+            d.base_ref
+        )),
+        Action::Merge if readiness == Readiness::Behind => Err(format!(
+            "{} requires its branch up to date with {}: {} updates it",
+            pr.repo,
+            d.base_ref,
+            key(Action::UpdateBranch)
+        )),
+        Action::Merge if readiness == Readiness::Blocked && !d.may.merge_as_admin => {
+            Err("GitHub says it's blocked: a required review or check is missing".into())
         }
         Action::Merge => {
             let choices = d
@@ -237,8 +307,17 @@ fn pr_plan(
                         "It's merged: a merged pull request can't be reopened".into()
                     ));
                 }
+                IssueState::Open | IssueState::Draft if !d.may.close => {
+                    return Some(Err(
+                        "GitHub doesn't let you close it: that takes its author or triage access"
+                            .into(),
+                    ));
+                }
                 IssueState::Open | IssueState::Draft => {
                     (format!("Close {pr}?"), "Close pull request", false)
+                }
+                IssueState::Closed | IssueState::NotPlanned if !d.may.reopen => {
+                    return Some(Err("GitHub doesn't let you reopen it".into()));
                 }
                 IssueState::Closed | IssueState::NotPlanned => {
                     (format!("Reopen {pr}?"), "Reopen", true)
@@ -260,21 +339,23 @@ fn pr_plan(
                 vec![(label.into(), change)],
             )))
         }
+        Action::ReadyForReview if d.summary.state == IssueState::Draft && !d.may.edit => {
+            Err("Marking it ready takes its author or write access".into())
+        }
         Action::ReadyForReview if d.summary.state == IssueState::Draft => {
             Ok(Plan::Do(Change::ReadyForReview { pr: d.id.clone() }))
         }
         Action::ReadyForReview if open => Err("It isn't a draft".into()),
         Action::ReadyForReview => Err(not_open()),
-        Action::UpdateBranch if d.merge_state == MergeState::Dirty => Err(format!(
-            "It conflicts with {}: resolve that on GitHub",
-            d.base_ref
+        Action::UpdateBranch if !d.may.push_head => Err(format!(
+            "Updating it pushes to its branch, {}, which you can't push to",
+            d.head_ref
         )),
-        // GitHub's own "Update branch" button: behind, and the repository
-        // suggests updating (or requires it).
-        Action::UpdateBranch if !d.can_update_branch => Err(format!(
-            "GitHub doesn't offer to update it: it's up to date with {}, or the repository doesn't suggest updating branches",
-            d.base_ref
-        )),
+        // GitHub only says it's behind when the repository requires it up
+        // to date; the comparison says so either way.
+        Action::UpdateBranch if d.behind_by == Some(0) && d.merge_state != MergeState::Behind => {
+            Err(format!("It's up to date with {}", d.base_ref))
+        }
         Action::UpdateBranch => {
             let update = |rebase| Change::UpdateBranch {
                 pr: d.id.clone(),
@@ -287,8 +368,9 @@ fn pr_plan(
             }
             let facts = vec![(
                 format!(
-                    "Its branch, {}, is behind {}; updating pushes to it",
-                    d.head_ref, d.base_ref
+                    "Its branch, {}, is {}; updating pushes to it",
+                    d.head_ref,
+                    behind(d)
                 ),
                 false,
             )];
@@ -306,7 +388,16 @@ fn pr_plan(
     })
 }
 
-/// What's worth knowing before merging.
+/// "3 commits behind main".
+fn behind(d: &PrDetail) -> String {
+    match d.behind_by {
+        Some(1) => format!("1 commit behind {}", d.base_ref),
+        Some(n) => format!("{n} commits behind {}", d.base_ref),
+        None => format!("behind {}", d.base_ref),
+    }
+}
+
+/// What's worth knowing before merging (what stops it is refused before).
 fn merge_facts(state: &State, d: &PrDetail) -> Vec<(String, bool)> {
     let mut facts = vec![(format!("Into {} from {}", d.base_ref, d.head_ref), false)];
     match d.summary.checks {
@@ -323,70 +414,79 @@ fn merge_facts(state: &State, d: &PrDetail) -> Vec<(String, bool)> {
         Some(ReviewDecision::ReviewRequired) => facts.push(("A review is required".into(), true)),
         None => {}
     }
-    let update = state.first_key(Action::UpdateBranch);
-    let (text, problem) = match (d.merge_state, d.mergeable) {
-        (MergeState::Dirty, _) | (_, Mergeable::Conflicting) => {
-            (format!("It conflicts with {}", d.base_ref), true)
-        }
-        (MergeState::Behind, _) => (
-            format!("The branch is behind {} ({update} updates it)", d.base_ref),
-            true,
-        ),
-        (MergeState::Blocked, _) => (
-            "GitHub says it's blocked: a required review or check is missing".into(),
-            true,
-        ),
-        (MergeState::Unstable, _) => (
-            "Some checks didn't pass, though none is required".into(),
-            true,
-        ),
-        (MergeState::Unknown, _) | (_, Mergeable::Unknown) => (
+    facts.push(match d.readiness() {
+        Readiness::Checking => (
             "GitHub is still working out whether it can merge".into(),
+            true,
+        ),
+        Readiness::Blocked => (
+            "A required review or check is missing: you'd merge as an administrator".into(),
+            true,
+        ),
+        _ if d.merge_state == MergeState::Unstable => (
+            "No failed check is required, so GitHub will merge it".into(),
             false,
         ),
-        (MergeState::Clean | MergeState::HasHooks | MergeState::Draft, Mergeable::Yes) => {
-            ("Ready to merge".into(), false)
-        }
-    };
-    facts.push((text, problem));
-    // Behind, though nothing requires it to be up to date.
-    if d.can_update_branch && !matches!(d.merge_state, MergeState::Behind | MergeState::Dirty) {
+        _ => ("Ready to merge".into(), false),
+    });
+    if d.behind_by.is_some_and(|n| n > 0) {
+        let update = state.first_key(Action::UpdateBranch);
         facts.push((
-            format!("The branch is behind {} ({update} updates it)", d.base_ref),
+            format!("Its branch is {} ({update} updates it)", behind(d)),
             false,
         ));
     }
     facts
 }
 
+/// The run an action on a run's page or a job's is about.
+struct RunAbout {
+    id: u64,
+    /// "CI #12".
+    name: String,
+    outcome: CheckOutcome,
+}
+
 /// Cancelling or re-running a run, from its page (`job: None`) or one of
 /// its jobs'. `None`: `action` isn't for runs.
 fn run_plan(
+    state: &State,
     repo: &RepoId,
-    run: u64,
-    outcome: CheckOutcome,
+    run: &RunAbout,
     job: Option<&Job>,
     action: Action,
 ) -> Option<Result<Plan, String>> {
-    let running = outcome == CheckOutcome::Pending;
+    if !matches!(action, Action::Close | Action::Rerun) {
+        return None;
+    }
+    if state.overview(repo).is_some_and(|o| !o.can_write) {
+        return Some(Err(format!(
+            "Re-running and cancelling take write access to {repo}"
+        )));
+    }
+    let running = run.outcome == CheckOutcome::Pending;
+    let name = &run.name;
     Some(match action {
         Action::Close if running => {
             let change = Change::CancelRun {
                 repo: repo.clone(),
-                run,
+                run: run.id,
             };
             Ok(Plan::Ask(Confirm::new(
-                format!("Cancel run {run}?"),
+                format!("Cancel {name}?"),
                 vec![("Jobs still running stop where they are".into(), false)],
-                vec![("Cancel run".into(), change)],
+                vec![("Cancel the run".into(), change)],
             )))
         }
-        Action::Close => Err("It has finished: there's nothing to cancel".into()),
-        Action::Rerun if running => Err("It's still running: X cancels it".into()),
-        Action::Rerun => {
+        Action::Close => Err("The run has finished: there's nothing to cancel".into()),
+        _ if running => Err(format!(
+            "The run is still going: {} cancels it",
+            state.first_key(Action::Close)
+        )),
+        _ => {
             let rerun = |failed_only| Change::Rerun {
                 repo: repo.clone(),
-                run,
+                run: run.id,
                 failed_only,
             };
             let mut choices = Vec::new();
@@ -397,17 +497,16 @@ fn run_plan(
                 };
                 choices.push(("Re-run this job".to_owned(), change));
             }
-            if matches!(outcome, CheckOutcome::Failure | CheckOutcome::Cancelled) {
+            if matches!(run.outcome, CheckOutcome::Failure | CheckOutcome::Cancelled) {
                 choices.push(("Re-run failed jobs".to_owned(), rerun(true)));
             }
             choices.push(("Re-run all jobs".to_owned(), rerun(false)));
             Ok(Plan::Ask(Confirm::new(
-                format!("Re-run run {run}?"),
+                format!("Re-run {name}?"),
                 Vec::new(),
                 choices,
             )))
         }
-        _ => return None,
     })
 }
 
@@ -452,6 +551,13 @@ pub fn on_changed(state: &mut State, change: &Change, result: Result<(), ApiErro
                 state.overlay = None;
             }
             state.info(done(change));
+            state.awaiting = (state.route())
+                .filter(|_| !matches!(change, Change::Comment { .. } | Change::Star { .. }))
+                .map(|route| Awaiting {
+                    change: change.clone(),
+                    route: route.clone(),
+                    polls: 0,
+                });
             state.load_visible(false)
         }
         Err(err) => {
@@ -474,6 +580,190 @@ pub fn on_changed(state: &mut State, change: &Change, result: Result<(), ApiErro
             Vec::new()
         }
     }
+}
+
+/// The change the page on screen waits to see, if any.
+pub fn awaiting_here(state: &State) -> Option<&Awaiting> {
+    (state.awaiting.as_ref()).filter(|w| state.route() == Some(&w.route))
+}
+
+/// What the status bar says while GitHub hasn't shown a change.
+pub fn waiting(state: &State) -> Option<String> {
+    let what = match &awaiting_here(state)?.change {
+        Change::CancelRun { .. } => "Cancel requested: waiting for GitHub to stop the run",
+        Change::Rerun { .. } | Change::RerunJob { .. } => "Waiting for GitHub to start the re-run",
+        Change::Merge { .. } => "Waiting for GitHub to show the merge",
+        Change::UpdateBranch { .. } => "Waiting for GitHub to update the branch",
+        _ => "Waiting for GitHub to show the change",
+    };
+    Some(what.to_owned())
+}
+
+/// What the live refresh fetches again for the change the page waits to
+/// see: what the page is about. Past [`POLLS`], it stops waiting.
+pub fn poll(state: &mut State) -> Vec<Need> {
+    let Some(route) = awaiting_here(state).map(|w| w.route.clone()) else {
+        return Vec::new();
+    };
+    if let Some(w) = &mut state.awaiting {
+        w.polls += 1;
+        if w.polls > POLLS {
+            state.awaiting = None;
+            let key = state.first_key(Action::Refresh);
+            state.info(format!(
+                "GitHub doesn't show the change yet: {key} fetches the page again"
+            ));
+            return Vec::new();
+        }
+    }
+    match route {
+        Route::Pr { pr, .. } => vec![Need::Pr(pr)],
+        Route::Issue { repo, number } => vec![Need::Data(DataKey::Issue(repo, number))],
+        Route::WorkflowRun { repo, run, attempt } => {
+            vec![Need::Data(DataKey::Run(repo, run, attempt))]
+        }
+        Route::Job { repo, job, .. } => vec![Need::Data(DataKey::Job(repo, job))],
+        _ => Vec::new(),
+    }
+}
+
+/// Whether the page shows a change GitHub accepted.
+enum Shown {
+    No,
+    Yes,
+    /// On another page: the run's latest attempt, the job re-run.
+    There(Route),
+}
+
+fn shown(state: &State, change: &Change, route: &Route) -> Shown {
+    let yes = |b: bool| if b { Shown::Yes } else { Shown::No };
+    let pr = |pr: &PrRef| state.prs.get(pr).and_then(|r| r.data.as_ref());
+    match (change, route) {
+        (_, Route::Pr { pr: r, .. }) => {
+            let Some(d) = pr(r) else {
+                return Shown::No;
+            };
+            let open = matches!(d.summary.state, IssueState::Open | IssueState::Draft);
+            yes(match change {
+                Change::Merge { .. } => d.summary.state == IssueState::Merged,
+                Change::SetPrOpen { open: o, .. } => open == *o,
+                Change::ReadyForReview { .. } => d.summary.state != IssueState::Draft,
+                Change::UpdateBranch { head, .. } => d.head_oid != *head,
+                _ => true,
+            })
+        }
+        (Change::CloseIssue { .. } | Change::ReopenIssue { .. }, Route::Issue { repo, number }) => {
+            let key = DataKey::Issue(repo.clone(), *number);
+            let issue = state.picked::<Option<Box<ghtui_api::browse::IssueDetail>>>(&key);
+            let Some(Some(issue)) = issue else {
+                return Shown::No;
+            };
+            let open = matches!(issue.state, IssueState::Open | IssueState::Draft);
+            yes(open == matches!(change, Change::ReopenIssue { .. }))
+        }
+        (
+            Change::Rerun { .. },
+            Route::WorkflowRun {
+                repo,
+                run,
+                attempt: Some(_),
+            },
+        ) => Shown::There(Route::WorkflowRun {
+            repo: repo.clone(),
+            run: *run,
+            attempt: None,
+        }),
+        (
+            Change::Rerun { .. } | Change::CancelRun { .. },
+            Route::WorkflowRun { repo, run, attempt },
+        ) => {
+            let key = DataKey::Run(repo.clone(), *run, *attempt);
+            let Some(r) = state.picked::<WorkflowRun>(&key) else {
+                return Shown::No;
+            };
+            let running = r.outcome == CheckOutcome::Pending;
+            yes(running == matches!(change, Change::Rerun { .. }))
+        }
+        (
+            Change::Rerun { .. } | Change::RerunJob { .. } | Change::CancelRun { .. },
+            Route::Job { repo, run, job, .. },
+        ) => {
+            let Some(j) = state.picked::<Job>(&DataKey::Job(repo.clone(), *job)) else {
+                return Shown::No;
+            };
+            let latest = j.attempt == j.run.attempt;
+            let running = j.run.outcome == CheckOutcome::Pending;
+            match (change, j.run.rerun) {
+                (Change::CancelRun { .. }, _) => yes(!running),
+                (_, Some(rerun)) => Shown::There(Route::Job {
+                    repo: repo.clone(),
+                    run: *run,
+                    job: rerun,
+                    step: None,
+                    query: String::new(),
+                }),
+                // Following it here, or its re-run left this job out.
+                (Change::Rerun { failed_only, .. }, None) => yes((latest
+                    && running
+                    && j.attempt > 1)
+                    || (*failed_only
+                        && !latest
+                        && !matches!(j.outcome, CheckOutcome::Failure | CheckOutcome::Cancelled))),
+                _ => yes(latest && running && j.attempt > 1),
+            }
+        }
+        _ => Shown::Yes,
+    }
+}
+
+/// After GitHub's data arrives: stops waiting for a change the page now
+/// shows (going to the re-run, if that's where it is), and plans an open
+/// confirmation again, so it says what's true now, or closes, saying why,
+/// if the change no longer applies.
+#[must_use]
+pub fn follow(state: &mut State) -> Vec<Cmd> {
+    let mut cmds = Vec::new();
+    if let Some(w) = awaiting_here(state).cloned() {
+        match shown(state, &w.change, &w.route) {
+            Shown::No => {}
+            // The rest of the page (a pull request's commits) follows too.
+            Shown::Yes => {
+                state.awaiting = None;
+                cmds.extend(state.ensure_route(&w.route, true));
+            }
+            Shown::There(route) => {
+                state.awaiting = Some(Awaiting {
+                    route: route.clone(),
+                    ..w
+                });
+                cmds.extend(state.replace(route, false, None));
+            }
+        }
+    }
+    let Some(Overlay::Confirm(confirm)) = &state.overlay else {
+        return cmds;
+    };
+    if confirm.sending {
+        return cmds;
+    }
+    let planned = plan(state, confirm.action);
+    match (planned, &mut state.overlay) {
+        (Err(why), _) => {
+            state.overlay = None;
+            state.info(why);
+        }
+        (Ok(Plan::Ask(new)), Some(Overlay::Confirm(confirm))) => {
+            let selected = confirm.selected.min(new.choices.len().saturating_sub(1));
+            let error = confirm.error.take();
+            **confirm = Confirm {
+                selected,
+                error,
+                ..new
+            };
+        }
+        _ => {}
+    }
+    cmds
 }
 
 /// What a change is doing while GitHub answers: "Merging".

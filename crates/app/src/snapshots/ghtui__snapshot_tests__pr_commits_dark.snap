@@ -1,5 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
+assertion_line: 1118
 expression: render(&state)
 ---
 Buffer {
@@ -34,7 +35,7 @@ Buffer {
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
-        "  space menu   ↵ open   / search   f go to file   c comment   4 files   M merge      API 4987/5000  ",
+        "  space menu   ↵ open   / search   f go to file   c comment   4 files   ←→ tabs      API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
@@ -154,7 +155,7 @@ Buffer {
         x: 63, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 69, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 72, y: 29, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
-        x: 73, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 74, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 79, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 85, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 98, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,

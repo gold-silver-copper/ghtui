@@ -175,6 +175,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 event: dialog.event,
                 input: &dialog.input,
                 pending: pending.len(),
+                on_github: dialog.on_github,
                 rejected,
                 error: dialog.error.as_deref(),
                 sending: dialog.sending,

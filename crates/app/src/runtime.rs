@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind, MouseEventKind};
 use futures::StreamExt;
-use ghtui_api::model::{NodeId, PrRef, RepoId, ReviewEvent};
+use ghtui_api::model::{PendingReview, PrRef, RepoId, ReviewEvent};
 use ghtui_api::{ApiError, GitHub};
 use ghtui_store::{DraftComment, ReviewState, Reviews};
 use ghtui_ui::bars::Notice;
@@ -438,9 +438,21 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 drafts,
                 event,
                 body,
+                seen,
             } => {
-                let outcome = submit_review(&gh, &pr, &head, drafts, event, &body).await;
+                let review = Review {
+                    drafts,
+                    event,
+                    body: &body,
+                    seen,
+                };
+                let outcome = submit_review(&gh, &pr, &head, review).await;
                 Msg::Diff(pr.into(), DiffMsg::ReviewSubmitted(outcome))
+            }
+            Api::FetchPendingReview(pr) => {
+                let result = gh.pending_review(&pr).await;
+                let comments = result.map(|(_, pending)| pending.map_or(0, |p| p.comments));
+                Msg::Diff(pr.into(), DiffMsg::PendingReview(comments))
             }
             Api::FetchLastReview { pr, login } => {
                 let result = gh.last_review_commit(&pr, &login).await;
@@ -580,6 +592,9 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
                 ..SubmitOutcome::default()
             }),
         ),
+        Cmd::Api(Api::FetchPendingReview(pr)) => {
+            Msg::Diff(pr.clone().into(), DiffMsg::PendingReview(api()))
+        }
         Cmd::Api(Api::FetchLastReview { pr, .. }) => {
             Msg::Diff(pr.clone().into(), DiffMsg::LastReview(api()))
         }
@@ -1026,29 +1041,39 @@ fn api_message(err: &ApiError) -> String {
     }
 }
 
+/// A review to submit.
+struct Review<'a> {
+    drafts: Vec<DraftComment>,
+    event: ReviewEvent,
+    body: &'a str,
+    /// The comments in your pending review on GitHub you were shown.
+    seen: u64,
+}
+
 /// Submits a review: reuses the viewer's pending review on GitHub (or
 /// starts one on `head`), adds each draft as a thread, and submits only if
 /// GitHub accepted every draft. Each draft's fate is reported, so rejected
-/// ones keep their text.
-async fn submit_review(
-    gh: &GitHub,
-    pr: &PrRef,
-    head: &str,
-    drafts: Vec<DraftComment>,
-    event: ReviewEvent,
-    body: &str,
-) -> SubmitOutcome {
+/// ones keep their text. A pending review holding comments you weren't
+/// shown isn't submitted: they'd be published unseen.
+async fn submit_review(gh: &GitHub, pr: &PrRef, head: &str, review: Review<'_>) -> SubmitOutcome {
     let mut outcome = SubmitOutcome::default();
-    let review_id = match gh.pending_review(pr).await {
-        Ok((_, Some(pending))) => match reusable(pending, head) {
-            Ok(existing) => existing,
+    let (review_id, held) = match gh.pending_review(pr).await {
+        Ok((_, Some(pending))) if pending.comments > review.seen => {
+            outcome.on_github = Some(pending.comments);
+            outcome.error = Some(
+                "Not sent: your pending review on GitHub holds comments you hadn't seen".into(),
+            );
+            return outcome;
+        }
+        Ok((_, Some(pending))) => match reusable(&pending, head) {
+            Ok(()) => (pending.id, pending.comments),
             Err(message) => {
                 outcome.error = Some(message);
                 return outcome;
             }
         },
         Ok((pr_id, None)) => match gh.start_review(&pr_id, head).await {
-            Ok(id) => id,
+            Ok(id) => (id, 0),
             Err(err) => {
                 outcome.error = Some(format!("Couldn't start the review: {}", api_message(&err)));
                 return outcome;
@@ -1059,7 +1084,7 @@ async fn submit_review(
             return outcome;
         }
     };
-    for draft in drafts {
+    for draft in review.drafts {
         match gh
             .add_review_thread(&review_id, &review::new_thread(&draft))
             .await
@@ -1068,27 +1093,33 @@ async fn submit_review(
             Err(err) => outcome.rejected.push((draft.id, api_message(&err))),
         }
     }
+    // Those accepted are in it now, and were yours to see.
+    outcome.on_github = Some(held + outcome.accepted.len() as u64);
     if !outcome.rejected.is_empty() {
         return outcome;
     }
-    match gh.submit_review(&review_id, event, body).await {
+    match gh
+        .submit_review(&review_id, review.event, review.body)
+        .await
+    {
         Ok(()) => outcome.submitted = true,
         Err(err) => outcome.error = Some(format!("Couldn't submit: {}", api_message(&err))),
     }
     outcome
 }
 
-/// Your pending review, if it's on `head`. One on another commit has its
-/// comments placed on that commit's lines, and the drafts' line numbers are
-/// from this diff, so they're not mixed; nor is the pending review
-/// discarded, since it may hold comments written on GitHub.
-fn reusable((id, commit): (NodeId, Option<String>), head: &str) -> Result<NodeId, String> {
-    match commit {
+/// Whether the drafts can join your pending review: it must be on `head`.
+/// One on another commit has its comments placed on that commit's lines,
+/// and the drafts' line numbers are from this diff, so they're not mixed;
+/// nor is the pending review discarded, since it may hold comments written
+/// on GitHub.
+fn reusable(pending: &PendingReview, head: &str) -> Result<(), String> {
+    match &pending.commit {
         Some(commit) if commit != head => Err(format!(
             "You have a pending review on another commit ({}): finish or discard it on GitHub, then submit again",
-            ghtui_ui::text::short_sha(&commit)
+            ghtui_ui::text::short_sha(commit)
         )),
-        _ => Ok(id),
+        _ => Ok(()),
     }
 }
 
@@ -1154,6 +1185,7 @@ async fn edit_externally(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ghtui_api::model::NodeId;
 
     /// A panicking task still answers: a notice, then the failure reply
     /// the screen is waiting for.
@@ -1176,10 +1208,14 @@ mod tests {
 
     #[test]
     fn a_pending_review_on_another_commit_is_not_reused() {
-        let id = || NodeId::new("R_1");
-        assert_eq!(reusable((id(), Some("abc".into())), "abc"), Ok(id()));
-        assert_eq!(reusable((id(), None), "abc"), Ok(id()));
-        let err = reusable((id(), Some("0123456789".into())), "abc").unwrap_err();
+        let on = |commit: Option<&str>| PendingReview {
+            id: NodeId::new("R_1"),
+            commit: commit.map(Into::into),
+            comments: 0,
+        };
+        assert_eq!(reusable(&on(Some("abc")), "abc"), Ok(()));
+        assert_eq!(reusable(&on(None), "abc"), Ok(()));
+        let err = reusable(&on(Some("0123456789")), "abc").unwrap_err();
         assert!(err.contains("another commit (0123456)"), "{err}");
     }
 

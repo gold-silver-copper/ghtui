@@ -89,7 +89,15 @@ pub(crate) fn pr_detail() -> PrDetail {
     PrDetail {
         id: ghtui_api::model::NodeId::new("PR_12"),
         merge_state: ghtui_api::model::MergeState::Dirty,
-        can_update_branch: true,
+        behind_by: Some(2),
+        may: ghtui_api::model::PrPermits {
+            merge: true,
+            merge_as_admin: false,
+            close: true,
+            reopen: true,
+            edit: true,
+            push_head: true,
+        },
         merge_methods: vec![
             ghtui_api::change::MergeMethod::Squash,
             ghtui_api::change::MergeMethod::Merge,
@@ -3011,7 +3019,7 @@ mod changes {
     use ghtui_api::ApiError;
     use ghtui_api::browse::{CheckOutcome, IssueState};
     use ghtui_api::change::{Change, MergeMethod};
-    use ghtui_api::model::{NodeId, PrRef, ReviewEvent};
+    use ghtui_api::model::{MergeState, NodeId, PrRef, ReviewEvent};
     use ghtui_store::{DraftComment, DraftSide, ReviewState};
     use ghtui_theme::Mode;
     use ghtui_ui::bars::Notice;
@@ -3021,6 +3029,7 @@ mod changes {
     use crate::fixtures::{fetched, press};
     use crate::keymap::Action;
     use crate::review::SubmitOutcome;
+    use crate::route::Route;
     use crate::state::{Api, Cmd, DiffMsg, Msg, Overlay, State, Timer, timers, update};
 
     fn pr() -> PrRef {
@@ -3043,16 +3052,29 @@ mod changes {
 
     /// A pull request whose state is `state`.
     fn pr_in(state: IssueState) -> State {
+        pr_with(|d| d.summary.state = state)
+    }
+
+    /// The pull request, changed by `f`.
+    fn pr_with(f: impl FnOnce(&mut ghtui_api::model::PrDetail)) -> State {
         let mut s = with_pr(Mode::Dark);
-        let mut detail = pr_detail();
-        detail.summary.state = state;
-        update(&mut s, Msg::Pr(pr(), Box::new(Ok(detail))));
+        update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(f)))));
         s
+    }
+
+    /// The pull request without its conflicts (GitHub would merge it),
+    /// changed by `f`.
+    fn mergeable(f: impl FnOnce(&mut ghtui_api::model::PrDetail)) -> ghtui_api::model::PrDetail {
+        let mut detail = pr_detail();
+        detail.mergeable = ghtui_api::model::Mergeable::Yes;
+        detail.merge_state = MergeState::Unstable;
+        f(&mut detail);
+        detail
     }
 
     #[test]
     fn merge_confirm_dark() {
-        let mut s = with_pr(Mode::Dark);
+        let mut s = pr_with(|_| {});
         press(&mut s, "M");
         insta::assert_snapshot!(render(&s));
     }
@@ -3062,16 +3084,18 @@ mod changes {
     /// merged, the pull request is fetched again.
     #[test]
     fn merging_asks_first_and_ends_up_as_github_has_it() {
-        let mut s = with_pr(Mode::Dark);
+        let mut s = pr_with(|_| {});
         assert!(press(&mut s, "M").is_empty());
         let c = confirm(&s);
         let problems: Vec<&str> = (c.facts.iter())
             .filter(|(_, p)| *p)
             .map(|(f, _)| f.as_str())
             .collect();
-        assert_eq!(
-            problems,
-            ["Some checks failed", "It conflicts with main"],
+        assert_eq!(problems, ["Some checks failed"], "{:?}", c.facts);
+        assert!(
+            c.facts
+                .iter()
+                .any(|(f, _)| f == "Its branch is 2 commits behind main (B updates it)"),
             "{:?}",
             c.facts
         );
@@ -3105,6 +3129,104 @@ mod changes {
         assert!(
             cmds.contains(&Cmd::Api(Api::FetchPr(pr()))),
             "the pull request is fetched again: {cmds:?}"
+        );
+        // Until GitHub shows it merged, nothing else is offered.
+        press(&mut s, "X");
+        assert!(
+            info(&s).contains("hasn't shown the last change"),
+            "{}",
+            info(&s)
+        );
+        let merged = mergeable(|d| d.summary.state = IssueState::Merged);
+        update(&mut s, Msg::Pr(pr(), Box::new(Ok(merged))));
+        assert!(s.awaiting.is_none());
+    }
+
+    /// Updating the branch, the page follows GitHub until it shows the new
+    /// head (GitHub moves it after it answers), and merging then names that
+    /// head: merging the old one is refused as "Head branch was modified".
+    #[test]
+    fn after_updating_the_branch_merging_waits_for_the_new_head() {
+        // Behind, though the repository doesn't require it up to date.
+        let mut s = pr_with(|_| {});
+        press(&mut s, "B");
+        let update_branch = Change::UpdateBranch {
+            pr: NodeId::new("PR_12"),
+            rebase: false,
+            head: pr_detail().head_oid,
+        };
+        assert_eq!(confirm(&s).choices[0].1, update_branch);
+        assert_eq!(
+            confirm(&s).facts[0].0,
+            "Its branch, syntax-palette, is 2 commits behind main; updating pushes to it"
+        );
+        press(&mut s, "<Enter>");
+        update(&mut s, Msg::Changed(update_branch, Ok(())));
+        // GitHub still shows the old head.
+        update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
+        press(&mut s, "M");
+        assert!(
+            info(&s).contains("hasn't shown the last change"),
+            "{}",
+            info(&s)
+        );
+        let cmds = timers(&mut s, &mut None);
+        assert!(cmds.contains(&Cmd::Timer(Timer::Live, 5_000)), "{cmds:?}");
+        let cmds = update(&mut s, Msg::Timer(Timer::Live));
+        assert!(cmds.contains(&Cmd::Api(Api::FetchPr(pr()))), "{cmds:?}");
+        let moved = mergeable(|d| {
+            d.head_oid = "1".repeat(40);
+            d.behind_by = Some(0);
+        });
+        update(&mut s, Msg::Pr(pr(), Box::new(Ok(moved))));
+        press(&mut s, "M");
+        let head = match &confirm(&s).choices[0].1 {
+            Change::Merge { head, .. } => head.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(head, "1".repeat(40));
+        press(&mut s, "<Esc>");
+        press(&mut s, "B");
+        assert_eq!(info(&s), "It's up to date with main");
+    }
+
+    /// What GitHub says you may not do is refused, saying why, and what
+    /// GitHub says stops a merge is refused before asking.
+    #[test]
+    fn what_github_forbids_is_refused() {
+        let mut s = pr_with(|d| d.may = ghtui_api::model::PrPermits::default());
+        press(&mut s, "M");
+        assert_eq!(
+            info(&s),
+            "Merging takes write access to gold-silver-copper/ghtui"
+        );
+        press(&mut s, "X");
+        assert!(
+            info(&s).starts_with("GitHub doesn't let you close it"),
+            "{}",
+            info(&s)
+        );
+        press(&mut s, "B");
+        assert!(info(&s).contains("which you can't push to"), "{}", info(&s));
+
+        let mut s = with_pr(Mode::Dark);
+        press(&mut s, "M");
+        assert_eq!(info(&s), "It conflicts with main: resolve that on GitHub");
+        let mut s = pr_with(|d| d.merge_state = MergeState::Blocked);
+        press(&mut s, "M");
+        assert!(info(&s).contains("blocked"), "{}", info(&s));
+        let mut s = pr_with(|d| d.merge_state = MergeState::Behind);
+        press(&mut s, "M");
+        assert!(info(&s).contains("B updates it"), "{}", info(&s));
+
+        let mut s = with_run(Mode::Dark);
+        let mut repo = crate::fixtures::overview();
+        repo.can_write = false;
+        fetched(&mut s, DataKey::Repo(ghtui()), Data::Repo(Box::new(repo)));
+        press(&mut s, "<C-r>");
+        assert_eq!(
+            info(&s),
+            "Re-running and cancelling take write access to gold-silver-copper/ghtui"
         );
     }
 
@@ -3156,7 +3278,13 @@ mod changes {
     fn approving_from_the_page_takes_your_saved_drafts() {
         let mut s = with_pr(Mode::Dark);
         s.viewer = Some("me".into());
-        assert_eq!(press(&mut s, "A"), vec![Cmd::LoadReview(pr())]);
+        assert_eq!(
+            press(&mut s, "A"),
+            vec![
+                Cmd::Api(Api::FetchPendingReview(pr())),
+                Cmd::LoadReview(pr())
+            ]
+        );
         let Some(Overlay::Submit(dialog)) = &s.overlay else {
             panic!("no dialog");
         };
@@ -3193,6 +3321,7 @@ mod changes {
                 drafts: vec![draft],
                 event: ReviewEvent::Approve,
                 body: "LGTM".into(),
+                seen: 0,
             })]
         );
         let outcome = SubmitOutcome {
@@ -3235,12 +3364,94 @@ mod changes {
         );
         let mut s = with_run(Mode::Dark);
         press(&mut s, "X");
-        assert_eq!(info(&s), "It has finished: there's nothing to cancel");
+        assert_eq!(info(&s), "The run has finished: there's nothing to cancel");
 
         let mut s = with_job(Mode::Dark, None);
         press(&mut s, "<C-r>");
+        assert_eq!(confirm(&s).title, "Re-run CI #412?");
         let first = confirm(&s).choices.first().map(|(l, _)| l.clone());
         assert_eq!(first.as_deref(), Some("Re-run this job"));
+    }
+
+    /// A job that ended in a run still going is the run's to cancel, and
+    /// not to re-run yet.
+    #[test]
+    fn a_finished_job_in_a_running_run_cancels_the_run() {
+        let mut s = with_job(Mode::Dark, None);
+        let (mut job, _) = crate::fixtures::job();
+        job.run.outcome = CheckOutcome::Pending;
+        fetched(
+            &mut s,
+            DataKey::Job(ghtui(), 2),
+            Data::Job(Box::new(job.clone())),
+        );
+        press(&mut s, "<C-r>");
+        assert_eq!(info(&s), "The run is still going: X cancels it");
+        press(&mut s, "X");
+        assert_eq!(confirm(&s).title, "Cancel CI #412?");
+        let cancel = Change::CancelRun {
+            repo: ghtui(),
+            run: 7,
+        };
+        assert_eq!(
+            press(&mut s, "<Enter>"),
+            vec![Cmd::Api(Api::Change(cancel.clone()))]
+        );
+        update(&mut s, Msg::Changed(cancel, Ok(())));
+        // GitHub takes a while to stop it: it's asked for once.
+        press(&mut s, "X");
+        assert!(
+            info(&s).contains("hasn't shown the last change"),
+            "{}",
+            info(&s)
+        );
+        assert!(s.busy().is_some_and(|b| b.starts_with("Cancel requested")));
+        job.run.outcome = CheckOutcome::Cancelled;
+        fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
+        assert!(s.awaiting.is_none());
+    }
+
+    /// Re-running a job, the page moves to the job GitHub re-runs it as,
+    /// once GitHub has it, and follows that one.
+    #[test]
+    fn a_rerun_job_is_followed_to_its_new_attempt() {
+        let mut s = with_job(Mode::Dark, None);
+        let rerun = Change::RerunJob {
+            repo: ghtui(),
+            job: 2,
+        };
+        update(&mut s, Msg::Changed(rerun, Ok(())));
+        let (mut job, _) = crate::fixtures::job();
+        job.run.attempt = 2;
+        job.run.outcome = CheckOutcome::Pending;
+        fetched(
+            &mut s,
+            DataKey::Job(ghtui(), 2),
+            Data::Job(Box::new(job.clone())),
+        );
+        assert!(
+            matches!(s.route(), Some(Route::Job { job: 2, .. })),
+            "not there yet"
+        );
+        job.run.rerun = Some(9);
+        let cmds = update(
+            &mut s,
+            Msg::Fetched {
+                key: DataKey::Job(ghtui(), 2),
+                result: Ok(Data::Job(Box::new(job))),
+                cached_at: None,
+            },
+        );
+        assert!(
+            matches!(s.route(), Some(Route::Job { job: 9, .. })),
+            "{:?}",
+            s.route()
+        );
+        let fetch = Cmd::Api(Api::Fetch {
+            key: DataKey::Job(ghtui(), 9),
+            cached: true,
+        });
+        assert!(cmds.contains(&fetch), "{cmds:?}");
     }
 
     /// While a job on screen is running, it's fetched again on a timer

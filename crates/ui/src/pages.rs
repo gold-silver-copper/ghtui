@@ -16,8 +16,8 @@ use ghtui_api::browse::{
     WorkflowRun,
 };
 use ghtui_api::model::{
-    Capped, ChecksState, Inbox, Label, Mergeable, MilestoneRef, PrDetail, PrRef, PrSummary, RepoId,
-    ReviewDecision, ReviewState,
+    Capped, ChecksState, Inbox, Label, Mergeable, MilestoneRef, PrDetail, PrRef, PrSummary,
+    Readiness, RepoId, ReviewDecision, ReviewState,
 };
 use ghtui_theme::{Bg, Syntax};
 
@@ -2135,9 +2135,14 @@ fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
         }
         _ => d.head_ref.clone(),
     };
+    let wants = match s.state {
+        IssueState::Merged => " merged into ",
+        IssueState::Closed | IssueState::NotPlanned => " wanted to merge into ",
+        IssueState::Open | IssueState::Draft => " wants to merge into ",
+    };
     let segs = vec![
         author,
-        Seg::new(" wants to merge into ", Role::Meta),
+        Seg::new(wants, Role::Meta),
         chip(&d.base_ref, Bg::PrimaryContainer),
         Seg::new(" from ", Role::Meta),
         chip(head, Bg::PrimaryContainer),
@@ -2160,22 +2165,28 @@ fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
 /// GitHub's merge box: checks, reviews, conflicts.
 fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
     let s = &d.summary;
-    if matches!(s.state, IssueState::Merged | IssueState::Closed) {
+    let readiness = d.readiness();
+    if matches!(readiness, Readiness::Merged | Readiness::Closed) {
         return;
     }
     connector(page);
-    let (headline, role) = match (s.checks, d.mergeable) {
-        (_, Mergeable::Conflicting) => (
+    let (headline, role) = match (readiness, s.checks, s.review) {
+        (Readiness::Draft, ..) => ("This pull request is still a draft", Role::Meta),
+        (Readiness::Conflicts, ..) => (
             "This branch has conflicts that must be resolved",
             Role::Error,
         ),
-        (Some(ChecksState::Failing), _) => ("Some checks were not successful", Role::Error),
-        (Some(ChecksState::Pending), _) => ("Some checks haven't completed yet", Role::Accent),
-        _ => match s.review {
-            Some(ReviewDecision::ChangesRequested) => ("Changes requested", Role::Error),
-            Some(ReviewDecision::ReviewRequired) => ("Review required", Role::Accent),
-            _ => ("This branch can be merged", Role::Success),
-        },
+        (_, Some(ChecksState::Failing), _) => ("Some checks were not successful", Role::Error),
+        (_, Some(ChecksState::Pending), _) => ("Some checks haven't completed yet", Role::Accent),
+        (_, _, Some(ReviewDecision::ChangesRequested)) => ("Changes requested", Role::Error),
+        (_, _, Some(ReviewDecision::ReviewRequired)) => ("Review required", Role::Accent),
+        (Readiness::Checking, ..) => ("Checking whether it can be merged…", Role::Accent),
+        (Readiness::Behind, ..) => (
+            "This branch is out-of-date with the base branch",
+            Role::Error,
+        ),
+        (Readiness::Blocked, ..) => ("Merging is blocked", Role::Error),
+        _ => ("This branch can be merged", Role::Success),
     };
     page.box_top(vec![Seg::new(headline, role)], Vec::new());
     // Each row: passed, failed, or neither yet.
@@ -2190,16 +2201,33 @@ fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
         ChecksState::Pending => (None, "Some checks haven't completed yet"),
     });
     let conflicts = match d.mergeable {
-        Mergeable::Yes => (Some(true), "No conflicts with the base branch"),
-        Mergeable::Conflicting => (Some(false), "This branch has conflicts"),
-        Mergeable::Unknown => (None, "Checking for conflicts…"),
+        Mergeable::Yes => (Some(true), "No conflicts with the base branch".to_owned()),
+        Mergeable::Conflicting => (Some(false), "This branch has conflicts".to_owned()),
+        Mergeable::Unknown => (None, "Checking for conflicts…".to_owned()),
     };
-    for (ok, text) in [review, checks, Some(conflicts)].into_iter().flatten() {
-        let (icon, role) = match ok {
+    // Behind is a problem only where the repository requires it up to date.
+    let behind = d.behind_by.filter(|n| *n > 0).map(|n| {
+        let mark = if readiness == Readiness::Behind {
+            ("✗", Role::Error)
+        } else {
+            ("◦", Role::Meta)
+        };
+        let s = if n == 1 { "" } else { "s" };
+        (mark, format!("{n} commit{s} behind {}", d.base_ref))
+    });
+    let rows = [review, checks].into_iter().flatten();
+    let rows = rows
+        .map(|(ok, text)| (ok, text.to_owned()))
+        .chain([conflicts]);
+    let rows = rows.map(|(ok, text)| {
+        let mark = match ok {
             Some(true) => ("✓", Role::Success),
             Some(false) => ("✗", Role::Error),
             None => ("●", Role::Accent),
         };
+        (mark, text)
+    });
+    for ((icon, role), text) in rows.chain(behind) {
         body(
             page,
             vec![
@@ -2616,7 +2644,13 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
         format!("Jobs  {}", count_of(&run.jobs)),
         Role::Strong,
     )];
-    list_box(page, title, Vec::new(), &jobs, "No jobs.", |page, job| {
+    // A run just started (or re-run) has no jobs until GitHub queues them.
+    let none = if run.outcome == CheckOutcome::Pending {
+        "Waiting for GitHub to queue its jobs…"
+    } else {
+        "No jobs."
+    };
+    list_box(page, title, Vec::new(), &jobs, none, |page, job| {
         let target = format!("{}/actions/runs/{}/job/{}", url::repo(repo), run.id, job.id);
         item(page, target, |page, link| {
             let (mark, role) = outcome_mark(job.outcome);
@@ -2835,10 +2869,19 @@ pub fn job(
     let run = format!("{}/actions/runs/{}", url::repo(repo), job.run_id);
     meta.push(link_seg(
         page,
-        format!("Run {}", job.run_id),
-        run,
+        format!("{} #{}", job.run.name, job.run.number),
+        run.clone(),
         Role::Link,
     ));
+    if job.run.attempt > 1 {
+        let of = format!(" · attempt {} of {}", job.attempt, job.run.attempt);
+        meta.push(Seg::new(of, Role::Meta));
+    }
+    if let Some(rerun) = job.run.rerun {
+        meta.push(Seg::new(" · ", Role::Meta));
+        let target = format!("{run}/job/{rerun}");
+        meta.push(link_seg(page, "its re-run", target, Role::Link));
+    }
     if let Some(d) = took(
         job.started_at.as_ref(),
         job.completed_at.as_ref(),
@@ -2846,6 +2889,9 @@ pub fn job(
         now,
     ) {
         meta.push(Seg::new(format!(" · {d}"), Role::Meta));
+    }
+    if job.outcome != CheckOutcome::Pending && job.run.outcome == CheckOutcome::Pending {
+        meta.push(Seg::new(" · its run is still going", Role::Meta));
     }
     page.wrapped(meta, 0, Frame::None);
     page.blank();
@@ -2899,7 +2945,11 @@ pub fn job(
             step.number
         );
         item(page, target, |page, link| {
-            let (mark, role) = outcome_mark(step.outcome);
+            let (mark, role) = match step.outcome {
+                // Queued: not running yet.
+                CheckOutcome::Pending if step.started_at.is_none() => ("○", Role::Meta),
+                outcome => outcome_mark(outcome),
+            };
             let right = took(
                 step.started_at.as_ref(),
                 step.completed_at.as_ref(),
@@ -4213,6 +4263,17 @@ pub fn home(
 mod tests {
     use super::*;
 
+    /// The run a test job is in: one attempt, finished.
+    fn finished_run() -> ghtui_api::browse::JobRun {
+        ghtui_api::browse::JobRun {
+            name: "CI".into(),
+            number: 1,
+            outcome: CheckOutcome::Success,
+            attempt: 1,
+            rerun: None,
+        }
+    }
+
     /// Steps that start in the second the one before ends still get their
     /// own lines, by the lines that start them.
     #[test]
@@ -4227,6 +4288,8 @@ mod tests {
         let job = Job {
             id: 1,
             run_id: 1,
+            attempt: 1,
+            run: finished_run(),
             name: String::new(),
             outcome: CheckOutcome::Success,
             started_at: None,
@@ -4317,6 +4380,8 @@ mod tests {
         let job = Job {
             id: 1,
             run_id: 1,
+            attempt: 1,
+            run: finished_run(),
             name: String::new(),
             outcome: CheckOutcome::Success,
             started_at: None,
@@ -4357,6 +4422,8 @@ mod tests {
         let job = Job {
             id: 1,
             run_id: 1,
+            attempt: 1,
+            run: finished_run(),
             name: String::new(),
             outcome: CheckOutcome::Success,
             started_at: None,
@@ -4434,6 +4501,8 @@ mod tests {
         Job {
             id: 1,
             run_id: 1,
+            attempt: 1,
+            run: finished_run(),
             name: String::new(),
             outcome,
             started_at: None,
@@ -4634,6 +4703,8 @@ mod tests {
         let job = Job {
             id: 1,
             run_id: 1,
+            attempt: 1,
+            run: finished_run(),
             name: String::new(),
             outcome: CheckOutcome::Success,
             started_at: None,
@@ -4777,6 +4848,7 @@ mod tests {
             commits: 10,
             parent: None,
             starred: false,
+            can_write: false,
             id: ghtui_api::model::NodeId::new("R_1"),
             has_issues: true,
             has_discussions: false,
@@ -4951,6 +5023,7 @@ mod tests {
             commits: 1,
             parent: None,
             starred: false,
+            can_write: false,
             id: ghtui_api::model::NodeId::new("R_1"),
             has_issues: true,
             has_discussions: false,

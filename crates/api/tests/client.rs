@@ -264,9 +264,12 @@ async fn tracks_rate_limit_headers() {
 
 const PR_RESPONSE: &str = r#"{"data":{"repository":{
   "mergeCommitAllowed": true, "squashMergeAllowed": true, "rebaseMergeAllowed": false,
-  "viewerDefaultMergeMethod": "SQUASH",
+  "viewerDefaultMergeMethod": "SQUASH", "viewerPermission": "WRITE",
   "pullRequest":{
-  "id": "PR_7", "mergeStateStatus": "BEHIND", "viewerCanUpdateBranch": true,
+  "id": "PR_7", "mergeStateStatus": "BEHIND",
+  "viewerCanClose": true, "viewerCanReopen": true, "viewerCanUpdate": true,
+  "viewerCanMergeAsAdmin": false, "viewerDidAuthor": false,
+  "maintainerCanModify": true, "isCrossRepository": true,
   "number": 7, "title": "Add thing", "body": "Body text", "url": "https://github.com/o/r/pull/7",
   "isDraft": false, "state": "OPEN", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-02T00:00:00Z",
   "author": {"login": "alice"}, "repository": {"nameWithOwner": "o/r"},
@@ -288,7 +291,8 @@ async fn fetches_and_caches_pull_request() {
 
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(&dir.path().join("cache.redb"));
-    let (base, seen) = serve(vec![Reply::new(200, PR_RESPONSE)]).await;
+    let behind = r#"{"data":{"repository":{"ref":{"compare":{"behindBy":3}}}}}"#;
+    let (base, seen) = serve(vec![Reply::new(200, PR_RESPONSE), Reply::new(200, behind)]).await;
     let gh = client(&base, store);
     let pr = PrRef::parse("o/r#7").unwrap();
 
@@ -305,7 +309,12 @@ async fn fetches_and_caches_pull_request() {
         [MergeMethod::Squash, MergeMethod::Merge]
     );
     assert_eq!(detail.merge_state, MergeState::Behind);
-    assert!(detail.can_update_branch);
+    // GitHub's word on what you may do; a fork's branch takes the
+    // author's leave to push to.
+    assert!(detail.may.merge && detail.may.push_head && !detail.may.merge_as_admin);
+    // Compared with its base, as GitHub only says so when it's required.
+    assert_eq!(detail.behind_by, Some(3));
+    assert!(seen.lock().unwrap()[1].body.contains("refs/heads/main"));
     assert_eq!(detail.labels[0].name, "bug");
     assert_eq!(detail.labels.left_out(), 2);
     assert_eq!(detail.head_oid, "bbb");
@@ -1170,19 +1179,24 @@ async fn a_completed_job_without_a_conclusion_has_its_log_fetched() {
 }
 
 /// A pending review comes with the commit it's on, so comments for another
-/// diff aren't added to it.
+/// diff aren't added to it, and how many comments it holds, so none are
+/// published unseen.
 #[tokio::test]
 async fn a_pending_review_says_its_commit() {
     let (gh, seen) = github(vec![Reply::new(
         200,
-        r#"{"data":{"repository":{"pullRequest":{"id":"PR_1","reviews":{"nodes":[{"id":"R_1","commit":{"oid":"abc"}}]}}}}}"#,
+        r#"{"data":{"repository":{"pullRequest":{"id":"PR_1","reviews":{"nodes":[{"id":"R_1","commit":{"oid":"abc"},"comments":{"totalCount":2}}]}}}}}"#,
     )])
     .await;
     let (_, pending) = gh
         .pending_review(&PrRef::parse("o/r#7").unwrap())
         .await
         .unwrap();
-    assert_eq!(pending, Some((NodeId::new("R_1"), Some("abc".into()))));
+    let pending = pending.unwrap();
+    assert_eq!(
+        (pending.id, pending.commit, pending.comments),
+        (NodeId::new("R_1"), Some("abc".into()), 2)
+    );
     assert!(seen.lock().unwrap()[0].body.contains("commit"));
 }
 
@@ -1364,7 +1378,7 @@ async fn a_failed_readme_isnt_taken_for_no_readme() {
     let recorded: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/corpus/74a258eefceb212d.json"
+            "/tests/corpus/6fd55acbc9fbaa3e.json"
         ))
         .unwrap(),
     )
@@ -1544,7 +1558,7 @@ fn root_not_found(data: &str, path: &str, message: &str) -> Reply {
 #[tokio::test]
 async fn a_missing_pull_request_isnt_also_left_out() {
     let (gh, _) = github(vec![root_not_found(
-        r#"{"repository":{"pullRequest":null,"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"MERGE"},"rateLimit":null}"#,
+        r#"{"repository":{"pullRequest":null,"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"MERGE","viewerPermission":"READ"},"rateLimit":null}"#,
         r#"["repository","pullRequest"]"#,
         "Could not resolve to a PullRequest with the number of 999999.",
     )])

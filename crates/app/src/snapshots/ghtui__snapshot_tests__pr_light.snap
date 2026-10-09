@@ -1,6 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 464
+assertion_line: 1111
 expression: "render(&with_pr(Mode::Light))"
 ---
 Buffer {
@@ -25,7 +25,7 @@ Buffer {
         "                                                                                                   ▐",
         "  ╭─ hubot commented 2d ago ────────────────────────────────────────────────────────────────────╮  ▐",
         "  │ Does this cover the 256-color fallback?                                                     │  ▐",
-        "  ╰─────────────────────────────────────────────────────────────────────────────────────────────╯  ▐",
+        "  ╰─────────────────────────────────────────────────────────────────────────────────────────────╯   ",
         "     │                                                                                              ",
         "    ◉  hubot reviewed 2d ago                                                                        ",
         "     │                                                                                              ",
@@ -163,8 +163,6 @@ Buffer {
         x: 0, y: 19, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 2, y: 19, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 97, y: 19, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
-        x: 99, y: 19, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
-        x: 0, y: 20, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 5, y: 20, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 6, y: 20, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 4, y: 21, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,

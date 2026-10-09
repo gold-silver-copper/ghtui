@@ -117,6 +117,9 @@ pub struct SubmitDialog {
     /// The key (esc or ctrl-c) pressed once with a summary typed: only that
     /// key, pressed again, throws the summary away.
     pub discard_armed: Option<&'static str>,
+    /// The comments your pending review on GitHub holds, which go with
+    /// it; `None` until GitHub says.
+    pub on_github: Option<u64>,
 }
 
 impl SubmitDialog {
@@ -133,6 +136,7 @@ impl SubmitDialog {
             quick: false,
             saved: None,
             discard_armed: None,
+            on_github: None,
         }
     }
 
@@ -192,6 +196,8 @@ pub struct SubmitOutcome {
     pub submitted: bool,
     /// The submission as a whole failed.
     pub error: Option<String>,
+    /// The comments your pending review on GitHub held after, if known.
+    pub on_github: Option<u64>,
 }
 
 pub fn suggestion_body(suggested: &str) -> String {
@@ -439,6 +445,7 @@ pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcom
         cmds.extend(state.load_visible(false));
     } else if let Some(Overlay::Submit(dialog)) = &mut state.overlay {
         dialog.sending = false;
+        dialog.on_github = outcome.on_github.or(dialog.on_github);
         dialog.error = Some(match (&outcome.error, outcome.rejected.len()) {
             (Some(err), _) => err.clone(),
             (None, n) => format!(
@@ -751,9 +758,9 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             }
             state.overlay = Some(Overlay::Submit(Box::new(SubmitDialog::new(
                 &state.theme,
-                pr,
+                pr.clone(),
             ))));
-            Vec::new()
+            vec![Cmd::Api(Api::FetchPendingReview(pr))]
         }
         _ => notice(state, Notice::Info(action.not_here())),
     }
@@ -988,10 +995,11 @@ fn submit(state: &mut State) -> Vec<Cmd> {
     let Some(Overlay::Submit(dialog)) = &state.overlay else {
         return Vec::new();
     };
-    let (event, body, pr) = (
+    let (event, body, pr, seen) = (
         dialog.event,
         dialog.input.lines().join("\n"),
         dialog.pr.clone(),
+        dialog.on_github.unwrap_or(0),
     );
     let drafts = dialog.drafts(state).map(<[DraftComment]>::to_vec);
     let head = match state.diffs.get(&DiffOf::Pr(pr.clone())) {
@@ -1023,6 +1031,7 @@ fn submit(state: &mut State) -> Vec<Cmd> {
         drafts,
         event,
         body,
+        seen,
     })]
 }
 
@@ -1035,11 +1044,11 @@ pub(crate) fn open_approve(state: &mut State, pr: PrRef) -> Vec<Cmd> {
     dialog.event = ReviewEvent::Approve;
     dialog.quick = true;
     state.overlay = Some(Overlay::Submit(Box::new(dialog)));
-    if state.diffs.contains_key(&DiffOf::Pr(pr.clone())) {
-        Vec::new()
-    } else {
-        vec![Cmd::LoadReview(pr)]
+    let mut cmds = vec![Cmd::Api(Api::FetchPendingReview(pr.clone()))];
+    if !state.diffs.contains_key(&DiffOf::Pr(pr.clone())) {
+        cmds.push(Cmd::LoadReview(pr));
     }
+    cmds
 }
 
 #[cfg(test)]
