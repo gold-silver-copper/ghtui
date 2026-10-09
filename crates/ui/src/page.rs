@@ -42,6 +42,8 @@ pub enum Link {
     Branch,
     /// Find a file in the repository.
     FindFile,
+    /// A Home section, by its place: its whole list, or what's wrong.
+    Section(usize),
     /// Reply quoting the comment `author` wrote `at` a time, its id.
     Quote {
         author: String,

@@ -1,6 +1,6 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-expression: "small(with_inbox(Mode::Dark, ColorDepth::TrueColor))"
+expression: "small(with_home(Mode::Dark, ColorDepth::TrueColor))"
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 80, height: 24 },
@@ -28,7 +28,7 @@ Buffer {
         "                                                                                ",
         "                                                                                ",
         "                                                                                ",
-        "  space menu   ↵ open   / search   o browser   y copy link       API 4987/5000  ",
+        "  space menu   ↵ open   / search   M merge   A approve           API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
@@ -150,10 +150,10 @@ Buffer {
         x: 32, y: 23, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 35, y: 23, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
         x: 36, y: 23, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 44, y: 23, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 47, y: 23, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
-        x: 48, y: 23, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 58, y: 23, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 42, y: 23, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 45, y: 23, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
+        x: 46, y: 23, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 54, y: 23, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 65, y: 23, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 78, y: 23, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
     ]

@@ -101,7 +101,6 @@ fn is_github(url: &str) -> bool {
 async fn load(gh: &GitHub, git: &GitContext, state: &mut State, route: &Route) -> bool {
     for need in needs(route) {
         match need {
-            Need::Inbox => {}
             Need::Pr(pr) => match gh.pull_request(&pr).await {
                 Ok(detail) => {
                     let remote = state.prs.entry(pr).or_default();
@@ -134,7 +133,7 @@ async fn fetch(
         DataKey::Wiki(repo, page) => crate::wiki::page(git, repo, page.as_deref())
             .await
             .map(|w| crate::browse::Data::Wiki(Box::new(w))),
-        key => crate::runtime::fetch(gh, key, None).await,
+        key => crate::runtime::fetch(gh, key, None, None).await,
     }
 }
 

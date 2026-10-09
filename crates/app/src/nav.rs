@@ -203,6 +203,7 @@ impl State {
             Link::Sort => cycle_sort(self),
             Link::Branch => self.open_finder(true),
             Link::FindFile => self.open_finder(false),
+            Link::Section(i) => self.open_section(*i),
             Link::State(state) => set_list_state(self, state),
             Link::Quote { author, body, .. } => {
                 let quoted: String = body.trim().lines().map(|l| format!("> {l}\n")).collect();
@@ -292,8 +293,12 @@ impl PageScreen {
         self.built = Some(built);
         let before = (self.scroll, self.selected);
         let find = |i: usize| self.page.find(old.target(old.items.get(i)?.link)?, i);
-        // A fresh page selects its first visible item again.
-        self.selected = self.selected.filter(|_| !self.fresh).and_then(find);
+        // A fresh page selects its first visible item again. An item that
+        // left (a pull request closed off a list) leaves the selection
+        // where it was, on the one after it.
+        let last = self.page.items.len().checked_sub(1);
+        self.selected = (self.selected.filter(|_| !self.fresh))
+            .and_then(|i| find(i).or_else(|| last.map(|l| i.min(l))));
         // The item still there starting nearest the top, if nearer than
         // the page's top, keeps its place on screen.
         let off = |it: &Item| it.start.abs_diff(self.scroll);
@@ -399,7 +404,17 @@ fn settle(p: &mut PageScreen, height: usize) {
     }
     p.scroll = p.scroll.min(max);
     if p.fresh && p.selected.is_none() {
-        p.selected = (0..p.page.items.len()).find(|&i| visible(p, i, height));
+        // A row of a list, before a Home section's note (its empty state).
+        let shown = |i: &usize| visible(p, *i, height);
+        let row = |i: &usize| {
+            let link = p.page.items.get(*i).and_then(|it| p.page.target(it.link));
+            !matches!(link, Some(Link::Section(_)))
+        };
+        let n = p.page.items.len();
+        p.selected = (0..n)
+            .filter(shown)
+            .find(row)
+            .or_else(|| (0..n).find(shown));
     }
     if jump.is_some() || p.jumped.is_some() {
         p.jumped = Some(jump.map(|_| (p.scroll, p.selected)));
@@ -539,6 +554,12 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Branch => return state.open_finder(true),
         Action::ToggleState => return cycle_state(state),
         Action::Sort => return cycle_sort(state),
+        Action::SaveSection
+        | Action::RenameSection
+        | Action::MoveSectionUp
+        | Action::MoveSectionDown
+        | Action::Delete
+        | Action::UndoDelete => return crate::home::act(state, action),
         _ => state.info(action.not_here()),
     }
     Vec::new()
@@ -1018,13 +1039,11 @@ impl State {
                 Some((score, v.title.clone(), v.url.clone(), "◷", "visited"))
             })
             .collect();
-        if let Some(Data::Repos(repos)) = self.get(&DataKey::ViewerRepos) {
-            for r in repos {
-                let name = r.repo.to_string();
-                if let Some(score) = fuzzy_score(q, &name) {
-                    let url = pages::url::repo(&r.repo);
-                    jumps.push((score + 1, name, url, "▤", "your repository"));
-                }
+        for r in self.home_repos() {
+            let name = r.repo.to_string();
+            if let Some(score) = fuzzy_score(q, &name) {
+                let url = pages::url::repo(&r.repo);
+                jumps.push((score + 1, name, url, "▤", "on your Home"));
             }
         }
         // Most recent first, as they came, until something is typed.
@@ -1425,7 +1444,7 @@ const DIFF_DOABLES: &[(&str, &[(Action, &str)])] = {
                 (A::Suggest, ""),
                 (A::FileComment, ""),
                 (A::ResolveThread, ""),
-                (A::DeleteDraft, ""),
+                (A::Delete, ""),
                 (A::UndoDelete, ""),
                 (A::SubmitReview, "submit review"),
             ],
@@ -1557,6 +1576,29 @@ impl State {
             let show = format!("Show {}", next_list_state(query));
             out.push(here(Action::ToggleState, &show, "open/closed"));
             out.push(here(Action::Sort, "Change the sort", "sort"));
+            let mut save = here(Action::SaveSection, "Save this list to Home", "");
+            save.unavailable = crate::home::unavailable(self, Action::SaveSection);
+            out.push(save);
+        }
+        if *route == Route::Home {
+            let title = self
+                .section_here()
+                .and_then(|i| self.home.get(i))
+                .map_or_else(|| "the section".to_owned(), |s| format!("“{}”", s.title));
+            for (action, label) in [
+                (Action::RenameSection, format!("Rename {title}")),
+                (Action::MoveSectionUp, format!("Move {title} up")),
+                (Action::MoveSectionDown, format!("Move {title} down")),
+                (Action::Delete, format!("Remove {title} from Home")),
+                (
+                    Action::UndoDelete,
+                    "Bring back the section removed".to_owned(),
+                ),
+            ] {
+                let mut row = doable("Home", action, &label, "");
+                row.unavailable = crate::home::unavailable(self, action);
+                out.push(row);
+            }
         }
         if let Some(repo) = route.repo() {
             out.push(here(Action::FindFile, "Go to file", "go to file"));
@@ -1666,7 +1708,7 @@ impl State {
         match here {
             Some(a) if a.is_draft() => {
                 out.push((Action::Open, "edit".to_owned()));
-                out.push((Action::DeleteDraft, "delete".to_owned()));
+                out.push((Action::Delete, "delete".to_owned()));
             }
             Some(_) => {
                 out.push((Action::Comment, "reply".to_owned()));
@@ -1720,6 +1762,7 @@ fn describe(link: &Link) -> String {
         Link::Branch => "Switch branches".into(),
         Link::FindFile => "Go to file".into(),
         Link::Quote { .. } => "Quote reply".into(),
+        Link::Section(_) => "Open the section's list".into(),
     }
 }
 

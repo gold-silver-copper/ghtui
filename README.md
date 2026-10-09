@@ -6,8 +6,9 @@ viewer that's better than GitHub's. The look is flat Material 3 adapted to
 the terminal.
 
 **Status: milestones M0–M4, plus browsing.** You can browse GitHub much as you
-would on the website. That covers your home page (review requests, your pull
-requests, your repositories), any repository, issue and pull request lists,
+would on the website. That covers your home page (your own saved searches:
+review requests, your pull requests and repositories unless you choose
+others), any repository, issue and pull request lists,
 issues, pull requests, profiles, and search. Repository pages show files, stats
 and the rendered README. You can also comment and star. Reviewing a pull
 request's diff is where ghtui goes furthest. The
@@ -41,7 +42,7 @@ That installs the `ghtui` binary.
 ## Usage
 
 ```sh
-ghtui                                   # home: review requests, your PRs and repositories
+ghtui                                   # home: your saved searches
 ghtui ratatui/ratatui                   # a repository
 ghtui ratatui/ratatui#1820              # an issue or pull request
 ghtui @octocat                          # a profile
@@ -125,8 +126,9 @@ your drafts.
   ghtui starts at home.
 
 **The pages.**
-- **Home** shows review requests, your open pull requests and your
-  repositories.
+- **Home** is your saved searches, each a section with its first rows (see
+  [Home sections](#home-sections)): by default review requests, your open
+  pull requests and your repositories.
 - **Repository** has the Code tab:
   - A title with Star, Fork and Watch.
   - About.
@@ -209,7 +211,10 @@ most 140 columns wide and centered.
 ## Acting on GitHub
 
 From a pull request (its page or its Files changed), an issue, a workflow
-run or a job, ghtui can change things on GitHub, not only show them. Each
+run or a job, ghtui can change things on GitHub, not only show them. On a
+list (Home's sections, a search, a repository's pull requests, a
+workflow's runs) the same keys act on the selected row: ghtui loads what
+it needs of it first, then asks as it would on its page. Each
 action is in the `Space` menu, where an action that can't apply says why
 (already merged, not a draft, still running…), and has a key:
 
@@ -310,6 +315,9 @@ never does something else. Less common actions have no key: they're in the
 | `B`                   | Update the pull request's branch from its base (asks first)   |
 | `X`                   | Close or reopen the issue or pull request; cancel a running workflow run (asks first) |
 | `ctrl-r`              | Re-run the workflow run, its failed jobs, or the job          |
+| `alt-↑` `alt-↓`       | Move the Home section up / down                               |
+| `Delete`              | Delete the selection: a Home section, a draft comment         |
+| `ctrl-z`              | Bring back what was just deleted                              |
 | `n` `p`               | In a job's log after a search: next / previous match          |
 | `o`                   | Open on GitHub in the browser                                 |
 | `y`                   | Copy the link                                                 |
@@ -399,6 +407,91 @@ down = ["j", "<Down>", "<C-n>"]
 up = ["k", "<Up>", "<C-p>"]
 sort = ["O"]
 ```
+
+### Home sections
+
+Home is a list of your own searches. Each `[[home]]` table is a section:
+a title, what it lists (`pulls`, `issues` or `repos`, set to a search in
+GitHub's search syntax, `@me` and all), and optionally how many `rows` it
+shows (1 to 30; 25 unless you say). Without any `[[home]]` tables, Home is
+GitHub's dashboard, as if you'd written:
+
+```toml
+[[home]]
+title = "Review requests"
+pulls = "is:open review-requested:@me archived:false sort:updated-desc"
+
+[[home]]
+title = "Your pull requests"
+pulls = "is:open author:@me archived:false sort:updated-desc"
+
+[[home]]
+title = "Your repositories"
+repos = "user:@me fork:true sort:updated"   # add org:yours for an organization's
+rows = 20
+```
+
+And for example:
+
+```toml
+[[home]]
+title = "Failing in my PRs"
+pulls = "is:open author:@me status:failure"
+
+[[home]]
+title = "Bugs in our repos"
+issues = "is:open label:bug org:my-org sort:updated-desc"
+rows = 10
+
+[[home]]
+title = "Assigned to me"
+issues = "is:open assignee:@me"
+```
+
+- **A section is its search's first page.** Its title says how many it
+  shows of how many GitHub found (`25 of 1,408`), and its last row
+  (`… 1,383 more`) opens that search in ghtui, the same list in the same
+  order. Rows are as on the search page: pull requests with their checks
+  and review state. `Enter` opens one, and the actions (merge, approve,
+  close…) work on the selected row.
+- **Fresh.** Sections show what was cached at once, then refresh; `r`
+  refreshes them, and while Home is on screen each is fetched again every
+  2 minutes. Home in a tab you aren't looking at doesn't fetch.
+- **Mistakes say so.** A section written wrong (no title, two lists,
+  `rows = 500`) says what's wrong in its box, and GitHub's reason shows
+  when it refuses a search (`author:` someone who doesn't exist); the
+  other sections load either way. An unknown key is still an error that
+  stops ghtui, as everywhere in the config.
+- **Changing them in ghtui.** On any list of issues, pull requests or
+  repositories, "Save this list to Home" (in the `Space` menu) adds it as a
+  section, under a title you type. On Home, the menu renames, moves
+  (`alt-↑` `alt-↓`) and removes (`Delete`, and `ctrl-z` brings it back)
+  the section the selection is in. Each change is written to
+  `config.toml` (through a symlink, to its target), keeping your comments
+  and layout: a section's comments move with it. If the file changed
+  since ghtui read it, the change isn't made, and Home shows what the file
+  says. Without `[[home]]` tables, the first change writes the defaults
+  out first; removing every section leaves `home = []`.
+- **Repositories** are a search too, so its count and its list agree: the
+  default is the ones you own (`user:@me`). GitHub's search can name
+  owners (`org:my-org`, more than one is either) but not "every
+  repository I can push to", so collaborations are added by owner.
+
+**GitHub's limits, measured.** GitHub gives a GraphQL request 10 seconds
+and answers 502 past them. A search's time grows with its page and with
+what each result reads: across a busy organization (`org:microsoft`,
+50,000 open pull requests) 25 results took 3.5s, 25 with each pull
+request's checks 5.7s, and 50 with checks or 100 without timed out; a
+search across all of GitHub timed out at 50 with checks. So a section's
+search reads no checks: its page (30, the search page's own) comes in 1–3s
+and shows at once, and the checks of the pull requests on it come from a
+second request by ID, 1–4s for 30. Each section is its own request, run
+side by side, so one slow search doesn't hold up the others, and a
+request that ran out of GitHub's 10 seconds isn't retried (it would only
+run out again). GraphQL search finds nothing, silently, for a user or
+repository that doesn't exist; when a search finds nothing, ghtui asks
+REST's search, which says why. Searches cost 1 point each of the 5,000 an
+hour; Home's refresh of 3 sections every 2 minutes is under 200.
 
 Action names are listed in the `actions!` table in
 [`crates/app/src/keymap.rs`](crates/app/src/keymap.rs), with their default keys;
@@ -755,9 +848,10 @@ Performance targets, as timing tests
 ## Known limitations
 
 - github.com only; GitHub Enterprise Server isn't supported yet.
-- The home page shows the 25 most recently updated PRs per section, with
-  GitHub's total count (the "see all" links list them all). Larger pages that include check status make GitHub's search
-  time out (HTTP 502) for busy accounts.
+- A Home section shows at most 30 rows (one page of GitHub's search); its
+  last row opens the rest. GitHub's search index can lag a change by a
+  few seconds, so a section may list a pull request you just merged until
+  its next refresh.
 - The cache isn't separated per GitHub account. After switching accounts, the
   previous account's cached pages show until the first refresh completes.
 - Notifications aren't a page yet; their links open in the browser.

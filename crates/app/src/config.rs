@@ -15,6 +15,8 @@ pub struct Config {
     pub ui: UiConfig,
     /// Action name → key sequences.
     pub keys: HashMap<String, Vec<String>>,
+    /// Home's sections, in order (`[[home]]` tables); none, the defaults.
+    pub home: Option<Vec<crate::home::SectionConfig>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -68,7 +70,7 @@ pub enum Density {
 
 impl Config {
     pub fn parse(text: &str) -> Result<Self> {
-        Ok(toml::from_str(text)?)
+        Ok(toml_edit::de::from_str(text)?)
     }
 
     /// Loads `path`, or the defaults if it doesn't exist.

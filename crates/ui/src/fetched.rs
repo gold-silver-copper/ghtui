@@ -72,10 +72,21 @@ impl<'a, T: ?Sized> Fetched<'a, T> {
         what: &str,
         loading: impl FnOnce(&mut Page),
     ) -> Option<&'a T> {
+        self.show_with(page, what, loading, flash)
+    }
+
+    /// [`Fetched::show_or`], drawing why it failed with `failed`.
+    pub(crate) fn show_with(
+        self,
+        page: &mut Page,
+        what: &str,
+        loading: impl FnOnce(&mut Page),
+        failed: impl FnOnce(&mut Page, &str),
+    ) -> Option<&'a T> {
         #[expect(clippy::disallowed_methods, reason = "said here")]
         match (self.error.is_some(), self.text(what)) {
             (_, Ok(data)) => return Some(data),
-            (true, Err(why)) => flash(page, &why),
+            (true, Err(why)) => failed(page, &why),
             (false, Err(_)) => loading(page),
         }
         None
@@ -91,7 +102,11 @@ impl<'a, T: ?Sized> Fetched<'a, T> {
         };
         match (self.data, self.error) {
             (Some(data), _) => Ok(data),
-            (None, Some(err)) => Err(format!("Couldn't load {what}: {err}{again}")),
+            (None, Some(err)) => {
+                // GitHub's own words may end in a full stop.
+                let err = err.trim_end_matches('.');
+                Err(format!("Couldn't load {what}: {err}{again}"))
+            }
             (None, None) => Err(format!("Loading {what}…")),
         }
     }

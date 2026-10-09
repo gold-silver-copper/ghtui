@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ghtui_api::ApiError;
 use ghtui_api::change::Change;
-use ghtui_api::model::{Inbox, NodeId, PrDetail, PrRef, ViewedFiles};
+use ghtui_api::model::{NodeId, PrDetail, PrRef, ViewedFiles};
 use ghtui_api::rate_limit::RateLimits;
 use ghtui_diff::FileDiff;
 use ghtui_git::Oid;
@@ -41,7 +41,6 @@ pub enum Msg {
     Key(KeyEvent),
     Resize(u16, u16),
     Viewer(Result<String, ApiError>),
-    Inbox(Result<Inbox, ApiError>),
     Pr(PrRef, Box<Result<PrDetail, ApiError>>),
     /// Page data; with `cached_at` (when it was fetched), the cached copy
     /// shown while fetching.
@@ -69,6 +68,13 @@ pub enum Msg {
     Problem(Problem, Option<String>),
     /// `$EDITOR` finished (or failed to start).
     Edited(EditPurpose, Result<String, Failure>),
+    /// `config.toml` was changed (or wasn't, and why): what Home shows
+    /// now, and the table a removal took out.
+    HomeEdited {
+        edit: crate::home::Edit,
+        result: Result<(Vec<crate::home::Section>, Option<String>), String>,
+        what: String,
+    },
     /// For a PR's diff screen.
     Diff(DiffOf, DiffMsg),
 }
@@ -145,12 +151,19 @@ pub enum Cmd {
         purpose: EditPurpose,
         text: String,
     },
+    /// Change Home's sections in the config file, if it still has `shown`;
+    /// `what` says it's done.
+    EditHome {
+        path: std::path::PathBuf,
+        shown: Vec<crate::home::Section>,
+        edit: crate::home::Edit,
+        what: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Api {
     FetchViewer,
-    FetchInbox,
     FetchPr(PrRef),
     /// Fetch page data; with `cached`, first send what the cache has.
     Fetch {
@@ -261,6 +274,8 @@ pub enum Timer {
     Minute,
     /// Fetch again what's on screen and still running.
     Live,
+    /// Home's sections, on screen, are fetched again when old.
+    Home,
 }
 
 /// Braille spinner frames.
@@ -275,6 +290,8 @@ pub struct Remote<T> {
     pub error: Option<String>,
     /// When `data` was fetched, while it's a copy from the cache.
     pub cached_at: Option<u64>,
+    /// When it was last asked for (Unix seconds), to know when it's old.
+    pub asked_at: Option<u64>,
     /// The cursor a next page was asked after, while that page is on its way.
     more: Option<String>,
     /// A write was made since the last fetch was asked for.
@@ -292,6 +309,7 @@ impl<T> Default for Remote<T> {
             loading: false,
             error: None,
             cached_at: None,
+            asked_at: None,
             more: None,
             stale: false,
             extended: false,
@@ -328,6 +346,7 @@ impl<T> Remote<T> {
             loading: self.loading,
             error: self.error.clone(),
             cached_at: self.cached_at,
+            asked_at: self.asked_at,
             more: self.more.clone(),
             stale: self.stale,
             extended: self.extended,
@@ -460,7 +479,16 @@ pub struct State {
     pub after: Vec<Tab>,
     /// Pages visited, for the search box.
     pub visits: Vec<Visit>,
-    pub inbox: Remote<Inbox>,
+    /// Home's sections, as `config.toml` has them.
+    pub home: Vec<crate::home::Section>,
+    /// Where they're written back to.
+    pub config_path: Option<std::path::PathBuf>,
+    /// The section just removed, where it was, as its TOML.
+    pub removed: Option<(usize, String)>,
+    /// A change to the sections is being written.
+    pub home_editing: bool,
+    /// [`Timer::Home`] is scheduled.
+    pub home_timer: bool,
     pub prs: HashMap<PrRef, Remote<PrDetail>>,
     /// Everything else pages show.
     pub data: HashMap<DataKey, Remote<Data>>,
@@ -492,6 +520,10 @@ pub struct State {
     pub live: bool,
     /// A change GitHub accepted that its page doesn't show yet.
     pub awaiting: Option<act::Awaiting>,
+    /// An action waiting for what it's about to load.
+    pub pending: Option<act::Pending>,
+    /// What the change on its way to GitHub is about.
+    pub changing: Option<act::Subject>,
     pub quit: bool,
 }
 
@@ -503,7 +535,11 @@ impl State {
             before: Vec::new(),
             after: Vec::new(),
             visits: Vec::new(),
-            inbox: Remote::default(),
+            home: crate::home::defaults(),
+            config_path: None,
+            removed: None,
+            home_editing: false,
+            home_timer: false,
             prs: HashMap::new(),
             data: HashMap::new(),
             data_gen: 0,
@@ -525,6 +561,8 @@ impl State {
             spinning: false,
             live: false,
             awaiting: None,
+            pending: None,
+            changing: None,
             quit: false,
         };
         state.sync_page();
@@ -573,22 +611,32 @@ impl State {
         }
     }
 
+    /// What a page needs fetched: Home's are its sections'.
+    pub fn needs(&self, route: &Route) -> Vec<Need> {
+        match route {
+            Route::Home => self.home_needs(),
+            _ => browse::needs(route),
+        }
+    }
+
     /// Fetches a page's data. The repository header shared by a repo's
-    /// pages is only fetched when missing.
+    /// pages is only fetched when missing; Home's sections, also when
+    /// they're old.
     #[must_use]
     pub fn ensure_route(&mut self, route: &Route, force: bool) -> Vec<Cmd> {
         let mut cmds = Vec::new();
-        for need in browse::needs(route) {
+        for need in self.needs(route) {
             let header = browse::is_header(route, &need);
-            cmds.extend(self.ensure(need, force && !header));
+            let aged = *route == Route::Home && self.aged(&need);
+            cmds.extend(self.ensure(need, (force || aged) && !header));
         }
         cmds
     }
 
     #[must_use]
     pub fn ensure(&mut self, need: Need, force: bool) -> Vec<Cmd> {
+        let now = (self.clock)();
         let (started, api) = match need {
-            Need::Inbox => (self.inbox.begin(force), Api::FetchInbox),
             Need::Pr(pr) => (
                 self.prs.entry(pr.clone()).or_default().begin(force),
                 Api::FetchPr(pr),
@@ -600,7 +648,11 @@ impl State {
                 let running = remote.data.as_ref().is_some_and(Data::running);
                 let cached = remote.data.is_none();
                 let force = force || (running && !remote.extended);
-                (remote.begin(force), Api::Fetch { cached, key })
+                let started = remote.begin(force);
+                if started {
+                    remote.asked_at = Some(now);
+                }
+                (started, Api::Fetch { cached, key })
             }
         };
         started.then_some(Cmd::Api(api)).into_iter().collect()
@@ -788,7 +840,7 @@ impl State {
         let Screen::Page(p) = self.screen() else {
             return Vec::new();
         };
-        browse::needs(&p.route)
+        self.needs(&p.route)
             .into_iter()
             .filter(|need| match need {
                 Need::Data(key) => self
@@ -798,7 +850,6 @@ impl State {
                 Need::Pr(pr) => (self.prs.get(pr))
                     .and_then(|r| r.data.as_ref())
                     .is_some_and(PrDetail::settling),
-                Need::Inbox => false,
             })
             .collect()
     }
@@ -847,7 +898,6 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     let data = matches!(
         msg,
         Msg::Viewer(_)
-            | Msg::Inbox(_)
             | Msg::Pr(..)
             | Msg::Fetched { .. }
             | Msg::FetchedMore(..)
@@ -864,7 +914,6 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         _ => false,
     };
     if wrote {
-        state.inbox.stale = true;
         state.prs.values_mut().for_each(|r| r.stale = true);
         state.data.values_mut().for_each(|r| r.stale = true);
     }
@@ -905,6 +954,11 @@ pub fn timers(state: &mut State, last_notice: &mut Option<Notice>) -> Vec<Cmd> {
         state.live = true;
         cmds.push(Cmd::Timer(Timer::Live, LIVE_MS));
     }
+    // Home keeps itself fresh while it's on screen, and only then.
+    if !state.home_timer && state.route() == Some(&Route::Home) {
+        state.home_timer = true;
+        cmds.push(Cmd::Timer(Timer::Home, crate::home::FRESH_SECS * 1000));
+    }
     cmds
 }
 
@@ -919,12 +973,6 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Resize(w, h) => state.size = (w, h),
         Msg::Viewer(Ok(login)) => state.viewer = Some(login),
         Msg::Viewer(Err(err)) => tracing::warn!(%err, "could not fetch viewer"),
-        Msg::Inbox(result) => {
-            if let Err(err) = &result {
-                tracing::warn!(%err, "inbox fetch failed");
-            }
-            state.inbox.finish(result);
-        }
         Msg::Pr(pr, result) => {
             if let Err(err) = result.as_ref() {
                 tracing::warn!(%pr, %err, "PR fetch failed");
@@ -943,10 +991,11 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             let remote = state.data.entry(key.clone()).or_default();
             match cached_at {
                 None => remote.finish(result),
+                // A first look while it loads: shown over nothing, or over
+                // an older one.
                 Some(at) => {
-                    if remote.data.is_none()
-                        && let Ok(data) = result
-                    {
+                    let older = remote.data.is_none() || remote.cached_at.is_some_and(|c| c <= at);
+                    if older && let Ok(data) = result {
                         remote.data = Some(data);
                         remote.cached_at = Some(at);
                     }
@@ -1016,6 +1065,12 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             }
             return cmds;
         }
+        Msg::Timer(Timer::Home) => {
+            state.home_timer = false;
+            if state.route() == Some(&Route::Home) {
+                return state.ensure_route(&Route::Home, false);
+            }
+        }
         Msg::Timer(Timer::Minute) => {
             state.data_gen += 1;
             return vec![Cmd::Timer(Timer::Minute, 60_000)];
@@ -1041,6 +1096,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.problems.remove(&problem);
         }
         Msg::Edited(purpose, result) => return on_edited(state, purpose, result),
+        Msg::HomeEdited { edit, result, what } => return state.home_edited(&edit, result, what),
     }
     Vec::new()
 }
@@ -1206,7 +1262,7 @@ fn diff_action(state: &mut State, action: Action) -> Vec<Cmd> {
         | Action::FileComment
         | Action::Suggest
         | Action::ResolveThread
-        | Action::DeleteDraft
+        | Action::Delete
         | Action::UndoDelete
         | Action::SubmitReview
         | Action::ToggleSinceReview
@@ -1269,7 +1325,6 @@ pub(crate) mod tests {
     use crate::route::OPEN;
     use ghtui_api::browse::IssueState;
     use ghtui_api::browse::SearchResults;
-    use ghtui_api::model::PrSummary;
     use ghtui_api::model::RepoId;
     use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode};
     use ghtui_ui::annotations::AnnotationKey;
@@ -1287,38 +1342,46 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn state() -> State {
-        State::new(
+        let mut state = State::new(
             Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor),
             Icons::default(),
             Keymap::default(),
             (100, 30),
-        )
-    }
-
-    fn summary(n: u64) -> PrSummary {
-        PrSummary {
-            pr: PrRef::parse(&format!("o/r#{n}")).unwrap(),
-            title: format!("PR {n}"),
-            author: "a".into(),
-            state: IssueState::Open,
-            updated_at: "2026-01-01T00:00:00Z".into(),
-            additions: 0,
-            deletions: 0,
-            comments: 0,
-            review: None,
-            checks: None,
-        }
-    }
-
-    fn with_inbox(n: u64) -> State {
-        let mut state = state();
-        update(
-            &mut state,
-            Msg::Inbox(Ok(Inbox {
-                authored: (1..=n).map(summary).collect::<Vec<_>>().into(),
-                ..Inbox::default()
-            })),
         );
+        // Never written: changes to Home's sections are commands.
+        state.config_path = Some("config.toml".into());
+        state
+    }
+
+    /// Your `n` pull requests of `total`, as Home's second section finds them.
+    fn mine(n: u64, total: u64) -> SearchResults {
+        let row = |n| {
+            crate::fixtures::found_pr(&format!("o/r#{n}"), &format!("PR {n}"), IssueState::Open)
+        };
+        crate::fixtures::found_prs((1..=n).map(row).collect(), total)
+    }
+
+    /// Home's second section: your pull requests.
+    fn mine_key(state: &State) -> DataKey {
+        state.home[1].search.clone().unwrap().key()
+    }
+
+    /// Home's second section's fetch failed.
+    fn mine_failed(state: &mut State, err: ApiError) {
+        let key = mine_key(state);
+        update(
+            state,
+            Msg::Fetched {
+                key,
+                result: Err(err),
+                cached_at: None,
+            },
+        );
+    }
+
+    fn with_home(n: u64) -> State {
+        let mut state = state();
+        crate::fixtures::section(&mut state, 1, mine(n, n));
         state
     }
 
@@ -1422,7 +1485,7 @@ pub(crate) mod tests {
 
     #[test]
     fn home_selects_the_first_row_and_opens_it() {
-        let mut state = with_inbox(3);
+        let mut state = with_home(3);
         assert_eq!(route(&state), Route::Home);
         assert!(
             selected_text(&state).contains("PR 1"),
@@ -1578,10 +1641,10 @@ pub(crate) mod tests {
     #[test]
     fn duplicate_fetches_are_suppressed() {
         let mut state = state();
-        assert_eq!(
-            state.load_visible(false),
-            vec![Cmd::Api(Api::FetchInbox), fetch(DataKey::ViewerRepos)]
-        );
+        let sections: Vec<Cmd> = (state.home.iter())
+            .map(|s| fetch(s.search.clone().unwrap().key()))
+            .collect();
+        assert_eq!(state.load_visible(false), sections);
         assert_eq!(state.load_visible(true), vec![Cmd::Api(Api::FetchViewer)]);
     }
 
@@ -1604,10 +1667,10 @@ pub(crate) mod tests {
 
     #[test]
     fn failed_refresh_keeps_cached_data() {
-        let mut state = with_inbox(2);
+        let mut state = with_home(2);
         let _ = state.load_visible(true);
-        update(&mut state, Msg::Inbox(Err(ApiError::RateLimited(30))));
-        assert_eq!(state.inbox.data.as_ref().unwrap().authored.len(), 2);
+        mine_failed(&mut state, ApiError::RateLimited(30));
+        assert!(selected_text(&state).contains("PR 1"));
         let first = page(&state).page().lines[0].text();
         assert!(
             first.contains("Couldn't refresh") && first.contains("rate limited"),
@@ -1618,37 +1681,53 @@ pub(crate) mod tests {
     /// One outage that fails each of the page's needs is said once.
     #[test]
     fn a_refresh_error_shared_by_needs_is_said_once() {
-        let mut state = with_inbox(2);
+        let mut state = with_home(2);
+        let repos = state.home[2].search.clone().unwrap().key();
         let fetched = |result| Msg::Fetched {
-            key: DataKey::ViewerRepos,
+            key: repos.clone(),
             result,
             cached_at: None,
         };
-        update(
-            &mut state,
-            fetched(Ok(Data::Repos(ghtui_api::model::Capped::default()))),
-        );
+        let none = SearchResults::Repos(ghtui_api::browse::Results::default());
+        update(&mut state, fetched(Ok(Data::Search(Box::new(none)))));
         let _ = state.load_visible(true);
-        update(&mut state, Msg::Inbox(Err(ApiError::RateLimited(30))));
+        mine_failed(&mut state, ApiError::RateLimited(30));
         update(&mut state, fetched(Err(ApiError::RateLimited(30))));
         let first = page(&state).page().lines[0].text();
         assert_eq!(first.matches("rate limited").count(), 1, "{first}");
     }
 
-    /// Home's boxes show a few of your pull requests; the rest are a
-    /// row that opens them, not the dashboard `o` opens.
+    /// A section shows its search's first rows; the rest are a row that
+    /// opens the search's own list in ghtui: the same fetch, so the same
+    /// order and count.
     #[test]
-    fn home_links_the_pull_requests_it_left_out() {
+    fn a_section_opens_the_rest_of_its_list() {
         let mut state = state();
-        update(
-            &mut state,
-            Msg::Inbox(Ok(Inbox {
-                authored: ghtui_api::model::Capped::new(vec![summary(1)], 31),
-                ..Inbox::default()
-            })),
+        crate::fixtures::section(&mut state, 1, mine(30, 31));
+        state.home[1].search.as_mut().unwrap().rows = 5;
+        state.data_gen += 1;
+        state.sync_page();
+        let text = page(&state)
+            .page()
+            .lines
+            .iter()
+            .map(ghtui_ui::page::PageLine::text)
+            .collect::<Vec<_>>();
+        assert!(
+            text.iter()
+                .any(|l| l.contains("Your pull requests  5 of 31")),
+            "{text:?}"
         );
         press(&mut state, "G");
-        assert_eq!(selected_text(&state).trim(), "… 30 more");
+        assert_eq!(selected_text(&state).trim(), "… 26 more");
+        let key = mine_key(&state);
+        press(&mut state, "<Enter>");
+        let DataKey::Search(kind, query) = key.clone() else {
+            panic!("{key:?}")
+        };
+        assert_eq!(route(&state), Route::Search { kind, query });
+        assert!(selected_text(&state).contains("PR 1"), "the same list");
+        press(&mut state, "<Esc>");
         let cmds = press(&mut state, "o");
         let [Cmd::OpenUrl(url)] = cmds.as_slice() else {
             panic!("{cmds:?}")
@@ -1658,7 +1737,7 @@ pub(crate) mod tests {
 
     #[test]
     fn browser_and_copy_use_the_selection_or_the_page() {
-        let mut state = with_inbox(1);
+        let mut state = with_home(1);
         assert_eq!(
             press(&mut state, "o"),
             vec![Cmd::OpenUrl("https://github.com/o/r/pull/1".into())]
@@ -1678,7 +1757,7 @@ pub(crate) mod tests {
 
     #[test]
     fn palette_goes_places_and_runs_actions() {
-        let mut state = with_inbox(1);
+        let mut state = with_home(1);
         press(&mut state, ":");
         assert!(matches!(state.overlay, Some(Overlay::Picker(_))));
         let cmds = fetches(press(&mut state, "a/b#9<Enter>"));
@@ -1965,16 +2044,156 @@ pub(crate) mod tests {
         assert_eq!(h.next, None, "the next page was dropped");
     }
 
-    /// Home's inbox from the disk cache is from an earlier session: going
-    /// back to Home fetches it.
+    /// Sections are changed from Home: moved, renamed, removed and
+    /// brought back, each written to config.toml; Home then shows what the
+    /// file says.
     #[test]
-    fn going_back_home_fetches_a_cached_inbox() {
+    fn home_sections_are_changed_in_the_config() {
+        use crate::home::Edit;
+        let mut state = with_home(2);
+        press(&mut state, "j");
+        assert_eq!(state.section_here(), Some(1));
+        let cmds = press(&mut state, "<A-Up>");
+        let [Cmd::EditHome { edit, shown, .. }] = cmds.as_slice() else {
+            panic!("{cmds:?}")
+        };
+        assert_eq!(*edit, Edit::Move { at: 1, up: true });
+        assert_eq!(*shown, crate::home::defaults());
+        assert!(
+            press(&mut state, "<A-Up>").is_empty(),
+            "one change at a time"
+        );
+        let mut moved = crate::home::defaults();
+        moved.swap(0, 1);
+        update(
+            &mut state,
+            Msg::HomeEdited {
+                edit: edit.clone(),
+                result: Ok((moved.clone(), None)),
+                what: "Moved".into(),
+            },
+        );
+        assert_eq!(state.home, moved);
+        assert_eq!(state.section_here(), Some(0), "the selection moved with it");
+        let cmds = press(&mut state, "<Delete>");
+        let [Cmd::EditHome { edit, .. }] = cmds.as_slice() else {
+            panic!("{cmds:?}")
+        };
+        assert_eq!(*edit, Edit::Remove { at: 0 });
+        let (removed, table) = (moved[1..].to_vec(), "[[home]]\ntitle = \"x\"".to_owned());
+        update(
+            &mut state,
+            Msg::HomeEdited {
+                edit: edit.clone(),
+                result: Ok((removed, Some(table.clone()))),
+                what: "Removed".into(),
+            },
+        );
+        let cmds = press(&mut state, "<C-z>");
+        assert!(
+            matches!(cmds.as_slice(), [Cmd::EditHome { edit: Edit::Restore { at: 0, table: t }, .. }] if *t == table),
+            "{cmds:?}"
+        );
+        // A change GitHub's file refused says why.
+        update(
+            &mut state,
+            Msg::HomeEdited {
+                edit: Edit::Remove { at: 0 },
+                result: Err("config.toml changed since ghtui read it".into()),
+                what: String::new(),
+            },
+        );
+        assert!(matches!(&state.notice, Some(Notice::Error(e)) if e.contains("changed since")));
+    }
+
+    /// Any list of issues, pull requests or repositories can be saved to
+    /// Home, under a title you give it.
+    #[test]
+    fn a_list_is_saved_to_home() {
         let mut state = state();
-        let (value, fetched_at) = (Inbox::default(), 0);
-        state.inbox = Remote::cached(Some(ghtui_store::Cached { value, fetched_at }));
+        let _ = state.push(Route::Search {
+            kind: ghtui_api::browse::SearchKind::Issues,
+            query: "repo:o/r is:pr label:bug".into(),
+        });
+        let _ = act(&mut state, Action::SaveSection);
+        let cmds = press(&mut state, "<C-u>Bugs<Enter>");
+        assert!(state.overlay.is_none(), "the prompt closed");
+        assert_eq!(
+            cmds,
+            vec![Cmd::EditHome {
+                path: "config.toml".into(),
+                shown: crate::home::defaults(),
+                edit: crate::home::Edit::Add {
+                    title: "Bugs".into(),
+                    kind: ghtui_api::browse::SearchKind::Pulls,
+                    query: "repo:o/r is:pr label:bug".into(),
+                },
+                what: "Added “Bugs” to Home".into(),
+            }]
+        );
+        let _ = state.push(Route::user("octocat"));
+        let _ = act(&mut state, Action::SaveSection);
+        assert!(state.overlay.is_none());
+    }
+
+    /// Home on screen fetches its sections again once they're old, one
+    /// fetch at a time; a Home in another tab or history doesn't.
+    #[test]
+    fn home_stays_fresh_only_on_screen() {
+        static NOW: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1000);
+        let mut state = state();
+        state.clock = || NOW.load(std::sync::atomic::Ordering::Relaxed);
+        let _ = state.load_visible(false);
+        let mut last = None;
+        let cmds = timers(&mut state, &mut last);
+        let home = Cmd::Timer(Timer::Home, crate::home::FRESH_SECS * 1000);
+        assert!(cmds.contains(&home), "{cmds:?}");
+        assert!(!timers(&mut state, &mut last).contains(&home), "one timer");
+        // Still loading: nothing more is asked.
+        NOW.store(
+            1000 + crate::home::FRESH_SECS,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        assert!(update(&mut state, Msg::Timer(Timer::Home)).is_empty());
+        crate::fixtures::section(&mut state, 1, mine(1, 1));
+        NOW.store(
+            1000 + 2 * crate::home::FRESH_SECS,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let asked = |cmds: &[Cmd], key: &DataKey| {
+            cmds.iter()
+                .any(|c| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if k == key))
+        };
+        let cmds = update(&mut state, Msg::Timer(Timer::Home));
+        assert_eq!(cmds.len(), 1, "{cmds:?}");
+        assert!(asked(&cmds, &mine_key(&state)), "{cmds:?}");
+        // Away from Home, its timer does nothing and isn't set again.
+        let _ = state.push(Route::user("octocat"));
+        crate::fixtures::section(&mut state, 1, mine(1, 1));
+        NOW.store(
+            1000 + 4 * crate::home::FRESH_SECS,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        assert!(update(&mut state, Msg::Timer(Timer::Home)).is_empty());
+        assert!(!timers(&mut state, &mut last).contains(&home));
+        // Back home, what's old is fetched again.
+        let cmds = state.back();
+        assert!(asked(&cmds, &mine_key(&state)), "{cmds:?}");
+    }
+
+    /// Home's sections from the disk cache are from an earlier session:
+    /// going back to Home fetches them.
+    #[test]
+    fn going_back_home_fetches_cached_sections() {
+        let mut state = state();
+        let key = mine_key(&state);
+        let (value, fetched_at) = (Data::Search(Box::new(mine(1, 1))), 0);
+        let cached = Remote::cached(Some(ghtui_store::Cached { value, fetched_at }));
+        state.data.insert(key.clone(), cached);
         let _ = state.start_at(Target::Page(Route::Repo(repo())));
         let cmds = state.back();
-        assert!(cmds.contains(&Cmd::Api(Api::FetchInbox)), "{cmds:?}");
+        let asked = |c: &Cmd| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if *k == key);
+        assert!(cmds.iter().any(asked), "{cmds:?}");
     }
 
     /// Live suggestions answer in any order: an answer for an older input
@@ -3688,7 +3907,7 @@ pub(crate) mod tests {
     /// moving what you scrolled to.
     #[test]
     fn a_failed_refresh_keeps_the_view() {
-        let mut state = with_inbox(40);
+        let mut state = with_home(40);
         for _ in 0..25 {
             press(&mut state, "<Down>");
         }
@@ -3699,7 +3918,7 @@ pub(crate) mod tests {
         let before = top(&state);
         assert!(page(&state).scroll > 0, "scrolled");
         let _ = state.load_visible(true);
-        update(&mut state, Msg::Inbox(Err(ApiError::RateLimited(30))));
+        mine_failed(&mut state, ApiError::RateLimited(30));
         assert!(
             page(&state).page().lines[0]
                 .text()

@@ -38,6 +38,8 @@ pub struct Confirm {
     /// What asked for it: planned again as GitHub's answers arrive, so
     /// the facts stay true and a change that no longer applies closes.
     pub action: Action,
+    /// What it changes, kept: on a list, the selection may move on.
+    pub about: Option<Subject>,
     pub title: String,
     /// Each with whether it's a problem.
     pub facts: Vec<(String, bool)>,
@@ -51,6 +53,7 @@ impl Confirm {
     fn new(title: String, facts: Vec<(String, bool)>, choices: Vec<(String, Change)>) -> Self {
         Self {
             action: Action::Close,
+            about: None,
             title,
             facts,
             choices,
@@ -73,8 +76,20 @@ impl Confirm {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Awaiting {
     pub change: Change,
+    /// The page it was made on.
     pub route: Route,
+    /// The page of what it changed: the same, or a row's on a list.
+    pub about: Route,
     polls: u32,
+}
+
+/// An action asked for on something not loaded yet (a list's row): it
+/// runs once that's in, if you're still on the page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pending {
+    pub action: Action,
+    pub subject: Subject,
+    pub route: Option<Route>,
 }
 
 /// How many times a page is fetched again for a change before giving up:
@@ -87,6 +102,8 @@ enum Plan {
     Ask(Confirm),
     Do(Change),
     Approve(PrRef),
+    /// It's about something that has to load first.
+    Load(Need),
 }
 
 /// Why `action` can't change anything here, if it can't.
@@ -94,10 +111,23 @@ pub fn unavailable(state: &State, action: Action) -> Option<String> {
     plan(state, action).err()
 }
 
-/// Runs one of [`ACTIONS`].
+/// Runs one of [`ACTIONS`] on what's on screen, or on the selected row
+/// of a list.
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
-    match plan(state, action) {
+    let Some(subject) = subject(state) else {
+        state.info(elsewhere(action));
+        return Vec::new();
+    };
+    // A row's may be an old copy (from the cache, before a change).
+    let mut cmds = state.ensure(subject.need(), false);
+    cmds.extend(act_on(state, subject, action));
+    cmds
+}
+
+#[must_use]
+fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
+    match plan_for(state, &subject, action) {
         Err(why) => {
             state.info(why);
             Vec::new()
@@ -108,37 +138,124 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Ok(Plan::Do(change)) => {
             state.info(format!("{}…", doing(&change)));
+            state.changing = Some(subject);
             vec![Cmd::Api(Api::Change(change))]
         }
         Ok(Plan::Approve(pr)) => crate::review::open_approve(state, pr),
+        Ok(Plan::Load(need)) => {
+            state.info(format!("Loading {}…", subject.name()));
+            let route = state.route().cloned();
+            state.pending = Some(Pending {
+                action,
+                subject,
+                route,
+            });
+            state.ensure(need, false)
+        }
     }
 }
 
-/// What the screen is about, as far as changing it goes.
-enum Subject {
+/// What an action changes: a pull request, an issue, a run or a job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Subject {
     Pr(PrRef),
     Issue(RepoId, u64),
     Run(RepoId, u64, Option<u64>),
     Job(RepoId, u64),
 }
 
+impl Subject {
+    /// The subject of a page about one thing.
+    fn of(route: &Route) -> Option<Self> {
+        Some(match route {
+            Route::Pr { pr, .. } => Subject::Pr(pr.clone()),
+            Route::Issue { repo, number } => Subject::Issue(repo.clone(), *number),
+            Route::WorkflowRun { repo, run, attempt } => Subject::Run(repo.clone(), *run, *attempt),
+            Route::Job { repo, job, .. } => Subject::Job(repo.clone(), *job),
+            _ => return None,
+        })
+    }
+
+    /// Its page.
+    fn route(&self) -> Route {
+        match self {
+            Subject::Pr(pr) => Route::pr(pr.clone()),
+            Subject::Issue(repo, number) => Route::Issue {
+                repo: repo.clone(),
+                number: *number,
+            },
+            Subject::Run(repo, run, attempt) => Route::WorkflowRun {
+                repo: repo.clone(),
+                run: *run,
+                attempt: *attempt,
+            },
+            Subject::Job(repo, job) => Route::Job {
+                repo: repo.clone(),
+                run: None,
+                job: *job,
+                step: None,
+                query: String::new(),
+            },
+        }
+    }
+
+    /// What planning for it reads.
+    fn need(&self) -> Need {
+        match self {
+            Subject::Pr(pr) => Need::Pr(pr.clone()),
+            Subject::Issue(repo, number) => Need::Data(DataKey::Issue(repo.clone(), *number)),
+            Subject::Run(repo, run, attempt) => {
+                Need::Data(DataKey::Run(repo.clone(), *run, *attempt))
+            }
+            Subject::Job(repo, job) => Need::Data(DataKey::Job(repo.clone(), *job)),
+        }
+    }
+
+    fn name(&self) -> String {
+        match self {
+            Subject::Pr(pr) => pr.to_string(),
+            Subject::Issue(repo, number) => format!("{repo}#{number}"),
+            Subject::Run(..) => "the run".to_owned(),
+            Subject::Job(..) => "the job".to_owned(),
+        }
+    }
+}
+
+/// What an action would change here: the page's own subject (a pull
+/// request, its files, an issue, a run, a job), or on a list, the
+/// selected row's.
 fn subject(state: &State) -> Option<Subject> {
     match state.screen() {
         Screen::Diff(d) => d.of.pr().map(|pr| Subject::Pr(pr.clone())),
-        Screen::Page(p) => match &p.route {
-            Route::Pr { pr, .. } => Some(Subject::Pr(pr.clone())),
-            Route::Issue { repo, number } => Some(Subject::Issue(repo.clone(), *number)),
-            Route::WorkflowRun { repo, run, attempt } => {
-                Some(Subject::Run(repo.clone(), *run, *attempt))
+        Screen::Page(p) => Subject::of(&p.route).or_else(|| {
+            let url = p.selected_link()?.url()?;
+            match crate::route::Target::from_url(url) {
+                crate::route::Target::Page(route) => Subject::of(&route),
+                crate::route::Target::Files(of) => of.pr().cloned().map(Subject::Pr),
+                crate::route::Target::External(_) => None,
             }
-            Route::Job { repo, job, .. } => Some(Subject::Job(repo.clone(), *job)),
-            _ => None,
-        },
+        }),
+    }
+}
+
+/// Where `action` works, for when it doesn't here.
+fn elsewhere(action: Action) -> &'static str {
+    match action {
+        Action::Close => {
+            "Closing works on an issue, a pull request or a running workflow run (or its row)"
+        }
+        Action::Rerun => "Re-running works on a workflow run or a job",
+        _ => "That works on a pull request (or its row in a list)",
     }
 }
 
 fn plan(state: &State, action: Action) -> Result<Plan, String> {
-    let mut plan = plan_here(state, action)?;
+    let subject = subject(state).ok_or_else(|| elsewhere(action).to_owned())?;
+    plan_for(state, &subject, action)
+}
+
+fn plan_for(state: &State, subject: &Subject, action: Action) -> Result<Plan, String> {
+    let mut plan = plan_here(state, subject, action)?;
     // GitHub hasn't shown the last change yet: what's on screen is old.
     if let Some(waiting) = awaiting_here(state) {
         return Err(format!(
@@ -148,35 +265,49 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
     }
     if let Plan::Ask(confirm) = &mut plan {
         confirm.action = action;
+        confirm.about = Some(subject.clone());
     }
     Ok(plan)
 }
 
-fn plan_here(state: &State, action: Action) -> Result<Plan, String> {
-    let elsewhere = || match action {
-        Action::Close => "Closing works on an issue, a pull request or a running workflow run",
-        Action::Rerun => "Re-running works on a workflow run or a job",
-        _ => "That works on a pull request",
-    };
-    match subject(state).ok_or_else(|| elsewhere().to_owned())? {
+/// `remote`'s data; `None` until it's loaded; why it couldn't load.
+fn loaded<'a, T>(
+    remote: Option<&'a crate::state::Remote<T>>,
+    name: &str,
+) -> Result<Option<&'a T>, String> {
+    match remote {
+        Some(r) if r.data.is_some() => Ok(r.data.as_ref()),
+        Some(r) if !r.loading && r.error.is_some() => Err(format!(
+            "Couldn't load {name}: {}",
+            r.error.as_deref().unwrap_or_default()
+        )),
+        _ => Ok(None),
+    }
+}
+
+fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, String> {
+    let elsewhere = || elsewhere(action).to_owned();
+    let name = subject.name();
+    let for_runs = matches!(action, Action::Close | Action::Rerun);
+    match subject {
+        Subject::Pr(_) | Subject::Issue(..) if action == Action::Rerun => Err(elsewhere()),
+        Subject::Issue(..) if action != Action::Close => Err(elsewhere()),
+        Subject::Run(..) | Subject::Job(..) if !for_runs => Err(elsewhere()),
         Subject::Pr(pr) => {
-            let detail = state
-                .prs
-                .get(&pr)
-                .and_then(|r| r.data.as_ref())
-                .ok_or("The pull request hasn't loaded yet")?;
-            pr_plan(state, &pr, detail, action).ok_or_else(|| elsewhere().to_owned())?
+            let Some(detail) = loaded(state.prs.get(pr), &name)? else {
+                return Ok(Plan::Load(subject.need()));
+            };
+            pr_plan(state, pr, detail, action).ok_or_else(elsewhere)?
         }
         Subject::Issue(repo, number) => {
-            let key = DataKey::Issue(repo.clone(), number);
-            let issue = state
-                .picked::<Option<Box<ghtui_api::browse::IssueDetail>>>(&key)
-                .and_then(Option::as_deref)
-                .ok_or("The issue hasn't loaded yet")?;
-            if action != Action::Close {
-                return Err(elsewhere().to_owned());
-            }
-            let name = format!("{repo}#{number}");
+            let key = DataKey::Issue(repo.clone(), *number);
+            let Some(data) = loaded(state.data.get(&key), &name)? else {
+                return Ok(Plan::Load(subject.need()));
+            };
+            // A number that's a pull request is one.
+            let crate::browse::Data::Issue(Some(issue)) = data else {
+                return Err(elsewhere());
+            };
             let issue_id = issue.id.clone();
             Ok(Plan::Ask(match issue.state {
                 IssueState::Open | IssueState::Draft if !issue.can_close => {
@@ -216,20 +347,28 @@ fn plan_here(state: &State, action: Action) -> Result<Plan, String> {
             }))
         }
         Subject::Run(repo, run, attempt) => {
+            let key = DataKey::Run(repo.clone(), *run, *attempt);
+            if loaded(state.data.get(&key), &name)?.is_none() {
+                return Ok(Plan::Load(subject.need()));
+            }
             let run = state
-                .picked::<WorkflowRun>(&DataKey::Run(repo.clone(), run, attempt))
-                .ok_or("The run hasn't loaded yet")?;
+                .picked::<WorkflowRun>(&key)
+                .ok_or("GitHub sent something else for the run")?;
             let about = RunAbout {
                 id: run.id,
                 name: format!("{} #{}", run.name, run.number),
                 outcome: run.outcome,
             };
-            run_plan(state, &repo, &about, None, action).ok_or_else(|| elsewhere().to_owned())?
+            run_plan(state, repo, &about, None, action).ok_or_else(elsewhere)?
         }
         Subject::Job(repo, job) => {
+            let key = DataKey::Job(repo.clone(), *job);
+            if loaded(state.data.get(&key), &name)?.is_none() {
+                return Ok(Plan::Load(subject.need()));
+            }
             let job = state
-                .picked::<Job>(&DataKey::Job(repo.clone(), job))
-                .ok_or("The job hasn't loaded yet")?;
+                .picked::<Job>(&key)
+                .ok_or("GitHub sent something else for the job")?;
             // A job can end while its run goes on: it's the run that's
             // cancelled or re-run.
             let about = RunAbout {
@@ -237,8 +376,7 @@ fn plan_here(state: &State, action: Action) -> Result<Plan, String> {
                 name: format!("{} #{}", job.run.name, job.run.number),
                 outcome: job.run.outcome,
             };
-            run_plan(state, &repo, &about, Some(job), action)
-                .ok_or_else(|| elsewhere().to_owned())?
+            run_plan(state, repo, &about, Some(job), action).ok_or_else(elsewhere)?
         }
     }
 }
@@ -530,7 +668,9 @@ pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             if let Some((_, change)) = confirm.choices.get(confirm.selected) {
                 confirm.sending = true;
                 confirm.error = None;
-                return vec![Cmd::Api(Api::Change(change.clone()))];
+                let cmd = Cmd::Api(Api::Change(change.clone()));
+                state.changing = confirm.about.clone();
+                return vec![cmd];
             }
         }
         _ => {}
@@ -551,16 +691,23 @@ pub fn on_changed(state: &mut State, change: &Change, result: Result<(), ApiErro
                 state.overlay = None;
             }
             state.info(done(change));
+            let about = state.changing.take();
             state.awaiting = (state.route())
                 .filter(|_| !matches!(change, Change::Comment { .. } | Change::Star { .. }))
                 .map(|route| Awaiting {
                     change: change.clone(),
                     route: route.clone(),
+                    // The page it's on, if that's its own; a row's page.
+                    about: match about {
+                        Some(s) if Subject::of(route).as_ref() != Some(&s) => s.route(),
+                        _ => route.clone(),
+                    },
                     polls: 0,
                 });
             state.load_visible(false)
         }
         Err(err) => {
+            state.changing = None;
             tracing::warn!(?change, %err, "a change to GitHub failed");
             if let Change::Star { repo, starred, .. } = change {
                 nav::set_starred(state, repo, !starred);
@@ -602,7 +749,7 @@ pub fn waiting(state: &State) -> Option<String> {
 /// What the live refresh fetches again for the change the page waits to
 /// see: what the page is about. Past [`POLLS`], it stops waiting.
 pub fn poll(state: &mut State) -> Vec<Need> {
-    let Some(route) = awaiting_here(state).map(|w| w.route.clone()) else {
+    let Some(route) = awaiting_here(state).map(|w| w.about.clone()) else {
         return Vec::new();
     };
     if let Some(w) = &mut state.awaiting {
@@ -724,20 +871,31 @@ fn shown(state: &State, change: &Change, route: &Route) -> Shown {
 pub fn follow(state: &mut State) -> Vec<Cmd> {
     let mut cmds = Vec::new();
     if let Some(w) = awaiting_here(state).cloned() {
-        match shown(state, &w.change, &w.route) {
+        match shown(state, &w.change, &w.about) {
             Shown::No => {}
-            // The rest of the page (a pull request's commits) follows too.
-            Shown::Yes => {
-                state.awaiting = None;
-                cmds.extend(state.ensure_route(&w.route, true));
-            }
-            Shown::There(route) => {
+            Shown::There(route) if w.about == w.route => {
                 state.awaiting = Some(Awaiting {
                     route: route.clone(),
+                    about: route.clone(),
                     ..w
                 });
                 cmds.extend(state.replace(route, false, None));
             }
+            // The rest of the page (a pull request's commits, or the list
+            // the row was on) follows too.
+            Shown::Yes | Shown::There(_) => {
+                state.awaiting = None;
+                cmds.extend(state.ensure_route(&w.route, true));
+            }
+        }
+    }
+    // An action asked for before what it's about loaded.
+    if let Some(p) = state.pending.clone() {
+        if state.route() != p.route.as_ref() {
+            state.pending = None;
+        } else if !matches!(plan_for(state, &p.subject, p.action), Ok(Plan::Load(_))) {
+            state.pending = None;
+            cmds.extend(act_on(state, p.subject, p.action));
         }
     }
     let Some(Overlay::Confirm(confirm)) = &state.overlay else {
@@ -746,7 +904,10 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     if confirm.sending {
         return cmds;
     }
-    let planned = plan(state, confirm.action);
+    let planned = match &confirm.about {
+        Some(about) => plan_for(state, &about.clone(), confirm.action),
+        None => plan(state, confirm.action),
+    };
     match (planned, &mut state.overlay) {
         (Err(why), _) => {
             state.overlay = None;

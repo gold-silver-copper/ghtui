@@ -1,6 +1,5 @@
 ---
 source: crates/app/src/snapshot_tests.rs
-assertion_line: 871
 expression: "render(&with_milestone(Mode::Light))"
 ---
 Buffer {
@@ -20,10 +19,10 @@ Buffer {
         "                                                                                                    ",
         "  ╭─ Issues and pull requests  10 ──────────────────────────────────────────────────────────────╮   ",
         "  │▌◉ Issue 42: pages wrap at the terminal width  bug                                           │   ",
-        "  │▌  #42 opened 4d ago by octocat                                                              │   ",
+        "  │▌  #42 updated 3h ago by octocat                                                             │   ",
         "  ├─────────────────────────────────────────────────────────────────────────────────────────────┤   ",
         "  │ ⇉ Issue 6: pages wrap at the terminal width  bug                                            │   ",
-        "  │   #6 opened 4d ago by octocat                                                               │   ",
+        "  │   #6 updated 3h ago by octocat                                                              │   ",
         "  ├─────────────────────────────────────────────────────────────────────────────────────────────┤   ",
         "  │ Load more  (2 of 10)                                                                        │   ",
         "  ╰─────────────────────────────────────────────────────────────────────────────────────────────╯   ",
@@ -100,7 +99,7 @@ Buffer {
         x: 3, y: 14, fg: Rgb(50, 83, 131), bg: Rgb(221, 225, 237), underline: Reset, modifier: NONE,
         x: 4, y: 14, fg: Rgb(25, 28, 32), bg: Rgb(221, 225, 237), underline: Reset, modifier: NONE,
         x: 6, y: 14, fg: Rgb(67, 71, 78), bg: Rgb(221, 225, 237), underline: Reset, modifier: NONE,
-        x: 34, y: 14, fg: Rgb(25, 28, 32), bg: Rgb(221, 225, 237), underline: Reset, modifier: NONE,
+        x: 35, y: 14, fg: Rgb(25, 28, 32), bg: Rgb(221, 225, 237), underline: Reset, modifier: NONE,
         x: 96, y: 14, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 97, y: 14, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 2, y: 15, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
@@ -117,7 +116,7 @@ Buffer {
         x: 2, y: 17, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 3, y: 17, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 6, y: 17, fg: Rgb(67, 71, 78), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
-        x: 33, y: 17, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 34, y: 17, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 96, y: 17, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 97, y: 17, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 2, y: 18, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,

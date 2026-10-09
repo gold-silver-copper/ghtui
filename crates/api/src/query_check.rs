@@ -315,7 +315,7 @@ fn typed() -> Vec<(&'static str, String)> {
     use crate::change as c;
     use crate::queries as q;
     typed! {
-        Query q::SearchQuery, q::SearchVariables;
+        Query q::RollupsQuery, q::NodesVariables;
         Query q::PullRequestQuery, q::NumberVariables;
         Query q::BehindQuery, q::BehindVariables;
         Query q::PrFilesQuery, q::PageVariables;
@@ -348,7 +348,6 @@ fn typed() -> Vec<(&'static str, String)> {
         Query b::ReleasesQuery, b::ListVariables;
         Query b::ReleaseQuery, b::ReleaseVariables;
         Query b::TagsQuery, b::ListVariables;
-        Query b::ViewerReposQuery, ();
         Mutation c::AddComment, c::AddCommentVariables;
         Mutation c::AddStar, c::IdVariables;
         Mutation c::RemoveStar, c::IdVariables;

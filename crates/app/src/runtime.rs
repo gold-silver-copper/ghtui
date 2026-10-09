@@ -175,6 +175,19 @@ impl Effects {
                 let _ = self.save_review.send((pr, review));
             }
             Cmd::Edit { purpose, text } => return Some((purpose, text)),
+            Cmd::EditHome {
+                path,
+                shown,
+                edit,
+                what,
+            } => {
+                spawn_guarded(&self.tx, replies, |tx| async move {
+                    let made = edit.clone();
+                    let result =
+                        blocking(move || crate::home::edit_file(&path, &shown, &made)).await;
+                    let _ = tx.send(Msg::HomeEdited { edit, result, what });
+                });
+            }
         }
         None
     }
@@ -333,7 +346,6 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
     spawn_guarded(tx, replies, |tx| async move {
         let msg = match api {
             Api::FetchViewer => Msg::Viewer(gh.viewer_login().await),
-            Api::FetchInbox => Msg::Inbox(gh.inbox().await),
             Api::FetchPr(pr) => {
                 let result = gh.pull_request(&pr).await;
                 Msg::Pr(pr, Box::new(result))
@@ -349,7 +361,9 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                         });
                     }
                 }
-                let result = fetch(&gh, &key, None).await;
+                // Nothing on screen yet: a search shows before its checks.
+                let early = cached.then_some(&tx);
+                let result = fetch(&gh, &key, None, early).await;
                 Msg::Fetched {
                     key,
                     result,
@@ -357,7 +371,7 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 }
             }
             Api::FetchMore { key, after } => {
-                let result = fetch(&gh, &key, Some(after.clone())).await;
+                let result = fetch(&gh, &key, Some(after.clone()), None).await;
                 Msg::FetchedMore(key, after, result)
             }
             Api::Change(change) => {
@@ -535,7 +549,6 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
     }
     let msg = match cmd {
         Cmd::Api(Api::FetchViewer) => Msg::Viewer(api()),
-        Cmd::Api(Api::FetchInbox) => Msg::Inbox(api()),
         Cmd::Api(Api::FetchPr(pr)) => Msg::Pr(pr.clone(), Box::new(api())),
         Cmd::Api(Api::Fetch { key, .. }) => Msg::Fetched {
             key: key.clone(),
@@ -585,6 +598,11 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             },
         ),
         Cmd::LoadReview(pr) => Msg::Diff(pr.clone().into(), DiffMsg::ReviewLoaded(git())),
+        Cmd::EditHome { edit, what, .. } => Msg::HomeEdited {
+            edit: edit.clone(),
+            result: Err("ghtui hit a bug".into()),
+            what: what.clone(),
+        },
         Cmd::Api(Api::SubmitReview { pr, .. }) => Msg::Diff(
             pr.clone().into(),
             DiffMsg::ReviewSubmitted(SubmitOutcome {
@@ -734,7 +752,7 @@ async fn save_tabs(gh: &GitHub, state: &State) {
 }
 
 /// What the cache has for a page, and when it was fetched.
-fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
+pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
     use ghtui_api::browse::keys;
     fn at<T>(c: ghtui_store::Cached<T>, wrap: impl FnOnce(T) -> Data) -> (Data, u64) {
         (wrap(c.value), c.fetched_at)
@@ -757,7 +775,6 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Profile(login) => at(gh.cached(&keys::profile(login))?, |v| {
             Data::Profile(Box::new(v))
         }),
-        DataKey::ViewerRepos => at(gh.cached(keys::VIEWER_REPOS)?, Data::Repos),
         DataKey::Refs(repo) => at(gh.cached(&keys::refs(repo))?, |v| Data::Refs(Box::new(v))),
         DataKey::Commit(repo, oid) => at(gh.cached(&keys::commit(repo, oid))?, |v| {
             Data::Commit(Box::new(v))
@@ -868,12 +885,14 @@ fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
     })
 }
 
-/// A list's next page, from `after`.
 /// A page's data; for a list, the page after `after` (the first without).
+/// With `early`, a search's page is sent there as soon as it's found, as
+/// a first look while its pull requests' checks are read.
 pub(crate) async fn fetch(
     gh: &GitHub,
     key: &DataKey,
     after: Option<String>,
+    early: Option<&mpsc::UnboundedSender<Msg>>,
 ) -> Result<Data, ApiError> {
     Ok(match key {
         DataKey::Repo(repo) => Data::Repo(Box::new(gh.repo(repo).await?)),
@@ -881,12 +900,21 @@ pub(crate) async fn fetch(
         DataKey::Tree(repo, rev, path) => Data::Tree(gh.tree(repo, rev, path).await?),
         DataKey::Blob(repo, rev, path) => Data::Blob(Box::new(gh.blob(repo, rev, path).await?)),
         DataKey::Search(kind, query) => {
-            Data::Search(Box::new(gh.search(*kind, query, after).await?))
+            let found = |r: &ghtui_api::browse::SearchResults| {
+                if let Some(tx) = early {
+                    let _ = tx.send(Msg::Fetched {
+                        key: key.clone(),
+                        result: Ok(Data::Search(Box::new(r.clone()))),
+                        cached_at: Some(ghtui_store::now()),
+                    });
+                }
+            };
+            let results = gh.search_showing(*kind, query, after, found).await?;
+            Data::Search(Box::new(results))
         }
         DataKey::Issue(repo, number) => Data::Issue(gh.issue(repo, *number).await?.map(Box::new)),
         DataKey::PrActivity(pr) => Data::PrActivity(Box::new(gh.pr_activity(pr).await?)),
         DataKey::Profile(login) => Data::Profile(Box::new(gh.profile(login).await?)),
-        DataKey::ViewerRepos => Data::Repos(gh.viewer_repos().await?),
         DataKey::Files(repo, rev) => {
             let (files, truncated) = gh.file_list(repo, rev).await?;
             Data::Files(std::sync::Arc::new(files), truncated)

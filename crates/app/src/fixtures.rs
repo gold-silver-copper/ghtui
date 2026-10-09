@@ -50,6 +50,40 @@ pub(crate) fn fetched(state: &mut State, key: DataKey, data: Data) -> Vec<Cmd> {
     )
 }
 
+/// Fills Home's section `i` with a search's results.
+pub(crate) fn section(state: &mut State, i: usize, results: SearchResults) -> Vec<Cmd> {
+    let search = state.home[i].search.clone().unwrap();
+    fetched(state, search.key(), Data::Search(Box::new(results)))
+}
+
+/// Pull requests as a search finds them, of `total`.
+pub(crate) fn found_prs(items: Vec<IssueSummary>, total: u64) -> SearchResults {
+    SearchResults::Issues(Results {
+        total,
+        items,
+        next: None,
+    })
+}
+
+/// A pull request a search found.
+pub(crate) fn found_pr(pr: &str, title: &str, state: IssueState) -> IssueSummary {
+    let pr = PrRef::parse(pr).unwrap();
+    IssueSummary {
+        repo: pr.repo,
+        number: pr.number,
+        title: title.into(),
+        is_pr: true,
+        state,
+        author: "octocat".into(),
+        updated_at: "2026-10-03T09:00:00Z".into(),
+        comments: 3,
+        labels: Capped::default(),
+        created_at: "2026-10-01T09:00:00Z".into(),
+        review: None,
+        checks: None,
+    }
+}
+
 /// Delivers a message for `pr`'s diff.
 pub(crate) fn diff_msg(state: &mut State, pr: &PrRef, msg: DiffMsg) -> Vec<Cmd> {
     update(state, Msg::Diff(DiffOf::Pr(pr.clone()), msg))

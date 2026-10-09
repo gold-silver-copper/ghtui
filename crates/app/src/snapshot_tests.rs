@@ -5,8 +5,7 @@
 
 use ghtui_api::browse::{IssueState, RepoSort, SearchKind, SearchResults};
 use ghtui_api::model::{
-    Capped, ChecksState, Inbox, Label, Mergeable, PrDetail, PrRef, PrSummary, RepoId,
-    ReviewDecision,
+    Capped, ChecksState, Label, Mergeable, PrDetail, PrRef, PrSummary, RepoId, ReviewDecision,
 };
 use ghtui_api::rate_limit::{Bucket, RateLimits};
 use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
@@ -47,42 +46,68 @@ fn summary(
     }
 }
 
-fn inbox() -> Inbox {
-    Inbox {
-        review_requested: vec![
-            summary(
-                "ratatui/ratatui#1820",
-                "Add a virtualized list widget for very long collections",
-                IssueState::Open,
-                Some(ReviewDecision::ReviewRequired),
-                Some(ChecksState::Passing),
-            ),
-            summary(
-                "tokio-rs/tokio#7001",
-                "Fix waker leak in the multi-thread scheduler when tasks are cancelled during shutdown",
-                IssueState::Draft,
-                None,
-                Some(ChecksState::Pending),
-            ),
-        ]
-        .into(),
-        authored: Capped::new(vec![
-            summary(
-                "gold-silver-copper/ghtui#12",
-                "Theme: generate syntax palette from seed",
-                IssueState::Open,
-                Some(ReviewDecision::Approved),
-                Some(ChecksState::Failing),
-            ),
-            summary(
-                "gold-silver-copper/ghtui#9",
-                "Cache GraphQL responses in redb",
-                IssueState::Open,
-                Some(ReviewDecision::ChangesRequested),
-                None,
-            ),
-        ], 31),
+/// A pull request as Home's sections list it.
+fn row(
+    pr: &str,
+    title: &str,
+    state: IssueState,
+    review: Option<ReviewDecision>,
+    checks: Option<ChecksState>,
+) -> ghtui_api::browse::IssueSummary {
+    ghtui_api::browse::IssueSummary {
+        review,
+        checks,
+        ..fixtures::found_pr(pr, title, state)
     }
+}
+
+/// Home's default sections: review requests, your pull requests (2 of
+/// 31), your repositories.
+fn fill_home(state: &mut State) {
+    let requests = vec![
+        row(
+            "ratatui/ratatui#1820",
+            "Add a virtualized list widget for very long collections",
+            IssueState::Open,
+            Some(ReviewDecision::ReviewRequired),
+            Some(ChecksState::Passing),
+        ),
+        row(
+            "tokio-rs/tokio#7001",
+            "Fix waker leak in the multi-thread scheduler when tasks are cancelled during shutdown",
+            IssueState::Draft,
+            None,
+            Some(ChecksState::Pending),
+        ),
+    ];
+    fixtures::section(state, 0, fixtures::found_prs(requests, 2));
+    let mine = vec![
+        row(
+            "gold-silver-copper/ghtui#12",
+            "Theme: generate syntax palette from seed",
+            IssueState::Open,
+            Some(ReviewDecision::Approved),
+            Some(ChecksState::Failing),
+        ),
+        row(
+            "gold-silver-copper/ghtui#9",
+            "Cache GraphQL responses in redb",
+            IssueState::Open,
+            Some(ReviewDecision::ChangesRequested),
+            None,
+        ),
+    ];
+    fixtures::section(state, 1, fixtures::found_prs(mine, 31));
+    let repos = vec![
+        fixtures::repo_summary("gold-silver-copper/ghtui", 1234),
+        fixtures::repo_summary("gold-silver-copper/fux", 87),
+    ];
+    let repos = SearchResults::Repos(ghtui_api::browse::Results {
+        total: 2,
+        items: repos,
+        next: None,
+    });
+    fixtures::section(state, 2, repos);
 }
 
 pub(crate) fn pr_detail() -> PrDetail {
@@ -148,6 +173,8 @@ fn state(mode: Mode, depth: ColorDepth) -> State {
     );
     state.viewer = Some("octocat".into());
     state.clock = || NOW;
+    // Never written: changes to Home's sections are commands, not run here.
+    state.config_path = Some("config.toml".into());
     state.rate_limits = RateLimits {
         graphql: Some(Bucket {
             remaining: 4987,
@@ -159,25 +186,14 @@ fn state(mode: Mode, depth: ColorDepth) -> State {
     state
 }
 
-fn with_inbox(mode: Mode, depth: ColorDepth) -> State {
+fn with_home(mode: Mode, depth: ColorDepth) -> State {
     let mut state = state(mode, depth);
-    update(&mut state, Msg::Inbox(Ok(inbox())));
-    fetched(
-        &mut state,
-        DataKey::ViewerRepos,
-        Data::Repos(
-            vec![
-                fixtures::repo_summary("gold-silver-copper/ghtui", 1234),
-                fixtures::repo_summary("gold-silver-copper/fux", 87),
-            ]
-            .into(),
-        ),
-    );
+    fill_home(&mut state);
     state
 }
 
 fn with_pr(mode: Mode) -> State {
-    let mut state = with_inbox(mode, ColorDepth::TrueColor);
+    let mut state = with_home(mode, ColorDepth::TrueColor);
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
     let _ = state.push(Route::pr(pr.clone()));
     update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(pr_detail()))));
@@ -806,22 +822,22 @@ fn render(state: &State) -> String {
 
 #[test]
 fn home_dark() {
-    insta::assert_snapshot!(render(&with_inbox(Mode::Dark, ColorDepth::TrueColor)));
+    insta::assert_snapshot!(render(&with_home(Mode::Dark, ColorDepth::TrueColor)));
 }
 
 #[test]
 fn home_light() {
-    insta::assert_snapshot!(render(&with_inbox(Mode::Light, ColorDepth::TrueColor)));
+    insta::assert_snapshot!(render(&with_home(Mode::Light, ColorDepth::TrueColor)));
 }
 
 #[test]
 fn home_dark_256() {
-    insta::assert_snapshot!(render(&with_inbox(Mode::Dark, ColorDepth::Ansi256)));
+    insta::assert_snapshot!(render(&with_home(Mode::Dark, ColorDepth::Ansi256)));
 }
 
 #[test]
 fn home_third_row_selected_light() {
-    let mut state = with_inbox(Mode::Light, ColorDepth::TrueColor);
+    let mut state = with_home(Mode::Light, ColorDepth::TrueColor);
     press(&mut state, "jj");
     insta::assert_snapshot!(render(&state));
 }
@@ -837,11 +853,18 @@ fn home_loading_dark() {
 fn home_error_light() {
     let mut state = state(Mode::Light, ColorDepth::TrueColor);
     let _ = state.load_visible(false);
+    // One section fails; the others show.
+    fill_home(&mut state);
+    let key = state.home[1].search.clone().unwrap().key();
+    state.data.remove(&key);
+    let _ = state.load_visible(false);
     update(
         &mut state,
-        Msg::Inbox(Err(ghtui_api::ApiError::Network(
-            "connection refused".into(),
-        ))),
+        Msg::Fetched {
+            key,
+            result: Err(ghtui_api::ApiError::Network("connection refused".into())),
+            cached_at: None,
+        },
     );
     insta::assert_snapshot!(render(&state));
 }
@@ -1230,14 +1253,14 @@ fn repo_wide_with_about_dark() {
 
 #[test]
 fn menu_overlay_dark() {
-    let mut state = with_inbox(Mode::Dark, ColorDepth::TrueColor);
+    let mut state = with_home(Mode::Dark, ColorDepth::TrueColor);
     crate::nav::open_menu(&mut state);
     insta::assert_snapshot!(render(&state));
 }
 
 #[test]
 fn palette_light() {
-    let mut state = with_inbox(Mode::Light, ColorDepth::TrueColor);
+    let mut state = with_home(Mode::Light, ColorDepth::TrueColor);
     let _ = state.open_picker(crate::picker::Kind::Commands);
     if let Some(Overlay::Picker(p)) = &mut state.overlay {
         p.input.insert_str("ratatui");
@@ -1254,7 +1277,7 @@ fn small_terminal_80x24() {
     };
     insta::assert_snapshot!(
         "small_home",
-        small(with_inbox(Mode::Dark, ColorDepth::TrueColor))
+        small(with_home(Mode::Dark, ColorDepth::TrueColor))
     );
     insta::assert_snapshot!("small_issues", small(with_issues(Mode::Dark)));
     insta::assert_snapshot!("small_pr", small(with_pr(Mode::Dark)));
@@ -1834,7 +1857,7 @@ pub(crate) mod diff {
     #[test]
     fn every_screen_survives_every_size() {
         use super::{
-            DataKey, Overlay, ProfileTab, fetched, ghtui, with_file, with_inbox, with_issue,
+            DataKey, Overlay, ProfileTab, fetched, ghtui, with_file, with_home, with_issue,
             with_issues, with_pr, with_profile, with_repo, with_repo_search,
         };
         use crate::browse::Data;
@@ -1845,7 +1868,7 @@ pub(crate) mod diff {
             s
         };
         let builders: Vec<(&str, Build)> = vec![
-            ("home", Box::new(move || with_inbox(Mode::Dark, tc))),
+            ("home", Box::new(move || with_home(Mode::Dark, tc))),
             ("home loading", Box::new(move || state(Mode::Dark, tc))),
             ("repo", Box::new(move || with_repo(Mode::Light, tc))),
             ("file", Box::new(|| with_file(Mode::Light))),
@@ -1884,7 +1907,7 @@ pub(crate) mod diff {
             (
                 "palette",
                 Box::new(move || {
-                    let mut s = with_inbox(Mode::Light, tc);
+                    let mut s = with_home(Mode::Light, tc);
                     let _ = s.open_picker(crate::picker::Kind::Commands);
                     s
                 }),
@@ -2077,7 +2100,7 @@ mod links {
     use super::{
         press, with_actions, with_advisories, with_advisory, with_blame, with_branches,
         with_commit, with_compare, with_deployments, with_discussion, with_discussions, with_file,
-        with_forks, with_gist, with_gists, with_history, with_inbox, with_issue, with_issues,
+        with_forks, with_gist, with_gists, with_history, with_home, with_issue, with_issues,
         with_job, with_milestone, with_milestones, with_pr, with_pr_checks, with_profile,
         with_release, with_releases, with_repo, with_repo_search, with_run, with_search,
         with_stargazers, with_tags, with_team, with_teams, with_wiki, with_workflow,
@@ -2121,7 +2144,7 @@ mod links {
         let mut commits = with_pr(Mode::Dark);
         press(&mut commits, "2");
         vec![
-            ("home", with_inbox(Mode::Dark, tc)),
+            ("home", with_home(Mode::Dark, tc)),
             ("repo", with_repo(Mode::Dark, tc)),
             ("file", with_file(Mode::Dark)),
             ("issues", with_issues(Mode::Dark)),
@@ -2483,7 +2506,7 @@ fn screenshots() {
     for (mode, tag) in [(Mode::Dark, "dark"), (Mode::Light, "light")] {
         shot(
             &format!("home_{tag}"),
-            &sized(with_inbox(mode, ColorDepth::TrueColor), 120, 36),
+            &sized(with_home(mode, ColorDepth::TrueColor), 120, 36),
         );
         let mut repo = sized(with_repo(mode, ColorDepth::TrueColor), 150, 40);
         let commit = |headline: &str, date: &str| ghtui_api::browse::CommitInfo {
@@ -2651,7 +2674,7 @@ fn stretch(state: &mut State) {
 fn every_screen_renders_at_odd_sizes() {
     type Build = fn() -> State;
     let builders: Vec<(&str, Build)> = vec![
-        ("home", || with_inbox(Mode::Dark, ColorDepth::TrueColor)),
+        ("home", || with_home(Mode::Dark, ColorDepth::TrueColor)),
         ("pr", || with_pr(Mode::Dark)),
         ("repo", || with_repo(Mode::Dark, ColorDepth::TrueColor)),
         ("file", || with_file(Mode::Dark)),
@@ -2783,7 +2806,7 @@ fn failed_pr_checks_say_why_instead_of_loading() {
 /// opening comment goes on to say so.
 #[test]
 fn a_loading_conversation_stays_on_the_timeline() {
-    let mut state = with_inbox(Mode::Dark, ColorDepth::TrueColor);
+    let mut state = with_home(Mode::Dark, ColorDepth::TrueColor);
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
     let route = Route::pr(pr.clone());
     let _ = state.push(route.clone());
@@ -2892,14 +2915,13 @@ fn every_route_says_why_when_its_needs_fail() {
         };
         // The page a plain URL turns out to be.
         let route = route.split(None).unwrap_or(route);
-        let all = needs(&route);
+        let all = state(Mode::Dark, ColorDepth::TrueColor).needs(&route);
         for failing in &all {
             let mut state = state(Mode::Dark, ColorDepth::TrueColor);
             let _ = state.push(route.clone());
             for need in all.iter().cloned() {
                 let fail = &need == failing;
                 let msg = match need {
-                    Need::Inbox => Msg::Inbox(if fail { err() } else { Ok(inbox()) }),
                     Need::Pr(pr) => {
                         Msg::Pr(pr, Box::new(if fail { err() } else { Ok(pr_detail()) }))
                     }
@@ -2965,7 +2987,6 @@ fn sample(key: &DataKey) -> Data {
         K::Issue(..) => Data::Issue(Some(Box::new(fixtures::issue()))),
         K::PrActivity(_) => Data::PrActivity(Box::new(fixtures::activity())),
         K::Profile(_) => Data::Profile(Box::new(fixtures::profile())),
-        K::ViewerRepos => Data::Repos(vec![fixtures::repo_summary("o/r", 1)].into()),
         K::Files(..) => Data::Files(Arc::new(vec!["README.md".into()]), false),
         K::Refs(_) => Data::Refs(Box::default()),
         K::RefIn(..) => Data::RefIn(None),
@@ -3142,6 +3163,69 @@ mod changes {
         assert!(s.awaiting.is_none());
     }
 
+    /// On Home, an action works on the selected row: the pull request
+    /// loads, then the dialog opens about it, and stays about it when the
+    /// list changes under it. Once GitHub shows the merge, Home is fetched
+    /// again.
+    #[test]
+    fn acting_on_a_homes_row_is_about_that_row() {
+        let mut s = super::with_home(Mode::Dark, ghtui_theme::ColorDepth::TrueColor);
+        s.prs.clear();
+        press(&mut s, "jj");
+        let cmds = press(&mut s, "M");
+        assert_eq!(cmds, vec![Cmd::Api(Api::FetchPr(pr()))], "{}", info(&s));
+        assert!(
+            info(&s).starts_with("Loading gold-silver-copper/ghtui#12"),
+            "{}",
+            info(&s)
+        );
+        update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
+        assert_eq!(confirm(&s).about, Some(crate::act::Subject::Pr(pr())));
+        assert!(
+            confirm(&s)
+                .title
+                .starts_with("Merge gold-silver-copper/ghtui#12")
+        );
+        // The list moves; the dialog is still about #12.
+        press(&mut s, "<Esc>");
+        press(&mut s, "M");
+        let mine = crate::fixtures::found_prs(Vec::new(), 0);
+        crate::fixtures::section(&mut s, 1, mine);
+        assert_eq!(confirm(&s).about, Some(crate::act::Subject::Pr(pr())));
+        let merge = confirm(&s).choices[0].1.clone();
+        press(&mut s, "<Enter>");
+        update(&mut s, Msg::Changed(merge, Ok(())));
+        let w = s.awaiting.clone().unwrap();
+        assert_eq!((w.route, w.about), (Route::Home, Route::pr(pr())));
+        // Home asked again at once; GitHub's search may not show it yet.
+        for i in 0..2 {
+            let none = crate::fixtures::found_prs(Vec::new(), 0);
+            crate::fixtures::section(&mut s, i, none);
+        }
+        let merged = mergeable(|d| d.summary.state = IssueState::Merged);
+        let cmds = update(&mut s, Msg::Pr(pr(), Box::new(Ok(merged))));
+        assert!(s.awaiting.is_none());
+        let home = s.home[1].search.clone().unwrap().key();
+        let refetched = |c: &Cmd| matches!(c, Cmd::Api(Api::Fetch { key, .. }) if *key == home);
+        assert!(cmds.iter().any(refetched), "{cmds:?}");
+        // An issue row offers closing, not merging.
+        crate::fixtures::section(
+            &mut s,
+            1,
+            crate::fixtures::found_prs(
+                vec![crate::fixtures::issue_summary(3, false, IssueState::Open)],
+                1,
+            ),
+        );
+        press(&mut s, "gjj");
+        press(&mut s, "M");
+        assert!(
+            info(&s).starts_with("That works on a pull request"),
+            "{}",
+            info(&s)
+        );
+    }
+
     /// Updating the branch, the page follows GitHub until it shows the new
     /// head (GitHub moves it after it answers), and merging then names that
     /// head: merging the old one is refused as "Head branch was modified".
@@ -3254,7 +3338,10 @@ mod changes {
 
         let mut s = with_repo(Mode::Dark, ghtui_theme::ColorDepth::TrueColor);
         press(&mut s, "M");
-        assert_eq!(info(&s), "That works on a pull request");
+        assert_eq!(
+            info(&s),
+            "That works on a pull request (or its row in a list)"
+        );
         press(&mut s, "<C-r>");
         assert_eq!(info(&s), "Re-running works on a workflow run or a job");
     }

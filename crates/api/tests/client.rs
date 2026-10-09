@@ -375,7 +375,10 @@ async fn graphql_errors_without_data_are_errors() {
         r#"{"errors":[{"message":"Something went wrong"}]}"#,
     )])
     .await;
-    match gh.inbox().await {
+    match gh
+        .search(ghtui_api::browse::SearchKind::Pulls, "q", None)
+        .await
+    {
         Err(ApiError::GraphQl(errors)) => assert_eq!(errors, ["Something went wrong"]),
         other => panic!("{other:?}"),
     }
@@ -675,23 +678,103 @@ async fn an_organizations_discussions_are_found_past_the_first_page() {
 }
 
 /// A searched pull request that's an open draft reads as a draft, through
-/// the same state-and-draft fragment the PR page reads.
+/// the same state-and-draft fragment the PR page reads. Its checks come
+/// from a second request by its ID, after the page was shown without them:
+/// one request reading both runs past GitHub's 10 seconds for busy accounts.
 #[tokio::test]
-async fn a_searched_draft_pr_is_a_draft() {
-    let (gh, _) = github(vec![Reply::new(
-        200,
-        r#"{"data":{"search":{"issueCount":1,"repositoryCount":0,"userCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"__typename":"PullRequest","number":5,"title":"t","isDraft":true,"state":"OPEN","author":null,"createdAt":"2026-10-01T00:00:00Z","updatedAt":"2026-10-01T00:00:00Z","reviewDecision":null,"comments":{"totalCount":0},"labels":null,"repository":{"nameWithOwner":"o/r"}}]}}}"#,
-    )])
+async fn a_searched_pr_is_shown_then_gets_its_checks() {
+    let (gh, seen) = github(vec![
+        Reply::new(
+            200,
+            r#"{"data":{"search":{"issueCount":1,"repositoryCount":0,"userCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"__typename":"PullRequest","id":"PR_5","number":5,"title":"t","isDraft":true,"state":"OPEN","author":null,"createdAt":"2026-10-01T00:00:00Z","updatedAt":"2026-10-01T00:00:00Z","reviewDecision":null,"comments":{"totalCount":0},"labels":null,"repository":{"nameWithOwner":"o/r"}}]}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"nodes":[{"__typename":"PullRequest","id":"PR_5","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE"}}}]}}]}}"#,
+        ),
+    ])
     .await;
+    let shown = Mutex::new(None);
     let results = gh
-        .search(ghtui_api::browse::SearchKind::Pulls, "q", None)
+        .search_showing(ghtui_api::browse::SearchKind::Pulls, "q", None, |r| {
+            *shown.lock().unwrap() = Some(r.clone());
+        })
         .await
         .unwrap();
     let ghtui_api::browse::SearchResults::Issues(r) = results else {
         panic!("{results:?}");
     };
-    let states: Vec<_> = r.items.iter().map(|i| (i.number, i.state)).collect();
-    assert_eq!(states, [(5, ghtui_api::browse::IssueState::Draft)]);
+    let states: Vec<_> = r
+        .items
+        .iter()
+        .map(|i| (i.number, i.state, i.checks))
+        .collect();
+    assert_eq!(
+        states,
+        [(
+            5,
+            ghtui_api::browse::IssueState::Draft,
+            Some(ghtui_api::model::ChecksState::Failing)
+        )]
+    );
+    let Some(ghtui_api::browse::SearchResults::Issues(first)) = shown.into_inner().unwrap() else {
+        panic!("the page wasn't shown before its checks");
+    };
+    assert_eq!(first.items[0].checks, None);
+    let seen = seen.lock().unwrap();
+    assert!(
+        !seen[0].query().contains("statusCheckRollup"),
+        "{}",
+        seen[0].query()
+    );
+    assert_eq!(
+        seen[1].json()["variables"]["ids"],
+        serde_json::json!(["PR_5"])
+    );
+}
+
+/// GraphQL finds nothing for a search naming a user or repository that
+/// isn't there; REST says that's why, and the search says so.
+#[tokio::test]
+async fn a_search_github_refuses_says_why() {
+    let (gh, seen) = github(vec![
+        Reply::new(
+            200,
+            r#"{"data":{"search":{"issueCount":0,"repositoryCount":0,"userCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}"#,
+        ),
+        Reply::new(
+            422,
+            r#"{"message":"Validation Failed","errors":[{"message":"The listed users cannot be searched either because the users do not exist or you do not have permission to view the users.","resource":"Search","field":"q","code":"invalid"}],"status":"422"}"#,
+        ),
+    ])
+    .await;
+    let result = gh
+        .search(
+            ghtui_api::browse::SearchKind::Pulls,
+            "author:nobody-here",
+            None,
+        )
+        .await;
+    match result {
+        Err(ApiError::Http {
+            status: 422,
+            message,
+        }) => {
+            assert!(
+                message.starts_with("The listed users cannot be searched"),
+                "{message}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[1]
+            .request_line
+            .contains("/search/issues?q=author%3Anobody-here+is%3Apr"),
+        "{}",
+        seen[1].request_line
+    );
 }
 
 /// An empty commit or code search, which GitHub refuses, finds nothing
