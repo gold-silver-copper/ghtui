@@ -904,7 +904,7 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             subject: subject_id,
             body,
         };
-        return vec![Cmd::Api(Api::Change(change))];
+        return vec![Cmd::Api(Api::Change(change, crate::act::By::Compose))];
     }
     let Some((screen, diff)) = state.diff_parts() else {
         return Vec::new();

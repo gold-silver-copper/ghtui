@@ -52,7 +52,7 @@ pub enum Msg {
     /// The next page of a list, asked for after the cursor.
     FetchedMore(DataKey, String, Result<Data, ApiError>),
     /// GitHub's answer to a change.
-    Changed(Change, Result<(), ApiError>),
+    Changed(Change, act::By, Result<(), ApiError>),
     Mouse(MouseEvent),
     Timer(Timer),
     /// The search box's input settled; fetch live suggestions if it's
@@ -176,7 +176,7 @@ pub enum Api {
         after: String,
     },
     /// Change something on GitHub, answered by [`Msg::Changed`].
-    Change(Change),
+    Change(Change, act::By),
     /// Search repositories for the search box's suggestions.
     Suggest(String),
     SaveVisits(Vec<Visit>),
@@ -522,8 +522,6 @@ pub struct State {
     pub awaiting: Option<act::Awaiting>,
     /// An action waiting for what it's about to load.
     pub pending: Option<act::Pending>,
-    /// What the change on its way to GitHub is about.
-    pub changing: Option<act::Subject>,
     pub quit: bool,
 }
 
@@ -562,7 +560,6 @@ impl State {
             live: false,
             awaiting: None,
             pending: None,
-            changing: None,
             quit: false,
         };
         state.sync_page();
@@ -908,7 +905,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     }
     // A write changes what GitHub shows, wherever it shows it.
     let wrote = match &msg {
-        Msg::Changed(_, r) | Msg::Diff(_, DiffMsg::Replied(r)) => r.is_ok(),
+        Msg::Changed(_, _, r) | Msg::Diff(_, DiffMsg::Replied(r)) => r.is_ok(),
         // Drafts GitHub accepted wait in a pending review there.
         Msg::Diff(_, DiffMsg::ReviewSubmitted(o)) => o.error.is_none() || !o.accepted.is_empty(),
         _ => false,
@@ -1044,7 +1041,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 Err(err) => state.error(format!("Couldn't load more: {err}")),
             }
         }
-        Msg::Changed(change, result) => return act::on_changed(state, &change, result),
+        Msg::Changed(change, by, result) => return act::on_changed(state, &change, by, result),
         Msg::Mouse(ev) => return nav::on_mouse(state, ev),
         Msg::Timer(Timer::ExpireNotice(id)) => {
             if id == state.notice_id {
@@ -1886,7 +1883,7 @@ pub(crate) mod tests {
             id: NodeId::new("R_1"),
             starred: true,
         };
-        update(&mut state, Msg::Changed(star, Ok(())));
+        update(&mut state, Msg::Changed(star, act::By::Star, Ok(())));
         assert!(!state.load_visible(false).contains(&refetch));
         let Some(Data::Runs(runs)) = state.get(&key) else {
             panic!()
@@ -3061,12 +3058,15 @@ pub(crate) mod tests {
             id: NodeId::new("R_ghtui"),
             starred: true,
         };
-        assert_eq!(cmds, vec![Cmd::Api(Api::Change(star.clone()))]);
+        assert_eq!(
+            cmds,
+            vec![Cmd::Api(Api::Change(star.clone(), act::By::Star))]
+        );
         assert!(state.overview(&repo()).unwrap().starred);
         assert_eq!(state.overview(&repo()).unwrap().summary.stars, 1235);
         update(
             &mut state,
-            Msg::Changed(star, Err(ApiError::Network("down".into()))),
+            Msg::Changed(star, act::By::Star, Err(ApiError::Network("down".into()))),
         );
         assert!(!state.overview(&repo()).unwrap().starred, "rolled back");
         assert_eq!(state.overview(&repo()).unwrap().summary.stars, 1234);
@@ -3234,8 +3234,15 @@ pub(crate) mod tests {
             subject: NodeId::new("I_14"),
             body: "Thanks!".into(),
         };
-        assert_eq!(cmds, vec![Cmd::Api(Api::Change(comment.clone()))]);
-        let cmds = update(&mut state, Msg::Changed(comment.clone(), Ok(())));
+        let compose = act::By::Compose;
+        assert_eq!(
+            cmds,
+            vec![Cmd::Api(Api::Change(comment.clone(), compose.clone()))]
+        );
+        let cmds = update(
+            &mut state,
+            Msg::Changed(comment.clone(), compose.clone(), Ok(())),
+        );
         assert!(state.overlay.is_none());
         let refetch = Cmd::Api(Api::Fetch {
             key: key.clone(),
@@ -3244,7 +3251,7 @@ pub(crate) mod tests {
         assert!(cmds.contains(&refetch), "{cmds:?}");
         // Another comment, posted while that fetch is on its way: the fetch
         // may miss it, so the page is fetched again once it lands.
-        let cmds = update(&mut state, Msg::Changed(comment, Ok(())));
+        let cmds = update(&mut state, Msg::Changed(comment, compose, Ok(())));
         assert!(!cmds.contains(&refetch));
         let refetch = vec![refetch];
         let issue = || Data::Issue(Some(Box::new(crate::fixtures::issue())));
@@ -3777,13 +3784,13 @@ pub(crate) mod tests {
         assert!(
             !cmds
                 .iter()
-                .any(|c| matches!(c, Cmd::Api(Api::Change(Change::Star { .. })))),
+                .any(|c| matches!(c, Cmd::Api(Api::Change(Change::Star { .. }, _)))),
             "{cmds:?}"
         );
         let cmds = state.follow(&ghtui_ui::page::Link::Star);
         assert!(
             cmds.iter()
-                .any(|c| matches!(c, Cmd::Api(Api::Change(Change::Star { .. }))))
+                .any(|c| matches!(c, Cmd::Api(Api::Change(Change::Star { .. }, _))))
         );
     }
 

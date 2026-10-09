@@ -63,11 +63,28 @@ impl Confirm {
         }
     }
 
+    /// The change it sent, while GitHub answers.
+    fn sent(&self) -> Option<&Change> {
+        let (_, change) = self.choices.get(self.selected).filter(|_| self.sending)?;
+        Some(change)
+    }
+
     /// What's happening while GitHub answers.
     pub fn busy(&self) -> Option<String> {
-        let (_, change) = self.choices.get(self.selected).filter(|_| self.sending)?;
-        Some(format!("{}…", doing(change)))
+        Some(format!("{}…", doing(self.sent()?)))
     }
+}
+
+/// What sent a change: GitHub's answer goes back there, and only there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum By {
+    /// A confirmation, about this.
+    Confirm(Subject),
+    /// An action that asks nothing first, about this.
+    Act(Subject),
+    /// The composer, posting a comment.
+    Compose,
+    Star,
 }
 
 /// A change GitHub accepted that the page it was made on doesn't show
@@ -144,8 +161,7 @@ fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
         }
         Ok(Plan::Do(change)) => {
             state.info(format!("{}…", doing(&change)));
-            state.changing = Some(subject);
-            vec![Cmd::Api(Api::Change(change))]
+            vec![Cmd::Api(Api::Change(change, By::Act(subject)))]
         }
         Ok(Plan::Approve(pr)) => crate::review::open_approve(state, pr),
         Ok(Plan::Load(need)) => {
@@ -671,11 +687,12 @@ pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             confirm.selected = (confirm.selected + n - 1) % n;
         }
         KeyCode::Enter => {
-            if let Some((_, change)) = confirm.choices.get(confirm.selected) {
+            if let (Some((_, change)), Some(about)) =
+                (confirm.choices.get(confirm.selected), &confirm.about)
+            {
+                let cmd = Cmd::Api(Api::Change(change.clone(), By::Confirm(about.clone())));
                 confirm.sending = true;
                 confirm.error = None;
-                let cmd = Cmd::Api(Api::Change(change.clone()));
-                state.changing = confirm.about.clone();
                 return vec![cmd];
             }
         }
@@ -684,52 +701,55 @@ pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     Vec::new()
 }
 
-/// GitHub's answer to a change. Whatever was shown is fetched again (a
-/// write marks everything stale), so the page ends up as GitHub has it.
+/// GitHub's answer to a change, back to what sent it. Whatever was shown
+/// is fetched again (a write marks everything stale), so the page ends up
+/// as GitHub has it.
 #[must_use]
-pub fn on_changed(state: &mut State, change: &Change, result: Result<(), ApiError>) -> Vec<Cmd> {
+pub fn on_changed(
+    state: &mut State,
+    change: &Change,
+    by: By,
+    result: Result<(), ApiError>,
+) -> Vec<Cmd> {
+    // The dialog or the composer that sent it, if it's still waiting.
+    let sender = match (&by, &state.overlay) {
+        (By::Confirm(_), Some(Overlay::Confirm(c))) => c.sent() == Some(change),
+        (By::Compose, Some(Overlay::Compose(c))) => c.sending,
+        _ => false,
+    };
     match result {
         Ok(()) => {
-            let sending = match &state.overlay {
-                Some(Overlay::Confirm(c)) => c.sending,
-                Some(Overlay::Compose(c)) => c.sending,
-                _ => false,
-            };
-            if sending {
+            if sender {
                 state.overlay = None;
             }
             state.info(done(change));
-            // A star or a comment isn't waited for.
-            if !matches!(change, Change::Comment { .. } | Change::Star { .. }) {
-                let about = state.changing.take();
+            if let By::Confirm(about) | By::Act(about) = by {
                 state.awaiting = state.route().map(|route| Awaiting {
                     change: change.clone(),
-                    route: route.clone(),
                     // The page it's on, if that's its own; a row's page.
-                    about: match about {
-                        Some(s) if Subject::of(route).as_ref() != Some(&s) => s.route(),
-                        _ => route.clone(),
+                    about: if Subject::of(route).as_ref() == Some(&about) {
+                        route.clone()
+                    } else {
+                        about.route()
                     },
+                    route: route.clone(),
                     polls: 0,
                 });
             }
             state.load_visible(false)
         }
         Err(err) => {
-            if !matches!(change, Change::Comment { .. } | Change::Star { .. }) {
-                state.changing = None;
-            }
             tracing::warn!(?change, %err, "a change to GitHub failed");
             if let Change::Star { repo, starred, .. } = change {
                 nav::set_starred(state, repo, !starred);
             }
             let text = failure(change, &err);
             match &mut state.overlay {
-                Some(Overlay::Confirm(confirm)) if confirm.sending => {
+                Some(Overlay::Confirm(confirm)) if sender => {
                     confirm.sending = false;
                     confirm.error = Some(text);
                 }
-                Some(Overlay::Compose(compose)) if compose.sending => {
+                Some(Overlay::Compose(compose)) if sender => {
                     compose.sending = false;
                     compose.error = Some(text);
                 }

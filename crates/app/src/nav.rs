@@ -1327,7 +1327,8 @@ pub fn star(state: &mut State) -> Vec<Cmd> {
     };
     let (id, starred) = (overview.id.clone(), !overview.starred);
     set_starred(state, &repo, starred);
-    vec![Cmd::Api(Api::Change(Change::Star { repo, id, starred }))]
+    let star = Change::Star { repo, id, starred };
+    vec![Cmd::Api(Api::Change(star, crate::act::By::Star))]
 }
 
 /// Shows a repository as starred or not (optimistically, before GitHub
