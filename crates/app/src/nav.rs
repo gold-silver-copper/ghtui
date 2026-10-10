@@ -1542,10 +1542,10 @@ impl State {
             out.push(save);
         }
         if *route == Route::Home {
-            let title = self
-                .section_here()
-                .and_then(|i| self.home.get(i))
-                .map_or_else(|| "the section".to_owned(), |s| format!("“{}”", s.title));
+            let title = match self.section_here() {
+                Some((_, s)) => format!("“{}”", s.title),
+                None => "the section".to_owned(),
+            };
             for (action, label) in [
                 (Action::RenameSection, format!("Rename {title}")),
                 (Action::MoveSectionUp, format!("Move {title} up")),
