@@ -3182,7 +3182,7 @@ mod changes {
             info(&s)
         );
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
-        assert_eq!(confirm(&s).about, Some(Subject::Pr(pr())));
+        assert_eq!(confirm(&s).about, Subject::Pr(pr()));
         assert!(
             confirm(&s)
                 .title
@@ -3193,11 +3193,14 @@ mod changes {
         press(&mut s, "M");
         let mine = crate::fixtures::found_prs(Vec::new(), 0);
         crate::fixtures::section(&mut s, 1, mine);
-        assert_eq!(confirm(&s).about, Some(Subject::Pr(pr())));
+        assert_eq!(confirm(&s).about, Subject::Pr(pr()));
         let sent = press(&mut s, "<Enter>");
         answer(&mut s, &sent, Ok(()));
         let w = s.awaiting.clone().unwrap();
-        assert_eq!((w.route, w.about), (Route::Home, Route::pr(pr())));
+        assert_eq!(
+            (w.route, w.about),
+            (Route::Home, crate::act::Subject::Pr(pr()))
+        );
         // Home asked again at once; GitHub's search may not show it yet.
         for i in 0..2 {
             let none = crate::fixtures::found_prs(Vec::new(), 0);
@@ -3523,7 +3526,7 @@ mod changes {
             sent,
             vec![Cmd::Api(Api::Change(
                 cancel,
-                By::Confirm(Subject::Job(ghtui(), 2))
+                By::Confirm(Subject::Job(ghtui(), Some(7), 2))
             ))]
         );
         answer(&mut s, &sent, Ok(()));
@@ -3549,7 +3552,7 @@ mod changes {
             repo: ghtui(),
             job: 2,
         };
-        let by = By::Confirm(Subject::Job(ghtui(), 2));
+        let by = By::Confirm(Subject::Job(ghtui(), Some(7), 2));
         update(&mut s, Msg::Changed(rerun, by, Ok(())));
         let (mut job, _) = crate::fixtures::job();
         job.run.attempt = 2;
