@@ -26,7 +26,7 @@ use crate::diff_screen::DiffOf;
 use crate::keymap::Action;
 use crate::picker::{fuzzy_score, move_in_list};
 use crate::review::ComposeTarget;
-use crate::route::{self, Route, Target};
+use crate::route::{self, Dest, Route, Target};
 use crate::state::{Api, Cmd, Overlay, Remote, Screen, State, apply};
 
 /// Rows `j`/`k` scroll when there's no row to move to nearby.
@@ -87,15 +87,7 @@ impl State {
     /// Navigates to a page, keeping the current one in history.
     #[must_use]
     pub fn push(&mut self, route: Route) -> Vec<Cmd> {
-        let route = self.followed(route);
-        self.forward.clear();
-        let mut cmds = self.record_visit(&route);
-        self.screens
-            .push(Screen::Page(Box::new(PageScreen::new(route, None))));
-        if let Some(route) = self.route().cloned() {
-            cmds.extend(self.ensure_route(&route, true));
-        }
-        cmds
+        self.go(Target::Page(route).into())
     }
 
     /// Replaces the page on screen (switching tabs, changing a filter).
@@ -134,18 +126,29 @@ impl State {
         }
     }
 
-    /// Follows a link.
+    /// Follows a link, going once it's loaded to what its `#fragment`
+    /// names: a comment, a file in a diff, a review comment's thread.
     #[must_use]
-    pub fn go(&mut self, target: Target) -> Vec<Cmd> {
+    pub fn go(&mut self, Dest { target, anchor }: Dest) -> Vec<Cmd> {
         match target {
-            Target::Page(route) => self.push(route),
+            Target::Page(route) => {
+                let route = self.followed(route);
+                self.forward.clear();
+                let mut cmds = self.record_visit(&route);
+                let screen = PageScreen::new(route, anchor);
+                self.screens.push(Screen::Page(Box::new(screen)));
+                if let Some(route) = self.route().cloned() {
+                    cmds.extend(self.ensure_route(&route, true));
+                }
+                cmds
+            }
             Target::Files(of) => {
                 self.forward.clear();
                 let mut cmds = match &of {
                     DiffOf::Pr(pr) => self.ensure(Need::Pr(pr.clone()), false),
                     DiffOf::Commit(..) | DiffOf::Range(..) => Vec::new(),
                 };
-                cmds.extend(self.open_diff(of));
+                cmds.extend(self.open_diff(of, anchor));
                 cmds
             }
             Target::External(url) => {
@@ -155,47 +158,12 @@ impl State {
         }
     }
 
-    /// Opens a URL (in a new tab with `tab`), going once it's loaded to
-    /// what its `#fragment` names: a comment, a file in a diff, a review
-    /// comment's thread.
-    #[must_use]
-    pub fn open_url(&mut self, url: &str, tab: bool) -> Vec<Cmd> {
-        let target = Target::from_url(url);
-        let external = matches!(target, Target::External(_));
-        let cmds = if tab {
-            self.open_tab(target)
-        } else {
-            self.go(target)
-        };
-        if !external {
-            self.anchor_at(url);
-        }
-        cmds
-    }
-
-    /// Notes `url`'s `#fragment` on the screen it opened.
-    pub fn anchor_at(&mut self, url: &str) {
-        let with_scheme = if url.starts_with("github.com/") {
-            format!("https://{url}")
-        } else {
-            url.to_owned()
-        };
-        let fragment = url::Url::parse(&with_scheme)
-            .ok()
-            .and_then(|u| u.fragment().map(str::to_owned));
-        match (fragment, self.screen_mut()) {
-            (Some(fragment), Screen::Page(p)) => p.anchor = Some(fragment),
-            (Some(fragment), Screen::Diff(d)) => d.anchor = Some(fragment),
-            _ => {}
-        }
-    }
-
     /// Follows a link on the page on screen: a URL, or one of the page's
     /// actions.
     #[must_use]
     pub fn follow(&mut self, link: &Link) -> Vec<Cmd> {
         match link {
-            Link::Url(url) => self.open_url(url, false),
+            Link::Url(url) => self.go(Dest::from_url(url)),
             Link::More => self.load_more(),
             Link::Star => star(self),
             Link::Comment => comment_with(self, ""),
@@ -737,7 +705,7 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
                 state.push(route)
             }
         }
-        (target, _) => state.go(target),
+        (target, _) => state.go(target.into()),
     }
 }
 
@@ -865,8 +833,8 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             let (browser, tab) = (hints.browser, hints.tab);
             state.overlay = None;
             match link {
-                Link::Url(url) if browser => state.go(Target::External(url)),
-                Link::Url(url) if tab => state.open_url(&url, true),
+                Link::Url(url) if browser => state.go(Target::External(url).into()),
+                Link::Url(url) if tab => state.open_tab(Dest::from_url(&url)),
                 link => state.follow(&link),
             }
         }
@@ -914,8 +882,7 @@ impl SearchBox {
 /// What choosing a suggestion does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pick {
-    Go(Target),
-    Url(String),
+    Go(Dest),
     Search(SearchKind, String),
     Filter(String),
 }
@@ -1009,19 +976,13 @@ impl State {
             }
             return out;
         }
-        if let Some(target) = route::parse_input(q, self.context_repo()) {
-            let label = match &target {
+        if let Some(dest) = route::parse_input(q, self.context_repo()) {
+            let label = match &dest.target {
                 Target::Page(r) => r.title(),
                 Target::Files(of) => format!("Files changed in {of}"),
                 Target::External(url) => url.clone(),
             };
-            // A URL keeps its `#fragment`.
-            let pick = if q.contains("://") || q.starts_with("github.com/") {
-                Pick::Url(q.to_owned())
-            } else {
-                Pick::Go(target)
-            };
-            out.push(suggestion("→", label, "go to", "↵", pick));
+            out.push(suggestion("→", label, "go to", "↵", Pick::Go(dest)));
         }
         // Jump to: pages you've visited, your repositories, live matches.
         let current = self.route().map(Route::url);
@@ -1059,7 +1020,7 @@ impl State {
             if seen.is_empty() {
                 out.push(heading(if q.is_empty() { "Recent" } else { "Jump to" }));
             }
-            let pick = Pick::Go(Target::from_url(&url));
+            let pick = Pick::Go(Dest::from_url(&url));
             out.push(suggestion(icon, title, detail, "", pick));
             seen.push(url);
         }
@@ -1091,7 +1052,7 @@ impl State {
             }
             for r in live {
                 let detail = format!("☆ {}", pages::compact(r.stars));
-                let pick = Pick::Go(Target::Page(Route::Repo(r.repo.clone())));
+                let pick = Pick::Go(Target::Page(Route::Repo(r.repo.clone())).into());
                 out.push(suggestion("▤", r.repo.to_string(), &detail, "", pick));
             }
         }
@@ -1162,8 +1123,7 @@ pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 #[must_use]
 fn choose(state: &mut State, pick: Pick) -> Vec<Cmd> {
     match pick {
-        Pick::Go(target) => state.go(target),
-        Pick::Url(url) => state.open_url(&url, false),
+        Pick::Go(dest) => state.go(dest),
         Pick::Search(kind, query) => state.push(Route::Search { kind, query }),
         Pick::Filter(query) if matches!(state.route(), Some(Route::Job { .. })) => {
             search_log(state, &query);
@@ -1748,7 +1708,7 @@ impl State {
 /// What following `link` does, for the menu.
 fn describe(link: &Link) -> String {
     match link {
-        Link::Url(url) => match Target::from_url(url) {
+        Link::Url(url) => match Dest::from_url(url).target {
             Target::Page(r) => format!("Open {}", r.title()),
             Target::Files(of) => format!("Files changed in {of}"),
             Target::External(u) => format!("Open {u} in the browser"),
@@ -2020,7 +1980,7 @@ fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
             .map(|(_, t)| t.clone());
         return crumb
             .or(right)
-            .map_or_else(Vec::new, |target| state.go(target));
+            .map_or_else(Vec::new, |target| state.go(target.into()));
     }
     if let Some(tabs) = lay.tabs
         && inside(tabs)

@@ -233,6 +233,23 @@ pub enum Target {
     External(String),
 }
 
+/// Where a link leads, and the spot there its `#fragment` names: a
+/// comment, a file in a diff, a review comment's thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dest {
+    pub target: Target,
+    pub anchor: Option<String>,
+}
+
+impl From<Target> for Dest {
+    fn from(target: Target) -> Dest {
+        Dest {
+            target,
+            anchor: None,
+        }
+    }
+}
+
 impl Route {
     /// A pull request's conversation.
     pub fn pr(pr: PrRef) -> Route {
@@ -622,31 +639,38 @@ fn list_url(base: &str, query: &str) -> String {
     }
 }
 
-impl Target {
+impl Dest {
     /// Parses a github.com URL (or a ghtui link). Other URLs are external.
-    pub fn from_url(s: &str) -> Target {
-        parse(s).unwrap_or_else(|| Target::External(s.to_owned()))
+    pub fn from_url(s: &str) -> Dest {
+        let with_scheme = if s.starts_with("github.com/") {
+            format!("https://{s}")
+        } else {
+            s.to_owned()
+        };
+        let parsed = url::Url::parse(&with_scheme).ok();
+        let anchor = parsed
+            .as_ref()
+            .and_then(url::Url::fragment)
+            .map(str::to_owned);
+        match parsed.as_ref().and_then(parse) {
+            Some(target) => Dest { target, anchor },
+            None => Target::External(s.to_owned()).into(),
+        }
     }
 }
 
 /// What a URL opens in ghtui, or `None` for the browser.
-fn parse(s: &str) -> Option<Target> {
-    let with_scheme = if s.starts_with("github.com/") {
-        format!("https://{s}")
-    } else {
-        s.to_owned()
-    };
-    let parsed = url::Url::parse(&with_scheme).ok()?;
+fn parse(parsed: &url::Url) -> Option<Target> {
     if !matches!(parsed.scheme(), "https" | "http") {
         return None;
     }
     if parsed.host_str() == Some("gist.github.com") {
-        return gist(&parsed).map(Target::Page);
+        return gist(parsed).map(Target::Page);
     }
     if !matches!(parsed.host_str(), Some("github.com" | "www.github.com")) {
         return None;
     }
-    let param = |name: &str| param(&parsed, name);
+    let param = |name: &str| param(parsed, name);
     let (query, kind, tab) = (param("q"), param("type"), param("tab"));
     let repos = || {
         ProfileTab::Repositories(match param("sort").as_deref() {
@@ -758,7 +782,7 @@ fn parse(s: &str) -> Option<Target> {
         },
         // GitHub's own pages: settings, apps, the marketplace…
         [first, ..] if RESERVED.contains(first) => return None,
-        [o, r, rest @ ..] => return repo_page(RepoId::parse(&format!("{o}/{r}"))?, rest, &parsed),
+        [o, r, rest @ ..] => return repo_page(RepoId::parse(&format!("{o}/{r}"))?, rest, parsed),
         _ => return None,
     };
     Some(Target::Page(route))
@@ -1228,23 +1252,18 @@ fn strip_is(query: &str) -> String {
 }
 
 /// What the command palette makes of its input.
-pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Target> {
+pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
     let input = input.trim();
-    if input.is_empty() {
-        return None;
-    }
     if input.contains("://") || input.starts_with("github.com/") {
-        return match Target::from_url(input) {
-            Target::External(_) => None,
-            target => Some(target),
-        };
+        let dest = Dest::from_url(input);
+        return (!matches!(dest.target, Target::External(_))).then_some(dest);
     }
     if let Some(login) = input.strip_prefix('@') {
-        return valid_login(login).then(|| Target::Page(Route::user(login)));
+        return valid_login(login).then(|| Target::Page(Route::user(login)).into());
     }
     let issue = |repo: RepoId, n: &str| {
         let number = n.trim_start_matches('#').parse().ok()?;
-        Some(Target::Page(Route::Issue { repo, number }))
+        Some(Target::Page(Route::Issue { repo, number }).into())
     };
     if let Some((repo, n)) = input.split_once('#')
         && !repo.is_empty()
@@ -1259,7 +1278,7 @@ pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Target> {
         return issue(context?.clone(), input);
     }
     if input.contains('/') {
-        return RepoId::parse(input).map(|r| Target::Page(Route::Repo(r)));
+        return RepoId::parse(input).map(|r| Target::Page(Route::Repo(r)).into());
     }
     None
 }
@@ -1317,7 +1336,7 @@ pub(crate) mod tests {
             "https://github.com/o/r/labels/a%0Bb",
         ] {
             assert!(
-                matches!(Target::from_url(url), Target::External(_)),
+                matches!(Dest::from_url(url).target, Target::External(_)),
                 "{url}"
             );
         }
@@ -1396,7 +1415,7 @@ pub(crate) mod tests {
                 false,
             ),
         ] {
-            let target = Target::from_url(&url);
+            let target = Dest::from_url(&url).target;
             assert_eq!(
                 matches!(target, Target::Page(_)),
                 opens,
@@ -1405,7 +1424,7 @@ pub(crate) mod tests {
         }
         // Not a commit under a PR: the PR's commits.
         assert!(matches!(
-            Target::from_url("https://github.com/o/r/pull/1/commits/a%20b"),
+            Dest::from_url("https://github.com/o/r/pull/1/commits/a%20b").target,
             Target::Page(Route::Pr {
                 tab: PrTab::Commits,
                 ..
@@ -1413,11 +1432,11 @@ pub(crate) mod tests {
         ));
         // A full SHA's files open the diff; a short one, its page.
         assert!(matches!(
-            Target::from_url(&format!("https://github.com/o/r/commit/{sha}#diff-1")),
+            Dest::from_url(&format!("https://github.com/o/r/commit/{sha}#diff-1")).target,
             Target::Files(_)
         ));
         assert!(matches!(
-            Target::from_url("https://github.com/o/r/commit/0123456#diff-1"),
+            Dest::from_url("https://github.com/o/r/commit/0123456#diff-1").target,
             Target::Page(Route::Commit { .. })
         ));
         assert!(!valid_rev("a b") && !valid_rev("a~1") && !valid_rev("a.") && valid_rev("v1.2/x"));
@@ -1426,7 +1445,7 @@ pub(crate) mod tests {
             for rev in ["a..b", "a~1", "%2E%2Fx", "a%2F%2Fb", "%2F", "x.lock%2Fy"] {
                 let url = format!("https://github.com/o/r/{view}/{rev}/src/lib.rs");
                 assert!(
-                    matches!(Target::from_url(&url), Target::External(_)),
+                    matches!(Dest::from_url(&url).target, Target::External(_)),
                     "{url}"
                 );
             }
@@ -1436,14 +1455,14 @@ pub(crate) mod tests {
 
     /// What `route`'s URL opens, once GitHub says where its ref ends.
     fn reopened(route: &Route) -> Target {
-        match Target::from_url(&route.url()) {
+        match Dest::from_url(&route.url()).target {
             Target::Page(r) => Target::Page(r.split(route.rev()).unwrap_or(r)),
             target => target,
         }
     }
 
     fn page(url: &str) -> Route {
-        match Target::from_url(url) {
+        match Dest::from_url(url).target {
             Target::Page(route) => route,
             other => panic!("{url}: {other:?}"),
         }
@@ -1505,7 +1524,7 @@ pub(crate) mod tests {
             }
         );
         assert_eq!(
-            Target::from_url("https://github.com/o/r/pull/7/files"),
+            Dest::from_url("https://github.com/o/r/pull/7/files").target,
             Target::Files(DiffOf::Pr(pr.clone()))
         );
         let sha = "0123456789abcdef0123456789abcdef01234567";
@@ -1555,7 +1574,7 @@ pub(crate) mod tests {
             Route::Tags(pr.repo.clone())
         );
         assert!(matches!(
-            Target::from_url("https://github.com/o/r/releases/download/v1/x.tgz"),
+            Dest::from_url("https://github.com/o/r/releases/download/v1/x.tgz").target,
             Target::External(_)
         ));
         assert_eq!(
@@ -1574,7 +1593,7 @@ pub(crate) mod tests {
             commit(sha)
         );
         assert_eq!(
-            Target::from_url(&format!("https://github.com/o/r/commit/{sha}#diff-abc")),
+            Dest::from_url(&format!("https://github.com/o/r/commit/{sha}#diff-abc")).target,
             Target::Files(DiffOf::Commit(pr.repo.clone(), Oid::parse(sha).unwrap()))
         );
         assert_eq!(
@@ -1650,9 +1669,10 @@ pub(crate) mod tests {
         );
         let other = "f".repeat(40);
         assert_eq!(
-            Target::from_url(&format!(
+            Dest::from_url(&format!(
                 "https://github.com/o/r/compare/{sha}..{other}#files"
-            )),
+            ))
+            .target,
             Target::Files(DiffOf::Range(
                 pr.repo.clone(),
                 Oid::parse(sha).unwrap(),
@@ -1676,7 +1696,7 @@ pub(crate) mod tests {
             DiffOf::Commit(pr.repo.clone(), from.clone()),
             DiffOf::Range(pr.repo.clone(), from, to),
         ] {
-            assert_eq!(Target::from_url(&of.url()), Target::Files(of.clone()));
+            assert_eq!(Dest::from_url(&of.url()).target, Target::Files(of.clone()));
         }
         // A topic search without a topic is an empty search, not `topic:`.
         assert_eq!(
@@ -1707,11 +1727,11 @@ pub(crate) mod tests {
         };
         assert_eq!(reopened(&blame), Target::Page(blame));
         assert!(matches!(
-            Target::from_url("https://github.com/settings/tokens"),
+            Dest::from_url("https://github.com/settings/tokens").target,
             Target::External(_)
         ));
         assert!(matches!(
-            Target::from_url("https://example.com/o/r"),
+            Dest::from_url("https://example.com/o/r").target,
             Target::External(_)
         ));
     }
@@ -1770,7 +1790,7 @@ pub(crate) mod tests {
     fn every_github_link_does_what_the_corpus_says() {
         let mut wrong = Vec::new();
         for (url, expect, reason) in corpus() {
-            let target = Target::from_url(url);
+            let target = Dest::from_url(url).target;
             if !as_expected(&target, expect, reason) {
                 wrong.push(format!(
                     "{url}\n    expected {expect} {}, got {target:?}",
@@ -1888,7 +1908,7 @@ pub(crate) mod tests {
                 },
             ] {
                 let url = route.url();
-                let back = Target::from_url(&url);
+                let back = Dest::from_url(&url).target;
                 if back != Target::Page(route.clone()) {
                     wrong.push(format!(
                         "{url}\n    expected {route:?}\n    got      {back:?}"
@@ -1917,7 +1937,7 @@ pub(crate) mod tests {
             Route::CommitChecks { repo, oid },
         ] {
             let url = route.url();
-            assert_eq!(Target::from_url(&url), Target::Page(route), "{url}");
+            assert_eq!(Dest::from_url(&url).target, Target::Page(route), "{url}");
         }
     }
 
@@ -1992,7 +2012,7 @@ pub(crate) mod tests {
         let repo = RepoId::new("o", "r");
         let url = ghtui_ui::pages::url::tree(&repo, "dependabot/cargo/serde-1.0", "");
         assert_eq!(
-            Target::from_url(&url),
+            Dest::from_url(&url).target,
             Target::Page(Route::Tree {
                 repo,
                 rev: "dependabot/cargo/serde-1.0".into(),
@@ -2005,24 +2025,25 @@ pub(crate) mod tests {
     #[test]
     fn palette_input() {
         let repo = RepoId::new("o", "r");
+        let target = |input, context| parse_input(input, context).map(|d| d.target);
         assert_eq!(
-            parse_input("a/b", None),
+            target("a/b", None),
             Some(Target::Page(Route::Repo(RepoId::new("a", "b"))))
         );
         assert_eq!(
-            parse_input("@octocat", None),
+            target("@octocat", None),
             Some(Target::Page(Route::user("octocat")))
         );
         assert_eq!(
-            parse_input("#12", Some(&repo)),
+            target("#12", Some(&repo)),
             Some(Target::Page(Route::Issue {
                 repo: repo.clone(),
                 number: 12
             }))
         );
-        assert_eq!(parse_input("12", None), None);
+        assert_eq!(target("12", None), None);
         assert_eq!(
-            parse_input("a/b#3", None),
+            target("a/b#3", None),
             Some(Target::Page(Route::Issue {
                 repo: RepoId::new("a", "b"),
                 number: 3
@@ -2308,7 +2329,7 @@ pub(crate) mod tests {
             ) {
                 for (url, expect, reason) in corpus() {
                     let varied = vary(url, &owner, &name, number, &sha);
-                    let target = Target::from_url(&varied);
+                    let target = Dest::from_url(&varied).target;
                     prop_assert!(as_expected(&target, expect, reason), "{varied}: {target:?}, not {expect}");
                     if let Target::Page(route) = &target {
                         let route = route.split(None).unwrap_or_else(|| route.clone());
@@ -2328,7 +2349,7 @@ pub(crate) mod tests {
             fn any_input_parses_or_not(input in any::<String>()) {
                 let repo = RepoId::new("o", "r");
                 let _ = parse_input(&input, Some(&repo));
-                let _ = Target::from_url(&input);
+                let _ = Dest::from_url(&input).target;
                 let _ = decode(&input);
             }
         }

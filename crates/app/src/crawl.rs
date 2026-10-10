@@ -28,7 +28,7 @@ use ghtui_ui::Icons;
 use crate::browse::{DataKey, Need, needs};
 use crate::diff_job::GitContext;
 use crate::keymap::Keymap;
-use crate::route::{Route, Target};
+use crate::route::{Dest, Route, Target};
 use crate::state::{Remote, State};
 
 const PAGES: usize = 300;
@@ -153,7 +153,7 @@ async fn link_crawl() {
 
     let mut queue: VecDeque<(Route, usize)> = SEEDS
         .iter()
-        .filter_map(|u| match Target::from_url(u) {
+        .filter_map(|u| match Dest::from_url(u).target {
             Target::Page(route) => Some((route, 0)),
             _ => None,
         })
@@ -187,7 +187,7 @@ async fn link_crawl() {
         let page = state.build_page(&route, 140, ghtui_store::now());
         for url in page.links.iter().filter_map(|l| l.url()) {
             links += 1;
-            match Target::from_url(url) {
+            match Dest::from_url(url).target {
                 Target::External(url) if is_github(&url) => {
                     let entry = leaving
                         .entry(shape(&url))

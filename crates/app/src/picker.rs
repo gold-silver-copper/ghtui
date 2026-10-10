@@ -16,7 +16,7 @@ use crate::browse::{Data, DataKey, Need};
 use crate::keymap::Action;
 use crate::nav::new_input;
 use crate::review::apply_commit_choice;
-use crate::route::{self, Route, Target};
+use crate::route::{self, Dest, Route, Target};
 use crate::state::{Cmd, Overlay, Remote, Screen, State, apply};
 
 pub enum Kind {
@@ -82,9 +82,7 @@ pub enum PickItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Choice {
     Action(Action),
-    Go(Target),
-    /// Open this URL, at its `#fragment`.
-    Url(String),
+    Go(Dest),
     Search(String),
     DiffFile(usize),
     Commits(PickItem),
@@ -222,20 +220,13 @@ impl State {
     /// order first), and searching GitHub.
     pub fn commands(&self, input: &str) -> Rows {
         let mut out = Vec::new();
-        if let Some(target) = route::parse_input(input, self.context_repo()) {
-            let label = match &target {
+        if let Some(dest) = route::parse_input(input, self.context_repo()) {
+            let label = match &dest.target {
                 Target::Page(route) => format!("Go to {}", route.title()),
                 Target::Files(of) => format!("Files changed in {of}"),
                 Target::External(url) => format!("Open {url}"),
             };
-            // A URL keeps its `#fragment`.
-            let input = input.trim();
-            let choice = if input.contains("://") || input.starts_with("github.com/") {
-                Choice::Url(input.to_owned())
-            } else {
-                Choice::Go(target)
-            };
-            out.push((item(label, ""), Some(choice)));
+            out.push((item(label, ""), Some(Choice::Go(dest))));
         }
         // Open tabs, by title.
         if self.tab_count() > 1 {
@@ -326,7 +317,7 @@ impl State {
             .take(200)
             .map(|(_, path)| {
                 let target = Target::Page(Route::blob(repo.clone(), rev.to_owned(), path.clone()));
-                (item(path, ""), Some(Choice::Go(target)))
+                (item(path, ""), Some(Choice::Go(target.into())))
             })
             .collect();
         if *truncated && rows.len() < 200 {
@@ -358,14 +349,15 @@ impl State {
                     what
                 };
                 let (repo, rev, path) = (repo.clone(), name.clone(), path.to_owned());
-                let target = if file {
+                let route = if file {
                     Route::blob(repo, rev, path)
                 } else if path.is_empty() && is_default {
                     Route::Repo(repo)
                 } else {
                     Route::Tree { repo, rev, path }
                 };
-                rows.push((score, item(name, hint), Choice::Go(Target::Page(target))));
+                let go = Choice::Go(Target::Page(route).into());
+                rows.push((score, item(name, hint), go));
             }
         }
         rows.sort_by_key(|(s, ..)| *s);
@@ -526,7 +518,6 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
     match choice {
         Choice::Action(action) => apply(state, action),
         Choice::Go(target) => state.go(target),
-        Choice::Url(url) => state.open_url(&url, false),
         Choice::Search(query) => state.push(search_route(&query)),
         Choice::DiffFile(file) => {
             if let Screen::Diff(screen) = state.screen_mut() {
