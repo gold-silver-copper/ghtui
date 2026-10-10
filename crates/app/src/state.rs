@@ -1421,6 +1421,25 @@ pub(crate) mod tests {
         state
     }
 
+    /// An empty repository says what it's about, in its sidebar on a
+    /// wide screen and above its note on a narrow one.
+    #[test]
+    fn an_empty_repository_shows_its_about() {
+        for width in [100, 140] {
+            let mut s = state();
+            s.size = (width, 30);
+            let _ = s.push(Route::Repo(repo()));
+            let mut o = crate::fixtures::overview();
+            (o.entries, o.default_branch) = (Vec::new(), None);
+            fetched(&mut s, DataKey::Repo(repo()), Data::Repo(Box::new(o)));
+            let page = page(&s).page();
+            let aside = page.aside.iter().flat_map(|a| &a.lines);
+            let lines = page.lines.iter().chain(aside);
+            let text: String = lines.map(ghtui_ui::page::PageLine::text).collect();
+            assert!(text.contains("keyboard-driven"), "{width}: {text}");
+        }
+    }
+
     #[must_use]
     fn click(state: &mut State, x: u16, y: u16) -> Vec<Cmd> {
         update(

@@ -530,16 +530,15 @@ impl State {
             filter: &filter,
         };
         let cx = pages::PageCtx { icons, keys, now };
-        let aside = match route {
+        let mut page = match route {
             Route::Repo(_)
             | Route::Issue { .. }
             | Route::Pr {
                 tab: PrTab::Conversation,
                 ..
-            } => pages::aside_width(width),
-            _ => None,
+            } => Page::with_aside(width),
+            _ => Page::new(width),
         };
-        let mut page = Page::new(pages::main_width(width, aside));
         page.compact = self.compact();
         if let Some(err) = self.stale_errors(route) {
             // A flash banner on top; what's below is the cached copy.
@@ -583,7 +582,7 @@ impl State {
                     #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
                     let commits = f.get(&key).ready_unchecked();
                     let readme = f.get(&DataKey::Readme(repo.clone()));
-                    pages::repo_code(&mut page, repo, o, commits, readme, aside, cx);
+                    pages::repo_code(&mut page, repo, o, commits, readme, cx);
                 }
             }
             Route::Tree { repo, rev, path } => {
@@ -664,7 +663,7 @@ impl State {
                 let issue =
                     f.get::<Option<Box<IssueDetail>>>(&DataKey::Issue(repo.clone(), *number));
                 match issue.show(&mut page, &format!("{repo}#{number}")) {
-                    Some(Some(issue)) => pages::issue(&mut page, issue, icons, keys, aside, now),
+                    Some(Some(issue)) => pages::issue(&mut page, issue, icons, keys, now),
                     // Redirecting to the pull request.
                     Some(None) => page.line(vec![Seg::new("Loading…", Role::Meta)]),
                     None => {}
@@ -675,7 +674,7 @@ impl State {
                 if let Some(d) = f.of(self.prs.get(pr)).show(&mut page, &pr.to_string()) {
                     match tab {
                         PrTab::Conversation => {
-                            pages::pr_conversation(&mut page, pr, d, activity, aside, cx);
+                            pages::pr_conversation(&mut page, pr, d, activity, cx);
                         }
                         PrTab::Commits => pages::pr_commits(&mut page, pr, d, activity, now),
                         PrTab::Checks => {
@@ -824,8 +823,9 @@ impl State {
             }
         }
         // The sidebar starts beside the page, below the banner.
-        let pad = if page.aside.is_empty() { 0 } else { banner };
-        page.aside.splice(0..0, vec![PageLine::default(); pad]);
+        if let Some(a) = page.aside.as_mut().filter(|a| !a.lines.is_empty()) {
+            a.lines.splice(0..0, vec![PageLine::default(); banner]);
+        }
         page
     }
 }

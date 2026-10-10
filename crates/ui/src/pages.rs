@@ -22,7 +22,7 @@ use ghtui_api::model::{
 use ghtui_theme::{Bg, Syntax};
 
 use crate::markdown::{self, LinkBase};
-use crate::page::{ASIDE_GAP, Frame, Link, Page, PageLine, Role, Seg, Tone};
+use crate::page::{Frame, Link, Page, PageLine, Role, Seg, Tone};
 use crate::{Fetched, Icons, cols, time};
 
 // ---- URLs ----------------------------------------------------------------------
@@ -564,19 +564,6 @@ pub struct Listing<'a> {
     pub commits: Option<&'a HashMap<String, CommitInfo>>,
 }
 
-/// Width of a sidebar for a page `total` columns wide, if there's room.
-pub fn aside_width(total: u16) -> Option<u16> {
-    (total >= 104).then_some(30)
-}
-
-/// The main column's width beside an aside of `aside` columns.
-pub fn main_width(total: u16, aside: Option<u16>) -> u16 {
-    match aside {
-        Some(a) => total.saturating_sub(a + ASIDE_GAP),
-        None => total,
-    }
-}
-
 fn aside_heading(page: &mut Page, text: &str) {
     page.blank();
     page.line(vec![Seg::new(text, Role::Strong)]);
@@ -865,11 +852,10 @@ pub fn repo_code(
     o: &RepoOverview,
     commits: Option<&HashMap<String, CommitInfo>>,
     readme: Fetched<'_, Option<Box<Readme>>>,
-    aside: Option<u16>,
     cx: PageCtx<'_>,
 ) {
     let PageCtx { keys, now, .. } = cx;
-    if aside.is_none() {
+    if !page.build_aside(|a| about(a, repo, o, false)) {
         about(page, repo, o, true);
         page.blank();
     }
@@ -922,9 +908,6 @@ pub fn repo_code(
         let base = LinkBase::new(repo, rev, &readme.path);
         markdown::render(page, &readme.text, Some(&base), Frame::Body);
         page.box_bottom();
-    }
-    if let Some(width) = aside {
-        page.build_aside(width, |a| about(a, repo, o, false));
     }
 }
 
@@ -2047,14 +2030,23 @@ fn label_list(page: &mut Page, l: &Capped<Label>) {
     }
 }
 
-pub fn issue(
-    page: &mut Page,
-    d: &IssueDetail,
-    icons: Icons,
-    keys: Keys<'_>,
-    aside: Option<u16>,
-    now: u64,
-) {
+pub fn issue(page: &mut Page, d: &IssueDetail, icons: Icons, keys: Keys<'_>, now: u64) {
+    let participants =
+        unique(std::iter::once(&d.author).chain(d.comments.iter().map(|c| &c.author)));
+    let aside = page.build_aside(|a| {
+        people(
+            a,
+            "Assignees",
+            &d.assignees,
+            (d.assignees.left_out() > 0)
+                .then(|| left_out_text(d.assignees.left_out(), "more", "more")),
+            "No one assigned",
+        );
+        label_list(a, &d.labels);
+        milestone_aside(a, &d.repo, d.milestone.as_ref());
+        let earlier = d.comments.left_out() > 0;
+        people(a, "Participants", &participants, maybe_others(earlier), "");
+    });
     page.wrapped(
         vec![
             Seg::new(d.title.clone(), Role::Title),
@@ -2077,7 +2069,7 @@ pub fn issue(
             Role::Meta,
         ),
     ];
-    if aside.is_none() {
+    if !aside {
         labels(&mut segs, &d.labels);
         if let Some(m) = &d.milestone {
             let target = format!("{}/milestone/{}", url::repo(&d.repo), m.number);
@@ -2086,10 +2078,10 @@ pub fn issue(
         }
     }
     page.wrapped(segs, 0, Frame::None);
-    if aside.is_some() || d.assignees.is_empty() {
+    if aside || d.assignees.is_empty() {
         page.rule(0, Frame::None);
     }
-    if aside.is_none() && !d.assignees.is_empty() {
+    if !aside && !d.assignees.is_empty() {
         let mut segs = vec![Seg::new("Assignees: ", Role::Meta)];
         for (i, a) in d.assignees.iter().enumerate() {
             if i > 0 {
@@ -2112,24 +2104,6 @@ pub fn issue(
         talk.comment(page, c);
     }
     add_comment(page, keys);
-    if let Some(width) = aside {
-        let participants =
-            unique(std::iter::once(&d.author).chain(d.comments.iter().map(|c| &c.author)));
-        page.build_aside(width, |a| {
-            people(
-                a,
-                "Assignees",
-                &d.assignees,
-                (d.assignees.left_out() > 0)
-                    .then(|| left_out_text(d.assignees.left_out(), "more", "more")),
-                "No one assigned",
-            );
-            label_list(a, &d.labels);
-            milestone_aside(a, &d.repo, d.milestone.as_ref());
-            let earlier = d.comments.left_out() > 0;
-            people(a, "Participants", &participants, maybe_others(earlier), "");
-        });
-    }
 }
 
 // ---- pull request -------------------------------------------------------------------------
@@ -2272,7 +2246,6 @@ pub fn pr_conversation(
     pr: &PrRef,
     d: &PrDetail,
     activity: Fetched<'_, PrActivity>,
-    aside: Option<u16>,
     cx: PageCtx<'_>,
 ) {
     // Comments and reviews, merged in time order below.
@@ -2281,6 +2254,28 @@ pub fn pr_conversation(
         Review(&'a ghtui_api::browse::ReviewSummary),
     }
     let PageCtx { icons, keys, now } = cx;
+    // The sidebar doesn't wait for the conversation, which says how it's
+    // going; only its reviewers come from it.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the conversation says how it's going"
+    )]
+    let reviews = activity.ready_unchecked().map(|a| &a.reviews);
+    page.build_aside(|side| {
+        let reviewers = unique(reviews.into_iter().flatten().map(|r| &r.author));
+        let earlier = reviews.is_some_and(|r| r.left_out() > 0);
+        let none = if reviews.is_some() { "No reviews" } else { "" };
+        people(side, "Reviewers", &reviewers, maybe_others(earlier), none);
+        label_list(side, &d.labels);
+        milestone_aside(side, &pr.repo, d.milestone.as_ref());
+        aside_heading(side, "Size");
+        let mut size = Vec::from(changes(d.summary.additions, d.summary.deletions));
+        size.push(Seg::new(
+            format!(" in {}", plural(d.changed_files, "file")),
+            Role::Meta,
+        ));
+        side.line(size);
+    });
     pr_summary(page, pr, d, now);
     let op = &d.summary.author;
     let talk = Conversation {
@@ -2338,28 +2333,6 @@ pub fn pr_conversation(
     }
     merge_box(page, pr, d, icons);
     add_comment(page, keys);
-    if let Some(width) = aside {
-        let reviewers = unique(a.reviews.iter().map(|r| &r.author));
-        page.build_aside(width, |side| {
-            let earlier = a.reviews.left_out() > 0;
-            people(
-                side,
-                "Reviewers",
-                &reviewers,
-                maybe_others(earlier),
-                "No reviews",
-            );
-            label_list(side, &d.labels);
-            milestone_aside(side, &pr.repo, d.milestone.as_ref());
-            aside_heading(side, "Size");
-            let mut size = Vec::from(changes(d.summary.additions, d.summary.deletions));
-            size.push(Seg::new(
-                format!(" in {}", plural(d.changed_files, "file")),
-                Role::Meta,
-            ));
-            side.line(size);
-        });
-    }
 }
 
 /// A pull request's Checks tab: the checks on its head.
@@ -4972,7 +4945,6 @@ mod tests {
             &overview,
             None,
             readme,
-            None,
             PageCtx::default(),
         );
         for link in [
@@ -5135,18 +5107,11 @@ mod tests {
             &overview,
             None,
             readme,
-            None,
             PageCtx::default(),
         );
         let text: Vec<String> = page.lines.iter().map(PageLine::text).collect();
         assert!(text.iter().any(|l| l.contains("Jane Doe")), "{text:?}");
         assert_eq!(profile_links(&page), Vec::<String>::new());
-    }
-
-    #[test]
-    fn wide_pages_get_an_about_sidebar() {
-        assert_eq!(aside_width(90), None);
-        assert_eq!(main_width(120, aside_width(120)), 120 - 30 - ASIDE_GAP);
     }
 
     #[test]

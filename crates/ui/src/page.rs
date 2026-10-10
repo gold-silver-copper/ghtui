@@ -191,6 +191,14 @@ const BOX_PAD: u16 = 2;
 /// Columns between the page and its aside.
 pub const ASIDE_GAP: u16 = 3;
 
+/// GitHub's right-hand sidebar: the columns kept for it beside the main
+/// column, and what it says once built.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Aside {
+    pub width: u16,
+    pub lines: Vec<PageLine>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Page {
     pub lines: Vec<PageLine>,
@@ -201,9 +209,9 @@ pub struct Page {
     /// Columns of the main column.
     pub width: u16,
     pub items: Vec<Item>,
-    /// The sidebar, drawn right of the main column and scrolled with it.
-    pub aside: Vec<PageLine>,
-    pub aside_width: u16,
+    /// The sidebar, drawn right of the main column and scrolled with it:
+    /// kept only on a page wide enough for one ([`Page::with_aside`]).
+    pub aside: Option<Aside>,
     /// Lists take one row per item.
     pub compact: bool,
     /// The line the page opens scrolled to (a linked line), if not the top.
@@ -219,6 +227,22 @@ impl Page {
         Self {
             width: width.max(20),
             ..Self::default()
+        }
+    }
+
+    /// A page `total` columns wide that keeps a sidebar beside its column,
+    /// if there's room for one.
+    pub fn with_aside(total: u16) -> Self {
+        const WIDTH: u16 = 30;
+        if total < 104 {
+            return Self::new(total);
+        }
+        Self {
+            aside: Some(Aside {
+                width: WIDTH,
+                lines: Vec::new(),
+            }),
+            ..Self::new(total.saturating_sub(WIDTH + ASIDE_GAP))
         }
     }
 
@@ -390,22 +414,28 @@ impl Page {
         }
     }
 
-    /// Builds the sidebar with `f`, which gets a page `width` wide that
-    /// shares this page's links.
-    pub fn build_aside(&mut self, width: u16, f: impl FnOnce(&mut Page)) {
+    /// Builds the sidebar, if the page keeps one, with `f`, which gets a
+    /// page as wide as it that shares this page's links. False if it
+    /// doesn't: what the sidebar would say goes in the column.
+    pub fn build_aside(&mut self, f: impl FnOnce(&mut Page)) -> bool {
+        let Some(Aside { width, .. }) = self.aside else {
+            return false;
+        };
         let mut aside = Page::new(width);
         aside.links = std::mem::take(&mut self.links);
         aside.link_ids = std::mem::take(&mut self.link_ids);
         f(&mut aside);
         self.links = std::mem::take(&mut aside.links);
         self.link_ids = std::mem::take(&mut aside.link_ids);
-        self.aside = aside.lines;
-        self.aside_width = width;
+        let lines = aside.lines;
+        self.aside = Some(Aside { width, lines });
+        true
     }
 
     /// Rows the page takes (the longer of the column and the aside).
     pub fn height(&self) -> usize {
-        self.lines.len().max(self.aside.len())
+        let aside = self.aside.as_ref().map_or(0, |a| a.lines.len());
+        self.lines.len().max(aside)
     }
 
     /// The item containing `line`.
@@ -502,7 +532,7 @@ pub struct Columns {
 }
 
 pub fn columns(page: &Page, area: Rect) -> Columns {
-    let aside = (!page.aside.is_empty()).then_some(ASIDE_GAP.saturating_add(page.aside_width));
+    let aside = (page.aside.as_ref()).map(|a| ASIDE_GAP.saturating_add(a.width));
     let total = page.width.saturating_add(aside.unwrap_or(0));
     let main_x = area.x.saturating_add(area.width.saturating_sub(total) / 2);
     Columns {
@@ -596,8 +626,8 @@ pub fn spots(page: &Page, area: Rect, scroll: usize) -> Vec<Spot> {
         }
     };
     add(&page.lines, layout.main_x, page.width);
-    if let Some(ax) = layout.aside_x {
-        add(&page.aside, ax, page.aside_width);
+    if let (Some(ax), Some(a)) = (layout.aside_x, &page.aside) {
+        add(&a.lines, ax, a.width);
     }
     out.sort_by_key(|s| (s.y, s.x));
     out
@@ -616,13 +646,10 @@ pub fn hit(page: &Page, area: Rect, scroll: usize, x: u16, y: u16) -> PageHit {
             .find(|(sx, shown, _)| (*sx..sx.saturating_add(cols(text::width(shown)))).contains(&x))
             .and_then(|(_, _, seg)| seg.link)
     };
-    if let Some(ax) = layout.aside_x
+    if let (Some(ax), Some(a)) = (layout.aside_x, &page.aside)
         && x >= ax
     {
-        let link = page
-            .aside
-            .get(row)
-            .and_then(|l| link_at(l, ax, page.aside_width));
+        let link = a.lines.get(row).and_then(|l| link_at(l, ax, a.width));
         return PageHit { line: None, link };
     }
     let Some(line) = page.lines.get(row) else {
@@ -674,8 +701,10 @@ impl Widget for PageView<'_> {
                     here,
                 );
             }
-            if let (Some(ax), Some(line)) = (layout.aside_x, self.page.aside.get(i)) {
-                self.line(buf, line, ax, y, self.page.aside_width, false, false);
+            if let (Some(ax), Some(a)) = (layout.aside_x, &self.page.aside)
+                && let Some(line) = a.lines.get(i)
+            {
+                self.line(buf, line, ax, y, a.width, false, false);
             }
         }
         self.scrollbar(area, buf);
@@ -962,18 +991,18 @@ mod tests {
 
     #[test]
     fn hits_and_spots_find_links_in_both_columns() {
-        let mut page = Page::new(30);
+        let mut page = Page::with_aside(110);
         let link = page.link("https://github.com/a");
         page.line(vec![
             Seg::new("see ", Role::Body),
             Seg::linked("here", Role::Link, link),
         ]);
-        page.build_aside(10, |aside| {
+        assert!(page.build_aside(|aside| {
             aside.link_line("b", "https://github.com/b", Role::Link, 0);
-        });
-        let area = Rect::new(0, 0, 50, 5);
+        }));
+        let area = Rect::new(0, 0, 120, 5);
         let cols = columns(&page, area);
-        assert_eq!(cols.main_x, (50 - 43) / 2);
+        assert_eq!(cols.main_x, (120 - 110) / 2);
         let spots = spots(&page, area, 0);
         assert_eq!(spots.len(), 2);
         assert_eq!(spots[0].x, cols.main_x + 4);
