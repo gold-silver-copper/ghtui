@@ -117,7 +117,6 @@ pub enum DiffMsg {
     ReviewLoaded(Result<ReviewState, Failure>),
     ThreadsLoaded(Result<Vec<ReviewThread>, ApiError>),
     PatchesLoaded(Result<Vec<PatchFile>, ApiError>),
-    Replied(Result<(), ApiError>),
     ResolvedSet {
         thread_id: NodeId,
         resolved: bool,
@@ -190,11 +189,6 @@ pub enum Api {
     },
     FetchThreads(PrRef),
     FetchPatches(PrRef),
-    Reply {
-        pr: PrRef,
-        thread_id: NodeId,
-        body: String,
-    },
     SetResolved {
         pr: PrRef,
         thread_id: NodeId,
@@ -905,7 +899,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     }
     // A write changes what GitHub shows, wherever it shows it.
     let wrote = match &msg {
-        Msg::Changed(_, _, r) | Msg::Diff(_, DiffMsg::Replied(r)) => r.is_ok(),
+        Msg::Changed(_, _, r) => r.is_ok(),
         // Drafts GitHub accepted wait in a pending review there.
         Msg::Diff(_, DiffMsg::ReviewSubmitted(o)) => o.error.is_none() || !o.accepted.is_empty(),
         _ => false,
@@ -4861,17 +4855,14 @@ pub(crate) mod tests {
                 press(&mut s, "Fixed");
                 let cmds = press(&mut s, "<C-s>");
                 assert!(
-                    matches!(&cmds[..], [Cmd::Api(Api::Reply { body, .. })] if body == "Fixed")
+                    matches!(&cmds[..], [Cmd::Api(Api::Change(Change::Reply { body, .. }, _))] if body == "Fixed")
                 );
-                diff_msg(
-                    &mut s,
-                    &pr,
-                    DiffMsg::Replied(Err(ApiError::Network("down".into()))),
-                );
+                answer(&mut s, &cmds, Err(ApiError::Network("down".into())));
                 assert!(
                     matches!(&s.overlay, Some(Overlay::Compose(c)) if c.error.is_some() && c.text() == "Fixed")
                 );
-                let cmds = diff_msg(&mut s, &pr, DiffMsg::Replied(Ok(())));
+                let cmds = press(&mut s, "<C-s>");
+                let cmds = answer(&mut s, &cmds, Ok(()));
                 assert!(s.overlay.is_none());
                 assert_eq!(cmds, vec![Cmd::Api(Api::FetchThreads(pr))]);
             }

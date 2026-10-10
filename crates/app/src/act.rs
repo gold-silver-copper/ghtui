@@ -79,6 +79,8 @@ pub enum By {
     Act(Subject),
     /// The composer, posting a comment.
     Compose,
+    /// The composer, replying to one of this pull request's threads.
+    Reply(PrRef),
     Star,
 }
 
@@ -714,7 +716,7 @@ pub fn on_changed(
                     .get(c.selected)
                     .is_some_and(|(_, sent)| sent == change)
         }
-        (By::Compose, Some(Overlay::Compose(c))) => c.sending,
+        (By::Compose | By::Reply(_), Some(Overlay::Compose(c))) => c.sending,
         _ => false,
     };
     match result {
@@ -723,18 +725,23 @@ pub fn on_changed(
                 state.overlay = None;
             }
             state.info(done(change));
-            if let By::Confirm(about) | By::Act(about) = by {
-                state.awaiting = state.route().map(|route| Awaiting {
-                    change: change.clone(),
-                    // The page it's on, if that's its own; a row's page.
-                    about: if Subject::of(route).as_ref() == Some(&about) {
-                        route.clone()
-                    } else {
-                        about.route()
-                    },
-                    route: route.clone(),
-                    polls: 0,
-                });
+            match by {
+                By::Confirm(about) | By::Act(about) => {
+                    state.awaiting = state.route().map(|route| Awaiting {
+                        change: change.clone(),
+                        // The page it's on, if that's its own; a row's page.
+                        about: if Subject::of(route).as_ref() == Some(&about) {
+                            route.clone()
+                        } else {
+                            about.route()
+                        },
+                        route: route.clone(),
+                        polls: 0,
+                    });
+                }
+                // It shows in its thread.
+                By::Reply(pr) => return vec![Cmd::Api(Api::FetchThreads(pr))],
+                By::Compose | By::Star => {}
             }
             state.load_visible(false)
         }
@@ -961,7 +968,7 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
 /// What a change is doing while GitHub answers: "Merging".
 fn doing(change: &Change) -> &'static str {
     match change {
-        Change::Comment { .. } => "Posting",
+        Change::Comment { .. } | Change::Reply { .. } => "Posting",
         Change::Star { starred: true, .. } => "Starring",
         Change::Star { .. } => "Unstarring",
         Change::Merge { .. } => "Merging",
@@ -978,6 +985,7 @@ fn doing(change: &Change) -> &'static str {
 fn done(change: &Change) -> String {
     match change {
         Change::Comment { .. } => "Comment posted".into(),
+        Change::Reply { .. } => "Reply posted".into(),
         Change::Star {
             repo,
             starred: true,
@@ -1012,7 +1020,9 @@ pub fn needs(change: &Change) -> &'static str {
         Change::Merge { .. } | Change::UpdateBranch { .. } => {
             "Contents: write and Pull requests: write"
         }
-        Change::SetPrOpen { .. } | Change::ReadyForReview { .. } => "Pull requests: write",
+        Change::SetPrOpen { .. } | Change::ReadyForReview { .. } | Change::Reply { .. } => {
+            "Pull requests: write"
+        }
         Change::CloseIssue { .. } | Change::ReopenIssue { .. } => "Issues: write",
         Change::Rerun { .. } | Change::RerunJob { .. } | Change::CancelRun { .. } => {
             "Actions: write"
@@ -1025,6 +1035,7 @@ pub fn needs(change: &Change) -> &'static str {
 fn failure(change: &Change, err: &ApiError) -> String {
     let what = match change {
         Change::Comment { .. } => "the comment",
+        Change::Reply { .. } => "the reply",
         Change::Star { starred: true, .. } => "the star",
         Change::Star { .. } => "removing the star",
         Change::Merge { .. } => "the merge",

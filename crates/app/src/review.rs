@@ -917,11 +917,11 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             if let Some(Overlay::Compose(compose)) = &mut state.overlay {
                 compose.sending = true;
             }
-            vec![Cmd::Api(Api::Reply {
-                pr,
-                thread_id,
+            let reply = Change::Reply {
+                thread: thread_id,
                 body,
-            })]
+            };
+            vec![Cmd::Api(Api::Change(reply, crate::act::By::Reply(pr)))]
         }
         ComposeTarget::Draft { id } => {
             let save = diff.edit_review(&pr, |i| {

@@ -423,14 +423,6 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 let result = gh.pr_patches(&pr).await;
                 Msg::Diff(pr.into(), DiffMsg::PatchesLoaded(result))
             }
-            Api::Reply {
-                pr,
-                thread_id,
-                body,
-            } => {
-                let result = gh.reply(&thread_id, &body).await;
-                Msg::Diff(pr.into(), DiffMsg::Replied(result))
-            }
             Api::SetResolved {
                 pr,
                 thread_id,
@@ -584,7 +576,6 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             let none = threads.iter().map(|t| (t.thread.clone(), None)).collect();
             Msg::Diff(pr.clone().into(), DiffMsg::Job(*job, JobMsg::Mapped(none)))
         }
-        Cmd::Api(Api::Reply { pr, .. }) => Msg::Diff(pr.clone().into(), DiffMsg::Replied(api())),
         Cmd::Api(Api::SetResolved {
             pr,
             thread_id,
