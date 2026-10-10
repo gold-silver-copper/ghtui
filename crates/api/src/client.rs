@@ -844,15 +844,6 @@ impl GitHub {
         self.mutate(op).await.map(drop)
     }
 
-    /// Replies to a thread right away (outside any pending review).
-    pub async fn reply(&self, thread_id: &NodeId, body: &str) -> Result<(), ApiError> {
-        let op = queries::Reply::build(queries::ReplyVariables {
-            thread_id: thread_id.gql(),
-            body: body.to_owned(),
-        });
-        self.mutate(op).await.map(drop)
-    }
-
     pub async fn set_resolved(&self, thread_id: &NodeId, resolved: bool) -> Result<(), ApiError> {
         let vars = queries::ThreadIdVariables {
             thread_id: thread_id.gql(),

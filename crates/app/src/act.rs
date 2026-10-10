@@ -57,6 +57,20 @@ impl Confirm {
     }
 }
 
+/// What sent a change: GitHub's answer goes back there, and only there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum By {
+    /// A confirmation, about this.
+    Confirm(Subject),
+    /// An action that asks nothing first, about this.
+    Act(Subject),
+    /// The composer, posting a comment.
+    Compose,
+    /// The composer, replying to one of this pull request's threads.
+    Reply(PrRef),
+    Star,
+}
+
 /// A change GitHub accepted that the page it was made on doesn't show
 /// yet: GitHub can take a while (a cancel, a minute or more). While that
 /// page is on screen, what it's about is fetched again until it shows it.
@@ -138,8 +152,7 @@ fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
         }
         Ok(Plan::Do(change)) => {
             state.info(format!("{}…", doing(&change)));
-            state.changing = Some(subject);
-            vec![Cmd::Api(Api::Change(change))]
+            vec![Cmd::Api(Api::Change(change, By::Act(subject)))]
         }
         Ok(Plan::Approve(pr)) => crate::review::open_approve(state, pr),
         Ok(Plan::Load(need)) => {
@@ -642,10 +655,10 @@ pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         }
         KeyCode::Enter => {
             if let Some((_, change)) = confirm.choices.get(confirm.selected) {
+                let by = By::Confirm(confirm.about.clone());
+                let cmd = Cmd::Api(Api::Change(change.clone(), by));
                 confirm.sending = true;
                 confirm.error = None;
-                let cmd = Cmd::Api(Api::Change(change.clone()));
-                state.changing = Some(confirm.about.clone());
                 return vec![cmd];
             }
         }
@@ -654,45 +667,60 @@ pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     Vec::new()
 }
 
-/// GitHub's answer to a change. Whatever was shown is fetched again (a
-/// write marks everything stale), so the page ends up as GitHub has it.
+/// GitHub's answer to a change, back to what sent it. Whatever was shown
+/// is fetched again (a write marks everything stale), so the page ends up
+/// as GitHub has it.
 #[must_use]
-pub fn on_changed(state: &mut State, change: &Change, result: Result<(), ApiError>) -> Vec<Cmd> {
+pub fn on_changed(
+    state: &mut State,
+    change: &Change,
+    by: By,
+    result: Result<(), ApiError>,
+) -> Vec<Cmd> {
+    // The dialog or the composer that sent it, if it's still waiting.
+    let sender = match (&by, &state.overlay) {
+        (By::Confirm(_), Some(Overlay::Confirm(c))) => {
+            c.sending
+                && c.choices
+                    .get(c.selected)
+                    .is_some_and(|(_, sent)| sent == change)
+        }
+        (By::Compose | By::Reply(_), Some(Overlay::Compose(c))) => c.sending,
+        _ => false,
+    };
     match result {
         Ok(()) => {
-            if matches!(
-                state.overlay,
-                Some(Overlay::Confirm(_) | Overlay::Compose(_))
-            ) {
+            if sender {
                 state.overlay = None;
             }
             state.info(done(change));
-            let about = state.changing.take();
-            state.awaiting = (state.route())
-                .filter(|_| !matches!(change, Change::Comment { .. } | Change::Star { .. }))
-                .and_then(|route| {
-                    Some(Awaiting {
+            match by {
+                By::Confirm(about) | By::Act(about) => {
+                    state.awaiting = state.route().map(|route| Awaiting {
                         change: change.clone(),
                         route: route.clone(),
-                        about: about.or_else(|| Subject::of(route))?,
+                        about,
                         polls: 0,
-                    })
-                });
+                    });
+                }
+                // It shows in its thread.
+                By::Reply(pr) => return vec![Cmd::Api(Api::FetchThreads(pr))],
+                By::Compose | By::Star => {}
+            }
             state.load_visible(false)
         }
         Err(err) => {
-            state.changing = None;
             tracing::warn!(?change, %err, "a change to GitHub failed");
             if let Change::Star { repo, starred, .. } = change {
                 nav::set_starred(state, repo, !starred);
             }
             let text = failure(change, &err);
             match &mut state.overlay {
-                Some(Overlay::Confirm(confirm)) => {
+                Some(Overlay::Confirm(confirm)) if sender => {
                     confirm.sending = false;
                     confirm.error = Some(text);
                 }
-                Some(Overlay::Compose(compose)) if compose.sending => {
+                Some(Overlay::Compose(compose)) if sender => {
                     compose.sending = false;
                     compose.error = Some(text);
                 }
@@ -871,7 +899,7 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
 /// What a change is doing while GitHub answers: "Merging".
 fn doing(change: &Change) -> &'static str {
     match change {
-        Change::Comment { .. } => "Posting",
+        Change::Comment { .. } | Change::Reply { .. } => "Posting",
         Change::Star { starred: true, .. } => "Starring",
         Change::Star { .. } => "Unstarring",
         Change::Merge { .. } => "Merging",
@@ -888,6 +916,7 @@ fn doing(change: &Change) -> &'static str {
 fn done(change: &Change) -> String {
     match change {
         Change::Comment { .. } => "Comment posted".into(),
+        Change::Reply { .. } => "Reply posted".into(),
         Change::Star {
             repo,
             starred: true,
@@ -922,7 +951,9 @@ pub fn needs(change: &Change) -> &'static str {
         Change::Merge { .. } | Change::UpdateBranch { .. } => {
             "Contents: write and Pull requests: write"
         }
-        Change::SetPrOpen { .. } | Change::ReadyForReview { .. } => "Pull requests: write",
+        Change::SetPrOpen { .. } | Change::ReadyForReview { .. } | Change::Reply { .. } => {
+            "Pull requests: write"
+        }
         Change::CloseIssue { .. } | Change::ReopenIssue { .. } => "Issues: write",
         Change::Rerun { .. } | Change::RerunJob { .. } | Change::CancelRun { .. } => {
             "Actions: write"
@@ -935,6 +966,7 @@ pub fn needs(change: &Change) -> &'static str {
 fn failure(change: &Change, err: &ApiError) -> String {
     let what = match change {
         Change::Comment { .. } => "the comment",
+        Change::Reply { .. } => "the reply",
         Change::Star { starred: true, .. } => "the star",
         Change::Star { .. } => "removing the star",
         Change::Merge { .. } => "the merge",

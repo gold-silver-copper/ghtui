@@ -995,18 +995,6 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
         return Vec::new();
     };
     match msg {
-        // The text stays in the composer, with GitHub's reason.
-        DiffMsg::Replied(Err(err)) => {
-            if let Some(Overlay::Compose(compose)) = &mut state.overlay {
-                compose.sending = false;
-                compose.error = Some(err.to_string());
-            }
-        }
-        DiffMsg::Replied(Ok(())) => {
-            state.overlay = None;
-            state.info("Reply posted");
-            return vec![Cmd::Api(Api::FetchThreads(pr))];
-        }
         DiffMsg::LastReview(result) => {
             if let Some(diff) = state.diffs.get_mut(of) {
                 let last = match result {

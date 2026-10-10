@@ -3046,8 +3046,9 @@ mod changes {
     use ghtui_ui::bars::Notice;
 
     use super::{ghtui, pr_detail, render, with_job, with_pr, with_repo, with_run};
+    use crate::act::{By, Subject};
     use crate::browse::{Data, DataKey};
-    use crate::fixtures::{fetched, press};
+    use crate::fixtures::{answer, fetched, press};
     use crate::keymap::Action;
     use crate::review::SubmitOutcome;
     use crate::route::Route;
@@ -3128,23 +3129,24 @@ mod changes {
             method: MergeMethod::Merge,
             head: pr_detail().head_oid,
         };
+        let sent = press(&mut s, "<Enter>");
         assert_eq!(
-            press(&mut s, "<Enter>"),
-            vec![Cmd::Api(Api::Change(merge.clone()))]
+            sent,
+            vec![Cmd::Api(Api::Change(merge, By::Confirm(Subject::Pr(pr()))))]
         );
         assert!(confirm(&s).sending);
         // Keys wait while it's sent.
         assert!(press(&mut s, "<Enter>").is_empty());
 
         let refused = ApiError::GraphQl(vec!["Must have push access to repository".into()]);
-        update(&mut s, Msg::Changed(merge.clone(), Err(refused)));
+        answer(&mut s, &sent, Err(refused));
         let error = confirm(&s).error.clone().unwrap_or_default();
         assert!(error.contains("Must have push access"), "{error}");
         assert!(error.contains("Contents: write"), "{error}");
         assert!(!confirm(&s).sending);
 
         press(&mut s, "<Enter>");
-        let cmds = update(&mut s, Msg::Changed(merge, Ok(())));
+        let cmds = answer(&mut s, &sent, Ok(()));
         assert!(s.overlay.is_none());
         assert_eq!(info(&s), "Merged");
         assert!(
@@ -3180,7 +3182,7 @@ mod changes {
             info(&s)
         );
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
-        assert_eq!(confirm(&s).about, crate::act::Subject::Pr(pr()));
+        assert_eq!(confirm(&s).about, Subject::Pr(pr()));
         assert!(
             confirm(&s)
                 .title
@@ -3191,10 +3193,9 @@ mod changes {
         press(&mut s, "M");
         let mine = crate::fixtures::found_prs(Vec::new(), 0);
         crate::fixtures::section(&mut s, 1, mine);
-        assert_eq!(confirm(&s).about, crate::act::Subject::Pr(pr()));
-        let merge = confirm(&s).choices[0].1.clone();
-        press(&mut s, "<Enter>");
-        update(&mut s, Msg::Changed(merge, Ok(())));
+        assert_eq!(confirm(&s).about, Subject::Pr(pr()));
+        let sent = press(&mut s, "<Enter>");
+        answer(&mut s, &sent, Ok(()));
         let w = s.awaiting.clone().unwrap();
         assert_eq!(
             (w.route, w.about),
@@ -3247,8 +3248,8 @@ mod changes {
             confirm(&s).facts[0].0,
             "Its branch, syntax-palette, is 2 commits behind main; updating pushes to it"
         );
-        press(&mut s, "<Enter>");
-        update(&mut s, Msg::Changed(update_branch, Ok(())));
+        let sent = press(&mut s, "<Enter>");
+        answer(&mut s, &sent, Ok(()));
         // GitHub still shows the old head.
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
         press(&mut s, "M");
@@ -3349,17 +3350,51 @@ mod changes {
         assert_eq!(info(&s), "Re-running works on a workflow run or a job");
     }
 
-    /// Marking a draft ready asks nothing: it's sent at once.
+    /// Marking a draft ready asks nothing: it's sent at once. GitHub's
+    /// answer goes back to what sent it: a dialog or a comment opened while
+    /// it's on its way is left as it is.
     #[test]
-    fn a_draft_is_marked_ready_at_once() {
+    fn a_draft_is_marked_ready_at_once_and_hears_back_alone() {
         let mut s = pr_in(IssueState::Draft);
-        let cmds = press(&mut s, "W");
         let ready = Change::ReadyForReview {
             pr: NodeId::new("PR_12"),
         };
-        assert_eq!(cmds, vec![Cmd::Api(Api::Change(ready.clone()))]);
-        update(&mut s, Msg::Changed(ready, Ok(())));
+        let sent = press(&mut s, "W");
+        assert_eq!(
+            sent,
+            vec![Cmd::Api(Api::Change(ready, By::Act(Subject::Pr(pr()))))]
+        );
+        press(&mut s, "X");
+        let refused = ApiError::GraphQl(vec!["Not now".into()]);
+        answer(&mut s, &sent, Err(refused));
+        assert_eq!(confirm(&s).error, None);
+        assert!(info(&s).contains("Not now"), "{}", info(&s));
+        press(&mut s, "<Esc>WcLGTM");
+        answer(&mut s, &sent, Ok(()));
         assert_eq!(info(&s), "Ready for review");
+        assert!(
+            matches!(&s.overlay, Some(Overlay::Compose(c)) if c.text() == "LGTM"),
+            "the comment is still being written"
+        );
+    }
+
+    /// A star answered while a re-run from a list's row is on its way, or
+    /// once GitHub accepted it, leaves the page following that run.
+    #[test]
+    fn a_star_leaves_the_wait_for_another_change_alone() {
+        let mut s = super::with_workflow(Mode::Dark);
+        let run = Data::Run(Box::new(crate::fixtures::workflow_run()));
+        fetched(&mut s, DataKey::Run(ghtui(), 7, None), run);
+        let rerun = press(&mut s, "<C-r><Enter>");
+        press(&mut s, "<Esc>");
+        let star = press(&mut s, "s");
+        answer(&mut s, &star, Ok(()));
+        answer(&mut s, &rerun, Ok(()));
+        // The page follows the run, not the list.
+        let run = vec![crate::browse::Need::Data(DataKey::Run(ghtui(), 7, None))];
+        assert_eq!(crate::act::poll(&mut s), run);
+        answer(&mut s, &star, Ok(()));
+        assert_eq!(crate::act::poll(&mut s), run);
     }
 
     /// Approving from the pull request's page reads your saved drafts
@@ -3446,11 +3481,14 @@ mod changes {
         assert_eq!(choices, ["Re-run failed jobs", "Re-run all jobs"]);
         assert_eq!(
             press(&mut s, "<Enter>"),
-            vec![Cmd::Api(Api::Change(Change::Rerun {
-                repo: ghtui(),
-                run: 7,
-                failed_only: true
-            }))]
+            vec![Cmd::Api(Api::Change(
+                Change::Rerun {
+                    repo: ghtui(),
+                    run: 7,
+                    failed_only: true
+                },
+                By::Confirm(Subject::Run(ghtui(), 7, None))
+            ))]
         );
         let mut s = with_run(Mode::Dark);
         press(&mut s, "X");
@@ -3483,11 +3521,15 @@ mod changes {
             repo: ghtui(),
             run: 7,
         };
+        let sent = press(&mut s, "<Enter>");
         assert_eq!(
-            press(&mut s, "<Enter>"),
-            vec![Cmd::Api(Api::Change(cancel.clone()))]
+            sent,
+            vec![Cmd::Api(Api::Change(
+                cancel,
+                By::Confirm(Subject::Job(ghtui(), Some(7), 2))
+            ))]
         );
-        update(&mut s, Msg::Changed(cancel, Ok(())));
+        answer(&mut s, &sent, Ok(()));
         // GitHub takes a while to stop it: it's asked for once.
         press(&mut s, "X");
         assert!(
@@ -3510,7 +3552,8 @@ mod changes {
             repo: ghtui(),
             job: 2,
         };
-        update(&mut s, Msg::Changed(rerun, Ok(())));
+        let by = By::Confirm(Subject::Job(ghtui(), Some(7), 2));
+        update(&mut s, Msg::Changed(rerun, by, Ok(())));
         let (mut job, _) = crate::fixtures::job();
         job.run.attempt = 2;
         job.run.outcome = CheckOutcome::Pending;
