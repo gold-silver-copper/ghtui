@@ -1421,6 +1421,25 @@ pub(crate) mod tests {
         state
     }
 
+    /// An empty repository says what it's about, in its sidebar on a
+    /// wide screen and above its note on a narrow one.
+    #[test]
+    fn an_empty_repository_shows_its_about() {
+        for width in [100, 140] {
+            let mut s = state();
+            s.size = (width, 30);
+            let _ = s.push(Route::Repo(repo()));
+            let mut o = crate::fixtures::overview();
+            (o.entries, o.default_branch) = (Vec::new(), None);
+            fetched(&mut s, DataKey::Repo(repo()), Data::Repo(Box::new(o)));
+            let page = page(&s).page();
+            let aside = page.aside.iter().flat_map(|a| &a.lines);
+            let lines = page.lines.iter().chain(aside);
+            let text: String = lines.map(ghtui_ui::page::PageLine::text).collect();
+            assert!(text.contains("keyboard-driven"), "{width}: {text}");
+        }
+    }
+
     #[must_use]
     fn click(state: &mut State, x: u16, y: u16) -> Vec<Cmd> {
         update(
@@ -1447,6 +1466,17 @@ pub(crate) mod tests {
             }
         }
         panic!("{text} isn't on screen")
+    }
+
+    /// On a list that can't scroll, a page down goes to its last row and
+    /// a page up to its first.
+    #[test]
+    fn paging_a_list_that_fits_goes_to_its_edge() {
+        let mut state = with_home(3);
+        press(&mut state, "<PageDown>");
+        assert!(selected_text(&state).contains("PR 3"));
+        press(&mut state, "<PageUp>");
+        assert!(selected_text(&state).contains("PR 1"));
     }
 
     #[test]
@@ -2588,6 +2618,28 @@ pub(crate) mod tests {
             press(&mut s, &label);
             assert_eq!(s.tab_count(), 2);
         }
+    }
+
+    /// On a wide screen, output (a job's log) takes the whole width, and
+    /// reading (a list of issues) stays at most 140 columns, centered.
+    #[test]
+    fn output_takes_the_screen_and_reading_stays_narrow() {
+        let mut s = state();
+        s.size = (220, 30);
+        let mut width = |route| {
+            let _ = s.push(route);
+            s.sync_page();
+            page(&s).page().width
+        };
+        let job = Route::Job {
+            repo: repo(),
+            run: Some(7),
+            job: 2,
+            step: None,
+            query: String::new(),
+        };
+        assert!(width(job) > 200);
+        assert_eq!(width(issues(OPEN)), 140);
     }
 
     /// `/` on a job searches its log: the steps with a match open, the

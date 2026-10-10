@@ -314,12 +314,9 @@ impl State {
         }
     }
 
-    /// Columns pages are built for.
+    /// Columns pages are built for: each takes what it fills of them.
     pub fn page_width(&self) -> u16 {
-        self.size
-            .0
-            .saturating_sub(2 * PAD_X + 1)
-            .min(browse::MAX_WIDTH)
+        self.size.0.saturating_sub(2 * PAD_X + 1)
     }
 
     /// Rows a page shows.
@@ -430,18 +427,20 @@ fn scroll_by(p: &mut PageScreen, rows: isize, height: usize) {
     }
 }
 
-/// Pages and jumps keep a selection on screen when there's one to keep.
-/// When the view can't scroll that way, the selection goes to the edge.
+/// Pages and jumps keep a selection on screen when there's one to keep:
+/// one scrolled off is the first item shown on that side. When the view
+/// can't scroll that way, the selection goes to that edge.
 fn scroll_keep(p: &mut PageScreen, rows: isize, height: usize) {
     let had = p.selected.is_some();
     let scroll = p.scroll;
     scroll_by(p, rows, height);
-    if (had && p.selected.is_none()) || p.scroll == scroll {
+    let stuck = p.scroll == scroll;
+    if (had && p.selected.is_none()) || stuck {
         let mut visible_items = (0..p.page.items.len()).filter(|&i| visible(p, i, height));
-        p.selected = if rows > 0 {
-            visible_items.next()
-        } else {
+        p.selected = if (rows > 0) == stuck {
             visible_items.next_back()
+        } else {
+            visible_items.next()
         };
     }
 }
@@ -713,13 +712,11 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
 pub fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
     let chrome = state.chrome();
     let n = chrome.tabs.len();
-    // The first tab in that direction, wrapping around, that isn't a link.
-    let next = chrome.active.and_then(|active| {
-        (1..n)
-            .map(|k| if forward { active + k } else { active + n - k })
-            .map(|i| i % n)
-            .find(|&i| chrome.tabs.get(i).is_some_and(|(t, _)| !t.external))
-    });
+    // The next tab in that direction, wrapping around.
+    let next = chrome
+        .active
+        .filter(|_| n > 1)
+        .map(|active| (if forward { active + 1 } else { active + n - 1 }) % n);
     match next {
         Some(i) => switch_tab(state, i + 1),
         None => {

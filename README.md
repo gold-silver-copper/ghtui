@@ -205,8 +205,10 @@ alerts), what needs a token scope gh doesn't grant (projects, packages),
 what the API doesn't expose (wiki search), and other sites. Every kind of
 link, with an example and what it does, is listed in
 `crates/app/tests/github_urls.txt`, which the tests hold ghtui to.
-Pages show cached data first and refresh in the background. Pages are at
-most 140 columns wide and centered.
+Pages show cached data first and refresh in the background. Pages for
+reading are at most 140 columns wide and centered; output and tables
+(checks, Actions runs, jobs and their logs, files, blame, branches, tags,
+deployments) take the whole width.
 
 ## Acting on GitHub
 

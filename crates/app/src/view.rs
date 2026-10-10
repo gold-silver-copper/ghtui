@@ -31,8 +31,8 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
         fill(buf, area, ctx.theme, Bg::Surface);
         return;
     }
-    let lay = state.layout();
     let chrome = state.chrome();
+    let lay = state.layout_of(&chrome);
     let status = lay.status;
 
     // Header: where you are, the search field, you.
