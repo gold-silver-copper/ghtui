@@ -1771,20 +1771,17 @@ pub(crate) mod tests {
 
     mod annotations {
         use super::*;
-        use crate::annotations::{Annotation, AnnotationComment, AnnotationKey};
+        use crate::annotations::{Annotation, AnnotationComment, AnnotationKey, Place};
 
         fn ann(key: &str, side: Side, line: Option<u32>) -> Annotation {
             Annotation {
                 key: AnnotationKey::Thread(ghtui_api::model::NodeId::new(key)),
                 path: "a.txt".into(),
-                side,
-                line,
-                start_line: None,
-                original_line: line,
+                place: line.map_or(Place::File { outdated: false }, |line| Place::Line {
+                    at: LinePos { side, line },
+                    start: None,
+                }),
                 resolved: false,
-                outdated: false,
-                moved: false,
-                file_level: line.is_none(),
                 comments: vec![AnnotationComment {
                     author: "alice".into(),
                     body: "Is this right?\nSecond line.".into(),
