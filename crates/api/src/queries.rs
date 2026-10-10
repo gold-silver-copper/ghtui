@@ -194,20 +194,16 @@ pub struct PrRollup {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequest", schema_module = "schema")]
 pub struct PrSummary {
-    pub number: i32,
     pub title: String,
-    pub url: Uri,
     #[cynic(spread)]
     pub status: crate::model::PrStatus,
     pub updated_at: DateTime,
     pub author: Option<Actor>,
-    pub repository: RepositoryName,
     pub additions: i32,
     pub deletions: i32,
     pub review_decision: Option<ReviewDecision>,
     #[arguments(last: 1)]
     pub commits: CommitRollupConnection,
-    pub comments: CommentCount,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
