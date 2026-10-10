@@ -1301,7 +1301,7 @@ fn repo_wide_with_about_dark() {
 #[test]
 fn menu_overlay_dark() {
     let mut state = with_home(Mode::Dark, ColorDepth::TrueColor);
-    crate::nav::open_menu(&mut state);
+    let _ = crate::nav::open_menu(&mut state);
     insta::assert_snapshot!(render(&state));
 }
 
@@ -1329,7 +1329,7 @@ fn small_terminal_80x24() {
     insta::assert_snapshot!("small_issues", small(with_issues(Mode::Dark)));
     insta::assert_snapshot!("small_pr", small(with_pr(Mode::Dark)));
     let mut menu = with_repo(Mode::Dark, ColorDepth::TrueColor);
-    crate::nav::open_menu(&mut menu);
+    let _ = crate::nav::open_menu(&mut menu);
     insta::assert_snapshot!("small_menu", small(menu));
 }
 
@@ -1343,7 +1343,7 @@ fn narrow_terminal_does_not_panic() {
             state.screens.truncate(1);
             update(&mut state, Msg::Resize(w, h));
             render(&state);
-            crate::nav::open_menu(&mut state);
+            let _ = crate::nav::open_menu(&mut state);
             render(&state);
             let mut state = with_repo(mode, ColorDepth::TrueColor);
             update(&mut state, Msg::Resize(w, h));
@@ -3329,6 +3329,33 @@ mod changes {
         press(&mut s, "<Esc>r");
         crate::fixtures::section(&mut s, 1, crate::fixtures::found_prs(Vec::new(), 0));
         assert!(rows(&s).is_empty());
+    }
+
+    /// The menu on a row that hasn't loaded loads it, saying it's checking
+    /// what you may do until GitHub says, then why you can't, if you can't.
+    #[test]
+    fn the_menu_checks_a_row_before_offering_its_changes() {
+        let mut s = super::with_home(Mode::Dark, ghtui_theme::ColorDepth::TrueColor);
+        s.prs.clear();
+        press(&mut s, "jj");
+        let cmds = press(&mut s, "<Space>");
+        assert!(cmds.contains(&Cmd::Api(Api::FetchPr(pr()))), "{cmds:?}");
+        let close = |s: &State| {
+            let Some(Overlay::Menu(menu)) = &s.overlay else {
+                panic!("no menu")
+            };
+            let row = menu.rows.iter().find(|d| d.action == Action::Close).unwrap();
+            (row.label.clone(), row.unavailable.clone())
+        };
+        assert_eq!(
+            close(&s),
+            ("Close or reopen (checking gold-silver-copper/ghtui#12 first)".to_owned(), None)
+        );
+        let theirs = mergeable(|d| d.may = ghtui_api::model::PrPermits::default());
+        update(&mut s, Msg::Pr(pr(), Box::new(Ok(theirs))));
+        let (label, why) = close(&s);
+        assert_eq!(label, "Close or reopen");
+        assert!(why.is_some_and(|w| w.contains("doesn't let you close it")));
     }
 
     /// Updating the branch, the page follows GitHub until it shows the new

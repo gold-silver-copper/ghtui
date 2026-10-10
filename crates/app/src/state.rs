@@ -941,7 +941,18 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Diff(of, msg) => return diff_screen::update(state, &of, msg),
         Msg::Key(key) => return on_key(state, key),
-        Msg::Resize(w, h) => state.size = (w, h),
+        Msg::Resize(w, h) => {
+            // Split view asked for that no longer fits says so.
+            let unsplit = |state: &State| match state.screen() {
+                Screen::Diff(d) => d.unsplit(state.layout().content),
+                Screen::Page(_) => None,
+            };
+            let before = unsplit(state);
+            state.size = (w, h);
+            if let Some(why) = unsplit(state).filter(|_| before.is_none()) {
+                state.info(why);
+            }
+        }
         Msg::Viewer(Ok(login)) => state.viewer = Some(login),
         Msg::Viewer(Err(err)) => tracing::warn!(%err, "could not fetch viewer"),
         Msg::Pr(pr, result) => {
@@ -1195,7 +1206,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Search => return state.open_search(),
         Action::FindFile if diff.is_some() => return state.open_picker(picker::Kind::DiffFiles),
         Action::FindFile => return state.open_finder(false),
-        Action::Menu => nav::open_menu(state),
+        Action::Menu => return nav::open_menu(state),
         Action::CommandPalette => return state.open_picker(picker::Kind::Commands),
         Action::Messages => {
             let kept = state.notices.log().iter().cloned().collect();
@@ -2097,7 +2108,15 @@ pub(crate) mod tests {
             query: "repo:o/r is:pr label:bug".into(),
         });
         let _ = act(&mut state, Action::SaveSection);
-        let cmds = press(&mut state, "<C-u>Bugs<Enter>");
+        // Titled with the search at first, which it doesn't say twice.
+        let prompt = |state: &State| {
+            let p = overlay!(state, Picker);
+            state.picker_rows(p).into_iter().map(|(i, _)| i.label).collect::<Vec<_>>()
+        };
+        assert_eq!(prompt(&state), ["Add “repo:o/r is:pr label:bug” to Home"]);
+        press(&mut state, "<C-u>Bugs");
+        assert_eq!(prompt(&state), ["Add “Bugs” to Home: repo:o/r is:pr label:bug"]);
+        let cmds = press(&mut state, "<Enter>");
         assert!(state.overlay.is_none(), "the prompt closed");
         assert_eq!(
             cmds,
@@ -4062,6 +4081,31 @@ pub(crate) mod tests {
             assert!(narrow.diffs.values().next().unwrap().doc.opts().split);
             let (wide, _) = diff_state(220);
             assert!(wide.diffs.values().next().unwrap().doc.opts().split);
+        }
+
+        /// Split view asked for where its halves would be too narrow hides
+        /// the file tree if that makes room, else stays unified, and says so.
+        #[test]
+        fn split_view_too_narrow_hides_the_tree_or_stays_unified() {
+            let split = |s: &State| s.diffs.values().next().unwrap().doc.opts().split;
+            let (mut s, _) = diff_state(110);
+            assert!(screen(&s).prefs.tree_visible);
+            act(&mut s, Action::ToggleSplit);
+            assert!(split(&s) && !screen(&s).prefs.tree_visible);
+            says(&s, "Hid the file tree");
+            act(&mut s, Action::ToggleTree);
+            assert!(!split(&s), "the tree back, split doesn't fit beside it");
+            says(&s, "split view needs 90 columns beside the file tree");
+
+            let (mut s, _) = diff_state(86);
+            act(&mut s, Action::ToggleSplit);
+            assert!(!split(&s));
+            says(&s, "Unified view: split view needs 90 columns");
+            update(&mut s, Msg::Resize(200, 30));
+            assert!(split(&s));
+            update(&mut s, Msg::Resize(86, 30));
+            assert!(!split(&s));
+            says(&s, "Unified view");
         }
 
         /// Where the cursor is, and the document it's in.

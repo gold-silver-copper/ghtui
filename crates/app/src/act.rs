@@ -954,6 +954,7 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
             cmds.extend(act_on(state, p.subject, p.action));
         }
     }
+    nav::replan_menu(state);
     let Some(Overlay::Confirm(confirm)) = &state.overlay else {
         return cmds;
     };
@@ -1080,7 +1081,8 @@ fn failure(change: &Change, err: &ApiError) -> String {
 }
 
 /// The changes the menu offers for what's on screen: each action, its
-/// label, and why it can't be made now, if it can't.
+/// label, and why it can't be made now, if it can't. A row not loaded yet
+/// says so: whether you may make the change isn't known until it is.
 pub fn doables(state: &State) -> Vec<(Action, String, Option<String>)> {
     let Some(subject) = subject(state) else {
         return Vec::new();
@@ -1093,10 +1095,26 @@ pub fn doables(state: &State) -> Vec<(Action, String, Option<String>)> {
                 (Action::Close, _) => "Close or reopen",
                 (action, _) => action.description(),
             };
-            let why = plan_for(state, &subject, action).err();
-            (action, label.to_owned(), why)
+            match plan_for(state, &subject, action) {
+                Err(why) => (action, label.to_owned(), Some(why)),
+                Ok(Plan::Load(_)) => {
+                    let label = format!("{label} (checking {} first)", subject.name());
+                    (action, label, None)
+                }
+                Ok(_) => (action, label.to_owned(), None),
+            }
         })
         .collect()
+}
+
+/// Loads the selected row's subject, if its changes need it to decide.
+#[must_use]
+pub fn check_row(state: &mut State) -> Vec<Cmd> {
+    let row = state.route().is_some_and(|r| Subject::of(r).is_none());
+    match subject(state) {
+        Some(subject) if row => state.ensure(subject.need(), false),
+        _ => Vec::new(),
+    }
 }
 
 #[cfg(test)]

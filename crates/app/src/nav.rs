@@ -1763,7 +1763,11 @@ impl Menu {
     }
 }
 
-pub fn open_menu(state: &mut State) {
+/// Opens the menu, loading what the selected row's changes depend on
+/// (whether you may close it, say): the menu says so until it's in.
+#[must_use]
+pub fn open_menu(state: &mut State) -> Vec<Cmd> {
+    let cmds = crate::act::check_row(state);
     let mut menu = Menu {
         rows: state.doables(),
         selected: 0,
@@ -1771,6 +1775,22 @@ pub fn open_menu(state: &mut State) {
     };
     menu.reselect();
     state.overlay = Some(Overlay::Menu(Box::new(menu)));
+    cmds
+}
+
+/// The menu's rows again, as what they depend on arrives.
+pub fn replan_menu(state: &mut State) {
+    if !matches!(state.overlay, Some(Overlay::Menu(_))) {
+        return;
+    }
+    let rows = state.doables();
+    if let Some(Overlay::Menu(menu)) = &mut state.overlay {
+        let at = menu.shown().get(menu.selected).map(|d| d.action);
+        menu.rows = rows;
+        let shown = menu.shown();
+        menu.selected = (shown.iter().position(|d| Some(d.action) == at))
+            .unwrap_or(menu.selected.min(shown.len().saturating_sub(1)));
+    }
 }
 
 impl State {
@@ -2011,8 +2031,7 @@ fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
     let item = hit.line.and_then(|l| p.page.item_at(l));
     if button == MouseButton::Right {
         p.selected = item.or(p.selected);
-        open_menu(state);
-        return Vec::new();
+        return open_menu(state);
     }
     if let Some(link) = hit.link.and_then(|l| p.page.target(l)) {
         let link = link.clone();
