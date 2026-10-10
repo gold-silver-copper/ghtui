@@ -236,13 +236,35 @@ pub enum IssueState {
     Closed,
     /// Closed as not planned (or duplicate).
     NotPlanned,
-    Merged,
+}
+
+/// Only a pull request is a draft or merged, and only an issue is closed
+/// as not planned: each has its own states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PrState {
+    Open,
     Draft,
+    Closed,
+    Merged,
+}
+
+impl PrState {
+    /// Open, as a draft or not.
+    pub fn is_open(self) -> bool {
+        matches!(self, Self::Open | Self::Draft)
+    }
+}
+
+/// An issue's state or a pull request's: what its icon and chip show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Issue(IssueState),
+    Pr(PrState),
 }
 
 /// A pull request's state with its draft flag. Every query spreads this
-/// in, and only it makes a pull request's [`IssueState`], so none can get
-/// the state without the flag or forget that an open draft is a draft.
+/// in, and only it makes a [`PrState`], so none can get the state without
+/// the flag or forget that an open draft is a draft.
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequest", schema_module = "schema")]
 pub struct PrStatus {
@@ -250,7 +272,7 @@ pub struct PrStatus {
     state: q::PullRequestState,
 }
 
-impl From<PrStatus> for IssueState {
+impl From<PrStatus> for PrState {
     fn from(pr: PrStatus) -> Self {
         match pr.state {
             q::PullRequestState::Open if pr.is_draft => Self::Draft,
@@ -317,7 +339,7 @@ pub struct PrSummary {
     pub pr: PrRef,
     pub title: String,
     pub author: String,
-    pub state: IssueState,
+    pub state: PrState,
     /// ISO 8601.
     pub updated_at: String,
     pub additions: u64,
@@ -402,9 +424,9 @@ pub enum Readiness {
 impl PrDetail {
     pub fn readiness(&self) -> Readiness {
         match (self.summary.state, self.mergeable, self.merge_state) {
-            (IssueState::Merged, ..) => Readiness::Merged,
-            (IssueState::Closed | IssueState::NotPlanned, ..) => Readiness::Closed,
-            (IssueState::Draft, ..) | (_, _, MergeState::Draft) => Readiness::Draft,
+            (PrState::Merged, ..) => Readiness::Merged,
+            (PrState::Closed, ..) => Readiness::Closed,
+            (PrState::Draft, ..) | (_, _, MergeState::Draft) => Readiness::Draft,
             (_, Mergeable::Conflicting, _) | (_, _, MergeState::Dirty) => Readiness::Conflicts,
             (_, Mergeable::Unknown, _) | (_, _, MergeState::Unknown) => Readiness::Checking,
             (.., MergeState::Behind) => Readiness::Behind,
@@ -418,7 +440,7 @@ impl PrDetail {
     /// It's open and GitHub hasn't settled what it shows: whether it can
     /// merge, or its checks. A page showing it fetches it again until it has.
     pub fn settling(&self) -> bool {
-        matches!(self.summary.state, IssueState::Open | IssueState::Draft)
+        self.summary.state.is_open()
             && (self.mergeable == Mergeable::Unknown
                 || self.merge_state == MergeState::Unknown
                 || self.summary.checks == Some(ChecksState::Pending))
@@ -706,13 +728,13 @@ mod tests {
     /// an open draft is a draft.
     #[test]
     fn an_open_draft_is_a_draft() {
-        let state = |json| IssueState::from(serde_json::from_value::<PrStatus>(json).unwrap());
+        let state = |json| PrState::from(serde_json::from_value::<PrStatus>(json).unwrap());
         let open = serde_json::json!({ "isDraft": true, "state": "OPEN" });
-        assert_eq!(state(open), IssueState::Draft);
+        assert_eq!(state(open), PrState::Draft);
         let open = serde_json::json!({ "isDraft": false, "state": "OPEN" });
-        assert_eq!(state(open), IssueState::Open);
+        assert_eq!(state(open), PrState::Open);
         let merged = serde_json::json!({ "isDraft": true, "state": "MERGED" });
-        assert_eq!(state(merged), IssueState::Merged);
+        assert_eq!(state(merged), PrState::Merged);
     }
 
     /// A count decoded as fewer than its items still reads as no fewer.

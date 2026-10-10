@@ -375,7 +375,7 @@ fn pr_title<'a>(state: &'a State, pr: &ghtui_api::model::PrRef) -> Line<'a> {
         return Line::from(Span::styled(pr.to_string(), theme.title(bar)));
     };
     let s = &d.summary;
-    let (text, bg) = ghtui_ui::pages::state_label(s.state, true);
+    let (text, bg) = ghtui_ui::pages::state_label(ghtui_api::browse::Status::Pr(s.state));
     Line::from(vec![
         Span::styled(
             format!(" {} {text} ", state.icons.pr_state(s.state)),

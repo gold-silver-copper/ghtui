@@ -698,13 +698,11 @@ impl State {
     /// merge commit, its head is in the branch, which would leave nothing).
     pub(crate) fn pr_base(&self, pr: &PrRef) -> Option<crate::diff_job::PrBase> {
         let d = self.prs.get(pr)?.data.as_ref()?;
-        let done = matches!(
-            d.summary.state,
-            ghtui_api::browse::IssueState::Merged | ghtui_api::browse::IssueState::Closed
-        );
         Some(crate::diff_job::PrBase {
             branch: d.base_ref.clone(),
-            oid: done.then(|| Oid::parse(&d.base_oid).ok()).flatten(),
+            oid: (!d.summary.state.is_open())
+                .then(|| Oid::parse(&d.base_oid).ok())
+                .flatten(),
         })
     }
 
@@ -1289,8 +1287,8 @@ pub(crate) mod tests {
     use crate::fixtures::{answer, diff_msg, fetched, press, says, thread, warns};
     use crate::picker::{Choice, fuzzy_score};
     use crate::route::{Dest, OPEN};
-    use ghtui_api::browse::IssueState;
     use ghtui_api::browse::SearchResults;
+    use ghtui_api::browse::{IssueState, PrState, Status};
     use ghtui_api::model::RepoId;
     use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode};
     use ghtui_ui::annotations::{AnnotationKey, Place};
@@ -1321,9 +1319,8 @@ pub(crate) mod tests {
 
     /// Your `n` pull requests of `total`, as Home's second section finds them.
     fn mine(n: u64, total: u64) -> SearchResults {
-        let row = |n| {
-            crate::fixtures::found_pr(&format!("o/r#{n}"), &format!("PR {n}"), IssueState::Open)
-        };
+        let row =
+            |n| crate::fixtures::found_pr(&format!("o/r#{n}"), &format!("PR {n}"), PrState::Open);
         crate::fixtures::found_prs((1..=n).map(row).collect(), total)
     }
 
@@ -3435,13 +3432,13 @@ pub(crate) mod tests {
     fn a_merged_prs_diff_is_from_its_own_base() {
         let pr = PrRef::parse("o/r#1").unwrap();
         for (pr_state, oid) in [
-            (IssueState::Open, None),
+            (PrState::Open, None),
             (
-                IssueState::Merged,
+                PrState::Merged,
                 Some("0123456789abcdef0123456789abcdef01234567"),
             ),
             (
-                IssueState::Closed,
+                PrState::Closed,
                 Some("0123456789abcdef0123456789abcdef01234567"),
             ),
         ] {
@@ -3602,7 +3599,7 @@ pub(crate) mod tests {
         let mut state = state();
         let pr = PrRef::parse("o/r#1").unwrap();
         let mut detail = crate::snapshot_tests::pr_detail();
-        detail.summary.state = ghtui_api::browse::IssueState::Open;
+        detail.summary.state = PrState::Open;
         let _ = update(
             &mut state,
             Msg::Pr(pr.clone(), Box::new(Ok(detail.clone()))),
@@ -3616,7 +3613,7 @@ pub(crate) mod tests {
         };
         let cmds = act(&mut state, Action::Refresh);
         assert_eq!(load(&cmds), None, "started from the PR it had: {cmds:?}");
-        detail.summary.state = ghtui_api::browse::IssueState::Merged;
+        detail.summary.state = PrState::Merged;
         detail.base_oid = "c".repeat(40);
         let cmds = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
         assert_eq!(
@@ -3885,7 +3882,9 @@ pub(crate) mod tests {
                     total: numbers.len() as u64,
                     items: numbers
                         .iter()
-                        .map(|&n| crate::fixtures::issue_summary(n, false, IssueState::Open))
+                        .map(|&n| {
+                            crate::fixtures::issue_summary(n, Status::Issue(IssueState::Open))
+                        })
                         .collect(),
                     next: None,
                 },

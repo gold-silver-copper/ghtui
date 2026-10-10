@@ -1,7 +1,7 @@
 //! Glyphs: Nerd Font when enabled, plain Unicode otherwise. Icons always
 //! accompany text; they never carry meaning alone.
 
-use ghtui_api::browse::IssueState;
+use ghtui_api::browse::PrState;
 use ghtui_api::model::ChecksState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -10,17 +10,17 @@ pub struct Icons {
 }
 
 impl Icons {
-    pub fn pr_state(self, state: IssueState) -> &'static str {
+    pub fn pr_state(self, state: PrState) -> &'static str {
         match (self.nerd_font, state) {
-            (true, IssueState::Open) => "\u{f407}",
-            (true, IssueState::Draft) => "\u{f4dd}",
-            (true, IssueState::Merged) => "\u{f419}",
-            (true, IssueState::Closed | IssueState::NotPlanned) => "\u{f4dc}",
+            (true, PrState::Open) => "\u{f407}",
+            (true, PrState::Draft) => "\u{f4dd}",
+            (true, PrState::Merged) => "\u{f419}",
+            (true, PrState::Closed) => "\u{f4dc}",
             // Arrows, unlike the checks' marks, and narrow in every locale.
-            (false, IssueState::Open) => "⇄",
-            (false, IssueState::Draft) => "⇢",
-            (false, IssueState::Merged) => "⇉",
-            (false, IssueState::Closed | IssueState::NotPlanned) => "⇸",
+            (false, PrState::Open) => "⇄",
+            (false, PrState::Draft) => "⇢",
+            (false, PrState::Merged) => "⇉",
+            (false, PrState::Closed) => "⇸",
         }
     }
 

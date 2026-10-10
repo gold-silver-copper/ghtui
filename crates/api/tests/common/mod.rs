@@ -41,7 +41,7 @@ pub async fn run(gh: &GitHub) {
 
     // A PR merged with a merge commit: its diff is from its own base.
     let merged = gh.pull_request(&pr("cli/cli#14592")).await.unwrap();
-    assert_eq!(merged.summary.state, ghtui_api::browse::IssueState::Merged);
+    assert_eq!(merged.summary.state, ghtui_api::browse::PrState::Merged);
     assert_eq!(merged.base_oid, "6fc1c29d5477bfe71da7af290eb481c0df7811f1");
     no_doubts(gh, "a merged PR");
 

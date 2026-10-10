@@ -291,7 +291,7 @@ const PR_RESPONSE: &str = r#"{"data":{"repository":{
 
 #[tokio::test]
 async fn fetches_and_caches_pull_request() {
-    use ghtui_api::browse::IssueState;
+    use ghtui_api::browse::PrState;
     use ghtui_api::change::MergeMethod;
     use ghtui_api::model::{ChecksState, MergeState, Mergeable, ReviewDecision};
 
@@ -305,7 +305,7 @@ async fn fetches_and_caches_pull_request() {
     assert!(gh.cached_pull_request(&pr).is_none());
     let detail = gh.pull_request(&pr).await.unwrap();
     assert_eq!(detail.summary.title, "Add thing");
-    assert_eq!(detail.summary.state, IssueState::Open);
+    assert_eq!(detail.summary.state, PrState::Open);
     assert_eq!(detail.summary.review, Some(ReviewDecision::Approved));
     assert_eq!(detail.summary.checks, Some(ChecksState::Failing));
     assert_eq!(detail.mergeable, Mergeable::Yes);
@@ -689,6 +689,8 @@ async fn an_organizations_discussions_are_found_past_the_first_page() {
 /// one request reading both runs past GitHub's 10 seconds for busy accounts.
 #[tokio::test]
 async fn a_searched_pr_is_shown_then_gets_its_checks() {
+    use ghtui_api::browse::PrState;
+    use ghtui_api::model::ChecksState;
     let (gh, seen) = github(vec![
         Reply::new(
             200,
@@ -710,23 +712,18 @@ async fn a_searched_pr_is_shown_then_gets_its_checks() {
     let ghtui_api::browse::SearchResults::Issues(r) = results else {
         panic!("{results:?}");
     };
-    let states: Vec<_> = r
-        .items
-        .iter()
-        .map(|i| (i.number, i.state, i.checks))
-        .collect();
+    let checks = |i: &ghtui_api::browse::IssueSummary| match i.kind {
+        ghtui_api::browse::IssueKind::Pr { state, checks, .. } => (i.number, state, checks),
+        ghtui_api::browse::IssueKind::Issue(_) => panic!("{i:?}"),
+    };
     assert_eq!(
-        states,
-        [(
-            5,
-            ghtui_api::browse::IssueState::Draft,
-            Some(ghtui_api::model::ChecksState::Failing)
-        )]
+        r.items.iter().map(checks).collect::<Vec<_>>(),
+        [(5, PrState::Draft, Some(ChecksState::Failing))]
     );
     let Some(ghtui_api::browse::SearchResults::Issues(first)) = shown.into_inner().unwrap() else {
         panic!("the page wasn't shown before its checks");
     };
-    assert_eq!(first.items[0].checks, None);
+    assert_eq!(checks(&first.items[0]), (5, PrState::Draft, None));
     let seen = seen.lock().unwrap();
     assert!(
         !seen[0].query().contains("statusCheckRollup"),

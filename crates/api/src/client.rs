@@ -625,10 +625,7 @@ impl GitHub {
             .await?;
         // GitHub says a branch is behind only when the repository requires
         // it up to date; it may be behind anyway.
-        if matches!(
-            detail.summary.state,
-            browse::IssueState::Open | browse::IssueState::Draft
-        ) {
+        if detail.summary.state.is_open() {
             detail.behind_by = self.behind_by(pr, &detail).await;
         }
         Ok(self.kept(&pr_key(pr), detail).await)
@@ -1003,7 +1000,7 @@ impl GitHub {
         } else {
             format!("{query}{is}")
         };
-        let (mut results, prs) = self.search_as(kind, search_type, &api_query, after).await?;
+        let mut results = self.search_as(kind, search_type, &api_query, after).await?;
         if first_page
             && results.counts().0 == 0
             && kind != Kind::Users
@@ -1011,12 +1008,23 @@ impl GitHub {
         {
             return Err(refused);
         }
+        let prs: Vec<_> = match &results {
+            browse::SearchResults::Issues(r) => (r.items.iter())
+                .filter_map(|i| match &i.kind {
+                    browse::IssueKind::Pr { id, .. } => Some(id.clone()),
+                    browse::IssueKind::Issue(_) => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         if !prs.is_empty() {
             found(&results);
-            let checks = self.checks_of(prs).await;
+            let found = self.checks_of(&prs).await;
             if let browse::SearchResults::Issues(r) = &mut results {
-                for (item, checks) in r.items.iter_mut().zip(checks) {
-                    item.checks = item.checks.or(checks);
+                for item in &mut r.items {
+                    if let browse::IssueKind::Pr { id, checks, .. } = &mut item.kind {
+                        *checks = checks.or_else(|| found.get(id.as_str()).copied());
+                    }
                 }
             }
         }
@@ -1025,33 +1033,25 @@ impl GitHub {
             .await)
     }
 
-    /// The checks of each item, by its pull request's ID (`None`: not a
-    /// pull request). Checks are a decoration: without them, the rows still
-    /// show, so a failure is only logged.
-    async fn checks_of(&self, ids: Vec<Option<cynic::Id>>) -> Vec<Option<ChecksState>> {
-        let wanted: Vec<cynic::Id> = ids.iter().flatten().cloned().collect();
-        let op = queries::RollupsQuery::build(queries::NodesVariables { ids: wanted });
-        let by_id: std::collections::HashMap<String, Option<ChecksState>> =
-            match self.graphql(op).await {
-                Ok(q) => q
-                    .nodes
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|node| match node {
-                        queries::RollupNode::PullRequest(pr) => {
-                            Some((pr.id.into_inner(), crate::model::checks(&pr.commits)))
-                        }
-                        queries::RollupNode::Other => None,
-                    })
-                    .collect(),
-                Err(err) => {
-                    tracing::warn!(%err, "couldn't read the found pull requests' checks");
-                    Default::default()
-                }
-            };
-        ids.into_iter()
-            .map(|id| id.and_then(|id| by_id.get(id.inner()).copied().flatten()))
-            .collect()
+    /// The checks of these pull requests, by ID. Checks are a decoration:
+    /// without them, the rows still show, so a failure is only logged.
+    async fn checks_of(&self, ids: &[NodeId]) -> std::collections::HashMap<String, ChecksState> {
+        let ids = ids.iter().map(NodeId::gql).collect();
+        let op = queries::RollupsQuery::build(queries::NodesVariables { ids });
+        match self.graphql(op).await {
+            Ok(q) => (q.nodes.into_iter().flatten())
+                .filter_map(|node| match node {
+                    queries::RollupNode::PullRequest(pr) => {
+                        Some((pr.id.into_inner(), crate::model::checks(&pr.commits)?))
+                    }
+                    queries::RollupNode::Other => None,
+                })
+                .collect(),
+            Err(err) => {
+                tracing::warn!(%err, "couldn't read the found pull requests' checks");
+                std::collections::HashMap::new()
+            }
+        }
     }
 
     /// GitHub's reason for refusing `query`, which GraphQL doesn't give:
@@ -1151,7 +1151,7 @@ impl GitHub {
         search_type: browse::SearchType,
         query: &str,
         after: Option<String>,
-    ) -> Result<(browse::SearchResults, Vec<Option<cynic::Id>>), ApiError> {
+    ) -> Result<browse::SearchResults, ApiError> {
         use browse::{BrowseItem, Results, SearchKind as Kind, SearchResults};
         let op = browse::BrowseSearch::build(browse::BrowseSearchVariables {
             query: query.to_owned(),
@@ -1163,8 +1163,7 @@ impl GitHub {
         let next = conn.page_info.next();
         let items = nodes(conn.nodes);
         let count = crate::model::count;
-        let mut prs = Vec::new();
-        let results = match kind {
+        Ok(match kind {
             Kind::Repos => SearchResults::Repos(Results {
                 total: count(conn.repository_count),
                 items: items
@@ -1177,17 +1176,7 @@ impl GitHub {
             }),
             Kind::Issues | Kind::Pulls => SearchResults::Issues(Results {
                 total: count(conn.issue_count),
-                items: items
-                    .filter_map(|i| {
-                        let id = match &i {
-                            BrowseItem::PullRequest(p) => Some(p.id.clone()),
-                            _ => None,
-                        };
-                        let issue = i.into_issue()?;
-                        prs.push(id);
-                        Some(issue)
-                    })
-                    .collect(),
+                items: items.filter_map(BrowseItem::into_issue).collect(),
                 next,
             }),
             Kind::Users | Kind::Discussions | Kind::Commits | Kind::Code => {
@@ -1197,11 +1186,7 @@ impl GitHub {
                     next,
                 })
             }
-        };
-        if prs.iter().all(Option::is_none) {
-            prs.clear();
-        }
-        Ok((results, prs))
+        })
     }
 
     /// An issue; `None` when the number is a pull request (GitHub redirects
@@ -1710,7 +1695,6 @@ impl GitHub {
                     after,
                 )
                 .await?
-                .0
             {
                 browse::SearchResults::Issues(items) => items,
                 _ => browse::Results::default(),
