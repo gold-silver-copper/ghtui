@@ -373,9 +373,9 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 let result = fetch(&gh, &key, Some(after.clone()), None).await;
                 Msg::FetchedMore(key, after, result)
             }
-            Api::Change(change) => {
+            Api::Change(change, by) => {
                 let result = gh.change(&change).await;
-                Msg::Changed(change, result)
+                Msg::Changed(change, by, result)
             }
             Api::Suggest(q) => {
                 let result = gh
@@ -421,14 +421,6 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
             Api::FetchPatches(pr) => {
                 let result = gh.pr_patches(&pr).await;
                 Msg::Diff(pr.into(), DiffMsg::PatchesLoaded(result))
-            }
-            Api::Reply {
-                pr,
-                thread_id,
-                body,
-            } => {
-                let result = gh.reply(&thread_id, &body).await;
-                Msg::Diff(pr.into(), DiffMsg::Replied(result))
             }
             Api::SetResolved {
                 pr,
@@ -557,7 +549,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Cmd::Api(Api::FetchMore { key, after }) => {
             Msg::FetchedMore(key.clone(), after.clone(), api())
         }
-        Cmd::Api(Api::Change(change)) => Msg::Changed(change.clone(), api()),
+        Cmd::Api(Api::Change(change, by)) => Msg::Changed(change.clone(), by.clone(), api()),
         Cmd::Api(Api::Suggest(q)) => Msg::Suggested(q.clone(), api()),
         Cmd::Api(Api::FetchViewed(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::ViewedLoaded(Box::new(api())))
@@ -583,7 +575,6 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             let none = threads.iter().map(|t| (t.thread.clone(), None)).collect();
             Msg::Diff(pr.clone().into(), DiffMsg::Job(*job, JobMsg::Mapped(none)))
         }
-        Cmd::Api(Api::Reply { pr, .. }) => Msg::Diff(pr.clone().into(), DiffMsg::Replied(api())),
         Cmd::Api(Api::SetResolved {
             pr,
             thread_id,

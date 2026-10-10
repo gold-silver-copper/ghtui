@@ -27,8 +27,8 @@ pub const ACTIONS: [Action; 6] = [
     Action::Approve,
     Action::ReadyForReview,
     Action::UpdateBranch,
-    Action::Close,
     Action::Rerun,
+    Action::Close,
 ];
 
 /// A change to confirm: what it is, what's worth knowing first, and the
@@ -39,7 +39,7 @@ pub struct Confirm {
     /// the facts stay true and a change that no longer applies closes.
     pub action: Action,
     /// What it changes, kept: on a list, the selection may move on.
-    pub about: Option<Subject>,
+    pub about: Subject,
     pub title: String,
     /// Each with whether it's a problem.
     pub facts: Vec<(String, bool)>,
@@ -50,24 +50,25 @@ pub struct Confirm {
 }
 
 impl Confirm {
-    fn new(title: String, facts: Vec<(String, bool)>, choices: Vec<(String, Change)>) -> Self {
-        Self {
-            action: Action::Close,
-            about: None,
-            title,
-            facts,
-            choices,
-            selected: 0,
-            sending: false,
-            error: None,
-        }
-    }
-
     /// What's happening while GitHub answers.
     pub fn busy(&self) -> Option<String> {
         let (_, change) = self.choices.get(self.selected).filter(|_| self.sending)?;
         Some(format!("{}…", doing(change)))
     }
+}
+
+/// What sent a change: GitHub's answer goes back there, and only there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum By {
+    /// A confirmation, about this.
+    Confirm(Subject),
+    /// An action that asks nothing first, about this.
+    Act(Subject),
+    /// The composer, posting a comment.
+    Compose,
+    /// The composer, replying to one of this pull request's threads.
+    Reply(PrRef),
+    Star,
 }
 
 /// A change GitHub accepted that the page it was made on doesn't show
@@ -78,8 +79,8 @@ pub struct Awaiting {
     pub change: Change,
     /// The page it was made on.
     pub route: Route,
-    /// The page of what it changed: the same, or a row's on a list.
-    pub about: Route,
+    /// What it changed: the page's own subject, or a row's on a list.
+    pub about: Subject,
     polls: u32,
 }
 
@@ -99,16 +100,13 @@ const POLLS: u32 = 40;
 /// What an action does here.
 #[derive(Debug)]
 enum Plan {
-    Ask(Confirm),
+    /// Ask first: what, what's worth knowing (each with whether it's a
+    /// problem), and the ways to make it.
+    Ask(String, Vec<(String, bool)>, Vec<(String, Change)>),
     Do(Change),
     Approve(PrRef),
     /// It's about something that has to load first.
     Load(Need),
-}
-
-/// Why `action` can't change anything here, if it can't.
-pub fn unavailable(state: &State, action: Action) -> Option<String> {
-    plan(state, action).err()
 }
 
 /// Runs one of [`ACTIONS`] on what's on screen, or on the selected row
@@ -138,14 +136,23 @@ fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
             state.info(why);
             Vec::new()
         }
-        Ok(Plan::Ask(confirm)) => {
+        Ok(Plan::Ask(title, facts, choices)) => {
+            let confirm = Confirm {
+                action,
+                about: subject,
+                title,
+                facts,
+                choices,
+                selected: 0,
+                sending: false,
+                error: None,
+            };
             state.overlay = Some(Overlay::Confirm(Box::new(confirm)));
             Vec::new()
         }
         Ok(Plan::Do(change)) => {
             state.info(format!("{}…", doing(&change)));
-            state.changing = Some(subject);
-            vec![Cmd::Api(Api::Change(change))]
+            vec![Cmd::Api(Api::Change(change, By::Act(subject)))]
         }
         Ok(Plan::Approve(pr)) => crate::review::open_approve(state, pr),
         Ok(Plan::Load(need)) => {
@@ -167,7 +174,8 @@ pub enum Subject {
     Pr(PrRef),
     Issue(RepoId, u64),
     Run(RepoId, u64, Option<u64>),
-    Job(RepoId, u64),
+    /// A job, with its run when its page has it.
+    Job(RepoId, Option<u64>, u64),
 }
 
 impl Subject {
@@ -177,7 +185,7 @@ impl Subject {
             Route::Pr { pr, .. } => Subject::Pr(pr.clone()),
             Route::Issue { repo, number } => Subject::Issue(repo.clone(), *number),
             Route::WorkflowRun { repo, run, attempt } => Subject::Run(repo.clone(), *run, *attempt),
-            Route::Job { repo, job, .. } => Subject::Job(repo.clone(), *job),
+            Route::Job { repo, run, job, .. } => Subject::Job(repo.clone(), *run, *job),
             _ => return None,
         })
     }
@@ -195,9 +203,9 @@ impl Subject {
                 run: *run,
                 attempt: *attempt,
             },
-            Subject::Job(repo, job) => Route::Job {
+            Subject::Job(repo, run, job) => Route::Job {
                 repo: repo.clone(),
-                run: None,
+                run: *run,
                 job: *job,
                 step: None,
                 query: String::new(),
@@ -213,7 +221,20 @@ impl Subject {
             Subject::Run(repo, run, attempt) => {
                 Need::Data(DataKey::Run(repo.clone(), *run, *attempt))
             }
-            Subject::Job(repo, job) => Need::Data(DataKey::Job(repo.clone(), *job)),
+            Subject::Job(repo, _, job) => Need::Data(DataKey::Job(repo.clone(), *job)),
+        }
+    }
+
+    /// Whether `action` is for it: the one place that says so.
+    fn fits(&self, action: Action) -> bool {
+        use Action as A;
+        match self {
+            Subject::Pr(_) => matches!(
+                action,
+                A::Merge | A::Approve | A::ReadyForReview | A::UpdateBranch | A::Close
+            ),
+            Subject::Issue(..) => action == A::Close,
+            Subject::Run(..) | Subject::Job(..) => matches!(action, A::Rerun | A::Close),
         }
     }
 
@@ -235,7 +256,7 @@ fn subject(state: &State) -> Option<Subject> {
         Screen::Diff(d) => d.of.pr().map(|pr| Subject::Pr(pr.clone())),
         Screen::Page(p) => Subject::of(&p.route).or_else(|| {
             let url = p.selected_link()?.url()?;
-            match crate::route::Target::from_url(url) {
+            match crate::route::Dest::from_url(url).target {
                 crate::route::Target::Page(route) => Subject::of(&route),
                 crate::route::Target::Files(of) => of.pr().cloned().map(Subject::Pr),
                 crate::route::Target::External(_) => None,
@@ -255,23 +276,14 @@ fn elsewhere(action: Action) -> &'static str {
     }
 }
 
-fn plan(state: &State, action: Action) -> Result<Plan, String> {
-    let subject = subject(state).ok_or_else(|| elsewhere(action).to_owned())?;
-    plan_for(state, &subject, action)
-}
-
 fn plan_for(state: &State, subject: &Subject, action: Action) -> Result<Plan, String> {
-    let mut plan = plan_here(state, subject, action)?;
+    let plan = plan_here(state, subject, action)?;
     // GitHub hasn't shown the last change yet: what's on screen is old.
     if let Some(waiting) = awaiting_here(state) {
         return Err(format!(
             "GitHub hasn't shown the last change yet ({}): wait a moment",
             doing(&waiting.change).to_lowercase()
         ));
-    }
-    if let Plan::Ask(confirm) = &mut plan {
-        confirm.action = action;
-        confirm.about = Some(subject.clone());
     }
     Ok(plan)
 }
@@ -292,18 +304,16 @@ fn loaded<'a, T>(
 }
 
 fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, String> {
-    let elsewhere = || elsewhere(action).to_owned();
+    if !subject.fits(action) {
+        return Err(elsewhere(action).to_owned());
+    }
     let name = subject.name();
-    let for_runs = matches!(action, Action::Close | Action::Rerun);
     match subject {
-        Subject::Pr(_) | Subject::Issue(..) if action == Action::Rerun => Err(elsewhere()),
-        Subject::Issue(..) if action != Action::Close => Err(elsewhere()),
-        Subject::Run(..) | Subject::Job(..) if !for_runs => Err(elsewhere()),
         Subject::Pr(pr) => {
             let Some(detail) = loaded(state.prs.get(pr), &name)? else {
                 return Ok(Plan::Load(subject.need()));
             };
-            pr_plan(state, pr, detail, action).ok_or_else(elsewhere)?
+            pr_plan(state, pr, detail, action)
         }
         Subject::Issue(repo, number) => {
             let key = DataKey::Issue(repo.clone(), *number);
@@ -312,17 +322,17 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
             };
             // A number that's a pull request is one.
             let crate::browse::Data::Issue(Some(issue)) = data else {
-                return Err(elsewhere());
+                return Err(elsewhere(action).to_owned());
             };
             let issue_id = issue.id.clone();
-            Ok(Plan::Ask(match issue.state {
+            Ok(match issue.state {
                 IssueState::Open | IssueState::Draft if !issue.can_close => {
                     return Err(
                         "GitHub doesn't let you close it: that takes its author or triage access"
                             .into(),
                     );
                 }
-                IssueState::Open | IssueState::Draft => Confirm::new(
+                IssueState::Open | IssueState::Draft => Plan::Ask(
                     format!("Close {name}?"),
                     Vec::new(),
                     vec![
@@ -345,12 +355,12 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
                 _ if !issue.can_reopen => {
                     return Err("GitHub doesn't let you reopen it".into());
                 }
-                IssueState::Closed | IssueState::NotPlanned | IssueState::Merged => Confirm::new(
+                IssueState::Closed | IssueState::NotPlanned | IssueState::Merged => Plan::Ask(
                     format!("Reopen {name}?"),
                     Vec::new(),
                     vec![("Reopen".into(), Change::ReopenIssue { issue: issue_id })],
                 ),
-            }))
+            })
         }
         Subject::Run(repo, run, attempt) => {
             let key = DataKey::Run(repo.clone(), *run, *attempt);
@@ -365,9 +375,9 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
                 name: format!("{} #{}", run.name, run.number),
                 outcome: run.outcome,
             };
-            run_plan(state, repo, &about, None, action).ok_or_else(elsewhere)?
+            run_plan(state, repo, &about, None, action)
         }
-        Subject::Job(repo, job) => {
+        Subject::Job(repo, _, job) => {
             let key = DataKey::Job(repo.clone(), *job);
             if loaded(state.data.get(&key), &name)?.is_none() {
                 return Ok(Plan::Load(subject.need()));
@@ -382,18 +392,12 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
                 name: format!("{} #{}", job.run.name, job.run.number),
                 outcome: job.run.outcome,
             };
-            run_plan(state, repo, &about, Some(job), action).ok_or_else(elsewhere)?
+            run_plan(state, repo, &about, Some(job), action)
         }
     }
 }
 
-/// `None`: `action` isn't for pull requests.
-fn pr_plan(
-    state: &State,
-    pr: &PrRef,
-    d: &PrDetail,
-    action: Action,
-) -> Option<Result<Plan, String>> {
+fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Plan, String> {
     let open = matches!(d.summary.state, IssueState::Open | IssueState::Draft);
     let key = |a: Action| state.first_key(a);
     let not_open = || match d.summary.state {
@@ -401,7 +405,7 @@ fn pr_plan(
         _ => format!("It's closed: {} reopens it", key(Action::Close)),
     };
     let readiness = d.readiness();
-    Some(match action {
+    match action {
         Action::Merge if readiness == Readiness::Draft => Err(format!(
             "A draft can't be merged: {} marks it ready for review",
             key(Action::ReadyForReview)
@@ -438,30 +442,24 @@ fn pr_plan(
                 })
                 .collect();
             let title = format!("Merge {pr}: {}?", d.summary.title);
-            Ok(Plan::Ask(Confirm::new(
-                title,
-                merge_facts(state, d),
-                choices,
-            )))
+            Ok(Plan::Ask(title, merge_facts(state, d), choices))
         }
         Action::Close => {
             let (title, label, reopen) = match d.summary.state {
                 IssueState::Merged => {
-                    return Some(Err(
-                        "It's merged: a merged pull request can't be reopened".into()
-                    ));
+                    return Err("It's merged: a merged pull request can't be reopened".into());
                 }
                 IssueState::Open | IssueState::Draft if !d.may.close => {
-                    return Some(Err(
+                    return Err(
                         "GitHub doesn't let you close it: that takes its author or triage access"
                             .into(),
-                    ));
+                    );
                 }
                 IssueState::Open | IssueState::Draft => {
                     (format!("Close {pr}?"), "Close pull request", false)
                 }
                 IssueState::Closed | IssueState::NotPlanned if !d.may.reopen => {
-                    return Some(Err("GitHub doesn't let you reopen it".into()));
+                    return Err("GitHub doesn't let you reopen it".into());
                 }
                 IssueState::Closed | IssueState::NotPlanned => {
                     (format!("Reopen {pr}?"), "Reopen", true)
@@ -477,11 +475,7 @@ fn pr_plan(
                 pr: d.id.clone(),
                 open: reopen,
             };
-            Ok(Plan::Ask(Confirm::new(
-                title,
-                facts,
-                vec![(label.into(), change)],
-            )))
+            Ok(Plan::Ask(title, facts, vec![(label.into(), change)]))
         }
         Action::ReadyForReview if d.summary.state == IssueState::Draft && !d.may.edit => {
             Err("Marking it ready takes its author or write access".into())
@@ -518,18 +512,14 @@ fn pr_plan(
                 ),
                 false,
             )];
-            Ok(Plan::Ask(Confirm::new(
-                format!("Update {pr}'s branch?"),
-                facts,
-                choices,
-            )))
+            Ok(Plan::Ask(format!("Update {pr}'s branch?"), facts, choices))
         }
         Action::Approve if state.viewer.as_deref() == Some(d.summary.author.as_str()) => {
             Err("You can't approve your own pull request".into())
         }
         Action::Approve => Ok(Plan::Approve(pr.clone())),
-        _ => return None,
-    })
+        _ => Err(elsewhere(action).to_owned()),
+    }
 }
 
 /// "3 commits behind main".
@@ -591,36 +581,33 @@ struct RunAbout {
     outcome: CheckOutcome,
 }
 
-/// Cancelling or re-running a run, from its page (`job: None`) or one of
-/// its jobs'. `None`: `action` isn't for runs.
+/// Cancelling (`Close`) or re-running a run, from its page (`job: None`)
+/// or one of its jobs'.
 fn run_plan(
     state: &State,
     repo: &RepoId,
     run: &RunAbout,
     job: Option<&Job>,
     action: Action,
-) -> Option<Result<Plan, String>> {
-    if !matches!(action, Action::Close | Action::Rerun) {
-        return None;
-    }
+) -> Result<Plan, String> {
     if state.overview(repo).is_some_and(|o| !o.can_write) {
-        return Some(Err(format!(
+        return Err(format!(
             "Re-running and cancelling take write access to {repo}"
-        )));
+        ));
     }
     let running = run.outcome == CheckOutcome::Pending;
     let name = &run.name;
-    Some(match action {
+    match action {
         Action::Close if running => {
             let change = Change::CancelRun {
                 repo: repo.clone(),
                 run: run.id,
             };
-            Ok(Plan::Ask(Confirm::new(
+            Ok(Plan::Ask(
                 format!("Cancel {name}?"),
                 vec![("Jobs still running stop where they are".into(), false)],
                 vec![("Cancel the run".into(), change)],
-            )))
+            ))
         }
         Action::Close => Err("The run has finished: there's nothing to cancel".into()),
         _ if running => Err(format!(
@@ -645,13 +632,9 @@ fn run_plan(
                 choices.push(("Re-run failed jobs".to_owned(), rerun(true)));
             }
             choices.push(("Re-run all jobs".to_owned(), rerun(false)));
-            Ok(Plan::Ask(Confirm::new(
-                format!("Re-run {name}?"),
-                Vec::new(),
-                choices,
-            )))
+            Ok(Plan::Ask(format!("Re-run {name}?"), Vec::new(), choices))
         }
-    })
+    }
 }
 
 /// Keys in the confirmation: choose, do it, or cancel.
@@ -672,10 +655,10 @@ pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         }
         KeyCode::Enter => {
             if let Some((_, change)) = confirm.choices.get(confirm.selected) {
+                let by = By::Confirm(confirm.about.clone());
+                let cmd = Cmd::Api(Api::Change(change.clone(), by));
                 confirm.sending = true;
                 confirm.error = None;
-                let cmd = Cmd::Api(Api::Change(change.clone()));
-                state.changing = confirm.about.clone();
                 return vec![cmd];
             }
         }
@@ -684,47 +667,60 @@ pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     Vec::new()
 }
 
-/// GitHub's answer to a change. Whatever was shown is fetched again (a
-/// write marks everything stale), so the page ends up as GitHub has it.
+/// GitHub's answer to a change, back to what sent it. Whatever was shown
+/// is fetched again (a write marks everything stale), so the page ends up
+/// as GitHub has it.
 #[must_use]
-pub fn on_changed(state: &mut State, change: &Change, result: Result<(), ApiError>) -> Vec<Cmd> {
+pub fn on_changed(
+    state: &mut State,
+    change: &Change,
+    by: By,
+    result: Result<(), ApiError>,
+) -> Vec<Cmd> {
+    // The dialog or the composer that sent it, if it's still waiting.
+    let sender = match (&by, &state.overlay) {
+        (By::Confirm(_), Some(Overlay::Confirm(c))) => {
+            c.sending
+                && c.choices
+                    .get(c.selected)
+                    .is_some_and(|(_, sent)| sent == change)
+        }
+        (By::Compose | By::Reply(_), Some(Overlay::Compose(c))) => c.sending,
+        _ => false,
+    };
     match result {
         Ok(()) => {
-            if matches!(
-                state.overlay,
-                Some(Overlay::Confirm(_) | Overlay::Compose(_))
-            ) {
+            if sender {
                 state.overlay = None;
             }
             state.info(done(change));
-            let about = state.changing.take();
-            state.awaiting = (state.route())
-                .filter(|_| !matches!(change, Change::Comment { .. } | Change::Star { .. }))
-                .map(|route| Awaiting {
-                    change: change.clone(),
-                    route: route.clone(),
-                    // The page it's on, if that's its own; a row's page.
-                    about: match about {
-                        Some(s) if Subject::of(route).as_ref() != Some(&s) => s.route(),
-                        _ => route.clone(),
-                    },
-                    polls: 0,
-                });
+            match by {
+                By::Confirm(about) | By::Act(about) => {
+                    state.awaiting = state.route().map(|route| Awaiting {
+                        change: change.clone(),
+                        route: route.clone(),
+                        about,
+                        polls: 0,
+                    });
+                }
+                // It shows in its thread.
+                By::Reply(pr) => return vec![Cmd::Api(Api::FetchThreads(pr))],
+                By::Compose | By::Star => {}
+            }
             state.load_visible(false)
         }
         Err(err) => {
-            state.changing = None;
             tracing::warn!(?change, %err, "a change to GitHub failed");
             if let Change::Star { repo, starred, .. } = change {
                 nav::set_starred(state, repo, !starred);
             }
             let text = failure(change, &err);
             match &mut state.overlay {
-                Some(Overlay::Confirm(confirm)) => {
+                Some(Overlay::Confirm(confirm)) if sender => {
                     confirm.sending = false;
                     confirm.error = Some(text);
                 }
-                Some(Overlay::Compose(compose)) if compose.sending => {
+                Some(Overlay::Compose(compose)) if sender => {
                     compose.sending = false;
                     compose.error = Some(text);
                 }
@@ -755,7 +751,7 @@ pub fn waiting(state: &State) -> Option<String> {
 /// What the live refresh fetches again for the change the page waits to
 /// see: what the page is about. Past [`POLLS`], it stops waiting.
 pub fn poll(state: &mut State) -> Vec<Need> {
-    let Some(route) = awaiting_here(state).map(|w| w.about.clone()) else {
+    let Some(need) = awaiting_here(state).map(|w| w.about.need()) else {
         return Vec::new();
     };
     if let Some(w) = &mut state.awaiting {
@@ -769,15 +765,7 @@ pub fn poll(state: &mut State) -> Vec<Need> {
             return Vec::new();
         }
     }
-    match route {
-        Route::Pr { pr, .. } => vec![Need::Pr(pr)],
-        Route::Issue { repo, number } => vec![Need::Data(DataKey::Issue(repo, number))],
-        Route::WorkflowRun { repo, run, attempt } => {
-            vec![Need::Data(DataKey::Run(repo, run, attempt))]
-        }
-        Route::Job { repo, job, .. } => vec![Need::Data(DataKey::Job(repo, job))],
-        _ => Vec::new(),
-    }
+    vec![need]
 }
 
 /// Whether the page shows a change GitHub accepted.
@@ -785,14 +773,14 @@ enum Shown {
     No,
     Yes,
     /// On another page: the run's latest attempt, the job re-run.
-    There(Route),
+    There(Subject),
 }
 
-fn shown(state: &State, change: &Change, route: &Route) -> Shown {
+fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
     let yes = |b: bool| if b { Shown::Yes } else { Shown::No };
     let pr = |pr: &PrRef| state.prs.get(pr).and_then(|r| r.data.as_ref());
-    match (change, route) {
-        (_, Route::Pr { pr: r, .. }) => {
+    match (change, about) {
+        (_, Subject::Pr(r)) => {
             let Some(d) = pr(r) else {
                 return Shown::No;
             };
@@ -805,7 +793,7 @@ fn shown(state: &State, change: &Change, route: &Route) -> Shown {
                 _ => true,
             })
         }
-        (Change::CloseIssue { .. } | Change::ReopenIssue { .. }, Route::Issue { repo, number }) => {
+        (Change::CloseIssue { .. } | Change::ReopenIssue { .. }, Subject::Issue(repo, number)) => {
             let key = DataKey::Issue(repo.clone(), *number);
             let issue = state.picked::<Option<Box<ghtui_api::browse::IssueDetail>>>(&key);
             let Some(Some(issue)) = issue else {
@@ -814,22 +802,10 @@ fn shown(state: &State, change: &Change, route: &Route) -> Shown {
             let open = matches!(issue.state, IssueState::Open | IssueState::Draft);
             yes(open == matches!(change, Change::ReopenIssue { .. }))
         }
-        (
-            Change::Rerun { .. },
-            Route::WorkflowRun {
-                repo,
-                run,
-                attempt: Some(_),
-            },
-        ) => Shown::There(Route::WorkflowRun {
-            repo: repo.clone(),
-            run: *run,
-            attempt: None,
-        }),
-        (
-            Change::Rerun { .. } | Change::CancelRun { .. },
-            Route::WorkflowRun { repo, run, attempt },
-        ) => {
+        (Change::Rerun { .. }, Subject::Run(repo, run, Some(_))) => {
+            Shown::There(Subject::Run(repo.clone(), *run, None))
+        }
+        (Change::Rerun { .. } | Change::CancelRun { .. }, Subject::Run(repo, run, attempt)) => {
             let key = DataKey::Run(repo.clone(), *run, *attempt);
             let Some(r) = state.picked::<WorkflowRun>(&key) else {
                 return Shown::No;
@@ -839,7 +815,7 @@ fn shown(state: &State, change: &Change, route: &Route) -> Shown {
         }
         (
             Change::Rerun { .. } | Change::RerunJob { .. } | Change::CancelRun { .. },
-            Route::Job { repo, run, job, .. },
+            Subject::Job(repo, run, job),
         ) => {
             let Some(j) = state.picked::<Job>(&DataKey::Job(repo.clone(), *job)) else {
                 return Shown::No;
@@ -848,13 +824,7 @@ fn shown(state: &State, change: &Change, route: &Route) -> Shown {
             let running = j.run.outcome == CheckOutcome::Pending;
             match (change, j.run.rerun) {
                 (Change::CancelRun { .. }, _) => yes(!running),
-                (_, Some(rerun)) => Shown::There(Route::Job {
-                    repo: repo.clone(),
-                    run: *run,
-                    job: rerun,
-                    step: None,
-                    query: String::new(),
-                }),
+                (_, Some(rerun)) => Shown::There(Subject::Job(repo.clone(), *run, rerun)),
                 // Following it here, or its re-run left this job out.
                 (Change::Rerun { failed_only, .. }, None) => yes((latest
                     && running
@@ -879,10 +849,11 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     if let Some(w) = awaiting_here(state).cloned() {
         match shown(state, &w.change, &w.about) {
             Shown::No => {}
-            Shown::There(route) if w.about == w.route => {
+            Shown::There(about) if Subject::of(&w.route).as_ref() == Some(&w.about) => {
+                let route = about.route();
                 state.awaiting = Some(Awaiting {
                     route: route.clone(),
-                    about: route.clone(),
+                    about,
                     ..w
                 });
                 cmds.extend(state.replace(route, false, None));
@@ -910,23 +881,15 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     if confirm.sending {
         return cmds;
     }
-    let planned = match &confirm.about {
-        Some(about) => plan_for(state, &about.clone(), confirm.action),
-        None => plan(state, confirm.action),
-    };
+    let planned = plan_for(state, &confirm.about, confirm.action);
     match (planned, &mut state.overlay) {
         (Err(why), _) => {
             state.overlay = None;
             state.info(why);
         }
-        (Ok(Plan::Ask(new)), Some(Overlay::Confirm(confirm))) => {
-            let selected = confirm.selected.min(new.choices.len().saturating_sub(1));
-            let error = confirm.error.take();
-            **confirm = Confirm {
-                selected,
-                error,
-                ..new
-            };
+        (Ok(Plan::Ask(title, facts, choices)), Some(Overlay::Confirm(confirm))) => {
+            confirm.selected = confirm.selected.min(choices.len().saturating_sub(1));
+            (confirm.title, confirm.facts, confirm.choices) = (title, facts, choices);
         }
         _ => {}
     }
@@ -936,7 +899,7 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
 /// What a change is doing while GitHub answers: "Merging".
 fn doing(change: &Change) -> &'static str {
     match change {
-        Change::Comment { .. } => "Posting",
+        Change::Comment { .. } | Change::Reply { .. } => "Posting",
         Change::Star { starred: true, .. } => "Starring",
         Change::Star { .. } => "Unstarring",
         Change::Merge { .. } => "Merging",
@@ -953,6 +916,7 @@ fn doing(change: &Change) -> &'static str {
 fn done(change: &Change) -> String {
     match change {
         Change::Comment { .. } => "Comment posted".into(),
+        Change::Reply { .. } => "Reply posted".into(),
         Change::Star {
             repo,
             starred: true,
@@ -987,7 +951,9 @@ pub fn needs(change: &Change) -> &'static str {
         Change::Merge { .. } | Change::UpdateBranch { .. } => {
             "Contents: write and Pull requests: write"
         }
-        Change::SetPrOpen { .. } | Change::ReadyForReview { .. } => "Pull requests: write",
+        Change::SetPrOpen { .. } | Change::ReadyForReview { .. } | Change::Reply { .. } => {
+            "Pull requests: write"
+        }
         Change::CloseIssue { .. } | Change::ReopenIssue { .. } => "Issues: write",
         Change::Rerun { .. } | Change::RerunJob { .. } | Change::CancelRun { .. } => {
             "Actions: write"
@@ -1000,6 +966,7 @@ pub fn needs(change: &Change) -> &'static str {
 fn failure(change: &Change, err: &ApiError) -> String {
     let what = match change {
         Change::Comment { .. } => "the comment",
+        Change::Reply { .. } => "the reply",
         Change::Star { starred: true, .. } => "the star",
         Change::Star { .. } => "removing the star",
         Change::Merge { .. } => "the merge",
@@ -1036,31 +1003,19 @@ fn failure(change: &Change, err: &ApiError) -> String {
 /// The changes the menu offers for what's on screen: each action, its
 /// label, and why it can't be made now, if it can't.
 pub fn doables(state: &State) -> Vec<(Action, String, Option<String>)> {
-    use Action as A;
-    let (actions, run): (&[Action], bool) = match subject(state) {
-        Some(Subject::Pr(_)) => (
-            &[
-                A::Merge,
-                A::Approve,
-                A::ReadyForReview,
-                A::UpdateBranch,
-                A::Close,
-            ],
-            false,
-        ),
-        Some(Subject::Issue(..)) => (&[A::Close], false),
-        Some(Subject::Run(..) | Subject::Job(..)) => (&[A::Rerun, A::Close], true),
-        None => (&[], false),
+    let Some(subject) = subject(state) else {
+        return Vec::new();
     };
-    actions
-        .iter()
-        .map(|&action| {
-            let label = match action {
-                A::Close if run => "Cancel the run",
-                A::Close => "Close or reopen",
-                action => action.description(),
+    (ACTIONS.into_iter())
+        .filter(|&action| subject.fits(action))
+        .map(|action| {
+            let label = match (action, &subject) {
+                (Action::Close, Subject::Run(..) | Subject::Job(..)) => "Cancel the run",
+                (Action::Close, _) => "Close or reopen",
+                (action, _) => action.description(),
             };
-            (action, label.to_owned(), unavailable(state, action))
+            let why = plan_for(state, &subject, action).err();
+            (action, label.to_owned(), why)
         })
         .collect()
 }

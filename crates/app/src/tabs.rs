@@ -10,7 +10,7 @@ use ghtui_ui::text::short_sha;
 
 use crate::diff_screen::{DiffOf, DiffPrefs, DiffScreen};
 use crate::nav::PageScreen;
-use crate::route::{Route, Target};
+use crate::route::{Dest, Route, Target};
 use crate::state::{Cmd, Screen, Screens, State};
 
 /// An open tab off screen: its history as it was left.
@@ -97,26 +97,25 @@ impl State {
         }
     }
 
-    /// Opens `target` in a new tab after this one. Pages in the browser
-    /// just open there.
+    /// Opens `dest` in a new tab after this one, at its anchor. Pages in
+    /// the browser just open there.
     #[must_use]
-    pub fn open_tab(&mut self, target: Target) -> Vec<Cmd> {
-        let target = match target {
-            Target::Page(route) => Target::Page(self.followed(route)),
-            target => target,
-        };
-        let prefs = DiffPrefs::fit(self.size.0);
-        let first = match &target {
-            Target::External(_) => return self.go(target),
-            Target::Page(route) => Screen::Page(Box::new(PageScreen::new(route.clone(), None))),
-            Target::Files(of) => Screen::Diff(Box::new(DiffScreen::new(of.clone(), prefs))),
+    pub fn open_tab(&mut self, Dest { target, anchor }: Dest) -> Vec<Cmd> {
+        let (first, mut cmds) = match target {
+            Target::Page(route) => {
+                let route = self.followed(route);
+                let cmds = self.record_visit(&route);
+                (Screen::Page(Box::new(PageScreen::new(route, anchor))), cmds)
+            }
+            Target::Files(of) => {
+                let mut screen = DiffScreen::new(of, DiffPrefs::fit(self.size.0));
+                screen.anchor = anchor;
+                (Screen::Diff(Box::new(screen)), Vec::new())
+            }
+            Target::External(_) => return self.go(target.into()),
         };
         let left = self.swap_in(Tab::new(first));
         self.before.push(left);
-        let mut cmds = match &target {
-            Target::Page(route) => self.record_visit(route),
-            _ => Vec::new(),
-        };
         cmds.extend(self.load_visible(false));
         let n = self.tab_count();
         self.info(format!("Opened in tab {} of {n}", self.active_tab() + 1));
@@ -128,22 +127,23 @@ impl State {
     /// nothing selected, this page again.
     #[must_use]
     pub fn open_in_tab(&mut self) -> Vec<Cmd> {
-        let target = match self.screen() {
+        let dest = match self.screen() {
             Screen::Page(p) => match p.selected_link() {
-                Some(Link::Url(url)) => Target::from_url(url),
-                Some(_) | None => Target::Page(p.route.clone()),
+                Some(Link::Url(url)) => Dest::from_url(url),
+                Some(_) | None => Target::Page(p.route.clone()).into(),
             },
-            Screen::Diff(d) => match &d.of {
-                DiffOf::Pr(pr) => Target::Page(Route::pr(pr.clone())),
-                DiffOf::Commit(repo, oid) => Target::Page(Route::Commit {
+            Screen::Diff(d) => Target::Page(match &d.of {
+                DiffOf::Pr(pr) => Route::pr(pr.clone()),
+                DiffOf::Commit(repo, oid) => Route::Commit {
                     repo: repo.clone(),
                     oid: oid.to_string(),
-                }),
-                DiffOf::Range(repo, from, to) => Target::Page(Route::Compare {
+                },
+                DiffOf::Range(repo, from, to) => Route::Compare {
                     repo: repo.clone(),
                     spec: format!("{from}..{to}"),
-                }),
-            },
+                },
+            })
+            .into(),
         };
         let from_tree = match self.screen() {
             Screen::Diff(d) if d.focus == crate::diff_screen::Pane::Tree => Some((*d).clone()),
@@ -163,7 +163,7 @@ impl State {
             ));
             return self.load_visible(false);
         }
-        self.open_tab(target)
+        self.open_tab(dest)
     }
 
     /// Goes to tab `i` (from 0), showing what it had and refreshing what's
@@ -185,14 +185,14 @@ impl State {
     /// What the command line asked for: on screen, or with tabs reopened,
     /// in a new tab after them.
     #[must_use]
-    pub fn start_at(&mut self, target: Target) -> Vec<Cmd> {
+    pub fn start_at(&mut self, dest: Dest) -> Vec<Cmd> {
         if self.tab_count() == 1 {
-            return self.go(target);
+            return self.go(dest);
         }
         // Only passing through the last tab: loading it would mark its
         // data as on its way.
         self.move_to_tab(self.tab_count() - 1);
-        self.open_tab(target)
+        self.open_tab(dest)
     }
 
     /// Puts tab `i` on screen.
@@ -260,26 +260,17 @@ impl State {
     /// Reopens tabs saved by [`State::tab_urls`]: the first replaces the
     /// home page, each other one opens after it, and the first is shown.
     pub fn restore_tabs(&mut self, urls: &[String]) {
-        let mut targets = urls.iter().filter_map(|u| match Target::from_url(u) {
-            Target::External(_) => None,
-            target => Some(target),
-        });
-        let Some(first) = targets.next() else {
-            return;
-        };
-        let screen = |target: Target, prefs| match target {
+        let prefs = DiffPrefs::fit(self.size.0);
+        let mut screens = urls.iter().filter_map(|u| match Dest::from_url(u).target {
             Target::Files(of) => Some(Screen::Diff(Box::new(DiffScreen::new(of, prefs)))),
             Target::Page(route) => Some(Screen::Page(Box::new(PageScreen::new(route, None)))),
             Target::External(_) => None,
+        });
+        let Some(first) = screens.next() else {
+            return;
         };
-        let prefs = DiffPrefs::fit(self.size.0);
-        if let Some(first) = screen(first, prefs) {
-            self.screens = Screens::new(first);
-            self.forward.clear();
-        }
-        self.after = targets
-            .filter_map(|t| screen(t, prefs))
-            .map(Tab::new)
-            .collect();
+        self.screens = Screens::new(first);
+        self.forward.clear();
+        self.after = screens.map(Tab::new).collect();
     }
 }

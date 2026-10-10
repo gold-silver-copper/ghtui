@@ -400,7 +400,7 @@ fn joined_diff_work_is_the_same_in_every_arrival_order() {
             fetched_at: 0,
         };
         state.prs.insert(pr.clone(), Remote::cached(Some(cached)));
-        let mut cmds = state.open_diff(of.clone());
+        let mut cmds = state.open_diff(of.clone(), None);
         let job = cmds
             .iter()
             .find_map(|c| match c {

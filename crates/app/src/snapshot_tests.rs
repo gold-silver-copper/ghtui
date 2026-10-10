@@ -520,7 +520,7 @@ fn with_tabs(mode: Mode, n: usize) -> State {
         Route::Stargazers(ghtui()),
     ];
     for route in more.into_iter().cycle().take(n) {
-        let _ = state.open_tab(crate::route::Target::Page(route));
+        let _ = state.open_tab(crate::route::Target::Page(route).into());
     }
     let _ = state.switch_to_tab(1);
     state.notices.dismiss();
@@ -1107,7 +1107,7 @@ fn file_lines_dark() {
         truncated: false,
     };
     let url = "https://github.com/gold-silver-copper/ghtui/blob/main/src/main.rs#L60-L62";
-    let crate::route::Target::Page(route) = crate::route::Target::from_url(url) else {
+    let crate::route::Target::Page(route) = crate::route::Dest::from_url(url).target else {
         panic!("{url}");
     };
     let route = route.split(None).unwrap_or(route);
@@ -2105,7 +2105,7 @@ mod links {
         with_release, with_releases, with_repo, with_repo_search, with_run, with_search,
         with_stargazers, with_tags, with_team, with_teams, with_wiki, with_workflow,
     };
-    use crate::route::Target;
+    use crate::route::{Dest, Target};
     use crate::state::{Screen, State};
 
     /// A link's shape: on github.com its first four path segments, with
@@ -2232,7 +2232,7 @@ mod links {
                 .links
                 .iter()
                 .filter_map(|l| l.url())
-                .filter_map(|u| match Target::from_url(u) {
+                .filter_map(|u| match Dest::from_url(u).target {
                     Target::Page(r) => Some(r),
                     _ => None,
                 })
@@ -2271,7 +2271,7 @@ mod links {
             };
             let tabs = s.chrome().tabs.into_iter().map(|(_, t)| t);
             let links = p.page().links.iter().filter_map(|l| l.url());
-            let targets = links.map(Target::from_url).chain(tabs);
+            let targets = links.map(|u| Dest::from_url(u).target).chain(tabs);
             for target in targets {
                 // A page of a kind the corpus has an example of.
                 let kind = match &target {
@@ -2911,7 +2911,7 @@ fn every_route_says_why_when_its_needs_fail() {
         "https://github.com/o?tab=repositories",
     ];
     for url in urls {
-        let crate::route::Target::Page(route) = crate::route::Target::from_url(url) else {
+        let crate::route::Target::Page(route) = crate::route::Dest::from_url(url).target else {
             panic!("{url} isn't a page");
         };
         // The page a plain URL turns out to be.
@@ -3046,8 +3046,9 @@ mod changes {
     use ghtui_theme::Mode;
 
     use super::{ghtui, pr_detail, render, with_job, with_pr, with_repo, with_run};
+    use crate::act::{By, Subject};
     use crate::browse::{Data, DataKey};
-    use crate::fixtures::{fetched, press, says};
+    use crate::fixtures::{answer, fetched, press, says, warns};
     use crate::keymap::Action;
     use crate::review::SubmitOutcome;
     use crate::route::Route;
@@ -3121,23 +3122,24 @@ mod changes {
             method: MergeMethod::Merge,
             head: pr_detail().head_oid,
         };
+        let sent = press(&mut s, "<Enter>");
         assert_eq!(
-            press(&mut s, "<Enter>"),
-            vec![Cmd::Api(Api::Change(merge.clone()))]
+            sent,
+            vec![Cmd::Api(Api::Change(merge, By::Confirm(Subject::Pr(pr()))))]
         );
         assert!(confirm(&s).sending);
         // Keys wait while it's sent.
         assert!(press(&mut s, "<Enter>").is_empty());
 
         let refused = ApiError::GraphQl(vec!["Must have push access to repository".into()]);
-        update(&mut s, Msg::Changed(merge.clone(), Err(refused)));
+        answer(&mut s, &sent, Err(refused));
         let error = confirm(&s).error.clone().unwrap_or_default();
         assert!(error.contains("Must have push access"), "{error}");
         assert!(error.contains("Contents: write"), "{error}");
         assert!(!confirm(&s).sending);
 
         press(&mut s, "<Enter>");
-        let cmds = update(&mut s, Msg::Changed(merge, Ok(())));
+        let cmds = answer(&mut s, &sent, Ok(()));
         assert!(s.overlay.is_none());
         says(&s, "Merged");
         assert!(
@@ -3165,7 +3167,7 @@ mod changes {
         assert_eq!(cmds, vec![Cmd::Api(Api::FetchPr(pr()))]);
         says(&s, "Loading gold-silver-copper/ghtui#12");
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
-        assert_eq!(confirm(&s).about, Some(crate::act::Subject::Pr(pr())));
+        assert_eq!(confirm(&s).about, Subject::Pr(pr()));
         assert!(
             confirm(&s)
                 .title
@@ -3176,12 +3178,14 @@ mod changes {
         press(&mut s, "M");
         let mine = crate::fixtures::found_prs(Vec::new(), 0);
         crate::fixtures::section(&mut s, 1, mine);
-        assert_eq!(confirm(&s).about, Some(crate::act::Subject::Pr(pr())));
-        let merge = confirm(&s).choices[0].1.clone();
-        press(&mut s, "<Enter>");
-        update(&mut s, Msg::Changed(merge, Ok(())));
+        assert_eq!(confirm(&s).about, Subject::Pr(pr()));
+        let sent = press(&mut s, "<Enter>");
+        answer(&mut s, &sent, Ok(()));
         let w = s.awaiting.clone().unwrap();
-        assert_eq!((w.route, w.about), (Route::Home, Route::pr(pr())));
+        assert_eq!(
+            (w.route, w.about),
+            (Route::Home, crate::act::Subject::Pr(pr()))
+        );
         // Home asked again at once; GitHub's search may not show it yet.
         for i in 0..2 {
             let none = crate::fixtures::found_prs(Vec::new(), 0);
@@ -3225,8 +3229,8 @@ mod changes {
             confirm(&s).facts[0].0,
             "Its branch, syntax-palette, is 2 commits behind main; updating pushes to it"
         );
-        press(&mut s, "<Enter>");
-        update(&mut s, Msg::Changed(update_branch, Ok(())));
+        let sent = press(&mut s, "<Enter>");
+        answer(&mut s, &sent, Ok(()));
         // GitHub still shows the old head.
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
         press(&mut s, "M");
@@ -3313,17 +3317,51 @@ mod changes {
         says(&s, "Re-running works on a workflow run or a job");
     }
 
-    /// Marking a draft ready asks nothing: it's sent at once.
+    /// Marking a draft ready asks nothing: it's sent at once. GitHub's
+    /// answer goes back to what sent it: a dialog or a comment opened while
+    /// it's on its way is left as it is.
     #[test]
-    fn a_draft_is_marked_ready_at_once() {
+    fn a_draft_is_marked_ready_at_once_and_hears_back_alone() {
         let mut s = pr_in(IssueState::Draft);
-        let cmds = press(&mut s, "W");
         let ready = Change::ReadyForReview {
             pr: NodeId::new("PR_12"),
         };
-        assert_eq!(cmds, vec![Cmd::Api(Api::Change(ready.clone()))]);
-        update(&mut s, Msg::Changed(ready, Ok(())));
+        let sent = press(&mut s, "W");
+        assert_eq!(
+            sent,
+            vec![Cmd::Api(Api::Change(ready, By::Act(Subject::Pr(pr()))))]
+        );
+        press(&mut s, "X");
+        let refused = ApiError::GraphQl(vec!["Not now".into()]);
+        answer(&mut s, &sent, Err(refused));
+        assert_eq!(confirm(&s).error, None);
+        warns(&s, "Not now");
+        press(&mut s, "<Esc>WcLGTM");
+        answer(&mut s, &sent, Ok(()));
         says(&s, "Ready for review");
+        assert!(
+            matches!(&s.overlay, Some(Overlay::Compose(c)) if c.text() == "LGTM"),
+            "the comment is still being written"
+        );
+    }
+
+    /// A star answered while a re-run from a list's row is on its way, or
+    /// once GitHub accepted it, leaves the page following that run.
+    #[test]
+    fn a_star_leaves_the_wait_for_another_change_alone() {
+        let mut s = super::with_workflow(Mode::Dark);
+        let run = Data::Run(Box::new(crate::fixtures::workflow_run()));
+        fetched(&mut s, DataKey::Run(ghtui(), 7, None), run);
+        let rerun = press(&mut s, "<C-r><Enter>");
+        press(&mut s, "<Esc>");
+        let star = press(&mut s, "s");
+        answer(&mut s, &star, Ok(()));
+        answer(&mut s, &rerun, Ok(()));
+        // The page follows the run, not the list.
+        let run = vec![crate::browse::Need::Data(DataKey::Run(ghtui(), 7, None))];
+        assert_eq!(crate::act::poll(&mut s), run);
+        answer(&mut s, &star, Ok(()));
+        assert_eq!(crate::act::poll(&mut s), run);
     }
 
     /// Approving from the pull request's page reads your saved drafts
@@ -3410,11 +3448,14 @@ mod changes {
         assert_eq!(choices, ["Re-run failed jobs", "Re-run all jobs"]);
         assert_eq!(
             press(&mut s, "<Enter>"),
-            vec![Cmd::Api(Api::Change(Change::Rerun {
-                repo: ghtui(),
-                run: 7,
-                failed_only: true
-            }))]
+            vec![Cmd::Api(Api::Change(
+                Change::Rerun {
+                    repo: ghtui(),
+                    run: 7,
+                    failed_only: true
+                },
+                By::Confirm(Subject::Run(ghtui(), 7, None))
+            ))]
         );
         let mut s = with_run(Mode::Dark);
         press(&mut s, "X");
@@ -3447,11 +3488,15 @@ mod changes {
             repo: ghtui(),
             run: 7,
         };
+        let sent = press(&mut s, "<Enter>");
         assert_eq!(
-            press(&mut s, "<Enter>"),
-            vec![Cmd::Api(Api::Change(cancel.clone()))]
+            sent,
+            vec![Cmd::Api(Api::Change(
+                cancel,
+                By::Confirm(Subject::Job(ghtui(), Some(7), 2))
+            ))]
         );
-        update(&mut s, Msg::Changed(cancel, Ok(())));
+        answer(&mut s, &sent, Ok(()));
         // GitHub takes a while to stop it: it's asked for once.
         press(&mut s, "X");
         says(&s, "hasn't shown the last change");
@@ -3470,7 +3515,8 @@ mod changes {
             repo: ghtui(),
             job: 2,
         };
-        update(&mut s, Msg::Changed(rerun, Ok(())));
+        let by = By::Confirm(Subject::Job(ghtui(), Some(7), 2));
+        update(&mut s, Msg::Changed(rerun, by, Ok(())));
         let (mut job, _) = crate::fixtures::job();
         job.run.attempt = 2;
         job.run.outcome = CheckOutcome::Pending;

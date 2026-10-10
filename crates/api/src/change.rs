@@ -18,6 +18,11 @@ pub enum Change {
         subject: NodeId,
         body: String,
     },
+    /// Reply to a review thread right away (outside any pending review).
+    Reply {
+        thread: NodeId,
+        body: String,
+    },
     Star {
         repo: RepoId,
         id: NodeId,
@@ -113,6 +118,13 @@ impl GitHub {
             Change::Comment { subject, body } => {
                 let op = AddComment::build(AddCommentVariables {
                     subject: subject.gql(),
+                    body: body.clone(),
+                });
+                self.mutate(op).await.map(drop)
+            }
+            Change::Reply { thread, body } => {
+                let op = crate::queries::Reply::build(crate::queries::ReplyVariables {
+                    thread_id: thread.gql(),
                     body: body.clone(),
                 });
                 self.mutate(op).await.map(drop)

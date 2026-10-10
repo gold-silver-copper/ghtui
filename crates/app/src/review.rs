@@ -9,7 +9,7 @@ use ghtui_api::model::{NodeId, PrRef};
 use ghtui_diff::anchor::{AnchorError, LinePos, Side};
 use ghtui_store::{DraftComment, DraftSide, ReviewState};
 use ghtui_theme::{Bg, Theme};
-use ghtui_ui::annotations::{Annotation, AnnotationComment, AnnotationKey};
+use ghtui_ui::annotations::{Annotation, AnnotationComment, AnnotationKey, Place};
 use ghtui_ui::diff_doc::{Doc, Pos};
 use ghtui_ui::text::short_sha;
 use ratatui_textarea::TextArea;
@@ -323,22 +323,20 @@ pub fn annotations(
                 ApiSide::Right => Side::Right,
             };
             let moved_to = mapped.get(&t.id).copied().flatten();
-            let (line, outdated, moved) = match (t.outdated, t.line, moved_to) {
-                (false, Some(line), _) => (Some(line), false, false),
-                (_, _, Some(line)) => (Some(line), false, true),
-                (_, line, None) => (line, t.outdated, false),
+            let place = match (t.file_level, t.outdated, t.line, moved_to) {
+                (true, outdated, ..) => Place::File { outdated },
+                (_, false, Some(line), _) => Place::Line {
+                    at: LinePos { side, line },
+                    start: t.start_line,
+                },
+                (.., Some(line)) => Place::Moved(LinePos { side, line }),
+                _ => Place::Outdated(t.original_line),
             };
             Annotation {
                 key: AnnotationKey::Thread(t.id.clone()),
                 path: t.path.clone(),
-                side,
-                line,
-                start_line: if moved { None } else { t.start_line },
-                original_line: t.original_line,
+                place,
                 resolved: t.resolved,
-                outdated,
-                moved,
-                file_level: t.file_level,
                 comments: t
                     .comments
                     .iter()
@@ -360,14 +358,17 @@ pub fn annotations(
     out.extend(drafts.iter().map(|d| Annotation {
         key: AnnotationKey::Draft(d.id),
         path: d.path.clone(),
-        side: side_of(d.side),
-        line: d.line,
-        start_line: d.start_line,
-        original_line: d.line,
+        place: match d.line {
+            Some(line) => Place::Line {
+                at: LinePos {
+                    side: side_of(d.side),
+                    line,
+                },
+                start: d.start_line,
+            },
+            None => Place::File { outdated: false },
+        },
         resolved: false,
-        outdated: false,
-        moved: false,
-        file_level: d.line.is_none(),
         comments: vec![AnnotationComment {
             author: "You".into(),
             body: d.body.clone(),
@@ -895,7 +896,7 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             subject: subject_id,
             body,
         };
-        return vec![Cmd::Api(Api::Change(change))];
+        return vec![Cmd::Api(Api::Change(change, crate::act::By::Compose))];
     }
     let Some((screen, diff)) = state.diff_parts() else {
         return Vec::new();
@@ -908,11 +909,11 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             if let Some(Overlay::Compose(compose)) = &mut state.overlay {
                 compose.sending = true;
             }
-            vec![Cmd::Api(Api::Reply {
-                pr,
-                thread_id,
+            let reply = Change::Reply {
+                thread: thread_id,
                 body,
-            })]
+            };
+            vec![Cmd::Api(Api::Change(reply, crate::act::By::Reply(pr)))]
         }
         ComposeTarget::Draft { id } => {
             let save = diff.edit_review(&pr, |i| {
@@ -1059,12 +1060,9 @@ mod tests {
             (NodeId::new("lost"), None),
         ]);
         let anns = annotations(&threads, &mapped, &[]);
-        assert_eq!((anns[0].line, anns[0].outdated), (Some(3), false));
-        assert_eq!(
-            (anns[1].line, anns[1].moved, anns[1].outdated),
-            (Some(12), true, false)
-        );
-        assert!(anns[2].outdated && anns[2].on_line().is_none());
+        assert!(matches!(anns[0].place, Place::Line { at, .. } if at.line == 3));
+        assert!(matches!(anns[1].place, Place::Moved(at) if at.line == 12));
+        assert_eq!(anns[2].place, Place::Outdated(Some(3)));
         assert_eq!(outdated_to_map(&threads).len(), 2);
     }
 

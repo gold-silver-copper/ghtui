@@ -9,7 +9,7 @@ use ghtui_diff::FileDiff;
 use ghtui_diff::anchor::Side;
 use ghtui_git::files::{ChangedFile, FileStatus};
 use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
-use ghtui_ui::annotations::{Annotation, AnnotationComment, AnnotationKey};
+use ghtui_ui::annotations::{Annotation, AnnotationComment, AnnotationKey, Place};
 use ghtui_ui::diff_doc::{Doc, DocInputs, Pos};
 use ghtui_ui::diff_view::{DiffView, Keys};
 use ghtui_ui::markdown::render;
@@ -85,14 +85,8 @@ fn a_review_comment_keeps_its_tabs() {
         annotations: vec![Annotation {
             key: AnnotationKey::Draft(1),
             path: path.into(),
-            side: Side::Right,
-            line: None,
-            start_line: None,
-            original_line: None,
+            place: Place::File { outdated: false },
             resolved: false,
-            outdated: false,
-            moved: false,
-            file_level: true,
             comments: vec![AnnotationComment {
                 author: "alice".into(),
                 body: "Try:\n\tx := 1".into(),

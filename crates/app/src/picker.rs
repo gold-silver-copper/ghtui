@@ -16,7 +16,7 @@ use crate::browse::{Data, DataKey, Need};
 use crate::keymap::Action;
 use crate::nav::new_input;
 use crate::review::apply_commit_choice;
-use crate::route::{self, Route, Target};
+use crate::route::{self, Dest, Route, Target};
 use crate::state::{Cmd, Overlay, Remote, Screen, State, apply};
 
 pub enum Kind {
@@ -37,8 +37,8 @@ pub enum Kind {
     Commits { mark: Option<usize> },
     /// Recent notices and errors, newest first, as they were on opening.
     Messages(Vec<(u64, Notice)>),
-    /// A title for a Home section: the field is all of it.
-    SectionTitle(Titling),
+    /// A Home section's title, for the config file at the path: the field is all of it.
+    SectionTitle(Titling, std::path::PathBuf),
 }
 
 /// What a section's title is for.
@@ -64,8 +64,8 @@ impl Picker {
             Kind::Branches { .. } => "Switch branches/tags",
             Kind::Commits { .. } => "Commits",
             Kind::Messages(_) => "Messages",
-            Kind::SectionTitle(Titling::New { .. }) => "Save to Home",
-            Kind::SectionTitle(Titling::Rename { .. }) => "Rename the section",
+            Kind::SectionTitle(Titling::New { .. }, _) => "Save to Home",
+            Kind::SectionTitle(Titling::Rename { .. }, _) => "Rename the section",
         }
     }
 }
@@ -82,7 +82,7 @@ pub enum PickItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Choice {
     Action(Action),
-    Go(Target),
+    Go(Dest),
     Search(String),
     DiffFile(usize),
     Commits(PickItem),
@@ -90,8 +90,8 @@ pub enum Choice {
     Copy(String),
     /// Go to open tab N (from 0).
     Tab(usize),
-    /// Title a Home section this.
-    Title(Titling, String),
+    /// Title a Home section this, in the config file at the path.
+    Title(Titling, std::path::PathBuf, String),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -126,7 +126,7 @@ impl State {
             Kind::Branches { .. } => "Find a branch or tag",
             Kind::Commits { .. } => "space marks a range start · ↵ views · esc cancels",
             Kind::Messages(_) => "↵ copies a message",
-            Kind::SectionTitle(_) => "The section's title",
+            Kind::SectionTitle(..) => "The section's title",
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
@@ -142,16 +142,6 @@ impl State {
             selected: 0,
         })));
         need.map_or_else(Vec::new, |key| self.ensure(Need::Data(key), false))
-    }
-
-    /// [`State::open_picker`], with `text` typed.
-    #[must_use]
-    pub fn open_picker_with(&mut self, kind: Kind, text: &str) -> Vec<Cmd> {
-        let cmds = self.open_picker(kind);
-        if let Some(Overlay::Picker(p)) = &mut self.overlay {
-            p.input.insert_str(text);
-        }
-        cmds
     }
 
     /// Go to file, or switch branches, for the code on screen.
@@ -202,7 +192,7 @@ impl State {
             Kind::DiffFiles => self.diff_file_rows(q),
             Kind::Commits { mark } => self.commit_rows(*mark),
             Kind::Messages(kept) => message_rows(kept, q, (self.clock)()),
-            Kind::SectionTitle(titling) => {
+            Kind::SectionTitle(titling, path) => {
                 if q.is_empty() {
                     return vec![(item("Type a title", ""), None)];
                 }
@@ -210,7 +200,7 @@ impl State {
                     Titling::New { query, .. } => format!("Add “{q}” to Home: {query}"),
                     Titling::Rename { .. } => format!("Rename it “{q}”"),
                 };
-                let choice = Choice::Title(titling.clone(), q.to_owned());
+                let choice = Choice::Title(titling.clone(), path.clone(), q.to_owned());
                 vec![(item(label, "↵"), Some(choice))]
             }
         }
@@ -220,13 +210,13 @@ impl State {
     /// order first), and searching GitHub.
     pub fn commands(&self, input: &str) -> Rows {
         let mut out = Vec::new();
-        if let Some(target) = route::parse_input(input, self.context_repo()) {
-            let label = match &target {
+        if let Some(dest) = route::parse_input(input, self.context_repo()) {
+            let label = match &dest.target {
                 Target::Page(route) => format!("Go to {}", route.title()),
                 Target::Files(of) => format!("Files changed in {of}"),
                 Target::External(url) => format!("Open {url}"),
             };
-            out.push((item(label, ""), Some(Choice::Go(target))));
+            out.push((item(label, ""), Some(Choice::Go(dest))));
         }
         // Open tabs, by title.
         if self.tab_count() > 1 {
@@ -317,7 +307,7 @@ impl State {
             .take(200)
             .map(|(_, path)| {
                 let target = Target::Page(Route::blob(repo.clone(), rev.to_owned(), path.clone()));
-                (item(path, ""), Some(Choice::Go(target)))
+                (item(path, ""), Some(Choice::Go(target.into())))
             })
             .collect();
         if *truncated && rows.len() < 200 {
@@ -349,14 +339,15 @@ impl State {
                     what
                 };
                 let (repo, rev, path) = (repo.clone(), name.clone(), path.to_owned());
-                let target = if file {
+                let route = if file {
                     Route::blob(repo, rev, path)
                 } else if path.is_empty() && is_default {
                     Route::Repo(repo)
                 } else {
                     Route::Tree { repo, rev, path }
                 };
-                rows.push((score, item(name, hint), Choice::Go(Target::Page(target))));
+                let go = Choice::Go(Target::Page(route).into());
+                rows.push((score, item(name, hint), go));
             }
         }
         rows.sort_by_key(|(s, ..)| *s);
@@ -531,13 +522,13 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
             vec![Cmd::Copy(text)]
         }
         Choice::Tab(i) => state.switch_to_tab(i),
-        Choice::Title(Titling::New { kind, query }, title) => {
+        Choice::Title(Titling::New { kind, query }, path, title) => {
             let what = format!("Added “{title}” to Home");
-            state.edit_home(crate::home::Edit::Add { title, kind, query }, what)
+            state.edit_home(path, crate::home::Edit::Add { title, kind, query }, what)
         }
-        Choice::Title(Titling::Rename { at }, title) => {
+        Choice::Title(Titling::Rename { at }, path, title) => {
             let what = format!("Renamed it “{title}”");
-            state.edit_home(crate::home::Edit::Rename { at, title }, what)
+            state.edit_home(path, crate::home::Edit::Rename { at, title }, what)
         }
     }
 }

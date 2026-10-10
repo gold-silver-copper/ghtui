@@ -6,7 +6,7 @@
 //! and outdated threads that can't be mapped onto the current diff, sit
 //! under the file header.
 
-use ghtui_diff::anchor::{LinePos, Side};
+use ghtui_diff::anchor::LinePos;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AnnotationKey {
@@ -24,23 +24,26 @@ pub struct AnnotationComment {
     pub pending: bool,
 }
 
+/// Where an annotation sits in the current diff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    /// On the whole file.
+    File { outdated: bool },
+    /// On a current line, or lines `start..=at.line` when `start` is set.
+    Line { at: LinePos, start: Option<u32> },
+    /// Outdated, but its line still exists unchanged and it was moved there.
+    Moved(LinePos),
+    /// Outdated and not mapped onto the current diff, with the line it was
+    /// written on, if known.
+    Outdated(Option<u32>),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Annotation {
     pub key: AnnotationKey,
     pub path: String,
-    pub side: Side,
-    /// Current line (or the line an outdated thread was mapped to). `None`
-    /// for file-level comments and threads that can't be placed.
-    pub line: Option<u32>,
-    pub start_line: Option<u32>,
-    /// Line on the commit the thread was written against.
-    pub original_line: Option<u32>,
+    pub place: Place,
     pub resolved: bool,
-    /// Outdated and not mapped onto the current diff.
-    pub outdated: bool,
-    /// Outdated, but its line still exists unchanged and it was moved there.
-    pub moved: bool,
-    pub file_level: bool,
     pub comments: Vec<AnnotationComment>,
     /// Replies on GitHub between the first comment and the rest, not
     /// fetched (a thread brings its first comment and its newest 99).
@@ -59,11 +62,9 @@ impl Annotation {
 
     /// Placed on a line (as opposed to under the file header).
     pub fn on_line(&self) -> Option<LinePos> {
-        if self.file_level || self.outdated {
-            None
-        } else {
-            let side = self.side;
-            self.line.map(|line| LinePos { side, line })
+        match self.place {
+            Place::Line { at, .. } | Place::Moved(at) => Some(at),
+            Place::File { .. } | Place::Outdated(_) => None,
         }
     }
 

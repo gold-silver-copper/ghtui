@@ -165,6 +165,12 @@ async fn github(replies: Vec<Reply>) -> (GitHub, Arc<Mutex<Vec<Seen>>>) {
     (client(&base, Store::disabled()), seen)
 }
 
+/// "Done", replying to thread T_9.
+fn reply() -> ghtui_api::change::Change {
+    let (thread, body) = (NodeId::new("T_9"), "Done".into());
+    ghtui_api::change::Change::Reply { thread, body }
+}
+
 #[tokio::test]
 async fn rest_get_revalidates_with_etag() {
     let dir = tempfile::tempdir().unwrap();
@@ -1337,7 +1343,7 @@ async fn review_submission_calls() {
     gh.submit_review(&review, ReviewEvent::RequestChanges, "Needs work")
         .await
         .unwrap();
-    gh.reply(&NodeId::new("T_9"), "Done").await.unwrap();
+    gh.change(&reply()).await.unwrap();
     gh.set_resolved(&NodeId::new("T_9"), true).await.unwrap();
 
     let seen = seen.lock().unwrap();
@@ -1398,7 +1404,7 @@ async fn mutations_are_not_retried_after_server_errors() {
     ])
     .await;
     assert!(matches!(
-        gh.reply(&NodeId::new("T_9"), "Done").await,
+        gh.change(&reply()).await,
         Err(ApiError::Http { status: 502, .. })
     ));
     assert_eq!(seen.lock().unwrap().len(), 1);
@@ -1431,7 +1437,7 @@ async fn refused_connections_are_retried_even_for_mutations() {
     let gh = client("http://127.0.0.1:1", Store::disabled());
     let started = std::time::Instant::now();
     assert!(matches!(
-        gh.reply(&NodeId::new("T_9"), "Done").await,
+        gh.change(&reply()).await,
         Err(ApiError::Network(_))
     ));
     // Three attempts means two backoffs (500ms + 1s).
