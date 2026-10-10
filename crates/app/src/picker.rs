@@ -37,8 +37,8 @@ pub enum Kind {
     Commits { mark: Option<usize> },
     /// Recent notices and errors, newest first, as they were on opening.
     Messages(Vec<(u64, Notice)>),
-    /// A title for a Home section: the field is all of it.
-    SectionTitle(Titling),
+    /// A Home section's title, for the config file at the path: the field is all of it.
+    SectionTitle(Titling, std::path::PathBuf),
 }
 
 /// What a section's title is for.
@@ -64,8 +64,8 @@ impl Picker {
             Kind::Branches { .. } => "Switch branches/tags",
             Kind::Commits { .. } => "Commits",
             Kind::Messages(_) => "Messages",
-            Kind::SectionTitle(Titling::New { .. }) => "Save to Home",
-            Kind::SectionTitle(Titling::Rename { .. }) => "Rename the section",
+            Kind::SectionTitle(Titling::New { .. }, _) => "Save to Home",
+            Kind::SectionTitle(Titling::Rename { .. }, _) => "Rename the section",
         }
     }
 }
@@ -90,8 +90,8 @@ pub enum Choice {
     Copy(String),
     /// Go to open tab N (from 0).
     Tab(usize),
-    /// Title a Home section this.
-    Title(Titling, String),
+    /// Title a Home section this, in the config file at the path.
+    Title(Titling, std::path::PathBuf, String),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -126,7 +126,7 @@ impl State {
             Kind::Branches { .. } => "Find a branch or tag",
             Kind::Commits { .. } => "space marks a range start · ↵ views · esc cancels",
             Kind::Messages(_) => "↵ copies a message",
-            Kind::SectionTitle(_) => "The section's title",
+            Kind::SectionTitle(..) => "The section's title",
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
@@ -142,16 +142,6 @@ impl State {
             selected: 0,
         })));
         need.map_or_else(Vec::new, |key| self.ensure(Need::Data(key), false))
-    }
-
-    /// [`State::open_picker`], with `text` typed.
-    #[must_use]
-    pub fn open_picker_with(&mut self, kind: Kind, text: &str) -> Vec<Cmd> {
-        let cmds = self.open_picker(kind);
-        if let Some(Overlay::Picker(p)) = &mut self.overlay {
-            p.input.insert_str(text);
-        }
-        cmds
     }
 
     /// Go to file, or switch branches, for the code on screen.
@@ -202,7 +192,7 @@ impl State {
             Kind::DiffFiles => self.diff_file_rows(q),
             Kind::Commits { mark } => self.commit_rows(*mark),
             Kind::Messages(kept) => message_rows(kept, q, (self.clock)()),
-            Kind::SectionTitle(titling) => {
+            Kind::SectionTitle(titling, path) => {
                 if q.is_empty() {
                     return vec![(item("Type a title", ""), None)];
                 }
@@ -210,7 +200,7 @@ impl State {
                     Titling::New { query, .. } => format!("Add “{q}” to Home: {query}"),
                     Titling::Rename { .. } => format!("Rename it “{q}”"),
                 };
-                let choice = Choice::Title(titling.clone(), q.to_owned());
+                let choice = Choice::Title(titling.clone(), path.clone(), q.to_owned());
                 vec![(item(label, "↵"), Some(choice))]
             }
         }
@@ -531,13 +521,13 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
             vec![Cmd::Copy(text)]
         }
         Choice::Tab(i) => state.switch_to_tab(i),
-        Choice::Title(Titling::New { kind, query }, title) => {
+        Choice::Title(Titling::New { kind, query }, path, title) => {
             let what = format!("Added “{title}” to Home");
-            state.edit_home(crate::home::Edit::Add { title, kind, query }, what)
+            state.edit_home(path, crate::home::Edit::Add { title, kind, query }, what)
         }
-        Choice::Title(Titling::Rename { at }, title) => {
+        Choice::Title(Titling::Rename { at }, path, title) => {
             let what = format!("Renamed it “{title}”");
-            state.edit_home(crate::home::Edit::Rename { at, title }, what)
+            state.edit_home(path, crate::home::Edit::Rename { at, title }, what)
         }
     }
 }

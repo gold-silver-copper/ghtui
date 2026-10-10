@@ -8,7 +8,7 @@
 //! its count, its order and the list its last row opens can't disagree:
 //! they're one fetch.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ghtui_api::browse::SearchKind;
 use serde::Deserialize;
@@ -16,9 +16,9 @@ use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
 use crate::browse::{DataKey, Need};
 use crate::keymap::Action;
-use crate::picker;
+use crate::picker::{self, Titling};
 use crate::route::Route;
-use crate::state::{Cmd, Screen, State};
+use crate::state::{Cmd, Overlay, Screen, State};
 
 /// Rows a section shows unless it says.
 pub const DEFAULT_ROWS: usize = 25;
@@ -415,7 +415,7 @@ impl State {
     }
 
     /// The section the selection on Home is in.
-    pub fn section_here(&self) -> Option<usize> {
+    pub fn section_here(&self) -> Option<(usize, &Section)> {
         let Screen::Page(p) = self.screen() else {
             return None;
         };
@@ -424,32 +424,14 @@ impl State {
         }
         let page = p.page();
         let start = page.items.get(p.selected?)?.start;
-        (0..self.home.len())
-            .rev()
-            .find(|i| page.anchors.get(&anchor(*i)).is_some_and(|&l| l <= start))
+        (self.home.iter().enumerate().rev())
+            .find(|(i, _)| page.anchors.get(&anchor(*i)).is_some_and(|&l| l <= start))
     }
 }
 
 /// Where section `i` starts on Home's page.
 pub fn anchor(i: usize) -> String {
     format!("section-{i}")
-}
-
-/// The list on screen as a section to save: its kind and query, or why
-/// it can't be one.
-fn savable(state: &State) -> Result<(SearchKind, String), String> {
-    let elsewhere = "Saving to Home works on a list of issues, pull requests or repositories";
-    let (kind, query) = state.route().and_then(Route::search).ok_or(elsewhere)?;
-    let kind = match kind {
-        // A repository's pull request list is an issue search for `is:pr`.
-        SearchKind::Issues if query.split_whitespace().any(|w| w == "is:pr") => SearchKind::Pulls,
-        SearchKind::Issues | SearchKind::Pulls | SearchKind::Repos => kind,
-        _ => return Err("Home sections list issues, pull requests or repositories".into()),
-    };
-    if query.trim().is_empty() {
-        return Err("Type a search first: an empty one would list all of GitHub".into());
-    }
-    Ok((kind, query))
 }
 
 /// The actions on Home's sections (and saving a list as one).
@@ -462,54 +444,36 @@ pub const ACTIONS: [Action; 6] = [
     Action::UndoDelete,
 ];
 
-/// Why `action` can't change Home's sections here, if it can't.
-pub fn unavailable(state: &State, action: Action) -> Option<String> {
-    let at = state.section_here();
-    let n = state.home.len();
-    let why = match action {
-        Action::SaveSection => savable(state).err(),
-        Action::Delete | Action::UndoDelete if state.route() != Some(&Route::Home) => {
-            Some("Deleting works on a draft comment in Files changed, or on a Home section".into())
-        }
-        _ if state.route() != Some(&Route::Home) => Some("That works on Home's sections".into()),
-        Action::UndoDelete if state.removed.is_none() => {
-            Some("No section was removed just now".into())
-        }
-        Action::UndoDelete => None,
-        _ if at.is_none() => Some("Select a row in a section first".into()),
-        Action::MoveSectionUp if at == Some(0) => Some("It's the first section".into()),
-        Action::MoveSectionDown if at.is_some_and(|i| i + 1 >= n) => {
-            Some("It's the last section".into())
-        }
-        _ => None,
-    };
-    why.or_else(|| match action {
-        _ if state.config_path.is_none() => {
-            Some("There's no config file to keep it in (no config directory)".into())
-        }
-        _ if state.home_editing => Some("Still saving the last change".into()),
-        _ => None,
-    })
+/// What one of Home's actions does here, everything it needs checked.
+enum Plan<'a> {
+    /// Asks for a section's title, starting as this.
+    Title(Titling, String),
+    /// Moves the section at this index, titled this, up (or down).
+    Move(usize, bool, &'a str),
+    Remove(usize, &'a str),
+    /// Puts back the section removed, where it was.
+    Restore(&'a (usize, String)),
 }
 
-/// Runs one of the actions on Home's sections.
-#[must_use]
-pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
-    if let Some(why) = unavailable(state, action) {
-        state.info(why);
-        return Vec::new();
-    }
-    let at = state.section_here();
-    let title = |state: &State, at: Option<usize>| {
-        at.and_then(|i| state.home.get(i))
-            .map(|s| s.title.clone())
-            .unwrap_or_default()
-    };
-    let edit = match action {
+/// What `action` does to Home's sections here, and the config file it
+/// writes, or why it can't.
+fn plan(state: &State, action: Action) -> Result<(&Path, Plan<'_>), String> {
+    let plan = match action {
         Action::SaveSection => {
-            let Ok((kind, query)) = savable(state) else {
-                return Vec::new();
+            let elsewhere =
+                "Saving to Home works on a list of issues, pull requests or repositories";
+            let (kind, query) = state.route().and_then(Route::search).ok_or(elsewhere)?;
+            let kind = match kind {
+                // A repository's pull request list is an issue search for `is:pr`.
+                SearchKind::Issues if query.split_whitespace().any(|w| w == "is:pr") => {
+                    SearchKind::Pulls
+                }
+                SearchKind::Issues | SearchKind::Pulls | SearchKind::Repos => kind,
+                _ => return Err("Home sections list issues, pull requests or repositories".into()),
             };
+            if query.trim().is_empty() {
+                return Err("Type a search first: an empty one would list all of GitHub".into());
+            }
             let name = match state.route() {
                 Some(Route::Search { query, .. }) => query.clone(),
                 Some(Route::Issues { repo, .. }) => format!("Issues in {repo}"),
@@ -517,56 +481,88 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
                 Some(route) => route.title(),
                 None => String::new(),
             };
-            return state.open_picker_with(
-                picker::Kind::SectionTitle(picker::Titling::New { kind, query }),
-                &name,
+            Plan::Title(Titling::New { kind, query }, name)
+        }
+        Action::Delete | Action::UndoDelete if state.route() != Some(&Route::Home) => {
+            return Err(
+                "Deleting works on a draft comment in Files changed, or on a Home section".into(),
             );
         }
-        Action::RenameSection => {
-            let Some(at) = at else {
-                return Vec::new();
-            };
-            let name = title(state, Some(at));
-            return state.open_picker_with(
-                picker::Kind::SectionTitle(picker::Titling::Rename { at }),
-                &name,
-            );
+        _ if state.route() != Some(&Route::Home) => {
+            return Err("That works on Home's sections".into());
         }
-        Action::MoveSectionUp | Action::MoveSectionDown => Edit::Move {
-            at: at.unwrap_or_default(),
-            up: action == Action::MoveSectionUp,
-        },
-        Action::Delete => Edit::Remove {
-            at: at.unwrap_or_default(),
-        },
-        // Kept until it's back: a write that fails can be tried again.
-        Action::UndoDelete => match state.removed.clone() {
-            Some((at, table)) => Edit::Restore { at, table },
-            None => return Vec::new(),
-        },
-        _ => return Vec::new(),
+        Action::UndoDelete => {
+            Plan::Restore((state.removed.as_ref()).ok_or("No section was removed just now")?)
+        }
+        _ => {
+            let (at, section) = (state.section_here()).ok_or("Select a row in a section first")?;
+            let title = section.title.as_str();
+            match action {
+                Action::RenameSection => Plan::Title(Titling::Rename { at }, title.to_owned()),
+                Action::MoveSectionUp if at == 0 => return Err("It's the first section".into()),
+                Action::MoveSectionDown if at + 1 >= state.home.len() => {
+                    return Err("It's the last section".into());
+                }
+                Action::MoveSectionUp | Action::MoveSectionDown => {
+                    Plan::Move(at, action == Action::MoveSectionUp, title)
+                }
+                Action::Delete => Plan::Remove(at, title),
+                _ => return Err("That works on Home's sections".into()),
+            }
+        }
     };
-    let what = match &edit {
-        Edit::Move { up: true, .. } => format!("Moved “{}” up", title(state, at)),
-        Edit::Move { .. } => format!("Moved “{}” down", title(state, at)),
-        Edit::Remove { .. } => format!(
-            "Removed “{}” · {} brings it back",
-            title(state, at),
-            state.first_key(Action::UndoDelete)
-        ),
-        _ => "Brought the section back".to_owned(),
+    let path = (state.config_path.as_deref())
+        .ok_or("There's no config file to keep it in (no config directory)")?;
+    if state.home_editing {
+        return Err("Still saving the last change".into());
+    }
+    Ok((path, plan))
+}
+
+/// Why `action` can't change Home's sections here, if it can't.
+pub fn unavailable(state: &State, action: Action) -> Option<String> {
+    plan(state, action).err()
+}
+
+/// Runs one of the actions on Home's sections.
+#[must_use]
+pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+    let (path, plan) = match plan(state, action) {
+        Ok((path, plan)) => (path.to_owned(), plan),
+        Err(why) => {
+            state.info(why);
+            return Vec::new();
+        }
     };
-    state.edit_home(edit, what)
+    let (edit, what) = match plan {
+        Plan::Title(titling, name) => {
+            let cmds = state.open_picker(picker::Kind::SectionTitle(titling, path));
+            if let Some(Overlay::Picker(p)) = &mut state.overlay {
+                p.input.insert_str(&name);
+            }
+            return cmds;
+        }
+        Plan::Move(at, up, title) => {
+            let what = format!("Moved “{title}” {}", if up { "up" } else { "down" });
+            (Edit::Move { at, up }, what)
+        }
+        Plan::Remove(at, title) => {
+            let undo = state.first_key(Action::UndoDelete);
+            let what = format!("Removed “{title}” · {undo} brings it back");
+            (Edit::Remove { at }, what)
+        }
+        Plan::Restore(&(at, ref table)) => {
+            let (table, what) = (table.clone(), "Brought the section back".to_owned());
+            (Edit::Restore { at, table }, what)
+        }
+    };
+    state.edit_home(path, edit, what)
 }
 
 impl State {
-    /// Sends `edit` to `config.toml`; `what` says it once it's made.
+    /// Sends `edit` to the config file at `path`; `what` says it once it's made.
     #[must_use]
-    pub fn edit_home(&mut self, edit: Edit, what: String) -> Vec<Cmd> {
-        let Some(path) = self.config_path.clone() else {
-            self.info("There's no config file to keep it in (no config directory)");
-            return Vec::new();
-        };
+    pub fn edit_home(&mut self, path: PathBuf, edit: Edit, what: String) -> Vec<Cmd> {
         self.home_editing = true;
         vec![Cmd::EditHome {
             path,

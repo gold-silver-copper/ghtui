@@ -2052,7 +2052,7 @@ pub(crate) mod tests {
         use crate::home::Edit;
         let mut state = with_home(2);
         press(&mut state, "j");
-        assert_eq!(state.section_here(), Some(1));
+        assert!(matches!(state.section_here(), Some((1, _))));
         let cmds = press(&mut state, "<A-Up>");
         let [Cmd::EditHome { edit, shown, .. }] = cmds.as_slice() else {
             panic!("{cmds:?}")
@@ -2074,7 +2074,10 @@ pub(crate) mod tests {
             },
         );
         assert_eq!(state.home, moved);
-        assert_eq!(state.section_here(), Some(0), "the selection moved with it");
+        assert!(
+            matches!(state.section_here(), Some((0, _))),
+            "the selection moved with it"
+        );
         let cmds = press(&mut state, "<Delete>");
         let [Cmd::EditHome { edit, .. }] = cmds.as_slice() else {
             panic!("{cmds:?}")
