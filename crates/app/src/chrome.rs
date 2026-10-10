@@ -49,7 +49,6 @@ fn new_tab(icon: &'static str, label: &str, count: Option<u64>) -> PageTab {
         icon,
         label: label.to_owned(),
         count,
-        external: false,
     }
 }
 

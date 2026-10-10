@@ -715,13 +715,11 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
 pub fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
     let chrome = state.chrome();
     let n = chrome.tabs.len();
-    // The first tab in that direction, wrapping around, that isn't a link.
-    let next = chrome.active.and_then(|active| {
-        (1..n)
-            .map(|k| if forward { active + k } else { active + n - k })
-            .map(|i| i % n)
-            .find(|&i| chrome.tabs.get(i).is_some_and(|(t, _)| !t.external))
-    });
+    // The next tab in that direction, wrapping around.
+    let next = chrome
+        .active
+        .filter(|_| n > 1)
+        .map(|active| (if forward { active + 1 } else { active + n - 1 }) % n);
     match next {
         Some(i) => switch_tab(state, i + 1),
         None => {

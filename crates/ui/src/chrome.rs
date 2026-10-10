@@ -190,8 +190,6 @@ pub struct PageTab {
     pub icon: &'static str,
     pub label: String,
     pub count: Option<u64>,
-    /// Opens in the browser.
-    pub external: bool,
 }
 
 /// How much of each tab fits: everything; no counts on inactive tabs;
@@ -260,13 +258,8 @@ fn tab_width(tab: &PageTab, level: Fit, active: bool) -> u16 {
     } else {
         0
     };
-    let external = if tab.external && shown(Fit::NoCounts) {
-        2
-    } else {
-        0
-    };
     cols(
-        [2, text::width(tab.icon), label, count, external]
+        [2, text::width(tab.icon), label, count]
             .into_iter()
             .fold(0, usize::saturating_add),
     )
@@ -318,12 +311,6 @@ impl Widget for TabBar<'_> {
                 spans.push(Span::styled(
                     format!(" {} ", crate::pages::compact(n)),
                     theme.fill(Bg::ContainerHighest),
-                ));
-            }
-            if tab.external && shown(Fit::NoCounts) {
-                spans.push(Span::styled(
-                    format!(" {}", self.ctx.icons.external()),
-                    theme.meta(BAR),
                 ));
             }
             spans.push(Span::styled(" ", theme.body(BAR)));
