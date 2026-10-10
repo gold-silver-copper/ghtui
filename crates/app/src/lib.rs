@@ -140,7 +140,7 @@ async fn run(started: Instant) -> Result<()> {
         nerd_font: config.ui.nerd_font,
     };
     let store = Store::open(&cache_dir.join("cache.redb"));
-    let reviews = open_reviews(&store);
+    let reviews = open_reviews();
 
     let (token, source) = token
         .join()
@@ -216,17 +216,10 @@ async fn run(started: Instant) -> Result<()> {
     result
 }
 
-/// Review drafts' home, with any left in the cache by older versions
-/// moved in.
-fn open_reviews(store: &Store) -> Result<ghtui_store::Reviews, String> {
+/// Review drafts' home.
+fn open_reviews() -> Result<ghtui_store::Reviews, String> {
     let dir = config::data_dir().ok_or("cannot determine a data directory")?;
-    let reviews = ghtui_store::Reviews::open(&dir.join("reviews")).map_err(|e| e.to_string())?;
-    match store.migrate_reviews(&reviews) {
-        Ok(0) => {}
-        Ok(n) => tracing::info!(n, "moved review state out of the cache"),
-        Err(err) => tracing::warn!(%err, "moving review state out of the cache failed"),
-    }
-    Ok(reviews)
+    ghtui_store::Reviews::open(&dir.join("reviews")).map_err(|e| e.to_string())
 }
 
 /// How git authenticates for the cache clone: through `gh` when that's
