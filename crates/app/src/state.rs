@@ -3787,6 +3787,26 @@ pub(crate) mod tests {
         );
     }
 
+    /// Saying the same thing again shows it for its whole time again; the
+    /// first one's timer doesn't clear it early.
+    #[test]
+    fn a_repeated_notice_gets_its_own_time() {
+        let mut state = with_repo();
+        let mut last = None;
+        press(&mut state, "<A-5>");
+        let first = timers(&mut state, &mut last);
+        press(&mut state, "<A-5>");
+        let again = timers(&mut state, &mut last);
+        let expires = |c: &Cmd| matches!(c, Cmd::Timer(Timer::ExpireNotice(_), _));
+        assert!(again.iter().any(expires), "{again:?}");
+        for cmd in first {
+            if let Cmd::Timer(timer, _) = cmd {
+                let _ = update(&mut state, Msg::Timer(timer));
+            }
+        }
+        assert!(matches!(&state.notice, Some(Notice::Info(n)) if n.contains("No tab 5")));
+    }
+
     /// Esc on an error dismisses it (and goes nowhere); the messages list
     /// keeps it, and choosing it copies it.
     #[test]
