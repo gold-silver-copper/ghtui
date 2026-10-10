@@ -3362,11 +3362,8 @@ mod changes {
             vec![Cmd::Api(Api::Change(ready, By::Act(Subject::Pr(pr()))))]
         );
         press(&mut s, "X");
-        answer(
-            &mut s,
-            &sent,
-            Err(ApiError::GraphQl(vec!["Not now".into()])),
-        );
+        let refused = ApiError::GraphQl(vec!["Not now".into()]);
+        answer(&mut s, &sent, Err(refused));
         assert_eq!(confirm(&s).error, None);
         assert!(info(&s).contains("Not now"), "{}", info(&s));
         press(&mut s, "<Esc>WcLGTM");
@@ -3387,20 +3384,14 @@ mod changes {
         fetched(&mut s, DataKey::Run(ghtui(), 7, None), run);
         let rerun = press(&mut s, "<C-r><Enter>");
         press(&mut s, "<Esc>");
-        let star = |s: &mut State| {
-            let sent = press(s, "s");
-            answer(s, &sent, Ok(()))
-        };
-        star(&mut s);
+        let star = press(&mut s, "s");
+        answer(&mut s, &star, Ok(()));
         answer(&mut s, &rerun, Ok(()));
-        let run = Some(Route::WorkflowRun {
-            repo: ghtui(),
-            run: 7,
-            attempt: None,
-        });
-        assert_eq!(s.awaiting.as_ref().map(|w| w.about.clone()), run);
-        star(&mut s);
-        assert_eq!(s.awaiting.map(|w| w.about), run);
+        // The page follows the run, not the list.
+        let run = vec![crate::browse::Need::Data(DataKey::Run(ghtui(), 7, None))];
+        assert_eq!(crate::act::poll(&mut s), run);
+        answer(&mut s, &star, Ok(()));
+        assert_eq!(crate::act::poll(&mut s), run);
     }
 
     /// Approving from the pull request's page reads your saved drafts
