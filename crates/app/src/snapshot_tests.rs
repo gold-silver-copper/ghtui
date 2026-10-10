@@ -3180,7 +3180,7 @@ mod changes {
             info(&s)
         );
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
-        assert_eq!(confirm(&s).about, Some(crate::act::Subject::Pr(pr())));
+        assert_eq!(confirm(&s).about, crate::act::Subject::Pr(pr()));
         assert!(
             confirm(&s)
                 .title
@@ -3191,7 +3191,7 @@ mod changes {
         press(&mut s, "M");
         let mine = crate::fixtures::found_prs(Vec::new(), 0);
         crate::fixtures::section(&mut s, 1, mine);
-        assert_eq!(confirm(&s).about, Some(crate::act::Subject::Pr(pr())));
+        assert_eq!(confirm(&s).about, crate::act::Subject::Pr(pr()));
         let merge = confirm(&s).choices[0].1.clone();
         press(&mut s, "<Enter>");
         update(&mut s, Msg::Changed(merge, Ok(())));
