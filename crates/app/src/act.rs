@@ -9,7 +9,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ghtui_api::ApiError;
-use ghtui_api::browse::{CheckOutcome, IssueState, Job, WorkflowRun};
+use ghtui_api::browse::{CheckOutcome, IssueState, Job, PrState, WorkflowRun};
 use ghtui_api::change::{Change, CloseReason, MergeMethod};
 use ghtui_api::model::{
     ChecksState, MergeState, PrDetail, PrRef, Readiness, RepoId, ReviewDecision,
@@ -326,13 +326,13 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
             };
             let issue_id = issue.id.clone();
             Ok(match issue.state {
-                IssueState::Open | IssueState::Draft if !issue.can_close => {
+                IssueState::Open if !issue.can_close => {
                     return Err(
                         "GitHub doesn't let you close it: that takes its author or triage access"
                             .into(),
                     );
                 }
-                IssueState::Open | IssueState::Draft => Plan::Ask(
+                IssueState::Open => Plan::Ask(
                     format!("Close {name}?"),
                     Vec::new(),
                     vec![
@@ -355,7 +355,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
                 _ if !issue.can_reopen => {
                     return Err("GitHub doesn't let you reopen it".into());
                 }
-                IssueState::Closed | IssueState::NotPlanned | IssueState::Merged => Plan::Ask(
+                IssueState::Closed | IssueState::NotPlanned => Plan::Ask(
                     format!("Reopen {name}?"),
                     Vec::new(),
                     vec![("Reopen".into(), Change::ReopenIssue { issue: issue_id })],
@@ -398,10 +398,10 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
 }
 
 fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Plan, String> {
-    let open = matches!(d.summary.state, IssueState::Open | IssueState::Draft);
+    let open = d.state.is_open();
     let key = |a: Action| state.first_key(a);
-    let not_open = || match d.summary.state {
-        IssueState::Merged => "It's merged".to_owned(),
+    let not_open = || match d.state {
+        PrState::Merged => "It's merged".to_owned(),
         _ => format!("It's closed: {} reopens it", key(Action::Close)),
     };
     let readiness = d.readiness();
@@ -441,29 +441,27 @@ fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Pl
                     (method.describe().to_owned(), change)
                 })
                 .collect();
-            let title = format!("Merge {pr}: {}?", d.summary.title);
+            let title = format!("Merge {pr}: {}?", d.title);
             Ok(Plan::Ask(title, merge_facts(state, d), choices))
         }
         Action::Close => {
-            let (title, label, reopen) = match d.summary.state {
-                IssueState::Merged => {
+            let (title, label, reopen) = match d.state {
+                PrState::Merged => {
                     return Err("It's merged: a merged pull request can't be reopened".into());
                 }
-                IssueState::Open | IssueState::Draft if !d.may.close => {
+                PrState::Open | PrState::Draft if !d.may.close => {
                     return Err(
                         "GitHub doesn't let you close it: that takes its author or triage access"
                             .into(),
                     );
                 }
-                IssueState::Open | IssueState::Draft => {
+                PrState::Open | PrState::Draft => {
                     (format!("Close {pr}?"), "Close pull request", false)
                 }
-                IssueState::Closed | IssueState::NotPlanned if !d.may.reopen => {
+                PrState::Closed if !d.may.reopen => {
                     return Err("GitHub doesn't let you reopen it".into());
                 }
-                IssueState::Closed | IssueState::NotPlanned => {
-                    (format!("Reopen {pr}?"), "Reopen", true)
-                }
+                PrState::Closed => (format!("Reopen {pr}?"), "Reopen", true),
             };
             let facts = if reopen {
                 Vec::new()
@@ -477,10 +475,10 @@ fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Pl
             };
             Ok(Plan::Ask(title, facts, vec![(label.into(), change)]))
         }
-        Action::ReadyForReview if d.summary.state == IssueState::Draft && !d.may.edit => {
+        Action::ReadyForReview if d.state == PrState::Draft && !d.may.edit => {
             Err("Marking it ready takes its author or write access".into())
         }
-        Action::ReadyForReview if d.summary.state == IssueState::Draft => {
+        Action::ReadyForReview if d.state == PrState::Draft => {
             Ok(Plan::Do(Change::ReadyForReview { pr: d.id.clone() }))
         }
         Action::ReadyForReview if open => Err("It isn't a draft".into()),
@@ -514,7 +512,7 @@ fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Pl
             )];
             Ok(Plan::Ask(format!("Update {pr}'s branch?"), facts, choices))
         }
-        Action::Approve if state.viewer.as_deref() == Some(d.summary.author.as_str()) => {
+        Action::Approve if state.viewer.as_deref() == Some(d.author.as_str()) => {
             Err("You can't approve your own pull request".into())
         }
         Action::Approve => Ok(Plan::Approve(pr.clone())),
@@ -534,13 +532,13 @@ fn behind(d: &PrDetail) -> String {
 /// What's worth knowing before merging (what stops it is refused before).
 fn merge_facts(state: &State, d: &PrDetail) -> Vec<(String, bool)> {
     let mut facts = vec![(format!("Into {} from {}", d.base_ref, d.head_ref), false)];
-    match d.summary.checks {
+    match d.checks {
         Some(ChecksState::Passing) => facts.push(("Checks passed".into(), false)),
         Some(ChecksState::Failing) => facts.push(("Some checks failed".into(), true)),
         Some(ChecksState::Pending) => facts.push(("Checks are still running".into(), true)),
         None => facts.push(("No checks".into(), false)),
     }
-    match d.summary.review {
+    match d.review {
         Some(ReviewDecision::Approved) => facts.push(("Approved".into(), false)),
         Some(ReviewDecision::ChangesRequested) => {
             facts.push(("Changes were requested".into(), true));
@@ -784,11 +782,10 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             let Some(d) = pr(r) else {
                 return Shown::No;
             };
-            let open = matches!(d.summary.state, IssueState::Open | IssueState::Draft);
             yes(match change {
-                Change::Merge { .. } => d.summary.state == IssueState::Merged,
-                Change::SetPrOpen { open: o, .. } => open == *o,
-                Change::ReadyForReview { .. } => d.summary.state != IssueState::Draft,
+                Change::Merge { .. } => d.state == PrState::Merged,
+                Change::SetPrOpen { open, .. } => d.state.is_open() == *open,
+                Change::ReadyForReview { .. } => d.state != PrState::Draft,
                 Change::UpdateBranch { head, .. } => d.head_oid != *head,
                 _ => true,
             })
@@ -799,7 +796,7 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             let Some(Some(issue)) = issue else {
                 return Shown::No;
             };
-            let open = matches!(issue.state, IssueState::Open | IssueState::Draft);
+            let open = issue.state == IssueState::Open;
             yes(open == matches!(change, Change::ReopenIssue { .. }))
         }
         (Change::Rerun { .. }, Subject::Run(repo, run, Some(_))) => {

@@ -11,11 +11,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
+use redb::{Database, ReadableDatabase, TableDefinition};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bump whenever the meaning or encoding of any table changes.
-pub const SCHEMA_VERSION: u64 = 9;
+pub const SCHEMA_VERSION: u64 = 10;
 
 const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 /// REST responses keyed by request path, stored with their ETag.
@@ -25,10 +25,6 @@ const QUERIES: TableDefinition<&str, &[u8]> = TableDefinition::new("queries");
 pub mod reviews;
 
 pub use reviews::Reviews;
-
-/// Per-PR review state keyed by `owner/repo#number`, from before review
-/// state moved to [`Reviews`]. Only read, to migrate it.
-const REVIEW: TableDefinition<&str, &[u8]> = TableDefinition::new("review");
 
 const VERSION_KEY: &str = "schema_version";
 
@@ -204,46 +200,6 @@ impl Store {
         );
     }
 
-    /// Moves review state saved in the cache by older versions into
-    /// `reviews`, without replacing anything already there. Entries leave
-    /// the cache only once written.
-    pub fn migrate_reviews(&self, reviews: &Reviews) -> Result<usize, StoreError> {
-        let Some(db) = self.db.as_ref() else {
-            return Ok(0);
-        };
-        let mut entries = Vec::new();
-        {
-            let txn = db.begin_read()?;
-            let table = match txn.open_table(REVIEW) {
-                Ok(table) => table,
-                Err(redb::TableError::TableDoesNotExist(_)) => return Ok(0),
-                Err(err) => return Err(err.into()),
-            };
-            for entry in table.iter()? {
-                let (key, value) = entry?;
-                let key = key.value().to_owned();
-                match serde_json::from_slice::<ReviewState>(value.value()) {
-                    Ok(state) => entries.push((key, state)),
-                    Err(err) => tracing::warn!(key, %err, "old review state doesn't decode"),
-                }
-            }
-        }
-        let mut moved = 0;
-        for (key, state) in &entries {
-            let Some((owner, repo, number)) = reviews::parse_key(key) else {
-                continue;
-            };
-            if !reviews.exists(owner, repo, number) {
-                reviews.put(owner, repo, number, state)?;
-                moved += 1;
-            }
-        }
-        let txn = db.begin_write()?;
-        txn.delete_table(REVIEW)?;
-        txn.commit()?;
-        Ok(moved)
-    }
-
     fn read_json<T: DeserializeOwned>(
         &self,
         table: TableDefinition<&str, &[u8]>,
@@ -408,37 +364,6 @@ mod tests {
         assert!(second.query_get::<i32>("k").is_none());
         // The first holder's data survives.
         assert_eq!(first.query_get::<i32>("k").unwrap().value, 1);
-    }
-
-    #[test]
-    fn old_review_state_migrates_once_without_replacing() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("cache.redb"));
-        let reviews = Reviews::open(&dir.path().join("reviews")).unwrap();
-        assert_eq!(ReviewState::default().next_draft_id(), 1);
-        let state = reviews::tests::draft("nit");
-        assert_eq!(state.next_draft_id(), 2);
-        store.write_json(REVIEW, "o/r#1", &state);
-        // An entry written before `pending` existed still decodes.
-        store.write_json(
-            REVIEW,
-            "o/r#2",
-            &serde_json::json!({"reviewed_hunks": ["h"]}),
-        );
-        // Newer state already in place wins.
-        let newer = ReviewState {
-            reviewed_hunks: vec!["new".into()],
-            ..ReviewState::default()
-        };
-        reviews.put("o", "r", 3, &newer).unwrap();
-        store.write_json(REVIEW, "o/r#3", &state);
-
-        assert_eq!(store.migrate_reviews(&reviews).unwrap(), 2);
-        assert_eq!(reviews.get("o", "r", 1).unwrap(), state);
-        assert_eq!(reviews.get("o", "r", 2).unwrap().reviewed_hunks, ["h"]);
-        assert_eq!(reviews.get("o", "r", 3).unwrap(), newer);
-        // Done: the cache no longer has them.
-        assert_eq!(store.migrate_reviews(&reviews).unwrap(), 0);
     }
 
     #[test]

@@ -17,7 +17,7 @@ use crate::queries::{
 };
 use ghtui_schema::schema;
 
-pub use crate::model::IssueState;
+pub use crate::model::{IssueState, PrState, Status};
 pub use crate::person::{Login, Person};
 
 // ---- models ------------------------------------------------------------------
@@ -125,9 +125,7 @@ pub struct RepoOverview {
     pub watchers: u64,
     pub open_issues: u64,
     pub open_prs: u64,
-    #[serde(default)]
     pub closed_issues: u64,
-    #[serde(default)]
     pub closed_prs: u64,
     pub license: Option<String>,
     pub topics: Capped<String>,
@@ -142,13 +140,9 @@ pub struct RepoOverview {
     /// Node ID, for starring.
     pub id: NodeId,
     pub has_issues: bool,
-    #[serde(default)]
     pub has_discussions: bool,
-    #[serde(default)]
     pub has_wiki: bool,
-    #[serde(default)]
     pub branches: u64,
-    #[serde(default)]
     pub tags: u64,
     /// Root directory at the default branch (empty for empty repos).
     pub entries: Vec<TreeEntry>,
@@ -175,20 +169,36 @@ pub struct IssueSummary {
     pub repo: RepoId,
     pub number: u64,
     pub title: String,
-    pub is_pr: bool,
-    pub state: IssueState,
+    pub kind: IssueKind,
     pub author: String,
     pub updated_at: String,
     pub comments: u64,
     pub labels: Capped<Label>,
-    #[serde(default)]
     pub created_at: String,
-    /// Pull requests only.
-    #[serde(default)]
-    pub review: Option<crate::model::ReviewDecision>,
-    /// Pull requests only, where known.
-    #[serde(default)]
-    pub checks: Option<crate::model::ChecksState>,
+}
+
+/// A row is an issue or a pull request, and only a pull request has a
+/// review and checks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IssueKind {
+    Issue(IssueState),
+    Pr {
+        /// What its checks are asked by.
+        id: NodeId,
+        state: PrState,
+        review: Option<ReviewDecision>,
+        /// Where known.
+        checks: Option<ChecksState>,
+    },
+}
+
+impl IssueSummary {
+    pub fn status(&self) -> Status {
+        match self.kind {
+            IssueKind::Issue(state) => Status::Issue(state),
+            IssueKind::Pr { state, .. } => Status::Pr(state),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -405,7 +415,6 @@ pub struct CodeHit {
 pub struct Comment {
     /// GitHub's number for it, which its links' anchors use
     /// (`#issuecomment-…`, `#discussioncomment-…`).
-    #[serde(default)]
     pub id: Option<u64>,
     pub author: String,
     pub body: String,
@@ -423,7 +432,6 @@ pub struct IssueDetail {
     pub created_at: String,
     pub labels: Capped<Label>,
     pub assignees: Capped<String>,
-    #[serde(default)]
     pub milestone: Option<MilestoneRef>,
     /// The newest comments, oldest first, of how many there are in all.
     pub comments: Capped<Comment>,
@@ -467,30 +475,21 @@ pub struct Profile {
     pub is_org: bool,
     pub pinned: Vec<RepoSummary>,
     pub repos: Capped<RepoSummary>,
-    #[serde(default)]
     pub star_count: u64,
     /// The profile README, as markdown.
-    #[serde(default)]
     pub readme: Option<String>,
     /// "🌴 On vacation".
-    #[serde(default)]
     pub status: Option<String>,
-    #[serde(default)]
     pub pronouns: Option<String>,
     /// Social accounts: (how it's shown, link).
-    #[serde(default)]
     pub socials: Vec<(String, String)>,
     /// Organizations a user belongs to (the public ones).
-    #[serde(default)]
     pub orgs: Capped<String>,
     /// An organization's verified domain badge.
-    #[serde(default)]
     pub verified: bool,
     /// An organization's first public members.
-    #[serde(default)]
     pub people: Capped<String>,
     /// A user's contributions in the last year.
-    #[serde(default)]
     pub contributions: Option<Contributions>,
 }
 
@@ -503,7 +502,6 @@ pub struct Contributions {
     /// Newest month first.
     pub activity: Vec<MonthActivity>,
     /// Where its counts may be short.
-    #[serde(default)]
     pub short: Short,
 }
 
@@ -1811,7 +1809,7 @@ mod tests {
         }))
         .unwrap();
         let info = branch.into_info(&RepoId::new("cli", "cli"), Some("trunk"));
-        assert_eq!(info.pr, Some((7, IssueState::Closed)));
+        assert_eq!(info.pr, Some((7, PrState::Closed)));
         assert!(info.default);
     }
 
@@ -1829,7 +1827,7 @@ mod tests {
         }))
         .unwrap();
         let info = branch.into_info(&RepoId::new("cli", "cli"), None);
-        assert_eq!(info.pr, Some((5, IssueState::Draft)));
+        assert_eq!(info.pr, Some((5, PrState::Draft)));
     }
 
     /// A dismissed review keeps GitHub's own state, the one the UI's
@@ -2626,7 +2624,7 @@ pub struct BranchInfo {
     /// ISO 8601: when its latest commit was committed.
     pub date: Option<String>,
     /// Its most recent pull request: number and state.
-    pub pr: Option<(u64, IssueState)>,
+    pub pr: Option<(u64, PrState)>,
 }
 
 pub(crate) mod wire_branches {
@@ -2733,7 +2731,6 @@ pub struct MilestoneDetail {
     pub items: Results<IssueSummary>,
     /// Its title has quotes, which GitHub's search can't match, so its
     /// issues and pull requests weren't looked up.
-    #[serde(default)]
     pub unsearchable: bool,
 }
 
@@ -2868,7 +2865,6 @@ pub struct Comparison {
     pub to: String,
     pub files: u64,
     /// GitHub lists at most 300 files, so the counts may be short.
-    #[serde(default)]
     pub files_capped: bool,
     pub additions: u64,
     pub deletions: u64,
@@ -4834,29 +4830,28 @@ impl BrowseItem {
                 repo: RepoId::parse(&i.repository.name_with_owner)?,
                 number: count(i.number),
                 title: i.title,
-                is_pr: false,
-                state: issue_state(i.state, i.state_reason),
+                kind: IssueKind::Issue(issue_state(i.state, i.state_reason)),
                 author: author(i.author),
                 updated_at: i.updated_at.0,
                 comments: count(i.comments.total_count),
                 labels: labels(i.labels),
                 created_at: i.created_at.0,
-                review: None,
-                checks: None,
             }),
             BrowseItem::PullRequest(p) => Some(IssueSummary {
                 repo: RepoId::parse(&p.repository.name_with_owner)?,
                 number: count(p.number),
                 title: p.title,
-                is_pr: true,
-                state: p.status.into(),
+                kind: IssueKind::Pr {
+                    id: p.id.into(),
+                    state: p.status.into(),
+                    review: p.review_decision,
+                    checks: None,
+                },
                 author: author(p.author),
                 updated_at: p.updated_at.0,
                 comments: count(p.comments.total_count),
                 labels: labels(p.labels),
                 created_at: p.created_at.0,
-                review: p.review_decision,
-                checks: None,
             }),
             _ => None,
         }

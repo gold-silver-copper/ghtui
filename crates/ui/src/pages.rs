@@ -9,11 +9,11 @@ use std::collections::HashMap;
 use ghtui_api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail,
     CommitInfo, Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList,
-    EntryKind, Gist, GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobLog,
-    MilestoneDetail, MilestoneInfo, MilestoneList, Person, PrActivity, Profile, Readme, Release,
-    RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, Severity,
-    Short, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow,
-    WorkflowRun,
+    EntryKind, Gist, GistSummary, IssueDetail, IssueKind, IssueState, IssueSummary, Job, JobLog,
+    MilestoneDetail, MilestoneInfo, MilestoneList, Person, PrActivity, PrState, Profile, Readme,
+    Release, RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults,
+    Severity, Short, Status, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserSummary, WikiPage,
+    Workflow, WorkflowRun,
 };
 use ghtui_api::model::{
     Capped, ChecksState, Label, Mergeable, MilestoneRef, PrDetail, PrRef, Readiness, RepoId,
@@ -490,34 +490,43 @@ fn hanging(page: &mut Page, prefix: Seg, segs: Vec<Seg>, frame: Frame) {
     }
 }
 
-fn issue_icon(icons: Icons, state: IssueState, is_pr: bool) -> (String, Role) {
+fn issue_icon(icons: Icons, state: Status) -> (String, Role) {
     let nerd = icons.nerd_font;
-    match (state, is_pr) {
-        (IssueState::Open, false) => (if nerd { "\u{f41b}" } else { "◉" }.into(), Role::Success),
-        (IssueState::Closed, false) => (if nerd { "\u{f41d}" } else { "✓" }.into(), Role::Accent),
-        (IssueState::NotPlanned, _) => (if nerd { "\u{f468}" } else { "⊘" }.into(), Role::Meta),
-        (IssueState::Open, true) => (icons.pr_state(IssueState::Open).into(), Role::Success),
-        (IssueState::Draft, _) => (icons.pr_state(IssueState::Draft).into(), Role::Meta),
-        (IssueState::Merged, _) => (icons.pr_state(IssueState::Merged).into(), Role::Accent),
-        (IssueState::Closed, true) => (icons.pr_state(IssueState::Closed).into(), Role::Error),
+    let pr = |s| icons.pr_state(s).into();
+    match state {
+        Status::Issue(IssueState::Open) => {
+            (if nerd { "\u{f41b}" } else { "◉" }.into(), Role::Success)
+        }
+        Status::Issue(IssueState::Closed) => {
+            (if nerd { "\u{f41d}" } else { "✓" }.into(), Role::Accent)
+        }
+        Status::Issue(IssueState::NotPlanned) => {
+            (if nerd { "\u{f468}" } else { "⊘" }.into(), Role::Meta)
+        }
+        Status::Pr(s @ PrState::Open) => (pr(s), Role::Success),
+        Status::Pr(s @ PrState::Draft) => (pr(s), Role::Meta),
+        Status::Pr(s @ PrState::Merged) => (pr(s), Role::Accent),
+        Status::Pr(s @ PrState::Closed) => (pr(s), Role::Error),
     }
 }
 
 /// An issue's or pull request's state, as its chip says it.
-pub fn state_label(state: IssueState, is_pr: bool) -> (&'static str, Bg) {
+pub fn state_label(state: Status) -> (&'static str, Bg) {
     match state {
-        IssueState::Open => ("Open", Bg::SuccessContainer),
-        IssueState::Draft => ("Draft", Bg::SecondaryContainer),
-        IssueState::Merged => ("Merged", Bg::TertiaryContainer),
-        IssueState::NotPlanned => ("Closed as not planned", Bg::SecondaryContainer),
-        IssueState::Closed if is_pr => ("Closed", Bg::ErrorContainer),
-        IssueState::Closed => ("Closed", Bg::TertiaryContainer),
+        Status::Issue(IssueState::Open) | Status::Pr(PrState::Open) => {
+            ("Open", Bg::SuccessContainer)
+        }
+        Status::Pr(PrState::Draft) => ("Draft", Bg::SecondaryContainer),
+        Status::Pr(PrState::Merged) => ("Merged", Bg::TertiaryContainer),
+        Status::Issue(IssueState::NotPlanned) => ("Closed as not planned", Bg::SecondaryContainer),
+        Status::Pr(PrState::Closed) => ("Closed", Bg::ErrorContainer),
+        Status::Issue(IssueState::Closed) => ("Closed", Bg::TertiaryContainer),
     }
 }
 
-fn state_chip(state: IssueState, is_pr: bool, icons: Icons) -> Seg {
-    let (icon, _) = issue_icon(icons, state, is_pr);
-    let (text, bg) = state_label(state, is_pr);
+fn state_chip(state: Status, icons: Icons) -> Seg {
+    let (icon, _) = issue_icon(icons, state);
+    let (text, bg) = state_label(state);
     chip(format!("{icon} {text}"), bg)
 }
 
@@ -1559,14 +1568,13 @@ fn issue_row(
     icons: Icons,
     now: u64,
 ) {
-    let (icon, role) = issue_icon(icons, i.state, i.is_pr);
-    let target = if i.is_pr {
-        url::pull(&PrRef {
+    let (icon, role) = issue_icon(icons, i.status());
+    let target = match i.kind {
+        IssueKind::Pr { .. } => url::pull(&PrRef {
             repo: i.repo.clone(),
             number: i.number,
-        })
-    } else {
-        url::issue(&i.repo, i.number)
+        }),
+        IssueKind::Issue(_) => url::issue(&i.repo, i.number),
     };
     let place = if show_repo {
         format!("{}#{}", i.repo, i.number)
@@ -1589,14 +1597,18 @@ fn issue_row(
         labels(&mut segs, &i.labels);
         hanging(page, Seg::new(format!("{icon} "), role), segs, Frame::Body);
         // GitHub's second line: `#12 opened 3 days ago by octocat · Approved`.
-        let (verb, at) = if i.created_at.is_empty() || updated {
+        let (verb, at) = if updated {
             ("updated", &i.updated_at)
         } else {
             ("opened", &i.created_at)
         };
         let when = format!("{place} {verb} {} by {}", time::ago_iso(at, now), i.author);
         let mut meta = vec![Seg::new(when, Role::Meta)];
-        if let Some(review) = i.review {
+        if let IssueKind::Pr {
+            review: Some(review),
+            ..
+        } = i.kind
+        {
             let (text, role) = match review {
                 ReviewDecision::Approved => ("Approved", Role::Success),
                 ReviewDecision::ChangesRequested => ("Changes requested", Role::Error),
@@ -1611,7 +1623,11 @@ fn issue_row(
 /// Checks and comment count, for the right of an issue's row.
 fn issue_signals(i: &IssueSummary, icons: Icons) -> Vec<Seg> {
     let mut right = Vec::new();
-    if let Some(checks) = i.checks {
+    if let IssueKind::Pr {
+        checks: Some(checks),
+        ..
+    } = i.kind
+    {
         let role = match checks {
             ChecksState::Passing => Role::Success,
             ChecksState::Failing => Role::Error,
@@ -1724,17 +1740,20 @@ pub fn issue_list(
     filter_field(page, query, keys, "filter");
     let state = list_state(query);
     let mut title = Vec::new();
-    let closed_kind = if is_pr {
-        IssueState::Merged
+    let (open_state, closed_state) = if is_pr {
+        (Status::Pr(PrState::Open), Status::Pr(PrState::Merged))
     } else {
-        IssueState::Closed
+        (
+            Status::Issue(IssueState::Open),
+            Status::Issue(IssueState::Closed),
+        )
     };
     let (open, closed) = counts.unwrap_or_default();
     for (name, kind, n, label) in [
-        ("open", IssueState::Open, open, "Open"),
-        ("closed", closed_kind, closed, "Closed"),
+        ("open", open_state, open, "Open"),
+        ("closed", closed_state, closed, "Closed"),
     ] {
-        let (icon, _) = issue_icon(icons, kind, is_pr);
+        let (icon, _) = issue_icon(icons, kind);
         let role = if state == name {
             Role::Strong
         } else {
@@ -2062,7 +2081,7 @@ pub fn issue(page: &mut Page, d: &IssueDetail, icons: Icons, keys: Keys<'_>, now
     );
     let author = login_seg(page, &d.author, Role::Strong);
     let mut segs = vec![
-        state_chip(d.state, false, icons),
+        state_chip(Status::Issue(d.state), icons),
         Seg::new("  ", Role::Body),
         author,
         Seg::new(
@@ -2123,18 +2142,17 @@ pub enum PrTab {
 /// The lines under a PR's title: branches, size (the state is in the
 /// sticky title above).
 fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
-    let s = &d.summary;
-    let author = login_seg(page, &s.author, Role::Strong);
+    let author = login_seg(page, &d.author, Role::Strong);
     let head = match &d.head_repo {
         Some(repo) if *repo != pr.repo.to_string() => {
             format!("{}:{}", repo.split('/').next().unwrap_or(repo), d.head_ref)
         }
         _ => d.head_ref.clone(),
     };
-    let wants = match s.state {
-        IssueState::Merged => " merged into ",
-        IssueState::Closed | IssueState::NotPlanned => " wanted to merge into ",
-        IssueState::Open | IssueState::Draft => " wants to merge into ",
+    let wants = match d.state {
+        PrState::Merged => " merged into ",
+        PrState::Closed => " wanted to merge into ",
+        PrState::Open | PrState::Draft => " wants to merge into ",
     };
     let segs = vec![
         author,
@@ -2144,12 +2162,12 @@ fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
         chip(head, Bg::PrimaryContainer),
     ];
     page.wrapped(segs, 0, Frame::None);
-    let mut meta = Vec::from(changes(s.additions, s.deletions));
+    let mut meta = Vec::from(changes(d.additions, d.deletions));
     meta.push(Seg::new(
         format!(
             " · opened {} · updated {}",
             time::ago_iso(&d.created_at, now),
-            time::ago_iso(&s.updated_at, now)
+            time::ago_iso(&d.updated_at, now)
         ),
         Role::Meta,
     ));
@@ -2160,13 +2178,12 @@ fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
 
 /// GitHub's merge box: checks, reviews, conflicts.
 fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
-    let s = &d.summary;
     let readiness = d.readiness();
     if matches!(readiness, Readiness::Merged | Readiness::Closed) {
         return;
     }
     connector(page);
-    let (headline, role) = match (readiness, s.checks, s.review) {
+    let (headline, role) = match (readiness, d.checks, d.review) {
         (Readiness::Draft, ..) => ("This pull request is still a draft", Role::Meta),
         (Readiness::Conflicts, ..) => (
             "This branch has conflicts that must be resolved",
@@ -2186,12 +2203,12 @@ fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
     };
     page.box_top(vec![Seg::new(headline, role)], Vec::new());
     // Each row: passed, failed, or neither yet.
-    let review = s.review.map(|r| match r {
+    let review = d.review.map(|r| match r {
         ReviewDecision::Approved => (Some(true), "Changes approved"),
         ReviewDecision::ChangesRequested => (Some(false), "Changes requested"),
         ReviewDecision::ReviewRequired => (None, "Review required"),
     });
-    let checks = s.checks.map(|c| match c {
+    let checks = d.checks.map(|c| match c {
         ChecksState::Passing => (Some(true), "All checks have passed"),
         ChecksState::Failing => (Some(false), "Some checks were not successful"),
         ChecksState::Pending => (None, "Some checks haven't completed yet"),
@@ -2274,7 +2291,7 @@ pub fn pr_conversation(
         label_list(side, &d.labels);
         milestone_aside(side, &pr.repo, d.milestone.as_ref());
         aside_heading(side, "Size");
-        let mut size = Vec::from(changes(d.summary.additions, d.summary.deletions));
+        let mut size = Vec::from(changes(d.additions, d.deletions));
         size.push(Seg::new(
             format!(" in {}", plural(d.changed_files, "file")),
             Role::Meta,
@@ -2282,7 +2299,7 @@ pub fn pr_conversation(
         side.line(size);
     });
     pr_summary(page, pr, d, now);
-    let op = &d.summary.author;
+    let op = &d.author;
     let talk = Conversation {
         base: LinkBase::new(&pr.repo, &d.head_oid, ""),
         op,
@@ -3429,7 +3446,7 @@ pub fn branches(
             }
             let mut right = Vec::new();
             if let Some((number, state)) = b.pr {
-                let (icon, role) = issue_icon(icons, state, true);
+                let (icon, role) = issue_icon(icons, Status::Pr(state));
                 right.push(Seg::new(format!("{icon} "), role));
                 right.push(link_seg(
                     page,

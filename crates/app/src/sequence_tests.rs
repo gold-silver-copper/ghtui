@@ -17,7 +17,9 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
 use ghtui_api::ApiError;
-use ghtui_api::browse::{BranchInfo, IssueState, Results, SearchKind, SearchResults};
+use ghtui_api::browse::{
+    BranchInfo, IssueState, PrState, Results, SearchKind, SearchResults, Status,
+};
 use ghtui_api::model::RepoId;
 use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
 use ghtui_ui::Icons;
@@ -62,7 +64,16 @@ fn page(route: &Route, start: u64, len: u8, total: u64, next: bool) -> Data {
     match route {
         Route::Search { .. } => {
             let items = (start..start + u64::from(len))
-                .map(|n| fixtures::issue_summary(n + 1, n % 3 == 0, IssueState::Open))
+                .map(|n| {
+                    fixtures::issue_summary(
+                        n + 1,
+                        if n % 3 == 0 {
+                            Status::Pr(PrState::Open)
+                        } else {
+                            Status::Issue(IssueState::Open)
+                        },
+                    )
+                })
                 .collect();
             Data::Search(Box::new(SearchResults::Issues(Results {
                 total,

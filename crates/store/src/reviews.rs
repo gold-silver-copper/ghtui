@@ -60,10 +60,6 @@ impl Reviews {
         }
     }
 
-    pub fn exists(&self, owner: &str, repo: &str, number: u64) -> bool {
-        self.path(owner, repo, number).is_ok_and(|p| p.exists())
-    }
-
     /// Replaces the PR's review state; an empty state removes its file.
     pub fn put(
         &self,
@@ -89,19 +85,12 @@ impl Reviews {
     }
 }
 
-/// `owner/repo#number`, the cache's old review key.
-pub(crate) fn parse_key(key: &str) -> Option<(&str, &str, u64)> {
-    let (repo, number) = key.split_once('#')?;
-    let (owner, name) = repo.split_once('/')?;
-    Some((owner, name, number.parse().ok()?))
-}
-
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
     use crate::{DraftComment, DraftSide};
 
-    pub(crate) fn draft(body: &str) -> ReviewState {
+    fn draft(body: &str) -> ReviewState {
         ReviewState {
             pending: vec![DraftComment {
                 id: 1,
@@ -121,15 +110,18 @@ pub(crate) mod tests {
     #[test]
     fn round_trips_and_empty_removes() {
         let dir = tempfile::tempdir().unwrap();
-        let reviews = Reviews::open(&dir.path().join("reviews")).unwrap();
+        let reviews = Reviews::open(dir.path()).unwrap();
+        let file = dir.path().join("o/r/1.json");
         assert_eq!(reviews.get("o", "r", 1).unwrap(), ReviewState::default());
+        assert_eq!(ReviewState::default().next_draft_id(), 1);
         reviews.put("o", "r", 1, &draft("nit")).unwrap();
-        assert!(reviews.exists("o", "r", 1));
+        assert_eq!(draft("nit").next_draft_id(), 2);
+        assert!(file.exists());
         assert_eq!(reviews.get("o", "r", 1).unwrap(), draft("nit"));
         reviews.put("o", "r", 1, &draft("better")).unwrap();
         assert_eq!(reviews.get("o", "r", 1).unwrap(), draft("better"));
         reviews.put("o", "r", 1, &ReviewState::default()).unwrap();
-        assert!(!reviews.exists("o", "r", 1));
+        assert!(!file.exists());
     }
 
     #[test]
@@ -153,11 +145,5 @@ pub(crate) mod tests {
         let reviews = Reviews::open(dir.path()).unwrap();
         assert!(reviews.put("..", "r", 1, &draft("x")).is_err());
         assert!(reviews.put("o", "a/b", 1, &draft("x")).is_err());
-    }
-
-    #[test]
-    fn parses_old_keys() {
-        assert_eq!(parse_key("o/r#12"), Some(("o", "r", 12)));
-        assert_eq!(parse_key("o/r"), None);
     }
 }

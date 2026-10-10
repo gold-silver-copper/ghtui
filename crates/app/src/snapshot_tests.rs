@@ -3,9 +3,9 @@
 //! show up in review. Rendering also exercises the theme's debug assertion
 //! that every fg/bg pair used is declared (and therefore contrast-tested).
 
-use ghtui_api::browse::{IssueState, RepoSort, SearchKind, SearchResults};
+use ghtui_api::browse::{IssueKind, PrState, RepoSort, SearchKind, SearchResults};
 use ghtui_api::model::{
-    Capped, ChecksState, Label, Mergeable, PrDetail, PrRef, PrSummary, RepoId, ReviewDecision,
+    Capped, ChecksState, Label, Mergeable, PrDetail, PrRef, RepoId, ReviewDecision,
 };
 use ghtui_api::rate_limit::{Bucket, RateLimits};
 use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
@@ -25,40 +25,24 @@ use crate::view::view;
 /// 2026-10-03T12:00:00Z
 const NOW: u64 = 1_791_028_800;
 
-fn summary(
-    pr: &str,
-    title: &str,
-    state: IssueState,
-    review: Option<ReviewDecision>,
-    checks: Option<ChecksState>,
-) -> PrSummary {
-    PrSummary {
-        pr: PrRef::parse(pr).unwrap(),
-        title: title.into(),
-        author: "octocat".into(),
-        state,
-        updated_at: "2026-10-03T09:00:00Z".into(),
-        additions: 120,
-        deletions: 34,
-        comments: 3,
-        review,
-        checks,
-    }
-}
-
 /// A pull request as Home's sections list it.
 fn row(
     pr: &str,
     title: &str,
-    state: IssueState,
+    state: PrState,
     review: Option<ReviewDecision>,
     checks: Option<ChecksState>,
 ) -> ghtui_api::browse::IssueSummary {
-    ghtui_api::browse::IssueSummary {
-        review,
-        checks,
-        ..fixtures::found_pr(pr, title, state)
+    let mut row = fixtures::found_pr(pr, title, state);
+    if let IssueKind::Pr {
+        review: r,
+        checks: c,
+        ..
+    } = &mut row.kind
+    {
+        (*r, *c) = (review, checks);
     }
+    row
 }
 
 /// Home's default sections: review requests, your pull requests (2 of
@@ -68,14 +52,14 @@ fn fill_home(state: &mut State) {
         row(
             "ratatui/ratatui#1820",
             "Add a virtualized list widget for very long collections",
-            IssueState::Open,
+            PrState::Open,
             Some(ReviewDecision::ReviewRequired),
             Some(ChecksState::Passing),
         ),
         row(
             "tokio-rs/tokio#7001",
             "Fix waker leak in the multi-thread scheduler when tasks are cancelled during shutdown",
-            IssueState::Draft,
+            PrState::Draft,
             None,
             Some(ChecksState::Pending),
         ),
@@ -85,14 +69,14 @@ fn fill_home(state: &mut State) {
         row(
             "gold-silver-copper/ghtui#12",
             "Theme: generate syntax palette from seed",
-            IssueState::Open,
+            PrState::Open,
             Some(ReviewDecision::Approved),
             Some(ChecksState::Failing),
         ),
         row(
             "gold-silver-copper/ghtui#9",
             "Cache GraphQL responses in redb",
-            IssueState::Open,
+            PrState::Open,
             Some(ReviewDecision::ChangesRequested),
             None,
         ),
@@ -127,13 +111,14 @@ pub(crate) fn pr_detail() -> PrDetail {
             ghtui_api::change::MergeMethod::Squash,
             ghtui_api::change::MergeMethod::Merge,
         ],
-        summary: summary(
-            "gold-silver-copper/ghtui#12",
-            "Theme: generate syntax palette from seed",
-            IssueState::Open,
-            Some(ReviewDecision::Approved),
-            Some(ChecksState::Failing),
-        ),
+        title: "Theme: generate syntax palette from seed".into(),
+        author: "octocat".into(),
+        state: PrState::Open,
+        updated_at: "2026-10-03T09:00:00Z".into(),
+        additions: 120,
+        deletions: 34,
+        review: Some(ReviewDecision::Approved),
+        checks: Some(ChecksState::Failing),
         body: "Derives keyword, string and type colors from the seed's HCT palettes.\n\n\
                Every syntax role is now checked against every diff background, in both \
                schemes and at both color depths."
@@ -3039,7 +3024,7 @@ fn sample(key: &DataKey) -> Data {
 /// when it can't, sends one change, and ends up showing what GitHub says.
 mod changes {
     use ghtui_api::ApiError;
-    use ghtui_api::browse::{CheckOutcome, IssueState};
+    use ghtui_api::browse::{CheckOutcome, IssueState, PrState, Status};
     use ghtui_api::change::{Change, MergeMethod};
     use ghtui_api::model::{MergeState, NodeId, PrRef, ReviewEvent};
     use ghtui_store::{DraftComment, DraftSide, ReviewState};
@@ -3066,8 +3051,8 @@ mod changes {
     }
 
     /// A pull request whose state is `state`.
-    fn pr_in(state: IssueState) -> State {
-        pr_with(|d| d.summary.state = state)
+    fn pr_in(state: PrState) -> State {
+        pr_with(|d| d.state = state)
     }
 
     /// The pull request, changed by `f`.
@@ -3149,7 +3134,7 @@ mod changes {
         // Until GitHub shows it merged, nothing else is offered.
         press(&mut s, "X");
         says(&s, "hasn't shown the last change");
-        let merged = mergeable(|d| d.summary.state = IssueState::Merged);
+        let merged = mergeable(|d| d.state = PrState::Merged);
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(merged))));
         assert!(s.awaiting.is_none());
     }
@@ -3191,7 +3176,7 @@ mod changes {
             let none = crate::fixtures::found_prs(Vec::new(), 0);
             crate::fixtures::section(&mut s, i, none);
         }
-        let merged = mergeable(|d| d.summary.state = IssueState::Merged);
+        let merged = mergeable(|d| d.state = PrState::Merged);
         let cmds = update(&mut s, Msg::Pr(pr(), Box::new(Ok(merged))));
         assert!(s.awaiting.is_none());
         let home = s.home[1].search.clone().unwrap().key();
@@ -3202,7 +3187,10 @@ mod changes {
             &mut s,
             1,
             crate::fixtures::found_prs(
-                vec![crate::fixtures::issue_summary(3, false, IssueState::Open)],
+                vec![crate::fixtures::issue_summary(
+                    3,
+                    Status::Issue(IssueState::Open),
+                )],
                 1,
             ),
         );
@@ -3292,7 +3280,7 @@ mod changes {
     /// alike, and sends nothing.
     #[test]
     fn what_cant_be_done_says_why() {
-        let mut s = pr_in(IssueState::Merged);
+        let mut s = pr_in(PrState::Merged);
         assert!(press(&mut s, "M").is_empty());
         assert!(s.overlay.is_none());
         says(&s, "It's merged");
@@ -3306,7 +3294,7 @@ mod changes {
         let mut s = with_pr(Mode::Dark);
         press(&mut s, "W");
         says(&s, "It isn't a draft");
-        s.viewer = Some(pr_detail().summary.author);
+        s.viewer = Some(pr_detail().author);
         press(&mut s, "A");
         says(&s, "You can't approve your own pull request");
 
@@ -3322,7 +3310,7 @@ mod changes {
     /// it's on its way is left as it is.
     #[test]
     fn a_draft_is_marked_ready_at_once_and_hears_back_alone() {
-        let mut s = pr_in(IssueState::Draft);
+        let mut s = pr_in(PrState::Draft);
         let ready = Change::ReadyForReview {
             pr: NodeId::new("PR_12"),
         };

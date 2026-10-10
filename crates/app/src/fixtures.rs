@@ -7,11 +7,11 @@ use ghtui_api::browse::{
     Checks, CodeHit, Comment, CommitDetail, CommitHit, CommitInfo, Comparison, Contributed,
     Contributions, DeploymentInfo, DeploymentList, DiscussionCategory, DiscussionComment,
     DiscussionDetail, DiscussionHit, DiscussionList, DiscussionSummary, EntryKind, Gist, GistFile,
-    GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobSummary, Login, MilestoneDetail,
-    MilestoneInfo, MilestoneList, MonthActivity, Person, PrActivity, Profile, Readme, Release,
-    RepoOverview, RepoSummary, Results, ReviewSummary, RunSummary, SearchResults, Step, TagInfo,
-    TeamDetail, TeamRepo, TeamSummary, TreeEntry, UserSummary, Week, WikiPage, Workflow,
-    WorkflowRun,
+    GistSummary, IssueDetail, IssueKind, IssueState, IssueSummary, Job, JobSummary, Login,
+    MilestoneDetail, MilestoneInfo, MilestoneList, MonthActivity, Person, PrActivity, PrState,
+    Profile, Readme, Release, RepoOverview, RepoSummary, Results, ReviewSummary, RunSummary,
+    SearchResults, Status, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary, TreeEntry,
+    UserSummary, Week, WikiPage, Workflow, WorkflowRun,
 };
 use ghtui_api::model::{Capped, Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
@@ -98,21 +98,23 @@ pub(crate) fn found_prs(items: Vec<IssueSummary>, total: u64) -> SearchResults {
 }
 
 /// A pull request a search found.
-pub(crate) fn found_pr(pr: &str, title: &str, state: IssueState) -> IssueSummary {
+pub(crate) fn found_pr(pr: &str, title: &str, state: PrState) -> IssueSummary {
     let pr = PrRef::parse(pr).unwrap();
     IssueSummary {
+        kind: IssueKind::Pr {
+            id: NodeId::new(format!("PR_{pr}")),
+            state,
+            review: None,
+            checks: None,
+        },
         repo: pr.repo,
         number: pr.number,
         title: title.into(),
-        is_pr: true,
-        state,
         author: "octocat".into(),
         updated_at: "2026-10-03T09:00:00Z".into(),
         comments: 3,
         labels: Capped::default(),
         created_at: "2026-10-01T09:00:00Z".into(),
-        review: None,
-        checks: None,
     }
 }
 
@@ -563,13 +565,20 @@ fn label(name: &str, color: &str) -> Label {
     }
 }
 
-pub fn issue_summary(number: u64, is_pr: bool, state: IssueState) -> IssueSummary {
+pub fn issue_summary(number: u64, state: Status) -> IssueSummary {
     IssueSummary {
+        kind: match state {
+            Status::Issue(state) => IssueKind::Issue(state),
+            Status::Pr(state) => IssueKind::Pr {
+                id: NodeId::new(format!("PR_{number}")),
+                state,
+                review: None,
+                checks: None,
+            },
+        },
         repo: RepoId::new("gold-silver-copper", "ghtui"),
         number,
         title: format!("Issue {number}: pages wrap at the terminal width"),
-        is_pr,
-        state,
         author: "octocat".into(),
         updated_at: "2026-10-03T09:00:00Z".into(),
         comments: number % 3,
@@ -579,8 +588,6 @@ pub fn issue_summary(number: u64, is_pr: bool, state: IssueState) -> IssueSummar
             Vec::new().into()
         },
         created_at: "2026-09-29T09:00:00Z".into(),
-        review: None,
-        checks: None,
     }
 }
 
@@ -588,9 +595,9 @@ pub fn issue_results(next: Option<&str>) -> SearchResults {
     SearchResults::Issues(Results {
         total: 7,
         items: vec![
-            issue_summary(14, false, IssueState::Open),
-            issue_summary(11, false, IssueState::Open),
-            issue_summary(8, false, IssueState::Open),
+            issue_summary(14, Status::Issue(IssueState::Open)),
+            issue_summary(11, Status::Issue(IssueState::Open)),
+            issue_summary(8, Status::Issue(IssueState::Open)),
         ],
         next: next.map(str::to_owned),
     })
@@ -1090,7 +1097,7 @@ pub fn branches() -> Results<BranchInfo> {
                 "links",
                 false,
                 "Discussions are pages",
-                Some((6, IssueState::Open)),
+                Some((6, PrState::Open)),
             ),
             branch(
                 "main",
@@ -1102,7 +1109,7 @@ pub fn branches() -> Results<BranchInfo> {
                 "tabs",
                 false,
                 "Tabs keep their history",
-                Some((5, IssueState::Merged)),
+                Some((5, PrState::Merged)),
             ),
         ],
         next: Some("b1".into()),
@@ -1151,8 +1158,8 @@ pub fn milestone() -> MilestoneDetail {
         items: Results {
             total: 10,
             items: vec![
-                issue_summary(42, false, IssueState::Open),
-                issue_summary(6, true, IssueState::Merged),
+                issue_summary(42, Status::Issue(IssueState::Open)),
+                issue_summary(6, Status::Pr(PrState::Merged)),
             ],
             next: Some("m1".into()),
         },

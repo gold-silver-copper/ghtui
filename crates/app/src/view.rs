@@ -374,15 +374,14 @@ fn pr_title<'a>(state: &'a State, pr: &ghtui_api::model::PrRef) -> Line<'a> {
     let Some(d) = state.prs.get(pr).and_then(|r| r.data.as_ref()) else {
         return Line::from(Span::styled(pr.to_string(), theme.title(bar)));
     };
-    let s = &d.summary;
-    let (text, bg) = ghtui_ui::pages::state_label(s.state, true);
+    let (text, bg) = ghtui_ui::pages::state_label(ghtui_api::browse::Status::Pr(d.state));
     Line::from(vec![
         Span::styled(
-            format!(" {} {text} ", state.icons.pr_state(s.state)),
+            format!(" {} {text} ", state.icons.pr_state(d.state)),
             theme.fill(bg),
         ),
         Span::styled("  ", theme.body(bar)),
-        Span::styled(s.title.clone(), theme.title(bar)),
+        Span::styled(d.title.clone(), theme.title(bar)),
         Span::styled(format!("  #{}", pr.number), theme.meta(bar)),
     ])
 }
