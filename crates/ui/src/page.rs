@@ -332,7 +332,9 @@ impl Page {
         let number_w = cols(text::width(&number.text));
         let first = self.room(frame, number_w);
         let text: String = segs.iter().map(|s| s.text.as_str()).collect();
-        let indent = text.len().saturating_sub(text.trim_start_matches(' ').len());
+        let indent = text
+            .len()
+            .saturating_sub(text.trim_start_matches(' ').len());
         let under = number_w.saturating_add(cols(indent).min(first / 2));
         let rest = usize::from(self.room(frame, under));
         let lines = wrap_hanging(segs, usize::from(first), rest);

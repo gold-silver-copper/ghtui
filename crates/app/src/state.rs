@@ -2749,7 +2749,10 @@ pub(crate) mod tests {
             p.scroll,
             page.lines.len()
         );
-        let shown: String = page.lines[jump..].iter().map(ghtui_ui::page::PageLine::text).collect();
+        let shown: String = page.lines[jump..]
+            .iter()
+            .map(ghtui_ui::page::PageLine::text)
+            .collect();
         assert_eq!(shown.matches("a::b::c").count(), 20, "{shown}");
     }
 
