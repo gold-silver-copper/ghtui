@@ -127,50 +127,6 @@ impl State {
     fn page_chrome(&self, route: &Route, c: &mut Chrome) {
         match route {
             Route::Home => c.crumb("Home", None),
-            Route::Repo(repo)
-            | Route::Tree { repo, .. }
-            | Route::Blob { repo, .. }
-            | Route::Blame { repo, .. }
-            | Route::Unsplit { repo, .. }
-            | Route::Issues { repo, .. }
-            | Route::Pulls { repo, .. }
-            | Route::Issue { repo, .. }
-            | Route::Commits { repo, .. }
-            | Route::Stargazers(repo)
-            | Route::Watchers(repo)
-            | Route::Forks(repo)
-            | Route::Releases(repo)
-            | Route::Release { repo, .. }
-            | Route::Tags(repo)
-            | Route::Branches(repo)
-            | Route::Wiki { repo, .. }
-            | Route::Deployments { repo, .. }
-            | Route::Milestones { repo, .. }
-            | Route::Milestone { repo, .. }
-            | Route::WorkflowRun { repo, .. }
-            | Route::Job { repo, .. }
-            | Route::Workflow { repo, .. }
-            | Route::Actions(repo)
-            | Route::Discussions {
-                of: DiscussionsOf::Repo(repo),
-                ..
-            }
-            | Route::Discussion {
-                of: DiscussionsOf::Repo(repo),
-                ..
-            }
-            | Route::Advisories(Some(repo))
-            | Route::Advisory {
-                repo: Some(repo), ..
-            } => {
-                repo_crumbs(repo, c);
-                self.repo_tabs(repo, c);
-                let here = section(route);
-                c.active = c.tabs.iter().position(|(_, t)| match t {
-                    Target::Page(r) => section(r) == here,
-                    _ => false,
-                });
-            }
             Route::Pr { pr, tab } => {
                 repo_crumbs(&pr.repo, c);
                 self.pr_tabs(pr, c);
@@ -315,6 +271,19 @@ impl State {
                         }),
                     ));
                 }
+            }
+            // The rest are a repository's pages, under its tabs.
+            _ => {
+                let Some(repo) = route.repo() else {
+                    return;
+                };
+                repo_crumbs(repo, c);
+                self.repo_tabs(repo, c);
+                let here = section(route);
+                c.active = c.tabs.iter().position(|(_, t)| match t {
+                    Target::Page(r) => section(r) == here,
+                    _ => false,
+                });
             }
         }
     }
