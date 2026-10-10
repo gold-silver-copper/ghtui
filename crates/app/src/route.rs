@@ -606,6 +606,33 @@ impl Route {
         })
     }
 
+    /// What a list's tabs count, in one request: an issue or pull request
+    /// list's filter open and closed (in any order), or a search's words
+    /// as each kind of search.
+    pub fn counts(&self) -> Option<Vec<(SearchKind, String)>> {
+        match self {
+            Route::Issues { repo, query } | Route::Pulls { repo, query } => {
+                let is = if matches!(self, Route::Pulls { .. }) {
+                    "pr"
+                } else {
+                    "issue"
+                };
+                let words = query.split_whitespace();
+                let words = words.filter(|w| !is_state_word(w) && !w.starts_with("sort:"));
+                let base = std::iter::once(format!("repo:{repo} is:{is}"))
+                    .chain(words.map(str::to_owned))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let in_state = |state: &str| (SearchKind::Issues, format!("{base} is:{state}"));
+                Some(vec![in_state("open"), in_state("closed")])
+            }
+            Route::Search { query, .. } if !query.trim().is_empty() => {
+                Some(COUNTED.map(|kind| (kind, query.clone())).to_vec())
+            }
+            _ => None,
+        }
+    }
+
     /// The search behind a list page.
     pub fn search(&self) -> Option<(SearchKind, String)> {
         match self {
@@ -620,6 +647,21 @@ impl Route {
         }
     }
 }
+
+/// Whether a word of a list's filter picks the list's state.
+pub fn is_state_word(word: &str) -> bool {
+    matches!(word, "is:open" | "is:closed" | "state:open" | "state:closed")
+}
+
+/// The kinds of search a search page's tabs count (commits and code are
+/// counted by REST alone, a request each, so only once visited).
+const COUNTED: [SearchKind; 5] = [
+    SearchKind::Repos,
+    SearchKind::Issues,
+    SearchKind::Pulls,
+    SearchKind::Users,
+    SearchKind::Discussions,
+];
 
 /// The search for a repository's issue or pull request list. Newest first,
 /// as on GitHub, unless the filter sorts.

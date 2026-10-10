@@ -513,6 +513,8 @@ pub struct State {
     pub awaiting: Option<act::Awaiting>,
     /// An action waiting for what it's about to load.
     pub pending: Option<act::Pending>,
+    /// Rows changed from the list on screen, kept on it.
+    pub kept: Option<act::Kept>,
     pub quit: bool,
 }
 
@@ -549,6 +551,7 @@ impl State {
             live: false,
             awaiting: None,
             pending: None,
+            kept: None,
             quit: false,
         };
         state.sync_page();
@@ -656,12 +659,6 @@ impl State {
             Screen::Page(p) => {
                 let route = p.route.clone();
                 cmds.extend(self.ensure_route(&route, force));
-                // An issue or pull request list's open and closed counts
-                // are the header's, so refreshing the list refreshes them.
-                if force && let Route::Issues { repo, .. } | Route::Pulls { repo, .. } = &route {
-                    let header = Need::Data(DataKey::Repo(repo.clone()));
-                    cmds.extend(self.ensure(header, true));
-                }
             }
             Screen::Diff(d) => {
                 let of = d.of.clone();
@@ -742,6 +739,10 @@ impl State {
     /// diff) in bounds.
     #[must_use]
     pub fn settle(&mut self) -> Vec<Cmd> {
+        // Rows kept on a list are let go once you leave it.
+        if self.kept.as_ref().is_some_and(|k| self.route() != Some(&k.route)) {
+            self.kept = None;
+        }
         let mut cmds = self.settle_ref();
         self.sync_page();
         cmds.extend(self.settle_diff());
@@ -958,6 +959,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 tracing::warn!(?key, %err, "fetch failed");
             }
             let is_pr = matches!(result, Ok(Data::Issue(None)));
+            let result = result.map(|data| act::keep(state, &key, data));
             let remote = state.data.entry(key.clone()).or_default();
             match cached_at {
                 None => remote.finish(result),
@@ -1199,7 +1201,11 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             let kept = state.notices.log().iter().cloned().collect();
             return state.open_picker(picker::Kind::Messages(kept));
         }
-        Action::Refresh => return state.load_visible(true),
+        Action::Refresh => {
+            // What a refresh shows is GitHub's list, without the rows kept.
+            state.kept = None;
+            return state.load_visible(true);
+        }
         Action::Copy => return nav::copy_link(state),
         Action::OpenInBrowser => return state.go(Target::External(state.here_url()).into()),
         _ if act::ACTIONS.contains(&action) => return act::act(state, action),
@@ -3005,19 +3011,22 @@ pub(crate) mod tests {
         let open = issues(OPEN);
         assert_eq!(route(&state), open);
         let (kind, query) = open.search().unwrap();
+        let counts = DataKey::Counts(open.counts().unwrap());
         assert_eq!(
             cmds,
-            vec![fetch(DataKey::Search(kind, query))],
+            vec![fetch(DataKey::Search(kind, query)), fetch(counts.clone())],
             "the header isn't fetched again"
         );
         assert_eq!(state.chrome().active, Some(1));
-        // r refreshes the list's counts too, which the header holds.
+        // r refreshes the list's counts too.
+        let open_closed = Data::Counts(vec![Some(3), Some(9)]);
+        fetched(&mut state, counts.clone(), open_closed);
         let cmds = fetches(press(&mut state, "r"));
-        let header = Cmd::Api(Api::Fetch {
-            key: DataKey::Repo(repo()),
+        let counts = Cmd::Api(Api::Fetch {
+            key: counts,
             cached: false,
         });
-        assert!(cmds.contains(&header), "{cmds:?}");
+        assert!(cmds.contains(&counts), "{cmds:?}");
 
         // `/` on a list edits its filter.
         press(&mut state, "/");

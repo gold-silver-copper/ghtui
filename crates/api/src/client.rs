@@ -983,25 +983,16 @@ impl GitHub {
         after: Option<String>,
         found: impl FnOnce(&browse::SearchResults) + Send,
     ) -> Result<browse::SearchResults, ApiError> {
-        use browse::{SearchKind as Kind, SearchType};
+        use browse::SearchKind as Kind;
         let first_page = after.is_none();
-        // GitHub's issue search covers both; the tabs separate them.
-        let (search_type, is) = match kind {
-            Kind::Repos => (SearchType::Repository, ""),
-            Kind::Issues => (SearchType::Issue, " is:issue"),
-            Kind::Pulls => (SearchType::Issue, " is:pr"),
-            Kind::Users => (SearchType::User, ""),
-            Kind::Discussions | Kind::Commits | Kind::Code => {
+        let (search_type, api_query) = match searched(kind, query) {
+            Some((search_type, api_query)) if kind != Kind::Discussions => (search_type, api_query),
+            _ => {
                 let results = self.search_other(kind, query, after).await?;
                 return Ok(self
                     .kept_if(first_page, &browse::keys::search(kind, query), results)
                     .await);
             }
-        };
-        let api_query = if query.contains("is:issue") || query.contains("is:pr") {
-            query.to_owned()
-        } else {
-            format!("{query}{is}")
         };
         let (mut results, prs) = self.search_as(kind, search_type, &api_query, after).await?;
         if first_page
@@ -1023,6 +1014,43 @@ impl GitHub {
         Ok(self
             .kept_if(first_page, &browse::keys::search(kind, query), results)
             .await)
+    }
+
+    /// How many each search finds, all in one request: what a list's
+    /// open and closed tabs and a search's kinds count. Commits and code
+    /// are searched by REST alone, one request each, so they're `None`.
+    pub async fn search_counts(
+        &self,
+        searches: &[(browse::SearchKind, String)],
+    ) -> Result<Vec<Option<u64>>, ApiError> {
+        let asked: Vec<(usize, browse::SearchType, String)> = (searches.iter().enumerate())
+            .filter_map(|(i, (kind, query))| {
+                let (search_type, query) = searched(*kind, query)?;
+                Some((i, search_type, query))
+            })
+            .collect();
+        let mut counts = vec![None; searches.len()];
+        if asked.is_empty() {
+            return Ok(counts);
+        }
+        let types: Vec<browse::SearchType> = asked.iter().map(|(_, t, _)| *t).collect();
+        let vars: serde_json::Map<String, Value> = (asked.iter().enumerate())
+            .map(|(n, (_, _, q))| (format!("q{n}"), Value::String(q.clone())))
+            .collect();
+        let body = serde_json::json!({ "query": raw::search_counts(&types), "variables": vars });
+        let reply = self.ask(&body, true).await?;
+        let found: std::collections::HashMap<String, std::collections::HashMap<String, i64>> =
+            reply.unrooted("the counts", |errors| self.leave_out(errors))?;
+        for (n, (i, _, _)) in asked.iter().enumerate() {
+            let count = (found.get(&format!("c{n}")))
+                .and_then(|c| c.values().next())
+                .map(|&c| u64::try_from(c).unwrap_or(0));
+            if let Some(slot) = counts.get_mut(*i) {
+                *slot = count;
+            }
+        }
+        let key = browse::keys::counts(searches);
+        Ok(self.kept(&key, counts).await)
     }
 
     /// The checks of each item, by its pull request's ID (`None`: not a
@@ -2333,6 +2361,28 @@ impl GitHub {
     }
 }
 
+/// How GraphQL searches `query` as a `kind` search: GitHub's issue search
+/// covers both issues and pull requests, so the kind says which, unless the
+/// query does. Commits and code are REST's alone (`None`).
+fn searched(kind: browse::SearchKind, query: &str) -> Option<(browse::SearchType, String)> {
+    use browse::{SearchKind as Kind, SearchType};
+    let (search_type, is) = match kind {
+        Kind::Repos => (SearchType::Repository, ""),
+        Kind::Issues => (SearchType::Issue, " is:issue"),
+        Kind::Pulls => (SearchType::Issue, " is:pr"),
+        Kind::Users => (SearchType::User, ""),
+        Kind::Discussions => (SearchType::Discussion, ""),
+        Kind::Commits | Kind::Code => return None,
+    };
+    let typed = query.contains("is:issue") || query.contains("is:pr");
+    let query = if typed || is.is_empty() {
+        query.to_owned()
+    } else {
+        format!("{query}{is}")
+    };
+    Some((search_type, query))
+}
+
 /// A query whose root GitHub never answers with null (`search`,
 /// `viewer`), so [`GitHub::graphql`] may take its data whole. A claim
 /// about GitHub's schema: a query for one thing goes through
@@ -2390,6 +2440,17 @@ mod reply {
                     .map(T::deserialize)
                     .transpose()
             };
+            self.found(subject, read, leave_out)
+        }
+
+        /// The whole data of a query whose root fields are all ones GitHub
+        /// never answers with null (searches); see [`Self::found`].
+        pub(super) fn unrooted<T: DeserializeOwned>(
+            self,
+            subject: impl std::fmt::Display,
+            leave_out: impl FnOnce(Vec<String>),
+        ) -> Result<T, ApiError> {
+            let read = |data: Value| (!data.is_null()).then(|| T::deserialize(data)).transpose();
             self.found(subject, read, leave_out)
         }
 

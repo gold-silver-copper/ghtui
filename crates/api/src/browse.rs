@@ -4582,6 +4582,10 @@ pub mod keys {
     pub fn search(kind: SearchKind, query: &str) -> String {
         format!("search:{kind:?}:{query}")
     }
+    pub fn counts(searches: &[(SearchKind, String)]) -> String {
+        let each: Vec<String> = searches.iter().map(|(k, q)| format!("{k:?}:{q}")).collect();
+        format!("counts:{}", each.join("\u{1f}"))
+    }
     pub fn issue(repo: &RepoId, number: u64) -> String {
         format!("issue:{repo}#{number}")
     }

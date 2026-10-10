@@ -261,12 +261,11 @@ impl PageScreen {
         self.built = Some(built);
         let before = (self.scroll, self.selected);
         let find = |i: usize| self.page.find(old.target(old.items.get(i)?.link)?, i);
-        // A fresh page selects its first visible item again. An item that
-        // left (a pull request closed off a list) leaves the selection
-        // where it was, on the one after it.
-        let last = self.page.items.len().checked_sub(1);
-        self.selected = (self.selected.filter(|_| !self.fresh))
-            .and_then(|i| find(i).or_else(|| last.map(|l| i.min(l))));
+        // A fresh page selects its first visible item again. The
+        // selection follows its item, not its place: when the item leaves,
+        // nothing is selected, so a key meant for it can't act on the one
+        // that took its place.
+        self.selected = (self.selected.filter(|_| !self.fresh)).and_then(find);
         // The item still there starting nearest the top, if nearer than
         // the page's top, keeps its place on screen.
         let off = |it: &Item| it.start.abs_diff(self.scroll);
@@ -1182,7 +1181,7 @@ pub fn search_log(state: &mut State, query: &str) {
 fn with_state(query: &str, state: &str) -> String {
     let mut words: Vec<&str> = query
         .split_whitespace()
-        .filter(|w| !matches!(*w, "is:open" | "is:closed" | "state:open" | "state:closed"))
+        .filter(|w| !crate::route::is_state_word(w))
         .collect();
     let qualifier = match state {
         "open" => Some("is:open"),

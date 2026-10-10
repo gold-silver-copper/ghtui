@@ -113,6 +113,29 @@ pub(crate) fn team() -> String {
     )
 }
 
+/// How many each search finds (`$q0`, `$q1`… of `types`), none of them read.
+pub(crate) fn search_counts(types: &[crate::browse::SearchType]) -> String {
+    use crate::browse::SearchType as T;
+    let params: String = (0..types.len())
+        .map(|i| format!("$q{i}: String!"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let fields: String = (types.iter().enumerate())
+        .map(|(i, t)| {
+            let (name, count) = match t {
+                T::Repository => ("REPOSITORY", "repositoryCount"),
+                T::User => ("USER", "userCount"),
+                T::Discussion => ("DISCUSSION", "discussionCount"),
+                T::Issue | T::IssueAdvanced | T::IssueHybrid | T::IssueSemantic => {
+                    ("ISSUE", "issueCount")
+                }
+            };
+            format!("c{i}: search(type: {name}, query: $q{i}, first: 0) {{ {count} }} ")
+        })
+        .collect();
+    format!("query({params}) {{ {fields}}}")
+}
+
 /// Every query here, by name, built with sample input.
 #[cfg(test)]
 pub(crate) fn all() -> Vec<(&'static str, String)> {
@@ -132,6 +155,15 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
             last_commits(&["src/a \"b\".rs".into(), "README.md".into()]),
         ),
         ("refs_named", refs_named(3)),
+        (
+            "search_counts",
+            search_counts(&[
+                crate::browse::SearchType::Issue,
+                crate::browse::SearchType::Repository,
+                crate::browse::SearchType::User,
+                crate::browse::SearchType::Discussion,
+            ]),
+        ),
         ("milestones(open)", milestones(false)),
         ("milestones(closed)", milestones(true)),
         ("milestone", milestone()),

@@ -303,12 +303,24 @@ fn a_dismissed_review_reads_as_dismissed() {
 }
 
 /// Pushes `route` and delivers `data` for its page's own fetch (its last).
+/// Opens `route` with `data` for its own fetch (its last but the counts),
+/// and its tabs' counts, if it counts any, as the samples have them.
 fn open(state: &mut State, route: Route, data: Data) {
-    let Some(Need::Data(key)) = needs(&route).pop() else {
+    let mut keys = needs(&route).into_iter().filter_map(|n| match n {
+        Need::Data(key) => Some(key),
+        Need::Pr(_) => None,
+    });
+    let (counts, own): (Vec<DataKey>, Vec<DataKey>) =
+        keys.by_ref().partition(|k| matches!(k, DataKey::Counts(_)));
+    let Some(key) = own.last().cloned() else {
         panic!("{route:?} doesn't end in a data fetch");
     };
     let _ = state.push(route);
     fetched(state, key, data);
+    for key in counts {
+        let data = sample(&key);
+        fetched(state, key, data);
+    }
 }
 
 fn ghtui() -> RepoId {
@@ -2734,6 +2746,38 @@ fn page_text(state: &State) -> String {
         .join("\n")
 }
 
+/// A filtered list counts its filter open and closed, as GitHub does, not
+/// the whole repository's; and every sort and state of it shares the counts.
+#[test]
+fn a_filtered_list_counts_its_filter() {
+    let mut state = with_issues(Mode::Dark);
+    let route = Route::Issues {
+        repo: ghtui(),
+        query: "is:open label:I-ICE sort:comments-desc".into(),
+    };
+    let counted = route.counts().unwrap();
+    assert_eq!(
+        counted,
+        ["open", "closed"].map(|s| (
+            SearchKind::Issues,
+            format!("repo:gold-silver-copper/ghtui is:issue label:I-ICE is:{s}")
+        ))
+    );
+    let closed = Route::Issues {
+        repo: ghtui(),
+        query: "label:I-ICE is:closed".into(),
+    };
+    assert_eq!(closed.counts().unwrap(), counted);
+    open(&mut state, route, Data::Search(Box::new(fixtures::issue_results(None))));
+    fetched(
+        &mut state,
+        DataKey::Counts(counted),
+        Data::Counts(vec![Some(812), Some(8646)]),
+    );
+    let text = page_text(&state);
+    assert!(text.contains("◉ 812 Open   ✓ 8.6k Closed"), "{text}");
+}
+
 /// Delivers a failed fetch of `key`.
 fn failed(state: &mut State, key: DataKey) {
     update(
@@ -2954,7 +2998,7 @@ fn decoration(route: &Route, need: &Need) -> bool {
     crate::browse::is_header(route, need)
         || matches!(
             (route, need),
-            (_, Need::Data(K::LastCommits(..)))
+            (_, Need::Data(K::LastCommits(..) | K::Counts(_)))
                 | (Route::CommitChecks { .. }, Need::Data(K::Commit(..)))
                 | (
                     Route::Pr {
@@ -2985,6 +3029,9 @@ fn sample(key: &DataKey) -> Data {
         K::Tree(..) => Data::Tree(fixtures::tree()),
         K::Blob(..) => Data::Blob(Box::new(fixtures::blob())),
         K::Search(kind, _) => Data::Search(Box::new(search(kind))),
+        // An issue list's open and closed, or a search's kinds.
+        K::Counts(searches) if searches.len() == 2 => Data::Counts(vec![Some(7), Some(41)]),
+        K::Counts(searches) => Data::Counts((0..searches.len() as u64).map(|n| Some(n * 12)).collect()),
         K::Issue(..) => Data::Issue(Some(Box::new(fixtures::issue()))),
         K::PrActivity(_) => Data::PrActivity(Box::new(fixtures::activity())),
         K::Profile(_) => Data::Profile(Box::new(fixtures::profile())),
@@ -3209,6 +3256,44 @@ mod changes {
         press(&mut s, "gjj");
         press(&mut s, "M");
         says(&s, "That works on a pull request");
+    }
+
+    /// A pull request closed from a list that shows open ones stays where
+    /// it was, closed, when the list is fetched again without it: the key
+    /// pressed next is still about it, not the row that took its place.
+    #[test]
+    fn a_row_closed_from_a_list_stays_under_the_cursor() {
+        let mut s = super::with_home(Mode::Dark, ghtui_theme::ColorDepth::TrueColor);
+        s.prs.clear();
+        press(&mut s, "jj");
+        press(&mut s, "X");
+        update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
+        assert!(confirm(&s).title.starts_with("Close gold-silver-copper/ghtui#12"));
+        let sent = press(&mut s, "<Enter>");
+        answer(&mut s, &sent, Ok(()));
+        let rows = |s: &State| match s.picked::<ghtui_api::browse::SearchResults>(&s.home[1].search.clone().unwrap().key()) {
+            Some(ghtui_api::browse::SearchResults::Issues(r)) => r.items.iter().map(|i| (i.number, i.state)).collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        // GitHub's search no longer has it, and the PR is closed.
+        let closed = mergeable(|d| d.summary.state = IssueState::Closed);
+        update(&mut s, Msg::Pr(pr(), Box::new(Ok(closed))));
+        let others = rows(&s).into_iter().filter(|(n, _)| *n != 12);
+        let others: Vec<_> = others
+            .map(|(n, _)| crate::fixtures::issue_summary(n, true, IssueState::Open))
+            .collect();
+        crate::fixtures::section(&mut s, 1, crate::fixtures::found_prs(others, 30));
+        assert!(rows(&s).contains(&(12, IssueState::Closed)), "{:?}", rows(&s));
+        press(&mut s, "X");
+        assert!(
+            confirm(&s).title.starts_with("Reopen gold-silver-copper/ghtui#12"),
+            "{}",
+            confirm(&s).title
+        );
+        // Refreshing shows GitHub's list as it is.
+        press(&mut s, "<Esc>r");
+        crate::fixtures::section(&mut s, 1, crate::fixtures::found_prs(Vec::new(), 0));
+        assert!(rows(&s).is_empty());
     }
 
     /// Updating the branch, the page follows GitHub until it shows the new

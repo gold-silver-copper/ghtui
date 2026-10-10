@@ -292,6 +292,13 @@ impl State {
                 c.crumb("Search", None);
                 let results = paged(route).and_then(|key| self.picked::<SearchResults>(&key));
                 let total = results.map(|r| r.counts().0);
+                // The other kinds, as one request counts them.
+                let counted = route.counts().zip(self.counts(route));
+                let count_of = |k: SearchKind| {
+                    let (searches, counts) = counted.as_ref()?;
+                    let i = searches.iter().position(|(kind, _)| *kind == k)?;
+                    counts.get(i).copied().flatten()
+                };
                 let kinds = [
                     // Short, so all seven fit.
                     (SearchKind::Repos, "▤", "Repos"),
@@ -306,7 +313,7 @@ impl State {
                     if k == *kind {
                         c.active = Some(i);
                     }
-                    let count = (k == *kind).then_some(total).flatten();
+                    let count = if k == *kind { total } else { count_of(k) };
                     c.tabs.push((
                         new_tab(icon, label, count),
                         Target::Page(Route::Search {
