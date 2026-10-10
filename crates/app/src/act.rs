@@ -256,7 +256,7 @@ fn subject(state: &State) -> Option<Subject> {
         Screen::Diff(d) => d.of.pr().map(|pr| Subject::Pr(pr.clone())),
         Screen::Page(p) => Subject::of(&p.route).or_else(|| {
             let url = p.selected_link()?.url()?;
-            match crate::route::Target::from_url(url) {
+            match crate::route::Dest::from_url(url).target {
                 crate::route::Target::Page(route) => Subject::of(&route),
                 crate::route::Target::Files(of) => of.pr().cloned().map(Subject::Pr),
                 crate::route::Target::External(_) => None,

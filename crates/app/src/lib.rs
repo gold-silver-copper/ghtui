@@ -43,7 +43,7 @@ use crate::config::{Config, DepthSetting, ModeSetting};
 use crate::diff_job::GitContext;
 use crate::diff_screen::DiffOf;
 use crate::keymap::Keymap;
-use crate::route::{Route, Target};
+use crate::route::{Dest, Route, Target};
 use crate::state::{Api, Remote, State};
 
 /// How long to wait for the terminal to report its background color.
@@ -128,11 +128,6 @@ async fn run(started: Instant) -> Result<()> {
     let _log_guard = init_logging(&cache_dir);
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting");
 
-    // What the command line names, for its anchor (a comment, a file).
-    let named = match &cli.command {
-        Some(Command::Pr { target }) => Some(target.as_str()),
-        None => cli.target.as_deref(),
-    };
     let target = match (&cli.command, &cli.target) {
         (Some(Command::Pr { target }), _) => Some(resolve_pr(target).await?),
         (None, Some(target)) => Some(resolve_open(target).await?),
@@ -182,8 +177,8 @@ async fn run(started: Instant) -> Result<()> {
         .unwrap_or_default();
     state.restore_tabs(&tabs);
     let mut cmds = match target {
-        Some(target) => {
-            if let Target::Page(Route::Pr { pr, .. }) | Target::Files(DiffOf::Pr(pr)) = &target {
+        Some(at) => {
+            if let Target::Page(Route::Pr { pr, .. }) | Target::Files(DiffOf::Pr(pr)) = &at.target {
                 state
                     .prs
                     .insert(pr.clone(), Remote::cached(gh.cached_pull_request(pr)));
@@ -192,12 +187,7 @@ async fn run(started: Instant) -> Result<()> {
             // when you get there. With tabs reopened, it's a new tab after
             // them.
             let mut cmds = vec![state::Cmd::Api(Api::FetchViewer)];
-            let external = matches!(target, Target::External(_));
-            cmds.extend(state.start_at(target));
-            // A link to a comment, a file in a diff, a review comment.
-            if let Some(url) = named.filter(|_| !external) {
-                state.anchor_at(url);
-            }
+            cmds.extend(state.start_at(at));
             cmds
         }
         None => state.load_visible(true),
@@ -294,31 +284,30 @@ async fn resolve_target(target: &str) -> Result<PrRef> {
     })
 }
 
-/// The pull request `ghtui pr` opens: at the tab its URL names (Files
-/// changed for `/files`), else its conversation.
-async fn resolve_pr(target: &str) -> Result<Target> {
-    match Target::from_url(target) {
-        target @ (Target::Page(Route::Pr { .. }) | Target::Files(DiffOf::Pr(_))) => Ok(target),
-        _ => Ok(Target::Page(Route::pr(resolve_target(target).await?))),
+/// The pull request `ghtui pr` opens: at the tab and spot its URL names
+/// (Files changed for `/files`), else its conversation.
+async fn resolve_pr(target: &str) -> Result<Dest> {
+    let dest = Dest::from_url(target);
+    match dest.target {
+        Target::Page(Route::Pr { .. }) | Target::Files(DiffOf::Pr(_)) => Ok(dest),
+        _ => Ok(Target::Page(Route::pr(resolve_target(target).await?)).into()),
     }
 }
 
 /// The page to open from the command line.
-async fn resolve_open(target: &str) -> Result<Target> {
+async fn resolve_open(target: &str) -> Result<Dest> {
     let number = target.trim_start_matches('#');
     if !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) {
         let pr = resolve_target(number).await?;
         return Ok(Target::Page(Route::Issue {
             repo: pr.repo,
             number: pr.number,
-        }));
+        })
+        .into());
     }
-    match route::parse_input(target, None) {
-        Some(Target::External(_)) | None => bail!(
-            "can't open `{target}`; use owner/repo, owner/repo#123, @user, or a github.com URL"
-        ),
-        Some(target) => Ok(target),
-    }
+    route::parse_input(target, None).with_context(|| {
+        format!("can't open `{target}`; use owner/repo, owner/repo#123, @user, or a github.com URL")
+    })
 }
 
 fn build_theme(config: &Config, cli_mode: Option<ModeSetting>) -> Result<Theme> {

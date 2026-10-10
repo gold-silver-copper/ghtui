@@ -682,16 +682,17 @@ impl State {
         cmds
     }
 
-    /// Opens a diff (a PR's starts once the PR's metadata is in).
+    /// Opens a diff at `anchor` (a PR's starts once its metadata is in).
     #[must_use]
-    pub fn open_diff(&mut self, of: DiffOf) -> Vec<Cmd> {
+    pub fn open_diff(&mut self, of: DiffOf, anchor: Option<String>) -> Vec<Cmd> {
         let reuse = self.diffs.get(&of).is_some_and(|d| d.error.is_none());
         let cmds = if reuse {
             Vec::new()
         } else {
             self.start_diff(&of)
         };
-        let screen = DiffScreen::new(of, DiffPrefs::fit(self.size.0));
+        let mut screen = DiffScreen::new(of, DiffPrefs::fit(self.size.0));
+        screen.anchor = anchor;
         self.screens.push(Screen::Diff(Box::new(screen)));
         cmds
     }
@@ -1226,7 +1227,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::Refresh => return state.load_visible(true),
         Action::Copy => return nav::copy_link(state),
-        Action::OpenInBrowser => return state.go(Target::External(state.here_url())),
+        Action::OpenInBrowser => return state.go(Target::External(state.here_url()).into()),
         _ if act::ACTIONS.contains(&action) => return act::act(state, action),
         _ if diff.is_some() => return diff_action(state, action),
         _ => return nav::page_action(state, action),
@@ -1313,7 +1314,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::fixtures::{answer, diff_msg, fetched, press, thread};
     use crate::picker::{Choice, fuzzy_score};
-    use crate::route::OPEN;
+    use crate::route::{Dest, OPEN};
     use ghtui_api::browse::IssueState;
     use ghtui_api::browse::SearchResults;
     use ghtui_api::model::RepoId;
@@ -1799,11 +1800,11 @@ pub(crate) mod tests {
     fn commit_history_loads_more() {
         let mut state = with_repo();
         let url = format!("https://github.com/{}/commits/main/src", repo());
-        let Target::Page(route) = Target::from_url(&url) else {
+        let Target::Page(route) = Dest::from_url(&url).target else {
             panic!("{url}");
         };
         let key = DataKey::History(repo(), "main".into(), "src".into());
-        let cmds = state.go(Target::Page(route));
+        let cmds = state.push(route);
         assert!(cmds.contains(&fetch(key.clone())), "{cmds:?}");
         fetched(
             &mut state,
@@ -1850,7 +1851,7 @@ pub(crate) mod tests {
         let mut state = with_repo();
         let file = "ci.yml".to_owned();
         let key = DataKey::WorkflowRuns(repo(), file.clone());
-        let _ = state.go(Target::Page(Route::Workflow { repo: repo(), file }));
+        let _ = state.push(Route::Workflow { repo: repo(), file });
         let page = |id: u64, next: Option<&str>| {
             let mut runs = crate::fixtures::workflow_runs().1;
             for (i, run) in runs.items.iter_mut().enumerate() {
@@ -1919,11 +1920,11 @@ pub(crate) mod tests {
     fn a_next_page_from_before_a_refresh_is_not_appended() {
         let mut state = with_repo();
         let url = format!("https://github.com/{}/commits/main/src", repo());
-        let Target::Page(route) = Target::from_url(&url) else {
+        let Target::Page(route) = Dest::from_url(&url).target else {
             panic!("{url}");
         };
         let key = DataKey::History(repo(), "main".into(), "src".into());
-        let _ = state.go(Target::Page(route));
+        let _ = state.push(route);
         // Commits named `c0`, `c1`, ...
         let page = |c: char, next: Option<&str>| {
             let mut page = crate::fixtures::history(next);
@@ -1980,11 +1981,11 @@ pub(crate) mod tests {
     fn load_more_during_a_refresh_waits_for_it() {
         let mut state = with_repo();
         let url = format!("https://github.com/{}/commits/main/src", repo());
-        let Target::Page(route) = Target::from_url(&url) else {
+        let Target::Page(route) = Dest::from_url(&url).target else {
             panic!("{url}");
         };
         let key = DataKey::History(repo(), "main".into(), "src".into());
-        let _ = state.go(Target::Page(route));
+        let _ = state.push(route);
         let page = |next| Data::History(Box::new(crate::fixtures::history(next)));
         fetched(&mut state, key.clone(), page(Some("h1")));
         let _ = press(&mut state, "r");
@@ -2004,11 +2005,11 @@ pub(crate) mod tests {
     fn a_next_page_survives_a_failed_refresh() {
         let mut state = with_repo();
         let url = format!("https://github.com/{}/commits/main/src", repo());
-        let Target::Page(route) = Target::from_url(&url) else {
+        let Target::Page(route) = Dest::from_url(&url).target else {
             panic!("{url}");
         };
         let key = DataKey::History(repo(), "main".into(), "src".into());
-        let _ = state.go(Target::Page(route));
+        let _ = state.push(route);
         let page = |next: Option<&str>| Data::History(Box::new(crate::fixtures::history(next)));
         fetched(&mut state, key.clone(), page(Some("h1")));
         press(&mut state, "G");
@@ -2181,7 +2182,7 @@ pub(crate) mod tests {
         let (value, fetched_at) = (Data::Search(Box::new(mine(1, 1))), 0);
         let cached = Remote::cached(Some(ghtui_store::Cached { value, fetched_at }));
         state.data.insert(key.clone(), cached);
-        let _ = state.start_at(Target::Page(Route::Repo(repo())));
+        let _ = state.start_at(Target::Page(Route::Repo(repo())).into());
         let cmds = state.back();
         let asked = |c: &Cmd| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if *k == key);
         assert!(cmds.iter().any(asked), "{cmds:?}");
@@ -2210,9 +2211,9 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(
             picks.last(),
-            Some(&nav::Pick::Go(Target::Page(Route::Repo(RepoId::new(
-                "o", "ratatui"
-            ))))),
+            Some(&nav::Pick::Go(
+                Target::Page(Route::Repo(RepoId::new("o", "ratatui"))).into()
+            )),
             "the suggestions for `rat` vanished"
         );
     }
@@ -2231,7 +2232,7 @@ pub(crate) mod tests {
                 fetched_at: 0,
             })),
         );
-        let cmds = state.start_at(Target::Files(DiffOf::Pr(pr.clone())));
+        let cmds = state.start_at(Target::Files(DiffOf::Pr(pr.clone())).into());
         assert!(
             cmds.contains(&Cmd::Api(Api::FetchPr(pr))),
             "the cached PR is never refreshed: {cmds:?}"
@@ -2245,7 +2246,7 @@ pub(crate) mod tests {
         let mut state = with_repo();
         let route = Route::Advisories(Some(repo()));
         let key = DataKey::Advisories(Some(repo()));
-        let cmds = state.go(Target::Page(route));
+        let cmds = state.push(route);
         assert!(cmds.contains(&fetch(key.clone())), "{cmds:?}");
         let list = ghtui_api::browse::Results {
             total: 3,
@@ -2376,7 +2377,7 @@ pub(crate) mod tests {
             let _ = act(&mut s, Action::OpenInTab);
             assert_eq!((s.tab_count(), s.active_tab()), (2, 1));
             assert_eq!(route(&s), issue(1));
-            let _ = s.go(Target::Page(issue(2)));
+            let _ = s.push(issue(2));
             press(&mut s, "[");
             assert_eq!((s.active_tab(), route(&s)), (0, issue(1)));
             press(&mut s, "]");
@@ -2503,7 +2504,7 @@ pub(crate) mod tests {
             let releases = Route::Releases(RepoId::new("o", "r"));
             let mut s = state();
             s.restore_tabs(&[issue(1).url(), releases.url()]);
-            let cmds = s.start_at(Target::Page(releases));
+            let cmds = s.start_at(Target::Page(releases).into());
             assert_eq!(s.tab_count(), 3);
             let fetches = |key: &DataKey| {
                 cmds.iter()
@@ -2525,13 +2526,12 @@ pub(crate) mod tests {
             };
             let url = "https://github.com/o/r/issues/1#issuecomment-5";
             let mut s = state();
-            let _ = s.open_url(url, true);
+            let _ = s.open_tab(Dest::from_url(url));
             assert_eq!(s.tab_count(), 2);
             assert_eq!(anchor(&s).as_deref(), Some("issuecomment-5"));
             let mut s = state();
             s.restore_tabs(&[issue(2).url(), issue(3).url()]);
-            let _ = s.start_at(Target::from_url(url));
-            s.anchor_at(url);
+            let _ = s.start_at(Dest::from_url(url));
             assert_eq!(anchor(&s).as_deref(), Some("issuecomment-5"));
         }
 
@@ -2544,7 +2544,7 @@ pub(crate) mod tests {
             let mut s = with_repo();
             let url = "https://github.com/gold-silver-copper/ghtui/blob/feature/x/src/lib.rs#L2";
             let key = DataKey::RefIn(repo(), "feature/x/src/lib.rs".into());
-            assert_eq!(fetches(s.open_url(url, false)), vec![fetch(key.clone())]);
+            assert_eq!(fetches(s.go(Dest::from_url(url))), vec![fetch(key.clone())]);
             let depth = s.screens.len();
             let cmds = fetched(&mut s, key, Data::RefIn(Some("feature/x".into())));
             let file = Route::Blob {
@@ -2559,7 +2559,7 @@ pub(crate) mod tests {
             assert_eq!(fetches(cmds), vec![fetch(text)]);
 
             let base = "https://github.com/gold-silver-copper/ghtui";
-            let _ = s.open_url(&format!("{base}/tree/feature/x/src"), false);
+            let _ = s.go(Dest::from_url(&format!("{base}/tree/feature/x/src")));
             assert_eq!(
                 route(&s),
                 Route::Tree {
@@ -2568,7 +2568,7 @@ pub(crate) mod tests {
                     path: "src".into()
                 }
             );
-            let _ = s.open_url(&format!("{base}/blob/main/README.md"), false);
+            let _ = s.go(Dest::from_url(&format!("{base}/blob/main/README.md")));
             assert_eq!(route(&s), blob("main", "README.md"));
         }
 
@@ -2578,7 +2578,7 @@ pub(crate) mod tests {
         fn an_issue_link_redirected_to_its_pr_keeps_the_anchor() {
             let url = "https://github.com/o/r/issues/7#issuecomment-5";
             let mut s = state();
-            let _ = s.open_url(url, true);
+            let _ = s.open_tab(Dest::from_url(url));
             let anchor = |s: &State| match s.screen() {
                 Screen::Page(p) => p.anchor.clone(),
                 Screen::Diff(_) => None,
@@ -2869,7 +2869,7 @@ pub(crate) mod tests {
     fn a_commit_diff_has_no_review() {
         let mut s = state();
         let of = DiffOf::Commit(RepoId::new("o", "r"), Oid::parse(&"a".repeat(40)).unwrap());
-        let cmds = s.open_diff(of.clone());
+        let cmds = s.open_diff(of.clone(), None);
         assert!(matches!(
             &cmds[..],
             [Cmd::Git(Git::LoadDiff { of: o, base, .. })]
@@ -2898,10 +2898,29 @@ pub(crate) mod tests {
         assert!(choices.contains(&Choice::Search("ratatui widgets".into())));
         assert_eq!(
             state.commands("ratatui/ratatui")[0].1,
-            Some(Choice::Go(Target::Page(Route::Repo(RepoId::new(
-                "ratatui", "ratatui"
-            )))))
+            Some(Choice::Go(
+                Target::Page(Route::Repo(RepoId::new("ratatui", "ratatui"))).into()
+            ))
         );
+    }
+
+    /// A comment's link given to the palette opens at the comment.
+    #[test]
+    fn palette_links_keep_their_anchor() {
+        let mut s = state();
+        let _ = s.open_picker(picker::Kind::Commands);
+        press(
+            &mut s,
+            "https://github.com/o/r/issues/1#issuecomment-5<Enter>",
+        );
+        assert_eq!(
+            route(&s),
+            Route::Issue {
+                repo: RepoId::new("o", "r"),
+                number: 1
+            }
+        );
+        assert_eq!(page(&s).anchor.as_deref(), Some("issuecomment-5"));
     }
 
     #[test]
@@ -3277,9 +3296,9 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(
             picks.last(),
-            Some(&nav::Pick::Go(Target::Page(Route::Repo(RepoId::new(
-                "o", "bugs"
-            )))))
+            Some(&nav::Pick::Go(
+                Target::Page(Route::Repo(RepoId::new("o", "bugs"))).into()
+            ))
         );
         press(&mut state, "<Enter>");
         let route = route(&state);
@@ -3401,7 +3420,7 @@ pub(crate) mod tests {
             let mut detail = crate::snapshot_tests::pr_detail();
             detail.summary.state = pr_state;
             let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
-            let cmds = state.open_diff(DiffOf::Pr(pr.clone()));
+            let cmds = state.open_diff(DiffOf::Pr(pr.clone()), None);
             let base = cmds.iter().find_map(|c| match c {
                 Cmd::Git(Git::LoadDiff { base, .. }) => Some(base.clone()),
                 _ => None,
@@ -3419,7 +3438,7 @@ pub(crate) mod tests {
         let detail = crate::snapshot_tests::pr_detail();
         let head = ghtui_git::Oid::parse(&detail.head_oid).unwrap();
         let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
-        let cmds = state.open_diff(DiffOf::Pr(pr.clone()));
+        let cmds = state.open_diff(DiffOf::Pr(pr.clone()), None);
         let job = cmds
             .iter()
             .find_map(|c| match c {
@@ -3445,7 +3464,7 @@ pub(crate) mod tests {
 
     /// Opens `pr`'s diff (its metadata already in) and returns the job's id.
     fn start_pr_diff(state: &mut State, pr: &PrRef) -> crate::diff_job::JobId {
-        let cmds = state.open_diff(DiffOf::Pr(pr.clone()));
+        let cmds = state.open_diff(DiffOf::Pr(pr.clone()), None);
         cmds.iter()
             .find_map(|c| match c {
                 Cmd::Git(Git::LoadDiff { job, .. }) => Some(*job),
@@ -3601,7 +3620,7 @@ pub(crate) mod tests {
         detail.head_oid = "d".repeat(40);
         let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
         assert_eq!(state.notice, None, "a diff off screen was checked");
-        let _ = state.open_diff(DiffOf::Pr(pr.clone()));
+        let _ = state.open_diff(DiffOf::Pr(pr.clone()), None);
         let _ = state.settle();
         assert!(
             matches!(&state.notice, Some(Notice::Error(m)) if m.contains("moved while loading")),
@@ -3634,7 +3653,7 @@ pub(crate) mod tests {
         );
         let _ = state.back();
         let _ = diff_msg(&mut state, &pr, no_files(job, &head));
-        let mut cmds = state.open_diff(DiffOf::Pr(pr.clone()));
+        let mut cmds = state.open_diff(DiffOf::Pr(pr.clone()), None);
         cmds.extend(state.settle());
         assert!(
             !cmds

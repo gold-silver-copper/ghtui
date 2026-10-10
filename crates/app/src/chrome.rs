@@ -662,7 +662,7 @@ mod tests {
             let c = s.chrome();
             assert_eq!(s.chrome_rows(), (c.title.is_some(), !c.tabs.is_empty()));
         }
-        let _ = s.open_diff(DiffOf::Pr(pr));
+        let _ = s.open_diff(DiffOf::Pr(pr), None);
         let c = s.chrome();
         assert_eq!(s.chrome_rows(), (c.title.is_some(), !c.tabs.is_empty()));
     }

@@ -520,7 +520,7 @@ fn with_tabs(mode: Mode, n: usize) -> State {
         Route::Stargazers(ghtui()),
     ];
     for route in more.into_iter().cycle().take(n) {
-        let _ = state.open_tab(crate::route::Target::Page(route));
+        let _ = state.open_tab(crate::route::Target::Page(route).into());
     }
     let _ = state.switch_to_tab(1);
     state.notice = None;
@@ -1107,7 +1107,7 @@ fn file_lines_dark() {
         truncated: false,
     };
     let url = "https://github.com/gold-silver-copper/ghtui/blob/main/src/main.rs#L60-L62";
-    let crate::route::Target::Page(route) = crate::route::Target::from_url(url) else {
+    let crate::route::Target::Page(route) = crate::route::Dest::from_url(url).target else {
         panic!("{url}");
     };
     let route = route.split(None).unwrap_or(route);
@@ -2105,7 +2105,7 @@ mod links {
         with_release, with_releases, with_repo, with_repo_search, with_run, with_search,
         with_stargazers, with_tags, with_team, with_teams, with_wiki, with_workflow,
     };
-    use crate::route::Target;
+    use crate::route::{Dest, Target};
     use crate::state::{Screen, State};
 
     /// A link's shape: on github.com its first four path segments, with
@@ -2232,7 +2232,7 @@ mod links {
                 .links
                 .iter()
                 .filter_map(|l| l.url())
-                .filter_map(|u| match Target::from_url(u) {
+                .filter_map(|u| match Dest::from_url(u).target {
                     Target::Page(r) => Some(r),
                     _ => None,
                 })
@@ -2271,7 +2271,7 @@ mod links {
             };
             let tabs = s.chrome().tabs.into_iter().map(|(_, t)| t);
             let links = p.page().links.iter().filter_map(|l| l.url());
-            let targets = links.map(Target::from_url).chain(tabs);
+            let targets = links.map(|u| Dest::from_url(u).target).chain(tabs);
             for target in targets {
                 // A page of a kind the corpus has an example of.
                 let kind = match &target {
@@ -2910,7 +2910,7 @@ fn every_route_says_why_when_its_needs_fail() {
         "https://github.com/o?tab=repositories",
     ];
     for url in urls {
-        let crate::route::Target::Page(route) = crate::route::Target::from_url(url) else {
+        let crate::route::Target::Page(route) = crate::route::Dest::from_url(url).target else {
             panic!("{url} isn't a page");
         };
         // The page a plain URL turns out to be.
