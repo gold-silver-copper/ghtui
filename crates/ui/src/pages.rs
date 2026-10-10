@@ -2142,15 +2142,14 @@ pub enum PrTab {
 /// The lines under a PR's title: branches, size (the state is in the
 /// sticky title above).
 fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
-    let s = &d.summary;
-    let author = login_seg(page, &s.author, Role::Strong);
+    let author = login_seg(page, &d.author, Role::Strong);
     let head = match &d.head_repo {
         Some(repo) if *repo != pr.repo.to_string() => {
             format!("{}:{}", repo.split('/').next().unwrap_or(repo), d.head_ref)
         }
         _ => d.head_ref.clone(),
     };
-    let wants = match s.state {
+    let wants = match d.state {
         PrState::Merged => " merged into ",
         PrState::Closed => " wanted to merge into ",
         PrState::Open | PrState::Draft => " wants to merge into ",
@@ -2163,12 +2162,12 @@ fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
         chip(head, Bg::PrimaryContainer),
     ];
     page.wrapped(segs, 0, Frame::None);
-    let mut meta = Vec::from(changes(s.additions, s.deletions));
+    let mut meta = Vec::from(changes(d.additions, d.deletions));
     meta.push(Seg::new(
         format!(
             " · opened {} · updated {}",
             time::ago_iso(&d.created_at, now),
-            time::ago_iso(&s.updated_at, now)
+            time::ago_iso(&d.updated_at, now)
         ),
         Role::Meta,
     ));
@@ -2179,13 +2178,12 @@ fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
 
 /// GitHub's merge box: checks, reviews, conflicts.
 fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
-    let s = &d.summary;
     let readiness = d.readiness();
     if matches!(readiness, Readiness::Merged | Readiness::Closed) {
         return;
     }
     connector(page);
-    let (headline, role) = match (readiness, s.checks, s.review) {
+    let (headline, role) = match (readiness, d.checks, d.review) {
         (Readiness::Draft, ..) => ("This pull request is still a draft", Role::Meta),
         (Readiness::Conflicts, ..) => (
             "This branch has conflicts that must be resolved",
@@ -2205,12 +2203,12 @@ fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
     };
     page.box_top(vec![Seg::new(headline, role)], Vec::new());
     // Each row: passed, failed, or neither yet.
-    let review = s.review.map(|r| match r {
+    let review = d.review.map(|r| match r {
         ReviewDecision::Approved => (Some(true), "Changes approved"),
         ReviewDecision::ChangesRequested => (Some(false), "Changes requested"),
         ReviewDecision::ReviewRequired => (None, "Review required"),
     });
-    let checks = s.checks.map(|c| match c {
+    let checks = d.checks.map(|c| match c {
         ChecksState::Passing => (Some(true), "All checks have passed"),
         ChecksState::Failing => (Some(false), "Some checks were not successful"),
         ChecksState::Pending => (None, "Some checks haven't completed yet"),
@@ -2293,7 +2291,7 @@ pub fn pr_conversation(
         label_list(side, &d.labels);
         milestone_aside(side, &pr.repo, d.milestone.as_ref());
         aside_heading(side, "Size");
-        let mut size = Vec::from(changes(d.summary.additions, d.summary.deletions));
+        let mut size = Vec::from(changes(d.additions, d.deletions));
         size.push(Seg::new(
             format!(" in {}", plural(d.changed_files, "file")),
             Role::Meta,
@@ -2301,7 +2299,7 @@ pub fn pr_conversation(
         side.line(size);
     });
     pr_summary(page, pr, d, now);
-    let op = &d.summary.author;
+    let op = &d.author;
     let talk = Conversation {
         base: LinkBase::new(&pr.repo, &d.head_oid, ""),
         op,

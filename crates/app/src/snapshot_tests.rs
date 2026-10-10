@@ -5,7 +5,7 @@
 
 use ghtui_api::browse::{IssueKind, PrState, RepoSort, SearchKind, SearchResults};
 use ghtui_api::model::{
-    Capped, ChecksState, Label, Mergeable, PrDetail, PrRef, PrSummary, RepoId, ReviewDecision,
+    Capped, ChecksState, Label, Mergeable, PrDetail, PrRef, RepoId, ReviewDecision,
 };
 use ghtui_api::rate_limit::{Bucket, RateLimits};
 use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
@@ -24,27 +24,6 @@ use crate::view::view;
 
 /// 2026-10-03T12:00:00Z
 const NOW: u64 = 1_791_028_800;
-
-fn summary(
-    pr: &str,
-    title: &str,
-    state: PrState,
-    review: Option<ReviewDecision>,
-    checks: Option<ChecksState>,
-) -> PrSummary {
-    PrSummary {
-        pr: PrRef::parse(pr).unwrap(),
-        title: title.into(),
-        author: "octocat".into(),
-        state,
-        updated_at: "2026-10-03T09:00:00Z".into(),
-        additions: 120,
-        deletions: 34,
-        comments: 3,
-        review,
-        checks,
-    }
-}
 
 /// A pull request as Home's sections list it.
 fn row(
@@ -132,13 +111,14 @@ pub(crate) fn pr_detail() -> PrDetail {
             ghtui_api::change::MergeMethod::Squash,
             ghtui_api::change::MergeMethod::Merge,
         ],
-        summary: summary(
-            "gold-silver-copper/ghtui#12",
-            "Theme: generate syntax palette from seed",
-            PrState::Open,
-            Some(ReviewDecision::Approved),
-            Some(ChecksState::Failing),
-        ),
+        title: "Theme: generate syntax palette from seed".into(),
+        author: "octocat".into(),
+        state: PrState::Open,
+        updated_at: "2026-10-03T09:00:00Z".into(),
+        additions: 120,
+        deletions: 34,
+        review: Some(ReviewDecision::Approved),
+        checks: Some(ChecksState::Failing),
         body: "Derives keyword, string and type colors from the seed's HCT palettes.\n\n\
                Every syntax role is now checked against every diff background, in both \
                schemes and at both color depths."
@@ -3072,7 +3052,7 @@ mod changes {
 
     /// A pull request whose state is `state`.
     fn pr_in(state: PrState) -> State {
-        pr_with(|d| d.summary.state = state)
+        pr_with(|d| d.state = state)
     }
 
     /// The pull request, changed by `f`.
@@ -3154,7 +3134,7 @@ mod changes {
         // Until GitHub shows it merged, nothing else is offered.
         press(&mut s, "X");
         says(&s, "hasn't shown the last change");
-        let merged = mergeable(|d| d.summary.state = PrState::Merged);
+        let merged = mergeable(|d| d.state = PrState::Merged);
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(merged))));
         assert!(s.awaiting.is_none());
     }
@@ -3196,7 +3176,7 @@ mod changes {
             let none = crate::fixtures::found_prs(Vec::new(), 0);
             crate::fixtures::section(&mut s, i, none);
         }
-        let merged = mergeable(|d| d.summary.state = PrState::Merged);
+        let merged = mergeable(|d| d.state = PrState::Merged);
         let cmds = update(&mut s, Msg::Pr(pr(), Box::new(Ok(merged))));
         assert!(s.awaiting.is_none());
         let home = s.home[1].search.clone().unwrap().key();
@@ -3314,7 +3294,7 @@ mod changes {
         let mut s = with_pr(Mode::Dark);
         press(&mut s, "W");
         says(&s, "It isn't a draft");
-        s.viewer = Some(pr_detail().summary.author);
+        s.viewer = Some(pr_detail().author);
         press(&mut s, "A");
         says(&s, "You can't approve your own pull request");
 

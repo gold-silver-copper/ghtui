@@ -625,7 +625,7 @@ impl GitHub {
             .await?;
         // GitHub says a branch is behind only when the repository requires
         // it up to date; it may be behind anyway.
-        if detail.summary.state.is_open() {
+        if detail.state.is_open() {
             detail.behind_by = self.behind_by(pr, &detail).await;
         }
         Ok(self.kept(&pr_key(pr), detail).await)

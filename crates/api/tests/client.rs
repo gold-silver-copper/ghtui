@@ -304,10 +304,10 @@ async fn fetches_and_caches_pull_request() {
 
     assert!(gh.cached_pull_request(&pr).is_none());
     let detail = gh.pull_request(&pr).await.unwrap();
-    assert_eq!(detail.summary.title, "Add thing");
-    assert_eq!(detail.summary.state, PrState::Open);
-    assert_eq!(detail.summary.review, Some(ReviewDecision::Approved));
-    assert_eq!(detail.summary.checks, Some(ChecksState::Failing));
+    assert_eq!(detail.title, "Add thing");
+    assert_eq!(detail.state, PrState::Open);
+    assert_eq!(detail.review, Some(ReviewDecision::Approved));
+    assert_eq!(detail.checks, Some(ChecksState::Failing));
     assert_eq!(detail.mergeable, Mergeable::Yes);
     // Yours first, then the rest the repository allows.
     assert_eq!(

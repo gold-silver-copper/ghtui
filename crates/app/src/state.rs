@@ -700,7 +700,7 @@ impl State {
         let d = self.prs.get(pr)?.data.as_ref()?;
         Some(crate::diff_job::PrBase {
             branch: d.base_ref.clone(),
-            oid: (!d.summary.state.is_open())
+            oid: (!d.state.is_open())
                 .then(|| Oid::parse(&d.base_oid).ok())
                 .flatten(),
         })
@@ -3444,7 +3444,7 @@ pub(crate) mod tests {
         ] {
             let mut state = state();
             let mut detail = crate::snapshot_tests::pr_detail();
-            detail.summary.state = pr_state;
+            detail.state = pr_state;
             let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
             let cmds = state.open_diff(DiffOf::Pr(pr.clone()), None);
             let base = cmds.iter().find_map(|c| match c {
@@ -3599,7 +3599,7 @@ pub(crate) mod tests {
         let mut state = state();
         let pr = PrRef::parse("o/r#1").unwrap();
         let mut detail = crate::snapshot_tests::pr_detail();
-        detail.summary.state = PrState::Open;
+        detail.state = PrState::Open;
         let _ = update(
             &mut state,
             Msg::Pr(pr.clone(), Box::new(Ok(detail.clone()))),
@@ -3613,7 +3613,7 @@ pub(crate) mod tests {
         };
         let cmds = act(&mut state, Action::Refresh);
         assert_eq!(load(&cmds), None, "started from the PR it had: {cmds:?}");
-        detail.summary.state = PrState::Merged;
+        detail.state = PrState::Merged;
         detail.base_oid = "c".repeat(40);
         let cmds = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
         assert_eq!(

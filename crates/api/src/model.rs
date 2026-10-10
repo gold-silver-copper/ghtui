@@ -334,9 +334,12 @@ pub struct Label {
     pub color: String,
 }
 
+/// A pull request, as its page shows it. Where it is (a [`PrRef`]) is
+/// what it's fetched and kept by, not part of it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PrSummary {
-    pub pr: PrRef,
+pub struct PrDetail {
+    /// What changes name it by.
+    pub id: NodeId,
     pub title: String,
     pub author: String,
     pub state: PrState,
@@ -344,16 +347,8 @@ pub struct PrSummary {
     pub updated_at: String,
     pub additions: u64,
     pub deletions: u64,
-    pub comments: u64,
     pub review: Option<ReviewDecision>,
     pub checks: Option<ChecksState>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PrDetail {
-    /// What changes name it by.
-    pub id: NodeId,
-    pub summary: PrSummary,
     pub body: String,
     pub created_at: String,
     pub base_ref: String,
@@ -423,7 +418,7 @@ pub enum Readiness {
 
 impl PrDetail {
     pub fn readiness(&self) -> Readiness {
-        match (self.summary.state, self.mergeable, self.merge_state) {
+        match (self.state, self.mergeable, self.merge_state) {
             (PrState::Merged, ..) => Readiness::Merged,
             (PrState::Closed, ..) => Readiness::Closed,
             (PrState::Draft, ..) | (_, _, MergeState::Draft) => Readiness::Draft,
@@ -440,10 +435,10 @@ impl PrDetail {
     /// It's open and GitHub hasn't settled what it shows: whether it can
     /// merge, or its checks. A page showing it fetches it again until it has.
     pub fn settling(&self) -> bool {
-        self.summary.state.is_open()
+        self.state.is_open()
             && (self.mergeable == Mergeable::Unknown
                 || self.merge_state == MergeState::Unknown
-                || self.summary.checks == Some(ChecksState::Pending))
+                || self.checks == Some(ChecksState::Pending))
     }
 }
 
@@ -598,32 +593,8 @@ pub(crate) fn labels(labels: Option<q::LabelConnection>) -> Capped<Label> {
     })
 }
 
-fn pr_ref(name_with_owner: &str, number: i32) -> Option<PrRef> {
-    Some(PrRef {
-        repo: RepoId::parse(name_with_owner)?,
-        number: u64::try_from(number).ok()?,
-    })
-}
-
 pub(crate) fn count(n: i32) -> u64 {
     u64::try_from(n).unwrap_or(0)
-}
-
-impl PrSummary {
-    pub(crate) fn from_wire(pr: q::PrSummary) -> Option<Self> {
-        Some(Self {
-            pr: pr_ref(&pr.repository.name_with_owner, pr.number)?,
-            title: pr.title,
-            author: author(pr.author),
-            state: pr.status.into(),
-            updated_at: pr.updated_at.0,
-            additions: count(pr.additions),
-            deletions: count(pr.deletions),
-            comments: count(pr.comments.total_count),
-            review: pr.review_decision,
-            checks: checks(&pr.commits),
-        })
-    }
 }
 
 impl PrDetail {
@@ -643,7 +614,14 @@ impl PrDetail {
         let pr = repo.pull_request?;
         Some(Self {
             id: pr.id.into(),
-            summary: PrSummary::from_wire(pr.summary)?,
+            title: pr.summary.title,
+            author: author(pr.summary.author),
+            state: pr.summary.status.into(),
+            updated_at: pr.summary.updated_at.0,
+            additions: count(pr.summary.additions),
+            deletions: count(pr.summary.deletions),
+            review: pr.summary.review_decision,
+            checks: checks(&pr.summary.commits),
             body: pr.body,
             created_at: pr.created_at.0,
             base_ref: pr.base_ref_name,

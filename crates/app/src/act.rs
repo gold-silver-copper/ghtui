@@ -398,9 +398,9 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
 }
 
 fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Plan, String> {
-    let open = d.summary.state.is_open();
+    let open = d.state.is_open();
     let key = |a: Action| state.first_key(a);
-    let not_open = || match d.summary.state {
+    let not_open = || match d.state {
         PrState::Merged => "It's merged".to_owned(),
         _ => format!("It's closed: {} reopens it", key(Action::Close)),
     };
@@ -441,11 +441,11 @@ fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Pl
                     (method.describe().to_owned(), change)
                 })
                 .collect();
-            let title = format!("Merge {pr}: {}?", d.summary.title);
+            let title = format!("Merge {pr}: {}?", d.title);
             Ok(Plan::Ask(title, merge_facts(state, d), choices))
         }
         Action::Close => {
-            let (title, label, reopen) = match d.summary.state {
+            let (title, label, reopen) = match d.state {
                 PrState::Merged => {
                     return Err("It's merged: a merged pull request can't be reopened".into());
                 }
@@ -475,10 +475,10 @@ fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Pl
             };
             Ok(Plan::Ask(title, facts, vec![(label.into(), change)]))
         }
-        Action::ReadyForReview if d.summary.state == PrState::Draft && !d.may.edit => {
+        Action::ReadyForReview if d.state == PrState::Draft && !d.may.edit => {
             Err("Marking it ready takes its author or write access".into())
         }
-        Action::ReadyForReview if d.summary.state == PrState::Draft => {
+        Action::ReadyForReview if d.state == PrState::Draft => {
             Ok(Plan::Do(Change::ReadyForReview { pr: d.id.clone() }))
         }
         Action::ReadyForReview if open => Err("It isn't a draft".into()),
@@ -512,7 +512,7 @@ fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Pl
             )];
             Ok(Plan::Ask(format!("Update {pr}'s branch?"), facts, choices))
         }
-        Action::Approve if state.viewer.as_deref() == Some(d.summary.author.as_str()) => {
+        Action::Approve if state.viewer.as_deref() == Some(d.author.as_str()) => {
             Err("You can't approve your own pull request".into())
         }
         Action::Approve => Ok(Plan::Approve(pr.clone())),
@@ -532,13 +532,13 @@ fn behind(d: &PrDetail) -> String {
 /// What's worth knowing before merging (what stops it is refused before).
 fn merge_facts(state: &State, d: &PrDetail) -> Vec<(String, bool)> {
     let mut facts = vec![(format!("Into {} from {}", d.base_ref, d.head_ref), false)];
-    match d.summary.checks {
+    match d.checks {
         Some(ChecksState::Passing) => facts.push(("Checks passed".into(), false)),
         Some(ChecksState::Failing) => facts.push(("Some checks failed".into(), true)),
         Some(ChecksState::Pending) => facts.push(("Checks are still running".into(), true)),
         None => facts.push(("No checks".into(), false)),
     }
-    match d.summary.review {
+    match d.review {
         Some(ReviewDecision::Approved) => facts.push(("Approved".into(), false)),
         Some(ReviewDecision::ChangesRequested) => {
             facts.push(("Changes were requested".into(), true));
@@ -783,9 +783,9 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
                 return Shown::No;
             };
             yes(match change {
-                Change::Merge { .. } => d.summary.state == PrState::Merged,
-                Change::SetPrOpen { open, .. } => d.summary.state.is_open() == *open,
-                Change::ReadyForReview { .. } => d.summary.state != PrState::Draft,
+                Change::Merge { .. } => d.state == PrState::Merged,
+                Change::SetPrOpen { open, .. } => d.state.is_open() == *open,
+                Change::ReadyForReview { .. } => d.state != PrState::Draft,
                 Change::UpdateBranch { head, .. } => d.head_oid != *head,
                 _ => true,
             })
