@@ -2620,6 +2620,28 @@ pub(crate) mod tests {
         }
     }
 
+    /// On a wide screen, output (a job's log) takes the whole width, and
+    /// reading (a list of issues) stays at most 140 columns, centered.
+    #[test]
+    fn output_takes_the_screen_and_reading_stays_narrow() {
+        let mut s = state();
+        s.size = (220, 30);
+        let mut width = |route| {
+            let _ = s.push(route);
+            s.sync_page();
+            page(&s).page().width
+        };
+        let job = Route::Job {
+            repo: repo(),
+            run: Some(7),
+            job: 2,
+            step: None,
+            query: String::new(),
+        };
+        assert!(width(job) > 200);
+        assert_eq!(width(issues(OPEN)), 140);
+    }
+
     /// `/` on a job searches its log: the steps with a match open, the
     /// page opens at the first match, every match is picked out, and `n`
     /// `p` go through them. Nothing is hidden. Esc ends the search, back

@@ -314,12 +314,9 @@ impl State {
         }
     }
 
-    /// Columns pages are built for.
+    /// Columns pages are built for: each takes what it fills of them.
     pub fn page_width(&self) -> u16 {
-        self.size
-            .0
-            .saturating_sub(2 * PAD_X + 1)
-            .min(browse::MAX_WIDTH)
+        self.size.0.saturating_sub(2 * PAD_X + 1)
     }
 
     /// Rows a page shows.

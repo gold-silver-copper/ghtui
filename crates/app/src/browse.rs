@@ -20,8 +20,9 @@ use crate::keymap::Action;
 use crate::route::Route;
 use crate::state::{Remote, State};
 
-/// Widest a page gets; wider terminals center it, as GitHub does.
-pub const MAX_WIDTH: u16 = 140;
+/// Widest a page of reading gets; wider terminals center it, as GitHub
+/// does.
+const MAX_WIDTH: u16 = 140;
 
 /// One piece of GitHub data a page shows.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -530,14 +531,31 @@ impl State {
             filter: &filter,
         };
         let cx = pages::PageCtx { icons, keys, now };
+        // Reading stays narrow enough to follow; output and tables take
+        // the whole width.
+        let reading = width.min(MAX_WIDTH);
         let mut page = match route {
             Route::Repo(_)
             | Route::Issue { .. }
             | Route::Pr {
                 tab: PrTab::Conversation,
                 ..
-            } => Page::with_aside(width),
-            _ => Page::new(width),
+            } => Page::with_aside(reading),
+            Route::Blob { path, .. } if pages::is_markdown(path) => Page::new(reading),
+            Route::Pr {
+                tab: PrTab::Checks, ..
+            }
+            | Route::CommitChecks { .. }
+            | Route::Actions(_)
+            | Route::WorkflowRun { .. }
+            | Route::Job { .. }
+            | Route::Workflow { .. }
+            | Route::Blob { .. }
+            | Route::Blame { .. }
+            | Route::Branches(_)
+            | Route::Tags(_)
+            | Route::Deployments { .. } => Page::new(width),
+            _ => Page::new(reading),
         };
         page.compact = self.compact();
         if let Some(err) = self.stale_errors(route) {

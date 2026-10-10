@@ -290,6 +290,11 @@ fn item(page: &mut Page, target: impl Into<Link>, build: impl FnOnce(&mut Page, 
 }
 
 /// Each name once, in order.
+/// A file shown as Markdown, read as prose rather than as code.
+pub fn is_markdown(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".md")
+}
+
 fn unique<'a>(names: impl IntoIterator<Item = &'a String>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for name in names {
@@ -970,7 +975,7 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
     );
     let right = vec![blame, Seg::new("  ", Role::Meta), raw];
     page.box_top(vec![Seg::new(info, Role::Meta)], right);
-    if path.to_ascii_lowercase().ends_with(".md") {
+    if is_markdown(path) {
         let base = LinkBase::new(repo, rev, path);
         markdown::render(page, text, Some(&base), Frame::Body);
         page.box_bottom();
@@ -1441,7 +1446,7 @@ pub fn gist(page: &mut Page, g: &Gist, now: u64) {
         info.push(Seg::new(format!("  {}", facts.join(" · ")), Role::Meta));
         page.box_top(info, Vec::new());
         match &f.text {
-            Some(text) if f.name.to_ascii_lowercase().ends_with(".md") => {
+            Some(text) if is_markdown(&f.name) => {
                 markdown::render(page, text, None, Frame::Body);
             }
             Some(text) => {
