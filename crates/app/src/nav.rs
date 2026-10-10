@@ -430,18 +430,20 @@ fn scroll_by(p: &mut PageScreen, rows: isize, height: usize) {
     }
 }
 
-/// Pages and jumps keep a selection on screen when there's one to keep.
-/// When the view can't scroll that way, the selection goes to the edge.
+/// Pages and jumps keep a selection on screen when there's one to keep:
+/// one scrolled off is the first item shown on that side. When the view
+/// can't scroll that way, the selection goes to that edge.
 fn scroll_keep(p: &mut PageScreen, rows: isize, height: usize) {
     let had = p.selected.is_some();
     let scroll = p.scroll;
     scroll_by(p, rows, height);
-    if (had && p.selected.is_none()) || p.scroll == scroll {
+    let stuck = p.scroll == scroll;
+    if (had && p.selected.is_none()) || stuck {
         let mut visible_items = (0..p.page.items.len()).filter(|&i| visible(p, i, height));
-        p.selected = if rows > 0 {
-            visible_items.next()
-        } else {
+        p.selected = if (rows > 0) == stuck {
             visible_items.next_back()
+        } else {
+            visible_items.next()
         };
     }
 }

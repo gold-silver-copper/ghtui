@@ -1449,6 +1449,17 @@ pub(crate) mod tests {
         panic!("{text} isn't on screen")
     }
 
+    /// On a list that can't scroll, a page down goes to its last row and
+    /// a page up to its first.
+    #[test]
+    fn paging_a_list_that_fits_goes_to_its_edge() {
+        let mut state = with_home(3);
+        press(&mut state, "<PageDown>");
+        assert!(selected_text(&state).contains("PR 3"));
+        press(&mut state, "<PageUp>");
+        assert!(selected_text(&state).contains("PR 1"));
+    }
+
     #[test]
     fn home_selects_the_first_row_and_opens_it() {
         let mut state = with_home(3);
