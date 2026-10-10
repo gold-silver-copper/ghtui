@@ -489,9 +489,10 @@ impl State {
         let activity = self.activity(pr);
         let detail = self.prs.get(pr).and_then(|r| r.data.as_ref());
         let checks = self.picked::<Checks>(&DataKey::PrChecks(pr.clone()));
-        let comments = (activity.map(|a| a.comments.total()))
-            .or_else(|| detail.map(|d| d.summary.comments));
-        let commits = (activity.map(|a| a.commits.total())).or_else(|| detail.map(|d| d.commit_count));
+        let comments =
+            (activity.map(|a| a.comments.total())).or_else(|| detail.map(|d| d.summary.comments));
+        let commits =
+            (activity.map(|a| a.commits.total())).or_else(|| detail.map(|d| d.commit_count));
         let (state, check_count) = match (checks, detail) {
             (Some(c), _) => (c.state(), Some(c.items.total())),
             (None, Some(d)) => (d.summary.checks, Some(d.check_count)),

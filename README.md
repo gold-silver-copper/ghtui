@@ -139,12 +139,15 @@ your drafts.
 - **Directories and files** open in place. Files are syntax-highlighted with
   line numbers, and `.md` files are rendered.
 - **Issues and pull requests** lists are newest first, under a filter field,
-  with Open/Closed counts and a sort (click them, or use the `Space` menu).
-  Long lists end in "Load more".
+  with Open/Closed counts of the filter (as GitHub counts them: a label's
+  open and closed issues, not the whole repository's) and a sort (click them,
+  or use the `Space` menu). Long lists end in "Load more".
 - **Issue** shows the conversation as a timeline of comment boxes. Issue
   numbers that are pull requests redirect, as on GitHub.
 - **Pull request**:
-  - A sticky title.
+  - A sticky title, and tabs counted from the pull request itself, so they're
+    there wherever you open it; the Checks tab's icon is how its checks are
+    (running, failed, passed).
   - Conversation, with a merge box for checks, reviews and conflicts.
   - Commits, grouped by day.
   - Checks: each check run and status on the head commit, grouped by
@@ -162,7 +165,11 @@ your drafts.
 - **Actions** shows the checks on the default branch, like a pull request's.
   A **workflow run** lists its jobs, failures first; a **job** lists its
   steps with the failing ones (and the one a link points at) opened to their
-  whole log, scrolled to the first error. `/` searches the log: steps with a
+  whole log, opened at the first error with what leads to it (the step's
+  name, and what it printed just before) above. A step's name stays on top
+  while its log scrolls, and long lines wrap under their own indent, so
+  nothing is cut off. A run that ran no jobs says why, where GitHub says (a
+  workflow file it couldn't start, an approval it waits for). `/` searches the log: steps with a
   match open, matches are picked out, `n` `p` go from one to the next (the
   one you're on is marked), and `Esc` ends the search where you were. A
   **workflow** lists its runs. A run, a job or a log that's still going is
@@ -205,8 +212,12 @@ alerts), what needs a token scope gh doesn't grant (projects, packages),
 what the API doesn't expose (wiki search), and other sites. Every kind of
 link, with an example and what it does, is listed in
 `crates/app/tests/github_urls.txt`, which the tests hold ghtui to.
-Pages show cached data first and refresh in the background. Pages are at
-most 140 columns wide and centered.
+Pages show cached data first and refresh in the background. Pages for
+reading (conversations, READMEs, profiles, issue lists) are at most 140
+columns wide and centered; output and columns (checks, runs, jobs and their
+logs, a workflow's runs, files, blame, branches, tags, deployments) use the
+whole width. A search's tabs count every kind but commits and code (which
+GitHub only counts one request each) before you visit them.
 
 ## Acting on GitHub
 
@@ -214,9 +225,15 @@ From a pull request (its page or its Files changed), an issue, a workflow
 run or a job, ghtui can change things on GitHub, not only show them. On a
 list (Home's sections, a search, a repository's pull requests, a
 workflow's runs) the same keys act on the selected row: ghtui loads what
-it needs of it first, then asks as it would on its page. Each
-action is in the `Space` menu, where an action that can't apply says why
-(already merged, not a draft, still running…), and has a key:
+it needs of it first, then asks as it would on its page. A row you changed
+stays where it was, in its new state, until you refresh (`r`) or leave the
+list, even when the list no longer matches it (a pull request you closed on
+a list of open ones), so the next key can't land on the row that would have
+taken its place; and a selected row that leaves the list otherwise leaves
+nothing selected. Each action is in the `Space` menu, where an action that
+can't apply says why (already merged, not a draft, still running…), and has
+a key. On a row that hasn't loaded, the menu loads it and says it's
+checking until GitHub says what you may do:
 
 - **Merge** (`M`): a dialog first says what stands in the way (failed or
   running checks, requested changes, a branch behind its base or in
@@ -351,7 +368,7 @@ Reviewing, in a pull request's Files changed tab:
 | `x`         | Select lines (for multi-line comments)                                       |
 | `e`         | Show more context                                                            |
 | `F`         | Show the whole file                                                          |
-| `S`         | Split or unified view                                                        |
+| `S`         | Split or unified view (split hides the file tree, or stays unified, where its halves wouldn't fit, and says so) |
 | `t`         | Show or hide the file tree                                                   |
 | `J`         | Jump to the other end of moved code                                          |
 | `w`         | Ignore whitespace changes                                                    |

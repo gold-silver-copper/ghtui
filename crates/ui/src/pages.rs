@@ -3082,7 +3082,7 @@ pub fn job(
                 format!("{:>width$}  ", i + 1),
                 Role::Syntax(Syntax::Comment),
             );
-            page.output(number, highlight(log_seg(text), &q), Tone::Code);
+            page.output(&number, highlight(log_seg(text), &q), Tone::Code);
         }
         if pointed && !searched {
             page.jump.get_or_insert(page.lines.len().saturating_sub(1));
@@ -4606,10 +4606,17 @@ mod tests {
             };
             let mut page = Page::new(200);
             workflow_run(&mut page, &RepoId::new("o", "r"), &run, 0);
-            page.lines.iter().map(PageLine::text).collect::<Vec<_>>().join("\n")
+            page.lines
+                .iter()
+                .map(PageLine::text)
+                .collect::<Vec<_>>()
+                .join("\n")
         };
         let broken = text(Some(Held::StartupFailure), CheckOutcome::Failure);
-        assert!(broken.contains("found a problem in .github/workflows/ci.yml"), "{broken}");
+        assert!(
+            broken.contains("found a problem in .github/workflows/ci.yml"),
+            "{broken}"
+        );
         let waiting = text(Some(Held::Approval), CheckOutcome::Failure);
         assert!(waiting.contains("approve running it"), "{waiting}");
         let failed = text(None, CheckOutcome::Failure);

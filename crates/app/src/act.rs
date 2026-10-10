@@ -793,7 +793,11 @@ pub fn keep(state: &State, key: &DataKey, mut data: Data) -> Data {
             Subject::Issue(repo, number) => {
                 let key = DataKey::Issue(repo.clone(), *number);
                 let issue = state.picked::<Option<Box<IssueDetail>>>(&key);
-                (repo, *number, issue.and_then(|i| i.as_ref()).map(|i| i.state))
+                (
+                    repo,
+                    *number,
+                    issue.and_then(|i| i.as_ref()).map(|i| i.state),
+                )
             }
             Subject::Run(..) | Subject::Job(..) => continue,
         };
@@ -804,7 +808,10 @@ pub fn keep(state: &State, key: &DataKey, mut data: Data) -> Data {
             rows.items.insert(at.min(rows.items.len()), row.clone());
         }
         if let Some(now) = now {
-            rows.items.iter_mut().filter(|i| is(i)).for_each(|i| i.state = now);
+            rows.items
+                .iter_mut()
+                .filter(|i| is(i))
+                .for_each(|i| i.state = now);
         }
     }
     data

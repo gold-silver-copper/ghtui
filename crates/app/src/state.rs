@@ -740,7 +740,11 @@ impl State {
     #[must_use]
     pub fn settle(&mut self) -> Vec<Cmd> {
         // Rows kept on a list are let go once you leave it.
-        if self.kept.as_ref().is_some_and(|k| self.route() != Some(&k.route)) {
+        if self
+            .kept
+            .as_ref()
+            .is_some_and(|k| self.route() != Some(&k.route))
+        {
             self.kept = None;
         }
         let mut cmds = self.settle_ref();
@@ -2111,11 +2115,18 @@ pub(crate) mod tests {
         // Titled with the search at first, which it doesn't say twice.
         let prompt = |state: &State| {
             let p = overlay!(state, Picker);
-            state.picker_rows(p).into_iter().map(|(i, _)| i.label).collect::<Vec<_>>()
+            state
+                .picker_rows(p)
+                .into_iter()
+                .map(|(i, _)| i.label)
+                .collect::<Vec<_>>()
         };
         assert_eq!(prompt(&state), ["Add “repo:o/r is:pr label:bug” to Home"]);
         press(&mut state, "<C-u>Bugs");
-        assert_eq!(prompt(&state), ["Add “Bugs” to Home: repo:o/r is:pr label:bug"]);
+        assert_eq!(
+            prompt(&state),
+            ["Add “Bugs” to Home: repo:o/r is:pr label:bug"]
+        );
         let cmds = press(&mut state, "<Enter>");
         assert!(state.overlay.is_none(), "the prompt closed");
         assert_eq!(
@@ -2715,7 +2726,10 @@ pub(crate) mod tests {
             .collect();
         log.text = log
             .text
-            .replace("2026-10-03T12:04:10", &format!("{filler}2026-10-03T12:04:10"))
+            .replace(
+                "2026-10-03T12:04:10",
+                &format!("{filler}2026-10-03T12:04:10"),
+            )
             .replace("##[error]Process completed with exit code 101.", &long);
         fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
         fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
@@ -2726,8 +2740,16 @@ pub(crate) mod tests {
         let page = p.page();
         let jump = page.jump.unwrap();
         assert!(jump - p.scroll >= height / 3 && jump < p.scroll + height);
-        assert!(page.lines[page.shown(p.scroll, 0)].text().contains("✗ cargo test"), "{:?} {} {jump} {}", page.heads, p.scroll, page.lines.len());
-        let shown: String = page.lines[jump..].iter().map(|l| l.text()).collect();
+        assert!(
+            page.lines[page.shown(p.scroll, 0)]
+                .text()
+                .contains("✗ cargo test"),
+            "{:?} {} {jump} {}",
+            page.heads,
+            p.scroll,
+            page.lines.len()
+        );
+        let shown: String = page.lines[jump..].iter().map(ghtui_ui::page::PageLine::text).collect();
         assert_eq!(shown.matches("a::b::c").count(), 20, "{shown}");
     }
 

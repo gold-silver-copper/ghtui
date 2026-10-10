@@ -650,7 +650,10 @@ impl Route {
 
 /// Whether a word of a list's filter picks the list's state.
 pub fn is_state_word(word: &str) -> bool {
-    matches!(word, "is:open" | "is:closed" | "state:open" | "state:closed")
+    matches!(
+        word,
+        "is:open" | "is:closed" | "state:open" | "state:closed"
+    )
 }
 
 /// The kinds of search a search page's tabs count (commits and code are

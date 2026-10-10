@@ -329,9 +329,10 @@ pub fn needs(route: &Route) -> Vec<Need> {
             header(repo),
             Need::Data(K::RefIn(repo.clone(), spot.clone())),
         ],
-        Route::Issues { repo, .. } | Route::Pulls { repo, .. } => {
-            std::iter::once(header(repo)).chain(list).chain(counts).collect()
-        }
+        Route::Issues { repo, .. } | Route::Pulls { repo, .. } => std::iter::once(header(repo))
+            .chain(list)
+            .chain(counts)
+            .collect(),
         Route::Search { .. } => list.into_iter().chain(counts).collect(),
         Route::Wiki { repo, page } => vec![
             header(repo),
@@ -679,7 +680,7 @@ impl State {
             Route::Issues { query, .. } | Route::Pulls { query, .. } => {
                 let is_pr = matches!(route, Route::Pulls { .. });
                 let counts = self.counts(route);
-                let counts = match counts.as_deref() {
+                let counts = match counts {
                     Some(&[Some(open), Some(closed)]) => Some((open, closed)),
                     _ => None,
                 };

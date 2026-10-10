@@ -222,8 +222,14 @@ fn pr_tabs_count_and_say_how_the_checks_are() {
     let _ = state.open_diff(crate::diff_screen::DiffOf::Pr(pr.clone()), None);
     let mut passing = pr_detail();
     passing.summary.checks = Some(ChecksState::Passing);
-    update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(passing.clone()))));
-    assert_eq!(tab(&state, "Conversation").1, Some(passing.summary.comments));
+    update(
+        &mut state,
+        Msg::Pr(pr.clone(), Box::new(Ok(passing.clone()))),
+    );
+    assert_eq!(
+        tab(&state, "Conversation").1,
+        Some(passing.summary.comments)
+    );
     assert_eq!(tab(&state, "Commits").1, Some(3));
     assert_eq!(tab(&state, "Checks"), ("✓", Some(5)));
     // The checks it lists are still going, whatever the rollup said.
@@ -235,8 +241,16 @@ fn pr_tabs_count_and_say_how_the_checks_are() {
     let mut running = checks.items[0].clone();
     running.outcome = ghtui_api::browse::CheckOutcome::Pending;
     checks.items = vec![running, checks.items[0].clone()].into();
-    checks.items.iter_mut().skip(1).for_each(|c| c.outcome = ghtui_api::browse::CheckOutcome::Success);
-    fetched(&mut state, DataKey::PrChecks(pr), Data::Checks(Box::new(checks)));
+    checks
+        .items
+        .iter_mut()
+        .skip(1)
+        .for_each(|c| c.outcome = ghtui_api::browse::CheckOutcome::Success);
+    fetched(
+        &mut state,
+        DataKey::PrChecks(pr),
+        Data::Checks(Box::new(checks)),
+    );
     assert_eq!(tab(&state, "Checks"), ("◔", Some(2)));
 }
 
@@ -2803,7 +2817,11 @@ fn a_filtered_list_counts_its_filter() {
         query: "label:I-ICE is:closed".into(),
     };
     assert_eq!(closed.counts().unwrap(), counted);
-    open(&mut state, route, Data::Search(Box::new(fixtures::issue_results(None))));
+    open(
+        &mut state,
+        route,
+        Data::Search(Box::new(fixtures::issue_results(None))),
+    );
     fetched(
         &mut state,
         DataKey::Counts(counted),
@@ -3066,7 +3084,9 @@ fn sample(key: &DataKey) -> Data {
         K::Search(kind, _) => Data::Search(Box::new(search(kind))),
         // An issue list's open and closed, or a search's kinds.
         K::Counts(searches) if searches.len() == 2 => Data::Counts(vec![Some(7), Some(41)]),
-        K::Counts(searches) => Data::Counts((0..searches.len() as u64).map(|n| Some(n * 12)).collect()),
+        K::Counts(searches) => {
+            Data::Counts((0..searches.len() as u64).map(|n| Some(n * 12)).collect())
+        }
         K::Issue(..) => Data::Issue(Some(Box::new(fixtures::issue()))),
         K::PrActivity(_) => Data::PrActivity(Box::new(fixtures::activity())),
         K::Profile(_) => Data::Profile(Box::new(fixtures::profile())),
@@ -3303,11 +3323,21 @@ mod changes {
         press(&mut s, "jj");
         press(&mut s, "X");
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
-        assert!(confirm(&s).title.starts_with("Close gold-silver-copper/ghtui#12"));
+        assert!(
+            confirm(&s)
+                .title
+                .starts_with("Close gold-silver-copper/ghtui#12")
+        );
         let sent = press(&mut s, "<Enter>");
         answer(&mut s, &sent, Ok(()));
-        let rows = |s: &State| match s.picked::<ghtui_api::browse::SearchResults>(&s.home[1].search.clone().unwrap().key()) {
-            Some(ghtui_api::browse::SearchResults::Issues(r)) => r.items.iter().map(|i| (i.number, i.state)).collect::<Vec<_>>(),
+        let rows = |s: &State| match s
+            .picked::<ghtui_api::browse::SearchResults>(&s.home[1].search.clone().unwrap().key())
+        {
+            Some(ghtui_api::browse::SearchResults::Issues(r)) => r
+                .items
+                .iter()
+                .map(|i| (i.number, i.state))
+                .collect::<Vec<_>>(),
             _ => Vec::new(),
         };
         // GitHub's search no longer has it, and the PR is closed.
@@ -3318,10 +3348,16 @@ mod changes {
             .map(|(n, _)| crate::fixtures::issue_summary(n, true, IssueState::Open))
             .collect();
         crate::fixtures::section(&mut s, 1, crate::fixtures::found_prs(others, 30));
-        assert!(rows(&s).contains(&(12, IssueState::Closed)), "{:?}", rows(&s));
+        assert!(
+            rows(&s).contains(&(12, IssueState::Closed)),
+            "{:?}",
+            rows(&s)
+        );
         press(&mut s, "X");
         assert!(
-            confirm(&s).title.starts_with("Reopen gold-silver-copper/ghtui#12"),
+            confirm(&s)
+                .title
+                .starts_with("Reopen gold-silver-copper/ghtui#12"),
             "{}",
             confirm(&s).title
         );
@@ -3344,12 +3380,19 @@ mod changes {
             let Some(Overlay::Menu(menu)) = &s.overlay else {
                 panic!("no menu")
             };
-            let row = menu.rows.iter().find(|d| d.action == Action::Close).unwrap();
+            let row = menu
+                .rows
+                .iter()
+                .find(|d| d.action == Action::Close)
+                .unwrap();
             (row.label.clone(), row.unavailable.clone())
         };
         assert_eq!(
             close(&s),
-            ("Close or reopen (checking gold-silver-copper/ghtui#12 first)".to_owned(), None)
+            (
+                "Close or reopen (checking gold-silver-copper/ghtui#12 first)".to_owned(),
+                None
+            )
         );
         let theirs = mergeable(|d| d.may = ghtui_api::model::PrPermits::default());
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(theirs))));
