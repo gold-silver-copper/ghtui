@@ -10,7 +10,6 @@ use ghtui_diff::anchor::{AnchorError, LinePos, Side};
 use ghtui_store::{DraftComment, DraftSide, ReviewState};
 use ghtui_theme::{Bg, Theme};
 use ghtui_ui::annotations::{Annotation, AnnotationComment, AnnotationKey};
-use ghtui_ui::bars::Notice;
 use ghtui_ui::diff_doc::{Doc, Pos};
 use ghtui_ui::text::short_sha;
 use ratatui_textarea::TextArea;
@@ -538,8 +537,12 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
     let annotation = at
         .and_then(|i| diff.doc.annotations().get(i as usize))
         .cloned();
-    let notice = |state: &mut State, n: Notice| {
-        state.notices.say(n);
+    let info = |state: &mut State, text: &str| {
+        state.info(text);
+        Vec::new()
+    };
+    let error = |state: &mut State, text: &str| {
+        state.error(text);
         Vec::new()
     };
     let in_range = diff.range().is_some();
@@ -550,16 +553,16 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         )
     {
         let all = all_changes(state);
-        return notice(
+        return error(
             state,
-            Notice::Error(format!("Comments anchor to the whole PR: {all} to comment")),
+            &format!("Comments anchor to the whole PR: {all} to comment"),
         );
     }
     match action {
         Action::ToggleSinceReview => {
             if in_range {
                 let all = all_changes(state);
-                return notice(state, Notice::Error(format!("First {all}")));
+                return error(state, &format!("First {all}"));
             }
             let active = !diff.doc.since_active();
             if diff_screen::preserving_position(screen, diff, |d| d.doc.show_since(active)) {
@@ -608,7 +611,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             }) = &annotation =>
         {
             if !can_reply {
-                return notice(state, Notice::Info("You can't reply to this one".into()));
+                return info(state, "You can't reply to this one");
             }
             let thread_id = thread_id.clone();
             state.compose(ComposeTarget::Reply { thread_id }, "")
@@ -626,7 +629,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                     }
                     state.compose(target, "")
                 }
-                Err(err) => notice(state, Notice::Error(err)),
+                Err(err) => error(state, &err),
             }
         }
         Action::FileComment => {
@@ -656,25 +659,16 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             let selection = screen.selection.take();
             let target = match target(&diff.doc, cursor, half, selection) {
                 Ok(target) => target,
-                Err(err) => return notice(state, Notice::Error(err)),
+                Err(err) => return error(state, &err),
             };
             let ComposeTarget::Line { path, start, end } = target else {
-                return notice(
-                    state,
-                    Notice::Error("Suggestions need lines GitHub can comment on".into()),
-                );
+                return error(state, "Suggestions need lines GitHub can comment on");
             };
             if start.side != Side::Right || end.side != Side::Right {
-                return notice(
-                    state,
-                    Notice::Error("Suggestions apply to new lines (not deleted ones)".into()),
-                );
+                return error(state, "Suggestions apply to new lines (not deleted ones)");
             }
             let Some(text) = diff.doc.files().get(cursor.file).and_then(|f| f.text()) else {
-                return notice(
-                    state,
-                    Notice::Error("Suggestions need the file's text".into()),
-                );
+                return error(state, "Suggestions need the file's text");
             };
             let original: Vec<String> = (start.line..=end.line)
                 .map(|line| text.line(LinePos { line, ..start }).to_owned())
@@ -691,14 +685,14 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::ResolveThread => {
             let Some(ann) = annotation else {
-                return notice(state, Notice::Info("Move to a thread to resolve it".into()));
+                return info(state, "Move to a thread to resolve it");
             };
             let AnnotationKey::Thread(thread_id) = ann.key else {
-                return notice(state, Notice::Info("Drafts can't be resolved".into()));
+                return info(state, "Drafts can't be resolved");
             };
             let resolved = !ann.resolved;
             if (resolved && !ann.can_resolve) || (!resolved && !ann.can_unresolve) {
-                return notice(state, Notice::Info("You can't change this thread".into()));
+                return info(state, "You can't change this thread");
             }
             // Optimistic; rolled back if GitHub refuses.
             diff.edit(|i| i.set_resolved(&thread_id, resolved));
@@ -710,10 +704,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::Delete => {
             let Some(AnnotationKey::Draft(id)) = annotation.map(|a| a.key) else {
-                return notice(
-                    state,
-                    Notice::Info("Move to a draft comment to delete it".into()),
-                );
+                return info(state, "Move to a draft comment to delete it");
             };
             let Some(at) = diff.inputs().review.pending.iter().position(|d| d.id == id) else {
                 return Vec::new();
@@ -725,7 +716,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::UndoDelete => {
             let Some(mut draft) = diff.edit(|i| i.deleted.take()) else {
-                return notice(state, Notice::Info("No deleted draft to bring back".into()));
+                return info(state, "No deleted draft to bring back");
             };
             let save = diff.edit_review(&pr, |i| {
                 if i.review.pending.iter().any(|d| d.id == draft.id) {
@@ -754,7 +745,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::SubmitReview => {
             if diff.refs.is_none() {
-                return notice(state, Notice::Error("The diff hasn't loaded yet".into()));
+                return error(state, "The diff hasn't loaded yet");
             }
             state.overlay = Some(Overlay::Submit(Box::new(SubmitDialog::new(
                 &state.theme,
@@ -762,7 +753,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             ))));
             vec![Cmd::Api(Api::FetchPendingReview(pr))]
         }
-        _ => notice(state, Notice::Info(action.not_here())),
+        _ => info(state, &action.not_here()),
     }
 }
 
