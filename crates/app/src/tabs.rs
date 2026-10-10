@@ -260,26 +260,17 @@ impl State {
     /// Reopens tabs saved by [`State::tab_urls`]: the first replaces the
     /// home page, each other one opens after it, and the first is shown.
     pub fn restore_tabs(&mut self, urls: &[String]) {
-        let mut targets = urls.iter().filter_map(|u| match Dest::from_url(u).target {
-            Target::External(_) => None,
-            target => Some(target),
-        });
-        let Some(first) = targets.next() else {
-            return;
-        };
-        let screen = |target: Target, prefs| match target {
+        let prefs = DiffPrefs::fit(self.size.0);
+        let mut screens = urls.iter().filter_map(|u| match Dest::from_url(u).target {
             Target::Files(of) => Some(Screen::Diff(Box::new(DiffScreen::new(of, prefs)))),
             Target::Page(route) => Some(Screen::Page(Box::new(PageScreen::new(route, None)))),
             Target::External(_) => None,
+        });
+        let Some(first) = screens.next() else {
+            return;
         };
-        let prefs = DiffPrefs::fit(self.size.0);
-        if let Some(first) = screen(first, prefs) {
-            self.screens = Screens::new(first);
-            self.forward.clear();
-        }
-        self.after = targets
-            .filter_map(|t| screen(t, prefs))
-            .map(Tab::new)
-            .collect();
+        self.screens = Screens::new(first);
+        self.forward.clear();
+        self.after = screens.map(Tab::new).collect();
     }
 }
