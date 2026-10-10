@@ -111,7 +111,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
         spinner: crate::state::SPINNER
             .get(state.spinner % crate::state::SPINNER.len())
             .unwrap_or(&""),
-        notice: state.notice.as_ref(),
+        notice: state.notices.shown(),
         rate_limit,
         hints: &state.key_hints(),
     }

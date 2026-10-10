@@ -523,7 +523,7 @@ fn with_tabs(mode: Mode, n: usize) -> State {
         let _ = state.open_tab(crate::route::Target::Page(route).into());
     }
     let _ = state.switch_to_tab(1);
-    state.notice = None;
+    state.notices.dismiss();
     state
 }
 
@@ -930,7 +930,7 @@ fn tabs_dark() {
 fn tabs_overflow_80_dark() {
     let mut state = with_tabs(Mode::Dark, 12);
     let _ = state.switch_to_tab(6);
-    state.notice = None;
+    state.notices.dismiss();
     insta::assert_snapshot!(render(&sized(state, 80, 24)));
 }
 
@@ -2416,7 +2416,8 @@ mod keys {
                 let before = render(&s);
                 let cmds = apply(&mut s, action);
                 let _ = s.settle();
-                if cmds.is_empty() && s.notice.is_none() && !s.quit && render(&s) == before {
+                if cmds.is_empty() && s.notices.shown().is_none() && !s.quit && render(&s) == before
+                {
                     silent.push(format!("{name}: {}", action.name()));
                 }
             }
@@ -3043,12 +3044,11 @@ mod changes {
     use ghtui_api::model::{MergeState, NodeId, PrRef, ReviewEvent};
     use ghtui_store::{DraftComment, DraftSide, ReviewState};
     use ghtui_theme::Mode;
-    use ghtui_ui::bars::Notice;
 
     use super::{ghtui, pr_detail, render, with_job, with_pr, with_repo, with_run};
     use crate::act::{By, Subject};
     use crate::browse::{Data, DataKey};
-    use crate::fixtures::{answer, fetched, press};
+    use crate::fixtures::{answer, fetched, press, says, warns};
     use crate::keymap::Action;
     use crate::review::SubmitOutcome;
     use crate::route::Route;
@@ -3062,13 +3062,6 @@ mod changes {
         match &s.overlay {
             Some(Overlay::Confirm(c)) => c,
             _ => panic!("no confirmation"),
-        }
-    }
-
-    fn info(s: &State) -> String {
-        match &s.notice {
-            Some(Notice::Info(text) | Notice::Error(text)) => text.clone(),
-            None => String::new(),
         }
     }
 
@@ -3148,18 +3141,14 @@ mod changes {
         press(&mut s, "<Enter>");
         let cmds = answer(&mut s, &sent, Ok(()));
         assert!(s.overlay.is_none());
-        assert_eq!(info(&s), "Merged");
+        says(&s, "Merged");
         assert!(
             cmds.contains(&Cmd::Api(Api::FetchPr(pr()))),
             "the pull request is fetched again: {cmds:?}"
         );
         // Until GitHub shows it merged, nothing else is offered.
         press(&mut s, "X");
-        assert!(
-            info(&s).contains("hasn't shown the last change"),
-            "{}",
-            info(&s)
-        );
+        says(&s, "hasn't shown the last change");
         let merged = mergeable(|d| d.summary.state = IssueState::Merged);
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(merged))));
         assert!(s.awaiting.is_none());
@@ -3175,12 +3164,8 @@ mod changes {
         s.prs.clear();
         press(&mut s, "jj");
         let cmds = press(&mut s, "M");
-        assert_eq!(cmds, vec![Cmd::Api(Api::FetchPr(pr()))], "{}", info(&s));
-        assert!(
-            info(&s).starts_with("Loading gold-silver-copper/ghtui#12"),
-            "{}",
-            info(&s)
-        );
+        assert_eq!(cmds, vec![Cmd::Api(Api::FetchPr(pr()))]);
+        says(&s, "Loading gold-silver-copper/ghtui#12");
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
         assert_eq!(confirm(&s).about, Subject::Pr(pr()));
         assert!(
@@ -3223,11 +3208,7 @@ mod changes {
         );
         press(&mut s, "gjj");
         press(&mut s, "M");
-        assert!(
-            info(&s).starts_with("That works on a pull request"),
-            "{}",
-            info(&s)
-        );
+        says(&s, "That works on a pull request");
     }
 
     /// Updating the branch, the page follows GitHub until it shows the new
@@ -3253,12 +3234,8 @@ mod changes {
         // GitHub still shows the old head.
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
         press(&mut s, "M");
-        assert!(
-            info(&s).contains("hasn't shown the last change"),
-            "{}",
-            info(&s)
-        );
-        let cmds = timers(&mut s, &mut None);
+        says(&s, "hasn't shown the last change");
+        let cmds = timers(&mut s);
         assert!(cmds.contains(&Cmd::Timer(Timer::Live, 5_000)), "{cmds:?}");
         let cmds = update(&mut s, Msg::Timer(Timer::Live));
         assert!(cmds.contains(&Cmd::Api(Api::FetchPr(pr()))), "{cmds:?}");
@@ -3275,7 +3252,7 @@ mod changes {
         assert_eq!(head, "1".repeat(40));
         press(&mut s, "<Esc>");
         press(&mut s, "B");
-        assert_eq!(info(&s), "It's up to date with main");
+        says(&s, "It's up to date with main");
     }
 
     /// What GitHub says you may not do is refused, saying why, and what
@@ -3284,37 +3261,30 @@ mod changes {
     fn what_github_forbids_is_refused() {
         let mut s = pr_with(|d| d.may = ghtui_api::model::PrPermits::default());
         press(&mut s, "M");
-        assert_eq!(
-            info(&s),
-            "Merging takes write access to gold-silver-copper/ghtui"
-        );
+        says(&s, "Merging takes write access to gold-silver-copper/ghtui");
         press(&mut s, "X");
-        assert!(
-            info(&s).starts_with("GitHub doesn't let you close it"),
-            "{}",
-            info(&s)
-        );
+        says(&s, "GitHub doesn't let you close it");
         press(&mut s, "B");
-        assert!(info(&s).contains("which you can't push to"), "{}", info(&s));
+        says(&s, "which you can't push to");
 
         let mut s = with_pr(Mode::Dark);
         press(&mut s, "M");
-        assert_eq!(info(&s), "It conflicts with main: resolve that on GitHub");
+        says(&s, "It conflicts with main: resolve that on GitHub");
         let mut s = pr_with(|d| d.merge_state = MergeState::Blocked);
         press(&mut s, "M");
-        assert!(info(&s).contains("blocked"), "{}", info(&s));
+        says(&s, "blocked");
         let mut s = pr_with(|d| d.merge_state = MergeState::Behind);
         press(&mut s, "M");
-        assert!(info(&s).contains("B updates it"), "{}", info(&s));
+        says(&s, "B updates it");
 
         let mut s = with_run(Mode::Dark);
         let mut repo = crate::fixtures::overview();
         repo.can_write = false;
         fetched(&mut s, DataKey::Repo(ghtui()), Data::Repo(Box::new(repo)));
         press(&mut s, "<C-r>");
-        assert_eq!(
-            info(&s),
-            "Re-running and cancelling take write access to gold-silver-copper/ghtui"
+        says(
+            &s,
+            "Re-running and cancelling take write access to gold-silver-copper/ghtui",
         );
     }
 
@@ -3325,29 +3295,26 @@ mod changes {
         let mut s = pr_in(IssueState::Merged);
         assert!(press(&mut s, "M").is_empty());
         assert!(s.overlay.is_none());
-        assert_eq!(info(&s), "It's merged");
+        says(&s, "It's merged");
         let merge = (s.doables().into_iter())
             .find(|d| d.action == Action::Merge)
             .unwrap();
         assert_eq!(merge.unavailable.as_deref(), Some("It's merged"));
         press(&mut s, "X");
-        assert!(info(&s).contains("can't be reopened"), "{}", info(&s));
+        says(&s, "can't be reopened");
 
         let mut s = with_pr(Mode::Dark);
         press(&mut s, "W");
-        assert_eq!(info(&s), "It isn't a draft");
+        says(&s, "It isn't a draft");
         s.viewer = Some(pr_detail().summary.author);
         press(&mut s, "A");
-        assert_eq!(info(&s), "You can't approve your own pull request");
+        says(&s, "You can't approve your own pull request");
 
         let mut s = with_repo(Mode::Dark, ghtui_theme::ColorDepth::TrueColor);
         press(&mut s, "M");
-        assert_eq!(
-            info(&s),
-            "That works on a pull request (or its row in a list)"
-        );
+        says(&s, "That works on a pull request (or its row in a list)");
         press(&mut s, "<C-r>");
-        assert_eq!(info(&s), "Re-running works on a workflow run or a job");
+        says(&s, "Re-running works on a workflow run or a job");
     }
 
     /// Marking a draft ready asks nothing: it's sent at once. GitHub's
@@ -3368,10 +3335,10 @@ mod changes {
         let refused = ApiError::GraphQl(vec!["Not now".into()]);
         answer(&mut s, &sent, Err(refused));
         assert_eq!(confirm(&s).error, None);
-        assert!(info(&s).contains("Not now"), "{}", info(&s));
+        warns(&s, "Not now");
         press(&mut s, "<Esc>WcLGTM");
         answer(&mut s, &sent, Ok(()));
-        assert_eq!(info(&s), "Ready for review");
+        says(&s, "Ready for review");
         assert!(
             matches!(&s.overlay, Some(Overlay::Compose(c)) if c.text() == "LGTM"),
             "the comment is still being written"
@@ -3459,7 +3426,7 @@ mod changes {
             Msg::Diff(pr().into(), DiffMsg::ReviewSubmitted(outcome)),
         );
         assert!(s.overlay.is_none());
-        assert_eq!(info(&s), "Approved gold-silver-copper/ghtui#12");
+        says(&s, "Approved gold-silver-copper/ghtui#12");
         let left = ReviewState {
             last_reviewed_head: Some(pr_detail().head_oid),
             ..ReviewState::default()
@@ -3492,7 +3459,7 @@ mod changes {
         );
         let mut s = with_run(Mode::Dark);
         press(&mut s, "X");
-        assert_eq!(info(&s), "The run has finished: there's nothing to cancel");
+        says(&s, "The run has finished: there's nothing to cancel");
 
         let mut s = with_job(Mode::Dark, None);
         press(&mut s, "<C-r>");
@@ -3514,7 +3481,7 @@ mod changes {
             Data::Job(Box::new(job.clone())),
         );
         press(&mut s, "<C-r>");
-        assert_eq!(info(&s), "The run is still going: X cancels it");
+        says(&s, "The run is still going: X cancels it");
         press(&mut s, "X");
         assert_eq!(confirm(&s).title, "Cancel CI #412?");
         let cancel = Change::CancelRun {
@@ -3532,11 +3499,7 @@ mod changes {
         answer(&mut s, &sent, Ok(()));
         // GitHub takes a while to stop it: it's asked for once.
         press(&mut s, "X");
-        assert!(
-            info(&s).contains("hasn't shown the last change"),
-            "{}",
-            info(&s)
-        );
+        says(&s, "hasn't shown the last change");
         assert!(s.busy().is_some_and(|b| b.starts_with("Cancel requested")));
         job.run.outcome = CheckOutcome::Cancelled;
         fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
@@ -3594,7 +3557,7 @@ mod changes {
         let mut s = with_job(Mode::Dark, None);
         let live = Cmd::Timer(Timer::Live, 5_000);
         assert!(
-            !timers(&mut s, &mut None).contains(&live),
+            !timers(&mut s).contains(&live),
             "a finished job isn't followed"
         );
         let (mut job, mut log) = crate::fixtures::job();
@@ -3610,13 +3573,9 @@ mod changes {
             DataKey::JobLog(ghtui(), 2),
             Data::Log(std::sync::Arc::new(log)),
         );
-        let mut last = s.notice.clone();
-        let cmds = timers(&mut s, &mut last);
+        let cmds = timers(&mut s);
         assert!(cmds.contains(&live), "{cmds:?}");
-        assert!(
-            !timers(&mut s, &mut last).contains(&live),
-            "one timer at a time"
-        );
+        assert!(!timers(&mut s).contains(&live), "one timer at a time");
         let cmds = update(&mut s, Msg::Timer(Timer::Live));
         let fetch = |key| Cmd::Api(Api::Fetch { key, cached: false });
         assert!(cmds.contains(&fetch(DataKey::Job(ghtui(), 2))), "{cmds:?}");

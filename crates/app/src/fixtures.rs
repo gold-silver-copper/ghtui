@@ -15,9 +15,32 @@ use ghtui_api::browse::{
 };
 use ghtui_api::model::{Capped, Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 
+use ghtui_ui::bars::Notice;
+
 use crate::browse::{Data, DataKey};
 use crate::diff_screen::DiffOf;
 use crate::state::{Api, Cmd, DiffMsg, Msg, State, update};
+
+/// Asserts the status bar says `part`, as information.
+#[track_caller]
+pub(crate) fn says(state: &State, part: &str) {
+    shows(state, Notice::Info, part);
+}
+
+/// Asserts the status bar says `part`, as an error.
+#[track_caller]
+pub(crate) fn warns(state: &State, part: &str) {
+    shows(state, Notice::Error, part);
+}
+
+#[track_caller]
+fn shows(state: &State, kind: fn(String) -> Notice, part: &str) {
+    let shown = state.notices.shown();
+    let fits = shown.is_some_and(|n| match n {
+        Notice::Info(text) | Notice::Error(text) => *n == kind(text.clone()) && text.contains(part),
+    });
+    assert!(fits, "{shown:?} doesn't say “{part}”");
+}
 
 /// Presses `keys`, in vim notation (`"jj"`, `"<Esc>/"`, `"<C-d>"`).
 pub(crate) fn press(state: &mut State, keys: &str) -> Vec<Cmd> {

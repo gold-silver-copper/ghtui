@@ -20,6 +20,7 @@ use ratatui::layout::Rect;
 use crate::diff_job::{DiffFiles, JobId, JobMsg, next_job};
 use crate::join;
 use crate::keymap::Action;
+use crate::notice::Notices;
 use crate::picker;
 use crate::review::{annotations, on_submitted};
 use crate::state::{Api, Cmd, DiffMsg, Git, Overlay, Problem, State};
@@ -455,7 +456,7 @@ pub fn apply(
     state: &mut DiffState,
     action: Action,
     content: Rect,
-    notice: &mut Option<Notice>,
+    notice: &mut Notices,
 ) -> Vec<Cmd> {
     let lay = layout(content, screen.prefs.tree_visible);
     let half = (usize::from(lay.diff.height) / 2).max(1).cast_signed();
@@ -497,14 +498,11 @@ pub fn apply(
         }
         Action::IgnoreWhitespace => {
             screen.prefs.ignore_whitespace = !screen.prefs.ignore_whitespace;
-            *notice = Some(Notice::Info(
-                if screen.prefs.ignore_whitespace {
-                    "Ignoring whitespace changes"
-                } else {
-                    "Showing whitespace changes"
-                }
-                .into(),
-            ));
+            notice.info(if screen.prefs.ignore_whitespace {
+                "Ignoring whitespace changes"
+            } else {
+                "Showing whitespace changes"
+            });
         }
         // Moving in the file tree; everything else acts on the diff.
         Action::Open if tree_focused => screen.focus = Pane::Diff,
@@ -576,7 +574,7 @@ pub fn apply(
                     screen.cursor = pos;
                     face_thread(screen, state);
                 }
-                None => *notice = Some(Notice::Info(none.into())),
+                None => notice.info(none),
             }
         }
         Action::VisualLines => {
@@ -585,11 +583,11 @@ pub fn apply(
                 None => (Some(screen.cursor), "Selecting lines"),
             };
             screen.selection = selection;
-            *notice = Some(Notice::Info(what.into()));
+            notice.info(what);
         }
         Action::NextUnviewed => match state.doc.next_unviewed(screen.cursor) {
             Some(pos) => jump(screen, pos),
-            None => *notice = Some(Notice::Info("Every file is viewed".into())),
+            None => notice.info("Every file is viewed"),
         },
         Action::ExpandContext => {
             let pos = screen.cursor;
@@ -597,7 +595,7 @@ pub fn apply(
             let before = rows(&state.doc);
             preserving_position(screen, state, |d| d.doc.expand(pos));
             if rows(&state.doc) == before {
-                *notice = Some(Notice::Info("No more context here".into()));
+                notice.info("No more context here");
             }
         }
         Action::FullFile => {
@@ -605,7 +603,7 @@ pub fn apply(
             preserving_position(screen, state, |d| d.doc.toggle_full(file));
         }
         Action::OldSide | Action::NewSide if !state.doc.opts().split => {
-            *notice = Some(Notice::Info("Sides are split view's · S splits".into()));
+            notice.info("Sides are split view's · S splits");
         }
         Action::OldSide => screen.half = Side::Left,
         Action::NewSide => screen.half = Side::Right,
@@ -617,7 +615,7 @@ pub fn apply(
                     screen.half = if from { Side::Right } else { Side::Left };
                 }
             }
-            None => *notice = Some(Notice::Info("Not on moved code".into())),
+            None => notice.info("Not on moved code"),
         },
         Action::Open => match state.doc.row(screen.cursor) {
             Some(Row::Fold { .. }) => {
@@ -641,13 +639,13 @@ pub fn apply(
                 state.requested.remove(&file);
                 screen.cursor.row = 0;
             }
-            _ => *notice = Some(Notice::Info("Nothing to open here".into())),
+            _ => notice.info("Nothing to open here"),
         },
         Action::ToggleViewed => cmds.extend(toggle_viewed(screen, state, notice)),
         Action::MarkReviewed => cmds.extend(toggle_reviewed(screen, state, notice)),
         Action::SearchNext | Action::SearchPrev => {
             let Some(query) = screen.search.clone() else {
-                *notice = Some(Notice::Info("No search yet".into()));
+                notice.info("No search yet");
                 return Vec::new();
             };
             match state
@@ -655,10 +653,10 @@ pub fn apply(
                 .search(&query, screen.cursor, action == Action::SearchNext)
             {
                 Some(pos) => screen.cursor = pos,
-                None => *notice = Some(Notice::Error(format!("No match for “{query}”"))),
+                None => notice.error(format!("No match for “{query}”")),
             }
         }
-        _ => *notice = Some(Notice::Info(action.not_here())),
+        _ => notice.info(action.not_here()),
     }
     cmds
 }
@@ -700,19 +698,13 @@ pub fn search(screen: &mut DiffScreen, state: &DiffState, query: String) -> Noti
 }
 
 #[must_use]
-fn toggle_viewed(
-    screen: &mut DiffScreen,
-    state: &mut DiffState,
-    notice: &mut Option<Notice>,
-) -> Vec<Cmd> {
+fn toggle_viewed(screen: &mut DiffScreen, state: &mut DiffState, notice: &mut Notices) -> Vec<Cmd> {
     let Some(pr) = screen.of.pr().cloned() else {
-        *notice = Some(Notice::Info("Viewed files are a pull request's".into()));
+        notice.info("Viewed files are a pull request's");
         return Vec::new();
     };
     let Some(viewed) = &state.inputs().viewed else {
-        *notice = Some(Notice::Error(
-            "Viewed state hasn't loaded from GitHub yet".into(),
-        ));
+        notice.error("Viewed state hasn't loaded from GitHub yet");
         return Vec::new();
     };
     let index = screen.cursor.file;
@@ -742,19 +734,13 @@ fn toggle_viewed(
 }
 
 #[must_use]
-fn toggle_reviewed(
-    screen: &DiffScreen,
-    state: &mut DiffState,
-    notice: &mut Option<Notice>,
-) -> Vec<Cmd> {
+fn toggle_reviewed(screen: &DiffScreen, state: &mut DiffState, notice: &mut Notices) -> Vec<Cmd> {
     let Some(pr) = screen.of.pr().cloned() else {
-        *notice = Some(Notice::Info("Reviewed marks are a pull request's".into()));
+        notice.info("Reviewed marks are a pull request's");
         return Vec::new();
     };
     let Some(block) = state.doc.block_at(screen.cursor) else {
-        *notice = Some(Notice::Info(
-            "Move to a changed line to mark it reviewed".into(),
-        ));
+        notice.info("Move to a changed line to mark it reviewed");
         return Vec::new();
     };
     let hash = block.hash.clone();
@@ -1008,7 +994,7 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
         }
         DiffMsg::CommitsListed(Ok(commits)) => {
             edit(state, of, |i| i.commits = commits);
-            state.notice = None;
+            state.notices.dismiss();
             return state.open_picker(picker::Kind::Commits { mark: None });
         }
         DiffMsg::CommitsListed(Err(err)) => {

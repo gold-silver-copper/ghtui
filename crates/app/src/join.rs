@@ -2,7 +2,6 @@
 //! what is present, so the order the inputs arrive in can't matter.
 
 use ghtui_api::model::{NodeId, PrDetail};
-use ghtui_ui::bars::Notice;
 
 use crate::diff_job::JobId;
 use crate::diff_screen::{DiffOf, LastReview};
@@ -96,7 +95,7 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
         }
         match check {
             Ok(None) => {}
-            Ok(Some(warning)) => state.notice = Some(Notice::Error(warning)),
+            Ok(Some(warning)) => state.notices.error(warning),
             Err(error) => diff.error = Some(error),
         }
     }

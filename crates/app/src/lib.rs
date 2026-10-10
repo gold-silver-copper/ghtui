@@ -15,6 +15,7 @@ mod home;
 mod join;
 mod keymap;
 mod nav;
+mod notice;
 mod picker;
 mod review;
 pub mod route;

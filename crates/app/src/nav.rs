@@ -1473,7 +1473,7 @@ impl State {
         out.push(go(Action::Refresh, "Refresh", ""));
         out.push(go(Action::CommandPalette, "Command palette", ""));
         let mut messages = go(Action::Messages, "Recent messages and errors", "");
-        if self.messages.is_empty() {
+        if self.notices.log().is_empty() {
             messages.unavailable = Some("nothing yet".into());
         }
         out.push(messages);
