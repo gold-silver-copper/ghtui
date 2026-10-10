@@ -56,12 +56,6 @@ fn new_tab(icon: &'static str, label: &str, count: Option<u64>) -> PageTab {
 impl State {
     pub fn chrome(&self) -> Chrome {
         let mut c = self.screen_chrome();
-        self.tab_strip(&mut c);
-        c
-    }
-
-    fn screen_chrome(&self) -> Chrome {
-        let mut c = Chrome::default();
         // Right: review requests and you.
         // Review requests, once their search (Home's first section, unless
         // you changed it) is in.
@@ -81,6 +75,13 @@ impl State {
             c.right
                 .push((format!("@{login}"), Target::Page(Route::user(login))));
         }
+        self.tab_strip(&mut c);
+        c
+    }
+
+    /// What's on screen's own chrome: its crumbs, tabs and title.
+    fn screen_chrome(&self) -> Chrome {
+        let mut c = Chrome::default();
         match self.screen() {
             Screen::Page(p) => self.page_chrome(&p.route, &mut c),
             Screen::Diff(d) => {
@@ -326,7 +327,7 @@ impl State {
         if self.tab_count() < 2 {
             return;
         }
-        let lay = self.layout();
+        let header = Rect::new(0, 0, self.size.0, self.size.1.min(1));
         let right: Vec<String> = c.right.iter().map(|(t, _)| t.clone()).collect();
         // The header keeps up to 32 columns for crumbs before dropping
         // its right-hand items; measure with that much.
@@ -335,7 +336,7 @@ impl State {
             current: false,
             tab: true,
         };
-        let h = ghtui_ui::chrome::header_layout(lay.header, &[reserve], &right);
+        let h = ghtui_ui::chrome::header_layout(header, &[reserve], &right);
         let room = usize::from(h.search.x.saturating_sub(h.logo.right().saturating_add(5)));
         let titles: Vec<String> = self
             .tab_titles()
@@ -502,33 +503,25 @@ impl State {
         ));
     }
 
-    /// Whether the chrome has a title row and tabs: what [`State::chrome`]
-    /// builds, without building it (layout runs several times a frame).
-    fn chrome_rows(&self) -> (bool, bool) {
-        match self.screen() {
-            // A pull request's title stays on top; a commit has none.
-            Screen::Diff(d) => (d.of.pr().is_some(), true),
-            Screen::Page(p) => (
-                matches!(p.route, Route::Pr { .. }),
-                !matches!(p.route, Route::Home),
-            ),
-        }
-    }
-
     /// Where everything goes on screen.
     pub fn layout(&self) -> Layout {
+        self.layout_of(&self.screen_chrome())
+    }
+
+    /// Where everything goes around chrome `c`: rows for the title and
+    /// the tabs when it has them.
+    pub fn layout_of(&self, c: &Chrome) -> Layout {
         let (w, h) = self.size;
-        let (has_title, has_tabs) = self.chrome_rows();
         let mut y = 0;
         let row = |y: u16, height: u16| Rect::new(0, y, w, height.min(h.saturating_sub(y)));
         let header = row(y, 1);
         y += 1;
-        let title = has_title.then(|| {
+        let title = c.title.is_some().then(|| {
             let r = row(y, 1);
             y += 1;
             r
         });
-        let tabs = has_tabs.then(|| {
+        let tabs = (!c.tabs.is_empty()).then(|| {
             let r = row(y, 2);
             y += 2;
             r
@@ -629,41 +622,19 @@ impl Chrome {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::route::Route;
     use crate::state::tests::state;
-    use ghtui_api::model::PrRef;
 
-    /// `chrome_rows` says what `chrome` builds, on every kind of screen.
+    /// A page without tabs (a gist) keeps no rows for them.
     #[test]
-    fn layout_shape_matches_the_chrome() {
-        let repo = RepoId::new("o", "r");
-        let pr = PrRef::parse("o/r#1").unwrap();
-        let routes = [
-            Route::Home,
-            Route::Repo(repo.clone()),
-            Route::Issues {
-                repo: repo.clone(),
-                query: OPEN.into(),
-            },
-            Route::Issue { repo, number: 2 },
-            Route::Pr {
-                pr: pr.clone(),
-                tab: PrTab::Commits,
-            },
-            Route::user("octocat"),
-            Route::Search {
-                kind: SearchKind::Users,
-                query: "x".into(),
-            },
-        ];
+    fn rows_are_kept_only_for_the_chrome_there_is() {
         let mut s = state();
-        for route in routes {
-            let _ = s.push(route);
-            let c = s.chrome();
-            assert_eq!(s.chrome_rows(), (c.title.is_some(), !c.tabs.is_empty()));
-        }
-        let _ = s.open_diff(DiffOf::Pr(pr), None);
-        let c = s.chrome();
-        assert_eq!(s.chrome_rows(), (c.title.is_some(), !c.tabs.is_empty()));
+        let _ = s.push(Route::Gist {
+            owner: None,
+            id: "6cad326836d38bd3a7ae".into(),
+        });
+        assert!(s.chrome().tabs.is_empty());
+        let lay = s.layout();
+        assert_eq!((lay.title, lay.tabs, lay.content.y), (None, None, 1));
     }
 }
