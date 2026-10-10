@@ -72,6 +72,24 @@ pub struct Checks {
     pub items: Capped<CheckItem>,
 }
 
+impl Checks {
+    /// What they come to, as GitHub rolls them up: failed if any failed
+    /// (or was cancelled), else running if any is, else passed.
+    pub fn state(&self) -> Option<crate::model::ChecksState> {
+        use crate::model::ChecksState;
+        let any = |o: CheckOutcome| self.items.iter().any(|i| i.outcome == o);
+        Some(if self.items.is_empty() {
+            return None;
+        } else if any(CheckOutcome::Failure) || any(CheckOutcome::Cancelled) {
+            ChecksState::Failing
+        } else if any(CheckOutcome::Pending) {
+            ChecksState::Pending
+        } else {
+            ChecksState::Passing
+        })
+    }
+}
+
 /// A commit's page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitDetail {
@@ -2084,6 +2102,19 @@ pub struct WorkflowRun {
     /// The workflow file, `.github/workflows/ci.yml`.
     pub path: String,
     pub jobs: Capped<JobSummary>,
+    /// Why it ran no jobs, where its conclusion says.
+    #[serde(default)]
+    pub held: Option<Held>,
+}
+
+/// Why a run ran no jobs, as its conclusion says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Held {
+    /// GitHub couldn't start it: its workflow file has a problem.
+    StartupFailure,
+    /// It waits for someone with write access to approve it (a fork's,
+    /// or a first-time contributor's).
+    Approval,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2508,7 +2539,13 @@ pub(crate) mod rest_actions {
 impl rest_actions::Run {
     pub(crate) fn into_run(self, jobs: Capped<rest_actions::Job>) -> WorkflowRun {
         let outcome = CheckOutcome::of(self.status, self.conclusion);
+        let held = match self.conclusion {
+            Some(CheckConclusionState::StartupFailure) => Some(Held::StartupFailure),
+            Some(CheckConclusionState::ActionRequired) => Some(Held::Approval),
+            _ => None,
+        };
         WorkflowRun {
+            held,
             id: self.id,
             name: self.name.unwrap_or_else(|| "Workflow".into()),
             title: self.display_title.unwrap_or_default(),

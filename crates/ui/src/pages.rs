@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use ghtui_api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckItem, CheckOutcome, Checks, Comment, CommitDetail,
     CommitInfo, Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList,
-    EntryKind, Gist, GistSummary, IssueDetail, IssueState, IssueSummary, Job, JobLog,
+    EntryKind, Gist, GistSummary, Held, IssueDetail, IssueState, IssueSummary, Job, JobLog,
     MilestoneDetail, MilestoneInfo, MilestoneList, Person, PrActivity, Profile, Readme, Release,
     RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, Severity,
     Short, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserSummary, WikiPage, Workflow,
@@ -2670,13 +2670,25 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
         format!("Jobs  {}", count_of(&run.jobs)),
         Role::Strong,
     )];
-    // A run just started (or re-run) has no jobs until GitHub queues them.
-    let none = if run.outcome == CheckOutcome::Pending {
-        "Waiting for GitHub to queue its jobs…"
-    } else {
-        "No jobs."
+    // Why it has no jobs, where GitHub says: as on its page, which also
+    // has what the API doesn't (an approval that expired, say).
+    let none = match (run.held, run.outcome) {
+        (Some(Held::StartupFailure), _) => format!(
+            "It didn't start: GitHub found a problem in {} (o shows GitHub's message)",
+            run.path
+        ),
+        (Some(Held::Approval), _) => {
+            "It waits for someone with write access to approve running it (o approves it on GitHub)"
+                .to_owned()
+        }
+        // A run just started (or re-run) has no jobs until GitHub queues them.
+        (None, CheckOutcome::Pending) => "Waiting for GitHub to queue its jobs…".to_owned(),
+        (None, CheckOutcome::Failure) => {
+            "No job ran: GitHub ended it before any started, and its API doesn't say why. Its page does (o); a run that waits for approval ends so when nobody approves it in time.".to_owned()
+        }
+        (None, _) => "No jobs ran.".to_owned(),
     };
-    list_box(page, title, Vec::new(), &jobs, none, |page, job| {
+    list_box(page, title, Vec::new(), &jobs, &none, |page, job| {
         let target = format!("{}/actions/runs/{}/job/{}", url::repo(repo), run.id, job.id);
         item(page, target, |page, link| {
             let (mark, role) = outcome_mark(job.outcome);
@@ -4561,6 +4573,7 @@ mod tests {
             updated_at: None,
             path: ".github/workflows/ci.yml".into(),
             jobs: Capped::new(vec![job], 51),
+            held: None,
         };
         let mut page = Page::new(100);
         workflow_run(&mut page, &RepoId::new("o", "r"), &run, 0);
@@ -4569,6 +4582,39 @@ mod tests {
             texts.iter().any(|t| t.contains("… 50 more on GitHub (o)")),
             "{texts:#?}"
         );
+    }
+
+    /// A run that ran no jobs says why, where GitHub says.
+    #[test]
+    fn a_run_without_jobs_says_why() {
+        let text = |held, outcome| {
+            let run = WorkflowRun {
+                id: 1,
+                name: "CI".into(),
+                title: "t".into(),
+                number: 1,
+                attempt: 1,
+                event: "pull_request".into(),
+                branch: None,
+                sha: "abc".into(),
+                outcome,
+                actor: None,
+                started_at: None,
+                updated_at: None,
+                path: ".github/workflows/ci.yml".into(),
+                jobs: Capped::default(),
+                held,
+            };
+            let mut page = Page::new(200);
+            workflow_run(&mut page, &RepoId::new("o", "r"), &run, 0);
+            page.lines.iter().map(PageLine::text).collect::<Vec<_>>().join("\n")
+        };
+        let broken = text(Some(Held::StartupFailure), CheckOutcome::Failure);
+        assert!(broken.contains("found a problem in .github/workflows/ci.yml"), "{broken}");
+        let waiting = text(Some(Held::Approval), CheckOutcome::Failure);
+        assert!(waiting.contains("approve running it"), "{waiting}");
+        let failed = text(None, CheckOutcome::Failure);
+        assert!(failed.contains("No job ran"), "{failed}");
     }
 
     fn job_page(page: &mut Page, job: &Job, log: &str, at: JobAt<'_>) {

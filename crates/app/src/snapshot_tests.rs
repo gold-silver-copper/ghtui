@@ -145,6 +145,8 @@ pub(crate) fn pr_detail() -> PrDetail {
         head_oid: "fedcba9876543210fedcba9876543210fedcba98".into(),
         head_repo: Some("octocat/ghtui".into()),
         changed_files: 7,
+        commit_count: 3,
+        check_count: 5,
         mergeable: Mergeable::Conflicting,
         milestone: Some(ghtui_api::model::MilestoneRef {
             number: 3,
@@ -203,6 +205,39 @@ fn with_pr(mode: Mode) -> State {
         Data::PrActivity(Box::new(fixtures::activity())),
     );
     state
+}
+
+/// A pull request's tabs are counted from the pull request until their
+/// own data is in, so opening it at its files counts them all; and the
+/// Checks tab's icon is the state of what it lists, not a fixed mark.
+#[test]
+fn pr_tabs_count_and_say_how_the_checks_are() {
+    let tab = |state: &State, label: &str| {
+        let tabs = state.chrome().tabs;
+        let (t, _) = tabs.into_iter().find(|(t, _)| t.label == label).unwrap();
+        (t.icon, t.count)
+    };
+    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let mut state = with_home(Mode::Dark, ColorDepth::TrueColor);
+    let _ = state.open_diff(crate::diff_screen::DiffOf::Pr(pr.clone()), None);
+    let mut passing = pr_detail();
+    passing.summary.checks = Some(ChecksState::Passing);
+    update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(passing.clone()))));
+    assert_eq!(tab(&state, "Conversation").1, Some(passing.summary.comments));
+    assert_eq!(tab(&state, "Commits").1, Some(3));
+    assert_eq!(tab(&state, "Checks"), ("✓", Some(5)));
+    // The checks it lists are still going, whatever the rollup said.
+    let _ = state.push(Route::Pr {
+        pr: pr.clone(),
+        tab: PrTab::Checks,
+    });
+    let mut checks = fixtures::checks();
+    let mut running = checks.items[0].clone();
+    running.outcome = ghtui_api::browse::CheckOutcome::Pending;
+    checks.items = vec![running, checks.items[0].clone()].into();
+    checks.items.iter_mut().skip(1).for_each(|c| c.outcome = ghtui_api::browse::CheckOutcome::Success);
+    fetched(&mut state, DataKey::PrChecks(pr), Data::Checks(Box::new(checks)));
+    assert_eq!(tab(&state, "Checks"), ("◔", Some(2)));
 }
 
 /// A conversation longer than what's fetched (its newest comments,
