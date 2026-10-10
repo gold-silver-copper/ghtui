@@ -513,6 +513,8 @@ pub struct State {
     pub awaiting: Option<act::Awaiting>,
     /// An action waiting for what it's about to load.
     pub pending: Option<act::Pending>,
+    /// Rows changed from the list on screen, kept on it.
+    pub kept: Option<act::Kept>,
     pub quit: bool,
 }
 
@@ -549,6 +551,7 @@ impl State {
             live: false,
             awaiting: None,
             pending: None,
+            kept: None,
             quit: false,
         };
         state.sync_page();
@@ -656,12 +659,6 @@ impl State {
             Screen::Page(p) => {
                 let route = p.route.clone();
                 cmds.extend(self.ensure_route(&route, force));
-                // An issue or pull request list's open and closed counts
-                // are the header's, so refreshing the list refreshes them.
-                if force && let Route::Issues { repo, .. } | Route::Pulls { repo, .. } = &route {
-                    let header = Need::Data(DataKey::Repo(repo.clone()));
-                    cmds.extend(self.ensure(header, true));
-                }
             }
             Screen::Diff(d) => {
                 let of = d.of.clone();
@@ -742,6 +739,14 @@ impl State {
     /// diff) in bounds.
     #[must_use]
     pub fn settle(&mut self) -> Vec<Cmd> {
+        // Rows kept on a list are let go once you leave it.
+        if self
+            .kept
+            .as_ref()
+            .is_some_and(|k| self.route() != Some(&k.route))
+        {
+            self.kept = None;
+        }
         let mut cmds = self.settle_ref();
         self.sync_page();
         cmds.extend(self.settle_diff());
@@ -940,7 +945,18 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Diff(of, msg) => return diff_screen::update(state, &of, msg),
         Msg::Key(key) => return on_key(state, key),
-        Msg::Resize(w, h) => state.size = (w, h),
+        Msg::Resize(w, h) => {
+            // Split view asked for that no longer fits says so.
+            let unsplit = |state: &State| match state.screen() {
+                Screen::Diff(d) => d.unsplit(state.layout().content),
+                Screen::Page(_) => None,
+            };
+            let before = unsplit(state);
+            state.size = (w, h);
+            if let Some(why) = unsplit(state).filter(|_| before.is_none()) {
+                state.info(why);
+            }
+        }
         Msg::Viewer(Ok(login)) => state.viewer = Some(login),
         Msg::Viewer(Err(err)) => tracing::warn!(%err, "could not fetch viewer"),
         Msg::Pr(pr, result) => {
@@ -958,6 +974,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 tracing::warn!(?key, %err, "fetch failed");
             }
             let is_pr = matches!(result, Ok(Data::Issue(None)));
+            let result = result.map(|data| act::keep(state, &key, data));
             let remote = state.data.entry(key.clone()).or_default();
             match cached_at {
                 None => remote.finish(result),
@@ -1193,13 +1210,17 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Search => return state.open_search(),
         Action::FindFile if diff.is_some() => return state.open_picker(picker::Kind::DiffFiles),
         Action::FindFile => return state.open_finder(false),
-        Action::Menu => nav::open_menu(state),
+        Action::Menu => return nav::open_menu(state),
         Action::CommandPalette => return state.open_picker(picker::Kind::Commands),
         Action::Messages => {
             let kept = state.notices.log().iter().cloned().collect();
             return state.open_picker(picker::Kind::Messages(kept));
         }
-        Action::Refresh => return state.load_visible(true),
+        Action::Refresh => {
+            // What a refresh shows is GitHub's list, without the rows kept.
+            state.kept = None;
+            return state.load_visible(true);
+        }
         Action::Copy => return nav::copy_link(state),
         Action::OpenInBrowser => return state.go(Target::External(state.here_url()).into()),
         _ if act::ACTIONS.contains(&action) => return act::act(state, action),
@@ -2091,7 +2112,22 @@ pub(crate) mod tests {
             query: "repo:o/r is:pr label:bug".into(),
         });
         let _ = act(&mut state, Action::SaveSection);
-        let cmds = press(&mut state, "<C-u>Bugs<Enter>");
+        // Titled with the search at first, which it doesn't say twice.
+        let prompt = |state: &State| {
+            let p = overlay!(state, Picker);
+            state
+                .picker_rows(p)
+                .into_iter()
+                .map(|(i, _)| i.label)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(prompt(&state), ["Add “repo:o/r is:pr label:bug” to Home"]);
+        press(&mut state, "<C-u>Bugs");
+        assert_eq!(
+            prompt(&state),
+            ["Add “Bugs” to Home: repo:o/r is:pr label:bug"]
+        );
+        let cmds = press(&mut state, "<Enter>");
         assert!(state.overlay.is_none(), "the prompt closed");
         assert_eq!(
             cmds,
@@ -2676,6 +2712,48 @@ pub(crate) mod tests {
             .map(ghtui_ui::page::Seg::text)
             .collect();
         assert!(text.contains("exit code 101"), "{text}");
+        // The step's name shows above it, with what it printed before.
+        let header = (page.lines.iter()).position(|l| l.text().contains("✗ cargo test"));
+        assert!(header.is_some_and(|h| h >= p.scroll && h < p.scroll + s.page_height()));
+
+        // A long step: a third of a screen of what leads to the error, the
+        // step's name kept on top, and a line too long to fit wrapped
+        // whole rather than cut.
+        let (job, mut log) = crate::fixtures::job();
+        let long = format!("##[error]{}", "a::b::c calls d::e ".repeat(20));
+        let filler: String = (0..80)
+            .map(|n| format!("2026-10-03T12:00:05:01.{n:02}00000Z output {n}\n"))
+            .collect();
+        log.text = log
+            .text
+            .replace(
+                "2026-10-03T12:04:10",
+                &format!("{filler}2026-10-03T12:04:10"),
+            )
+            .replace("##[error]Process completed with exit code 101.", &long);
+        fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
+        fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
+        let height = s.page_height();
+        let Screen::Page(p) = s.screen() else {
+            panic!()
+        };
+        let page = p.page();
+        let jump = page.jump.unwrap();
+        assert!(jump - p.scroll >= height / 3 && jump < p.scroll + height);
+        assert!(
+            page.lines[page.shown(p.scroll, 0)]
+                .text()
+                .contains("✗ cargo test"),
+            "{:?} {} {jump} {}",
+            page.heads,
+            p.scroll,
+            page.lines.len()
+        );
+        let shown: String = page.lines[jump..]
+            .iter()
+            .map(ghtui_ui::page::PageLine::text)
+            .collect();
+        assert_eq!(shown.matches("a::b::c").count(), 20, "{shown}");
     }
 
     /// A running job, and its log (which GitHub doesn't have until the
@@ -3005,19 +3083,22 @@ pub(crate) mod tests {
         let open = issues(OPEN);
         assert_eq!(route(&state), open);
         let (kind, query) = open.search().unwrap();
+        let counts = DataKey::Counts(open.counts().unwrap());
         assert_eq!(
             cmds,
-            vec![fetch(DataKey::Search(kind, query))],
+            vec![fetch(DataKey::Search(kind, query)), fetch(counts.clone())],
             "the header isn't fetched again"
         );
         assert_eq!(state.chrome().active, Some(1));
-        // r refreshes the list's counts too, which the header holds.
+        // r refreshes the list's counts too.
+        let open_closed = Data::Counts(vec![Some(3), Some(9)]);
+        fetched(&mut state, counts.clone(), open_closed);
         let cmds = fetches(press(&mut state, "r"));
-        let header = Cmd::Api(Api::Fetch {
-            key: DataKey::Repo(repo()),
+        let counts = Cmd::Api(Api::Fetch {
+            key: counts,
             cached: false,
         });
-        assert!(cmds.contains(&header), "{cmds:?}");
+        assert!(cmds.contains(&counts), "{cmds:?}");
 
         // `/` on a list edits its filter.
         press(&mut state, "/");
@@ -4025,6 +4106,31 @@ pub(crate) mod tests {
             assert!(narrow.diffs.values().next().unwrap().doc.opts().split);
             let (wide, _) = diff_state(220);
             assert!(wide.diffs.values().next().unwrap().doc.opts().split);
+        }
+
+        /// Split view asked for where its halves would be too narrow hides
+        /// the file tree if that makes room, else stays unified, and says so.
+        #[test]
+        fn split_view_too_narrow_hides_the_tree_or_stays_unified() {
+            let split = |s: &State| s.diffs.values().next().unwrap().doc.opts().split;
+            let (mut s, _) = diff_state(110);
+            assert!(screen(&s).prefs.tree_visible);
+            act(&mut s, Action::ToggleSplit);
+            assert!(split(&s) && !screen(&s).prefs.tree_visible);
+            says(&s, "Hid the file tree");
+            act(&mut s, Action::ToggleTree);
+            assert!(!split(&s), "the tree back, split doesn't fit beside it");
+            says(&s, "split view needs 90 columns beside the file tree");
+
+            let (mut s, _) = diff_state(86);
+            act(&mut s, Action::ToggleSplit);
+            assert!(!split(&s));
+            says(&s, "Unified view: split view needs 90 columns");
+            update(&mut s, Msg::Resize(200, 30));
+            assert!(split(&s));
+            update(&mut s, Msg::Resize(86, 30));
+            assert!(!split(&s));
+            says(&s, "Unified view");
         }
 
         /// Where the cursor is, and the document it's in.

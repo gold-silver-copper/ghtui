@@ -99,6 +99,10 @@ impl std::fmt::Display for DiffOf {
 /// Split view turns on automatically from this diff-pane width.
 pub const SPLIT_MIN_WIDTH: u16 = 160;
 
+/// The narrowest diff pane split view is drawn in, asked for: each half's
+/// code gets about 30 columns. Narrower, it's unified.
+pub const SPLIT_NARROWEST: u16 = 90;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
     Tree,
@@ -172,11 +176,9 @@ impl DiffScreen {
     /// The view options this screen wants at `content` size.
     pub fn options(&self, content: Rect) -> ViewOptions {
         let lay = layout(content, self.prefs.tree_visible);
+        let wanted = (self.prefs.split_override).unwrap_or(lay.diff.width >= SPLIT_MIN_WIDTH);
         ViewOptions {
-            split: self
-                .prefs
-                .split_override
-                .unwrap_or(lay.diff.width >= SPLIT_MIN_WIDTH),
+            split: wanted && lay.diff.width >= SPLIT_NARROWEST,
             whitespace: if self.prefs.ignore_whitespace {
                 Whitespace::Ignore
             } else {
@@ -185,6 +187,21 @@ impl DiffScreen {
             // Thread cards start after the gutter; keep comments readable.
             wrap: lay.diff.width.saturating_sub(24).clamp(20, 100),
         }
+    }
+}
+
+impl DiffScreen {
+    /// Why split view, asked for, is unified at `content`'s size.
+    pub fn unsplit(&self, content: Rect) -> Option<String> {
+        let shown = self.options(content).split;
+        (self.prefs.split_override == Some(true) && !shown).then(|| {
+            let beside = if self.prefs.tree_visible && content.width >= SPLIT_NARROWEST {
+                " beside the file tree"
+            } else {
+                ""
+            };
+            format!("Unified view: split view needs {SPLIT_NARROWEST} columns{beside}")
+        })
     }
 }
 
@@ -484,6 +501,9 @@ pub fn apply(
             if !screen.prefs.tree_visible {
                 screen.focus = Pane::Diff;
             }
+            if let Some(why) = screen.unsplit(content) {
+                notice.info(why);
+            }
         }
         Action::SwitchPane => {
             if lay.tree.is_some() {
@@ -495,6 +515,21 @@ pub fn apply(
         }
         Action::ToggleSplit => {
             screen.prefs.split_override = Some(!screen.options(content).split);
+            // Split view too narrow beside the tree may fit without it.
+            let prefs = screen.prefs;
+            if screen.unsplit(content).is_some() && prefs.tree_visible {
+                screen.prefs.tree_visible = false;
+                match screen.unsplit(content) {
+                    None => {
+                        screen.focus = Pane::Diff;
+                        notice.info("Hid the file tree to make room for split view");
+                    }
+                    Some(_) => screen.prefs = prefs,
+                }
+            }
+            if let Some(why) = screen.unsplit(content) {
+                notice.info(why);
+            }
         }
         Action::IgnoreWhitespace => {
             screen.prefs.ignore_whitespace = !screen.prefs.ignore_whitespace;

@@ -961,6 +961,7 @@ pub fn workflow_run() -> WorkflowRun {
             job(3, "test (macos)", CheckOutcome::Pending, None),
         ]
         .into(),
+        held: None,
     }
 }
 

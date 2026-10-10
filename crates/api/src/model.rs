@@ -341,6 +341,12 @@ pub struct PrDetail {
     /// `owner/name` of the head repository; `None` if it was deleted.
     pub head_repo: Option<String>,
     pub changed_files: u64,
+    /// Its commits, and the checks and statuses on its head: what its tabs
+    /// count before they're opened.
+    #[serde(default)]
+    pub commit_count: u64,
+    #[serde(default)]
+    pub check_count: u64,
     pub mergeable: Mergeable,
     pub merge_state: MergeState,
     /// Commits on its base its branch doesn't have; `None` once it's
@@ -537,17 +543,14 @@ pub struct NewThread {
 
 // ---- conversions from the wire types ---------------------------------------
 
+/// The checks on a pull request's head commit, rolled up.
+fn rollup(commits: &q::CommitRollupConnection) -> Option<&q::StatusCheckRollup> {
+    let head = commits.nodes.as_ref()?.iter().flatten().last()?;
+    head.commit.status_check_rollup.as_ref()
+}
+
 pub(crate) fn checks(commits: &q::CommitRollupConnection) -> Option<ChecksState> {
-    let rollup = commits
-        .nodes
-        .as_ref()?
-        .iter()
-        .flatten()
-        .last()?
-        .commit
-        .status_check_rollup
-        .as_ref()?;
-    Some(rollup.state.into())
+    Some(rollup(commits)?.state.into())
 }
 
 /// The one reading of a commit status, for a PR's rollup and for each
@@ -619,8 +622,15 @@ impl PrDetail {
         merge_methods.sort_by_key(|m| *m != default);
         let writes = q::RepositoryPermission::writes(repo.viewer_permission);
         let pr = repo.pull_request?;
+        let commits = &pr.summary.commits;
+        let (commit_count, check_count) = (
+            count(commits.total_count),
+            rollup(commits).map_or(0, |r| count(r.contexts.total_count)),
+        );
         Some(Self {
             id: pr.id.into(),
+            commit_count,
+            check_count,
             summary: PrSummary::from_wire(pr.summary)?,
             body: pr.body,
             created_at: pr.created_at.0,

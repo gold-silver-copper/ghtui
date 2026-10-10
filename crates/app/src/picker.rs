@@ -197,6 +197,10 @@ impl State {
                     return vec![(item("Type a title", ""), None)];
                 }
                 let label = match titling {
+                    // The query, unless it's the title (a search's, at first).
+                    Titling::New { query, .. } if query.trim() == q.trim() => {
+                        format!("Add “{q}” to Home")
+                    }
                     Titling::New { query, .. } => format!("Add “{q}” to Home: {query}"),
                     Titling::Rename { .. } => format!("Rename it “{q}”"),
                 };

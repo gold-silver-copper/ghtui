@@ -756,6 +756,7 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Search(kind, query) => at(gh.cached(&keys::search(*kind, query))?, |v| {
             Data::Search(Box::new(v))
         }),
+        DataKey::Counts(searches) => at(gh.cached(&keys::counts(searches))?, Data::Counts),
         DataKey::Issue(repo, number) => at(gh.cached(&keys::issue(repo, *number))?, |v| {
             Data::Issue(Some(Box::new(v)))
         }),
@@ -902,6 +903,7 @@ pub(crate) async fn fetch(
             let results = gh.search_showing(*kind, query, after, found).await?;
             Data::Search(Box::new(results))
         }
+        DataKey::Counts(searches) => Data::Counts(gh.search_counts(searches).await?),
         DataKey::Issue(repo, number) => Data::Issue(gh.issue(repo, *number).await?.map(Box::new)),
         DataKey::PrActivity(pr) => Data::PrActivity(Box::new(gh.pr_activity(pr).await?)),
         DataKey::Profile(login) => Data::Profile(Box::new(gh.profile(login).await?)),

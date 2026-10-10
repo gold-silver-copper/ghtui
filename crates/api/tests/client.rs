@@ -285,7 +285,7 @@ const PR_RESPONSE: &str = r#"{"data":{"repository":{
   "reviewDecision": "APPROVED",
   "labels": {"totalCount": 3, "nodes": [{"name": "bug", "color": "d73a4a"}]},
   "milestone": {"number": 3, "title": "v1"},
-  "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]},
+  "commits": {"totalCount": 4, "nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE", "contexts": {"totalCount": 9}}}}]},
   "comments": {"totalCount": 4}
 }}, "rateLimit": {"cost": 1, "limit": 5000, "remaining": 4999, "resetAt": "2026-01-01T01:00:00Z"}}}"#;
 
@@ -308,6 +308,8 @@ async fn fetches_and_caches_pull_request() {
     assert_eq!(detail.summary.state, IssueState::Open);
     assert_eq!(detail.summary.review, Some(ReviewDecision::Approved));
     assert_eq!(detail.summary.checks, Some(ChecksState::Failing));
+    // What its Commits and Checks tabs count before they're opened.
+    assert_eq!((detail.commit_count, detail.check_count), (4, 9));
     assert_eq!(detail.mergeable, Mergeable::Yes);
     // Yours first, then the rest the repository allows.
     assert_eq!(
@@ -696,7 +698,7 @@ async fn a_searched_pr_is_shown_then_gets_its_checks() {
         ),
         Reply::new(
             200,
-            r#"{"data":{"nodes":[{"__typename":"PullRequest","id":"PR_5","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE"}}}]}}]}}"#,
+            r#"{"data":{"nodes":[{"__typename":"PullRequest","id":"PR_5","commits":{"totalCount":1,"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE","contexts":{"totalCount":2}}}}]}}]}}"#,
         ),
     ])
     .await;

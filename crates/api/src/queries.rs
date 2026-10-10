@@ -84,6 +84,7 @@ fragments! {
     FollowCount = "FollowerConnection",
     FollowingCount = "FollowingConnection",
     RefCount = "RefConnection",
+    ContextCount = "StatusCheckRollupContextConnection",
 }
 
 // Results of mutations that only need to succeed.
@@ -127,12 +128,12 @@ fragments! {
     counted:
     LabelConnection = "LabelConnection" => Label,
     ReviewCommentConnection = "PullRequestReviewCommentConnection" => ReviewComment,
+    CommitRollupConnection = "PullRequestCommitConnection" => CommitRollupNode,
 }
 
 // Lists of nodes, and their nodes' types.
 fragments! {
     nodes:
-    CommitRollupConnection = "PullRequestCommitConnection" => CommitRollupNode,
     PendingReviewConnection = "PullRequestReviewConnection" => PendingReview,
     ReviewCommitConnection = "PullRequestReviewConnection" => ReviewCommit,
 }
@@ -245,6 +246,9 @@ pub struct CommitRollup {
 #[cynic(graphql_type = "StatusCheckRollup", schema_module = "schema")]
 pub struct StatusCheckRollup {
     pub state: StatusState,
+    /// How many checks and statuses it rolls up.
+    #[arguments(first: 0)]
+    pub contexts: ContextCount,
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy)]

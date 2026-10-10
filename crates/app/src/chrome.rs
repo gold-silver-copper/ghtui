@@ -4,7 +4,7 @@
 //! [`State::layout`], so clicks land where things are drawn.
 
 use ghtui_api::browse::{
-    CommitDetail, Comparison, DiscussionsOf, Profile, RepoSort, SearchKind, SearchResults,
+    Checks, CommitDetail, Comparison, DiscussionsOf, Profile, RepoSort, SearchKind, SearchResults,
 };
 use ghtui_api::model::{PrRef, RepoId};
 use ghtui_git::Oid;
@@ -292,6 +292,13 @@ impl State {
                 c.crumb("Search", None);
                 let results = paged(route).and_then(|key| self.picked::<SearchResults>(&key));
                 let total = results.map(|r| r.counts().0);
+                // The other kinds, as one request counts them.
+                let counted = route.counts().zip(self.counts(route));
+                let count_of = |k: SearchKind| {
+                    let (searches, counts) = counted.as_ref()?;
+                    let i = searches.iter().position(|(kind, _)| *kind == k)?;
+                    counts.get(i).copied().flatten()
+                };
                 let kinds = [
                     // Short, so all seven fit.
                     (SearchKind::Repos, "▤", "Repos"),
@@ -306,7 +313,7 @@ impl State {
                     if k == *kind {
                         c.active = Some(i);
                     }
-                    let count = (k == *kind).then_some(total).flatten();
+                    let count = if k == *kind { total } else { count_of(k) };
                     c.tabs.push((
                         new_tab(icon, label, count),
                         Target::Page(Route::Search {
@@ -475,22 +482,36 @@ impl State {
         ));
     }
 
+    /// A pull request's tabs, each counted from the pull request itself
+    /// until its own data is in (as on any of its tabs, or its files); the
+    /// Checks tab's icon is the state of the checks it lists.
     fn pr_tabs(&self, pr: &PrRef, c: &mut Chrome) {
         let activity = self.activity(pr);
         let detail = self.prs.get(pr).and_then(|r| r.data.as_ref());
+        let checks = self.picked::<Checks>(&DataKey::PrChecks(pr.clone()));
+        let comments =
+            (activity.map(|a| a.comments.total())).or_else(|| detail.map(|d| d.summary.comments));
+        let commits =
+            (activity.map(|a| a.commits.total())).or_else(|| detail.map(|d| d.commit_count));
+        let (state, check_count) = match (checks, detail) {
+            (Some(c), _) => (c.state(), Some(c.items.total())),
+            (None, Some(d)) => (d.summary.checks, Some(d.check_count)),
+            (None, None) => (None, None),
+        };
+        let icon = state.map_or("✓", |s| self.icons.checks(s));
         c.tabs.push((
-            new_tab("◌", "Conversation", activity.map(|a| a.comments.total())),
+            new_tab("◌", "Conversation", comments),
             Target::Page(Route::pr(pr.clone())),
         ));
         c.tabs.push((
-            new_tab("◷", "Commits", activity.map(|a| a.commits.total())),
+            new_tab("◷", "Commits", commits),
             Target::Page(Route::Pr {
                 pr: pr.clone(),
                 tab: PrTab::Commits,
             }),
         ));
         c.tabs.push((
-            new_tab("✓", "Checks", None),
+            new_tab(icon, "Checks", check_count.filter(|&n| n > 0)),
             Target::Page(Route::Pr {
                 pr: pr.clone(),
                 tab: PrTab::Checks,

@@ -9,13 +9,15 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ghtui_api::ApiError;
-use ghtui_api::browse::{CheckOutcome, IssueState, Job, WorkflowRun};
+use ghtui_api::browse::{
+    CheckOutcome, IssueDetail, IssueState, IssueSummary, Job, SearchResults, WorkflowRun,
+};
 use ghtui_api::change::{Change, CloseReason, MergeMethod};
 use ghtui_api::model::{
     ChecksState, MergeState, PrDetail, PrRef, Readiness, RepoId, ReviewDecision,
 };
 
-use crate::browse::{DataKey, Need};
+use crate::browse::{Data, DataKey, Need};
 use crate::keymap::Action;
 use crate::nav;
 use crate::route::Route;
@@ -91,6 +93,18 @@ pub struct Pending {
     pub action: Action,
     pub subject: Subject,
     pub route: Option<Route>,
+}
+
+/// Rows of a list changed from it. A list that filters by state (open
+/// pull requests) loses a row you close as soon as it's fetched again, and
+/// the next row slides under the cursor; so the rows you changed stay where
+/// they were, showing what their own pages say now, until you refresh or
+/// leave the list. Home's sections and searches are lists alike.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Kept {
+    /// The list.
+    pub route: Route,
+    subjects: Vec<Subject>,
 }
 
 /// How many times a page is fetched again for a change before giving up:
@@ -696,6 +710,7 @@ pub fn on_changed(
             state.info(done(change));
             match by {
                 By::Confirm(about) | By::Act(about) => {
+                    keep_row(state, &about);
                     state.awaiting = state.route().map(|route| Awaiting {
                         change: change.clone(),
                         route: route.clone(),
@@ -729,6 +744,77 @@ pub fn on_changed(
             Vec::new()
         }
     }
+}
+
+/// Keeps `about` on the list on screen, if it's a row there.
+fn keep_row(state: &mut State, about: &Subject) {
+    let Some(route) = state.route().filter(|r| Subject::of(r).is_none()).cloned() else {
+        return;
+    };
+    let mut kept = match state.kept.take() {
+        Some(k) if k.route == route => k,
+        _ => Kept {
+            route,
+            subjects: Vec::new(),
+        },
+    };
+    if !kept.subjects.contains(about) {
+        kept.subjects.push(about.clone());
+    }
+    state.kept = Some(kept);
+}
+
+/// `data`, just fetched for `key`, with the rows kept on the list on
+/// screen put back where they were if GitHub left them out, and each kept
+/// row in the state its own page has.
+pub fn keep(state: &State, key: &DataKey, mut data: Data) -> Data {
+    let Some(kept) = (state.kept.as_ref()).filter(|k| state.route() == Some(&k.route)) else {
+        return data;
+    };
+    let Data::Search(found) = &mut data else {
+        return data;
+    };
+    let SearchResults::Issues(rows) = &mut **found else {
+        return data;
+    };
+    if !state.needs(&kept.route).contains(&Need::Data(key.clone())) {
+        return data;
+    }
+    let old = match state.picked::<SearchResults>(key) {
+        Some(SearchResults::Issues(old)) => old.items.as_slice(),
+        _ => &[],
+    };
+    for subject in &kept.subjects {
+        let (repo, number, now) = match subject {
+            Subject::Pr(pr) => {
+                let d = state.prs.get(pr).and_then(|r| r.data.as_ref());
+                (&pr.repo, pr.number, d.map(|d| d.summary.state))
+            }
+            Subject::Issue(repo, number) => {
+                let key = DataKey::Issue(repo.clone(), *number);
+                let issue = state.picked::<Option<Box<IssueDetail>>>(&key);
+                (
+                    repo,
+                    *number,
+                    issue.and_then(|i| i.as_ref()).map(|i| i.state),
+                )
+            }
+            Subject::Run(..) | Subject::Job(..) => continue,
+        };
+        let is = |i: &IssueSummary| i.repo == *repo && i.number == number;
+        if !rows.items.iter().any(is)
+            && let Some((at, row)) = old.iter().enumerate().find(|(_, i)| is(i))
+        {
+            rows.items.insert(at.min(rows.items.len()), row.clone());
+        }
+        if let Some(now) = now {
+            rows.items
+                .iter_mut()
+                .filter(|i| is(i))
+                .for_each(|i| i.state = now);
+        }
+    }
+    data
 }
 
 /// The change the page on screen waits to see, if any.
@@ -875,6 +961,7 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
             cmds.extend(act_on(state, p.subject, p.action));
         }
     }
+    nav::replan_menu(state);
     let Some(Overlay::Confirm(confirm)) = &state.overlay else {
         return cmds;
     };
@@ -1001,7 +1088,8 @@ fn failure(change: &Change, err: &ApiError) -> String {
 }
 
 /// The changes the menu offers for what's on screen: each action, its
-/// label, and why it can't be made now, if it can't.
+/// label, and why it can't be made now, if it can't. A row not loaded yet
+/// says so: whether you may make the change isn't known until it is.
 pub fn doables(state: &State) -> Vec<(Action, String, Option<String>)> {
     let Some(subject) = subject(state) else {
         return Vec::new();
@@ -1014,10 +1102,26 @@ pub fn doables(state: &State) -> Vec<(Action, String, Option<String>)> {
                 (Action::Close, _) => "Close or reopen",
                 (action, _) => action.description(),
             };
-            let why = plan_for(state, &subject, action).err();
-            (action, label.to_owned(), why)
+            match plan_for(state, &subject, action) {
+                Err(why) => (action, label.to_owned(), Some(why)),
+                Ok(Plan::Load(_)) => {
+                    let label = format!("{label} (checking {} first)", subject.name());
+                    (action, label, None)
+                }
+                Ok(_) => (action, label.to_owned(), None),
+            }
         })
         .collect()
+}
+
+/// Loads the selected row's subject, if its changes need it to decide.
+#[must_use]
+pub fn check_row(state: &mut State) -> Vec<Cmd> {
+    let row = state.route().is_some_and(|r| Subject::of(r).is_none());
+    match subject(state) {
+        Some(subject) if row => state.ensure(subject.need(), false),
+        _ => Vec::new(),
+    }
 }
 
 #[cfg(test)]

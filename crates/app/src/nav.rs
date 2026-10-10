@@ -261,12 +261,11 @@ impl PageScreen {
         self.built = Some(built);
         let before = (self.scroll, self.selected);
         let find = |i: usize| self.page.find(old.target(old.items.get(i)?.link)?, i);
-        // A fresh page selects its first visible item again. An item that
-        // left (a pull request closed off a list) leaves the selection
-        // where it was, on the one after it.
-        let last = self.page.items.len().checked_sub(1);
-        self.selected = (self.selected.filter(|_| !self.fresh))
-            .and_then(|i| find(i).or_else(|| last.map(|l| i.min(l))));
+        // A fresh page selects its first visible item again. The
+        // selection follows its item, not its place: when the item leaves,
+        // nothing is selected, so a key meant for it can't act on the one
+        // that took its place.
+        self.selected = (self.selected.filter(|_| !self.fresh)).and_then(find);
         // The item still there starting nearest the top, if nearer than
         // the page's top, keeps its place on screen.
         let off = |it: &Item| it.start.abs_diff(self.scroll);
@@ -314,12 +313,11 @@ impl State {
         }
     }
 
-    /// Columns pages are built for.
+    /// Columns pages are built for: what's room, up to the page's widest
+    /// ([`browse::max_width`]).
     pub fn page_width(&self) -> u16 {
-        self.size
-            .0
-            .saturating_sub(2 * PAD_X + 1)
-            .min(browse::MAX_WIDTH)
+        let widest = self.route().map_or(browse::MAX_WIDTH, browse::max_width);
+        self.size.0.saturating_sub(2 * PAD_X + 1).min(widest)
     }
 
     /// Rows a page shows.
@@ -368,7 +366,14 @@ fn settle(p: &mut PageScreen, height: usize) {
     let here = Some((p.scroll, p.selected));
     let jump = (p.page.jump.or(anchor)).filter(|_| p.jumped.is_none_or(|at| at == here));
     if let Some(jump) = jump {
-        p.scroll = jump.saturating_sub(MARGIN);
+        // With what leads to it: from its lead (a step's name) if the jump
+        // then shows in the top two thirds, else a third of a screen of it.
+        let lead = p.page.jump.and(p.page.lead).filter(|&l| l <= jump);
+        p.scroll = match lead {
+            Some(lead) if jump - lead < height * 2 / 3 => lead,
+            Some(_) => jump.saturating_sub(height / 3),
+            None => jump.saturating_sub(MARGIN),
+        };
     }
     p.scroll = p.scroll.min(max);
     if p.fresh && p.selected.is_none() {
@@ -1182,7 +1187,7 @@ pub fn search_log(state: &mut State, query: &str) {
 fn with_state(query: &str, state: &str) -> String {
     let mut words: Vec<&str> = query
         .split_whitespace()
-        .filter(|w| !matches!(*w, "is:open" | "is:closed" | "state:open" | "state:closed"))
+        .filter(|w| !crate::route::is_state_word(w))
         .collect();
     let qualifier = match state {
         "open" => Some("is:open"),
@@ -1758,7 +1763,11 @@ impl Menu {
     }
 }
 
-pub fn open_menu(state: &mut State) {
+/// Opens the menu, loading what the selected row's changes depend on
+/// (whether you may close it, say): the menu says so until it's in.
+#[must_use]
+pub fn open_menu(state: &mut State) -> Vec<Cmd> {
+    let cmds = crate::act::check_row(state);
     let mut menu = Menu {
         rows: state.doables(),
         selected: 0,
@@ -1766,6 +1775,22 @@ pub fn open_menu(state: &mut State) {
     };
     menu.reselect();
     state.overlay = Some(Overlay::Menu(Box::new(menu)));
+    cmds
+}
+
+/// The menu's rows again, as what they depend on arrives.
+pub fn replan_menu(state: &mut State) {
+    if !matches!(state.overlay, Some(Overlay::Menu(_))) {
+        return;
+    }
+    let rows = state.doables();
+    if let Some(Overlay::Menu(menu)) = &mut state.overlay {
+        let at = menu.shown().get(menu.selected).map(|d| d.action);
+        menu.rows = rows;
+        let shown = menu.shown();
+        menu.selected = (shown.iter().position(|d| Some(d.action) == at))
+            .unwrap_or(menu.selected.min(shown.len().saturating_sub(1)));
+    }
 }
 
 impl State {
@@ -2006,8 +2031,7 @@ fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
     let item = hit.line.and_then(|l| p.page.item_at(l));
     if button == MouseButton::Right {
         p.selected = item.or(p.selected);
-        open_menu(state);
-        return Vec::new();
+        return open_menu(state);
     }
     if let Some(link) = hit.link.and_then(|l| p.page.target(l)) {
         let link = link.clone();

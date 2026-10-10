@@ -20,8 +20,34 @@ use crate::keymap::Action;
 use crate::route::Route;
 use crate::state::{Remote, State};
 
-/// Widest a page gets; wider terminals center it, as GitHub does.
+/// Widest a page of reading gets; wider terminals center it, as GitHub
+/// does.
 pub const MAX_WIDTH: u16 = 140;
+
+/// How wide `route`'s page gets: the one place that says. Reading
+/// (conversations, READMEs, profiles, lists of issues and repositories)
+/// stays at [`MAX_WIDTH`], centered, as lines much longer are hard to
+/// follow. What's output or laid out in columns takes the whole width:
+/// checks, runs, jobs and their logs, a workflow's runs, files and blame,
+/// branches, tags and deployments.
+pub fn max_width(route: &Route) -> u16 {
+    match route {
+        Route::Pr {
+            tab: PrTab::Checks, ..
+        }
+        | Route::CommitChecks { .. }
+        | Route::Actions(_)
+        | Route::WorkflowRun { .. }
+        | Route::Job { .. }
+        | Route::Workflow { .. }
+        | Route::Blob { .. }
+        | Route::Blame { .. }
+        | Route::Branches(_)
+        | Route::Tags(_)
+        | Route::Deployments { .. } => u16::MAX,
+        _ => MAX_WIDTH,
+    }
+}
 
 /// One piece of GitHub data a page shows.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -85,6 +111,8 @@ pub enum DataKey {
     CommitChecks(RepoId, String),
     /// Someone's own repositories, in an order.
     OwnerRepos(String, RepoSort),
+    /// How many each search finds (see [`Route::counts`]).
+    Counts(Vec<(SearchKind, String)>),
     /// What someone starred.
     Stars(String),
 }
@@ -137,6 +165,9 @@ pub enum Data {
     Deployments(Box<DeploymentList>),
     Milestones(Box<MilestoneList>),
     Milestone(Box<MilestoneDetail>),
+    /// How many each search found, in order; `None` for one GitHub only
+    /// counts on its own.
+    Counts(Vec<Option<u64>>),
 }
 
 impl Data {
@@ -268,6 +299,7 @@ pub fn needs(route: &Route) -> Vec<Need> {
     let list = route
         .search()
         .map(|(kind, query)| Need::Data(K::Search(kind, query)));
+    let counts = route.counts().map(|c| Need::Data(K::Counts(c)));
     match route {
         Route::Home => Vec::new(),
         Route::Repo(repo) => vec![
@@ -297,10 +329,11 @@ pub fn needs(route: &Route) -> Vec<Need> {
             header(repo),
             Need::Data(K::RefIn(repo.clone(), spot.clone())),
         ],
-        Route::Issues { repo, .. } | Route::Pulls { repo, .. } => {
-            std::iter::once(header(repo)).chain(list).collect()
-        }
-        Route::Search { .. } => list.into_iter().collect(),
+        Route::Issues { repo, .. } | Route::Pulls { repo, .. } => std::iter::once(header(repo))
+            .chain(list)
+            .chain(counts)
+            .collect(),
+        Route::Search { .. } => list.into_iter().chain(counts).collect(),
         Route::Wiki { repo, page } => vec![
             header(repo),
             Need::Data(K::Wiki(repo.clone(), page.clone())),
@@ -432,6 +465,7 @@ picked!(
     Teams => Results<TeamSummary>, Team => TeamDetail, Gist => Gist,
     Gists => Results<GistSummary>, Blame => Blame, Compare => Comparison,
     Deployments => DeploymentList, Milestones => MilestoneList, Milestone => MilestoneDetail,
+    Counts => Vec<Option<u64>>,
 );
 
 /// A page's needs as the page shows them, failing with the key that
@@ -465,6 +499,12 @@ impl State {
     /// `key`'s data, if it's there: for what isn't a page.
     pub fn picked<T: Picked + ?Sized>(&self, key: &DataKey) -> Option<&T> {
         self.get(key).and_then(T::pick)
+    }
+
+    /// What the list on `route` counts, once it's in (see [`Route::counts`]).
+    pub fn counts(&self, route: &Route) -> Option<&[Option<u64>]> {
+        let key = DataKey::Counts(route.counts()?);
+        self.picked::<Vec<Option<u64>>>(&key).map(Vec::as_slice)
     }
 
     pub fn overview(&self, repo: &RepoId) -> Option<&RepoOverview> {
@@ -637,19 +677,13 @@ impl State {
                 let key = DataKey::RefIn(repo.clone(), spot.clone());
                 let _ = f.get::<Option<String>>(&key).show(&mut page, "the branch");
             }
-            Route::Issues { repo, query } | Route::Pulls { repo, query } => {
+            Route::Issues { query, .. } | Route::Pulls { query, .. } => {
                 let is_pr = matches!(route, Route::Pulls { .. });
-                #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
-                let overview = f
-                    .get::<RepoOverview>(&DataKey::Repo(repo.clone()))
-                    .ready_unchecked();
-                let counts = overview.map(|o| {
-                    if is_pr {
-                        (o.open_prs, o.closed_prs)
-                    } else {
-                        (o.open_issues, o.closed_issues)
-                    }
-                });
+                let counts = self.counts(route);
+                let counts = match counts {
+                    Some(&[Some(open), Some(closed)]) => Some((open, closed)),
+                    _ => None,
+                };
                 let results = f.paged(route).pick(|r| match r {
                     SearchResults::Issues(r) => Some(r),
                     _ => None,
