@@ -26,6 +26,7 @@ use crate::diff_screen::{self, DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
 use crate::join;
 use crate::keymap::{Action, Key, Keymap, Scope};
 use crate::nav::{self, Hints, Menu, PageScreen, SearchBox, Visit};
+use crate::notice::Notices;
 use crate::picker::{self, Picker};
 use crate::review::{
     Compose, ComposeTarget, EditPurpose, SubmitDialog, SubmitOutcome, on_compose_key, on_edited,
@@ -498,9 +499,7 @@ pub struct State {
     pub viewer: Option<String>,
     pub rate_limits: RateLimits,
     pub overlay: Option<Overlay>,
-    pub notice: Option<Notice>,
-    /// Notices shown this session, newest last, with when (Unix seconds).
-    pub messages: std::collections::VecDeque<(u64, Notice)>,
+    pub notices: Notices,
     /// Lasting problems, most important first; the first is shown.
     pub problems: std::collections::BTreeMap<Problem, String>,
     /// Terminal size.
@@ -511,8 +510,6 @@ pub struct State {
     pub density: crate::config::Density,
     /// Unix seconds; pages show relative times.
     pub clock: fn() -> u64,
-    /// Which notice is showing, to expire the right one.
-    pub notice_id: u64,
     /// The spinner's frame, and whether its next frame is scheduled.
     pub spinner: usize,
     pub spinning: bool,
@@ -547,8 +544,7 @@ impl State {
             viewer: None,
             rate_limits: RateLimits::default(),
             overlay: None,
-            notice: None,
-            messages: Default::default(),
+            notices: Notices::default(),
             problems: Default::default(),
             size,
             keymap,
@@ -556,7 +552,6 @@ impl State {
             icons,
             density: crate::config::Density::default(),
             clock: ghtui_store::now,
-            notice_id: 0,
             spinner: 0,
             spinning: false,
             live: false,
@@ -571,12 +566,12 @@ impl State {
 
     /// Says `text` in the status bar for a few seconds.
     pub fn info(&mut self, text: impl Into<String>) {
-        self.notice = Some(Notice::Info(text.into()));
+        self.notices.info(text);
     }
 
     /// Says what went wrong, in the status bar (and the messages list).
     pub fn error(&mut self, text: impl Into<String>) {
-        self.notice = Some(Notice::Error(text.into()));
+        self.notices.error(text);
     }
 
     pub fn screen(&self) -> &Screen {
@@ -924,28 +919,11 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     cmds
 }
 
-/// Timers the screen needs after an update: the notice expiring (errors
-/// stay longer), the spinner's next frame while something loads. The
-/// runtime calls this; `last_notice` is the notice it last saw.
+/// Timers the screen needs after an update: a new notice expiring, the
+/// spinner's next frame while something loads. The runtime calls this.
 #[must_use]
-pub fn timers(state: &mut State, last_notice: &mut Option<Notice>) -> Vec<Cmd> {
-    let mut cmds = Vec::new();
-    if state.notice != *last_notice {
-        if let Some(notice) = &state.notice {
-            const KEPT: usize = 50;
-            if state.messages.len() == KEPT {
-                state.messages.pop_front();
-            }
-            state.messages.push_back(((state.clock)(), notice.clone()));
-            state.notice_id += 1;
-            let ms = match notice {
-                Notice::Info(_) => 4_000,
-                Notice::Error(_) => 10_000,
-            };
-            cmds.push(Cmd::Timer(Timer::ExpireNotice(state.notice_id), ms));
-        }
-        *last_notice = state.notice.clone();
-    }
+pub fn timers(state: &mut State) -> Vec<Cmd> {
+    let mut cmds = Vec::from_iter(state.notices.timer(state.clock));
     if state.busy().is_some() && !state.spinning {
         state.spinning = true;
         cmds.push(Cmd::Timer(Timer::Spin, 90));
@@ -1046,11 +1024,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::Changed(change, result) => return act::on_changed(state, &change, result),
         Msg::Mouse(ev) => return nav::on_mouse(state, ev),
-        Msg::Timer(Timer::ExpireNotice(id)) => {
-            if id == state.notice_id {
-                state.notice = None;
-            }
-        }
+        Msg::Timer(Timer::ExpireNotice(id)) => state.notices.expire(id),
         Msg::Timer(Timer::Spin) => {
             state.spinning = false;
             state.spinner = state.spinner.wrapping_add(1);
@@ -1088,7 +1062,7 @@ fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             }
         }
         Msg::RateLimits(limits) => state.rate_limits = limits,
-        Msg::Notice(notice) => state.notice = Some(notice),
+        Msg::Notice(notice) => state.notices.say(notice),
         Msg::Problem(problem, Some(text)) => {
             state.problems.insert(problem, text);
         }
@@ -1120,8 +1094,7 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     }
     // Any keypress dismisses the last notice; Esc on an error does only
     // that (the messages list keeps it).
-    let dismissing = matches!(state.notice, Some(Notice::Error(_)));
-    state.notice = None;
+    let dismissing = matches!(state.notices.dismiss(), Some(Notice::Error(_)));
     if dismissing && key.code == KeyCode::Esc {
         return Vec::new();
     }
@@ -1154,7 +1127,8 @@ fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             if !query.is_empty()
                 && let Some((screen, diff)) = state.diff_parts()
             {
-                state.notice = Some(diff_screen::search(screen, diff, query));
+                let found = diff_screen::search(screen, diff, query);
+                state.notices.say(found);
             }
         }
         _ => nav::type_into(input, key),
@@ -1230,7 +1204,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Menu => nav::open_menu(state),
         Action::CommandPalette => return state.open_picker(picker::Kind::Commands),
         Action::Messages => {
-            let kept = state.messages.iter().rev().cloned().collect();
+            let kept = state.notices.log().iter().cloned().collect();
             return state.open_picker(picker::Kind::Messages(kept));
         }
         Action::Refresh => return state.load_visible(true),
@@ -1273,16 +1247,16 @@ fn diff_action(state: &mut State, action: Action) -> Vec<Cmd> {
     let State {
         screens,
         diffs,
-        notice,
+        notices,
         ..
     } = &mut *state;
     let Screen::Diff(screen) = screens.last_mut() else {
         return Vec::new();
     };
     match diffs.get_mut(&screen.of) {
-        Some(diff) => diff_screen::apply(screen, diff, action, content, notice),
+        Some(diff) => diff_screen::apply(screen, diff, action, content, notices),
         None => {
-            *notice = Some(Notice::Info("The diff hasn't loaded yet".into()));
+            notices.info("The diff hasn't loaded yet");
             Vec::new()
         }
     }
@@ -1320,7 +1294,7 @@ impl State {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::fixtures::{diff_msg, fetched, press, thread};
+    use crate::fixtures::{diff_msg, fetched, press, says, thread, warns};
     use crate::picker::{Choice, fuzzy_score};
     use crate::route::OPEN;
     use ghtui_api::browse::IssueState;
@@ -2103,7 +2077,7 @@ pub(crate) mod tests {
                 what: String::new(),
             },
         );
-        assert!(matches!(&state.notice, Some(Notice::Error(e)) if e.contains("changed since")));
+        warns(&state, "changed since");
     }
 
     /// Any list of issues, pull requests or repositories can be saved to
@@ -2144,11 +2118,10 @@ pub(crate) mod tests {
         let mut state = state();
         state.clock = || NOW.load(std::sync::atomic::Ordering::Relaxed);
         let _ = state.load_visible(false);
-        let mut last = None;
-        let cmds = timers(&mut state, &mut last);
+        let cmds = timers(&mut state);
         let home = Cmd::Timer(Timer::Home, crate::home::FRESH_SECS * 1000);
         assert!(cmds.contains(&home), "{cmds:?}");
-        assert!(!timers(&mut state, &mut last).contains(&home), "one timer");
+        assert!(!timers(&mut state).contains(&home), "one timer");
         // Still loading: nothing more is asked.
         NOW.store(
             1000 + crate::home::FRESH_SECS,
@@ -2175,7 +2148,7 @@ pub(crate) mod tests {
             std::sync::atomic::Ordering::Relaxed,
         );
         assert!(update(&mut state, Msg::Timer(Timer::Home)).is_empty());
-        assert!(!timers(&mut state, &mut last).contains(&home));
+        assert!(!timers(&mut state).contains(&home));
         // Back home, what's old is fetched again.
         let cmds = state.back();
         assert!(asked(&cmds, &mine_key(&state)), "{cmds:?}");
@@ -2396,13 +2369,13 @@ pub(crate) mod tests {
             press(&mut s, "<A-2>");
             assert_eq!(s.active_tab(), 1);
             press(&mut s, "<A-5>");
-            assert!(matches!(&s.notice, Some(Notice::Info(n)) if n.contains("No tab 5")));
+            says(&s, "No tab 5");
             // Closing shows the next tab, or the previous at the end.
             press(&mut s, "<C-w>");
             assert_eq!((s.tab_count(), route(&s)), (1, issue(1)));
             press(&mut s, "<C-w>");
             assert_eq!(s.tab_count(), 1);
-            assert!(matches!(&s.notice, Some(Notice::Info(n)) if n.contains("last tab")));
+            says(&s, "last tab");
         }
 
         /// Back and forward stay within a tab.
@@ -2658,25 +2631,24 @@ pub(crate) mod tests {
         assert_eq!(page.jump, page.marks.first().copied());
         let n = page.marks.len();
         assert!(n > 1, "{n}");
-        assert_eq!(s.notice, Some(Notice::Info(format!("Match 1 of {n}"))));
+        says(&s, &format!("Match 1 of {n}"));
         press(&mut s, "n");
-        assert_eq!(s.notice, Some(Notice::Info(format!("Match 2 of {n}"))));
+        says(&s, &format!("Match 2 of {n}"));
         let Screen::Page(p) = s.screen() else {
             panic!()
         };
         assert_eq!(p.current_match(), p.page().marks.get(1).copied());
         press(&mut s, "p");
-        assert_eq!(s.notice, Some(Notice::Info(format!("Match 1 of {n}"))));
+        says(&s, &format!("Match 1 of {n}"));
         press(&mut s, "<Esc>");
         assert_eq!(route(&s), job_route);
         assert_eq!(s.screens.len(), depth);
         press(&mut s, "/");
         press(&mut s, "no such text");
         press(&mut s, "<Enter>");
-        let none = Notice::Info("No matches for “no such text”".into());
-        assert_eq!(s.notice, Some(none.clone()));
+        says(&s, "No matches for “no such text”");
         press(&mut s, "n");
-        assert_eq!(s.notice, Some(none));
+        says(&s, "No matches for “no such text”");
     }
 
     /// A failed job opens at its failing step's first error.
@@ -2886,13 +2858,9 @@ pub(crate) mod tests {
         ));
         s.diffs.insert(of, crate::snapshot_tests::diff_fixture());
         for action in [Action::Comment, Action::ToggleViewed, Action::MarkReviewed] {
-            s.notice = None;
+            s.notices.dismiss();
             assert!(apply(&mut s, action).is_empty(), "{action:?}");
-            assert!(
-                matches!(&s.notice, Some(Notice::Info(n)) if n.contains("pull request")),
-                "{action:?}: {:?}",
-                s.notice
-            );
+            says(&s, "pull request");
         }
     }
 
@@ -3550,11 +3518,7 @@ pub(crate) mod tests {
         let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
         let job = start_pr_diff(&mut state, &pr);
         let _ = diff_msg(&mut state, &pr, no_files(job, &"c".repeat(40)));
-        assert!(
-            matches!(&state.notice, Some(Notice::Error(m)) if m.contains("moved while loading")),
-            "{:?}",
-            state.notice
-        );
+        warns(&state, "moved while loading");
         let cmds = act(&mut state, Action::Refresh);
         assert!(
             cmds.contains(&Cmd::Api(Api::FetchPr(pr.clone()))),
@@ -3608,17 +3572,13 @@ pub(crate) mod tests {
         let job = start_pr_diff(&mut state, &pr);
         let _ = diff_msg(&mut state, &pr, no_files(job, &head));
         let _ = state.back();
-        state.notice = None;
+        state.notices.dismiss();
         detail.head_oid = "d".repeat(40);
         let _ = update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(detail))));
-        assert_eq!(state.notice, None, "a diff off screen was checked");
+        assert_eq!(state.notices.shown(), None, "a diff off screen was checked");
         let _ = state.open_diff(DiffOf::Pr(pr.clone()));
         let _ = state.settle();
-        assert!(
-            matches!(&state.notice, Some(Notice::Error(m)) if m.contains("moved while loading")),
-            "{:?}",
-            state.notice
-        );
+        warns(&state, "moved while loading");
     }
 
     /// "Since my last review" asked for while the diff loads says it'll
@@ -3638,11 +3598,7 @@ pub(crate) mod tests {
             DiffMsg::LastReview(Ok(Some("a".repeat(40)))),
         );
         let _ = act(&mut state, Action::ToggleSinceReview);
-        assert!(
-            matches!(&state.notice, Some(Notice::Info(m)) if m.contains("once the diff has loaded")),
-            "{:?}",
-            state.notice
-        );
+        says(&state, "once the diff has loaded");
         let _ = state.back();
         let _ = diff_msg(&mut state, &pr, no_files(job, &head));
         let mut cmds = state.open_diff(DiffOf::Pr(pr.clone()));
@@ -3792,11 +3748,10 @@ pub(crate) mod tests {
     #[test]
     fn a_repeated_notice_gets_its_own_time() {
         let mut state = with_repo();
-        let mut last = None;
         press(&mut state, "<A-5>");
-        let first = timers(&mut state, &mut last);
+        let first = timers(&mut state);
         press(&mut state, "<A-5>");
-        let again = timers(&mut state, &mut last);
+        let again = timers(&mut state);
         let expires = |c: &Cmd| matches!(c, Cmd::Timer(Timer::ExpireNotice(_), _));
         assert!(again.iter().any(expires), "{again:?}");
         for cmd in first {
@@ -3804,7 +3759,7 @@ pub(crate) mod tests {
                 let _ = update(&mut state, Msg::Timer(timer));
             }
         }
-        assert!(matches!(&state.notice, Some(Notice::Info(n)) if n.contains("No tab 5")));
+        says(&state, "No tab 5");
     }
 
     /// Esc on an error dismisses it (and goes nowhere); the messages list
@@ -3814,9 +3769,9 @@ pub(crate) mod tests {
         let mut state = with_repo();
         let depth = state.screens.len();
         state.error("boom");
-        let _ = timers(&mut state, &mut None);
+        let _ = timers(&mut state);
         press(&mut state, "<Esc>");
-        assert!(state.notice.is_none());
+        assert!(state.notices.shown().is_none());
         assert_eq!(state.screens.len(), depth, "Esc only dismissed");
         act(&mut state, Action::Messages);
         let p = overlay!(state, Picker);
@@ -3832,15 +3787,14 @@ pub(crate) mod tests {
     #[test]
     fn a_new_message_keeps_the_chosen_one() {
         let mut state = with_repo();
-        let mut last = None;
         for text in ["one", "two"] {
             state.error(text);
-            let _ = timers(&mut state, &mut last);
+            let _ = timers(&mut state);
         }
         act(&mut state, Action::Messages);
         press(&mut state, "<Down>");
         state.error("three");
-        let _ = timers(&mut state, &mut last);
+        let _ = timers(&mut state);
         let cmds = press(&mut state, "<Enter>");
         assert!(
             matches!(&cmds[..], [Cmd::Copy(t)] if t == "one"),
@@ -3985,10 +3939,8 @@ pub(crate) mod tests {
     fn key_scopes_follow_the_screen() {
         let mut state = with_repo();
         press(&mut state, "a");
-        assert!(
-            matches!(&state.notice, Some(Notice::Info(n)) if n.contains("Files changed")),
-            "a review key on a page says where it works"
-        );
+        // A review key on a page says where it works.
+        says(&state, "Files changed");
         press(&mut state, "i");
         assert!(
             matches!(state.overlay, Some(Overlay::Hints(_))),
@@ -4144,7 +4096,7 @@ pub(crate) mod tests {
             let (mut s, pr) = diff_state(120);
             // Before GitHub's state arrives, toggling explains why not.
             assert!(press(&mut s, "v").is_empty());
-            assert!(matches!(s.notice, Some(Notice::Error(_))));
+            warns(&s, "");
 
             diff_msg(
                 &mut s,
@@ -4193,7 +4145,7 @@ pub(crate) mod tests {
                 s.diffs[&DiffOf::Pr(pr.clone())].doc.files()[1].viewed,
                 Viewed::Unviewed
             );
-            assert!(matches!(s.notice, Some(Notice::Error(_))));
+            warns(&s, "");
         }
 
         /// Marks made before the saved review arrives aren't saved over
@@ -4286,12 +4238,12 @@ pub(crate) mod tests {
                     .row_text(cursor)
                     .contains("origin")
             );
-            assert!(matches!(s.notice, Some(Notice::Info(ref m)) if m.contains("1 line")));
+            says(&s, "1 line");
             press(&mut s, "n");
             assert_eq!(screen(&s).cursor, cursor, "single match wraps to itself");
             press(&mut s, "/");
             press(&mut s, "zzzz<Enter>");
-            assert!(matches!(s.notice, Some(Notice::Error(_))));
+            warns(&s, "");
         }
 
         #[test]
@@ -4385,7 +4337,7 @@ pub(crate) mod tests {
                         .any(|c| matches!(c, Cmd::Git(Git::DetectMoves(..))))
                 );
                 assert!(act(&mut s, Action::JumpMove).is_empty());
-                assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("moved")));
+                says(&s, "moved");
             }
 
             /// After a restart (a refresh, another commit range), the old
@@ -4460,7 +4412,7 @@ pub(crate) mod tests {
                 act(&mut s, Action::ToggleSinceReview);
                 diff_msg(&mut s, &pr, DiffMsg::LastReview(Ok(Some("old".into()))));
                 let _ = s.back();
-                s.notice = None;
+                s.notices.dismiss();
                 let job = s.diffs[&DiffOf::Pr(pr.clone())].job;
                 diff_msg(
                     &mut s,
@@ -4468,7 +4420,7 @@ pub(crate) mod tests {
                     DiffMsg::Job(job, JobMsg::Since("old".into(), Ok(Default::default()))),
                 );
                 assert!(!s.diffs[&DiffOf::Pr(pr.clone())].doc.since_active());
-                assert_eq!(s.notice, None);
+                assert_eq!(s.notices.shown(), None);
             }
 
             #[test]
@@ -4477,16 +4429,14 @@ pub(crate) mod tests {
                 s.viewer = Some("me".into());
                 act(&mut s, Action::ToggleSinceReview);
                 diff_msg(&mut s, &pr, DiffMsg::LastReview(Ok(None)));
-                assert!(
-                    matches!(&s.notice, Some(Notice::Info(m)) if m.contains("haven't reviewed"))
-                );
+                says(&s, "haven't reviewed");
                 // Reviewing the current head means nothing's new.
                 s.diffs
                     .get_mut(&DiffOf::Pr(pr.clone()))
                     .unwrap()
                     .since_requested = true;
                 diff_msg(&mut s, &pr, DiffMsg::LastReview(Ok(Some("e".repeat(40)))));
-                assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("current head")));
+                says(&s, "current head");
             }
 
             #[test]
@@ -4500,9 +4450,9 @@ pub(crate) mod tests {
                     DiffMsg::LastReview(Err(ApiError::Network("offline".into()))),
                 );
                 assert!(
-                    !matches!(&s.notice, Some(Notice::Info(m)) if m.contains("haven't reviewed")),
+                    !matches!(s.notices.shown(), Some(Notice::Info(m)) if m.contains("haven't reviewed")),
                     "{:?}",
-                    s.notice
+                    s.notices.shown()
                 );
                 // Asking again asks GitHub again.
                 let cmds = act(&mut s, Action::ToggleSinceReview);
@@ -4532,11 +4482,8 @@ pub(crate) mod tests {
                     matches!(&cmds[..], [Cmd::Git(Git::SinceReview(j))] if j.get().2 == "old"),
                     "{cmds:?}"
                 );
-                assert!(
-                    matches!(&s.notice, Some(Notice::Info(m)) if m.contains("offline") && m.contains("made here")),
-                    "{:?}",
-                    s.notice
-                );
+                says(&s, "offline");
+                says(&s, "made here");
             }
 
             #[test]
@@ -4587,7 +4534,7 @@ pub(crate) mod tests {
                 // Commenting needs the whole PR.
                 press(&mut s, "c");
                 assert!(s.overlay.is_none());
-                assert!(matches!(&s.notice, Some(Notice::Error(m)) if m.contains("All changes")));
+                warns(&s, "All changes");
                 // Back to everything.
                 act(&mut s, Action::PickCommits);
                 let cmds = press(&mut s, "<Enter>");
@@ -4654,7 +4601,7 @@ pub(crate) mod tests {
                     },
                 );
                 assert!(!s.diffs[&DiffOf::Pr(pr.clone())].inputs().threads[1].resolved);
-                assert!(matches!(s.notice, Some(Notice::Error(_))));
+                warns(&s, "");
             }
 
             #[test]
@@ -4698,7 +4645,7 @@ pub(crate) mod tests {
 
                 let cmds = press(&mut s, "<Delete>");
                 assert!(matches!(&cmds[..], [Cmd::SaveReview(_, r)] if r.pending.is_empty()));
-                assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.contains("ctrl-z")));
+                says(&s, "ctrl-z");
 
                 // Deleting can be undone.
                 let cmds = press(&mut s, "<C-z>");
@@ -4713,7 +4660,7 @@ pub(crate) mod tests {
                         .any(ghtui_ui::annotations::Annotation::is_draft)
                 );
                 press(&mut s, "<C-z>");
-                assert!(matches!(&s.notice, Some(Notice::Info(m)) if m.starts_with("No deleted")));
+                says(&s, "No deleted");
             }
 
             #[test]
@@ -4758,11 +4705,7 @@ pub(crate) mod tests {
                 to_line(&mut s, "origin");
                 press(&mut s, "c");
                 assert!(s.overlay.is_none());
-                assert!(
-                    matches!(&s.notice, Some(Notice::Error(m)) if m.contains("one hunk")),
-                    "{:?}",
-                    s.notice
-                );
+                warns(&s, "one hunk");
             }
 
             #[test]

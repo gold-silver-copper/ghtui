@@ -91,7 +91,6 @@ async fn drive(
     }
     check_git(tx.clone());
 
-    let mut last_notice = None;
     loop {
         let msg = tokio::select! {
             event = events.next() => match event {
@@ -119,7 +118,7 @@ async fn drive(
             cmds.extend(apply_msg(&mut state, msg));
         }
         cmds.extend(state.settle());
-        cmds.extend(timers(&mut state, &mut last_notice));
+        cmds.extend(timers(&mut state));
         for cmd in cmds {
             // The editor needs the terminal: run here, not spawned.
             if let Some((purpose, text)) = effects.run(cmd) {

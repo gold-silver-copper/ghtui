@@ -539,7 +539,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         .and_then(|i| diff.doc.annotations().get(i as usize))
         .cloned();
     let notice = |state: &mut State, n: Notice| {
-        state.notice = Some(n);
+        state.notices.say(n);
         Vec::new()
     };
     let in_range = diff.range().is_some();
