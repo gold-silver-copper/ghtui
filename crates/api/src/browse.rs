@@ -125,9 +125,7 @@ pub struct RepoOverview {
     pub watchers: u64,
     pub open_issues: u64,
     pub open_prs: u64,
-    #[serde(default)]
     pub closed_issues: u64,
-    #[serde(default)]
     pub closed_prs: u64,
     pub license: Option<String>,
     pub topics: Capped<String>,
@@ -142,13 +140,9 @@ pub struct RepoOverview {
     /// Node ID, for starring.
     pub id: NodeId,
     pub has_issues: bool,
-    #[serde(default)]
     pub has_discussions: bool,
-    #[serde(default)]
     pub has_wiki: bool,
-    #[serde(default)]
     pub branches: u64,
-    #[serde(default)]
     pub tags: u64,
     /// Root directory at the default branch (empty for empty repos).
     pub entries: Vec<TreeEntry>,
@@ -180,7 +174,6 @@ pub struct IssueSummary {
     pub updated_at: String,
     pub comments: u64,
     pub labels: Capped<Label>,
-    #[serde(default)]
     pub created_at: String,
 }
 
@@ -422,7 +415,6 @@ pub struct CodeHit {
 pub struct Comment {
     /// GitHub's number for it, which its links' anchors use
     /// (`#issuecomment-…`, `#discussioncomment-…`).
-    #[serde(default)]
     pub id: Option<u64>,
     pub author: String,
     pub body: String,
@@ -440,7 +432,6 @@ pub struct IssueDetail {
     pub created_at: String,
     pub labels: Capped<Label>,
     pub assignees: Capped<String>,
-    #[serde(default)]
     pub milestone: Option<MilestoneRef>,
     /// The newest comments, oldest first, of how many there are in all.
     pub comments: Capped<Comment>,
@@ -484,30 +475,21 @@ pub struct Profile {
     pub is_org: bool,
     pub pinned: Vec<RepoSummary>,
     pub repos: Capped<RepoSummary>,
-    #[serde(default)]
     pub star_count: u64,
     /// The profile README, as markdown.
-    #[serde(default)]
     pub readme: Option<String>,
     /// "🌴 On vacation".
-    #[serde(default)]
     pub status: Option<String>,
-    #[serde(default)]
     pub pronouns: Option<String>,
     /// Social accounts: (how it's shown, link).
-    #[serde(default)]
     pub socials: Vec<(String, String)>,
     /// Organizations a user belongs to (the public ones).
-    #[serde(default)]
     pub orgs: Capped<String>,
     /// An organization's verified domain badge.
-    #[serde(default)]
     pub verified: bool,
     /// An organization's first public members.
-    #[serde(default)]
     pub people: Capped<String>,
     /// A user's contributions in the last year.
-    #[serde(default)]
     pub contributions: Option<Contributions>,
 }
 
@@ -520,7 +502,6 @@ pub struct Contributions {
     /// Newest month first.
     pub activity: Vec<MonthActivity>,
     /// Where its counts may be short.
-    #[serde(default)]
     pub short: Short,
 }
 
@@ -2750,7 +2731,6 @@ pub struct MilestoneDetail {
     pub items: Results<IssueSummary>,
     /// Its title has quotes, which GitHub's search can't match, so its
     /// issues and pull requests weren't looked up.
-    #[serde(default)]
     pub unsearchable: bool,
 }
 
@@ -2885,7 +2865,6 @@ pub struct Comparison {
     pub to: String,
     pub files: u64,
     /// GitHub lists at most 300 files, so the counts may be short.
-    #[serde(default)]
     pub files_capped: bool,
     pub additions: u64,
     pub deletions: u64,

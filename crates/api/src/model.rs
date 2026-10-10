@@ -366,7 +366,6 @@ pub struct PrDetail {
     /// The ways the repository allows merging, yours first.
     pub merge_methods: Vec<MergeMethod>,
     pub labels: Capped<Label>,
-    #[serde(default)]
     pub milestone: Option<MilestoneRef>,
     /// What GitHub lets you do to it.
     pub may: PrPermits,

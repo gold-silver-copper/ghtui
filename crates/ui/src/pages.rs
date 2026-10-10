@@ -1597,7 +1597,7 @@ fn issue_row(
         labels(&mut segs, &i.labels);
         hanging(page, Seg::new(format!("{icon} "), role), segs, Frame::Body);
         // GitHub's second line: `#12 opened 3 days ago by octocat · Approved`.
-        let (verb, at) = if i.created_at.is_empty() || updated {
+        let (verb, at) = if updated {
             ("updated", &i.updated_at)
         } else {
             ("opened", &i.created_at)
