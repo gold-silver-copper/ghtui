@@ -12,7 +12,7 @@ use ratatui::widgets::Widget;
 
 use ghtui_diff::anchor::{LinePos, Side};
 
-use crate::annotations::{Annotation, ThreadRowKind};
+use crate::annotations::{Annotation, Place, ThreadRowKind};
 use crate::diff_doc::{Doc, DocFile, FoldReason, Note, Pos, Row, Viewed};
 use crate::{Ctx, PAD_X, chips, cols, fill, inset, key_hints, render_split, text, time};
 
@@ -585,19 +585,15 @@ impl DiffView<'_> {
                 if *first {
                     spans.push(Span::styled("  ", theme.body(bg)));
                     spans.extend(self.state_chips(ann, bg));
-                    if let (Some(start), Some(end)) = (ann.start_line, ann.line)
-                        && start != end
-                    {
-                        spans.push(Span::styled(format!("lines {start}–{end}"), theme.meta(bg)));
-                    }
-                    if ann.outdated
-                        && let Some(line) = ann.original_line
-                    {
-                        spans.push(Span::styled(
-                            format!("line {line} of an earlier commit"),
-                            theme.meta(bg),
-                        ));
-                    }
+                    let place = match ann.place {
+                        Place::Line {
+                            at,
+                            start: Some(start),
+                        } if start != at.line => format!("lines {start}–{}", at.line),
+                        Place::Outdated(Some(line)) => format!("line {line} of an earlier commit"),
+                        _ => String::new(),
+                    };
+                    spans.push(Span::styled(place, theme.meta(bg)));
                 }
                 if c.pending {
                     spans.push(Span::styled("  ", theme.body(bg)));
@@ -655,16 +651,18 @@ impl DiffView<'_> {
                 chip("Rejected", Bg::ErrorContainer);
             }
         }
-        if ann.file_level {
+        if let Place::File { .. } = ann.place {
             chip("File", Bg::SecondaryContainer);
         }
         if ann.resolved {
             chip("Resolved", Bg::SuccessContainer);
         }
-        if ann.outdated {
-            chip("Outdated", Bg::SecondaryContainer);
-        } else if ann.moved {
-            chip("Outdated, moved", Bg::SecondaryContainer);
+        match ann.place {
+            Place::File { outdated: true } | Place::Outdated(_) => {
+                chip("Outdated", Bg::SecondaryContainer);
+            }
+            Place::Moved(_) => chip("Outdated, moved", Bg::SecondaryContainer),
+            Place::File { .. } | Place::Line { .. } => {}
         }
         out
     }

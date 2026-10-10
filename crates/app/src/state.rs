@@ -1327,7 +1327,7 @@ pub(crate) mod tests {
     use ghtui_api::browse::SearchResults;
     use ghtui_api::model::RepoId;
     use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode};
-    use ghtui_ui::annotations::AnnotationKey;
+    use ghtui_ui::annotations::{AnnotationKey, Place};
     use ghtui_ui::overlays::PALETTE_ROWS;
     use ghtui_ui::pages::PrTab;
 
@@ -4924,15 +4924,12 @@ pub(crate) mod tests {
                 );
                 assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated(j)) if j.get().3.len() == 1 && *j.get().2 == "e".repeat(40))));
                 let ann = &s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations()[0];
-                assert!(
-                    ann.outdated && ann.on_line().is_none(),
-                    "unplaced until mapped"
-                );
+                assert_eq!(ann.place, Place::Outdated(Some(3)), "unplaced until mapped");
                 let job = s.diffs[&DiffOf::Pr(pr.clone())].job;
                 let mapped = JobMsg::Mapped(vec![(NodeId::new("old"), Some(4))]);
                 diff_msg(&mut s, &pr, DiffMsg::Job(job, mapped));
                 let ann = &s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations()[0];
-                assert_eq!((ann.on_line().map(|p| p.line), ann.moved), (Some(4), true));
+                assert!(matches!(ann.place, Place::Moved(at) if at.line == 4));
             }
 
             /// Outdated threads are mapped onto each job's head: another
