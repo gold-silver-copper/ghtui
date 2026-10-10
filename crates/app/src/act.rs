@@ -65,8 +65,8 @@ pub struct Awaiting {
     pub change: Change,
     /// The page it was made on.
     pub route: Route,
-    /// The page of what it changed: the same, or a row's on a list.
-    pub about: Route,
+    /// What it changed: the page's own subject, or a row's on a list.
+    pub about: Subject,
     polls: u32,
 }
 
@@ -161,7 +161,8 @@ pub enum Subject {
     Pr(PrRef),
     Issue(RepoId, u64),
     Run(RepoId, u64, Option<u64>),
-    Job(RepoId, u64),
+    /// A job, with its run when its page has it.
+    Job(RepoId, Option<u64>, u64),
 }
 
 impl Subject {
@@ -171,7 +172,7 @@ impl Subject {
             Route::Pr { pr, .. } => Subject::Pr(pr.clone()),
             Route::Issue { repo, number } => Subject::Issue(repo.clone(), *number),
             Route::WorkflowRun { repo, run, attempt } => Subject::Run(repo.clone(), *run, *attempt),
-            Route::Job { repo, job, .. } => Subject::Job(repo.clone(), *job),
+            Route::Job { repo, run, job, .. } => Subject::Job(repo.clone(), *run, *job),
             _ => return None,
         })
     }
@@ -189,9 +190,9 @@ impl Subject {
                 run: *run,
                 attempt: *attempt,
             },
-            Subject::Job(repo, job) => Route::Job {
+            Subject::Job(repo, run, job) => Route::Job {
                 repo: repo.clone(),
-                run: None,
+                run: *run,
                 job: *job,
                 step: None,
                 query: String::new(),
@@ -207,7 +208,7 @@ impl Subject {
             Subject::Run(repo, run, attempt) => {
                 Need::Data(DataKey::Run(repo.clone(), *run, *attempt))
             }
-            Subject::Job(repo, job) => Need::Data(DataKey::Job(repo.clone(), *job)),
+            Subject::Job(repo, _, job) => Need::Data(DataKey::Job(repo.clone(), *job)),
         }
     }
 
@@ -363,7 +364,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
             };
             run_plan(state, repo, &about, None, action)
         }
-        Subject::Job(repo, job) => {
+        Subject::Job(repo, _, job) => {
             let key = DataKey::Job(repo.clone(), *job);
             if loaded(state.data.get(&key), &name)?.is_none() {
                 return Ok(Plan::Load(subject.need()));
@@ -669,15 +670,13 @@ pub fn on_changed(state: &mut State, change: &Change, result: Result<(), ApiErro
             let about = state.changing.take();
             state.awaiting = (state.route())
                 .filter(|_| !matches!(change, Change::Comment { .. } | Change::Star { .. }))
-                .map(|route| Awaiting {
-                    change: change.clone(),
-                    route: route.clone(),
-                    // The page it's on, if that's its own; a row's page.
-                    about: match about {
-                        Some(s) if Subject::of(route).as_ref() != Some(&s) => s.route(),
-                        _ => route.clone(),
-                    },
-                    polls: 0,
+                .and_then(|route| {
+                    Some(Awaiting {
+                        change: change.clone(),
+                        route: route.clone(),
+                        about: about.or_else(|| Subject::of(route))?,
+                        polls: 0,
+                    })
                 });
             state.load_visible(false)
         }
@@ -724,7 +723,7 @@ pub fn waiting(state: &State) -> Option<String> {
 /// What the live refresh fetches again for the change the page waits to
 /// see: what the page is about. Past [`POLLS`], it stops waiting.
 pub fn poll(state: &mut State) -> Vec<Need> {
-    let Some(route) = awaiting_here(state).map(|w| w.about.clone()) else {
+    let Some(need) = awaiting_here(state).map(|w| w.about.need()) else {
         return Vec::new();
     };
     if let Some(w) = &mut state.awaiting {
@@ -738,15 +737,7 @@ pub fn poll(state: &mut State) -> Vec<Need> {
             return Vec::new();
         }
     }
-    match route {
-        Route::Pr { pr, .. } => vec![Need::Pr(pr)],
-        Route::Issue { repo, number } => vec![Need::Data(DataKey::Issue(repo, number))],
-        Route::WorkflowRun { repo, run, attempt } => {
-            vec![Need::Data(DataKey::Run(repo, run, attempt))]
-        }
-        Route::Job { repo, job, .. } => vec![Need::Data(DataKey::Job(repo, job))],
-        _ => Vec::new(),
-    }
+    vec![need]
 }
 
 /// Whether the page shows a change GitHub accepted.
@@ -754,14 +745,14 @@ enum Shown {
     No,
     Yes,
     /// On another page: the run's latest attempt, the job re-run.
-    There(Route),
+    There(Subject),
 }
 
-fn shown(state: &State, change: &Change, route: &Route) -> Shown {
+fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
     let yes = |b: bool| if b { Shown::Yes } else { Shown::No };
     let pr = |pr: &PrRef| state.prs.get(pr).and_then(|r| r.data.as_ref());
-    match (change, route) {
-        (_, Route::Pr { pr: r, .. }) => {
+    match (change, about) {
+        (_, Subject::Pr(r)) => {
             let Some(d) = pr(r) else {
                 return Shown::No;
             };
@@ -774,7 +765,7 @@ fn shown(state: &State, change: &Change, route: &Route) -> Shown {
                 _ => true,
             })
         }
-        (Change::CloseIssue { .. } | Change::ReopenIssue { .. }, Route::Issue { repo, number }) => {
+        (Change::CloseIssue { .. } | Change::ReopenIssue { .. }, Subject::Issue(repo, number)) => {
             let key = DataKey::Issue(repo.clone(), *number);
             let issue = state.picked::<Option<Box<ghtui_api::browse::IssueDetail>>>(&key);
             let Some(Some(issue)) = issue else {
@@ -783,22 +774,10 @@ fn shown(state: &State, change: &Change, route: &Route) -> Shown {
             let open = matches!(issue.state, IssueState::Open | IssueState::Draft);
             yes(open == matches!(change, Change::ReopenIssue { .. }))
         }
-        (
-            Change::Rerun { .. },
-            Route::WorkflowRun {
-                repo,
-                run,
-                attempt: Some(_),
-            },
-        ) => Shown::There(Route::WorkflowRun {
-            repo: repo.clone(),
-            run: *run,
-            attempt: None,
-        }),
-        (
-            Change::Rerun { .. } | Change::CancelRun { .. },
-            Route::WorkflowRun { repo, run, attempt },
-        ) => {
+        (Change::Rerun { .. }, Subject::Run(repo, run, Some(_))) => {
+            Shown::There(Subject::Run(repo.clone(), *run, None))
+        }
+        (Change::Rerun { .. } | Change::CancelRun { .. }, Subject::Run(repo, run, attempt)) => {
             let key = DataKey::Run(repo.clone(), *run, *attempt);
             let Some(r) = state.picked::<WorkflowRun>(&key) else {
                 return Shown::No;
@@ -808,7 +787,7 @@ fn shown(state: &State, change: &Change, route: &Route) -> Shown {
         }
         (
             Change::Rerun { .. } | Change::RerunJob { .. } | Change::CancelRun { .. },
-            Route::Job { repo, run, job, .. },
+            Subject::Job(repo, run, job),
         ) => {
             let Some(j) = state.picked::<Job>(&DataKey::Job(repo.clone(), *job)) else {
                 return Shown::No;
@@ -817,13 +796,7 @@ fn shown(state: &State, change: &Change, route: &Route) -> Shown {
             let running = j.run.outcome == CheckOutcome::Pending;
             match (change, j.run.rerun) {
                 (Change::CancelRun { .. }, _) => yes(!running),
-                (_, Some(rerun)) => Shown::There(Route::Job {
-                    repo: repo.clone(),
-                    run: *run,
-                    job: rerun,
-                    step: None,
-                    query: String::new(),
-                }),
+                (_, Some(rerun)) => Shown::There(Subject::Job(repo.clone(), *run, rerun)),
                 // Following it here, or its re-run left this job out.
                 (Change::Rerun { failed_only, .. }, None) => yes((latest
                     && running
@@ -848,10 +821,11 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     if let Some(w) = awaiting_here(state).cloned() {
         match shown(state, &w.change, &w.about) {
             Shown::No => {}
-            Shown::There(route) if w.about == w.route => {
+            Shown::There(about) if Subject::of(&w.route).as_ref() == Some(&w.about) => {
+                let route = about.route();
                 state.awaiting = Some(Awaiting {
                     route: route.clone(),
-                    about: route.clone(),
+                    about,
                     ..w
                 });
                 cmds.extend(state.replace(route, false, None));

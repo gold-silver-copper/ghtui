@@ -3196,7 +3196,10 @@ mod changes {
         press(&mut s, "<Enter>");
         update(&mut s, Msg::Changed(merge, Ok(())));
         let w = s.awaiting.clone().unwrap();
-        assert_eq!((w.route, w.about), (Route::Home, Route::pr(pr())));
+        assert_eq!(
+            (w.route, w.about),
+            (Route::Home, crate::act::Subject::Pr(pr()))
+        );
         // Home asked again at once; GitHub's search may not show it yet.
         for i in 0..2 {
             let none = crate::fixtures::found_prs(Vec::new(), 0);
