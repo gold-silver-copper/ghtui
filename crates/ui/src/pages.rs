@@ -2982,6 +2982,7 @@ pub fn job(
             job.id,
             step.number
         );
+        let header = page.lines.len();
         item(page, target, |page, link| {
             let (mark, role) = match step.outcome {
                 // Queued: not running yet.
@@ -3068,8 +3069,11 @@ pub fn job(
         }
         let width = shown.last().map_or(1, |(i, _)| (i + 1).to_string().len());
         for (n, (i, text)) in shown.iter().enumerate() {
-            if focus == Some(n) {
-                page.jump.get_or_insert(page.lines.len());
+            if focus == Some(n) && page.jump.is_none() {
+                page.jump = Some(page.lines.len());
+                // What leads to it: the step's name, and what it printed
+                // just before (an error's heading).
+                page.lead = Some(header);
             }
             if matches(text) {
                 page.marks.push(page.lines.len());
@@ -3078,18 +3082,13 @@ pub fn job(
                 format!("{:>width$}  ", i + 1),
                 Role::Syntax(Syntax::Comment),
             );
-            let mut segs = vec![number];
-            segs.extend(highlight(log_seg(text), &q));
-            page.push(PageLine {
-                segs,
-                frame: Frame::Body,
-                tone: Tone::Code,
-                ..PageLine::default()
-            });
+            page.output(number, highlight(log_seg(text), &q), Tone::Code);
         }
         if pointed && !searched {
             page.jump.get_or_insert(page.lines.len().saturating_sub(1));
         }
+        // The step's name stays on top while its log scrolls under it.
+        page.heads.push((header, page.lines.len()));
     }
     page.box_bottom();
 }

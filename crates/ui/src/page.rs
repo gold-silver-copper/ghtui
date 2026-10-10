@@ -208,6 +208,15 @@ pub struct Page {
     pub compact: bool,
     /// The line the page opens scrolled to (a linked line), if not the top.
     pub jump: Option<usize>,
+    /// Where what the jump lands in begins (a job step's header, above its
+    /// first error): opened at, when that still shows the jump well up
+    /// the screen; otherwise the jump opens with a third of a screen of
+    /// what leads to it above.
+    pub lead: Option<usize>,
+    /// Headings that stay on top while what they head scrolls under them:
+    /// each a line and where what it heads ends (a job's step, over its
+    /// log).
+    pub heads: Vec<(usize, usize)>,
     /// Named places a link's `#fragment` can point at (a comment), by line.
     pub anchors: HashMap<String, usize>,
     /// The lines a search on the page matched, in order.
@@ -313,6 +322,42 @@ impl Page {
             _ => self.width.saturating_sub(2 * BOX_PAD),
         };
         inner.saturating_sub(indent).max(8)
+    }
+
+    /// A line of output (a log's), numbered by `number`: wrapped to fit,
+    /// what doesn't continuing under the text (its own indent, up to half
+    /// the room) rather than the number.
+    pub fn output(&mut self, number: Seg, segs: Vec<Seg>, tone: Tone) {
+        let frame = Frame::Body;
+        let number_w = cols(text::width(&number.text));
+        let first = self.room(frame, number_w);
+        let text: String = segs.iter().map(|s| s.text.as_str()).collect();
+        let indent = text.len() - text.trim_start_matches(' ').len();
+        let under = number_w.saturating_add(cols(indent).min(first / 2));
+        let rest = usize::from(self.room(frame, under));
+        let lines = wrap_hanging(segs, usize::from(first), rest);
+        for (n, segs) in lines.into_iter().enumerate() {
+            let (indent, segs) = match n {
+                0 => (0, std::iter::once(number.clone()).chain(segs).collect()),
+                _ => (under, segs),
+            };
+            self.lines.push(PageLine {
+                segs,
+                indent,
+                frame,
+                tone,
+                ..PageLine::default()
+            });
+        }
+    }
+
+    /// The line drawn at `row` of the view scrolled to `scroll`: the
+    /// heading over what's under it, on the top row.
+    pub fn shown(&self, scroll: usize, row: usize) -> usize {
+        let head = (self.heads.iter())
+            .find(|&&(head, end)| row == 0 && head < scroll && scroll < end)
+            .map(|&(head, _)| head);
+        head.unwrap_or(scroll.saturating_add(row))
     }
 
     /// Word-wraps segments into lines `indent` columns in.
@@ -429,7 +474,13 @@ pub fn wrap(text: &str, max: usize) -> Vec<String> {
 /// spaces (or mid-word for words longer than a line). Newlines in segment
 /// text force breaks.
 pub(crate) fn wrap_segs(segs: Vec<Seg>, width: usize) -> Vec<Vec<Seg>> {
+    wrap_hanging(segs, width, width)
+}
+
+/// [`wrap_segs`], the first line `first` wide and the rest `rest`.
+fn wrap_hanging(segs: Vec<Seg>, first: usize, rest: usize) -> Vec<Vec<Seg>> {
     let mut lines: Vec<Vec<Seg>> = vec![Vec::new()];
+    let room = |lines: &Vec<Vec<Seg>>| if lines.len() > 1 { rest } else { first };
     let mut used = 0usize;
     let push = |lines: &mut Vec<Vec<Seg>>, seg: &Seg, text: &str| {
         let Some(line) = lines.last_mut() else {
@@ -455,18 +506,18 @@ pub(crate) fn wrap_segs(segs: Vec<Seg>, width: usize) -> Vec<Vec<Seg>> {
             // Words with the spaces that follow them.
             for word in part.split_inclusive(' ') {
                 let w = text::width(word.trim_end());
-                if used > 0 && used.saturating_add(w) > width {
+                if used > 0 && used.saturating_add(w) > room(&lines) {
                     lines.push(Vec::new());
                     used = 0;
                     if word.trim().is_empty() {
                         continue;
                     }
                 }
-                if w > width {
+                if w > room(&lines) {
                     // Hard-break a long word.
                     let mut chunk = String::new();
                     for (g, gw) in text::graphemes(word) {
-                        if used.saturating_add(gw) > width {
+                        if used.saturating_add(gw) > room(&lines) {
                             push(&mut lines, &seg, &chunk);
                             chunk.clear();
                             lines.push(Vec::new());
@@ -582,8 +633,16 @@ fn lay_out<'a>(out: &mut Vec<(u16, String, &'a Seg)>, segs: &'a [Seg], mut x: u1
 pub fn spots(page: &Page, area: Rect, scroll: usize) -> Vec<Spot> {
     let layout = columns(page, area);
     let mut out = Vec::new();
-    let mut add = |lines: &[PageLine], x: u16, width: u16| {
-        for (line, y) in lines.iter().skip(scroll).zip(area.top()..area.bottom()) {
+    let mut add = |lines: &[PageLine], main: bool, x: u16, width: u16| {
+        for (row, y) in (area.top()..area.bottom()).enumerate() {
+            let i = if main {
+                page.shown(scroll, row)
+            } else {
+                scroll.saturating_add(row)
+            };
+            let Some(line) = lines.get(i) else {
+                continue;
+            };
             let mut seen = Vec::new();
             for (sx, _, seg) in place(line, x, width) {
                 if let Some(link) = seg.link
@@ -595,9 +654,9 @@ pub fn spots(page: &Page, area: Rect, scroll: usize) -> Vec<Spot> {
             }
         }
     };
-    add(&page.lines, layout.main_x, page.width);
+    add(&page.lines, true, layout.main_x, page.width);
     if let Some(ax) = layout.aside_x {
-        add(&page.aside, ax, page.aside_width);
+        add(&page.aside, false, ax, page.aside_width);
     }
     out.sort_by_key(|s| (s.y, s.x));
     out
@@ -608,7 +667,8 @@ pub fn hit(page: &Page, area: Rect, scroll: usize, x: u16, y: u16) -> PageHit {
     if !(area.y..area.bottom()).contains(&y) {
         return PageHit::default();
     }
-    let row = scroll.saturating_add(usize::from(y.saturating_sub(area.y)));
+    let at = usize::from(y.saturating_sub(area.y));
+    let row = scroll.saturating_add(at);
     let layout = columns(page, area);
     let link_at = |line: &PageLine, lx: u16, width: u16| {
         place(line, lx, width)
@@ -625,6 +685,7 @@ pub fn hit(page: &Page, area: Rect, scroll: usize, x: u16, y: u16) -> PageHit {
             .and_then(|l| link_at(l, ax, page.aside_width));
         return PageHit { line: None, link };
     }
+    let row = page.shown(scroll, at);
     let Some(line) = page.lines.get(row) else {
         return PageHit::default();
     };
@@ -660,7 +721,7 @@ impl Widget for PageView<'_> {
         let layout = columns(self.page, area);
         let selected = self.selected.and_then(|i| self.page.items.get(i)).copied();
         for (row, y) in (area.top()..area.bottom()).enumerate() {
-            let i = self.scroll.saturating_add(row);
+            let i = self.page.shown(self.scroll, row);
             if let Some(line) = self.page.lines.get(i) {
                 let sel = selected.is_some_and(|s| (s.start..s.end).contains(&i));
                 let here = self.current == Some(i);
@@ -674,7 +735,8 @@ impl Widget for PageView<'_> {
                     here,
                 );
             }
-            if let (Some(ax), Some(line)) = (layout.aside_x, self.page.aside.get(i)) {
+            let aside = self.page.aside.get(self.scroll.saturating_add(row));
+            if let (Some(ax), Some(line)) = (layout.aside_x, aside) {
                 self.line(buf, line, ax, y, self.page.aside_width, false, false);
             }
         }

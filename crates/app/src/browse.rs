@@ -20,8 +20,34 @@ use crate::keymap::Action;
 use crate::route::Route;
 use crate::state::{Remote, State};
 
-/// Widest a page gets; wider terminals center it, as GitHub does.
+/// Widest a page of reading gets; wider terminals center it, as GitHub
+/// does.
 pub const MAX_WIDTH: u16 = 140;
+
+/// How wide `route`'s page gets: the one place that says. Reading
+/// (conversations, READMEs, profiles, lists of issues and repositories)
+/// stays at [`MAX_WIDTH`], centered, as lines much longer are hard to
+/// follow. What's output or laid out in columns takes the whole width:
+/// checks, runs, jobs and their logs, a workflow's runs, files and blame,
+/// branches, tags and deployments.
+pub fn max_width(route: &Route) -> u16 {
+    match route {
+        Route::Pr {
+            tab: PrTab::Checks, ..
+        }
+        | Route::CommitChecks { .. }
+        | Route::Actions(_)
+        | Route::WorkflowRun { .. }
+        | Route::Job { .. }
+        | Route::Workflow { .. }
+        | Route::Blob { .. }
+        | Route::Blame { .. }
+        | Route::Branches(_)
+        | Route::Tags(_)
+        | Route::Deployments { .. } => u16::MAX,
+        _ => MAX_WIDTH,
+    }
+}
 
 /// One piece of GitHub data a page shows.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

@@ -313,12 +313,11 @@ impl State {
         }
     }
 
-    /// Columns pages are built for.
+    /// Columns pages are built for: what's room, up to the page's widest
+    /// ([`browse::max_width`]).
     pub fn page_width(&self) -> u16 {
-        self.size
-            .0
-            .saturating_sub(2 * PAD_X + 1)
-            .min(browse::MAX_WIDTH)
+        let widest = self.route().map_or(browse::MAX_WIDTH, browse::max_width);
+        self.size.0.saturating_sub(2 * PAD_X + 1).min(widest)
     }
 
     /// Rows a page shows.
@@ -367,7 +366,14 @@ fn settle(p: &mut PageScreen, height: usize) {
     let here = Some((p.scroll, p.selected));
     let jump = (p.page.jump.or(anchor)).filter(|_| p.jumped.is_none_or(|at| at == here));
     if let Some(jump) = jump {
-        p.scroll = jump.saturating_sub(MARGIN);
+        // With what leads to it: from its lead (a step's name) if the jump
+        // then shows in the top two thirds, else a third of a screen of it.
+        let lead = p.page.jump.and(p.page.lead).filter(|&l| l <= jump);
+        p.scroll = match lead {
+            Some(lead) if jump - lead < height * 2 / 3 => lead,
+            Some(_) => jump.saturating_sub(height / 3),
+            None => jump.saturating_sub(MARGIN),
+        };
     }
     p.scroll = p.scroll.min(max);
     if p.fresh && p.selected.is_none() {

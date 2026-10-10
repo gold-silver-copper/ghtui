@@ -2682,6 +2682,34 @@ pub(crate) mod tests {
             .map(ghtui_ui::page::Seg::text)
             .collect();
         assert!(text.contains("exit code 101"), "{text}");
+        // The step's name shows above it, with what it printed before.
+        let header = (page.lines.iter()).position(|l| l.text().contains("✗ cargo test"));
+        assert!(header.is_some_and(|h| h >= p.scroll && h < p.scroll + s.page_height()));
+
+        // A long step: a third of a screen of what leads to the error, the
+        // step's name kept on top, and a line too long to fit wrapped
+        // whole rather than cut.
+        let (job, mut log) = crate::fixtures::job();
+        let long = format!("##[error]{}", "a::b::c calls d::e ".repeat(20));
+        let filler: String = (0..80)
+            .map(|n| format!("2026-10-03T12:00:05:01.{n:02}00000Z output {n}\n"))
+            .collect();
+        log.text = log
+            .text
+            .replace("2026-10-03T12:04:10", &format!("{filler}2026-10-03T12:04:10"))
+            .replace("##[error]Process completed with exit code 101.", &long);
+        fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
+        fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
+        let height = s.page_height();
+        let Screen::Page(p) = s.screen() else {
+            panic!()
+        };
+        let page = p.page();
+        let jump = page.jump.unwrap();
+        assert!(jump - p.scroll >= height / 3 && jump < p.scroll + height);
+        assert!(page.lines[page.shown(p.scroll, 0)].text().contains("✗ cargo test"), "{:?} {} {jump} {}", page.heads, p.scroll, page.lines.len());
+        let shown: String = page.lines[jump..].iter().map(|l| l.text()).collect();
+        assert_eq!(shown.matches("a::b::c").count(), 20, "{shown}");
     }
 
     /// A running job, and its log (which GitHub doesn't have until the
