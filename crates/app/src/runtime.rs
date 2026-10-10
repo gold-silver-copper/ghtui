@@ -81,7 +81,10 @@ async fn drive(
     let mut events = EventStream::new();
     let mut stop = StopSignals::new()?;
 
-    terminal.draw(|frame| view(&state, frame, ghtui_store::now()))?;
+    // A scripted demo (demo/tour.py) reads each frame's text to know when
+    // what it waits for is on screen.
+    let dump = std::env::var_os("GHTUI_FRAME_DUMP");
+    draw(terminal, &state, dump.as_deref())?;
     tracing::info!(elapsed_ms = started.elapsed().as_millis(), "first paint");
 
     for cmd in initial {
@@ -131,8 +134,28 @@ async fn drive(
             save_tabs(&effects.gh, &state).await;
             return Ok(());
         }
-        terminal.draw(|frame| view(&state, frame, ghtui_store::now()))?;
+        draw(terminal, &state, dump.as_deref())?;
     }
+}
+
+/// Draws `state`, and with a `dump` path writes the frame's text there.
+fn draw(
+    terminal: &mut DefaultTerminal,
+    state: &State,
+    dump: Option<&std::ffi::OsStr>,
+) -> Result<()> {
+    let frame = terminal.draw(|frame| view(state, frame, ghtui_store::now()))?;
+    if let Some(path) = dump {
+        let width = usize::from(frame.buffer.area.width).max(1);
+        let rows = frame.buffer.content.chunks(width);
+        let text: String = rows
+            .flat_map(|row| row.iter().map(ratatui::buffer::Cell::symbol).chain(["\n"]))
+            .collect();
+        if let Err(err) = std::fs::write(path, text) {
+            tracing::warn!(%err, "couldn't write the frame dump");
+        }
+    }
+    Ok(())
 }
 
 impl Effects {
