@@ -702,8 +702,17 @@ fn max_scroll(p: &PageScreen, height: usize) -> usize {
 #[must_use]
 pub fn go_to_line(state: &mut State, n: usize) -> Vec<Cmd> {
     let height = state.page_height();
+    // In the diff: that line of the file the cursor is in.
+    if let Some((screen, diff)) = state.diff_parts() {
+        let line = u32::try_from(n).unwrap_or(u32::MAX);
+        match diff.doc.new_line(screen.cursor.file, line) {
+            Some(pos) => screen.cursor = pos,
+            None => state.info(format!("There's no line {n} here")),
+        }
+        return Vec::new();
+    }
     let Screen::Page(p) = state.screen_mut() else {
-        return apply(state, Action::Top);
+        return Vec::new();
     };
     let item = match p.page.numbered.get(n.saturating_sub(1)) {
         Some(&item) => Some(item),

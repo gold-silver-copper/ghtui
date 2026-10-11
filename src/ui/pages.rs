@@ -1068,7 +1068,7 @@ pub fn blame(
         .map(|r| crate::ui::text::width(r.commit.author.name()))
         .max()
         .unwrap_or(0)
-        .min(16);
+        .min(20);
     let gutter_w = (usize::from(page.width) * 2 / 5).clamp(32, 90);
     let fixed_w = 7 + 1 + author_w + 1 + 8 + 2;
     let message_w = gutter_w.saturating_sub(fixed_w + 2);

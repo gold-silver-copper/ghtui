@@ -4377,6 +4377,22 @@ pub(crate) mod tests {
             warns(&s, "");
         }
 
+        /// A count before `gg` goes to that new line of the file (or the
+        /// nearest after it that shows).
+        #[test]
+        fn a_count_before_gg_goes_to_that_line() {
+            let (mut s, pr) = diff_state(120);
+            press(&mut s, "5gg");
+            let at = screen(&s).cursor;
+            let doc = &s.diffs[&DiffOf::Pr(pr)].doc;
+            let shown: Vec<_> = (doc.files().first().zip(doc.row(at)))
+                .map(|(f, row)| f.shows(row).map(|p| p.line).collect())
+                .unwrap_or_default();
+            assert!(shown.iter().any(|&l| l >= 5), "{at:?}: {shown:?}");
+            press(&mut s, "9999gg");
+            says(&s, "no line 9999");
+        }
+
         #[test]
         fn n_and_shift_n_follow_a_search_and_esc_ends_it() {
             let (mut s, _) = diff_state(120);
