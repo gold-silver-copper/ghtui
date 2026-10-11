@@ -277,6 +277,10 @@ A contract suite checks ghtui's assumptions against live GitHub, read-only
 kind of github.com link is listed with what it must open in
 `crates/app/tests/github_urls.txt`.
 
+`demo/record.sh` records a captioned tour of ghtui to a video, on a hidden
+Hyprland monitor (it needs foot, grim and ffmpeg, and an unlocked session). It
+uses a scratch config and cache, and only reads public GitHub.
+
 Timing tests (`cargo test --release -p ghtui -- --ignored --nocapture`)
 hold scrolling a 500-file pull request to under 8ms a frame (about 0.5ms
 today), and diffing a 50,000-line file to under 100ms (about 32ms).
