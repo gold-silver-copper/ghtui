@@ -1,74 +1,92 @@
-[workspace]
-resolver = "3"
-members = ["crates/*"]
-
-[workspace.package]
+[package]
+name = "ghtui"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.97"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/gold-silver-copper/ghtui"
+description = "A keyboard-driven terminal client for GitHub, with a pull request diff viewer that goes further than GitHub's"
+readme = "README.md"
+keywords = ["github", "tui", "terminal", "code-review", "diff"]
+categories = ["command-line-utilities", "development-tools"]
+# What the package needs to build; the tests and their recorded data stay
+# in the repository.
+include = ["/src/**/*.rs", "/src/schema/github.graphql", "/build.rs", "/README.md", "/LICENSE-*"]
 
-[workspace.dependencies]
-ghtui-api = { path = "crates/api", version = "0.1.0" }
-ghtui-schema = { path = "crates/schema", version = "0.1.0" }
-ghtui-store = { path = "crates/store", version = "0.1.0" }
-ghtui-git = { path = "crates/git", version = "0.1.0" }
-ghtui-diff = { path = "crates/diff", version = "0.1.0" }
-ghtui-theme = { path = "crates/theme", version = "0.1.0" }
-ghtui-ui = { path = "crates/ui", version = "0.1.0" }
+# The library has everything; the binary runs it. The two share a name,
+# so only the library is documented.
+[[bin]]
+name = "ghtui"
+path = "src/main.rs"
+doc = false
 
+[features]
+default = ["lang-rust", "lang-typescript", "lang-javascript", "lang-python", "lang-go", "lang-json", "lang-yaml", "lang-toml", "lang-markdown", "lang-bash"]
+lang-rust = ["dep:tree-sitter-rust"]
+lang-typescript = ["dep:tree-sitter-typescript"]
+lang-javascript = ["dep:tree-sitter-javascript"]
+lang-python = ["dep:tree-sitter-python"]
+lang-go = ["dep:tree-sitter-go"]
+lang-json = ["dep:tree-sitter-json"]
+lang-yaml = ["dep:tree-sitter-yaml"]
+lang-toml = ["dep:tree-sitter-toml-ng"]
+lang-markdown = ["dep:tree-sitter-md"]
+lang-bash = ["dep:tree-sitter-bash"]
+
+[dependencies]
 anyhow = "1.0.104"
-thiserror = "2.0.21"
-tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "fs", "signal"] }
+base64 = "0.23.1"
+clap = { version = "4.6.7", features = ["derive"] }
+etcetera = "0.11.0"
+ratatui = "0.30.2"
+ratatui-textarea = "0.9.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
-toml_edit = { version = "0.25.17", features = ["serde"] }
-tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
-tracing-appender = "0.2.5"
-clap = { version = "4.6.7", features = ["derive"] }
-url = "2.5.8"
 sha2 = "0.10"
 tempfile = "3.27.0"
-etcetera = "0.11.0"
-
-ratatui = "0.30.2"
-crossterm = "0.29.0"
-ratatui-textarea = "0.9.2"
-
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "fs", "signal"] }
+toml_edit = { version = "0.25.17", features = ["serde"] }
+tracing = "0.1.44"
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+url = "2.5.8"
 cynic = { version = "3.14.0", features = ["rkyv"] }
-cynic-codegen = { version = "3.14.0", features = ["rkyv"] }
-cynic-parser = { version = "0.11.2", default-features = false }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2", "json"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
 http = "1"
-
+thiserror = "2.0.21"
 redb = "4.3.0"
 material-colors = "0.5.0"
 terminal-colorsaurus = "1.0.3"
-
-insta = "1.49.0"
-proptest = { version = "1.11.0", default-features = false, features = ["std"] }
-flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 pulldown-cmark = { version = "0.13.4", default-features = false }
-base64 = "0.23.1"
-
 imara-diff = "0.2.0"
 tree-sitter = "0.27.0"
 tree-sitter-highlight = "0.27.0"
-tree-sitter-rust = "0.24.2"
-tree-sitter-typescript = "0.23.2"
-tree-sitter-javascript = "0.25.0"
-tree-sitter-python = "0.25.0"
-tree-sitter-go = "0.25.0"
-tree-sitter-json = "0.24.8"
-tree-sitter-yaml = "0.7.2"
-tree-sitter-toml-ng = "0.7.0"
-tree-sitter-md = "0.5.3"
-tree-sitter-bash = "0.25.1"
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+futures = "0.3"
+unicode-segmentation = "1"
+tree-sitter-rust = { version = "0.24.2", optional = true }
+tree-sitter-typescript = { version = "0.23.2", optional = true }
+tree-sitter-javascript = { version = "0.25.0", optional = true }
+tree-sitter-python = { version = "0.25.0", optional = true }
+tree-sitter-go = { version = "0.25.0", optional = true }
+tree-sitter-json = { version = "0.24.8", optional = true }
+tree-sitter-yaml = { version = "0.7.2", optional = true }
+tree-sitter-toml-ng = { version = "0.7.0", optional = true }
+tree-sitter-md = { version = "0.5.3", optional = true }
+tree-sitter-bash = { version = "0.25.1", optional = true }
 
-[workspace.lints.rust]
+[build-dependencies]
+cynic-codegen = { version = "3.14.0", features = ["rkyv"] }
+
+[dev-dependencies]
+cynic-parser = { version = "0.11.2", default-features = false }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+insta = "1.49.0"
+proptest = { version = "1.11.0", default-features = false, features = ["std"] }
+tokio = { version = "1.53.2", features = ["net", "rt-multi-thread", "macros", "sync", "time", "process", "io-util", "fs", "signal"] }
+
+[lints.rust]
 unsafe_code = "forbid"
 
 # Panics are bugs, so non-test code can't contain them (tests are exempt
@@ -76,7 +94,7 @@ unsafe_code = "forbid"
 # not `forbid`: clap's derives allow the whole restriction group, which
 # `forbid` rejects. Where a cast or similar is provably fine, say why with
 # `#[expect(..., reason = "...")]`; a bare allow is refused.
-[workspace.lints.clippy]
+[lints.clippy]
 # Panics.
 unwrap_used = "deny"
 expect_used = "deny"

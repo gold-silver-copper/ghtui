@@ -277,7 +277,7 @@ def tour(t):
     t.key("esc")
     t.pause(1)
 
-    t.scene("ghtui: cargo install --path crates/app")
+    t.scene("ghtui: cargo install ghtui")
     t.pause(3)
     t.log("end")
     while DONE and not os.path.exists(DONE):

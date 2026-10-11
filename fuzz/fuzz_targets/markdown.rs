@@ -1,8 +1,8 @@
 //! Markdown from GitHub (READMEs, comments) renders without panicking.
 #![no_main]
 
-use ghtui_ui::markdown::{LinkBase, render};
-use ghtui_ui::page::{Frame, Page};
+use ghtui::ui::markdown::{LinkBase, render};
+use ghtui::ui::page::{Frame, Page};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|input: (u8, &str)| {

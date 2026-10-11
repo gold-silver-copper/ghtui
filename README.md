@@ -46,7 +46,7 @@ navigation and structural diffs.
 You need Rust 1.97 or newer and git 2.36 or newer.
 
 ```sh
-cargo install --path crates/app
+cargo install ghtui
 ```
 
 ## Usage
@@ -208,7 +208,7 @@ A section lists `pulls`, `issues` or `repos`, and shows up to 30 rows; its
 last row opens the rest. Without any `[[home]]` tables, Home shows your
 review requests, your open pull requests and your repositories. Action
 names for `[keys]` are in the `actions!` table in
-[`crates/app/src/keymap.rs`](crates/app/src/keymap.rs).
+[`src/keymap.rs`](src/keymap.rs).
 
 ## Design
 
@@ -243,12 +243,14 @@ with ETags, so unchanged data costs nothing against the rate limit.
 Material 3's tonal palettes. Every foreground and background pair the UI
 uses is tested for contrast in both schemes, in truecolor and 256 colors.
 
-| Crate    | What it does                                                    |
+It's one crate. The top of `src/` is the app (routes, state, keys, view,
+runtime) and the binary that runs it; the rest are its modules:
+
+| Module   | What it does                                                    |
 | -------- | --------------------------------------------------------------- |
-| `app`    | The binary: routes, state, keys, view, runtime                  |
 | `ui`     | Pages and widgets, pure functions of data                       |
 | `api`    | GitHub over GraphQL (cynic) and REST: auth, retries, limits     |
-| `schema` | GitHub's GraphQL schema, compiled once                          |
+| `schema` | GitHub's GraphQL schema, which the queries are typed against   |
 | `store`  | The cache, and review drafts kept outside it                    |
 | `git`    | The `git` CLI: clones, fetches, credentials, blobs              |
 | `diff`   | Hunks (imara-diff), highlighting (tree-sitter), the diff model  |
@@ -268,20 +270,20 @@ The tests come at GitHub's data from several sides:
 - recorded GitHub responses are replayed offline;
 - git is the oracle for diffs, on real repositories over `file://`;
 - full screens are snapshotted in light, dark and 256 colors
-  (`INSTA_UPDATE=always cargo test -p ghtui` to accept changes, then review
+  (`INSTA_UPDATE=always cargo test` to accept changes, then review
   them);
 - property tests throw random keys, resizes and replies at the app.
 
 A contract suite checks ghtui's assumptions against live GitHub, read-only
-(`cargo test -p ghtui-api --test contract -- --ignored contract`). Every
+(`cargo test --test contract -- --ignored contract`). Every
 kind of github.com link is listed with what it must open in
-`crates/app/tests/github_urls.txt`.
+`tests/github_urls.txt`.
 
 `demo/record.sh` records a captioned tour of ghtui to a video, on a hidden
 Hyprland monitor (it needs foot, grim and ffmpeg, and an unlocked session). It
 uses a scratch config and cache, and only reads public GitHub.
 
-Timing tests (`cargo test --release -p ghtui -- --ignored --nocapture`)
+Timing tests (`cargo test --release -- --ignored --nocapture`)
 hold scrolling a 500-file pull request to under 8ms a frame (about 0.5ms
 today), and diffing a 50,000-line file to under 100ms (about 32ms).
 

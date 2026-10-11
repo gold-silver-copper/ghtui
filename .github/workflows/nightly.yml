@@ -37,7 +37,7 @@ jobs:
         if: steps.token.outputs.skip != 'true'
       - name: Contract tests
         if: steps.token.outputs.skip != 'true'
-        run: cargo test -p ghtui-api --test contract --locked -- --ignored contract
+        run: cargo test --test contract --locked -- --ignored contract
       - name: Link crawl
         if: steps.token.outputs.skip != 'true' && !cancelled()
         run: |

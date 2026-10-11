@@ -1,0 +1,19 @@
+//! GitHub API access: auth, GraphQL and REST, rate limits, retries, caching.
+
+pub mod auth;
+pub mod browse;
+pub mod change;
+mod client;
+pub mod corpus;
+#[doc(hidden)]
+pub mod fuzz;
+pub mod model;
+mod person;
+pub mod queries;
+#[cfg(test)]
+mod query_check;
+pub mod rate_limit;
+mod raw;
+
+pub use crate::store::Cached;
+pub use client::{ApiError, GitHub};

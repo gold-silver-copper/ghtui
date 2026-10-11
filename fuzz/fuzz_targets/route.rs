@@ -4,9 +4,9 @@
 #![no_main]
 
 use ghtui::route::Target;
-use ghtui_api::browse::WikiPage;
-use ghtui_api::model::RepoId;
-use ghtui_ui::page::Page;
+use ghtui::api::browse::WikiPage;
+use ghtui::api::model::RepoId;
+use ghtui::ui::page::Page;
 use libfuzzer_sys::fuzz_target;
 
 fn follow(url: &str) {
@@ -34,7 +34,7 @@ fuzz_target!(|input: (&str, &str)| {
         sidebar: None,
     };
     let mut built = Page::new(80);
-    ghtui_ui::pages::wiki(&mut built, &RepoId::new("o", "r"), &page);
+    ghtui::ui::pages::wiki(&mut built, &RepoId::new("o", "r"), &page);
     for link in built.links.iter().filter_map(|l| l.url()) {
         follow(link);
     }

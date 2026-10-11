@@ -5,12 +5,12 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use ghtui_diff::FileDiff;
-use ghtui_git::files::{ChangedFile, FileStatus};
-use ghtui_theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
-use ghtui_ui::diff_doc::{Doc, Pos, ViewOptions};
-use ghtui_ui::diff_view::{DiffView, Keys};
-use ghtui_ui::{Ctx, Icons};
+use ghtui::diff::FileDiff;
+use ghtui::git::files::{ChangedFile, FileStatus};
+use ghtui::theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
+use ghtui::ui::diff_doc::{Doc, Pos, ViewOptions};
+use ghtui::ui::diff_view::{DiffView, Keys};
+use ghtui::ui::{Ctx, Icons};
 use libfuzzer_sys::fuzz_target;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -26,8 +26,8 @@ fuzz_target!(|input: (u8, u8, &[u8], &[u8])| {
         new_path: Some(path.into()),
         old_mode: 0o100644,
         new_mode: 0o100644,
-        old_oid: ghtui_git::Oid::parse(&"1".repeat(40)).unwrap(),
-        new_oid: ghtui_git::Oid::parse(&"2".repeat(40)).unwrap(),
+        old_oid: ghtui::git::Oid::parse(&"1".repeat(40)).unwrap(),
+        new_oid: ghtui::git::Oid::parse(&"2".repeat(40)).unwrap(),
         similarity: None,
     };
     let mut doc = Doc::new(vec![file], &HashSet::new());
