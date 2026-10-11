@@ -1136,7 +1136,9 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         _ => {
             let shown = crate::keymap::pretty_keys(&typed);
             match state.keymap.elsewhere(&typed) {
-                Some(action) => state.info(action.not_here()),
+                Some(action) => {
+                    state.info(format!("{shown} does nothing here · {}", action.not_here()));
+                }
                 None => {
                     let menu = state.first_key(Action::Menu);
                     state.info(format!("{shown}: not bound here · {menu} shows what is"));

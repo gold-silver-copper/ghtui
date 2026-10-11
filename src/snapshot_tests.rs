@@ -2512,6 +2512,10 @@ mod keys {
         press(&mut s, "z");
         press(&mut s, "q");
         assert!(!s.quit, "zq is no binding; q in it doesn't quit");
+        // A key of another screen says so, not what it would do there.
+        press(&mut s, "w");
+        let said = format!("{:?}", s.notices.shown());
+        assert!(said.contains("w does nothing here"), "{said}");
     }
 
     /// A file's lines are rows: a count goes to one, `y` copies its link,
