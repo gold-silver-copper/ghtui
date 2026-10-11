@@ -263,8 +263,10 @@ says where it works.
 | `h`  | Fold the folder (on a file, go to its folder) |
 | `l`  | Unfold the folder |
 
-In the comment editor, `ctrl-s` adds the comment, `ctrl-e` continues in
-`$EDITOR`, and `esc` cancels.
+The comment editor opens where the comment will go: under the lines, the
+thread or the file header in Files changed, and in place of the comment
+box on a conversation. In it, `ctrl-s` adds the comment, `ctrl-e`
+continues in `$EDITOR`, and `esc` cancels (keeping the lines selected).
 
 ## Configuration
 

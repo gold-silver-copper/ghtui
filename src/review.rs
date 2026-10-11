@@ -9,13 +9,13 @@ use crate::diff::anchor::{AnchorError, LinePos, Side};
 use crate::store::{DraftComment, DraftSide, ReviewState};
 use crate::theme::{Bg, Theme};
 use crate::ui::annotations::{Annotation, AnnotationComment, AnnotationKey, Place};
-use crate::ui::diff_doc::{Doc, Pos};
+use crate::ui::diff_doc::{Doc, Pos, Row};
 use crate::ui::text::short_sha;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui_textarea::TextArea;
 
 use crate::api::change::Change;
-use crate::diff_screen::{self, DiffOf, LastReview};
+use crate::diff_screen::{self, DiffOf, DiffScreen, LastReview};
 use crate::keymap::Action;
 use crate::picker::{self, PickItem};
 use crate::state::{Api, Cmd, Git, OutdatedThread, Overlay, Screen, State};
@@ -79,6 +79,23 @@ impl Compose {
         self.input.lines().join("\n")
     }
 
+    /// Why a comment asked for on lines is on the whole file.
+    pub fn note(&self) -> Option<&str> {
+        match &self.target {
+            ComposeTarget::File {
+                reason: Some(reason),
+                ..
+            } => Some(reason),
+            _ => None,
+        }
+    }
+
+    /// Rows the composer wants on screen.
+    pub fn rows(&self) -> u16 {
+        let preview = (self.preview.as_ref()).map(|p| p.original.len() + p.suggested.len());
+        crate::ui::review_sheets::compose_rows(preview, self.note().is_some())
+    }
+
     pub fn title(&self) -> String {
         let side = |s: Side| match s {
             Side::Left => "old",
@@ -99,6 +116,29 @@ impl Compose {
             ComposeTarget::Draft { .. } => "Edit draft".to_owned(),
             ComposeTarget::Conversation { name, .. } => format!("Comment on {name}"),
         }
+    }
+}
+
+/// The row of the diff the composer opens under: the last selected line,
+/// the end of the thread or draft it's about, or the file's header.
+pub fn compose_anchor(doc: &Doc, screen: &DiffScreen, target: &ComposeTarget) -> Pos {
+    let cursor = screen.cursor;
+    match target {
+        ComposeTarget::File { .. } => Pos { row: 0, ..cursor },
+        ComposeTarget::Reply { .. } | ComposeTarget::Draft { .. } => {
+            let ann = doc.annotation_under(cursor, screen.half);
+            (cursor.row + 1..)
+                .map(|row| Pos { row, ..cursor })
+                .take_while(|&p| {
+                    matches!(doc.row(p), Some(Row::Thread(_))) && doc.annotation_at(p) == ann
+                })
+                .last()
+                .unwrap_or(cursor)
+        }
+        ComposeTarget::Line { .. } | ComposeTarget::Conversation { .. } => screen
+            .selection
+            .filter(|s| doc.to_global(*s) > doc.to_global(cursor))
+            .unwrap_or(cursor),
     }
 }
 
@@ -618,8 +658,8 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             state.compose(ComposeTarget::Reply { thread_id }, "")
         }
         Action::Comment => {
-            let selection = screen.selection.take();
-            match target(&diff.doc, cursor, half, selection) {
+            // The selection stays until the comment is added.
+            match target(&diff.doc, cursor, half, screen.selection) {
                 Ok(target) => {
                     if let ComposeTarget::File {
                         reason: Some(reason),
@@ -657,8 +697,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             state.compose(ComposeTarget::File { path, reason: None }, "")
         }
         Action::Suggest => {
-            let selection = screen.selection.take();
-            let target = match target(&diff.doc, cursor, half, selection) {
+            let target = match target(&diff.doc, cursor, half, screen.selection) {
                 Ok(target) => target,
                 Err(err) => return error(state, &err),
             };
@@ -936,6 +975,7 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             };
             let save = diff.edit_review(&pr, |i| i.review.pending.push(draft));
             let count = diff.inputs().review.pending.len();
+            screen.selection = None;
             state.overlay = None;
             state.info(format!(
                 "Added to your review ({count} pending). Submit with {}",

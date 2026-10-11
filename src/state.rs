@@ -4864,6 +4864,23 @@ pub(crate) mod tests {
             }
 
             #[test]
+            fn cancelling_a_comment_keeps_the_selection() {
+                let (mut s, _) = diff_state(120);
+                to_line(&mut s, "A point in 2D");
+                press(&mut s, "Vjc<Esc>");
+                assert!(s.overlay.is_none());
+                assert!(screen(&s).selection.is_some(), "the selection survives");
+                // Again, and the comment covers the same lines.
+                press(&mut s, "c");
+                let compose = overlay!(s, Compose);
+                assert!(
+                    matches!(&compose.target, ComposeTarget::Line { start, end, .. } if start != end)
+                );
+                press(&mut s, "Fine<C-s>");
+                assert!(screen(&s).selection.is_none(), "an added comment ends it");
+            }
+
+            #[test]
             fn typed_text_survives_one_press_of_each_discard_key() {
                 let (mut s, _) = diff_state(120);
                 to_line(&mut s, "origin");

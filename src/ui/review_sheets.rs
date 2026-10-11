@@ -1,4 +1,4 @@
-//! The comment composer (a bottom sheet) and the review submit dialog.
+//! The comment composer and the review submit dialog.
 
 #![deny(clippy::arithmetic_side_effects)]
 
@@ -29,24 +29,25 @@ pub struct ComposeSheet<'a> {
     pub save: &'a str,
 }
 
+/// Rows a suggestion's preview of `lines` lines takes.
+fn preview_rows(lines: Option<usize>) -> u16 {
+    lines.map_or(0, |n| cols(n).saturating_add(2)).min(12)
+}
+
+/// Rows the composer wants, with a preview of `preview` lines and a note.
+pub fn compose_rows(preview: Option<usize>, note: bool) -> u16 {
+    (2 * PAD_Y + 2 + INPUT_ROWS + 2)
+        .saturating_add(preview_rows(preview))
+        .saturating_add(u16::from(note))
+}
+
 impl Widget for ComposeSheet<'_> {
-    fn render(self, screen: Rect, buf: &mut Buffer) {
+    fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = self.ctx.theme;
-        let preview_rows = self
-            .preview
-            .map_or(0, |(_, o, s)| {
-                cols(o.len().saturating_add(s.len())).saturating_add(2)
-            })
-            .min(12);
-        let height = (2 * PAD_Y + 2 + INPUT_ROWS + 2)
-            .saturating_add(preview_rows)
-            .saturating_add(u16::from(self.note.is_some()))
-            .min(screen.height.saturating_sub(2));
-        let area = Rect {
-            y: screen.bottom().saturating_sub(height.saturating_add(1)),
-            height,
-            ..screen
-        };
+        let preview_rows = preview_rows(
+            self.preview
+                .map(|(_, o, s)| o.len().saturating_add(s.len())),
+        );
         fill(buf, area, theme, SHEET);
         let inner = padded(area);
         let mut y = inner.y;

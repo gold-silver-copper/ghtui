@@ -1700,6 +1700,8 @@ pub(crate) mod diff {
         use crate::diff::anchor::{LinePos, Side};
         use crate::review::{Compose, ComposeTarget, Preview};
         let mut s = with_threads(Mode::Dark);
+        // On the line, so the composer opens under it.
+        press(&mut s, "/origin<Enter>");
         let target = ComposeTarget::Line {
             path: "src/point.rs".into(),
             start: LinePos {
@@ -1926,6 +1928,18 @@ pub(crate) mod diff {
                 }),
             ),
             ("threads", Box::new(|| with_threads(Mode::Dark))),
+            (
+                "reply",
+                Box::new(move || pressed(with_threads(Mode::Dark), "c")),
+            ),
+            (
+                "comment on lines",
+                Box::new(move || pressed(diff_at(Mode::Dark, 0, 4), "Vjc")),
+            ),
+            (
+                "comment on an issue",
+                Box::new(move || pressed(with_issue(Mode::Light), "c")),
+            ),
             (
                 "submit",
                 Box::new(|| {
