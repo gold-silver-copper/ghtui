@@ -86,6 +86,7 @@ fn render_doc(doc: &Doc, cursor: Pos, width: u16, height: u16) {
         top: cursor,
         keys,
         selection: Some((Pos::default(), cursor)),
+        shift: 0,
     }
     .render(area, &mut buf);
 }

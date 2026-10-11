@@ -1,6 +1,5 @@
 ---
-source: crates/app/src/snapshot_tests.rs
-assertion_line: 863
+source: src/snapshot_tests.rs
 expression: "render(&sized(state, 100, 80))"
 ---
 Buffer {
@@ -85,7 +84,7 @@ Buffer {
         "                                                                                                    ",
         "                                                                                                    ",
         "────────────────────────────────────────────────────────────────────────────────────────────────────",
-        "  space menu   ↵ open   / search   ←→ tabs   o browser   y copy link   i links       API 4987/5000  ",
+        "  space menu   ↵ open   / search   gt/gT tabs   o browser   y copy link   i links    API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
@@ -630,17 +629,17 @@ Buffer {
         x: 25, y: 79, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 32, y: 79, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 35, y: 79, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
-        x: 37, y: 79, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 42, y: 79, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 45, y: 79, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
-        x: 46, y: 79, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 54, y: 79, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 57, y: 79, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
-        x: 58, y: 79, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 68, y: 79, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 71, y: 79, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
-        x: 72, y: 79, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 78, y: 79, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 40, y: 79, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 45, y: 79, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 48, y: 79, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
+        x: 49, y: 79, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 57, y: 79, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 60, y: 79, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
+        x: 61, y: 79, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 71, y: 79, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 74, y: 79, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
+        x: 75, y: 79, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 81, y: 79, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 85, y: 79, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 98, y: 79, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
     ]

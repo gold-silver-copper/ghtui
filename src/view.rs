@@ -81,8 +81,10 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 page: p.page(),
                 scroll: p.scroll,
                 selected: p.selected,
+                from: p.range,
                 current: p.current_match(),
                 hints: &hints,
+                shift: p.shift,
             }
             .render(state.page_area(), buf);
         }
@@ -223,7 +225,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             }
             .render(area, buf);
         }
-        Some(Overlay::DiffSearch(input)) => {
+        Some(Overlay::Find(input)) => {
             // The prompt replaces the status bar.
             fill(buf, status, ctx.theme, Bg::Container);
             let row = Rect {
@@ -316,6 +318,7 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
             file_comment: &file_comment,
         },
         selection: screen.selection.map(|anchor| (anchor, screen.cursor)),
+        shift: screen.shift,
     }
     .render(area, buf);
 
@@ -323,7 +326,7 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
         FileTree {
             ctx,
             doc: &diff.doc,
-            rows: &diff.tree,
+            rows: &crate::ui::file_tree::unfolded(&diff.tree, &screen.folded),
             selected: screen.tree_selected,
             scroll: screen.tree_scroll,
             focused: screen.focus == Pane::Tree,

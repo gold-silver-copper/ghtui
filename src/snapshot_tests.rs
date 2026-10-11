@@ -244,7 +244,7 @@ fn long_conversations_say_what_is_left_out() {
         (count("Conversation"), count("Commits")),
         (Some(101), Some(250))
     );
-    press(&mut state, "2");
+    press(&mut state, "2gt");
     assert!(text(&state).contains("… 248 earlier commits"));
 }
 
@@ -1123,7 +1123,7 @@ fn pr_light() {
 #[test]
 fn pr_commits_dark() {
     let mut state = with_pr(Mode::Dark);
-    press(&mut state, "2");
+    press(&mut state, "2gt");
     insta::assert_snapshot!(render(&state));
 }
 
@@ -1187,7 +1187,7 @@ fn quick_ways_around_dark() {
     }];
     press(&mut state, "i");
     insta::assert_snapshot!("hints_dark", render(&state));
-    press(&mut state, "<Esc>/");
+    press(&mut state, "<Esc>g/");
     insta::assert_snapshot!("search_empty_dark", render(&state));
     press(&mut state, "oct");
     insta::assert_snapshot!("search_typed_dark", render(&state));
@@ -1220,7 +1220,7 @@ fn go_to_file_light() {
 #[test]
 fn list_filter_light() {
     let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
-    press(&mut state, "2/");
+    press(&mut state, "2gt/");
     insta::assert_snapshot!(render(&state));
 }
 
@@ -1862,7 +1862,7 @@ pub(crate) mod diff {
             ("pr", Box::new(|| with_pr(Mode::Dark))),
             (
                 "pr commits",
-                Box::new(move || pressed(with_pr(Mode::Dark), "2")),
+                Box::new(move || pressed(with_pr(Mode::Dark), "2gt")),
             ),
             (
                 "profile",
@@ -1875,6 +1875,10 @@ pub(crate) mod diff {
             ),
             (
                 "search box",
+                Box::new(move || pressed(with_repo(Mode::Dark, tc), "g/oct")),
+            ),
+            (
+                "find on the page",
                 Box::new(move || pressed(with_repo(Mode::Dark, tc), "/oct")),
             ),
             (
@@ -1887,7 +1891,7 @@ pub(crate) mod diff {
             ),
             (
                 "list filter",
-                Box::new(move || pressed(with_repo(Mode::Light, tc), "2/")),
+                Box::new(move || pressed(with_repo(Mode::Light, tc), "2gt/")),
             ),
             (
                 "palette",
@@ -2127,7 +2131,7 @@ mod links {
     fn pages() -> Vec<(&'static str, State)> {
         let tc = ColorDepth::TrueColor;
         let mut commits = with_pr(Mode::Dark);
-        press(&mut commits, "2");
+        press(&mut commits, "2gt");
         vec![
             ("home", with_home(Mode::Dark, tc)),
             ("repo", with_repo(Mode::Dark, tc)),
@@ -2342,7 +2346,7 @@ mod keys {
             ("commit", || with_commit(Mode::Dark)),
             ("commit files", || {
                 let mut s = with_commit(Mode::Dark);
-                press(&mut s, "<Right><Right>");
+                press(&mut s, "gtgt");
                 if let Some((screen, _)) = s.diff_parts() {
                     screen.cursor = Pos { file: 0, row: 4 };
                 }
@@ -2354,7 +2358,7 @@ mod keys {
             // From the top: a failed job opens at its first error.
             ("job", || {
                 let mut s = super::sized(with_job(Mode::Dark, None), 100, 12);
-                press(&mut s, "gjj");
+                press(&mut s, "ggjj");
                 s
             }),
             ("workflow", || mid(with_workflow(Mode::Dark))),
@@ -2369,7 +2373,7 @@ mod keys {
             // bottom when resized.
             ("blame", || {
                 let mut s = super::sized(with_blame(Mode::Dark), 100, 12);
-                press(&mut s, "gj");
+                press(&mut s, "ggj");
                 s
             }),
             ("gist", || mid(with_gist(Mode::Dark))),
@@ -2410,16 +2414,11 @@ mod keys {
         assert!(silent.is_empty(), "silent:\n{}", silent.join("\n"));
     }
 
-    /// `→` walks a pull request's tabs into Files changed and `←` walks
-    /// back; so do `l` `h`, the numbers, and `←` `→` wrapping around.
+    /// `gt` walks a pull request's tabs into Files changed and `gT` walks
+    /// back; so does a count before `gt`. They don't wrap around.
     #[test]
     fn tabs_go_into_the_files_and_back() {
-        let pairs = [
-            ("<Right><Right><Right>", "<Left><Left><Left>"),
-            ("lll", "hhh"),
-            ("4", "1"),
-            ("<Left>", "<Right>"),
-        ];
+        let pairs = [("gtgtgt", "gTgTgT"), ("4gt", "1gt")];
         for (there, back) in pairs {
             let mut s = with_pr(Mode::Dark);
             let start = s.chrome().active;
@@ -2428,6 +2427,8 @@ mod keys {
             press(&mut s, back);
             assert!(matches!(s.screen(), Screen::Page(_)), "{back}");
             assert_eq!(s.chrome().active, start, "{back}");
+            press(&mut s, "gT");
+            assert_eq!(s.chrome().active, start, "no wrapping");
         }
     }
 
@@ -2435,17 +2436,17 @@ mod keys {
     #[test]
     fn commit_tabs_go_into_the_files_and_back() {
         let mut s = with_commit(Mode::Dark);
-        press(&mut s, "<Right>");
+        press(&mut s, "gt");
         assert!(matches!(
             s.route(),
             Some(crate::route::Route::CommitChecks { .. })
         ));
-        press(&mut s, "<Right>");
+        press(&mut s, "gt");
         assert!(
             matches!(s.screen(), Screen::Diff(d) if d.of == super::diff::commit_of()),
             "the commit's diff, by its full ID"
         );
-        press(&mut s, "<Left><Left>");
+        press(&mut s, "gTgT");
         assert!(matches!(
             s.route(),
             Some(crate::route::Route::Commit { .. })
@@ -2538,7 +2539,7 @@ fn screenshots() {
         shot(&format!("issue_{tag}"), &sized(with_issue(mode), 130, 40));
         shot(&format!("pr_{tag}"), &sized(with_pr(mode), 130, 44));
         let mut commits = sized(with_pr(mode), 120, 30);
-        press(&mut commits, "2");
+        press(&mut commits, "2gt");
         shot(&format!("pr_commits_{tag}"), &commits);
         shot(&format!("file_{tag}"), &sized(with_file(mode), 120, 24));
         let profile = with_profile(mode, ProfileTab::Overview);
@@ -2556,7 +2557,7 @@ fn screenshots() {
         }];
         press(&mut s, "i");
         shot(&format!("hints_{tag}"), &s);
-        press(&mut s, "<Esc>/oct");
+        press(&mut s, "<Esc>g/oct");
         shot(&format!("search_box_{tag}"), &s);
         press(&mut s, "<Esc><Space>");
         shot(&format!("menu_{tag}"), &s);
@@ -3196,7 +3197,7 @@ mod changes {
                 1,
             ),
         );
-        press(&mut s, "gjj");
+        press(&mut s, "ggjj");
         press(&mut s, "M");
         says(&s, "That works on a pull request");
     }

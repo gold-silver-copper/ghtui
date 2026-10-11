@@ -4,6 +4,8 @@
 
 #![deny(clippy::arithmetic_side_effects)]
 
+use std::collections::HashSet;
+
 use crate::git::files::FileStatus;
 use crate::theme::{Bg, Fg};
 use ratatui::buffer::Buffer;
@@ -18,7 +20,10 @@ use crate::ui::{Ctx, PAD_Y, fill, inset, render_split, text};
 pub enum TreeRow {
     Dir {
         name: String,
+        /// The whole path, which a fold is kept by.
+        path: String,
         depth: u16,
+        folded: bool,
     },
     File {
         index: usize,
@@ -66,11 +71,44 @@ pub fn tree_rows(doc: &Doc) -> Vec<TreeRow> {
         }
     }
     let mut rows = Vec::new();
-    flatten(&root, 0, &mut rows);
+    flatten(&root, "", 0, &mut rows);
     rows
 }
 
-fn flatten(node: &Node, depth: u16, rows: &mut Vec<TreeRow>) {
+impl TreeRow {
+    pub fn depth(&self) -> u16 {
+        match self {
+            TreeRow::Dir { depth, .. } | TreeRow::File { depth, .. } => *depth,
+        }
+    }
+}
+
+/// `rows` with the folders in `folded` folded: what's in them is hidden.
+pub fn unfolded(rows: &[TreeRow], folded: &HashSet<String>) -> Vec<TreeRow> {
+    let mut out = Vec::new();
+    // The depth of a folded folder being skipped.
+    let mut hiding: Option<u16> = None;
+    for row in rows {
+        let depth = row.depth();
+        if hiding.is_some_and(|d| depth > d) {
+            continue;
+        }
+        hiding = None;
+        let mut row = row.clone();
+        if let TreeRow::Dir {
+            path, folded: f, ..
+        } = &mut row
+            && folded.contains(path.as_str())
+        {
+            *f = true;
+            hiding = Some(depth);
+        }
+        out.push(row);
+    }
+    out
+}
+
+fn flatten(node: &Node, parent: &str, depth: u16, rows: &mut Vec<TreeRow>) {
     for child in &node.children {
         if let Some(index) = child.file {
             rows.push(TreeRow::File {
@@ -88,11 +126,18 @@ fn flatten(node: &Node, depth: u16, rows: &mut Vec<TreeRow>) {
             dir = only;
             name = format!("{name}/{}", dir.name);
         }
+        let path = if parent.is_empty() {
+            name.clone()
+        } else {
+            format!("{parent}/{name}")
+        };
         rows.push(TreeRow::Dir {
             name: format!("{name}/"),
+            path: path.clone(),
             depth,
+            folded: false,
         });
-        flatten(dir, depth.saturating_add(1), rows);
+        flatten(dir, &path, depth.saturating_add(1), rows);
     }
 }
 
@@ -176,11 +221,18 @@ impl FileTree<'_> {
     fn render_row(&self, row: &TreeRow, bg: Bg, area: Rect, buf: &mut Buffer) {
         let theme = self.ctx.theme;
         match row {
-            TreeRow::Dir { name, depth } => {
+            TreeRow::Dir {
+                name,
+                depth,
+                folded,
+                ..
+            } => {
                 let indent = " ".repeat(usize::from(*depth) * 2);
-                let room = usize::from(area.width).saturating_sub(indent.len());
+                let room = usize::from(area.width).saturating_sub(indent.len().saturating_add(2));
+                let fold = if *folded { "▸ " } else { "▾ " };
                 Line::from(vec![
                     Span::styled(indent, theme.body(bg)),
+                    Span::styled(fold, theme.meta(bg)),
                     Span::styled(text::truncate(name, room), theme.meta(bg)),
                 ])
                 .render(area, buf);
@@ -240,7 +292,6 @@ impl FileTree<'_> {
 mod tests {
     use super::*;
     use crate::ui::diff_doc::tests::changed;
-    use std::collections::HashSet;
 
     fn doc(paths: &[&str]) -> Doc {
         Doc::new(
@@ -253,7 +304,15 @@ mod tests {
     fn render(rows: &[TreeRow]) -> Vec<String> {
         rows.iter()
             .map(|r| match r {
-                TreeRow::Dir { name, depth } => format!("{}{name}", "  ".repeat(*depth as usize)),
+                TreeRow::Dir {
+                    name,
+                    depth,
+                    folded,
+                    ..
+                } => {
+                    let fold = if *folded { "+" } else { "" };
+                    format!("{}{fold}{name}", "  ".repeat(*depth as usize))
+                }
                 TreeRow::File { name, depth, index } => {
                     format!("{}{name} #{index}", "  ".repeat(*depth as usize))
                 }
@@ -283,6 +342,16 @@ mod tests {
                 "docs/guide/",
                 "  intro.md #4",
             ]
+        );
+    }
+
+    #[test]
+    fn folded_folders_hide_what_is_in_them() {
+        let doc = doc(&["a/x/1.rs", "a/x/2.rs", "a/3.rs", "b.rs"]);
+        let folded = HashSet::from(["a/x".to_owned()]);
+        assert_eq!(
+            render(&unfolded(&tree_rows(&doc), &folded)),
+            ["a/", "  +x/", "  3.rs #2", "b.rs #3"]
         );
     }
 

@@ -995,22 +995,31 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
     let lines = markdown::highlighted(text, crate::diff::Language::from_path(path));
     let width = lines.len().to_string().len();
     let is_marked = |n: usize| marked.is_some_and(|(a, b)| (a as usize..=b as usize).contains(&n));
+    // Each line is a row: selected, `y` copies its link.
+    let file_url = url::blob(repo, rev, path);
+    let line_url = |n: usize| format!("{file_url}#L{n}");
     for (i, mut segs) in lines.into_iter().enumerate() {
-        let number = format!("{:>width$}  ", i + 1);
+        let n = i + 1;
+        let number = format!("{n:>width$}  ");
         segs.insert(0, Seg::new(number, Role::Syntax(Syntax::Comment)));
-        if is_marked(i + 1) && page.jump.is_none() {
+        if is_marked(n) && page.jump.is_none() {
             page.jump = Some(page.lines.len());
         }
+        let start = page.lines.len();
         page.push(PageLine {
             segs,
             frame: Frame::Body,
-            tone: if is_marked(i + 1) {
+            tone: if is_marked(n) {
                 Tone::Marked
             } else {
                 Tone::Code
             },
+            fixed: 1,
             ..PageLine::default()
         });
+        let link = page.link(line_url(n));
+        page.numbered.push(page.items.len());
+        page.item(start, link);
     }
     page.box_bottom();
 }
@@ -1053,17 +1062,34 @@ pub fn blame(
     let lines = markdown::highlighted(text, crate::diff::Language::from_path(path));
     let width = lines.len().to_string().len();
     let is_marked = |n: usize| marked.is_some_and(|(a, b)| (a as usize..=b as usize).contains(&n));
+    // Beside each run of lines: its commit, author, age and message, in
+    // a column that takes what the page can spare.
+    let author_w = (blame.ranges.iter())
+        .map(|r| crate::ui::text::width(r.commit.author.name()))
+        .max()
+        .unwrap_or(0)
+        .min(16);
+    let gutter_w = (usize::from(page.width) * 2 / 5).clamp(32, 90);
+    let fixed_w = 7 + 1 + author_w + 1 + 8 + 2;
+    let message_w = gutter_w.saturating_sub(fixed_w + 2);
+    let gutter_w = if message_w >= 8 { gutter_w } else { fixed_w };
+    // Each run is a row opening its commit.
+    let mut run_start = 0;
     for (i, mut segs) in lines.into_iter().enumerate() {
         let n = i + 1;
         let range = blame
             .ranges
             .iter()
             .find(|r| (r.start as usize..=r.end as usize).contains(&n));
+        if range.is_some_and(|r| r.start as usize == n && n > 1) {
+            page.box_rule();
+        }
         let mut gutter = match range {
             Some(r) if r.start as usize == n => {
+                run_start = page.lines.len();
                 let c = &r.commit;
-                let author: String = c.author.name().chars().take(12).collect();
-                vec![
+                let author = crate::ui::text::truncate(c.author.name(), author_w);
+                let mut gutter = vec![
                     link_seg(
                         page,
                         crate::ui::text::short_sha(&c.oid),
@@ -1071,21 +1097,24 @@ pub fn blame(
                         Role::Code,
                     ),
                     Seg::new(
-                        format!(" {author:<12} {:>8}  ", time::ago_iso(&c.date, now)),
+                        format!(" {author:<author_w$} {:>8}  ", time::ago_iso(&c.date, now)),
                         Role::Meta,
                     ),
-                ]
+                ];
+                if message_w >= 8 {
+                    let message = crate::ui::text::truncate(&c.headline, message_w);
+                    gutter.push(Seg::new(format!("{message:<message_w$}  "), Role::Body));
+                }
+                gutter
             }
-            _ => vec![Seg::new(" ".repeat(31), Role::Meta)],
+            _ => vec![Seg::new(" ".repeat(gutter_w), Role::Meta)],
         };
+        let fixed = gutter.len() + 1;
         gutter.push(Seg::new(
             format!("{n:>width$}  "),
             Role::Syntax(Syntax::Comment),
         ));
         gutter.append(&mut segs);
-        if range.is_some_and(|r| r.start as usize == n && n > 1) {
-            page.box_rule();
-        }
         if is_marked(n) && page.jump.is_none() {
             page.jump = Some(page.lines.len());
         }
@@ -1097,8 +1126,14 @@ pub fn blame(
             } else {
                 Tone::Code
             },
+            fixed: u8::try_from(fixed).unwrap_or(u8::MAX),
             ..PageLine::default()
         });
+        page.numbered.push(page.items.len());
+        if let Some(r) = range.filter(|r| r.end as usize == n) {
+            let link = page.link(url::commit(repo, &r.commit.oid));
+            page.item(run_start, link);
+        }
     }
     page.box_bottom();
 }
@@ -2837,48 +2872,10 @@ pub fn log_seg(text: &str) -> Seg {
     }
 }
 
-/// `seg` with each match of `query` (lowercase; case doesn't matter in
-/// the text, for ASCII) picked out.
-fn highlight(seg: Seg, query: &str) -> Vec<Seg> {
-    let q = query.as_bytes();
-    if q.is_empty() {
-        return vec![seg];
-    }
-    let text = seg.text().as_bytes();
-    let mut out = Vec::new();
-    let (mut from, mut i) = (0, 0);
-    while i + q.len() <= text.len() {
-        let hit = text
-            .get(i..i + q.len())
-            .is_some_and(|w| w.eq_ignore_ascii_case(q));
-        // A match of a whole UTF-8 string starts and ends on characters.
-        let (Some(before), Some(found)) = (seg.text().get(from..i), seg.text().get(i..i + q.len()))
-        else {
-            i += 1;
-            continue;
-        };
-        if hit {
-            if !before.is_empty() {
-                out.push(Seg::new(before, seg.role.clone()));
-            }
-            out.push(Seg::new(found, Role::Match));
-            i += q.len();
-            from = i;
-        } else {
-            i += 1;
-        }
-    }
-    match seg.text().get(from..) {
-        Some(rest) if !rest.is_empty() => out.push(Seg::new(rest, seg.role.clone())),
-        _ => {}
-    }
-    if out.is_empty() { vec![seg] } else { out }
-}
-
 /// A job: its steps, each collapsed to its outcome, failing ones (and the
 /// one a link points at) expanded with their whole log. With `query`, the
 /// steps whose log has it are expanded too, its matches picked out and
-/// marked for `n`/`p`.
+/// marked for `n`/`N`.
 pub fn job(
     page: &mut Page,
     repo: &RepoId,
@@ -3064,11 +3061,12 @@ pub fn job(
                 Role::Syntax(Syntax::Comment),
             );
             let mut segs = vec![number];
-            segs.extend(highlight(log_seg(text), &q));
+            segs.extend(crate::ui::page::highlight(log_seg(text), &q));
             page.push(PageLine {
                 segs,
                 frame: Frame::Body,
                 tone: Tone::Code,
+                fixed: 1,
                 ..PageLine::default()
             });
         }

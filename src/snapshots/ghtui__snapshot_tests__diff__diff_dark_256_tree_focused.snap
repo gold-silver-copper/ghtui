@@ -1,6 +1,5 @@
 ---
-source: crates/app/src/snapshot_tests.rs
-assertion_line: 790
+source: src/snapshot_tests.rs
 expression: "render(&screen_state(Mode::Dark, ColorDepth::Ansi256, Pos { file: 2, row: 0 },\nPane::Tree,))"
 ---
 Buffer {
@@ -13,16 +12,16 @@ Buffer {
         "─────────────────────────────src/point.rs──────────────────────────────────────────────────────────────+5─−1──",
         " Files  8  +8 −4                       @@ -1,6 +1,6 @@                                                        ",
         "                                1   1    use std::fmt;                                                        ",
-        " src/                           2   2                                                                         ",
+        " ▾ src/                         2   2                                                                         ",
         "   M point.rs        +5 −1      3      - /// A point.                                                         ",
-        " docs/                              3  + /// A point in 2D.                                                   ",
+        " ▾ docs/                            3  + /// A point in 2D.                                                   ",
         "   R new.md          +0 −0      4   4    pub struct Point {                                                   ",
         " A notes.txt         +2 −0      5   5        x: i32,                                                          ",
         " D gone.py           +0 −2      6   6        y: i32,                                                          ",
         " M logo.png          +0 −0             ⋯ 3 unchanged lines · e to expand                                      ",
         " M run.sh            +0 −0             @@ -10,4 +10,8 @@ impl Point                                           ",
         " M Cargo.lock        +1 −1     10  10        pub fn new(x: i32, y: i32) -> Self {                             ",
-        " zz/                           11  11            Point { x, y }                                               ",
+        " ▾ zz/                         11  11            Point { x, y }                                               ",
         "   M pending.rs                12  12        }                                                                ",
         "                                   13  +                                                                      ",
         "                                   14  +     pub fn origin() -> Self {                                        ",
@@ -39,7 +38,7 @@ Buffer {
         "                                    2  + second, no newline                                                   ",
         "                                         \ No newline at end of file                                          ",
         "──────────────────────────────────────────────────────────────────────────────────────────────────────────────",
-        "  ⠋ Diffing 7/8 files   space menu   n/p change   ⇧↓ file   v viewed   c comment               API 4987/5000  ",
+        "  ⠋ Diffing 7/8 files   space menu   ↵ show file   h fold   l unfold   ⇥ to the diff           API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
@@ -98,7 +97,7 @@ Buffer {
         x: 54, y: 6, fg: Indexed(254), bg: Indexed(233), underline: Reset, modifier: NONE,
         x: 0, y: 7, fg: Indexed(254), bg: Indexed(236), underline: Reset, modifier: NONE,
         x: 1, y: 7, fg: Indexed(252), bg: Indexed(236), underline: Reset, modifier: NONE,
-        x: 5, y: 7, fg: Indexed(254), bg: Indexed(236), underline: Reset, modifier: NONE,
+        x: 7, y: 7, fg: Indexed(254), bg: Indexed(236), underline: Reset, modifier: NONE,
         x: 27, y: 7, fg: Indexed(254), bg: Indexed(233), underline: Reset, modifier: NONE,
         x: 30, y: 7, fg: Indexed(252), bg: Indexed(233), underline: Reset, modifier: NONE,
         x: 33, y: 7, fg: Indexed(254), bg: Indexed(233), underline: Reset, modifier: NONE,
@@ -123,7 +122,7 @@ Buffer {
         x: 53, y: 8, fg: Indexed(254), bg: Indexed(235), underline: Reset, modifier: NONE,
         x: 0, y: 9, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 1, y: 9, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 6, y: 9, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 8, y: 9, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 27, y: 9, fg: Indexed(254), bg: Indexed(235), underline: Reset, modifier: NONE,
         x: 30, y: 9, fg: Indexed(252), bg: Indexed(235), underline: Reset, modifier: NONE,
         x: 33, y: 9, fg: Indexed(254), bg: Indexed(235), underline: Reset, modifier: NONE,
@@ -248,7 +247,7 @@ Buffer {
         x: 81, y: 15, fg: Indexed(254), bg: Indexed(233), underline: Reset, modifier: NONE,
         x: 0, y: 16, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 1, y: 16, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 4, y: 16, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 6, y: 16, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 27, y: 16, fg: Indexed(254), bg: Indexed(233), underline: Reset, modifier: NONE,
         x: 30, y: 16, fg: Indexed(252), bg: Indexed(233), underline: Reset, modifier: NONE,
         x: 33, y: 16, fg: Indexed(254), bg: Indexed(233), underline: Reset, modifier: NONE,
@@ -409,9 +408,9 @@ Buffer {
         x: 29, y: 33, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 34, y: 33, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 37, y: 33, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
-        x: 40, y: 33, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 47, y: 33, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 50, y: 33, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
+        x: 38, y: 33, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 48, y: 33, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 51, y: 33, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
         x: 52, y: 33, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 57, y: 33, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 60, y: 33, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
@@ -419,7 +418,7 @@ Buffer {
         x: 68, y: 33, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 71, y: 33, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
         x: 72, y: 33, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 80, y: 33, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 84, y: 33, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 95, y: 33, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 108, y: 33, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
     ]

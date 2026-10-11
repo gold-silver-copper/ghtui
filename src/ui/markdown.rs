@@ -483,6 +483,7 @@ impl Renderer<'_> {
             frame,
             indent,
             right: Vec::new(),
+            fixed: 1,
         };
         self.page.push(line(Vec::new()));
         for mut segs in highlighted(&code, lang) {

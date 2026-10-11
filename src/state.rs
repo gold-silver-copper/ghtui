@@ -25,7 +25,7 @@ use crate::browse::{self, Data, DataKey, Need};
 use crate::diff_job::{JobId, JobMsg};
 use crate::diff_screen::{self, DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
 use crate::join;
-use crate::keymap::{Action, Key, Keymap, Scope};
+use crate::keymap::{Action, Context, Key, Keymap, Resolved};
 use crate::nav::{self, Hints, Menu, PageScreen, SearchBox, Visit};
 use crate::notice::Notices;
 use crate::picker::{self, Picker};
@@ -446,8 +446,8 @@ impl Screens {
 }
 
 pub enum Overlay {
-    /// `/` prompt on the diff screen.
-    DiffSearch(Box<TextArea<'static>>),
+    /// `/` prompt: searching the diff or the page on screen.
+    Find(Box<TextArea<'static>>),
     /// The header's search box with its suggestions.
     Search(Box<SearchBox>),
     /// Letters over the links on screen.
@@ -499,6 +499,12 @@ pub struct State {
     /// Terminal size.
     pub size: (u16, u16),
     pub keymap: Keymap,
+    /// Keys typed so far that start a longer binding.
+    pub typed: Vec<Key>,
+    /// A count typed before them.
+    pub count: Option<usize>,
+    /// The page's other tabs as they were left, to come back to.
+    pub parked: Vec<Screen>,
     pub theme: Theme,
     pub icons: Icons,
     pub density: crate::config::Density,
@@ -540,6 +546,9 @@ impl State {
             problems: Default::default(),
             size,
             keymap,
+            typed: Vec::new(),
+            count: None,
+            parked: Vec::new(),
             theme,
             icons,
             density: crate::config::Density::default(),
@@ -581,12 +590,19 @@ impl State {
         }
     }
 
-    /// Which keymap applies.
-    pub fn scope(&self) -> Scope {
-        match self.screen() {
-            Screen::Page(_) => Scope::Page,
-            Screen::Diff(_) => Scope::Diff,
-        }
+    /// The key contexts active, innermost first.
+    pub fn contexts(&self) -> &'static [Context] {
+        let innermost = match self.screen() {
+            Screen::Diff(d) if d.focus == Pane::Tree && d.prefs.tree_visible => Context::Tree,
+            Screen::Diff(_) => Context::Diff,
+            Screen::Page(p) => match &p.route {
+                Route::Job { .. } => Context::Log,
+                Route::Blob { .. } | Route::Blame { .. } => Context::File,
+                route if route.list_query().is_some() => Context::List,
+                _ => Context::Page,
+            },
+        };
+        innermost.stack()
     }
 
     /// The page on screen, if it is one.
@@ -680,16 +696,24 @@ impl State {
     /// Opens a diff at `anchor` (a PR's starts once its metadata is in).
     #[must_use]
     pub fn open_diff(&mut self, of: DiffOf, anchor: Option<String>) -> Vec<Cmd> {
-        let reuse = self.diffs.get(&of).is_some_and(|d| d.error.is_none());
-        let cmds = if reuse {
-            Vec::new()
-        } else {
-            self.start_diff(&of)
+        let (screen, cmds) = self.diff_screen(of, anchor);
+        self.screens.push(screen);
+        cmds
+    }
+
+    /// A screen of `of`'s files at `anchor`, its diff on its way.
+    #[must_use]
+    pub fn diff_screen(&mut self, of: DiffOf, anchor: Option<String>) -> (Screen, Vec<Cmd>) {
+        let mut cmds = match &of {
+            DiffOf::Pr(pr) => self.ensure(Need::Pr(pr.clone()), false),
+            DiffOf::Commit(..) | DiffOf::Range(..) => Vec::new(),
         };
+        if !self.diffs.get(&of).is_some_and(|d| d.error.is_none()) {
+            cmds.extend(self.start_diff(&of));
+        }
         let mut screen = DiffScreen::new(of, DiffPrefs::fit(self.size.0));
         screen.anchor = anchor;
-        self.screens.push(Screen::Diff(Box::new(screen)));
-        cmds
+        (Screen::Diff(Box::new(screen)), cmds)
     }
 
     /// The branch the PR merges into, once the PR has loaded.
@@ -1073,7 +1097,7 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     }
     match &mut state.overlay {
         Some(Overlay::Picker(_)) => return picker::on_key(state, key),
-        Some(Overlay::DiffSearch(_)) => return on_search_key(state, key),
+        Some(Overlay::Find(_)) => return on_search_key(state, key),
         Some(Overlay::Search(_)) => return nav::on_search_box_key(state, key),
         Some(Overlay::Hints(_)) => return nav::on_hints_key(state, key),
         Some(Overlay::Menu(_)) => return nav::on_menu_key(state, key),
@@ -1086,27 +1110,67 @@ fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     // that (the messages list keeps it).
     let dismissing = matches!(state.notices.dismiss(), Some(Notice::Error(_)));
     if dismissing && key.code == KeyCode::Esc {
+        (state.typed, state.count) = (Vec::new(), None);
         return Vec::new();
     }
-    // A key bound only on the other kind of screen still runs, to say
-    // where it works.
-    let other = match state.scope() {
-        Scope::Page => Scope::Diff,
-        _ => Scope::Page,
-    };
     let key = Key::from(key);
-    match [state.scope(), other]
-        .into_iter()
-        .find_map(|scope| state.keymap.resolve(key, scope))
+    // Digits before a binding are a count.
+    if let Some(digit) = key.digit().filter(|_| state.typed.is_empty())
+        && (digit > 0 || state.count.is_some())
     {
-        Some(action) => apply(state, action),
-        None => Vec::new(),
+        let count = state.count.unwrap_or(0).saturating_mul(10);
+        state.count = Some(count.saturating_add(digit as usize).min(MAX_COUNT));
+        return Vec::new();
+    }
+    state.typed.push(key);
+    let resolved = state.keymap.resolve(&state.typed, state.contexts());
+    if resolved == Resolved::Wait {
+        return Vec::new();
+    }
+    let typed = std::mem::take(&mut state.typed);
+    let count = state.count.take();
+    match resolved {
+        Resolved::Run(action) => run(state, action, count),
+        // Esc gives up on keys typed so far.
+        _ if typed.len() > 1 && key.code == KeyCode::Esc => Vec::new(),
+        _ => {
+            let shown = crate::keymap::pretty_keys(&typed);
+            match state.keymap.elsewhere(&typed) {
+                Some(action) => state.info(action.not_here()),
+                None => {
+                    let menu = state.first_key(Action::Menu);
+                    state.info(format!("{shown}: not bound here · {menu} shows what is"));
+                }
+            }
+            Vec::new()
+        }
+    }
+}
+
+/// The largest count typed.
+const MAX_COUNT: usize = 9999;
+
+/// Runs `action`, `count` times if it's a motion. With a count, top goes
+/// to that line or row and the next tab is that tab.
+#[must_use]
+pub fn run(state: &mut State, action: Action, count: Option<usize>) -> Vec<Cmd> {
+    match (action, count) {
+        (Action::Top, Some(n)) => nav::go_to_line(state, n),
+        (Action::NextTab, Some(n)) => nav::switch_tab(state, n),
+        (action, Some(n)) if action.repeats() => {
+            let mut cmds = Vec::new();
+            for _ in 0..n {
+                cmds.extend(apply(state, action));
+            }
+            cmds
+        }
+        (action, _) => apply(state, action),
     }
 }
 
 #[must_use]
 fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
-    let Some(Overlay::DiffSearch(input)) = &mut state.overlay else {
+    let Some(Overlay::Find(input)) = &mut state.overlay else {
         return Vec::new();
     };
     match key.code {
@@ -1114,11 +1178,14 @@ fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         KeyCode::Enter => {
             let query = input.lines().join("");
             state.overlay = None;
-            if !query.is_empty()
-                && let Some((screen, diff)) = state.diff_parts()
-            {
-                let found = diff_screen::search(screen, diff, query);
-                state.notices.say(found);
+            if !query.is_empty() {
+                match state.diff_parts() {
+                    Some((screen, diff)) => {
+                        let found = diff_screen::search(screen, diff, query);
+                        state.notices.say(found);
+                    }
+                    None => nav::find(state, &query),
+                }
             }
         }
         _ => nav::type_into(input, key),
@@ -1138,18 +1205,18 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
     };
     match action {
         Action::Quit => state.quit = true,
-        // Esc ends a search or selection before it leaves.
-        Action::Back if diff == Some(true) => {
+        // Esc ends a search or selection, and never leaves.
+        Action::Cancel if diff == Some(true) => {
             if let Screen::Diff(screen) = state.screen_mut() {
                 (screen.search, screen.selection) = (None, None);
             }
-            state.info("Cleared · esc again goes back");
+            state.info("Cleared");
         }
-        // Esc ends a log search before it leaves, too.
-        Action::Back if matches!(state.route(), Some(Route::Job { query, .. }) if !query.is_empty()) =>
+        Action::Cancel if matches!(state.route(), Some(Route::Job { query, .. }) if !query.is_empty()) =>
         {
             nav::search_log(state, "");
         }
+        Action::Cancel => nav::cancel(state),
         Action::Back => return state.back(),
         Action::Forward => return state.go_forward(),
         // From the files, up is the pull request.
@@ -1157,15 +1224,10 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::UpLevel => return nav::up_level(state),
         Action::NextTab => return nav::step_tab(state, true),
         Action::PrevTab => return nav::step_tab(state, false),
-        Action::Tab1 => return nav::switch_tab(state, 1),
-        Action::Tab2 => return nav::switch_tab(state, 2),
-        Action::Tab3 => return nav::switch_tab(state, 3),
-        Action::Tab4 => return nav::switch_tab(state, 4),
-        Action::Tab5 => return nav::switch_tab(state, 5),
-        Action::Tab6 => return nav::switch_tab(state, 6),
-        Action::Tab7 => return nav::switch_tab(state, 7),
-        Action::Tab8 => return nav::switch_tab(state, 8),
-        Action::Tab9 => return nav::switch_tab(state, 9),
+        _ if Action::PAGE_TABS.contains(&action) => {
+            let n = Action::PAGE_TABS.iter().position(|a| *a == action);
+            return nav::switch_tab(state, n.unwrap_or(0) + 1);
+        }
         Action::NextOpenTab => return state.step_open_tab(true),
         Action::PrevOpenTab => return state.step_open_tab(false),
         Action::OpenInTab => return state.open_in_tab(),
@@ -1184,11 +1246,12 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::GoHome if state.route() == Some(&Route::Home) => state.info("Already home"),
         Action::GoHome => return state.push(Route::Home),
-        Action::Search if diff.is_some() => {
+        Action::Search if diff.is_some() || !nav::searches_itself(state) => {
             let input = nav::new_input(&state.theme, Bg::Container);
-            state.overlay = Some(Overlay::DiffSearch(Box::new(input)));
+            state.overlay = Some(Overlay::Find(Box::new(input)));
         }
-        Action::Search => return state.open_search(),
+        Action::Search => return state.open_search(false),
+        Action::SearchGithub => return state.open_search(true),
         Action::FindFile if diff.is_some() => return state.open_picker(picker::Kind::DiffFiles),
         Action::FindFile => return state.open_finder(false),
         Action::Menu => nav::open_menu(state),
@@ -1522,7 +1585,7 @@ pub(crate) mod tests {
             "the activity is still loading"
         );
 
-        press(&mut state, "<Esc>");
+        press(&mut state, "<C-o>");
         assert_eq!(route(&state), Route::Home);
         assert!(
             selected_text(&state).contains("PR 1"),
@@ -1563,7 +1626,7 @@ pub(crate) mod tests {
             press(&mut state, "k");
         }
         assert!(page(&state).selected.is_some());
-        press(&mut state, "g");
+        press(&mut state, "gg");
         assert_eq!(page(&state).scroll, 0);
         assert_eq!(page(&state).selected, Some(0));
     }
@@ -1580,15 +1643,15 @@ pub(crate) mod tests {
         assert_eq!(route(&state), crates, "l opens");
         press(&mut state, "u");
         assert_eq!(route(&state), Route::Repo(repo()), "u: the folder above");
-        press(&mut state, "<Esc>");
-        assert_eq!(route(&state), crates, "esc: back");
+        press(&mut state, "<C-o>");
+        assert_eq!(route(&state), crates, "ctrl-o: back");
         press(&mut state, "uu");
         assert_eq!(
             route(&state),
             Route::user("gold-silver-copper"),
             "up from a repository: its owner"
         );
-        press(&mut state, "<Esc><Esc>");
+        press(&mut state, "<C-o><C-o>");
         assert_eq!(route(&state), crates);
     }
 
@@ -1720,7 +1783,7 @@ pub(crate) mod tests {
         };
         assert_eq!(route(&state), Route::Search { kind, query });
         assert!(selected_text(&state).contains("PR 1"), "the same list");
-        press(&mut state, "<Esc>");
+        press(&mut state, "<C-o>");
         let cmds = press(&mut state, "o");
         let [Cmd::OpenUrl(url)] = cmds.as_slice() else {
             panic!("{cmds:?}")
@@ -2202,7 +2265,7 @@ pub(crate) mod tests {
     #[test]
     fn an_older_suggestion_reply_does_not_replace_a_newer_one() {
         let mut state = with_repo();
-        press(&mut state, "/");
+        press(&mut state, "g/");
         press(&mut state, "ra");
         let cmds = update(&mut state, Msg::SuggestDue("ra".into()));
         assert_eq!(cmds, vec![Cmd::Api(Api::Suggest("ra".into()))]);
@@ -2387,12 +2450,12 @@ pub(crate) mod tests {
             assert_eq!((s.tab_count(), s.active_tab()), (2, 1));
             assert_eq!(route(&s), issue(1));
             let _ = s.push(issue(2));
-            press(&mut s, "[");
+            press(&mut s, "[b");
             assert_eq!((s.active_tab(), route(&s)), (0, issue(1)));
-            press(&mut s, "]");
+            press(&mut s, "]b");
             assert_eq!((s.active_tab(), route(&s)), (1, issue(2)));
             // Wrapping around, and straight to a number.
-            press(&mut s, "]");
+            press(&mut s, "]b");
             assert_eq!(s.active_tab(), 0);
             press(&mut s, "<A-2>");
             assert_eq!(s.active_tab(), 1);
@@ -2416,11 +2479,11 @@ pub(crate) mod tests {
             let _ = s.push(issue(3));
             act(&mut s, Action::Back);
             assert_eq!(route(&s), issue(2));
-            press(&mut s, "[");
+            press(&mut s, "[b");
             assert_eq!(route(&s), issue(1));
             act(&mut s, Action::Forward);
             assert_eq!(route(&s), issue(1), "nothing to go forward to here");
-            press(&mut s, "]");
+            press(&mut s, "]b");
             act(&mut s, Action::Forward);
             assert_eq!(route(&s), issue(3));
         }
@@ -2687,7 +2750,7 @@ pub(crate) mod tests {
             panic!()
         };
         assert_eq!(p.current_match(), p.page().marks.get(1).copied());
-        press(&mut s, "p");
+        press(&mut s, "N");
         says(&s, &format!("Match 1 of {n}"));
         press(&mut s, "<Esc>");
         assert_eq!(route(&s), job_route);
@@ -2857,7 +2920,7 @@ pub(crate) mod tests {
         let ((before, _), (after, _), line) = open(&|_| {});
         assert!(after > before, "{before} -> {after}");
         assert!(after <= line && line < after + 10, "{after} vs {line}");
-        let ((before, _), (after, _), _) = open(&|s| drop(press(s, "g")));
+        let ((before, _), (after, _), _) = open(&|s| drop(press(s, "gg")));
         assert_eq!(after, before, "yanked back after scrolling");
         // Selecting an item on screen, as j can, is moving too.
         let select = |s: &mut State| {
@@ -3023,9 +3086,9 @@ pub(crate) mod tests {
         }
         // Every tab has a number key: `5` is Actions, `7` Security.
         let _ = state.push(Route::Repo(repo()));
-        press(&mut state, "5");
+        press(&mut state, "5gt");
         assert_eq!(route(&state), Route::Actions(repo()));
-        press(&mut state, "7");
+        press(&mut state, "7gt");
         assert_eq!(route(&state), Route::Advisories(Some(repo())));
     }
 
@@ -3050,7 +3113,7 @@ pub(crate) mod tests {
                 "Security"
             ]
         );
-        let cmds = fetches(press(&mut state, "2"));
+        let cmds = fetches(press(&mut state, "2gt"));
         let open = issues(OPEN);
         assert_eq!(route(&state), open);
         let (kind, query) = open.search().unwrap();
@@ -3083,12 +3146,12 @@ pub(crate) mod tests {
             issues("is:closed label:bug sort:created-asc")
         );
 
-        press(&mut state, "<Right>");
+        press(&mut state, "gt");
         assert!(
             matches!(route(&state), Route::Pulls { .. }),
             "→: the next tab"
         );
-        press(&mut state, "1");
+        press(&mut state, "1gt");
         assert_eq!(route(&state), Route::Repo(repo()));
 
         let cmds = press(&mut state, "s");
@@ -3289,7 +3352,7 @@ pub(crate) mod tests {
     #[test]
     fn search_box_jumps_searches_and_loads_more() {
         let mut state = with_repo();
-        press(&mut state, "/");
+        press(&mut state, "g/");
         let sb = overlay!(state, Search);
         assert!(!sb.filter);
         press(&mut state, "bug");
@@ -3407,7 +3470,7 @@ pub(crate) mod tests {
         let mut state = with_repo();
         let _ = state.push(Route::user("octocat"));
         let _ = state.push(Route::Home);
-        press(&mut state, "/");
+        press(&mut state, "g/");
         let sb = overlay!(state, Search);
         let labels: Vec<String> = state
             .suggestions(sb)
@@ -3682,7 +3745,7 @@ pub(crate) mod tests {
         let mut state = state();
         let pr = PrRef::parse("o/r#1").unwrap();
         let _ = state.push(Route::pr(pr.clone()));
-        assert!(press(&mut state, "4").is_empty(), "waits for the PR");
+        assert!(press(&mut state, "4gt").is_empty(), "waits for the PR");
         assert!(matches!(state.screen(), Screen::Diff(_)));
         assert_eq!(state.chrome().active, Some(3));
         assert_eq!(state.busy().as_deref(), Some("Loading o/r#1"));
@@ -3695,7 +3758,7 @@ pub(crate) mod tests {
                 .any(|c| matches!(c, Cmd::Git(Git::LoadDiff { .. }))),
             "{cmds:?}"
         );
-        press(&mut state, "2");
+        press(&mut state, "2gt");
         assert_eq!(
             route(&state),
             Route::Pr {
@@ -3735,7 +3798,7 @@ pub(crate) mod tests {
         let _ = click(&mut state, 0, bottom);
         assert!(state.overlay.is_none(), "a click outside closes it");
         // The wheel.
-        press(&mut state, "1");
+        press(&mut state, "1gt");
         update(&mut state, Msg::Resize(100, 16));
         let before = page(&state).scroll;
         update(
@@ -3995,7 +4058,7 @@ pub(crate) mod tests {
         let hints: Vec<String> = state.key_hints().into_iter().map(|(_, w)| w).collect();
         assert_eq!(hints[..2], ["menu", "open"]);
         assert!(hints.contains(&"go to file".to_owned()));
-        press(&mut state, "2");
+        press(&mut state, "2gt");
         let hints: Vec<String> = state.key_hints().into_iter().map(|(_, w)| w).collect();
         assert!(
             hints.contains(&"filter".to_owned()) && hints.contains(&"tabs".to_owned()),
@@ -4181,7 +4244,7 @@ pub(crate) mod tests {
             );
 
             // Next unviewed skips the viewed file.
-            press(&mut s, "g");
+            press(&mut s, "gg");
             act(&mut s, Action::NextUnviewed);
             assert_eq!(screen(&s).cursor.file, 1);
 
@@ -4221,7 +4284,7 @@ pub(crate) mod tests {
         #[test]
         fn nothing_is_saved_before_the_saved_review_is_read() {
             let (mut s, pr) = unread_diff_state(120);
-            press(&mut s, "njjj");
+            press(&mut s, "]cjjj");
             let cmds = press(&mut s, "m");
             assert!(!cmds.iter().any(|c| matches!(c, Cmd::SaveReview(..))));
 
@@ -4267,10 +4330,10 @@ pub(crate) mod tests {
         fn review_marks_toggle_and_persist() {
             let (mut s, pr) = diff_state(120);
             // Off a changed line: nothing to mark.
-            assert!(press(&mut s, "g").is_empty());
+            assert!(press(&mut s, "gg").is_empty());
             assert!(press(&mut s, "m").is_empty());
             // Onto the first change.
-            press(&mut s, "njjj");
+            press(&mut s, "]cjjj");
             let cmds = press(&mut s, "m");
             let Some(Cmd::SaveReview(saved_pr, review)) = cmds.first() else {
                 panic!("{cmds:?}")
@@ -4296,7 +4359,7 @@ pub(crate) mod tests {
         fn search_and_repeat() {
             let (mut s, pr) = diff_state(120);
             press(&mut s, "/");
-            assert!(matches!(s.overlay, Some(Overlay::DiffSearch(_))));
+            assert!(matches!(s.overlay, Some(Overlay::Find(_))));
             press(&mut s, "origin<Enter>");
             assert!(s.overlay.is_none());
             let cursor = screen(&s).cursor;
@@ -4315,20 +4378,22 @@ pub(crate) mod tests {
         }
 
         #[test]
-        fn n_and_p_follow_a_search_and_esc_ends_it() {
+        fn n_and_shift_n_follow_a_search_and_esc_ends_it() {
             let (mut s, _) = diff_state(120);
             press(&mut s, "/");
             press(&mut s, "Point<Enter>");
             let first = screen(&s).cursor;
             press(&mut s, "n");
             assert_ne!(screen(&s).cursor, first, "n: the next match");
-            press(&mut s, "p");
-            assert_eq!(screen(&s).cursor, first, "p: back");
+            press(&mut s, "N");
+            assert_eq!(screen(&s).cursor, first, "N: back");
             let depth = s.screens.len();
             press(&mut s, "<Esc>");
-            assert_eq!(s.screens.len(), depth, "esc ends the search first");
+            assert!(screen(&s).search.is_none(), "esc ends the search");
             press(&mut s, "<Esc>");
-            assert_eq!(s.screens.len(), depth - 1, "then goes back");
+            assert_eq!(s.screens.len(), depth, "and never leaves");
+            press(&mut s, "<C-o>");
+            assert_eq!(s.screens.len(), depth - 1, "ctrl-o goes back");
         }
 
         #[test]
@@ -4346,7 +4411,7 @@ pub(crate) mod tests {
         #[test]
         fn whitespace_and_full_file_keep_the_cursor_line() {
             let (mut s, pr) = diff_state(120);
-            press(&mut s, "njjj");
+            press(&mut s, "]cjjj");
             let text = s.diffs[&DiffOf::Pr(pr.clone())]
                 .doc
                 .row_text(screen(&s).cursor);
@@ -4635,7 +4700,7 @@ pub(crate) mod tests {
                     ])),
                 );
                 assert_eq!(s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations().len(), 2);
-                press(&mut s, "g");
+                press(&mut s, "gg");
                 act(&mut s, Action::NextThread);
                 let at = s.diffs[&DiffOf::Pr(pr.clone())]
                     .doc
@@ -4891,7 +4956,7 @@ pub(crate) mod tests {
                     &pr,
                     DiffMsg::ThreadsLoaded(Ok(vec![thread("t", Some(14), false, false)])),
                 );
-                press(&mut s, "g");
+                press(&mut s, "gg");
                 act(&mut s, Action::NextThread);
                 press(&mut s, "c");
                 press(&mut s, "Fixed");

@@ -45,17 +45,8 @@ fn shows(state: &State, kind: fn(String) -> Notice, part: &str) {
 /// Presses `keys`, in vim notation (`"jj"`, `"<Esc>/"`, `"<C-d>"`).
 pub(crate) fn press(state: &mut State, keys: &str) -> Vec<Cmd> {
     let mut cmds = Vec::new();
-    let mut rest = keys;
-    while let Some(c) = rest.chars().next() {
-        // One key: `<…>`, or a character.
-        let len = match rest.find('>') {
-            Some(end) if c == '<' && end > 1 => end + 1,
-            _ => c.len_utf8(),
-        };
-        let (key, tail) = rest.split_at(len);
-        let key = crate::keymap::parse_key(key).unwrap();
+    for key in crate::keymap::parse_keys(keys).unwrap() {
         cmds.extend(update(state, Msg::Key(KeyEvent::new(key.code, key.mods))));
-        rest = tail;
     }
     cmds
 }

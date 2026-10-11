@@ -53,8 +53,10 @@ fn a_paragraph_with_tabs_wraps_instead_of_losing_its_end() {
         page: &page,
         scroll: 0,
         selected: None,
+        from: None,
         current: None,
         hints: &[],
+        shift: 0,
     }
     .render(area, &mut buf);
     let shown = rows(&buf).join("\n");
@@ -125,6 +127,7 @@ fn a_review_comment_keeps_its_tabs() {
             file_comment: "C",
         },
         selection: None,
+        shift: 0,
     }
     .render(area, &mut buf);
     let rows = rows(&buf);

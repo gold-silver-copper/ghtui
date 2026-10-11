@@ -17,6 +17,7 @@ use crate::state::{Cmd, Screen, Screens, State};
 pub struct Tab {
     pub screens: Screens,
     pub forward: Vec<Screen>,
+    pub parked: Vec<Screen>,
 }
 
 impl Tab {
@@ -24,6 +25,7 @@ impl Tab {
         Self {
             screens: Screens::new(first),
             forward: Vec::new(),
+            parked: Vec::new(),
         }
     }
 
@@ -94,6 +96,7 @@ impl State {
         Tab {
             screens: std::mem::replace(&mut self.screens, next.screens),
             forward: std::mem::replace(&mut self.forward, next.forward),
+            parked: std::mem::replace(&mut self.parked, next.parked),
         }
     }
 

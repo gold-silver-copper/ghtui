@@ -1,6 +1,5 @@
 ---
-source: crates/app/src/snapshot_tests.rs
-assertion_line: 737
+source: src/snapshot_tests.rs
 expression: render(&state)
 ---
 Buffer {
@@ -35,7 +34,7 @@ Buffer {
         "  │                                                                                             │  ▐",
         "  │ │ Everything is a link: press  Enter  to follow it.                                         │  ▐",
         "──╰─────────────────────────────────────────────────────────────────────────────────────────────╯──▐",
-        "  space menu   ↵ open   / search   f go to file   b branch   s star   ←→ tabs        API 4987/5000  ",
+        "  space menu   ↵ open   / search   f go to file   b branch   s star   gt/gT tabs     API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
@@ -268,8 +267,8 @@ Buffer {
         x: 62, y: 29, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 67, y: 29, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 70, y: 29, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
-        x: 72, y: 29, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 77, y: 29, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 75, y: 29, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 80, y: 29, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 85, y: 29, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 98, y: 29, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
     ]

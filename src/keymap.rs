@@ -1,28 +1,103 @@
-//! Rebindable keymap. A binding is one key, in vim notation: `j`, `G`,
-//! `<C-d>`, `<Enter>`, `<Esc>`, `<Tab>`, `<Down>`.
+//! Rebindable keymap. A binding is a key sequence in vim notation: `j`,
+//! `gg`, `]c`, `<C-d>`, `<Enter>`. Digits typed first are a count (`5j`,
+//! `3gt`). A binding belongs to a context; what's on screen makes a stack
+//! of contexts, and the innermost that binds the keys wins.
 
 use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-/// Where a binding applies. Diff and page bindings may share keys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Scope {
+/// Where a binding applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Context {
+    /// Everywhere.
     Global,
-    Diff,
+    /// Any page (not the diff).
     Page,
+    /// A list with a GitHub filter: issues, pull requests, search results.
+    List,
+    /// A file or its blame.
+    File,
+    /// A job's log.
+    Log,
+    /// A pull request's (or commit's) files: the diff and its file tree.
+    Diff,
+    /// The diff's file tree, when it has the focus.
+    Tree,
 }
 
-impl Scope {
-    pub fn overlaps(self, other: Scope) -> bool {
-        self == Scope::Global || other == Scope::Global || self == other
+/// The stacks of contexts that can be active at once, innermost first.
+const STACKS: &[&[Context]] = {
+    use Context::*;
+    &[
+        &[List, Page, Global],
+        &[File, Page, Global],
+        &[Log, Page, Global],
+        &[Page, Global],
+        &[Tree, Diff, Global],
+        &[Diff, Global],
+    ]
+};
+
+impl Context {
+    const ALL: [Context; 7] = [
+        Context::Global,
+        Context::Page,
+        Context::List,
+        Context::File,
+        Context::Log,
+        Context::Diff,
+        Context::Tree,
+    ];
+
+    /// Its name in config: `diff:x` binds `x` in the diff.
+    pub fn name(self) -> &'static str {
+        match self {
+            Context::Global => "global",
+            Context::Page => "page",
+            Context::List => "list",
+            Context::File => "file",
+            Context::Log => "log",
+            Context::Diff => "diff",
+            Context::Tree => "tree",
+        }
+    }
+
+    /// Where it is, for "works … only".
+    fn place(self) -> &'static str {
+        match self {
+            Context::Global => "everywhere",
+            Context::Page => "on pages",
+            Context::List => "on lists",
+            Context::File => "in files",
+            Context::Log => "in job logs",
+            Context::Diff => "in Files changed",
+            Context::Tree => "in Files changed's file tree",
+        }
+    }
+
+    /// The contexts active when this is the innermost.
+    pub fn stack(self) -> &'static [Context] {
+        STACKS
+            .iter()
+            .copied()
+            .find(|s| s.first() == Some(&self))
+            .unwrap_or(&[Context::Global])
+    }
+
+    /// Whether the two can be active at once.
+    fn meets(self, other: Context) -> bool {
+        STACKS
+            .iter()
+            .any(|stack| stack.contains(&self) && stack.contains(&other))
     }
 }
 
-/// Declares [`Action`] from one table: config name, default keys, scope
-/// and description.
+/// Declares [`Action`] from one table: config name, default keys, home
+/// context and description. A default key may name its own context
+/// (`file:V`).
 macro_rules! actions {
-    ($($action:ident $name:literal [$($key:literal),*] $scope:ident $description:literal;)*) => {
+    ($($action:ident $name:literal [$($key:literal),*] $context:ident $description:literal;)*) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub enum Action {
             $($action,)*
@@ -44,9 +119,10 @@ macro_rules! actions {
                 }
             }
 
-            pub fn scope(self) -> Scope {
+            /// Where its keys apply unless they say otherwise.
+            pub fn context(self) -> Context {
                 match self {
-                    $(Action::$action => Scope::$scope,)*
+                    $(Action::$action => Context::$context,)*
                 }
             }
 
@@ -60,100 +136,114 @@ macro_rules! actions {
 }
 
 actions! {
-    Down              "down"              ["<Down>", "j"]      Global "Move down";
-    Up                "up"                ["<Up>", "k"]        Global "Move up";
-    HalfPageDown      "half_page_down"    ["<C-d>"]            Global "Half page down";
-    HalfPageUp        "half_page_up"      ["<C-u>"]            Global "Half page up";
-    PageDown          "page_down"         ["<PageDown>"]       Global "Page down";
-    PageUp            "page_up"           ["<PageUp>"]         Global "Page up";
-    Top               "top"               ["<Home>", "g"]      Global "Go to top";
-    Bottom            "bottom"            ["<End>", "G"]       Global "Go to bottom";
-    Open              "open"              ["<Enter>"]          Global "Open the selection";
-    Back              "back"              ["<Esc>", "<BS>", "<A-Left>"] Global "Back";
-    Forward           "forward"           ["<A-Right>"]        Global "Forward";
-    UpLevel           "up_level"          ["u"]                Global "Up a level";
-    NextTab           "next_tab"          ["<Right>", "l"]     Global "Next tab";
-    PrevTab           "prev_tab"          ["<Left>", "h"]      Global "Previous tab";
-    Tab1              "tab_1"             ["1"]                Global "First tab";
-    Tab2              "tab_2"             ["2"]                Global "Second tab";
-    Tab3              "tab_3"             ["3"]                Global "Third tab";
-    Tab4              "tab_4"             ["4"]                Global "Fourth tab";
-    Tab5              "tab_5"             ["5"]                Global "Fifth tab";
-    Tab6              "tab_6"             ["6"]                Global "Sixth tab";
-    Tab7              "tab_7"             ["7"]                Global "Seventh tab";
-    Tab8              "tab_8"             ["8"]                Global "Eighth tab";
-    Tab9              "tab_9"             ["9"]                Global "Ninth tab";
-    NextOpenTab       "next_open_tab"     ["]"]                Global "Next open tab";
-    PrevOpenTab       "prev_open_tab"     ["["]                Global "Previous open tab";
-    OpenInTab         "open_in_tab"       ["T"]                Global "Open the selection in a new tab";
-    CloseTab          "close_tab"         ["<C-w>"]            Global "Close the tab";
-    OpenTab1          "open_tab_1"        ["<A-1>"]            Global "Go to open tab 1";
-    OpenTab2          "open_tab_2"        ["<A-2>"]            Global "Go to open tab 2";
-    OpenTab3          "open_tab_3"        ["<A-3>"]            Global "Go to open tab 3";
-    OpenTab4          "open_tab_4"        ["<A-4>"]            Global "Go to open tab 4";
-    OpenTab5          "open_tab_5"        ["<A-5>"]            Global "Go to open tab 5";
-    OpenTab6          "open_tab_6"        ["<A-6>"]            Global "Go to open tab 6";
-    OpenTab7          "open_tab_7"        ["<A-7>"]            Global "Go to open tab 7";
-    OpenTab8          "open_tab_8"        ["<A-8>"]            Global "Go to open tab 8";
-    OpenTab9          "open_tab_9"        ["<A-9>"]            Global "Go to open tab 9";
-    GoHome            "go_home"           ["H"]                Global "Go home";
-    Search            "search"            ["/"]                Global "Search (on a list: filter it)";
-    FindFile          "find_file"         ["f"]                Global "Go to file";
-    Comment           "comment"           ["c"]                Global "Comment (on a thread: reply)";
-    Copy              "copy_link"         ["y"]                Global "Copy the link";
-    OpenInBrowser     "open_in_browser"   ["o"]                Global "Open on GitHub";
-    Refresh           "refresh"           ["r"]                Global "Refresh";
-    Menu              "actions_menu"      ["<Space>", "?"]     Global "Everything you can do here";
-    CommandPalette    "command_palette"   [":", "<C-k>"]       Global "Command palette";
-    Messages          "messages"          []                   Global "Recent messages and errors";
-    Merge             "merge"             ["M"]                Global "Merge the pull request";
-    Approve           "approve"           ["A"]                Global "Approve the pull request";
-    ReadyForReview    "ready_for_review"  ["W"]                Global "Mark the draft ready for review";
-    UpdateBranch      "update_branch"     ["B"]                Global "Update the branch from its base";
-    Close             "close"             ["X"]                Global "Close or reopen; on a running run, cancel it";
-    Rerun             "rerun"             ["<C-r>"]            Global "Re-run the workflow run or job";
-    Delete            "delete"            ["<Delete>"]         Global "Delete the selection (a draft comment, a Home section)";
-    UndoDelete        "undo_delete"       ["<C-z>"]            Global "Bring back what was just deleted";
-    Quit              "quit"              ["q", "<C-c>"]       Global "Quit";
+    Down              "down"              ["j", "<Down>"]          Global "Move down";
+    Up                "up"                ["k", "<Up>"]            Global "Move up";
+    HalfPageDown      "half_page_down"    ["<C-d>"]                Global "Half page down";
+    HalfPageUp        "half_page_up"      ["<C-u>"]                Global "Half page up";
+    PageDown          "page_down"         ["<C-f>", "<PageDown>"]  Global "Page down";
+    PageUp            "page_up"           ["<C-b>", "<PageUp>"]    Global "Page up";
+    ScrollDown        "scroll_down"       ["<C-e>"]                Global "Scroll down a line";
+    ScrollUp          "scroll_up"         ["<C-y>"]                Global "Scroll up a line";
+    ScrollCenter      "scroll_center"     ["zz"]                   Global "Scroll the cursor to the middle";
+    ScrollTop         "scroll_top"        ["zt"]                   Global "Scroll the cursor to the top";
+    ScrollBottom      "scroll_bottom"     ["zb"]                   Global "Scroll the cursor to the bottom";
+    Top               "top"               ["gg", "<Home>"]         Global "Go to the top (with a count, to that line)";
+    Bottom            "bottom"            ["G", "<End>"]           Global "Go to the bottom";
+    Open              "open"              ["<Enter>"]              Global "Open the selection";
+    Cancel            "cancel"            ["<Esc>"]                Global "Cancel a search, a selection or keys typed so far";
+    Back              "back"              ["<C-o>", "<BS>", "<A-Left>"] Global "Back";
+    Forward           "forward"           ["<C-i>", "<A-Right>"]   Global "Forward";
+    UpLevel           "up_level"          ["-", "u"]               Global "Up a level";
+    NextTab           "next_page_tab"     ["gt"]                   Global "Next tab of the page (with a count, that tab)";
+    PrevTab           "prev_page_tab"     ["gT"]                   Global "Previous tab of the page";
+    Tab1              "page_tab_1"        []                       Global "First tab of the page";
+    Tab2              "page_tab_2"        []                       Global "Second tab of the page";
+    Tab3              "page_tab_3"        []                       Global "Third tab of the page";
+    Tab4              "page_tab_4"        []                       Global "Fourth tab of the page";
+    Tab5              "page_tab_5"        []                       Global "Fifth tab of the page";
+    Tab6              "page_tab_6"        []                       Global "Sixth tab of the page";
+    Tab7              "page_tab_7"        []                       Global "Seventh tab of the page";
+    Tab8              "page_tab_8"        []                       Global "Eighth tab of the page";
+    Tab9              "page_tab_9"        []                       Global "Ninth tab of the page";
+    NextOpenTab       "next_open_tab"     ["]b", "<C-PageDown>"]   Global "Next open tab";
+    PrevOpenTab       "prev_open_tab"     ["[b", "<C-PageUp>"]     Global "Previous open tab";
+    OpenInTab         "open_in_tab"       ["T"]                    Global "Open the selection in a new tab";
+    CloseTab          "close_tab"         ["<C-w>"]                Global "Close the tab";
+    OpenTab1          "open_tab_1"        ["<A-1>"]                Global "Go to open tab 1";
+    OpenTab2          "open_tab_2"        ["<A-2>"]                Global "Go to open tab 2";
+    OpenTab3          "open_tab_3"        ["<A-3>"]                Global "Go to open tab 3";
+    OpenTab4          "open_tab_4"        ["<A-4>"]                Global "Go to open tab 4";
+    OpenTab5          "open_tab_5"        ["<A-5>"]                Global "Go to open tab 5";
+    OpenTab6          "open_tab_6"        ["<A-6>"]                Global "Go to open tab 6";
+    OpenTab7          "open_tab_7"        ["<A-7>"]                Global "Go to open tab 7";
+    OpenTab8          "open_tab_8"        ["<A-8>"]                Global "Go to open tab 8";
+    OpenTab9          "open_tab_9"        ["<A-9>"]                Global "Go to open tab 9";
+    GoHome            "go_home"           ["gh", "H"]              Global "Go home";
+    Search            "search"            ["/"]                    Global "Search what's on screen (on a list, filter it)";
+    SearchNext        "search_next"       ["n"]                    Global "Next search match";
+    SearchPrev        "search_prev"       ["N"]                    Global "Previous search match";
+    SearchGithub      "search_github"     ["g/"]                   Global "Search GitHub or go to a page";
+    FindFile          "find_file"         ["f"]                    Global "Go to file";
+    Comment           "comment"           ["c"]                    Global "Comment (on a thread, reply)";
+    Copy              "copy_link"         ["y"]                    Global "Copy the link";
+    OpenInBrowser     "open_in_browser"   ["o"]                    Global "Open on GitHub";
+    Refresh           "refresh"           ["r"]                    Global "Refresh";
+    Menu              "actions_menu"      ["<Space>", "?"]         Global "Everything you can do here";
+    CommandPalette    "command_palette"   [":", "<C-k>"]           Global "Command palette";
+    Messages          "messages"          []                       Global "Recent messages and errors";
+    Merge             "merge"             ["M"]                    Global "Merge the pull request";
+    Approve           "approve"           ["A"]                    Global "Approve the pull request";
+    ReadyForReview    "ready_for_review"  ["W"]                    Global "Mark the draft ready for review";
+    UpdateBranch      "update_branch"     ["B"]                    Global "Update the branch from its base";
+    Close             "close"             ["X"]                    Global "Close or reopen; on a running run, cancel it";
+    Rerun             "rerun"             ["<C-r>"]                Global "Re-run the workflow run or job";
+    Delete            "delete"            ["<Delete>"]             Global "Delete the selection (a draft comment, a Home section)";
+    UndoDelete        "undo_delete"       ["<C-z>"]                Global "Bring back what was just deleted";
+    Quit              "quit"              ["q", "<C-c>"]           Global "Quit";
 
-    Star              "star"              ["s"]                Page   "Star / unstar";
-    Branch            "branch"            ["b"]                Page   "Switch branches or tags";
-    Hints             "hints"             ["i"]                Page   "Follow a link by its letters";
-    HintsBrowser      "hints_browser"     ["I"]                Page   "Follow a link, in the browser";
-    ToggleState       "toggle_state"      []                   Page   "Open / closed / all";
-    Sort              "sort"              []                   Page   "Change the sort";
-    SaveSection       "save_to_home"      []                   Page   "Save this list as a Home section";
-    RenameSection     "rename_section"    []                   Page   "Rename the Home section";
-    MoveSectionUp     "move_section_up"   ["<A-Up>"]           Page   "Move the Home section up";
-    MoveSectionDown   "move_section_down" ["<A-Down>"]         Page   "Move the Home section down";
+    NextItem          "next_item"         ["]]"]                   Page   "Next comment or row";
+    PrevItem          "prev_item"         ["[["]                   Page   "Previous comment or row";
+    Star              "star"              ["s"]                    Page   "Star / unstar";
+    Branch            "branch"            ["b"]                    Page   "Switch branches or tags";
+    Hints             "hints"             ["i"]                    Page   "Follow a link by its letters";
+    HintsBrowser      "hints_browser"     ["I"]                    Page   "Follow a link, in the browser";
+    ToggleState       "toggle_state"      ["t"]                    List   "Open / closed / all";
+    Sort              "sort"              ["S"]                    List   "Change the sort";
+    SaveSection       "save_to_home"      []                       List   "Save this list as a Home section";
+    RenameSection     "rename_section"    []                       Page   "Rename the Home section";
+    MoveSectionUp     "move_section_up"   ["<A-Up>"]               Page   "Move the Home section up";
+    MoveSectionDown   "move_section_down" ["<A-Down>"]             Page   "Move the Home section down";
+    Blame             "blame"             ["gb"]                   File   "Blame the file at this line, or back to the file";
+    ScrollLeft        "scroll_left"       ["h", "log:h", "diff:h"] File   "Scroll left";
+    ScrollRight       "scroll_right"      ["l", "log:l", "diff:l"] File   "Scroll right";
 
-    NextHunk          "next_hunk"         ["n"]                Global "Next change (or search match)";
-    PrevHunk          "prev_hunk"         ["p"]                Global "Previous change (or search match)";
-    NextFile          "next_file"         ["<S-Down>"]         Diff   "Next file";
-    PrevFile          "prev_file"         ["<S-Up>"]           Diff   "Previous file";
-    OldSide           "old_side"          ["<S-Left>"]         Diff   "Old side of a split row (for comments)";
-    NewSide           "new_side"          ["<S-Right>"]        Diff   "New side of a split row (for comments)";
-    NextUnviewed      "next_unviewed"     ["U"]                Diff   "Next unviewed file";
-    NextThread        "next_thread"       ["N"]                Diff   "Next unresolved thread";
-    PrevThread        "prev_thread"       ["P"]                Diff   "Previous unresolved thread";
-    JumpMove          "jump_move"         ["J"]                Diff   "Jump to the other end of moved code";
-    SearchNext        "search_next"       []                   Diff   "Next search match";
-    SearchPrev        "search_prev"       []                   Diff   "Previous search match";
-    SwitchPane        "switch_pane"       ["<Tab>"]            Diff   "Switch between the file tree and the diff";
-    ToggleTree        "toggle_tree"       ["t"]                Diff   "Show or hide the file tree";
-    ToggleSplit       "toggle_split"      ["S"]                Diff   "Split or unified view";
-    IgnoreWhitespace  "ignore_whitespace" ["w"]                Diff   "Ignore whitespace changes";
-    ExpandContext     "expand_context"    ["e"]                Diff   "Show more context";
-    FullFile          "full_file"         ["F"]                Diff   "Show the whole file";
-    ToggleSinceReview "since_review"      []                   Diff   "Show only changes since your last review";
-    PickCommits       "pick_commits"      []                   Diff   "Choose commits to view";
-    ToggleViewed      "toggle_viewed"     ["v"]                Diff   "Mark the file viewed (syncs with GitHub)";
-    MarkReviewed      "mark_reviewed"     ["m"]                Diff   "Mark the change reviewed";
-    VisualLines       "visual_lines"      ["x"]                Diff   "Select lines (for multi-line comments)";
-    Suggest           "suggest"           []                   Diff   "Suggest a change (opens $EDITOR)";
-    FileComment       "file_comment"      ["C"]                Diff   "Comment on the whole file";
-    ResolveThread     "resolve"           ["R"]                Diff   "Resolve or unresolve the thread";
-    SubmitReview      "submit_review"     ["a"]                Diff   "Submit your review";
+    NextHunk          "next_change"       ["]c"]                   Diff   "Next change";
+    PrevHunk          "prev_change"       ["[c"]                   Diff   "Previous change";
+    NextFile          "next_file"         ["]f", "<S-Down>"]       Diff   "Next file";
+    PrevFile          "prev_file"         ["[f", "<S-Up>"]         Diff   "Previous file";
+    OldSide           "old_side"          ["<S-Left>"]             Diff   "Old side of a split row (for comments)";
+    NewSide           "new_side"          ["<S-Right>"]            Diff   "New side of a split row (for comments)";
+    NextUnviewed      "next_unviewed"     ["U"]                    Diff   "Next unviewed file";
+    NextThread        "next_thread"       ["]t"]                   Diff   "Next unresolved thread";
+    PrevThread        "prev_thread"       ["[t"]                   Diff   "Previous unresolved thread";
+    JumpMove          "jump_move"         ["%"]                    Diff   "Jump to the other end of moved code";
+    SwitchPane        "switch_pane"       ["<Tab>"]                Diff   "Switch between the file tree and the diff";
+    ToggleTree        "toggle_tree"       ["t"]                    Diff   "Show or hide the file tree";
+    Fold              "fold"              ["h"]                    Tree   "Fold the folder (on a file, go to its folder)";
+    Unfold            "unfold"            ["l"]                    Tree   "Unfold the folder";
+    ToggleSplit       "toggle_split"      ["S"]                    Diff   "Split or unified view";
+    IgnoreWhitespace  "ignore_whitespace" ["w"]                    Diff   "Ignore whitespace changes";
+    ExpandContext     "expand_context"    ["e"]                    Diff   "Show more context";
+    FullFile          "full_file"         ["F"]                    Diff   "Show the whole file";
+    ToggleSinceReview "since_review"      []                       Diff   "Show only changes since your last review";
+    PickCommits       "pick_commits"      []                       Diff   "Choose commits to view";
+    ToggleViewed      "toggle_viewed"     ["v"]                    Diff   "Mark the file viewed (syncs with GitHub)";
+    MarkReviewed      "mark_reviewed"     ["m"]                    Diff   "Mark the change reviewed";
+    VisualLines       "select_lines"      ["V", "x", "file:V"]     Diff   "Select lines";
+    Suggest           "suggest"           []                       Diff   "Suggest a change (opens $EDITOR)";
+    FileComment       "file_comment"      ["C"]                    Diff   "Comment on the whole file";
+    ResolveThread     "resolve"           ["R"]                    Diff   "Resolve or unresolve the thread";
+    SubmitReview      "submit_review"     ["a"]                    Diff   "Submit your review";
 }
 
 impl Action {
@@ -170,18 +260,99 @@ impl Action {
         Action::OpenTab9,
     ];
 
+    /// The page's tabs 1…9, in order.
+    pub const PAGE_TABS: [Action; 9] = [
+        Action::Tab1,
+        Action::Tab2,
+        Action::Tab3,
+        Action::Tab4,
+        Action::Tab5,
+        Action::Tab6,
+        Action::Tab7,
+        Action::Tab8,
+        Action::Tab9,
+    ];
+
     pub fn from_name(name: &str) -> Option<Action> {
         Action::ALL.iter().copied().find(|a| a.name() == name)
     }
 
-    /// Says where the action works, for when it's used elsewhere.
+    /// Where it works by default, for when it's used elsewhere.
     pub fn not_here(self) -> String {
-        let place = match self.scope() {
-            Scope::Diff => "in a pull request's Files changed tab",
-            Scope::Page => "on pages, not in the diff",
-            Scope::Global => "not here",
+        let mut places: Vec<&str> = Vec::new();
+        for key in self.defaults() {
+            let place = scoped(key, self.context()).1.place();
+            if !places.contains(&place) {
+                places.push(place);
+            }
+        }
+        if places.is_empty() {
+            places.push(self.context().place());
+        }
+        let places = match places.split_last() {
+            Some((last, [])) => (*last).to_owned(),
+            Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+            None => String::new(),
         };
-        format!("{}: {place}", self.description())
+        format!("{}: works {places}", self.description())
+    }
+
+    /// Moving around the screen, rather than doing something.
+    pub fn moves(self) -> bool {
+        use Action::*;
+        matches!(
+            self,
+            Down | Up
+                | HalfPageDown
+                | HalfPageUp
+                | PageDown
+                | PageUp
+                | ScrollDown
+                | ScrollUp
+                | ScrollCenter
+                | ScrollTop
+                | ScrollBottom
+                | ScrollLeft
+                | ScrollRight
+                | Top
+                | Bottom
+                | Open
+                | Cancel
+                | NextItem
+                | PrevItem
+        )
+    }
+
+    /// Motions a count repeats.
+    pub fn repeats(self) -> bool {
+        use Action::*;
+        matches!(
+            self,
+            Down | Up
+                | HalfPageDown
+                | HalfPageUp
+                | PageDown
+                | PageUp
+                | ScrollDown
+                | ScrollUp
+                | ScrollLeft
+                | ScrollRight
+                | Back
+                | Forward
+                | NextOpenTab
+                | PrevOpenTab
+                | SearchNext
+                | SearchPrev
+                | NextItem
+                | PrevItem
+                | NextHunk
+                | PrevHunk
+                | NextFile
+                | PrevFile
+                | NextThread
+                | PrevThread
+                | UpLevel
+        )
     }
 }
 
@@ -196,17 +367,28 @@ pub struct Key {
 impl Key {
     /// Folds Shift into the key where the key already says it: `G`, and
     /// Shift-Tab (terminals send `BackTab` with Shift; `<C-S-Tab>` reads as
-    /// Tab with Shift).
+    /// Tab with Shift). Ctrl-i is Tab, as terminals send it.
     pub fn new(code: KeyCode, mods: KeyModifiers) -> Self {
-        let code = match code {
-            KeyCode::Tab if mods.contains(KeyModifiers::SHIFT) => KeyCode::BackTab,
-            code => code,
+        let (code, mods) = match code {
+            KeyCode::Char('i') if mods == KeyModifiers::CONTROL => {
+                (KeyCode::Tab, KeyModifiers::NONE)
+            }
+            KeyCode::Tab if mods.contains(KeyModifiers::SHIFT) => (KeyCode::BackTab, mods),
+            code => (code, mods),
         };
         let mods = match code {
             KeyCode::Char(_) | KeyCode::BackTab => mods - KeyModifiers::SHIFT,
             _ => mods,
         };
         Self { code, mods }
+    }
+
+    /// A digit typed as (part of) a count.
+    pub fn digit(self) -> Option<u32> {
+        match self.code {
+            KeyCode::Char(c) if self.mods.is_empty() => c.to_digit(10),
+            _ => None,
+        }
     }
 }
 
@@ -237,24 +419,32 @@ const NAMED: &[(&str, KeyCode)] = &[
     ("lt", KeyCode::Char('<')),
 ];
 
-/// Parses one key in vim notation.
-pub fn parse_key(s: &str) -> Result<Key, String> {
-    let mut chars = s.chars();
-    let (Some(first), rest) = (chars.next(), chars.as_str()) else {
+/// Parses a key sequence in vim notation: `gg`, `]c`, `<C-w>j`.
+pub fn parse_keys(s: &str) -> Result<Vec<Key>, String> {
+    let mut keys = Vec::new();
+    let mut rest = s;
+    while let Some(c) = rest.chars().next() {
+        // `<…>` names a key; a lone `<` is itself.
+        let len = match (c, rest.find('>')) {
+            ('<', Some(end)) if end > 1 && !rest.get(1..end).is_some_and(|n| n.contains('<')) => {
+                end + 1
+            }
+            ('<', None) if rest.len() > 1 => return Err(format!("unclosed `<` in `{s}`")),
+            _ => c.len_utf8(),
+        };
+        let (key, tail) = rest.split_at(len);
+        keys.push(
+            match key.strip_prefix('<').and_then(|k| k.strip_suffix('>')) {
+                Some(name) => parse_named(name).ok_or_else(|| format!("unknown key `{key}`"))?,
+                None => Key::new(KeyCode::Char(c), KeyModifiers::NONE),
+            },
+        );
+        rest = tail;
+    }
+    if keys.is_empty() {
         return Err("empty key".into());
-    };
-    if rest.is_empty() {
-        return Ok(Key::new(KeyCode::Char(first), KeyModifiers::NONE));
     }
-    match s.strip_prefix('<').and_then(|n| n.strip_suffix('>')) {
-        Some(name) if !name.contains(['<', '>']) => {
-            parse_named(name).ok_or_else(|| format!("unknown key `{s}`"))
-        }
-        _ if s.starts_with('<') && !s.contains('>') => Err(format!("unclosed `<` in `{s}`")),
-        _ => Err(format!(
-            "`{s}` is more than one key; bindings are single keys"
-        )),
-    }
+    Ok(keys)
 }
 
 fn parse_named(name: &str) -> Option<Key> {
@@ -315,10 +505,31 @@ pub fn format_key(key: Key) -> String {
     format!("<{prefix}{base}>")
 }
 
+/// Writes a key sequence in vim notation.
+pub fn format_keys(keys: &[Key]) -> String {
+    keys.iter().copied().map(format_key).collect()
+}
+
+/// What typed keys come to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resolved {
+    Run(Action),
+    /// The start of longer bindings: wait for the next key.
+    Wait,
+    /// Nothing here.
+    None,
+}
+
+#[derive(Debug, Clone)]
+pub struct Binding {
+    pub keys: Vec<Key>,
+    pub action: Action,
+    pub context: Context,
+}
+
 #[derive(Debug, Clone)]
 pub struct Keymap {
-    /// `(key, action, where)`.
-    bindings: Vec<(Key, Action, Scope)>,
+    bindings: Vec<Binding>,
 }
 
 impl Default for Keymap {
@@ -330,15 +541,14 @@ impl Default for Keymap {
     }
 }
 
-/// `page:h` binds `h` on pages only, `diff:s` in the diff only; a plain
-/// key applies where its action does.
-fn scoped(key: &str, action: Action) -> (&str, Scope) {
-    if let Some(rest) = key.strip_prefix("page:") {
-        (rest, Scope::Page)
-    } else if let Some(rest) = key.strip_prefix("diff:") {
-        (rest, Scope::Diff)
-    } else {
-        (key, action.scope())
+/// `diff:x` binds `x` in the diff; a plain key applies in `home`.
+fn scoped(key: &str, home: Context) -> (&str, Context) {
+    match key.split_once(':') {
+        Some((name, rest)) if !rest.is_empty() => Context::ALL
+            .into_iter()
+            .find(|c| c.name() == name)
+            .map_or((key, home), |c| (rest, c)),
+        _ => (key, home),
     }
 }
 
@@ -362,9 +572,17 @@ impl Keymap {
                 None => action.defaults().iter().map(|s| (*s).to_owned()).collect(),
             };
             for key in keys {
-                let (key, scope) = scoped(&key, action);
-                let key = parse_key(key).map_err(|e| format!("[keys] {}: {e}", action.name()))?;
-                bindings.push((key, action, scope));
+                let (key, context) = scoped(&key, action.context());
+                let at = |e: String| format!("[keys] {}: {e}", action.name());
+                let keys = parse_keys(key).map_err(at)?;
+                if keys.first().and_then(|k| k.digit()).is_some() {
+                    return Err(at(format!("`{key}` starts with a digit, which is a count")));
+                }
+                bindings.push(Binding {
+                    keys,
+                    action,
+                    context,
+                });
             }
         }
         let keymap = Self { bindings };
@@ -372,16 +590,22 @@ impl Keymap {
         Ok(keymap)
     }
 
-    /// Rejects a key bound twice where both bindings apply.
+    /// Rejects two bindings that can be active at once when they're the
+    /// same keys in one context, or one starts the other (it could never
+    /// run).
     fn validate(&self) -> Result<(), String> {
-        for (i, (a, action_a, scope_a)) in self.bindings.iter().enumerate() {
-            for (b, action_b, scope_b) in self.bindings.iter().skip(i + 1) {
-                if a == b && scope_a.overlaps(*scope_b) {
+        for (i, a) in self.bindings.iter().enumerate() {
+            for b in self.bindings.iter().skip(i + 1) {
+                let same = a.keys == b.keys && a.context == b.context;
+                let starts = a.keys != b.keys
+                    && (a.keys.starts_with(&b.keys) || b.keys.starts_with(&a.keys));
+                if (same || starts) && a.context.meets(b.context) {
                     return Err(format!(
-                        "key `{}` ({}) conflicts with {}",
-                        format_key(*a),
-                        action_a.name(),
-                        action_b.name()
+                        "key `{}` ({}) conflicts with `{}` ({})",
+                        format_keys(&a.keys),
+                        a.action.name(),
+                        format_keys(&b.keys),
+                        b.action.name()
                     ));
                 }
             }
@@ -389,20 +613,69 @@ impl Keymap {
         Ok(())
     }
 
-    /// The action `key` runs in `scope`.
-    pub fn resolve(&self, key: Key, scope: Scope) -> Option<Action> {
-        self.bindings
+    /// The bindings active in `stack`, innermost context first; one
+    /// shadowed by an inner binding of the same keys is left out.
+    fn active<'a>(&'a self, stack: &'a [Context]) -> impl Iterator<Item = &'a Binding> {
+        let mut seen: Vec<&[Key]> = Vec::new();
+        stack
             .iter()
-            .find(|(k, _, where_)| *k == key && where_.overlaps(scope))
-            .map(|(_, action, _)| *action)
+            .flat_map(|c| self.bindings.iter().filter(move |b| b.context == *c))
+            .filter(move |b| {
+                let fresh = !seen.contains(&b.keys.as_slice());
+                if fresh {
+                    seen.push(&b.keys);
+                }
+                fresh
+            })
     }
 
-    /// The keys that run `action` in `scope`, for hints.
-    pub fn keys_in(&self, action: Action, scope: Scope) -> impl Iterator<Item = Key> {
+    /// What `keys`, typed so far, do in `stack`.
+    pub fn resolve(&self, keys: &[Key], stack: &[Context]) -> Resolved {
+        let mut longer = false;
+        for b in self.active(stack) {
+            if b.keys == keys {
+                return Resolved::Run(b.action);
+            }
+            longer |= b.keys.starts_with(keys);
+        }
+        if longer {
+            Resolved::Wait
+        } else {
+            Resolved::None
+        }
+    }
+
+    /// What `keys` do in a context not active now, to say where they work.
+    pub fn elsewhere(&self, keys: &[Key]) -> Option<Action> {
         self.bindings
             .iter()
-            .filter(move |(_, a, where_)| *a == action && where_.overlaps(scope))
-            .map(|(key, _, _)| *key)
+            .find(|b| b.keys == keys)
+            .map(|b| b.action)
+    }
+
+    /// The key sequences that run `action` in `stack`.
+    pub fn keys_in<'a>(
+        &'a self,
+        action: Action,
+        stack: &'a [Context],
+    ) -> impl Iterator<Item = &'a [Key]> {
+        self.active(stack)
+            .filter(move |b| b.action == action)
+            .map(|b| b.keys.as_slice())
+    }
+
+    /// What can follow `typed` in `stack`: the rest of each binding and
+    /// what it does.
+    pub fn continuations(&self, typed: &[Key], stack: &[Context]) -> Vec<(Vec<Key>, Action)> {
+        self.active(stack)
+            .filter(|b| b.keys.len() > typed.len() && b.keys.starts_with(typed))
+            .map(|b| {
+                (
+                    b.keys.get(typed.len()..).unwrap_or_default().to_vec(),
+                    b.action,
+                )
+            })
+            .collect()
     }
 }
 
@@ -439,6 +712,68 @@ pub fn pretty(key: Key) -> String {
     }
 }
 
+/// A key sequence as people write it: `gg`, `]c`, `ctrl-w j`.
+pub fn pretty_keys(keys: &[Key]) -> String {
+    let plain = keys
+        .iter()
+        .all(|k| k.mods.is_empty() && matches!(k.code, KeyCode::Char(c) if c != ' '));
+    let shown: Vec<String> = keys.iter().copied().map(pretty).collect();
+    shown.join(if plain { "" } else { " " })
+}
+
+#[cfg(test)]
+/// The README's key tables: written from the default keymap, so they
+/// can't say anything the keys don't do (a test compares them).
+pub fn readme_tables() -> String {
+    let keymap = Keymap::default();
+    let mut out = String::new();
+    for context in Context::ALL {
+        let keys_of = |action: Action| -> Vec<String> {
+            (keymap.bindings.iter())
+                .filter(|b| b.action == action && b.context == context)
+                .map(|b| format!("`{}`", pretty_keys(&b.keys)))
+                .collect()
+        };
+        let rows: Vec<(String, &str)> = Action::ALL
+            .iter()
+            .filter(|a| !Action::OPEN_TABS.get(1..).unwrap_or_default().contains(a))
+            .filter_map(|&action| {
+                let mut keys = keys_of(action);
+                // Open tabs 1 to 9 are one row.
+                if action == Action::OpenTab1 {
+                    keys.extend(keys_of(Action::OpenTab9));
+                    return Some((keys.join("–"), "Go to open tab 1 to 9"));
+                }
+                (!keys.is_empty()).then(|| (keys.join(" "), action.description()))
+            })
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        let place = context.place();
+        let mut title = place.chars();
+        let title: String = title
+            .next()
+            .map(|c| c.to_uppercase().chain(title).collect())
+            .unwrap_or_default();
+        let width = rows
+            .iter()
+            .map(|(k, _)| k.chars().count())
+            .max()
+            .unwrap_or(0)
+            .max(4);
+        out.push_str(&format!("**{title}** (`{}:`)\n\n", context.name()));
+        out.push_str(&format!("| {:width$} | Action |\n", "Keys"));
+        out.push_str(&format!("| {} | ------ |\n", "-".repeat(width)));
+        for (keys, what) in rows {
+            let pad = width.saturating_sub(keys.chars().count());
+            out.push_str(&format!("| {keys}{} | {what} |\n", " ".repeat(pad)));
+        }
+        out.push('\n');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,6 +781,22 @@ mod tests {
     fn key(c: char) -> Key {
         Key::new(KeyCode::Char(c), KeyModifiers::NONE)
     }
+
+    fn keys(s: &str) -> Vec<Key> {
+        parse_keys(s).unwrap()
+    }
+
+    fn parse_key(s: &str) -> Result<Key, String> {
+        match parse_keys(s)?.as_slice() {
+            [key] => Ok(*key),
+            _ => Err(format!("`{s}` is more than one key")),
+        }
+    }
+
+    const PAGE: &[Context] = &[Context::Page, Context::Global];
+    const LIST: &[Context] = &[Context::List, Context::Page, Context::Global];
+    const DIFF: &[Context] = &[Context::Diff, Context::Global];
+    const TREE: &[Context] = &[Context::Tree, Context::Diff, Context::Global];
 
     #[test]
     fn parses_vim_notation() {
@@ -458,35 +809,29 @@ mod tests {
             parse_key("<c-D>").unwrap(),
             Key::new(KeyCode::Char('d'), KeyModifiers::CONTROL)
         );
-        assert_eq!(
-            parse_key("<Enter>").unwrap(),
-            Key::new(KeyCode::Enter, KeyModifiers::NONE)
-        );
         assert_eq!(parse_key("<lt>").unwrap(), key('<'));
         assert_eq!(parse_key("<").unwrap(), key('<'));
+        assert_eq!(parse_key("<C-i>").unwrap(), parse_key("<Tab>").unwrap());
+        assert_eq!(keys("gg"), [key('g'), key('g')]);
+        assert_eq!(
+            keys("<C-w>j"),
+            [
+                Key::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+                key('j')
+            ]
+        );
         parse_key("<Nope>").unwrap_err();
         parse_key("<C-d").unwrap_err();
-        parse_key("").unwrap_err();
-    }
-
-    /// Bindings are single keys: a sequence is an error that says so.
-    #[test]
-    fn sequences_are_rejected() {
-        for s in ["gg", "]h", "<C-d><C-u>", "<Esc>j"] {
-            let err = parse_key(s).unwrap_err();
-            assert!(err.contains("single keys"), "{s}: {err}");
-        }
-        let overrides = HashMap::from([("sort".to_owned(), vec!["zs".to_owned()])]);
-        let err = Keymap::with_overrides(&overrides).unwrap_err();
-        assert!(err.contains("single keys"), "{err}");
+        parse_key("gg").unwrap_err();
+        parse_keys("").unwrap_err();
     }
 
     #[test]
     fn formats_round_trip() {
         for s in [
-            "G", "<C-d>", "<Enter>", "<Esc>", "<S-Tab>", "<lt>", "?", ":",
+            "G", "<C-d>", "<Enter>", "<Esc>", "<S-Tab>", "<lt>", "?", ":", "gg", "]c", "<C-w>j",
         ] {
-            assert_eq!(format_key(parse_key(s).unwrap()), s);
+            assert_eq!(format_keys(&keys(s)), s);
         }
     }
 
@@ -494,6 +839,8 @@ mod tests {
     fn shift_is_folded_into_chars() {
         let event = KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT);
         assert_eq!(Key::from(event), key('G'));
+        let event = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
+        assert_eq!(parse_key("<S-Tab>").unwrap(), Key::from(event));
     }
 
     #[test]
@@ -501,217 +848,132 @@ mod tests {
         Keymap::with_overrides(&HashMap::new()).unwrap();
     }
 
-    /// The README's key tables say what the keys do. Each row is listed
-    /// here with the actions it documents; the keys must run them, and a
-    /// row added to the README must be added here.
+    /// The README's key tables are the keymap's.
     #[test]
     fn readme_key_tables_match_the_keymap() {
-        use Action::*;
-        let page: &[(&str, &[Action])] = &[
-            ("`↑` `↓` (`j` `k`)", &[Up, Down]),
-            ("`←` `→` (`h` `l`)", &[PrevTab, NextTab]),
-            ("`Enter`", &[Open]),
-            ("`Esc` `⌫` `alt-←`", &[Back]),
-            ("`alt-→`", &[Forward]),
-            ("`PgUp` `PgDn`", &[PageUp, PageDown]),
-            ("`Home` `End` (`g` `G`)", &[Top, Bottom]),
-            ("`1`–`9`", &[Tab1, Tab9]),
-            ("`Space` `?`", &[Menu]),
-            ("`/`", &[Search]),
-            ("`f`", &[FindFile]),
-            ("`b`", &[Branch]),
-            ("`c`", &[Comment]),
-            ("`s`", &[Star]),
-            ("`M`", &[Merge]),
-            ("`A`", &[Approve]),
-            ("`W`", &[ReadyForReview]),
-            ("`B`", &[UpdateBranch]),
-            ("`X`", &[Close]),
-            ("`ctrl-r`", &[Rerun]),
-            ("`alt-↑` `alt-↓`", &[MoveSectionUp, MoveSectionDown]),
-            ("`Delete`", &[Delete]),
-            ("`ctrl-z`", &[UndoDelete]),
-            ("`n` `p`", &[NextHunk, PrevHunk]),
-            ("`o`", &[OpenInBrowser]),
-            ("`y`", &[Copy]),
-            ("`i`", &[Hints]),
-            ("`I`", &[HintsBrowser]),
-            ("`u`", &[UpLevel]),
-            ("`T`", &[OpenInTab]),
-            ("`[` `]`", &[PrevOpenTab, NextOpenTab]),
-            ("`alt-1`–`alt-9`", &[OpenTab1, OpenTab9]),
-            ("`ctrl-w`", &[CloseTab]),
-            ("`H`", &[GoHome]),
-            ("`r`", &[Refresh]),
-            ("`:` `ctrl-k`", &[CommandPalette]),
-            ("`q` `ctrl-c`", &[Quit]),
-        ];
-        let diff: &[(&str, &[Action])] = &[
-            ("`n` `p`", &[NextHunk, PrevHunk]),
-            ("`N` `P`", &[NextThread, PrevThread]),
-            ("`⇧↓` `⇧↑`", &[NextFile, PrevFile]),
-            ("`⇧←` `⇧→`", &[OldSide, NewSide]),
-            ("`⇥`", &[SwitchPane]),
-            ("`U`", &[NextUnviewed]),
-            ("`v`", &[ToggleViewed]),
-            ("`m`", &[MarkReviewed]),
-            ("`c`", &[Comment]),
-            ("`C`", &[FileComment]),
-            ("`R`", &[ResolveThread]),
-            ("`x`", &[VisualLines]),
-            ("`e`", &[ExpandContext]),
-            ("`F`", &[FullFile]),
-            ("`S`", &[ToggleSplit]),
-            ("`t`", &[ToggleTree]),
-            ("`J`", &[JumpMove]),
-            ("`w`", &[IgnoreWhitespace]),
-            ("`a`", &[SubmitReview]),
-            ("`Delete`", &[Delete]),
-            ("`ctrl-z`", &[UndoDelete]),
-        ];
-        let notation = |shown: &str| match shown {
-            "↑" => "<Up>".to_owned(),
-            "↓" => "<Down>".to_owned(),
-            "←" => "<Left>".to_owned(),
-            "→" => "<Right>".to_owned(),
-            "⌫" => "<BS>".to_owned(),
-            "⇥" => "<Tab>".to_owned(),
-            "⇧↓" => "<S-Down>".to_owned(),
-            "⇧↑" => "<S-Up>".to_owned(),
-            "⇧←" => "<S-Left>".to_owned(),
-            "⇧→" => "<S-Right>".to_owned(),
-            "PgUp" => "<PageUp>".to_owned(),
-            "PgDn" => "<PageDown>".to_owned(),
-            "alt-←" => "<A-Left>".to_owned(),
-            "alt-→" => "<A-Right>".to_owned(),
-            "alt-↑" => "<A-Up>".to_owned(),
-            "alt-↓" => "<A-Down>".to_owned(),
-            "ctrl-k" => "<C-k>".to_owned(),
-            "ctrl-r" => "<C-r>".to_owned(),
-            "ctrl-c" => "<C-c>".to_owned(),
-            "ctrl-z" => "<C-z>".to_owned(),
-            "ctrl-w" => "<C-w>".to_owned(),
-            "alt-1" => "<A-1>".to_owned(),
-            "alt-9" => "<A-9>".to_owned(),
-            s if s.chars().count() > 1 => format!("<{s}>"),
-            s => s.to_owned(),
-        };
         let readme = include_str!("../README.md");
-        let keys = readme
-            .split_once("\n## Keys\n")
-            .and_then(|(_, rest)| rest.split_once("\n## Configuration"))
-            .map(|(keys, _)| keys)
-            .unwrap();
-        let (page_table, diff_table) = keys.split_once("Reviewing,").unwrap();
-        let keymap = Keymap::default();
-        for (table, documented, scope) in [
-            (page_table, page, Scope::Page),
-            (diff_table, diff, Scope::Diff),
-        ] {
-            let rows: Vec<&str> = table
-                .lines()
-                .filter(|l| l.starts_with("| `"))
-                .filter_map(|l| l.split('|').nth(1))
-                .map(str::trim)
-                .collect();
-            let listed: Vec<&str> = documented.iter().map(|(k, _)| *k).collect();
-            assert_eq!(rows, listed, "README rows and this test's list differ");
-            for (cell, actions) in documented {
-                for shown in cell.split('`').skip(1).step_by(2) {
-                    let key = parse_key(&notation(shown)).unwrap();
-                    let does = keymap.resolve(key, scope);
-                    assert!(
-                        actions.iter().any(|a| does == Some(*a)),
-                        "README says `{shown}` does {actions:?}; it does {does:?}"
-                    );
-                }
-            }
-        }
-    }
-
-    /// What terminals send for Shift-Tab matches `<S-Tab>`.
-    #[test]
-    fn shift_tab_matches_what_terminals_send() {
-        let event = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
-        assert_eq!(parse_key("<S-Tab>").unwrap(), Key::from(event));
-        assert_eq!(
-            parse_key("<C-S-Tab>").unwrap(),
-            Key::new(KeyCode::BackTab, KeyModifiers::CONTROL)
+        assert!(
+            readme.contains(&readme_tables()),
+            "README's key tables are out of date; they should read:\n\n{}",
+            readme_tables()
         );
     }
 
     #[test]
-    fn resolves_defaults() {
+    fn sequences_wait_then_run() {
         let keymap = Keymap::default();
-        assert_eq!(keymap.resolve(key('j'), Scope::Page), Some(Action::Down));
-        assert_eq!(keymap.resolve(key('g'), Scope::Page), Some(Action::Top));
-        assert_eq!(keymap.resolve(key('z'), Scope::Page), None);
+        assert_eq!(keymap.resolve(&keys("g"), PAGE), Resolved::Wait);
+        assert_eq!(
+            keymap.resolve(&keys("gg"), PAGE),
+            Resolved::Run(Action::Top)
+        );
+        assert_eq!(keymap.resolve(&keys("gz"), PAGE), Resolved::None);
+        assert_eq!(keymap.resolve(&keys("z"), PAGE), Resolved::Wait);
+        assert_eq!(
+            keymap.resolve(&keys("]c"), DIFF),
+            Resolved::Run(Action::NextHunk)
+        );
+        assert_eq!(keymap.resolve(&keys("]c"), PAGE), Resolved::None);
+        assert_eq!(keymap.elsewhere(&keys("]c")), Some(Action::NextHunk));
+        let next: Vec<_> = keymap.continuations(&keys("g"), PAGE);
+        assert!(
+            next.iter()
+                .any(|(k, a)| *k == keys("t") && *a == Action::NextTab)
+        );
+        assert!(
+            !next.iter().any(|(_, a)| *a == Action::Blame),
+            "gb is the file's"
+        );
     }
 
     #[test]
-    fn every_key_means_one_thing_everywhere() {
+    fn inner_contexts_win() {
         let keymap = Keymap::default();
-        for (i, (a, action_a, _)) in keymap.bindings.iter().enumerate() {
-            for (b, action_b, _) in &keymap.bindings[i + 1..] {
-                assert!(
-                    a != b,
-                    "{} is both {} and {}",
-                    format_key(*a),
-                    action_a.name(),
-                    action_b.name()
-                );
-            }
-        }
-        // The verbs do the same on a page and in the diff.
-        for c in ['f', 'c', 'o', 'y', '/', 'u'] {
-            assert_eq!(
-                keymap.resolve(key(c), Scope::Page),
-                keymap.resolve(key(c), Scope::Diff),
-                "{c}"
-            );
-        }
-        // A page key can't shadow a global one.
-        let clash = HashMap::from([("star".to_owned(), vec!["q".to_owned()])]);
+        assert_eq!(
+            keymap.resolve(&keys("t"), LIST),
+            Resolved::Run(Action::ToggleState)
+        );
+        assert_eq!(
+            keymap.resolve(&keys("t"), DIFF),
+            Resolved::Run(Action::ToggleTree)
+        );
+        assert_eq!(
+            keymap.resolve(&keys("h"), DIFF),
+            Resolved::Run(Action::ScrollLeft)
+        );
+        assert_eq!(
+            keymap.resolve(&keys("h"), TREE),
+            Resolved::Run(Action::Fold)
+        );
+        assert_eq!(
+            keymap.resolve(&keys("<Tab>"), PAGE),
+            Resolved::Run(Action::Forward)
+        );
+        assert_eq!(
+            keymap.resolve(&keys("<Tab>"), DIFF),
+            Resolved::Run(Action::SwitchPane)
+        );
+        assert_eq!(
+            keymap.resolve(&keys("<Esc>"), PAGE),
+            Resolved::Run(Action::Cancel)
+        );
+        assert!(keymap.keys_in(Action::ScrollLeft, TREE).next().is_none());
+    }
+
+    #[test]
+    fn rejects_bad_bindings() {
+        let reject = |name: &str, key: &str, says: &str| {
+            let overrides = HashMap::from([(name.to_owned(), vec![key.to_owned()])]);
+            let err = Keymap::with_overrides(&overrides).unwrap_err();
+            assert!(err.contains(says), "{name} = {key}: {err}");
+        };
+        reject("fly", "f", "unknown action");
+        reject("down", "k", "conflicts");
+        // `g` alone would make `gg` unreachable.
+        reject("star", "g", "conflicts");
+        reject("star", "3", "count");
+        reject("star", "<Nope>", "unknown key");
+        reject("star", "<C-d", "unclosed");
+        // An inner context may shadow a global key, as the diff's `⇥`
+        // does `ctrl-i`; it can't start a longer one, though.
+        let shadow = HashMap::from([("star".to_owned(), vec!["page:q".to_owned()])]);
+        let keymap = Keymap::with_overrides(&shadow).unwrap();
+        assert_eq!(
+            keymap.resolve(&keys("q"), PAGE),
+            Resolved::Run(Action::Star)
+        );
+        assert_eq!(
+            keymap.resolve(&keys("q"), DIFF),
+            Resolved::Run(Action::Quit)
+        );
+        let scoped = HashMap::from([("star".to_owned(), vec!["page:z".to_owned()])]);
         assert!(
-            Keymap::with_overrides(&clash)
+            Keymap::with_overrides(&scoped)
                 .unwrap_err()
                 .contains("conflicts")
         );
-        // Config can scope a binding.
-        let scoped = HashMap::from([("star".to_owned(), vec!["page:z".to_owned()])]);
-        Keymap::with_overrides(&scoped).unwrap();
+    }
+
+    #[test]
+    fn overrides_replace_defaults() {
+        let overrides = HashMap::from([("down".to_owned(), vec!["<C-n>".to_owned()])]);
+        let keymap = Keymap::with_overrides(&overrides).unwrap();
+        let ctrl_n = keys("<C-n>");
+        assert_eq!(keymap.resolve(&ctrl_n, PAGE), Resolved::Run(Action::Down));
+        assert_eq!(keymap.resolve(&keys("j"), PAGE), Resolved::None);
+        assert!(keymap.keys_in(Action::Down, PAGE).eq([ctrl_n.as_slice()]));
     }
 
     #[test]
     fn keys_read_like_people_write_them() {
         assert_eq!(pretty(parse_key("<Enter>").unwrap()), "↵");
-        assert_eq!(pretty(parse_key("<C-d>").unwrap()), "ctrl-d");
-        assert_eq!(pretty(parse_key("<Space>").unwrap()), "space");
-        assert_eq!(pretty(parse_key("G").unwrap()), "G");
-    }
-
-    #[test]
-    fn overrides_replace_defaults() {
-        let overrides = HashMap::from([("down".to_owned(), vec!["z".to_owned()])]);
-        let keymap = Keymap::with_overrides(&overrides).unwrap();
-        assert_eq!(keymap.resolve(key('z'), Scope::Page), Some(Action::Down));
-        assert_eq!(keymap.resolve(key('j'), Scope::Page), None);
-        assert!(keymap.keys_in(Action::Down, Scope::Page).eq([key('z')]));
-    }
-
-    #[test]
-    fn rejects_bad_overrides() {
-        let unknown = HashMap::from([("fly".to_owned(), vec!["f".to_owned()])]);
-        assert!(
-            Keymap::with_overrides(&unknown)
-                .unwrap_err()
-                .contains("unknown action")
-        );
-        let conflict = HashMap::from([("down".to_owned(), vec!["k".to_owned()])]);
-        assert!(
-            Keymap::with_overrides(&conflict)
-                .unwrap_err()
-                .contains("conflicts")
+        assert_eq!(pretty_keys(&keys("<C-d>")), "ctrl-d");
+        assert_eq!(pretty_keys(&keys("gg")), "gg");
+        assert_eq!(pretty_keys(&keys("]c")), "]c");
+        assert_eq!(pretty_keys(&keys("<C-w>j")), "ctrl-w j");
+        assert_eq!(
+            Action::ScrollLeft.not_here(),
+            "Scroll left: works in files, in job logs and in Files changed"
         );
     }
 
@@ -742,19 +1004,19 @@ mod tests {
         }
 
         proptest! {
-            /// Writing a key down and reading it back gives the same key.
+            /// Writing keys down and reading them back gives the same keys.
             #[test]
-            fn keys_round_trip(key in key()) {
-                let written = format_key(key);
-                prop_assert_eq!(parse_key(&written), Ok(key), "{}", written);
+            fn keys_round_trip(keys in prop::collection::vec(key(), 1..4)) {
+                let written = format_keys(&keys);
+                prop_assert_eq!(parse_keys(&written), Ok(keys), "{}", written);
             }
 
             /// Any accepted spelling settles on one canonical form.
             #[test]
-            fn parsing_settles(s in "<[A-Za-z-]{1,8}>|[ -~]") {
-                if let Ok(key) = parse_key(&s) {
-                    let canonical = format_key(key);
-                    let again = parse_key(&canonical).map(format_key);
+            fn parsing_settles(s in "(<[A-Za-z-]{1,8}>|[ -~]){1,3}") {
+                if let Ok(keys) = parse_keys(&s) {
+                    let canonical = format_keys(&keys);
+                    let again = parse_keys(&canonical).map(|k| format_keys(&k));
                     prop_assert_eq!(again, Ok(canonical));
                 }
             }

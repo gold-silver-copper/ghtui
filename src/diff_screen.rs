@@ -12,7 +12,7 @@ use crate::store::ReviewState;
 use crate::ui::annotations::Annotation;
 use crate::ui::bars::Notice;
 use crate::ui::diff_doc::{Doc, DocInputs, Note, Pos, Row, ViewOptions, Viewed};
-use crate::ui::file_tree::{TreeRow, row_of_file, tree_rows};
+use crate::ui::file_tree::{TreeRow, row_of_file, tree_rows, unfolded};
 use crate::ui::pages::url as links;
 use crate::ui::text::short_sha;
 use ratatui::layout::Rect;
@@ -96,6 +96,10 @@ impl std::fmt::Display for DiffOf {
     }
 }
 
+/// Columns `h`/`l` scroll code sideways, and the most it scrolls.
+const SHIFT: usize = 8;
+const MAX_SHIFT: usize = 400;
+
 /// Split view turns on automatically from this diff-pane width.
 pub const SPLIT_MIN_WIDTH: u16 = 160;
 
@@ -141,6 +145,10 @@ pub struct DiffScreen {
     pub search: Option<String>,
     /// Where a visual line selection started.
     pub selection: Option<Pos>,
+    /// The file tree's folded folders, by path.
+    pub folded: HashSet<String>,
+    /// Columns code is scrolled left by.
+    pub shift: usize,
     /// What a link pointed at, to go to once it's loaded: a file
     /// (`diff-<hash>`, GitHub's SHA-256 of its path) or a review comment
     /// (`discussion_r<id>`, `r<id>`).
@@ -160,6 +168,8 @@ impl DiffScreen {
             tree_scroll: 0,
             search: None,
             selection: None,
+            folded: HashSet::new(),
+            shift: 0,
             anchor: None,
         }
     }
@@ -461,12 +471,18 @@ pub fn apply(
     let lay = layout(content, screen.prefs.tree_visible);
     let half = (usize::from(lay.diff.height) / 2).max(1).cast_signed();
     let tree_focused = screen.focus == Pane::Tree && lay.tree.is_some();
-    // While searching, n and p go through the matches.
-    let action = match action {
-        Action::NextHunk if screen.search.is_some() => Action::SearchNext,
-        Action::PrevHunk if screen.search.is_some() => Action::SearchPrev,
-        action => action,
-    };
+    let tree = unfolded(&state.tree, &screen.folded);
+    let before = (screen.top, screen.cursor, screen.shift);
+    let scrolls = matches!(
+        action,
+        Action::ScrollDown
+            | Action::ScrollUp
+            | Action::ScrollCenter
+            | Action::ScrollTop
+            | Action::ScrollBottom
+            | Action::ScrollLeft
+            | Action::ScrollRight
+    );
     let mut cmds = Vec::new();
     match action {
         // A page is two half pages, so the cursor keeps its place on screen.
@@ -525,10 +541,10 @@ pub fn apply(
                 Action::Top => isize::MIN,
                 _ => isize::MAX,
             };
-            let last = state.tree.len().saturating_sub(1);
+            let last = tree.len().saturating_sub(1);
             screen.tree_selected = screen.tree_selected.saturating_add_signed(delta).min(last);
             // The diff follows the tree selection.
-            if let Some(TreeRow::File { index, .. }) = state.tree.get(screen.tree_selected) {
+            if let Some(TreeRow::File { index, .. }) = tree.get(screen.tree_selected) {
                 jump(
                     screen,
                     Pos {
@@ -537,6 +553,69 @@ pub fn apply(
                     },
                 );
             }
+        }
+        Action::Fold | Action::Unfold | Action::Open if tree_focused => {
+            match (action, tree.get(screen.tree_selected)) {
+                (
+                    Action::Fold,
+                    Some(TreeRow::Dir {
+                        path,
+                        folded: false,
+                        ..
+                    }),
+                ) => {
+                    screen.folded.insert(path.clone());
+                }
+                (
+                    Action::Unfold | Action::Open,
+                    Some(TreeRow::Dir {
+                        path, folded: true, ..
+                    }),
+                ) => {
+                    screen.folded.remove(path);
+                }
+                // Into an open folder: its first row.
+                (Action::Unfold, Some(TreeRow::Dir { .. })) => {
+                    screen.tree_selected =
+                        (screen.tree_selected + 1).min(tree.len().saturating_sub(1));
+                }
+                // From a file or a folded folder, out to the folder it's in.
+                (Action::Fold, Some(row)) => {
+                    let depth = row.depth();
+                    let parent = (0..screen.tree_selected)
+                        .rev()
+                        .find(|&i| tree.get(i).is_some_and(|r| r.depth() < depth));
+                    match parent {
+                        Some(i) => screen.tree_selected = i,
+                        None => notice.info("Already at the top"),
+                    }
+                }
+                (_, Some(TreeRow::File { .. })) => screen.focus = Pane::Diff,
+                _ => {}
+            }
+        }
+        Action::ScrollLeft => screen.shift = screen.shift.saturating_sub(SHIFT),
+        Action::ScrollRight => screen.shift = screen.shift.saturating_add(SHIFT).min(MAX_SHIFT),
+        Action::ScrollDown | Action::ScrollUp => {
+            let by = if action == Action::ScrollDown { 1 } else { -1 };
+            screen.top = state.doc.offset(screen.top, by);
+            // The cursor stays on screen.
+            let (doc, height) = (&state.doc, usize::from(lay.diff.height).max(1));
+            let (top, cursor) = (doc.to_global(screen.top), doc.to_global(screen.cursor));
+            if cursor < top {
+                screen.cursor = screen.top;
+            } else if cursor >= top + height {
+                screen.cursor = doc.offset(screen.top, (height - 1).cast_signed());
+            }
+        }
+        Action::ScrollCenter | Action::ScrollTop | Action::ScrollBottom => {
+            let height = usize::from(lay.diff.height).max(1).cast_signed();
+            let above = match action {
+                Action::ScrollTop => 0,
+                Action::ScrollBottom => height - 1,
+                _ => height / 2,
+            };
+            screen.top = state.doc.offset(screen.cursor, -above);
         }
         Action::Down => screen.cursor = state.doc.offset(screen.cursor, 1),
         Action::Up => screen.cursor = state.doc.offset(screen.cursor, -1),
@@ -657,6 +736,13 @@ pub fn apply(
             }
         }
         _ => notice.info(action.not_here()),
+    }
+    if scrolls && (screen.top, screen.cursor, screen.shift) == before {
+        notice.info(match action {
+            Action::ScrollLeft => "Already at the left edge",
+            Action::ScrollRight => "Already at the right edge",
+            _ => "Already there",
+        });
     }
     cmds
 }
@@ -871,7 +957,7 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
     screen.top = doc.to_pos(top);
 
     if screen.focus == Pane::Diff
-        && let Some(row) = row_of_file(&state.tree, screen.cursor.file)
+        && let Some(row) = row_of_file(&unfolded(&state.tree, &screen.folded), screen.cursor.file)
     {
         screen.tree_selected = row;
     }

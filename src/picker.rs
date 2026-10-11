@@ -238,10 +238,12 @@ impl State {
                 ));
             }
         }
-        let scope = self.scope();
+        let contexts = self.contexts();
         let doables = self.doables();
         let mut order: Vec<Action> = doables.iter().map(|d| d.action).collect();
-        order.extend(Action::ALL.iter().filter(|a| a.scope().overlaps(scope)));
+        // Not moving around: those are keys, not commands to look for.
+        order
+            .extend((Action::ALL.iter()).filter(|a| contexts.contains(&a.context()) && !a.moves()));
         let mut actions: Vec<(usize, Action)> = Vec::new();
         for a in order {
             if a == Action::CommandPalette || actions.iter().any(|(_, b)| *b == a) {
