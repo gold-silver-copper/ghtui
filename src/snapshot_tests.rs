@@ -1220,6 +1220,33 @@ fn list_filter_light() {
     insta::assert_snapshot!(render(&state));
 }
 
+/// A filter is typed into the list's own field, not the header's, and
+/// Enter applies it.
+#[test]
+fn a_filter_is_edited_in_place() {
+    let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
+    press(&mut state, "2gt/label:bug");
+    let Some(Overlay::Search(sb)) = &state.overlay else {
+        panic!("not filtering");
+    };
+    let (field, in_place) = state.search_field(sb);
+    assert!(in_place);
+    let (w, h) = state.size;
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+    terminal.draw(|frame| view(&state, frame, NOW)).unwrap();
+    let buf = terminal.backend().buffer();
+    let row = |r: ratatui::layout::Rect| -> String {
+        (r.left()..r.right())
+            .map(|x| buf[(x, r.y)].symbol())
+            .collect()
+    };
+    assert!(row(field).contains("⌕ is:open label:bug"), "{}", row(field));
+    assert!(!row(state.header_search()).contains("label:bug"));
+    press(&mut state, "<Enter>");
+    let query = state.route().and_then(Route::list_query);
+    assert_eq!(query, Some("is:open label:bug"));
+}
+
 #[test]
 fn profile_stars_dark() {
     insta::assert_snapshot!(render(&with_profile(Mode::Dark, ProfileTab::Stars)));
@@ -1841,7 +1868,7 @@ pub(crate) mod diff {
     fn every_screen_survives_every_size() {
         use super::{
             DataKey, Overlay, ProfileTab, fetched, ghtui, with_file, with_home, with_issue,
-            with_issues, with_pr, with_profile, with_repo, with_repo_search,
+            with_issues, with_job, with_pr, with_profile, with_repo, with_repo_search,
         };
         use crate::browse::Data;
         type Build = Box<dyn Fn() -> State>;
@@ -1890,6 +1917,10 @@ pub(crate) mod diff {
             (
                 "list filter",
                 Box::new(move || pressed(with_repo(Mode::Light, tc), "2gt/")),
+            ),
+            (
+                "log search",
+                Box::new(move || pressed(with_job(Mode::Light, None), "/")),
             ),
             (
                 "palette",

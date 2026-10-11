@@ -551,6 +551,12 @@ impl Page {
         self.lines.len().max(aside)
     }
 
+    /// The first line of the main column with a link to `link`.
+    pub fn line_of(&self, link: &Link) -> Option<usize> {
+        let id = *self.link_ids.get(link)?;
+        (self.lines.iter()).position(|l| l.segs.iter().any(|s| s.link == Some(id)))
+    }
+
     /// The item containing `line`.
     pub fn item_at(&self, line: usize) -> Option<usize> {
         self.items

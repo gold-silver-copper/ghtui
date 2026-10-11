@@ -2,7 +2,7 @@
 
 use crate::theme::Bg;
 use crate::ui::bars::{Banner, StatusBar};
-use crate::ui::chrome::{Header, KeyPanel, SearchPanel, TabBar, TitleBar, header_layout};
+use crate::ui::chrome::{Header, KeyPanel, SearchField, SearchPanel, TabBar, TitleBar};
 use crate::ui::overlays::Palette;
 use crate::ui::page::{Link, PageView, columns};
 use crate::ui::{Ctx, PAD_X, PAD_Y, fill};
@@ -39,8 +39,9 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
     // Header: where you are, the search field, you.
     let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
     let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
+    // A filter is typed into the list's own field, not the header's.
     let search_input = match &state.overlay {
-        Some(Overlay::Search(sb)) => Some(&sb.input),
+        Some(Overlay::Search(sb)) if !state.search_field(sb).1 => Some(&sb.input),
         _ => None,
     };
     let placeholder = format!("Type {} to search", state.first_key(Action::SearchGithub));
@@ -263,7 +264,14 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
         }
         Some(Overlay::Search(sb)) => {
             let rows: Vec<_> = state.suggestions(sb).into_iter().map(|(r, _)| r).collect();
-            let field = header_layout(lay.header, &crumbs, &right).search;
+            let (field, in_place) = state.search_field(sb);
+            if in_place {
+                SearchField {
+                    ctx,
+                    input: &sb.input,
+                }
+                .render(field, buf);
+            }
             SearchPanel {
                 ctx,
                 rows: &rows,

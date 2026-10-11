@@ -1354,6 +1354,14 @@ impl State {
         {
             input.insert_str(format!("user:{login} "));
         }
+        // A filter is edited in place, on the page's own field: scrolled
+        // into view.
+        if filter_query.is_some()
+            && let Screen::Page(p) = self.screen_mut()
+            && let Some(line) = p.page.line_of(&Link::Filter)
+        {
+            p.scroll = p.scroll.min(line);
+        }
         self.overlay = Some(Overlay::Search(Box::new(SearchBox {
             input,
             filter: filter_query.is_some(),
@@ -1362,6 +1370,36 @@ impl State {
             remote_for: String::new(),
         })));
         Vec::new()
+    }
+
+    /// Where the search box is typed into: the page's own filter field
+    /// when it filters and the field is in view, else the header's.
+    pub fn search_field(&self, sb: &SearchBox) -> (Rect, bool) {
+        match self.filter_field().filter(|_| sb.filter) {
+            Some(field) => (field, true),
+            None => (self.header_search(), false),
+        }
+    }
+
+    /// The page's filter field (`⌕ is:open`), while it's in view.
+    fn filter_field(&self) -> Option<Rect> {
+        let Screen::Page(p) = self.screen() else {
+            return None;
+        };
+        let area = self.page_area();
+        let row = p.page.line_of(&Link::Filter)?.checked_sub(p.scroll)?;
+        let y = area.y.checked_add(u16::try_from(row).ok()?)?;
+        let x = page::columns(&p.page, area).main_x;
+        let width = p.page.width.min(area.right().saturating_sub(x));
+        (y < area.bottom()).then_some(Rect::new(x, y, width, 1))
+    }
+
+    /// The header's search field.
+    pub fn header_search(&self) -> Rect {
+        let chrome = self.chrome();
+        let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
+        let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
+        chrome::header_layout(self.layout().header, &crumbs, &right).search
     }
 
     /// The search box's suggestions: rows to draw, and what choosing each
@@ -2647,11 +2685,7 @@ fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
     // Overlays first: a click outside closes them.
     match &state.overlay {
         Some(Overlay::Search(sb)) => {
-            let lay = state.layout();
-            let chrome = state.chrome();
-            let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
-            let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
-            let field = chrome::header_layout(lay.header, &crumbs, &right).search;
+            let (field, _) = state.search_field(sb);
             let rows = state.suggestions(sb);
             let panel = chrome::SearchPanel {
                 ctx: state.ctx(0),
@@ -2672,6 +2706,10 @@ fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
                 return choose(state, pick);
             }
             state.overlay = None;
+            // Away from a filter, the header's field still searches GitHub.
+            if inside(state.header_search()) {
+                return state.open_search(true);
+            }
             return Vec::new();
         }
         Some(Overlay::Compose(_) | Overlay::Submit(_)) => return Vec::new(),

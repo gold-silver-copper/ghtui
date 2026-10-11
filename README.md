@@ -125,8 +125,8 @@ says where it works.
   Files changed) aren't history: `gt` and `gT` switch them in place, and
   each keeps where you were.
 - `/` searches what's on screen: the page, a file, the diff or a log, and
-  `n` and `N` go through the matches. On a list it filters the list
-  instead. `g/` searches GitHub, as does `:`.
+  `n` and `N` go through the matches. On a list it edits the list's
+  filter instead, in place on the list. `g/` searches GitHub, as does `:`.
 - In a file, `j` and `k` move line by line, `y` copies the line's link,
   `V` selects lines (then `y` copies `#L10-L20`), and `gb` blames the
   file at that line. In the blame, a run of lines opens its commit.

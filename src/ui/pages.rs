@@ -2952,10 +2952,8 @@ pub fn job(
     }
     page.wrapped(meta, 0, Frame::None);
     page.blank();
-    if !at.query.is_empty() {
-        filter_field(page, at.query, at.keys, "search");
-        page.blank();
-    }
+    filter_field(page, at.query, at.keys, "search");
+    page.blank();
     #[expect(
         clippy::disallowed_methods,
         reason = "said under each open step, or in place of the steps"
