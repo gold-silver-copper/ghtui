@@ -134,6 +134,7 @@ impl State {
                     PrTab::Conversation => 0,
                     PrTab::Commits => 1,
                     PrTab::Checks => 2,
+                    PrTab::Review => 4,
                 });
                 c.title = Some(pr.clone());
             }
@@ -473,6 +474,13 @@ impl State {
         c.tabs.push((
             new_tab("±", "Files changed", detail.map(|d| d.changed_files)),
             Target::Files(DiffOf::Pr(pr.clone())),
+        ));
+        c.tabs.push((
+            new_tab("◎", "Review", None),
+            Target::Page(Route::Pr {
+                pr: pr.clone(),
+                tab: PrTab::Review,
+            }),
         ));
     }
 

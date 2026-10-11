@@ -7,7 +7,7 @@ Buffer {
     content: [
         "  ◆ ghtui   o / r                                             ⌕ Type g/ to search                   @octocat  ",
         "  o/r#7                                                                                                       ",
-        "   1 ◌ Conversation   2 ◷ Commits   3 ✓ Checks   4 ± Files changed                                            ",
+        "   1 ◌ Conversation   2 ◷ Commits   3 ✓ Checks   4 ± Files changed   5 ◎ Review                               ",
         "────────────────────────────────────────────────━━━━━━━━━━━━━━━━━━━───────────────────────────────────────────",
         "                            src/math.rs                                                                +2 −9  ",
         " Files  2  +5 −9                      ⋯ 1 unchanged line · e to expand                                        ",
@@ -64,6 +64,9 @@ Buffer {
         x: 50, y: 2, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 53, y: 2, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
         x: 66, y: 2, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 68, y: 2, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: DIM,
+        x: 70, y: 2, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 73, y: 2, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 0, y: 3, fg: Rgb(72, 76, 83), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 48, y: 3, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 67, y: 3, fg: Rgb(72, 76, 83), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,

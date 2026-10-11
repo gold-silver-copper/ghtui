@@ -184,6 +184,7 @@ actions! {
     OpenTab9          "open_tab_9"        ["<A-9>"]                Global "Go to open tab 9";
     GoHome            "go_home"           ["gh"]                   Global "Go home";
     Notifications     "notifications"     ["gn"]                   Global "Your notifications";
+    ReviewGlance      "review_glance"     ["gr"]                   Global "The pull request's review at a glance";
     Search            "search"            ["/"]                    Global "Search what's on screen (on a list, filter it)";
     SearchBack        "search_back"       ["?"]                    Global "Search what's on screen, backwards";
     SearchNext        "search_next"       ["n"]                    Global "Next search match";

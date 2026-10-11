@@ -675,6 +675,10 @@ impl State {
             Screen::Page(p) => {
                 let route = p.route.clone();
                 cmds.extend(self.ensure_route(&route, force));
+                // A Review tab's diff starts again, as Files changed's does.
+                if force && let Some(pr) = browse::glanced(&route) {
+                    self.diffs.remove(&DiffOf::Pr(pr.clone()));
+                }
                 // An issue or pull request list's open and closed counts
                 // are the header's, so refreshing the list refreshes them.
                 if force && let Route::Issues { repo, .. } | Route::Pulls { repo, .. } = &route {
@@ -826,13 +830,17 @@ impl State {
     /// due, and re-runs the diff screen's clamping and prioritization.
     #[must_use]
     pub fn settle_diff(&mut self) -> Vec<Cmd> {
-        let mut cmds = match self.screen() {
-            Screen::Diff(screen)
-                if !self.diffs.contains_key(&screen.of)
-                    && (screen.of.pr())
-                        .is_none_or(|pr| self.prs.get(pr).is_none_or(|r| !r.loading)) =>
+        // A pull request's Review tab shows its diff's threads and drafts.
+        let of = match self.screen() {
+            Screen::Diff(screen) => Some(screen.of.clone()),
+            Screen::Page(p) => browse::glanced(&p.route).cloned().map(DiffOf::Pr),
+        };
+        let mut cmds = match of {
+            Some(of)
+                if !self.diffs.contains_key(&of)
+                    && (of.pr()).is_none_or(|pr| self.prs.get(pr).is_none_or(|r| !r.loading)) =>
             {
-                self.start_diff(&screen.of.clone())
+                self.start_diff(&of)
             }
             _ => Vec::new(),
         };
@@ -1281,6 +1289,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::OpenLink => return nav::open_link(state),
         Action::Notifications => state.info("Notifications aren't here yet"),
+        Action::ReviewGlance => return nav::review_glance(state),
         Action::SearchGithub => return state.open_search(true),
         Action::FindFile if diff.is_some() => return state.open_picker(picker::Kind::DiffFiles),
         Action::FindFile => return state.open_finder(false),
@@ -4262,6 +4271,57 @@ pub(crate) mod tests {
             );
         }
 
+        /// A pull request's Review tab reads the drafts and threads its
+        /// diff does, without the diff open. It lists the drafts and the
+        /// unresolved threads, and a thread opens Files changed on it.
+        #[test]
+        fn the_review_tab_lists_drafts_and_threads_and_opens_them() {
+            let mut s = state();
+            let pr = PrRef::parse("o/r#7").unwrap();
+            let of = DiffOf::Pr(pr.clone());
+            let _ = s.push(Route::Pr {
+                pr: pr.clone(),
+                tab: PrTab::Review,
+            });
+            let detail = Box::new(Ok(crate::snapshot_tests::pr_detail()));
+            let cmds = update(&mut s, Msg::Pr(pr.clone(), detail));
+            assert!(cmds.contains(&Cmd::LoadReview(pr.clone())), "{cmds:?}");
+            assert!(cmds.contains(&Cmd::Api(Api::FetchThreads(pr.clone()))));
+            // The diff job lists the files.
+            s.diffs
+                .insert(of.clone(), crate::snapshot_tests::diff_fixture());
+            let review = ReviewState {
+                pending: vec![crate::fixtures::draft(1, 5, "Name it for what it holds")],
+                ..ReviewState::default()
+            };
+            diff_msg(&mut s, &pr, DiffMsg::ReviewLoaded(Ok(review)));
+            let url = "https://github.com/o/r/pull/7#discussion_r42";
+            let mut open = thread("open", Some(14), false, false);
+            open.comments[0].url = url.into();
+            let threads = vec![thread("done", Some(3), true, false), open];
+            diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(threads)));
+            let text = crate::snapshot_tests::page_text(&s);
+            assert!(text.contains("src/point.rs:5"), "{text}");
+            assert!(text.contains("Name it for what it holds"), "{text}");
+            assert!(text.contains("Thread open"), "{text}");
+            assert!(!text.contains("Thread done"), "resolved: {text}");
+            for _ in 0..9 {
+                if page(&s)
+                    .selected_link()
+                    .and_then(crate::ui::page::Link::url)
+                    == Some(url)
+                {
+                    break;
+                }
+                press(&mut s, "j");
+            }
+            press(&mut s, "<Enter>");
+            let screen = screen(&s);
+            assert_eq!(screen.of, of);
+            let doc = &s.diffs[&of].doc;
+            assert_eq!(doc.annotation_at(screen.cursor), Some(1), "the open thread");
+        }
+
         /// Threads arriving above the cursor push its line down, and the
         /// cursor goes with it.
         #[test]
@@ -4830,7 +4890,7 @@ pub(crate) mod tests {
                     &cmds[..],
                     [Cmd::Api(Api::SetResolved { resolved: true, .. }), ..]
                 ));
-                assert!(s.diffs[&DiffOf::Pr(pr.clone())].inputs().threads[1].resolved);
+                assert!(s.diffs[&DiffOf::Pr(pr.clone())].inputs().thread_list()[1].resolved);
                 diff_msg(
                     &mut s,
                     &pr,
@@ -4840,7 +4900,7 @@ pub(crate) mod tests {
                         result: Err(ApiError::Network("down".into())),
                     },
                 );
-                assert!(!s.diffs[&DiffOf::Pr(pr.clone())].inputs().threads[1].resolved);
+                assert!(!s.diffs[&DiffOf::Pr(pr.clone())].inputs().thread_list()[1].resolved);
                 warns(&s, "");
             }
 

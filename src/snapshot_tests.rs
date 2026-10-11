@@ -254,6 +254,7 @@ fn a_dismissed_review_reads_as_dismissed() {
     let mut activity = fixtures::activity();
     activity.reviews = crate::api::model::Capped::new(
         vec![crate::api::browse::ReviewSummary {
+            id: None,
             author: "hubot".into(),
             state: crate::api::model::ReviewState::Dismissed,
             body: String::new(),
@@ -462,6 +463,31 @@ fn with_pr_checks(mode: Mode) -> State {
     fetched(&mut state, DataKey::PrActivity(pr.clone()), activity);
     let checks = Data::Checks(Box::new(fixtures::checks()));
     fetched(&mut state, DataKey::PrChecks(pr), checks);
+    state
+}
+
+/// A pull request's Review tab: a draft, a thread still open (and one
+/// resolved), the reviewers and what stops the merge.
+fn with_pr_review(mode: Mode) -> State {
+    let mut state = with_pr(mode);
+    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    press(&mut state, "gr");
+    // The diff it starts reads the drafts and threads.
+    let of = crate::diff_screen::DiffOf::Pr(pr.clone());
+    state.diffs.insert(of.clone(), diff::diff_state());
+    let review = crate::store::ReviewState {
+        pending: vec![fixtures::draft(1, 5, "Could this name say what it holds?")],
+        ..Default::default()
+    };
+    let mut open = fixtures::thread("t", Some(14), false, false);
+    open.comments[0].url = format!("{}#discussion_r42", pr.url());
+    let threads = vec![open, fixtures::thread("done", Some(3), true, false)];
+    for msg in [
+        crate::state::DiffMsg::ReviewLoaded(Ok(review)),
+        crate::state::DiffMsg::ThreadsLoaded(Ok(threads)),
+    ] {
+        update(&mut state, Msg::Diff(of.clone(), msg));
+    }
     state
 }
 
@@ -877,6 +903,11 @@ fn repo_wide_terminal_centers_light() {
 #[test]
 fn pr_checks_dark() {
     insta::assert_snapshot!(render(&with_pr_checks(Mode::Dark)));
+}
+
+#[test]
+fn pr_review_dark() {
+    insta::assert_snapshot!(render(&sized(with_pr_review(Mode::Dark), 100, 44)));
 }
 
 #[test]
@@ -1670,7 +1701,10 @@ pub(crate) mod diff {
         thread.comments[0].url = "https://github.com/o/r/pull/7#discussion_r42".into();
         if let Some(diff) = s.diffs.get_mut(&DiffOf::Pr(pr())) {
             diff.edit(|i| {
-                i.threads = vec![crate::fixtures::thread("u", Some(1), false, false), thread];
+                i.threads.finish(Ok(vec![
+                    crate::fixtures::thread("u", Some(1), false, false),
+                    thread,
+                ]));
             });
         }
         let _ = s.settle_diff();
@@ -1710,7 +1744,7 @@ pub(crate) mod diff {
         ));
         let mut thread = crate::fixtures::thread("t", Some(3), false, false);
         thread.comments[0].url = "https://github.com/o/r/pull/7#discussion_r42".into();
-        diff.edit(|i| i.threads = vec![thread]);
+        diff.edit(|i| i.threads.finish(Ok(vec![thread])));
         s.diffs.insert(DiffOf::Pr(pr()), diff);
         let _ = s.settle_diff();
         let waiting = matches!(s.screen(), Screen::Diff(d) if d.anchor.is_some());
@@ -1827,7 +1861,7 @@ pub(crate) mod diff {
             }
         };
         let diff = s.diffs.get_mut(&DiffOf::Pr(pr())).unwrap();
-        diff.edit(|i| i.threads = vec![
+        diff.edit(|i| i.threads.finish(Ok(vec![
             thread(
                 "t1",
                 Some(3),
@@ -1840,7 +1874,7 @@ pub(crate) mod diff {
             ),
             thread("t2", Some(10), true, false, vec![comment("c3", "bob", "Looks fine now.", false)].into()),
             thread("t3", None, false, true, vec![comment("c4", "carol", "Please add tests for this file.", false)].into()),
-        ]);
+        ])));
         diff.edit(|i| {
             i.review = crate::store::ReviewState {
                 pending: vec![crate::store::DraftComment {
@@ -2498,8 +2532,8 @@ mod keys {
     use super::{
         press, render, with_advisories, with_advisory, with_blame, with_branches, with_commit,
         with_compare, with_deployments, with_discussion, with_discussions, with_gist, with_gists,
-        with_issues, with_job, with_milestone, with_milestones, with_pr, with_run, with_search,
-        with_team, with_teams, with_wiki, with_workflow,
+        with_issues, with_job, with_milestone, with_milestones, with_pr, with_pr_review, with_run,
+        with_search, with_team, with_teams, with_wiki, with_workflow,
     };
     use crate::diff_screen::Pane;
     use crate::keymap::Action;
@@ -2510,7 +2544,7 @@ mod keys {
     /// A list, a pull request, the diff with each pane focused (the
     /// selection away from the edges so moving can move), and every page
     /// links lead to.
-    fn screens() -> [(&'static str, Make); 25] {
+    fn screens() -> [(&'static str, Make); 26] {
         fn moved(mut s: State) -> State {
             press(&mut s, "jj");
             s
@@ -2525,6 +2559,7 @@ mod keys {
         [
             ("issue list", || moved(with_issues(Mode::Dark))),
             ("pull request", || moved(with_pr(Mode::Dark))),
+            ("review", || moved(with_pr_review(Mode::Dark))),
             ("diff", || {
                 let at = Pos { file: 0, row: 4 };
                 screen_state(Mode::Dark, ColorDepth::TrueColor, at, Pane::Diff)
@@ -3025,7 +3060,7 @@ fn every_screen_renders_at_odd_sizes() {
 }
 
 /// The page's lines, as text.
-fn page_text(state: &State) -> String {
+pub(crate) fn page_text(state: &State) -> String {
     let crate::state::Screen::Page(p) = state.screen() else {
         panic!("not a page");
     };

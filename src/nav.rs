@@ -196,6 +196,10 @@ impl State {
 
 // ---- the page on screen -----------------------------------------------------------------
 
+/// What a page was built for: the data's generation, its diff's inputs
+/// (a pull request's Review tab shows them), the width and the density.
+type Built = (u64, Option<u64>, u16, bool);
+
 /// The screen of one page: where it is, what's selected, and the page as
 /// last built.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,8 +210,7 @@ pub struct PageScreen {
     /// The selected item, if one is.
     pub selected: Option<usize>,
     page: Arc<Page>,
-    /// The data generation, width and density `page` was built for.
-    built: Option<(u64, u16, bool)>,
+    built: Option<Built>,
     /// Nothing has been selected or scrolled yet: select the first visible
     /// item once the page has items.
     fresh: bool,
@@ -267,7 +270,7 @@ impl PageScreen {
 
     /// Shows a new build of the page, keeping the selection and the view
     /// on the same items.
-    fn show(&mut self, mut page: Page, built: (u64, u16, bool)) {
+    fn show(&mut self, mut page: Page, built: Built) {
         if let Some(query) = &self.find {
             page.mark(query);
         }
@@ -348,13 +351,17 @@ impl State {
     /// keeps its scroll and selection valid.
     pub fn sync_page(&mut self) {
         let width = self.page_width();
-        let built = (self.data_gen, width, self.compact());
         let height = self.page_height();
-        let rebuild = match self.screen() {
-            Screen::Page(p) if p.built != Some(built) => Some(p.route.clone()),
-            Screen::Page(_) => None,
-            Screen::Diff(_) => return,
+        let Screen::Page(p) = self.screen() else {
+            return;
         };
+        let built = (
+            self.data_gen,
+            self.diff_version(&p.route),
+            width,
+            self.compact(),
+        );
+        let rebuild = (p.built != Some(built)).then(|| p.route.clone());
         let page = rebuild.map(|route| self.build_page(&route, width, (self.clock)()));
         if let Screen::Page(p) = self.screen_mut() {
             if let Some(page) = page {
@@ -1086,10 +1093,30 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
     cmds
 }
 
+/// `gr`: the pull request's Review tab, from any of its tabs.
+#[must_use]
+pub fn review_glance(state: &mut State) -> Vec<Cmd> {
+    match state.review_tab() {
+        Some(n) => switch_tab(state, n),
+        None => {
+            state.info("A review at a glance is a pull request's");
+            Vec::new()
+        }
+    }
+}
+
 /// The most page tabs kept to come back to.
 const PARKED: usize = 16;
 
 impl State {
+    /// Which of the page's tabs (from 1) is a pull request's Review tab.
+    fn review_tab(&self) -> Option<usize> {
+        let tabs = self.chrome().tabs;
+        let review =
+            |(_, t): &(_, Target)| matches!(t, Target::Page(r) if browse::glanced(r).is_some());
+        tabs.iter().position(review).map(|i| i + 1)
+    }
+
     /// Keeps a page tab left, as it was.
     fn park(&mut self, screen: Screen) {
         let url = crate::tabs::url(&screen);
@@ -1999,6 +2026,17 @@ impl State {
         }
         if let Screen::Diff(_) = self.screen() {
             out.push(go(Action::Tab1, "Back to the conversation", ""));
+        }
+        if let Some(n) = self.review_tab() {
+            let mut glance = go(
+                Action::ReviewGlance,
+                "The review at a glance: drafts, threads, reviewers",
+                "",
+            );
+            if self.chrome().active == Some(n - 1) {
+                glance.unavailable = Some("this is it".into());
+            }
+            out.push(glance);
         }
         let (open, copy) = match (selected, self.screen()) {
             (Some(_), _) => ("Open the selection on GitHub", "Copy the selection's link"),

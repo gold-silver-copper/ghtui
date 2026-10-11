@@ -7,7 +7,7 @@ Buffer {
     content: [
         "  ◆ ghtui   gold-silver-copper / ghtui            ⌕ Type g/ to search                ⇄ 2 to review  ",
         "   ⇄ Open   Theme: generate syntax palette from seed  #12                                           ",
-        "   1 ◌ Conversation  1    2 ◷ Commits  2    3 ✓ Checks   4 ± Files changed  7                       ",
+        "   1 ◌ Conversation  1    2 ◷ Commits  2    3 ✓ Checks   4 ± Files changed  7    5 ◎ Review         ",
         "──━━━━━━━━━━━━━━━━━━━━━━────────────────────────────────────────────────────────────────────────────",
         "                                                                                                    ",
         "  octocat wants to merge into  main  from  octocat:syntax-palette                                  ▐",
@@ -73,6 +73,9 @@ Buffer {
         x: 61, y: 2, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 75, y: 2, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
         x: 78, y: 2, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 80, y: 2, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: DIM,
+        x: 82, y: 2, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 85, y: 2, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 0, y: 3, fg: Rgb(72, 76, 83), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 2, y: 3, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 24, y: 3, fg: Rgb(72, 76, 83), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,

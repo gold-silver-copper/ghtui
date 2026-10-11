@@ -99,6 +99,17 @@ Comments are kept on disk until you submit, so a crash never loses them.
 Threads that GitHub calls outdated are moved to their line when it still
 exists.
 
+**A pull request's Review tab** (`gr` from any of its tabs) shows where
+its review stands, so you don't have to piece it together:
+- your drafts that aren't submitted yet;
+- the threads still unresolved, in every file;
+- who has reviewed and what they said last, and who is asked and hasn't
+  answered yet;
+- what still stops the merge.
+
+Each row opens what it's about: a draft or a thread in Files changed at
+its line, a review in the conversation.
+
 **Acting on GitHub** asks first wherever it matters (merging, closing,
 cancelling, updating a branch). It asks GitHub what you may do and says
 why when you can't. After a change, the page follows GitHub until it shows
@@ -121,9 +132,9 @@ says where it works.
 - `esc` only cancels: a search, a selection, an overlay or keys typed so
   far. It never leaves the page. Back is `ctrl-o` (or `⌫`), forward is
   `ctrl-i`, which terminals send as `⇥`.
-- A page's own tabs (a pull request's Conversation, Commits, Checks and
-  Files changed) aren't history: `gt` and `gT` switch them in place, and
-  each keeps where you were.
+- A page's own tabs (a pull request's Conversation, Commits, Checks,
+  Files changed and Review) aren't history: `gt` and `gT` switch them in
+  place, and each keeps where you were.
 - `/` searches what's on screen: the page, a file, the diff or a log, and
   `n` and `N` go through the matches. On a list it edits the list's
   filter instead, in place on the list. `g/` searches GitHub, as does `:`.
@@ -186,6 +197,7 @@ says where it works.
 | `alt-1`–`alt-9`      | Go to open tab 1 to 9 |
 | `gh`                 | Go home |
 | `gn`                 | Your notifications |
+| `gr`                 | The pull request's review at a glance |
 | `/`                  | Search what's on screen (on a list, filter it) |
 | `?`                  | Search what's on screen, backwards |
 | `n`                  | Next search match |

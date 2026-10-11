@@ -17,6 +17,7 @@ use crate::ui::Fetched;
 use crate::ui::page::{Page, PageLine, Role, Seg};
 use crate::ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
 
+use crate::diff_screen::{DiffOf, DiffState};
 use crate::keymap::Action;
 use crate::route::Route;
 use crate::state::{Remote, State};
@@ -268,6 +269,18 @@ pub fn paged(route: &Route) -> Option<DataKey> {
 pub enum Need {
     Pr(PrRef),
     Data(DataKey),
+}
+
+/// The pull request whose review a page shows at a glance: its Review
+/// tab's. Its diff's threads and drafts load with it.
+pub(crate) fn glanced(route: &Route) -> Option<&PrRef> {
+    match route {
+        Route::Pr {
+            pr,
+            tab: PrTab::Review,
+        } => Some(pr),
+        _ => None,
+    }
 }
 
 /// What a page needs fetched, but Home's (its sections are the state's:
@@ -533,6 +546,13 @@ impl State {
         self.picked(&DataKey::PrActivity(pr.clone()))
     }
 
+    /// Which state of its diff's inputs a page shows: a pull request's
+    /// Review tab shows the diff's threads and drafts.
+    pub(crate) fn diff_version(&self, route: &Route) -> Option<u64> {
+        let of = DiffOf::Pr(glanced(route)?.clone());
+        self.diffs.get(&of).map(DiffState::version)
+    }
+
     /// How a page's fetches are going (the ones that have started).
     pub(crate) fn fetches(&self, route: &Route) -> impl Iterator<Item = Remote<()>> {
         self.needs(route).into_iter().filter_map(|need| match need {
@@ -602,7 +622,10 @@ impl State {
             Route::Wiki { .. }
             | Route::Discussion { .. }
             | Route::Release { .. }
-            | Route::Advisory { .. } => Page::new(reading),
+            | Route::Advisory { .. }
+            | Route::Pr {
+                tab: PrTab::Review, ..
+            } => Page::new(reading),
             Route::Pr {
                 tab: PrTab::Checks, ..
             }
@@ -765,6 +788,17 @@ impl State {
                         PrTab::Checks => {
                             let checks = f.get(&DataKey::PrChecks(pr.clone()));
                             pages::pr_checks(&mut page, pr, d, checks, now);
+                        }
+                        PrTab::Review => {
+                            let diff = self.diffs.get(&DiffOf::Pr(pr.clone()));
+                            let inputs = diff.map(DiffState::inputs);
+                            let glance = pages::Glance {
+                                threads: Remote::fetched(inputs.map(|i| &i.threads), &retry),
+                                drafts: inputs
+                                    .filter(|i| i.review_loaded)
+                                    .map(|i| i.review.pending.as_slice()),
+                            };
+                            pages::pr_review(&mut page, pr, d, activity, glance, cx);
                         }
                     }
                 }

@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::api::model::{NodeId, PatchFile, PrRef, RepoId, ReviewThread, ViewedFiles};
 use crate::diff::anchor::{Commentable, LinePos, Side};
@@ -23,7 +24,7 @@ use crate::keymap::Action;
 use crate::notice::Notices;
 use crate::picker;
 use crate::review::{annotations, on_submitted};
-use crate::state::{Api, Cmd, DiffMsg, Git, Overlay, Problem, State};
+use crate::state::{Api, Cmd, DiffMsg, Git, Overlay, Problem, Remote, State};
 
 /// What GitHub says about your last submitted review of a PR.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -246,7 +247,7 @@ pub struct DiffInputs {
     /// overwrite it).
     pub review_loaded: bool,
     /// Review threads from GitHub.
-    pub threads: Vec<ReviewThread>,
+    pub threads: Remote<Vec<ReviewThread>>,
     /// Commentable ranges from GitHub's patches of the whole PR, by path.
     pub patches: Arc<HashMap<String, Commentable>>,
     /// Your last submitted review on GitHub.
@@ -267,9 +268,15 @@ impl DiffInputs {
 
     /// Marks thread `id` resolved or not.
     pub fn set_resolved(&mut self, id: &NodeId, resolved: bool) {
-        if let Some(t) = self.threads.iter_mut().find(|t| t.id == *id) {
+        let mut threads = self.threads.data.iter_mut().flatten();
+        if let Some(t) = threads.find(|t| t.id == *id) {
             t.resolved = resolved;
         }
+    }
+
+    /// The review threads, or none while they load.
+    pub fn thread_list(&self) -> &[ReviewThread] {
+        self.threads.data.as_deref().unwrap_or_default()
     }
 
     /// Takes in the saved review state, keeping whatever was done before
@@ -320,6 +327,15 @@ pub struct DiffState {
     requested: HashSet<usize>,
     /// The diff job whose results this shows; older jobs' are ignored.
     pub job: JobId,
+    /// Which state of the inputs this is: new with each change, and never
+    /// another diff's, so what's built from them knows when it's old.
+    version: u64,
+}
+
+/// A version no diff's inputs have had.
+fn next_version() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl DiffState {
@@ -338,6 +354,7 @@ impl DiffState {
             range: None,
             requested: HashSet::new(),
             job: next_job(),
+            version: next_version(),
         }
     }
 
@@ -359,6 +376,11 @@ impl DiffState {
         &self.inputs
     }
 
+    /// Which state of the inputs this is.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
     /// What the doc shows of the inputs and this job's mapping; GitHub's
     /// patches only on the whole PR's diff, whose lines they number.
     fn doc_inputs(&self) -> DocInputs {
@@ -371,13 +393,14 @@ impl DiffState {
             },
             viewed: i.viewed.iter().flat_map(|v| v.states.clone()).collect(),
             reviewed: i.review.reviewed_hunks.iter().cloned().collect(),
-            annotations: annotations(&i.threads, &self.mapped, &i.review.pending),
+            annotations: annotations(i.thread_list(), &self.mapped, &i.review.pending),
         }
     }
 
     /// Changes the inputs with `f` and shows the change.
     pub fn edit<R>(&mut self, f: impl FnOnce(&mut DiffInputs) -> R) -> R {
         let r = f(&mut self.inputs);
+        self.version = next_version();
         self.doc.set_inputs(self.doc_inputs());
         r
     }
@@ -1119,10 +1142,7 @@ fn anchor_pos(anchor: &str, state: &DiffState, pr: bool) -> Option<Option<Landin
     if !pr {
         return Some(None);
     }
-    let threads = &state.inputs().threads;
-    if threads.is_empty() {
-        return None;
-    }
+    let threads = state.inputs().threads.data.as_ref()?;
     let comment = format!("#discussion_r{id}");
     // Annotations list the threads first, in order.
     let Some((index, thread)) = threads
@@ -1382,12 +1402,12 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
                 format!("Drafts for {pr} are not being saved: {err}"),
             );
         }
-        DiffMsg::ThreadsLoaded(Ok(threads)) => {
-            edit(state, of, |i| i.threads = threads);
-        }
-        DiffMsg::ThreadsLoaded(Err(err)) => {
-            tracing::warn!(%pr, %err, "review threads fetch failed");
-            state.error(format!("Couldn't load review threads: {err}"));
+        DiffMsg::ThreadsLoaded(result) => {
+            if let Err(err) = &result {
+                tracing::warn!(%pr, %err, "review threads fetch failed");
+                state.error(format!("Couldn't load review threads: {err}"));
+            }
+            edit(state, of, |i| i.threads.finish(result));
         }
         DiffMsg::PatchesLoaded(Ok(patches)) => {
             let commentable = |f: PatchFile| Some((f.filename, Commentable::from_patch(&f.patch?)));

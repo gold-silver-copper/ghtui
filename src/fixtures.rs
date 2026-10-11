@@ -8,13 +8,14 @@ use crate::api::browse::{
     DiscussionDetail, DiscussionHit, DiscussionList, DiscussionSummary, EntryKind, Gist, GistFile,
     GistSummary, IssueDetail, IssueKind, IssueState, IssueSummary, Job, JobSummary, Login,
     MilestoneDetail, MilestoneInfo, MilestoneList, MonthActivity, Person, PrActivity, PrState,
-    Profile, Readme, Release, RepoOverview, RepoSummary, Results, ReviewSummary, RunSummary,
-    SearchResults, Status, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary, TreeEntry,
+    Profile, Readme, Release, RepoOverview, RepoSummary, Results, ReviewSummary, Reviewer,
+    RunSummary, SearchResults, Status, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary, TreeEntry,
     UserSummary, Week, WikiPage, Workflow, WorkflowRun,
 };
 use crate::api::model::{Capped, Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
 use crossterm::event::KeyEvent;
 
+use crate::store::{DraftComment, DraftSide};
 use crate::ui::bars::Notice;
 
 use crate::browse::{Data, DataKey};
@@ -112,6 +113,21 @@ pub(crate) fn found_pr(pr: &str, title: &str, state: PrState) -> IssueSummary {
 /// Delivers a message for `pr`'s diff.
 pub(crate) fn diff_msg(state: &mut State, pr: &PrRef, msg: DiffMsg) -> Vec<Cmd> {
     update(state, Msg::Diff(DiffOf::Pr(pr.clone()), msg))
+}
+
+/// A draft comment on new line `line` of `src/point.rs`.
+pub(crate) fn draft(id: u64, line: u32, body: &str) -> DraftComment {
+    DraftComment {
+        id,
+        path: "src/point.rs".into(),
+        body: body.into(),
+        side: DraftSide::Right,
+        line: Some(line),
+        start_line: None,
+        start_side: None,
+        commit: "e".repeat(40),
+        error: None,
+    }
 }
 
 /// A review thread on `src/point.rs`, with one comment.
@@ -634,12 +650,14 @@ pub fn activity() -> PrActivity {
         .into(),
         reviews: vec![
             ReviewSummary {
+                id: Some(2_000_001),
                 author: "monalisa".into(),
                 state: crate::api::model::ReviewState::Approved,
                 body: String::new(),
                 submitted_at: "2026-10-02T09:00:00Z".into(),
             },
             ReviewSummary {
+                id: Some(2_000_002),
                 author: "hubot".into(),
                 state: crate::api::model::ReviewState::Commented,
                 body: "Yes: every role is checked at both depths.".into(),
@@ -660,6 +678,11 @@ pub fn activity() -> PrActivity {
                 author: Person::User(Login::unchecked("octocat")),
                 date: "2026-10-01T12:00:00Z".into(),
             },
+        ]
+        .into(),
+        requested: vec![
+            Reviewer::User("defunkt".into()),
+            Reviewer::Team("octo-org/core".into()),
         ]
         .into(),
     }
