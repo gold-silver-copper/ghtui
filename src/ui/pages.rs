@@ -437,9 +437,9 @@ fn count_of<T>(list: &impl Rows<T>) -> String {
     }
 }
 
-/// `… 12 more replies on GitHub (o)`: what a list left out.
+/// `… 12 more replies on GitHub`: what a list left out.
 pub(crate) fn left_out_text(n: u64, one: &str, many: &str) -> String {
-    format!("… {n} {} on GitHub (o)", if n == 1 { one } else { many })
+    format!("… {n} {} on GitHub", if n == 1 { one } else { many })
 }
 
 /// A box of a list, a row each, saying `empty` when there are none and
@@ -970,7 +970,11 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
     let size = crate::ui::text::size(blob.size);
     let Some(text) = &blob.text else {
         let title = Seg::new(size, Role::Meta);
-        empty_box(page, title, "Binary file not shown. o opens it on GitHub.");
+        empty_box(
+            page,
+            title,
+            "Binary file not shown here: open it on GitHub.",
+        );
         return;
     };
     let lines = text.lines().count() as u64;
@@ -1512,7 +1516,7 @@ pub fn gist(page: &mut Page, g: &Gist, now: u64) {
                     });
                 }
             }
-            None => empty_row(page, "Too large to show here. o opens it on GitHub."),
+            None => empty_row(page, "Too large to show here: open it on GitHub."),
         }
         if f.truncated {
             body(
@@ -2972,7 +2976,7 @@ pub fn job(
         let text = match &log {
             Err(why) => why.clone(),
             Ok(l) if l.running => "The job is still running (o follows it on GitHub)".to_owned(),
-            Ok(_) => "GitHub lists no steps for this job (o shows it on GitHub)".to_owned(),
+            Ok(_) => "GitHub lists no steps for this job: open it on GitHub.".to_owned(),
         };
         empty_row(page, &text);
     }
@@ -3073,17 +3077,16 @@ pub fn job(
             .filter(|&l| pointed && !searched && l >= 1 && l <= cut);
         if let Some(l) = pointed_cut {
             page.jump.get_or_insert(page.lines.len());
-            let text = format!(
-                "Line {l} is in the part of the log too long to load (o shows it on GitHub)"
-            );
+            let text =
+                format!("Line {l} is in the part of the log too long to load: open it on GitHub.");
             body(page, vec![Seg::new(text, Role::Meta)]);
         }
         if cut > 0 {
             let lines = format!("{cut} earlier {}", noun(cut as u64, "line"));
             let text = if q.is_empty() {
-                format!("… {lines} (o shows them all on GitHub)")
+                format!("… {lines} (all of them on GitHub)")
             } else {
-                format!("… {lines} weren't loaded, so aren't searched (o shows them on GitHub)")
+                format!("… {lines} weren't loaded, so aren't searched (they're on GitHub)")
             };
             body(page, vec![Seg::new(text, Role::Meta)]);
         }
@@ -3799,7 +3802,7 @@ pub fn milestone(page: &mut Page, repo: &RepoId, d: &MilestoneDetail, icons: Ico
         Role::Strong,
     )];
     let empty = if d.unsearchable {
-        "GitHub's search can't look up a title with quotes: o shows them on GitHub."
+        "GitHub's search can't look up a title with quotes: open them on GitHub."
     } else {
         "Nothing in this milestone."
     };
@@ -4276,7 +4279,7 @@ fn contribution_activity(page: &mut Page, c: &Contributions) {
     {
         page.blank();
         page.line(vec![Seg::new(
-            "Counts with + are at least that: GitHub has more (o)",
+            "Counts with + are at least that: GitHub has more",
             Role::Meta,
         )]);
     }
@@ -4646,7 +4649,7 @@ mod tests {
         workflow_run(&mut page, &RepoId::new("o", "r"), &run, 0);
         let texts: Vec<String> = page.lines.iter().map(PageLine::text).collect();
         assert!(
-            texts.iter().any(|t| t.contains("… 50 more on GitHub (o)")),
+            texts.iter().any(|t| t.contains("… 50 more on GitHub")),
             "{texts:#?}"
         );
     }

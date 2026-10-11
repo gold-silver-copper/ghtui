@@ -1879,7 +1879,7 @@ pub(crate) mod tests {
                 texts.get(3),
                 Some(&(
                     ThreadRowKind::Gap,
-                    "… 120 more replies on GitHub (o)".to_owned()
+                    "… 120 more replies on GitHub".to_owned()
                 )),
                 "{texts:?}"
             );

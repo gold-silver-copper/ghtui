@@ -214,7 +214,7 @@ fn long_conversations_say_what_is_left_out() {
         number: 14,
     };
     open(&mut state, route, Data::Issue(Some(Box::new(issue))));
-    assert!(text(&state).contains("… 119 earlier comments on GitHub (o)"));
+    assert!(text(&state).contains("… 119 earlier comments on GitHub"));
     assert!(text(&state).contains("120 comments"));
 
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
@@ -229,11 +229,8 @@ fn long_conversations_say_what_is_left_out() {
         Data::PrActivity(Box::new(activity)),
     );
     let page = text(&state);
-    assert!(
-        page.contains("… 100 earlier comments on GitHub (o)"),
-        "{page}"
-    );
-    assert!(page.contains("… 1 earlier review on GitHub (o)"), "{page}");
+    assert!(page.contains("… 100 earlier comments on GitHub"), "{page}");
+    assert!(page.contains("… 1 earlier review on GitHub"), "{page}");
     let tabs = state.chrome().tabs;
     let count = |label: &str| {
         tabs.iter()

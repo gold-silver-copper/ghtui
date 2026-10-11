@@ -1,5 +1,6 @@
 ---
 source: src/snapshot_tests.rs
+assertion_line: 938
 expression: "render(&sized(state, 100, 80))"
 ---
 Buffer {
@@ -57,7 +58,7 @@ Buffer {
         "  ◉ Opened 1 issue                                                                                  ",
         "      ratatui/ratatui#1888  Unicode width of emoji in tables                                        ",
         "                                                                                                    ",
-        "  Counts with + are at least that: GitHub has more (o)                                              ",
+        "  Counts with + are at least that: GitHub has more                                                  ",
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
@@ -616,7 +617,7 @@ Buffer {
         x: 28, y: 50, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 60, y: 50, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 2, y: 52, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
-        x: 54, y: 52, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
+        x: 50, y: 52, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 0, y: 78, fg: Indexed(240), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 0, y: 79, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 2, y: 79, fg: Indexed(153), bg: Indexed(234), underline: Reset, modifier: BOLD,
