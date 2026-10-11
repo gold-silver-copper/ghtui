@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "A keyboard-driven terminal client for GitHub, with a pull request diff viewer that goes further than GitHub's"
+readme = "../../README.md"
+keywords = ["github", "tui", "terminal", "code-review", "diff"]
+categories = ["command-line-utilities", "development-tools"]
 
 # The library has everything; the binary runs it. The two share a name,
 # so only the library is documented.

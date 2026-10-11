@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Material 3 color schemes for ghtui, generated from one seed and checked for contrast"
 
 [dependencies]
 material-colors.workspace = true

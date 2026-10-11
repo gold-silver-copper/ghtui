@@ -363,7 +363,7 @@ fn typed() -> Vec<(&'static str, String)> {
 
 #[test]
 fn every_query_is_valid_and_says_what_it_leaves_out() {
-    let text = include_str!("../../schema/github.graphql");
+    let text = include_str!(env!("GITHUB_SDL"));
     let doc = cynic_parser::parse_type_system_document(text).unwrap();
     let schema = Schema::new(&doc, text);
     let mut errors = Vec::new();
@@ -387,7 +387,7 @@ fn every_query_is_valid_and_says_what_it_leaves_out() {
 /// The checks above catch what they're meant to.
 #[test]
 fn the_check_catches_cut_lists_and_bad_fields() {
-    let text = include_str!("../../schema/github.graphql");
+    let text = include_str!(env!("GITHUB_SDL"));
     let doc = cynic_parser::parse_type_system_document(text).unwrap();
     let schema = Schema::new(&doc, text);
     let errors = |q: &str| check(&schema, "t", q).errors;

@@ -6,6 +6,11 @@
 )]
 
 fn main() {
+    // Where the schema is, for the crates that depend on this one (Cargo
+    // hands it to their build scripts as DEP_GHTUI_SCHEMA_SDL).
+    let sdl =
+        std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("github.graphql");
+    println!("cargo::metadata=sdl={}", sdl.display());
     cynic_codegen::register_schema("github")
         .from_sdl_file("github.graphql")
         .expect("GitHub schema is valid SDL")
