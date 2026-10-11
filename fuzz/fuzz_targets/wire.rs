@@ -6,5 +6,5 @@ use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|input: (u8, &[u8])| {
     let (shape, json) = input;
-    ghtui_api::fuzz::decode(shape, json);
+    ghtui::api::fuzz::decode(shape, json);
 });

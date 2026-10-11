@@ -4,12 +4,12 @@ allow-panic-in-tests = true
 allow-indexing-slicing-in-tests = true
 
 # Ratatui's direct buffer writes don't clip and panic past the buffer's
-# edges: draw text through `ghtui_ui::put`, or render a widget.
+# edges: draw text through `ghtui::ui::put`, or render a widget.
 disallowed-methods = [
-    { path = "ratatui_core::buffer::Buffer::set_string", reason = "unclipped: use `ghtui_ui::put`" },
-    { path = "ratatui_core::buffer::Buffer::set_stringn", reason = "unclipped: use `ghtui_ui::put`" },
-    { path = "ratatui_core::buffer::Buffer::set_line", reason = "unclipped: use `ghtui_ui::put` or render the `Line`" },
-    { path = "ratatui_core::buffer::Buffer::set_span", reason = "unclipped: use `ghtui_ui::put` or render the `Span`" },
+    { path = "ratatui_core::buffer::Buffer::set_string", reason = "unclipped: use `ghtui::ui::put`" },
+    { path = "ratatui_core::buffer::Buffer::set_stringn", reason = "unclipped: use `ghtui::ui::put`" },
+    { path = "ratatui_core::buffer::Buffer::set_line", reason = "unclipped: use `ghtui::ui::put` or render the `Line`" },
+    { path = "ratatui_core::buffer::Buffer::set_span", reason = "unclipped: use `ghtui::ui::put` or render the `Span`" },
     # Ratatui draws by its cell widths, a grapheme at a time, unlike these.
     { path = "ratatui_core::text::Span::width", reason = "measures unlike ratatui draws: use `text::width`" },
     { path = "ratatui_core::text::Line::width", reason = "measures unlike ratatui draws: use `text::width`" },
@@ -18,11 +18,11 @@ disallowed-methods = [
     # It prints its failure to stderr, which panics when the terminal is gone.
     { path = "ratatui::restore", reason = "panics without a terminal: use `restore_terminal`" },
     # A page shows each need as loading, failed (and why) or ready.
-    { path = "ghtui_ui::fetched::Fetched::ready_unchecked", reason = "says nothing of a failure: use `show`, or say why silence is right" },
-    { path = "ghtui_ui::fetched::Fetched::text", reason = "`.ok()` drops what to say: use `show`, or say where the text is shown" },
-    { path = "ghtui_ui::fetched::Fetched::new_unchecked", reason = "only a fetch's owner (`Remote::fetched`) knows how it's going" },
+    { path = "ghtui::ui::fetched::Fetched::ready_unchecked", reason = "says nothing of a failure: use `show`, or say why silence is right" },
+    { path = "ghtui::ui::fetched::Fetched::text", reason = "`.ok()` drops what to say: use `show`, or say where the text is shown" },
+    { path = "ghtui::ui::fetched::Fetched::new_unchecked", reason = "only a fetch's owner (`Remote::fetched`) knows how it's going" },
     # A slow download that keeps moving isn't stuck: a transfer is given
-    # up on when nothing arrives (`ghtui_git::git`), never by the clock.
+    # up on when nothing arrives (`ghtui::git::git`), never by the clock.
     { path = "tokio::time::timeout", reason = "judge work by its progress, not the clock" },
     { path = "tokio::time::timeout_at", reason = "judge work by its progress, not the clock" },
 ]

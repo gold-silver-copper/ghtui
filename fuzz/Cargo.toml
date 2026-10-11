@@ -13,12 +13,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-ghtui = { path = "../crates/app" }
-ghtui-api = { path = "../crates/api" }
-ghtui-diff = { path = "../crates/diff" }
-ghtui-ui = { path = "../crates/ui" }
-ghtui-git = { path = "../crates/git" }
-ghtui-theme = { path = "../crates/theme" }
+ghtui = { path = ".." }
 ratatui = "0.30.2"
 
 [[bin]]

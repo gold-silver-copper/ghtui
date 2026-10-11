@@ -3,10 +3,10 @@
 //! step and line a link points at or the filter holds.
 #![no_main]
 
-use ghtui_api::browse::{CheckOutcome, Job, JobLog, Step};
-use ghtui_api::model::RepoId;
-use ghtui_ui::page::Page;
-use ghtui_ui::pages::{JobAt, Keys};
+use ghtui::api::browse::{CheckOutcome, Job, JobLog, Step};
+use ghtui::api::model::RepoId;
+use ghtui::ui::page::Page;
+use ghtui::ui::pages::{JobAt, Keys};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|input: (&str, Vec<(u8, &str, &str)>, (u8, u16), &str)| {
@@ -38,7 +38,7 @@ fuzz_target!(|input: (&str, Vec<(u8, &str, &str)>, (u8, u16), &str)| {
         completed_at: None,
         steps,
     };
-    let (cut, text) = ghtui_api::browse::log::cut(log);
+    let (cut, text) = ghtui::api::browse::log::cut(log);
     let log = JobLog {
         cut,
         text: text.to_owned(),
@@ -50,5 +50,5 @@ fuzz_target!(|input: (&str, Vec<(u8, &str, &str)>, (u8, u16), &str)| {
         keys: Keys::default(),
     };
     let mut page = Page::new(100);
-    ghtui_ui::pages::job(&mut page, &RepoId::new("o", "r"), &job, Some(Ok(&log)), at, 0);
+    ghtui::ui::pages::job(&mut page, &RepoId::new("o", "r"), &job, Some(Ok(&log)), at, 0);
 });
