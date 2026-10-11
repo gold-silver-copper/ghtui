@@ -12,22 +12,23 @@ the terminal.
 
 ghtui is pre-release, but it's usable every day.
 
-- **Browsing** covers most of GitHub: your home page, repositories (files,
-  README, branches, tags, releases, commits, blame, comparisons), issues,
-  pull requests, Actions runs and job logs, discussions, wikis, milestones,
-  deployments, security advisories, gists, teams, profiles and search. Every
-  github.com link opens in ghtui unless it can only work in a browser (a
-  download, settings, notifications), and then it says why.
+- **Browsing** covers most of GitHub: your home page and notifications,
+  repositories (files, README, branches, tags, releases, commits, blame,
+  comparisons), issues, pull requests, Actions runs and job logs,
+  discussions, wikis, milestones, deployments, security advisories, gists,
+  teams, profiles and search. Every github.com link opens in ghtui unless
+  it can only work in a browser (a download, settings), and then it says
+  why.
 - **Reviewing** is where ghtui goes furthest. Diffs are computed locally
   with git, highlighted with tree-sitter, and shown unified or split. You
   can reply, resolve, comment on lines or ranges, suggest changes, and
   submit a review.
 - **Acting** works from a page or from a row in a list: merge, approve,
   mark ready for review, update a branch, close or reopen, re-run or cancel
-  a workflow run, comment and star.
+  a workflow run, comment and star, and mark notifications read or done.
 
-Not there yet: notifications, projects, GitHub Enterprise Server, code
-navigation and structural diffs.
+Not there yet: projects, GitHub Enterprise Server, code navigation and
+structural diffs.
 
 ## Goals
 
@@ -82,6 +83,13 @@ palette that also goes places (`owner/repo#123`, `@user`, a URL).
 **Home** is your own saved searches: by default your review requests, your
 open pull requests and your repositories. Save any list to Home from its
 `Space` menu, and rename, reorder or remove sections in place.
+
+**Notifications** (`gn`, or the link at the top of Home) is your inbox,
+as on GitHub: what each thread is about, why you got it and when, the
+unread ones marked. `/` filters it as GitHub does (`is:unread`,
+`reason:review-requested`, `repo:owner/name`), `t` shows unread, read or
+all, and `↵` opens the thread at its latest comment. `,n` marks a thread
+read and `,d` marks it done.
 
 **Tabs** work like a browser's: `T` opens the selection in a new tab, `]b`
 and `[b` switch between them, and they come back next time you start.
@@ -245,8 +253,10 @@ says where it works.
 
 | Keys | Action |
 | ---- | ------ |
-| `t`  | Open / closed / all |
+| `t`  | Open / closed / all (in the inbox, unread / read) |
 | `S`  | Change the sort |
+| `,n` | Mark the notification read |
+| `,d` | Mark the notification done |
 
 **In files** (`file:`)
 

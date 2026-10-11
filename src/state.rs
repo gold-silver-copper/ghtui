@@ -1288,7 +1288,16 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             return state.open_search(false);
         }
         Action::OpenLink => return nav::open_link(state),
-        Action::Notifications => state.info("Notifications aren't here yet"),
+        Action::Notifications => {
+            let inbox = Route::Notifications {
+                query: String::new(),
+            };
+            if state.route() == Some(&inbox) {
+                state.info("Already in your notifications");
+            } else {
+                return state.push(inbox);
+            }
+        }
         Action::ReviewGlance => return nav::review_glance(state),
         Action::SearchGithub => return state.open_search(true),
         Action::FindFile if diff.is_some() => return state.open_picker(picker::Kind::DiffFiles),

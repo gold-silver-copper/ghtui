@@ -13,6 +13,7 @@ use crate::api::browse::{
     UserSummary, Week, WikiPage, Workflow, WorkflowRun,
 };
 use crate::api::model::{Capped, Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
+use crate::api::notifications::Notification;
 use crossterm::event::KeyEvent;
 
 use crate::store::{DraftComment, DraftSide};
@@ -538,6 +539,72 @@ pub fn advisory() -> Advisory {
         }],
         credits: vec!["octocat".into()],
         references: vec!["https://nvd.nist.gov/vuln/detail/CVE-2026-41510".into()],
+    }
+}
+
+/// The first page of an inbox: two unread threads, two read.
+pub fn notifications() -> Results<Notification> {
+    use crate::api::notifications::SubjectKind;
+    let thread =
+        |id: &str, repo: &str, kind, title: &str, reason: &str, unread, url: &str| Notification {
+            id: id.into(),
+            repo: RepoId::parse(repo).unwrap_or_else(|| RepoId::new("o", "r")),
+            kind,
+            title: title.into(),
+            reason: reason.into(),
+            // Newest first, as GitHub lists them.
+            updated_at: match id {
+                "101" => "2026-10-03T11:40:00Z",
+                "102" => "2026-10-03T09:00:00Z",
+                "103" => "2026-10-02T12:00:00Z",
+                _ => "2026-09-28T12:00:00Z",
+            }
+            .into(),
+            unread,
+            url: format!("https://github.com/{repo}/{url}"),
+        };
+    let items = vec![
+        thread(
+            "101",
+            "gold-silver-copper/ghtui",
+            SubjectKind::PullRequest,
+            "Theme: generate syntax palette from seed",
+            "review_requested",
+            true,
+            "pull/12",
+        ),
+        thread(
+            "102",
+            "ratatui/ratatui",
+            SubjectKind::Issue,
+            "Add a virtualized list widget for very long collections",
+            "mention",
+            true,
+            "issues/1820#issuecomment-7",
+        ),
+        thread(
+            "103",
+            "gold-silver-copper/ghtui",
+            SubjectKind::CheckSuite,
+            "CI workflow run failed for main branch",
+            "ci_activity",
+            false,
+            "actions",
+        ),
+        thread(
+            "104",
+            "tokio-rs/tokio",
+            SubjectKind::Release,
+            "Tokio v1.48.0",
+            "subscribed",
+            false,
+            "releases",
+        ),
+    ];
+    Results {
+        total: items.len() as u64,
+        items,
+        next: Some("2".into()),
     }
 }
 

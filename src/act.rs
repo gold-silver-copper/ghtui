@@ -1,18 +1,19 @@
 //! Changing GitHub from a page: merging, closing and reopening, marking a
 //! draft ready, updating a branch, approving, re-running and cancelling
-//! runs. What an action does where you are is decided once, by [`plan`]:
-//! the key, the menu and the command palette all ask it, so they can't
-//! disagree, and it asks GitHub's own word on what you may do. Every
-//! change goes to GitHub as a [`Change`] and comes back as
-//! [`Msg::Changed`], handled by [`on_changed`]; the page then follows
-//! GitHub ([`follow`]) until it shows the change.
+//! runs, marking notifications read or done. What an action does where
+//! you are is decided once, by [`plan`]: the key, the menu and the command
+//! palette all ask it, so they can't disagree, and it asks GitHub's own
+//! word on what you may do. Every change goes to GitHub as a [`Change`]
+//! and comes back as [`Msg::Changed`], handled by [`on_changed`]; the page
+//! then follows GitHub ([`follow`]) until it shows the change.
 
 use crate::api::ApiError;
-use crate::api::browse::{CheckOutcome, IssueState, Job, PrState, WorkflowRun};
+use crate::api::browse::{CheckOutcome, IssueState, Job, PrState, Results, WorkflowRun};
 use crate::api::change::{Change, CloseReason, MergeMethod};
 use crate::api::model::{
     ChecksState, MergeState, PrDetail, PrRef, Readiness, RepoId, ReviewDecision,
 };
+use crate::api::notifications::Notification;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::browse::{DataKey, Need};
@@ -22,7 +23,9 @@ use crate::route::Route;
 use crate::state::{Api, Cmd, Overlay, Screen, State};
 
 /// The actions that change GitHub, as the menu lists them.
-pub const ACTIONS: [Action; 6] = [
+pub const ACTIONS: [Action; 8] = [
+    Action::MarkRead,
+    Action::MarkDone,
     Action::Merge,
     Action::Approve,
     Action::ReadyForReview,
@@ -113,7 +116,7 @@ enum Plan {
 /// of a list.
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
-    let Some(subject) = subject(state) else {
+    let Some(subject) = subject(state, action) else {
         state.info(elsewhere(action));
         return Vec::new();
     };
@@ -168,7 +171,8 @@ fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
     }
 }
 
-/// What an action changes: a pull request, an issue, a run or a job.
+/// What an action changes: a pull request, an issue, a run, a job or a
+/// notification's thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Subject {
     Pr(PrRef),
@@ -176,6 +180,11 @@ pub enum Subject {
     Run(RepoId, u64, Option<u64>),
     /// A job, with its run when its page has it.
     Job(RepoId, Option<u64>, u64),
+    /// A thread, by its ID, in the inbox `query` lists.
+    Thread {
+        id: String,
+        query: String,
+    },
 }
 
 impl Subject {
@@ -210,6 +219,9 @@ impl Subject {
                 step: None,
                 query: String::new(),
             },
+            Subject::Thread { query, .. } => Route::Notifications {
+                query: query.clone(),
+            },
         }
     }
 
@@ -222,6 +234,7 @@ impl Subject {
                 Need::Data(DataKey::Run(repo.clone(), *run, *attempt))
             }
             Subject::Job(repo, _, job) => Need::Data(DataKey::Job(repo.clone(), *job)),
+            Subject::Thread { query, .. } => Need::Data(DataKey::Notifications(query.clone())),
         }
     }
 
@@ -235,6 +248,7 @@ impl Subject {
             ),
             Subject::Issue(..) => action == A::Close,
             Subject::Run(..) | Subject::Job(..) => matches!(action, A::Rerun | A::Close),
+            Subject::Thread { .. } => matches!(action, A::MarkRead | A::MarkDone),
         }
     }
 
@@ -244,14 +258,18 @@ impl Subject {
             Subject::Issue(repo, number) => format!("{repo}#{number}"),
             Subject::Run(..) => "the run".to_owned(),
             Subject::Job(..) => "the job".to_owned(),
+            Subject::Thread { .. } => "the notification".to_owned(),
         }
     }
 }
 
 /// What an action would change here: the page's own subject (a pull
 /// request, its files, an issue, a run, a job), or on a list, the
-/// selected row's.
-fn subject(state: &State) -> Option<Subject> {
+/// selected row's (in the inbox, its thread is what's marked read).
+fn subject(state: &State, action: Action) -> Option<Subject> {
+    if matches!(action, Action::MarkRead | Action::MarkDone) {
+        return thread(state);
+    }
     match state.screen() {
         Screen::Diff(d) => d.of.pr().map(|pr| Subject::Pr(pr.clone())),
         Screen::Page(p) => Subject::of(&p.route).or_else(|| {
@@ -265,9 +283,29 @@ fn subject(state: &State) -> Option<Subject> {
     }
 }
 
+/// The selected notification's thread: the inbox's rows are its
+/// notifications, in order.
+fn thread(state: &State) -> Option<Subject> {
+    let Screen::Page(p) = state.screen() else {
+        return None;
+    };
+    let Route::Notifications { query } = &p.route else {
+        return None;
+    };
+    let key = DataKey::Notifications(query.clone());
+    let list = state.picked::<Results<Notification>>(&key)?;
+    let n = list.items.get(p.selected?)?;
+    let url = p.selected_link().and_then(crate::ui::page::Link::url);
+    (url == Some(n.url.as_str())).then(|| Subject::Thread {
+        id: n.id.clone(),
+        query: query.clone(),
+    })
+}
+
 /// Where `action` works, for when it doesn't here.
 fn elsewhere(action: Action) -> &'static str {
     match action {
+        Action::MarkRead | Action::MarkDone => "That works on a notification in your inbox",
         Action::Close => {
             "Closing works on an issue, a pull request or a running workflow run (or its row)"
         }
@@ -393,6 +431,22 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
                 outcome: job.run.outcome,
             };
             run_plan(state, repo, &about, Some(job), action)
+        }
+        Subject::Thread { id, query } => {
+            let key = DataKey::Notifications(query.clone());
+            if loaded(state.data.get(&key), &name)?.is_none() {
+                return Ok(Plan::Load(subject.need()));
+            }
+            let n = state
+                .picked::<Results<Notification>>(&key)
+                .and_then(|list| list.items.iter().find(|n| n.id == *id))
+                .ok_or("It's no longer in your inbox")?;
+            let thread = id.clone();
+            match action {
+                Action::MarkRead if !n.unread => Err("It's read already".into()),
+                Action::MarkRead => Ok(Plan::Do(Change::MarkRead { thread })),
+                _ => Ok(Plan::Do(Change::MarkDone { thread })),
+            }
         }
     }
 }
@@ -832,6 +886,22 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
                 _ => yes(latest && running && j.attempt > 1),
             }
         }
+        (
+            Change::MarkRead { thread } | Change::MarkDone { thread },
+            Subject::Thread { query, .. },
+        ) => {
+            let key = DataKey::Notifications(query.clone());
+            let Some(list) = state.picked::<Results<Notification>>(&key) else {
+                return Shown::No;
+            };
+            // Done, it leaves the inbox; read, it stays, read (or leaves
+            // a list of the unread).
+            let row = list.items.iter().find(|n| n.id == *thread);
+            yes(match change {
+                Change::MarkRead { .. } => row.is_none_or(|n| !n.unread),
+                _ => row.is_none(),
+            })
+        }
         _ => Shown::Yes,
     }
 }
@@ -906,6 +976,8 @@ fn doing(change: &Change) -> &'static str {
         Change::UpdateBranch { .. } => "Updating the branch",
         Change::Rerun { .. } | Change::RerunJob { .. } => "Asking GitHub to re-run it",
         Change::CancelRun { .. } => "Cancelling the run",
+        Change::MarkRead { .. } => "Marking it read",
+        Change::MarkDone { .. } => "Marking it done",
     }
 }
 
@@ -937,6 +1009,8 @@ fn done(change: &Change) -> String {
         Change::Rerun { .. } => "Re-running the run".into(),
         Change::RerunJob { .. } => "Re-running the job".into(),
         Change::CancelRun { .. } => "Cancelling the run".into(),
+        Change::MarkRead { .. } => "Marked read".into(),
+        Change::MarkDone { .. } => "Marked done".into(),
     }
 }
 
@@ -955,6 +1029,7 @@ pub fn needs(change: &Change) -> &'static str {
         Change::Rerun { .. } | Change::RerunJob { .. } | Change::CancelRun { .. } => {
             "Actions: write"
         }
+        Change::MarkRead { .. } | Change::MarkDone { .. } => "Notifications (classic tokens only)",
     }
 }
 
@@ -973,6 +1048,8 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::UpdateBranch { .. } => "updating the branch",
         Change::Rerun { .. } | Change::RerunJob { .. } => "the re-run",
         Change::CancelRun { .. } => "cancelling the run",
+        Change::MarkRead { .. } => "marking it read",
+        Change::MarkDone { .. } => "marking it done",
     };
     let reason = match err {
         ApiError::GraphQl(messages) => messages.join("; "),
@@ -988,11 +1065,16 @@ fn failure(change: &Change, err: &ApiError) -> String {
             .any(|s| reason.contains(s))
     };
     let mut text = format!("GitHub refused {what}: {reason}");
-    if denied {
-        text.push_str(&format!(
+    match change {
+        // Fine-grained tokens can't read notifications at all.
+        Change::MarkRead { .. } | Change::MarkDone { .. } if denied => text.push_str(
+            ". Your token may lack the permission: notifications take a classic token with the notifications or repo scope",
+        ),
+        _ if denied => text.push_str(&format!(
             ". Your token may lack the permission: a fine-grained token needs {}; a classic one, the repo scope",
             needs(change)
-        ));
+        )),
+        _ => {}
     }
     text
 }
@@ -1000,19 +1082,16 @@ fn failure(change: &Change, err: &ApiError) -> String {
 /// The changes the menu offers for what's on screen: each action, its
 /// label, and why it can't be made now, if it can't.
 pub fn doables(state: &State) -> Vec<(Action, String, Option<String>)> {
-    let Some(subject) = subject(state) else {
-        return Vec::new();
-    };
     (ACTIONS.into_iter())
-        .filter(|&action| subject.fits(action))
-        .map(|action| {
+        .filter_map(|action| {
+            let subject = subject(state, action).filter(|s| s.fits(action))?;
             let label = match (action, &subject) {
                 (Action::Close, Subject::Run(..) | Subject::Job(..)) => "Cancel the run",
                 (Action::Close, _) => "Close or reopen",
                 (action, _) => action.description(),
             };
             let why = plan_for(state, &subject, action).err();
-            (action, label.to_owned(), why)
+            Some((action, label.to_owned(), why))
         })
         .collect()
 }

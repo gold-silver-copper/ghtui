@@ -59,6 +59,9 @@ from_redb!(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HttpEntry {
     pub etag: String,
+    /// The `Link` header: where a list's next page is.
+    #[serde(default)]
+    pub link: Option<String>,
     pub body: String,
 }
 
@@ -306,6 +309,7 @@ mod tests {
 
         let entry = HttpEntry {
             etag: "W/\"abc\"".into(),
+            link: None,
             body: "{}".into(),
         };
         store.http_put("/user", &entry);

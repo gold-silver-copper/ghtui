@@ -127,6 +127,7 @@ impl State {
     fn page_chrome(&self, route: &Route, c: &mut Chrome) {
         match route {
             Route::Home => c.crumb("Home", None),
+            Route::Notifications { .. } => c.crumb("Notifications", None),
             Route::Pr { pr, tab } => {
                 repo_crumbs(&pr.repo, c);
                 self.pr_tabs(pr, c);

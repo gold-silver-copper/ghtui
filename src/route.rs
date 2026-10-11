@@ -180,6 +180,10 @@ pub enum Route {
         kind: SearchKind,
         query: String,
     },
+    /// Your inbox, filtered as GitHub's is (`is:unread reason:mention`).
+    Notifications {
+        query: String,
+    },
 }
 
 /// The pages at a revision.
@@ -493,6 +497,16 @@ impl Route {
                 ProfileTab::People => format!("{}/orgs/{login}/people", links::BASE),
             },
             Route::Search { kind, query } => links::search(*kind, query),
+            Route::Notifications { query } if query.is_empty() => {
+                format!("{}/notifications", links::BASE)
+            }
+            Route::Notifications { query } => {
+                format!(
+                    "{}/notifications?query={}",
+                    links::BASE,
+                    links::encode(query)
+                )
+            }
         }
     }
 
@@ -549,6 +563,7 @@ impl Route {
             Route::Commit { repo, oid, .. } => format!("{repo}@{}", short_sha(oid)),
             Route::User { login, .. } => format!("@{login}"),
             Route::Search { query, .. } => format!("Search “{query}”"),
+            Route::Notifications { .. } => "Notifications".to_owned(),
         }
     }
 
@@ -598,6 +613,7 @@ impl Route {
             Route::Home
             | Route::User { .. }
             | Route::Search { .. }
+            | Route::Notifications { .. }
             | Route::Gist { .. }
             | Route::Gists(_)
             | Route::Teams(_)
@@ -615,13 +631,15 @@ impl Route {
         }
     }
 
-    /// A list's filter: issues, pull requests, search results, runs.
+    /// A list's filter: issues, pull requests, search results, runs,
+    /// notifications.
     pub fn list_query(&self) -> Option<&str> {
         match self {
             Route::Issues { query, .. }
             | Route::Pulls { query, .. }
             | Route::Actions { query, .. }
-            | Route::Search { query, .. } => Some(query),
+            | Route::Search { query, .. }
+            | Route::Notifications { query } => Some(query),
             _ => None,
         }
     }
@@ -642,6 +660,7 @@ impl Route {
                 repo: repo.clone(),
                 query,
             },
+            Route::Notifications { .. } => Route::Notifications { query },
             _ => return None,
         })
     }
@@ -800,6 +819,11 @@ fn parse(parsed: &url::Url) -> Option<Target> {
             tab: ProfileTab::Stars,
         },
         ["orgs", login] => Route::user(login),
+        ["notifications"] => Route::Notifications {
+            query: param("query")
+                .map(|q| q.trim().to_owned())
+                .unwrap_or_default(),
+        },
         ["advisories"] => Route::Advisories(None),
         ["advisories", ghsa] if valid_ghsa(ghsa) => Route::Advisory {
             repo: None,
@@ -1812,6 +1836,18 @@ pub(crate) mod tests {
             lines: None,
         };
         assert_eq!(reopened(&blame), Target::Page(blame));
+        assert_eq!(
+            page("https://github.com/notifications"),
+            Route::Notifications {
+                query: String::new()
+            }
+        );
+        assert_eq!(
+            page("https://github.com/notifications?query=is%3Aunread+repo%3Ao%2Fr"),
+            Route::Notifications {
+                query: "is:unread repo:o/r".into()
+            }
+        );
         assert!(matches!(
             Dest::from_url("https://github.com/settings/tokens").target,
             Target::External(_)
@@ -2213,6 +2249,8 @@ pub(crate) mod tests {
                     });
             prop_oneof![
                 Just(Route::Home),
+                prop_oneof![Just(String::new()), query()]
+                    .prop_map(|query| Route::Notifications { query }),
                 (repo(), query()).prop_map(|(repo, query)| Route::Actions { repo, query }),
                 repo().prop_map(Route::Stargazers),
                 repo().prop_map(Route::Watchers),

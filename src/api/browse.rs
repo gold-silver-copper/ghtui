@@ -2352,7 +2352,7 @@ impl RunFilter {
 
 /// A filter's words, a quoted part's spaces kept and its quotes dropped
 /// (`workflow:"Build and test"`).
-fn filter_words(query: &str) -> Vec<String> {
+pub(crate) fn filter_words(query: &str) -> Vec<String> {
     let (mut words, mut word, mut quoted) = (Vec::new(), String::new(), false);
     for c in query.chars() {
         match c {
@@ -4758,6 +4758,9 @@ pub mod keys {
     }
     pub fn runs(repo: &RepoId, query: &str) -> String {
         format!("runs:{repo}:{query}")
+    }
+    pub fn notifications(query: &str) -> String {
+        format!("notifications:{query}")
     }
     pub fn commit_checks(repo: &RepoId, rev: &str) -> String {
         format!("commit-checks:{repo}@{rev}")

@@ -222,8 +222,10 @@ actions! {
     Branch            "branch"            ["B"]                    Page   "Switch branches or tags";
     Hints             "hints"             ["i"]                    Page   "Follow a link by its letters";
     HintsBrowser      "hints_browser"     ["I"]                    Page   "Follow a link, in the browser";
-    ToggleState       "toggle_state"      ["t"]                    List   "Open / closed / all";
+    ToggleState       "toggle_state"      ["t"]                    List   "Open / closed / all (in the inbox, unread / read)";
     Sort              "sort"              ["S"]                    List   "Change the sort";
+    MarkRead          "mark_read"         [",n"]                   List   "Mark the notification read";
+    MarkDone          "mark_done"         [",d"]                   List   "Mark the notification done";
     SaveSection       "save_to_home"      []                       List   "Save this list as a Home section";
     RenameSection     "rename_section"    []                       Page   "Rename the Home section";
     MoveSectionUp     "move_section_up"   ["<A-Up>"]               Page   "Move the Home section up";

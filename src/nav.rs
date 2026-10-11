@@ -1042,7 +1042,7 @@ fn up(state: &State, route: &Route) -> Option<Route> {
             repo: pr.repo.clone(),
             query: crate::route::OPEN.into(),
         },
-        Route::User { .. } | Route::Search { .. } => Route::Home,
+        Route::User { .. } | Route::Search { .. } | Route::Notifications { .. } => Route::Home,
         Route::Gist { owner, .. } => Route::Gists(owner.clone()?),
         Route::Gists(login) | Route::Teams(login) => Route::user(login),
         Route::Team { org, .. } => Route::Teams(org.clone()),
@@ -1479,6 +1479,20 @@ impl State {
                 }
                 return out;
             }
+            if let Some(Route::Notifications { .. }) = self.route() {
+                for (f, what) in [
+                    ("is:unread", "unread"),
+                    ("reason:review-requested", "review requested"),
+                    ("reason:mention", "mentioning you"),
+                    ("reason:assign", "assigned to you"),
+                    ("reason:participating", "participating"),
+                    ("reason:team-mention", "mentioning your team"),
+                    ("reason:ci-activity", "CI activity"),
+                ] {
+                    out.push(suggestion("⚑", f, what, "", Pick::Filter(f.to_owned())));
+                }
+                return out;
+            }
             for (f, what) in [
                 ("is:open", "open"),
                 ("is:closed", "closed"),
@@ -1697,15 +1711,23 @@ pub fn search_log(state: &mut State, query: &str) {
 
 // ---- lists: state and sort ------------------------------------------------------------------
 
-/// The list query with `is:open`/`is:closed` replaced by `state`.
+/// The list query with its state (`is:open`, `is:unread`…) replaced by
+/// `state`.
 fn with_state(query: &str, state: &str) -> String {
     let mut words: Vec<&str> = query
         .split_whitespace()
-        .filter(|w| !matches!(*w, "is:open" | "is:closed" | "state:open" | "state:closed"))
+        .filter(|w| {
+            !matches!(
+                *w,
+                "is:open" | "is:closed" | "state:open" | "state:closed" | "is:unread" | "is:read"
+            )
+        })
         .collect();
     let qualifier = match state {
         "open" => Some("is:open"),
         "closed" => Some("is:closed"),
+        "unread" => Some("is:unread"),
+        "read" => Some("is:read"),
         _ => None,
     };
     if let Some(q) = qualifier {
@@ -1714,11 +1736,13 @@ fn with_state(query: &str, state: &str) -> String {
     words.join(" ")
 }
 
-/// Open → closed → all.
-fn next_list_state(query: &str) -> &'static str {
+/// Open → closed → all; in the inbox, unread → read → all.
+fn next_list_state(route: &Route, query: &str) -> &'static str {
     match pages::list_state(query) {
         "open" => "closed",
-        "closed" => "all",
+        "unread" => "read",
+        "closed" | "read" => "all",
+        _ if matches!(route, Route::Notifications { .. }) => "unread",
         _ => "open",
     }
 }
@@ -1749,11 +1773,11 @@ fn cycle_state(state: &mut State) -> Vec<Cmd> {
         ));
         return Vec::new();
     }
-    let Some((_, query)) = list_query(state) else {
+    let Some((route, query)) = list_query(state) else {
         state.info("Only lists have open and closed");
         return Vec::new();
     };
-    set_list_state(state, next_list_state(&query))
+    set_list_state(state, next_list_state(&route, &query))
 }
 
 #[must_use]
@@ -1774,6 +1798,10 @@ fn cycle_sort(state: &mut State) -> Vec<Cmd> {
     }
     if let Some(Route::Actions { .. }) = state.route() {
         state.info("Runs are newest first: GitHub doesn't sort them otherwise");
+        return Vec::new();
+    }
+    if let Some(Route::Notifications { .. }) = state.route() {
+        state.info("Notifications are newest first: GitHub doesn't sort them otherwise");
         return Vec::new();
     }
     let Some((route, query)) = list_query(state) else {
@@ -2008,6 +2036,8 @@ impl State {
                 Action::Merge => "merge",
                 Action::Approve => "approve",
                 Action::Rerun => "re-run",
+                Action::MarkRead => "read",
+                Action::MarkDone => "done",
                 _ => "",
             };
             let mut change = doable("Change", action, &label, short);
@@ -2188,8 +2218,12 @@ impl State {
                 "",
             ));
         }
+        if let Route::Notifications { query } = route {
+            let show = format!("Show {}", next_list_state(route, query));
+            out.push(here(Action::ToggleState, &show, "unread/read"));
+        }
         if let Some(query) = &list {
-            let show = format!("Show {}", next_list_state(query));
+            let show = format!("Show {}", next_list_state(route, query));
             out.push(here(Action::ToggleState, &show, "open/closed"));
             out.push(here(Action::Sort, "Change the sort", "sort"));
             let mut save = here(Action::SaveSection, "Save this list to Home", "");
@@ -2889,5 +2923,9 @@ mod tests {
         );
         assert_eq!(with_state("is:closed", "all"), "");
         assert_eq!(with_state("label:bug", "open"), "is:open label:bug");
+        assert_eq!(
+            with_state("is:unread reason:mention", "read"),
+            "is:read reason:mention"
+        );
     }
 }

@@ -13,6 +13,7 @@ use crate::api::browse::{
     Workflow, WorkflowRun,
 };
 use crate::api::model::{PrRef, RepoId};
+use crate::api::notifications::Notification;
 use crate::ui::Fetched;
 use crate::ui::page::{Page, PageLine, Role, Seg};
 use crate::ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
@@ -94,6 +95,9 @@ pub enum DataKey {
     OwnerRepos(String, RepoSort),
     /// What someone starred.
     Stars(String),
+    /// Your notifications, filtered as the inbox filters them
+    /// ([`InboxFilter`](crate::api::notifications::InboxFilter)).
+    Notifications(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,6 +149,7 @@ pub enum Data {
     Deployments(Box<DeploymentList>),
     Milestones(Box<MilestoneList>),
     Milestone(Box<MilestoneDetail>),
+    Notifications(Box<Results<Notification>>),
 }
 
 impl Data {
@@ -182,6 +187,7 @@ impl Data {
             Data::Milestones(m) => m.results.next.as_deref(),
             Data::Milestone(m) => m.items.next.as_deref(),
             Data::Advisories(r) => r.next.as_deref(),
+            Data::Notifications(r) => r.next.as_deref(),
             _ => None,
         }
     }
@@ -214,6 +220,7 @@ impl Data {
                 extend(&mut a.items, b.items, |i| (i.repo.clone(), i.number));
             }
             (Data::Advisories(a), Data::Advisories(b)) => extend(a, *b, |a| a.ghsa.clone()),
+            (Data::Notifications(a), Data::Notifications(b)) => extend(a, *b, |n| n.id.clone()),
             _ => {}
         }
     }
@@ -258,6 +265,7 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Milestones { repo, closed } => Some(DataKey::Milestones(repo.clone(), *closed)),
         Route::Milestone { repo, number } => Some(DataKey::Milestone(repo.clone(), *number)),
         Route::Advisories(repo) => Some(DataKey::Advisories(repo.clone())),
+        Route::Notifications { query } => Some(DataKey::Notifications(query.clone())),
         _ => route
             .search()
             .map(|(kind, query)| DataKey::Search(kind, query)),
@@ -339,7 +347,9 @@ pub fn needs(route: &Route) -> Vec<Need> {
             };
             repo.iter().map(header).chain([Need::Data(own)]).collect()
         }
-        Route::Gists(_) | Route::Teams(_) => paged(route).map(Need::Data).into_iter().collect(),
+        Route::Gists(_) | Route::Teams(_) | Route::Notifications { .. } => {
+            paged(route).map(Need::Data).into_iter().collect()
+        }
         Route::Team { org, slug } => vec![Need::Data(K::Team(org.to_lowercase(), slug.clone()))],
         Route::Gist { id, .. } => vec![Need::Data(K::Gist(id.clone()))],
         Route::Issue { repo, number } => {
@@ -468,6 +478,7 @@ picked!(
     Teams => Results<TeamSummary>, Team => TeamDetail, Gist => Gist,
     Gists => Results<GistSummary>, Blame => Blame, Compare => Comparison,
     Deployments => DeploymentList, Milestones => MilestoneList, Milestone => MilestoneDetail,
+    Notifications => Results<Notification>,
 );
 
 /// A page's needs as the page shows them, failing with the key that
@@ -908,6 +919,9 @@ impl State {
             }
             Route::Actions { repo, query } => {
                 pages::actions(&mut page, repo, query, f.paged(route), cx);
+            }
+            Route::Notifications { query } => {
+                pages::notifications(&mut page, query, f.paged(route), cx);
             }
             Route::Commits { repo, rev, path } => {
                 pages::commit_history(&mut page, repo, rev, path, f.paged(route), now);

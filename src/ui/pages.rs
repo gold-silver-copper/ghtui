@@ -19,6 +19,7 @@ use crate::api::model::{
     Capped, ChecksState, Label, Mergeable, MilestoneRef, PrDetail, PrRef, Readiness, RepoId,
     ReviewDecision, ReviewState, ReviewThread,
 };
+use crate::api::notifications::{InboxFilter, Notification, SubjectKind, reason_label};
 use crate::store::{DraftComment, DraftSide};
 use crate::theme::{Bg, Syntax};
 
@@ -1755,6 +1756,10 @@ pub fn list_state(query: &str) -> &'static str {
         "closed"
     } else if has("open") {
         "open"
+    } else if has("unread") {
+        "unread"
+    } else if has("read") {
+        "read"
     } else {
         "all"
     }
@@ -3459,6 +3464,88 @@ fn run_list(
     });
 }
 
+// ---- notifications --------------------------------------------------------------------------
+
+/// Your notifications, as GitHub's inbox lists them: what each is about,
+/// why you got it and when, the unread ones marked. Words the inbox can't
+/// be filtered by are said.
+pub fn notifications(
+    page: &mut Page,
+    query: &str,
+    list: Fetched<'_, Results<Notification>>,
+    cx: PageCtx<'_>,
+) {
+    let PageCtx { icons, keys, now } = cx;
+    filter_field(page, query, keys, "filter");
+    let ignored = InboxFilter::parse(query).ignored;
+    if !ignored.is_empty() {
+        let words = ignored.iter().map(|w| format!("“{w}”")).collect::<Vec<_>>();
+        let text = format!(
+            "Not filtered by {}: notifications filter by is:unread, is:read, reason: and repo:",
+            words.join(", ")
+        );
+        page.wrapped(vec![Seg::new(text, Role::Meta)], 0, Frame::None);
+    }
+    page.blank();
+    let Some(l) = list.show(page, "your notifications") else {
+        return;
+    };
+    let shown = list_state(query);
+    let mut title = Vec::new();
+    for (state, label) in [("all", "All"), ("unread", "Unread"), ("read", "Read")] {
+        let role = if state == shown {
+            Role::Strong
+        } else {
+            Role::Meta
+        };
+        if !title.is_empty() {
+            title.push(Seg::new("   ", Role::Body));
+        }
+        title.push(link_seg(page, label, Link::State(state.to_owned()), role));
+    }
+    let empty = if query.is_empty() {
+        "All caught up: no notifications."
+    } else {
+        "No notifications match this filter."
+    };
+    let count = vec![Seg::new(count_of(l), Role::Meta)];
+    list_box(page, title, count, l, empty, |page, n| {
+        item(page, n.url.clone(), |page, link| {
+            let (mark, role) = if n.unread {
+                ("● ", Role::Strong)
+            } else {
+                ("  ", Role::Body)
+            };
+            page.box_line(
+                vec![
+                    Seg::new(mark, Role::Accent),
+                    Seg::new(format!("{} ", subject_icon(&n.kind, icons)), Role::Meta),
+                    Seg::linked(n.title.clone(), role, link),
+                ],
+                vec![Seg::new(time::ago_iso(&n.updated_at, now), Role::Meta)],
+                0,
+            );
+            let meta = format!("{} · {}", n.repo, reason_label(&n.reason));
+            page.box_line(vec![Seg::new(meta, Role::Meta)], Vec::new(), 4);
+        });
+    });
+}
+
+/// What a notification is about, as an icon.
+fn subject_icon(kind: &SubjectKind, icons: Icons) -> &'static str {
+    let (nerd, plain) = match kind {
+        SubjectKind::PullRequest => return icons.pr_state(PrState::Open),
+        SubjectKind::Discussion => return icons.comment(),
+        SubjectKind::Issue => ("\u{f41b}", "◉"),
+        SubjectKind::Release => ("\u{f412}", "◇"),
+        SubjectKind::Commit => ("\u{f417}", "◦"),
+        SubjectKind::CheckSuite => ("\u{f04b}", "▷"),
+        SubjectKind::Alert => ("\u{f421}", "△"),
+        SubjectKind::Other(_) => ("·", "·"),
+    };
+    if icons.nerd_font { nerd } else { plain }
+}
+
 /// A commit's checks.
 pub fn commit_checks(page: &mut Page, c: Fetched<'_, Checks>, now: u64) {
     checks(page, c, now);
@@ -4594,6 +4681,14 @@ impl<T> Rows<T> for Start<'_, T> {
 /// many of how many, ending in a row that opens the rest. A section that
 /// fails, or is written wrong, says why in its box; the others show.
 pub fn home(page: &mut Page, sections: &[HomeSection<'_>], icons: Icons, now: u64) {
+    // Where GitHub's header has its inbox.
+    let inbox = button(
+        page,
+        "Notifications",
+        format!("{}/notifications", url::BASE),
+    );
+    page.line(vec![inbox]);
+    page.blank();
     if sections.is_empty() {
         page.box_top(vec![Seg::new("Home", Role::Strong)], Vec::new());
         empty_row(

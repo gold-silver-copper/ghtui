@@ -872,6 +872,9 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Runs(repo, query) => at(gh.cached(&keys::runs(repo, query))?, |v| {
             Data::Runs(Box::new(v))
         }),
+        DataKey::Notifications(query) => at(gh.cached(&keys::notifications(query))?, |v| {
+            Data::Notifications(Box::new(v))
+        }),
         DataKey::CommitChecks(repo, oid) => at(gh.cached(&keys::commit_checks(repo, oid))?, |v| {
             Data::Checks(Box::new(v))
         }),
@@ -983,6 +986,9 @@ pub(crate) async fn fetch(
         DataKey::JobLog(repo, job) => Data::Log(Arc::new(gh.job_log(repo, *job).await?)),
         DataKey::Workflow(repo, file) => Data::Workflow(Box::new(gh.workflow(repo, file).await?)),
         DataKey::Runs(repo, query) => Data::Runs(Box::new(gh.runs(repo, query, after).await?)),
+        DataKey::Notifications(query) => {
+            Data::Notifications(Box::new(gh.notifications(query, after).await?))
+        }
         DataKey::CommitChecks(repo, oid) => {
             Data::Checks(Box::new(gh.commit_checks(repo, oid).await?))
         }
