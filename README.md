@@ -108,8 +108,9 @@ it.
 
 The keys are vim's where vim has one. A binding is a key sequence (`gg`,
 `]c`), and digits before it are a count: `5j` moves five rows, `3gt` goes
-to the page's third tab, `120gg` to line 120 of a file. After the first key
-of a sequence, the status bar lists what can follow it.
+to the page's third tab (the tab bar numbers them), `120gg` to line 120 of
+a file. After the first key of a sequence, a panel lists what can follow
+it here.
 
 What a key does depends on where you are: the innermost of the contexts
 below that binds it wins. A list adds its keys to a page's, which add
@@ -131,6 +132,20 @@ says where it works.
   file at that line. In the blame, a run of lines opens its commit.
 - `h` and `l` scroll code sideways in files, logs and the diff; in the
   diff's file tree they fold and unfold folders.
+- What changes GitHub waits behind `,`: `,m` merges, `,a` approves, `,r`
+  marks a draft ready, `,u` updates the branch, `,x` closes or reopens
+  (or cancels a run), `,R` re-runs, `,*` stars, and in Files changed `,s`
+  submits your review. Each asks first where it matters.
+- `q` closes the view: back a page, or the tab when there's nothing to go
+  back to. `ZZ` (or `ctrl-c`) quits.
+- `]]` and `[[` jump by section: a Home section, a box, a heading, a
+  folder in the file tree, a file in the diff. `}` and `{` go row by row,
+  comment by comment, and change by change in the diff. `H` `M` `L` go to
+  the top, middle and bottom of the screen.
+- `?` searches backwards, and `n` and `N` follow its direction. `>`
+  replies quoting the selected comment; Enter on a comment doesn't start
+  writing. In Files changed the view toggles are under `z`: `zw`
+  whitespace, `zs` split, `zf` the whole file, `zT` the file tree.
 
 **Everywhere** (`global:`)
 

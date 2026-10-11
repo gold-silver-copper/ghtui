@@ -711,7 +711,7 @@ pub fn apply(
             preserving_position(screen, state, |d| d.doc.toggle_full(file));
         }
         Action::OldSide | Action::NewSide if !state.doc.opts().split => {
-            notice.info("Sides are split view's · S splits");
+            notice.info("Sides are split view's: switch to it in the menu (Split or unified view)");
         }
         Action::OldSide => screen.half = Side::Left,
         Action::NewSide => screen.half = Side::Right,
