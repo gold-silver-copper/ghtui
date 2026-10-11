@@ -54,8 +54,12 @@ pub enum Route {
         pr: PrRef,
         tab: PrTab,
     },
-    /// The checks on the default branch.
-    Actions(RepoId),
+    /// Workflow runs, filtered as GitHub's Actions tab filters them
+    /// (`branch:main is:failure`).
+    Actions {
+        repo: RepoId,
+        query: String,
+    },
     /// Discussions, in a category (by its slug) if given.
     Discussions {
         of: DiscussionsOf,
@@ -314,6 +318,14 @@ impl Route {
         }
     }
 
+    /// A repository's Actions tab: all its runs.
+    pub fn actions(repo: RepoId) -> Route {
+        Route::Actions {
+            repo,
+            query: String::new(),
+        }
+    }
+
     pub fn url(&self) -> String {
         match self {
             Route::Home => format!("{}/", links::BASE),
@@ -353,7 +365,16 @@ impl Route {
                 PrTab::Commits => links::pull_tab(pr, "commits"),
                 PrTab::Checks => links::pull_tab(pr, "checks"),
             },
-            Route::Actions(repo) => format!("{}/actions", links::repo(repo)),
+            Route::Actions { repo, query } if query.is_empty() => {
+                format!("{}/actions", links::repo(repo))
+            }
+            Route::Actions { repo, query } => {
+                format!(
+                    "{}/actions?query={}",
+                    links::repo(repo),
+                    links::encode(query)
+                )
+            }
             Route::WorkflowRun { repo, run, attempt } => {
                 let url = format!("{}/actions/runs/{run}", links::repo(repo));
                 match attempt {
@@ -493,7 +514,7 @@ impl Route {
             Route::Pulls { repo, .. } => format!("{repo} · Pull requests"),
             Route::Issue { repo, number } => format!("{repo}#{number}"),
             Route::Pr { pr, .. } => pr.to_string(),
-            Route::Actions(repo) => format!("{repo} · Actions"),
+            Route::Actions { repo, .. } => format!("{repo} · Actions"),
             Route::WorkflowRun { repo, run, .. } => format!("{repo} · Run {run}"),
             Route::Job { repo, job, .. } => format!("{repo} · Job {job}"),
             Route::Workflow { repo, file } => format!("{repo} · {file}"),
@@ -540,7 +561,7 @@ impl Route {
             | Route::Pulls { repo, .. }
             | Route::Issue { repo, .. }
             | Route::Commits { repo, .. }
-            | Route::Actions(repo)
+            | Route::Actions { repo, .. }
             | Route::WorkflowRun { repo, .. }
             | Route::Job { repo, .. }
             | Route::Workflow { repo, .. }
@@ -593,11 +614,12 @@ impl Route {
         }
     }
 
-    /// A list's filter: issues, pull requests, search results.
+    /// A list's filter: issues, pull requests, search results, runs.
     pub fn list_query(&self) -> Option<&str> {
         match self {
             Route::Issues { query, .. }
             | Route::Pulls { query, .. }
+            | Route::Actions { query, .. }
             | Route::Search { query, .. } => Some(query),
             _ => None,
         }
@@ -615,6 +637,10 @@ impl Route {
                 query,
             },
             Route::Search { kind, .. } => Route::Search { kind: *kind, query },
+            Route::Actions { repo, .. } => Route::Actions {
+                repo: repo.clone(),
+                query,
+            },
             _ => return None,
         })
     }
@@ -884,7 +910,12 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
                 query: format!("{OPEN} label:{label}"),
             }
         }
-        ["actions"] => Route::Actions(repo),
+        ["actions"] => Route::Actions {
+            repo,
+            query: param("query")
+                .map(|q| q.trim().to_owned())
+                .unwrap_or_default(),
+        },
         ["stargazers"] => Route::Stargazers(repo),
         ["watchers"] => Route::Watchers(repo),
         ["forks"] | ["network", "members"] => Route::Forks(repo),
@@ -1565,7 +1596,14 @@ pub(crate) mod tests {
         assert_eq!(page("https://github.com/o/r/commits"), commits("HEAD", ""));
         assert_eq!(
             page("https://github.com/o/r/actions"),
-            Route::Actions(pr.repo.clone())
+            Route::actions(pr.repo.clone())
+        );
+        assert_eq!(
+            page("https://github.com/o/r/actions?query=branch%3Amain+is%3Afailure"),
+            Route::Actions {
+                repo: pr.repo.clone(),
+                query: "branch:main is:failure".into()
+            }
         );
         assert_eq!(
             page("https://github.com/o/r/stargazers"),
@@ -2149,7 +2187,7 @@ pub(crate) mod tests {
                     });
             prop_oneof![
                 Just(Route::Home),
-                repo().prop_map(Route::Actions),
+                (repo(), query()).prop_map(|(repo, query)| Route::Actions { repo, query }),
                 repo().prop_map(Route::Stargazers),
                 repo().prop_map(Route::Watchers),
                 repo().prop_map(Route::Forks),

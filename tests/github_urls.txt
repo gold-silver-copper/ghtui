@@ -206,6 +206,7 @@ https://github.com/rust-lang/rust/issues/views/1                            exte
 https://github.com/rust-lang/rust/pulls                                     Pulls
 https://github.com/rust-lang/rust/pulls?q=is%3Amerged                       Pulls
 https://github.com/rust-lang/rust/actions                                   Actions
+https://github.com/rust-lang/rust/actions?query=branch%3Amain+is%3Afailure  Actions
 https://github.com/rust-lang/rust/actions/caches                            external session
 https://github.com/rust-lang/rust/discussions                               Discussions
 https://github.com/rust-lang/rust/discussions/categories/ideas              Discussions

@@ -221,8 +221,8 @@ pub struct PageScreen {
 
 impl PageScreen {
     pub fn new(route: Route, anchor: Option<String>) -> Self {
-        // Lists start on their first row; reading pages (issues, pull
-        // requests, files) start with nothing selected.
+        // Lists start on their first row, and a job on a step; reading
+        // pages (issues, pull requests, files) start with nothing selected.
         let list = !matches!(
             route,
             Route::Issue { .. }
@@ -231,7 +231,6 @@ impl PageScreen {
                 | Route::Commit { .. }
                 | Route::Release { .. }
                 | Route::Discussion { .. }
-                | Route::Job { .. }
                 | Route::Pr {
                     tab: PrTab::Conversation,
                     ..
@@ -389,10 +388,12 @@ fn settle(p: &mut PageScreen, height: usize) {
             !matches!(link, Some(Link::Section(_)))
         };
         let n = p.page.items.len();
-        p.selected = (0..n)
-            .filter(shown)
-            .find(row)
-            .or_else(|| (0..n).find(shown));
+        p.selected = p.page.selects.filter(|&i| i < n).or_else(|| {
+            (0..n)
+                .filter(shown)
+                .find(row)
+                .or_else(|| (0..n).find(shown))
+        });
     }
     if jump.is_some() || p.jumped.is_some() {
         p.jumped = Some(jump.map(|_| (p.scroll, p.selected)));
@@ -875,7 +876,7 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Deployments { repo, .. }
         | Route::Milestones { repo, .. }
         | Route::Wiki { repo, page: None }
-        | Route::Actions(repo) => Route::Repo(repo.clone()),
+        | Route::Actions { repo, .. } => Route::Repo(repo.clone()),
         Route::Discussion { of, .. } => Route::Discussions {
             of: of.clone(),
             category: None,
@@ -893,7 +894,7 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Workflow { repo, .. }
         | Route::Job {
             repo, run: None, ..
-        } => Route::Actions(repo.clone()),
+        } => Route::actions(repo.clone()),
         Route::Job {
             repo,
             run: Some(run),
@@ -1291,6 +1292,25 @@ impl State {
                 out.push(suggestion("⌕", q, "filter this list", "↵", pick));
             }
             out.push(heading("Quick filters"));
+            // Runs filter by GitHub's Actions words, and aren't searched.
+            if let Some(Route::Actions { repo, .. }) = self.route() {
+                if let Some(b) = self.overview(repo).and_then(|o| o.default_branch.as_ref()) {
+                    let f = format!("branch:{b}");
+                    let pick = Pick::Filter(f.clone());
+                    out.push(suggestion("⚑", f, &format!("on {b}"), "", pick));
+                }
+                for (f, what) in [
+                    ("is:failure", "failed"),
+                    ("is:in_progress", "running"),
+                    ("is:queued", "queued"),
+                    ("is:success", "succeeded"),
+                    ("event:pull_request", "for pull requests"),
+                    ("event:push", "for pushes"),
+                ] {
+                    out.push(suggestion("⚑", f, what, "", Pick::Filter(f.to_owned())));
+                }
+                return out;
+            }
             for (f, what) in [
                 ("is:open", "open"),
                 ("is:closed", "closed"),
@@ -1555,6 +1575,13 @@ fn set_list_state(state: &mut State, which: &str) -> Vec<Cmd> {
 
 #[must_use]
 fn cycle_state(state: &mut State) -> Vec<Cmd> {
+    if let Some(Route::Actions { .. }) = state.route() {
+        let filter = state.first_key(Action::Search);
+        state.info(format!(
+            "Runs aren't open or closed · {filter} filters them: is:failure, is:success…"
+        ));
+        return Vec::new();
+    }
     let Some((_, query)) = list_query(state) else {
         state.info("Only lists have open and closed");
         return Vec::new();
@@ -1577,6 +1604,10 @@ fn cycle_sort(state: &mut State) -> Vec<Cmd> {
         };
         state.info(format!("Sorted: {}", next.label()));
         return state.replace(route, true, None);
+    }
+    if let Some(Route::Actions { .. }) = state.route() {
+        state.info("Runs are newest first: GitHub doesn't sort them otherwise");
+        return Vec::new();
     }
     let Some((route, query)) = list_query(state) else {
         state.info("Only lists can be sorted");
@@ -1867,7 +1898,7 @@ impl State {
                 out.push(here(Action::Search, "Search the log", "search"));
                 Some(query.clone())
             }
-            _ if list.is_some() => {
+            _ if route.list_query().is_some() => {
                 out.push(here(Action::Search, "Filter this list", "filter"));
                 None
             }

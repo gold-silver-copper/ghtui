@@ -1218,30 +1218,6 @@ pub struct PrHeadCommit {
     pub commit: ChecksCommit,
 }
 
-/// The checks on a repository's default branch.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Query",
-    schema_module = "schema",
-    variables = "BranchesVariables"
-)]
-pub struct BranchChecksQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoBranchChecks>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", schema_module = "schema")]
-pub struct RepoBranchChecks {
-    pub default_branch_ref: Option<ChecksRef>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Ref", schema_module = "schema")]
-pub struct ChecksRef {
-    pub target: Option<ChecksTarget>,
-}
-
 #[derive(cynic::InlineFragments, Debug)]
 #[cynic(graphql_type = "GitObject", schema_module = "schema")]
 pub enum ChecksTarget {
@@ -2212,17 +2188,99 @@ pub struct Workflow {
     pub disabled: Option<String>,
 }
 
-/// A run in a workflow's list.
+/// A run in a list of runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunSummary {
     pub id: u64,
     pub title: String,
+    /// Its workflow's name.
+    pub workflow: String,
     pub number: u64,
     pub event: String,
     pub branch: Option<String>,
     pub outcome: CheckOutcome,
     pub actor: Option<String>,
     pub created_at: Option<String>,
+    pub started_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+/// The statuses runs filter by (`is:failure`), as REST names them.
+pub const RUN_STATUSES: [&str; 14] = [
+    "completed",
+    "action_required",
+    "cancelled",
+    "failure",
+    "neutral",
+    "skipped",
+    "stale",
+    "success",
+    "timed_out",
+    "in_progress",
+    "queued",
+    "requested",
+    "waiting",
+    "pending",
+];
+
+/// A filter of workflow runs in the words of GitHub's Actions tab
+/// (`workflow:CI branch:main is:failure event:push actor:octocat`), as
+/// REST's list of runs takes it: one of each kind.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct RunFilter {
+    /// A workflow, by its name, file name or ID.
+    pub workflow: Option<String>,
+    /// REST's parameters: `branch`, `status`, `event`, `actor`.
+    pub params: Vec<(&'static str, String)>,
+    /// Words runs can't be filtered by.
+    pub ignored: Vec<String>,
+}
+
+impl RunFilter {
+    /// Reads a filter; a later word of a kind replaces an earlier one.
+    pub fn parse(query: &str) -> RunFilter {
+        let mut filter = RunFilter::default();
+        for word in filter_words(query) {
+            let (key, value) = word.split_once(':').unwrap_or_default();
+            let param = match key {
+                _ if value.is_empty() => None,
+                "workflow" => {
+                    filter.workflow = Some(value.to_owned());
+                    continue;
+                }
+                "is" if RUN_STATUSES.contains(&value) => Some("status"),
+                "branch" => Some("branch"),
+                "event" => Some("event"),
+                "actor" => Some("actor"),
+                _ => None,
+            };
+            match param {
+                Some(param) => {
+                    let value = value.to_owned();
+                    filter.params.retain(|(p, _)| *p != param);
+                    filter.params.push((param, value));
+                }
+                None => filter.ignored.push(word),
+            }
+        }
+        filter
+    }
+}
+
+/// A filter's words, a quoted part's spaces kept and its quotes dropped
+/// (`workflow:"Build and test"`).
+fn filter_words(query: &str) -> Vec<String> {
+    let (mut words, mut word, mut quoted) = (Vec::new(), String::new(), false);
+    for c in query.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            c if c.is_whitespace() && !quoted => words.push(std::mem::take(&mut word)),
+            c => word.push(c),
+        }
+    }
+    words.push(word);
+    words.retain(|w| !w.is_empty());
+    words
 }
 
 /// The shapes GraphQL responses read as raw JSON share.
@@ -2500,9 +2558,16 @@ pub(crate) mod rest_actions {
 
     #[derive(Deserialize)]
     pub struct Workflow {
+        pub id: u64,
         pub name: String,
         pub path: String,
         pub state: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Workflows {
+        pub total_count: u64,
+        pub workflows: Vec<Workflow>,
     }
 }
 
@@ -2550,12 +2615,15 @@ impl rest_actions::Run {
         RunSummary {
             id: self.id,
             title: self.display_title.unwrap_or_default(),
+            workflow: self.name.unwrap_or_else(|| "Workflow".into()),
             number: self.run_number,
             event: self.event,
             branch: self.head_branch,
             outcome,
             actor: self.actor.map(|a| a.login),
+            started_at: self.run_started_at.or_else(|| self.created_at.clone()),
             created_at: self.created_at,
+            updated_at: self.updated_at,
         }
     }
 }
@@ -4550,12 +4618,6 @@ impl TagRefs {
 
 // ---- branches ------------------------------------------------------------------------------
 
-#[derive(cynic::QueryVariables, Debug)]
-pub struct BranchesVariables {
-    pub owner: String,
-    pub name: String,
-}
-
 /// A repository's branches (by name) and tags (newest first), and how
 /// many there are of each.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -4608,8 +4670,8 @@ pub mod keys {
     pub fn workflow(repo: &RepoId, file: &str) -> String {
         format!("workflow:{repo}:{file}")
     }
-    pub fn workflow_runs(repo: &RepoId, file: &str) -> String {
-        format!("workflow-runs:{repo}:{file}")
+    pub fn runs(repo: &RepoId, query: &str) -> String {
+        format!("runs:{repo}:{query}")
     }
     pub fn commit_checks(repo: &RepoId, rev: &str) -> String {
         format!("commit-checks:{repo}@{rev}")
@@ -4622,9 +4684,6 @@ pub mod keys {
     }
     pub fn pr_checks(pr: &PrRef) -> String {
         format!("pr-checks:{pr}")
-    }
-    pub fn branch_checks(repo: &RepoId) -> String {
-        format!("branch-checks:{repo}")
     }
     pub fn users(list: &super::UserList) -> String {
         format!("users:{list:?}")

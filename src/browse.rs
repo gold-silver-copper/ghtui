@@ -52,8 +52,6 @@ pub enum DataKey {
     History(RepoId, String, String),
     /// The checks on a pull request's head.
     PrChecks(PrRef),
-    /// The checks on a repository's default branch.
-    BranchChecks(RepoId),
     Users(UserList),
     Forks(RepoId),
     Releases(RepoId),
@@ -81,8 +79,9 @@ pub enum DataKey {
     /// A job's log (not cached: it's big).
     JobLog(RepoId, u64),
     Workflow(RepoId, String),
-    /// A workflow's runs.
-    WorkflowRuns(RepoId, String),
+    /// Workflow runs, filtered as the Actions tab filters them
+    /// ([`RunFilter`](crate::api::browse::RunFilter)).
+    Runs(RepoId, String),
     CommitChecks(RepoId, String),
     /// Someone's own repositories, in an order.
     OwnerRepos(String, RepoSort),
@@ -225,7 +224,10 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Discussions { of, category } => {
             Some(DataKey::Discussions(of.clone(), category.clone()))
         }
-        Route::Workflow { repo, file } => Some(DataKey::WorkflowRuns(repo.clone(), file.clone())),
+        Route::Actions { repo, query } => Some(DataKey::Runs(repo.clone(), query.clone())),
+        Route::Workflow { repo, file } => {
+            Some(DataKey::Runs(repo.clone(), format!("workflow:{file}")))
+        }
         Route::User { login, tab } => {
             let login = login.to_lowercase();
             Some(match tab {
@@ -328,7 +330,6 @@ pub fn needs(route: &Route) -> Vec<Need> {
             Need::Data(K::PrChecks(pr.clone())),
         ],
         Route::Pr { pr, .. } => vec![Need::Pr(pr.clone()), Need::Data(K::PrActivity(pr.clone()))],
-        Route::Actions(repo) => vec![header(repo), Need::Data(K::BranchChecks(repo.clone()))],
         Route::Discussions { of, .. } | Route::Discussion { of, .. } => {
             let header = match of {
                 DiscussionsOf::Repo(repo) => Some(header(repo)),
@@ -351,11 +352,10 @@ pub fn needs(route: &Route) -> Vec<Need> {
             Need::Data(K::Job(repo.clone(), *job)),
             Need::Data(K::JobLog(repo.clone(), *job)),
         ],
-        Route::Workflow { repo, file } => vec![
-            header(repo),
-            Need::Data(K::Workflow(repo.clone(), file.clone())),
-            Need::Data(K::WorkflowRuns(repo.clone(), file.clone())),
-        ],
+        Route::Workflow { repo, file } => std::iter::once(header(repo))
+            .chain([Need::Data(K::Workflow(repo.clone(), file.clone()))])
+            .chain(paged(route).map(Need::Data))
+            .collect(),
         Route::CommitChecks { repo, oid } => vec![
             header(repo),
             Need::Data(K::Commit(repo.clone(), oid.clone())),
@@ -367,7 +367,8 @@ pub fn needs(route: &Route) -> Vec<Need> {
                 Need::Data(K::Release(repo.clone(), tag.clone())),
             ]
         }
-        Route::Stargazers(repo)
+        Route::Actions { repo, .. }
+        | Route::Stargazers(repo)
         | Route::Watchers(repo)
         | Route::Forks(repo)
         | Route::Releases(repo)
@@ -590,7 +591,7 @@ impl State {
                 tab: PrTab::Checks, ..
             }
             | Route::CommitChecks { .. }
-            | Route::Actions(_)
+            | Route::Actions { .. }
             | Route::WorkflowRun { .. }
             | Route::Job { .. }
             | Route::Workflow { .. }
@@ -849,14 +850,8 @@ impl State {
                     pages::release(&mut page, repo, r, now);
                 }
             }
-            Route::Actions(repo) => {
-                let checks = f.get(&DataKey::BranchChecks(repo.clone()));
-                #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
-                let overview = f
-                    .get::<RepoOverview>(&DataKey::Repo(repo.clone()))
-                    .ready_unchecked();
-                let branch = overview.and_then(|o| o.default_branch.as_deref());
-                pages::actions(&mut page, branch, checks, now);
+            Route::Actions { repo, query } => {
+                pages::actions(&mut page, repo, query, f.paged(route), cx);
             }
             Route::Commits { repo, rev, path } => {
                 pages::commit_history(&mut page, repo, rev, path, f.paged(route), now);

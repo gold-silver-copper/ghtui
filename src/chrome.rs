@@ -432,7 +432,7 @@ impl State {
         }
         c.tabs.push((
             new_tab("▶", "Actions", None),
-            Target::Page(Route::Actions(repo.clone())),
+            Target::Page(Route::actions(repo.clone())),
         ));
         if o.is_some_and(|o| o.has_wiki) {
             c.tabs.push((
@@ -533,7 +533,7 @@ fn section(route: &Route) -> Section {
         | Route::Milestone { .. } => Section::Issues,
         Route::Pulls { .. } | Route::Pr { .. } => Section::Pulls,
         Route::Discussions { .. } | Route::Discussion { .. } => Section::Discussions,
-        Route::Actions(_)
+        Route::Actions { .. }
         | Route::WorkflowRun { .. }
         | Route::Job { .. }
         | Route::Workflow { .. } => Section::Actions,

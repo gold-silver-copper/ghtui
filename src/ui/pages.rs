@@ -11,9 +11,9 @@ use crate::api::browse::{
     CommitInfo, Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList,
     EntryKind, Gist, GistSummary, IssueDetail, IssueKind, IssueState, IssueSummary, Job, JobLog,
     MilestoneDetail, MilestoneInfo, MilestoneList, Person, PrActivity, PrState, Profile, Readme,
-    Release, RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults,
-    Severity, Short, Status, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserSummary, WikiPage,
-    Workflow, WorkflowRun,
+    Release, RepoOverview, RepoSort, RepoSummary, Results, RunFilter, RunSummary, SearchKind,
+    SearchResults, Severity, Short, Status, TagInfo, TeamDetail, TeamSummary, TreeEntry,
+    UserSummary, WikiPage, Workflow, WorkflowRun,
 };
 use crate::api::model::{
     Capped, ChecksState, Label, Mergeable, MilestoneRef, PrDetail, PrRef, Readiness, RepoId,
@@ -2401,15 +2401,32 @@ pub fn pr_checks(page: &mut Page, pr: &PrRef, d: &PrDetail, c: Fetched<'_, Check
     checks(page, c, now);
 }
 
-/// A repository's Actions tab: the checks on its default branch.
-pub fn actions(page: &mut Page, branch: Option<&str>, c: Fetched<'_, Checks>, now: u64) {
-    let mut title = vec![Seg::new("Actions", Role::Title)];
-    if let Some(branch) = branch {
-        title.push(Seg::new(format!("  checks on {branch}"), Role::Meta));
+/// A repository's Actions tab: its workflow runs, newest first, as
+/// `query` filters them. Words runs can't be filtered by are said.
+pub fn actions(
+    page: &mut Page,
+    repo: &RepoId,
+    query: &str,
+    runs: Fetched<'_, Results<RunSummary>>,
+    cx: PageCtx<'_>,
+) {
+    filter_field(page, query, cx.keys, "filter");
+    let ignored = RunFilter::parse(query).ignored;
+    if !ignored.is_empty() {
+        let words = ignored.iter().map(|w| format!("“{w}”")).collect::<Vec<_>>();
+        let text = format!(
+            "Not filtered by {}: runs filter by workflow:, branch:, is:, event: and actor:",
+            words.join(", ")
+        );
+        page.wrapped(vec![Seg::new(text, Role::Meta)], 0, Frame::None);
     }
-    page.wrapped(title, 0, Frame::None);
     page.blank();
-    checks(page, c, now);
+    let empty = if query.is_empty() {
+        "No runs yet."
+    } else {
+        "No runs match this filter."
+    };
+    run_list(page, repo, runs, empty, cx.now);
 }
 
 pub fn pr_commits(
@@ -2964,9 +2981,19 @@ pub fn job(
         .iter()
         .flatten()
         .any(|(_, _, l)| l.iter().any(|t| matches(t)));
+    // It opens on the step a link points at, else the first that failed,
+    // else the first, so Enter opens it.
+    let opens = (job.steps.iter())
+        .find(|s| at.step.is_some_and(|(n, _)| n == s.number))
+        .or_else(|| (job.steps.iter()).find(|s| s.outcome == CheckOutcome::Failure))
+        .or(job.steps.first())
+        .map(|s| s.number);
     for (n, step) in job.steps.iter().enumerate() {
         if n > 0 {
             page.box_rule();
+        }
+        if opens == Some(step.number) {
+            page.selects = Some(page.items.len());
         }
         let target = format!(
             "{}/actions/runs/{}/job/{}#step:{}:1",
@@ -3120,7 +3147,19 @@ pub fn workflow(
         page.wrapped(vec![file], 0, Frame::None);
         page.blank();
     }
-    paged_list(page, "Runs", runs, "No runs yet.", |page, run| {
+    run_list(page, repo, runs, "No runs yet.", now);
+}
+
+/// Workflow runs, each with its workflow, what started it, when, and how
+/// long it took.
+fn run_list(
+    page: &mut Page,
+    repo: &RepoId,
+    runs: Fetched<'_, Results<RunSummary>>,
+    empty: &str,
+    now: u64,
+) {
+    paged_list(page, "Runs", runs, empty, |page, run| {
         item(
             page,
             format!("{}/actions/runs/{}", url::repo(repo), run.id),
@@ -3131,15 +3170,22 @@ pub fn workflow(
                 } else {
                     run.title.clone()
                 };
+                let start = run.started_at.as_ref();
+                let end = run
+                    .updated_at
+                    .as_ref()
+                    .filter(|_| run.outcome != CheckOutcome::Pending);
+                let right = took(start, end, run.outcome, now)
+                    .map_or_else(Vec::new, |t| vec![Seg::new(t, Role::Meta)]);
                 page.box_line(
                     vec![
                         Seg::new(format!("{mark} "), role),
                         Seg::linked(title, Role::Strong, link),
                     ],
-                    Vec::new(),
+                    right,
                     0,
                 );
-                let mut meta = format!("#{} · {}", run.number, run.event);
+                let mut meta = format!("{} #{} · {}", run.workflow, run.number, run.event);
                 if let Some(b) = &run.branch {
                     meta.push_str(&format!(" · {b}"));
                 }

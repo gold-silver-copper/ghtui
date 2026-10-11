@@ -1036,12 +1036,15 @@ pub fn workflow_runs() -> (Workflow, Results<RunSummary>) {
     let run = |id, number, title: &str, outcome| RunSummary {
         id,
         title: title.into(),
+        workflow: "CI".into(),
         number,
         event: "push".into(),
         branch: Some("main".into()),
         outcome,
         actor: Some("octocat".into()),
         created_at: Some("2026-10-03T12:00:00Z".into()),
+        started_at: Some("2026-10-03T12:00:00Z".into()),
+        updated_at: Some("2026-10-03T12:04:31Z".into()),
     };
     let workflow = Workflow {
         name: "CI".into(),

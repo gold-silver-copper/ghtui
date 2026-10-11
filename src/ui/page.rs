@@ -282,6 +282,8 @@ pub struct Page {
     pub compact: bool,
     /// The line the page opens scrolled to (a linked line), if not the top.
     pub jump: Option<usize>,
+    /// The item the page opens selected, if not the first in view.
+    pub selects: Option<usize>,
     /// Named places a link's `#fragment` can point at (a comment), by line.
     pub anchors: HashMap<String, usize>,
     /// The lines a search on the page matched, in order.

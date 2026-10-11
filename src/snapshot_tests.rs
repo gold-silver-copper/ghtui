@@ -471,12 +471,9 @@ fn with_pr_checks(mode: Mode) -> State {
 /// A repository's Actions tab.
 fn with_actions(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
-    let route = Route::Actions(ghtui());
-    open(
-        &mut state,
-        route,
-        Data::Checks(Box::new(fixtures::checks())),
-    );
+    let route = Route::actions(ghtui());
+    let runs = Data::Runs(Box::new(fixtures::workflow_runs().1));
+    open(&mut state, route, runs);
     state
 }
 
@@ -600,7 +597,7 @@ fn with_workflow(mode: Mode) -> State {
     let (workflow, runs) = fixtures::workflow_runs();
     let key = DataKey::Workflow(ghtui(), "ci.yml".into());
     fetched(&mut state, key, Data::Workflow(Box::new(workflow)));
-    let key = DataKey::WorkflowRuns(ghtui(), "ci.yml".into());
+    let key = DataKey::Runs(ghtui(), "workflow:ci.yml".into());
     fetched(&mut state, key, Data::Runs(Box::new(runs)));
     state
 }
@@ -2946,7 +2943,7 @@ fn failed_workflow_runs_say_why_instead_of_loading() {
     let (workflow, _) = fixtures::workflow_runs();
     let key = DataKey::Workflow(ghtui(), "ci.yml".into());
     fetched(&mut state, key, Data::Workflow(Box::new(workflow)));
-    failed(&mut state, DataKey::WorkflowRuns(ghtui(), "ci.yml".into()));
+    failed(&mut state, DataKey::Runs(ghtui(), "workflow:ci.yml".into()));
     let text = page_text(&state);
     assert!(!text.contains("Loading runs…"), "{text}");
     assert!(text.contains("timed out"), "{text}");
@@ -3089,9 +3086,7 @@ fn sample(key: &DataKey) -> Data {
         K::LastCommits(..) => Data::LastCommits(Arc::new(fixtures::last_commits())),
         K::Commit(..) => Data::Commit(Box::new(fixtures::commit())),
         K::History(..) => Data::History(Box::new(fixtures::history(None))),
-        K::PrChecks(_) | K::BranchChecks(_) | K::CommitChecks(..) => {
-            Data::Checks(Box::new(fixtures::checks()))
-        }
+        K::PrChecks(_) | K::CommitChecks(..) => Data::Checks(Box::new(fixtures::checks())),
         K::Users(_) => Data::Users(Box::new(fixtures::people())),
         K::Forks(_) | K::OwnerRepos(..) | K::Stars(_) => {
             Data::RepoPage(Box::new(fixtures::profile_repos()))
@@ -3126,7 +3121,7 @@ fn sample(key: &DataKey) -> Data {
         K::Job(..) => Data::Job(Box::new(fixtures::job().0)),
         K::JobLog(..) => Data::Log(Arc::new(fixtures::job().1)),
         K::Workflow(..) => Data::Workflow(Box::new(fixtures::workflow_runs().0)),
-        K::WorkflowRuns(..) => Data::Runs(Box::new(fixtures::workflow_runs().1)),
+        K::Runs(..) => Data::Runs(Box::new(fixtures::workflow_runs().1)),
     }
 }
 

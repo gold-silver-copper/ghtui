@@ -338,7 +338,6 @@ fn typed() -> Vec<(&'static str, String)> {
         Query b::CommitQuery, b::RepoVariables;
         Query b::HistoryQuery, b::HistoryVariables;
         Query b::PrChecksQuery, q::NumberVariables;
-        Query b::BranchChecksQuery, b::BranchesVariables;
         Query b::ContextsQuery, b::ContextsVariables;
         Query b::CommitChecksQuery, b::RepoVariables;
         Query b::ProfileQuery, b::ProfileVariables;

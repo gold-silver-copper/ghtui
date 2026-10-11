@@ -1914,7 +1914,7 @@ pub(crate) mod tests {
     fn an_extended_list_is_kept_until_asked() {
         let mut state = with_repo();
         let file = "ci.yml".to_owned();
-        let key = DataKey::WorkflowRuns(repo(), file.clone());
+        let key = DataKey::Runs(repo(), format!("workflow:{file}"));
         let _ = state.push(Route::Workflow { repo: repo(), file });
         let page = |id: u64, next: Option<&str>| {
             let mut runs = crate::fixtures::workflow_runs().1;
@@ -2763,7 +2763,8 @@ pub(crate) mod tests {
         says(&s, "No matches for “no such text”");
     }
 
-    /// A failed job opens at its failing step's first error.
+    /// A failed job opens at its failing step's first error, the step
+    /// selected.
     #[test]
     fn a_failed_job_opens_at_its_first_error() {
         let mut s = with_repo();
@@ -2788,6 +2789,11 @@ pub(crate) mod tests {
             .map(crate::ui::page::Seg::text)
             .collect();
         assert!(text.contains("exit code 101"), "{text}");
+        let link = p.selected_link().map(|l| format!("{l:?}"));
+        assert!(
+            link.as_ref().is_some_and(|l| l.contains("#step:3:")),
+            "{link:?}"
+        );
     }
 
     /// A running job, and its log (which GitHub doesn't have until the
@@ -3087,7 +3093,7 @@ pub(crate) mod tests {
         // Every tab has a number key: `5` is Actions, `7` Security.
         let _ = state.push(Route::Repo(repo()));
         press(&mut state, "5gt");
-        assert_eq!(route(&state), Route::Actions(repo()));
+        assert_eq!(route(&state), Route::actions(repo()));
         press(&mut state, "7gt");
         assert_eq!(route(&state), Route::Advisories(Some(repo())));
     }

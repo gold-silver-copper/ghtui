@@ -1931,7 +1931,7 @@ async fn a_blocked_repository_says_why_on_every_page() {
             .starts_with("GET /repos/o/r ")
     );
     let (gh, _) = github(vec![Reply::new(451, BLOCKED)]).await;
-    says_why(gh.workflow_runs(&repo, "ci.yml", None).await.unwrap_err());
+    says_why(gh.runs(&repo, "workflow:ci.yml", None).await.unwrap_err());
 
     // One that's only missing is not found, by name.
     let (gh, _) = github(vec![Reply::new(200, missing), Reply::new(404, "{}")]).await;
@@ -1940,4 +1940,41 @@ async fn a_blocked_repository_says_why_on_every_page() {
     let (gh, _) = github(vec![Reply::new(404, r#"{"message":"Not Found"}"#)]).await;
     let err = gh.job(&repo, 2).await.unwrap_err();
     assert_eq!(err.to_string(), "not found: o/r's job 2");
+}
+
+/// The Actions tab's filter asks REST in its own words: a workflow named
+/// is found by its name, a later word of a kind wins, and what runs can't
+/// be filtered by is left out (and said, by the page).
+#[tokio::test]
+async fn a_runs_filter_becomes_rest_parameters() {
+    let workflows = r#"{"total_count":1,"workflows":[{"id":42,"name":"Build and test","path":".github/workflows/ci.yml","state":"active"}]}"#;
+    let runs = r#"{"total_count":0,"workflow_runs":[]}"#;
+    let (gh, seen) = github(vec![Reply::new(200, workflows), Reply::new(200, runs)]).await;
+    let query = r#"workflow:"build and test" branch:main is:failure is:success event:push actor:octocat label:bug"#;
+    let repo = RepoId::new("o", "r");
+    gh.runs(&repo, query, Some("2".into())).await.unwrap();
+    let lines: Vec<String> = (seen.lock().unwrap().iter())
+        .map(|s| s.request_line.clone())
+        .collect();
+    assert!(
+        lines[0].starts_with("GET /repos/o/r/actions/workflows?per_page=100 "),
+        "{lines:?}"
+    );
+    assert!(
+        lines[1].starts_with(
+            "GET /repos/o/r/actions/workflows/42/runs?branch=main&status=success&event=push&actor=octocat&per_page=30&page=2 "
+        ),
+        "{lines:?}"
+    );
+    let filter = ghtui::api::browse::RunFilter::parse(query);
+    assert_eq!(filter.ignored, ["label:bug"]);
+
+    // Without a workflow, all of the repository's runs.
+    let (gh, seen) = github(vec![Reply::new(200, runs)]).await;
+    gh.runs(&repo, "", None).await.unwrap();
+    let line = seen.lock().unwrap()[0].request_line.clone();
+    assert!(
+        line.starts_with("GET /repos/o/r/actions/runs?per_page=30&page=1 "),
+        "{line}"
+    );
 }
