@@ -1519,9 +1519,8 @@ pub fn search_log(state: &mut State, query: &str) {
     let loaded = state
         .picked::<crate::api::browse::JobLog>(&log)
         .is_some_and(|l| !l.running);
-    let back = state.first_key(Action::Back);
     let text = match (p.mark_at(), p.page.marks.len()) {
-        _ if query.is_empty() => format!("Cleared the search · {back} again goes back"),
+        _ if query.is_empty() => "Cleared the search".to_owned(),
         (Some(at), of) => format!("Match {} of {of}", at + 1),
         _ if loaded => format!("No matches for “{query}”"),
         _ => format!("Searches for “{query}” once the log is in"),
