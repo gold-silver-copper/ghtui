@@ -2501,9 +2501,11 @@ mod keys {
     fn sequences_say_what_can_follow() {
         let mut s = with_pr(Mode::Dark);
         press(&mut s, "2g");
-        let hints = s.key_hints();
-        assert_eq!(hints.first().map(|(k, _)| k.as_str()), Some("2g…"));
-        assert!(hints.iter().any(|(k, _)| k == "t"), "{hints:?}");
+        let (typed, rows) = s.which_key().unwrap();
+        assert_eq!(typed, "2g…");
+        assert!(rows.iter().any(|r| r.key == "t"), "{rows:?}");
+        // Only what does something here: `gb` is a file's.
+        assert!(!rows.iter().any(|r| r.key == "b"), "{rows:?}");
         press(&mut s, "t");
         assert_eq!(s.chrome().active, Some(1), "2gt: the second tab");
         let depth = s.screens.len();

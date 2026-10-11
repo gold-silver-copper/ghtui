@@ -259,7 +259,8 @@ fn tab_width(tab: &PageTab, level: Fit, active: bool) -> u16 {
         0
     };
     cols(
-        [2, text::width(tab.icon), label, count]
+        // ` 3 ◷ `: its number, for `3gt`, and its icon.
+        [4, text::width(tab.icon), label, count]
             .into_iter()
             .fold(0, usize::saturating_add),
     )
@@ -302,7 +303,18 @@ impl Widget for TabBar<'_> {
             } else {
                 theme.body(BAR)
             };
-            let mut spans = vec![Span::styled(format!(" {} ", tab.icon), theme.meta(BAR))];
+            let number = if i < 9 {
+                char::from_digit(u32::try_from(i.saturating_add(1)).unwrap_or(0), 10).unwrap_or(' ')
+            } else {
+                ' '
+            };
+            let mut spans = vec![
+                Span::styled(
+                    format!(" {number}"),
+                    theme.meta(BAR).add_modifier(Modifier::DIM),
+                ),
+                Span::styled(format!(" {} ", tab.icon), theme.meta(BAR)),
+            ];
             if shown(Fit::NoCounts) {
                 spans.push(Span::styled(tab.label.clone(), label_style));
             }
@@ -483,7 +495,8 @@ pub struct KeyPanel<'a> {
     pub ctx: Ctx<'a>,
     pub title: &'a str,
     pub rows: &'a [KeyRow],
-    pub selected: usize,
+    /// The highlighted row, if one is (which-key's hints have none).
+    pub selected: Option<usize>,
     /// Where the selection is among the items (`3/40`), shown when they
     /// don't all fit.
     pub position: (usize, usize),
@@ -545,10 +558,12 @@ impl Widget for KeyPanel<'_> {
         let title = vec![Span::styled(self.title, theme.title(PANEL))];
         let position = vec![Span::styled(position, theme.meta(PANEL))];
         render_split(title_row, buf, &title, &position, 1);
-        let skip = self.selected.saturating_add(1).saturating_sub(rows);
+        let skip = self
+            .selected
+            .map_or(0, |s| s.saturating_add(1).saturating_sub(rows));
         let shown = self.rows.iter().enumerate().skip(skip).take(rows);
         for ((n, row), y) in shown.zip(area.y.saturating_add(2)..area.bottom()) {
-            let (line, bg) = list_row(buf, theme, area, y, self.selected == n, PANEL);
+            let (line, bg) = list_row(buf, theme, area, y, self.selected == Some(n), PANEL);
             if row.heading {
                 Span::styled(row.label.as_str(), heading(theme)).render(line, buf);
                 continue;

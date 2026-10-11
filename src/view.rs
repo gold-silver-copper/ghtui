@@ -256,7 +256,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 ctx,
                 title: &title,
                 rows: &rows,
-                selected,
+                selected: Some(selected),
                 position: (menu.selected + 1, menu.shown().len()),
             }
             .render(area, buf);
@@ -291,7 +291,20 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 buf,
             );
         }
-        Some(Overlay::Hints(_)) | None => {}
+        // After the first keys of a sequence: what can follow.
+        None => {
+            if let Some((typed, rows)) = state.which_key() {
+                KeyPanel {
+                    ctx,
+                    title: &typed,
+                    rows: &rows,
+                    selected: None,
+                    position: (0, rows.len()),
+                }
+                .render(area, buf);
+            }
+        }
+        Some(Overlay::Hints(_)) => {}
     }
 }
 

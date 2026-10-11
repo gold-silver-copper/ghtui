@@ -1946,6 +1946,7 @@ impl State {
         ));
         if !self.chrome().tabs.is_empty() {
             out.push(go(Action::NextTab, "Next tab", "tabs"));
+            out.push(go(Action::PrevTab, "Previous tab", ""));
         }
         if let Screen::Diff(_) = self.screen() {
             out.push(go(Action::Tab1, "Back to the conversation", ""));
@@ -2152,6 +2153,32 @@ impl State {
         }
     }
 
+    /// After a count or the first keys of a sequence: what's typed, and
+    /// what can follow it here.
+    pub fn which_key(&self) -> Option<(String, Vec<KeyRow>)> {
+        let count = self.count.map(|c| c.to_string()).unwrap_or_default();
+        if self.typed.is_empty() {
+            self.count?;
+            let tab = self.first_key(Action::NextTab);
+            let top = self.first_key(Action::Top);
+            let rows = vec![
+                KeyRow::key("j k …", "that many times"),
+                KeyRow::key(tab, format!("tab {count}")),
+                KeyRow::key(top, format!("line {count}")),
+            ];
+            return Some((format!("{count}…"), rows));
+        }
+        let typed = format!("{count}{}…", crate::keymap::pretty_keys(&self.typed));
+        let rows = (self
+            .keymap
+            .continuations(&self.typed, self.contexts())
+            .into_iter())
+        .filter(|(_, a)| self.availability(*a).is_ok())
+        .map(|(rest, a)| KeyRow::key(crate::keymap::pretty_keys(&rest), a.description()))
+        .collect();
+        Some((typed, rows))
+    }
+
     /// Whether `action` does something here, or why not. What the menu
     /// lists decides, so which-key, the palette and the menu agree; moving
     /// and going places work everywhere.
@@ -2239,37 +2266,9 @@ impl State {
             Some(_) => return Vec::new(),
             None => {}
         }
-        // Keys typed so far: what can follow them.
-        if let Some(count) = self.count.filter(|_| self.typed.is_empty()) {
-            let tab = self.first_key(Action::NextTab);
-            return vec![
-                (format!("{count}…"), "times".to_owned()),
-                (format!("{count}{tab}"), format!("tab {count}")),
-                (
-                    format!("{count}{}", self.first_key(Action::Top)),
-                    format!("line {count}"),
-                ),
-                pair("esc", "cancel"),
-            ];
-        }
-        if !self.typed.is_empty() {
-            let typed = crate::keymap::pretty_keys(&self.typed);
-            let count = self.count.map(|c| c.to_string()).unwrap_or_default();
-            let next = (self
-                .keymap
-                .continuations(&self.typed, self.contexts())
-                .into_iter())
-            .filter(|(_, a)| self.availability(*a).is_ok())
-            .map(|(rest, a)| {
-                (
-                    crate::keymap::pretty_keys(&rest),
-                    a.description().to_owned(),
-                )
-            });
-            return std::iter::once((format!("{count}{typed}…"), String::new()))
-                .chain(next)
-                .chain(std::iter::once(pair("esc", "cancel")))
-                .collect();
+        // Keys typed so far: the which-key panel lists what can follow.
+        if let Some((typed, _)) = self.which_key() {
+            return vec![(typed, String::new()), pair("esc", "cancel")];
         }
         // The menu first: everything else is in it, so it must never be
         // the hint a narrow terminal drops. Then what fits the thing under
