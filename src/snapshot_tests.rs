@@ -2541,12 +2541,18 @@ mod keys {
     #[test]
     fn blame_runs_open_their_commit() {
         let mut s = with_blame(Mode::Dark);
-        press(&mut s, "ggj");
-        let link = match s.screen() {
+        let selected = |s: &State| match s.screen() {
             Screen::Page(p) => p.selected_link().and_then(|l| l.url().map(str::to_owned)),
             Screen::Diff(_) => None,
         };
-        assert!(link.is_some_and(|l| l.contains("/commit/")));
+        // Opened at line 5: its run is selected.
+        let link = selected(&s);
+        assert!(
+            link.as_ref().is_some_and(|l| l.contains("/commit/bbbbbbb")),
+            "{link:?}"
+        );
+        press(&mut s, "ggj");
+        assert!(selected(&s).is_some_and(|l| l.contains("/commit/")));
         press(&mut s, "<Enter>");
         assert!(matches!(s.route(), Some(Route::Commit { .. })));
     }

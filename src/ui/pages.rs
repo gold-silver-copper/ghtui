@@ -1010,6 +1010,7 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
         segs.insert(0, Seg::new(number, Role::Syntax(Syntax::Comment)));
         if is_marked(n) && page.jump.is_none() {
             page.jump = Some(page.lines.len());
+            page.selects = Some(page.items.len());
         }
         let start = page.lines.len();
         page.push(PageLine {
@@ -1123,6 +1124,8 @@ pub fn blame(
         gutter.append(&mut segs);
         if is_marked(n) && page.jump.is_none() {
             page.jump = Some(page.lines.len());
+            // The run it's in, pushed once the run ends.
+            page.selects = Some(page.items.len());
         }
         page.push(PageLine {
             segs: gutter,

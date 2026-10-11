@@ -221,13 +221,14 @@ pub struct PageScreen {
 
 impl PageScreen {
     pub fn new(route: Route, anchor: Option<String>) -> Self {
-        // Lists start on their first row, and a job on a step; reading
-        // pages (issues, pull requests, files) start with nothing selected.
+        // Lists start on their first row, a job on a step and a file on the
+        // lines linked; reading pages (issues, pull requests, files) start
+        // with nothing selected.
         let list = !matches!(
             route,
             Route::Issue { .. }
-                | Route::Blob { .. }
-                | Route::Blame { .. }
+                | Route::Blob { lines: None, .. }
+                | Route::Blame { lines: None, .. }
                 | Route::Commit { .. }
                 | Route::Release { .. }
                 | Route::Discussion { .. }
@@ -1884,13 +1885,16 @@ impl State {
 
     fn page_doables(&self, p: &PageScreen, out: &mut Vec<Doable>) {
         let here = |action, label: &str, short| doable("This page", action, label, short);
-        let mut open = here(Action::Open, "Open the selected row", "open");
-        match p.selected_link() {
-            Some(link) => open.label = describe(link),
-            None => open.unavailable = Some("nothing is selected".into()),
-        }
-        out.push(open);
         let route = &p.route;
+        // A file's line is this page: nothing to open.
+        if !matches!(route, Route::Blob { .. }) {
+            let mut open = here(Action::Open, "Open the selected row", "open");
+            match p.selected_link() {
+                Some(link) => open.label = describe(link),
+                None => open.unavailable = Some("nothing is selected".into()),
+            }
+            out.push(open);
+        }
         let list = route.search().map(|(_, q)| q);
         // `/` searches the page, or filters a list; then n/N.
         let searched = match route {
