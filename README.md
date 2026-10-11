@@ -131,7 +131,10 @@ says where it works.
   `V` selects lines (then `y` copies `#L10-L20`), and `gb` blames the
   file at that line. In the blame, a run of lines opens its commit.
 - `h` and `l` scroll code sideways in files, logs and the diff; in the
-  diff's file tree they fold and unfold folders.
+  diff's file tree they fold and unfold folders, and the diff shows the
+  file selected there.
+- In the diff, `y` copies the link to the line, or to the lines `V`
+  selected, as GitHub writes it; such a link opens back on those lines.
 - What changes GitHub waits behind `,`: `,m` merges, `,a` approves, `,r`
   marks a draft ready, `,u` updates the branch, `,x` closes or reopens
   (or cancels a run), `,R` re-runs, `,*` stars, and in Files changed `,s`
@@ -145,7 +148,8 @@ says where it works.
 - `?` searches backwards, and `n` and `N` follow its direction. `>`
   replies quoting the selected comment; Enter on a comment doesn't start
   writing. In Files changed the view toggles are under `z`: `zw`
-  whitespace, `zs` split, `zf` the whole file, `zT` the file tree.
+  whitespace, `zs` split, `zf` the whole file, `zT` the file tree; `zc`
+  `zo` `za` fold a thread or file, `zM` `zR` every file.
 
 **Everywhere** (`global:`)
 
@@ -296,6 +300,8 @@ says where it works.
 | `[[` | Previous section |
 | `h`  | Fold the folder (on a file, go to its folder) |
 | `l`  | Unfold the folder |
+| `<`  | Narrow the file tree |
+| `>`  | Widen the file tree |
 
 The comment editor opens where the comment will go: under the lines, the
 thread or the file header in Files changed, and in place of the comment

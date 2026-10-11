@@ -971,7 +971,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             // Its files, from one commit to the other (`a..b`; with three
             // dots it's from their merge base, which the comparison page
             // finds).
-            if fragment == Some("files")
+            if fragment.is_some_and(|f| f == "files" || f.starts_with("diff-"))
                 && !spec.contains("...")
                 && let Some((from, to)) = spec.split_once("..")
                 && let Ok(from) = Oid::parse(from)
@@ -1765,14 +1765,23 @@ pub(crate) mod tests {
                 spec: format!("{sha}...{other}")
             }
         );
-        // A diff's link leads back to it.
+        // A diff's link leads back to it, and a link to its lines to them.
         let (from, to) = (Oid::parse(sha).unwrap(), Oid::parse(&other).unwrap());
+        let line = |side, line| crate::diff::anchor::LinePos { side, line };
+        let lines = (
+            line(crate::diff::anchor::Side::Left, 3),
+            line(crate::diff::anchor::Side::Right, 5),
+        );
+        let anchor = format!("diff-{}L3-R5", crate::diff_screen::path_hash("a.rs"));
         for of in [
             DiffOf::Pr(pr.clone()),
             DiffOf::Commit(pr.repo.clone(), from.clone()),
             DiffOf::Range(pr.repo.clone(), from, to),
         ] {
             assert_eq!(Dest::from_url(&of.url()).target, Target::Files(of.clone()));
+            let dest = Dest::from_url(&of.file_url("a.rs", Some(lines)));
+            assert_eq!(dest.target, Target::Files(of.clone()));
+            assert_eq!(dest.anchor.as_deref(), Some(anchor.as_str()));
         }
         // A topic search without a topic is an empty search, not `topic:`.
         assert_eq!(

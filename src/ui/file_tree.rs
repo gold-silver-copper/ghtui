@@ -141,6 +141,41 @@ fn flatten(node: &Node, parent: &str, depth: u16, rows: &mut Vec<TreeRow>) {
     }
 }
 
+/// Columns that show every row whole, counts and padding included.
+pub fn fit_width(rows: &[TreeRow]) -> u16 {
+    let widest = rows.iter().map(|row| {
+        let indent = usize::from(row.depth()).saturating_mul(2);
+        match row {
+            // `▾ name`
+            TreeRow::Dir { name, .. } => text::width(name).saturating_add(2),
+            // `M ✓ name   +12 −34`
+            TreeRow::File { name, .. } => text::width(name).saturating_add(FILE_EXTRA),
+        }
+        .saturating_add(indent)
+    });
+    // The row's inset on both sides.
+    let width = widest.max().unwrap_or(0).saturating_add(2);
+    u16::try_from(width).unwrap_or(u16::MAX)
+}
+
+/// Columns a file's row takes besides its name: its mark, a viewed tick,
+/// a gap and `+12 −34`.
+const FILE_EXTRA: usize = 15;
+
+/// The first row of the list in a tree drawn in `area`.
+fn list_top(area: Rect) -> u16 {
+    area.y
+        .saturating_add(PAD_Y.min(area.height.saturating_sub(1)))
+        .saturating_add(2)
+}
+
+/// The row of the list (scrolled by `scroll`) drawn at `y`, if any.
+pub fn row_at(area: Rect, scroll: usize, y: u16) -> Option<usize> {
+    let top = list_top(area);
+    (y >= top && y < area.bottom())
+        .then(|| scroll.saturating_add(usize::from(y.saturating_sub(top))))
+}
+
 /// Tree row showing file `index`.
 pub fn row_of_file(rows: &[TreeRow], index: usize) -> Option<usize> {
     rows.iter()
@@ -194,9 +229,8 @@ impl Widget for FileTree<'_> {
         ];
         Line::from(fit_spans(&title, title_area.width)).render(title_area, buf);
 
-        let list_top = title_area.y.saturating_add(2);
         let shown = self.rows.iter().enumerate().skip(self.scroll);
-        for ((i, row), y) in shown.zip(list_top..area.bottom()) {
+        for ((i, row), y) in shown.zip(list_top(area)..area.bottom()) {
             let selected = i == self.selected;
             let bg = match (selected, self.focused) {
                 (true, true) => Bg::Selected,

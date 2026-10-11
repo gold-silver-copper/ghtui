@@ -327,9 +327,9 @@ fn render_diff(
     composing: Option<&Compose>,
 ) -> Option<Slot> {
     let theme = ctx.theme;
-    let lay = diff_screen::layout(content, screen.prefs.tree_visible);
     fill(buf, content, theme, Bg::Surface);
     let diff = state.diffs.get(&screen.of)?;
+    let lay = diff_screen::layout(content, &screen.prefs, &diff.tree);
     let mut area = lay.diff;
     if let Some(err) = &diff.error {
         let text = format!("Couldn't load the diff: {err}");

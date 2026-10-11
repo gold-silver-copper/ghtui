@@ -258,21 +258,12 @@ pub fn target(
 ) -> Result<ComposeTarget, String> {
     let file = doc.files().get(cursor.file).ok_or("No file here")?;
     let path = file.meta.path().to_owned();
-    let (from, to) = match selection {
-        Some(anchor) if anchor.file == cursor.file => {
-            let (a, b) = (doc.to_global(anchor), doc.to_global(cursor));
-            (a.min(b), a.max(b))
-        }
+    let from = match selection {
+        Some(anchor) if anchor.file == cursor.file => anchor,
         Some(_) => return Err("A selection can't span files".into()),
-        None => {
-            let g = doc.to_global(cursor);
-            (g, g)
-        }
+        None => cursor,
     };
-    let lines: Vec<LinePos> = (from..=to)
-        .filter_map(|g| doc.line_at(doc.to_pos(g), half))
-        .collect();
-    let (Some(&start), Some(&end)) = (lines.first(), lines.last()) else {
+    let Some((start, end)) = doc.line_range(from, cursor, half) else {
         return Ok(ComposeTarget::File { path, reason: None });
     };
     let Some(commentable) = doc.commentable(cursor.file) else {

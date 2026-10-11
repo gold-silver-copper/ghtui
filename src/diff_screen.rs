@@ -4,15 +4,15 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::api::model::{NodeId, PatchFile, PrRef, RepoId, ReviewThread, ViewedFiles};
-use crate::diff::anchor::{Commentable, Side};
+use crate::diff::anchor::{Commentable, LinePos, Side};
 use crate::diff::{FileDiff, Whitespace};
 use crate::git::Oid;
 use crate::git::repo::{Commit, PrRefs};
 use crate::store::ReviewState;
 use crate::ui::annotations::Annotation;
 use crate::ui::bars::Notice;
-use crate::ui::diff_doc::{Doc, DocInputs, Note, Pos, Row, ViewOptions, Viewed};
-use crate::ui::file_tree::{TreeRow, row_of_file, tree_rows, unfolded};
+use crate::ui::diff_doc::{Doc, DocFile, DocInputs, Note, Pos, Row, ViewOptions, Viewed};
+use crate::ui::file_tree::{self, TreeRow, row_of_file, tree_rows, unfolded};
 use crate::ui::pages::url as links;
 use crate::ui::text::short_sha;
 use ratatui::layout::Rect;
@@ -71,9 +71,33 @@ impl DiffOf {
     /// one that parses back to it.
     pub fn url(&self) -> String {
         match self {
+            DiffOf::Pr(_) => self.page(),
+            DiffOf::Commit(..) | DiffOf::Range(..) => format!("{}#files", self.page()),
+        }
+    }
+
+    /// Its file `path` on GitHub, at `lines` (the first and the last) if
+    /// given, as GitHub anchors them (`#diff-<hash>R10-R12`): what
+    /// [`DiffScreen::anchor`] goes back to.
+    pub fn file_url(&self, path: &str, lines: Option<(LinePos, LinePos)>) -> String {
+        let line = |l: LinePos| match l.side {
+            Side::Left => format!("L{}", l.line),
+            Side::Right => format!("R{}", l.line),
+        };
+        let lines = match lines {
+            Some((start, end)) if start == end => line(start),
+            Some((start, end)) => format!("{}-{}", line(start), line(end)),
+            None => String::new(),
+        };
+        format!("{}#diff-{}{lines}", self.page(), path_hash(path))
+    }
+
+    /// The page its files are on.
+    fn page(&self) -> String {
+        match self {
             DiffOf::Pr(pr) => format!("{}/files", pr.url()),
-            DiffOf::Commit(repo, oid) => format!("{}#files", links::commit(repo, oid)),
-            DiffOf::Range(repo, from, to) => format!("{}#files", links::compare(repo, from, to)),
+            DiffOf::Commit(repo, oid) => links::commit(repo, oid),
+            DiffOf::Range(repo, from, to) => links::compare(repo, from, to),
         }
     }
 }
@@ -113,6 +137,8 @@ pub enum Pane {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DiffPrefs {
     pub tree_visible: bool,
+    /// The file tree's width as set with keys; `None` fits its names.
+    pub tree_width: Option<u16>,
     /// `None` picks split or unified by width.
     pub split_override: Option<bool>,
     pub ignore_whitespace: bool,
@@ -123,6 +149,7 @@ impl DiffPrefs {
     pub fn fit(width: u16) -> Self {
         Self {
             tree_visible: width >= 100,
+            tree_width: None,
             split_override: None,
             ignore_whitespace: false,
         }
@@ -150,8 +177,9 @@ pub struct DiffScreen {
     /// Columns code is scrolled left by.
     pub shift: usize,
     /// What a link pointed at, to go to once it's loaded: a file
-    /// (`diff-<hash>`, GitHub's SHA-256 of its path) or a review comment
-    /// (`discussion_r<id>`, `r<id>`).
+    /// (`diff-<hash>`, GitHub's SHA-256 of its path), maybe at lines
+    /// (`diff-<hash>L3-R5`), or a review comment (`discussion_r<id>`,
+    /// `r<id>`).
     pub anchor: Option<String>,
 }
 
@@ -179,9 +207,10 @@ impl DiffScreen {
         *self = Self::new(self.of.clone(), self.prefs);
     }
 
-    /// The view options this screen wants at `content` size.
-    pub fn options(&self, content: Rect) -> ViewOptions {
-        let lay = layout(content, self.prefs.tree_visible);
+    /// The view options this screen wants at `content` size, beside
+    /// `tree`.
+    pub fn options(&self, content: Rect, tree: &[TreeRow]) -> ViewOptions {
+        let lay = layout(content, &self.prefs, tree);
         ViewOptions {
             split: self
                 .prefs
@@ -415,16 +444,20 @@ pub struct Layout {
     pub diff: Rect,
 }
 
-/// Splits the content area; shared by the view and key handling so both
-/// agree on viewport sizes.
-pub fn layout(content: Rect, tree_visible: bool) -> Layout {
-    if !tree_visible || content.width < 60 {
+/// Splits the content area between `tree` and the diff; shared by the
+/// view and key handling so both agree on viewport sizes.
+pub fn layout(content: Rect, prefs: &DiffPrefs, tree: &[TreeRow]) -> Layout {
+    if !prefs.tree_visible || content.width < 60 {
         return Layout {
             tree: None,
             diff: content,
         };
     }
-    let width = (content.width / 4).clamp(24, 40);
+    // Its names fit up to a third of the width; keys widen it to half.
+    let width = match prefs.tree_width {
+        Some(w) => w.clamp(MIN_TREE, content.width / 2),
+        None => file_tree::fit_width(tree).clamp(FIT_TREE, (content.width / 3).max(FIT_TREE)),
+    };
     Layout {
         tree: Some(Rect { width, ..content }),
         diff: Rect {
@@ -434,6 +467,12 @@ pub fn layout(content: Rect, tree_visible: bool) -> Layout {
         },
     }
 }
+
+/// The narrowest the file tree gets, the narrowest it starts, and what a
+/// key widens or narrows it by.
+const MIN_TREE: u16 = 16;
+const FIT_TREE: u16 = 24;
+const TREE_STEP: u16 = 4;
 
 /// Rows of the tree list below its title.
 fn tree_list_height(tree: Rect) -> usize {
@@ -469,7 +508,7 @@ pub fn apply(
     content: Rect,
     notice: &mut Notices,
 ) -> Vec<Cmd> {
-    let lay = layout(content, screen.prefs.tree_visible);
+    let lay = layout(content, &screen.prefs, &state.tree);
     let half = (usize::from(lay.diff.height) / 2).max(1).cast_signed();
     let tree_focused = screen.focus == Pane::Tree && lay.tree.is_some();
     let tree = unfolded(&state.tree, &screen.folded);
@@ -514,7 +553,7 @@ pub fn apply(
             }
         }
         Action::ToggleSplit => {
-            screen.prefs.split_override = Some(!screen.options(content).split);
+            screen.prefs.split_override = Some(!screen.options(content, &state.tree).split);
         }
         Action::IgnoreWhitespace => {
             screen.prefs.ignore_whitespace = !screen.prefs.ignore_whitespace;
@@ -524,8 +563,30 @@ pub fn apply(
                 "Showing whitespace changes"
             });
         }
+        Action::TreeNarrower | Action::TreeWider => match lay.tree {
+            Some(tree) => {
+                let wider = action == Action::TreeWider;
+                let width = if wider {
+                    tree.width.saturating_add(TREE_STEP)
+                } else {
+                    tree.width.saturating_sub(TREE_STEP)
+                };
+                screen.prefs.tree_width = Some(width);
+                // What it came to, within its limits.
+                let now = layout(content, &screen.prefs, &state.tree).tree;
+                let now = now.map_or(width, |t| t.width);
+                screen.prefs.tree_width = Some(now);
+                if now == tree.width {
+                    notice.info(if wider {
+                        "The file tree is as wide as it gets"
+                    } else {
+                        "The file tree is as narrow as it gets"
+                    });
+                }
+            }
+            None => notice.info("The file tree is hidden"),
+        },
         // Moving in the file tree; everything else acts on the diff.
-        Action::Open if tree_focused => screen.focus = Pane::Diff,
         Action::Down
         | Action::Up
         | Action::HalfPageDown
@@ -545,58 +606,111 @@ pub fn apply(
                 Action::Top => isize::MIN,
                 _ => isize::MAX,
             };
-            let last = tree.len().saturating_sub(1);
-            screen.tree_selected = screen.tree_selected.saturating_add_signed(delta).min(last);
-            // The diff follows the tree selection.
-            if let Some(TreeRow::File { index, .. }) = tree.get(screen.tree_selected) {
-                jump(
-                    screen,
-                    Pos {
-                        file: *index,
-                        row: 0,
-                    },
-                );
-            }
+            let row = screen.tree_selected.saturating_add_signed(delta);
+            select_tree_row(screen, state, row);
         }
-        Action::Fold | Action::Unfold | Action::Open if tree_focused => {
-            match (action, tree.get(screen.tree_selected)) {
-                (
-                    Action::Fold,
-                    Some(TreeRow::Dir {
-                        path,
-                        folded: false,
-                        ..
-                    }),
-                ) => {
-                    screen.folded.insert(path.clone());
-                }
-                (
-                    Action::Unfold | Action::Open,
-                    Some(TreeRow::Dir {
-                        path, folded: true, ..
-                    }),
-                ) => {
-                    screen.folded.remove(path);
+        Action::Fold
+        | Action::Unfold
+        | Action::Open
+        | Action::FoldClose
+        | Action::FoldOpen
+        | Action::FoldToggle
+            if tree_focused =>
+        {
+            let at = screen.tree_selected;
+            let row = tree.get(at);
+            // The folder the row is in.
+            let parent = row.and_then(|row| {
+                (0..at)
+                    .rev()
+                    .find(|&i| tree.get(i).is_some_and(|r| r.depth() < row.depth()))
+            });
+            match (action, row) {
+                (_, None) => notice.info("No files"),
+                (Action::Open | Action::Unfold, Some(TreeRow::File { .. })) => {
+                    screen.focus = Pane::Diff;
                 }
                 // Into an open folder: its first row.
-                (Action::Unfold, Some(TreeRow::Dir { .. })) => {
-                    screen.tree_selected =
-                        (screen.tree_selected + 1).min(tree.len().saturating_sub(1));
+                (Action::Unfold, Some(TreeRow::Dir { folded: false, .. })) => {
+                    select_tree_row(screen, state, at + 1);
                 }
                 // From a file or a folded folder, out to the folder it's in.
-                (Action::Fold, Some(row)) => {
-                    let depth = row.depth();
-                    let parent = (0..screen.tree_selected)
-                        .rev()
-                        .find(|&i| tree.get(i).is_some_and(|r| r.depth() < depth));
+                (Action::Fold, Some(TreeRow::File { .. } | TreeRow::Dir { folded: true, .. })) => {
                     match parent {
-                        Some(i) => screen.tree_selected = i,
+                        Some(i) => select_tree_row(screen, state, i),
                         None => notice.info("Already at the top"),
                     }
                 }
-                (_, Some(TreeRow::File { .. })) => screen.focus = Pane::Diff,
-                _ => {}
+                (Action::FoldOpen, Some(TreeRow::File { .. })) => notice.info("Not a folder"),
+                // Folding a file folds the folder it's in.
+                (_, Some(TreeRow::File { .. })) => {
+                    match parent.and_then(|i| Some((i, tree.get(i)?))) {
+                        Some((i, TreeRow::Dir { path, .. })) => {
+                            screen.folded.insert(path.clone());
+                            select_tree_row(screen, state, i);
+                        }
+                        _ => notice.info("Not in a folder"),
+                    }
+                }
+                (_, Some(TreeRow::Dir { path, folded, .. })) => {
+                    let fold = match action {
+                        Action::Fold | Action::FoldClose => true,
+                        Action::Unfold | Action::FoldOpen => false,
+                        _ => !folded,
+                    };
+                    if fold == *folded {
+                        notice.info(if fold {
+                            "Already folded"
+                        } else {
+                            "Already unfolded"
+                        });
+                    } else if fold {
+                        screen.folded.insert(path.clone());
+                    } else {
+                        screen.folded.remove(path);
+                    }
+                }
             }
+        }
+        Action::FoldClose | Action::FoldOpen | Action::FoldToggle => {
+            let (doc, file) = (&state.doc, screen.cursor.file);
+            let thread = (doc.annotation_under(screen.cursor, screen.half))
+                // Folding a folded thread folds its file, as in vim.
+                .filter(|&t| action != Action::FoldClose || doc.thread_open(t));
+            let open = match thread {
+                Some(t) => doc.thread_open(t),
+                None => doc.files().get(file).is_some_and(|f| !f.collapsed()),
+            };
+            let want = match action {
+                Action::FoldOpen => true,
+                Action::FoldClose => false,
+                _ => !open,
+            };
+            match thread {
+                _ if want == open => notice.info(if open {
+                    "Already unfolded"
+                } else {
+                    "Already folded"
+                }),
+                Some(t) => preserving_position(screen, state, |d| d.doc.toggle_thread(t)),
+                None => {
+                    preserving_position(screen, state, |d| d.doc.set_open(file, want));
+                    // Files shown again are diffed on demand.
+                    state.requested.remove(&file);
+                }
+            }
+        }
+        Action::FoldAll | Action::UnfoldAll => {
+            let open = action == Action::UnfoldAll;
+            preserving_position(screen, state, |d| d.doc.set_all_open(open));
+            if open {
+                state.requested.clear();
+            }
+            notice.info(if open {
+                "Unfolded every file"
+            } else {
+                "Folded every file"
+            });
         }
         Action::ScrollLeft => screen.shift = screen.shift.saturating_sub(SHIFT),
         Action::ScrollRight => screen.shift = screen.shift.saturating_add(SHIFT).min(MAX_SHIFT),
@@ -633,7 +747,7 @@ pub fn apply(
                 dirs.rfind(|&i| i < at)
             };
             match to {
-                Some(i) => screen.tree_selected = i,
+                Some(i) => select_tree_row(screen, state, i),
                 None => notice.info("No more folders that way"),
             }
         }
@@ -739,10 +853,11 @@ pub fn apply(
                     .doc
                     .files()
                     .get(screen.cursor.file)
-                    .is_some_and(|f| f.collapsed() || f.expanded) =>
+                    .is_some_and(|f| f.collapsed() || f.open.is_some()) =>
             {
                 let file = screen.cursor.file;
-                state.doc.toggle_expanded(file);
+                let open = state.doc.files().get(file).is_some_and(DocFile::collapsed);
+                state.doc.set_open(file, open);
                 // Expanded files are diffed on demand.
                 state.requested.remove(&file);
                 screen.cursor.row = 0;
@@ -774,6 +889,45 @@ pub fn apply(
         });
     }
     cmds
+}
+
+/// Selects row `row` of the file tree as shown (or its last), and shows
+/// the file on it in the diff: every move in the tree comes here.
+pub fn select_tree_row(screen: &mut DiffScreen, state: &DiffState, row: usize) {
+    let tree = unfolded(&state.tree, &screen.folded);
+    screen.tree_selected = row.min(tree.len().saturating_sub(1));
+    if let Some(&TreeRow::File { index, .. }) = tree.get(screen.tree_selected)
+        && index != screen.cursor.file
+    {
+        jump(
+            screen,
+            Pos {
+                file: index,
+                row: 0,
+            },
+        );
+    }
+}
+
+/// A click at `x`, `y`: in the file tree, selects its row; a second click
+/// on a folder folds or unfolds it.
+pub fn click(screen: &mut DiffScreen, state: &DiffState, content: Rect, x: u16, y: u16) {
+    let Some(tree) = layout(content, &screen.prefs, &state.tree).tree else {
+        return;
+    };
+    let rows = unfolded(&state.tree, &screen.folded);
+    let Some(row) = (file_tree::row_at(tree, screen.tree_scroll, y))
+        .filter(|&row| x < tree.right() && row < rows.len())
+    else {
+        return;
+    };
+    screen.focus = Pane::Tree;
+    if let (true, Some(TreeRow::Dir { path, .. })) = (row == screen.tree_selected, rows.get(row))
+        && !screen.folded.remove(path)
+    {
+        screen.folded.insert(path.clone());
+    }
+    select_tree_row(screen, state, row);
 }
 
 /// Puts the cursor on the half of a split row where the thread under it
@@ -880,17 +1034,78 @@ pub fn path_hash(path: &str) -> String {
         .collect()
 }
 
+/// The link to what's under the cursor: the lines selected, or the line
+/// under it, or else its file.
+pub fn here_url(screen: &DiffScreen, state: &DiffState) -> String {
+    let (doc, cursor) = (&state.doc, screen.cursor);
+    let Some(file) = doc.files().get(cursor.file) else {
+        return screen.of.url();
+    };
+    let from = (screen.selection)
+        .filter(|s| s.file == cursor.file)
+        .unwrap_or(cursor);
+    let lines = (screen.focus == Pane::Diff)
+        .then(|| doc.line_range(from, cursor, screen.half))
+        .flatten();
+    screen.of.file_url(file.meta.path(), lines)
+}
+
+/// Lines as GitHub anchors them: `R12`, `L3-R5`.
+fn parse_lines(s: &str) -> Option<(LinePos, LinePos)> {
+    let line = |s: &str| {
+        let side = match s.get(..1)? {
+            "L" => Side::Left,
+            "R" => Side::Right,
+            _ => return None,
+        };
+        let line = s.get(1..)?.parse().ok()?;
+        Some(LinePos { side, line })
+    };
+    let (start, end) = s.split_once('-').unwrap_or((s, s));
+    Some((line(start)?, line(end)?))
+}
+
+/// Where a link's anchor puts the cursor, and the selection it starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Landing {
+    cursor: Pos,
+    /// For lines: the half of split rows they're on, and the first.
+    lines: Option<(Side, Pos)>,
+}
+
+impl From<Pos> for Landing {
+    fn from(cursor: Pos) -> Self {
+        Self {
+            cursor,
+            lines: None,
+        }
+    }
+}
+
 /// Where a link's anchor is in the diff: `Some(None)` when it isn't there,
-/// `None` while the review threads it needs are still on their way.
-fn anchor_pos(anchor: &str, state: &DiffState, pr: bool) -> Option<Option<Pos>> {
+/// `None` while the diff or review threads it needs are on their way.
+fn anchor_pos(anchor: &str, state: &DiffState, pr: bool) -> Option<Option<Landing>> {
     let doc = &state.doc;
-    if let Some(hash) = anchor.strip_prefix("diff-") {
-        let hash = hash.get(..64).unwrap_or(hash);
-        let file = doc
-            .files()
-            .iter()
-            .position(|f| path_hash(f.meta.path()) == hash);
-        return Some(file.map(|file| Pos { file, row: 0 }));
+    if let Some(rest) = anchor.strip_prefix("diff-") {
+        let (hash, lines) = rest.split_at_checked(64).unwrap_or((rest, ""));
+        let Some((file, f)) =
+            (doc.files().iter().enumerate()).find(|(_, f)| path_hash(f.meta.path()) == hash)
+        else {
+            return Some(None);
+        };
+        let top = Pos { file, row: 0 };
+        let Some((start, end)) = parse_lines(lines) else {
+            return Some(Some(top.into()));
+        };
+        // Lines wait for the file's diff; a folded file shows none.
+        if f.diff.is_none() && !f.collapsed() {
+            return None;
+        }
+        let row = |l| doc.line_row(file, l).unwrap_or(top);
+        return Some(Some(Landing {
+            cursor: row(end),
+            lines: Some((end.side, row(start))),
+        }));
     }
     let Some(id) = anchor
         .strip_prefix("discussion_r")
@@ -921,7 +1136,7 @@ fn anchor_pos(anchor: &str, state: &DiffState, pr: bool) -> Option<Option<Pos>> 
         .ok()
         .and_then(|i| doc.annotation_pos(i))
     {
-        return Some(Some(pos));
+        return Some(Some(pos.into()));
     }
     // Its file shows no thread rows yet: wait while it's being diffed;
     // once it is (collapsed, say), go to the file.
@@ -933,7 +1148,7 @@ fn anchor_pos(anchor: &str, state: &DiffState, pr: bool) -> Option<Option<Pos>> 
         return Some(None);
     };
     let diffed = doc.files().get(file).is_some_and(|f| f.diff.is_some());
-    diffed.then_some(Some(Pos { file, row: 0 }))
+    diffed.then_some(Some(Pos { file, row: 0 }.into()))
 }
 
 /// Applies view options, clamps positions, keeps the cursor visible (clear
@@ -941,11 +1156,11 @@ fn anchor_pos(anchor: &str, state: &DiffState, pr: bool) -> Option<Option<Pos>> 
 /// prioritize files that are on screen but not diffed yet.
 #[must_use]
 pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> Vec<Cmd> {
-    let lay = layout(content, screen.prefs.tree_visible);
+    let lay = layout(content, &screen.prefs, &state.tree);
     if lay.tree.is_none() {
         screen.focus = Pane::Diff;
     }
-    let opts = screen.options(content);
+    let opts = screen.options(content, &state.tree);
     if state.doc.opts() != opts {
         preserving_position(screen, state, |d| d.doc.set_options(opts));
     }
@@ -955,9 +1170,17 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
     }
     if let Some(anchor) = screen.anchor.take() {
         match anchor_pos(&anchor, state, screen.of.pr().is_some()) {
-            Some(Some(pos)) => {
-                screen.cursor = pos;
-                face_thread(screen, state);
+            Some(Some(Landing { cursor, lines })) => {
+                screen.cursor = cursor;
+                match lines {
+                    // Lines are selected, from a little above the first.
+                    Some((half, from)) => {
+                        screen.half = half;
+                        screen.selection = (from != cursor).then_some(from);
+                        screen.top = state.doc.offset(from, -2);
+                    }
+                    None => face_thread(screen, state),
+                }
             }
             // A review comment waits for the threads.
             None => screen.anchor = Some(anchor),

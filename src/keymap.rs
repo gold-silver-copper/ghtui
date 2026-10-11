@@ -246,6 +246,8 @@ actions! {
     SwitchPane        "switch_pane"       ["<Tab>"]                Diff   "Switch between the file tree and the diff";
     Fold              "fold"              ["h"]                    Tree   "Fold the folder (on a file, go to its folder)";
     Unfold            "unfold"            ["l"]                    Tree   "Unfold the folder";
+    TreeNarrower      "tree_narrower"     ["<"]                    Tree   "Narrow the file tree";
+    TreeWider         "tree_wider"        [">"]                    Tree   "Widen the file tree";
     FoldClose         "fold_close"        ["zc"]                   Diff   "Fold the file or thread";
     FoldOpen          "fold_open"         ["zo"]                   Diff   "Unfold the file or thread";
     FoldToggle        "fold_toggle"       ["za"]                   Diff   "Fold or unfold the file or thread";

@@ -259,6 +259,10 @@ impl DiffView<'_> {
         if file.full {
             chip("Full file".into(), Bg::SecondaryContainer);
         }
+        // Folded by hand: nothing under it says so.
+        if file.open == Some(false) {
+            chip("Folded".into(), Bg::SecondaryContainer);
+        }
         if let Some(old) = meta.old_path.as_deref()
             && matches!(meta.status, FileStatus::Renamed | FileStatus::Copied)
         {

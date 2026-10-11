@@ -778,8 +778,17 @@ pub fn go_to_line(state: &mut State, n: usize) -> Vec<Cmd> {
     let height = state.page_height();
     // In the diff: that line of the file the cursor is in.
     if let Some((screen, diff)) = state.diff_parts() {
+        // In its file tree, that row.
+        if screen.focus == Pane::Tree {
+            crate::diff_screen::select_tree_row(screen, diff, n.saturating_sub(1));
+            return Vec::new();
+        }
         let line = u32::try_from(n).unwrap_or(u32::MAX);
-        match diff.doc.new_line(screen.cursor.file, line) {
+        let line = crate::diff::anchor::LinePos {
+            side: Side::Right,
+            line,
+        };
+        match diff.doc.line_row(screen.cursor.file, line) {
             Some(pos) => screen.cursor = pos,
             None => state.info(format!("There's no line {n} here")),
         }
@@ -1921,6 +1930,8 @@ const DIFF_DOABLES: &[(&str, &[(Action, &str)])] = {
                 (A::FoldAll, ""),
                 (A::UnfoldAll, ""),
                 (A::ToggleTree, ""),
+                (A::TreeNarrower, ""),
+                (A::TreeWider, ""),
                 (A::ToggleSplit, ""),
                 (A::IgnoreWhitespace, ""),
                 (A::ExpandContext, ""),
@@ -1989,9 +2000,13 @@ impl State {
         if let Screen::Diff(_) = self.screen() {
             out.push(go(Action::Tab1, "Back to the conversation", ""));
         }
-        let (open, copy) = match selected {
-            Some(_) => ("Open the selection on GitHub", "Copy the selection's link"),
-            None => ("Open this page on GitHub", "Copy this page's link"),
+        let (open, copy) = match (selected, self.screen()) {
+            (Some(_), _) => ("Open the selection on GitHub", "Copy the selection's link"),
+            (None, Screen::Diff(_)) => (
+                "Open the lines or file on GitHub",
+                "Copy the link to the lines or file",
+            ),
+            (None, Screen::Page(_)) => ("Open this page on GitHub", "Copy this page's link"),
         };
         out.push(go(Action::OpenInBrowser, open, "browser"));
         out.push(go(Action::Copy, copy, "copy link"));
@@ -2633,7 +2648,10 @@ impl State {
         }
         let link = match self.screen() {
             Screen::Page(p) => p.selected_link().and_then(Link::url),
-            Screen::Diff(_) => None,
+            Screen::Diff(d) => match self.diffs.get(&d.of) {
+                Some(diff) => return crate::diff_screen::here_url(d, diff),
+                None => None,
+            },
         };
         link.map_or_else(|| crate::tabs::url(self.screen()), str::to_owned)
     }
@@ -2753,6 +2771,11 @@ fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
             Some(i) => switch_tab(state, i + 1),
             None => Vec::new(),
         };
+    }
+    let content = lay.content;
+    if let Some((screen, diff)) = state.diff_parts() {
+        crate::diff_screen::click(screen, diff, content, x, y);
+        return Vec::new();
     }
     let area = state.page_area();
     let height = state.page_height();
