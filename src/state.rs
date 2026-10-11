@@ -505,6 +505,8 @@ pub struct State {
     pub count: Option<usize>,
     /// The page's other tabs as they were left, to come back to.
     pub parked: Vec<Screen>,
+    /// The last search went backwards (`?`): `n` goes up.
+    pub backwards: bool,
     pub theme: Theme,
     pub icons: Icons,
     pub density: crate::config::Density,
@@ -549,6 +551,7 @@ impl State {
             typed: Vec::new(),
             count: None,
             parked: Vec::new(),
+            backwards: false,
             theme,
             icons,
             density: crate::config::Density::default(),
@@ -1180,13 +1183,14 @@ fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         KeyCode::Enter => {
             let query = input.lines().join("");
             state.overlay = None;
+            let forward = !state.backwards;
             if !query.is_empty() {
                 match state.diff_parts() {
                     Some((screen, diff)) => {
-                        let found = diff_screen::search(screen, diff, query);
+                        let found = diff_screen::search(screen, diff, query, forward);
                         state.notices.say(found);
                     }
-                    None => nav::find(state, &query),
+                    None => nav::find(state, &query, forward),
                 }
             }
         }
@@ -1207,6 +1211,24 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
     };
     match action {
         Action::Quit => state.quit = true,
+        // After `?`, `n` goes up and `N` down.
+        Action::SearchNext | Action::SearchPrev if state.backwards => {
+            let flipped = if action == Action::SearchNext {
+                Action::SearchPrev
+            } else {
+                Action::SearchNext
+            };
+            state.backwards = false;
+            let cmds = apply(state, flipped);
+            state.backwards = true;
+            return cmds;
+        }
+        Action::CloseView if state.screens.len() > 1 => return state.back(),
+        Action::CloseView if state.tab_count() > 1 => return state.close_tab(),
+        Action::CloseView => {
+            let quit = state.first_key(Action::Quit);
+            state.info(format!("Nothing left to close · {quit} quits"));
+        }
         // Esc ends a search or selection, and never leaves.
         Action::Cancel if diff == Some(true) => {
             if let Screen::Diff(screen) = state.screen_mut() {
@@ -1248,11 +1270,17 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::GoHome if state.route() == Some(&Route::Home) => state.info("Already home"),
         Action::GoHome => return state.push(Route::Home),
-        Action::Search if diff.is_some() || !nav::searches_itself(state) => {
+        Action::Search | Action::SearchBack if diff.is_some() || !nav::searches_itself(state) => {
+            state.backwards = action == Action::SearchBack;
             let input = nav::new_input(&state.theme, Bg::Container);
             state.overlay = Some(Overlay::Find(Box::new(input)));
         }
-        Action::Search => return state.open_search(false),
+        Action::Search | Action::SearchBack => {
+            state.backwards = action == Action::SearchBack;
+            return state.open_search(false);
+        }
+        Action::OpenLink => return nav::open_link(state),
+        Action::Notifications => state.info("Notifications aren't here yet"),
         Action::SearchGithub => return state.open_search(true),
         Action::FindFile if diff.is_some() => return state.open_picker(picker::Kind::DiffFiles),
         Action::FindFile => return state.open_finder(false),
@@ -1595,9 +1623,9 @@ pub(crate) mod tests {
         );
         act(&mut state, Action::Forward);
         assert_eq!(route(&state), Route::pr(pr), "forward again");
-        press(&mut state, "H");
+        press(&mut state, "gh");
         assert!(!state.quit);
-        press(&mut state, "q");
+        press(&mut state, "ZZ");
         assert!(state.quit);
     }
 
@@ -1687,7 +1715,7 @@ pub(crate) mod tests {
         assert_eq!(page(&state).selected, Some(2), "the comment box at the end");
         press(&mut state, "<Up>");
         assert_eq!(page(&state).selected, Some(1), "hubot's comment");
-        press(&mut state, "<Enter>");
+        press(&mut state, ">");
         let compose = overlay!(state, Compose);
         assert!(
             compose.text().starts_with("> @hubot wrote:\n> Agreed."),
@@ -3170,7 +3198,7 @@ pub(crate) mod tests {
         press(&mut state, "1gt");
         assert_eq!(route(&state), Route::Repo(repo()));
 
-        let cmds = press(&mut state, "s");
+        let cmds = press(&mut state, ",*");
         let star = Change::Star {
             repo: repo(),
             id: NodeId::new("R_ghtui"),
@@ -3239,7 +3267,7 @@ pub(crate) mod tests {
                 DataKey::Files(repo(), "main".into()),
                 "Couldn't load files",
             ),
-            ("b", DataKey::Refs(repo()), "Couldn't load branches"),
+            ("B", DataKey::Refs(repo()), "Couldn't load branches"),
         ] {
             assert_eq!(press(&mut state, keys), vec![fetch(key.clone())]);
             let result = Err(ApiError::Network("timed out".into()));
@@ -3293,7 +3321,7 @@ pub(crate) mod tests {
         assert_eq!(rows, ["src/main.rs", "crates/ui/src/main_view.rs"]);
         press(&mut state, "<Enter>");
         assert_eq!(route(&state), blob("main", "src/main.rs"));
-        let cmds = press(&mut state, "b");
+        let cmds = press(&mut state, "B");
         assert_eq!(cmds, vec![fetch(DataKey::Refs(repo()))]);
         fetched(
             &mut state,
@@ -4132,7 +4160,7 @@ pub(crate) mod tests {
     #[test]
     fn key_scopes_follow_the_screen() {
         let mut state = with_repo();
-        press(&mut state, "a");
+        press(&mut state, "zw");
         // A review key on a page says where it works.
         says(&state, "Files changed");
         press(&mut state, "i");
@@ -4502,7 +4530,7 @@ pub(crate) mod tests {
                     .row_text(screen(&s).cursor),
                 text
             );
-            press(&mut s, "w");
+            press(&mut s, "zw");
             assert_eq!(
                 s.diffs[&DiffOf::Pr(pr)].doc.opts().whitespace,
                 crate::diff::Whitespace::Ignore
@@ -4955,7 +4983,7 @@ pub(crate) mod tests {
                 assert!(matches!(&s.overlay, Some(Overlay::Compose(c)) if c.text() == "nit"));
 
                 let (mut s, _) = diff_state(120);
-                press(&mut s, "alooks good<Esc>");
+                press(&mut s, ",slooks good<Esc>");
                 assert!(
                     matches!(&s.overlay, Some(Overlay::Submit(d)) if d.input.lines() == ["looks good"])
                 );
@@ -4972,7 +5000,7 @@ pub(crate) mod tests {
                 press(&mut s, "<C-s>");
                 let id = s.diffs[&DiffOf::Pr(pr.clone())].inputs().review.pending[0].id;
 
-                press(&mut s, "a");
+                press(&mut s, ",s");
                 assert!(matches!(s.overlay, Some(Overlay::Submit(_))));
                 press(&mut s, "<Tab>");
                 let cmds = press(&mut s, "<C-s>");
@@ -5006,7 +5034,7 @@ pub(crate) mod tests {
                     s.diffs[&DiffOf::Pr(pr.clone())].inputs().review.pending[0].line,
                     None
                 );
-                press(&mut s, "a");
+                press(&mut s, ",s");
                 press(&mut s, "<C-s>");
                 diff_msg(
                     &mut s,
@@ -5038,7 +5066,7 @@ pub(crate) mod tests {
             #[test]
             fn request_changes_needs_a_summary() {
                 let (mut s, _) = diff_state(120);
-                press(&mut s, "a");
+                press(&mut s, ",s");
                 press(&mut s, "<Tab><Tab>");
                 assert!(press(&mut s, "<C-s>").is_empty());
                 assert!(matches!(&s.overlay, Some(Overlay::Submit(d)) if d.error.is_some()));
@@ -5313,9 +5341,9 @@ pub(crate) mod tests {
             fn choosing_a_commit_keeps_the_view_toggles() {
                 let (mut s, pr, job) = loading();
                 deliver(&mut s, &pr, job);
-                press(&mut s, "w");
-                press(&mut s, "S");
-                press(&mut s, "t");
+                press(&mut s, "zw");
+                press(&mut s, "zs");
+                press(&mut s, "zT");
                 let before = {
                     let d = screen(&s);
                     (

@@ -241,9 +241,11 @@ impl State {
         let contexts = self.contexts();
         let doables = self.doables();
         let mut order: Vec<Action> = doables.iter().map(|d| d.action).collect();
-        // Not moving around: those are keys, not commands to look for.
-        order
-            .extend((Action::ALL.iter()).filter(|a| contexts.contains(&a.context()) && !a.moves()));
+        // Not moving around (those are keys, not commands to look for), and
+        // only what does something here.
+        order.extend((Action::ALL.iter()).filter(|a| {
+            contexts.contains(&a.context()) && !a.moves() && self.availability(**a).is_ok()
+        }));
         let mut actions: Vec<(usize, Action)> = Vec::new();
         for a in order {
             if a == Action::CommandPalette || actions.iter().any(|(_, b)| *b == a) {

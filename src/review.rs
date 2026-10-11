@@ -39,8 +39,12 @@ pub enum ComposeTarget {
     /// Editing an existing draft.
     Draft { id: u64 },
     /// A comment on an issue or pull request's conversation, posted right
-    /// away; `refresh` is the page data to reload after.
-    Conversation { subject_id: NodeId, name: String },
+    /// away; quoting the comment made `quoting` (its time, as links name it).
+    Conversation {
+        subject_id: NodeId,
+        name: String,
+        quoting: Option<String>,
+    },
 }
 
 /// A suggested change and what it replaces.

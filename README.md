@@ -147,12 +147,16 @@ says where it works.
 | `zz`                 | Scroll the cursor to the middle |
 | `zt`                 | Scroll the cursor to the top |
 | `zb`                 | Scroll the cursor to the bottom |
+| `H`                  | To the top of the screen |
+| `M`                  | To the middle of the screen |
+| `L`                  | To the bottom of the screen |
 | `gg` `home`          | Go to the top (with a count, to that line) |
 | `G` `end`            | Go to the bottom |
 | `↵`                  | Open the selection |
 | `esc`                | Cancel a search, a selection or keys typed so far |
 | `ctrl-o` `⌫` `alt-←` | Back |
 | `⇥` `alt-→`          | Forward |
+| `q`                  | Close this view: back, or close the tab |
 | `-` `u`              | Up a level |
 | `gt`                 | Next tab of the page (with a count, that tab) |
 | `gT`                 | Previous tab of the page |
@@ -161,39 +165,46 @@ says where it works.
 | `T`                  | Open the selection in a new tab |
 | `ctrl-w`             | Close the tab |
 | `alt-1`–`alt-9`      | Go to open tab 1 to 9 |
-| `gh` `H`             | Go home |
+| `gh`                 | Go home |
+| `gn`                 | Your notifications |
 | `/`                  | Search what's on screen (on a list, filter it) |
+| `?`                  | Search what's on screen, backwards |
 | `n`                  | Next search match |
 | `N`                  | Previous search match |
+| `*`                  | Search the word under the cursor |
+| `#`                  | Search the word under the cursor, backwards |
 | `g/`                 | Search GitHub or go to a page |
 | `f`                  | Go to file |
 | `c`                  | Comment (on a thread, reply) |
 | `y`                  | Copy the link |
 | `o`                  | Open on GitHub |
-| `r`                  | Refresh |
-| `space` `?`          | Everything you can do here |
+| `gx`                 | Open the link under the cursor in the browser |
+| `r` `ctrl-l`         | Refresh |
+| `space`              | Everything you can do here |
 | `:` `ctrl-k`         | Command palette |
-| `M`                  | Merge the pull request |
-| `A`                  | Approve the pull request |
-| `W`                  | Mark the draft ready for review |
-| `B`                  | Update the branch from its base |
-| `X`                  | Close or reopen; on a running run, cancel it |
-| `ctrl-r`             | Re-run the workflow run or job |
+| `,m`                 | Merge the pull request |
+| `,a`                 | Approve the pull request |
+| `,r`                 | Mark the draft ready for review |
+| `,u`                 | Update the branch from its base |
+| `,x`                 | Close or reopen; on a running run, cancel it |
+| `,R`                 | Re-run the workflow run or job |
 | `del`                | Delete the selection (a draft comment, a Home section) |
 | `ctrl-z`             | Bring back what was just deleted |
-| `q` `ctrl-c`         | Quit |
+| `ZZ` `ctrl-c`        | Quit |
 
 **On pages** (`page:`)
 
 | Keys    | Action |
 | ------- | ------ |
-|         | Go to open tab 1 to 9 |
-| `]]`    | Next comment or row |
-| `[[`    | Previous comment or row |
+| `]]`    | Next section (a box, a Home section, a folder) |
+| `[[`    | Previous section |
+| `}`     | Next comment or row |
+| `{`     | Previous comment or row |
 | `]C`    | Next commit of the pull request |
 | `[C`    | Previous commit of the pull request |
-| `s`     | Star / unstar |
-| `b`     | Switch branches or tags |
+| `>`     | Reply quoting the comment |
+| `,*`    | Star / unstar |
+| `B`     | Switch branches or tags |
 | `i`     | Follow a link by its letters |
 | `I`     | Follow a link, in the browser |
 | `alt-↑` | Move the Home section up |
@@ -203,7 +214,6 @@ says where it works.
 
 | Keys | Action |
 | ---- | ------ |
-|      | Go to open tab 1 to 9 |
 | `t`  | Open / closed / all |
 | `S`  | Change the sort |
 
@@ -211,55 +221,64 @@ says where it works.
 
 | Keys | Action |
 | ---- | ------ |
-|      | Go to open tab 1 to 9 |
 | `gb` | Blame the file at this line, or back to the file |
 | `h`  | Scroll left |
 | `l`  | Scroll right |
+| `w`  | Next word (for * and gx) |
+| `b`  | Previous word |
 | `V`  | Select lines |
 
 **In job logs** (`log:`)
 
 | Keys | Action |
 | ---- | ------ |
-|      | Go to open tab 1 to 9 |
 | `h`  | Scroll left |
 | `l`  | Scroll right |
+| `w`  | Next word (for * and gx) |
+| `b`  | Previous word |
 
 **In Files changed** (`diff:`)
 
-| Keys      | Action |
-| --------- | ------ |
-|           | Go to open tab 1 to 9 |
-| `h`       | Scroll left |
-| `l`       | Scroll right |
-| `]c`      | Next change |
-| `[c`      | Previous change |
-| `]f` `⇧↓` | Next file |
-| `[f` `⇧↑` | Previous file |
-| `⇧←`      | Old side of a split row (for comments) |
-| `⇧→`      | New side of a split row (for comments) |
-| `U`       | Next unviewed file |
-| `]t`      | Next unresolved thread |
-| `[t`      | Previous unresolved thread |
-| `%`       | Jump to the other end of moved code |
-| `⇥`       | Switch between the file tree and the diff |
-| `t`       | Show or hide the file tree |
-| `S`       | Split or unified view |
-| `w`       | Ignore whitespace changes |
-| `e`       | Show more context |
-| `F`       | Show the whole file |
-| `v`       | Mark the file viewed (syncs with GitHub) |
-| `m`       | Mark the change reviewed |
-| `V` `x`   | Select lines |
-| `C`       | Comment on the whole file |
-| `R`       | Resolve or unresolve the thread |
-| `a`       | Submit your review |
+| Keys           | Action |
+| -------------- | ------ |
+| `h`            | Scroll left |
+| `l`            | Scroll right |
+| `w`            | Next word (for * and gx) |
+| `b`            | Previous word |
+| `]c` `}`       | Next change |
+| `[c` `{`       | Previous change |
+| `]f` `]]` `⇧↓` | Next file |
+| `[f` `[[` `⇧↑` | Previous file |
+| `⇧←`           | Old side of a split row (for comments) |
+| `⇧→`           | New side of a split row (for comments) |
+| `U`            | Next unviewed file |
+| `]t`           | Next unresolved thread |
+| `[t`           | Previous unresolved thread |
+| `%`            | Jump to the other end of moved code |
+| `⇥`            | Switch between the file tree and the diff |
+| `zc`           | Fold the file or thread |
+| `zo`           | Unfold the file or thread |
+| `za`           | Fold or unfold the file or thread |
+| `zM`           | Fold every file |
+| `zR`           | Unfold every file |
+| `zT`           | Show or hide the file tree |
+| `zs`           | Split or unified view |
+| `zw`           | Ignore whitespace changes |
+| `zf`           | Show the whole file |
+| `e`            | Show more context |
+| `v`            | Mark the file viewed (syncs with GitHub) |
+| `m`            | Mark the change reviewed |
+| `V` `x`        | Select lines |
+| `C`            | Comment on the whole file |
+| `R`            | Resolve or unresolve the thread |
+| `,s`           | Submit your review |
 
 **In Files changed's file tree** (`tree:`)
 
 | Keys | Action |
 | ---- | ------ |
-|      | Go to open tab 1 to 9 |
+| `]]` | Next section (a box, a Home section, a folder) |
+| `[[` | Previous section |
 | `h`  | Fold the folder (on a file, go to its folder) |
 | `l`  | Unfold the folder |
 

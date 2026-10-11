@@ -483,6 +483,9 @@ pub fn apply(
             | Action::ScrollBottom
             | Action::ScrollLeft
             | Action::ScrollRight
+            | Action::ScreenTop
+            | Action::ScreenMiddle
+            | Action::ScreenBottom
     );
     let mut cmds = Vec::new();
     match action {
@@ -617,6 +620,31 @@ pub fn apply(
                 _ => height / 2,
             };
             screen.top = state.doc.offset(screen.cursor, -above);
+        }
+        // The tree's sections are its folders.
+        Action::NextSection | Action::PrevSection if tree_focused => {
+            let mut dirs = (tree.iter().enumerate())
+                .filter(|(_, r)| matches!(r, TreeRow::Dir { .. }))
+                .map(|(i, _)| i);
+            let at = screen.tree_selected;
+            let to = if action == Action::NextSection {
+                dirs.find(|&i| i > at)
+            } else {
+                dirs.rfind(|&i| i < at)
+            };
+            match to {
+                Some(i) => screen.tree_selected = i,
+                None => notice.info("No more folders that way"),
+            }
+        }
+        Action::ScreenTop | Action::ScreenMiddle | Action::ScreenBottom => {
+            let height = usize::from(lay.diff.height).max(1).cast_signed();
+            let down = match action {
+                Action::ScreenTop => 0,
+                Action::ScreenBottom => height - 1,
+                _ => height / 2,
+            };
+            screen.cursor = state.doc.offset(screen.top, down);
         }
         Action::Down => screen.cursor = state.doc.offset(screen.cursor, 1),
         Action::Up => screen.cursor = state.doc.offset(screen.cursor, -1),
@@ -767,9 +795,9 @@ fn jump(screen: &mut DiffScreen, pos: Pos) {
     screen.top = pos;
 }
 
-/// Starts a search from the cursor.
-pub fn search(screen: &mut DiffScreen, state: &DiffState, query: String) -> Notice {
-    let notice = match state.doc.search(&query, screen.cursor, true) {
+/// Starts a search from the cursor, down or (`?`) up.
+pub fn search(screen: &mut DiffScreen, state: &DiffState, query: String, forward: bool) -> Notice {
+    let notice = match state.doc.search(&query, screen.cursor, forward) {
         Some(pos) => {
             screen.cursor = pos;
             let n = state.doc.count_matches(&query);

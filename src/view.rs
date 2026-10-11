@@ -84,12 +84,26 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             let area = state.page_area();
             let page = p.page();
             // The composer takes the comment box's place, scrolled into view.
+            // The composer takes the comment box's place, or goes under the
+            // comment it quotes, scrolled into view.
             let comment_box = composing.and_then(|c| {
-                let item = page.items.get(page.find(&Link::Comment, 0)?)?;
-                Some((usize::from(c.rows()), item))
+                let quoted = match &c.target {
+                    crate::review::ComposeTarget::Conversation {
+                        quoting: Some(at), ..
+                    } => page.items.iter().find(|it| {
+                        matches!(page.target(it.link), Some(Link::Quote { at: was, .. }) if was == at)
+                    }),
+                    _ => None,
+                };
+                let (item, under) = match quoted {
+                    Some(item) => (*item, true),
+                    None => (*page.items.get(page.find(&Link::Comment, 0)?)?, false),
+                };
+                Some((usize::from(c.rows()), item, under))
             });
-            let scroll = comment_box.map_or(p.scroll, |(rows, item)| {
-                scroll_to(item.start, item.start, rows, p.scroll, area.height)
+            let scroll = comment_box.map_or(p.scroll, |(rows, item, under)| {
+                let at = if under { item.end } else { item.start };
+                scroll_to(item.start, at, rows, p.scroll, area.height)
             });
             PageView {
                 ctx,
@@ -102,16 +116,21 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 shift: p.shift,
             }
             .render(area, buf);
-            comment_box.map(|(_, item)| {
+            comment_box.map(|(_, item, under)| {
                 let x = columns(page, area).main_x;
+                let (at, replaced) = if under {
+                    (item.end, 0)
+                } else {
+                    (item.start, item.end.saturating_sub(item.start))
+                };
                 Slot {
                     area: Rect {
                         x,
                         width: page.width.min(area.right().saturating_sub(x)),
                         ..area
                     },
-                    offset: item.start.saturating_sub(scroll),
-                    replaced: item.end.saturating_sub(item.start),
+                    offset: at.saturating_sub(scroll),
+                    replaced,
                 }
             })
         }
@@ -261,7 +280,8 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 width: status.width.saturating_sub(2 * PAD_X),
                 ..status
             };
-            Span::styled("/", ctx.theme.accent(Bg::Container)).render(row, buf);
+            let prompt = if state.backwards { "?" } else { "/" };
+            Span::styled(prompt, ctx.theme.accent(Bg::Container)).render(row, buf);
             input.render(
                 Rect {
                     x: row.x + 1,

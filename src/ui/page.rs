@@ -506,6 +506,26 @@ impl Page {
     }
 
     /// Rows the page takes (the longer of the column and the aside).
+    /// Where sections start: boxes, and headings.
+    pub fn sections(&self) -> Vec<usize> {
+        let starts = self.lines.iter().enumerate().filter(|(_, l)| {
+            l.frame == Frame::Top
+                || l.segs
+                    .first()
+                    .is_some_and(|s| matches!(s.role, Role::Heading | Role::Title))
+        });
+        // A heading wrapped onto several lines starts one section.
+        let mut out = Vec::new();
+        let mut previous = None;
+        for (i, _) in starts {
+            if previous.is_none_or(|p: usize| p.saturating_add(1) != i) {
+                out.push(i);
+            }
+            previous = Some(i);
+        }
+        out
+    }
+
     /// Picks out `query` on every line it's on, and marks those lines
     /// for `n`/`N`.
     pub fn mark(&mut self, query: &str) {

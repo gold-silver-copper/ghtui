@@ -281,7 +281,7 @@ def tour(t):
     t.log("end")
     while DONE and not os.path.exists(DONE):
         time.sleep(0.1)
-    t.key("q")
+    t.key("ZZ")
 
 
 def main():

@@ -2076,7 +2076,7 @@ pub(crate) mod diff {
 
         // Full-file mode on 50k lines must stay interactive too.
         let start = Instant::now();
-        press(&mut s, "F");
+        press(&mut s, "zf");
         terminal.draw(|frame| view(&s, frame, NOW)).unwrap();
         let full_file = start.elapsed();
 
@@ -2506,9 +2506,14 @@ mod keys {
         assert!(hints.iter().any(|(k, _)| k == "t"), "{hints:?}");
         press(&mut s, "t");
         assert_eq!(s.chrome().active, Some(1), "2gt: the second tab");
+        let depth = s.screens.len();
         press(&mut s, "z");
         press(&mut s, "q");
-        assert!(!s.quit, "zq is no binding; q in it doesn't quit");
+        assert_eq!(
+            s.screens.len(),
+            depth,
+            "zq is no binding; q in it doesn't close"
+        );
         // A key of another screen says so, not what it would do there.
         press(&mut s, "w");
         let said = format!("{:?}", s.notices.shown());
@@ -3204,7 +3209,7 @@ mod changes {
     #[test]
     fn merge_confirm_dark() {
         let mut s = pr_with(|_| {});
-        press(&mut s, "M");
+        press(&mut s, ",m");
         insta::assert_snapshot!(render(&s));
     }
 
@@ -3214,7 +3219,7 @@ mod changes {
     #[test]
     fn merging_asks_first_and_ends_up_as_github_has_it() {
         let mut s = pr_with(|_| {});
-        assert!(press(&mut s, "M").is_empty());
+        assert!(press(&mut s, ",m").is_empty());
         let c = confirm(&s);
         let problems: Vec<&str> = (c.facts.iter())
             .filter(|(_, p)| *p)
@@ -3224,7 +3229,7 @@ mod changes {
         assert!(
             c.facts
                 .iter()
-                .any(|(f, _)| f == "Its branch is 2 commits behind main (B updates it)"),
+                .any(|(f, _)| f == "Its branch is 2 commits behind main (,u updates it)"),
             "{:?}",
             c.facts
         );
@@ -3261,7 +3266,7 @@ mod changes {
             "the pull request is fetched again: {cmds:?}"
         );
         // Until GitHub shows it merged, nothing else is offered.
-        press(&mut s, "X");
+        press(&mut s, ",x");
         says(&s, "hasn't shown the last change");
         let merged = mergeable(|d| d.state = PrState::Merged);
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(merged))));
@@ -3277,7 +3282,7 @@ mod changes {
         let mut s = super::with_home(Mode::Dark, crate::theme::ColorDepth::TrueColor);
         s.prs.clear();
         press(&mut s, "jj");
-        let cmds = press(&mut s, "M");
+        let cmds = press(&mut s, ",m");
         assert_eq!(cmds, vec![Cmd::Api(Api::FetchPr(pr()))]);
         says(&s, "Loading gold-silver-copper/ghtui#12");
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
@@ -3289,7 +3294,7 @@ mod changes {
         );
         // The list moves; the dialog is still about #12.
         press(&mut s, "<Esc>");
-        press(&mut s, "M");
+        press(&mut s, ",m");
         let mine = crate::fixtures::found_prs(Vec::new(), 0);
         crate::fixtures::section(&mut s, 1, mine);
         assert_eq!(confirm(&s).about, Subject::Pr(pr()));
@@ -3324,7 +3329,7 @@ mod changes {
             ),
         );
         press(&mut s, "ggjj");
-        press(&mut s, "M");
+        press(&mut s, ",m");
         says(&s, "That works on a pull request");
     }
 
@@ -3335,7 +3340,7 @@ mod changes {
     fn after_updating_the_branch_merging_waits_for_the_new_head() {
         // Behind, though the repository doesn't require it up to date.
         let mut s = pr_with(|_| {});
-        press(&mut s, "B");
+        press(&mut s, ",u");
         let update_branch = Change::UpdateBranch {
             pr: NodeId::new("PR_12"),
             rebase: false,
@@ -3350,7 +3355,7 @@ mod changes {
         answer(&mut s, &sent, Ok(()));
         // GitHub still shows the old head.
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
-        press(&mut s, "M");
+        press(&mut s, ",m");
         says(&s, "hasn't shown the last change");
         let cmds = timers(&mut s);
         assert!(cmds.contains(&Cmd::Timer(Timer::Live, 5_000)), "{cmds:?}");
@@ -3361,14 +3366,14 @@ mod changes {
             d.behind_by = Some(0);
         });
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(moved))));
-        press(&mut s, "M");
+        press(&mut s, ",m");
         let head = match &confirm(&s).choices[0].1 {
             Change::Merge { head, .. } => head.clone(),
             other => panic!("{other:?}"),
         };
         assert_eq!(head, "1".repeat(40));
         press(&mut s, "<Esc>");
-        press(&mut s, "B");
+        press(&mut s, ",u");
         says(&s, "It's up to date with main");
     }
 
@@ -3377,28 +3382,28 @@ mod changes {
     #[test]
     fn what_github_forbids_is_refused() {
         let mut s = pr_with(|d| d.may = crate::api::model::PrPermits::default());
-        press(&mut s, "M");
+        press(&mut s, ",m");
         says(&s, "Merging takes write access to gold-silver-copper/ghtui");
-        press(&mut s, "X");
+        press(&mut s, ",x");
         says(&s, "GitHub doesn't let you close it");
-        press(&mut s, "B");
+        press(&mut s, ",u");
         says(&s, "which you can't push to");
 
         let mut s = with_pr(Mode::Dark);
-        press(&mut s, "M");
+        press(&mut s, ",m");
         says(&s, "It conflicts with main: resolve that on GitHub");
         let mut s = pr_with(|d| d.merge_state = MergeState::Blocked);
-        press(&mut s, "M");
+        press(&mut s, ",m");
         says(&s, "blocked");
         let mut s = pr_with(|d| d.merge_state = MergeState::Behind);
-        press(&mut s, "M");
-        says(&s, "B updates it");
+        press(&mut s, ",m");
+        says(&s, ",u updates it");
 
         let mut s = with_run(Mode::Dark);
         let mut repo = crate::fixtures::overview();
         repo.can_write = false;
         fetched(&mut s, DataKey::Repo(ghtui()), Data::Repo(Box::new(repo)));
-        press(&mut s, "<C-r>");
+        press(&mut s, ",R");
         says(
             &s,
             "Re-running and cancelling take write access to gold-silver-copper/ghtui",
@@ -3410,27 +3415,27 @@ mod changes {
     #[test]
     fn what_cant_be_done_says_why() {
         let mut s = pr_in(PrState::Merged);
-        assert!(press(&mut s, "M").is_empty());
+        assert!(press(&mut s, ",m").is_empty());
         assert!(s.overlay.is_none());
         says(&s, "It's merged");
         let merge = (s.doables().into_iter())
             .find(|d| d.action == Action::Merge)
             .unwrap();
         assert_eq!(merge.unavailable.as_deref(), Some("It's merged"));
-        press(&mut s, "X");
+        press(&mut s, ",x");
         says(&s, "can't be reopened");
 
         let mut s = with_pr(Mode::Dark);
-        press(&mut s, "W");
+        press(&mut s, ",r");
         says(&s, "It isn't a draft");
         s.viewer = Some(pr_detail().author);
-        press(&mut s, "A");
+        press(&mut s, ",a");
         says(&s, "You can't approve your own pull request");
 
         let mut s = with_repo(Mode::Dark, crate::theme::ColorDepth::TrueColor);
-        press(&mut s, "M");
+        press(&mut s, ",m");
         says(&s, "That works on a pull request (or its row in a list)");
-        press(&mut s, "<C-r>");
+        press(&mut s, ",R");
         says(&s, "Re-running works on a workflow run or a job");
     }
 
@@ -3443,12 +3448,12 @@ mod changes {
         let ready = Change::ReadyForReview {
             pr: NodeId::new("PR_12"),
         };
-        let sent = press(&mut s, "W");
+        let sent = press(&mut s, ",r");
         assert_eq!(
             sent,
             vec![Cmd::Api(Api::Change(ready, By::Act(Subject::Pr(pr()))))]
         );
-        press(&mut s, "X");
+        press(&mut s, ",x");
         let refused = ApiError::GraphQl(vec!["Not now".into()]);
         answer(&mut s, &sent, Err(refused));
         assert_eq!(confirm(&s).error, None);
@@ -3469,9 +3474,9 @@ mod changes {
         let mut s = super::with_workflow(Mode::Dark);
         let run = Data::Run(Box::new(crate::fixtures::workflow_run()));
         fetched(&mut s, DataKey::Run(ghtui(), 7, None), run);
-        let rerun = press(&mut s, "<C-r><Enter>");
+        let rerun = press(&mut s, ",R<Enter>");
         press(&mut s, "<Esc>");
-        let star = press(&mut s, "s");
+        let star = press(&mut s, ",*");
         answer(&mut s, &star, Ok(()));
         answer(&mut s, &rerun, Ok(()));
         // The page follows the run, not the list.
@@ -3488,7 +3493,7 @@ mod changes {
         let mut s = with_pr(Mode::Dark);
         s.viewer = Some("me".into());
         assert_eq!(
-            press(&mut s, "A"),
+            press(&mut s, ",a"),
             vec![
                 Cmd::Api(Api::FetchPendingReview(pr())),
                 Cmd::LoadReview(pr())
@@ -3556,7 +3561,7 @@ mod changes {
     #[test]
     fn runs_rerun_and_cancel() {
         let mut s = with_run(Mode::Dark);
-        press(&mut s, "<C-r>");
+        press(&mut s, ",R");
         let choices: Vec<&str> = confirm(&s)
             .choices
             .iter()
@@ -3575,11 +3580,11 @@ mod changes {
             ))]
         );
         let mut s = with_run(Mode::Dark);
-        press(&mut s, "X");
+        press(&mut s, ",x");
         says(&s, "The run has finished: there's nothing to cancel");
 
         let mut s = with_job(Mode::Dark, None);
-        press(&mut s, "<C-r>");
+        press(&mut s, ",R");
         assert_eq!(confirm(&s).title, "Re-run CI #412?");
         let first = confirm(&s).choices.first().map(|(l, _)| l.clone());
         assert_eq!(first.as_deref(), Some("Re-run this job"));
@@ -3597,9 +3602,9 @@ mod changes {
             DataKey::Job(ghtui(), 2),
             Data::Job(Box::new(job.clone())),
         );
-        press(&mut s, "<C-r>");
-        says(&s, "The run is still going: X cancels it");
-        press(&mut s, "X");
+        press(&mut s, ",R");
+        says(&s, "The run is still going: ,x cancels it");
+        press(&mut s, ",x");
         assert_eq!(confirm(&s).title, "Cancel CI #412?");
         let cancel = Change::CancelRun {
             repo: ghtui(),
@@ -3615,7 +3620,7 @@ mod changes {
         );
         answer(&mut s, &sent, Ok(()));
         // GitHub takes a while to stop it: it's asked for once.
-        press(&mut s, "X");
+        press(&mut s, ",x");
         says(&s, "hasn't shown the last change");
         assert!(s.busy().is_some_and(|b| b.starts_with("Cancel requested")));
         job.run.outcome = CheckOutcome::Cancelled;
