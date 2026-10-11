@@ -5,7 +5,7 @@ expression: render(&s)
 Buffer {
     area: Rect { x: 0, y: 0, width: 80, height: 24 },
     content: [
-        "  ◆ ghtui   o / r                         ⌕ Type / to search          @octocat  ",
+        "  ◆ ghtui   o / r                         ⌕ Type g/ to search         @octocat  ",
         "  o/r#7                                                                         ",
         "   ◌ Conversation   ◷ Commits   ✓ Checks   ± Files changed                      ",
         "──────────────────────────────────────────━━━━━━━━━━━━━━━━━─────────────────────",
@@ -39,7 +39,7 @@ Buffer {
         x: 17, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 41, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
         x: 42, y: 0, fg: Rgb(196, 198, 207), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
-        x: 60, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
+        x: 61, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
         x: 67, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 70, y: 0, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 78, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,

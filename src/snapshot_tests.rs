@@ -445,6 +445,7 @@ fn with_commit(mode: Mode) -> State {
     let route = Route::Commit {
         repo: ghtui(),
         oid: commit.oid.clone(),
+        pr: None,
     };
     open(&mut state, route, Data::Commit(Box::new(commit)));
     state
@@ -500,6 +501,7 @@ fn with_tabs(mode: Mode, n: usize) -> State {
         Route::Commit {
             repo: ghtui(),
             oid: fixtures::commit().oid,
+            pr: None,
         },
         Route::Releases(ghtui()),
         Route::Stargazers(ghtui()),
@@ -2296,6 +2298,8 @@ mod links {
 // ---- keys on every screen ---------------------------------------------------
 
 mod keys {
+    use crate::api::model::PrRef;
+    use crate::route::Route;
     use crate::theme::{ColorDepth, Mode};
     use crate::ui::diff_doc::Pos;
 
@@ -2451,6 +2455,109 @@ mod keys {
             s.route(),
             Some(crate::route::Route::Commit { .. })
         ));
+    }
+
+    /// `esc` cancels and never leaves the page; `ctrl-o` goes back.
+    #[test]
+    fn esc_never_leaves_the_page() {
+        let mut s = with_pr(Mode::Dark);
+        let depth = s.screens.len();
+        press(&mut s, "<Esc>g<Esc>3<Esc><Esc>");
+        assert_eq!(s.screens.len(), depth);
+        assert!(s.typed.is_empty() && s.count.is_none());
+        press(&mut s, "<C-o>");
+        assert_eq!(s.screens.len(), depth - 1);
+    }
+
+    /// A page's tabs aren't history, and each keeps its place: back in
+    /// Files changed, the cursor is where it was left.
+    #[test]
+    fn page_tabs_keep_their_place() {
+        let mut s = with_pr(Mode::Dark);
+        let depth = s.screens.len();
+        press(&mut s, "4gt");
+        let at = Pos { file: 2, row: 3 };
+        if let Screen::Diff(d) = s.screen_mut() {
+            d.cursor = at;
+        }
+        press(&mut s, "1gt");
+        assert!(matches!(s.screen(), Screen::Page(_)));
+        press(&mut s, "4gt");
+        assert!(matches!(s.screen(), Screen::Diff(d) if d.cursor == at));
+        assert_eq!(s.screens.len(), depth, "no history");
+    }
+
+    /// After a key that starts sequences, the status bar lists what can
+    /// follow; a count goes before.
+    #[test]
+    fn sequences_say_what_can_follow() {
+        let mut s = with_pr(Mode::Dark);
+        press(&mut s, "2g");
+        let hints = s.key_hints();
+        assert_eq!(hints.first().map(|(k, _)| k.as_str()), Some("2g…"));
+        assert!(hints.iter().any(|(k, _)| k == "t"), "{hints:?}");
+        press(&mut s, "t");
+        assert_eq!(s.chrome().active, Some(1), "2gt: the second tab");
+        press(&mut s, "z");
+        press(&mut s, "q");
+        assert!(!s.quit, "zq is no binding; q in it doesn't quit");
+    }
+
+    /// A file's lines are rows: a count goes to one, `y` copies its link,
+    /// `V` a range's, and `gb` blames from there.
+    #[test]
+    fn file_lines_copy_and_blame() {
+        let mut s = super::with_file(Mode::Dark);
+        press(&mut s, "3gg");
+        let copied = |s: &mut State, keys: &str| match press(s, keys).as_slice() {
+            [crate::state::Cmd::Copy(url)] => url.clone(),
+            cmds => panic!("{cmds:?}"),
+        };
+        assert!(copied(&mut s, "y").ends_with("src/main.rs#L3"));
+        assert!(copied(&mut s, "Vjjy").ends_with("src/main.rs#L3-L5"));
+        press(&mut s, "<Esc>gb");
+        assert!(matches!(
+            s.route(),
+            Some(Route::Blame {
+                lines: Some((5, 5)),
+                ..
+            })
+        ));
+    }
+
+    /// A blame's runs of lines are rows that open their commit.
+    #[test]
+    fn blame_runs_open_their_commit() {
+        let mut s = with_blame(Mode::Dark);
+        press(&mut s, "ggj");
+        let link = match s.screen() {
+            Screen::Page(p) => p.selected_link().and_then(|l| l.url().map(str::to_owned)),
+            Screen::Diff(_) => None,
+        };
+        assert!(link.is_some_and(|l| l.contains("/commit/")));
+        press(&mut s, "<Enter>");
+        assert!(matches!(s.route(), Some(Route::Commit { .. })));
+    }
+
+    /// A pull request's commit goes up to it, and on to its next commit.
+    #[test]
+    fn pr_commits_step_and_go_up() {
+        let mut s = with_pr(Mode::Dark);
+        let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+        let commit = |oid: &str| Route::Commit {
+            repo: pr.repo.clone(),
+            oid: oid.into(),
+            pr: Some(12),
+        };
+        let first = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
+        let _ = s.push(commit(first));
+        press(&mut s, "]C");
+        assert_eq!(
+            s.route(),
+            Some(&commit("1b2c3d4e5f60718293a4b5c6d7e8f9012345678a"))
+        );
+        press(&mut s, "u");
+        assert_eq!(s.route(), Some(&Route::pr(pr)));
     }
 
     /// In the menu, `h` and `l` are `←` and `→`: close it, run the row.

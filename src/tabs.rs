@@ -44,12 +44,12 @@ pub fn url(screen: &Screen) -> String {
     }
 }
 
-/// A screen's short name: `#42`, `owner/repo`, `@user`, a file's name.
+/// A screen's short name: `repo#42`, `owner/repo`, `@user`, a file's name.
 pub fn title(screen: &Screen) -> String {
     match screen {
         Screen::Page(p) => match &p.route {
-            Route::Issue { number, .. } => format!("#{number}"),
-            Route::Pr { pr, .. } => format!("#{}", pr.number),
+            Route::Issue { repo, number } => format!("{}#{number}", repo.name),
+            Route::Pr { pr, .. } => format!("{}#{}", pr.repo.name, pr.number),
             Route::Blob { path, .. } | Route::Tree { path, .. } if !path.is_empty() => {
                 path.rsplit('/').next().unwrap_or(path).to_owned()
             }
@@ -63,7 +63,7 @@ pub fn title(screen: &Screen) -> String {
             },
         },
         Screen::Diff(d) => match &d.of {
-            DiffOf::Pr(pr) => format!("#{} files", pr.number),
+            DiffOf::Pr(pr) => format!("{}#{} files", pr.repo.name, pr.number),
             DiffOf::Commit(_, oid) => format!("{} files", short_sha(oid)),
             DiffOf::Range(_, from, to) => format!("{}..{} files", short_sha(from), short_sha(to)),
         },
@@ -140,6 +140,7 @@ impl State {
                 DiffOf::Commit(repo, oid) => Route::Commit {
                     repo: repo.clone(),
                     oid: oid.to_string(),
+                    pr: None,
                 },
                 DiffOf::Range(repo, from, to) => Route::Compare {
                     repo: repo.clone(),

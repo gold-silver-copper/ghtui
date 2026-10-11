@@ -203,6 +203,8 @@ actions! {
 
     NextItem          "next_item"         ["]]"]                   Page   "Next comment or row";
     PrevItem          "prev_item"         ["[["]                   Page   "Previous comment or row";
+    NextCommit        "next_commit"       ["]C"]                   Page   "Next commit of the pull request";
+    PrevCommit        "prev_commit"       ["[C"]                   Page   "Previous commit of the pull request";
     Star              "star"              ["s"]                    Page   "Star / unstar";
     Branch            "branch"            ["b"]                    Page   "Switch branches or tags";
     Hints             "hints"             ["i"]                    Page   "Follow a link by its letters";

@@ -5,7 +5,7 @@ expression: "render(&screen_state(Mode::Dark, ColorDepth::Ansi256, Pos { file: 2
 Buffer {
     area: Rect { x: 0, y: 0, width: 110, height: 34 },
     content: [
-        "  ◆ ghtui   o / r                                             ⌕ Type / to search                    @octocat  ",
+        "  ◆ ghtui   o / r                                             ⌕ Type g/ to search                   @octocat  ",
         "  o/r#7                                                                                                       ",
         "   ◌ Conversation   ◷ Commits   ✓ Checks   ± Files changed                                                    ",
         "──────────────────────────────────────────━━━━━━━━━━━━━━━━━───────────────────────────────────────────────────",
@@ -49,7 +49,7 @@ Buffer {
         x: 17, y: 0, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 61, y: 0, fg: Indexed(254), bg: Indexed(237), underline: Reset, modifier: NONE,
         x: 62, y: 0, fg: Indexed(252), bg: Indexed(237), underline: Reset, modifier: NONE,
-        x: 80, y: 0, fg: Indexed(254), bg: Indexed(237), underline: Reset, modifier: NONE,
+        x: 81, y: 0, fg: Indexed(254), bg: Indexed(237), underline: Reset, modifier: NONE,
         x: 97, y: 0, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 100, y: 0, fg: Indexed(252), bg: Indexed(234), underline: Reset, modifier: NONE,
         x: 108, y: 0, fg: Indexed(254), bg: Indexed(234), underline: Reset, modifier: NONE,

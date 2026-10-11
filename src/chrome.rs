@@ -88,7 +88,7 @@ impl State {
                 let pr = match &d.of {
                     DiffOf::Pr(pr) => pr,
                     DiffOf::Commit(repo, oid) => {
-                        self.commit_tabs(repo, oid, &mut c);
+                        self.commit_tabs(repo, oid, None, &mut c);
                         c.active = Some(2);
                         return c;
                     }
@@ -137,9 +137,13 @@ impl State {
                 });
                 c.title = Some(pr.clone());
             }
-            Route::Commit { repo, oid } | Route::CommitChecks { repo, oid } => {
+            Route::Commit { repo, oid, .. } | Route::CommitChecks { repo, oid } => {
                 repo_crumbs(repo, c);
-                self.commit_tabs(repo, oid, c);
+                let pr = match route {
+                    Route::Commit { pr, .. } => *pr,
+                    _ => None,
+                };
+                self.commit_tabs(repo, oid, pr, c);
                 c.active = Some(usize::from(matches!(route, Route::CommitChecks { .. })));
             }
             Route::Gist { owner, id } => {
@@ -355,7 +359,7 @@ impl State {
     }
 
     /// A commit's tabs: the commit, and its files.
-    fn commit_tabs(&self, repo: &RepoId, oid: &str, c: &mut Chrome) {
+    fn commit_tabs(&self, repo: &RepoId, oid: &str, pr: Option<u64>, c: &mut Chrome) {
         let detail = self.picked::<CommitDetail>(&DataKey::Commit(repo.clone(), oid.to_owned()));
         let full = detail.map_or(oid, |d| d.oid.as_str());
         c.tabs.push((
@@ -363,6 +367,7 @@ impl State {
             Target::Page(Route::Commit {
                 repo: repo.clone(),
                 oid: full.to_owned(),
+                pr,
             }),
         ));
         c.tabs.push((

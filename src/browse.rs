@@ -379,11 +379,20 @@ pub fn needs(route: &Route) -> Vec<Need> {
         | Route::Milestone { repo, .. } => std::iter::once(header(repo))
             .chain(paged(route).map(Need::Data))
             .collect(),
-        Route::Commit { repo, oid } => {
-            vec![
+        Route::Commit { repo, oid, pr } => {
+            let mut needs = vec![
                 header(repo),
                 Need::Data(K::Commit(repo.clone(), oid.clone())),
-            ]
+            ];
+            // Its place among the pull request's commits.
+            if let Some(number) = pr {
+                let pr = PrRef {
+                    repo: repo.clone(),
+                    number: *number,
+                };
+                needs.push(Need::Data(K::PrActivity(pr)));
+            }
+            needs
         }
         Route::Commits { repo, rev, path } => vec![
             header(repo),
@@ -466,6 +475,41 @@ impl State {
     /// `key`'s data, if it's there: for what isn't a page.
     pub fn picked<T: Picked + ?Sized>(&self, key: &DataKey) -> Option<&T> {
         self.get(key).and_then(T::pick)
+    }
+
+    /// Where commit `oid` is among pull request `number`'s commits, once
+    /// they're in, with links to the ones either side.
+    pub fn pr_commit_at(&self, repo: &RepoId, number: u64, oid: &str) -> Option<pages::PrCommitAt> {
+        let pr = PrRef {
+            repo: repo.clone(),
+            number,
+        };
+        let commits = &self
+            .picked::<PrActivity>(&DataKey::PrActivity(pr.clone()))?
+            .commits;
+        let i = commits
+            .items
+            .iter()
+            .position(|c| c.oid.starts_with(oid) || oid.starts_with(&c.oid))?;
+        let link = |c: &CommitInfo| {
+            let route = Route::Commit {
+                repo: repo.clone(),
+                oid: c.oid.clone(),
+                pr: Some(number),
+            };
+            route.url()
+        };
+        Some(pages::PrCommitAt {
+            n: commits.left_out() + i as u64 + 1,
+            of: commits.total(),
+            pr: pages::url::pull(&pr),
+            number,
+            previous: i
+                .checked_sub(1)
+                .and_then(|i| commits.items.get(i))
+                .map(link),
+            next: commits.items.get(i + 1).map(link),
+        })
     }
 
     pub fn overview(&self, repo: &RepoId) -> Option<&RepoOverview> {
@@ -817,12 +861,16 @@ impl State {
             Route::Commits { repo, rev, path } => {
                 pages::commit_history(&mut page, repo, rev, path, f.paged(route), now);
             }
-            Route::Commit { repo, oid } => {
+            Route::Commit { repo, oid, pr } => {
                 let key = DataKey::Commit(repo.clone(), oid.clone());
                 if let Some(c) = f.get::<CommitDetail>(&key).show(&mut page, &title) {
+                    if let Some(at) = pr.and_then(|n| self.pr_commit_at(repo, n, &c.oid)) {
+                        pages::pr_commit_nav(&mut page, &at);
+                    }
                     let files = Route::Commit {
                         repo: repo.clone(),
                         oid: c.oid.clone(),
+                        pr: None,
                     };
                     let files = format!("{}#files", files.url());
                     pages::commit(&mut page, repo, c, &files, now);

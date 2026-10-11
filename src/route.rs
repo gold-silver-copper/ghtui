@@ -161,10 +161,12 @@ pub enum Route {
         rev: String,
         path: String,
     },
-    /// A commit, by SHA (short or full, as linked).
+    /// A commit, by SHA (short or full, as linked); opened from a pull
+    /// request's commits, that pull request's number.
     Commit {
         repo: RepoId,
         oid: String,
+        pr: Option<u64>,
     },
     User {
         login: String,
@@ -441,7 +443,18 @@ impl Route {
                 format!("{}/milestone/{number}", links::repo(repo))
             }
             Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
-            Route::Commit { repo, oid } => links::commit(repo, oid),
+            Route::Commit {
+                repo,
+                oid,
+                pr: Some(number),
+            } => {
+                let pr = PrRef {
+                    repo: repo.clone(),
+                    number: *number,
+                };
+                links::pull_tab(&pr, &format!("commits/{oid}"))
+            }
+            Route::Commit { repo, oid, .. } => links::commit(repo, oid),
             Route::User { login, tab } => match tab {
                 ProfileTab::Overview => links::user(login),
                 ProfileTab::Repositories(sort) => {
@@ -511,7 +524,7 @@ impl Route {
             Route::Milestone { repo, number } => format!("{repo} · Milestone {number}"),
             Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
             Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
-            Route::Commit { repo, oid } => format!("{repo}@{}", short_sha(oid)),
+            Route::Commit { repo, oid, .. } => format!("{repo}@{}", short_sha(oid)),
             Route::User { login, .. } => format!("@{login}"),
             Route::Search { query, .. } => format!("Search “{query}”"),
         }
@@ -1004,6 +1017,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
         ["git", "commit", sha] => Route::Commit {
             repo,
             oid: (*sha).to_owned(),
+            pr: None,
         },
         // A commit's patch is a download; its diff is the diff viewer.
         ["commit", sha] if sha.ends_with(".patch") => return None,
@@ -1025,6 +1039,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             Route::Commit {
                 repo,
                 oid: rev.to_owned(),
+                pr: None,
             }
         }
         ["issues", n] => Route::Issue {
@@ -1048,6 +1063,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
                 ["commits" | "changes", sha] if valid_rev(sha) => Route::Commit {
                     repo: pr.repo,
                     oid: (*sha).to_owned(),
+                    pr: Some(pr.number),
                 },
                 ["files" | "changes", ..] => return Some(Target::Files(DiffOf::Pr(pr))),
                 ["commits", ..] => Route::Pr {
@@ -1531,6 +1547,7 @@ pub(crate) mod tests {
         let commit = |oid: &str| Route::Commit {
             repo: pr.repo.clone(),
             oid: oid.into(),
+            pr: None,
         };
         assert_eq!(
             page(&format!("https://github.com/o/r/commit/{sha}")),
@@ -1588,9 +1605,14 @@ pub(crate) mod tests {
             page("https://github.com/o/r/commit/0123abc"),
             commit("0123abc")
         );
+        // A pull request's commit knows it.
         assert_eq!(
             page(&format!("https://github.com/o/r/pull/7/commits/{sha}")),
-            commit(sha)
+            Route::Commit {
+                repo: pr.repo.clone(),
+                oid: sha.into(),
+                pr: Some(7),
+            }
         );
         assert_eq!(
             Dest::from_url(&format!("https://github.com/o/r/commit/{sha}#diff-abc")).target,
@@ -1850,6 +1872,7 @@ pub(crate) mod tests {
             Route::Commit {
                 repo: repo.clone(),
                 oid: "abc1234".into(),
+                pr: None,
             },
             Route::Issue { repo, number: 3 },
             Route::user("octocat"),
@@ -1933,6 +1956,7 @@ pub(crate) mod tests {
             Route::Commit {
                 repo: repo.clone(),
                 oid: oid.clone(),
+                pr: None,
             },
             Route::CommitChecks { repo, oid },
         ] {
@@ -2234,7 +2258,11 @@ pub(crate) mod tests {
                 (repo(), query()).prop_map(|(repo, query)| Route::Issues { repo, query }),
                 (repo(), query()).prop_map(|(repo, query)| Route::Pulls { repo, query }),
                 (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Issue { repo, number }),
-                (repo(), "[0-9a-f]{7,40}").prop_map(|(repo, oid)| Route::Commit { repo, oid }),
+                (repo(), "[0-9a-f]{7,40}").prop_map(|(repo, oid)| Route::Commit {
+                    repo,
+                    oid,
+                    pr: None
+                }),
                 (repo(), rev, path()).prop_map(|(repo, rev, path)| Route::Commits {
                     repo,
                     rev,

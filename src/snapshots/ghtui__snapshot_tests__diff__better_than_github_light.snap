@@ -5,7 +5,7 @@ expression: "render(&better_than_github(Mode::Light))"
 Buffer {
     area: Rect { x: 0, y: 0, width: 110, height: 30 },
     content: [
-        "  ◆ ghtui   o / r                                             ⌕ Type / to search                    @octocat  ",
+        "  ◆ ghtui   o / r                                             ⌕ Type g/ to search                   @octocat  ",
         "  o/r#7                                                                                                       ",
         "   ◌ Conversation   ◷ Commits   ✓ Checks   ± Files changed                                                    ",
         "──────────────────────────────────────────━━━━━━━━━━━━━━━━━───────────────────────────────────────────────────",
@@ -45,7 +45,7 @@ Buffer {
         x: 17, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 61, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(226, 226, 233), underline: Reset, modifier: NONE,
         x: 62, y: 0, fg: Rgb(67, 71, 78), bg: Rgb(226, 226, 233), underline: Reset, modifier: NONE,
-        x: 80, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(226, 226, 233), underline: Reset, modifier: NONE,
+        x: 81, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(226, 226, 233), underline: Reset, modifier: NONE,
         x: 97, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 100, y: 0, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 108, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,

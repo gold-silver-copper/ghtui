@@ -2423,14 +2423,21 @@ pub fn pr_commits(
     let Some(a) = activity.show(page, "commits") else {
         return;
     };
-    commit_rows(page, &pr.repo, &a.commits, now);
+    commit_rows(page, &pr.repo, Some(pr), &a.commits, now);
 }
 
 /// Commits in boxes by day, each linked to its page: first how many
 /// earlier ones were left out, which opens the history from the oldest
 /// here back (oldest first, as a comparison and a PR list them), last
-/// "Load more" if another page loads.
-fn commit_rows(page: &mut Page, repo: &RepoId, commits: &impl Rows<CommitInfo>, now: u64) {
+/// "Load more" if another page loads. A pull request's open as its
+/// commits, as GitHub links them.
+fn commit_rows(
+    page: &mut Page,
+    repo: &RepoId,
+    pr: Option<&PrRef>,
+    commits: &impl Rows<CommitInfo>,
+    now: u64,
+) {
     let rest = match (commits.rest(), commits.rows().first()) {
         (Rest::OnGitHub(n), Some(oldest)) => {
             let earlier = url::commits(repo, &oldest.oid, "");
@@ -2460,7 +2467,11 @@ fn commit_rows(page: &mut Page, repo: &RepoId, commits: &impl Rows<CommitInfo>, 
             );
             current_day = date;
         }
-        item(page, url::commit(repo, &c.oid), |page, link| {
+        let commit = match pr {
+            Some(pr) => url::pull_tab(pr, &format!("commits/{}", c.oid)),
+            None => url::commit(repo, &c.oid),
+        };
+        item(page, commit, |page, link| {
             page.box_line(
                 vec![Seg::linked(c.headline.clone(), Role::Strong, link)],
                 vec![Seg::new(crate::ui::text::short_sha(&c.oid), Role::Code)],
@@ -2502,7 +2513,7 @@ pub fn commit_history(
         empty_box(page, Seg::new("◷ Commits", Role::Meta), "No commits here.");
         return;
     }
-    commit_rows(page, repo, h, now);
+    commit_rows(page, repo, None, h, now);
 }
 
 // ---- checks --------------------------------------------------------------------------------
@@ -3538,7 +3549,7 @@ pub fn compare(page: &mut Page, repo: &RepoId, spec: &str, c: &Comparison, now: 
         );
         return;
     }
-    commit_rows(page, repo, &c.commits, now);
+    commit_rows(page, repo, None, &c.commits, now);
 }
 // ---- deployments ------------------------------------------------------------------------------
 
@@ -3754,6 +3765,36 @@ pub fn milestone(page: &mut Page, repo: &RepoId, d: &MilestoneDetail, icons: Ico
 
 /// A commit: its message, who and when, its parents, and a link to its
 /// files (`files` is that link's target).
+/// A pull request's commit: which of its commits it is, and links to the
+/// ones either side.
+pub struct PrCommitAt {
+    pub n: u64,
+    pub of: u64,
+    pub pr: String,
+    pub number: u64,
+    pub previous: Option<String>,
+    pub next: Option<String>,
+}
+
+/// The line above a pull request's commit: `Commit 3 of 7 in #149`, and
+/// the previous and next commits.
+pub fn pr_commit_nav(page: &mut Page, at: &PrCommitAt) {
+    let pr = link_seg(page, format!("#{}", at.number), at.pr.clone(), Role::Link);
+    let mut segs = vec![
+        Seg::new(format!("Commit {} of {} in ", at.n, at.of), Role::Meta),
+        pr,
+    ];
+    for (label, url) in [("‹ Previous", &at.previous), ("Next ›", &at.next)] {
+        segs.push(Seg::new("   ", Role::Meta));
+        segs.push(match url {
+            Some(url) => link_seg(page, label, url.clone(), Role::Link),
+            None => Seg::new(label, Role::Meta),
+        });
+    }
+    page.line(segs);
+    page.blank();
+}
+
 pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now: u64) {
     page.wrapped(
         vec![Seg::new(d.headline.clone(), Role::Title)],

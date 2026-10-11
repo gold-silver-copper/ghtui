@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::api::browse::{DiscussionsOf, RepoSummary, SearchKind};
 use crate::api::change::Change;
-use crate::api::model::RepoId;
+use crate::api::model::{PrRef, RepoId};
 use crate::diff::anchor::Side;
 use crate::theme::{Bg, Theme};
 use crate::ui::chrome::{self, KeyRow, SuggestRow};
@@ -621,6 +621,40 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             p.fresh = false;
             state.info(what);
         }
+        Action::NextCommit | Action::PrevCommit => {
+            let Route::Commit {
+                repo,
+                oid,
+                pr: Some(number),
+            } = p.route.clone()
+            else {
+                state.info(
+                    "Next and previous commits are a pull request's: open one from its Commits tab",
+                );
+                return Vec::new();
+            };
+            let at = state.pr_commit_at(&repo, number, &oid);
+            let to = match &at {
+                Some(at) if action == Action::NextCommit => at.next.clone(),
+                Some(at) => at.previous.clone(),
+                None => None,
+            };
+            return match (to, at) {
+                (Some(url), _) => state.go(Dest::from_url(&url)),
+                (None, Some(_)) => {
+                    state.info(if action == Action::NextCommit {
+                        "This is the newest commit"
+                    } else {
+                        "No earlier commit here"
+                    });
+                    Vec::new()
+                }
+                (None, None) => {
+                    state.info("The pull request's commits haven't loaded yet");
+                    Vec::new()
+                }
+            };
+        }
         Action::Star => return star(state),
         Action::Comment => return comment_with(state, ""),
         Action::Branch => return state.open_finder(true),
@@ -652,7 +686,7 @@ fn scroll_view(p: &mut PageScreen, action: Action, height: usize) {
         Action::ScrollUp => scroll_by(p, -1, height),
         Action::ScrollTop => p.scroll = at.min(max_scroll(p, height)),
         Action::ScrollBottom => {
-            p.scroll = (at + 1).saturating_sub(height).min(max_scroll(p, height))
+            p.scroll = (at + 1).saturating_sub(height).min(max_scroll(p, height));
         }
         Action::ScrollCenter => p.scroll = at.saturating_sub(height / 2).min(max_scroll(p, height)),
         Action::ScrollLeft => p.shift = p.shift.saturating_sub(SHIFT),
@@ -863,9 +897,19 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         Route::CommitChecks { repo, oid } => Route::Commit {
             repo: repo.clone(),
             oid: oid.clone(),
+            pr: None,
         },
+        // A pull request's commit leads up to the pull request.
+        Route::Commit {
+            repo,
+            pr: Some(number),
+            ..
+        } => Route::pr(PrRef {
+            repo: repo.clone(),
+            number: *number,
+        }),
         // A commit's history leads up to it.
-        Route::Commit { repo, oid } => Route::Commits {
+        Route::Commit { repo, oid, .. } => Route::Commits {
             repo: repo.clone(),
             rev: oid.clone(),
             path: String::new(),
@@ -986,6 +1030,8 @@ pub fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
 pub struct Hints {
     pub labels: Vec<HintLabel>,
     pub links: Vec<Link>,
+    /// The page tab each link is, if it's one (1-based).
+    pub tabs: Vec<Option<usize>>,
     pub typed: String,
     pub browser: bool,
     /// A capital was typed: follow the link in a new tab.
@@ -1019,28 +1065,47 @@ fn start_hints(state: &mut State, browser: bool) {
     let Screen::Page(p) = state.screen() else {
         return;
     };
-    let spots = page::spots(&p.page, area, p.scroll);
+    // The page's own tabs first, then its links.
+    let chrome = state.chrome();
+    let tab_list: Vec<_> = chrome.tabs.iter().map(|(t, _)| t.clone()).collect();
+    let tab_rects = (state.layout_of(&chrome).tabs)
+        .map(|bar| chrome::tab_layout(bar, &tab_list, chrome.active))
+        .unwrap_or_default();
+    let tabs = (chrome.tabs.iter().zip(tab_rects).enumerate())
+        .filter(|(i, _)| chrome.active != Some(*i))
+        .map(|(i, ((_, target), rect))| {
+            let url = match target {
+                Target::Page(route) => route.url(),
+                Target::Files(of) => of.url(),
+                Target::External(url) => url.clone(),
+            };
+            (
+                (rect.x.saturating_add(2), rect.y),
+                Link::Url(url),
+                Some(i + 1),
+            )
+        });
+    let links = page::spots(&p.page, area, p.scroll)
+        .into_iter()
+        .filter_map(|s| Some(((s.x, s.y), p.page.target(s.link)?.clone(), None)));
+    let spots: Vec<((u16, u16), Link, Option<usize>)> = tabs.chain(links).collect();
     if spots.is_empty() {
         state.info("No links on screen");
         return;
     }
     let labels = hint_labels(spots.len());
-    let (spots, links): (Vec<&page::Spot>, Vec<Link>) = spots
-        .iter()
-        .filter_map(|s| Some((s, p.page.target(s.link)?.clone())))
-        .unzip();
-    let labels = spots
-        .iter()
-        .zip(labels)
-        .map(|(s, label)| HintLabel {
-            x: s.x,
-            y: s.y,
+    let labels = (spots.iter().zip(labels))
+        .map(|(((x, y), ..), label)| HintLabel {
+            x: *x,
+            y: *y,
             label,
         })
         .collect();
+    let (links, tabs) = spots.into_iter().map(|(_, link, tab)| (link, tab)).unzip();
     state.overlay = Some(Overlay::Hints(Box::new(Hints {
         labels,
         links,
+        tabs,
         typed: String::new(),
         browser,
         tab: false,
@@ -1068,10 +1133,10 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             return Vec::new();
         }
     }
-    let matching: Vec<(&HintLabel, &Link)> = hints
+    let matching: Vec<(&HintLabel, (&Link, &Option<usize>))> = hints
         .labels
         .iter()
-        .zip(&hints.links)
+        .zip(hints.links.iter().zip(&hints.tabs))
         .filter(|(h, _)| h.label.starts_with(&hints.typed))
         .collect();
     match matching.as_slice() {
@@ -1080,11 +1145,15 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             state.info("No link has those letters");
             Vec::new()
         }
-        [(hint, link)] if hint.label == hints.typed => {
-            let link = (*link).clone();
+        [(hint, (link, page_tab))] if hint.label == hints.typed => {
+            let (link, page_tab) = ((*link).clone(), **page_tab);
             let (browser, tab) = (hints.browser, hints.tab);
             state.overlay = None;
             match link {
+                // The page's own tab: switched to, not gone to.
+                Link::Url(_) if !browser && !tab && page_tab.is_some() => {
+                    switch_tab(state, page_tab.unwrap_or(1))
+                }
                 Link::Url(url) if browser => state.go(Target::External(url).into()),
                 Link::Url(url) if tab => state.open_tab(Dest::from_url(&url)),
                 link => state.follow(&link),
@@ -1815,6 +1884,10 @@ impl State {
                 out.push(row);
             }
         }
+        if let Route::Commit { pr: Some(_), .. } = route {
+            out.push(here(Action::NextCommit, "Next commit", "next commit"));
+            out.push(here(Action::PrevCommit, "Previous commit", ""));
+        }
         if matches!(route, Route::Blob { .. } | Route::Blame { .. }) {
             let blame = match route {
                 Route::Blob { .. } => "Blame this line",
@@ -1888,7 +1961,11 @@ impl State {
                     Some(Route::Job { .. }) => "search",
                     _ => "filter",
                 };
-                return vec![pair("↵", enter), pair("↑↓", "choose"), pair("esc", "close")];
+                return vec![
+                    pair("↵", enter),
+                    pair("ctrl-j/k", "choose"),
+                    pair("esc", "close"),
+                ];
             }
             Some(Overlay::Hints(_)) => {
                 return vec![pair("a-z", "type a link's letters"), pair("esc", "cancel")];
@@ -1903,6 +1980,7 @@ impl State {
             Some(Overlay::Menu(_)) => {
                 return vec![
                     pair("↵", "run"),
+                    pair("j/k", "choose"),
                     pair("key", "run it"),
                     (self.first_key(Action::Search), "filter".into()),
                     pair("esc", "close"),
@@ -1911,7 +1989,7 @@ impl State {
             Some(Overlay::Picker(_)) => {
                 return vec![
                     pair("↵", "open"),
-                    pair("↑↓", "choose"),
+                    pair("ctrl-j/k", "choose"),
                     pair("esc", "close"),
                 ];
             }

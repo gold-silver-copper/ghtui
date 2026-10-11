@@ -2514,7 +2514,7 @@ pub(crate) mod tests {
             let urls = s.tab_urls();
             let mut again = state();
             again.restore_tabs(&urls);
-            assert_eq!(again.tab_titles(), ["#1", "#2"]);
+            assert_eq!(again.tab_titles(), ["ghtui#1", "ghtui#2"]);
             assert_eq!((again.active_tab(), route(&again)), (0, issue(1)));
         }
 

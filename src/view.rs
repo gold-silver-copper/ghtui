@@ -42,7 +42,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
         Some(Overlay::Search(sb)) => Some(&sb.input),
         _ => None,
     };
-    let placeholder = format!("Type {} to search", state.first_key(Action::Search));
+    let placeholder = format!("Type {} to search", state.first_key(Action::SearchGithub));
     Header {
         ctx,
         crumbs: &crumbs,

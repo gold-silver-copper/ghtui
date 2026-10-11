@@ -5,7 +5,7 @@ expression: render(&state)
 Buffer {
     area: Rect { x: 0, y: 0, width: 160, height: 30 },
     content: [
-        "  ◆ ghtui   gold-silver-copper / ghtui                                                          ⌕ Type / to search                                    @octocat  ",
+        "  ◆ ghtui   gold-silver-copper / ghtui                                                          ⌕ Type g/ to search                                   @octocat  ",
         "   <> Code   ◉ Issues  7    ⇄ Pull requests  3    ◈ Discussions   ▶ Actions   ▤ Wiki   ⛨ Security                                                               ",
         "──━━━━━━━━━─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
         "                                                                                                                                                                ",
@@ -45,7 +45,7 @@ Buffer {
         x: 38, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 95, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(226, 226, 233), underline: Reset, modifier: NONE,
         x: 96, y: 0, fg: Rgb(67, 71, 78), bg: Rgb(226, 226, 233), underline: Reset, modifier: NONE,
-        x: 114, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(226, 226, 233), underline: Reset, modifier: NONE,
+        x: 115, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(226, 226, 233), underline: Reset, modifier: NONE,
         x: 147, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 150, y: 0, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 158, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,

@@ -5,7 +5,7 @@ expression: "render(&with_profile(Mode::Dark, ProfileTab::Followers))"
 Buffer {
     area: Rect { x: 0, y: 0, width: 100, height: 30 },
     content: [
-        "  ◆ ghtui   octocat                                    ⌕ Type / to search                 @octocat  ",
+        "  ◆ ghtui   octocat                                    ⌕ Type g/ to search                @octocat  ",
         "   ◫ Overview   ▤ Repositories  8    ☆ Stars  120    ⚇ Followers  21.4k    ⚇ Following  9           ",
         "────────────────────────────────────────────────────━━━━━━━━━━━━━━━━━━━━━───────────────────────────",
         "                                                                                                    ",
@@ -44,7 +44,7 @@ Buffer {
         x: 19, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 54, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
         x: 55, y: 0, fg: Rgb(196, 198, 207), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
-        x: 73, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
+        x: 74, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
         x: 87, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 90, y: 0, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 98, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,

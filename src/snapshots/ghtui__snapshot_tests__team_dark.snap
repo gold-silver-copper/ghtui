@@ -1,11 +1,11 @@
 ---
-source: crates/app/src/snapshot_tests.rs
+source: src/snapshot_tests.rs
 expression: "render(&with_team(Mode::Dark))"
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 100, height: 30 },
     content: [
-        "  ◆ ghtui   github / Teams / core                      ⌕ Type / to search                 @octocat  ",
+        "  ◆ ghtui   github / Teams / core                      ⌕ Type g/ to search                @octocat  ",
         "                                                                                                    ",
         "  @github / Core                                                                                    ",
         "  The Core team                                                                                     ",
@@ -47,7 +47,7 @@ Buffer {
         x: 33, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 54, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
         x: 55, y: 0, fg: Rgb(196, 198, 207), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
-        x: 73, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
+        x: 74, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
         x: 87, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 90, y: 0, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 98, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,

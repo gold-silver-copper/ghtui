@@ -452,9 +452,9 @@ pub fn move_in_list(key: KeyEvent, selected: &mut usize, count: usize) -> bool {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Down | KeyCode::Tab => *selected += 1,
-        KeyCode::Char('n') if ctrl => *selected += 1,
+        KeyCode::Char('n' | 'j') if ctrl => *selected += 1,
         KeyCode::Up | KeyCode::BackTab => *selected = selected.saturating_sub(1),
-        KeyCode::Char('p') if ctrl => *selected = selected.saturating_sub(1),
+        KeyCode::Char('p' | 'k') if ctrl => *selected = selected.saturating_sub(1),
         _ => return false,
     }
     *selected = (*selected).min(count.saturating_sub(1));

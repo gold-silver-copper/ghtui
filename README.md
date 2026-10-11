@@ -190,6 +190,8 @@ says where it works.
 |         | Go to open tab 1 to 9 |
 | `]]`    | Next comment or row |
 | `[[`    | Previous comment or row |
+| `]C`    | Next commit of the pull request |
+| `[C`    | Previous commit of the pull request |
 | `s`     | Star / unstar |
 | `b`     | Switch branches or tags |
 | `i`     | Follow a link by its letters |
