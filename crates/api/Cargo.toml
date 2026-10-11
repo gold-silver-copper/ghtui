@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "GitHub's GraphQL and REST APIs for ghtui: models, auth, retries, rate limits"
 
 [dependencies]
 ghtui-schema.workspace = true

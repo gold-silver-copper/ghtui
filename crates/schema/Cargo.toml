@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "GitHub's GraphQL schema compiled for cynic, for ghtui"
+# Its build script tells dependents where the schema file is.
+links = "ghtui-schema"
 
 [dependencies]
 cynic.workspace = true

@@ -10,13 +10,13 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/gold-silver-copper/ghtui"
 
 [workspace.dependencies]
-ghtui-api = { path = "crates/api" }
-ghtui-schema = { path = "crates/schema" }
-ghtui-store = { path = "crates/store" }
-ghtui-git = { path = "crates/git" }
-ghtui-diff = { path = "crates/diff" }
-ghtui-theme = { path = "crates/theme" }
-ghtui-ui = { path = "crates/ui" }
+ghtui-api = { path = "crates/api", version = "0.1.0" }
+ghtui-schema = { path = "crates/schema", version = "0.1.0" }
+ghtui-store = { path = "crates/store", version = "0.1.0" }
+ghtui-git = { path = "crates/git", version = "0.1.0" }
+ghtui-diff = { path = "crates/diff", version = "0.1.0" }
+ghtui-theme = { path = "crates/theme", version = "0.1.0" }
+ghtui-ui = { path = "crates/ui", version = "0.1.0" }
 
 anyhow = "1.0.104"
 thiserror = "2.0.21"

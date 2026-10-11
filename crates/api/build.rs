@@ -7,9 +7,11 @@
 
 fn main() {
     // Derives in this crate validate against the schema; the generated schema
-    // module itself lives in `ghtui-schema`.
+    // module itself lives in `ghtui-schema`, which says where its file is.
+    let sdl = std::env::var("DEP_GHTUI_SCHEMA_SDL").expect("ghtui-schema says where its schema is");
+    println!("cargo::rustc-env=GITHUB_SDL={sdl}");
     cynic_codegen::register_schema("github")
-        .from_sdl_file("../schema/github.graphql")
+        .from_sdl_file(&sdl)
         .expect("GitHub schema is valid SDL")
         .as_default()
         .expect("schema registers");
