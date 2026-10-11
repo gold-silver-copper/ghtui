@@ -355,9 +355,10 @@ impl State {
         rows.sort_by_key(|(s, ..)| *s);
         let mut rows: Rows = rows.into_iter().map(|(_, i, c)| (i, Some(c))).collect();
         // What wasn't fetched can't be picked: say so.
-        for (list, what) in [(&refs.branches, "branches"), (&refs.tags, "tags")] {
+        for (list, what) in [(&refs.branches, "branch"), (&refs.tags, "tag")] {
             let rest = list.left_out();
             if rest > 0 {
+                let what = crate::ui::text::noun(rest, what);
                 rows.push((item(format!("{rest} more {what} on GitHub"), ""), None));
             }
         }

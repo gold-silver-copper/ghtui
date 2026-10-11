@@ -8,8 +8,9 @@ use crate::api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckOutcome, Checks, CommitDetail, CommitInfo, Comparison,
     DeploymentList, DiscussionDetail, DiscussionList, DiscussionsOf, Gist, GistSummary,
     IssueDetail, Job, MilestoneDetail, MilestoneList, PrActivity, Profile, Readme, Refs, Release,
-    RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo,
-    TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage, Workflow, WorkflowRun,
+    RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults,
+    StateCounts, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage,
+    Workflow, WorkflowRun,
 };
 use crate::api::model::{PrRef, RepoId};
 use crate::ui::Fetched;
@@ -20,9 +21,12 @@ use crate::keymap::Action;
 use crate::route::Route;
 use crate::state::{Remote, State};
 
-/// Widest a page of reading gets; wider terminals center it, as GitHub
-/// does.
-const MAX_WIDTH: u16 = 140;
+/// Widest a page of reading (a conversation, a Markdown file) gets, its
+/// sidebar included; wider terminals center it, as GitHub does.
+const READING: u16 = 160;
+/// Widest a page of lists gets: room for their columns, without a row's
+/// two ends drifting apart.
+const LISTS: u16 = 200;
 
 /// One piece of GitHub data a page shows.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -34,6 +38,8 @@ pub enum DataKey {
     Tree(RepoId, String, String),
     Blob(RepoId, String, String),
     Search(SearchKind, String),
+    /// A filtered list's open and closed counts ([`Route::state_counts`]).
+    StateCounts(String),
     Issue(RepoId, u64),
     PrActivity(PrRef),
     Profile(String),
@@ -97,6 +103,7 @@ pub enum Data {
     Tree(Vec<TreeEntry>),
     Blob(Box<Blob>),
     Search(Box<SearchResults>),
+    StateCounts(StateCounts),
     /// `None`: the number is a pull request.
     Issue(Option<Box<IssueDetail>>),
     PrActivity(Box<PrActivity>),
@@ -301,7 +308,11 @@ pub fn needs(route: &Route) -> Vec<Need> {
             Need::Data(K::RefIn(repo.clone(), spot.clone())),
         ],
         Route::Issues { repo, .. } | Route::Pulls { repo, .. } => {
-            std::iter::once(header(repo)).chain(list).collect()
+            let counts = route.state_counts().map(|q| Need::Data(K::StateCounts(q)));
+            std::iter::once(header(repo))
+                .chain(list)
+                .chain(counts)
+                .collect()
         }
         Route::Search { .. } => list.into_iter().collect(),
         Route::Wiki { repo, page } => vec![
@@ -431,7 +442,8 @@ macro_rules! picked {
 
 picked!(
     Repo => RepoOverview, Readme => Option<Box<Readme>>, Tree => [TreeEntry], Blob => Blob,
-    Search => SearchResults, Issue => Option<Box<IssueDetail>>, PrActivity => PrActivity,
+    Search => SearchResults, StateCounts => StateCounts, Issue => Option<Box<IssueDetail>>,
+    PrActivity => PrActivity,
     Profile => Profile, Refs => Refs, RefIn => Option<String>,
     LastCommits => HashMap<String, CommitInfo>, Commit => CommitDetail,
     History => Results<CommitInfo>, Checks => Checks, Users => Results<UserSummary>,
@@ -576,17 +588,21 @@ impl State {
             filter: &filter,
         };
         let cx = pages::PageCtx { icons, keys, now };
-        // Reading stays narrow enough to follow; output and tables take
-        // the whole width.
-        let reading = width.min(MAX_WIDTH);
+        // Reading stays narrow enough to follow, lists get room for their
+        // columns, and output and tables take the whole width.
+        let (reading, lists) = (width.min(READING), width.min(LISTS));
         let mut page = match route {
-            Route::Repo(_)
-            | Route::Issue { .. }
+            Route::Issue { .. }
             | Route::Pr {
                 tab: PrTab::Conversation,
                 ..
             } => Page::with_aside(reading),
+            Route::Repo(_) => Page::with_aside(lists),
             Route::Blob { path, .. } if pages::is_markdown(path) => Page::new(reading),
+            Route::Wiki { .. }
+            | Route::Discussion { .. }
+            | Route::Release { .. }
+            | Route::Advisory { .. } => Page::new(reading),
             Route::Pr {
                 tab: PrTab::Checks, ..
             }
@@ -600,7 +616,7 @@ impl State {
             | Route::Branches(_)
             | Route::Tags(_)
             | Route::Deployments { .. } => Page::new(width),
-            _ => Page::new(reading),
+            _ => Page::new(lists),
         };
         page.compact = self.compact();
         if let Some(err) = self.stale_errors(route) {
@@ -701,17 +717,23 @@ impl State {
             }
             Route::Issues { repo, query } | Route::Pulls { repo, query } => {
                 let is_pr = matches!(route, Route::Pulls { .. });
+                // A filtered list counts what the filter finds, as GitHub's
+                // does; until it's counted, no counts show.
                 #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
-                let overview = f
-                    .get::<RepoOverview>(&DataKey::Repo(repo.clone()))
-                    .ready_unchecked();
-                let counts = overview.map(|o| {
-                    if is_pr {
-                        (o.open_prs, o.closed_prs)
-                    } else {
-                        (o.open_issues, o.closed_issues)
-                    }
-                });
+                let counts = match route.state_counts() {
+                    Some(q) => (f.get::<StateCounts>(&DataKey::StateCounts(q)))
+                        .ready_unchecked()
+                        .map(|c| (c.open, c.closed)),
+                    None => (f.get::<RepoOverview>(&DataKey::Repo(repo.clone())))
+                        .ready_unchecked()
+                        .map(|o| {
+                            if is_pr {
+                                (o.open_prs, o.closed_prs)
+                            } else {
+                                (o.open_issues, o.closed_issues)
+                            }
+                        }),
+                };
                 let results = f.paged(route).pick(|r| match r {
                     SearchResults::Issues(r) => Some(r),
                     _ => None,

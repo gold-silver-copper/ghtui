@@ -658,6 +658,22 @@ impl Route {
             _ => None,
         }
     }
+
+    /// The search an issue or pull request list's open and closed counts
+    /// come from, when its filter is more than a state and a sort (else
+    /// they're the repository's own).
+    pub fn state_counts(&self) -> Option<String> {
+        let (repo, is, query) = match self {
+            Route::Issues { repo, query } => (repo, "issue", query),
+            Route::Pulls { repo, query } => (repo, "pr", query),
+            _ => return None,
+        };
+        let state = ["is:open", "is:closed", "state:open", "state:closed"];
+        let filter: Vec<&str> = (query.split_whitespace())
+            .filter(|w| !state.contains(w) && !w.starts_with("sort:"))
+            .collect();
+        (!filter.is_empty()).then(|| format!("repo:{repo} is:{is} {}", filter.join(" ")))
+    }
 }
 
 /// The search for a repository's issue or pull request list. Newest first,

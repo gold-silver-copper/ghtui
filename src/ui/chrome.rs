@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::ui::{Ctx, PAD_X, cols, fill, label_hint, list_row, put, render_split, text};
+use crate::ui::{Ctx, PAD_X, cols, fill, fit_spans, label_hint, list_row, put, render_split, text};
 
 const BAR: Bg = Bg::Container;
 const FIELD: Bg = Bg::ContainerHighest;
@@ -332,14 +332,13 @@ pub struct TitleBar<'a> {
 impl Widget for TitleBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         fill(buf, area, self.ctx.theme, BAR);
-        self.line.render(
-            Rect {
-                x: area.x.saturating_add(PAD_X),
-                width: area.width.saturating_sub(2 * PAD_X),
-                ..area
-            },
-            buf,
-        );
+        let inner = Rect {
+            x: area.x.saturating_add(PAD_X),
+            width: area.width.saturating_sub(2 * PAD_X),
+            ..area
+        };
+        let spans = fit_spans(&self.line.spans, inner.width);
+        Line { spans, ..self.line }.render(inner, buf);
     }
 }
 
@@ -545,7 +544,7 @@ impl Widget for KeyPanel<'_> {
         };
         let title = vec![Span::styled(self.title, theme.title(PANEL))];
         let position = vec![Span::styled(position, theme.meta(PANEL))];
-        render_split(title_row, buf, title, position, 1);
+        render_split(title_row, buf, &title, &position, 1);
         let skip = self.selected.saturating_add(1).saturating_sub(rows);
         let shown = self.rows.iter().enumerate().skip(skip).take(rows);
         for ((n, row), y) in shown.zip(area.y.saturating_add(2)..area.bottom()) {

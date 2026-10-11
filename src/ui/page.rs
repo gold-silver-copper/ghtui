@@ -301,18 +301,20 @@ impl Page {
     }
 
     /// A page `total` columns wide that keeps a sidebar beside its column,
-    /// if there's room for one.
+    /// if there's room for one: 30 columns, and one more for every three
+    /// past 140, up to 48.
     pub fn with_aside(total: u16) -> Self {
-        const WIDTH: u16 = 30;
         if total < 104 {
             return Self::new(total);
         }
+        let grown = total.saturating_sub(140).checked_div(3).unwrap_or(0);
+        let width = grown.saturating_add(30).min(48);
         Self {
             aside: Some(Aside {
-                width: WIDTH,
+                width,
                 lines: Vec::new(),
             }),
-            ..Self::new(total.saturating_sub(WIDTH + ASIDE_GAP))
+            ..Self::new(total.saturating_sub(width.saturating_add(ASIDE_GAP)))
         }
     }
 

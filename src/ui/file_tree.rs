@@ -14,7 +14,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use crate::ui::diff_doc::{Doc, Viewed};
-use crate::ui::{Ctx, PAD_Y, fill, inset, render_split, text};
+use crate::ui::{Ctx, PAD_Y, fill, fit_spans, inset, render_split, text};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeRow {
@@ -173,7 +173,7 @@ impl Widget for FileTree<'_> {
             ..inset(area, 1, 0)
         };
         let (adds, dels) = self.doc.totals();
-        Line::from(vec![
+        let title = [
             Span::styled("Files", theme.title(TREE_BG)),
             Span::styled(format!("  {}", self.doc.files.len()), theme.meta(TREE_BG)),
             Span::styled(
@@ -191,8 +191,8 @@ impl Widget for FileTree<'_> {
                 format!(" −{dels}"),
                 theme.style(Fg::DiffRemovedSign, TREE_BG),
             ),
-        ])
-        .render(title_area, buf);
+        ];
+        Line::from(fit_spans(&title, title_area.width)).render(title_area, buf);
 
         let list_top = title_area.y.saturating_add(2);
         let shown = self.rows.iter().enumerate().skip(self.scroll);
@@ -282,7 +282,7 @@ impl FileTree<'_> {
                     room
                 };
                 spans.push(Span::styled(text::truncate(name, room), name_style));
-                render_split(area, buf, spans, right, 1);
+                render_split(area, buf, &spans, &right, 1);
             }
         }
     }

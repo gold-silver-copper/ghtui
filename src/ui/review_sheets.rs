@@ -11,7 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::ui::{Ctx, PAD_Y, centered, chips, cols, fill, idx, key_hints, padded, text};
+use crate::ui::{Ctx, PAD_Y, centered, chips, cols, fill, fit_spans, idx, key_hints, padded, text};
 
 const SHEET: Bg = Bg::ContainerHigh;
 const INPUT_ROWS: u16 = 8;
@@ -56,7 +56,8 @@ impl Widget for ComposeSheet<'_> {
             height: 1,
             ..inner
         };
-        Span::styled(self.title.to_owned(), theme.title(SHEET)).render(row(y), buf);
+        let title = text::truncate(self.title, usize::from(inner.width));
+        Span::styled(title, theme.title(SHEET)).render(row(y), buf);
         y = y.saturating_add(1);
         if let Some(note) = self.note {
             Span::styled(
@@ -140,13 +141,10 @@ fn footer(
 ) {
     let spans = match (busy, error) {
         (Some(busy), _) => vec![Span::styled(busy.to_owned(), theme.meta(SHEET))],
-        (None, Some(error)) => vec![Span::styled(
-            text::truncate(error, usize::from(area.width)),
-            theme.error(SHEET),
-        )],
+        (None, Some(error)) => vec![Span::styled(error.to_owned(), theme.error(SHEET))],
         (None, None) => key_hints(theme, SHEET, hints),
     };
-    Line::from(spans).render(area, buf);
+    Line::from(fit_spans(&spans, area.width)).render(area, buf);
 }
 
 pub struct SubmitSheet<'a> {
@@ -189,6 +187,7 @@ impl Widget for SubmitSheet<'_> {
                 "{n} pending comment{s}, {r} previously rejected (fix or delete those first)."
             ),
         };
+        let pending = text::truncate(&pending, usize::from(inner.width));
         Span::styled(pending, theme.meta(SHEET)).render(row(y), buf);
         // What's on GitHub is published too, wherever it was written.
         let on_github = match self.on_github {
@@ -208,7 +207,7 @@ impl Widget for SubmitSheet<'_> {
                 theme.error(SHEET),
             ),
         };
-        on_github.render(row(y.saturating_add(1)), buf);
+        Line::from(fit_spans(&[on_github], inner.width)).render(row(y.saturating_add(1)), buf);
         y = y.saturating_add(2);
 
         // Filled button for the chosen action, tonal for the others.

@@ -818,6 +818,41 @@ pub struct BrowseSearchConnection {
     pub nodes: Option<Vec<Option<BrowseItem>>>,
 }
 
+#[derive(cynic::QueryVariables, Debug)]
+pub struct StateCountsVariables {
+    pub open: String,
+    pub closed: String,
+}
+
+/// How many issues or pull requests two searches find, and nothing else.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Query",
+    schema_module = "schema",
+    variables = "StateCountsVariables"
+)]
+pub struct StateCountsQuery {
+    #[cynic(rename = "search", alias)]
+    #[arguments(query: $open, type: ISSUE, first: 0)]
+    pub open: SearchCount,
+    #[cynic(rename = "search", alias)]
+    #[arguments(query: $closed, type: ISSUE, first: 0)]
+    pub closed: SearchCount,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "SearchResultItemConnection", schema_module = "schema")]
+pub struct SearchCount {
+    pub issue_count: i32,
+}
+
+/// A filtered issue or pull request list's open and closed counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateCounts {
+    pub open: u64,
+    pub closed: u64,
+}
+
 #[derive(cynic::InlineFragments, Debug)]
 #[cynic(graphql_type = "SearchResultItem", schema_module = "schema")]
 pub enum BrowseItem {
@@ -4642,6 +4677,9 @@ pub mod keys {
     }
     pub fn search(kind: SearchKind, query: &str) -> String {
         format!("search:{kind:?}:{query}")
+    }
+    pub fn state_counts(query: &str) -> String {
+        format!("state-counts:{query}")
     }
     pub fn issue(repo: &RepoId, number: u64) -> String {
         format!("issue:{repo}#{number}")

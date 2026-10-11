@@ -74,10 +74,10 @@ pub fn fill(buf: &mut Buffer, area: Rect, theme: &Theme, bg: Bg) {
 }
 
 /// Renders `left` and `right` on one line, at least `gap` columns apart,
-/// truncating the left side first when they don't fit.
+/// cutting the left side first (with `…`) when they don't fit.
 #[deny(clippy::arithmetic_side_effects)]
-fn render_split(area: Rect, buf: &mut Buffer, left: Vec<Span<'_>>, right: Vec<Span<'_>>, gap: u16) {
-    let right_width = cols(text::spans_width(&right)).min(area.width);
+fn render_split(area: Rect, buf: &mut Buffer, left: &[Span<'_>], right: &[Span<'_>], gap: u16) {
+    let right_width = cols(text::spans_width(right)).min(area.width);
     let left_area = Rect {
         width: area.width.saturating_sub(right_width.saturating_add(gap)),
         ..area
@@ -87,8 +87,21 @@ fn render_split(area: Rect, buf: &mut Buffer, left: Vec<Span<'_>>, right: Vec<Sp
         width: right_width,
         ..area
     };
-    Line::from(left).render(left_area, buf);
-    Line::from(right).render(right_area, buf);
+    Line::from(fit_spans(left, left_area.width)).render(left_area, buf);
+    Line::from(fit_spans(right, right_width)).render(right_area, buf);
+}
+
+/// `spans` cut to `room` columns, ending in `…` where cut.
+fn fit_spans(spans: &[Span<'_>], room: u16) -> Vec<Span<'static>> {
+    let mut room = usize::from(room);
+    spans
+        .iter()
+        .map(|s| {
+            let shown = text::truncate(&s.content, room);
+            room = room.saturating_sub(text::width(&shown));
+            Span::styled(shown, s.style)
+        })
+        .collect()
 }
 
 /// A popup list's row `y`: a band with a stripe when selected, and the
@@ -119,16 +132,7 @@ fn label_hint(buf: &mut Buffer, row: Rect, left: &[Span<'_>], hint: Span<'_>) {
     } else {
         0
     };
-    let mut room = usize::from(row.width.saturating_sub(gap));
-    let left: Vec<Span<'_>> = left
-        .iter()
-        .map(|s| {
-            let shown = text::truncate(&s.content, room);
-            room = room.saturating_sub(text::width(&shown));
-            Span::styled(shown, s.style)
-        })
-        .collect();
-    Line::from(left).render(row, buf);
+    Line::from(fit_spans(left, row.width.saturating_sub(gap))).render(row, buf);
     let hint_area = Rect {
         x: row.right().saturating_sub(hint_w),
         width: hint_w,

@@ -963,6 +963,22 @@ impl GitHub {
         self.search_showing(kind, query, after, |_| {}).await
     }
 
+    /// How many issues or pull requests `query` finds open and closed, in
+    /// one request.
+    pub async fn state_counts(&self, query: &str) -> Result<browse::StateCounts, ApiError> {
+        let op = browse::StateCountsQuery::build(browse::StateCountsVariables {
+            open: format!("{query} is:open"),
+            closed: format!("{query} is:closed"),
+        });
+        let found = self.graphql(op).await?;
+        let count = crate::api::model::count;
+        let counts = browse::StateCounts {
+            open: count(found.open.issue_count),
+            closed: count(found.closed.issue_count),
+        };
+        Ok(self.kept(&browse::keys::state_counts(query), counts).await)
+    }
+
     /// One page of search results (30 per page). GitHub gives a request
     /// 10 seconds and answers 502 past them, and a busy account's search
     /// that also reads each pull request's checks runs out of them (25
@@ -2350,6 +2366,7 @@ impl GitHub {
 trait Unrooted {}
 impl Unrooted for queries::RollupsQuery {}
 impl Unrooted for browse::BrowseSearch {}
+impl Unrooted for browse::StateCountsQuery {}
 
 use reply::Reply;
 mod reply {

@@ -3095,6 +3095,9 @@ fn sample(key: &DataKey) -> Data {
         K::Tree(..) => Data::Tree(fixtures::tree()),
         K::Blob(..) => Data::Blob(Box::new(fixtures::blob())),
         K::Search(kind, _) => Data::Search(Box::new(search(kind))),
+        K::StateCounts(_) => {
+            Data::StateCounts(crate::api::browse::StateCounts { open: 2, closed: 5 })
+        }
         K::Issue(..) => Data::Issue(Some(Box::new(fixtures::issue()))),
         K::PrActivity(_) => Data::PrActivity(Box::new(fixtures::activity())),
         K::Profile(_) => Data::Profile(Box::new(fixtures::profile())),

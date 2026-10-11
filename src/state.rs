@@ -2682,16 +2682,22 @@ pub(crate) mod tests {
         }
     }
 
-    /// On a wide screen, output (a job's log) takes the whole width, and
-    /// reading (a list of issues) stays at most 140 columns, centered.
+    /// On a wide screen, output (a job's log) takes the whole width, lists
+    /// grow to 200 columns, and reading (an issue) stays at 160 with a
+    /// wider sidebar, centered. A narrow screen keeps GitHub's sidebar.
     #[test]
     fn output_takes_the_screen_and_reading_stays_narrow() {
         let mut s = state();
-        s.size = (220, 30);
-        let mut width = |route| {
+        let mut width = |size, route| {
+            s.size = (size, 30);
             let _ = s.push(route);
             s.sync_page();
-            page(&s).page().width
+            let p = page(&s).page();
+            let aside = p.aside.as_ref().map(|a| a.width);
+            (
+                p.width + aside.map_or(0, |a| a + crate::ui::page::ASIDE_GAP),
+                aside,
+            )
         };
         let job = Route::Job {
             repo: repo(),
@@ -2700,8 +2706,10 @@ pub(crate) mod tests {
             step: None,
             query: String::new(),
         };
-        assert!(width(job) > 200);
-        assert_eq!(width(issues(OPEN)), 140);
+        assert!(width(220, job).0 > 200);
+        assert_eq!(width(220, issues(OPEN)), (200, None));
+        assert_eq!(width(220, issue(1)), (160, Some(36)));
+        assert_eq!(width(110, issue(1)), (105, Some(30)));
     }
 
     /// `/` on a job searches its log: the steps with a match open, the
@@ -3975,6 +3983,53 @@ pub(crate) mod tests {
         fetched(&mut state, key, list(&[20, 14, 11, 8]));
         let text = selected_text(&state);
         assert!(text.contains("Issue 11"), "{text}");
+    }
+
+    /// A filtered list's Open and Closed count what the filter finds, as
+    /// GitHub's do, and show nothing until counted rather than the
+    /// repository's totals. A list filtered only by state costs nothing
+    /// more: its counts are the repository's.
+    #[test]
+    fn a_filtered_list_counts_what_it_finds() {
+        let counted = |cmds: &[Cmd]| {
+            cmds.iter().find_map(|c| match c {
+                Cmd::Api(Api::Fetch {
+                    key: DataKey::StateCounts(q),
+                    ..
+                }) => Some(q.clone()),
+                _ => None,
+            })
+        };
+        let mut s = state();
+        let cmds = s.push(issues("is:closed author:octocat sort:created-asc"));
+        let query = counted(&cmds).unwrap();
+        assert_eq!(
+            query,
+            "repo:gold-silver-copper/ghtui is:issue author:octocat"
+        );
+        let overview = Data::Repo(Box::new(crate::fixtures::overview()));
+        let _ = fetched(&mut s, DataKey::Repo(repo()), overview);
+        let header = |s: &State| {
+            let lines = page(s).page().lines.iter();
+            let lines = lines.map(crate::ui::page::PageLine::text);
+            lines.filter(|l| l.contains("Closed")).collect::<String>()
+        };
+        assert!(!header(&s).contains("41"), "{}", header(&s));
+        let counts = crate::api::browse::StateCounts {
+            open: 15,
+            closed: 34,
+        };
+        let _ = fetched(
+            &mut s,
+            DataKey::StateCounts(query),
+            Data::StateCounts(counts),
+        );
+        let text = header(&s);
+        assert!(
+            text.contains("15 Open") && text.contains("34 Closed"),
+            "{text}"
+        );
+        assert_eq!(counted(&s.push(issues("is:closed sort:created-asc"))), None);
     }
 
     /// Editing the comment you selected keeps it selected, and the view on

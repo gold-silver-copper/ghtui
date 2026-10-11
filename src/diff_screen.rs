@@ -398,10 +398,11 @@ impl DiffState {
     pub fn status(&self) -> Option<String> {
         let progress = self.progress.as_ref()?;
         if self.listed() && !self.doc.is_empty() {
+            let files = self.doc.files().len();
             Some(format!(
-                "Diffing {}/{} files",
+                "Diffing {}/{files} {}",
                 self.doc.ready_count(),
-                self.doc.files().len()
+                crate::ui::text::noun(files as u64, "file")
             ))
         } else {
             Some(progress.clone())

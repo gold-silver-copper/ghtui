@@ -23,6 +23,7 @@ use crate::theme::{Bg, Syntax};
 
 use crate::ui::markdown::{self, LinkBase};
 use crate::ui::page::{Frame, Link, Page, PageLine, Role, Seg, Tone};
+use crate::ui::text::noun;
 use crate::ui::{Fetched, Icons, cols, time};
 
 // ---- URLs ----------------------------------------------------------------------
@@ -148,8 +149,9 @@ fn trim_zero(s: &str) -> String {
     s.replace(".0k", "k").replace(".0m", "m")
 }
 
+/// `1 file`, `2 files`, `1.2k repositories`.
 fn plural(n: u64, word: &str) -> String {
-    format!("{} {word}{}", compact(n), if n == 1 { "" } else { "s" })
+    format!("{} {}", compact(n), noun(n, word))
 }
 
 fn chip(text: impl Into<String>, bg: Bg) -> Seg {
@@ -645,7 +647,7 @@ fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_layout: bool)
     }
     if let Some(home) = &o.homepage {
         let link = link_seg(page, home.clone(), home.clone(), Role::Link);
-        page.line(vec![Seg::new("↗ ", Role::Meta), link]);
+        page.wrapped(vec![Seg::new("↗ ", Role::Meta), link], 0, Frame::None);
     }
     if !o.topics.is_empty() {
         let mut topics = Vec::new();
@@ -667,12 +669,17 @@ fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_layout: bool)
     if let Some(license) = &o.license {
         facts.push(Seg::new(format!("⚖ {license} license"), Role::Meta));
     }
-    for (icon, n, noun, tab) in [
-        ("☆", o.summary.stars, "stars", "stargazers"),
-        ("◉", o.watchers, "watching", "watchers"),
-        ("⑂", o.summary.forks, "forks", "forks"),
+    for (icon, n, what, tab) in [
+        (
+            "☆",
+            o.summary.stars,
+            noun(o.summary.stars, "star"),
+            "stargazers",
+        ),
+        ("◉", o.watchers, "watching".to_owned(), "watchers"),
+        ("⑂", o.summary.forks, noun(o.summary.forks, "fork"), "forks"),
     ] {
-        let text = format!("{icon} {} {noun}", compact(n));
+        let text = format!("{icon} {} {what}", compact(n));
         let target = format!("{}/{tab}", url::repo(repo));
         facts.push(link_seg(page, text, target, Role::Meta));
     }
@@ -691,7 +698,7 @@ fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_layout: bool)
         page.wrapped(segs, 0, Frame::None);
     } else {
         for fact in facts {
-            page.line(vec![fact]);
+            page.wrapped(vec![fact], 0, Frame::None);
         }
     }
 }
@@ -715,14 +722,9 @@ fn code_toolbar(
     ];
     if let Some((branches, tags)) = refs {
         let base = url::repo(repo);
-        let branches = if branches == 1 {
-            "⎇ 1 branch".to_owned()
-        } else {
-            format!("⎇ {} branches", compact(branches))
-        };
         segs.push(link_seg(
             page,
-            branches,
+            format!("⎇ {}", plural(branches, "branch")),
             format!("{base}/branches"),
             Role::Meta,
         ));
@@ -1351,11 +1353,7 @@ fn team_row(page: &mut Page, org: &str, t: &TeamSummary) {
             let counts = format!(
                 "{} · {}",
                 plural(t.members, "member"),
-                if t.repos == 1 {
-                    "1 repository".to_owned()
-                } else {
-                    format!("{} repositories", t.repos)
-                }
+                plural(t.repos, "repository")
             );
             page.box_line(segs, vec![Seg::new(counts, Role::Meta)], 0);
             if !t.description.is_empty() {
@@ -1838,7 +1836,7 @@ pub fn search(
     now: u64,
 ) {
     filter_field(page, query, keys, "filter");
-    let noun = match kind {
+    let what = match kind {
         SearchKind::Repos => "repository",
         SearchKind::Issues => "issue",
         SearchKind::Pulls => "pull request",
@@ -1854,7 +1852,7 @@ pub fn search(
     let (total, shown) = results.counts();
     page.box_top(
         vec![Seg::new(
-            format!("{} {noun} results", compact(total)),
+            format!("{} {what} {}", compact(total), noun(total, "result")),
             Role::Strong,
         )],
         Vec::new(),
@@ -2052,13 +2050,14 @@ fn add_comment(page: &mut Page, keys: Keys<'_>) {
 fn people(page: &mut Page, heading: &str, logins: &[String], more: Option<String>, none: &str) {
     aside_heading(page, heading);
     if logins.is_empty() && more.is_none() {
-        page.line(vec![Seg::new(none, Role::Meta)]);
+        page.wrapped(vec![Seg::new(none, Role::Meta)], 0, Frame::None);
     }
     for login in logins {
-        page.link_line(login.clone(), url::user(login), Role::Link, 0);
+        let login = login_seg(page, login, Role::Link);
+        page.wrapped(vec![login], 0, Frame::None);
     }
     if let Some(more) = more {
-        page.line(vec![Seg::new(more, Role::Meta)]);
+        page.wrapped(vec![Seg::new(more, Role::Meta)], 0, Frame::None);
     }
 }
 
@@ -2074,7 +2073,8 @@ fn milestone_aside(page: &mut Page, repo: &RepoId, m: Option<&MilestoneRef>) {
     match m {
         Some(m) => {
             let target = format!("{}/milestone/{}", url::repo(repo), m.number);
-            page.link_line(m.title.clone(), target, Role::Link, 0);
+            let title = link_seg(page, m.title.clone(), target, Role::Link);
+            page.wrapped(vec![title], 0, Frame::None);
         }
         None => page.line(vec![Seg::new("No milestone", Role::Meta)]),
     }
@@ -2262,8 +2262,10 @@ fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
         } else {
             ("◦", Role::Meta)
         };
-        let s = if n == 1 { "" } else { "s" };
-        (mark, format!("{n} commit{s} behind {}", d.base_ref))
+        (
+            mark,
+            format!("{} behind {}", plural(n, "commit"), d.base_ref),
+        )
     });
     let rows = [review, checks].into_iter().flatten();
     let rows = rows
@@ -2288,7 +2290,10 @@ fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
     }
     page.box_rule();
     item(page, url::pull_tab(pr, "files"), |page, link| {
-        let review = format!("Review the {} changed files", d.changed_files);
+        let review = match d.changed_files {
+            1 => "Review the changed file".to_owned(),
+            n => format!("Review the {n} changed files"),
+        };
         body(
             page,
             vec![
@@ -2333,7 +2338,7 @@ pub fn pr_conversation(
             format!(" in {}", plural(d.changed_files, "file")),
             Role::Meta,
         ));
-        side.line(size);
+        side.wrapped(size, 0, Frame::None);
     });
     pr_summary(page, pr, d, now);
     let op = &d.author;
@@ -2458,10 +2463,7 @@ fn commit_rows(
     let rest = match (commits.rest(), commits.rows().first()) {
         (Rest::OnGitHub(n), Some(oldest)) => {
             let earlier = url::commits(repo, &oldest.oid, "");
-            let text = format!(
-                "… {n} earlier {}",
-                if n == 1 { "commit" } else { "commits" }
-            );
+            let text = format!("… {n} earlier {}", noun(n, "commit"));
             item(page, earlier, |page, link| {
                 page.wrapped(vec![Seg::linked(text, Role::Link, link)], 2, Frame::None);
             });
@@ -3077,12 +3079,11 @@ pub fn job(
             body(page, vec![Seg::new(text, Role::Meta)]);
         }
         if cut > 0 {
+            let lines = format!("{cut} earlier {}", noun(cut as u64, "line"));
             let text = if q.is_empty() {
-                format!("… {cut} earlier lines (o shows them all on GitHub)")
+                format!("… {lines} (o shows them all on GitHub)")
             } else {
-                format!(
-                    "… {cut} earlier lines weren't loaded, so aren't searched (o shows them on GitHub)"
-                )
+                format!("… {lines} weren't loaded, so aren't searched (o shows them on GitHub)")
             };
             body(page, vec![Seg::new(text, Role::Meta)]);
         }
@@ -3446,9 +3447,9 @@ pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
             item(page, a.url.clone(), |page, link| {
                 let right = vec![Seg::new(
                     format!(
-                        "{} · {} downloads",
+                        "{} · {}",
                         crate::ui::text::size(a.size),
-                        compact(a.downloads)
+                        plural(a.downloads, "download")
                     ),
                     Role::Meta,
                 )];
@@ -3960,8 +3961,8 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
     if let (Some(followers), Some(following)) = (p.followers, p.following) {
         facts.push(Seg::new(
             format!(
-                "⚇ {} followers · {} following",
-                compact(followers),
+                "⚇ {} · {} following",
+                plural(followers, "follower"),
                 compact(following)
             ),
             Role::Meta,
@@ -4139,7 +4140,11 @@ fn month_name(date: &str) -> Option<&'static str> {
 /// recent weeks that fit.
 fn contribution_graph(page: &mut Page, c: &Contributions) {
     const LABELS: usize = 4;
-    let title = format!("{} contributions in the last year", thousands(c.total));
+    let title = format!(
+        "{} {} in the last year",
+        thousands(c.total),
+        noun(c.total, "contribution")
+    );
     page.line(vec![Seg::new(title, Role::Strong)]);
     let room = usize::from(page.room(Frame::None, 0)).saturating_sub(LABELS);
     let weeks = c
@@ -4190,13 +4195,11 @@ fn contribution_graph(page: &mut Page, c: &Contributions) {
 /// What someone did, month by month: commits by repository, and the pull
 /// requests and issues they opened and reviewed.
 /// "20+ pull requests" when GitHub may have more than `n`.
-fn at_least(n: u64, noun: &str, short: bool) -> String {
+fn at_least(n: u64, word: &str, short: bool) -> String {
     if short {
-        let many = plural(2, noun);
-        let nouns = many.split_once(' ').map_or(many.as_str(), |(_, n)| n);
-        format!("{n}+ {nouns}")
+        format!("{n}+ {}", noun(2, word))
     } else {
-        plural(n, noun)
+        plural(n, word)
     }
 }
 
@@ -4213,12 +4216,7 @@ fn contribution_activity(page: &mut Page, c: &Contributions) {
         page.line(vec![Seg::new(format!("{name} {year}"), Role::Heading)]);
         if !m.commits.is_empty() {
             let total: u64 = m.commits.iter().map(|(_, n)| n).sum();
-            let repos = m.commits.len() as u64;
-            let repos = if repos == 1 {
-                "1 repository".to_owned()
-            } else {
-                format!("{repos} repositories")
-            };
+            let repos = plural(m.commits.len() as u64, "repository");
             let short = Short::in_month(c.short.commits.as_ref(), &m.month);
             let created = format!("◷ Created {} in {repos}", at_least(total, "commit", short));
             page.line(vec![Seg::new(created, Role::Body)]);

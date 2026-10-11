@@ -14,7 +14,9 @@ use crate::diff::anchor::{LinePos, Side};
 
 use crate::ui::annotations::{Annotation, Place, ThreadRowKind};
 use crate::ui::diff_doc::{Doc, DocFile, FoldReason, Note, Pos, Row, Viewed};
-use crate::ui::{Ctx, PAD_X, chips, cols, fill, inset, key_hints, render_split, text, time};
+use crate::ui::{
+    Ctx, PAD_X, chips, cols, fill, fit_spans, inset, key_hints, render_split, text, time,
+};
 
 const PANE: Bg = Bg::Surface;
 const HEADER: Bg = Bg::ContainerHigh;
@@ -109,7 +111,7 @@ impl DiffView<'_> {
             fill(buf, area, theme, quiet_bg);
             let mut spans = vec![what];
             spans.extend(key_hints(theme, quiet_bg, &[(key, verb)]));
-            Line::from(spans).render(area, buf);
+            Line::from(fit_spans(&spans, area.width)).render(area, buf);
         };
         match row {
             Row::Header => self.header(pos.file, cursor, &[], area, buf),
@@ -169,15 +171,13 @@ impl DiffView<'_> {
                 let lines = file
                     .blocks()
                     .get(block as usize)
-                    .map_or(0, |b| b.entries.len());
+                    .map_or(0, |b| b.entries.len() as u64);
                 let what = match reason {
                     FoldReason::Formatting => "Formatting-only change",
                     FoldReason::Seen => "Unchanged since your review",
                 };
-                let what = Span::styled(
-                    format!("{pad}⋯ {what}, {lines} lines · "),
-                    theme.meta(quiet_bg),
-                );
+                let lines = format!("{lines} {}", crate::ui::text::noun(lines, "line"));
+                let what = Span::styled(format!("{pad}⋯ {what}, {lines} · "), theme.meta(quiet_bg));
                 action(buf, what, self.keys.show, "to show");
             }
             Row::Moved { mv, from } => {
@@ -301,7 +301,7 @@ impl DiffView<'_> {
                 theme.meta(bg),
             ));
         }
-        render_split(inset(area, PAD_X, 0), buf, left, right, 2);
+        render_split(inset(area, PAD_X, 0), buf, &left, &right, 2);
     }
 
     fn note(&self, file: &DocFile, note: Note, bg: Bg, area: Rect, buf: &mut Buffer) {
@@ -637,7 +637,7 @@ impl DiffView<'_> {
                 spans = key_hints(theme, bg, &hints);
             }
         }
-        Line::from(spans).render(inner, buf);
+        Line::from(fit_spans(&spans, inner.width)).render(inner, buf);
     }
 
     fn state_chips(&self, ann: &Annotation, bg: Bg) -> Vec<Span<'static>> {

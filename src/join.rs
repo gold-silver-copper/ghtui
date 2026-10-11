@@ -153,15 +153,17 @@ fn check_pr_diff(
         )));
     }
     let (ours, theirs) = (files as u64, detail.changed_files);
+    let noun = crate::ui::text::noun;
     if ours == 0 && theirs > 0 {
         return Err(format!(
-            "git found no changes, but GitHub says {theirs} file{} changed. {refresh} tries again",
-            if theirs == 1 { "" } else { "s" }
+            "git found no changes, but GitHub says {theirs} {} changed. {refresh} tries again",
+            noun(theirs, "file")
         ));
     }
     Ok((ours.abs_diff(theirs) > 3.max(theirs / 10)).then(|| {
         format!(
-            "git found {ours} changed files, GitHub says {theirs}: the diff may not be the PR's"
+            "git found {ours} changed {}, GitHub says {theirs}: the diff may not be the PR's",
+            noun(ours, "file")
         )
     }))
 }

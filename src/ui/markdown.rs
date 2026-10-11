@@ -9,7 +9,11 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, T
 
 use crate::ui::cols;
 use crate::ui::diff_view::syntax_role;
-use crate::ui::page::{Frame, Page, PageLine, Role, Seg, Tone};
+use crate::ui::page::{Frame, Page, PageLine, Role, Seg, Tone, wrap_segs};
+
+/// Columns a line of prose takes at most, however wide the page, so it
+/// stays easy to follow (about GitHub's).
+const MEASURE: usize = 120;
 
 /// Where relative links point: a repository, revision and directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,7 +202,10 @@ impl Renderer<'_> {
             let quote = "│ ".repeat(usize::from(self.quote_depth));
             segs.insert(0, Seg::new(quote, Role::Meta));
         }
-        self.page.wrapped(segs, self.indent, self.frame);
+        let width = usize::from(self.page.room(self.frame, self.indent)).min(MEASURE);
+        for segs in wrap_segs(segs, width) {
+            self.page.add(self.frame, self.indent, segs, Vec::new());
+        }
     }
 
     fn html(&mut self, html: &str) {
