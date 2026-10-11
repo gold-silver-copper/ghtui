@@ -1,18 +1,17 @@
 ---
-source: crates/app/src/snapshot_tests.rs
-assertion_line: 1037
+source: src/snapshot_tests.rs
 expression: render(&state)
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 100, height: 30 },
     content: [
-        "  ◆ ghtui   Search                                     ⌕ Type / to search                 @octocat  ",
+        "  ◆ ghtui   Search                                     ⌕ Type g/ to search                @octocat  ",
         "   ▤ Repos   ◉ Issues   ⇄ PRs   ⚇ Users  1    ◈ Discussions   ◷ Commits   <> Code                   ",
         "───────────────────────────────━━━━━━━━━━━━━────────────────────────────────────────────────────────",
         "                                                                                                    ",
         "   ⌕ octocat                                                                         / to filter    ",
         "                                                                                                    ",
-        "  ╭─ 1 user results ────────────────────────────────────────────────────────────────────────────╮   ",
+        "  ╭─ 1 user result ─────────────────────────────────────────────────────────────────────────────╮   ",
         "  │▌octocat  The Octocat                                                                        │   ",
         "  ╰─────────────────────────────────────────────────────────────────────────────────────────────╯   ",
         "                                                                                                    ",
@@ -35,7 +34,7 @@ Buffer {
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
-        "  space menu   ↵ open   / filter   ←→ tabs   o browser   y copy link   i links       API 4987/5000  ",
+        "  space menu   ↵ open   / filter   t open/closed   S sort   gt/gT tabs               API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
@@ -45,7 +44,7 @@ Buffer {
         x: 18, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 54, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(226, 226, 233), underline: Reset, modifier: NONE,
         x: 55, y: 0, fg: Rgb(67, 71, 78), bg: Rgb(226, 226, 233), underline: Reset, modifier: NONE,
-        x: 73, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(226, 226, 233), underline: Reset, modifier: NONE,
+        x: 74, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(226, 226, 233), underline: Reset, modifier: NONE,
         x: 87, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 90, y: 0, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 98, y: 0, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
@@ -75,8 +74,8 @@ Buffer {
         x: 2, y: 6, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 4, y: 6, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 5, y: 6, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: BOLD,
-        x: 19, y: 6, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
-        x: 20, y: 6, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 18, y: 6, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
+        x: 19, y: 6, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 97, y: 6, fg: Rgb(25, 28, 32), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 2, y: 7, fg: Rgb(190, 193, 201), bg: Rgb(243, 243, 250), underline: Reset, modifier: NONE,
         x: 3, y: 7, fg: Rgb(50, 83, 131), bg: Rgb(221, 225, 237), underline: Reset, modifier: NONE,
@@ -97,17 +96,14 @@ Buffer {
         x: 25, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 32, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 35, y: 29, fg: Rgb(50, 83, 131), bg: Rgb(237, 237, 244), underline: Reset, modifier: BOLD,
-        x: 37, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 42, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 45, y: 29, fg: Rgb(50, 83, 131), bg: Rgb(237, 237, 244), underline: Reset, modifier: BOLD,
-        x: 46, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 54, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 57, y: 29, fg: Rgb(50, 83, 131), bg: Rgb(237, 237, 244), underline: Reset, modifier: BOLD,
-        x: 58, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 68, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 71, y: 29, fg: Rgb(50, 83, 131), bg: Rgb(237, 237, 244), underline: Reset, modifier: BOLD,
-        x: 72, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 78, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 36, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 48, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 51, y: 29, fg: Rgb(50, 83, 131), bg: Rgb(237, 237, 244), underline: Reset, modifier: BOLD,
+        x: 52, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 57, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 60, y: 29, fg: Rgb(50, 83, 131), bg: Rgb(237, 237, 244), underline: Reset, modifier: BOLD,
+        x: 65, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 70, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 85, y: 29, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 98, y: 29, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
     ]

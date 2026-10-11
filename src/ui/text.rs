@@ -104,6 +104,24 @@ pub fn truncate(s: &str, max: usize) -> String {
     out
 }
 
+/// `word` as `n` of it: "file" or "files", "reply" or "replies", "branch"
+/// or "branches".
+pub fn noun(n: u64, word: &str) -> String {
+    if n == 1 {
+        return word.to_owned();
+    }
+    let consonant_y = word
+        .strip_suffix('y')
+        .filter(|stem| !stem.ends_with(['a', 'e', 'i', 'o', 'u']));
+    match consonant_y {
+        Some(stem) => format!("{stem}ies"),
+        None if word.ends_with(['s', 'x']) || word.ends_with("ch") || word.ends_with("sh") => {
+            format!("{word}es")
+        }
+        None => format!("{word}s"),
+    }
+}
+
 /// A commit id cut to GitHub's seven characters.
 pub fn short_sha(oid: &str) -> &str {
     oid.get(..7).unwrap_or(oid)
@@ -129,6 +147,17 @@ mod tests {
         assert_eq!(width("a\u{202e}b"), 2);
         assert_eq!(width("漢字"), 4);
         assert!(is_hidden('\u{202e}') && is_hidden('\u{200b}') && !is_hidden('\u{200d}'));
+    }
+
+    #[test]
+    fn counts_say_one_or_many() {
+        let say = |n, word| format!("{n} {}", noun(n, word));
+        assert_eq!(say(1, "file"), "1 file");
+        assert_eq!(say(0, "file"), "0 files");
+        assert_eq!(say(2, "repository"), "2 repositories");
+        assert_eq!(say(3, "branch"), "3 branches");
+        assert_eq!(say(4, "day"), "4 days");
+        assert_eq!(say(5, "match"), "5 matches");
     }
 
     #[test]

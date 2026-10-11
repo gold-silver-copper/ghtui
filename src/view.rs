@@ -4,7 +4,7 @@ use crate::theme::Bg;
 use crate::ui::bars::{Banner, StatusBar};
 use crate::ui::chrome::{Header, KeyPanel, SearchPanel, TabBar, TitleBar, header_layout};
 use crate::ui::overlays::Palette;
-use crate::ui::page::PageView;
+use crate::ui::page::{Link, PageView, columns};
 use crate::ui::{Ctx, PAD_X, PAD_Y, fill};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
@@ -18,6 +18,7 @@ use crate::ui::review_sheets::{ComposeSheet, ConfirmSheet, SubmitSheet};
 
 use crate::diff_screen::{self, DiffScreen, Pane};
 use crate::keymap::Action;
+use crate::review::Compose;
 use crate::state::{Overlay, Screen, State};
 
 /// The single content pane is focused, so it sits one tone above surface.
@@ -42,7 +43,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
         Some(Overlay::Search(sb)) => Some(&sb.input),
         _ => None,
     };
-    let placeholder = format!("Type {} to search", state.first_key(Action::Search));
+    let placeholder = format!("Type {} to search", state.first_key(Action::SearchGithub));
     Header {
         ctx,
         crumbs: &crumbs,
@@ -69,25 +70,53 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
     }
 
     let content = lay.content;
-    match state.screen() {
+    let composing = match &state.overlay {
+        Some(Overlay::Compose(compose)) => Some(compose.as_ref()),
+        _ => None,
+    };
+    let slot = match state.screen() {
         Screen::Page(p) => {
             fill(buf, content, ctx.theme, PANE);
             let hints = match &state.overlay {
                 Some(Overlay::Hints(h)) => h.shown(),
                 _ => Vec::new(),
             };
+            let area = state.page_area();
+            let page = p.page();
+            // The composer takes the comment box's place, scrolled into view.
+            let comment_box = composing.and_then(|c| {
+                let item = page.items.get(page.find(&Link::Comment, 0)?)?;
+                Some((usize::from(c.rows()), item))
+            });
+            let scroll = comment_box.map_or(p.scroll, |(rows, item)| {
+                scroll_to(item.start, item.start, rows, p.scroll, area.height)
+            });
             PageView {
                 ctx,
-                page: p.page(),
-                scroll: p.scroll,
+                page,
+                scroll,
                 selected: p.selected,
+                from: p.range,
                 current: p.current_match(),
                 hints: &hints,
+                shift: p.shift,
             }
-            .render(state.page_area(), buf);
+            .render(area, buf);
+            comment_box.map(|(_, item)| {
+                let x = columns(page, area).main_x;
+                Slot {
+                    area: Rect {
+                        x,
+                        width: page.width.min(area.right().saturating_sub(x)),
+                        ..area
+                    },
+                    offset: item.start.saturating_sub(scroll),
+                    replaced: item.end.saturating_sub(item.start),
+                }
+            })
         }
-        Screen::Diff(screen) => render_diff(state, ctx, content, buf, screen),
-    }
+        Screen::Diff(screen) => render_diff(state, ctx, content, buf, screen, composing),
+    };
     separate_collapsed_tones(ctx, content, buf);
 
     if let (Some(rect), Some(problem)) = (lay.problem, state.problems.values().next()) {
@@ -135,12 +164,19 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
         }
         Some(Overlay::Compose(compose)) => {
             let title = compose.title();
-            let note = match &compose.target {
-                crate::review::ComposeTarget::File {
-                    reason: Some(reason),
-                    ..
-                } => Some(reason.as_str()),
-                _ => None,
+            let rows = compose.rows();
+            // Where the comment will go, or (without room there) a strip
+            // above the status bar.
+            let sheet = match slot.filter(|s| s.area.height >= rows) {
+                Some(slot) => slot.make_room(buf, rows),
+                None => {
+                    let height = rows.min(area.height.saturating_sub(3));
+                    Rect {
+                        y: area.bottom().saturating_sub(height.saturating_add(2)),
+                        height,
+                        ..area
+                    }
+                }
             };
             ComposeSheet {
                 ctx,
@@ -150,7 +186,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                     .preview
                     .as_ref()
                     .map(|p| (p.start_line, p.original.as_slice(), p.suggested.as_slice())),
-                note,
+                note: compose.note(),
                 error: compose.error.as_deref(),
                 sending: compose.sending,
                 save: match compose.target {
@@ -159,13 +195,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                     _ => "add to review",
                 },
             }
-            .render(
-                Rect {
-                    height: area.height.saturating_sub(1),
-                    ..area
-                },
-                buf,
-            );
+            .render(sheet, buf);
         }
         Some(Overlay::Submit(dialog)) => {
             let pending = dialog.drafts(state).unwrap_or_default();
@@ -223,7 +253,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             }
             .render(area, buf);
         }
-        Some(Overlay::DiffSearch(input)) => {
+        Some(Overlay::Find(input)) => {
             // The prompt replaces the status bar.
             fill(buf, status, ctx.theme, Bg::Container);
             let row = Rect {
@@ -245,13 +275,20 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
     }
 }
 
-fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, screen: &DiffScreen) {
+/// Draws the diff; with `composing`, scrolled to show the composer under
+/// the row it's about, whose slot it returns.
+fn render_diff(
+    state: &State,
+    ctx: Ctx<'_>,
+    content: Rect,
+    buf: &mut Buffer,
+    screen: &DiffScreen,
+    composing: Option<&Compose>,
+) -> Option<Slot> {
     let theme = ctx.theme;
     let lay = diff_screen::layout(content, screen.prefs.tree_visible);
     fill(buf, content, theme, Bg::Surface);
-    let Some(diff) = state.diffs.get(&screen.of) else {
-        return;
-    };
+    let diff = state.diffs.get(&screen.of)?;
     let mut area = lay.diff;
     if let Some(err) = &diff.error {
         let text = format!("Couldn't load the diff: {err}");
@@ -282,11 +319,11 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
             )
             .render(message_area, buf);
         }
-        return;
+        return None;
     }
     if diff.doc.is_empty() {
         Span::styled("No changed files.", theme.meta(Bg::Surface)).render(message_area, buf);
-        return;
+        return None;
     }
     let key = |a| state.first_key(a);
     let jump = key(Action::JumpMove);
@@ -299,12 +336,28 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
         key(Action::Delete),
         key(Action::FileComment),
     );
+    // The composer goes under its row, which stays clear of the sticky
+    // header.
+    let doc = &diff.doc;
+    let anchor = composing.map(|c| crate::review::compose_anchor(doc, screen, &c.target));
+    let mut top = doc.to_global(screen.top);
+    let slot = composing.zip(anchor).map(|(c, anchor)| {
+        let row = doc.to_global(anchor);
+        let first = row.saturating_sub(usize::from(anchor.row > 0));
+        let rows = usize::from(c.rows());
+        top = scroll_to(first, row.saturating_add(1), rows, top, area.height);
+        Slot {
+            area,
+            offset: row.saturating_add(1).saturating_sub(top),
+            replaced: 0,
+        }
+    });
     DiffView {
         ctx,
-        doc: &diff.doc,
+        doc,
         cursor: screen.cursor,
         half: screen.half,
-        top: screen.top,
+        top: doc.to_pos(top),
         keys: Keys {
             show: &show,
             jump: &jump,
@@ -316,6 +369,7 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
             file_comment: &file_comment,
         },
         selection: screen.selection.map(|anchor| (anchor, screen.cursor)),
+        shift: screen.shift,
     }
     .render(area, buf);
 
@@ -323,7 +377,7 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
         FileTree {
             ctx,
             doc: &diff.doc,
-            rows: &diff.tree,
+            rows: &crate::ui::file_tree::unfolded(&diff.tree, &screen.folded),
             selected: screen.tree_selected,
             scroll: screen.tree_scroll,
             focused: screen.focus == Pane::Tree,
@@ -337,6 +391,55 @@ fn render_diff(state: &State, ctx: Ctx<'_>, content: Rect, buf: &mut Buffer, scr
                     cell.set_symbol("│").set_style(theme.separator(TREE_BG));
                 }
             }
+        }
+    }
+    slot
+}
+
+/// The scroll that shows rows `start..start + rows` while row `first`
+/// stays in view: `first` wins when they don't fit together.
+fn scroll_to(first: usize, start: usize, rows: usize, scroll: usize, height: u16) -> usize {
+    let lowest = start
+        .saturating_add(rows)
+        .saturating_sub(usize::from(height));
+    scroll.max(lowest).min(first)
+}
+
+/// Where the composer goes: `offset` rows into `area`, in place of
+/// `replaced` rows.
+#[derive(Clone, Copy)]
+struct Slot {
+    area: Rect,
+    offset: usize,
+    replaced: usize,
+}
+
+impl Slot {
+    /// Moves what's below the slot down to make room for `rows` rows
+    /// (kept on screen, over what's above if they must), and returns them.
+    fn make_room(self, buf: &mut Buffer, rows: u16) -> Rect {
+        let Slot { area, .. } = self;
+        let offset = u16::try_from(self.offset).unwrap_or(u16::MAX);
+        let replaced = u16::try_from(self.replaced).unwrap_or(u16::MAX);
+        let y = area
+            .y
+            .saturating_add(offset)
+            .min(area.bottom().saturating_sub(rows));
+        let shift = rows.saturating_sub(replaced);
+        for to in (y.saturating_add(rows)..area.bottom()).rev() {
+            let from = to.saturating_sub(shift);
+            for x in area.left()..area.right() {
+                if let Some(cell) = buf.cell((x, from)).cloned()
+                    && let Some(dest) = buf.cell_mut((x, to))
+                {
+                    *dest = cell;
+                }
+            }
+        }
+        Rect {
+            y,
+            height: rows,
+            ..area
         }
     }
 }

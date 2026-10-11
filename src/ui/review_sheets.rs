@@ -1,4 +1,4 @@
-//! The comment composer (a bottom sheet) and the review submit dialog.
+//! The comment composer and the review submit dialog.
 
 #![deny(clippy::arithmetic_side_effects)]
 
@@ -11,7 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::ui::{Ctx, PAD_Y, centered, chips, cols, fill, idx, key_hints, padded, text};
+use crate::ui::{Ctx, PAD_Y, centered, chips, cols, fill, fit_spans, idx, key_hints, padded, text};
 
 const SHEET: Bg = Bg::ContainerHigh;
 const INPUT_ROWS: u16 = 8;
@@ -29,24 +29,25 @@ pub struct ComposeSheet<'a> {
     pub save: &'a str,
 }
 
+/// Rows a suggestion's preview of `lines` lines takes.
+fn preview_rows(lines: Option<usize>) -> u16 {
+    lines.map_or(0, |n| cols(n).saturating_add(2)).min(12)
+}
+
+/// Rows the composer wants, with a preview of `preview` lines and a note.
+pub fn compose_rows(preview: Option<usize>, note: bool) -> u16 {
+    (2 * PAD_Y + 2 + INPUT_ROWS + 2)
+        .saturating_add(preview_rows(preview))
+        .saturating_add(u16::from(note))
+}
+
 impl Widget for ComposeSheet<'_> {
-    fn render(self, screen: Rect, buf: &mut Buffer) {
+    fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = self.ctx.theme;
-        let preview_rows = self
-            .preview
-            .map_or(0, |(_, o, s)| {
-                cols(o.len().saturating_add(s.len())).saturating_add(2)
-            })
-            .min(12);
-        let height = (2 * PAD_Y + 2 + INPUT_ROWS + 2)
-            .saturating_add(preview_rows)
-            .saturating_add(u16::from(self.note.is_some()))
-            .min(screen.height.saturating_sub(2));
-        let area = Rect {
-            y: screen.bottom().saturating_sub(height.saturating_add(1)),
-            height,
-            ..screen
-        };
+        let preview_rows = preview_rows(
+            self.preview
+                .map(|(_, o, s)| o.len().saturating_add(s.len())),
+        );
         fill(buf, area, theme, SHEET);
         let inner = padded(area);
         let mut y = inner.y;
@@ -55,7 +56,8 @@ impl Widget for ComposeSheet<'_> {
             height: 1,
             ..inner
         };
-        Span::styled(self.title.to_owned(), theme.title(SHEET)).render(row(y), buf);
+        let title = text::truncate(self.title, usize::from(inner.width));
+        Span::styled(title, theme.title(SHEET)).render(row(y), buf);
         y = y.saturating_add(1);
         if let Some(note) = self.note {
             Span::styled(
@@ -139,13 +141,10 @@ fn footer(
 ) {
     let spans = match (busy, error) {
         (Some(busy), _) => vec![Span::styled(busy.to_owned(), theme.meta(SHEET))],
-        (None, Some(error)) => vec![Span::styled(
-            text::truncate(error, usize::from(area.width)),
-            theme.error(SHEET),
-        )],
+        (None, Some(error)) => vec![Span::styled(error.to_owned(), theme.error(SHEET))],
         (None, None) => key_hints(theme, SHEET, hints),
     };
-    Line::from(spans).render(area, buf);
+    Line::from(fit_spans(&spans, area.width)).render(area, buf);
 }
 
 pub struct SubmitSheet<'a> {
@@ -188,6 +187,7 @@ impl Widget for SubmitSheet<'_> {
                 "{n} pending comment{s}, {r} previously rejected (fix or delete those first)."
             ),
         };
+        let pending = text::truncate(&pending, usize::from(inner.width));
         Span::styled(pending, theme.meta(SHEET)).render(row(y), buf);
         // What's on GitHub is published too, wherever it was written.
         let on_github = match self.on_github {
@@ -207,7 +207,7 @@ impl Widget for SubmitSheet<'_> {
                 theme.error(SHEET),
             ),
         };
-        on_github.render(row(y.saturating_add(1)), buf);
+        Line::from(fit_spans(&[on_github], inner.width)).render(row(y.saturating_add(1)), buf);
         y = y.saturating_add(2);
 
         // Filled button for the chosen action, tonal for the others.

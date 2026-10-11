@@ -238,10 +238,12 @@ impl State {
                 ));
             }
         }
-        let scope = self.scope();
+        let contexts = self.contexts();
         let doables = self.doables();
         let mut order: Vec<Action> = doables.iter().map(|d| d.action).collect();
-        order.extend(Action::ALL.iter().filter(|a| a.scope().overlaps(scope)));
+        // Not moving around: those are keys, not commands to look for.
+        order
+            .extend((Action::ALL.iter()).filter(|a| contexts.contains(&a.context()) && !a.moves()));
         let mut actions: Vec<(usize, Action)> = Vec::new();
         for a in order {
             if a == Action::CommandPalette || actions.iter().any(|(_, b)| *b == a) {
@@ -353,9 +355,10 @@ impl State {
         rows.sort_by_key(|(s, ..)| *s);
         let mut rows: Rows = rows.into_iter().map(|(_, i, c)| (i, Some(c))).collect();
         // What wasn't fetched can't be picked: say so.
-        for (list, what) in [(&refs.branches, "branches"), (&refs.tags, "tags")] {
+        for (list, what) in [(&refs.branches, "branch"), (&refs.tags, "tag")] {
             let rest = list.left_out();
             if rest > 0 {
+                let what = crate::ui::text::noun(rest, what);
                 rows.push((item(format!("{rest} more {what} on GitHub"), ""), None));
             }
         }
@@ -450,9 +453,9 @@ pub fn move_in_list(key: KeyEvent, selected: &mut usize, count: usize) -> bool {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Down | KeyCode::Tab => *selected += 1,
-        KeyCode::Char('n') if ctrl => *selected += 1,
+        KeyCode::Char('n' | 'j') if ctrl => *selected += 1,
         KeyCode::Up | KeyCode::BackTab => *selected = selected.saturating_sub(1),
-        KeyCode::Char('p') if ctrl => *selected = selected.saturating_sub(1),
+        KeyCode::Char('p' | 'k') if ctrl => *selected = selected.saturating_sub(1),
         _ => return false,
     }
     *selected = (*selected).min(count.saturating_sub(1));

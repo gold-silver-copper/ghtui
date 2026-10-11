@@ -1205,6 +1205,18 @@ impl Doc {
         at(here.min_by_key(|(p, _)| p.line).map_or(0, |(_, row)| row))
     }
 
+    /// The row showing new line `line` of file `file`, or the nearest line
+    /// after it that shows.
+    pub fn new_line(&self, file: usize, line: u32) -> Option<Pos> {
+        let f = self.files.get(file)?;
+        let shown = f.rows.iter().enumerate();
+        let shown = shown.flat_map(|(i, r)| f.shows(*r).map(move |p| (p, i)));
+        let (_, row) = shown
+            .filter(|(p, _)| p.side == Side::Right && p.line >= line)
+            .min_by_key(|(p, _)| p.line)?;
+        Some(Pos { file, row })
+    }
+
     pub fn total_rows(&self) -> usize {
         self.total
     }
@@ -1867,7 +1879,7 @@ pub(crate) mod tests {
                 texts.get(3),
                 Some(&(
                     ThreadRowKind::Gap,
-                    "… 120 more replies on GitHub (o)".to_owned()
+                    "… 120 more replies on GitHub".to_owned()
                 )),
                 "{texts:?}"
             );

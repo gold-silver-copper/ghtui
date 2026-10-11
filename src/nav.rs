@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::api::browse::{DiscussionsOf, RepoSummary, SearchKind};
 use crate::api::change::Change;
-use crate::api::model::RepoId;
+use crate::api::model::{PrRef, RepoId};
 use crate::diff::anchor::Side;
 use crate::theme::{Bg, Theme};
 use crate::ui::chrome::{self, KeyRow, SuggestRow};
@@ -21,8 +21,8 @@ use ratatui::layout::Rect;
 use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
-use crate::browse::{self, Data, DataKey, Need};
-use crate::diff_screen::DiffOf;
+use crate::browse::{self, Data, DataKey};
+use crate::diff_screen::Pane;
 use crate::keymap::Action;
 use crate::picker::{fuzzy_score, move_in_list};
 use crate::review::ComposeTarget;
@@ -144,12 +144,7 @@ impl State {
             }
             Target::Files(of) => {
                 self.forward.clear();
-                let mut cmds = match &of {
-                    DiffOf::Pr(pr) => self.ensure(Need::Pr(pr.clone()), false),
-                    DiffOf::Commit(..) | DiffOf::Range(..) => Vec::new(),
-                };
-                cmds.extend(self.open_diff(of, anchor));
-                cmds
+                self.open_diff(of, anchor)
             }
             Target::External(url) => {
                 self.info(format!("Opened {url} in the browser"));
@@ -167,7 +162,7 @@ impl State {
             Link::More => self.load_more(),
             Link::Star => star(self),
             Link::Comment => comment_with(self, ""),
-            Link::Filter => self.open_search(),
+            Link::Filter => self.open_search(false),
             Link::Sort => cycle_sort(self),
             Link::Branch => self.open_finder(true),
             Link::FindFile => self.open_finder(false),
@@ -216,21 +211,27 @@ pub struct PageScreen {
     pub anchor: Option<String>,
     /// The search match last gone to, by its index in [`Page::marks`].
     mark: Option<usize>,
+    /// What `/` searched the page for (a job's log keeps its own).
+    pub find: Option<String>,
+    /// Where a selection of a file's lines started (`V`), by item.
+    pub range: Option<usize>,
+    /// Columns code is scrolled left by.
+    pub shift: usize,
 }
 
 impl PageScreen {
     pub fn new(route: Route, anchor: Option<String>) -> Self {
-        // Lists start on their first row; reading pages (issues, pull
-        // requests, files) start with nothing selected.
+        // Lists start on their first row, a job on a step and a file on the
+        // lines linked; reading pages (issues, pull requests, files) start
+        // with nothing selected.
         let list = !matches!(
             route,
             Route::Issue { .. }
-                | Route::Blob { .. }
-                | Route::Blame { .. }
+                | Route::Blob { lines: None, .. }
+                | Route::Blame { lines: None, .. }
                 | Route::Commit { .. }
                 | Route::Release { .. }
                 | Route::Discussion { .. }
-                | Route::Job { .. }
                 | Route::Pr {
                     tab: PrTab::Conversation,
                     ..
@@ -246,6 +247,9 @@ impl PageScreen {
             jumped: None,
             anchor,
             mark: None,
+            find: None,
+            range: None,
+            shift: 0,
         }
     }
 
@@ -256,7 +260,10 @@ impl PageScreen {
 
     /// Shows a new build of the page, keeping the selection and the view
     /// on the same items.
-    fn show(&mut self, page: Page, built: (u64, u16, bool)) {
+    fn show(&mut self, mut page: Page, built: (u64, u16, bool)) {
+        if let Some(query) = &self.find {
+            page.mark(query);
+        }
         let old = mem::replace(&mut self.page, Arc::new(page));
         self.built = Some(built);
         let before = (self.scroll, self.selected);
@@ -294,6 +301,12 @@ impl PageScreen {
     /// The line of the search match gone to.
     pub fn current_match(&self) -> Option<usize> {
         self.page.marks.get(self.mark_at()?).copied()
+    }
+
+    /// The file line item `i` starts at, from 1.
+    pub fn line_of(&self, i: usize) -> Option<u32> {
+        let n = self.page.numbered.iter().position(|&it| it == i)?;
+        u32::try_from(n + 1).ok()
     }
 
     /// The selected item's link.
@@ -376,10 +389,12 @@ fn settle(p: &mut PageScreen, height: usize) {
             !matches!(link, Some(Link::Section(_)))
         };
         let n = p.page.items.len();
-        p.selected = (0..n)
-            .filter(shown)
-            .find(row)
-            .or_else(|| (0..n).find(shown));
+        p.selected = p.page.selects.filter(|&i| i < n).or_else(|| {
+            (0..n)
+                .filter(shown)
+                .find(row)
+                .or_else(|| (0..n).find(shown))
+        });
     }
     if jump.is_some() || p.jumped.is_some() {
         p.jumped = Some(jump.map(|_| (p.scroll, p.selected)));
@@ -473,6 +488,17 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             let last = p.page.items.len().checked_sub(1);
             p.selected = last.filter(|&l| visible(p, l, height));
         }
+        // A file's line is this page: say what you can do with it.
+        Action::Open if matches!(p.route, Route::Blob { .. }) && p.selected.is_some() => {
+            let line = p.selected.and_then(|i| p.line_of(i)).unwrap_or(1);
+            let (copy, blame) = (
+                state.first_key(Action::Copy),
+                state.first_key(Action::Blame),
+            );
+            state.info(format!(
+                "Line {line} · {copy} copies its link · {blame} blames it"
+            ));
+        }
         Action::Open => {
             return match p.selected_link().cloned() {
                 Some(link) => state.follow(&link),
@@ -491,22 +517,19 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Hints | Action::HintsBrowser => {
             start_hints(state, action == Action::HintsBrowser);
         }
-        Action::NextHunk | Action::PrevHunk => {
-            let next = action == Action::NextHunk;
+        Action::SearchNext | Action::SearchPrev => {
+            let next = action == Action::SearchNext;
             match step_mark(p, next) {
                 Some((n, of)) => state.info(format!("Match {n} of {of}")),
                 None if p.page.marks.is_empty() => {
                     let query = match &p.route {
                         Route::Job { query, .. } => Some(query.clone()),
-                        _ => None,
+                        _ => p.find.clone(),
                     };
                     let search = state.first_key(Action::Search);
-                    state.info(match query {
-                        Some(q) if q.is_empty() => {
-                            format!("No search yet: {search} searches the log")
-                        }
+                    state.info(match query.filter(|q| !q.is_empty()) {
                         Some(q) => format!("No matches for “{q}”"),
-                        None => format!("No matches here: {search} searches a job's log"),
+                        None => format!("No search yet: {search} searches here"),
                     });
                 }
                 None => state.info(if next {
@@ -515,6 +538,124 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                     "No earlier match"
                 }),
             }
+        }
+        Action::NextItem | Action::PrevItem => {
+            p.fresh = false;
+            let n = p.page.items.len();
+            let next = match p.selected {
+                Some(i) if action == Action::NextItem => (i + 1 < n).then_some(i + 1),
+                Some(i) => i.checked_sub(1),
+                None if action == Action::NextItem => {
+                    (0..n).find(|&i| p.page.items.get(i).is_some_and(|it| it.start >= p.scroll))
+                }
+                None => (0..n).rev().find(|&i| {
+                    p.page
+                        .items
+                        .get(i)
+                        .is_some_and(|it| it.start < p.scroll + height)
+                }),
+            };
+            match next {
+                Some(i) => {
+                    p.selected = Some(i);
+                    if let Some(item) = p.page.items.get(i) {
+                        p.scroll = item.start.saturating_sub(MARGIN).min(max_scroll(p, height));
+                    }
+                }
+                None => state.info("No more here"),
+            }
+        }
+        Action::ScrollDown
+        | Action::ScrollUp
+        | Action::ScrollCenter
+        | Action::ScrollTop
+        | Action::ScrollBottom
+        | Action::ScrollLeft
+        | Action::ScrollRight => {
+            let before = (p.scroll, p.shift);
+            scroll_view(p, action, height);
+            if (p.scroll, p.shift) == before {
+                let why = match action {
+                    Action::ScrollLeft => "Already at the left edge",
+                    Action::ScrollRight if p.page.wide() == 0 => {
+                        "Nothing here is wider than the screen"
+                    }
+                    Action::ScrollRight => "Already at the right edge",
+                    _ if p.page.height() <= height => "It all fits on the screen",
+                    _ => "Already there",
+                };
+                state.info(why);
+            }
+        }
+        Action::Blame => {
+            let line = p.selected.and_then(|i| p.line_of(i));
+            let lines = line.map(|n| (n, n));
+            let route = match p.route.clone() {
+                Route::Blob {
+                    repo, rev, path, ..
+                } => Route::Blame {
+                    repo,
+                    rev,
+                    path,
+                    lines,
+                },
+                Route::Blame {
+                    repo, rev, path, ..
+                } => Route::Blob {
+                    repo,
+                    rev,
+                    path,
+                    lines,
+                },
+                _ => {
+                    state.info(action.not_here());
+                    return Vec::new();
+                }
+            };
+            return state.push(route);
+        }
+        Action::VisualLines if matches!(p.route, Route::Blob { .. }) => {
+            let (range, what) = match p.range {
+                Some(_) => (None, "Selection cleared"),
+                None => (p.selected, "Selecting lines · y copies their link"),
+            };
+            p.range = range;
+            p.fresh = false;
+            state.info(what);
+        }
+        Action::NextCommit | Action::PrevCommit => {
+            let Route::Commit {
+                repo,
+                oid,
+                pr: Some(number),
+            } = p.route.clone()
+            else {
+                state.info(
+                    "Next and previous commits are a pull request's: open one from its Commits tab",
+                );
+                return Vec::new();
+            };
+            let at = state.pr_commit_at(&repo, number, &oid);
+            let to = match &at {
+                Some(at) if action == Action::NextCommit => at.next.clone(),
+                Some(at) => at.previous.clone(),
+                None => None,
+            };
+            return match (to, at) {
+                (Some(url), _) => state.go(Dest::from_url(&url)),
+                (None, Some(_)) => {
+                    state.info(if action == Action::NextCommit {
+                        "This is the newest commit"
+                    } else {
+                        "No earlier commit here"
+                    });
+                    Vec::new()
+                }
+                (None, None) => {
+                    state.info("The pull request's commits haven't loaded yet");
+                    Vec::new()
+                }
+            };
         }
         Action::Star => return star(state),
         Action::Comment => return comment_with(state, ""),
@@ -530,6 +671,135 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
         _ => state.info(action.not_here()),
     }
     Vec::new()
+}
+
+/// Columns `h`/`l` scroll code sideways.
+const SHIFT: usize = 8;
+
+/// `ctrl-e` `ctrl-y`, `zz` `zt` `zb`, `h` `l`: the view moves, the
+/// selection stays.
+fn scroll_view(p: &mut PageScreen, action: Action, height: usize) {
+    let at = p
+        .selected
+        .and_then(|i| p.page.items.get(i))
+        .map_or(p.scroll, |it| it.start);
+    match action {
+        Action::ScrollDown => scroll_by(p, 1, height),
+        Action::ScrollUp => scroll_by(p, -1, height),
+        Action::ScrollTop => p.scroll = at.min(max_scroll(p, height)),
+        Action::ScrollBottom => {
+            p.scroll = (at + 1).saturating_sub(height).min(max_scroll(p, height));
+        }
+        Action::ScrollCenter => p.scroll = at.saturating_sub(height / 2).min(max_scroll(p, height)),
+        Action::ScrollLeft => p.shift = p.shift.saturating_sub(SHIFT),
+        _ => p.shift = p.shift.saturating_add(SHIFT).min(p.page.wide()),
+    }
+}
+
+fn max_scroll(p: &PageScreen, height: usize) -> usize {
+    p.page.height().saturating_sub(height)
+}
+
+/// A count before `gg`: that line of a file, else that row.
+#[must_use]
+pub fn go_to_line(state: &mut State, n: usize) -> Vec<Cmd> {
+    let height = state.page_height();
+    // In the diff: that line of the file the cursor is in.
+    if let Some((screen, diff)) = state.diff_parts() {
+        let line = u32::try_from(n).unwrap_or(u32::MAX);
+        match diff.doc.new_line(screen.cursor.file, line) {
+            Some(pos) => screen.cursor = pos,
+            None => state.info(format!("There's no line {n} here")),
+        }
+        return Vec::new();
+    }
+    let Screen::Page(p) = state.screen_mut() else {
+        return Vec::new();
+    };
+    let item = match p.page.numbered.get(n.saturating_sub(1)) {
+        Some(&item) => Some(item),
+        None if p.page.numbered.is_empty() => n.checked_sub(1).filter(|&i| i < p.page.items.len()),
+        None => None,
+    };
+    match item {
+        Some(i) => {
+            p.fresh = false;
+            p.selected = Some(i);
+            if let Some(it) = p.page.items.get(i) {
+                p.scroll = it
+                    .start
+                    .saturating_sub(height / 2)
+                    .min(max_scroll(p, height));
+            }
+        }
+        None => state.info(format!("There's no line {n} here")),
+    }
+    Vec::new()
+}
+
+/// Esc on a page: ends a search on it or a selection of lines.
+pub fn cancel(state: &mut State) {
+    if let Screen::Page(p) = state.screen_mut() {
+        if p.range.take().is_some() {
+            state.info("Selection cleared");
+            return;
+        }
+        if p.find.is_some() {
+            find(state, "");
+            return;
+        }
+    }
+    let back = state.first_key(Action::Back);
+    state.info(format!("Nothing to cancel · {back} goes back"));
+}
+
+/// Whether `/` here is the page's own search box: a list's filter, a
+/// job's log search, a profile's repositories.
+pub fn searches_itself(state: &State) -> bool {
+    match state.route() {
+        Some(
+            Route::Job { .. }
+            | Route::User {
+                tab: ProfileTab::Repositories(_),
+                ..
+            },
+        ) => true,
+        Some(route) => route.list_query().is_some(),
+        None => false,
+    }
+}
+
+/// Searches the page on screen for `query` (empty clears it), going to
+/// the first match from the top of the view.
+pub fn find(state: &mut State, query: &str) {
+    let Screen::Page(p) = state.screen_mut() else {
+        return;
+    };
+    p.find = Some(query.to_owned()).filter(|q| !q.is_empty());
+    (p.built, p.mark) = (None, None);
+    state.sync_page();
+    let Screen::Page(p) = state.screen_mut() else {
+        return;
+    };
+    let first = p.page.marks.iter().position(|&line| line >= p.scroll);
+    let text = match (
+        first.or_else(|| (!p.page.marks.is_empty()).then_some(0)),
+        p.page.marks.len(),
+    ) {
+        _ if query.is_empty() => "Cleared the search".to_owned(),
+        (Some(at), of) => {
+            p.mark = Some(at);
+            p.fresh = false;
+            p.scroll = p
+                .page
+                .marks
+                .get(at)
+                .map_or(p.scroll, |m| m.saturating_sub(MARGIN));
+            format!("Match {} of {of}", at + 1)
+        }
+        _ => format!("No matches for “{query}”"),
+    };
+    state.info(text);
 }
 
 /// Scrolls to the next (or previous) search match on the page: which
@@ -607,7 +877,7 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Deployments { repo, .. }
         | Route::Milestones { repo, .. }
         | Route::Wiki { repo, page: None }
-        | Route::Actions(repo) => Route::Repo(repo.clone()),
+        | Route::Actions { repo, .. } => Route::Repo(repo.clone()),
         Route::Discussion { of, .. } => Route::Discussions {
             of: of.clone(),
             category: None,
@@ -625,7 +895,7 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Workflow { repo, .. }
         | Route::Job {
             repo, run: None, ..
-        } => Route::Actions(repo.clone()),
+        } => Route::actions(repo.clone()),
         Route::Job {
             repo,
             run: Some(run),
@@ -638,9 +908,19 @@ fn up(state: &State, route: &Route) -> Option<Route> {
         Route::CommitChecks { repo, oid } => Route::Commit {
             repo: repo.clone(),
             oid: oid.clone(),
+            pr: None,
         },
+        // A pull request's commit leads up to the pull request.
+        Route::Commit {
+            repo,
+            pr: Some(number),
+            ..
+        } => Route::pr(PrRef {
+            repo: repo.clone(),
+            number: *number,
+        }),
         // A commit's history leads up to it.
-        Route::Commit { repo, oid } => Route::Commits {
+        Route::Commit { repo, oid, .. } => Route::Commits {
             repo: repo.clone(),
             rev: oid.clone(),
             path: String::new(),
@@ -681,46 +961,76 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
         state.info(format!("Already on {}", tab.label));
         return Vec::new();
     }
-    let diff_of = match state.screen() {
-        Screen::Diff(screen) => Some(screen.of.clone()),
-        Screen::Page(_) => None,
-    };
-    match (target, diff_of) {
-        (Target::Page(route), None) => state.replace(route, false, None),
-        (Target::Page(route), Some(diff_pr)) => {
-            // From the files back to the pull request's other tabs.
-            state.screens.pop();
-            let same = match (state.route(), &diff_pr) {
-                (Some(Route::Pr { pr, .. }), DiffOf::Pr(diff)) => pr == diff,
-                (Some(Route::Commit { repo, oid }), DiffOf::Commit(r, full)) => {
-                    repo == r && full.starts_with(oid.as_str())
-                }
-                (Some(Route::Compare { repo, .. }), DiffOf::Range(r, ..)) => repo == r,
-                _ => false,
-            };
-            if same {
-                state.replace(route, false, None)
-            } else {
-                state.push(route)
+    // A page's tabs aren't history: the tab replaces the screen, and the
+    // one left is kept to come back to as it was.
+    let (screen, mut cmds) = match state.unpark(&target) {
+        Some(screen) => (screen, Vec::new()),
+        None => match target {
+            Target::Page(route) => {
+                let cmds = state.ensure_route(&route, false);
+                (Screen::Page(Box::new(PageScreen::new(route, None))), cmds)
             }
+            Target::Files(of) => state.diff_screen(of, None),
+            target @ Target::External(_) => return state.go(target.into()),
+        },
+    };
+    if let Screen::Page(p) = &screen {
+        cmds.extend(state.record_visit(&p.route.clone()));
+    }
+    let left = mem::replace(state.screen_mut(), screen);
+    state.park(left);
+    state.sync_page();
+    cmds.extend(state.load_visible(false));
+    cmds
+}
+
+/// The most page tabs kept to come back to.
+const PARKED: usize = 16;
+
+impl State {
+    /// Keeps a page tab left, as it was.
+    fn park(&mut self, screen: Screen) {
+        let url = crate::tabs::url(&screen);
+        self.parked.retain(|s| crate::tabs::url(s) != url);
+        self.parked.push(screen);
+        if self.parked.len() > PARKED {
+            self.parked.remove(0);
         }
-        (target, _) => state.go(target.into()),
+    }
+
+    /// The page tab kept for `target`, if there is one.
+    fn unpark(&mut self, target: &Target) -> Option<Screen> {
+        let i = self.parked.iter().position(|s| match (s, target) {
+            (Screen::Page(p), Target::Page(route)) => p.route == *route,
+            (Screen::Diff(d), Target::Files(of)) => d.of == *of,
+            _ => false,
+        })?;
+        Some(self.parked.remove(i))
     }
 }
 
+/// The next or previous tab of the page; they don't wrap around.
 #[must_use]
 pub fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
     let chrome = state.chrome();
     let n = chrome.tabs.len();
-    // The next tab in that direction, wrapping around.
-    let next = chrome
-        .active
-        .filter(|_| n > 1)
-        .map(|active| (if forward { active + 1 } else { active + n - 1 }) % n);
+    let Some(active) = chrome.active.filter(|_| n > 1) else {
+        state.info("No other tabs here");
+        return Vec::new();
+    };
+    let next = if forward {
+        Some(active + 1).filter(|&i| i < n)
+    } else {
+        active.checked_sub(1)
+    };
     match next {
         Some(i) => switch_tab(state, i + 1),
         None => {
-            state.info("No other tabs here");
+            state.info(if forward {
+                "This is the last tab"
+            } else {
+                "This is the first tab"
+            });
             Vec::new()
         }
     }
@@ -731,6 +1041,8 @@ pub fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
 pub struct Hints {
     pub labels: Vec<HintLabel>,
     pub links: Vec<Link>,
+    /// The page tab each link is, if it's one (1-based).
+    pub tabs: Vec<Option<usize>>,
     pub typed: String,
     pub browser: bool,
     /// A capital was typed: follow the link in a new tab.
@@ -764,28 +1076,47 @@ fn start_hints(state: &mut State, browser: bool) {
     let Screen::Page(p) = state.screen() else {
         return;
     };
-    let spots = page::spots(&p.page, area, p.scroll);
+    // The page's own tabs first, then its links.
+    let chrome = state.chrome();
+    let tab_list: Vec<_> = chrome.tabs.iter().map(|(t, _)| t.clone()).collect();
+    let tab_rects = (state.layout_of(&chrome).tabs)
+        .map(|bar| chrome::tab_layout(bar, &tab_list, chrome.active))
+        .unwrap_or_default();
+    let tabs = (chrome.tabs.iter().zip(tab_rects).enumerate())
+        .filter(|(i, _)| chrome.active != Some(*i))
+        .map(|(i, ((_, target), rect))| {
+            let url = match target {
+                Target::Page(route) => route.url(),
+                Target::Files(of) => of.url(),
+                Target::External(url) => url.clone(),
+            };
+            (
+                (rect.x.saturating_add(2), rect.y),
+                Link::Url(url),
+                Some(i + 1),
+            )
+        });
+    let links = page::spots(&p.page, area, p.scroll)
+        .into_iter()
+        .filter_map(|s| Some(((s.x, s.y), p.page.target(s.link)?.clone(), None)));
+    let spots: Vec<((u16, u16), Link, Option<usize>)> = tabs.chain(links).collect();
     if spots.is_empty() {
         state.info("No links on screen");
         return;
     }
     let labels = hint_labels(spots.len());
-    let (spots, links): (Vec<&page::Spot>, Vec<Link>) = spots
-        .iter()
-        .filter_map(|s| Some((s, p.page.target(s.link)?.clone())))
-        .unzip();
-    let labels = spots
-        .iter()
-        .zip(labels)
-        .map(|(s, label)| HintLabel {
-            x: s.x,
-            y: s.y,
+    let labels = (spots.iter().zip(labels))
+        .map(|(((x, y), ..), label)| HintLabel {
+            x: *x,
+            y: *y,
             label,
         })
         .collect();
+    let (links, tabs) = spots.into_iter().map(|(_, link, tab)| (link, tab)).unzip();
     state.overlay = Some(Overlay::Hints(Box::new(Hints {
         labels,
         links,
+        tabs,
         typed: String::new(),
         browser,
         tab: false,
@@ -813,10 +1144,10 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             return Vec::new();
         }
     }
-    let matching: Vec<(&HintLabel, &Link)> = hints
+    let matching: Vec<(&HintLabel, (&Link, &Option<usize>))> = hints
         .labels
         .iter()
-        .zip(&hints.links)
+        .zip(hints.links.iter().zip(&hints.tabs))
         .filter(|(h, _)| h.label.starts_with(&hints.typed))
         .collect();
     match matching.as_slice() {
@@ -825,11 +1156,15 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             state.info("No link has those letters");
             Vec::new()
         }
-        [(hint, link)] if hint.label == hints.typed => {
-            let link = (*link).clone();
+        [(hint, (link, page_tab))] if hint.label == hints.typed => {
+            let (link, page_tab) = ((*link).clone(), **page_tab);
             let (browser, tab) = (hints.browser, hints.tab);
             state.overlay = None;
             match link {
+                // The page's own tab: switched to, not gone to.
+                Link::Url(_) if !browser && !tab && page_tab.is_some() => {
+                    switch_tab(state, page_tab.unwrap_or(1))
+                }
                 Link::Url(url) if browser => state.go(Target::External(url).into()),
                 Link::Url(url) if tab => state.open_tab(Dest::from_url(&url)),
                 link => state.follow(&link),
@@ -903,11 +1238,12 @@ pub fn new_input(theme: &Theme, bg: Bg) -> TextArea<'static> {
 }
 
 impl State {
-    /// `/`: GitHub search in the header, or the list's filter on a list.
+    /// The header's search box: searching GitHub (`github`), or the
+    /// page's own search: a list's filter, a job's log.
     #[must_use]
-    pub fn open_search(&mut self) -> Vec<Cmd> {
-        // A job's log is searched on the page, like a list's filter.
+    pub fn open_search(&mut self, github: bool) -> Vec<Cmd> {
         let filter_query = match self.route() {
+            _ if github => None,
             Some(Route::Job { query, .. }) => Some(query.clone()),
             route => route.and_then(Route::list_query).map(str::to_owned),
         };
@@ -917,10 +1253,11 @@ impl State {
             input.insert_char(' ');
         }
         // A profile's repositories filter by searching that owner's.
-        if let Some(Route::User {
-            login,
-            tab: ProfileTab::Repositories(_),
-        }) = self.route()
+        if !github
+            && let Some(Route::User {
+                login,
+                tab: ProfileTab::Repositories(_),
+            }) = self.route()
         {
             input.insert_str(format!("user:{login} "));
         }
@@ -956,6 +1293,25 @@ impl State {
                 out.push(suggestion("⌕", q, "filter this list", "↵", pick));
             }
             out.push(heading("Quick filters"));
+            // Runs filter by GitHub's Actions words, and aren't searched.
+            if let Some(Route::Actions { repo, .. }) = self.route() {
+                if let Some(b) = self.overview(repo).and_then(|o| o.default_branch.as_ref()) {
+                    let f = format!("branch:{b}");
+                    let pick = Pick::Filter(f.clone());
+                    out.push(suggestion("⚑", f, &format!("on {b}"), "", pick));
+                }
+                for (f, what) in [
+                    ("is:failure", "failed"),
+                    ("is:in_progress", "running"),
+                    ("is:queued", "queued"),
+                    ("is:success", "succeeded"),
+                    ("event:pull_request", "for pull requests"),
+                    ("event:push", "for pushes"),
+                ] {
+                    out.push(suggestion("⚑", f, what, "", Pick::Filter(f.to_owned())));
+                }
+                return out;
+            }
             for (f, what) in [
                 ("is:open", "open"),
                 ("is:closed", "closed"),
@@ -1163,9 +1519,8 @@ pub fn search_log(state: &mut State, query: &str) {
     let loaded = state
         .picked::<crate::api::browse::JobLog>(&log)
         .is_some_and(|l| !l.running);
-    let back = state.first_key(Action::Back);
     let text = match (p.mark_at(), p.page.marks.len()) {
-        _ if query.is_empty() => format!("Cleared the search · {back} again goes back"),
+        _ if query.is_empty() => "Cleared the search".to_owned(),
         (Some(at), of) => format!("Match {} of {of}", at + 1),
         _ if loaded => format!("No matches for “{query}”"),
         _ => format!("Searches for “{query}” once the log is in"),
@@ -1220,6 +1575,13 @@ fn set_list_state(state: &mut State, which: &str) -> Vec<Cmd> {
 
 #[must_use]
 fn cycle_state(state: &mut State) -> Vec<Cmd> {
+    if let Some(Route::Actions { .. }) = state.route() {
+        let filter = state.first_key(Action::Search);
+        state.info(format!(
+            "Runs aren't open or closed · {filter} filters them: is:failure, is:success…"
+        ));
+        return Vec::new();
+    }
     let Some((_, query)) = list_query(state) else {
         state.info("Only lists have open and closed");
         return Vec::new();
@@ -1242,6 +1604,10 @@ fn cycle_sort(state: &mut State) -> Vec<Cmd> {
         };
         state.info(format!("Sorted: {}", next.label()));
         return state.replace(route, true, None);
+    }
+    if let Some(Route::Actions { .. }) = state.route() {
+        state.info("Runs are newest first: GitHub doesn't sort them otherwise");
+        return Vec::new();
     }
     let Some((route, query)) = list_query(state) else {
         state.info("Only lists can be sorted");
@@ -1376,8 +1742,13 @@ const DIFF_DOABLES: &[(&str, &[(Action, &str)])] = {
                 (A::JumpMove, ""),
                 (A::OldSide, ""),
                 (A::NewSide, ""),
+                (A::Search, ""),
+                (A::SearchNext, ""),
+                (A::SearchPrev, ""),
                 (A::FindFile, ""),
                 (A::SwitchPane, ""),
+                (A::Fold, ""),
+                (A::Unfold, ""),
             ],
         ),
         (
@@ -1440,6 +1811,11 @@ impl State {
             out.push(change);
         }
         let go = |action, label: &str, short| doable("Go", action, label, short);
+        out.push(go(
+            Action::SearchGithub,
+            "Search GitHub or go to a page",
+            "",
+        ));
         if !self.chrome().tabs.is_empty() {
             out.push(go(Action::NextTab, "Next tab", "tabs"));
         }
@@ -1481,34 +1857,60 @@ impl State {
             out.push(tab(Action::PrevOpenTab, "Previous open tab"));
             out.push(tab(Action::CloseTab, "Close the tab"));
         }
+        let contexts = self.contexts();
         for action in [
             Action::Down,
             Action::Up,
+            Action::NextItem,
+            Action::PrevItem,
             Action::Top,
             Action::Bottom,
-            Action::PageDown,
-            Action::PageUp,
             Action::HalfPageDown,
             Action::HalfPageUp,
+            Action::PageDown,
+            Action::PageUp,
+            Action::ScrollCenter,
+            Action::ScrollLeft,
+            Action::ScrollRight,
+            Action::Cancel,
             Action::Quit,
         ] {
-            out.push(doable("Keys", action, action.description(), ""));
+            if contexts.contains(&action.context()) || self.key_here(action).is_some() {
+                out.push(doable("Keys", action, action.description(), ""));
+            }
         }
         out
     }
 
     fn page_doables(&self, p: &PageScreen, out: &mut Vec<Doable>) {
         let here = |action, label: &str, short| doable("This page", action, label, short);
-        let mut open = here(Action::Open, "Open the selected row", "open");
-        match p.selected_link() {
-            Some(link) => open.label = describe(link),
-            None => open.unavailable = Some("nothing is selected".into()),
-        }
-        out.push(open);
         let route = &p.route;
+        // A file's line is this page: nothing to open.
+        if !matches!(route, Route::Blob { .. }) {
+            let mut open = here(Action::Open, "Open the selected row", "open");
+            match p.selected_link() {
+                Some(link) => open.label = describe(link),
+                None => open.unavailable = Some("nothing is selected".into()),
+            }
+            out.push(open);
+        }
         let list = route.search().map(|(_, q)| q);
-        if let Route::Job { query, .. } = route {
-            out.push(here(Action::Search, "Search the log", "search"));
+        // `/` searches the page, or filters a list; then n/N.
+        let searched = match route {
+            Route::Job { query, .. } => {
+                out.push(here(Action::Search, "Search the log", "search"));
+                Some(query.clone())
+            }
+            _ if route.list_query().is_some() => {
+                out.push(here(Action::Search, "Filter this list", "filter"));
+                None
+            }
+            _ => {
+                out.push(here(Action::Search, "Search this page", "search"));
+                p.find.clone()
+            }
+        };
+        if let Some(query) = searched {
             let why = if query.is_empty() {
                 Some("nothing is searched yet".to_owned())
             } else if p.page.marks.is_empty() {
@@ -1517,18 +1919,29 @@ impl State {
                 None
             };
             for (action, label) in [
-                (Action::NextHunk, "Next match"),
-                (Action::PrevHunk, "Previous match"),
+                (Action::SearchNext, "Next match"),
+                (Action::SearchPrev, "Previous match"),
             ] {
                 let mut row = here(action, label, "");
                 row.unavailable.clone_from(&why);
                 out.push(row);
             }
-        } else {
-            out.push(match list {
-                Some(_) => here(Action::Search, "Filter this list", "filter"),
-                None => here(Action::Search, "Search or jump to…", "search"),
-            });
+        }
+        if let Route::Commit { pr: Some(_), .. } = route {
+            out.push(here(Action::NextCommit, "Next commit", "next commit"));
+            out.push(here(Action::PrevCommit, "Previous commit", ""));
+        }
+        if matches!(route, Route::Blob { .. } | Route::Blame { .. }) {
+            let blame = match route {
+                Route::Blob { .. } => "Blame this line",
+                _ => "Back to the file",
+            };
+            out.push(here(Action::Blame, blame, "blame"));
+            out.push(here(
+                Action::VisualLines,
+                "Select lines (y copies their link)",
+                "",
+            ));
         }
         if let Some(query) = &list {
             let show = format!("Show {}", next_list_state(query));
@@ -1591,7 +2004,11 @@ impl State {
                     Some(Route::Job { .. }) => "search",
                     _ => "filter",
                 };
-                return vec![pair("↵", enter), pair("↑↓", "choose"), pair("esc", "close")];
+                return vec![
+                    pair("↵", enter),
+                    pair("ctrl-j/k", "choose"),
+                    pair("esc", "close"),
+                ];
             }
             Some(Overlay::Hints(_)) => {
                 return vec![pair("a-z", "type a link's letters"), pair("esc", "cancel")];
@@ -1606,6 +2023,7 @@ impl State {
             Some(Overlay::Menu(_)) => {
                 return vec![
                     pair("↵", "run"),
+                    pair("j/k", "choose"),
                     pair("key", "run it"),
                     (self.first_key(Action::Search), "filter".into()),
                     pair("esc", "close"),
@@ -1614,21 +2032,55 @@ impl State {
             Some(Overlay::Picker(_)) => {
                 return vec![
                     pair("↵", "open"),
-                    pair("↑↓", "choose"),
+                    pair("ctrl-j/k", "choose"),
                     pair("esc", "close"),
                 ];
             }
             Some(_) => return Vec::new(),
             None => {}
         }
+        // Keys typed so far: what can follow them.
+        if let Some(count) = self.count.filter(|_| self.typed.is_empty()) {
+            let tab = self.first_key(Action::NextTab);
+            return vec![
+                (format!("{count}…"), "times".to_owned()),
+                (format!("{count}{tab}"), format!("tab {count}")),
+                (
+                    format!("{count}{}", self.first_key(Action::Top)),
+                    format!("line {count}"),
+                ),
+                pair("esc", "cancel"),
+            ];
+        }
+        if !self.typed.is_empty() {
+            let typed = crate::keymap::pretty_keys(&self.typed);
+            let count = self.count.map(|c| c.to_string()).unwrap_or_default();
+            let next = (self
+                .keymap
+                .continuations(&self.typed, self.contexts())
+                .into_iter())
+            .map(|(rest, a)| {
+                (
+                    crate::keymap::pretty_keys(&rest),
+                    a.description().to_owned(),
+                )
+            });
+            return std::iter::once((format!("{count}{typed}…"), String::new()))
+                .chain(next)
+                .chain(std::iter::once(pair("esc", "cancel")))
+                .collect();
+        }
         // The menu first: everything else is in it, so it must never be
         // the hint a narrow terminal drops. Then what fits the thing under
         // the cursor, then the screen's usual verbs.
         let menu = (self.first_key(Action::Menu), "menu".to_owned());
         let focused = self.focus_hints();
+        // The file tree's keys are all its own.
+        let tree = self.contexts().first() == Some(&crate::keymap::Context::Tree);
         let usual = self
             .doables()
             .into_iter()
+            .filter(|_| !tree)
             .filter(|d| d.unavailable.is_none() && !d.short.is_empty())
             .filter(|d| !focused.iter().any(|(a, _)| *a == d.action))
             .map(|d| (d.action, d.short.to_owned()));
@@ -1638,9 +2090,11 @@ impl State {
             .chain(usual)
             .filter_map(|(action, what)| {
                 // Pairs read as one hint.
+                let pair = |a, b| Some(format!("{}/{}", self.key_here(a)?, self.key_here(b)?));
                 let key = match action {
-                    Action::NextTab => Some("←→".to_owned()),
-                    Action::NextHunk => Some("n/p".to_owned()),
+                    Action::NextTab => pair(Action::NextTab, Action::PrevTab),
+                    Action::NextHunk => pair(Action::NextHunk, Action::PrevHunk),
+                    Action::SearchNext => pair(Action::SearchNext, Action::SearchPrev),
                     action => self.key_here(action),
                 };
                 Some((key?, what))
@@ -1659,6 +2113,15 @@ impl State {
             return Vec::new();
         };
         let mut out = Vec::new();
+        // The file tree has its own keys.
+        if screen.focus == Pane::Tree && screen.prefs.tree_visible {
+            return vec![
+                (Action::Open, "show file".to_owned()),
+                (Action::Fold, "fold".to_owned()),
+                (Action::Unfold, "unfold".to_owned()),
+                (Action::SwitchPane, "to the diff".to_owned()),
+            ];
+        }
         let here = diff
             .doc
             .annotation_under(screen.cursor, screen.half)
@@ -1694,12 +2157,16 @@ impl State {
         out
     }
 
-    /// The first key that runs `action` on this screen, if any.
+    /// The first keys that run `action` on this screen, if any. The
+    /// page's tabs by number are a count before the next tab's keys.
     pub fn key_here(&self, action: Action) -> Option<String> {
-        self.keymap
-            .keys_in(action, self.scope())
-            .next()
-            .map(crate::keymap::pretty)
+        let stack = self.contexts();
+        if let Some(keys) = self.keymap.keys_in(action, stack).next() {
+            return Some(crate::keymap::pretty_keys(keys));
+        }
+        let n = Action::PAGE_TABS.iter().position(|a| *a == action)? + 1;
+        let next = self.keymap.keys_in(Action::NextTab, stack).next()?;
+        Some(format!("{n}{}", crate::keymap::pretty_keys(next)))
     }
 }
 
@@ -1794,9 +2261,12 @@ impl State {
 
 #[must_use]
 pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
-    let scope = state.scope();
-    let pressed = crate::keymap::Key::from(key);
-    let action = state.keymap.resolve(pressed, scope);
+    let stack = state.contexts();
+    let pressed = [crate::keymap::Key::from(key)];
+    let action = match state.keymap.resolve(&pressed, stack) {
+        crate::keymap::Resolved::Run(action) => Some(action),
+        _ => None,
+    };
     let Some(Overlay::Menu(menu)) = &mut state.overlay else {
         return Vec::new();
     };
@@ -1837,7 +2307,7 @@ pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             let row = menu
                 .rows
                 .iter()
-                .find(|d| state.keymap.keys_in(d.action, scope).any(|k| k == pressed));
+                .find(|d| state.keymap.keys_in(d.action, stack).any(|k| k == pressed));
             match row {
                 Some(d) => Some(d.clone()),
                 None => return Vec::new(),
@@ -1867,6 +2337,24 @@ fn run_menu_row(state: &mut State, row: Option<Doable>) -> Vec<Cmd> {
 impl State {
     /// The link of the selection, or of the page.
     pub fn here_url(&self) -> String {
+        // Lines selected in a file: their range.
+        if let Screen::Page(p) = self.screen()
+            && let Route::Blob {
+                repo, rev, path, ..
+            } = &p.route
+            && let (Some(a), Some(b)) = (
+                p.range.and_then(|i| p.line_of(i)),
+                p.selected.and_then(|i| p.line_of(i)),
+            )
+        {
+            let route = Route::Blob {
+                repo: repo.clone(),
+                rev: rev.clone(),
+                path: path.clone(),
+                lines: Some((a.min(b), a.max(b))),
+            };
+            return route.url();
+        }
         let link = match self.screen() {
             Screen::Page(p) => p.selected_link().and_then(Link::url),
             Screen::Diff(_) => None,
@@ -1962,7 +2450,7 @@ fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
         let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
         let h = chrome::header_layout(lay.header, &crumbs, &right);
         if inside(h.search) {
-            return state.open_search();
+            return state.open_search(true);
         }
         if inside(h.logo) {
             return state.push(Route::Home);

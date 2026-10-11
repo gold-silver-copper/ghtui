@@ -779,6 +779,9 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Search(kind, query) => at(gh.cached(&keys::search(*kind, query))?, |v| {
             Data::Search(Box::new(v))
         }),
+        DataKey::StateCounts(query) => {
+            at(gh.cached(&keys::state_counts(query))?, Data::StateCounts)
+        }
         DataKey::Issue(repo, number) => at(gh.cached(&keys::issue(repo, *number))?, |v| {
             Data::Issue(Some(Box::new(v)))
         }),
@@ -866,15 +869,10 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Workflow(repo, file) => at(gh.cached(&keys::workflow(repo, file))?, |v| {
             Data::Workflow(Box::new(v))
         }),
-        DataKey::WorkflowRuns(repo, file) => {
-            at(gh.cached(&keys::workflow_runs(repo, file))?, |v| {
-                Data::Runs(Box::new(v))
-            })
-        }
-        DataKey::CommitChecks(repo, oid) => at(gh.cached(&keys::commit_checks(repo, oid))?, |v| {
-            Data::Checks(Box::new(v))
+        DataKey::Runs(repo, query) => at(gh.cached(&keys::runs(repo, query))?, |v| {
+            Data::Runs(Box::new(v))
         }),
-        DataKey::BranchChecks(repo) => at(gh.cached(&keys::branch_checks(repo))?, |v| {
+        DataKey::CommitChecks(repo, oid) => at(gh.cached(&keys::commit_checks(repo, oid))?, |v| {
             Data::Checks(Box::new(v))
         }),
         DataKey::History(repo, rev, path) => at(gh.cached(&keys::history(repo, rev, path))?, |v| {
@@ -925,6 +923,7 @@ pub(crate) async fn fetch(
             let results = gh.search_showing(*kind, query, after, found).await?;
             Data::Search(Box::new(results))
         }
+        DataKey::StateCounts(query) => Data::StateCounts(gh.state_counts(query).await?),
         DataKey::Issue(repo, number) => Data::Issue(gh.issue(repo, *number).await?.map(Box::new)),
         DataKey::PrActivity(pr) => Data::PrActivity(Box::new(gh.pr_activity(pr).await?)),
         DataKey::Profile(login) => Data::Profile(Box::new(gh.profile(login).await?)),
@@ -983,13 +982,10 @@ pub(crate) async fn fetch(
         DataKey::Job(repo, job) => Data::Job(Box::new(gh.job(repo, *job).await?)),
         DataKey::JobLog(repo, job) => Data::Log(Arc::new(gh.job_log(repo, *job).await?)),
         DataKey::Workflow(repo, file) => Data::Workflow(Box::new(gh.workflow(repo, file).await?)),
-        DataKey::WorkflowRuns(repo, file) => {
-            Data::Runs(Box::new(gh.workflow_runs(repo, file, after).await?))
-        }
+        DataKey::Runs(repo, query) => Data::Runs(Box::new(gh.runs(repo, query, after).await?)),
         DataKey::CommitChecks(repo, oid) => {
             Data::Checks(Box::new(gh.commit_checks(repo, oid).await?))
         }
-        DataKey::BranchChecks(repo) => Data::Checks(Box::new(gh.branch_checks(repo).await?)),
         DataKey::History(repo, rev, path) => {
             Data::History(Box::new(gh.history(repo, rev, path, after).await?))
         }

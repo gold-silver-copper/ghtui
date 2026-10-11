@@ -8,8 +8,9 @@ use crate::api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckOutcome, Checks, CommitDetail, CommitInfo, Comparison,
     DeploymentList, DiscussionDetail, DiscussionList, DiscussionsOf, Gist, GistSummary,
     IssueDetail, Job, MilestoneDetail, MilestoneList, PrActivity, Profile, Readme, Refs, Release,
-    RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults, TagInfo,
-    TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage, Workflow, WorkflowRun,
+    RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults,
+    StateCounts, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage,
+    Workflow, WorkflowRun,
 };
 use crate::api::model::{PrRef, RepoId};
 use crate::ui::Fetched;
@@ -20,9 +21,12 @@ use crate::keymap::Action;
 use crate::route::Route;
 use crate::state::{Remote, State};
 
-/// Widest a page of reading gets; wider terminals center it, as GitHub
-/// does.
-const MAX_WIDTH: u16 = 140;
+/// Widest a page of reading (a conversation, a Markdown file) gets, its
+/// sidebar included; wider terminals center it, as GitHub does.
+const READING: u16 = 160;
+/// Widest a page of lists gets: room for their columns, without a row's
+/// two ends drifting apart.
+const LISTS: u16 = 200;
 
 /// One piece of GitHub data a page shows.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -34,6 +38,8 @@ pub enum DataKey {
     Tree(RepoId, String, String),
     Blob(RepoId, String, String),
     Search(SearchKind, String),
+    /// A filtered list's open and closed counts ([`Route::state_counts`]).
+    StateCounts(String),
     Issue(RepoId, u64),
     PrActivity(PrRef),
     Profile(String),
@@ -52,8 +58,6 @@ pub enum DataKey {
     History(RepoId, String, String),
     /// The checks on a pull request's head.
     PrChecks(PrRef),
-    /// The checks on a repository's default branch.
-    BranchChecks(RepoId),
     Users(UserList),
     Forks(RepoId),
     Releases(RepoId),
@@ -81,8 +85,9 @@ pub enum DataKey {
     /// A job's log (not cached: it's big).
     JobLog(RepoId, u64),
     Workflow(RepoId, String),
-    /// A workflow's runs.
-    WorkflowRuns(RepoId, String),
+    /// Workflow runs, filtered as the Actions tab filters them
+    /// ([`RunFilter`](crate::api::browse::RunFilter)).
+    Runs(RepoId, String),
     CommitChecks(RepoId, String),
     /// Someone's own repositories, in an order.
     OwnerRepos(String, RepoSort),
@@ -98,6 +103,7 @@ pub enum Data {
     Tree(Vec<TreeEntry>),
     Blob(Box<Blob>),
     Search(Box<SearchResults>),
+    StateCounts(StateCounts),
     /// `None`: the number is a pull request.
     Issue(Option<Box<IssueDetail>>),
     PrActivity(Box<PrActivity>),
@@ -225,7 +231,10 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Discussions { of, category } => {
             Some(DataKey::Discussions(of.clone(), category.clone()))
         }
-        Route::Workflow { repo, file } => Some(DataKey::WorkflowRuns(repo.clone(), file.clone())),
+        Route::Actions { repo, query } => Some(DataKey::Runs(repo.clone(), query.clone())),
+        Route::Workflow { repo, file } => {
+            Some(DataKey::Runs(repo.clone(), format!("workflow:{file}")))
+        }
         Route::User { login, tab } => {
             let login = login.to_lowercase();
             Some(match tab {
@@ -299,7 +308,11 @@ pub fn needs(route: &Route) -> Vec<Need> {
             Need::Data(K::RefIn(repo.clone(), spot.clone())),
         ],
         Route::Issues { repo, .. } | Route::Pulls { repo, .. } => {
-            std::iter::once(header(repo)).chain(list).collect()
+            let counts = route.state_counts().map(|q| Need::Data(K::StateCounts(q)));
+            std::iter::once(header(repo))
+                .chain(list)
+                .chain(counts)
+                .collect()
         }
         Route::Search { .. } => list.into_iter().collect(),
         Route::Wiki { repo, page } => vec![
@@ -328,7 +341,6 @@ pub fn needs(route: &Route) -> Vec<Need> {
             Need::Data(K::PrChecks(pr.clone())),
         ],
         Route::Pr { pr, .. } => vec![Need::Pr(pr.clone()), Need::Data(K::PrActivity(pr.clone()))],
-        Route::Actions(repo) => vec![header(repo), Need::Data(K::BranchChecks(repo.clone()))],
         Route::Discussions { of, .. } | Route::Discussion { of, .. } => {
             let header = match of {
                 DiscussionsOf::Repo(repo) => Some(header(repo)),
@@ -351,11 +363,10 @@ pub fn needs(route: &Route) -> Vec<Need> {
             Need::Data(K::Job(repo.clone(), *job)),
             Need::Data(K::JobLog(repo.clone(), *job)),
         ],
-        Route::Workflow { repo, file } => vec![
-            header(repo),
-            Need::Data(K::Workflow(repo.clone(), file.clone())),
-            Need::Data(K::WorkflowRuns(repo.clone(), file.clone())),
-        ],
+        Route::Workflow { repo, file } => std::iter::once(header(repo))
+            .chain([Need::Data(K::Workflow(repo.clone(), file.clone()))])
+            .chain(paged(route).map(Need::Data))
+            .collect(),
         Route::CommitChecks { repo, oid } => vec![
             header(repo),
             Need::Data(K::Commit(repo.clone(), oid.clone())),
@@ -367,7 +378,8 @@ pub fn needs(route: &Route) -> Vec<Need> {
                 Need::Data(K::Release(repo.clone(), tag.clone())),
             ]
         }
-        Route::Stargazers(repo)
+        Route::Actions { repo, .. }
+        | Route::Stargazers(repo)
         | Route::Watchers(repo)
         | Route::Forks(repo)
         | Route::Releases(repo)
@@ -379,11 +391,20 @@ pub fn needs(route: &Route) -> Vec<Need> {
         | Route::Milestone { repo, .. } => std::iter::once(header(repo))
             .chain(paged(route).map(Need::Data))
             .collect(),
-        Route::Commit { repo, oid } => {
-            vec![
+        Route::Commit { repo, oid, pr } => {
+            let mut needs = vec![
                 header(repo),
                 Need::Data(K::Commit(repo.clone(), oid.clone())),
-            ]
+            ];
+            // Its place among the pull request's commits.
+            if let Some(number) = pr {
+                let pr = PrRef {
+                    repo: repo.clone(),
+                    number: *number,
+                };
+                needs.push(Need::Data(K::PrActivity(pr)));
+            }
+            needs
         }
         Route::Commits { repo, rev, path } => vec![
             header(repo),
@@ -421,7 +442,8 @@ macro_rules! picked {
 
 picked!(
     Repo => RepoOverview, Readme => Option<Box<Readme>>, Tree => [TreeEntry], Blob => Blob,
-    Search => SearchResults, Issue => Option<Box<IssueDetail>>, PrActivity => PrActivity,
+    Search => SearchResults, StateCounts => StateCounts, Issue => Option<Box<IssueDetail>>,
+    PrActivity => PrActivity,
     Profile => Profile, Refs => Refs, RefIn => Option<String>,
     LastCommits => HashMap<String, CommitInfo>, Commit => CommitDetail,
     History => Results<CommitInfo>, Checks => Checks, Users => Results<UserSummary>,
@@ -466,6 +488,41 @@ impl State {
     /// `key`'s data, if it's there: for what isn't a page.
     pub fn picked<T: Picked + ?Sized>(&self, key: &DataKey) -> Option<&T> {
         self.get(key).and_then(T::pick)
+    }
+
+    /// Where commit `oid` is among pull request `number`'s commits, once
+    /// they're in, with links to the ones either side.
+    pub fn pr_commit_at(&self, repo: &RepoId, number: u64, oid: &str) -> Option<pages::PrCommitAt> {
+        let pr = PrRef {
+            repo: repo.clone(),
+            number,
+        };
+        let commits = &self
+            .picked::<PrActivity>(&DataKey::PrActivity(pr.clone()))?
+            .commits;
+        let i = commits
+            .items
+            .iter()
+            .position(|c| c.oid.starts_with(oid) || oid.starts_with(&c.oid))?;
+        let link = |c: &CommitInfo| {
+            let route = Route::Commit {
+                repo: repo.clone(),
+                oid: c.oid.clone(),
+                pr: Some(number),
+            };
+            route.url()
+        };
+        Some(pages::PrCommitAt {
+            n: commits.left_out() + i as u64 + 1,
+            of: commits.total(),
+            pr: pages::url::pull(&pr),
+            number,
+            previous: i
+                .checked_sub(1)
+                .and_then(|i| commits.items.get(i))
+                .map(link),
+            next: commits.items.get(i + 1).map(link),
+        })
     }
 
     pub fn overview(&self, repo: &RepoId) -> Option<&RepoOverview> {
@@ -531,22 +588,26 @@ impl State {
             filter: &filter,
         };
         let cx = pages::PageCtx { icons, keys, now };
-        // Reading stays narrow enough to follow; output and tables take
-        // the whole width.
-        let reading = width.min(MAX_WIDTH);
+        // Reading stays narrow enough to follow, lists get room for their
+        // columns, and output and tables take the whole width.
+        let (reading, lists) = (width.min(READING), width.min(LISTS));
         let mut page = match route {
-            Route::Repo(_)
-            | Route::Issue { .. }
+            Route::Issue { .. }
             | Route::Pr {
                 tab: PrTab::Conversation,
                 ..
             } => Page::with_aside(reading),
+            Route::Repo(_) => Page::with_aside(lists),
             Route::Blob { path, .. } if pages::is_markdown(path) => Page::new(reading),
+            Route::Wiki { .. }
+            | Route::Discussion { .. }
+            | Route::Release { .. }
+            | Route::Advisory { .. } => Page::new(reading),
             Route::Pr {
                 tab: PrTab::Checks, ..
             }
             | Route::CommitChecks { .. }
-            | Route::Actions(_)
+            | Route::Actions { .. }
             | Route::WorkflowRun { .. }
             | Route::Job { .. }
             | Route::Workflow { .. }
@@ -555,7 +616,7 @@ impl State {
             | Route::Branches(_)
             | Route::Tags(_)
             | Route::Deployments { .. } => Page::new(width),
-            _ => Page::new(reading),
+            _ => Page::new(lists),
         };
         page.compact = self.compact();
         if let Some(err) = self.stale_errors(route) {
@@ -656,17 +717,23 @@ impl State {
             }
             Route::Issues { repo, query } | Route::Pulls { repo, query } => {
                 let is_pr = matches!(route, Route::Pulls { .. });
+                // A filtered list counts what the filter finds, as GitHub's
+                // does; until it's counted, no counts show.
                 #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
-                let overview = f
-                    .get::<RepoOverview>(&DataKey::Repo(repo.clone()))
-                    .ready_unchecked();
-                let counts = overview.map(|o| {
-                    if is_pr {
-                        (o.open_prs, o.closed_prs)
-                    } else {
-                        (o.open_issues, o.closed_issues)
-                    }
-                });
+                let counts = match route.state_counts() {
+                    Some(q) => (f.get::<StateCounts>(&DataKey::StateCounts(q)))
+                        .ready_unchecked()
+                        .map(|c| (c.open, c.closed)),
+                    None => (f.get::<RepoOverview>(&DataKey::Repo(repo.clone())))
+                        .ready_unchecked()
+                        .map(|o| {
+                            if is_pr {
+                                (o.open_prs, o.closed_prs)
+                            } else {
+                                (o.open_issues, o.closed_issues)
+                            }
+                        }),
+                };
                 let results = f.paged(route).pick(|r| match r {
                     SearchResults::Issues(r) => Some(r),
                     _ => None,
@@ -805,24 +872,22 @@ impl State {
                     pages::release(&mut page, repo, r, now);
                 }
             }
-            Route::Actions(repo) => {
-                let checks = f.get(&DataKey::BranchChecks(repo.clone()));
-                #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
-                let overview = f
-                    .get::<RepoOverview>(&DataKey::Repo(repo.clone()))
-                    .ready_unchecked();
-                let branch = overview.and_then(|o| o.default_branch.as_deref());
-                pages::actions(&mut page, branch, checks, now);
+            Route::Actions { repo, query } => {
+                pages::actions(&mut page, repo, query, f.paged(route), cx);
             }
             Route::Commits { repo, rev, path } => {
                 pages::commit_history(&mut page, repo, rev, path, f.paged(route), now);
             }
-            Route::Commit { repo, oid } => {
+            Route::Commit { repo, oid, pr } => {
                 let key = DataKey::Commit(repo.clone(), oid.clone());
                 if let Some(c) = f.get::<CommitDetail>(&key).show(&mut page, &title) {
+                    if let Some(at) = pr.and_then(|n| self.pr_commit_at(repo, n, &c.oid)) {
+                        pages::pr_commit_nav(&mut page, &at);
+                    }
                     let files = Route::Commit {
                         repo: repo.clone(),
                         oid: c.oid.clone(),
+                        pr: None,
                     };
                     let files = format!("{}#files", files.url());
                     pages::commit(&mut page, repo, c, &files, now);

@@ -14,7 +14,9 @@ use crate::diff::anchor::{LinePos, Side};
 
 use crate::ui::annotations::{Annotation, Place, ThreadRowKind};
 use crate::ui::diff_doc::{Doc, DocFile, FoldReason, Note, Pos, Row, Viewed};
-use crate::ui::{Ctx, PAD_X, chips, cols, fill, inset, key_hints, render_split, text, time};
+use crate::ui::{
+    Ctx, PAD_X, chips, cols, fill, fit_spans, inset, key_hints, render_split, text, time,
+};
 
 const PANE: Bg = Bg::Surface;
 const HEADER: Bg = Bg::ContainerHigh;
@@ -59,6 +61,8 @@ pub struct DiffView<'a> {
     pub keys: Keys<'a>,
     /// Visual line selection (anchor and cursor, either order).
     pub selection: Option<(Pos, Pos)>,
+    /// Columns code is scrolled left by.
+    pub shift: usize,
 }
 
 impl Widget for DiffView<'_> {
@@ -107,7 +111,7 @@ impl DiffView<'_> {
             fill(buf, area, theme, quiet_bg);
             let mut spans = vec![what];
             spans.extend(key_hints(theme, quiet_bg, &[(key, verb)]));
-            Line::from(spans).render(area, buf);
+            Line::from(fit_spans(&spans, area.width)).render(area, buf);
         };
         match row {
             Row::Header => self.header(pos.file, cursor, &[], area, buf),
@@ -167,15 +171,13 @@ impl DiffView<'_> {
                 let lines = file
                     .blocks()
                     .get(block as usize)
-                    .map_or(0, |b| b.entries.len());
+                    .map_or(0, |b| b.entries.len() as u64);
                 let what = match reason {
                     FoldReason::Formatting => "Formatting-only change",
                     FoldReason::Seen => "Unchanged since your review",
                 };
-                let what = Span::styled(
-                    format!("{pad}⋯ {what}, {lines} lines · "),
-                    theme.meta(quiet_bg),
-                );
+                let lines = format!("{lines} {}", crate::ui::text::noun(lines, "line"));
+                let what = Span::styled(format!("{pad}⋯ {what}, {lines} · "), theme.meta(quiet_bg));
                 action(buf, what, self.keys.show, "to show");
             }
             Row::Moved { mv, from } => {
@@ -299,7 +301,7 @@ impl DiffView<'_> {
                 theme.meta(bg),
             ));
         }
-        render_split(inset(area, PAD_X, 0), buf, left, right, 2);
+        render_split(inset(area, PAD_X, 0), buf, &left, &right, 2);
     }
 
     fn note(&self, file: &DocFile, note: Note, bg: Bg, area: Rect, buf: &mut Buffer) {
@@ -515,8 +517,9 @@ impl DiffView<'_> {
         if let Some(at) = side.map_or(Some(line.shown()), |side| line.on(side)) {
             let room = room.saturating_sub(2);
             let (code, tokens) = (text.line(at), text.spans(at));
+            let cut = (room, self.shift);
             spans.extend(code_spans(
-                self.ctx, code, tokens, diff_bg, cursor, room, emphasis,
+                self.ctx, code, tokens, diff_bg, cursor, cut, emphasis,
             ));
             // Line endings only matter where they changed.
             if text.crlf(at) && line.is_change() {
@@ -634,7 +637,7 @@ impl DiffView<'_> {
                 spans = key_hints(theme, bg, &hints);
             }
         }
-        Line::from(spans).render(inner, buf);
+        Line::from(fit_spans(&spans, inner.width)).render(inner, buf);
     }
 
     fn state_chips(&self, ann: &Annotation, bg: Bg) -> Vec<Span<'static>> {
@@ -723,14 +726,14 @@ fn number(n: Option<u32>, width: usize) -> String {
 }
 
 /// Styled code, with tabs expanded and control characters made visible,
-/// cut to `room` columns.
+/// cut to `room` columns after skipping `skip`.
 fn code_spans(
     ctx: Ctx<'_>,
     content: &str,
     tokens: &[TokenSpan],
     diff_bg: DiffBg,
     cursor: bool,
-    room: usize,
+    (room, skip): (usize, usize),
     emphasis: &[(u32, u32)],
 ) -> Vec<Span<'static>> {
     let theme = ctx.theme;
@@ -792,7 +795,8 @@ fn code_spans(
     }
 
     let mut out = Vec::new();
-    let mut used = 0usize;
+    // Columns of the line so far, and of them shown.
+    let (mut col, mut used) = (0usize, 0usize);
     for (s, e, kind, emphasized) in cut {
         let Some(slice) = content.get(s..e) else {
             continue;
@@ -800,11 +804,16 @@ fn code_spans(
         let mut piece = String::new();
         let mut truncated = false;
         for g in text::graphemes(slice) {
-            let (g, w) = match text::untab(g, used) {
+            let (g, w) = match text::untab(g, col) {
                 // Shown, never acted on: see `text::is_hidden`.
                 (g, _) if g.contains(text::is_hidden) => ("�", 1),
                 drawn => drawn,
             };
+            col += w;
+            // Scrolled off the left (a wide character half off, too).
+            if col - w < skip {
+                continue;
+            }
             if used + w > room {
                 truncated = true;
                 break;
@@ -857,7 +866,7 @@ mod tests {
             now: 0,
         };
         let line = "if a\u{202e} {\tb\u{200b}c";
-        let spans = code_spans(ctx, line, &[], DiffBg::Added, false, 80, &[]);
+        let spans = code_spans(ctx, line, &[], DiffBg::Added, false, (80, 0), &[]);
         let shown: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(shown, "if a� { b�c");
     }
@@ -917,6 +926,7 @@ mod tests {
             top: Pos::default(),
             keys,
             selection: None,
+            shift: 0,
         }
         .render(area, &mut buf);
         let row = |y: u16, xs: std::ops::Range<u16>| -> String {

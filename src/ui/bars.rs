@@ -97,7 +97,7 @@ impl Widget for StatusBar<'_> {
         {
             right.pop();
         }
-        render_split(inset(area, PAD_X, 0), buf, left, right, 1);
+        render_split(inset(area, PAD_X, 0), buf, &left, &right, 1);
     }
 }
 
@@ -159,7 +159,7 @@ impl Widget for Banner<'_> {
                 height: 1,
                 ..inner
             };
-            render_split(row, buf, vec![Span::styled(line, style)], right, 1);
+            render_split(row, buf, &[Span::styled(line, style)], &right, 1);
         }
     }
 }

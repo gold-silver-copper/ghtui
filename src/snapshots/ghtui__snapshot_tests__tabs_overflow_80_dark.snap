@@ -1,12 +1,11 @@
 ---
-source: crates/app/src/snapshot_tests.rs
-assertion_line: 850
+source: src/snapshot_tests.rs
 expression: "render(&sized(state, 80, 24))"
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 80, height: 24 },
     content: [
-        "  ◆ ghtui   ‹ 5   0a1b2c3   ghtui · Releases   6 ›   ⌕ Type / to search         ",
+        "  ◆ ghtui   ‹ 5   0a1b2c3   ghtui · Releases   6 ›   ⌕ Type g/ to search        ",
         "   <> Code   ◉ Issues   ⇄ Pull requests   ◈ Discussions   ▶ Actions   ▤   ⛨     ",
         "──━━━━━━━━━─────────────────────────────────────────────────────────────────────",
         "                                                                                ",
@@ -29,7 +28,7 @@ Buffer {
         "                                                                                ",
         "                                                                                ",
         "                                                                                ",
-        "  ⠋ Loading   space menu   / search   f go to file   ←→ tabs     API 4987/5000  ",
+        "  ⠋ Loading   space menu   / search   f go to file               API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
@@ -43,7 +42,7 @@ Buffer {
         x: 47, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 52, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
         x: 53, y: 0, fg: Rgb(196, 198, 207), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
-        x: 71, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
+        x: 72, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
         x: 78, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 2, y: 1, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 6, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
@@ -84,9 +83,6 @@ Buffer {
         x: 38, y: 23, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
         x: 39, y: 23, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 50, y: 23, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 53, y: 23, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
-        x: 55, y: 23, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 60, y: 23, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 65, y: 23, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 78, y: 23, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
     ]

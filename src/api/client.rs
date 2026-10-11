@@ -963,6 +963,22 @@ impl GitHub {
         self.search_showing(kind, query, after, |_| {}).await
     }
 
+    /// How many issues or pull requests `query` finds open and closed, in
+    /// one request.
+    pub async fn state_counts(&self, query: &str) -> Result<browse::StateCounts, ApiError> {
+        let op = browse::StateCountsQuery::build(browse::StateCountsVariables {
+            open: format!("{query} is:open"),
+            closed: format!("{query} is:closed"),
+        });
+        let found = self.graphql(op).await?;
+        let count = crate::api::model::count;
+        let counts = browse::StateCounts {
+            open: count(found.open.issue_count),
+            closed: count(found.closed.issue_count),
+        };
+        Ok(self.kept(&browse::keys::state_counts(query), counts).await)
+    }
+
     /// One page of search results (30 per page). GitHub gives a request
     /// 10 seconds and answers 502 past them, and a busy account's search
     /// that also reads each pull request's checks runs out of them (25
@@ -1429,21 +1445,6 @@ impl GitHub {
         };
         let contexts = self.more_pages(what, first, PAGES, page).await?;
         Ok(browse::checks(oid, contexts))
-    }
-
-    /// The checks on a repository's default branch.
-    pub async fn branch_checks(&self, repo: &RepoId) -> Result<browse::Checks, ApiError> {
-        let op = browse::BranchChecksQuery::build(browse::BranchesVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
-        });
-        let pick = |q: browse::BranchChecksQuery| match q.repository?.default_branch_ref?.target? {
-            browse::ChecksTarget::Commit(commit) => Some(commit),
-            browse::ChecksTarget::Other => None,
-        };
-        let commit = self.find(op, repo, pick).await?;
-        let checks = self.all_checks(repo, commit).await?;
-        Ok(self.kept(&browse::keys::branch_checks(repo), checks).await)
     }
 
     /// A page of people, 30 at a time from `after`; the first is cached.
@@ -2052,22 +2053,36 @@ impl GitHub {
             .await)
     }
 
-    /// A workflow's runs, newest first, 30 at a time; `after` is the page
-    /// number to fetch (REST pages by number). The first page is cached.
-    pub async fn workflow_runs(
+    /// A repository's workflow runs that match `query` (see
+    /// [`browse::RunFilter`]; the words it can't use are left out), newest
+    /// first, 30 at a time; `after` is the page number to fetch (REST pages
+    /// by number). The first page is cached.
+    pub async fn runs(
         &self,
         repo: &RepoId,
-        file: &str,
+        query: &str,
         after: Option<String>,
     ) -> Result<browse::Results<browse::RunSummary>, ApiError> {
+        let filter = browse::RunFilter::parse(query);
+        let base = format!("/repos/{}/{}/actions", repo.owner, repo.name);
+        let (list, what) = match &filter.workflow {
+            Some(w) => {
+                let id = encode_path(&self.workflow_id(repo, w).await?);
+                (
+                    format!("{base}/workflows/{id}/runs"),
+                    format!("{repo}'s workflow {w}"),
+                )
+            }
+            None => (format!("{base}/runs"), format!("{repo}'s workflow runs")),
+        };
         let page = rest_page(after.as_deref());
-        let path = format!(
-            "/repos/{}/{}/actions/workflows/{}/runs?per_page={REST_PAGE}&page={page}",
-            repo.owner,
-            repo.name,
-            encode_path(file)
-        );
-        let what = format!("{repo}'s workflow {file}");
+        let path = {
+            let mut params = url::form_urlencoded::Serializer::new(String::new());
+            params.extend_pairs(&filter.params);
+            params.append_pair("per_page", &REST_PAGE.to_string());
+            params.append_pair("page", &page.to_string());
+            format!("{list}?{}", params.finish())
+        };
         let wire: browse::rest_actions::Runs = self.rest_json(&path, what).await?;
         let runs = browse::Results {
             total: wire.total_count,
@@ -2079,8 +2094,35 @@ impl GitHub {
             next: next_page(page, REST_PAGE, wire.total_count),
         };
         Ok(self
-            .kept_page(page == 1, &browse::keys::workflow_runs(repo, file), runs)
+            .kept_page(page == 1, &browse::keys::runs(repo, query), runs)
             .await)
+    }
+
+    /// A workflow's ID for REST: its file name or ID as it is, else found
+    /// by its name.
+    async fn workflow_id(&self, repo: &RepoId, workflow: &str) -> Result<String, ApiError> {
+        let file = workflow.ends_with(".yml") || workflow.ends_with(".yaml");
+        if file || workflow.bytes().all(|b| b.is_ascii_digit()) {
+            return Ok(workflow.to_owned());
+        }
+        let path = format!(
+            "/repos/{}/{}/actions/workflows?per_page=100",
+            repo.owner, repo.name
+        );
+        let list: browse::rest_actions::Workflows =
+            self.rest_json(&path, format!("{repo}'s workflows")).await?;
+        let shown = list.workflows.len() as u64;
+        let found = (list.workflows.into_iter()).find(|w| w.name.eq_ignore_ascii_case(workflow));
+        match found {
+            Some(w) => Ok(w.id.to_string()),
+            None if shown < list.total_count => Err(ApiError::NotFound(format!(
+                "a workflow named “{workflow}” in {repo}'s first {shown} of {}",
+                list.total_count
+            ))),
+            None => Err(ApiError::NotFound(format!(
+                "a workflow named “{workflow}” in {repo}"
+            ))),
+        }
     }
 
     /// The checks on a commit, by a revision GitHub can resolve.
@@ -2324,6 +2366,7 @@ impl GitHub {
 trait Unrooted {}
 impl Unrooted for queries::RollupsQuery {}
 impl Unrooted for browse::BrowseSearch {}
+impl Unrooted for browse::StateCountsQuery {}
 
 use reply::Reply;
 mod reply {

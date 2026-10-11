@@ -1,11 +1,12 @@
 ---
-source: crates/app/src/snapshot_tests.rs
+source: src/snapshot_tests.rs
+assertion_line: 1039
 expression: "render(&with_team(Mode::Dark))"
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 100, height: 30 },
     content: [
-        "  ◆ ghtui   github / Teams / core                      ⌕ Type / to search                 @octocat  ",
+        "  ◆ ghtui   github / Teams / core                      ⌕ Type g/ to search                @octocat  ",
         "                                                                                                    ",
         "  @github / Core                                                                                    ",
         "  The Core team                                                                                     ",
@@ -16,14 +17,14 @@ Buffer {
         "  ├─────────────────────────────────────────────────────────────────────────────────────────────┤   ",
         "  │ hubot                                                                                       │   ",
         "  ├─────────────────────────────────────────────────────────────────────────────────────────────┤   ",
-        "  │ … 5 more on GitHub (o)                                                                      │   ",
+        "  │ … 5 more on GitHub                                                                          │   ",
         "  ╰─────────────────────────────────────────────────────────────────────────────────────────────╯   ",
         "                                                                                                    ",
         "  ╭─ Repositories  1 of 2 ──────────────────────────────────────────────────────────────────────╮   ",
         "  │ gold-silver-copper/ghtui                                                             ★ 1.2k │   ",
         "  │ GitHub in the terminal                                                                      │   ",
         "  ├─────────────────────────────────────────────────────────────────────────────────────────────┤   ",
-        "  │ … 1 more on GitHub (o)                                                                      │   ",
+        "  │ … 1 more on GitHub                                                                          │   ",
         "  ╰─────────────────────────────────────────────────────────────────────────────────────────────╯   ",
         "                                                                                                    ",
         "  ╭─ Child teams  1 ────────────────────────────────────────────────────────────────────────────╮   ",
@@ -47,7 +48,7 @@ Buffer {
         x: 33, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 54, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
         x: 55, y: 0, fg: Rgb(196, 198, 207), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
-        x: 73, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
+        x: 74, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(51, 53, 58), underline: Reset, modifier: NONE,
         x: 87, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 90, y: 0, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 98, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
@@ -84,7 +85,7 @@ Buffer {
         x: 2, y: 11, fg: Rgb(72, 76, 83), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 3, y: 11, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 4, y: 11, fg: Rgb(196, 198, 207), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
-        x: 26, y: 11, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
+        x: 22, y: 11, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 96, y: 11, fg: Rgb(72, 76, 83), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 97, y: 11, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 2, y: 12, fg: Rgb(72, 76, 83), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
@@ -114,7 +115,7 @@ Buffer {
         x: 2, y: 18, fg: Rgb(72, 76, 83), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 3, y: 18, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 4, y: 18, fg: Rgb(196, 198, 207), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
-        x: 26, y: 18, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
+        x: 22, y: 18, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 96, y: 18, fg: Rgb(72, 76, 83), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 97, y: 18, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 2, y: 19, fg: Rgb(72, 76, 83), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,

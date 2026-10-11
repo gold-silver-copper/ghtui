@@ -214,7 +214,7 @@ fn long_conversations_say_what_is_left_out() {
         number: 14,
     };
     open(&mut state, route, Data::Issue(Some(Box::new(issue))));
-    assert!(text(&state).contains("… 119 earlier comments on GitHub (o)"));
+    assert!(text(&state).contains("… 119 earlier comments on GitHub"));
     assert!(text(&state).contains("120 comments"));
 
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
@@ -229,11 +229,8 @@ fn long_conversations_say_what_is_left_out() {
         Data::PrActivity(Box::new(activity)),
     );
     let page = text(&state);
-    assert!(
-        page.contains("… 100 earlier comments on GitHub (o)"),
-        "{page}"
-    );
-    assert!(page.contains("… 1 earlier review on GitHub (o)"), "{page}");
+    assert!(page.contains("… 100 earlier comments on GitHub"), "{page}");
+    assert!(page.contains("… 1 earlier review on GitHub"), "{page}");
     let tabs = state.chrome().tabs;
     let count = |label: &str| {
         tabs.iter()
@@ -244,7 +241,7 @@ fn long_conversations_say_what_is_left_out() {
         (count("Conversation"), count("Commits")),
         (Some(101), Some(250))
     );
-    press(&mut state, "2");
+    press(&mut state, "2gt");
     assert!(text(&state).contains("… 248 earlier commits"));
 }
 
@@ -445,6 +442,7 @@ fn with_commit(mode: Mode) -> State {
     let route = Route::Commit {
         repo: ghtui(),
         oid: commit.oid.clone(),
+        pr: None,
     };
     open(&mut state, route, Data::Commit(Box::new(commit)));
     state
@@ -470,12 +468,9 @@ fn with_pr_checks(mode: Mode) -> State {
 /// A repository's Actions tab.
 fn with_actions(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
-    let route = Route::Actions(ghtui());
-    open(
-        &mut state,
-        route,
-        Data::Checks(Box::new(fixtures::checks())),
-    );
+    let route = Route::actions(ghtui());
+    let runs = Data::Runs(Box::new(fixtures::workflow_runs().1));
+    open(&mut state, route, runs);
     state
 }
 
@@ -500,6 +495,7 @@ fn with_tabs(mode: Mode, n: usize) -> State {
         Route::Commit {
             repo: ghtui(),
             oid: fixtures::commit().oid,
+            pr: None,
         },
         Route::Releases(ghtui()),
         Route::Stargazers(ghtui()),
@@ -598,7 +594,7 @@ fn with_workflow(mode: Mode) -> State {
     let (workflow, runs) = fixtures::workflow_runs();
     let key = DataKey::Workflow(ghtui(), "ci.yml".into());
     fetched(&mut state, key, Data::Workflow(Box::new(workflow)));
-    let key = DataKey::WorkflowRuns(ghtui(), "ci.yml".into());
+    let key = DataKey::Runs(ghtui(), "workflow:ci.yml".into());
     fetched(&mut state, key, Data::Runs(Box::new(runs)));
     state
 }
@@ -1123,7 +1119,7 @@ fn pr_light() {
 #[test]
 fn pr_commits_dark() {
     let mut state = with_pr(Mode::Dark);
-    press(&mut state, "2");
+    press(&mut state, "2gt");
     insta::assert_snapshot!(render(&state));
 }
 
@@ -1187,7 +1183,7 @@ fn quick_ways_around_dark() {
     }];
     press(&mut state, "i");
     insta::assert_snapshot!("hints_dark", render(&state));
-    press(&mut state, "<Esc>/");
+    press(&mut state, "<Esc>g/");
     insta::assert_snapshot!("search_empty_dark", render(&state));
     press(&mut state, "oct");
     insta::assert_snapshot!("search_typed_dark", render(&state));
@@ -1220,7 +1216,7 @@ fn go_to_file_light() {
 #[test]
 fn list_filter_light() {
     let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
-    press(&mut state, "2/");
+    press(&mut state, "2gt/");
     insta::assert_snapshot!(render(&state));
 }
 
@@ -1701,6 +1697,8 @@ pub(crate) mod diff {
         use crate::diff::anchor::{LinePos, Side};
         use crate::review::{Compose, ComposeTarget, Preview};
         let mut s = with_threads(Mode::Dark);
+        // On the line, so the composer opens under it.
+        press(&mut s, "/origin<Enter>");
         let target = ComposeTarget::Line {
             path: "src/point.rs".into(),
             start: LinePos {
@@ -1862,7 +1860,7 @@ pub(crate) mod diff {
             ("pr", Box::new(|| with_pr(Mode::Dark))),
             (
                 "pr commits",
-                Box::new(move || pressed(with_pr(Mode::Dark), "2")),
+                Box::new(move || pressed(with_pr(Mode::Dark), "2gt")),
             ),
             (
                 "profile",
@@ -1875,6 +1873,10 @@ pub(crate) mod diff {
             ),
             (
                 "search box",
+                Box::new(move || pressed(with_repo(Mode::Dark, tc), "g/oct")),
+            ),
+            (
+                "find on the page",
                 Box::new(move || pressed(with_repo(Mode::Dark, tc), "/oct")),
             ),
             (
@@ -1887,7 +1889,7 @@ pub(crate) mod diff {
             ),
             (
                 "list filter",
-                Box::new(move || pressed(with_repo(Mode::Light, tc), "2/")),
+                Box::new(move || pressed(with_repo(Mode::Light, tc), "2gt/")),
             ),
             (
                 "palette",
@@ -1923,6 +1925,18 @@ pub(crate) mod diff {
                 }),
             ),
             ("threads", Box::new(|| with_threads(Mode::Dark))),
+            (
+                "reply",
+                Box::new(move || pressed(with_threads(Mode::Dark), "c")),
+            ),
+            (
+                "comment on lines",
+                Box::new(move || pressed(diff_at(Mode::Dark, 0, 4), "Vjc")),
+            ),
+            (
+                "comment on an issue",
+                Box::new(move || pressed(with_issue(Mode::Light), "c")),
+            ),
             (
                 "submit",
                 Box::new(|| {
@@ -2127,7 +2141,7 @@ mod links {
     fn pages() -> Vec<(&'static str, State)> {
         let tc = ColorDepth::TrueColor;
         let mut commits = with_pr(Mode::Dark);
-        press(&mut commits, "2");
+        press(&mut commits, "2gt");
         vec![
             ("home", with_home(Mode::Dark, tc)),
             ("repo", with_repo(Mode::Dark, tc)),
@@ -2292,6 +2306,8 @@ mod links {
 // ---- keys on every screen ---------------------------------------------------
 
 mod keys {
+    use crate::api::model::PrRef;
+    use crate::route::Route;
     use crate::theme::{ColorDepth, Mode};
     use crate::ui::diff_doc::Pos;
 
@@ -2342,7 +2358,7 @@ mod keys {
             ("commit", || with_commit(Mode::Dark)),
             ("commit files", || {
                 let mut s = with_commit(Mode::Dark);
-                press(&mut s, "<Right><Right>");
+                press(&mut s, "gtgt");
                 if let Some((screen, _)) = s.diff_parts() {
                     screen.cursor = Pos { file: 0, row: 4 };
                 }
@@ -2354,7 +2370,7 @@ mod keys {
             // From the top: a failed job opens at its first error.
             ("job", || {
                 let mut s = super::sized(with_job(Mode::Dark, None), 100, 12);
-                press(&mut s, "gjj");
+                press(&mut s, "ggjj");
                 s
             }),
             ("workflow", || mid(with_workflow(Mode::Dark))),
@@ -2369,7 +2385,7 @@ mod keys {
             // bottom when resized.
             ("blame", || {
                 let mut s = super::sized(with_blame(Mode::Dark), 100, 12);
-                press(&mut s, "gj");
+                press(&mut s, "ggj");
                 s
             }),
             ("gist", || mid(with_gist(Mode::Dark))),
@@ -2410,16 +2426,11 @@ mod keys {
         assert!(silent.is_empty(), "silent:\n{}", silent.join("\n"));
     }
 
-    /// `→` walks a pull request's tabs into Files changed and `←` walks
-    /// back; so do `l` `h`, the numbers, and `←` `→` wrapping around.
+    /// `gt` walks a pull request's tabs into Files changed and `gT` walks
+    /// back; so does a count before `gt`. They don't wrap around.
     #[test]
     fn tabs_go_into_the_files_and_back() {
-        let pairs = [
-            ("<Right><Right><Right>", "<Left><Left><Left>"),
-            ("lll", "hhh"),
-            ("4", "1"),
-            ("<Left>", "<Right>"),
-        ];
+        let pairs = [("gtgtgt", "gTgTgT"), ("4gt", "1gt")];
         for (there, back) in pairs {
             let mut s = with_pr(Mode::Dark);
             let start = s.chrome().active;
@@ -2428,6 +2439,8 @@ mod keys {
             press(&mut s, back);
             assert!(matches!(s.screen(), Screen::Page(_)), "{back}");
             assert_eq!(s.chrome().active, start, "{back}");
+            press(&mut s, "gT");
+            assert_eq!(s.chrome().active, start, "no wrapping");
         }
     }
 
@@ -2435,21 +2448,134 @@ mod keys {
     #[test]
     fn commit_tabs_go_into_the_files_and_back() {
         let mut s = with_commit(Mode::Dark);
-        press(&mut s, "<Right>");
+        press(&mut s, "gt");
         assert!(matches!(
             s.route(),
             Some(crate::route::Route::CommitChecks { .. })
         ));
-        press(&mut s, "<Right>");
+        press(&mut s, "gt");
         assert!(
             matches!(s.screen(), Screen::Diff(d) if d.of == super::diff::commit_of()),
             "the commit's diff, by its full ID"
         );
-        press(&mut s, "<Left><Left>");
+        press(&mut s, "gTgT");
         assert!(matches!(
             s.route(),
             Some(crate::route::Route::Commit { .. })
         ));
+    }
+
+    /// `esc` cancels and never leaves the page; `ctrl-o` goes back.
+    #[test]
+    fn esc_never_leaves_the_page() {
+        let mut s = with_pr(Mode::Dark);
+        let depth = s.screens.len();
+        press(&mut s, "<Esc>g<Esc>3<Esc><Esc>");
+        assert_eq!(s.screens.len(), depth);
+        assert!(s.typed.is_empty() && s.count.is_none());
+        press(&mut s, "<C-o>");
+        assert_eq!(s.screens.len(), depth - 1);
+    }
+
+    /// A page's tabs aren't history, and each keeps its place: back in
+    /// Files changed, the cursor is where it was left.
+    #[test]
+    fn page_tabs_keep_their_place() {
+        let mut s = with_pr(Mode::Dark);
+        let depth = s.screens.len();
+        press(&mut s, "4gt");
+        let at = Pos { file: 2, row: 3 };
+        if let Screen::Diff(d) = s.screen_mut() {
+            d.cursor = at;
+        }
+        press(&mut s, "1gt");
+        assert!(matches!(s.screen(), Screen::Page(_)));
+        press(&mut s, "4gt");
+        assert!(matches!(s.screen(), Screen::Diff(d) if d.cursor == at));
+        assert_eq!(s.screens.len(), depth, "no history");
+    }
+
+    /// After a key that starts sequences, the status bar lists what can
+    /// follow; a count goes before.
+    #[test]
+    fn sequences_say_what_can_follow() {
+        let mut s = with_pr(Mode::Dark);
+        press(&mut s, "2g");
+        let hints = s.key_hints();
+        assert_eq!(hints.first().map(|(k, _)| k.as_str()), Some("2g…"));
+        assert!(hints.iter().any(|(k, _)| k == "t"), "{hints:?}");
+        press(&mut s, "t");
+        assert_eq!(s.chrome().active, Some(1), "2gt: the second tab");
+        press(&mut s, "z");
+        press(&mut s, "q");
+        assert!(!s.quit, "zq is no binding; q in it doesn't quit");
+        // A key of another screen says so, not what it would do there.
+        press(&mut s, "w");
+        let said = format!("{:?}", s.notices.shown());
+        assert!(said.contains("w does nothing here"), "{said}");
+    }
+
+    /// A file's lines are rows: a count goes to one, `y` copies its link,
+    /// `V` a range's, and `gb` blames from there.
+    #[test]
+    fn file_lines_copy_and_blame() {
+        let mut s = super::with_file(Mode::Dark);
+        press(&mut s, "3gg");
+        let copied = |s: &mut State, keys: &str| match press(s, keys).as_slice() {
+            [crate::state::Cmd::Copy(url)] => url.clone(),
+            cmds => panic!("{cmds:?}"),
+        };
+        assert!(copied(&mut s, "y").ends_with("src/main.rs#L3"));
+        assert!(copied(&mut s, "Vjjy").ends_with("src/main.rs#L3-L5"));
+        press(&mut s, "<Esc>gb");
+        assert!(matches!(
+            s.route(),
+            Some(Route::Blame {
+                lines: Some((5, 5)),
+                ..
+            })
+        ));
+    }
+
+    /// A blame's runs of lines are rows that open their commit.
+    #[test]
+    fn blame_runs_open_their_commit() {
+        let mut s = with_blame(Mode::Dark);
+        let selected = |s: &State| match s.screen() {
+            Screen::Page(p) => p.selected_link().and_then(|l| l.url().map(str::to_owned)),
+            Screen::Diff(_) => None,
+        };
+        // Opened at line 5: its run is selected.
+        let link = selected(&s);
+        assert!(
+            link.as_ref().is_some_and(|l| l.contains("/commit/bbbbbbb")),
+            "{link:?}"
+        );
+        press(&mut s, "ggj");
+        assert!(selected(&s).is_some_and(|l| l.contains("/commit/")));
+        press(&mut s, "<Enter>");
+        assert!(matches!(s.route(), Some(Route::Commit { .. })));
+    }
+
+    /// A pull request's commit goes up to it, and on to its next commit.
+    #[test]
+    fn pr_commits_step_and_go_up() {
+        let mut s = with_pr(Mode::Dark);
+        let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+        let commit = |oid: &str| Route::Commit {
+            repo: pr.repo.clone(),
+            oid: oid.into(),
+            pr: Some(12),
+        };
+        let first = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
+        let _ = s.push(commit(first));
+        press(&mut s, "]C");
+        assert_eq!(
+            s.route(),
+            Some(&commit("1b2c3d4e5f60718293a4b5c6d7e8f9012345678a"))
+        );
+        press(&mut s, "u");
+        assert_eq!(s.route(), Some(&Route::pr(pr)));
     }
 
     /// In the menu, `h` and `l` are `←` and `→`: close it, run the row.
@@ -2538,7 +2664,7 @@ fn screenshots() {
         shot(&format!("issue_{tag}"), &sized(with_issue(mode), 130, 40));
         shot(&format!("pr_{tag}"), &sized(with_pr(mode), 130, 44));
         let mut commits = sized(with_pr(mode), 120, 30);
-        press(&mut commits, "2");
+        press(&mut commits, "2gt");
         shot(&format!("pr_commits_{tag}"), &commits);
         shot(&format!("file_{tag}"), &sized(with_file(mode), 120, 24));
         let profile = with_profile(mode, ProfileTab::Overview);
@@ -2556,7 +2682,7 @@ fn screenshots() {
         }];
         press(&mut s, "i");
         shot(&format!("hints_{tag}"), &s);
-        press(&mut s, "<Esc>/oct");
+        press(&mut s, "<Esc>g/oct");
         shot(&format!("search_box_{tag}"), &s);
         press(&mut s, "<Esc><Space>");
         shot(&format!("menu_{tag}"), &s);
@@ -2838,7 +2964,7 @@ fn failed_workflow_runs_say_why_instead_of_loading() {
     let (workflow, _) = fixtures::workflow_runs();
     let key = DataKey::Workflow(ghtui(), "ci.yml".into());
     fetched(&mut state, key, Data::Workflow(Box::new(workflow)));
-    failed(&mut state, DataKey::WorkflowRuns(ghtui(), "ci.yml".into()));
+    failed(&mut state, DataKey::Runs(ghtui(), "workflow:ci.yml".into()));
     let text = page_text(&state);
     assert!(!text.contains("Loading runs…"), "{text}");
     assert!(text.contains("timed out"), "{text}");
@@ -2972,6 +3098,9 @@ fn sample(key: &DataKey) -> Data {
         K::Tree(..) => Data::Tree(fixtures::tree()),
         K::Blob(..) => Data::Blob(Box::new(fixtures::blob())),
         K::Search(kind, _) => Data::Search(Box::new(search(kind))),
+        K::StateCounts(_) => {
+            Data::StateCounts(crate::api::browse::StateCounts { open: 2, closed: 5 })
+        }
         K::Issue(..) => Data::Issue(Some(Box::new(fixtures::issue()))),
         K::PrActivity(_) => Data::PrActivity(Box::new(fixtures::activity())),
         K::Profile(_) => Data::Profile(Box::new(fixtures::profile())),
@@ -2981,9 +3110,7 @@ fn sample(key: &DataKey) -> Data {
         K::LastCommits(..) => Data::LastCommits(Arc::new(fixtures::last_commits())),
         K::Commit(..) => Data::Commit(Box::new(fixtures::commit())),
         K::History(..) => Data::History(Box::new(fixtures::history(None))),
-        K::PrChecks(_) | K::BranchChecks(_) | K::CommitChecks(..) => {
-            Data::Checks(Box::new(fixtures::checks()))
-        }
+        K::PrChecks(_) | K::CommitChecks(..) => Data::Checks(Box::new(fixtures::checks())),
         K::Users(_) => Data::Users(Box::new(fixtures::people())),
         K::Forks(_) | K::OwnerRepos(..) | K::Stars(_) => {
             Data::RepoPage(Box::new(fixtures::profile_repos()))
@@ -3018,7 +3145,7 @@ fn sample(key: &DataKey) -> Data {
         K::Job(..) => Data::Job(Box::new(fixtures::job().0)),
         K::JobLog(..) => Data::Log(Arc::new(fixtures::job().1)),
         K::Workflow(..) => Data::Workflow(Box::new(fixtures::workflow_runs().0)),
-        K::WorkflowRuns(..) => Data::Runs(Box::new(fixtures::workflow_runs().1)),
+        K::Runs(..) => Data::Runs(Box::new(fixtures::workflow_runs().1)),
     }
 }
 
@@ -3196,7 +3323,7 @@ mod changes {
                 1,
             ),
         );
-        press(&mut s, "gjj");
+        press(&mut s, "ggjj");
         press(&mut s, "M");
         says(&s, "That works on a pull request");
     }

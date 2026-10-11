@@ -130,6 +130,38 @@ impl Seg {
     }
 }
 
+/// `seg` with each match of `query` picked out (ASCII case doesn't
+/// matter).
+pub fn highlight(seg: Seg, query: &str) -> Vec<Seg> {
+    let q = query.to_ascii_lowercase();
+    if q.is_empty() {
+        return vec![seg];
+    }
+    // Lowercasing ASCII keeps every byte where it was.
+    let lower = seg.text().to_ascii_lowercase();
+    let piece = |text: &str, role: &Role| Seg::linked(text, role.clone(), seg.link);
+    let mut out = Vec::new();
+    let mut from = 0;
+    for (at, found) in lower.match_indices(&q) {
+        let end = at.saturating_add(found.len());
+        let (Some(before), Some(hit)) = (seg.text().get(from..at), seg.text().get(at..end)) else {
+            continue;
+        };
+        if !before.is_empty() {
+            out.push(piece(before, &seg.role));
+        }
+        out.push(piece(hit, &Role::Match));
+        from = end;
+    }
+    if out.is_empty() {
+        return vec![seg];
+    }
+    if let Some(rest) = seg.text().get(from..).filter(|r| !r.is_empty()) {
+        out.push(piece(rest, &seg.role));
+    }
+    out
+}
+
 /// Where a line sits in a box.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Frame {
@@ -165,6 +197,9 @@ pub struct PageLine {
     pub right: Vec<Seg>,
     pub frame: Frame,
     pub tone: Tone,
+    /// Leading segments that stay put when code scrolls sideways (its
+    /// line number).
+    pub fixed: u8,
 }
 
 impl PageLine {
@@ -175,6 +210,37 @@ impl PageLine {
 
     pub fn text(&self) -> String {
         self.segs.iter().map(|s| s.text.as_str()).collect()
+    }
+
+    /// The line with its code (after the fixed segments) scrolled left
+    /// by `shift` columns.
+    fn shifted(&self, shift: usize) -> PageLine {
+        let fixed = usize::from(self.fixed);
+        let mut skip = shift;
+        let mut segs: Vec<Seg> = self.segs.iter().take(fixed).cloned().collect();
+        for seg in self.segs.iter().skip(fixed) {
+            if skip == 0 {
+                segs.push(seg.clone());
+                continue;
+            }
+            let mut rest = String::new();
+            for c in seg.text.chars() {
+                let w = text::width(c.encode_utf8(&mut [0; 4]));
+                if skip >= w && rest.is_empty() {
+                    skip = skip.saturating_sub(w);
+                } else {
+                    skip = 0;
+                    rest.push(c);
+                }
+            }
+            if !rest.is_empty() {
+                segs.push(Seg::linked(rest, seg.role.clone(), seg.link));
+            }
+        }
+        PageLine {
+            segs,
+            ..self.clone()
+        }
     }
 }
 
@@ -216,10 +282,14 @@ pub struct Page {
     pub compact: bool,
     /// The line the page opens scrolled to (a linked line), if not the top.
     pub jump: Option<usize>,
+    /// The item the page opens selected, if not the first in view.
+    pub selects: Option<usize>,
     /// Named places a link's `#fragment` can point at (a comment), by line.
     pub anchors: HashMap<String, usize>,
     /// The lines a search on the page matched, in order.
     pub marks: Vec<usize>,
+    /// A file's lines, by number from 1: the item each is.
+    pub numbered: Vec<usize>,
 }
 
 impl Page {
@@ -231,18 +301,20 @@ impl Page {
     }
 
     /// A page `total` columns wide that keeps a sidebar beside its column,
-    /// if there's room for one.
+    /// if there's room for one: 30 columns, and one more for every three
+    /// past 140, up to 48.
     pub fn with_aside(total: u16) -> Self {
-        const WIDTH: u16 = 30;
         if total < 104 {
             return Self::new(total);
         }
+        let grown = total.saturating_sub(140).checked_div(3).unwrap_or(0);
+        let width = grown.saturating_add(30).min(48);
         Self {
             aside: Some(Aside {
-                width: WIDTH,
+                width,
                 lines: Vec::new(),
             }),
-            ..Self::new(total.saturating_sub(WIDTH + ASIDE_GAP))
+            ..Self::new(total.saturating_sub(width.saturating_add(ASIDE_GAP)))
         }
     }
 
@@ -293,6 +365,7 @@ impl Page {
             right,
             frame,
             tone: Tone::Plain,
+            fixed: 0,
         });
     }
 
@@ -433,6 +506,26 @@ impl Page {
     }
 
     /// Rows the page takes (the longer of the column and the aside).
+    /// Picks out `query` on every line it's on, and marks those lines
+    /// for `n`/`N`.
+    pub fn mark(&mut self, query: &str) {
+        let q = query.to_ascii_lowercase();
+        for (i, line) in self.lines.iter_mut().enumerate() {
+            if line.text().to_ascii_lowercase().contains(&q) {
+                let segs = std::mem::take(&mut line.segs);
+                line.segs = segs.into_iter().flat_map(|s| highlight(s, &q)).collect();
+                self.marks.push(i);
+            }
+        }
+    }
+
+    /// Columns code can scroll left by before its longest line ends.
+    pub fn wide(&self) -> usize {
+        let code = self.lines.iter().filter(|l| l.tone != Tone::Plain);
+        let longest = code.map(|l| text::width(&l.text())).max().unwrap_or(0);
+        longest.saturating_sub(usize::from(self.width) / 2)
+    }
+
     pub fn height(&self) -> usize {
         let aside = self.aside.as_ref().map_or(0, |a| a.lines.len());
         self.lines.len().max(aside)
@@ -676,8 +769,12 @@ pub struct PageView<'a> {
     pub page: &'a Page,
     pub scroll: usize,
     pub selected: Option<usize>,
+    /// Where a selection of several items started, to `selected`.
+    pub from: Option<usize>,
     pub current: Option<usize>,
     pub hints: &'a [HintLabel],
+    /// Columns code is scrolled left by.
+    pub shift: usize,
 }
 
 impl Widget for PageView<'_> {
@@ -685,11 +782,16 @@ impl Widget for PageView<'_> {
         let theme = self.ctx.theme;
         fill(buf, area, theme, PAGE_BG);
         let layout = columns(self.page, area);
-        let selected = self.selected.and_then(|i| self.page.items.get(i)).copied();
+        // The selected lines: an item's, or a run of items'.
+        let items = |i: Option<usize>| i.and_then(|i| self.page.items.get(i)).copied();
+        let selected = items(self.selected).map(|s| match items(self.from) {
+            Some(f) => s.start.min(f.start)..s.end.max(f.end),
+            None => s.start..s.end,
+        });
         for (row, y) in (area.top()..area.bottom()).enumerate() {
             let i = self.scroll.saturating_add(row);
             if let Some(line) = self.page.lines.get(i) {
-                let sel = selected.is_some_and(|s| (s.start..s.end).contains(&i));
+                let sel = selected.as_ref().is_some_and(|s| s.contains(&i));
                 let here = self.current == Some(i);
                 self.line(
                     buf,
@@ -804,6 +906,13 @@ impl PageView<'_> {
             }
         }
         // Text.
+        let shifted;
+        let line = if self.shift > 0 && line.tone != Tone::Plain {
+            shifted = line.shifted(self.shift);
+            &shifted
+        } else {
+            line
+        };
         let placed = place(line, x, width);
         if line.frame == Frame::Top {
             // Titles sit in gaps cut into the top edge.

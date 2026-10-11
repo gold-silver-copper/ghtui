@@ -54,8 +54,12 @@ pub enum Route {
         pr: PrRef,
         tab: PrTab,
     },
-    /// The checks on the default branch.
-    Actions(RepoId),
+    /// Workflow runs, filtered as GitHub's Actions tab filters them
+    /// (`branch:main is:failure`).
+    Actions {
+        repo: RepoId,
+        query: String,
+    },
     /// Discussions, in a category (by its slug) if given.
     Discussions {
         of: DiscussionsOf,
@@ -161,10 +165,12 @@ pub enum Route {
         rev: String,
         path: String,
     },
-    /// A commit, by SHA (short or full, as linked).
+    /// A commit, by SHA (short or full, as linked); opened from a pull
+    /// request's commits, that pull request's number.
     Commit {
         repo: RepoId,
         oid: String,
+        pr: Option<u64>,
     },
     User {
         login: String,
@@ -312,6 +318,14 @@ impl Route {
         }
     }
 
+    /// A repository's Actions tab: all its runs.
+    pub fn actions(repo: RepoId) -> Route {
+        Route::Actions {
+            repo,
+            query: String::new(),
+        }
+    }
+
     pub fn url(&self) -> String {
         match self {
             Route::Home => format!("{}/", links::BASE),
@@ -351,7 +365,16 @@ impl Route {
                 PrTab::Commits => links::pull_tab(pr, "commits"),
                 PrTab::Checks => links::pull_tab(pr, "checks"),
             },
-            Route::Actions(repo) => format!("{}/actions", links::repo(repo)),
+            Route::Actions { repo, query } if query.is_empty() => {
+                format!("{}/actions", links::repo(repo))
+            }
+            Route::Actions { repo, query } => {
+                format!(
+                    "{}/actions?query={}",
+                    links::repo(repo),
+                    links::encode(query)
+                )
+            }
             Route::WorkflowRun { repo, run, attempt } => {
                 let url = format!("{}/actions/runs/{run}", links::repo(repo));
                 match attempt {
@@ -441,7 +464,18 @@ impl Route {
                 format!("{}/milestone/{number}", links::repo(repo))
             }
             Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
-            Route::Commit { repo, oid } => links::commit(repo, oid),
+            Route::Commit {
+                repo,
+                oid,
+                pr: Some(number),
+            } => {
+                let pr = PrRef {
+                    repo: repo.clone(),
+                    number: *number,
+                };
+                links::pull_tab(&pr, &format!("commits/{oid}"))
+            }
+            Route::Commit { repo, oid, .. } => links::commit(repo, oid),
             Route::User { login, tab } => match tab {
                 ProfileTab::Overview => links::user(login),
                 ProfileTab::Repositories(sort) => {
@@ -480,7 +514,7 @@ impl Route {
             Route::Pulls { repo, .. } => format!("{repo} · Pull requests"),
             Route::Issue { repo, number } => format!("{repo}#{number}"),
             Route::Pr { pr, .. } => pr.to_string(),
-            Route::Actions(repo) => format!("{repo} · Actions"),
+            Route::Actions { repo, .. } => format!("{repo} · Actions"),
             Route::WorkflowRun { repo, run, .. } => format!("{repo} · Run {run}"),
             Route::Job { repo, job, .. } => format!("{repo} · Job {job}"),
             Route::Workflow { repo, file } => format!("{repo} · {file}"),
@@ -511,7 +545,7 @@ impl Route {
             Route::Milestone { repo, number } => format!("{repo} · Milestone {number}"),
             Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
             Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
-            Route::Commit { repo, oid } => format!("{repo}@{}", short_sha(oid)),
+            Route::Commit { repo, oid, .. } => format!("{repo}@{}", short_sha(oid)),
             Route::User { login, .. } => format!("@{login}"),
             Route::Search { query, .. } => format!("Search “{query}”"),
         }
@@ -527,7 +561,7 @@ impl Route {
             | Route::Pulls { repo, .. }
             | Route::Issue { repo, .. }
             | Route::Commits { repo, .. }
-            | Route::Actions(repo)
+            | Route::Actions { repo, .. }
             | Route::WorkflowRun { repo, .. }
             | Route::Job { repo, .. }
             | Route::Workflow { repo, .. }
@@ -580,11 +614,12 @@ impl Route {
         }
     }
 
-    /// A list's filter: issues, pull requests, search results.
+    /// A list's filter: issues, pull requests, search results, runs.
     pub fn list_query(&self) -> Option<&str> {
         match self {
             Route::Issues { query, .. }
             | Route::Pulls { query, .. }
+            | Route::Actions { query, .. }
             | Route::Search { query, .. } => Some(query),
             _ => None,
         }
@@ -602,6 +637,10 @@ impl Route {
                 query,
             },
             Route::Search { kind, .. } => Route::Search { kind: *kind, query },
+            Route::Actions { repo, .. } => Route::Actions {
+                repo: repo.clone(),
+                query,
+            },
             _ => return None,
         })
     }
@@ -618,6 +657,22 @@ impl Route {
             Route::Search { kind, query } => Some((*kind, query.clone())),
             _ => None,
         }
+    }
+
+    /// The search an issue or pull request list's open and closed counts
+    /// come from, when its filter is more than a state and a sort (else
+    /// they're the repository's own).
+    pub fn state_counts(&self) -> Option<String> {
+        let (repo, is, query) = match self {
+            Route::Issues { repo, query } => (repo, "issue", query),
+            Route::Pulls { repo, query } => (repo, "pr", query),
+            _ => return None,
+        };
+        let state = ["is:open", "is:closed", "state:open", "state:closed"];
+        let filter: Vec<&str> = (query.split_whitespace())
+            .filter(|w| !state.contains(w) && !w.starts_with("sort:"))
+            .collect();
+        (!filter.is_empty()).then(|| format!("repo:{repo} is:{is} {}", filter.join(" ")))
     }
 }
 
@@ -871,7 +926,12 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
                 query: format!("{OPEN} label:{label}"),
             }
         }
-        ["actions"] => Route::Actions(repo),
+        ["actions"] => Route::Actions {
+            repo,
+            query: param("query")
+                .map(|q| q.trim().to_owned())
+                .unwrap_or_default(),
+        },
         ["stargazers"] => Route::Stargazers(repo),
         ["watchers"] => Route::Watchers(repo),
         ["forks"] | ["network", "members"] => Route::Forks(repo),
@@ -1004,6 +1064,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
         ["git", "commit", sha] => Route::Commit {
             repo,
             oid: (*sha).to_owned(),
+            pr: None,
         },
         // A commit's patch is a download; its diff is the diff viewer.
         ["commit", sha] if sha.ends_with(".patch") => return None,
@@ -1025,6 +1086,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             Route::Commit {
                 repo,
                 oid: rev.to_owned(),
+                pr: None,
             }
         }
         ["issues", n] => Route::Issue {
@@ -1048,6 +1110,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
                 ["commits" | "changes", sha] if valid_rev(sha) => Route::Commit {
                     repo: pr.repo,
                     oid: (*sha).to_owned(),
+                    pr: Some(pr.number),
                 },
                 ["files" | "changes", ..] => return Some(Target::Files(DiffOf::Pr(pr))),
                 ["commits", ..] => Route::Pr {
@@ -1531,6 +1594,7 @@ pub(crate) mod tests {
         let commit = |oid: &str| Route::Commit {
             repo: pr.repo.clone(),
             oid: oid.into(),
+            pr: None,
         };
         assert_eq!(
             page(&format!("https://github.com/o/r/commit/{sha}")),
@@ -1548,7 +1612,14 @@ pub(crate) mod tests {
         assert_eq!(page("https://github.com/o/r/commits"), commits("HEAD", ""));
         assert_eq!(
             page("https://github.com/o/r/actions"),
-            Route::Actions(pr.repo.clone())
+            Route::actions(pr.repo.clone())
+        );
+        assert_eq!(
+            page("https://github.com/o/r/actions?query=branch%3Amain+is%3Afailure"),
+            Route::Actions {
+                repo: pr.repo.clone(),
+                query: "branch:main is:failure".into()
+            }
         );
         assert_eq!(
             page("https://github.com/o/r/stargazers"),
@@ -1588,9 +1659,14 @@ pub(crate) mod tests {
             page("https://github.com/o/r/commit/0123abc"),
             commit("0123abc")
         );
+        // A pull request's commit knows it.
         assert_eq!(
             page(&format!("https://github.com/o/r/pull/7/commits/{sha}")),
-            commit(sha)
+            Route::Commit {
+                repo: pr.repo.clone(),
+                oid: sha.into(),
+                pr: Some(7),
+            }
         );
         assert_eq!(
             Dest::from_url(&format!("https://github.com/o/r/commit/{sha}#diff-abc")).target,
@@ -1850,6 +1926,7 @@ pub(crate) mod tests {
             Route::Commit {
                 repo: repo.clone(),
                 oid: "abc1234".into(),
+                pr: None,
             },
             Route::Issue { repo, number: 3 },
             Route::user("octocat"),
@@ -1933,6 +2010,7 @@ pub(crate) mod tests {
             Route::Commit {
                 repo: repo.clone(),
                 oid: oid.clone(),
+                pr: None,
             },
             Route::CommitChecks { repo, oid },
         ] {
@@ -2125,7 +2203,7 @@ pub(crate) mod tests {
                     });
             prop_oneof![
                 Just(Route::Home),
-                repo().prop_map(Route::Actions),
+                (repo(), query()).prop_map(|(repo, query)| Route::Actions { repo, query }),
                 repo().prop_map(Route::Stargazers),
                 repo().prop_map(Route::Watchers),
                 repo().prop_map(Route::Forks),
@@ -2234,7 +2312,11 @@ pub(crate) mod tests {
                 (repo(), query()).prop_map(|(repo, query)| Route::Issues { repo, query }),
                 (repo(), query()).prop_map(|(repo, query)| Route::Pulls { repo, query }),
                 (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Issue { repo, number }),
-                (repo(), "[0-9a-f]{7,40}").prop_map(|(repo, oid)| Route::Commit { repo, oid }),
+                (repo(), "[0-9a-f]{7,40}").prop_map(|(repo, oid)| Route::Commit {
+                    repo,
+                    oid,
+                    pr: None
+                }),
                 (repo(), rev, path()).prop_map(|(repo, rev, path)| Route::Commits {
                     repo,
                     rev,
