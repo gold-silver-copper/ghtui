@@ -845,15 +845,17 @@ kind of github.com link is listed with what it must open in
 
 `cargo xtask live` runs ghtui for real, against real GitHub, and checks
 every write and live update against GitHub's own answer (`gh api`), not
-only the screen. It's run by hand, not in CI, and takes about five
+only the screen. It's run by hand, not in CI, and takes about eight
 minutes. `cargo xtask live --list` names the checks; `cargo xtask live
 issue inbox` runs only those.
 
 - **What it needs:** `gh`, logged in as the owner of
   `gold-silver-copper/ghtui-test-writes`, with a classic token's `repo`
-  scope (and `project` for the Projects check, which is
-  skipped without it: `gh auth refresh -s project`); git; openssl; and a
-  fux with `fux help agents` (on `PATH`, or `~/code/fux`'s release build,
+  and `gist` scopes, and `workflow` to run workflows by hand. Checks
+  that need more are skipped without it, and say so: `project` for the
+  Projects checks (`gh auth refresh -s project`), `notifications` for
+  subscribing to a thread (without it, the check sees ghtui name the
+  scope). It also needs git; openssl; and a fux with `fux help agents` (on `PATH`, or `~/code/fux`'s release build,
   or `--fux PATH`). It builds `target/release/ghtui` unless given
   `--ghtui PATH`.
 - **Where it runs:** ghtui runs in a private fux server, one pane at a
@@ -861,19 +863,28 @@ issue inbox` runs only those.
   and a scratch cache, config and clones, all under
   `~/.cache/claude-tmp/ghtui-live` (`GHTUI_LIVE_DIR`), which a run empties
   when it starts. A failing check leaves its last screen in `failures/`.
-- **What it touches:** it writes only to the test repository, whose
-  `mention.yml` (the Actions bot mentions the owner on an issue),
-  `botreview.yml` (it leaves a review comment on PR #11) and protected
-  `main` the checks rely on. The inbox is filtered to that repository
-  before anything is marked. A stand-in `xdg-open`, first on the
-  server's `PATH`, writes down the URLs ghtui opens instead of opening a
-  browser.
+- **What it touches:** it writes only to the test repository (and a
+  secret gist of the owner's, deleted at once). The checks rely on the
+  repository's workflows, run by hand: `mention.yml` (the Actions bot
+  mentions the owner on an issue), `botreview.yml` (it leaves a review
+  comment on PR #11, or, given `review`, submits a review with a summary
+  and an inline comment on the pull request it's given) and
+  `actions.yml` (a job that fails with annotations and uploads an
+  artifact); on its code scanning alerts (from an uploaded SARIF), its
+  Discussions (turned on) and its protected `main`. Its wiki has no
+  page, so the wiki check is skipped until one is made on github.com.
+  The inbox is filtered to that repository before anything is marked. A
+  stand-in `xdg-open`, first on the server's `PATH`, writes down the
+  URLs ghtui opens instead of opening a browser.
 - **Cleaning up:** each check undoes what it made, pass or fail (issues,
-  comments, pull requests, branches, projects, repository settings), and
-  the fux server and the stand-in server are stopped. ctrl-c stops the
-  run after cleaning up. A run that was killed is swept up by the next
-  one: issues and pull requests titled `[ghtui live]`, `ghtui-live-`
-  branches, its projects, and settings put back.
+  comments, pull requests, branches, releases and their tags, workflow
+  runs, gists, discussions, projects, repository and watch settings, a
+  dismissed alert), and the fux server and the stand-in server are
+  stopped. A submitted review can't be deleted, so the reviews check's
+  stay on its pull request, closed. ctrl-c stops the run after cleaning
+  up. A run that was killed is swept up by the next one: issues, pull
+  requests, discussions, gists and projects titled `[ghtui live]`,
+  `ghtui-live-` branches, tags and releases, and settings put back.
 - **Enterprise Server:** `cargo xtask ghes` serves a stand-in on
   `https://localhost:8443` that relays an Enterprise Server's paths to
   github.com (`/api/v3`, `/api/graphql`, `/raw`, git) and rewrites

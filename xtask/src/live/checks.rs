@@ -7,14 +7,22 @@
 
 use super::Check;
 
+mod actions;
+mod discussion;
 mod enterprise;
 mod inbox;
 mod issue;
+mod local_reads;
 mod merge;
 mod narrow;
 mod projects;
 mod pull;
 mod review;
+mod reviews;
+mod security;
+mod timeline;
+mod wiki;
+mod writes;
 
 pub const ALL: &[Check] = &[
     issue::CHECK,
@@ -22,7 +30,19 @@ pub const ALL: &[Check] = &[
     pull::CHECKOUT,
     merge::CHECK,
     review::CHECK,
+    reviews::CHECK,
+    timeline::CHECK,
+    actions::CHECK,
+    security::CHECK,
+    writes::RELEASE,
+    writes::GIST,
+    writes::WATCH,
+    writes::SUBSCRIBE,
     projects::CHECK,
+    projects::ITEMS,
+    discussion::CHECK,
+    local_reads::CHECK,
+    wiki::CHECK,
     enterprise::CHECK,
     enterprise::OLDER,
     narrow::CHECK,

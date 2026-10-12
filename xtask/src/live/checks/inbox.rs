@@ -18,7 +18,7 @@ use crate::live::{Check, Cx, gh, until};
 
 pub const CHECK: Check = Check::new(
     "inbox",
-    "a mention (mention.yml) makes an unread thread; ,N marks the repository's threads read, ,d marks one done",
+    "a mention (mention.yml) makes an unread thread; ,N marks the repository's threads read, ,d marks one done and it stays out of the inbox",
     run,
 )
 .prepare(prepare)
@@ -79,9 +79,28 @@ fn run(cx: &mut Cx) -> Result<()> {
             .then_some(()))
     })?;
 
-    cx.step(",d marks the first thread done")?;
+    cx.step(",d marks the first thread done, and it leaves the inbox")?;
     ghtui.wait_followed()?;
-    ghtui.keys("gg , d")?;
+    ghtui.keys("gg")?;
+    let screen = ghtui.screen_marked()?;
+    let all = threads()?;
+    let done = all
+        .iter()
+        .filter_map(|t| t["subject"]["title"].as_str())
+        .find(|title| {
+            screen
+                .lines()
+                .any(|l| l.contains("⟦▌") && l.contains(title))
+        })
+        .map(str::to_owned);
+    let Some(done) = done else {
+        anyhow::bail!("the selected row is none of the repository's threads");
+    };
+    let others = all
+        .iter()
+        .filter(|t| t["subject"]["title"] == done.as_str())
+        .count();
+    ghtui.keys(", d")?;
     ghtui.wait_until("ghtui to say it's done", GITHUB, |screen| {
         let status = screen.lines().rev().find(|l| !l.trim().is_empty())?;
         status.contains("done").then_some(())
@@ -92,6 +111,29 @@ fn run(cx: &mut Cx) -> Result<()> {
         threads()?.iter().all(|t| t["unread"] == false),
         "a thread is unread again"
     );
+    if others == 1 {
+        ghtui.wait_gone(&done)?;
+        cx.step("it stays out after a refresh and a restart (ghtui's own record)")?;
+        ghtui.keys("r")?;
+        ghtui.wait_followed()?;
+        ensure!(
+            !ghtui.screen()?.contains(&done),
+            "{done} is back after a refresh"
+        );
+        let again = cx.ghtui(&[])?;
+        again.wait_for("Review requests")?;
+        again.wait_followed()?;
+        again.keys("g n")?;
+        again.wait_for("All   Unread   Read")?;
+        again.keys("/")?;
+        again.type_text(&format!("repo:{}", gh::REPO))?;
+        again.keys("Enter")?;
+        again.wait_followed()?;
+        ensure!(
+            !again.screen()?.contains(&done),
+            "{done} is back after a restart"
+        );
+    }
     Ok(())
 }
 
