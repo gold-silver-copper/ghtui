@@ -366,18 +366,24 @@ pub fn search(
             });
         }),
         SearchResults::Code(r) => box_rows(page, r, |page, hit| {
-            item(
-                page,
-                url::blob(&hit.repo, "HEAD", &hit.path),
-                |page, link| {
-                    page.box_line(
-                        vec![Seg::linked(hit.path.clone(), Role::Code, link)],
-                        Vec::new(),
-                        0,
-                    );
-                    body(page, vec![Seg::new(hit.repo.to_string(), Role::Meta)]);
-                },
-            );
+            // Git says where it searched, and which lines matched.
+            let rev = hit.rev.as_deref().unwrap_or("HEAD");
+            let file = url::blob(&hit.repo, rev, &hit.path);
+            item(page, file.clone(), |page, link| {
+                page.box_line(
+                    vec![Seg::linked(hit.path.clone(), Role::Code, link)],
+                    Vec::new(),
+                    0,
+                );
+                body(page, vec![Seg::new(hit.repo.to_string(), Role::Meta)]);
+            });
+            for (n, text) in &hit.lines {
+                item(page, format!("{file}#L{n}"), |page, link| {
+                    let number = Seg::linked(format!("{n:>5}  "), Role::Meta, link);
+                    let text = crate::ui::text::truncate(text.trim(), 200);
+                    body(page, vec![number, Seg::new(text, Role::Code)]);
+                });
+            }
         }),
     }
     page.box_bottom();

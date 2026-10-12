@@ -21,6 +21,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
             | Msg::Pr(..)
             | Msg::Fetched { .. }
             | Msg::FetchedMore(..)
+            | Msg::Source(..)
             | Msg::Changed(..)
             | Msg::Create(_)
     );
@@ -150,6 +151,9 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 };
                 return state.replace(Route::pr(PrRef { repo, number }), true, anchor);
             }
+        }
+        Msg::Source(key, from) => {
+            state.sources.insert(key, from);
         }
         Msg::FetchedMore(key, after, result) => {
             let Some(remote) = (state.data.get_mut(&key)).filter(|r| r.more == Some(after)) else {

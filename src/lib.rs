@@ -41,6 +41,7 @@ mod security;
 mod sequence_tests;
 #[cfg(test)]
 mod snapshot_tests;
+mod source;
 mod state;
 mod tabs;
 mod typing;

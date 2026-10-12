@@ -725,6 +725,11 @@ impl State {
             pages::flash(&mut page, &why);
             page.blank();
         }
+        // Where the page was read: a clone at a commit, or GitHub's API.
+        if let Some(from) = crate::source::shown(route).and_then(|k| self.sources.get(&k)) {
+            let note = vec![Seg::new(from.note(), Role::Meta)];
+            page.wrapped(note, 0, crate::ui::page::Frame::None);
+        }
         let banner = page.lines.len();
         let retry = self.first_key(Action::Refresh);
         let f = Needs {

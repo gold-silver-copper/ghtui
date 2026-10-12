@@ -96,8 +96,34 @@ impl Repo {
         Self::open(top.to_owned(), remote, version, Credentials::Ambient).await
     }
 
+    /// Where the cache keeps its clone of `owner/name`.
+    pub fn cache_path(cache_root: &Path, owner: &str, name: &str) -> PathBuf {
+        cache_root
+            .join("repos")
+            .join(owner.to_ascii_lowercase())
+            .join(format!("{}.git", name.to_ascii_lowercase()))
+    }
+
+    /// The cache's clone of `owner/name`, if it has been made (never
+    /// cloning it).
+    pub async fn open_cached(
+        cache_root: &Path,
+        owner: &str,
+        name: &str,
+        credentials: Credentials,
+    ) -> Result<Option<Repo>, GitError> {
+        let path = Self::cache_path(cache_root, owner, name);
+        if !path.join("HEAD").exists() {
+            return Ok(None);
+        }
+        let version = crate::git::version().await?;
+        Self::open(path, "origin", version, credentials)
+            .await
+            .map(Some)
+    }
+
     /// Opens (cloning on first use) the cache clone of `url` at
-    /// `<cache_root>/repos/<owner>/<name>.git`.
+    /// [`Self::cache_path`].
     pub async fn open_cache(
         cache_root: &Path,
         owner: &str,
@@ -106,10 +132,7 @@ impl Repo {
         credentials: Credentials,
         progress: Progress<'_>,
     ) -> Result<Repo, GitError> {
-        let path = cache_root
-            .join("repos")
-            .join(owner.to_ascii_lowercase())
-            .join(format!("{}.git", name.to_ascii_lowercase()));
+        let path = Self::cache_path(cache_root, owner, name);
         let _guard = repo_lock(&path).lock_owned().await;
         let version = crate::git::version().await?;
         if !path.join("HEAD").exists() {
@@ -156,14 +179,26 @@ impl Repo {
         Ok(repo)
     }
 
-    fn cmd(&self) -> Command {
+    pub(crate) fn cmd(&self) -> Command {
         let mut cmd = git(Some(&self.path));
         self.credentials.apply(&mut cmd);
         cmd
     }
 
-    async fn run(&self, args: &[&str]) -> Result<String, GitError> {
+    pub(crate) async fn run(&self, args: &[&str]) -> Result<String, GitError> {
         stdout(&self.cmd().args(args).output().await?, &args.join(" "))
+    }
+
+    /// What `git <args>` printed, as bytes (a file's contents).
+    pub(crate) async fn run_bytes(&self, args: &[&str]) -> Result<Vec<u8>, GitError> {
+        let output = self.cmd().args(args).output().await?;
+        if !output.status.success() {
+            return Err(GitError::Failed {
+                args: args.join(" "),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            });
+        }
+        Ok(output.stdout)
     }
 
     async fn is_promisor(&self) -> bool {
@@ -303,7 +338,11 @@ impl Repo {
 
     /// Fetches `refspecs` (refs, or commits by SHA) from the remote,
     /// reporting git's progress.
-    async fn fetch(&self, refspecs: &[&str], progress: Progress<'_>) -> Result<(), GitError> {
+    pub(crate) async fn fetch(
+        &self,
+        refspecs: &[&str],
+        progress: Progress<'_>,
+    ) -> Result<(), GitError> {
         let _guard = repo_lock(&self.path).lock_owned().await;
         let mut cmd = self.cmd();
         cmd.args([

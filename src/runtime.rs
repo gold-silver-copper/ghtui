@@ -34,6 +34,8 @@ struct Effects {
     /// Review saves go through one writer, in order.
     save_review: mpsc::UnboundedSender<(PrRef, ReviewState)>,
     writer: tokio::task::JoinHandle<()>,
+    /// What git answers in place of GitHub's API.
+    local: Arc<crate::source::Local>,
 }
 
 pub async fn run(
@@ -49,6 +51,7 @@ pub async fn run(
     let (save_review, writer) = review_writer(reviews.clone(), &tx);
     let mut effects = Effects {
         gh,
+        local: crate::source::Local::new(git.clone()),
         git,
         tx,
         jobs: HashMap::new(),
@@ -171,6 +174,14 @@ impl Effects {
                 key: DataKey::Wiki(repo, page),
                 ..
             }) => self.wiki(repo, page, replies),
+            Cmd::Api(Api::Fetch { key, cached }) if crate::source::by_git(&key, None) => {
+                self.local(key, None, cached, replies);
+            }
+            Cmd::Api(Api::FetchMore { key, after })
+                if crate::source::by_git(&key, Some(&after)) =>
+            {
+                self.local(key, Some(after), false, replies);
+            }
             Cmd::Api(api) => spawn(api, replies, &self.gh, &self.tx),
             Cmd::Git(git) => self.git(git, replies),
             Cmd::OpenUrl(url) => {
@@ -364,6 +375,36 @@ impl Effects {
                 result: result.map(|w| Data::Wiki(Box::new(w))),
                 cached_at: None,
             });
+        });
+    }
+
+    /// Reads `key` (its page after `after`) through git where it can
+    /// (`crate::source`), saying where it came from; with `cached`, the
+    /// cache's copy shows first.
+    fn local(&self, key: DataKey, after: Option<String>, cached: bool, replies: Vec<Msg>) {
+        let (gh, local) = (self.gh.clone(), self.local.clone());
+        spawn_guarded(&self.tx, replies, |tx| async move {
+            if cached {
+                let (gh, lookup) = (gh.clone(), key.clone());
+                if let Some((data, at)) = blocking(move || cached_data(&gh, &lookup)).await {
+                    let _ = tx.send(Msg::Fetched {
+                        key: key.clone(),
+                        result: Ok(data),
+                        cached_at: Some(at),
+                    });
+                }
+            }
+            let (result, from) = local.fetch(&gh, &key, after.clone()).await;
+            let _ = tx.send(Msg::Source(key.clone(), from));
+            let _ = tx.send(match after {
+                Some(after) => Msg::FetchedMore(key, after, result),
+                None => Msg::Fetched {
+                    key,
+                    result,
+                    cached_at: None,
+                },
+            });
+            let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
         });
     }
 

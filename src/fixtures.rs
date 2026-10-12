@@ -1571,6 +1571,8 @@ pub fn code_results() -> SearchResults {
         repo: RepoId::new("ratatui", "ratatui"),
         path: path.into(),
         sha: "f60d17e29bb58b7e699e9befbb97298ec22aac14".into(),
+        lines: Vec::new(),
+        rev: None,
     };
     SearchResults::Code(Results {
         total: 158,

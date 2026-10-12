@@ -9,6 +9,7 @@ pub mod blobs;
 pub mod credentials;
 pub mod files;
 pub mod local;
+pub mod read;
 pub mod repo;
 
 use std::path::Path;

@@ -409,8 +409,16 @@ pub struct CommitHit {
 pub struct CodeHit {
     pub repo: RepoId,
     pub path: String,
-    /// The blob's ID: the file as it was indexed.
+    /// The blob's ID: the file as it was indexed (empty from git).
     pub sha: String,
+    /// The lines that matched, by number, where git searched (GitHub's
+    /// search doesn't say).
+    #[serde(default)]
+    pub lines: Vec<(u32, String)>,
+    /// The commit git searched at; GitHub's search reads the default
+    /// branch.
+    #[serde(default)]
+    pub rev: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -3627,6 +3635,8 @@ impl rest_search::Code {
             repo: RepoId::parse(&self.repository.full_name)?,
             path: self.path,
             sha: self.sha,
+            lines: Vec::new(),
+            rev: None,
         })
     }
 }
