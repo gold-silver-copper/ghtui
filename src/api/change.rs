@@ -6,7 +6,8 @@ use crate::schema::schema;
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{NodeId, RepoId};
 use crate::api::queries::{
-    AddCommentPayload, CloseIssuePayload, ClosePrPayload, GitObjectId, MergePayload, ReadyPayload,
+    AddCommentPayload, AutoMergePayload, CloseIssuePayload, ClosePrPayload, DequeuePayload,
+    EnqueuePayload, GitObjectId, MergePayload, NoAutoMergePayload, ReadyPayload,
     ReopenIssuePayload, ReopenPrPayload, StarPayload, UnstarPayload, UpdateBranchPayload,
 };
 
@@ -33,6 +34,25 @@ pub enum Change {
         pr: NodeId,
         method: MergeMethod,
         head: String,
+    },
+    /// Merge a pull request once every requirement is met (with a merge
+    /// queue, add it to the queue then), if its head is still `head`.
+    EnableAutoMerge {
+        pr: NodeId,
+        method: MergeMethod,
+        head: String,
+    },
+    DisableAutoMerge {
+        pr: NodeId,
+    },
+    /// Add a pull request to its base branch's merge queue, if its head
+    /// is still `head`.
+    Enqueue {
+        pr: NodeId,
+        head: String,
+    },
+    Dequeue {
+        pr: NodeId,
     },
     /// Close (`open: false`) or reopen a pull request.
     SetPrOpen {
@@ -162,6 +182,29 @@ impl GitHub {
                     method: *method,
                     head: GitObjectId(head.clone()),
                 });
+                self.mutate(op).await.map(drop)
+            }
+            Change::EnableAutoMerge { pr, method, head } => {
+                let op = EnableAutoMerge::build(MergeVariables {
+                    pr: pr.gql(),
+                    method: *method,
+                    head: GitObjectId(head.clone()),
+                });
+                self.mutate(op).await.map(drop)
+            }
+            Change::DisableAutoMerge { pr } => {
+                let op = DisableAutoMerge::build(IdVariables { id: pr.gql() });
+                self.mutate(op).await.map(drop)
+            }
+            Change::Enqueue { pr, head } => {
+                let op = Enqueue::build(EnqueueVariables {
+                    pr: pr.gql(),
+                    head: GitObjectId(head.clone()),
+                });
+                self.mutate(op).await.map(drop)
+            }
+            Change::Dequeue { pr } => {
+                let op = Dequeue::build(IdVariables { id: pr.gql() });
                 self.mutate(op).await.map(drop)
             }
             Change::SetPrOpen { pr, open } => {
@@ -332,6 +375,56 @@ pub struct MergeVariables {
 pub struct MergePr {
     #[arguments(input: { pullRequestId: $pr, mergeMethod: $method, expectedHeadOid: $head })]
     pub merge_pull_request: Option<MergePayload>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "MergeVariables"
+)]
+pub struct EnableAutoMerge {
+    #[arguments(input: { pullRequestId: $pr, mergeMethod: $method, expectedHeadOid: $head })]
+    pub enable_pull_request_auto_merge: Option<AutoMergePayload>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "IdVariables"
+)]
+pub struct DisableAutoMerge {
+    #[arguments(input: { pullRequestId: $id })]
+    pub disable_pull_request_auto_merge: Option<NoAutoMergePayload>,
+}
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct EnqueueVariables {
+    pub pr: cynic::Id,
+    pub head: GitObjectId,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "EnqueueVariables"
+)]
+pub struct Enqueue {
+    #[arguments(input: { pullRequestId: $pr, expectedHeadOid: $head })]
+    pub enqueue_pull_request: Option<EnqueuePayload>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "IdVariables"
+)]
+pub struct Dequeue {
+    #[arguments(input: { id: $id })]
+    pub dequeue_pull_request: Option<DequeuePayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]

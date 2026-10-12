@@ -1,0 +1,228 @@
+use crate::api::change::{Change, MergeMethod};
+use crate::api::model::{
+    AutoMerge, ChecksState, MergeState, Mergeable, NodeId, PrDetail, PrRef, QueueState, Queued,
+};
+use crate::theme::Mode;
+
+use super::{pr_detail, render, with_pr};
+use crate::act::{By, Subject};
+use crate::fixtures::{answer, press, says};
+use crate::keymap::Action;
+use crate::state::{Api, Cmd, Msg, Overlay, State, update};
+
+fn pr() -> PrRef {
+    PrRef::parse("gold-silver-copper/ghtui#12").unwrap()
+}
+
+/// The pull request without its conflicts, changed by `f`.
+fn detail(f: impl FnOnce(&mut PrDetail)) -> PrDetail {
+    let mut d = pr_detail();
+    d.mergeable = Mergeable::Yes;
+    d.merge_state = MergeState::Unstable;
+    f(&mut d);
+    d
+}
+
+fn pr_with(mode: Mode, f: impl FnOnce(&mut PrDetail)) -> State {
+    let mut s = with_pr(mode);
+    update(&mut s, Msg::Pr(pr(), Box::new(Ok(detail(f)))));
+    s
+}
+
+/// GitHub says it's `d` now.
+fn github_shows(s: &mut State, f: impl FnOnce(&mut PrDetail)) {
+    update(s, Msg::Pr(pr(), Box::new(Ok(detail(f)))));
+}
+
+fn choices(s: &State) -> Vec<(&str, &Change)> {
+    match &s.overlay {
+        Some(Overlay::Confirm(c)) => c.choices.iter().map(|(l, c)| (l.as_str(), c)).collect(),
+        _ => panic!("no confirmation"),
+    }
+}
+
+/// The Space menu's row for merging: its label, and why it can't be done.
+fn merge_row(s: &State) -> (String, Option<String>) {
+    let row = crate::act::doables(s)
+        .into_iter()
+        .find(|(a, ..)| *a == Action::Merge);
+    let (_, label, why) = row.unwrap();
+    (label, why)
+}
+
+/// Required checks still running.
+fn checks_running(d: &mut PrDetail) {
+    d.checks = Some(ChecksState::Pending);
+    d.merge_state = MergeState::Blocked;
+}
+
+fn alice_squashes() -> Option<AutoMerge> {
+    Some(AutoMerge {
+        by: "alice".into(),
+        method: MergeMethod::Squash,
+    })
+}
+
+#[test]
+fn auto_merge_box_dark() {
+    let mut s = pr_with(Mode::Dark, |d| {
+        checks_running(d);
+        d.auto_merge = alice_squashes();
+    });
+    press(&mut s, "G");
+    let screen = render(&s);
+    assert!(screen.contains("Auto-merge enabled by alice"), "{screen}");
+    assert_snapshot!(screen);
+}
+
+#[test]
+fn queued_box_light() {
+    let mut s = pr_with(Mode::Light, |d| {
+        d.checks = Some(ChecksState::Passing);
+        d.merge_queue = true;
+        d.queued = Some(Queued {
+            position: 2,
+            state: QueueState::AwaitingChecks,
+        });
+    });
+    press(&mut s, "G");
+    let screen = render(&s);
+    assert!(
+        screen.contains("#2 in the merge queue for main"),
+        "{screen}"
+    );
+    assert_snapshot!(screen);
+}
+
+/// While required checks run, `,m` offers to merge when they pass,
+/// rather than refusing; the page follows GitHub until it shows
+/// auto-merge on, and then `,m` turns it off.
+#[test]
+fn merging_while_checks_run_offers_merge_when_ready() {
+    // Without leave to enable auto-merge, it says why.
+    let s = pr_with(Mode::Dark, checks_running);
+    let (_, why) = merge_row(&s);
+    assert_eq!(
+        why.as_deref(),
+        Some("GitHub says it's blocked: a required review or check is missing")
+    );
+
+    let mut s = pr_with(Mode::Dark, |d| {
+        checks_running(d);
+        d.may.enable_auto_merge = true;
+    });
+    press(&mut s, ",m");
+    let labels: Vec<&str> = choices(&s).into_iter().map(|(l, _)| l).collect();
+    assert_eq!(
+        labels,
+        [
+            "Squash and merge when ready",
+            "Create a merge commit when ready"
+        ]
+    );
+    let enable = Change::EnableAutoMerge {
+        pr: NodeId::new("PR_12"),
+        method: MergeMethod::Squash,
+        head: pr_detail().head_oid,
+    };
+    let sent = press(&mut s, "<Enter>");
+    assert_eq!(
+        sent,
+        vec![Cmd::Api(Api::Change(
+            enable,
+            By::Confirm(Subject::Pr(pr()))
+        ))]
+    );
+    answer(&mut s, &sent, Ok(()));
+    says(&s, "Auto-merge enabled");
+    // GitHub doesn't show it yet: the page waits.
+    github_shows(&mut s, |d| {
+        checks_running(d);
+        d.may.enable_auto_merge = true;
+    });
+    assert!(s.awaiting.is_some());
+    github_shows(&mut s, |d| {
+        checks_running(d);
+        d.auto_merge = alice_squashes();
+        d.may.disable_auto_merge = true;
+    });
+    assert!(s.awaiting.is_none());
+
+    assert_eq!(merge_row(&s), ("Disable auto-merge".to_owned(), None));
+    press(&mut s, ",m");
+    let disable = Change::DisableAutoMerge {
+        pr: NodeId::new("PR_12"),
+    };
+    assert_eq!(choices(&s), [("Disable auto-merge", &disable)]);
+    let sent = press(&mut s, "<Enter>");
+    answer(&mut s, &sent, Ok(()));
+    github_shows(&mut s, checks_running);
+    assert!(s.awaiting.is_none());
+
+    // Mergeable now, with checks that aren't required still running:
+    // waiting for them comes first, merging now after.
+    let mut s = pr_with(Mode::Dark, |d| {
+        d.checks = Some(ChecksState::Pending);
+        d.may.enable_auto_merge = true;
+    });
+    press(&mut s, ",m");
+    let labels: Vec<&str> = choices(&s).into_iter().map(|(l, _)| l).collect();
+    assert_eq!(labels.len(), 4);
+    assert_eq!(labels[0], "Squash and merge when ready");
+    assert_eq!(labels[2], "Squash and merge");
+}
+
+/// Where the base branch has a merge queue, merging adds it to the
+/// queue; once GitHub shows it queued, `,m` takes it out again.
+#[test]
+fn a_merge_queue_takes_it_in_and_lets_it_go() {
+    let queue = |d: &mut PrDetail| d.merge_queue = true;
+    let mut s = pr_with(Mode::Dark, queue);
+    assert_eq!(merge_row(&s), ("Add to the merge queue".to_owned(), None));
+    press(&mut s, ",m");
+    let enqueue = Change::Enqueue {
+        pr: NodeId::new("PR_12"),
+        head: pr_detail().head_oid,
+    };
+    assert_eq!(choices(&s), [("Add to the merge queue", &enqueue)]);
+    let sent = press(&mut s, "<Enter>");
+    answer(&mut s, &sent, Ok(()));
+    says(&s, "Added to the merge queue");
+    assert!(s.awaiting.is_some());
+    let queued = |d: &mut PrDetail| {
+        d.merge_queue = true;
+        d.queued = Some(Queued {
+            position: 1,
+            state: QueueState::Queued,
+        });
+    };
+    github_shows(&mut s, queued);
+    assert!(s.awaiting.is_none());
+
+    assert_eq!(
+        merge_row(&s),
+        ("Remove from the merge queue".to_owned(), None)
+    );
+    press(&mut s, ",m");
+    let dequeue = Change::Dequeue {
+        pr: NodeId::new("PR_12"),
+    };
+    assert_eq!(choices(&s), [("Remove from the queue", &dequeue)]);
+    let sent = press(&mut s, "<Enter>");
+    answer(&mut s, &sent, Ok(()));
+    github_shows(&mut s, queued);
+    assert!(s.awaiting.is_some());
+    github_shows(&mut s, queue);
+    assert!(s.awaiting.is_none());
+
+    // Taking it out takes write access, and the menu says so.
+    let s = pr_with(Mode::Dark, |d| {
+        queued(d);
+        d.may.merge = false;
+    });
+    let (_, why) = merge_row(&s);
+    assert_eq!(
+        why.as_deref(),
+        Some("Removing it from the merge queue takes write access to gold-silver-copper/ghtui")
+    );
+}

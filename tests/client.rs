@@ -271,11 +271,15 @@ async fn tracks_rate_limit_headers() {
 const PR_RESPONSE: &str = r#"{"data":{"repository":{
   "mergeCommitAllowed": true, "squashMergeAllowed": true, "rebaseMergeAllowed": false,
   "viewerDefaultMergeMethod": "SQUASH", "viewerPermission": "WRITE",
+  "autoMergeAllowed": true,
   "pullRequest":{
   "id": "PR_7", "mergeStateStatus": "BEHIND",
   "viewerCanClose": true, "viewerCanReopen": true, "viewerCanUpdate": true,
   "viewerCanMergeAsAdmin": false, "viewerDidAuthor": false,
   "maintainerCanModify": true, "isCrossRepository": true,
+  "viewerCanEnableAutoMerge": false, "viewerCanDisableAutoMerge": true,
+  "autoMergeRequest": {"enabledBy": {"login": "alice"}, "mergeMethod": "SQUASH"},
+  "isMergeQueueEnabled": true, "mergeQueueEntry": {"position": 2, "state": "AWAITING_CHECKS"},
   "number": 7, "title": "Add thing", "body": "Body text", "url": "https://github.com/o/r/pull/7",
   "isDraft": false, "state": "OPEN", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-02T00:00:00Z",
   "author": {"login": "alice"}, "repository": {"nameWithOwner": "o/r"},
@@ -325,6 +329,19 @@ async fn fetches_and_caches_pull_request() {
     assert_eq!(detail.labels.left_out(), 2);
     assert_eq!(detail.head_oid, "bbb");
     assert_eq!(detail.milestone.as_ref().map(|m| m.number), Some(3));
+    // Auto-merge and the merge queue, as the merge box shows them.
+    let auto = detail.auto_merge.as_ref().unwrap();
+    assert_eq!(
+        (auto.by.as_str(), auto.method),
+        ("alice", MergeMethod::Squash)
+    );
+    assert!(detail.auto_merge_allowed && detail.merge_queue);
+    assert!(detail.may.disable_auto_merge && !detail.may.enable_auto_merge);
+    let queued = detail.queued.unwrap();
+    assert_eq!(
+        (queued.position, queued.state),
+        (2, ghtui::api::model::QueueState::AwaitingChecks)
+    );
 
     let cached = gh.cached_pull_request(&pr).unwrap();
     assert_eq!(cached.value, detail);
@@ -493,6 +510,59 @@ async fn a_merge_sends_its_method_and_head_and_a_refusal_says_why() {
     assert_eq!(sent["variables"]["pr"], "PR_7");
     assert_eq!(sent["variables"]["method"], "SQUASH");
     assert_eq!(sent["variables"]["head"], "bbb");
+}
+
+/// Auto-merge and the merge queue: each its own mutation, about the pull
+/// request, and enabling or queueing names the head it's for.
+#[tokio::test]
+async fn auto_merge_and_the_merge_queue_send_their_mutations() {
+    use ghtui::api::change::{Change, MergeMethod};
+    let ok = |field: &str| {
+        Reply::new(
+            200,
+            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
+        )
+    };
+    let (gh, seen) = github(vec![
+        ok("enablePullRequestAutoMerge"),
+        ok("disablePullRequestAutoMerge"),
+        ok("enqueuePullRequest"),
+        ok("dequeuePullRequest"),
+    ])
+    .await;
+    let pr = NodeId::new("PR_7");
+    let changes = [
+        Change::EnableAutoMerge {
+            pr: pr.clone(),
+            method: MergeMethod::Rebase,
+            head: "bbb".into(),
+        },
+        Change::DisableAutoMerge { pr: pr.clone() },
+        Change::Enqueue {
+            pr: pr.clone(),
+            head: "bbb".into(),
+        },
+        Change::Dequeue { pr },
+    ];
+    for change in &changes {
+        gh.change(change).await.unwrap();
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 4);
+    let enable = seen[0].json();
+    assert!(seen[0].query().contains("enablePullRequestAutoMerge"));
+    assert!(seen[0].query().contains("expectedHeadOid"));
+    assert_eq!(enable["variables"]["pr"], "PR_7");
+    assert_eq!(enable["variables"]["method"], "REBASE");
+    assert_eq!(enable["variables"]["head"], "bbb");
+    assert!(seen[1].query().contains("disablePullRequestAutoMerge"));
+    assert_eq!(seen[1].json()["variables"]["id"], "PR_7");
+    let enqueue = seen[2].json();
+    assert!(seen[2].query().contains("enqueuePullRequest"));
+    assert_eq!(enqueue["variables"]["pr"], "PR_7");
+    assert_eq!(enqueue["variables"]["head"], "bbb");
+    assert!(seen[3].query().contains("dequeuePullRequest"));
+    assert_eq!(seen[3].json()["variables"]["id"], "PR_7");
 }
 
 /// Re-runs and cancels post to Actions' paths; a refusal (here, a token
@@ -1644,7 +1714,7 @@ fn root_not_found(data: &str, path: &str, message: &str) -> Reply {
 #[tokio::test]
 async fn a_missing_pull_request_isnt_also_left_out() {
     let (gh, _) = github(vec![root_not_found(
-        r#"{"repository":{"pullRequest":null,"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"MERGE","viewerPermission":"READ"},"rateLimit":null}"#,
+        r#"{"repository":{"pullRequest":null,"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"MERGE","viewerPermission":"READ","autoMergeAllowed":false},"rateLimit":null}"#,
         r#"["repository","pullRequest"]"#,
         "Could not resolve to a PullRequest with the number of 999999.",
     )])

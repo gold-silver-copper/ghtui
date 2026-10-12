@@ -678,3 +678,6 @@ mod keys;
 /// Changing GitHub: each action asks first where it should, says why
 /// when it can't, sends one change, and ends up showing what GitHub says.
 mod changes;
+
+/// Merging when ready, and through a merge queue.
+mod merging;

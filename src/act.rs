@@ -23,6 +23,7 @@ use crate::route::Route;
 use crate::state::{Api, Cmd, Overlay, Screen, State};
 
 mod inbox;
+mod merge;
 
 /// The actions that change GitHub, as the menu lists them.
 pub const ACTIONS: [Action; 10] = [
@@ -495,39 +496,11 @@ fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Pl
             key(Action::ReadyForReview)
         )),
         Action::Merge | Action::UpdateBranch | Action::Approve if !open => Err(not_open()),
-        Action::Merge if !d.may.merge => Err(format!("Merging takes write access to {}", pr.repo)),
-        Action::Merge if d.merge_methods.is_empty() => {
-            Err("The repository allows no way of merging".into())
-        }
-        Action::Merge | Action::UpdateBranch if readiness == Readiness::Conflicts => Err(format!(
+        Action::Merge => merge::plan(state, pr, d),
+        Action::UpdateBranch if readiness == Readiness::Conflicts => Err(format!(
             "It conflicts with {}: resolve that on GitHub",
             d.base_ref
         )),
-        Action::Merge if readiness == Readiness::Behind => Err(format!(
-            "{} requires its branch up to date with {}: {} updates it",
-            pr.repo,
-            d.base_ref,
-            key(Action::UpdateBranch)
-        )),
-        Action::Merge if readiness == Readiness::Blocked && !d.may.merge_as_admin => {
-            Err("GitHub says it's blocked: a required review or check is missing".into())
-        }
-        Action::Merge => {
-            let choices = d
-                .merge_methods
-                .iter()
-                .map(|&method| {
-                    let change = Change::Merge {
-                        pr: d.id.clone(),
-                        method,
-                        head: d.head_oid.clone(),
-                    };
-                    (method.describe().to_owned(), change)
-                })
-                .collect();
-            let title = format!("Merge {pr}: {}?", d.title);
-            Ok(Plan::Ask(title, merge_facts(state, d), choices))
-        }
         Action::Close => {
             let (title, label, reopen) = match d.state {
                 PrState::Merged => {
@@ -635,10 +608,11 @@ fn merge_facts(state: &State, d: &PrDetail) -> Vec<(String, bool)> {
             "GitHub is still working out whether it can merge".into(),
             true,
         ),
-        Readiness::Blocked => (
+        Readiness::Blocked if d.may.merge_as_admin => (
             "A required review or check is missing: you'd merge as an administrator".into(),
             true,
         ),
+        Readiness::Blocked => ("A required review or check is missing".into(), true),
         _ if d.merge_state == MergeState::Unstable => (
             "No failed check is required, so GitHub will merge it".into(),
             false,
@@ -827,6 +801,8 @@ pub fn waiting(state: &State) -> Option<String> {
         Change::CancelRun { .. } => "Cancel requested: waiting for GitHub to stop the run",
         Change::Rerun { .. } | Change::RerunJob { .. } => "Waiting for GitHub to start the re-run",
         Change::Merge { .. } => "Waiting for GitHub to show the merge",
+        Change::EnableAutoMerge { .. } => "Waiting for GitHub to show auto-merge",
+        Change::Enqueue { .. } => "Waiting for GitHub to show it in the merge queue",
         Change::UpdateBranch { .. } => "Waiting for GitHub to update the branch",
         _ => "Waiting for GitHub to show the change",
     };
@@ -869,8 +845,17 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             let Some(d) = pr(r) else {
                 return Shown::No;
             };
+            let merged = d.state == PrState::Merged;
             yes(match change {
-                Change::Merge { .. } => d.state == PrState::Merged,
+                Change::Merge { .. } => merged,
+                // Auto-merge ends once it merges, or in a queue, once
+                // it's queued.
+                Change::EnableAutoMerge { .. } => {
+                    d.auto_merge.is_some() || d.queued.is_some() || merged
+                }
+                Change::DisableAutoMerge { .. } => d.auto_merge.is_none(),
+                Change::Enqueue { .. } => d.queued.is_some() || merged,
+                Change::Dequeue { .. } => d.queued.is_none(),
                 Change::SetPrOpen { open, .. } => d.state.is_open() == *open,
                 Change::ReadyForReview { .. } => d.state != PrState::Draft,
                 Change::UpdateBranch { head, .. } => d.head_oid != *head,
@@ -1023,6 +1008,10 @@ fn doing(change: &Change) -> &'static str {
         Change::Star { starred: true, .. } => "Starring",
         Change::Star { .. } => "Unstarring",
         Change::Merge { .. } => "Merging",
+        Change::EnableAutoMerge { .. } => "Enabling auto-merge",
+        Change::DisableAutoMerge { .. } => "Disabling auto-merge",
+        Change::Enqueue { .. } => "Adding it to the merge queue",
+        Change::Dequeue { .. } => "Removing it from the merge queue",
         Change::SetPrOpen { open: true, .. } | Change::ReopenIssue { .. } => "Reopening",
         Change::SetPrOpen { .. } | Change::CloseIssue { .. } => "Closing",
         Change::ReadyForReview { .. } => "Marking it ready for review",
@@ -1048,6 +1037,10 @@ fn done(change: &Change) -> String {
         } => format!("Starred {repo}"),
         Change::Star { repo, .. } => format!("Unstarred {repo}"),
         Change::Merge { .. } => "Merged".into(),
+        Change::EnableAutoMerge { .. } => "Auto-merge enabled: it merges when ready".into(),
+        Change::DisableAutoMerge { .. } => "Auto-merge disabled".into(),
+        Change::Enqueue { .. } => "Added to the merge queue".into(),
+        Change::Dequeue { .. } => "Removed from the merge queue".into(),
         Change::SetPrOpen { open: true, .. } | Change::ReopenIssue { .. } => "Reopened".into(),
         Change::SetPrOpen { .. } => "Closed".into(),
         Change::CloseIssue {
@@ -1081,12 +1074,15 @@ pub fn needs(change: &Change) -> &'static str {
     match change {
         Change::Comment { .. } => "Issues or Pull requests: write",
         Change::Star { .. } => "Starring: write",
-        Change::Merge { .. } | Change::UpdateBranch { .. } => {
-            "Contents: write and Pull requests: write"
-        }
-        Change::SetPrOpen { .. } | Change::ReadyForReview { .. } | Change::Reply { .. } => {
-            "Pull requests: write"
-        }
+        Change::Merge { .. }
+        | Change::UpdateBranch { .. }
+        | Change::EnableAutoMerge { .. }
+        | Change::Enqueue { .. } => "Contents: write and Pull requests: write",
+        Change::SetPrOpen { .. }
+        | Change::ReadyForReview { .. }
+        | Change::Reply { .. }
+        | Change::DisableAutoMerge { .. }
+        | Change::Dequeue { .. } => "Pull requests: write",
         Change::CloseIssue { .. } | Change::ReopenIssue { .. } => "Issues: write",
         Change::Rerun { .. } | Change::RerunJob { .. } | Change::CancelRun { .. } => {
             "Actions: write"
@@ -1107,6 +1103,10 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::Star { starred: true, .. } => "the star",
         Change::Star { .. } => "removing the star",
         Change::Merge { .. } => "the merge",
+        Change::EnableAutoMerge { .. } => "enabling auto-merge",
+        Change::DisableAutoMerge { .. } => "disabling auto-merge",
+        Change::Enqueue { .. } => "adding it to the merge queue",
+        Change::Dequeue { .. } => "removing it from the merge queue",
         Change::SetPrOpen { open: true, .. } | Change::ReopenIssue { .. } => "reopening it",
         Change::SetPrOpen { .. } | Change::CloseIssue { .. } => "closing it",
         Change::ReadyForReview { .. } => "marking it ready for review",
@@ -1155,6 +1155,9 @@ pub fn doables(state: &State) -> Vec<(Action, String, Option<String>)> {
             let label = match (action, &subject) {
                 (Action::Close, Subject::Run(..) | Subject::Job(..)) => "Cancel the run",
                 (Action::Close, _) => "Close or reopen",
+                (Action::Merge, Subject::Pr(pr)) => (state.prs.get(pr))
+                    .and_then(|r| r.data.as_ref())
+                    .map_or(action.description(), merge::label),
                 (action, _) => action.description(),
             };
             let why = plan_for(state, &subject, action).err();

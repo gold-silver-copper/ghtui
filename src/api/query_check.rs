@@ -352,6 +352,10 @@ fn typed() -> Vec<(&'static str, String)> {
         Mutation c::AddStar, c::IdVariables;
         Mutation c::RemoveStar, c::IdVariables;
         Mutation c::MergePr, c::MergeVariables;
+        Mutation c::EnableAutoMerge, c::MergeVariables;
+        Mutation c::DisableAutoMerge, c::IdVariables;
+        Mutation c::Enqueue, c::EnqueueVariables;
+        Mutation c::Dequeue, c::IdVariables;
         Mutation c::ClosePr, c::IdVariables;
         Mutation c::ReopenPr, c::IdVariables;
         Mutation c::CloseIssue, c::CloseIssueVariables;

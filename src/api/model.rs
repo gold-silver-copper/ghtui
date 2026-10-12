@@ -365,6 +365,14 @@ pub struct PrDetail {
     pub behind_by: Option<u64>,
     /// The ways the repository allows merging, yours first.
     pub merge_methods: Vec<MergeMethod>,
+    /// The repository allows merging once every requirement is met.
+    pub auto_merge_allowed: bool,
+    /// Set to merge once every requirement is met.
+    pub auto_merge: Option<AutoMerge>,
+    /// Its base branch merges through a merge queue.
+    pub merge_queue: bool,
+    /// Its place in that queue, once it's in it.
+    pub queued: Option<Queued>,
     pub labels: Capped<Label>,
     pub milestone: Option<MilestoneRef>,
     /// What GitHub lets you do to it.
@@ -395,6 +403,36 @@ pub struct PrPermits {
     pub edit: bool,
     /// Push to its branch, which updating the branch does.
     pub push_head: bool,
+    pub enable_auto_merge: bool,
+    pub disable_auto_merge: bool,
+}
+
+/// Auto-merge, turned on: by whom, and how it will merge.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AutoMerge {
+    pub by: String,
+    pub method: MergeMethod,
+}
+
+/// A pull request's place in its base branch's merge queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Queued {
+    /// 1 is next.
+    pub position: u64,
+    pub state: QueueState,
+}
+
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[cynic(graphql_type = "MergeQueueEntryState", schema_module = "schema")]
+pub enum QueueState {
+    /// Its checks in the queue are running.
+    AwaitingChecks,
+    /// Being merged.
+    Locked,
+    Mergeable,
+    /// Waiting its turn.
+    Queued,
+    Unmergeable,
 }
 
 /// Whether GitHub would merge a pull request now, and if not, the first
@@ -432,12 +470,14 @@ impl PrDetail {
     }
 
     /// It's open and GitHub hasn't settled what it shows: whether it can
-    /// merge, or its checks. A page showing it fetches it again until it has.
+    /// merge, its checks, or its place in the merge queue. A page showing
+    /// it fetches it again until it has.
     pub fn settling(&self) -> bool {
         self.state.is_open()
             && (self.mergeable == Mergeable::Unknown
                 || self.merge_state == MergeState::Unknown
-                || self.checks == Some(ChecksState::Pending))
+                || self.checks == Some(ChecksState::Pending)
+                || self.queued.is_some())
     }
 }
 
@@ -633,6 +673,16 @@ impl PrDetail {
             merge_state: pr.merge_state_status,
             behind_by: None,
             merge_methods,
+            auto_merge_allowed: repo.auto_merge_allowed,
+            auto_merge: pr.auto_merge_request.map(|a| AutoMerge {
+                by: author(a.enabled_by),
+                method: a.merge_method,
+            }),
+            merge_queue: pr.is_merge_queue_enabled,
+            queued: pr.merge_queue_entry.map(|e| Queued {
+                position: count(e.position),
+                state: e.state,
+            }),
             labels: labels(pr.labels),
             milestone: pr.milestone.map(MilestoneRef::from_wire),
             may: PrPermits {
@@ -646,6 +696,8 @@ impl PrDetail {
                 } else {
                     writes
                 },
+                enable_auto_merge: pr.viewer_can_enable_auto_merge,
+                disable_auto_merge: pr.viewer_can_disable_auto_merge,
             },
         })
     }

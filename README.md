@@ -23,10 +23,11 @@ ghtui is pre-release, but it's usable every day.
   with git, highlighted with tree-sitter, and shown unified or split. You
   can reply, resolve, comment on lines or ranges, suggest changes, and
   submit a review.
-- **Acting** works from a page or from a row in a list: merge, approve,
-  mark ready for review, update a branch, close or reopen, re-run or cancel
-  a workflow run, comment and star, and mark notifications read or done,
-  one at a time or all at once.
+- **Acting** works from a page or from a row in a list: merge (now, when
+  checks pass, or through a merge queue), approve, mark ready for review,
+  update a branch, close or reopen, re-run or cancel a workflow run,
+  comment and star, and mark notifications read or done, one at a time or
+  all at once.
 
 Not there yet: projects, GitHub Enterprise Server, code navigation and
 structural diffs.
@@ -177,6 +178,11 @@ says where it works.
   (or cancels a run), `,R` re-runs, `,*` stars, and in Files changed `,v`
   marks a file viewed, `,t` resolves a thread and `,s` submits your
   review. Each asks first where it matters.
+- `,m` offers what GitHub would: merging now, merging when ready
+  (auto-merge, offered first while checks run), or adding it to the
+  merge queue where its base branch has one. Once it's set to merge or
+  queued, the merge box says so (who turned auto-merge on and how it
+  will merge; its place in the queue), and `,m` takes that back.
 - `q` closes the view: back a page, or the tab when there's nothing to go
   back to. `ZZ`, `:q` in the palette, or `ctrl-c` quits; `ctrl-c` also
   works in the comment editor, asking before it throws away your text.
@@ -485,7 +491,6 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   to its text and links.
 - The cache isn't kept per account. After switching accounts, the old
   account's pages show until they refresh.
-- Merging doesn't offer auto-merge or merge queues.
 - Notifications filtered by a reason (`reason:mention`) or by `is:read`
   are filtered after fetching, as GitHub's API can't filter them: a load
   searches up to 300 notifications for a page of matches, and says when

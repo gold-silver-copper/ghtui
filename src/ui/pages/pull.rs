@@ -1,6 +1,8 @@
 //! A pull request's conversation, checks and actions.
 
 use super::*;
+use crate::api::change::MergeMethod;
+use crate::api::model::{AutoMerge, QueueState, Queued};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrTab {
@@ -49,8 +51,8 @@ pub(super) fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
     page.rule(0, Frame::None);
 }
 
-/// GitHub's merge box: checks, reviews, conflicts. On a timeline, it's
-/// joined to what's above.
+/// GitHub's merge box: checks, reviews, conflicts, auto-merge and the
+/// merge queue. On a timeline, it's joined to what's above.
 pub(super) fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons, timeline: bool) {
     let readiness = d.readiness();
     if matches!(readiness, Readiness::Merged | Readiness::Closed) {
@@ -60,6 +62,7 @@ pub(super) fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons,
         connector(page);
     }
     let (headline, role) = match (readiness, d.checks, d.review) {
+        _ if d.queued.is_some() => ("Queued to merge", Role::Accent),
         (Readiness::Draft, ..) => ("This pull request is still a draft", Role::Meta),
         (Readiness::Conflicts, ..) => (
             "This branch has conflicts that must be resolved",
@@ -106,9 +109,15 @@ pub(super) fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons,
             format!("{} behind {}", plural(n, "commit"), d.base_ref),
         )
     });
+    // Where it's headed: the queue, auto-merge, or a queue it can join.
+    let queue = d.queued.map(|q| {
+        let ok = (q.state == QueueState::Unmergeable).then_some(false);
+        (ok, queue_place(&q, &d.base_ref))
+    });
+    let auto = (d.auto_merge.as_ref()).map(|a| (None, auto_merging(a, d.merge_queue)));
     let rows = [review, checks].into_iter().flatten();
-    let rows = rows
-        .map(|(ok, text)| (ok, text.to_owned()))
+    let rows = (queue.into_iter().chain(auto))
+        .chain(rows.map(|(ok, text)| (ok, text.to_owned())))
         .chain([conflicts]);
     let rows = rows.map(|(ok, text)| {
         let mark = match ok {
@@ -118,7 +127,13 @@ pub(super) fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons,
         };
         (mark, text)
     });
-    for ((icon, role), text) in rows.chain(behind) {
+    let joins = (d.merge_queue && d.queued.is_none()).then(|| {
+        (
+            ("◦", Role::Meta),
+            format!("{} merges through a merge queue", d.base_ref),
+        )
+    });
+    for ((icon, role), text) in rows.chain(behind).chain(joins) {
         body(
             page,
             vec![
@@ -142,6 +157,41 @@ pub(super) fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons,
         );
     });
     page.box_bottom();
+}
+
+/// "Auto-merge enabled by alice: squashed and merged when every
+/// requirement is met", as the merge box and the dialog say it.
+pub fn auto_merging(auto: &AutoMerge, queue: bool) -> String {
+    let how = if queue {
+        "added to the merge queue"
+    } else {
+        match auto.method {
+            MergeMethod::Merge => "merged with a merge commit",
+            MergeMethod::Squash => "squashed and merged",
+            MergeMethod::Rebase => "rebased and merged",
+        }
+    };
+    format!(
+        "Auto-merge enabled by {}: {how} when every requirement is met",
+        auto.by
+    )
+}
+
+/// "#2 in the merge queue for main: waiting for its checks", as the
+/// merge box and the dialog say it.
+pub fn queue_place(queued: &Queued, base: &str) -> String {
+    let place = match queued.position {
+        1 => "Next".to_owned(),
+        n => format!("#{n}"),
+    };
+    let state = match queued.state {
+        QueueState::AwaitingChecks => "waiting for its checks",
+        QueueState::Queued => "waiting its turn",
+        QueueState::Mergeable => "ready to merge",
+        QueueState::Locked => "merging now",
+        QueueState::Unmergeable => "it can't be merged",
+    };
+    format!("{place} in the merge queue for {base}: {state}")
 }
 
 /// Comments in `fresh` (by GitHub's number) came in since you started
