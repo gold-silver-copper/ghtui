@@ -1029,7 +1029,7 @@ pub(super) fn reviewers_aside(
         page.wrapped(segs, 2, Frame::None);
     }
     if requested.left_out() > 0 {
-        let more = format!("and {} more asked", requested.left_out());
+        let more = format!("and {} more asked, unnamed", requested.left_out());
         page.wrapped(vec![meta(more)], 0, Frame::None);
     }
 }

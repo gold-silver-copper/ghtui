@@ -116,18 +116,20 @@ pub(super) fn step_mark(p: &mut PageScreen, next: bool) -> Option<(usize, usize)
     go_to_mark(p, n)
 }
 
-/// Scrolls to search match `n` and, in code, selects its line, the word
-/// cursor on the match, as vim's is: which one it is, of how many.
+/// Scrolls to search match `n` and selects its row; in code, the word
+/// cursor goes on the match, as vim's does: which one it is, of how many.
 pub(super) fn go_to_mark(p: &mut PageScreen, n: usize) -> Option<(usize, usize)> {
     let line = *p.page.marks.get(n)?;
     p.scroll = line.saturating_sub(MARGIN);
     (p.mark, p.fresh) = (Some(n), false);
-    let code = p.page.lines.get(line).filter(|l| l.code().is_some());
-    if let Some(i) = code.and_then(|_| p.page.item_at(line)) {
+    // The match's row is selected, so ↵ opens what was found; in code,
+    // the word cursor goes on the match too.
+    if let Some(i) = p.page.item_at(line) {
         p.selected = Some(i);
-        if let Some(col) = code.and_then(page::PageLine::first_match) {
-            p.word = Some(col);
-        }
+    }
+    let code = p.page.lines.get(line).filter(|l| l.code().is_some());
+    if let Some(col) = code.and_then(page::PageLine::first_match) {
+        p.word = Some(col);
     }
     Some((n + 1, p.page.marks.len()))
 }

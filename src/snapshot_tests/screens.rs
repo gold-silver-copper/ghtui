@@ -770,3 +770,17 @@ pub(super) fn render(state: &State) -> String {
     terminal.draw(|frame| view(state, frame, NOW)).unwrap();
     format!("{:?}", terminal.backend().buffer())
 }
+
+/// `/` on a page selects the row it finds, so `↵` opens what was found,
+/// as vim's cursor goes to the match.
+#[test]
+fn a_search_selects_the_row_it_finds() {
+    let mut s = with_pr(Mode::Dark);
+    press(&mut s, "/Fixes #12<Enter><Enter>");
+    assert!(
+        matches!(s.route(), Some(Route::Issue { number: 12, .. }))
+            || matches!(s.route(), Some(Route::Pr { pr, .. }) if pr.number == 12),
+        "{:?}",
+        s.route()
+    );
+}

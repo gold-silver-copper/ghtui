@@ -95,7 +95,10 @@ fn reviewers(page: &mut Page, pr: &PrRef, d: &PrDetail, activity: Fetched<'_, Pr
         });
     }
     if a.requested.left_out() > 0 {
-        let more = format!("And {} more asked.", a.requested.left_out());
+        let more = format!(
+            "And {} more asked, that GitHub's API doesn't name (a team you can't see, say).",
+            a.requested.left_out()
+        );
         empty_row(page, &more);
     }
     page.box_bottom();
