@@ -16,7 +16,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use crate::api::browse::Person;
 use crate::api::browse::{
     Blame, BlameRange, Blob, CodeHit, CommitDetail, CommitInfo, Comparison, EntryKind, Results,
-    TreeEntry,
+    TagInfo, TreeEntry,
 };
 use crate::api::model::{Capped, RepoId};
 use crate::git::files::{ChangedFile, MODE_SUBMODULE, MODE_SYMLINK, ZERO_OID};
@@ -33,7 +33,7 @@ pub const FILES_MAX: usize = 250_000;
 pub const STAT_FILES_MAX: usize = 3_000;
 /// The most versions of a file blame reads.
 pub const BLAME_VERSIONS_MAX: usize = 2_000;
-/// The most files a code search reads that the clone doesn't have yet.
+/// The most files a code search reads in a partial clone (in yours, any).
 pub const GREP_FETCH_MAX: usize = 25_000;
 /// The most matching lines kept for each file a code search finds.
 pub const GREP_LINES: usize = 3;
@@ -438,6 +438,10 @@ fn parse_blame(out: &str) -> Blame {
 /// or from `base` itself when `direct` (`a..b`).
 pub async fn compare(repo: &Repo, base: &Oid, head: &Oid, direct: bool) -> Read<Comparison> {
     let merge_base = repo.merge_base(base, head).await?;
+    let from = if direct { base.clone() } else { merge_base };
+    // A limit is found before the rest is read.
+    let files = changed(repo, &from, head).await?;
+    let (additions, deletions) = line_counts(repo, &from, head, &files).await?;
     let counts = repo
         .run(&[
             "rev-list",
@@ -458,9 +462,6 @@ pub async fn compare(repo: &Repo, base: &Oid, head: &Oid, direct: bool) -> Read<
     let out = repo.run(&["log", &format, &count, &range]).await?;
     let mut commits: Vec<CommitInfo> = out.lines().filter_map(commit_info).collect();
     commits.reverse();
-    let from = if direct { base.clone() } else { merge_base };
-    let files = changed(repo, &from, head).await?;
-    let (additions, deletions) = line_counts(repo, &from, head, &files).await?;
     Ok(Comparison {
         ahead,
         behind,
@@ -597,6 +598,43 @@ fn parse_ls_remote(out: &str) -> RemoteRefs {
     refs
 }
 
+/// `tags` (as [`remote_refs`] lists them) newest commit first, as GitHub
+/// lists them, each with its commit's date: the commits the clone doesn't
+/// have are fetched first, in one batch.
+pub async fn tags(repo: &Repo, tags: &[(String, Oid)]) -> Read<Vec<TagInfo>> {
+    let mut oids: Vec<String> = tags.iter().map(|(_, oid)| oid.to_string()).collect();
+    oids.sort();
+    oids.dedup();
+    let missing = repo.missing(&oids).await?;
+    if !missing.is_empty() {
+        let wants: Vec<&str> = missing.iter().map(String::as_str).collect();
+        repo.fetch(&wants, &|_| {}).await?;
+    }
+    let out = repo
+        .run_with_input(
+            &["log", "--no-walk=unsorted", "--stdin", "--format=%H %ct"],
+            oids.join("\n") + "\n",
+        )
+        .await?;
+    let dates: HashMap<&str, u64> = (out.lines())
+        .filter_map(|l| l.split_once(' '))
+        .filter_map(|(oid, time)| Some((oid, time.parse().ok()?)))
+        .collect();
+    let mut listed: Vec<(u64, TagInfo)> = (tags.iter())
+        .map(|(name, oid)| {
+            let time = dates.get(&**oid).copied();
+            let info = TagInfo {
+                name: name.clone(),
+                oid: Some(oid.to_string()),
+                date: time.map(crate::ui::time::iso8601),
+            };
+            (time.unwrap_or(0), info)
+        })
+        .collect();
+    listed.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.name.cmp(&a.1.name)));
+    Ok(listed.into_iter().map(|(_, info)| info).collect())
+}
+
 /// The remote's default branch: the name its `HEAD` points at, and its
 /// commit.
 pub async fn remote_head(repo: &Repo) -> Read<(String, Oid)> {
@@ -638,13 +676,15 @@ pub async fn grep(repo: &Repo, of: &RepoId, at: &Oid, grep: &Grep) -> Read<Vec<C
                 (kind == "blob" && mode != MODE_SUBMODULE).then(|| oid.to_owned())
             })
             .collect();
-        let missing = repo.missing(&blobs).await?;
-        if missing.len() > GREP_FETCH_MAX {
+        // Counted before asking which are here, which takes a while for
+        // so many.
+        if blobs.len() > GREP_FETCH_MAX {
             return Err(ReadError::Limit(format!(
-                "{} files to fetch first, more than the {GREP_FETCH_MAX} git searches",
-                missing.len()
+                "{} files, more than the {GREP_FETCH_MAX} git searches in ghtui's clone",
+                blobs.len()
             )));
         }
+        let missing = repo.missing(&blobs).await?;
         repo.prefetch(&missing).await?;
     }
     let mut args = vec![
@@ -868,7 +908,7 @@ mod tests {
             c.committer.is_some(),
             "Ann committed it under another email"
         );
-        let short = &c.oid[..7];
+        let short = crate::ui::text::short_sha(&c.oid);
         assert_eq!(commit(&repo, short).await.unwrap().unwrap().oid, c.oid);
         let root = commit(&repo, "main~2").await.unwrap().unwrap();
         assert_eq!((root.additions, root.changed_files), (2, Some(2)));

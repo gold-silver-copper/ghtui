@@ -167,6 +167,21 @@ doesn't:
 - "changes since your last review", even across force-pushes and rebases;
 - local per-change "reviewed" marks beside GitHub's per-file "viewed".
 
+**A repository's code is read with git**: its files and folders, "Go to
+file" (`f`), a branch's or a file's commits, a commit, blame, a
+comparison, the branches and tags to switch to (`B`), the tags list, and
+a code search in one repository (`repo:owner/name`, with `rev:` for a
+branch, tag or commit, else the default branch). ghtui reads your clone
+when it starts inside one, else a partial clone it makes in its cache, in
+the background, the first time you open the repository. A branch or tag
+is always GitHub's: ghtui asks GitHub where it is (with `git ls-remote`)
+and fetches what the clone doesn't have. The page's first line says
+where it was read: `At 1a2b3c4 · read by git from your clone`, or
+GitHub's API and why (the clone is still being made, git failed, or a
+limit was hit). Code search lists each file's matching lines, which
+GitHub's API doesn't. It answers in milliseconds once the clone has what
+it needs, and takes nothing from GitHub's rate limit.
+
 **Reading code** goes beyond the file on screen, without a language
 server. `gO` lists a file's functions, types, impls and modules, nested
 as in the code, and goes to the one you pick (in Files changed, the
@@ -583,6 +598,29 @@ at your last review. Comments still anchor to GitHub's own hunks, so they
 land where GitHub expects them. Git never sees the
 token on a command line or in a config file.
 
+**So does code.** Whatever git can answer, git answers: trees, files,
+paths, histories, commits, blame, comparisons, branches and tags, code
+search in a repository. The API keeps what only GitHub knows (issues,
+pull requests, reviews, checks, notifications, search across GitHub, who
+a commit's author is when their email doesn't say). One module,
+`src/source.rs`, decides which answers each page, and says so on the
+page. Your clone is only read: ghtui fetches commits into its object
+store, as `git fetch` would, from its own GitHub remote, and never
+touches its branches, index, working tree or config. The cache's clone
+is partial: a file's contents are fetched when a page reads it, all a
+page needs in one batch. Limits keep a huge repository from turning a
+page into a download, and the API answers past them, saying which:
+- a clone over 512 MiB isn't made (and isn't tried again for a week);
+- a file shows its first 1 MiB;
+- "Go to file" lists 250,000 paths;
+- line counts read at most 3,000 changed files, and blame 2,000 versions
+  of a file;
+- code search in ghtui's clone reads at most 25,000 files (in yours,
+  any number);
+- git gets 6 seconds for a page (20 for blame, comparisons and search,
+  and 1 for the walk that finds each entry's latest commit, the rest of
+  which GitHub finds), then the API answers while git carries on.
+
 **Fast from the cache.** The first paint comes from a local cache (redb),
 then everything is refreshed in the background. REST requests revalidate
 with ETags (and `Last-Modified`), so unchanged data costs nothing against
@@ -601,7 +639,7 @@ runtime) and the binary that runs it; the rest are its modules:
 | `api`    | GitHub over GraphQL (cynic) and REST: auth, retries, limits     |
 | `schema` | GitHub's GraphQL schema, which the queries are typed against   |
 | `store`  | The cache, and review drafts kept outside it                    |
-| `git`    | The `git` CLI: clones, fetches, credentials, blobs              |
+| `git`    | The `git` CLI: clones, fetches, credentials, reads at a commit  |
 | `diff`   | Hunks (imara-diff), highlighting (tree-sitter), the diff model  |
 | `theme`  | Color schemes, contrast, terminal detection                     |
 
@@ -746,3 +784,12 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   up to 1,000, and says so when there are more; a roadmap shows as a
   table, and a board's swimlanes aren't drawn. Archived items are listed
   50 at a time, newest first, whatever the view's filter.
+- A page read with git knows commits' authors by their git names: by
+  their GitHub accounts only where the email is GitHub's no-reply
+  address for one. A commit read with git doesn't say whether GitHub
+  verified its signature. The branches list (each branch's pull request)
+  still comes from GitHub's API.
+- Code search runs with git only in one repository, for words, with
+  `path:`, `extension:` and `filename:`; anything else (`language:`,
+  `OR`, several repositories) goes to GitHub's code search. A word
+  matches as text, without regard to case, not as a whole word.

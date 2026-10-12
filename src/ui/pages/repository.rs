@@ -130,8 +130,13 @@ pub(super) fn code_toolbar(
     // At the top of a repository: its commits, branches and tags.
     let commits = top.map_or(0, |o| o.commits);
     let refs = top.filter(|o| o.branches > 0).map(|o| (o.branches, o.tags));
+    // A commit's ID is shown short, as GitHub's branch button shows it.
+    let shown = match crate::git::Oid::parse(rev) {
+        Ok(_) => crate::ui::text::short_sha(rev),
+        Err(_) => rev,
+    };
     let mut segs = vec![
-        button(page, format!("⎇ {rev} ▾"), Link::Branch),
+        button(page, format!("⎇ {shown} ▾"), Link::Branch),
         Seg::new("  ", Role::Body),
     ];
     if let Some((branches, tags)) = refs {

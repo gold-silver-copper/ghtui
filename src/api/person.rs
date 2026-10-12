@@ -29,8 +29,8 @@ impl Person {
 
     /// Who git says wrote a commit (read from a clone, not GitHub): their
     /// account when the email is the no-reply address GitHub gives it
-    /// (`123+login@users.noreply.github.com`, which only that account
-    /// can commit with), else their name.
+    /// (`123+login@users.noreply.github.com`), which GitHub links to that
+    /// account too; else their name.
     pub fn from_git(name: &str, email: &str) -> Person {
         let noreply = format!(
             "@users.noreply.{}",

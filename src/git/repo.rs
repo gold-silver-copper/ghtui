@@ -151,13 +151,12 @@ impl Repo {
             credentials.apply(&mut cmd);
             cmd.args(["clone", "--bare", "--filter=blob:none", "--progress", url])
                 .arg(&tmp);
-            if let Err(err) = run_with_progress(cmd, "clone", None, progress).await {
-                // The clone's error is the one to report; a half-made
-                // directory left behind is removed on the next try.
-                let _ = std::fs::remove_dir_all(&tmp);
-                return Err(err);
-            }
+            // A clone that fails, or is given up on (this future dropped,
+            // which kills git), leaves nothing behind.
+            let unfinished = Unfinished(tmp.clone());
+            run_with_progress(cmd, "clone", None, progress).await?;
             std::fs::rename(&tmp, &path)?;
+            drop(unfinished);
         }
         Self::open(path, "origin", version, credentials).await
     }
@@ -199,6 +198,17 @@ impl Repo {
             });
         }
         Ok(output.stdout)
+    }
+
+    /// `git <args>` with `input` on its stdin.
+    pub(crate) async fn run_with_input(
+        &self,
+        args: &[&str],
+        input: String,
+    ) -> Result<String, GitError> {
+        let mut cmd = self.cmd();
+        cmd.args(args);
+        run_with_stdin(cmd, &args.join(" "), input).await
     }
 
     async fn is_promisor(&self) -> bool {
@@ -486,6 +496,18 @@ impl Repo {
     pub fn blob_reader(&self) -> Result<BlobReader, GitError> {
         let repo = self.clone();
         BlobReader::spawn(move || repo.cmd())
+    }
+}
+
+/// A clone being made: removed when dropped, unless it was moved into
+/// place (then there's nothing there to remove).
+struct Unfinished(PathBuf);
+
+impl Drop for Unfinished {
+    fn drop(&mut self) {
+        if self.0.exists() {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 }
 

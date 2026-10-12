@@ -30,12 +30,12 @@ use crate::route::Route;
 const REFS_FRESH: Duration = Duration::from_secs(30);
 /// The biggest clone the cache makes on its own; a bigger repository is
 /// read through the API.
-pub const CLONE_MAX: u64 = 1024 * 1024 * 1024;
+pub const CLONE_MAX: u64 = 512 * 1024 * 1024;
 /// How long a clone found too big is left alone.
 const TOO_BIG_FOR: Duration = Duration::from_secs(7 * 24 * 3600);
 /// How long the history walk for a directory's latest commits goes on;
 /// GitHub is asked for the entries it didn't reach.
-const WALK: Duration = Duration::from_secs(3);
+const WALK: Duration = Duration::from_secs(1);
 
 /// Whose clone a page was read from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,7 +62,10 @@ impl From {
         match self {
             From::Git { clone, at } => {
                 let whose = match clone {
-                    Clone::Yours(top) => format!("your clone ({})", tilde(top)),
+                    Clone::Yours(top) => match top.file_name() {
+                        Some(name) => format!("your clone, {}", name.to_string_lossy()),
+                        None => "your clone".to_owned(),
+                    },
                     Clone::Cache => "ghtui's clone".to_owned(),
                 };
                 match at {
@@ -75,15 +78,6 @@ impl From {
             }
             From::Api(why) => format!("From GitHub's API: {why}"),
         }
-    }
-}
-
-/// `path`, with the home directory as `~`.
-fn tilde(path: &Path) -> String {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    match home.and_then(|h| path.strip_prefix(h).ok().map(Path::to_owned)) {
-        Some(rest) => format!("~/{}", rest.display()),
-        None => path.display().to_string(),
     }
 }
 
@@ -102,6 +96,7 @@ pub fn by_git(key: &DataKey, after: Option<&str>) -> bool {
         | DataKey::Compare(..)
         | DataKey::LastCommits(..)
         | DataKey::Refs(..)
+        | DataKey::Tags(..)
         | DataKey::RefIn(..) => true,
         DataKey::Search(SearchKind::Code, query) => code_search(query).is_some(),
         _ => false,
@@ -123,6 +118,7 @@ pub fn shown(route: &Route) -> Option<DataKey> {
         }
         Route::Commit { repo, oid, .. } => DataKey::Commit(repo.clone(), oid.clone()),
         Route::Compare { repo, spec } => DataKey::Compare(repo.clone(), spec.clone()),
+        Route::Tags(repo) => DataKey::Tags(repo.clone()),
         Route::Search {
             kind: SearchKind::Code,
             query,
@@ -144,6 +140,7 @@ fn repo_of(key: &DataKey) -> Option<RepoId> {
         | DataKey::LastCommits(repo, ..)
         | DataKey::History(repo, ..)
         | DataKey::Refs(repo)
+        | DataKey::Tags(repo)
         | DataKey::RefIn(repo, _) => Some(repo.clone()),
         DataKey::Search(SearchKind::Code, query) => code_search(query).map(|s| s.repo),
         _ => None,
@@ -170,7 +167,7 @@ pub fn code_search(query: &str) -> Option<CodeSearch> {
             Some(("repo", r)) if repo.is_none() => repo = Some(RepoId::parse(r)?),
             Some(("rev", r)) if rev.is_none() && !r.is_empty() => rev = Some(r.to_owned()),
             Some(("path", p)) if !p.is_empty() => {
-                grep.paths.push(p.trim_start_matches('/').to_owned())
+                grep.paths.push(p.trim_start_matches('/').to_owned());
             }
             Some(("extension", e)) if !e.is_empty() => grep.paths.push(format!("*.{e}")),
             Some(("filename", f)) if !f.is_empty() => {
@@ -222,7 +219,12 @@ pub struct Local {
     /// GitHub's branches and tags, and its default branch, by repository,
     /// when asked; one ask at a time each.
     refs: Mutex<HashMap<String, Arc<tokio::sync::Mutex<Known>>>>,
+    /// Each directory's latest commits, by commit and path: they never
+    /// change, and a big repository's take seconds to find.
+    memo: Mutex<HashMap<(Oid, String), LastCommits>>,
 }
+
+type LastCommits = Arc<HashMap<String, crate::api::browse::CommitInfo>>;
 
 /// What a repository's remote said its refs were, and when.
 #[derive(Default)]
@@ -249,11 +251,16 @@ impl Local {
             git,
             clones: Mutex::default(),
             refs: Mutex::default(),
+            memo: Mutex::default(),
         })
     }
 
     fn clones(&self) -> std::sync::MutexGuard<'_, HashMap<String, Slot>> {
         self.clones.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn memo(&self) -> std::sync::MutexGuard<'_, HashMap<(Oid, String), LastCommits>> {
+        self.memo.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// `key`'s data and where it came from: git when it can, else the API
@@ -549,6 +556,11 @@ impl Local {
             }
             DataKey::LastCommits(_, rev, path) => {
                 let oid = at(rev.clone()).await?;
+                // At one commit, the answer never changes.
+                let memo_key = (oid.clone(), path.clone());
+                if let Some(found) = self.memo().get(&memo_key) {
+                    return Ok(Answer::Data(Data::LastCommits(found.clone()), Some(oid)));
+                }
                 let Some(entries) = read::tree(clone, &oid, path).await? else {
                     return absent(format!("{repo}/{path} at {rev}"));
                 };
@@ -571,7 +583,9 @@ impl Local {
                     let more = gh.last_commits(repo, &oid, path, &rest).await;
                     found.extend(more.map_err(|e| ReadError::Limit(e.to_string()))?);
                 }
-                Answer::Data(Data::LastCommits(Arc::new(found)), Some(oid))
+                let found = Arc::new(found);
+                self.memo().insert(memo_key, found.clone());
+                Answer::Data(Data::LastCommits(found), Some(oid))
             }
             DataKey::Refs(_) => {
                 let listed = self.remote_refs(repo, clone).await?;
@@ -586,6 +600,16 @@ impl Local {
                     tags: names(tags),
                 };
                 Answer::Data(Data::Refs(Box::new(refs)), None)
+            }
+            DataKey::Tags(_) => {
+                let listed = self.remote_refs(repo, clone).await?;
+                let tags = read::tags(clone, &listed.tags).await?;
+                let tags = Results {
+                    total: tags.len() as u64,
+                    items: tags,
+                    next: None,
+                };
+                Answer::Data(Data::Tags(Box::new(tags)), None)
             }
             DataKey::RefIn(_, spot) => {
                 let listed = self.remote_refs(repo, clone).await?;
@@ -764,7 +788,10 @@ mod tests {
             at: Some(head.clone()),
         };
         assert_eq!(from, at_head);
-        assert!(from.note().starts_with(&format!("At {}", &head[..7])));
+        assert!(
+            from.note()
+                .starts_with(&format!("At {}", crate::ui::text::short_sha(&head)))
+        );
 
         let (data, from) = local.fetch(&gh, &blob("c.txt"), None).await;
         assert!(matches!(data, Err(ApiError::NotFound(_))), "{data:?}");
@@ -781,6 +808,32 @@ mod tests {
             panic!("no refs")
         };
         assert_eq!(refs.branches.items, ["main"]);
+
+        // Tags made since (one annotated), at their commits, newest first.
+        git(g, &["tag", "-a", "v1", "-m", "One", "main~1"]).await;
+        git(g, &["tag", "v2", "main"]).await;
+        let fresh = Local::new(local.git.clone());
+        let tags = DataKey::Tags(repo.clone());
+        let Ok(Data::Tags(tags)) = fresh.fetch(&gh, &tags, None).await.0 else {
+            panic!("no tags")
+        };
+        let named: Vec<_> = (tags.items.iter())
+            .map(|t| {
+                (
+                    t.name.as_str(),
+                    t.oid.as_deref().map(crate::ui::text::short_sha),
+                )
+            })
+            .collect();
+        let first = git(g, &["rev-parse", "main~1"]).await;
+        assert_eq!(
+            named,
+            [
+                ("v2", Some(crate::ui::text::short_sha(&head))),
+                ("v1", Some(crate::ui::text::short_sha(&first)))
+            ]
+        );
+        assert!(tags.items.iter().all(|t| t.date.is_some()));
     }
 
     #[test]
