@@ -1,0 +1,727 @@
+//! The screens the snapshots show: states built from fixtures, and
+//! rendering them.
+
+use super::*;
+
+/// A pull request as Home's sections list it.
+pub(super) fn row(
+    pr: &str,
+    title: &str,
+    state: PrState,
+    review: Option<ReviewDecision>,
+    checks: Option<ChecksState>,
+) -> crate::api::browse::IssueSummary {
+    let mut row = fixtures::found_pr(pr, title, state);
+    if let IssueKind::Pr {
+        review: r,
+        checks: c,
+        ..
+    } = &mut row.kind
+    {
+        (*r, *c) = (review, checks);
+    }
+    row
+}
+
+/// Home's default sections: review requests, your pull requests (2 of
+/// 31), your repositories.
+pub(super) fn fill_home(state: &mut State) {
+    let requests = vec![
+        row(
+            "ratatui/ratatui#1820",
+            "Add a virtualized list widget for very long collections",
+            PrState::Open,
+            Some(ReviewDecision::ReviewRequired),
+            Some(ChecksState::Passing),
+        ),
+        row(
+            "tokio-rs/tokio#7001",
+            "Fix waker leak in the multi-thread scheduler when tasks are cancelled during shutdown",
+            PrState::Draft,
+            None,
+            Some(ChecksState::Pending),
+        ),
+    ];
+    fixtures::section(state, 0, fixtures::found_prs(requests, 2));
+    let mine = vec![
+        row(
+            "gold-silver-copper/ghtui#12",
+            "Theme: generate syntax palette from seed",
+            PrState::Open,
+            Some(ReviewDecision::Approved),
+            Some(ChecksState::Failing),
+        ),
+        row(
+            "gold-silver-copper/ghtui#9",
+            "Cache GraphQL responses in redb",
+            PrState::Open,
+            Some(ReviewDecision::ChangesRequested),
+            None,
+        ),
+    ];
+    fixtures::section(state, 1, fixtures::found_prs(mine, 31));
+    let repos = vec![
+        fixtures::repo_summary("gold-silver-copper/ghtui", 1234),
+        fixtures::repo_summary("gold-silver-copper/fux", 87),
+    ];
+    let repos = SearchResults::Repos(crate::api::browse::Results {
+        total: 2,
+        items: repos,
+        next: None,
+    });
+    fixtures::section(state, 2, repos);
+}
+
+pub(crate) fn pr_detail() -> PrDetail {
+    PrDetail {
+        id: crate::api::model::NodeId::new("PR_12"),
+        merge_state: crate::api::model::MergeState::Dirty,
+        behind_by: Some(2),
+        may: crate::api::model::PrPermits {
+            merge: true,
+            merge_as_admin: false,
+            close: true,
+            reopen: true,
+            edit: true,
+            push_head: true,
+        },
+        merge_methods: vec![
+            crate::api::change::MergeMethod::Squash,
+            crate::api::change::MergeMethod::Merge,
+        ],
+        title: "Theme: generate syntax palette from seed".into(),
+        author: "octocat".into(),
+        state: PrState::Open,
+        updated_at: "2026-10-03T09:00:00Z".into(),
+        additions: 120,
+        deletions: 34,
+        review: Some(ReviewDecision::Approved),
+        checks: Some(ChecksState::Failing),
+        body: "Derives keyword, string and type colors from the seed's HCT palettes.\n\n\
+               Every syntax role is now checked against every diff background, in both \
+               schemes and at both color depths."
+            .into(),
+        created_at: "2026-09-30T12:00:00Z".into(),
+        base_ref: "main".into(),
+        head_ref: "syntax-palette".into(),
+        base_oid: "0123456789abcdef0123456789abcdef01234567".into(),
+        head_oid: "fedcba9876543210fedcba9876543210fedcba98".into(),
+        head_repo: Some("octocat/ghtui".into()),
+        changed_files: 7,
+        mergeable: Mergeable::Conflicting,
+        milestone: Some(crate::api::model::MilestoneRef {
+            number: 3,
+            title: "Links".into(),
+        }),
+        labels: vec![
+            Label {
+                name: "enhancement".into(),
+                color: "a2eeef".into(),
+            },
+            Label {
+                name: "theme".into(),
+                color: "7057ff".into(),
+            },
+        ]
+        .into(),
+    }
+}
+
+pub(super) fn state(mode: Mode, depth: ColorDepth) -> State {
+    let mut state = State::new(
+        Theme::new(DEFAULT_SEED, mode, depth),
+        Icons::default(),
+        Keymap::default(),
+        (100, 30),
+    );
+    state.viewer = Some("octocat".into());
+    state.clock = || NOW;
+    // Never written: changes to Home's sections are commands, not run here.
+    state.config_path = Some("config.toml".into());
+    state.rate_limits = RateLimits {
+        graphql: Some(Bucket {
+            remaining: 4987,
+            limit: 5000,
+            reset_at: NOW + 3600,
+        }),
+        rest: None,
+    };
+    state
+}
+
+pub(super) fn with_home(mode: Mode, depth: ColorDepth) -> State {
+    let mut state = state(mode, depth);
+    fill_home(&mut state);
+    state
+}
+
+pub(super) fn with_pr(mode: Mode) -> State {
+    let mut state = with_home(mode, ColorDepth::TrueColor);
+    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let _ = state.push(Route::pr(pr.clone()));
+    update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(pr_detail()))));
+    fetched(
+        &mut state,
+        DataKey::PrActivity(pr),
+        Data::PrActivity(Box::new(fixtures::activity())),
+    );
+    state
+}
+
+/// Pushes `route` and delivers `data` for its page's own fetch (its last).
+pub(super) fn open(state: &mut State, route: Route, data: Data) {
+    let Some(Need::Data(key)) = needs(&route).pop() else {
+        panic!("{route:?} doesn't end in a data fetch");
+    };
+    let _ = state.push(route);
+    fetched(state, key, data);
+}
+
+pub(super) fn ghtui() -> RepoId {
+    RepoId::new("gold-silver-copper", "ghtui")
+}
+
+/// A repository's Code tab with everything it asked for delivered.
+pub(super) fn with_repo(mode: Mode, depth: ColorDepth) -> State {
+    let mut state = state(mode, depth);
+    let _ = state.push(Route::Repo(ghtui()));
+    fetched(
+        &mut state,
+        DataKey::Repo(ghtui()),
+        Data::Repo(Box::new(fixtures::overview())),
+    );
+    fetched(
+        &mut state,
+        DataKey::Readme(ghtui()),
+        Data::Readme(Some(Box::new(fixtures::readme()))),
+    );
+    fetched(
+        &mut state,
+        DataKey::LastCommits(ghtui(), "HEAD".into(), String::new()),
+        Data::LastCommits(std::sync::Arc::new(fixtures::last_commits())),
+    );
+    state
+}
+
+/// A file in the repository.
+pub(super) fn with_file(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::blob(ghtui(), "main".into(), "src/main.rs".into());
+    open(&mut state, route, Data::Blob(Box::new(fixtures::blob())));
+    state
+}
+
+/// A file's blame.
+pub(super) fn with_blame(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let (repo, rev, path) = (ghtui(), "main".to_owned(), "src/main.rs".to_owned());
+    let blob = DataKey::Blob(repo.clone(), rev.clone(), path.clone());
+    let route = Route::Blame {
+        repo,
+        rev,
+        path,
+        lines: Some((5, 5)),
+    };
+    let _ = state.push(route.clone());
+    fetched(&mut state, blob, Data::Blob(Box::new(fixtures::blob())));
+    let Some(Need::Data(key)) = needs(&route).pop() else {
+        panic!("a blame fetches its blame");
+    };
+    fetched(&mut state, key, Data::Blame(Box::new(fixtures::blame())));
+    state
+}
+/// A gist.
+pub(super) fn with_gist(mode: Mode) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    let route = Route::Gist {
+        owner: Some("octocat".into()),
+        id: "6cad326836d38bd3a7ae".into(),
+    };
+    open(&mut state, route, Data::Gist(Box::new(fixtures::gist())));
+    state
+}
+
+/// Someone's gists.
+pub(super) fn with_gists(mode: Mode) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    let route = Route::Gists("octocat".into());
+    open(&mut state, route, Data::Gists(Box::new(fixtures::gists())));
+    state
+}
+/// An organization's teams.
+pub(super) fn with_teams(mode: Mode) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    open(
+        &mut state,
+        Route::Teams("github".into()),
+        Data::Teams(Box::new(fixtures::teams())),
+    );
+    state
+}
+
+/// A team.
+pub(super) fn with_team(mode: Mode) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    let route = Route::Team {
+        org: "github".into(),
+        slug: "core".into(),
+    };
+    open(&mut state, route, Data::Team(Box::new(fixtures::team())));
+    state
+}
+/// A repository's security advisories.
+pub(super) fn with_advisories(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Advisories(Some(ghtui()));
+    let items = fixtures::advisories();
+    let list = crate::api::browse::Results {
+        total: items.len() as u64,
+        items,
+        next: None,
+    };
+    open(&mut state, route, Data::Advisories(Box::new(list)));
+    state
+}
+
+/// A security advisory from GitHub's database.
+pub(super) fn with_advisory(mode: Mode) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    let route = Route::Advisory {
+        repo: None,
+        ghsa: "GHSA-6r3q-mjv7-xr8m".into(),
+    };
+    open(
+        &mut state,
+        route,
+        Data::Advisory(Box::new(fixtures::advisory())),
+    );
+    state
+}
+/// A wiki's Home.
+pub(super) fn with_wiki(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Wiki {
+        repo: ghtui(),
+        page: None,
+    };
+    open(&mut state, route, Data::Wiki(Box::new(fixtures::wiki())));
+    state
+}
+/// The repository's open issues.
+pub(super) fn with_issues(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Issues {
+        repo: ghtui(),
+        query: OPEN.into(),
+    };
+    let results = fixtures::issue_results(Some("c1"));
+    open(&mut state, route, Data::Search(Box::new(results)));
+    state
+}
+
+/// A commit, its repository's header loaded first.
+pub(super) fn with_commit(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let commit = fixtures::commit();
+    let route = Route::Commit {
+        repo: ghtui(),
+        oid: commit.oid.clone(),
+        pr: None,
+    };
+    open(&mut state, route, Data::Commit(Box::new(commit)));
+    state
+}
+
+/// A pull request's Checks tab.
+pub(super) fn with_pr_checks(mode: Mode) -> State {
+    let mut state = with_pr(mode);
+    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let _ = state.push(Route::Pr {
+        pr: pr.clone(),
+        tab: PrTab::Checks,
+    });
+    // The switch refreshes the pull request; it comes back unchanged.
+    update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(pr_detail()))));
+    let activity = Data::PrActivity(Box::new(fixtures::activity()));
+    fetched(&mut state, DataKey::PrActivity(pr.clone()), activity);
+    let checks = Data::Checks(Box::new(fixtures::checks()));
+    fetched(&mut state, DataKey::PrChecks(pr), checks);
+    state
+}
+
+/// A pull request's Review tab: a draft, a thread still open (and one
+/// resolved), the reviewers and what stops the merge.
+pub(super) fn with_pr_review(mode: Mode) -> State {
+    let mut state = with_pr(mode);
+    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    press(&mut state, "gr");
+    // The diff it starts reads the drafts and threads.
+    let of = crate::diff_screen::DiffOf::Pr(pr.clone());
+    state.diffs.insert(of.clone(), diff::diff_state());
+    let review = crate::store::ReviewState {
+        pending: vec![fixtures::draft(1, 5, "Could this name say what it holds?")],
+        ..Default::default()
+    };
+    let mut open = fixtures::thread("t", Some(14), false, false);
+    open.comments[0].url = format!("{}#discussion_r42", pr.url());
+    let threads = vec![open, fixtures::thread("done", Some(3), true, false)];
+    for msg in [
+        crate::state::DiffMsg::ReviewLoaded(Ok(review)),
+        crate::state::DiffMsg::ThreadsLoaded(Ok(threads)),
+    ] {
+        update(&mut state, Msg::Diff(of.clone(), msg));
+    }
+    state
+}
+
+/// A repository's Actions tab.
+pub(super) fn with_actions(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::actions(ghtui());
+    let runs = Data::Runs(Box::new(fixtures::workflow_runs().1));
+    open(&mut state, route, runs);
+    state
+}
+
+/// Your inbox, from Home.
+pub(super) fn with_notifications(mode: Mode) -> State {
+    let mut state = with_home(mode, ColorDepth::TrueColor);
+    let route = Route::Notifications {
+        query: String::new(),
+    };
+    let inbox = Data::Notifications(Box::new(fixtures::notifications()));
+    open(&mut state, route, inbox);
+    state
+}
+
+/// `state` in a `w`×`h` terminal.
+pub(super) fn sized(mut state: State, w: u16, h: u16) -> State {
+    update(&mut state, Msg::Resize(w, h));
+    state
+}
+
+/// The repository page with `n` more tabs open after it: an issue, a
+/// pull request, a profile, a file, a commit…, then back on the second.
+pub(super) fn with_tabs(mode: Mode, n: usize) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let more = [
+        Route::Issue {
+            repo: ghtui(),
+            number: 14,
+        },
+        Route::pr(PrRef::parse("gold-silver-copper/ghtui#12").unwrap()),
+        Route::user("octocat"),
+        Route::blob(ghtui(), "main".into(), "crates/app/src/main.rs".into()),
+        Route::Commit {
+            repo: ghtui(),
+            oid: fixtures::commit().oid,
+            pr: None,
+        },
+        Route::Releases(ghtui()),
+        Route::Stargazers(ghtui()),
+    ];
+    for route in more.into_iter().cycle().take(n) {
+        let _ = state.open_tab(crate::route::Target::Page(route).into());
+    }
+    let _ = state.switch_to_tab(1);
+    state.notices.dismiss();
+    state
+}
+
+/// An organization's profile.
+pub(super) fn with_org(mode: Mode) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    let route = Route::user("ratatui");
+    open(
+        &mut state,
+        route,
+        Data::Profile(Box::new(fixtures::org_profile())),
+    );
+    state
+}
+
+/// A repository's discussions.
+pub(super) fn with_discussions(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let of = crate::api::browse::DiscussionsOf::Repo(ghtui());
+    let route = Route::Discussions { of, category: None };
+    open(
+        &mut state,
+        route,
+        Data::Discussions(Box::new(fixtures::discussions())),
+    );
+    state
+}
+
+/// A discussion.
+pub(super) fn with_discussion(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let of = crate::api::browse::DiscussionsOf::Repo(ghtui());
+    let route = Route::Discussion { of, number: 14603 };
+    open(
+        &mut state,
+        route,
+        Data::Discussion(Box::new(fixtures::discussion())),
+    );
+    state
+}
+/// A workflow run.
+pub(super) fn with_run(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::WorkflowRun {
+        repo: ghtui(),
+        run: 7,
+        attempt: None,
+    };
+    open(
+        &mut state,
+        route,
+        Data::Run(Box::new(fixtures::workflow_run())),
+    );
+    state
+}
+
+/// A job, its failed step's log open; `step` is the step a link pointed at.
+pub(super) fn with_job(mode: Mode, step: Option<(u32, u32)>) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Job {
+        repo: ghtui(),
+        run: Some(7),
+        job: 2,
+        step,
+        query: String::new(),
+    };
+    let _ = state.push(route);
+    let (job, log) = fixtures::job();
+    fetched(
+        &mut state,
+        DataKey::Job(ghtui(), 2),
+        Data::Job(Box::new(job)),
+    );
+    let log = Data::Log(std::sync::Arc::new(log));
+    fetched(&mut state, DataKey::JobLog(ghtui(), 2), log);
+    state
+}
+
+/// A workflow and its runs.
+pub(super) fn with_workflow(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Workflow {
+        repo: ghtui(),
+        file: "ci.yml".into(),
+    };
+    let _ = state.push(route);
+    let (workflow, runs) = fixtures::workflow_runs();
+    let key = DataKey::Workflow(ghtui(), "ci.yml".into());
+    fetched(&mut state, key, Data::Workflow(Box::new(workflow)));
+    let key = DataKey::Runs(ghtui(), "workflow:ci.yml".into());
+    fetched(&mut state, key, Data::Runs(Box::new(runs)));
+    state
+}
+
+/// A repository's stargazers.
+pub(super) fn with_stargazers(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Stargazers(ghtui());
+    open(&mut state, route, Data::Users(Box::new(fixtures::people())));
+    state
+}
+
+/// A repository's forks.
+pub(super) fn with_forks(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Forks(ghtui());
+    open(
+        &mut state,
+        route,
+        Data::RepoPage(Box::new(fixtures::forks())),
+    );
+    state
+}
+
+/// A repository's releases.
+pub(super) fn with_releases(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Releases(ghtui());
+    open(
+        &mut state,
+        route,
+        Data::Releases(Box::new(fixtures::releases())),
+    );
+    state
+}
+
+/// A release's page.
+pub(super) fn with_release(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Release {
+        repo: ghtui(),
+        tag: "v0.2.0".into(),
+    };
+    open(
+        &mut state,
+        route,
+        Data::Release(Box::new(fixtures::release(true))),
+    );
+    state
+}
+
+/// A repository's tags.
+pub(super) fn with_tags(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    open(
+        &mut state,
+        Route::Tags(ghtui()),
+        Data::Tags(Box::new(fixtures::tags())),
+    );
+    state
+}
+
+/// A repository's branches.
+pub(super) fn with_branches(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    open(
+        &mut state,
+        Route::Branches(ghtui()),
+        Data::Branches(Box::new(fixtures::branches())),
+    );
+    state
+}
+/// A repository's milestones.
+pub(super) fn with_milestones(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Milestones {
+        repo: ghtui(),
+        closed: false,
+    };
+    open(
+        &mut state,
+        route,
+        Data::Milestones(Box::new(fixtures::milestones())),
+    );
+    state
+}
+
+/// A milestone.
+pub(super) fn with_milestone(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Milestone {
+        repo: ghtui(),
+        number: 3,
+    };
+    open(
+        &mut state,
+        route,
+        Data::Milestone(Box::new(fixtures::milestone())),
+    );
+    state
+}
+/// A repository's deployments.
+pub(super) fn with_deployments(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Deployments {
+        repo: ghtui(),
+        environment: None,
+    };
+    open(
+        &mut state,
+        route,
+        Data::Deployments(Box::new(fixtures::deployments())),
+    );
+    state
+}
+/// Two tags compared.
+pub(super) fn with_compare(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Compare {
+        repo: ghtui(),
+        spec: "v0.1.0...v0.2.0".into(),
+    };
+    open(
+        &mut state,
+        route,
+        Data::Compare(Box::new(fixtures::comparison())),
+    );
+    state
+}
+/// A branch's commits.
+pub(super) fn with_history(mode: Mode) -> State {
+    let mut state = with_repo(mode, ColorDepth::TrueColor);
+    let route = Route::Commits {
+        repo: ghtui(),
+        rev: "main".into(),
+        path: String::new(),
+    };
+    open(
+        &mut state,
+        route,
+        Data::History(Box::new(fixtures::history(Some("h1")))),
+    );
+    state
+}
+
+/// An issue, its repository's header loaded first.
+pub(super) fn with_issue(mode: Mode) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    fetched(
+        &mut state,
+        DataKey::Repo(ghtui()),
+        Data::Repo(Box::new(fixtures::overview())),
+    );
+    let route = Route::Issue {
+        repo: ghtui(),
+        number: 14,
+    };
+    let issue = Data::Issue(Some(Box::new(fixtures::issue())));
+    open(&mut state, route, issue);
+    state
+}
+
+pub(super) fn with_profile(mode: Mode, tab: ProfileTab) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    let route = Route::User {
+        login: "octocat".into(),
+        tab,
+    };
+    let _ = state.push(route.clone());
+    let profile = Data::Profile(Box::new(fixtures::profile()));
+    fetched(&mut state, DataKey::Profile("octocat".into()), profile);
+    // The tab's own list.
+    if let Some(key) = crate::browse::paged(&route) {
+        let list = match key {
+            DataKey::Users(_) => Data::Users(Box::new(fixtures::people())),
+            _ => Data::RepoPage(Box::new(fixtures::profile_repos())),
+        };
+        fetched(&mut state, key, list);
+    }
+    state
+}
+
+pub(super) fn with_search(
+    mode: Mode,
+    kind: SearchKind,
+    query: &str,
+    results: SearchResults,
+) -> State {
+    let mut state = state(mode, ColorDepth::TrueColor);
+    let query = query.to_owned();
+    open(
+        &mut state,
+        Route::Search { kind, query },
+        Data::Search(Box::new(results)),
+    );
+    state
+}
+
+/// Repositories matching "terminal file manager".
+pub(super) fn with_repo_search(mode: Mode) -> State {
+    let results = fixtures::repo_results();
+    with_search(mode, SearchKind::Repos, "terminal file manager", results)
+}
+
+pub(super) fn render(state: &State) -> String {
+    let (w, h) = state.size;
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+    terminal.draw(|frame| view(state, frame, NOW)).unwrap();
+    format!("{:?}", terminal.backend().buffer())
+}
