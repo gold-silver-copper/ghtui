@@ -4,6 +4,7 @@ pub mod auth;
 pub mod browse;
 pub mod change;
 mod client;
+pub mod code_search;
 pub mod corpus;
 pub mod create;
 pub mod edit;

@@ -218,6 +218,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Paste(text) => return crate::typing::on_paste(state, &text),
         Msg::Focus(focused) => crate::live::on_focus(state, focused),
         Msg::Mentionable(repo, result) => crate::typing::on_mentionable(state, repo, result),
+        Msg::Definitions(ask, result) => return crate::code_nav::found(state, &ask, result),
         Msg::Edited(purpose, result) => return on_edited(state, purpose, result),
         Msg::HomeEdited { edit, result, what } => return state.home_edited(&edit, result, what),
     }
@@ -416,6 +417,8 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             return nav::search_word(state, action == Action::SearchWord);
         }
         Action::OpenLink => return nav::open_link(state),
+        Action::Symbols => return crate::code_nav::symbols(state),
+        Action::Definition => return crate::code_nav::definition(state),
         Action::Notifications => {
             let inbox = Route::Notifications {
                 query: String::new(),

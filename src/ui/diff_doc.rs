@@ -1499,9 +1499,9 @@ impl Doc {
         move |pos| {
             let text = self.row_text(pos);
             if smart_case {
-                text.contains(&needle)
+                crate::ui::text::has(&text, &needle)
             } else {
-                text.to_lowercase().contains(&needle)
+                crate::ui::text::has(&text.to_lowercase(), &needle)
             }
         }
     }

@@ -1033,7 +1033,7 @@ fn go_to_match(screen: &mut DiffScreen, doc: &Doc, pos: Pos, query: &str) {
     };
     let query = query.to_lowercase();
     let has = |w: &text::Word| {
-        (code.get(w.bytes.clone())).is_some_and(|t| t.to_lowercase().contains(&query))
+        (code.get(w.bytes.clone())).is_some_and(|t| text::has(&t.to_lowercase(), &query))
     };
     if let Some(word) = text::words(code).into_iter().find(has) {
         screen.word = Some(word.cols.start);

@@ -2633,3 +2633,23 @@ async fn mentionable_asks_for_assignees_and_recent_issues() {
         "GET /repos/o/r/issues?state=all&sort=updated&per_page=100 "
     ));
 }
+
+/// Where `gd` looks for a name the file doesn't define: GitHub's code
+/// search for the word in the repository, in the file's language.
+#[tokio::test]
+async fn code_search_asks_for_the_word_in_the_repository() {
+    let body = r#"{"total_count":1,"incomplete_results":true,"items":[{"path":"src/a.rs","sha":"abc","repository":{"full_name":"o/r"}}]}"#;
+    let (gh, seen) = github(vec![Reply::new(200, body).on("/search/code")]).await;
+    let hits = gh
+        .code_search("offset repo:o/r language:Rust")
+        .await
+        .unwrap();
+    assert_eq!(hits.paths, ["src/a.rs"]);
+    assert!(hits.incomplete, "a search that gave up says so");
+    let seen = seen.lock().unwrap();
+    let line = &seen[0].request_line;
+    assert!(
+        line.starts_with("GET /search/code?q=offset+repo%3Ao%2Fr+language%3ARust&per_page=10 "),
+        "{line}"
+    );
+}

@@ -438,7 +438,7 @@ pub fn job(
         empty_row(page, &text);
     }
     let q = at.query.to_lowercase();
-    let matches = |line: &str| !q.is_empty() && strip_escapes(line).to_lowercase().contains(&q);
+    let matches = |line: &str| crate::ui::text::has(&strip_escapes(line).to_lowercase(), &q);
     // With a match anywhere, the search decides where the page opens.
     let searched = lines
         .iter()

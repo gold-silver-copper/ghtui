@@ -164,8 +164,8 @@ pub fn highlight(seg: Seg, query: &str) -> Vec<Seg> {
     let piece = |text: &str, role: &Role| Seg::linked(text, role.clone(), seg.link);
     let mut out = Vec::new();
     let mut from = 0;
-    for (at, found) in lower.match_indices(&q) {
-        let end = at.saturating_add(found.len());
+    for found in text::hits(&lower, &q) {
+        let (at, end) = (found.start, found.end);
         let (Some(before), Some(hit)) = (seg.text().get(from..at), seg.text().get(at..end)) else {
             continue;
         };
@@ -583,7 +583,7 @@ impl Page {
     pub fn mark(&mut self, query: &str) {
         let q = query.to_ascii_lowercase();
         for (i, line) in self.lines.iter_mut().enumerate() {
-            if line.text().to_ascii_lowercase().contains(&q) {
+            if text::has(&line.text().to_ascii_lowercase(), &q) {
                 let segs = std::mem::take(&mut line.segs);
                 line.segs = segs.into_iter().flat_map(|s| highlight(s, &q)).collect();
                 self.marks.push(i);

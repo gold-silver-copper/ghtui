@@ -686,3 +686,6 @@ mod create;
 mod edits;
 /// Merging when ready, and through a merge queue.
 mod merging;
+// ---- code navigation --------------------------------------------------------
+
+mod code_nav;

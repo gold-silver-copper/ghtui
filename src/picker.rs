@@ -1,6 +1,6 @@
 //! One fuzzy picker for every list under a text field: the command
 //! palette, go to file (in a repository and in a diff), branches and tags,
-//! and the diff's commits.
+//! the diff's commits, and places in code (symbols, definitions).
 
 use crate::api::browse::SearchKind;
 use crate::api::model::RepoId;
@@ -43,6 +43,11 @@ pub enum Kind {
     Edit(crate::edit::Choosing),
     /// One of a new issue's or pull request's choices.
     Form(crate::create::Pick),
+    /// Places in code: a file's symbols, a name's definitions.
+    Code {
+        title: &'static str,
+        rows: Vec<(PaletteItem, Choice)>,
+    },
 }
 
 /// What a section's title is for.
@@ -72,6 +77,7 @@ impl Picker {
             Kind::SectionTitle(Titling::Rename { .. }, _) => "Rename the section",
             Kind::Edit(ref c) => c.title(),
             Kind::Form(pick) => pick.title(),
+            Kind::Code { title, .. } => title,
         }
     }
 }
@@ -102,6 +108,8 @@ pub enum Choice {
     Edit(crate::edit::Pick),
     /// Set one of a form's choices.
     Form(crate::create::Picked),
+    /// Go to this line of the file on screen.
+    Line(u32),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -111,6 +119,18 @@ fn item(label: impl Into<String>, hint: impl Into<String>) -> PaletteItem {
         label: label.into(),
         hint: hint.into(),
     }
+}
+
+/// Places in code that match `q`, best first; all of them in order
+/// before anything is typed.
+fn code_rows(rows: &[(PaletteItem, Choice)], q: &str) -> Rows {
+    let mut hits: Vec<_> = (rows.iter())
+        .filter_map(|(item, choice)| Some((fuzzy_score(q, item.label.trim_start())?, item, choice)))
+        .collect();
+    hits.sort_by_key(|(score, ..)| *score);
+    let hits = hits.into_iter();
+    hits.map(|(_, item, choice)| (item.clone(), Some(choice.clone())))
+        .collect()
 }
 
 /// Notices that match `q`; choosing one copies it.
@@ -142,6 +162,7 @@ impl State {
                 "Type to filter · ↵ picks or unpicks · esc when done"
             }
             Kind::Form(_) => "Type to filter",
+            Kind::Code { .. } => "Type a name",
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
@@ -214,6 +235,7 @@ impl State {
             Kind::Messages(kept) => message_rows(kept, q, (self.clock)()),
             Kind::Edit(c) => crate::edit::rows(self, c, q),
             Kind::Form(pick) => crate::create::picker_rows(self, *pick, q),
+            Kind::Code { rows, .. } => code_rows(rows, q),
             Kind::SectionTitle(titling, path) => {
                 if q.is_empty() {
                     return vec![(item("Type a title", ""), None)];
@@ -565,6 +587,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
             vec![Cmd::Copy(text)]
         }
         Choice::Tab(i) => state.switch_to_tab(i),
+        Choice::Line(line) => crate::code_nav::go_to_line(state, line),
         Choice::Title(Titling::New { kind, query }, path, title) => {
             let what = format!("Added “{title}” to Home");
             state.edit_home(path, crate::home::Edit::Add { title, kind, query }, what)

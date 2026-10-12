@@ -34,8 +34,8 @@ ghtui is pre-release, but it's usable every day.
 - **Creating**: open issues (from the repository's templates) and pull
   requests, and check a pull request out in your clone.
 
-Not there yet: projects, GitHub Enterprise Server, code navigation and
-structural diffs.
+Not there yet: projects, GitHub Enterprise Server, code navigation with
+a language server's precision, and structural diffs.
 
 ## Goals
 
@@ -112,6 +112,15 @@ doesn't:
 - scope names in hunk headers (`impl Doc › fn offset`);
 - "changes since your last review", even across force-pushes and rebases;
 - local per-change "reviewed" marks beside GitHub's per-file "viewed".
+
+**Reading code** goes beyond the file on screen, without a language
+server. `gO` lists a file's functions, types, impls and modules, nested
+as in the code, and goes to the one you pick (in Files changed, the
+file under the cursor's). `gd` goes to the definition of the word under
+the cursor: in the file when it's there, else in the files GitHub's
+code search finds the word in, read at the revision you're viewing, and
+it says when it can't tell. Symbols are read for Rust, TypeScript,
+JavaScript, Python and Go.
 
 Comments are kept on disk until you submit, so a crash never loses them.
 Threads that GitHub calls outdated are moved to their line when it still
@@ -242,8 +251,11 @@ says where it works.
 - `gn` opens your notifications (`,n` marks one read, `,d` done, `,N`
   and `,D` everything shown) and `gr` a pull request's Review tab.
 - In files, logs and the diff, `w` and `b` move a word cursor along the
-  line: `*` and `#` search its word, down and up, and `gx` opens a web
+  line: `*` and `#` search its word as a whole word (vim's `\<word\>`;
+  `/` takes `\<` and `\>` too), down and up, and `gx` opens a web
   address under it. A job log's lines are rows, as a file's are.
+- In files and the diff, `gO` lists the file's symbols and `gd` goes to
+  the definition of the word under the cursor.
 
 **Everywhere** (`global:`)
 
@@ -357,6 +369,8 @@ says where it works.
 | `l`  | Scroll right |
 | `w`  | Next word (for * and gx) |
 | `b`  | Previous word |
+| `gO` | Symbols in this file, to go to one |
+| `gd` | Go to the definition of the word under the cursor |
 | `V`  | Select lines |
 
 **In job logs** (`log:`)
@@ -378,6 +392,8 @@ says where it works.
 | `l`            | Scroll right |
 | `w`            | Next word (for * and gx) |
 | `b`            | Previous word |
+| `gO`           | Symbols in this file, to go to one |
+| `gd`           | Go to the definition of the word under the cursor |
 | `]c` `}`       | Next change |
 | `[c` `{`       | Previous change |
 | `]f` `]]` `⇧↓` | Next file |
@@ -555,8 +571,10 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   classic token can.
 - A pull request's Review tab has no page on GitHub, so its link (`y`,
   `o`, a restored tab) is the conversation's.
-- `*` and `#` find the word as text, inside longer words too, not as a
-  whole word.
+- `gd` doesn't know types or imports: it goes by name. Outside the
+  file, it searches with GitHub's code search API, which reads only the
+  default branch and searches text, not symbols; it reads the first five
+  files it finds at the revision you're viewing.
 - `@` offers as taking part only who has written what's loaded (the
   newest 100 comments, and the review threads), and `#` the 100 issues and
   pull requests updated last.

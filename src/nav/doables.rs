@@ -55,6 +55,8 @@ pub(super) const DIFF_DOABLES: &[(&str, &[(Action, &str)])] = {
                 (A::SearchWordBack, ""),
                 (A::WordNext, ""),
                 (A::WordPrev, ""),
+                (A::Symbols, ""),
+                (A::Definition, ""),
                 (A::FindFile, ""),
                 (A::SwitchPane, ""),
                 (A::Fold, ""),
@@ -326,6 +328,15 @@ impl State {
                 row.unavailable.clone_from(&why);
                 out.push(row);
             }
+        }
+        // Code navigation: a file's symbols, and a name's definition.
+        if matches!(route, Route::Blob { .. } | Route::Blame { .. }) {
+            out.push(here(Action::Symbols, "Symbols in this file", ""));
+            let mut definition = here(Action::Definition, Action::Definition.description(), "");
+            if p.word_cursor().is_none() {
+                definition.unavailable = Some("no line of code is selected".into());
+            }
+            out.push(definition);
         }
         if let Some(query) = &list {
             let show = format!("Show {}", next_list_state(route, query));

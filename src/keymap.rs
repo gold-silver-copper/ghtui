@@ -250,6 +250,8 @@ actions! {
     ScrollRight       "scroll_right"      ["l", "log:l", "diff:l"] File   "Scroll right";
     WordNext          "word_next"         ["w", "log:w", "diff:w"] File   "Next word (for * and gx)";
     WordPrev          "word_prev"         ["b", "log:b", "diff:b"] File   "Previous word";
+    Symbols           "symbols"           ["gO", "diff:gO"]        File   "Symbols in this file, to go to one";
+    Definition        "go_to_definition"  ["gd", "diff:gd"]        File   "Go to the definition of the word under the cursor";
 
     NextHunk          "next_change"       ["]c", "}"]              Diff   "Next change";
     PrevHunk          "prev_change"       ["[c", "{"]              Diff   "Previous change";

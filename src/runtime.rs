@@ -502,6 +502,10 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 let result = gh.mentionable(&repo).await;
                 Msg::Mentionable(repo, result)
             }
+            Api::FindDefinition(ask) => {
+                let result = crate::code_nav::find(&gh, &ask).await;
+                Msg::Definitions(ask, result)
+            }
             Api::Poll { pr, asks } => {
                 let polls = asks.into_iter().map(|ask| {
                     let (gh, path) = (&gh, ask.probe.path(&pr));
@@ -659,6 +663,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             Msg::Diff(pr.clone().into(), DiffMsg::LastReview(api()))
         }
         Cmd::Api(Api::FetchMentionable(repo)) => Msg::Mentionable(repo.clone(), api()),
+        Cmd::Api(Api::FindDefinition(ask)) => Msg::Definitions(ask.clone(), api()),
         Cmd::Api(Api::Poll { pr, .. }) => Msg::Polled(pr.clone(), Vec::new()),
         Cmd::Git(Git::LoadDiff { of, job, .. }) => Msg::Diff(
             of.clone(),

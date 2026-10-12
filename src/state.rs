@@ -97,6 +97,11 @@ pub enum Msg {
         crate::api::model::RepoId,
         Result<crate::api::mention::Mentionable, ApiError>,
     ),
+    /// Where a name is defined in the repository.
+    Definitions(
+        crate::code_nav::Ask,
+        Result<crate::code_nav::Found, ApiError>,
+    ),
     /// What GitHub answered when asked whether a watched pull request
     /// changed.
     Polled(
@@ -245,6 +250,9 @@ pub enum Api {
     },
     /// Who and what the repository's comments can mention.
     FetchMentionable(crate::api::model::RepoId),
+    /// Where a name is defined in the repository, answered by
+    /// [`Msg::Definitions`].
+    FindDefinition(crate::code_nav::Ask),
     /// Whether a watched pull request changed, asked with ETags.
     Poll {
         pr: PrRef,

@@ -13,6 +13,7 @@ pub mod ui;
 mod act;
 mod browse;
 mod chrome;
+mod code_nav;
 mod config;
 #[cfg(test)]
 mod crawl;

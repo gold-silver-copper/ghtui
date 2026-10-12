@@ -46,7 +46,8 @@ pub fn find(state: &mut State, query: &str, forward: bool) {
 }
 
 /// `*` and `#`: searches the word under the cursor as `/` and `?` would,
-/// going to its next match below the cursor's line (or above).
+/// as a whole word, going to its next match below the cursor's line (or
+/// above).
 #[must_use]
 pub fn search_word(state: &mut State, forward: bool) -> Vec<Cmd> {
     state.backwards = !forward;
@@ -58,7 +59,7 @@ pub fn search_word(state: &mut State, forward: bool) -> Vec<Cmd> {
             Some(word) => {
                 // The word cursor goes with the match.
                 screen.word = Some(screen.word.unwrap_or(0));
-                let found = diff_screen::search(screen, diff, word.to_owned(), forward);
+                let found = diff_screen::search(screen, diff, text::whole_word(word), forward);
                 state.notices.say(found);
             }
             None => state.info("No word under the cursor: this row has no code"),
@@ -68,7 +69,7 @@ pub fn search_word(state: &mut State, forward: bool) -> Vec<Cmd> {
     let Screen::Page(p) = state.screen_mut() else {
         return Vec::new();
     };
-    let Some(word) = p.word_text() else {
+    let Some(word) = p.word_text().map(|w| text::whole_word(&w)) else {
         let down = state.first_key(Action::Down);
         state.info(format!(
             "No word under the cursor: {down} moves to a line of a file or a log"
