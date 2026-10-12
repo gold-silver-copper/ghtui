@@ -226,6 +226,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                         "create pull request…"
                     }
                     crate::review::ComposeTarget::Form(_) => "create issue",
+                    crate::review::ComposeTarget::Edit(_) => "save",
                     _ => "add to review",
                 },
                 completions: (completions.as_deref()).map(|c| {

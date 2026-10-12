@@ -498,9 +498,20 @@ impl State {
                     pair("esc", "close"),
                 ];
             }
-            Some(Overlay::Picker(_)) => {
+            Some(Overlay::Picker(p)) => {
+                use crate::edit::Choosing;
+                use crate::picker::Kind;
+                // What ↵ does depends on what's being picked.
+                let enter = match &p.kind {
+                    Kind::Edit(Choosing::Title { .. }) => "save",
+                    Kind::Edit(Choosing::Many { .. }) => "pick or unpick · ctrl-s apply",
+                    Kind::Form(pick) if pick.several() => "pick or unpick",
+                    Kind::Edit(_) | Kind::Form(_) => "choose",
+                    Kind::Code { .. } => "go there",
+                    _ => "open",
+                };
                 return vec![
-                    pair("↵", "open"),
+                    pair("↵", enter),
                     pair("ctrl-j/k", "choose"),
                     pair("esc", "close"),
                 ];
