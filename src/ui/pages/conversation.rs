@@ -382,12 +382,7 @@ pub fn discussions(
 /// its comments (the answer marked) with their replies, each named for
 /// links to it (`#discussioncomment-…`), and the box to write in. Those
 /// in `fresh` (by GitHub's number) came in since you started looking.
-pub fn discussion(
-    page: &mut Page,
-    d: &DiscussionDetail,
-    fresh: &HashSet<u64>,
-    cx: PageCtx<'_>,
-) {
+pub fn discussion(page: &mut Page, d: &DiscussionDetail, fresh: &HashSet<u64>, cx: PageCtx<'_>) {
     page.wrapped(
         vec![
             Seg::new(d.title.clone(), Role::Title),

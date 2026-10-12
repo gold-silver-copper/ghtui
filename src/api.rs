@@ -23,8 +23,8 @@ pub mod queries;
 mod query_check;
 pub mod rate_limit;
 mod raw;
-pub mod security;
 pub mod release;
+pub mod security;
 pub mod watch;
 
 pub use crate::store::Cached;

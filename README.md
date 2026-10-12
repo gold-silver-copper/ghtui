@@ -246,10 +246,10 @@ the page doesn't, so what came in while the page loaded isn't lost.
   file or folder), and a file already there is replaced only when you
   choose the row that says so.
 
-**Running a workflow by hand** (`,w` on a workflow's page or one of its
+**Running a workflow by hand** (`,E` on a workflow's page or one of its
 runs) opens GitHub's "Run workflow" form: the branch, then the inputs
 its file declares on that branch (choices, booleans and text, with their
-defaults). `↵` changes one; `,w` (or the form's last row) runs it, and
+defaults). `↵` changes one; `,E` (or the form's last row) runs it, and
 the page follows the run it started.
 
 **A pull request's Review tab** (`gr` from any of its tabs) shows where
