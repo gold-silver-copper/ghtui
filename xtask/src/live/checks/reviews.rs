@@ -11,7 +11,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, ensure};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::live::{Check, Cx, Launch, NARROW, gh, until};
 
@@ -174,6 +174,69 @@ fn run(cx: &mut Cx) -> Result<()> {
         Ok((review["body"] == edited.as_str()).then_some(()))
     })?;
     ghtui.wait_for(&edited)?;
+
+    cx.step("a review with four threads folds after two; za unfolds it, zc folds it")?;
+    let long = format!("A long review {}", cx.env.run_id);
+    let threads: Vec<Value> = [1, 2, 3, 1]
+        .iter()
+        .enumerate()
+        .map(|(n, line)| json!({"path": FILE, "line": line, "side": "RIGHT", "body": format!("Thread {} of the long review", n + 1)}))
+        .collect();
+    gh::send(
+        "POST",
+        &format!("repos/{}/pulls/{pr}/reviews", gh::REPO),
+        Some(&json!({"event": "COMMENT", "body": long, "comments": threads})),
+    )?;
+    ghtui.keys("1 g t")?;
+    ghtui.keys("r")?;
+    ghtui.wait_for(&long)?;
+    ghtui.wait_for("▸ 2 more threads in this review")?;
+    ghtui.wait_followed()?;
+    ghtui.keys("/")?;
+    ghtui.type_text("more threads in this review")?;
+    ghtui.keys("Enter")?;
+    // Threads show in line order: 1 and 4 (line 1), then 2 and 3, folded.
+    ghtui.wait_gone("Thread 3 of the long review")?;
+    ghtui.keys("z a")?;
+    ghtui.wait_for("Thread 3 of the long review")?;
+    ghtui.wait_for("▾ Fold this review's threads")?;
+    ghtui.keys("z c")?;
+    ghtui.wait_for("▸ 2 more threads in this review")?;
+    ghtui.wait_gone("Thread 3 of the long review")?;
+    ghtui.keys("z o")?;
+    ghtui.wait_for("Thread 3 of the long review")?;
+
+    cx.step(",D on your pending review throws it away")?;
+    let pending = gh::send(
+        "POST",
+        &format!("repos/{}/pulls/{pr}/reviews", gh::REPO),
+        Some(
+            &json!({"body": "A pending review", "comments": [{"path": FILE, "line": 2, "side": "RIGHT", "body": "A pending comment"}]}),
+        ),
+    )?;
+    let pending = pending["id"].as_u64().context("no pending review id")?;
+    ghtui.keys("Escape r")?;
+    ghtui.wait_followed()?;
+    // `/` scrolls to it, wherever it is in the conversation, and selects it.
+    until("your pending review in the conversation", GITHUB, || {
+        ghtui.keys("Escape r")?;
+        ghtui.wait_followed()?;
+        ghtui.keys("/")?;
+        ghtui.type_text("Your pending review on GitHub")?;
+        ghtui.keys("Enter")?;
+        Ok(ghtui
+            .screen()?
+            .contains("Your pending review on GitHub")
+            .then_some(()))
+    })?;
+    ghtui.keys(", D")?;
+    ghtui.wait_for(&format!("Delete {login}'s review?"))?;
+    ghtui.keys("Enter")?;
+    until("the pending review gone from GitHub", GITHUB, || {
+        let reviews = gh::rest_list(&format!("repos/{}/pulls/{pr}/reviews", gh::REPO))?;
+        Ok((!reviews.iter().any(|r| r["id"].as_u64() == Some(pending))).then_some(()))
+    })?;
+    ghtui.wait_gone("Your pending review on GitHub")?;
 
     cx.step("at 90 columns, the reviewers' states are said above the conversation")?;
     let narrow = cx.launch(Launch::new(&[&format!("{}#{pr}", gh::REPO)]).size(NARROW))?;
