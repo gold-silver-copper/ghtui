@@ -184,8 +184,8 @@ says where it works.
 
 | Keys                 | Action |
 | -------------------- | ------ |
-| `j` `↓`              | Move down |
-| `k` `↑`              | Move up |
+| `j` `↓` `ctrl-n`     | Move down |
+| `k` `↑` `ctrl-p`     | Move up |
 | `ctrl-d`             | Half page down |
 | `ctrl-u`             | Half page up |
 | `ctrl-f` `pgdn`      | Page down |
@@ -356,7 +356,7 @@ nerd_font = false
 density = "auto"      # auto | compact | comfortable
 
 [keys]                # each action listed replaces its default keys
-down = ["j", "<Down>", "<C-n>"]
+down = ["j", "<Down>"]  # without ctrl-n
 sort = ["list:O"]     # a context first binds it there only
 go_home = ["gh", "<A-h>"]   # sequences or modified keys
 

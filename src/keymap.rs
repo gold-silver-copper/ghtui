@@ -136,8 +136,8 @@ macro_rules! actions {
 }
 
 actions! {
-    Down              "down"              ["j", "<Down>"]          Global "Move down";
-    Up                "up"                ["k", "<Up>"]            Global "Move up";
+    Down              "down"              ["j", "<Down>", "<C-n>"] Global "Move down";
+    Up                "up"                ["k", "<Up>", "<C-p>"]   Global "Move up";
     HalfPageDown      "half_page_down"    ["<C-d>"]                Global "Half page down";
     HalfPageUp        "half_page_up"      ["<C-u>"]                Global "Half page up";
     PageDown          "page_down"         ["<C-f>", "<PageDown>"]  Global "Page down";
