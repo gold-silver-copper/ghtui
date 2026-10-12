@@ -1,8 +1,9 @@
 //! Browsing: the data behind each page, and building pages from it.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 use crate::api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckOutcome, Checks, CommitDetail, CommitInfo, Comparison,
@@ -12,9 +13,12 @@ use crate::api::browse::{
     StateCounts, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage,
     Workflow, WorkflowRun,
 };
-use crate::api::model::{PrRef, RepoId};
+use crate::api::commit_comments::CommitComment;
+use crate::api::model::{Capped, PrRef, RepoId};
 use crate::api::notifications::Inbox;
 use crate::api::project::{Project, ProjectRef, ProjectSummary, ProjectsOf};
+use crate::api::security::{Alert, AlertKind, AlertList, AlertRef};
+use crate::api::timeline::{InProject, Review};
 use crate::ui::Fetched;
 use crate::ui::page::{Page, PageLine, Role, Seg};
 use crate::ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
@@ -45,6 +49,14 @@ pub enum DataKey {
     StateCounts(String),
     Issue(RepoId, u64),
     PrActivity(PrRef),
+    /// The projects an issue or pull request is in.
+    InProjects(RepoId, u64),
+    /// A file's lines at a commit, from git: where a review thread is.
+    Lines(RepoId, String, String),
+    /// A commit's comments, by the revision linked.
+    CommitComments(RepoId, String),
+    /// All of a pull request's reviews.
+    Reviews(PrRef),
     Profile(String),
     /// Every file path at a revision ("Go to file").
     Files(RepoId, String),
@@ -106,6 +118,11 @@ pub enum DataKey {
     Projects(ProjectsOf),
     /// A project at a view (its first, if none is named).
     Project(ProjectRef, Option<u64>),
+    /// A repository's security alerts of a kind, filtered.
+    Alerts(RepoId, AlertKind, String),
+    Alert(AlertRef),
+    /// Your subscription to a thread or a repository.
+    Subscription(crate::api::watch::Watched),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +137,10 @@ pub enum Data {
     /// `None`: the number is a pull request.
     Issue(Option<Box<IssueDetail>>),
     PrActivity(Box<PrActivity>),
+    Reviews(Box<Capped<Review>>),
+    CommitComments(Box<Capped<CommitComment>>),
+    Lines(Arc<Vec<String>>),
+    InProjects(Box<Capped<InProject>>),
     Profile(Box<Profile>),
     /// Paths, and whether GitHub cut the list short.
     Files(Arc<Vec<String>>, bool),
@@ -162,6 +183,9 @@ pub enum Data {
     NewForm(Box<crate::api::create::NewForm>),
     Projects(Box<Results<ProjectSummary>>),
     Project(Box<Project>),
+    Alerts(Box<AlertList>),
+    Alert(Box<Alert>),
+    Subscription(Box<crate::api::watch::Subscription>),
 }
 
 impl Data {
@@ -202,6 +226,7 @@ impl Data {
             Data::Notifications(i) => i.list.next.as_deref(),
             Data::Projects(r) => r.next.as_deref(),
             Data::Project(p) => p.items.next.as_deref(),
+            Data::Alerts(a) => a.results.next.as_deref(),
             _ => None,
         }
     }
@@ -241,6 +266,7 @@ impl Data {
             }
             (Data::Projects(a), Data::Projects(b)) => extend(a, *b, |p| p.number),
             (Data::Project(a), Data::Project(b)) => extend(&mut a.items, b.items, |i| i.id.clone()),
+            (Data::Alerts(a), Data::Alerts(b)) => extend(&mut a.results, b.results, |a| a.number),
             _ => {}
         }
     }
@@ -290,6 +316,9 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Project { project, view } | Route::ProjectItem { project, view, .. } => {
             Some(DataKey::Project(project.clone(), *view))
         }
+        Route::Alerts { repo, kind, query } => {
+            Some(DataKey::Alerts(repo.clone(), *kind, query.clone()))
+        }
         _ => route
             .search()
             .map(|(kind, query)| DataKey::Search(kind, query)),
@@ -324,7 +353,7 @@ pub fn needs(route: &Route) -> Vec<Need> {
         .search()
         .map(|(kind, query)| Need::Data(K::Search(kind, query)));
     match route {
-        Route::Home => Vec::new(),
+        Route::Home | Route::NewGist => Vec::new(),
         Route::Repo(repo) => vec![
             header(repo),
             Need::Data(K::Readme(repo.clone())),
@@ -380,13 +409,28 @@ pub fn needs(route: &Route) -> Vec<Need> {
             paged(route).map(Need::Data).into_iter().collect()
         }
         Route::Team { org, slug } => vec![Need::Data(K::Team(org.to_lowercase(), slug.clone()))],
-        Route::Gist { id, .. } => vec![Need::Data(K::Gist(id.clone()))],
+        Route::Gist { id, .. } | Route::EditGist { id, .. } => {
+            vec![Need::Data(K::Gist(id.clone()))]
+        }
         Route::Issue { repo, number } => {
-            vec![header(repo), Need::Data(K::Issue(repo.clone(), *number))]
+            vec![
+                header(repo),
+                Need::Data(K::InProjects(repo.clone(), *number)),
+                Need::Data(K::Issue(repo.clone(), *number)),
+            ]
         }
         Route::NewIssue(repo) | Route::NewPr(repo) => {
             vec![header(repo), Need::Data(K::NewForm(repo.clone()))]
         }
+        Route::NewRelease(repo) => vec![
+            header(repo),
+            Need::Data(K::Tags(repo.clone())),
+            Need::Data(K::Branches(repo.clone())),
+        ],
+        Route::WikiEdit { repo, page } => vec![
+            header(repo),
+            Need::Data(crate::wiki::form::key(repo, page.as_ref())),
+        ],
         Route::Pr {
             pr,
             tab: PrTab::Checks,
@@ -394,6 +438,23 @@ pub fn needs(route: &Route) -> Vec<Need> {
             Need::Pr(pr.clone()),
             Need::Data(K::PrActivity(pr.clone())),
             Need::Data(K::PrChecks(pr.clone())),
+        ],
+        // The Review tab and a review list every review.
+        Route::Pr {
+            pr,
+            tab: PrTab::Review | PrTab::Reviewed(_),
+        } => vec![
+            Need::Pr(pr.clone()),
+            Need::Data(K::PrActivity(pr.clone())),
+            Need::Data(K::Reviews(pr.clone())),
+        ],
+        Route::Pr {
+            pr,
+            tab: PrTab::Conversation,
+        } => vec![
+            Need::Pr(pr.clone()),
+            Need::Data(K::InProjects(pr.repo.clone(), pr.number)),
+            Need::Data(K::PrActivity(pr.clone())),
         ],
         Route::Pr { pr, .. } => vec![Need::Pr(pr.clone()), Need::Data(K::PrActivity(pr.clone()))],
         Route::Discussions { of, .. } | Route::Discussion { of, .. } => {
@@ -422,6 +483,7 @@ pub fn needs(route: &Route) -> Vec<Need> {
             .chain([Need::Data(K::Workflow(repo.clone(), file.clone()))])
             .chain(paged(route).map(Need::Data))
             .collect(),
+        Route::Dispatch { repo, file } => crate::actions::needs(repo, file),
         Route::CommitChecks { repo, oid } => vec![
             header(repo),
             Need::Data(K::Commit(repo.clone(), oid.clone())),
@@ -444,12 +506,22 @@ pub fn needs(route: &Route) -> Vec<Need> {
         | Route::Deployments { repo, .. }
         | Route::Milestones { repo, .. }
         | Route::Milestone { repo, .. }
+        | Route::Alerts { repo, .. }
         | Route::Projects(ProjectsOf::Repo(repo)) => std::iter::once(header(repo))
             .chain(paged(route).map(Need::Data))
             .collect(),
+        Route::Alert { repo, kind, number } => {
+            let a = AlertRef {
+                repo: repo.clone(),
+                kind: *kind,
+                number: *number,
+            };
+            vec![header(repo), Need::Data(K::Alert(a))]
+        }
         Route::Commit { repo, oid, pr } => {
             let mut needs = vec![
                 header(repo),
+                Need::Data(K::CommitComments(repo.clone(), oid.clone())),
                 Need::Data(K::Commit(repo.clone(), oid.clone())),
             ];
             // Its place among the pull request's commits.
@@ -499,7 +571,9 @@ macro_rules! picked {
 picked!(
     Repo => RepoOverview, Readme => Option<Box<Readme>>, Tree => [TreeEntry], Blob => Blob,
     Search => SearchResults, StateCounts => StateCounts, Issue => Option<Box<IssueDetail>>,
-    PrActivity => PrActivity,
+    PrActivity => PrActivity, Reviews => Capped<Review>,
+    CommitComments => Capped<CommitComment>, Lines => Vec<String>,
+    InProjects => Capped<InProject>,
     Profile => Profile, Refs => Refs, RefIn => Option<String>,
     LastCommits => HashMap<String, CommitInfo>, Commit => CommitDetail,
     History => Results<CommitInfo>, Checks => Checks, Users => Results<UserSummary>,
@@ -514,6 +588,8 @@ picked!(
     Notifications => Inbox, Sidebar => crate::api::edit::Sidebar,
     NewForm => crate::api::create::NewForm,
     Projects => Results<ProjectSummary>, Project => Project,
+    Alerts => AlertList, Alert => Alert,
+    Subscription => crate::api::watch::Subscription,
 );
 
 /// A page's needs as the page shows them, failing with the key that
@@ -648,10 +724,12 @@ impl State {
             self.first_key(Action::FindFile),
             self.first_key(Action::Search),
         );
+        let archive = self.first_key(Action::ArchiveItem);
         let keys = Keys {
             comment: &comment,
             find_file: &find_file,
             filter: &filter,
+            archive: &archive,
         };
         let cx = pages::PageCtx { icons, keys, now };
         // Reading stays narrow enough to follow, lists get room for their
@@ -669,11 +747,18 @@ impl State {
             | Route::Discussion { .. }
             | Route::Release { .. }
             | Route::Advisory { .. }
+            | Route::Alert { .. }
             | Route::NewIssue(_)
             | Route::NewPr(_)
+            | Route::NewRelease(_)
+            | Route::NewGist
+            | Route::EditGist { .. }
+            | Route::WikiEdit { .. }
+            | Route::Dispatch { .. }
             | Route::ProjectItem { .. }
             | Route::Pr {
-                tab: PrTab::Review, ..
+                tab: PrTab::Review | PrTab::Reviewed(_),
+                ..
             } => Page::new(reading),
             Route::Pr {
                 tab: PrTab::Checks, ..
@@ -700,6 +785,11 @@ impl State {
             let why = format!("Couldn't refresh: {err}. Showing what was loaded {when}.");
             pages::flash(&mut page, &why);
             page.blank();
+        }
+        // Where the page was read: a clone at a commit, or GitHub's API.
+        if let Some(from) = crate::source::shown(route).and_then(|k| self.sources.get(&k)) {
+            let note = vec![Seg::new(from.note(), Role::Meta)];
+            page.wrapped(note, 0, crate::ui::page::Frame::None);
         }
         let banner = page.lines.len();
         let retry = self.first_key(Action::Refresh);
@@ -811,6 +901,14 @@ impl State {
                     SearchResults::Issues(r) => Some(r),
                     _ => None,
                 });
+                // Pinned issues, above the list, as on GitHub.
+                #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
+                let overview = f
+                    .get::<RepoOverview>(&DataKey::Repo(repo.clone()))
+                    .ready_unchecked();
+                if let Some(o) = overview.filter(|_| !is_pr) {
+                    pages::pinned_issues(&mut page, repo, &o.pinned_issues, icons);
+                }
                 pages::issue_list(&mut page, query, counts, is_pr, results, cx);
             }
             Route::Search { kind, query } => {
@@ -820,8 +918,16 @@ impl State {
             Route::Issue { repo, number } => {
                 let issue =
                     f.get::<Option<Box<IssueDetail>>>(&DataKey::Issue(repo.clone(), *number));
+                let none = HashSet::new();
+                let fresh = crate::live::page::fresh(self, route).unwrap_or(&none);
                 match issue.show(&mut page, &format!("{repo}#{number}")) {
-                    Some(Some(issue)) => pages::issue(&mut page, issue, icons, keys, now),
+                    Some(Some(issue)) => {
+                        let lines = pages::LinesAt::new();
+                        let mut marks = crate::talk::marks(self, None, &lines);
+                        marks.comments = fresh;
+                        let projects = f.get(&DataKey::InProjects(repo.clone(), *number));
+                        pages::issue(&mut page, issue, projects, marks, cx);
+                    }
                     // Redirecting to the pull request.
                     Some(None) => page.line(vec![Seg::new("Loading…", Role::Meta)]),
                     None => {}
@@ -829,13 +935,15 @@ impl State {
             }
             Route::Pr { pr, tab } => {
                 let activity = f.get(&DataKey::PrActivity(pr.clone()));
-                let watch = crate::live::fresh(self, pr);
-                let (none, unseen) = (HashSet::new(), HashSet::new());
+                let reviews = f.get(&DataKey::Reviews(pr.clone()));
+                let lines = crate::talk::lines_at(self, pr);
+                let marks = crate::talk::marks(self, Some(pr), &lines);
                 if let Some(d) = f.of(self.prs.get(pr)).show(&mut page, &pr.to_string()) {
                     match tab {
                         PrTab::Conversation => {
-                            let fresh = watch.map_or(&none, |w| &w.new_comments);
-                            pages::pr_conversation(&mut page, pr, d, activity, fresh, cx);
+                            let projects = DataKey::InProjects(pr.repo.clone(), pr.number);
+                            let projects = f.get(&projects);
+                            pages::pr_conversation(&mut page, pr, d, activity, projects, marks, cx);
                         }
                         PrTab::Commits => pages::pr_commits(&mut page, pr, d, activity, now),
                         PrTab::Checks => {
@@ -850,9 +958,14 @@ impl State {
                                 drafts: inputs
                                     .filter(|i| i.review_loaded)
                                     .map(|i| i.review.pending.as_slice()),
-                                fresh: watch.map_or(&unseen, |w| &w.new_threads),
+                                fresh: marks.threads,
+                                reviews,
+                                new_reviews: marks.reviews,
                             };
                             pages::pr_review(&mut page, pr, d, activity, glance, cx);
+                        }
+                        PrTab::Reviewed(id) => {
+                            pages::pr_reviewed(&mut page, pr, d, *id, activity, reviews, marks, cx);
                         }
                     }
                 }
@@ -863,8 +976,42 @@ impl State {
                     crate::create::build(self, &mut page, route, d);
                 }
             }
-            Route::Stargazers(_) => pages::people_list(&mut page, "Stargazers", f.paged(route)),
-            Route::Watchers(_) => pages::people_list(&mut page, "Watchers", f.paged(route)),
+            Route::NewRelease(repo) => {
+                let header = f.get::<RepoOverview>(&DataKey::Repo(repo.clone()));
+                if header.show(&mut page, &title).is_some() {
+                    crate::release::build(self, &mut page, repo);
+                }
+            }
+            Route::NewGist => crate::gist::build(self, &mut page, route),
+            Route::EditGist { id, .. } => {
+                if f.get::<Gist>(&DataKey::Gist(id.clone()))
+                    .show(&mut page, &title)
+                    .is_some()
+                {
+                    crate::gist::build(self, &mut page, route);
+                }
+            }
+            Route::WikiEdit { repo, page: name } => {
+                let key = crate::wiki::form::key(repo, name.as_ref());
+                if f.get::<WikiPage>(&key).show(&mut page, &title).is_some() {
+                    crate::wiki::form::build(self, &mut page, route);
+                }
+            }
+            Route::Stargazers(repo) => {
+                // GitHub lists none of a big repository's stargazers.
+                let stars = self.overview(repo).map_or(0, |o| o.summary.stars);
+                let empty = match stars {
+                    0 => "Nobody here yet.".to_owned(),
+                    n => format!(
+                        "GitHub doesn't list this repository's {} stargazers.",
+                        pages::compact(n)
+                    ),
+                };
+                pages::people_list(&mut page, "Stargazers", f.paged(route), &empty);
+            }
+            Route::Watchers(_) => {
+                pages::people_list(&mut page, "Watchers", f.paged(route), "Nobody here yet.");
+            }
             Route::Forks(_) => pages::repos(&mut page, "Forks", f.paged(route), now),
             Route::Releases(repo) => pages::releases(&mut page, repo, f.paged(route), now),
             Route::Tags(repo) => pages::tags(&mut page, repo, f.paged(route), now),
@@ -889,7 +1036,24 @@ impl State {
                 }
             }
             Route::Advisories(repo) => {
+                if let Some(repo) = repo {
+                    pages::security_nav(&mut page, repo, None);
+                }
                 pages::advisories(&mut page, repo.as_ref(), f.paged(route), now);
+            }
+            Route::Alerts { repo, kind, query } => {
+                pages::security_nav(&mut page, repo, Some(*kind));
+                pages::alerts(&mut page, repo, *kind, query, f.paged(route), cx);
+            }
+            Route::Alert { repo, kind, number } => {
+                let key = DataKey::Alert(AlertRef {
+                    repo: repo.clone(),
+                    kind: *kind,
+                    number: *number,
+                });
+                if let Some(a) = f.get(&key).show(&mut page, &title) {
+                    pages::alert(&mut page, repo, a, cx);
+                }
             }
             Route::Advisory { repo, ghsa } => {
                 let key = DataKey::Advisory(repo.clone(), ghsa.clone());
@@ -924,8 +1088,10 @@ impl State {
             }
             Route::Discussion { of, number } => {
                 let key = DataKey::Discussion(of.clone(), *number);
+                let none = HashSet::new();
+                let fresh = crate::live::page::fresh(self, route).unwrap_or(&none);
                 if let Some(d) = f.get(&key).show(&mut page, &title) {
-                    pages::discussion(&mut page, d, now);
+                    pages::discussion(&mut page, d, fresh, cx);
                 }
             }
             Route::WorkflowRun { repo, run, attempt } => {
@@ -948,6 +1114,7 @@ impl State {
                         step: *step,
                         query,
                         keys,
+                        follows: crate::live::page::follows(self, repo, *job),
                     };
                     pages::job(&mut page, repo, j, log, at, now);
                 }
@@ -956,6 +1123,7 @@ impl State {
                 let wf = f.get(&DataKey::Workflow(repo.clone(), file.clone()));
                 pages::workflow(&mut page, repo, wf, f.paged(route), now);
             }
+            Route::Dispatch { repo, file } => crate::actions::build(self, &mut page, repo, file),
             Route::CommitChecks { repo, oid } => {
                 let checks = f.get(&DataKey::CommitChecks(repo.clone(), oid.clone()));
                 pages::commit_checks(&mut page, checks, now);
@@ -1003,6 +1171,8 @@ impl State {
                     };
                     let files = format!("{}#files", files.url());
                     pages::commit(&mut page, repo, c, &files, now);
+                    let comments = DataKey::CommitComments(repo.clone(), oid.clone());
+                    pages::commit_comments(&mut page, repo, c, f.get(&comments), cx);
                 }
             }
             Route::User { login, tab } => {

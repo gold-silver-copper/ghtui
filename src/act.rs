@@ -119,6 +119,8 @@ enum Plan {
     Approve(PrRef),
     /// It's about something that has to load first.
     Load(Need),
+    /// Choose why to dismiss a security alert.
+    Dismiss(crate::security::Dismissing),
 }
 
 /// Runs one of [`ACTIONS`] on what's on screen, or on the selected row
@@ -167,6 +169,7 @@ fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
             vec![Cmd::Api(Api::Change(change, By::Act(subject)))]
         }
         Ok(Plan::Approve(pr)) => crate::review::open_approve(state, pr),
+        Ok(Plan::Dismiss(d)) => crate::security::open_dismiss(state, d),
         Ok(Plan::Load(need)) => {
             state.info(format!("Loading {}…", subject.name()));
             let route = state.route().cloned();
@@ -200,6 +203,10 @@ pub enum Subject {
     },
     /// A project's items, at a view.
     Project(ProjectRef, Option<u64>),
+    /// A security alert.
+    Alert(crate::api::security::AlertRef),
+    /// A discussion and its comments.
+    Discussion(crate::api::browse::DiscussionsOf, u64),
 }
 
 impl Subject {
@@ -210,6 +217,11 @@ impl Subject {
             Route::Issue { repo, number } => Subject::Issue(repo.clone(), *number),
             Route::WorkflowRun { repo, run, attempt } => Subject::Run(repo.clone(), *run, *attempt),
             Route::Job { repo, run, job, .. } => Subject::Job(repo.clone(), *run, *job),
+            Route::Alert { repo, kind, number } => Subject::Alert(crate::api::security::AlertRef {
+                repo: repo.clone(),
+                kind: *kind,
+                number: *number,
+            }),
             _ => return None,
         })
     }
@@ -241,6 +253,15 @@ impl Subject {
                 project: project.clone(),
                 view: *view,
             },
+            Subject::Alert(a) => Route::Alert {
+                repo: a.repo.clone(),
+                kind: a.kind,
+                number: a.number,
+            },
+            Subject::Discussion(of, number) => Route::Discussion {
+                of: of.clone(),
+                number: *number,
+            },
         }
     }
 
@@ -257,6 +278,8 @@ impl Subject {
                 Need::Data(DataKey::Notifications(query.clone()))
             }
             Subject::Project(project, view) => Need::Data(DataKey::Project(project.clone(), *view)),
+            Subject::Alert(a) => Need::Data(DataKey::Alert(a.clone())),
+            Subject::Discussion(of, number) => Need::Data(DataKey::Discussion(of.clone(), *number)),
         }
     }
 
@@ -268,12 +291,13 @@ impl Subject {
                 action,
                 A::Merge | A::Approve | A::ReadyForReview | A::UpdateBranch | A::Close
             ),
-            Subject::Issue(..) => action == A::Close,
+            Subject::Issue(..) | Subject::Alert(_) => action == A::Close,
             Subject::Run(..) | Subject::Job(..) => matches!(action, A::Rerun | A::Close),
             Subject::Thread { .. } => matches!(action, A::MarkRead | A::MarkDone),
             Subject::Inbox { .. } => matches!(action, A::MarkAllRead | A::MarkAllDone),
-            // Moving and setting go through `crate::projects`.
-            Subject::Project(..) => false,
+            // Moving and setting go through `crate::projects`, writing in
+            // a discussion through `crate::discuss`.
+            Subject::Project(..) | Subject::Discussion(..) => false,
         }
     }
 
@@ -286,6 +310,8 @@ impl Subject {
             Subject::Thread { .. } => "the notification".to_owned(),
             Subject::Inbox { .. } => "your notifications".to_owned(),
             Subject::Project(..) => "the project".to_owned(),
+            Subject::Alert(_) => "the alert".to_owned(),
+            Subject::Discussion(..) => "the discussion".to_owned(),
         }
     }
 }
@@ -342,7 +368,7 @@ fn elsewhere(action: Action) -> &'static str {
         Action::MarkRead | Action::MarkDone => "That works on a notification in your inbox",
         Action::MarkAllRead | Action::MarkAllDone => "That works in your inbox",
         Action::Close => {
-            "Closing works on an issue, a pull request or a running workflow run (or its row)"
+            "Closing works on an issue, a pull request, a security alert or a running workflow run (or its row)"
         }
         Action::Rerun => "Re-running works on a workflow run or a job",
         _ => "That works on a pull request (or its row in a list)",
@@ -476,11 +502,12 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
                 .picked::<Inbox>(&key)
                 .and_then(|inbox| inbox.list.items.iter().find(|n| n.id == *id))
                 .ok_or("It's no longer in your inbox")?;
-            let thread = id.clone();
             match action {
                 Action::MarkRead if !n.unread => Err("It's read already".into()),
-                Action::MarkRead => Ok(Plan::Do(Change::MarkRead { thread })),
-                _ => Ok(Plan::Do(Change::MarkDone { thread })),
+                Action::MarkRead => Ok(Plan::Do(Change::MarkRead { thread: id.clone() })),
+                _ => Ok(Plan::Do(Change::MarkDone {
+                    thread: crate::api::notifications::ThreadAt::of(n),
+                })),
             }
         }
         Subject::Inbox { query } => {
@@ -494,7 +521,12 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
             let fetched = (state.data.get(&key)).and_then(|r| r.cached_at.or(r.asked_at));
             inbox::plan(query, list, fetched, action)
         }
-        Subject::Project(..) => Err(elsewhere(action).to_owned()),
+        Subject::Alert(a) => Ok(match crate::security::plan(state, a)? {
+            crate::security::Plan::Load(need) => Plan::Load(need),
+            crate::security::Plan::Ask(title, facts, choices) => Plan::Ask(title, facts, choices),
+            crate::security::Plan::Dismiss(d) => Plan::Dismiss(d),
+        }),
+        Subject::Project(..) | Subject::Discussion(..) => Err(elsewhere(action).to_owned()),
     }
 }
 
@@ -866,6 +898,9 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
     let yes = |b: bool| if b { Shown::Yes } else { Shown::No };
     let pr = |pr: &PrRef| state.prs.get(pr).and_then(|r| r.data.as_ref());
     match (change, about) {
+        (_, Subject::Discussion(of, number)) => {
+            yes(crate::discuss::shows(state, change, of, *number))
+        }
         (Change::Edit(edit), about) => yes(crate::edit::shown(state, edit, about)),
         (_, Subject::Pr(r)) => {
             let Some(d) = pr(r) else {
@@ -930,28 +965,29 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
                 _ => yes(latest && running && j.attempt > 1),
             }
         }
-        (
-            Change::MarkRead { thread } | Change::MarkDone { thread },
-            Subject::Thread { query, .. },
-        ) => {
+        (Change::MarkRead { .. } | Change::MarkDone { .. }, Subject::Thread { query, .. }) => {
             let key = DataKey::Notifications(query.clone());
             let Some(inbox) = state.picked::<Inbox>(&key) else {
                 return Shown::No;
             };
-            // Read, it stays, read (or leaves a list of the unread). Done
-            // reads as the same: GitHub's API goes on listing a thread
-            // marked done, read, though its website doesn't.
-            let row = inbox.list.items.iter().find(|n| n.id == *thread);
-            yes(row.is_none_or(|n| !n.unread))
+            // Read, it stays, read (or leaves a list of the unread); done,
+            // it leaves.
+            let row = |id: &str| inbox.list.items.iter().find(|n| n.id == id);
+            yes(match change {
+                Change::MarkDone { thread } => row(&thread.id).is_none(),
+                Change::MarkRead { thread } => row(thread).is_none_or(|n| !n.unread),
+                _ => true,
+            })
         }
         (Change::MarkAllRead { .. } | Change::MarkEach { .. }, Subject::Inbox { query }) => {
             let key = DataKey::Notifications(query.clone());
             let shows = state.picked::<Inbox>(&key);
             yes(shows.is_some_and(|i| inbox::shows(i, change)))
         }
-        (Change::SetProjectField { .. }, Subject::Project(project, view)) => {
+        (Change::SetProjectField { .. } | Change::Project(_), Subject::Project(project, view)) => {
             yes(crate::projects::shows(state, change, project, *view))
         }
+        (Change::Alert(c), _) => yes(crate::security::shows(state, c)),
         _ => Shown::Yes,
     }
 }
@@ -1032,7 +1068,7 @@ fn notifies(change: &Change) -> bool {
 /// What a change is doing while GitHub answers: "Merging".
 fn doing(change: &Change) -> &'static str {
     match change {
-        Change::Comment { .. } | Change::Reply { .. } => "Posting",
+        Change::Comment { .. } | Change::CommitComment { .. } | Change::Reply { .. } => "Posting",
         Change::Star { starred: true, .. } => "Starring",
         Change::Star { .. } => "Unstarring",
         Change::Merge { .. } => "Merging",
@@ -1051,15 +1087,18 @@ fn doing(change: &Change) -> &'static str {
         Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => "Marking them read",
         Change::MarkEach { .. } => "Marking them done",
         Change::Edit(edit) => crate::edit::doing(edit),
+        Change::Discussion(d) => crate::discuss::doing(d),
         Change::SetProjectField { value: None, .. } => "Clearing the field",
         Change::SetProjectField { .. } => "Setting the field",
+        Change::Alert(c) => crate::security::doing(c),
+        Change::Project(c) => crate::projects::doing(c),
     }
 }
 
 /// What a change did, once GitHub said so.
 fn done(change: &Change) -> String {
     match change {
-        Change::Comment { .. } => "Comment posted".into(),
+        Change::Comment { .. } | Change::CommitComment { .. } => "Comment posted".into(),
         Change::Reply { .. } => "Reply posted".into(),
         Change::Star {
             repo,
@@ -1098,10 +1137,13 @@ fn done(change: &Change) -> String {
             }
         }
         Change::Edit(edit) => crate::edit::done(edit).into(),
+        Change::Discussion(d) => crate::discuss::done(d).into(),
         Change::SetProjectField {
             value: None, said, ..
         } => format!("Cleared {said}"),
         Change::SetProjectField { said, .. } => format!("Set {said}"),
+        Change::Alert(c) => crate::security::done(c),
+        Change::Project(c) => crate::projects::done(c).into(),
     }
 }
 
@@ -1109,6 +1151,7 @@ fn done(change: &Change) -> String {
 pub fn needs(change: &Change) -> &'static str {
     match change {
         Change::Comment { .. } | Change::Edit(_) => "Issues or Pull requests: write",
+        Change::CommitComment { .. } => "Contents: write",
         Change::Star { .. } => "Starring: write",
         Change::Merge { .. }
         | Change::UpdateBranch { .. }
@@ -1127,7 +1170,9 @@ pub fn needs(change: &Change) -> &'static str {
         | Change::MarkDone { .. }
         | Change::MarkAllRead { .. }
         | Change::MarkEach { .. } => "Notifications (classic tokens only)",
-        Change::SetProjectField { .. } => "Projects: write",
+        Change::SetProjectField { .. } | Change::Project(_) => "Projects: write",
+        Change::Alert(c) => crate::security::needs(c),
+        Change::Discussion(_) => "Discussions: write",
     }
 }
 
@@ -1135,7 +1180,7 @@ pub fn needs(change: &Change) -> &'static str {
 /// when GitHub says the token lacks one.
 fn failure(change: &Change, err: &ApiError) -> String {
     let what = match change {
-        Change::Comment { .. } => "the comment",
+        Change::Comment { .. } | Change::CommitComment { .. } => "the comment",
         Change::Reply { .. } => "the reply",
         Change::Star { starred: true, .. } => "the star",
         Change::Star { .. } => "removing the star",
@@ -1155,7 +1200,10 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => "marking them read",
         Change::MarkEach { .. } => "marking them done",
         Change::Edit(edit) => crate::edit::what(edit),
+        Change::Discussion(d) => crate::discuss::what(d),
         Change::SetProjectField { .. } => "setting the field",
+        Change::Alert(c) => crate::security::what(c),
+        Change::Project(c) => crate::projects::what(c),
     };
     let reason = match err {
         ApiError::GraphQl(messages) => messages.join("; "),
@@ -1173,9 +1221,13 @@ fn failure(change: &Change, err: &ApiError) -> String {
     let mut text = format!("GitHub refused {what}: {reason}");
     match change {
         // Fine-grained tokens can't read notifications at all.
-        _ if denied && matches!(change, Change::SetProjectField { .. }) => text.push_str(
+        _ if denied && matches!(change, Change::SetProjectField { .. } | Change::Project(_)) => text.push_str(
             ". Your token may lack the permission: a classic token needs the project scope; a fine-grained one, Projects: write",
         ),
+        _ if denied && matches!(change, Change::Alert(_)) => text.push_str(&format!(
+            ". Your token may lack the permission: a fine-grained token needs {}; a classic one, the security_events or repo scope",
+            needs(change)
+        )),
         _ if denied && notifies(change) => text.push_str(
             ". Your token may lack the permission: notifications take a classic token with the notifications or repo scope",
         ),
@@ -1196,6 +1248,7 @@ pub fn doables(state: &State) -> Vec<(Action, String, Option<String>)> {
             let subject = subject(state, action).filter(|s| s.fits(action))?;
             let label = match (action, &subject) {
                 (Action::Close, Subject::Run(..) | Subject::Job(..)) => "Cancel the run",
+                (Action::Close, Subject::Alert(_)) => "Dismiss or reopen the alert",
                 (Action::Close, _) => "Close or reopen",
                 (Action::Merge, Subject::Pr(pr)) => (state.prs.get(pr))
                     .and_then(|r| r.data.as_ref())

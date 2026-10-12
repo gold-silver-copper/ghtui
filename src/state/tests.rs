@@ -164,6 +164,7 @@ mod tabs;
 
 pub(super) mod diff;
 
+mod actions;
 mod fetch;
 mod home;
 mod jobs;
@@ -173,3 +174,4 @@ mod lists;
 mod pr_diff;
 mod repo;
 mod search;
+mod watch;

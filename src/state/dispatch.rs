@@ -21,8 +21,10 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
             | Msg::Pr(..)
             | Msg::Fetched { .. }
             | Msg::FetchedMore(..)
+            | Msg::Source(..)
             | Msg::Changed(..)
             | Msg::Create(_)
+            | Msg::Write(_)
     );
     if data {
         state.data_gen += 1;
@@ -31,6 +33,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     let wrote = match &msg {
         Msg::Changed(_, _, r) => r.is_ok(),
         Msg::Create(crate::create::Done::Created(_, r)) => r.is_ok(),
+        Msg::Write(done) => done.wrote(),
         // Drafts GitHub accepted wait in a pending review there.
         Msg::Diff(_, DiffMsg::ReviewSubmitted(o)) => o.error.is_none() || !o.accepted.is_empty(),
         _ => false,
@@ -48,13 +51,39 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         } => Some(pr.clone()),
         _ => None,
     };
+    // A pull request's checks, for its diff's annotations.
+    let checks = match &msg {
+        Msg::Fetched {
+            key: DataKey::PrChecks(pr),
+            result: Ok(_),
+            ..
+        } => Some(pr.clone()),
+        _ => None,
+    };
+    // Any page's data, fresh from GitHub, for the page watchers.
+    let fresh = match &msg {
+        Msg::Fetched {
+            key,
+            result: Ok(_),
+            cached_at: None,
+        } => Some(key.clone()),
+        _ => None,
+    };
     let mut cmds = handle(state, msg);
     if let Some(pr) = activity {
         crate::live::activity_loaded(state, &pr);
+        cmds.extend(crate::talk::want_lines(state, &pr));
+    }
+    if let Some(key) = fresh {
+        crate::live::page::loaded(state, &key);
+    }
+    if let Some(pr) = checks {
+        crate::actions::checks_loaded(state, &pr);
     }
     if data {
         cmds.extend(act::follow(state));
         cmds.extend(crate::create::follow(state));
+        cmds.extend(crate::writes::follow(state));
     }
     cmds
 }
@@ -68,7 +97,8 @@ pub fn timers(state: &mut State) -> Vec<Cmd> {
         state.spinning = true;
         cmds.push(Cmd::Timer(Timer::Spin, 90));
     }
-    if !state.live && (!state.running_here().is_empty() || act::awaiting_here(state).is_some()) {
+    let awaiting = act::awaiting_here(state).is_some() || crate::writes::awaiting(state);
+    if !state.live && (!state.running_here().is_empty() || awaiting) {
         state.live = true;
         cmds.push(Cmd::Timer(Timer::Live, LIVE_MS));
     }
@@ -89,6 +119,8 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Diff(of, msg) => return diff_screen::update(state, &of, msg),
         Msg::Create(done) => return crate::create::on_done(state, done),
+        Msg::Write(done) => return crate::writes::on_done(state, done),
+        Msg::Actions(done) => return crate::actions::on_done(state, done),
         Msg::Key(key) => return on_key(state, key),
         Msg::Resize(w, h) => state.size = (w, h),
         Msg::Viewer(Ok(login)) => state.viewer = Some(login),
@@ -151,6 +183,9 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 return state.replace(Route::pr(PrRef { repo, number }), true, anchor);
             }
         }
+        Msg::Source(key, from) => {
+            state.sources.insert(key, from);
+        }
         Msg::FetchedMore(key, after, result) => {
             let Some(remote) = (state.data.get_mut(&key)).filter(|r| r.more == Some(after)) else {
                 return Vec::new();
@@ -178,6 +213,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             let mut cmds = Vec::new();
             let mut needs = state.running_here();
             needs.extend(act::poll(state));
+            needs.extend(crate::writes::poll(state));
             for need in needs {
                 cmds.extend(state.ensure(need, true));
             }
@@ -215,10 +251,11 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::Timer(Timer::Watch(id)) => return crate::live::on_timer(state, id),
         Msg::Polled(pr, answers) => return crate::live::on_polled(state, &pr, answers),
+        Msg::Watched(what, answers) => return crate::live::page::on_watched(state, &what, answers),
         Msg::Paste(text) => return crate::typing::on_paste(state, &text),
         Msg::Focus(focused) => crate::live::on_focus(state, focused),
         Msg::Mentionable(repo, result) => crate::typing::on_mentionable(state, repo, result),
-        Msg::Definitions(ask, result) => return crate::code_nav::found(state, &ask, result),
+        Msg::Code(ask, result) => return crate::code_nav::answered(state, &ask, result),
         Msg::Edited(purpose, result) => return on_edited(state, purpose, result),
         Msg::HomeEdited { edit, result, what } => return state.home_edited(&edit, result, what),
     }
@@ -419,6 +456,8 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::OpenLink => return nav::open_link(state),
         Action::Symbols => return crate::code_nav::symbols(state),
         Action::Definition => return crate::code_nav::definition(state),
+        Action::RepoSymbols => return crate::code_nav::repo_symbols(state),
+        Action::References => return crate::code_nav::references(state),
         Action::Notifications => {
             let inbox = Route::Notifications {
                 query: String::new(),
@@ -447,7 +486,12 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Hints | Action::HintsBrowser if diff.is_some() => {
             nav::start_hints(state, action == Action::HintsBrowser);
         }
+        // A discussion's and a project's own ways to write and edit.
+        _ if crate::discuss::takes(state, action) => return crate::discuss::act(state, action),
+        _ if crate::projects::takes(state, action) => return crate::projects::act(state, action),
+        _ if crate::writes::claims(state, action) => return crate::writes::act(state, action),
         _ if crate::edit::ACTIONS.contains(&action) => return crate::edit::act(state, action),
+        Action::RunWorkflow => return crate::actions::action(state),
         Action::NewIssue
         | Action::NewPr
         | Action::Create

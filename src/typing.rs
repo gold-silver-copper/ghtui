@@ -140,7 +140,7 @@ fn participants(state: &State) -> Vec<String> {
             state.picked::<Option<Box<IssueDetail>>>(&DataKey::Issue(repo.clone(), *number));
         if let Some(Some(issue)) = issue {
             out.push(issue.author.clone());
-            out.extend(issue.comments.iter().map(|c| c.author.clone()));
+            out.extend(issue.comments().map(|c| c.author.clone()));
             out.extend(issue.assignees.iter().cloned());
         }
     }
@@ -155,9 +155,9 @@ fn pr_participants(state: &State, pr: &PrRef) -> Vec<String> {
         out.push(d.author.clone());
     }
     if let Some(a) = state.picked::<PrActivity>(&DataKey::PrActivity(pr.clone())) {
-        out.extend(a.comments.iter().map(|c| c.author.clone()));
-        out.extend(a.reviews.iter().map(|r| r.author.clone()));
-        out.extend(a.requested.iter().filter_map(|r| match r {
+        out.extend(a.comments().map(|c| c.author.clone()));
+        out.extend(a.reviews().map(|r| r.author.clone()));
+        out.extend(a.requested.iter().filter_map(|r| match &r.who {
             crate::api::browse::Reviewer::User(login) => Some(login.clone()),
             crate::api::browse::Reviewer::Team(_) => None,
         }));

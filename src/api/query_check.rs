@@ -315,6 +315,7 @@ fn typed() -> Vec<(&'static str, String)> {
     use crate::api::change as c;
     use crate::api::edit as e;
     use crate::api::queries as q;
+    use crate::api::timeline as t;
     typed! {
         Query q::RollupsQuery, q::NodesVariables;
         Query q::PullRequestQuery, q::NumberVariables;
@@ -371,6 +372,10 @@ fn typed() -> Vec<(&'static str, String)> {
         Mutation e::UpdateReviewComment, e::BodyVariables;
         Mutation e::DeleteIssueComment, e::EditIdVariables;
         Mutation e::DeleteReviewComment, e::EditIdVariables;
+        Mutation e::UpdateReview, e::BodyVariables;
+        Mutation e::DeleteReview, e::EditIdVariables;
+        Query t::ReviewsQuery, q::PageVariables;
+        Query t::ProjectsOfQuery, q::NumberVariables;
         Mutation e::UpdateIssueTitle, e::TitleVariables;
         Mutation e::UpdatePrTitle, e::TitleVariables;
         Mutation e::AddReaction, e::ReactVariables;
@@ -384,6 +389,11 @@ fn typed() -> Vec<(&'static str, String)> {
         Mutation e::SetPrMilestone, e::MilestoneVariables;
         Mutation crate::api::create::CreateIssue, crate::api::create::CreateIssueVariables;
         Mutation crate::api::create::CreatePr, crate::api::create::CreatePrVariables;
+        Query crate::api::watch::RepoWatchQuery, crate::api::watch::RepoNameVariables;
+        Query crate::api::watch::ThreadWatchQuery, q::NumberVariables;
+        Query crate::api::watch::DiscussionWatchQuery, q::NumberVariables;
+        Mutation crate::api::watch::UpdateSubscription, crate::api::watch::SubscribeVariables;
+        Query crate::api::release::TagQuery, crate::api::release::TagVariables;
     }
 }
 
@@ -464,6 +474,9 @@ fn every_query_is_checked() {
         include_str!("change.rs"),
         include_str!("edit.rs"),
         include_str!("create.rs"),
+        include_str!("watch.rs"),
+        include_str!("release.rs"),
+        include_str!("timeline.rs"),
     ]
     .concat();
     let operations = source.matches("graphql_type = \"Query\"").count()

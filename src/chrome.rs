@@ -112,7 +112,11 @@ impl State {
                 let label = match diff.and_then(|d| d.range()) {
                     Some(range) => Some(format!("Files · {}", range.label)),
                     None if diff.is_some_and(|d| d.doc.since_active()) => {
-                        Some("Files · since your review".to_owned())
+                        let since = diff.and_then(|d| d.since_commit.as_deref());
+                        Some(since.map_or_else(
+                            || "Files · since your review".to_owned(),
+                            |c| format!("Files · since {}", crate::ui::text::short_sha(c)),
+                        ))
                     }
                     None => None,
                 };
@@ -142,7 +146,7 @@ impl State {
                     PrTab::Conversation => 0,
                     PrTab::Commits => 1,
                     PrTab::Checks => 2,
-                    PrTab::Review => 4,
+                    PrTab::Review | PrTab::Reviewed(_) => 4,
                 });
                 c.title = Some(pr.clone());
             }
@@ -533,7 +537,7 @@ impl State {
         let activity = self.activity(pr);
         let detail = self.prs.get(pr).and_then(|r| r.data.as_ref());
         c.tabs.push((
-            new_tab("◌", "Conversation", activity.map(|a| a.comments.total())),
+            new_tab("◌", "Conversation", activity.map(|a| a.comment_count)),
             Target::Page(Route::pr(pr.clone())),
         ));
         c.tabs.push((
@@ -625,10 +629,14 @@ fn section(route: &Route) -> Section {
         Route::Actions { .. }
         | Route::WorkflowRun { .. }
         | Route::Job { .. }
-        | Route::Workflow { .. } => Section::Actions,
+        | Route::Workflow { .. }
+        | Route::Dispatch { .. } => Section::Actions,
         Route::Projects(_) => Section::Projects,
-        Route::Wiki { .. } => Section::Wiki,
-        Route::Advisories(_) | Route::Advisory { .. } => Section::Security,
+        Route::Wiki { .. } | Route::WikiEdit { .. } => Section::Wiki,
+        Route::Advisories(_)
+        | Route::Advisory { .. }
+        | Route::Alerts { .. }
+        | Route::Alert { .. } => Section::Security,
         _ => Section::Code,
     }
 }

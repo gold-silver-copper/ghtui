@@ -56,16 +56,31 @@ pub(super) fn by_update(query: &str) -> bool {
 pub(super) fn issue_row(
     page: &mut Page,
     i: &IssueSummary,
-    (show_repo, updated): (bool, bool),
+    shown: (bool, bool),
     icons: Icons,
     now: u64,
 ) {
+    issue_row_to(page, i, shown, icons, now, false);
+}
+
+/// An issue's or pull request's row; with `review`, a pull request's opens
+/// its Files changed, to review it.
+pub(super) fn issue_row_to(
+    page: &mut Page,
+    i: &IssueSummary,
+    (show_repo, updated): (bool, bool),
+    icons: Icons,
+    now: u64,
+    review: bool,
+) {
     let (icon, role) = issue_icon(icons, i.status());
+    let pr = PrRef {
+        repo: i.repo.clone(),
+        number: i.number,
+    };
     let target = match i.kind {
-        IssueKind::Pr { .. } => url::pull(&PrRef {
-            repo: i.repo.clone(),
-            number: i.number,
-        }),
+        IssueKind::Pr { .. } if review => url::pull_tab(&pr, "files"),
+        IssueKind::Pr { .. } => url::pull(&pr),
         IssueKind::Issue(_) => url::issue(&i.repo, i.number),
     };
     let place = if show_repo {
@@ -97,16 +112,21 @@ pub(super) fn issue_row(
         let when = format!("{place} {verb} {} by {}", time::ago_iso(at, now), i.author);
         let mut meta = vec![Seg::new(when, Role::Meta)];
         if let IssueKind::Pr {
-            review: Some(review),
-            ..
+            review, approvals, ..
         } = i.kind
         {
-            let (text, role) = match review {
-                ReviewDecision::Approved => ("Approved", Role::Success),
-                ReviewDecision::ChangesRequested => ("Changes requested", Role::Error),
-                ReviewDecision::ReviewRequired => ("Review required", Role::Meta),
-            };
-            meta.extend([Seg::new(" · ", Role::Meta), Seg::new(text, role)]);
+            if let Some(review) = review {
+                let (text, role) = match review {
+                    ReviewDecision::Approved => ("Approved", Role::Success),
+                    ReviewDecision::ChangesRequested => ("Changes requested", Role::Error),
+                    ReviewDecision::ReviewRequired => ("Review required", Role::Meta),
+                };
+                meta.extend([Seg::new(" · ", Role::Meta), Seg::new(text, role)]);
+            }
+            if approvals > 0 {
+                let text = format!(" · {}", plural(approvals, "approval"));
+                meta.push(Seg::new(text, Role::Meta));
+            }
         }
         page.box_line(meta, issue_signals(i, icons), 2);
     });
@@ -154,8 +174,13 @@ pub(super) fn user_row(page: &mut Page, u: &UserSummary) {
 }
 
 /// A list of people (stargazers, watchers, followers…) that loads more.
-pub fn people_list(page: &mut Page, title: &str, people: Fetched<'_, Results<UserSummary>>) {
-    paged_list(page, title, people, "Nobody here yet.", user_row);
+pub fn people_list(
+    page: &mut Page,
+    title: &str,
+    people: Fetched<'_, Results<UserSummary>>,
+    empty: &str,
+) {
+    paged_list(page, title, people, empty, user_row);
 }
 
 /// A list of repositories (forks…) that loads more.
@@ -366,18 +391,24 @@ pub fn search(
             });
         }),
         SearchResults::Code(r) => box_rows(page, r, |page, hit| {
-            item(
-                page,
-                url::blob(&hit.repo, "HEAD", &hit.path),
-                |page, link| {
-                    page.box_line(
-                        vec![Seg::linked(hit.path.clone(), Role::Code, link)],
-                        Vec::new(),
-                        0,
-                    );
-                    body(page, vec![Seg::new(hit.repo.to_string(), Role::Meta)]);
-                },
-            );
+            // Git says where it searched, and which lines matched.
+            let rev = hit.rev.as_deref().unwrap_or("HEAD");
+            let file = url::blob(&hit.repo, rev, &hit.path);
+            item(page, file.clone(), |page, link| {
+                page.box_line(
+                    vec![Seg::linked(hit.path.clone(), Role::Code, link)],
+                    Vec::new(),
+                    0,
+                );
+                body(page, vec![Seg::new(hit.repo.to_string(), Role::Meta)]);
+            });
+            for (n, text) in &hit.lines {
+                item(page, format!("{file}#L{n}"), |page, link| {
+                    let number = Seg::linked(format!("{n:>5}  "), Role::Meta, link);
+                    let text = crate::ui::text::truncate(text.trim(), 200);
+                    body(page, vec![number, Seg::new(text, Role::Code)]);
+                });
+            }
         }),
     }
     page.box_bottom();

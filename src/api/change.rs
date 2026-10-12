@@ -5,6 +5,7 @@ use crate::schema::schema;
 
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{NodeId, RepoId};
+use crate::api::notifications::ThreadAt;
 use crate::api::queries::{
     AddCommentPayload, AutoMergePayload, CloseIssuePayload, ClosePrPayload, DequeuePayload,
     EnqueuePayload, GitObjectId, MergePayload, NoAutoMergePayload, ReadyPayload,
@@ -17,6 +18,12 @@ pub enum Change {
     /// Comment on an issue or pull request.
     Comment {
         subject: NodeId,
+        body: String,
+    },
+    /// Comment on a commit as a whole.
+    CommitComment {
+        repo: RepoId,
+        oid: String,
         body: String,
     },
     /// Reply to a review thread right away (outside any pending review).
@@ -94,9 +101,10 @@ pub enum Change {
     MarkRead {
         thread: String,
     },
-    /// Mark a notification's thread done: out of the inbox.
+    /// Mark a notification's thread done: out of the inbox (and kept out
+    /// of it here until GitHub updates it again).
     MarkDone {
-        thread: String,
+        thread: ThreadAt,
     },
     /// Mark read every notification updated by `last_read_at`: all of
     /// them, or one repository's.
@@ -106,11 +114,15 @@ pub enum Change {
     },
     /// Mark each of these threads read, or done.
     MarkEach {
-        threads: Vec<String>,
+        threads: Vec<ThreadAt>,
         done: bool,
     },
     /// Edit a comment, a title, a reaction or a sidebar.
     Edit(crate::api::edit::Edit),
+    /// Write in a discussion, or mark its answer.
+    Discussion(crate::api::discussion::Discuss),
+    /// Add, archive or restore a project's item, or edit a draft's text.
+    Project(crate::api::project::ProjectChange),
     /// Set a project item's field to a value, or clear it (`None`); `said`
     /// is what it sets, as people say it ("Status to Done").
     SetProjectField {
@@ -120,6 +132,8 @@ pub enum Change {
         value: Option<crate::api::project::FieldValue>,
         said: String,
     },
+    /// Dismiss (for a secret, resolve) a security alert, or reopen it.
+    Alert(crate::api::security::AlertChange),
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -171,6 +185,9 @@ impl GitHub {
                     body: body.clone(),
                 });
                 self.mutate(op).await.map(drop)
+            }
+            Change::CommitComment { repo, oid, body } => {
+                self.comment_on_commit(repo, oid, body).await
             }
             Change::Reply { thread, body } => {
                 let op = crate::api::queries::Reply::build(crate::api::queries::ReplyVariables {
@@ -287,7 +304,11 @@ impl GitHub {
                 .await
             }
             Change::MarkRead { thread } => self.mark(thread, false).await,
-            Change::MarkDone { thread } => self.mark(thread, true).await,
+            Change::MarkDone { thread } => {
+                self.mark(&thread.id, true).await?;
+                self.remember_done(std::slice::from_ref(thread)).await;
+                Ok(())
+            }
             Change::MarkAllRead { repo, last_read_at } => {
                 let path = match repo {
                     Some(repo) => format!("/repos/{repo}/notifications"),
@@ -298,18 +319,31 @@ impl GitHub {
             }
             // GitHub marks threads done one at a time.
             Change::MarkEach { threads, done } => {
-                for (n, thread) in threads.iter().enumerate() {
-                    self.mark(thread, *done).await.map_err(|err| match err {
-                        ApiError::Http { status, message } if n > 0 => ApiError::Http {
-                            status,
-                            message: format!("{message} (after {n} of {})", threads.len()),
-                        },
-                        err => err,
-                    })?;
+                let mut marked = 0;
+                let mut sent = Ok(());
+                for thread in threads {
+                    if let Err(err) = self.mark(&thread.id, *done).await {
+                        sent = Err(match err {
+                            ApiError::Http { status, message } if marked > 0 => ApiError::Http {
+                                status,
+                                message: format!("{message} (after {marked} of {})", threads.len()),
+                            },
+                            err => err,
+                        });
+                        break;
+                    }
+                    marked += 1;
                 }
-                Ok(())
+                // Those marked done before a failure are done.
+                if *done {
+                    self.remember_done(threads.get(..marked).unwrap_or_default())
+                        .await;
+                }
+                sent
             }
             Change::Edit(edit) => self.edit(edit).await,
+            Change::Discussion(change) => self.discuss(change).await,
+            Change::Project(change) => self.change_project(change).await,
             Change::SetProjectField {
                 project,
                 item,
@@ -320,6 +354,7 @@ impl GitHub {
                 self.set_project_field(project, item, field, value.as_ref())
                     .await
             }
+            Change::Alert(change) => self.set_alert(change).await,
         }
     }
 }

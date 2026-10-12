@@ -96,8 +96,11 @@ pub fn home(page: &mut Page, sections: &[HomeSection<'_>], icons: Icons, now: u6
             SearchResults::Issues(list) => {
                 let start = Start { list, rows, url };
                 let title = title(Some(count_of(&start)));
+                // Asked to review: a row opens straight to the review.
+                let review = search.query.contains("review-requested:");
                 section_box(page, title, &start, (i, &empty), |page, it| {
-                    issue_row(page, it, (true, by_update(search.query)), icons, now);
+                    let shown = (true, by_update(search.query));
+                    issue_row_to(page, it, shown, icons, now, review);
                 });
             }
             SearchResults::Repos(list) => {

@@ -33,8 +33,40 @@ pub(crate) const DISCUSSION_CATEGORIES: &str = "query($owner: String!, $name: St
 /// A repository's discussions, most recently updated first.
 pub(crate) const DISCUSSIONS: &str = "query($owner: String!, $name: String!, $after: String, $category: ID) { repository(owner: $owner, name: $name) { discussions(first: 25, after: $after, categoryId: $category, orderBy: {field: UPDATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { number title author { login } category { name } comments { totalCount } isAnswered upvoteCount updatedAt } } } }";
 
-/// A discussion and its comments.
-pub(crate) const DISCUSSION: &str = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { discussion(number: $number) { number title body author { login } createdAt category { name } isAnswered upvoteCount comments(first: 50) { totalCount nodes { databaseId author { login } body createdAt isAnswer upvoteCount replies(first: 30) { totalCount nodes { databaseId author { login } body createdAt } } } } } } }";
+/// What a discussion's comments and replies show, and what you may do
+/// to them.
+const DISCUSSION_REPLY: &str = "id databaseId author { login } body createdAt viewerCanUpdate viewerCanDelete viewerCanReact reactionGroups { content viewerHasReacted reactors { totalCount } }";
+
+/// A discussion, its answer and its comments, with what you may do.
+pub(crate) fn discussion() -> String {
+    let comment = format!(
+        "{DISCUSSION_REPLY} isAnswer upvoteCount viewerCanMarkAsAnswer viewerCanUnmarkAsAnswer"
+    );
+    format!(
+        "query($owner: String!, $name: String!, $number: Int!) {{ repository(owner: $owner, name: $name) {{ discussion(number: $number) {{ id number title body author {{ login }} createdAt category {{ name isAnswerable }} isAnswered locked upvoteCount viewerCanUpdate viewerCanReact reactionGroups {{ content viewerHasReacted reactors {{ totalCount }} }} answerChosenBy {{ login }} answer {{ {comment} }} comments(first: 50) {{ totalCount nodes {{ {comment} replies(first: 30) {{ totalCount nodes {{ {DISCUSSION_REPLY} }} }} }} }} }} }} }}"
+    )
+}
+
+/// A comment on a discussion, or a reply in a comment's thread.
+pub(crate) const ADD_DISCUSSION_COMMENT: &str = "mutation($discussion: ID!, $replyTo: ID, $body: String!) { addDiscussionComment(input: {discussionId: $discussion, replyToId: $replyTo, body: $body}) { comment { id } } }";
+
+/// New text for a discussion comment or reply.
+pub(crate) const UPDATE_DISCUSSION_COMMENT: &str = "mutation($id: ID!, $body: String!) { updateDiscussionComment(input: {commentId: $id, body: $body}) { comment { id } } }";
+
+/// New text for a discussion's post.
+pub(crate) const UPDATE_DISCUSSION: &str = "mutation($id: ID!, $body: String!) { updateDiscussion(input: {discussionId: $id, body: $body}) { discussion { id } } }";
+
+pub(crate) const DELETE_DISCUSSION_COMMENT: &str =
+    "mutation($id: ID!) { deleteDiscussionComment(input: {id: $id}) { comment { id } } }";
+
+pub(crate) const MARK_ANSWER: &str =
+    "mutation($id: ID!) { markDiscussionCommentAsAnswer(input: {id: $id}) { discussion { id } } }";
+
+pub(crate) const UNMARK_ANSWER: &str = "mutation($id: ID!) { unmarkDiscussionCommentAsAnswer(input: {id: $id}) { discussion { id } } }";
+
+/// What says a discussion changed: its title, text and answer, and how
+/// many comments it has, with the newest and its newest reply.
+pub(crate) const DISCUSSION_PROBE: &str = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { discussion(number: $number) { title body updatedAt isAnswered comments(last: 1) { totalCount nodes { databaseId updatedAt replies(last: 1) { totalCount nodes { databaseId updatedAt } } } } } } }";
 
 /// What a new issue or pull request can have: labels, people to assign,
 /// open milestones, the issue templates' files, the pull request template,
@@ -43,6 +75,10 @@ pub(crate) const NEW_FORM: &str = "query($owner: String!, $name: String!) { repo
 
 /// Branches by name, 100 at a time; with the first page, the newest 100 tags.
 pub(crate) const REFS: &str = "query($owner: String!, $name: String!, $after: String, $tags: Boolean!) { repository(owner: $owner, name: $name) { heads: refs(refPrefix: \"refs/heads/\", first: 100, after: $after, orderBy: {field: ALPHABETICAL, direction: ASC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name } } tags: refs(refPrefix: \"refs/tags/\", first: 100, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) @include(if: $tags) { totalCount pageInfo { hasNextPage endCursor } nodes { name } } } }";
+
+/// Dependabot's pull request for a vulnerability alert, or why it
+/// couldn't make one.
+pub(crate) const DEPENDABOT_UPDATE: &str = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { vulnerabilityAlert(number: $number) { dependabotUpdate { pullRequest { number title state } error { title body } } } } }";
 
 /// The latest commit touching each of `paths`: one `history` each.
 pub(crate) fn last_commits(paths: &[String]) -> String {
@@ -138,7 +174,7 @@ const LINKED: &str = "number title url state repository { nameWithOwner } assign
 /// their values.
 pub(crate) fn project_items() -> String {
     format!(
-        "query($login: String!, $number: Int!, $after: String, $query: String) {{ repositoryOwner(login: $login) {{ ... on ProjectV2Owner {{ projectV2(number: $number) {{ items(first: 50, after: $after, query: $query) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ id fullDatabaseId content {{ __typename ... on DraftIssue {{ title body assignees(first: 5) {{ totalCount nodes {{ login }} }} }} ... on Issue {{ {LINKED} stateReason }} ... on PullRequest {{ {LINKED} isDraft }} }} fieldValues(first: 50) {{ totalCount nodes {{ __typename ... on ProjectV2ItemFieldTextValue {{ text field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldNumberValue {{ number field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldDateValue {{ date field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldSingleSelectValue {{ optionId name field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldIterationValue {{ iterationId title field {{ {FIELD_ID} }} }} }} }} }} }} }} }} }} }}"
+        "query($login: String!, $number: Int!, $after: String, $query: String, $archived: [ProjectV2ItemArchivedState!]) {{ repositoryOwner(login: $login) {{ ... on ProjectV2Owner {{ projectV2(number: $number) {{ items(first: 50, after: $after, query: $query, archivedStates: $archived) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ id fullDatabaseId isArchived content {{ __typename ... on DraftIssue {{ id title body assignees(first: 5) {{ totalCount nodes {{ login }} }} }} ... on Issue {{ {LINKED} stateReason }} ... on PullRequest {{ {LINKED} isDraft }} }} fieldValues(first: 50) {{ totalCount nodes {{ __typename ... on ProjectV2ItemFieldTextValue {{ text field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldNumberValue {{ number field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldDateValue {{ date field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldSingleSelectValue {{ optionId name field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldIterationValue {{ iterationId title field {{ {FIELD_ID} }} }} }} }} }} }} }} }} }} }}"
     )
 }
 
@@ -147,6 +183,22 @@ pub(crate) const SET_PROJECT_FIELD: &str = "mutation($project: ID!, $item: ID!, 
 
 /// Clears an item's field.
 pub(crate) const CLEAR_PROJECT_FIELD: &str = "mutation($project: ID!, $item: ID!, $field: ID!) { clearProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field}) { projectV2Item { id } } }";
+
+/// An issue's or pull request's node ID, to add it to a project.
+pub(crate) const ISSUE_OR_PR_ID: &str = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issueOrPullRequest(number: $number) { ... on Issue { id } ... on PullRequest { id } } } }";
+
+/// Adds an issue or pull request to a project.
+pub(crate) const ADD_PROJECT_ITEM: &str = "mutation($project: ID!, $content: ID!) { addProjectV2ItemById(input: {projectId: $project, contentId: $content}) { item { id } } }";
+
+/// Adds a draft issue to a project.
+pub(crate) const ADD_PROJECT_DRAFT: &str = "mutation($project: ID!, $title: String!, $body: String) { addProjectV2DraftIssue(input: {projectId: $project, title: $title, body: $body}) { projectItem { id } } }";
+
+pub(crate) const ARCHIVE_PROJECT_ITEM: &str = "mutation($project: ID!, $item: ID!) { archiveProjectV2Item(input: {projectId: $project, itemId: $item}) { item { id } } }";
+
+pub(crate) const UNARCHIVE_PROJECT_ITEM: &str = "mutation($project: ID!, $item: ID!) { unarchiveProjectV2Item(input: {projectId: $project, itemId: $item}) { item { id } } }";
+
+/// A draft issue's new title and body.
+pub(crate) const UPDATE_PROJECT_DRAFT: &str = "mutation($draft: ID!, $title: String!, $body: String!) { updateProjectV2DraftIssue(input: {draftIssueId: $draft, title: $title, body: $body}) { draftIssue { id } } }";
 
 /// Every query here, by name, built with sample input.
 #[cfg(test)]
@@ -160,7 +212,20 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ("DISCUSSION_URLS", DISCUSSION_URLS.to_owned()),
         ("DISCUSSION_CATEGORIES", DISCUSSION_CATEGORIES.to_owned()),
         ("DISCUSSIONS", DISCUSSIONS.to_owned()),
-        ("DISCUSSION", DISCUSSION.to_owned()),
+        ("discussion", discussion()),
+        ("ADD_DISCUSSION_COMMENT", ADD_DISCUSSION_COMMENT.to_owned()),
+        (
+            "UPDATE_DISCUSSION_COMMENT",
+            UPDATE_DISCUSSION_COMMENT.to_owned(),
+        ),
+        ("UPDATE_DISCUSSION", UPDATE_DISCUSSION.to_owned()),
+        (
+            "DELETE_DISCUSSION_COMMENT",
+            DELETE_DISCUSSION_COMMENT.to_owned(),
+        ),
+        ("MARK_ANSWER", MARK_ANSWER.to_owned()),
+        ("UNMARK_ANSWER", UNMARK_ANSWER.to_owned()),
+        ("DISCUSSION_PROBE", DISCUSSION_PROBE.to_owned()),
         ("REFS", REFS.to_owned()),
         ("NEW_FORM", NEW_FORM.to_owned()),
         (
@@ -179,6 +244,13 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ("project_items", project_items()),
         ("SET_PROJECT_FIELD", SET_PROJECT_FIELD.to_owned()),
         ("CLEAR_PROJECT_FIELD", CLEAR_PROJECT_FIELD.to_owned()),
+        ("DEPENDABOT_UPDATE", DEPENDABOT_UPDATE.to_owned()),
+        ("ISSUE_OR_PR_ID", ISSUE_OR_PR_ID.to_owned()),
+        ("ADD_PROJECT_ITEM", ADD_PROJECT_ITEM.to_owned()),
+        ("ADD_PROJECT_DRAFT", ADD_PROJECT_DRAFT.to_owned()),
+        ("ARCHIVE_PROJECT_ITEM", ARCHIVE_PROJECT_ITEM.to_owned()),
+        ("UNARCHIVE_PROJECT_ITEM", UNARCHIVE_PROJECT_ITEM.to_owned()),
+        ("UPDATE_PROJECT_DRAFT", UPDATE_PROJECT_DRAFT.to_owned()),
     ];
     for field in ["stargazers", "watchers"] {
         all.push((

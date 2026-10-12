@@ -12,6 +12,9 @@ pub enum PrTab {
     /// Where its review stands: drafts, open threads, reviewers, what
     /// blocks the merge. ghtui's own: GitHub has no page for it.
     Review,
+    /// One review, by GitHub's number for it: its summary and comments,
+    /// the changes it reviewed and what changed since. ghtui's own too.
+    Reviewed(u64),
 }
 
 /// The lines under a PR's title: branches, size (the state is in the
@@ -194,39 +197,57 @@ pub fn queue_place(queued: &Queued, base: &str) -> String {
     format!("{place} in the merge queue for {base}: {state}")
 }
 
-/// Comments in `fresh` (by GitHub's number) came in since you started
-/// looking.
+/// A pull request's conversation: its description, then its timeline
+/// (comments, reviews with their threads, events), the merge box and the
+/// comment box. The sidebar has its reviewers, what it will close and the
+/// rest of its fields.
 pub fn pr_conversation(
     page: &mut Page,
     pr: &PrRef,
     d: &PrDetail,
     activity: Fetched<'_, PrActivity>,
-    fresh: &std::collections::HashSet<u64>,
+    projects: Fetched<'_, Capped<crate::api::timeline::InProject>>,
+    marks: Marks<'_>,
     cx: PageCtx<'_>,
 ) {
-    // Comments and reviews, merged in time order below.
-    enum Entry<'a> {
-        Comment(&'a Comment),
-        Review(&'a crate::api::browse::ReviewSummary),
-    }
     let PageCtx { icons, keys, now } = cx;
     // The sidebar doesn't wait for the conversation, which says how it's
-    // going; only its reviewers come from it.
+    // going; only its reviewers and links come from it.
     #[expect(
         clippy::disallowed_methods,
         reason = "the conversation says how it's going"
     )]
-    let reviews = activity.ready_unchecked().map(|a| &a.reviews);
-    page.build_aside(|side| {
-        let reviewers = unique(reviews.into_iter().flatten().map(|r| &r.author));
-        let earlier = reviews.is_some_and(|r| r.left_out() > 0);
-        let none = if reviews.is_some() { "No reviews" } else { "" };
-        people(side, "Reviewers", &reviewers, maybe_others(earlier), none);
+    let a = activity.ready_unchecked();
+    let aside = page.build_aside(|side| {
+        match a {
+            Some(a) => {
+                timeline::reviewers_aside(
+                    side,
+                    pr,
+                    &d.head_oid,
+                    &a.latest,
+                    &a.requested,
+                    &d.author,
+                );
+            }
+            None => people(side, "Reviewers", &[], None, ""),
+        }
         let more = (d.assignees.left_out() > 0)
             .then(|| left_out_text(d.assignees.left_out(), "more", "more"));
         people(side, "Assignees", &d.assignees, more, "No one assigned");
         label_list(side, &d.labels);
         milestone_aside(side, &pr.repo, d.milestone.as_ref());
+        timeline::projects_aside(side, projects);
+        if let Some(a) = a {
+            let none = "No issues linked";
+            timeline::linked_aside(side, icons, &pr.repo, "Closes", &a.closing, none);
+            if let Some(oid) = &a.merge_commit {
+                aside_heading(side, "Merge commit");
+                let target = url::commit(&pr.repo, oid);
+                let sha = link_seg(side, short_sha(oid), target, Role::Link);
+                side.wrapped(vec![sha], 0, Frame::None);
+            }
+        }
         aside_heading(side, "Size");
         let mut size = Vec::from(changes(d.additions, d.deletions));
         size.push(Seg::new(
@@ -236,6 +257,11 @@ pub fn pr_conversation(
         side.wrapped(size, 0, Frame::None);
     });
     pr_summary(page, pr, d, now);
+    // Without a sidebar, what it would say is said up here.
+    if !aside && let Some(a) = a {
+        timeline::pr_inline(page, icons, pr, d, a);
+        timeline::projects_inline(page, projects);
+    }
     let op = &d.author;
     let talk = Conversation {
         base: LinkBase::new(&pr.repo, &d.head_oid, ""),
@@ -257,54 +283,14 @@ pub fn pr_conversation(
     }) else {
         return;
     };
-    earlier_here(page, &a.comments, "comment", "comments");
-    earlier_here(page, &a.reviews, "review", "reviews");
-    let mut entries: Vec<(&str, Entry<'_>)> = a
-        .comments
-        .iter()
-        .map(|c| (c.created_at.as_str(), Entry::Comment(c)))
-        .chain(
-            a.reviews
-                .iter()
-                .map(|r| (r.submitted_at.as_str(), Entry::Review(r))),
-        )
-        .collect();
-    entries.sort_by(|x, y| x.0.cmp(y.0));
-    for (_, entry) in entries {
-        connector(page);
-        match entry {
-            Entry::Comment(c) => {
-                let new = c.id.is_some_and(|id| fresh.contains(&id));
-                talk.comment(page, c, new);
-            }
-            Entry::Review(r) => {
-                let (icon, what) = match r.state {
-                    ReviewState::Approved => (("✓", Role::Success), "approved these changes"),
-                    ReviewState::ChangesRequested => (("✗", Role::Error), "requested changes"),
-                    ReviewState::Dismissed => (("○", Role::Meta), "had a review dismissed"),
-                    ReviewState::Commented | ReviewState::Pending => {
-                        (("◉", Role::Meta), "reviewed")
-                    }
-                };
-                if let Some(id) = r.id {
-                    page.anchor(format!("pullrequestreview-{id}"));
-                }
-                talk.event(page, icon, &r.author, what, &r.submitted_at);
-                if !r.body.trim().is_empty() {
-                    connector(page);
-                    talk.said(
-                        page,
-                        &r.author,
-                        "commented",
-                        &r.submitted_at,
-                        &r.body,
-                        false,
-                        &[],
-                    );
-                }
-            }
-        }
-    }
+    earlier_here(page, &a.timeline, "comment or event", "comments and events");
+    let place = timeline::Place {
+        repo: &pr.repo,
+        pr: Some(pr),
+        threads: &a.threads,
+        icons,
+    };
+    timeline::entries(page, &talk, &place, &a.timeline, marks);
     merge_box(page, pr, d, icons, true);
     add_comment(page, keys);
 }

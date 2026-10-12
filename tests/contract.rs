@@ -250,22 +250,16 @@ async fn contract_lists_keep_their_order() {
     let gh = github!();
     let pr = PrRef::parse("cli/cli#9000").unwrap();
     let activity = gh.pr_activity(&pr).await.unwrap();
-    assert!(!activity.comments.is_empty() && !activity.reviews.is_empty());
+    assert!(activity.comments().next().is_some() && activity.reviews().next().is_some());
     let sorted = |dates: Vec<&str>| dates.windows(2).all(|w| w[0] <= w[1]);
-    assert!(sorted(
-        activity
-            .comments
-            .iter()
-            .map(|c| c.created_at.as_str())
-            .collect()
-    ));
-    assert!(sorted(
-        activity
-            .reviews
-            .iter()
-            .map(|r| r.submitted_at.as_str())
-            .collect()
-    ));
+    // Comments and reviews (commits keep their own dates, among them).
+    let said = activity.timeline.iter().filter_map(|i| match i {
+        ghtui::api::timeline::Item::Comment(_) | ghtui::api::timeline::Item::Review(_) => {
+            Some(i.at())
+        }
+        ghtui::api::timeline::Item::Event(_) => None,
+    });
+    assert!(sorted(said.collect()));
     assert!(sorted(
         activity.commits.iter().map(|c| c.date.as_str()).collect()
     ));

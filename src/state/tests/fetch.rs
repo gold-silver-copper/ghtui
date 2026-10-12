@@ -193,11 +193,7 @@ fn an_edited_comment_stays_selected() {
     let top = |s: &State| page(s).page().lines[page(s).scroll].text();
     let before = (selected_text(&s), top(&s));
     issue.body.push_str("\n\nEdited.");
-    issue.comments = vec![crate::api::browse::Comment {
-        body: "Edited.".into(),
-        ..issue.comments[0].clone()
-    }]
-    .into();
+    issue.first_comment().unwrap().body = "Edited.".into();
     fetched(&mut s, key, Data::Issue(Some(Box::new(issue))));
     assert_eq!((selected_text(&s), top(&s)), before);
 }

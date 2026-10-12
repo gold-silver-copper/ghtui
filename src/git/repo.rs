@@ -96,8 +96,34 @@ impl Repo {
         Self::open(top.to_owned(), remote, version, Credentials::Ambient).await
     }
 
+    /// Where the cache keeps its clone of `owner/name`.
+    pub fn cache_path(cache_root: &Path, owner: &str, name: &str) -> PathBuf {
+        cache_root
+            .join("repos")
+            .join(owner.to_ascii_lowercase())
+            .join(format!("{}.git", name.to_ascii_lowercase()))
+    }
+
+    /// The cache's clone of `owner/name`, if it has been made (never
+    /// cloning it).
+    pub async fn open_cached(
+        cache_root: &Path,
+        owner: &str,
+        name: &str,
+        credentials: Credentials,
+    ) -> Result<Option<Repo>, GitError> {
+        let path = Self::cache_path(cache_root, owner, name);
+        if !path.join("HEAD").exists() {
+            return Ok(None);
+        }
+        let version = crate::git::version().await?;
+        Self::open(path, "origin", version, credentials)
+            .await
+            .map(Some)
+    }
+
     /// Opens (cloning on first use) the cache clone of `url` at
-    /// `<cache_root>/repos/<owner>/<name>.git`.
+    /// [`Self::cache_path`].
     pub async fn open_cache(
         cache_root: &Path,
         owner: &str,
@@ -106,10 +132,7 @@ impl Repo {
         credentials: Credentials,
         progress: Progress<'_>,
     ) -> Result<Repo, GitError> {
-        let path = cache_root
-            .join("repos")
-            .join(owner.to_ascii_lowercase())
-            .join(format!("{}.git", name.to_ascii_lowercase()));
+        let path = Self::cache_path(cache_root, owner, name);
         let _guard = repo_lock(&path).lock_owned().await;
         let version = crate::git::version().await?;
         if !path.join("HEAD").exists() {
@@ -128,13 +151,12 @@ impl Repo {
             credentials.apply(&mut cmd);
             cmd.args(["clone", "--bare", "--filter=blob:none", "--progress", url])
                 .arg(&tmp);
-            if let Err(err) = run_with_progress(cmd, "clone", None, progress).await {
-                // The clone's error is the one to report; a half-made
-                // directory left behind is removed on the next try.
-                let _ = std::fs::remove_dir_all(&tmp);
-                return Err(err);
-            }
+            // A clone that fails, or is given up on (this future dropped,
+            // which kills git), leaves nothing behind.
+            let unfinished = Unfinished(tmp.clone());
+            run_with_progress(cmd, "clone", None, progress).await?;
             std::fs::rename(&tmp, &path)?;
+            drop(unfinished);
         }
         Self::open(path, "origin", version, credentials).await
     }
@@ -156,14 +178,37 @@ impl Repo {
         Ok(repo)
     }
 
-    fn cmd(&self) -> Command {
+    pub(crate) fn cmd(&self) -> Command {
         let mut cmd = git(Some(&self.path));
         self.credentials.apply(&mut cmd);
         cmd
     }
 
-    async fn run(&self, args: &[&str]) -> Result<String, GitError> {
+    pub(crate) async fn run(&self, args: &[&str]) -> Result<String, GitError> {
         stdout(&self.cmd().args(args).output().await?, &args.join(" "))
+    }
+
+    /// What `git <args>` printed, as bytes (a file's contents).
+    pub(crate) async fn run_bytes(&self, args: &[&str]) -> Result<Vec<u8>, GitError> {
+        let output = self.cmd().args(args).output().await?;
+        if !output.status.success() {
+            return Err(GitError::Failed {
+                args: args.join(" "),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            });
+        }
+        Ok(output.stdout)
+    }
+
+    /// `git <args>` with `input` on its stdin.
+    pub(crate) async fn run_with_input(
+        &self,
+        args: &[&str],
+        input: String,
+    ) -> Result<String, GitError> {
+        let mut cmd = self.cmd();
+        cmd.args(args);
+        run_with_stdin(cmd, &args.join(" "), input).await
     }
 
     async fn is_promisor(&self) -> bool {
@@ -303,7 +348,11 @@ impl Repo {
 
     /// Fetches `refspecs` (refs, or commits by SHA) from the remote,
     /// reporting git's progress.
-    async fn fetch(&self, refspecs: &[&str], progress: Progress<'_>) -> Result<(), GitError> {
+    pub(crate) async fn fetch(
+        &self,
+        refspecs: &[&str],
+        progress: Progress<'_>,
+    ) -> Result<(), GitError> {
         let _guard = repo_lock(&self.path).lock_owned().await;
         let mut cmd = self.cmd();
         cmd.args([
@@ -337,6 +386,27 @@ impl Repo {
         self.run(&["cat-file", "blob", &format!("{rev}:{path}")])
             .await
     }
+    /// Runs git here with this repository's credentials, `env` set and
+    /// `input` on its stdin: for what the methods here don't cover (a
+    /// wiki's commits, [`crate::wiki`]).
+    pub(crate) async fn git(
+        &self,
+        args: &[&str],
+        env: &[(&str, &str)],
+        input: Option<String>,
+    ) -> Result<String, GitError> {
+        let mut cmd = self.cmd();
+        cmd.args(args);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        let what = args.join(" ");
+        match input {
+            Some(input) => run_with_stdin(cmd, &what, input).await,
+            None => stdout(&cmd.output().await?, &what),
+        }
+    }
+
     /// Makes sure a commit is here, fetching it by SHA if it isn't (e.g. a
     /// head that was force-pushed away). GitHub serves commits it still has
     /// even when no ref points at them.
@@ -447,6 +517,18 @@ impl Repo {
     pub fn blob_reader(&self) -> Result<BlobReader, GitError> {
         let repo = self.clone();
         BlobReader::spawn(move || repo.cmd())
+    }
+}
+
+/// A clone being made: removed when dropped, unless it was moved into
+/// place (then there's nothing there to remove).
+struct Unfinished(PathBuf);
+
+impl Drop for Unfinished {
+    fn drop(&mut self) {
+        if self.0.exists() {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 }
 

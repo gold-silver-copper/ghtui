@@ -57,7 +57,9 @@ pub(super) fn plan(state: &State, pr: &PrRef, d: &PrDetail) -> Result<Plan, Stri
                 d.base_ref
             ));
         }
-        Readiness::Behind => {
+        // Behind, it can't merge now, but it can once updated: auto-merge
+        // waits for that.
+        Readiness::Behind if !d.may.enable_auto_merge => {
             return Err(format!(
                 "{} requires its branch up to date with {}: {} updates it",
                 pr.repo,
@@ -67,8 +69,10 @@ pub(super) fn plan(state: &State, pr: &PrRef, d: &PrDetail) -> Result<Plan, Stri
         }
         _ => {}
     }
+    let behind = readiness == Readiness::Behind;
     // A queue merges as it's configured to, past any administrator.
-    let now = readiness != Readiness::Blocked || (d.may.merge_as_admin && !d.merge_queue);
+    let now =
+        !behind && (readiness != Readiness::Blocked || (d.may.merge_as_admin && !d.merge_queue));
     let mut choices = Vec::new();
     let mut later = Vec::new();
     if now && d.merge_queue {
@@ -114,6 +118,16 @@ pub(super) fn plan(state: &State, pr: &PrRef, d: &PrDetail) -> Result<Plan, Stri
         });
     }
     let mut facts = merge_facts(state, d);
+    if behind {
+        facts.push((
+            format!(
+                "Its branch is behind {}, which must be up to date: {} updates it",
+                d.base_ref,
+                key(Action::UpdateBranch)
+            ),
+            false,
+        ));
+    }
     if d.merge_queue {
         facts.push((
             format!("{} merges through a merge queue", d.base_ref),

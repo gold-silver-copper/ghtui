@@ -57,6 +57,8 @@ pub(super) const DIFF_DOABLES: &[(&str, &[(Action, &str)])] = {
                 (A::WordPrev, ""),
                 (A::Symbols, ""),
                 (A::Definition, ""),
+                (A::RepoSymbols, ""),
+                (A::References, ""),
                 (A::FindFile, ""),
                 (A::SwitchPane, ""),
                 (A::Fold, ""),
@@ -133,6 +135,8 @@ impl State {
         }
         out.extend(crate::edit::doables(self));
         out.extend(crate::create::checkout_doable(self));
+        out.extend(crate::writes::change_doables(self));
+        crate::actions::doables(self, &mut out);
         let go = |action, label: &str, short| doable("Go", action, label, short);
         out.push(go(
             Action::SearchGithub,
@@ -254,6 +258,9 @@ impl State {
                 Some(Link::Comment) if matches!(route, Route::NewIssue(_) | Route::NewPr(_)) => {
                     open.label = "Write the title and description".into();
                 }
+                Some(Link::Comment) if crate::writes::is_form(route) => {
+                    open.label = "Write it in the composer".into();
+                }
                 Some(link) => open.label = describe(link),
                 None => open.unavailable = Some("nothing is selected".into()),
             }
@@ -336,12 +343,21 @@ impl State {
             if p.word_cursor().is_none() {
                 definition.unavailable = Some("no line of code is selected".into());
             }
+            let definition_unavailable = definition.unavailable.clone();
             out.push(definition);
+            out.push(here(Action::RepoSymbols, "Symbols in the repository", ""));
+            let mut references = here(Action::References, Action::References.description(), "");
+            references.unavailable.clone_from(&definition_unavailable);
+            out.push(references);
         }
         if let Some(query) = &list {
-            let show = format!("Show {}", next_list_state(route, query));
-            out.push(here(Action::ToggleState, &show, "open/closed"));
-            out.push(here(Action::Sort, "Change the sort", "sort"));
+            // Open, closed and sorting are issues', pull requests' and
+            // discussions'; repositories, people, commits and code have none.
+            if super::lists::plain_search(route).is_none() {
+                let show = format!("Show {}", next_list_state(route, query));
+                out.push(here(Action::ToggleState, &show, "open/closed"));
+                out.push(here(Action::Sort, "Change the sort", "sort"));
+            }
             let mut save = here(Action::SaveSection, "Save this list to Home", "");
             save.unavailable = crate::home::unavailable(self, Action::SaveSection);
             out.push(save);
@@ -378,7 +394,10 @@ impl State {
                 out.push(here(Action::Star, label, "star"));
             }
         }
-        if matches!(route, Route::Issue { .. } | Route::Pr { .. }) {
+        if matches!(
+            route,
+            Route::Issue { .. } | Route::Pr { .. } | Route::Commit { .. }
+        ) {
             out.push(here(Action::Comment, "Write a comment", "comment"));
             let mut quote = here(Action::QuoteReply, "Reply quoting the selected comment", "");
             if !matches!(p.selected_link(), Some(Link::Quote { .. })) {
@@ -387,6 +406,20 @@ impl State {
             out.push(quote);
         }
         crate::projects::doables(self, out);
+        crate::discuss::doables(self, out);
+        // Long reviews fold, in a conversation and on a review's page.
+        let folds = p
+            .page
+            .links
+            .iter()
+            .any(|l| matches!(l, Link::Review(crate::ui::page::ReviewLink::Fold(_))));
+        if folds {
+            out.push(here(
+                Action::FoldToggle,
+                "Fold or unfold the review",
+                "fold",
+            ));
+        }
         if let Route::Pr { tab, .. } = route {
             if *tab == PrTab::Conversation {
                 out.push(here(Action::Tab2, "Commits", ""));
@@ -394,6 +427,7 @@ impl State {
             out.push(here(Action::Tab4, "Files changed (review)", ""));
         }
         crate::create::doables(self, route, out);
+        crate::writes::page_doables(self, route, out);
     }
 
     /// After a count or the first keys of a sequence: what's typed, and
@@ -504,12 +538,22 @@ impl State {
                 use crate::picker::Kind;
                 // What ↵ does depends on what's being picked.
                 let enter = match &p.kind {
-                    Kind::Edit(Choosing::Title { .. }) => "save",
+                    Kind::Edit(Choosing::Title { .. }) | Kind::SectionTitle(..) => "save",
                     Kind::Edit(Choosing::Many { .. }) => "pick or unpick · ctrl-s apply",
                     Kind::Form(pick) if pick.several() => "pick or unpick",
-                    Kind::Edit(_) | Kind::Form(_) | Kind::Project(_) => "choose",
+                    Kind::Edit(_)
+                    | Kind::Form(_)
+                    | Kind::Project(_)
+                    | Kind::Alert(_)
+                    | Kind::Write(_)
+                    | Kind::Actions(_) => "choose",
                     Kind::Code { .. } => "go there",
-                    _ => "open",
+                    Kind::Messages(_) => "copy",
+                    Kind::Commands
+                    | Kind::Files { .. }
+                    | Kind::Branches { .. }
+                    | Kind::DiffFiles
+                    | Kind::Commits { .. } => "open",
                 };
                 return vec![
                     pair("↵", enter),
@@ -644,5 +688,8 @@ pub(super) fn describe(link: &Link) -> String {
         Link::Quote { .. } => "Quote reply".into(),
         Link::Section(_) => "Open the section's list".into(),
         Link::Form(link) => crate::create::describe(link).into(),
+        Link::Write(link) => crate::writes::describe(link).into(),
+        Link::Artifact { .. } | Link::Dispatch(_) => crate::actions::describe(link).into(),
+        Link::Review(link) => crate::talk::describe(link).into(),
     }
 }

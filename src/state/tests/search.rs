@@ -13,6 +13,7 @@ fn palette_goes_places_and_runs_actions() {
         cmds,
         vec![
             fetch(DataKey::Repo(RepoId::new("a", "b"))),
+            fetch(DataKey::InProjects(RepoId::new("a", "b"), 9)),
             fetch(key.clone())
         ]
     );
@@ -370,4 +371,55 @@ fn visited_pages_come_back_as_suggestions() {
     );
     press(&mut state, "octo<Enter>");
     assert_eq!(route(&state), Route::user("octocat"));
+    // Its letters scattered in a visited page's title aren't that page:
+    // ↵ searches for what's typed.
+    let _ = state.push(Route::Home);
+    press(&mut state, "g/occat<Enter>");
+    assert!(route(&state).search().is_some(), "{:?}", route(&state));
+}
+
+/// A URL or GitHub path typed after a search's `repo:o/r`, or after a
+/// list's filter, is noticed: `↵` goes there instead of searching for it.
+#[test]
+fn a_link_typed_after_a_scope_or_a_filter_opens() {
+    let pr = Route::pr(PrRef::parse("ratatui/ratatui#5").unwrap());
+    let mut state = with_repo();
+    press(
+        &mut state,
+        "g/repo:gold-silver-copper/ghtui https://github.com/ratatui/ratatui/pull/5<Enter>",
+    );
+    assert_eq!(route(&state), pr);
+
+    let search = Route::Search {
+        kind: crate::api::browse::SearchKind::Issues,
+        query: "repo:gold-silver-copper/ghtui bug".into(),
+    };
+    let _ = state.push(search.clone());
+    press(&mut state, "/");
+    assert!(overlay!(state, Search).filter);
+    press(&mut state, "ratatui/ratatui/pull/5<Enter>");
+    assert_eq!(route(&state), pr);
+
+    // Words stay a filter.
+    let _ = state.push(search);
+    press(&mut state, "/label:bug<Enter>");
+    let Route::Search { query, .. } = route(&state) else {
+        panic!("not a search");
+    };
+    assert_eq!(query, "repo:gold-silver-copper/ghtui bug label:bug");
+}
+
+/// People aren't open or closed: `t` says so on a search for them,
+/// rather than adding `is:open` to it.
+#[test]
+fn a_people_search_has_no_open_or_closed() {
+    let mut state = with_repo();
+    let route = Route::Search {
+        kind: crate::api::browse::SearchKind::Users,
+        query: "octo".into(),
+    };
+    let _ = state.push(route.clone());
+    assert!(press(&mut state, "t").is_empty());
+    assert_eq!(super::route(&state), route);
+    says(&state, "People aren't open or closed");
 }

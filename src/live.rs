@@ -1,12 +1,18 @@
-//! Watching a pull request while you review it. While its Files changed,
-//! its Review tab or its conversation is on screen, ghtui asks GitHub now
+//! Watching what's on screen. While a pull request's Files changed, its
+//! Review tab or its conversation is on screen, ghtui asks GitHub now
 //! and then whether anything changed there (review comments, a push,
-//! check results), with the ETag of the answer before, so an unchanged
-//! answer costs nothing. It asks less often while nothing changes, and
-//! seldom while the terminal is out of focus. What came in since you
-//! started looking is marked, and the status bar says what it was.
+//! check results); other pages have their own watchers ([`page`]): a
+//! running job, the Actions tab, a run, an issue, a discussion. Every
+//! watcher asks with the ETag of the answer before, so an unchanged
+//! answer costs nothing, and keeps the same [`Pace`]: it asks less often
+//! while nothing changes, and seldom while the terminal is out of focus.
+//! What came in since you started looking is marked, and the status bar
+//! says what it was. The first answer after opening a page is only "what
+//! was there" when it shows nothing the page doesn't: one newer than what
+//! the page loaded is a change.
 
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::api::browse::PrActivity;
@@ -26,6 +32,91 @@ pub const FIRST_MS: u64 = 10_000;
 const MOST_MS: u64 = 160_000;
 /// The wait while the terminal is out of focus.
 const AWAY_MS: u64 = 300_000;
+
+pub mod page;
+
+/// When a watcher asks next, and what it asked last: shared by every
+/// watcher.
+#[derive(Debug)]
+pub struct Pace<P> {
+    /// Which watch a timer is for: a new one ignores an old one's.
+    id: u64,
+    /// The last answers' ETags.
+    etags: HashMap<P, String>,
+    /// How long until the next ask.
+    wait: u64,
+    /// An ask is scheduled, or on its way.
+    busy: bool,
+}
+
+impl<P: Clone + Eq + Hash> Pace<P> {
+    fn new() -> Self {
+        Self {
+            id: next_id(),
+            etags: HashMap::new(),
+            wait: FIRST_MS,
+            busy: false,
+        }
+    }
+
+    /// Whether `id` is this watch's timer.
+    fn is(&self, id: u64) -> bool {
+        self.id == id
+    }
+
+    /// The timer for the next ask, unless one is scheduled or on its way.
+    fn due(&mut self, focused: bool) -> Option<Cmd> {
+        if self.busy {
+            return None;
+        }
+        self.busy = true;
+        let wait = if focused {
+            self.wait
+        } else {
+            self.wait.max(AWAY_MS)
+        };
+        Some(Cmd::Timer(Timer::Watch(self.id), wait))
+    }
+
+    /// Back in focus: the next ask is soon. A timer already running is
+    /// the old wait's, and ignored.
+    fn refocus(&mut self) {
+        (self.id, self.busy, self.wait) = (next_id(), false, FIRST_MS);
+    }
+
+    /// `probe`, asked with the ETag of its last answer.
+    fn ask(&self, probe: P) -> Ask<P> {
+        Ask {
+            etag: self.etags.get(&probe).cloned(),
+            probe,
+        }
+    }
+
+    /// Notes an answer's ETag; true if it's the first answer to `probe`.
+    fn answered(&mut self, probe: &P, etag: String) -> bool {
+        let first = !self.etags.contains_key(probe);
+        if !etag.is_empty() {
+            self.etags.insert(probe.clone(), etag);
+        }
+        first
+    }
+
+    /// The answers are in: soon again after a change, else later, up to
+    /// `most`.
+    fn settle(&mut self, changed: bool, most: u64) {
+        self.busy = false;
+        self.wait = if changed {
+            FIRST_MS
+        } else {
+            self.wait.saturating_mul(2).min(most)
+        };
+    }
+
+    /// Nothing was asked this time (what to ask isn't loaded yet).
+    fn idle(&mut self) {
+        self.busy = false;
+    }
+}
 
 /// What's asked about a pull request: a REST answer whose ETag says
 /// whether it changed.
@@ -60,8 +151,8 @@ impl Probe {
 
 /// A probe, asked with the ETag of its last answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Ask {
-    pub probe: Probe,
+pub struct Ask<P = Probe> {
+    pub probe: P,
     pub etag: Option<String>,
 }
 
@@ -69,14 +160,8 @@ pub struct Ask {
 #[derive(Debug)]
 pub struct Watch {
     pub pr: PrRef,
-    /// Which watch a timer is for: a new one ignores an old one's.
-    id: u64,
-    /// The last answers' ETags.
-    etags: HashMap<Probe, String>,
-    /// How long until the next ask.
-    wait: u64,
-    /// An ask is scheduled, or on its way.
-    busy: bool,
+    /// When it asks next, and the last answers' ETags.
+    pace: Pace<Probe>,
     /// The head GitHub last showed.
     head: Option<String>,
     /// Review threads and their comments, by id, there when you started
@@ -84,11 +169,15 @@ pub struct Watch {
     seen_threads: Option<HashSet<NodeId>>,
     /// The conversation's comments, by GitHub's number, likewise.
     seen_comments: Option<HashSet<u64>>,
+    /// Its reviews, by GitHub's number, likewise.
+    seen_reviews: Option<HashSet<u64>>,
     /// Review threads and comments that came in since you started
     /// looking (not yours).
     pub new_threads: HashSet<NodeId>,
     /// The conversation's comments that did.
     pub new_comments: HashSet<u64>,
+    /// The reviews that did.
+    pub new_reviews: HashSet<u64>,
 }
 
 /// An id no watch has had.
@@ -104,16 +193,17 @@ impl Watch {
         let threads = state.diffs.get(&DiffOf::Pr(pr.clone()));
         let threads = threads.and_then(|d| d.inputs().threads.data.as_deref());
         let activity = state.picked::<PrActivity>(&DataKey::PrActivity(pr.clone()));
+        // The conversation's threads, when the diff's aren't here.
+        let threads = threads.or(activity.map(|a| a.threads.as_slice()));
         Self {
-            id: next_id(),
-            etags: HashMap::new(),
-            wait: FIRST_MS,
-            busy: false,
+            pace: Pace::new(),
             head: head.map(|d| d.head_oid.clone()),
             seen_threads: threads.map(thread_ids),
             seen_comments: activity.map(|a| comment_ids(a).map(|(id, _)| id).collect()),
+            seen_reviews: activity.map(|a| review_ids(a).map(|(id, _)| id).collect()),
             new_threads: HashSet::new(),
             new_comments: HashSet::new(),
+            new_reviews: HashSet::new(),
             pr,
         }
     }
@@ -134,7 +224,14 @@ fn thread_ids(threads: &[ReviewThread]) -> HashSet<NodeId> {
 
 /// The conversation's comments' numbers, with their authors.
 fn comment_ids(activity: &PrActivity) -> impl Iterator<Item = (u64, &str)> {
-    (activity.comments.iter()).filter_map(|c| Some((c.id?, c.author.as_str())))
+    (activity.comments()).filter_map(|c| Some((c.id?, c.author.as_str())))
+}
+
+/// The conversation's submitted reviews' numbers, with their authors.
+fn review_ids(activity: &PrActivity) -> impl Iterator<Item = (u64, &str)> {
+    (activity.reviews())
+        .filter(|r| r.state != crate::api::model::ReviewState::Pending)
+        .filter_map(|r| Some((r.id?, r.author.as_str())))
 }
 
 /// The pull request whose review is on screen: its Files changed, its
@@ -145,7 +242,7 @@ pub fn watched(state: &State) -> Option<&PrRef> {
         Screen::Page(p) => match &p.route {
             Route::Pr {
                 pr,
-                tab: PrTab::Conversation | PrTab::Review,
+                tab: PrTab::Conversation | PrTab::Review | PrTab::Reviewed(_),
             } => Some(pr),
             _ => None,
         },
@@ -163,33 +260,32 @@ pub fn schedule(state: &mut State) -> Vec<Cmd> {
         }
         state.watch = here.map(|pr| Watch::new(pr, state));
     }
+    let mut cmds = page::schedule(state);
     let focused = state.focused;
-    let Some(w) = state.watch.as_mut().filter(|w| !w.busy) else {
-        return Vec::new();
-    };
-    w.busy = true;
-    let wait = if focused { w.wait } else { w.wait.max(AWAY_MS) };
-    vec![Cmd::Timer(Timer::Watch(w.id), wait)]
+    if let Some(w) = state.watch.as_mut() {
+        cmds.extend(w.pace.due(focused));
+    }
+    cmds
 }
 
 /// The terminal came into focus (`true`) or left it. Back in focus, the
 /// next ask is soon.
 pub fn on_focus(state: &mut State, focused: bool) {
     let was = std::mem::replace(&mut state.focused, focused);
-    if focused
-        && !was
-        && let Some(w) = &mut state.watch
-    {
-        // A timer already running is the old wait's: it's ignored.
-        (w.id, w.busy, w.wait) = (next_id(), false, FIRST_MS);
+    if focused && !was {
+        if let Some(w) = &mut state.watch {
+            w.pace.refocus();
+        }
+        page::refocus(state);
     }
 }
 
-/// Time to ask about the watched pull request, if the timer is still its.
+/// Time to ask about the watched pull request (or page), if the timer is
+/// still its.
 #[must_use]
 pub fn on_timer(state: &mut State, id: u64) -> Vec<Cmd> {
-    let Some(w) = state.watch.as_mut().filter(|w| w.id == id) else {
-        return Vec::new();
+    let Some(w) = state.watch.as_mut().filter(|w| w.pace.is(id)) else {
+        return page::on_timer(state, id);
     };
     let mut probes = vec![Probe::Pull, Probe::ReviewComments];
     if let Some(head) = &w.head {
@@ -198,13 +294,7 @@ pub fn on_timer(state: &mut State, id: u64) -> Vec<Cmd> {
             Probe::Statuses(head.clone()),
         ]);
     }
-    let asks = probes
-        .into_iter()
-        .map(|probe| Ask {
-            etag: w.etags.get(&probe).cloned(),
-            probe,
-        })
-        .collect();
+    let asks = probes.into_iter().map(|probe| w.pace.ask(probe)).collect();
     vec![Cmd::Api(Api::Poll {
         pr: w.pr.clone(),
         asks,
@@ -215,6 +305,12 @@ pub fn on_timer(state: &mut State, id: u64) -> Vec<Cmd> {
 fn head_of(body: &str) -> Option<String> {
     let json: serde_json::Value = serde_json::from_str(body).ok()?;
     Some(json.get("head")?.get("sha")?.as_str()?.to_owned())
+}
+
+/// When a pull request's REST answer says it was last updated.
+fn updated_of(body: &str) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_str(body).ok()?;
+    Some(json.get("updated_at")?.as_str()?.to_owned())
 }
 
 /// The newest review comment a review comments answer names.
@@ -231,17 +327,33 @@ pub fn on_polled(
     pr: &PrRef,
     answers: Vec<(Probe, Result<Polled, ApiError>)>,
 ) -> Vec<Cmd> {
-    // The conversation is fetched again where it's shown: on a page.
-    let talk = matches!(state.screen(), Screen::Page(_))
-        .then(|| Need::Data(DataKey::PrActivity(pr.clone())));
+    // The conversation is fetched again where it's shown: on a page; and
+    // every review, where they're listed.
+    let page = match state.screen() {
+        Screen::Page(p) => Some(&p.route),
+        Screen::Diff(_) => None,
+    };
+    let lists_reviews = matches!(
+        page,
+        Some(Route::Pr {
+            tab: PrTab::Review | PrTab::Reviewed(_),
+            ..
+        })
+    );
+    let talk: Vec<Need> = (page.is_some())
+        .then(|| Need::Data(DataKey::PrActivity(pr.clone())))
+        .into_iter()
+        .chain(lists_reviews.then(|| Need::Data(DataKey::Reviews(pr.clone()))))
+        .collect();
     // The review comments the diff shows, to tell whether the first
     // answer is newer than they are.
     let shown = (state.diffs.get(&DiffOf::Pr(pr.clone())))
         .and_then(|d| d.inputs().threads.data.as_deref().map(thread_ids));
+    // When the pull request shown was last updated, likewise (a review).
+    let updated = (state.prs.get(pr).and_then(|r| r.data.as_ref())).map(|d| d.updated_at.clone());
     let Some(w) = state.watch.as_mut().filter(|w| w.pr == *pr) else {
         return Vec::new();
     };
-    w.busy = false;
     let (mut changed, mut threads, mut pushed) = (false, false, None);
     let mut needs: Vec<Need> = Vec::new();
     for (probe, answer) in answers {
@@ -263,36 +375,40 @@ pub fn on_polled(
         }
         // The first answer is only what's there, unless a comment came in
         // after the diff's threads were fetched.
-        let first = !w.etags.contains_key(&probe);
-        if !etag.is_empty() {
-            w.etags.insert(probe.clone(), etag);
-        }
-        let unseen = probe == Probe::ReviewComments
-            && (shown.as_ref())
-                .is_some_and(|ids| newest_comment(&body).is_some_and(|id| !ids.contains(&id)));
+        let first = w.pace.answered(&probe, etag);
+        let unseen = match probe {
+            Probe::ReviewComments => (shown.as_ref())
+                .is_some_and(|ids| newest_comment(&body).is_some_and(|id| !ids.contains(&id))),
+            // Updated after what's shown was fetched: a review, a comment.
+            Probe::Pull => updated_of(&body)
+                .zip(updated.as_deref())
+                .is_some_and(|(now, shown)| now.as_str() > shown),
+            Probe::CheckRuns(_) | Probe::Statuses(_) => false,
+        };
         if first && pushed.is_none() && !unseen {
             continue;
         }
         changed = true;
         let fetch = match probe {
-            Probe::Pull => vec![Some(Need::Pr(pr.clone())), talk.clone()],
+            Probe::Pull => std::iter::once(Need::Pr(pr.clone()))
+                .chain(talk.iter().cloned())
+                .collect(),
             Probe::ReviewComments => {
                 threads = true;
-                vec![talk.clone()]
+                talk.clone()
             }
-            Probe::CheckRuns(_) | Probe::Statuses(_) => vec![Some(Need::Pr(pr.clone()))],
+            Probe::CheckRuns(_) | Probe::Statuses(_) => vec![
+                Need::Pr(pr.clone()),
+                Need::Data(DataKey::PrChecks(pr.clone())),
+            ],
         };
-        for need in fetch.into_iter().flatten() {
+        for need in fetch {
             if !needs.contains(&need) {
                 needs.push(need);
             }
         }
     }
-    w.wait = if changed {
-        FIRST_MS
-    } else {
-        w.wait.saturating_mul(2).min(MOST_MS)
-    };
+    w.pace.settle(changed, MOST_MS);
     let mut cmds: Vec<Cmd> = needs
         .into_iter()
         .flat_map(|need| state.ensure(need, true))
@@ -331,6 +447,49 @@ pub fn pushed_past(state: &State, pr: &PrRef, shown: Option<&str>) -> bool {
     matches!((head, shown), (Some(head), Some(shown)) if head != shown)
 }
 
+/// Notes review threads that are in: the first time, they're what was
+/// there; after, what wasn't (and isn't yours) is new. How many threads
+/// and replies came.
+fn note_threads(w: &mut Watch, threads: &[ReviewThread], viewer: Option<&str>) -> (u64, u64) {
+    let mine = |author: &str| viewer == Some(author);
+    let (mut new_threads, mut replies) = (0u64, 0u64);
+    let ids = thread_ids(threads);
+    let Some(seen) = &mut w.seen_threads else {
+        w.seen_threads = Some(ids);
+        return (0, 0);
+    };
+    for t in threads {
+        let came: Vec<&NodeId> = (t.comments.iter())
+            .filter(|c| !seen.contains(&c.id) && !mine(&c.author))
+            .map(|c| &c.id)
+            .collect();
+        if came.is_empty() {
+            continue;
+        }
+        w.new_threads.extend(came.iter().map(|id| (*id).clone()));
+        if seen.contains(&t.id) {
+            replies += came.len() as u64;
+        } else {
+            w.new_threads.insert(t.id.clone());
+            new_threads += 1;
+        }
+    }
+    seen.extend(ids);
+    (new_threads, replies)
+}
+
+/// "2 threads, 1 reply", for the status bar.
+fn threads_said(new_threads: u64, replies: u64) -> Vec<String> {
+    let mut what = Vec::new();
+    if new_threads > 0 {
+        what.push(format!("{new_threads} {}", noun(new_threads, "thread")));
+    }
+    if replies > 0 {
+        what.push(format!("{replies} {}", noun(replies, "reply")));
+    }
+    what
+}
+
 /// The pull request's review threads are in: the first time, they're
 /// what was there; after, what wasn't is new, and said. The diff marks
 /// them.
@@ -351,74 +510,82 @@ pub fn threads_loaded(state: &mut State, pr: &PrRef) {
     let Some(threads) = diff.inputs().threads.data.as_ref() else {
         return;
     };
-    let mine = |author: &str| viewer.as_deref() == Some(author);
-    let (mut new_threads, mut replies) = (0u64, 0u64);
-    let ids = thread_ids(threads);
-    match &mut w.seen_threads {
-        None => w.seen_threads = Some(ids),
-        Some(seen) => {
-            for t in threads {
-                let came: Vec<&NodeId> = (t.comments.iter())
-                    .filter(|c| !seen.contains(&c.id) && !mine(&c.author))
-                    .map(|c| &c.id)
-                    .collect();
-                if came.is_empty() {
-                    continue;
-                }
-                w.new_threads.extend(came.iter().map(|id| (*id).clone()));
-                if seen.contains(&t.id) {
-                    replies += came.len() as u64;
-                } else {
-                    w.new_threads.insert(t.id.clone());
-                    new_threads += 1;
-                }
-            }
-            seen.extend(ids);
-        }
-    }
+    let (new_threads, replies) = note_threads(w, threads, viewer.as_deref());
     if diff.inputs().fresh != w.new_threads {
         let fresh = w.new_threads.clone();
         diff.edit(|i| i.fresh = fresh);
     }
-    let mut what = Vec::new();
-    if new_threads > 0 {
-        what.push(format!("{new_threads} {}", noun(new_threads, "thread")));
-    }
-    if replies > 0 {
-        what.push(format!("{replies} {}", noun(replies, "reply")));
-    }
+    let what = threads_said(new_threads, replies);
     if !what.is_empty() {
         notices.info(format!("New on {pr}: {}", what.join(", ")));
     }
 }
 
-/// The conversation's comments are in: as with threads, what wasn't
-/// there before is new, and said.
+/// The conversation is in: as with threads, its comments, reviews and
+/// threads that weren't there before are new, and said (a review by who
+/// and what they decided).
 pub fn activity_loaded(state: &mut State, pr: &PrRef) {
-    let Some(activity) = state.picked::<PrActivity>(&DataKey::PrActivity(pr.clone())) else {
+    let State {
+        watch,
+        data,
+        viewer,
+        notices,
+        data_gen,
+        ..
+    } = state;
+    let activity = (data.get(&DataKey::PrActivity(pr.clone())))
+        .and_then(|r| r.data.as_ref())
+        .and_then(<PrActivity as crate::browse::Picked>::pick);
+    let Some(activity) = activity else {
         return;
     };
-    let viewer = state.viewer.as_deref();
-    let comments: Vec<(u64, bool)> = comment_ids(activity)
-        .map(|(id, author)| (id, viewer == Some(author)))
-        .collect();
-    let Some(w) = state.watch.as_mut().filter(|w| w.pr == *pr) else {
+    let viewer = viewer.as_deref();
+    let Some(w) = watch.as_mut().filter(|w| w.pr == *pr) else {
         return;
     };
-    let Some(seen) = &mut w.seen_comments else {
-        w.seen_comments = Some(comments.iter().map(|(id, _)| *id).collect());
-        return;
-    };
-    let mut new = 0;
-    for (id, mine) in comments {
-        if seen.insert(id) && !mine {
-            w.new_comments.insert(id);
-            new += 1;
+    let mut what = Vec::new();
+    // Comments.
+    let comments: Vec<(u64, &str)> = comment_ids(activity).collect();
+    match &mut w.seen_comments {
+        None => w.seen_comments = Some(comments.iter().map(|(id, _)| *id).collect()),
+        Some(seen) => {
+            let mut new = 0;
+            for (id, author) in comments {
+                if seen.insert(id) && viewer != Some(author) {
+                    w.new_comments.insert(id);
+                    new += 1;
+                }
+            }
+            if new > 0 {
+                what.push(format!("{new} {}", noun(new, "comment")));
+            }
         }
     }
-    if new > 0 {
-        state.data_gen += 1;
-        state.info(format!("New on {pr}: {new} {}", noun(new, "comment")));
+    // Reviews, each named.
+    let reviews: Vec<(u64, &str)> = review_ids(activity).collect();
+    match &mut w.seen_reviews {
+        None => w.seen_reviews = Some(reviews.iter().map(|(id, _)| *id).collect()),
+        Some(seen) => {
+            for (id, author) in reviews {
+                if seen.insert(id) && viewer != Some(author) {
+                    w.new_reviews.insert(id);
+                    let r = activity.reviews().find(|r| r.id == Some(id));
+                    let said = r.map_or("reviewed", |r| match r.state {
+                        crate::api::model::ReviewState::Approved => "approved",
+                        crate::api::model::ReviewState::ChangesRequested => "requested changes",
+                        _ => "reviewed",
+                    });
+                    what.push(format!("{author} {said}"));
+                }
+            }
+        }
+    }
+    // Threads, which the diff's own fetch may have noted already.
+    let (new_threads, replies) = note_threads(w, &activity.threads, viewer);
+    what.extend(threads_said(new_threads, replies));
+    if !what.is_empty() {
+        *data_gen += 1;
+        notices.info(format!("New on {pr}: {}", what.join(", ")));
     }
 }
 

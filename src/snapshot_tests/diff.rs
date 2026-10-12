@@ -490,6 +490,7 @@ fn with_threads(mode: Mode) -> State {
         original_commit: Some("abc".into()),
         pending,
         editable: crate::fixtures::editable(id),
+        review: None,
     };
     let thread =
         |id: &str, line: Option<u32>, resolved: bool, file_level: bool, comments| ReviewThread {
@@ -508,6 +509,7 @@ fn with_threads(mode: Mode) -> State {
             can_resolve: true,
             can_unresolve: true,
             comments,
+            diff_hunk: String::new(),
         };
     // Two reacted to the question, you among them.
     let mut asked = comment(

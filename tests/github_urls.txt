@@ -6,7 +6,7 @@
 #   external <reason>   the browser, for one of these reasons:
 #     download    a file to save (archives, release assets, raw files, .patch)
 #     session     needs a browser session, writes, or needs rights the token
-#                 doesn't give (settings, login, security alerts)
+#                 doesn't give (settings, login)
 #     scope       needs a token scope gh doesn't grant by default
 #                 (read:packages)
 #     not-github  not repository or user content (GitHub's marketing, docs
@@ -23,7 +23,8 @@
 #   handled  ?q= (lists, search, dashboards, a job's log filter), ?type=
 #            (search), ?tab= and ?sort= (profiles), ?state=closed
 #            (milestones), ?environments_filter= (deployments), ?query=
-#            (notifications, a repository's runs), ?itemId= (a project's
+#            (notifications, a repository's runs, code and secret
+#            scanning alerts), ?itemId= (a project's
 #            item, in its view's side pane); #L10-L20
 #            (files and blame, marked), #issuecomment-… and
 #            #discussioncomment-… (scrolled to), #discussion_r…/#r… (the
@@ -104,6 +105,8 @@ https://gist.github.com/1162032                                             Gist
 https://gist.github.com/2000                                                Gists
 https://gist.github.com/octocat/1162032                                     Gist
 https://gist.github.com/octocat                                             Gists
+https://gist.github.com/                                                    NewGist
+https://gist.github.com/octocat/aa5a315d61ae9438b18d/edit                   EditGist
 https://gist.github.com/octocat/1162032/raw                                 external download
 https://gist.github.com/discover                                            external rare
 # Team
@@ -154,9 +157,14 @@ https://github.com/octocat/Hello-World/blob/6dcb09b5b57875f334f61aebed695e2e4193
 https://github.com/octokit/octokit.rb/tree/master/lib/octokit               Tree
 https://github.com/github/hello-world/deployments/activity_log?environments_filter=staging Deployments
 https://github.com/octocat/Hello-World/deployments                          Deployments
-https://github.com/octocat/Hello-World/security/dependabot/1                external session
+https://github.com/octocat/Hello-World/security/dependabot/1                Alert
+https://github.com/octocat/Hello-World/security/dependabot?q=is%3Aclosed+severity%3Ahigh Alerts
 https://github.com/octocat/hello-world/code-scanning/42                     external session
-https://github.com/owner/private-repo/security/secret-scanning/42           external session
+https://github.com/octocat/Hello-World/security/code-scanning/42            Alert
+https://github.com/octocat/Hello-World/security/code-scanning?query=is%3Aopen+branch%3Amain Alerts
+https://github.com/octocat/Hello-World/security/code-scanning/tools         external session
+https://github.com/owner/private-repo/security/secret-scanning/42           Alert
+https://github.com/owner/private-repo/security/secret-scanning              Alerts
 https://github.com/owner/repo/secret_scanning_exemptions/1                  external session
 https://github.com/octocat/Hello-World/invitations                          external session
 https://github.com/organizations/octo-org/settings/installations/1          external session
@@ -222,7 +230,8 @@ https://github.com/rust-lang/rust/discussions/categories/ideas              Disc
 https://github.com/rust-lang/rust/wiki                                      Wiki
 https://github.com/rust-lang/rust/wiki/Home                                 Wiki
 https://github.com/rust-lang/rust/wiki/_pages                               Wiki
-https://github.com/rust-lang/rust/wiki/_new                                 external session
+https://github.com/rust-lang/rust/wiki/_new                                 WikiEdit
+https://github.com/rust-lang/rust/wiki/Home/_edit                           WikiEdit
 https://github.com/rust-lang/rust/wiki/_history                             external rare
 https://github.com/rust-lang/rust/wiki/_compare/029a999f7a641ee25596aa00ca09f6b760f1d10e external rare
 https://github.com/rust-lang/rust/security                                  Advisories
@@ -244,6 +253,7 @@ https://github.com/rust-lang/rust/branches                                  Bran
 https://github.com/rust-lang/rust/tags                                      Tags
 https://github.com/rust-lang/rust/releases                                  Releases
 https://github.com/rust-lang/rust/releases/latest                           Releases
+https://github.com/rust-lang/rust/releases/new                              NewRelease
 https://github.com/rust-lang/rust/stargazers                                Stargazers
 https://github.com/rust-lang/rust/watchers                                  Watchers
 https://github.com/rust-lang/rust/forks                                     Forks

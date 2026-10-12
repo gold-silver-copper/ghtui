@@ -1,7 +1,9 @@
 //! Conversations: issues and discussions.
 
 use super::*;
+use crate::api::browse::DiscussionComment;
 use crate::api::edit::Reaction;
+use std::collections::HashSet;
 
 /// What the comment boxes of a conversation share.
 pub(super) struct Conversation<'a> {
@@ -100,31 +102,11 @@ impl Conversation<'_> {
             reactions,
         );
     }
-
-    /// A timeline event: `● author approved these changes 1d ago`.
-    pub(super) fn event(
-        &self,
-        page: &mut Page,
-        (icon, role): (&str, Role),
-        author: &str,
-        what: &str,
-        when: &str,
-    ) {
-        let who = login_seg(page, author, Role::Strong);
-        let when = time::ago_iso(when, self.now);
-        let what = Seg::new(format!(" {what} {when}"), Role::Meta);
-        page.add(
-            Frame::None,
-            2,
-            vec![Seg::new(format!("{icon}  "), role), who, what],
-            Vec::new(),
-        );
-    }
 }
 
 /// The reactions under a comment, as GitHub shows them: each one's emoji
 /// and count, the ones you gave marked.
-fn reaction_chips(page: &mut Page, reactions: &[Reaction]) {
+pub(super) fn reaction_chips(page: &mut Page, reactions: &[Reaction]) {
     if reactions.is_empty() {
         return;
     }
@@ -213,9 +195,15 @@ pub(super) fn label_list(page: &mut Page, l: &Capped<Label>) {
     }
 }
 
-pub fn issue(page: &mut Page, d: &IssueDetail, icons: Icons, keys: Keys<'_>, now: u64) {
-    let participants =
-        unique(std::iter::once(&d.author).chain(d.comments.iter().map(|c| &c.author)));
+pub fn issue(
+    page: &mut Page,
+    d: &IssueDetail,
+    projects: Fetched<'_, Capped<crate::api::timeline::InProject>>,
+    marks: Marks<'_>,
+    cx: PageCtx<'_>,
+) {
+    let PageCtx { icons, keys, now } = cx;
+    let participants = unique(std::iter::once(&d.author).chain(d.comments().map(|c| &c.author)));
     let aside = page.build_aside(|a| {
         people(
             a,
@@ -227,7 +215,9 @@ pub fn issue(page: &mut Page, d: &IssueDetail, icons: Icons, keys: Keys<'_>, now
         );
         label_list(a, &d.labels);
         milestone_aside(a, &d.repo, d.milestone.as_ref());
-        let earlier = d.comments.left_out() > 0;
+        timeline::relations_aside(a, icons, d);
+        timeline::projects_aside(a, projects);
+        let earlier = d.timeline.left_out() > 0;
         people(a, "Participants", &participants, maybe_others(earlier), "");
     });
     page.wrapped(
@@ -247,7 +237,7 @@ pub fn issue(page: &mut Page, d: &IssueDetail, icons: Icons, keys: Keys<'_>, now
             format!(
                 " opened this issue {} · {}",
                 time::ago_iso(&d.created_at, now),
-                plural(d.comments.total(), "comment")
+                plural(d.comment_count, "comment")
             ),
             Role::Meta,
         ),
@@ -275,6 +265,10 @@ pub fn issue(page: &mut Page, d: &IssueDetail, icons: Icons, keys: Keys<'_>, now
         more_chips(&mut segs, &d.assignees);
         page.line(segs);
     }
+    if !aside {
+        timeline::relations_inline(page, icons, d);
+        timeline::projects_inline(page, projects);
+    }
     let talk = Conversation {
         base: LinkBase::new(&d.repo, "HEAD", ""),
         op: &d.author,
@@ -290,11 +284,14 @@ pub fn issue(page: &mut Page, d: &IssueDetail, icons: Icons, keys: Keys<'_>, now
         true,
         reactions,
     );
-    earlier_here(page, &d.comments, "comment", "comments");
-    for c in &d.comments {
-        connector(page);
-        talk.comment(page, c, false);
-    }
+    earlier_here(page, &d.timeline, "comment or event", "comments and events");
+    let place = timeline::Place {
+        repo: &d.repo,
+        pr: None,
+        threads: &[],
+        icons,
+    };
+    timeline::entries(page, &talk, &place, &d.timeline, marks);
     add_comment(page, keys);
 }
 
@@ -367,9 +364,11 @@ pub fn discussions(
     );
 }
 
-/// A discussion: its post, then its comments (the answer marked) with their
-/// replies, each named for links to it (`#discussioncomment-…`).
-pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
+/// A discussion: its post, the answer at the top as GitHub shows it, then
+/// its comments (the answer marked) with their replies, each named for
+/// links to it (`#discussioncomment-…`), and the box to write in. Those
+/// in `fresh` (by GitHub's number) came in since you started looking.
+pub fn discussion(page: &mut Page, d: &DiscussionDetail, fresh: &HashSet<u64>, cx: PageCtx<'_>) {
     page.wrapped(
         vec![
             Seg::new(d.title.clone(), Role::Title),
@@ -382,6 +381,10 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
     if d.answered {
         segs.push(space());
         segs.push(chip("✓ Answered", Bg::SuccessContainer));
+    }
+    if d.locked {
+        segs.push(space());
+        segs.push(chip("Locked", Bg::TertiaryContainer));
     }
     segs.push(Seg::new(
         format!(
@@ -396,7 +399,7 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
     let talk = Conversation {
         base: LinkBase::new(&d.repo, "HEAD", ""),
         op: &d.author,
-        now,
+        now: cx.now,
     };
     talk.said(
         page,
@@ -405,30 +408,63 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
         &d.created_at,
         &d.body,
         true,
-        &[],
+        &d.editable.reactions,
     );
     let anchor = |c: &Comment| c.id.map(|id| format!("discussioncomment-{id}"));
-    for c in &d.comments {
-        connector(page);
-        let badge = if c.answer {
+    let new = |c: &Comment| c.id.is_some_and(|id| fresh.contains(&id));
+    let reactions = |c: &Comment| {
+        c.editable
+            .as_ref()
+            .map_or(Vec::new(), |e| e.reactions.clone())
+    };
+    let comment = |page: &mut Page, c: &DiscussionComment, anchored: bool| {
+        let badge = if new(&c.comment) && anchored {
+            Some(chip("New", Bg::TertiaryContainer))
+        } else if c.answer {
             Some(chip("✓ Answer", Bg::SuccessContainer))
         } else {
             (c.comment.author == d.author).then(|| chip("Author", Bg::SecondaryContainer))
         };
-        let verb = format!("commented · ▲ {}", c.upvotes);
-        let comment = &c.comment;
+        let verb = if d.answerable {
+            "answered"
+        } else {
+            "commented"
+        };
+        let said = &c.comment;
         talk.said_at(
             page,
-            anchor(comment),
-            &comment.author,
-            &verb,
-            &comment.created_at,
-            &comment.body,
+            anchored.then(|| anchor(said)).flatten(),
+            &said.author,
+            &format!("{verb} · ▲ {}", c.upvotes),
+            &said.created_at,
+            &said.body,
             badge,
-            &[],
+            &reactions(said),
         );
+    };
+    // The answer, at the top; it's in its place below too.
+    if let Some(answer) = &d.answer {
+        connector(page);
+        let mut segs = vec![Seg::new("✓ ", Role::Success)];
+        match &d.answer_by {
+            Some(by) => {
+                segs.push(Seg::new("Answer selected by ", Role::Meta));
+                segs.push(login_seg(page, by, Role::Strong));
+            }
+            None => segs.push(Seg::new("Answer selected", Role::Meta)),
+        }
+        page.add(Frame::None, 2, segs, Vec::new());
+        comment(page, answer, false);
+    }
+    for c in &d.comments {
+        connector(page);
+        comment(page, c, true);
         for r in &c.replies {
-            let badge = (r.author == d.author).then(|| chip("Author", Bg::SecondaryContainer));
+            let badge = if new(r) {
+                Some(chip("New", Bg::TertiaryContainer))
+            } else {
+                (r.author == d.author).then(|| chip("Author", Bg::SecondaryContainer))
+            };
             talk.said_at(
                 page,
                 anchor(r),
@@ -437,10 +473,30 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
                 &r.created_at,
                 &r.body,
                 badge,
-                &[],
+                &reactions(r),
             );
         }
         more_here(page, &c.replies, "reply", "replies");
     }
     more_here(page, &d.comments, "comment", "comments");
+    // Where to write: an answer, in a category that takes them.
+    connector(page);
+    let (title, what) = if d.answerable {
+        ("Write an answer", "an answer")
+    } else {
+        ("Add a comment", "a comment")
+    };
+    item(page, Link::Comment, |page, link| {
+        page.box_top(vec![Seg::linked(title, Role::Strong, link)], Vec::new());
+        let keys = cx.keys;
+        let mut press = format!(
+            "Press {} to write {what}, or on a comment to reply in its thread",
+            keys.comment
+        );
+        if d.locked {
+            press.push_str(" (it's locked: only those with write access can)");
+        }
+        body(page, vec![Seg::linked(press, Role::Meta, link)]);
+        page.box_bottom();
+    });
 }

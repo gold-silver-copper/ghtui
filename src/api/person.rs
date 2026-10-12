@@ -27,6 +27,34 @@ impl Person {
         }
     }
 
+    /// Who git says wrote a commit (read from a clone, not GitHub): their
+    /// account when the email is the no-reply address GitHub gives it
+    /// (`123+login@users.noreply.github.com`), which GitHub links to that
+    /// account too; else their name.
+    pub fn from_git(name: &str, email: &str) -> Person {
+        let noreply = format!(
+            "@users.noreply.{}",
+            crate::host::current()
+                .name()
+                .split(':')
+                .next()
+                .unwrap_or_default()
+        );
+        let at = email.len().saturating_sub(noreply.len());
+        let login = (email.get(at..))
+            .filter(|domain| domain.eq_ignore_ascii_case(&noreply))
+            .and_then(|_| email.get(..at))
+            .map(|user| user.rsplit('+').next().unwrap_or(user))
+            .filter(|login| {
+                !login.is_empty() && login.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+            });
+        match login {
+            Some(login) => Person::User(Login(login.to_owned())),
+            None if !name.trim().is_empty() => Person::Git(name.trim().to_owned()),
+            None => Person::Unknown,
+        }
+    }
+
     /// The text to show. Not a login: never pass it to a URL builder.
     pub fn name(&self) -> &str {
         match self {

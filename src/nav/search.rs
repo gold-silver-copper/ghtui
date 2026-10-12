@@ -124,6 +124,18 @@ impl State {
         chrome::header_layout(self.layout().header, &crumbs, &right).search
     }
 
+    /// "→ o/r#5 go to", for what's typed when it's a place or ends in a
+    /// link.
+    fn go_to(&self, q: &str) -> Option<(SuggestRow, Option<Pick>)> {
+        let dest = link_in(q, self.context_repo())?;
+        let label = match &dest.target {
+            Target::Page(r) => r.title(),
+            Target::Files(of) => format!("Files changed in {of}"),
+            Target::External(url) => url.clone(),
+        };
+        Some(suggestion("→", label, "go to", "↵", Pick::Go(dest)))
+    }
+
     /// The search box's suggestions: rows to draw, and what choosing each
     /// item does (headings have none).
     pub fn suggestions(&self, sb: &SearchBox) -> Vec<(SuggestRow, Option<Pick>)> {
@@ -141,11 +153,29 @@ impl State {
                 out.push(suggestion("⌕", q, what, "↵", pick));
                 return out;
             }
+            // A link typed or pasted after the filter goes there.
+            if let Some(go) = self.go_to(q) {
+                out.push(go);
+            }
             if !q.is_empty() {
                 let pick = Pick::Filter(q.to_owned());
                 out.push(suggestion("⌕", q, "filter this list", "↵", pick));
             }
             out.push(heading("Quick filters"));
+            // Alerts filter by their own words, and aren't searched.
+            if let Some(Route::Alerts { repo, kind, .. }) = self.route() {
+                let branch = (self.overview(repo).and_then(|o| o.default_branch.as_ref()))
+                    .filter(|_| *kind == crate::api::security::AlertKind::CodeScanning);
+                if let Some(b) = branch {
+                    let f = format!("branch:{b}");
+                    let pick = Pick::Filter(f.clone());
+                    out.push(suggestion("⚑", f, &format!("on {b}"), "", pick));
+                }
+                for (f, what) in kind.filters() {
+                    out.push(suggestion("⚑", *f, what, "", Pick::Filter((*f).to_owned())));
+                }
+                return out;
+            }
             // Runs filter by GitHub's Actions words, and aren't searched.
             if let Some(Route::Actions { repo, .. }) = self.route() {
                 if let Some(b) = self.overview(repo).and_then(|o| o.default_branch.as_ref()) {
@@ -196,13 +226,8 @@ impl State {
             }
             return out;
         }
-        if let Some(dest) = route::parse_input(q, self.context_repo()) {
-            let label = match &dest.target {
-                Target::Page(r) => r.title(),
-                Target::Files(of) => format!("Files changed in {of}"),
-                Target::External(url) => url.clone(),
-            };
-            out.push(suggestion("→", label, "go to", "↵", Pick::Go(dest)));
+        if let Some(go) = self.go_to(q) {
+            out.push(go);
         }
         // Jump to: pages you've visited, your repositories, live matches.
         let current = self.route().map(Route::url);
@@ -233,20 +258,29 @@ impl State {
         }
         let most = if q.is_empty() { 8 } else { 5 };
         let mut seen: Vec<String> = Vec::new();
-        for (_, title, url, icon, detail) in jumps {
-            if seen.contains(&url) || seen.len() >= most {
-                continue;
+        // A page whose title has what's typed comes before searching for
+        // it; one that only has its letters scattered, after.
+        let (near, far): (Vec<_>, Vec<_>) =
+            (jumps.into_iter()).partition(|(score, ..)| q.is_empty() || *score < 1000);
+        let mut jump = |out: &mut Vec<_>, jumps: Vec<(usize, String, String, &str, &str)>| {
+            let mut headed = false;
+            for (_, title, url, icon, detail) in jumps {
+                if seen.contains(&url) || seen.len() >= most {
+                    continue;
+                }
+                if !headed {
+                    out.push(heading(if q.is_empty() { "Recent" } else { "Jump to" }));
+                    headed = true;
+                }
+                let pick = Pick::Go(Dest::from_url(&url));
+                out.push(suggestion(icon, title, detail, "", pick));
+                seen.push(url);
             }
-            if seen.is_empty() {
-                out.push(heading(if q.is_empty() { "Recent" } else { "Jump to" }));
-            }
-            let pick = Pick::Go(Dest::from_url(&url));
-            out.push(suggestion(icon, title, detail, "", pick));
-            seen.push(url);
-        }
+        };
+        jump(&mut out, near);
         if !q.is_empty() {
             out.push(heading("Search"));
-            if let Some(repo) = self.context_repo() {
+            if let Some(repo) = self.context_repo().filter(|_| !q.starts_with("repo:")) {
                 let pick = Pick::Search(SearchKind::Issues, format!("repo:{repo} {q}"));
                 out.push(suggestion("⌕", q, &format!("in {repo}"), "", pick));
             }
@@ -260,6 +294,7 @@ impl State {
                 out.push(suggestion("⌕", q, what, "", pick));
             }
         }
+        jump(&mut out, far);
         // Live matches come last, so they never move what's selected.
         if sb.remote_for == q && !q.is_empty() {
             let live: Vec<&RepoSummary> = sb
@@ -278,6 +313,20 @@ impl State {
         }
         out
     }
+}
+
+/// Where what's typed goes, if it is a place or ends in a link: all of
+/// it (`o/r#5`, `@octocat`), or its last word when that's a URL or a
+/// GitHub path, typed after a filter or a search's `repo:o/r`.
+pub(super) fn link_in(q: &str, context: Option<&RepoId>) -> Option<Dest> {
+    if let Some(dest) = route::parse_input(q, context) {
+        return Some(dest);
+    }
+    let last = q.split_whitespace().last()?;
+    let link = last.contains("://")
+        || last.matches('/').count() >= 2
+        || (last.contains('/') && last.contains('#'));
+    link.then(|| route::parse_input(last, context)).flatten()
 }
 
 /// A suggestion to choose.
@@ -340,7 +389,7 @@ pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 pub fn search_box_changed(sb: &mut SearchBox) -> Vec<Cmd> {
     sb.selected = 0;
     let q = sb.query();
-    if !sb.filter && q.chars().count() >= 2 && route::parse_input(&q, None).is_none() {
+    if !sb.filter && q.chars().count() >= 2 && link_in(&q, None).is_none() {
         vec![Cmd::SuggestLater(q)]
     } else {
         Vec::new()

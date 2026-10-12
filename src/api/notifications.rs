@@ -3,6 +3,8 @@
 //! filters by repository, read state and participation itself, and the
 //! rest is filtered here.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::api::browse::{Results, filter_words};
@@ -66,6 +68,71 @@ pub struct Inbox {
     /// The last fetch stopped at its limit, short of a full page and of
     /// the end of the inbox.
     pub cut: bool,
+}
+
+/// A thread as it was when marked: by its ID, and when GitHub said it
+/// was last updated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadAt {
+    pub id: String,
+    pub updated_at: String,
+}
+
+impl ThreadAt {
+    pub fn of(n: &Notification) -> ThreadAt {
+        ThreadAt {
+            id: n.id.clone(),
+            updated_at: n.updated_at.clone(),
+        }
+    }
+}
+
+/// The threads you marked done, kept per account: GitHub's API goes on
+/// listing a thread marked done, read, though it has left github.com's
+/// inbox. ghtui leaves such a thread out until GitHub updates it again,
+/// and then it's back, as on github.com.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Done {
+    /// When GitHub said each was last updated, as it was marked done.
+    threads: BTreeMap<String, String>,
+}
+
+impl Done {
+    /// Where it's kept, in the account's cache.
+    pub const KEY: &'static str = "notifications:done";
+    /// How many it remembers: the most recently updated.
+    const KEEP: usize = 2000;
+
+    pub fn mark(&mut self, threads: &[ThreadAt]) {
+        for t in threads {
+            self.threads.insert(t.id.clone(), t.updated_at.clone());
+        }
+        let excess = self.threads.len().saturating_sub(Self::KEEP);
+        if excess > 0 {
+            let mut times: Vec<String> = self.threads.values().cloned().collect();
+            times.sort_unstable();
+            if let Some(oldest) = times.get(excess) {
+                self.threads.retain(|_, at| *at >= *oldest);
+            }
+        }
+    }
+
+    /// Whether `n` was marked done since GitHub last updated it.
+    pub fn hides(&self, n: &Notification) -> bool {
+        (self.threads.get(&n.id)).is_some_and(|at| n.updated_at.as_str() <= at.as_str())
+    }
+
+    /// Forgets the threads among `seen` that GitHub updated since they
+    /// were marked done; whether any were.
+    pub fn forget_updated(&mut self, seen: &[Notification]) -> bool {
+        let before = self.threads.len();
+        for n in seen {
+            if !self.hides(n) {
+                self.threads.remove(&n.id);
+            }
+        }
+        self.threads.len() != before
+    }
 }
 
 /// How many notifications are unread, as polled.

@@ -263,6 +263,8 @@ pub struct DiffInputs {
     pub deleted: Option<crate::store::DraftComment>,
     /// Threads and comments that came in since you started looking.
     pub fresh: HashSet<NodeId>,
+    /// What the head's check runs say about its lines, by check.
+    pub checks: Vec<(String, crate::api::actions::Annotation)>,
 }
 
 impl DiffInputs {
@@ -328,6 +330,9 @@ pub struct DiffState {
     pub(crate) joins: join::Joins,
     /// "Since my last review" was asked for and is waiting on data.
     pub since_requested: bool,
+    /// What "since" compares with, when it isn't your last review: a
+    /// review's commit, opened from the review.
+    pub since_commit: Option<String>,
     /// Showing a sub-range of commits instead of the whole PR.
     range: Option<RangeView>,
     /// Files we've already asked the job to prioritize.
@@ -358,6 +363,7 @@ impl DiffState {
             mapped: HashMap::new(),
             joins: join::Joins::default(),
             since_requested: false,
+            since_commit: None,
             range: None,
             requested: HashSet::new(),
             job: next_job(),
@@ -400,7 +406,10 @@ impl DiffState {
             },
             viewed: i.viewed.iter().flat_map(|v| v.states.clone()).collect(),
             reviewed: i.review.reviewed_hunks.iter().cloned().collect(),
-            annotations: annotations(i.thread_list(), &self.mapped, &i.review.pending, &i.fresh),
+            annotations: (annotations(i.thread_list(), &self.mapped, &i.review.pending, &i.fresh))
+                .into_iter()
+                .chain(crate::actions::in_diff(&i.checks))
+                .collect(),
         }
     }
 
@@ -1348,8 +1357,13 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
                 && screen.of == *of
             {
                 preserving_position(screen, diff, |d| d.doc.set_since(Some(hashes), true));
+                let whose = if diff.since_commit.is_some() {
+                    ""
+                } else {
+                    "your review of "
+                };
                 state.info(format!(
-                    "Showing changes since your review of {}",
+                    "Showing changes since {whose}{}",
                     short_sha(&old_head)
                 ));
             }

@@ -8,6 +8,7 @@ use crate::diff_screen::{DiffOf, LastReview};
 use crate::keymap::Action;
 use crate::review;
 use crate::state::{Cmd, Git, Screen, State};
+use crate::ui::text::short_sha;
 
 /// What each piece of a diff's joined work last ran for: it runs again
 /// when that changes. Only [`join`] sees inside.
@@ -51,6 +52,20 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
         Screen::Page(_) => None,
     };
     for (of, diff) in &mut state.diffs {
+        // A commit's comments on its lines show as threads of its diff.
+        if let DiffOf::Commit(repo, oid) = of {
+            let key = crate::browse::DataKey::CommitComments(repo.clone(), oid.to_string());
+            let comments = state.data.get(&key).and_then(|r| r.data.as_ref());
+            if let Some(crate::browse::Data::CommitComments(c)) = comments {
+                let threads: Vec<_> = c
+                    .iter()
+                    .filter_map(super::api::commit_comments::CommitComment::as_thread)
+                    .collect();
+                if diff.inputs().threads.data.as_ref() != Some(&threads) {
+                    diff.edit(|i| i.threads.data = Some(threads));
+                }
+            }
+        }
         // Asked for on a screen you've left: not wanted when you're back.
         if shown.as_ref() != Some(of) {
             diff.since_requested = false;
@@ -98,6 +113,19 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
             Ok(Some(warning)) => state.notices.error(warning),
             Err(error) => diff.error = Some(error),
         }
+    }
+    // A review's commit, compared with the whole PR's diff.
+    if diff.since_requested
+        && let Some(old) = diff.since_commit.clone()
+    {
+        diff.since_requested = false;
+        if old == *head {
+            state.info(format!("Nothing new since {}", short_sha(&old)));
+        } else {
+            let since = Joined((pr.clone(), diff.job, old));
+            cmds.push(Cmd::Git(Git::SinceReview(since)));
+        }
+        return cmds;
     }
     // "Since my last review", compared with the whole PR's diff.
     if diff.since_requested && diff.inputs().last_review != LastReview::Unknown {

@@ -345,7 +345,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
                 ProfileTab::Following => "Following",
                 _ => "People",
             };
-            people_list(page, title, people);
+            people_list(page, title, people, "Nobody here yet.");
             return;
         }
         (_, ProfileList::None) => return,

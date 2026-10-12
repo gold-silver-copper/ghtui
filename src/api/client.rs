@@ -22,6 +22,7 @@ use crate::api::notifications;
 use crate::api::queries::{self, nodes};
 use crate::api::rate_limit::{RateLimits, retry_after};
 use crate::api::raw;
+use crate::api::timeline;
 use crate::host::Host;
 
 const MAX_ATTEMPTS: u32 = 3;
@@ -48,6 +49,10 @@ pub enum ApiError {
     /// It was there, and GitHub has since dropped it.
     #[error("{0}")]
     Gone(String),
+    /// GitHub refuses it to this token or this account, said as what's
+    /// missing and how to add it.
+    #[error("{0}")]
+    Denied(String),
     /// Reading through git (a wiki) failed.
     #[error("git: {0}")]
     Git(String),
@@ -124,6 +129,41 @@ struct Response {
     status: StatusCode,
     headers: HeaderMap,
     body: String,
+}
+
+/// A REST answer, whatever its status ([`GitHub::rest_answer`]).
+pub(crate) struct Answer(Response);
+
+impl Answer {
+    pub(crate) fn status(&self) -> u16 {
+        self.0.status.as_u16()
+    }
+
+    pub(crate) fn body(&self) -> &str {
+        &self.0.body
+    }
+
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
+        self.0.headers.get(name).and_then(|v| v.to_str().ok())
+    }
+
+    /// The error its status means, as any other request's would be.
+    pub(crate) fn checked(&self, what: impl std::fmt::Display) -> Result<(), ApiError> {
+        check_status(&self.0, what)
+    }
+
+    /// The cursor for the next page in its `Link` header: `after=…` or
+    /// `page=…`, as a query parameter to send.
+    pub(crate) fn next_page(&self) -> Option<String> {
+        let link = self.header(header::LINK.as_str())?;
+        let next = link.split(',').find(|l| l.contains("rel=\"next\""))?;
+        let url = next.split(['<', '>']).nth(1)?;
+        let query = url.split_once('?')?.1;
+        query
+            .split('&')
+            .find(|kv| kv.starts_with("after=") || kv.starts_with("page="))
+            .map(str::to_owned)
+    }
 }
 
 enum Request<'a> {
@@ -675,6 +715,101 @@ impl GitHub {
         let response = (self.send(&Request::Write { method, path, body })).await?;
         let path = path.strip_prefix("/repos/").unwrap_or(path);
         check_status(&response, path)
+    }
+
+    /// GETs a REST path and hands back GitHub's answer whatever its
+    /// status, for a caller that reads a refusal itself (what a token's
+    /// scopes lack). Not cached.
+    pub(crate) async fn rest_answer(&self, path: &str) -> Result<Answer, ApiError> {
+        Ok(Answer(
+            self.send(&Request::Get { path, cached: None }).await?,
+        ))
+    }
+
+    /// [`Self::rest_write`], for a change whose answer says what it made
+    /// (a release, a gist).
+    pub(crate) async fn rest_write_json<T: DeserializeOwned>(
+        &self,
+        method: http::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<T, ApiError> {
+        let response = (self.send(&Request::Write { method, path, body })).await?;
+        check_status(&response, path.strip_prefix("/repos/").unwrap_or(path))?;
+        Ok(serde_json::from_str(&response.body)?)
+    }
+
+    /// [`Self::rest_write`], for a change GitHub answers with what it
+    /// made: its answer (empty for 204).
+    pub(crate) async fn rest_write_answer(
+        &self,
+        method: http::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<String, ApiError> {
+        let response = (self.send(&Request::Write { method, path, body })).await?;
+        check_status(&response, path.strip_prefix("/repos/").unwrap_or(path))?;
+        Ok(response.body)
+    }
+
+    /// Saves what a REST path answers (following GitHub's redirect to its
+    /// storage, without the token) to `dest`, as it arrives, through a
+    /// temporary file beside it: an existing `dest` is replaced only if
+    /// `replace`. Its size, in bytes.
+    pub(crate) async fn download(
+        &self,
+        path: &str,
+        dest: &std::path::Path,
+        replace: bool,
+    ) -> Result<u64, ApiError> {
+        let failed =
+            |e: &dyn std::fmt::Display| ApiError::Network(format!("{}: {e}", dest.display()));
+        let client = self.client().await?;
+        let mut response = client
+            .get(format!("{}{path}", self.http.rest))
+            .send()
+            .await
+            .map_err(|e| ApiError::Network(e.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            let headers = HeaderMap::new();
+            let answer = Response {
+                status,
+                headers,
+                body,
+            };
+            check_status(&answer, path.strip_prefix("/repos/").unwrap_or(path))?;
+            return Err(ApiError::Network(format!("{path}: {status}")));
+        }
+        let dir = dest.parent().filter(|d| !d.as_os_str().is_empty());
+        let dir = dir.unwrap_or_else(|| std::path::Path::new("."));
+        let mut part = tempfile::NamedTempFile::new_in(dir).map_err(|e| failed(&e))?;
+        let mut size = 0u64;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| ApiError::Network(e.to_string()))?
+        {
+            std::io::Write::write_all(&mut part, &chunk).map_err(|e| failed(&e))?;
+            size += chunk.len() as u64;
+        }
+        // A temporary file is private; what's saved reads like any download.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let open = std::fs::Permissions::from_mode(0o644);
+            part.as_file()
+                .set_permissions(open)
+                .map_err(|e| failed(&e))?;
+        }
+        let kept = if replace {
+            part.persist(dest).map(drop)
+        } else {
+            part.persist_noclobber(dest).map(drop)
+        };
+        kept.map_err(|e| failed(&e.error))?;
+        Ok(size)
     }
 
     /// GETs a REST path and decodes its JSON.
@@ -1331,15 +1466,35 @@ impl GitHub {
         ))
     }
 
-    /// Comments, reviews and commits of a pull request.
+    /// A pull request's timeline (comments, reviews, events), commits and
+    /// review threads: the threads apart, in pages, at the same time.
     pub async fn pr_activity(&self, pr: &PrRef) -> Result<browse::PrActivity, ApiError> {
         let op = browse::PrActivityQuery::build(number_vars(pr)?);
-        let activity = self
-            .find(op, pr, |q| {
-                Some(q.repository?.pull_request?.into_activity())
-            })
-            .await?;
+        let activity = self.find(op, pr, |q| {
+            Some(q.repository?.pull_request?.into_activity())
+        });
+        let (activity, threads) = tokio::try_join!(activity, self.review_threads(pr))?;
+        let activity = browse::PrActivity {
+            threads,
+            ..activity
+        };
         Ok(self.kept(&browse::keys::pr_activity(pr), activity).await)
+    }
+
+    /// All of a pull request's reviews, oldest first.
+    pub async fn reviews(&self, pr: &PrRef) -> Result<Capped<timeline::Review>, ApiError> {
+        let page = move |after| async move {
+            let op = timeline::ReviewsQuery::build(page_vars(pr, after)?);
+            let page = self
+                .find(op, pr, |q| q.repository?.pull_request?.reviews)
+                .await?;
+            let reviews = nodes(page.nodes).map(timeline::WireReview::into_review);
+            let reviews = reviews.collect();
+            Ok(browse::Results::uncounted(reviews, page.page_info.next()))
+        };
+        let what = format!("{pr}'s reviews");
+        let reviews = self.more_pages(what, page(None).await?, FILE_PAGES, page);
+        Ok(self.kept(&browse::keys::reviews(pr), reviews.await?).await)
     }
 
     /// A user's or organization's profile.
@@ -2037,6 +2192,18 @@ impl GitHub {
             self.rest_json::<browse::rest_actions::Run>(&path, &asked),
             self.rest_json::<browse::rest_actions::Jobs>(jobs_path, &jobs_asked)
         );
+        let wire = wire?;
+        // A run just started has no jobs, nor artifacts, for GitHub to
+        // find for a moment: none yet.
+        let starting =
+            browse::CheckOutcome::of(wire.status, wire.conclusion) == browse::CheckOutcome::Pending;
+        let jobs = match jobs {
+            Err(ApiError::NotFound(_)) if starting => Ok(browse::rest_actions::Jobs {
+                jobs: Vec::new(),
+                total_count: 0,
+            }),
+            jobs => jobs,
+        };
         // Big matrices have more than a page of jobs; an empty page is the last.
         let results = |page: u64, jobs: browse::rest_actions::Jobs| browse::Results {
             next: next_page(page, 100, jobs.total_count).filter(|_| !jobs.jobs.is_empty()),
@@ -2052,10 +2219,15 @@ impl GitHub {
             Ok(results(page, jobs))
         };
         let what = format!("run {run}'s jobs");
-        let jobs = self
-            .more_pages(what, results(1, jobs?), PAGES, page)
-            .await?;
-        let run = wire?.into_run(jobs);
+        let (jobs, artifacts) = tokio::join!(
+            self.more_pages(what, results(1, jobs?), PAGES, page),
+            self.artifacts(repo, run)
+        );
+        let mut run = wire.into_run(jobs?);
+        run.artifacts = match artifacts {
+            Err(ApiError::NotFound(_)) if starting => Capped::default(),
+            artifacts => artifacts?,
+        };
         Ok(self
             .kept(&browse::keys::run(repo, run.id, attempt), run)
             .await)
@@ -2084,7 +2256,12 @@ impl GitHub {
         } else {
             None
         };
-        let job = wire.into_job(run.into_job_run(rerun));
+        let mut job = wire.into_job(run.into_job_run(rerun));
+        // A running job's annotations come with its steps' ends: asked once
+        // it's done.
+        if job.outcome != browse::CheckOutcome::Pending {
+            job.annotations = self.job_annotations(repo, job.id).await?;
+        }
         Ok(self.kept(&browse::keys::job(repo, job.id), job).await)
     }
 
@@ -2163,26 +2340,8 @@ impl GitHub {
         query: &str,
         after: Option<String>,
     ) -> Result<browse::Results<browse::RunSummary>, ApiError> {
-        let filter = browse::RunFilter::parse(query);
-        let base = format!("/repos/{}/{}/actions", repo.owner, repo.name);
-        let (list, what) = match &filter.workflow {
-            Some(w) => {
-                let id = encode_path(&self.workflow_id(repo, w).await?);
-                (
-                    format!("{base}/workflows/{id}/runs"),
-                    format!("{repo}'s workflow {w}"),
-                )
-            }
-            None => (format!("{base}/runs"), format!("{repo}'s workflow runs")),
-        };
         let page = rest_page(after.as_deref());
-        let path = {
-            let mut params = url::form_urlencoded::Serializer::new(String::new());
-            params.extend_pairs(&filter.params);
-            params.append_pair("per_page", &REST_PAGE.to_string());
-            params.append_pair("page", &page.to_string());
-            format!("{list}?{}", params.finish())
-        };
+        let (path, what) = self.runs_path(repo, query, page).await?;
         let wire: browse::rest_actions::Runs = self.rest_json(&path, what).await?;
         let runs = browse::Results {
             total: wire.total_count,
@@ -2196,6 +2355,65 @@ impl GitHub {
         Ok(self
             .kept_page(page == 1, &browse::keys::runs(repo, query), runs)
             .await)
+    }
+
+    /// Where page `page` of the runs `query` filters is (see
+    /// [`browse::RunFilter`]), and what it's called: a workflow named by
+    /// its name is looked up first.
+    pub async fn runs_path(
+        &self,
+        repo: &RepoId,
+        query: &str,
+        page: u64,
+    ) -> Result<(String, String), ApiError> {
+        let filter = browse::RunFilter::parse(query);
+        let base = format!("/repos/{}/{}/actions", repo.owner, repo.name);
+        let (list, what) = match &filter.workflow {
+            Some(w) => {
+                let id = encode_path(&self.workflow_id(repo, w).await?);
+                (
+                    format!("{base}/workflows/{id}/runs"),
+                    format!("{repo}'s workflow {w}"),
+                )
+            }
+            None => (format!("{base}/runs"), format!("{repo}'s workflow runs")),
+        };
+        let mut params = url::form_urlencoded::Serializer::new(String::new());
+        params.extend_pairs(&filter.params);
+        params.append_pair("per_page", &REST_PAGE.to_string());
+        params.append_pair("page", &page.to_string());
+        Ok((format!("{list}?{}", params.finish()), what))
+    }
+
+    /// Asks whether a discussion changed since the answer `seen` (its
+    /// title, text, answer, and its comments' count and newest, as
+    /// [`raw::DISCUSSION_PROBE`] has them). GraphQL has no ETags: the
+    /// answer is its own tag, and each ask costs a point of the rate limit.
+    pub async fn poll_discussion(
+        &self,
+        repo: &RepoId,
+        number: u64,
+        seen: Option<&str>,
+    ) -> Result<Polled, ApiError> {
+        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
+        let subject = format!("{repo} discussion {number}");
+        let node: Value = self
+            .graphql_json(
+                raw::DISCUSSION_PROBE,
+                vars,
+                subject,
+                "/repository/discussion",
+            )
+            .await?;
+        let body = node.to_string();
+        Ok(if seen == Some(body.as_str()) {
+            Polled::Same
+        } else {
+            Polled::Changed {
+                etag: body.clone(),
+                body,
+            }
+        })
     }
 
     /// Your notifications that `query` keeps (see
@@ -2216,24 +2434,30 @@ impl GitHub {
             Some(repo) => format!("your notifications from {repo}"),
             None => "your notifications".to_owned(),
         };
+        let mut done = self.done_threads().await;
         let (mut items, mut searched, mut page, mut more) = (Vec::new(), 0, first, false);
+        let mut forgot = false;
         for _ in 0..INBOX_PAGES {
             let fetched = self
                 .rest_fetch(&filter.path(page, REST_PAGE), &what)
                 .await?;
             let wire: Vec<notifications::rest::Thread> = serde_json::from_str(&fetched.body)?;
             searched += wire.len() as u64;
-            items.extend(
-                (wire.into_iter())
-                    .filter_map(notifications::rest::Thread::into_notification)
-                    .filter(|n| filter.keeps(n)),
-            );
+            let threads: Vec<notifications::Notification> = (wire.into_iter())
+                .filter_map(notifications::rest::Thread::into_notification)
+                .collect();
+            // A thread marked done that GitHub updated since is back.
+            forgot |= done.forget_updated(&threads);
+            items.extend((threads.into_iter()).filter(|n| filter.keeps(n) && !done.hides(n)));
             more = fetched.link.as_deref().is_some_and(has_next);
             page = page.saturating_add(1);
             let full = items.len() as u64 >= REST_PAGE;
             if !more || full || !filter.after_fetching() {
                 break;
             }
+        }
+        if forgot {
+            self.remember(notifications::Done::KEY, done).await;
         }
         let cut = more && filter.after_fetching() && (items.len() as u64) < REST_PAGE;
         let inbox = notifications::Inbox {
@@ -2248,6 +2472,26 @@ impl GitHub {
         Ok(self
             .kept_page(first == 1, &browse::keys::notifications(query), inbox)
             .await)
+    }
+
+    /// The threads this account marked done (see
+    /// [`notifications::Done`]).
+    async fn done_threads(&self) -> notifications::Done {
+        let store = self.store.clone();
+        let read = move || store.query_get::<notifications::Done>(notifications::Done::KEY);
+        let found = tokio::task::spawn_blocking(read).await.ok().flatten();
+        found.map(|c| c.value).unwrap_or_default()
+    }
+
+    /// Keeps that `threads` are marked done, so the inbox leaves them out
+    /// until GitHub updates them again.
+    pub(crate) async fn remember_done(&self, threads: &[notifications::ThreadAt]) {
+        if threads.is_empty() {
+            return;
+        }
+        let mut done = self.done_threads().await;
+        done.mark(threads);
+        self.remember(notifications::Done::KEY, done).await;
     }
 
     /// How many of your notifications are unread, up to a page of them.
@@ -2411,7 +2655,8 @@ impl GitHub {
         let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
         let subject = format!("{repo} discussion {number}");
         let wire: browse::wire_discussions::Detail =
-            (self.graphql_json(raw::DISCUSSION, vars, subject, "/repository/discussion")).await?;
+            (self.graphql_json(&raw::discussion(), vars, subject, "/repository/discussion"))
+                .await?;
         let detail = wire.into_detail(repo);
         Ok(self
             .kept(&browse::keys::discussion(of, number), detail)
@@ -2728,7 +2973,7 @@ fn encode_query(s: &str) -> String {
 }
 
 /// Percent-encodes a ref for a URL path (branch names may contain `/`).
-fn encode_path(s: &str) -> String {
+pub(crate) fn encode_path(s: &str) -> String {
     escape(s, false)
 }
 
@@ -2836,9 +3081,24 @@ fn check_status(response: &Response, what: impl std::fmt::Display) -> Result<(),
         #[serde(default)]
         errors: Vec<Detail>,
     }
+    /// One thing a 422 found wrong: its message, or what and why
+    /// (`tag_name`, `already_exists`).
     #[derive(serde::Deserialize)]
     struct Detail {
         message: Option<String>,
+        field: Option<String>,
+        code: Option<String>,
+    }
+    impl Detail {
+        fn text(self) -> Option<String> {
+            self.message.or_else(|| {
+                let code = self.code?.replace('_', " ");
+                Some(match self.field {
+                    Some(field) => format!("{field} {code}"),
+                    None => code,
+                })
+            })
+        }
     }
     #[derive(serde::Deserialize)]
     struct Block {
@@ -2864,7 +3124,7 @@ fn check_status(response: &Response, what: impl std::fmt::Display) -> Result<(),
     }
     let message = match wire {
         Some(m) => {
-            let details: Vec<String> = m.errors.into_iter().filter_map(|d| d.message).collect();
+            let details: Vec<String> = m.errors.into_iter().filter_map(Detail::text).collect();
             if details.is_empty() {
                 m.message
             } else {

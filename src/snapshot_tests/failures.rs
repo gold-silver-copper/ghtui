@@ -275,6 +275,10 @@ fn sample(key: &DataKey) -> Data {
         }
         K::Issue(..) => Data::Issue(Some(Box::new(fixtures::issue()))),
         K::PrActivity(_) => Data::PrActivity(Box::new(fixtures::activity())),
+        K::Reviews(_) => Data::Reviews(Box::new(fixtures::reviews())),
+        K::CommitComments(..) => Data::CommitComments(Box::default()),
+        K::Lines(..) => Data::Lines(Arc::default()),
+        K::InProjects(..) => Data::InProjects(Box::default()),
         K::Profile(_) => Data::Profile(Box::new(fixtures::profile())),
         K::Files(..) => Data::Files(Arc::new(vec!["README.md".into()]), false),
         K::Refs(_) => Data::Refs(Box::default()),
@@ -323,5 +327,8 @@ fn sample(key: &DataKey) -> Data {
         K::Notifications(_) => Data::Notifications(Box::new(fixtures::notifications())),
         K::Projects(_) => Data::Projects(Box::new(fixtures::projects())),
         K::Project(..) => Data::Project(Box::new(fixtures::project())),
+        K::Alerts(_, kind, _) => Data::Alerts(Box::new(crate::security::fixtures::alerts(*kind))),
+        K::Alert(a) => Data::Alert(Box::new(crate::security::fixtures::alert(a.kind, a.number))),
+        K::Subscription(_) => Data::Subscription(Box::new(fixtures::subscription())),
     }
 }

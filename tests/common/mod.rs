@@ -45,11 +45,14 @@ pub async fn run(gh: &GitHub) {
     assert_eq!(merged.base_oid, "6fc1c29d5477bfe71da7af290eb481c0df7811f1");
     no_doubts(gh, "a merged PR");
 
-    // A PR with more than 100 comments: the newest are kept, and the
-    // count says how many there are.
+    // A PR with more than 100 comments: the newest of its timeline are
+    // kept, and the counts say how many there are.
     let talky = gh.pr_activity(&pr("rust-lang/rust#158734")).await.unwrap();
-    assert!(talky.comments.total() > 100, "{}", talky.comments.total());
-    assert_eq!(talky.comments.len(), 100);
+    assert!(talky.comment_count > 100, "{}", talky.comment_count);
+    assert!(talky.timeline.left_out() > 0);
+    // Every one of its reviews, a page at a time.
+    let reviews = gh.reviews(&pr("rust-lang/rust#158734")).await.unwrap();
+    assert!(reviews.iter().all(|r| r.id.is_some()));
     no_doubts(gh, "a PR with many comments");
 
     // A comparison of more than 250 commits: the newest 250.
@@ -77,14 +80,14 @@ pub async fn run(gh: &GitHub) {
     let ghost = gh.issue(&rust, 97).await.unwrap().unwrap();
     assert_eq!(ghost.author, "ghost");
     let bot = gh.pr_activity(&pr("cli/cli#14543")).await.unwrap();
-    assert!(bot.comments.iter().all(|c| !c.author.is_empty()));
+    assert!(bot.comments().all(|c| !c.author.is_empty()));
     let bot_pr = gh.pull_request(&pr("cli/cli#14543")).await.unwrap();
     assert_eq!(bot_pr.author, "dependabot");
     no_doubts(gh, "ghost and bot authors");
 
-    // A discussion whose newer comments' IDs overflow GraphQL's Int, so
-    // come back null.
-    gh.discussion(&DiscussionsOf::Repo(cli.clone()), 14603)
+    // An answered discussion (its answer at the top); newer comments' IDs
+    // overflow GraphQL's Int, so come back null.
+    gh.discussion(&DiscussionsOf::Repo(cli.clone()), 8794)
         .await
         .unwrap();
     no_doubts(gh, "a discussion");

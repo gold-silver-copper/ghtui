@@ -93,6 +93,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                         quoting: Some(at), ..
                     } => (Some(at), true),
                     crate::review::ComposeTarget::Edit(e) => (Some(&e.at), false),
+                    crate::review::ComposeTarget::Discussion(w) => w.place(),
                     _ => (None, false),
                 };
                 let comment = at.and_then(|at| {
@@ -100,9 +101,14 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                         matches!(page.target(it.link), Some(Link::Quote { at: was, .. }) if was == at)
                     })
                 });
+                // A form's text box, or the conversation's comment box.
+                let anchor = match &c.target {
+                    crate::review::ComposeTarget::Write(t) => t.anchor(),
+                    _ => Link::Comment,
+                };
                 let (item, under) = match comment {
                     Some(item) => (*item, under),
-                    None => (*page.items.get(page.find(&Link::Comment, 0)?)?, false),
+                    None => (*page.items.get(page.find(&anchor, 0)?)?, false),
                 };
                 Some((usize::from(c.rows()), item, under))
             });
@@ -191,7 +197,10 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             .render(area, buf);
         }
         Some(Overlay::Compose(compose)) => {
-            let title = compose.title();
+            let title = match &compose.target {
+                crate::review::ComposeTarget::Write(text) => text.title(state),
+                _ => compose.title(),
+            };
             let completions: Option<Vec<String>> = crate::typing::completions(state)
                 .map(|choices| choices.into_iter().map(|c| c.label).collect());
             let rows = compose.rows();
@@ -219,14 +228,18 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 note: compose.note(),
                 error: compose.error.as_deref(),
                 sending: compose.sending,
-                save: match compose.target {
+                save: match &compose.target {
                     crate::review::ComposeTarget::Reply { .. } => "post reply",
                     crate::review::ComposeTarget::Conversation { .. } => "post comment",
                     crate::review::ComposeTarget::Form(crate::route::Route::NewPr(_)) => {
                         "create pull request…"
                     }
                     crate::review::ComposeTarget::Form(_) => "create issue",
+                    crate::review::ComposeTarget::Write(t) => t.save(),
                     crate::review::ComposeTarget::Edit(_) => "save",
+                    crate::review::ComposeTarget::Discussion(w) => w.save(),
+                    crate::review::ComposeTarget::ProjectDraft(d) if d.draft.is_some() => "save",
+                    crate::review::ComposeTarget::ProjectDraft(_) => "add draft",
                     _ => "add to review",
                 },
                 completions: (completions.as_deref()).map(|c| {

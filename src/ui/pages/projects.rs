@@ -89,6 +89,7 @@ pub fn project_view(
         (Layout::Table, _) => table(page, &at, shown, cx),
     }
     more(page, &p.items);
+    archived(page, &at, cx);
 }
 
 /// What a page shows of a project's items.
@@ -147,6 +148,14 @@ fn about(p: &Project, view: &ProjectView, column: Option<&ProjectField>) -> Vec<
     if !sorts.is_empty() {
         said.push(format!("sorted by {}", sorts.join(", ")));
     }
+    // GitHub's order and groups are the whole view's: so are these, but
+    // past the most loaded at once.
+    if Project::arranges(view) && p.items.next.is_some() {
+        said.push(format!(
+            "arranged over the first {} loaded",
+            p.items.items.len()
+        ));
+    }
     let mut segs = vec![Seg::new(said.join(" · "), Role::Meta)];
     if !view.filter.is_empty() {
         segs.extend([
@@ -157,34 +166,117 @@ fn about(p: &Project, view: &ProjectView, column: Option<&ProjectField>) -> Vec<
     segs
 }
 
+/// Narrowest a board's column gets beside others.
+const COLUMN_MIN: u16 = 30;
+/// Columns between a board's columns.
+const COLUMN_GAP: u16 = 1;
+
 /// A board: a box for each column (each value of `field`), its cards in
-/// the view's order.
+/// the view's order. The columns stand side by side, as many as fit
+/// (then the next ones below), or one above another when two don't fit.
 fn board(page: &mut Page, at: &Spot<'_>, field: &ProjectField, cx: PageCtx<'_>) {
     let items = at.p.sorted();
     let shown = card_fields(at.p, Some(&field.id));
-    for column in grouped(field, &items) {
-        let title = vec![
-            group_chip(&column),
-            Seg::new(format!("  {}", column.items.len()), Role::Meta),
-        ];
-        let about = option_description(field, &column);
-        page.box_top(
-            title,
-            about
-                .map(|d| vec![Seg::new(d, Role::Meta)])
-                .unwrap_or_default(),
-        );
-        if column.items.is_empty() {
-            empty_row(page, "No items");
+    let columns = grouped(field, &items);
+    let fit = usize::from(page.width.saturating_add(COLUMN_GAP) / (COLUMN_MIN + COLUMN_GAP));
+    if fit < 2 || columns.len() < 2 {
+        for c in &columns {
+            column(page, at, field, c, &shown, cx);
         }
-        for (n, it) in column.items.iter().enumerate() {
-            if n > 0 && !page.compact {
-                page.box_rule();
-            }
-            card(page, at, it, &shown, cx);
-        }
-        page.box_bottom();
+        return;
     }
+    let per = fit.min(columns.len());
+    let gaps = COLUMN_GAP.saturating_mul(u16::try_from(per - 1).unwrap_or(0));
+    let width = page.width.saturating_sub(gaps) / u16::try_from(per).unwrap_or(1);
+    for band in columns.chunks(per) {
+        page.blank();
+        page.side_by_side(&vec![width; band.len()], COLUMN_GAP, |i, page| {
+            if let Some(c) = band.get(i) {
+                column(page, at, field, c, &shown, cx);
+            }
+        });
+    }
+}
+
+/// A board's column: its value, how many cards, and the cards.
+fn column(
+    page: &mut Page,
+    at: &Spot<'_>,
+    field: &ProjectField,
+    column: &Group<'_>,
+    shown: &[&ProjectField],
+    cx: PageCtx<'_>,
+) {
+    let title = vec![
+        group_chip(column),
+        Seg::new(format!("  {}", column.items.len()), Role::Meta),
+    ];
+    // The description only where it fits beside the title and count,
+    // which matter more.
+    let room = usize::from(page.room(Frame::Top, 0));
+    let taken = title.iter().map(|s| width(s.text())).sum::<usize>() + 6;
+    let about = option_description(field, column).filter(|d| taken + width(d) <= room);
+    page.box_top(
+        title,
+        about
+            .map(|d| vec![Seg::new(d, Role::Meta)])
+            .unwrap_or_default(),
+    );
+    if column.items.is_empty() {
+        empty_row(page, "No items");
+    }
+    for (n, it) in column.items.iter().enumerate() {
+        if n > 0 && !page.compact {
+            page.box_rule();
+        }
+        card(page, at, it, shown, cx);
+    }
+    page.box_bottom();
+}
+
+/// The items archived, to open or restore: a box of rows, as a table's.
+fn archived(page: &mut Page, at: &Spot<'_>, cx: PageCtx<'_>) {
+    let a = &at.p.archived;
+    if a.items.is_empty() {
+        return;
+    }
+    let title = vec![Seg::new(format!("Archived  {}", a.total), Role::Strong)];
+    let hint = format!("{} restores one", cx.keys.archive);
+    page.box_top(title, vec![Seg::new(hint, Role::Meta)]);
+    for it in &a.items {
+        let (icon, role) = item_icon(it, cx.icons);
+        let place = match &it.content {
+            ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => format!("{}#{}", l.repo, l.number),
+            ItemContent::Draft(_) => "Draft".to_owned(),
+            ItemContent::Redacted => String::new(),
+        };
+        let right = vec![Seg::new(place, Role::Meta)];
+        match item_link(at.project, at.view, it) {
+            Some(target) => item(page, target, |page, link| {
+                let segs = vec![
+                    Seg::new(format!("{icon} "), role.clone()),
+                    Seg::linked(it.title().to_owned(), Role::Strong, link),
+                ];
+                page.box_line(segs, right.clone(), 0);
+            }),
+            None => {
+                let segs = vec![
+                    Seg::new(format!("{icon} "), role.clone()),
+                    Seg::new(it.title().to_owned(), Role::Meta),
+                ];
+                page.box_line(segs, right, 0);
+            }
+        }
+    }
+    if a.items.len() < usize::try_from(a.total).unwrap_or(usize::MAX) {
+        let more = left_out_text(
+            a.total.saturating_sub(a.items.len() as u64),
+            "more archived item",
+            "more archived items",
+        );
+        page.box_line(vec![Seg::new(more, Role::Meta)], Vec::new(), 0);
+    }
+    page.box_bottom();
 }
 
 /// The fields a card shows: the view's, but its title and its columns'.
@@ -556,6 +648,9 @@ pub fn project_item(
                 title.extend([space(), state_chip(status, cx.icons)]);
             }
         }
+    }
+    if it.archived {
+        title.extend([space(), chip("Archived", Bg::TertiaryContainer)]);
     }
     hanging(page, Seg::new(format!("{icon} "), role), title, Frame::None);
     let mut place = vec![Seg::new("In ", Role::Meta)];

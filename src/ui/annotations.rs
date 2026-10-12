@@ -12,6 +12,8 @@ use crate::diff::anchor::LinePos;
 pub enum AnnotationKey {
     Thread(crate::api::model::NodeId),
     Draft(u64),
+    /// A check run's annotation on the head, by its place among them.
+    Check(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

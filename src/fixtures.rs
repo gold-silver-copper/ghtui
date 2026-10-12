@@ -8,12 +8,15 @@ use crate::api::browse::{
     DiscussionDetail, DiscussionHit, DiscussionList, DiscussionSummary, EntryKind, Gist, GistFile,
     GistSummary, IssueDetail, IssueKind, IssueState, IssueSummary, Job, JobSummary, Login,
     MilestoneDetail, MilestoneInfo, MilestoneList, MonthActivity, Person, PrActivity, PrState,
-    Profile, Readme, Release, RepoOverview, RepoSummary, Results, ReviewSummary, Reviewer,
-    RunSummary, SearchResults, Status, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary, TreeEntry,
+    Profile, Readme, Release, RepoOverview, RepoSummary, Results, Reviewer, RunSummary,
+    SearchResults, Status, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary, TreeEntry,
     UserSummary, Week, WikiPage, Workflow, WorkflowRun,
 };
-use crate::api::model::{Capped, Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
+use crate::api::model::{
+    Capped, Label, NodeId, PrRef, RepoId, ReviewComment, ReviewState, ReviewThread, Side,
+};
 use crate::api::notifications::{Inbox, Notification};
+use crate::api::timeline::{Event, Item, Latest, Linked, LinkedState, Requested, Review, What};
 use crossterm::event::KeyEvent;
 
 use crate::store::{DraftComment, DraftSide};
@@ -98,6 +101,7 @@ pub(crate) fn found_pr(pr: &str, title: &str, state: PrState) -> IssueSummary {
             id: NodeId::new(format!("PR_{pr}")),
             state,
             review: None,
+            approvals: 0,
             checks: None,
         },
         repo: pr.repo,
@@ -157,8 +161,10 @@ pub(crate) fn thread(id: &str, line: Option<u32>, resolved: bool, outdated: bool
             original_commit: Some("abc".into()),
             pending: false,
             editable: editable(&format!("{id}-c")),
+            review: None,
         }]
         .into(),
+        diff_hunk: String::new(),
     }
 }
 
@@ -315,6 +321,13 @@ pub fn overview() -> RepoOverview {
         has_wiki: true,
         branches: 14,
         tags: 9,
+        pinned_issues: vec![Linked {
+            repo: RepoId::new("gold-silver-copper", "ghtui"),
+            number: 2,
+            title: "Roadmap".into(),
+            state: LinkedState::Issue(IssueState::Open),
+        }]
+        .into(),
         entries: vec![
             entry(".github", EntryKind::Dir, None),
             entry("crates", EntryKind::Dir, None),
@@ -419,6 +432,10 @@ pub fn checks() -> Checks {
             url: Some(format!(
                 "https://github.com/gold-silver-copper/ghtui/actions/runs/7/job/{job}"
             )),
+            annotations: match outcome {
+                CheckOutcome::Failure => vec![check_annotation()].into(),
+                _ => Default::default(),
+            },
         }
     };
     let mut items = vec![
@@ -464,6 +481,7 @@ pub fn checks() -> Checks {
         completed_at: None,
         summary: Some("92.31% of diff hit (target 80.00%)".into()),
         url: Some("https://app.codecov.io/gh/gold-silver-copper/ghtui/pull/12".into()),
+        annotations: Default::default(),
     });
     Checks {
         oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
@@ -730,6 +748,8 @@ pub fn wiki() -> WikiPage {
         markdown: true,
         pages: vec!["FAQ".into(), "Getting started".into(), "Home".into()],
         sidebar: Some("**[Home](Home)** · [FAQ](FAQ)".into()),
+        commit: Some("4b7d0c2e9a1f3d5b6c8e0a2b4d6f8a0c2e4b6d8f".into()),
+        file: Some("Home.md".into()),
     }
 }
 fn label(name: &str, color: &str) -> Label {
@@ -747,6 +767,7 @@ pub fn issue_summary(number: u64, state: Status) -> IssueSummary {
                 id: NodeId::new(format!("PR_{number}")),
                 state,
                 review: None,
+                approvals: 0,
                 checks: None,
             },
         },
@@ -792,14 +813,33 @@ pub fn issue() -> IssueDetail {
             number: 3,
             title: "Links".into(),
         }),
-        comments: vec![Comment {
-            id: Some(1_000_001),
-            author: "hubot".into(),
-            body: "Agreed. 120 columns, centered?".into(),
-            created_at: "2026-10-02T12:00:00Z".into(),
-            editable: Some(editable("IC_1")),
-        }]
+        timeline: vec![
+            event("octocat", "2026-10-01T12:05:00Z", labeled("bug", "d73a4a")),
+            event("octocat", "2026-10-01T12:06:00Z", labeled("ui", "1d76db")),
+            Item::Comment(Comment {
+                id: Some(1_000_001),
+                author: "hubot".into(),
+                body: "Agreed. 120 columns, centered?".into(),
+                created_at: "2026-10-02T12:00:00Z".into(),
+                editable: Some(editable("IC_1")),
+            }),
+            event(
+                "monalisa",
+                "2026-10-02T13:00:00Z",
+                What::CrossReferenced {
+                    from: linked_pr(12, "Cap the reading width"),
+                    will_close: true,
+                },
+            ),
+        ]
         .into(),
+        comment_count: 1,
+        closed_by: vec![linked_pr(12, "Cap the reading width")].into(),
+        branches: Capped::default(),
+        parent: None,
+        sub_issues: Capped::default(),
+        progress: None,
+        issue_type: Some("Bug".into()),
         id: NodeId::new("I_14"),
         can_close: true,
         can_reopen: true,
@@ -813,54 +853,196 @@ pub fn issue() -> IssueDetail {
     }
 }
 
+/// An event on a timeline.
+pub(crate) fn event(actor: &str, at: &str, what: What) -> Item {
+    Item::Event(Event {
+        actor: actor.into(),
+        at: at.into(),
+        what,
+    })
+}
+
+fn labeled(name: &str, color: &str) -> What {
+    What::Labeled {
+        label: label(name, color),
+        added: true,
+    }
+}
+
+/// An open pull request in ghtui's repository, as a timeline names it.
+pub(crate) fn linked_pr(number: u64, title: &str) -> Linked {
+    Linked {
+        repo: RepoId::new("gold-silver-copper", "ghtui"),
+        number,
+        title: title.into(),
+        state: LinkedState::Pr(PrState::Open),
+    }
+}
+
+/// A review on the fixture pull request.
+pub(crate) fn review(id: u64, author: &str, state: ReviewState, body: &str, at: &str) -> Review {
+    Review {
+        id: Some(id),
+        author: author.into(),
+        state,
+        body: body.into(),
+        at: at.into(),
+        commit: Some("1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into()),
+        comments: 0,
+        editable: editable(&format!("PRR_{id}")),
+    }
+}
+
+/// The projects the fixture issue is in.
+pub fn in_projects() -> Capped<crate::api::timeline::InProject> {
+    vec![crate::api::timeline::InProject {
+        title: "Roadmap".into(),
+        url: "https://github.com/users/octocat/projects/1".into(),
+        status: Some("In progress".into()),
+    }]
+    .into()
+}
+
+/// Every review of the fixture pull request, oldest first.
+pub fn reviews() -> Capped<Review> {
+    activity().reviews().cloned().collect::<Vec<_>>().into()
+}
+
+/// The two commits of the fixture pull request.
+fn pr_commits() -> Vec<CommitInfo> {
+    vec![
+        CommitInfo {
+            oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
+            headline: "Theme: derive syntax colors from the seed".into(),
+            author: Person::User(Login::unchecked("octocat")),
+            date: "2026-09-30T12:00:00Z".into(),
+        },
+        CommitInfo {
+            oid: "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into(),
+            headline: "Check every syntax role against diff backgrounds".into(),
+            author: Person::User(Login::unchecked("octocat")),
+            date: "2026-10-01T12:00:00Z".into(),
+        },
+    ]
+}
+
 pub fn activity() -> PrActivity {
+    let mut commits = pr_commits().into_iter().map(|c| {
+        let at = c.date.clone();
+        event("octocat", &at, What::Committed(c))
+    });
+    let (first, second) = (commits.next(), commits.next());
+    // hubot's review started a thread on the theme, which octocat answered.
+    let mut thread = thread("PRRT_1", Some(42), false, false);
+    thread.path = "src/theme.rs".into();
+    thread.original_line = Some(42);
+    thread.diff_hunk = "@@ -40,3 +40,4 @@ impl Theme {\n     fn syntax(&self) -> Syntax {\n-        Syntax::default()\n+        let seed = self.seed;\n+        Syntax::from_seed(seed)".into();
+    let said = thread.comments.items.clone();
+    thread.comments = said
+        .into_iter()
+        .flat_map(|c| {
+            [
+                ReviewComment {
+                    body: "Is the seed's tone checked against the diff backgrounds?".into(),
+                    author: "hubot".into(),
+                    review: Some(2_000_002),
+                    url: "https://github.com/gold-silver-copper/ghtui/pull/12#discussion_r3000001"
+                        .into(),
+                    ..c.clone()
+                },
+                ReviewComment {
+                    id: NodeId::new("PRRC_2"),
+                    body: "Yes, in `contrast_tests`.".into(),
+                    author: "octocat".into(),
+                    created_at: "2026-10-01T11:00:00Z".into(),
+                    review: Some(2_000_003),
+                    ..c
+                },
+            ]
+        })
+        .collect::<Vec<_>>()
+        .into();
+    let mut commented = review(
+        2_000_002,
+        "hubot",
+        ReviewState::Commented,
+        "Yes: every role is checked at both depths.",
+        "2026-10-01T10:00:00Z",
+    );
+    commented.comments = 1;
     PrActivity {
         id: NodeId::new("PR_12"),
-        comments: vec![Comment {
-            id: Some(1_000_001),
-            author: "hubot".into(),
-            body: "Does this cover the 256-color fallback?".into(),
-            created_at: "2026-10-01T09:00:00Z".into(),
-            editable: Some(editable("IC_2")),
+        timeline: first
+            .into_iter()
+            .chain([Item::Comment(Comment {
+                id: Some(1_000_001),
+                author: "hubot".into(),
+                body: "Does this cover the 256-color fallback?".into(),
+                created_at: "2026-10-01T09:00:00Z".into(),
+                editable: Some(editable("IC_2")),
+            })])
+            .chain([Item::Review(commented)])
+            .chain(second)
+            .chain([
+                event(
+                    "octocat",
+                    "2026-10-01T12:30:00Z",
+                    What::ReviewRequested {
+                        who: Some(Reviewer::User("defunkt".into())),
+                        added: true,
+                    },
+                ),
+                Item::Review(review(
+                    2_000_001,
+                    "monalisa",
+                    ReviewState::Approved,
+                    "",
+                    "2026-10-02T09:00:00Z",
+                )),
+            ])
+            .collect::<Vec<_>>()
+            .into(),
+        comment_count: 1,
+        commits: pr_commits().into(),
+        requested: vec![
+            Requested {
+                who: Reviewer::User("defunkt".into()),
+                code_owner: true,
+            },
+            Requested {
+                who: Reviewer::Team("octo-org/core".into()),
+                code_owner: false,
+            },
+        ]
+        .into(),
+        latest: vec![
+            Latest {
+                author: "hubot".into(),
+                state: ReviewState::Commented,
+                id: Some(2_000_002),
+                at: "2026-10-01T10:00:00Z".into(),
+                commit: Some("0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into()),
+                for_teams: Vec::new(),
+            },
+            Latest {
+                author: "monalisa".into(),
+                state: ReviewState::Approved,
+                id: Some(2_000_001),
+                at: "2026-10-02T09:00:00Z".into(),
+                commit: Some("1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into()),
+                for_teams: vec!["octo-org/design".into()],
+            },
+        ]
+        .into(),
+        closing: vec![Linked {
+            repo: RepoId::new("gold-silver-copper", "ghtui"),
+            number: 14,
+            title: "Pages wrap at the terminal width".into(),
+            state: LinkedState::Issue(IssueState::Open),
         }]
         .into(),
-        reviews: vec![
-            ReviewSummary {
-                id: Some(2_000_001),
-                author: "monalisa".into(),
-                state: crate::api::model::ReviewState::Approved,
-                body: String::new(),
-                submitted_at: "2026-10-02T09:00:00Z".into(),
-            },
-            ReviewSummary {
-                id: Some(2_000_002),
-                author: "hubot".into(),
-                state: crate::api::model::ReviewState::Commented,
-                body: "Yes: every role is checked at both depths.".into(),
-                submitted_at: "2026-10-01T10:00:00Z".into(),
-            },
-        ]
-        .into(),
-        commits: vec![
-            CommitInfo {
-                oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
-                headline: "Theme: derive syntax colors from the seed".into(),
-                author: Person::User(Login::unchecked("octocat")),
-                date: "2026-09-30T12:00:00Z".into(),
-            },
-            CommitInfo {
-                oid: "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into(),
-                headline: "Check every syntax role against diff backgrounds".into(),
-                author: Person::User(Login::unchecked("octocat")),
-                date: "2026-10-01T12:00:00Z".into(),
-            },
-        ]
-        .into(),
-        requested: vec![
-            Reviewer::User("defunkt".into()),
-            Reviewer::Team("octo-org/core".into()),
-        ]
-        .into(),
+        merge_commit: None,
+        threads: vec![thread],
     }
 }
 
@@ -1158,6 +1340,29 @@ pub fn workflow_run() -> WorkflowRun {
             job(3, "test (macos)", CheckOutcome::Pending, None),
         ]
         .into(),
+        artifacts: vec![crate::api::actions::Artifact {
+            id: 31,
+            name: "coverage-report".into(),
+            size: 1_572_864,
+            expires_at: Some("2026-12-31T12:00:00Z".into()),
+            expired: false,
+        }]
+        .into(),
+    }
+}
+
+/// A failing test's annotation, on a line of a file.
+pub fn check_annotation() -> crate::api::actions::Annotation {
+    crate::api::actions::Annotation {
+        path: Some("src/theme.rs".into()),
+        start_line: 3,
+        end_line: 3,
+        level: crate::api::actions::Level::Failure,
+        title: "heat_levels_stay_apart".into(),
+        message: "assertion failed: contrast(a, b) > 1.5".into(),
+        url: Some(
+            "https://github.com/gold-silver-copper/ghtui/blob/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/src/theme.rs#L3".into(),
+        ),
     }
 }
 
@@ -1181,6 +1386,7 @@ pub fn job() -> (Job, crate::api::browse::JobLog) {
             attempt: 1,
             rerun: None,
         },
+        annotations: vec![check_annotation()].into(),
         name: "test (ubuntu)".into(),
         outcome: CheckOutcome::Failure,
         started_at: Some("2026-10-03T12:00:00Z".into()),
@@ -1454,14 +1660,46 @@ pub fn discussions() -> DiscussionList {
 
 /// A question with an answer and a reply.
 pub fn discussion() -> DiscussionDetail {
-    let comment = |id, author: &str, body: &str| Comment {
+    use crate::api::edit::{Editable, Reaction, ReactionContent};
+    let comment = |id: u64, author: &str, body: &str, hour: u32| Comment {
         id: Some(id),
         author: author.into(),
         body: body.into(),
-        created_at: "2026-10-03T12:00:00Z".into(),
-        editable: None,
+        created_at: format!("2026-10-03T{hour:02}:00:00Z"),
+        editable: Some(Editable {
+            id: NodeId::new(format!("DC_{id}")),
+            can_update: author == "octocat",
+            can_delete: author == "octocat",
+            can_react: true,
+            reactions: Vec::new(),
+        }),
     };
+    let mut answer = DiscussionComment {
+        comment: comment(
+            18765024,
+            "hubot",
+            "Fetch the PR first; the diff then works offline.",
+            10,
+        ),
+        upvotes: 5,
+        answer: true,
+        can_mark: false,
+        can_unmark: true,
+        // More than came: the page says how many more.
+        replies: Capped::new(
+            vec![comment(18765030, "octocat", "That works, thanks!", 11)],
+            3,
+        ),
+    };
+    if let Some(e) = &mut answer.comment.editable {
+        e.reactions = vec![Reaction {
+            content: ReactionContent::Hooray,
+            count: 3,
+            mine: true,
+        }];
+    }
     DiscussionDetail {
+        id: NodeId::new("D_14603"),
         repo: RepoId::new("cli", "cli"),
         number: 14603,
         title: "How do I review a PR offline?".into(),
@@ -1469,24 +1707,30 @@ pub fn discussion() -> DiscussionDetail {
         author: "octocat".into(),
         created_at: "2026-10-02T12:00:00Z".into(),
         category: "Q&A".into(),
+        answerable: true,
         answered: true,
+        locked: false,
         upvotes: 12,
+        editable: Editable {
+            id: NodeId::new("D_14603"),
+            can_update: true,
+            can_delete: false,
+            can_react: true,
+            reactions: Vec::new(),
+        },
+        answer: Some(Box::new(DiscussionComment {
+            replies: Capped::default(),
+            ..answer.clone()
+        })),
+        answer_by: Some("octocat".into()),
         comments: vec![
+            answer,
             DiscussionComment {
-                comment: comment(
-                    18765024,
-                    "hubot",
-                    "Fetch the PR first; the diff then works offline.",
-                ),
-                upvotes: 5,
-                answer: true,
-                // More than came: the page says how many more.
-                replies: Capped::new(vec![comment(18765030, "octocat", "That works, thanks!")], 3),
-            },
-            DiscussionComment {
-                comment: comment(18765100, "monalisa", "Drafts are saved locally too."),
+                comment: comment(18765100, "monalisa", "Drafts are saved locally too.", 12),
                 upvotes: 1,
                 answer: false,
+                can_mark: true,
+                can_unmark: false,
                 replies: Capped::default(),
             },
         ]
@@ -1533,6 +1777,8 @@ pub fn code_results() -> SearchResults {
         repo: RepoId::new("ratatui", "ratatui"),
         path: path.into(),
         sha: "f60d17e29bb58b7e699e9befbb97298ec22aac14".into(),
+        lines: Vec::new(),
+        rev: None,
     };
     SearchResults::Code(Results {
         total: 158,
@@ -1694,6 +1940,7 @@ pub fn project() -> crate::api::project::Project {
     let item = |n: u64, content, values| ProjectItem {
         id: NodeId::new(format!("PVTI_{n}")),
         number: 1000 + n,
+        archived: false,
         content,
         values,
     };
@@ -1737,6 +1984,7 @@ pub fn project() -> crate::api::project::Project {
         item(
             3,
             ItemContent::Draft(Draft {
+                id: NodeId::new("DI_3"),
                 title: "Write the board's docs".into(),
                 body: "Explain **h** and **l**, and moving cards.".into(),
                 assignees: Capped::new(Vec::new(), 0),
@@ -1754,6 +2002,7 @@ pub fn project() -> crate::api::project::Project {
         item(
             5,
             ItemContent::Draft(Draft {
+                id: NodeId::new("DI_5"),
                 title: "Someday: roadmaps".into(),
                 body: String::new(),
                 assignees: Capped::new(Vec::new(), 0),
@@ -1777,5 +2026,31 @@ pub fn project() -> crate::api::project::Project {
             items,
             next: None,
         },
+        archived: Results {
+            total: 1,
+            items: vec![ProjectItem {
+                archived: true,
+                ..item(
+                    6,
+                    ItemContent::Draft(Draft {
+                        id: NodeId::new("DI_6"),
+                        title: "Classic projects".into(),
+                        body: String::new(),
+                        assignees: Capped::new(Vec::new(), 0),
+                    }),
+                    vec![status("O_done", "Done")],
+                )
+            }],
+            next: None,
+        },
+    }
+}
+
+/// Your subscription to a thread: notified of everything.
+pub fn subscription() -> crate::api::watch::Subscription {
+    crate::api::watch::Subscription {
+        id: NodeId::new("I_sub"),
+        state: Some(crate::api::watch::SubscriptionState::Subscribed),
+        can: true,
     }
 }

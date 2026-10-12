@@ -55,8 +55,28 @@ pub(super) fn set_list_state(state: &mut State, which: &str) -> Vec<Cmd> {
     }
 }
 
+/// What a search finds that's neither open nor closed, nor sorted as
+/// issues are: repositories, people, commits, code.
+pub(super) fn plain_search(route: &Route) -> Option<&'static str> {
+    use crate::api::browse::SearchKind as K;
+    match route {
+        Route::Search { kind, .. } => match kind {
+            K::Repos => Some("Repositories"),
+            K::Users => Some("People"),
+            K::Commits => Some("Commits"),
+            K::Code => Some("Code results"),
+            K::Issues | K::Pulls | K::Discussions => None,
+        },
+        _ => None,
+    }
+}
+
 #[must_use]
 pub(super) fn cycle_state(state: &mut State) -> Vec<Cmd> {
+    if let Some(what) = state.route().and_then(plain_search) {
+        state.info(format!("{what} aren't open or closed"));
+        return Vec::new();
+    }
     if let Some(Route::Actions { .. }) = state.route() {
         let filter = state.first_key(Action::Search);
         state.info(format!(
@@ -93,6 +113,14 @@ pub(super) fn cycle_sort(state: &mut State) -> Vec<Cmd> {
     }
     if let Some(Route::Notifications { .. }) = state.route() {
         state.info("Notifications are newest first: GitHub doesn't sort them otherwise");
+        return Vec::new();
+    }
+    if let Some(Route::Alerts { .. }) = state.route() {
+        state.info("Alerts are newest first: ghtui doesn't sort them otherwise");
+        return Vec::new();
+    }
+    if let Some(what) = state.route().and_then(plain_search) {
+        state.info(format!("{what} come in GitHub's best-match order"));
         return Vec::new();
     }
     let Some((route, query)) = list_query(state) else {

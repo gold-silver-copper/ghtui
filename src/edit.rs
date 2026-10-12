@@ -176,6 +176,7 @@ impl Spot {
         match self.of {
             Written::Issue | Written::Pr => "the description".to_owned(),
             Written::IssueComment | Written::ReviewComment => format!("{}'s comment", self.author),
+            Written::Review => format!("{}'s review", self.author),
         }
     }
 }
@@ -258,13 +259,36 @@ fn page_spot(state: &State, about: &Subject, fallback: bool) -> Result<Spot, Str
     if said.at == *at && said.author == *author {
         return Ok(said);
     }
-    let comments = match about {
-        Subject::Issue(repo, number) => issue(state, repo, *number).map(|d| &d.comments),
-        Subject::Pr(pr) => state.activity(pr).map(|a| &a.comments),
+    let timeline = match about {
+        Subject::Issue(repo, number) => issue(state, repo, *number).map(|d| &d.timeline),
+        Subject::Pr(pr) => state.activity(pr).map(|a| &a.timeline),
         _ => None,
     };
-    let found = (comments.into_iter().flatten())
-        .find(|c| c.created_at == *at && c.author == *author)
+    let timeline = timeline.map_or(&[][..], |t| &t.items[..]);
+    // A review's summary is written like a comment.
+    let review = timeline.iter().find_map(|i| match i {
+        crate::api::timeline::Item::Review(r) if r.at == *at && r.author == *author => Some(r),
+        _ => None,
+    });
+    if let Some(r) = review {
+        return Ok(Spot {
+            of: Written::Review,
+            editable: r.editable.clone(),
+            body: r.body.clone(),
+            author: r.author.clone(),
+            at: r.at.clone(),
+            about: about.clone(),
+        });
+    }
+    let found = (timeline.iter())
+        .find_map(|i| match i {
+            crate::api::timeline::Item::Comment(c)
+                if c.created_at == *at && c.author == *author =>
+            {
+                Some(c)
+            }
+            _ => None,
+        })
         .and_then(|c| Some((c, c.editable.clone()?)));
     match found {
         Some((c, editable)) => Ok(Spot {
@@ -963,24 +987,28 @@ fn apply(state: &mut State) -> Vec<Cmd> {
 
 // ---- following GitHub -----------------------------------------------------------
 
-/// The description and comments on the issue or pull request, each with
-/// its text; `None` until they're loaded.
+/// The description, comments and reviews' summaries on the issue or pull
+/// request, each with its text; `None` until they're loaded.
 fn said<'a>(state: &'a State, about: &Subject) -> Option<Vec<(&'a Editable, &'a str)>> {
-    let (description, body, comments) = match about {
+    let (description, body, timeline) = match about {
         Subject::Issue(repo, number) => {
             let d = issue(state, repo, *number)?;
-            (&d.editable, &d.body, &d.comments)
+            (&d.editable, &d.body, &d.timeline)
         }
         Subject::Pr(pr) => {
             let d = pr_detail(state, pr)?;
-            (&d.editable, &d.body, &state.activity(pr)?.comments)
+            (&d.editable, &d.body, &state.activity(pr)?.timeline)
         }
         _ => return None,
     };
-    let comments = (comments.iter()).filter_map(|c| Some((c.editable.as_ref()?, c.body.as_str())));
+    let written = timeline.iter().filter_map(|i| match i {
+        crate::api::timeline::Item::Comment(c) => Some((c.editable.as_ref()?, c.body.as_str())),
+        crate::api::timeline::Item::Review(r) => Some((&r.editable, r.body.as_str())),
+        crate::api::timeline::Item::Event(_) => None,
+    });
     Some(
         std::iter::once((description, body.as_str()))
-            .chain(comments)
+            .chain(written)
             .collect(),
     )
 }
@@ -1056,7 +1084,7 @@ pub fn shown(state: &State, edit: &Edit, about: &Subject) -> bool {
                 return false;
             };
             let asked: BTreeSet<&str> = (a.requested.iter())
-                .map(|r| match r {
+                .map(|r| match &r.who {
                     crate::api::browse::Reviewer::User(n)
                     | crate::api::browse::Reviewer::Team(n) => n.as_str(),
                 })

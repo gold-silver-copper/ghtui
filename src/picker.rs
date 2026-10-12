@@ -45,11 +45,17 @@ pub enum Kind {
     Form(crate::create::Pick),
     /// Places in code: a file's symbols, a name's definitions.
     Code {
-        title: &'static str,
+        title: String,
         rows: Vec<(PaletteItem, Choice)>,
     },
     /// A project item's columns, fields or a field's values.
     Project(crate::projects::Pick),
+    /// Why to dismiss a security alert; the field is the comment.
+    Alert(crate::security::Dismissing),
+    /// A subscription, a release's tag, a gist's names ([`crate::writes`]).
+    Write(crate::writes::Pick),
+    /// Where to save an artifact; a workflow's branch or input.
+    Actions(crate::actions::Pick),
 }
 
 /// What a section's title is for.
@@ -68,7 +74,7 @@ pub struct Picker {
 }
 
 impl Picker {
-    pub fn title(&self) -> &'static str {
+    pub fn title(&self) -> &str {
         match self.kind {
             Kind::Commands => ":",
             Kind::Files { .. } | Kind::DiffFiles => "Go to file",
@@ -79,8 +85,11 @@ impl Picker {
             Kind::SectionTitle(Titling::Rename { .. }, _) => "Rename the section",
             Kind::Edit(ref c) => c.title(),
             Kind::Form(pick) => pick.title(),
-            Kind::Code { title, .. } => title,
+            Kind::Code { ref title, .. } => title,
             Kind::Project(ref pick) => pick.title(),
+            Kind::Alert(ref d) => d.title(),
+            Kind::Write(ref pick) => pick.title(),
+            Kind::Actions(ref pick) => pick.title(),
         }
     }
 }
@@ -114,6 +123,10 @@ pub enum Choice {
     /// Go to this line of the file on screen.
     Line(u32),
     Project(crate::projects::Chosen),
+    /// Dismiss a security alert so.
+    Alert(crate::api::change::Change),
+    Write(crate::writes::Chosen),
+    Actions(crate::actions::Chosen),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -127,12 +140,16 @@ fn item(label: impl Into<String>, hint: impl Into<String>) -> PaletteItem {
 
 /// Places in code that match `q`, best first; all of them in order
 /// before anything is typed.
+/// Places in code listed at once.
+const CODE_ROWS: usize = 1000;
+
 fn code_rows(rows: &[(PaletteItem, Choice)], q: &str) -> Rows {
     let mut hits: Vec<_> = (rows.iter())
         .filter_map(|(item, choice)| Some((fuzzy_score(q, item.label.trim_start())?, item, choice)))
         .collect();
     hits.sort_by_key(|(score, ..)| *score);
-    let hits = hits.into_iter();
+    // A repository's symbols can be many: the best few are what's read.
+    let hits = hits.into_iter().take(CODE_ROWS);
     hits.map(|(_, item, choice)| (item.clone(), Some(choice.clone())))
         .collect()
 }
@@ -168,11 +185,15 @@ impl State {
             Kind::Form(_) => "Type to filter",
             Kind::Code { .. } => "Type a name",
             Kind::Project(ref pick) => pick.placeholder(),
+            Kind::Alert(ref d) => d.placeholder(),
+            Kind::Write(ref pick) => pick.placeholder(),
+            Kind::Actions(ref pick) => pick.placeholder(),
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
             Kind::Branches { repo, .. } => Some(DataKey::Refs(repo.clone())),
             Kind::Edit(c) => c.need(),
+            Kind::Write(pick) => pick.need(),
             Kind::Form(crate::create::Pick::Base | crate::create::Pick::Head) => self
                 .route()
                 .and_then(Route::repo)
@@ -252,8 +273,17 @@ impl State {
                 let choice = Choice::Title(titling.clone(), path.clone(), q.to_owned());
                 vec![(item(label, "↵"), Some(choice))]
             }
+            Kind::Actions(pick) => (crate::actions::rows(self, pick, q).into_iter())
+                .map(|(row, chosen)| (row, chosen.map(Choice::Actions)))
+                .collect(),
             Kind::Project(pick) => (crate::projects::rows(self, pick, q).into_iter())
                 .map(|(row, chosen)| (row, chosen.map(Choice::Project)))
+                .collect(),
+            Kind::Alert(d) => (crate::security::rows(d, q).into_iter())
+                .map(|(row, change)| (row, Some(Choice::Alert(change))))
+                .collect(),
+            Kind::Write(pick) => (crate::writes::rows(self, pick, q).into_iter())
+                .map(|(row, chosen)| (row, chosen.map(Choice::Write)))
                 .collect(),
         }
     }
@@ -607,6 +637,9 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
         }
         Choice::Edit(_) => Vec::new(),
         Choice::Project(chosen) => crate::projects::choose(state, chosen),
+        Choice::Alert(change) => crate::security::choose(state, change),
+        Choice::Write(chosen) => crate::writes::choose(state, chosen),
+        Choice::Actions(chosen) => crate::actions::choose(state, chosen),
     }
 }
 

@@ -48,9 +48,23 @@ pub enum ComposeTarget {
     /// Editing a comment or description already on GitHub, saved right
     /// away.
     Edit(crate::edit::Editing),
+    /// A comment on a commit as a whole, posted right away.
+    Commit {
+        repo: crate::api::model::RepoId,
+        oid: String,
+    },
     /// The title and description of the new issue or pull request on this
     /// page ([`crate::create`]).
     Form(crate::route::Route),
+    /// A comment, a reply or an edit in a discussion
+    /// ([`crate::discuss`]), saved right away.
+    Discussion(crate::discuss::Writing),
+    /// A project's draft issue, new or edited ([`crate::projects`]):
+    /// its title on the first line, then its text.
+    ProjectDraft(crate::projects::Drafting),
+    /// A release's, a gist's or a wiki page's text, on its form's page
+    /// ([`crate::writes`]).
+    Write(crate::writes::Text),
 }
 
 /// A suggested change and what it replaces.
@@ -129,12 +143,16 @@ impl Compose {
             ComposeTarget::Draft { .. } => "Edit draft".to_owned(),
             ComposeTarget::Conversation { name, .. } => format!("Comment on {name}"),
             ComposeTarget::Edit(e) => format!("Edit {}", e.name),
+            ComposeTarget::Discussion(w) => w.title.clone(),
+            ComposeTarget::ProjectDraft(d) => d.title.clone(),
+            ComposeTarget::Commit { oid, .. } => format!("Comment on commit {}", short_sha(oid)),
             ComposeTarget::Form(crate::route::Route::NewPr(_)) => {
                 "New pull request: its title on the first line, then its description".to_owned()
             }
             ComposeTarget::Form(_) => {
                 "New issue: its title on the first line, then its description".to_owned()
             }
+            ComposeTarget::Write(_) => "Write".to_owned(),
         }
     }
 }
@@ -157,7 +175,11 @@ pub fn compose_anchor(doc: &Doc, screen: &DiffScreen, target: &ComposeTarget) ->
         }
         ComposeTarget::Line { .. }
         | ComposeTarget::Conversation { .. }
-        | ComposeTarget::Form(_) => screen
+        | ComposeTarget::Discussion(_)
+        | ComposeTarget::ProjectDraft(_)
+        | ComposeTarget::Form(_)
+        | ComposeTarget::Write(_)
+        | ComposeTarget::Commit { .. } => screen
             .selection
             .filter(|s| doc.to_global(*s) > doc.to_global(cursor))
             .unwrap_or(cursor),
@@ -345,7 +367,11 @@ pub fn draft(target: &ComposeTarget, body: &str, id: u64, commit: &str) -> Optio
         | ComposeTarget::Draft { .. }
         | ComposeTarget::Conversation { .. }
         | ComposeTarget::Edit(_)
-        | ComposeTarget::Form(_) => None,
+        | ComposeTarget::Discussion(_)
+        | ComposeTarget::ProjectDraft(_)
+        | ComposeTarget::Form(_)
+        | ComposeTarget::Write(_)
+        | ComposeTarget::Commit { .. } => None,
     }
 }
 
@@ -630,6 +656,10 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 let all = all_changes(state);
                 return error(state, &format!("First {all}"));
             }
+            // Another review's comparison isn't yours: yours is made anew.
+            if diff.since_commit.take().is_some() {
+                diff.doc.set_since(None, false);
+            }
             // A push since the diff was made: the diff starts again at
             // it, and compares once it's in.
             let head = diff.head().map(|h| h.to_string());
@@ -819,7 +849,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             let pending = &diff.inputs().review.pending;
             let draft = annotation.and_then(|a| match a.key {
                 AnnotationKey::Draft(id) => pending.iter().find(|d| d.id == id),
-                AnnotationKey::Thread(_) => None,
+                AnnotationKey::Thread(_) | AnnotationKey::Check(_) => None,
             });
             if let Some(draft) = draft {
                 let (id, body) = (draft.id, draft.body.clone());
@@ -942,6 +972,11 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             crate::create::keep_text(state, &route, text);
             state.overlay = None;
         }
+        KeyCode::Esc if let ComposeTarget::Write(target) = &compose.target => {
+            let (target, text) = (target.clone(), compose.text());
+            crate::writes::keep_text(state, &target, text);
+            state.overlay = None;
+        }
         KeyCode::Esc => {
             if may_discard(state, "esc", "discard") {
                 state.overlay = None;
@@ -993,6 +1028,10 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
     let Some(Overlay::Compose(compose)) = &mut state.overlay else {
         return Vec::new();
     };
+    // A form says itself what it lacks.
+    if let ComposeTarget::Write(_) = compose.target {
+        return crate::writes::save(state);
+    }
     let body = compose.text();
     if body.trim().is_empty() {
         compose.error = Some("Write something first".into());
@@ -1014,12 +1053,33 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
     if let ComposeTarget::Form(_) = target {
         return crate::create::submit(state);
     }
+    if let ComposeTarget::Discussion(w) = target {
+        compose.sending = true;
+        return crate::discuss::send(&w, body);
+    }
+    if let ComposeTarget::ProjectDraft(d) = target {
+        return match d.send(&body) {
+            Ok(cmds) => {
+                compose.sending = true;
+                cmds
+            }
+            Err(why) => {
+                compose.error = Some(why);
+                Vec::new()
+            }
+        };
+    }
     if let ComposeTarget::Conversation { subject_id, .. } = target {
         compose.sending = true;
         let change = Change::Comment {
             subject: subject_id,
             body,
         };
+        return vec![Cmd::Api(Api::Change(change, crate::act::By::Compose))];
+    }
+    if let ComposeTarget::Commit { repo, oid } = target {
+        compose.sending = true;
+        let change = Change::CommitComment { repo, oid, body };
         return vec![Cmd::Api(Api::Change(change, crate::act::By::Compose))];
     }
     let Some((screen, diff)) = state.diff_parts() else {
@@ -1049,9 +1109,13 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             state.overlay = None;
             save
         }
-        ComposeTarget::Conversation { .. } | ComposeTarget::Edit(_) | ComposeTarget::Form(_) => {
-            Vec::new()
-        }
+        ComposeTarget::Conversation { .. }
+        | ComposeTarget::Edit(_)
+        | ComposeTarget::Discussion(_)
+        | ComposeTarget::ProjectDraft(_)
+        | ComposeTarget::Form(_)
+        | ComposeTarget::Write(_)
+        | ComposeTarget::Commit { .. } => Vec::new(),
         target @ (ComposeTarget::Line { .. } | ComposeTarget::File { .. }) => {
             let Some(head) = diff.head() else {
                 return Vec::new();

@@ -195,8 +195,18 @@ async fn run_inner(
         DiffOf::Range(_, from, to) => repo.range_refs(from, to, &progress).await?,
     };
     if let Some((from, to)) = range {
-        refs.merge_base = repo.rev_parse(&from).await?;
+        // A commit a push left behind (a review's) is fetched by its SHA.
+        if let Ok(oid) = Oid::parse(&to) {
+            repo.ensure(&oid, &progress).await?;
+        }
         refs.head = repo.rev_parse(&to).await?;
+        // No start: the pull request as it was at `to`, from where it
+        // left its base.
+        refs.merge_base = if from.is_empty() {
+            repo.merge_base(&refs.base, &refs.head).await?
+        } else {
+            repo.rev_parse(&from).await?
+        };
     }
     if let DiffOf::Pr(pr) = of
         && let Err(err) = repo.pin_seen(pr.number, &refs.head).await

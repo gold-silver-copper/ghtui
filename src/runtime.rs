@@ -34,6 +34,10 @@ struct Effects {
     /// Review saves go through one writer, in order.
     save_review: mpsc::UnboundedSender<(PrRef, ReviewState)>,
     writer: tokio::task::JoinHandle<()>,
+    /// What git answers in place of GitHub's API.
+    local: Arc<crate::source::Local>,
+    /// Repositories' code indexes.
+    index: Arc<crate::code_index::Indexer>,
 }
 
 pub async fn run(
@@ -47,8 +51,11 @@ pub async fn run(
 ) -> Result<()> {
     let (tx, rx) = mpsc::unbounded_channel::<Msg>();
     let (save_review, writer) = review_writer(reviews.clone(), &tx);
+    let index = Arc::new(crate::code_index::Indexer::new(git.clone()));
     let mut effects = Effects {
+        index,
         gh,
+        local: crate::source::Local::new(git.clone()),
         git,
         tx,
         jobs: HashMap::new(),
@@ -171,6 +178,18 @@ impl Effects {
                 key: DataKey::Wiki(repo, page),
                 ..
             }) => self.wiki(repo, page, replies),
+            Cmd::Api(Api::Fetch {
+                key: DataKey::Lines(repo, commit, path),
+                ..
+            }) => self.lines(repo, commit, path, replies),
+            Cmd::Api(Api::Fetch { key, cached }) if crate::source::by_git(&key, None) => {
+                self.local(key, None, cached, replies);
+            }
+            Cmd::Api(Api::FetchMore { key, after })
+                if crate::source::by_git(&key, Some(&after)) =>
+            {
+                self.local(key, Some(after), false, replies);
+            }
             Cmd::Api(api) => spawn(api, replies, &self.gh, &self.tx),
             Cmd::Git(git) => self.git(git, replies),
             Cmd::OpenUrl(url) => {
@@ -200,6 +219,14 @@ impl Effects {
                 spawn_guarded(&self.tx, replies, |tx| async move {
                     let done = work.run(&gh, &cwd).await;
                     let _ = tx.send(Msg::Create(done));
+                    let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
+                });
+            }
+            Cmd::Write(work) => {
+                let (gh, git) = (self.gh.clone(), self.git.clone());
+                spawn_guarded(&self.tx, replies, |tx| async move {
+                    let done = work.run(&gh, &git).await;
+                    let _ = tx.send(Msg::Write(done));
                     let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
                 });
             }
@@ -316,6 +343,14 @@ impl Effects {
                     let _ = tx.send(Msg::Diff(pr.into(), DiffMsg::CommitsListed(result)));
                 });
             }
+            Git::Code(ask) => {
+                let (gh, index) = (self.gh.clone(), self.index.clone());
+                spawn_guarded(&self.tx, replies, |tx| async move {
+                    if let Some(answer) = crate::code_nav::answer(&gh, &index, &ask).await {
+                        let _ = tx.send(Msg::Code(ask, answer));
+                    }
+                });
+            }
             Git::MapOutdated(joined) => {
                 let (pr, job, head, threads) = joined.into_inner();
                 let Some(git) = self.job_git(&DiffOf::Pr(pr.clone())) else {
@@ -354,6 +389,19 @@ impl Effects {
         });
     }
 
+    /// Reads a file's lines at a commit through git, for a review thread.
+    fn lines(&self, repo: RepoId, commit: String, path: String, replies: Vec<Msg>) {
+        let git = self.git.clone();
+        spawn_guarded(&self.tx, replies, |tx| async move {
+            let result = crate::talk::read_lines(&git, &repo, &commit, &path).await;
+            let _ = tx.send(Msg::Fetched {
+                key: DataKey::Lines(repo, commit, path),
+                result: result.map(|l| Data::Lines(Arc::new(l))),
+                cached_at: None,
+            });
+        });
+    }
+
     /// Reads a wiki page through git.
     fn wiki(&self, repo: RepoId, page: Option<String>, replies: Vec<Msg>) {
         let git = self.git.clone();
@@ -364,6 +412,36 @@ impl Effects {
                 result: result.map(|w| Data::Wiki(Box::new(w))),
                 cached_at: None,
             });
+        });
+    }
+
+    /// Reads `key` (its page after `after`) through git where it can
+    /// (`crate::source`), saying where it came from; with `cached`, the
+    /// cache's copy shows first.
+    fn local(&self, key: DataKey, after: Option<String>, cached: bool, replies: Vec<Msg>) {
+        let (gh, local) = (self.gh.clone(), self.local.clone());
+        spawn_guarded(&self.tx, replies, |tx| async move {
+            if cached {
+                let (gh, lookup) = (gh.clone(), key.clone());
+                if let Some((data, at)) = blocking(move || cached_data(&gh, &lookup)).await {
+                    let _ = tx.send(Msg::Fetched {
+                        key: key.clone(),
+                        result: Ok(data),
+                        cached_at: Some(at),
+                    });
+                }
+            }
+            let (result, from) = local.fetch(&gh, &key, after.clone()).await;
+            let _ = tx.send(Msg::Source(key.clone(), from));
+            let _ = tx.send(match after {
+                Some(after) => Msg::FetchedMore(key, after, result),
+                None => Msg::Fetched {
+                    key,
+                    result,
+                    cached_at: None,
+                },
+            });
+            let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
         });
     }
 
@@ -502,10 +580,6 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 let result = gh.mentionable(&repo).await;
                 Msg::Mentionable(repo, result)
             }
-            Api::FindDefinition(ask) => {
-                let result = crate::code_nav::find(&gh, &ask).await;
-                Msg::Definitions(ask, result)
-            }
             Api::Poll { pr, asks } => {
                 let polls = asks.into_iter().map(|ask| {
                     let (gh, path) = (&gh, ask.probe.path(&pr));
@@ -516,6 +590,18 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 });
                 let answers = futures::future::join_all(polls).await;
                 Msg::Polled(pr, answers)
+            }
+            Api::Actions(work) => Msg::Actions(work.run(&gh).await),
+            Api::Watch { what, asks } => {
+                let polls = asks.into_iter().map(|ask| {
+                    let gh = &gh;
+                    async move {
+                        let answer = crate::live::page::ask(gh, &ask).await;
+                        (ask.probe, answer)
+                    }
+                });
+                let answers = futures::future::join_all(polls).await;
+                Msg::Watched(what, answers)
             }
         };
         let _ = tx.send(msg);
@@ -644,6 +730,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         ),
         Cmd::LoadReview(pr) => Msg::Diff(pr.clone().into(), DiffMsg::ReviewLoaded(git())),
         Cmd::Create(work) => Msg::Create(work.failed()),
+        Cmd::Write(work) => Msg::Write(work.failed()),
         Cmd::EditHome { edit, what, .. } => Msg::HomeEdited {
             edit: edit.clone(),
             result: Err("ghtui hit a bug".into()),
@@ -663,8 +750,10 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             Msg::Diff(pr.clone().into(), DiffMsg::LastReview(api()))
         }
         Cmd::Api(Api::FetchMentionable(repo)) => Msg::Mentionable(repo.clone(), api()),
-        Cmd::Api(Api::FindDefinition(ask)) => Msg::Definitions(ask.clone(), api()),
+        Cmd::Git(Git::Code(ask)) => Msg::Code(ask.clone(), Err("ghtui hit a bug".into())),
         Cmd::Api(Api::Poll { pr, .. }) => Msg::Polled(pr.clone(), Vec::new()),
+        Cmd::Api(Api::Watch { what, .. }) => Msg::Watched(what.clone(), Vec::new()),
+        Cmd::Api(Api::Actions(work)) => Msg::Actions(work.failed()),
         Cmd::Git(Git::LoadDiff { of, job, .. }) => Msg::Diff(
             of.clone(),
             DiffMsg::Job(*job, JobMsg::Failed(Failure::msg("ghtui hit a bug"))),
@@ -822,6 +911,9 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Issue(repo, number) => at(gh.cached(&keys::issue(repo, *number))?, |v| {
             Data::Issue(Some(Box::new(v)))
         }),
+        DataKey::Reviews(pr) => at(gh.cached(&keys::reviews(pr))?, |v| {
+            Data::Reviews(Box::new(v))
+        }),
         DataKey::PrActivity(pr) => at(gh.cached(&keys::pr_activity(pr))?, |v| {
             Data::PrActivity(Box::new(v))
         }),
@@ -921,6 +1013,13 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Project(p, view) => at(gh.cached(&project::keys::project(p, *view))?, |v| {
             Data::Project(Box::new(v))
         }),
+        DataKey::Alerts(repo, kind, query) => {
+            let key = crate::api::security::keys::alerts(repo, *kind, query);
+            at(gh.cached(&key)?, |v| Data::Alerts(Box::new(v)))
+        }
+        DataKey::Alert(a) => at(gh.cached(&crate::api::security::keys::alert(a))?, |v| {
+            Data::Alert(Box::new(v))
+        }),
         DataKey::History(repo, rev, path) => at(gh.cached(&keys::history(repo, rev, path))?, |v| {
             Data::History(Box::new(v))
         }),
@@ -933,13 +1032,18 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         // A wiki's clone is its cache.
         // Where a ref ends is asked anew each session.
         // What a new issue can have is what it has now.
+        // A commit's comments revalidate with their ETag.
         DataKey::Blob(..)
+        | DataKey::CommitComments(..)
+        | DataKey::Lines(..)
+        | DataKey::InProjects(..)
         | DataKey::Files(..)
         | DataKey::JobLog(..)
         | DataKey::Wiki(..)
         | DataKey::RefIn(..)
         | DataKey::Sidebar(..)
-        | DataKey::NewForm(..) => {
+        | DataKey::NewForm(..)
+        | DataKey::Subscription(..) => {
             return None;
         }
     })
@@ -975,6 +1079,11 @@ pub(crate) async fn fetch(
         DataKey::StateCounts(query) => Data::StateCounts(gh.state_counts(query).await?),
         DataKey::Issue(repo, number) => Data::Issue(gh.issue(repo, *number).await?.map(Box::new)),
         DataKey::PrActivity(pr) => Data::PrActivity(Box::new(gh.pr_activity(pr).await?)),
+        DataKey::Reviews(pr) => Data::Reviews(Box::new(gh.reviews(pr).await?)),
+        DataKey::InProjects(repo, n) => Data::InProjects(Box::new(gh.projects_of(repo, *n).await?)),
+        DataKey::CommitComments(repo, oid) => {
+            Data::CommitComments(Box::new(gh.commit_comments(repo, oid).await?))
+        }
         DataKey::Profile(login) => Data::Profile(Box::new(gh.profile(login).await?)),
         DataKey::Files(repo, rev) => {
             let (files, truncated) = gh.file_list(repo, rev).await?;
@@ -994,6 +1103,12 @@ pub(crate) async fn fetch(
         DataKey::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, after).await?)),
         DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, after).await?)),
+        // A thread's lines come through git (see `Effects::lines`).
+        DataKey::Lines(repo, ..) => {
+            return Err(ApiError::NotFound(format!(
+                "{repo}'s lines, which git reads"
+            )));
+        }
         // Wikis come through git (see `Effects::wiki`).
         DataKey::Wiki(repo, _) => {
             return Err(ApiError::NotFound(format!(
@@ -1037,11 +1152,16 @@ pub(crate) async fn fetch(
         }
         DataKey::Sidebar(repo, number) => Data::Sidebar(Box::new(gh.sidebar(repo, *number).await?)),
         DataKey::NewForm(repo) => Data::NewForm(Box::new(gh.new_form(repo).await?)),
+        DataKey::Subscription(of) => Data::Subscription(Box::new(gh.subscription(of).await?)),
         DataKey::CommitChecks(repo, oid) => {
             Data::Checks(Box::new(gh.commit_checks(repo, oid).await?))
         }
         DataKey::Projects(of) => Data::Projects(Box::new(gh.projects(of, after).await?)),
         DataKey::Project(p, view) => Data::Project(Box::new(gh.project(p, *view, after).await?)),
+        DataKey::Alerts(repo, kind, query) => {
+            Data::Alerts(Box::new(gh.alerts(repo, *kind, query, after).await?))
+        }
+        DataKey::Alert(a) => Data::Alert(Box::new(gh.alert(a).await?)),
         DataKey::History(repo, rev, path) => {
             Data::History(Box::new(gh.history(repo, rev, path, after).await?))
         }

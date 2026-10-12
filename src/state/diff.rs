@@ -66,6 +66,14 @@ impl State {
                 Cmd::Api(Api::FetchThreads(pr.clone())),
                 Cmd::Api(Api::FetchPatches(pr.clone())),
             ]);
+            // Its checks' annotations show on their lines.
+            cmds.extend(self.ensure(Need::Data(DataKey::PrChecks(pr.clone())), false));
+            crate::actions::checks_loaded(self, pr);
+        }
+        // A commit's comments on its lines, which join puts in its diff.
+        if let DiffOf::Commit(repo, oid) = of {
+            let key = DataKey::CommitComments(repo.clone(), oid.to_string());
+            cmds.extend(self.ensure(Need::Data(key), false));
         }
         cmds
     }

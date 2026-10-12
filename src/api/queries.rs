@@ -131,6 +131,7 @@ fragments! {
     counted:
     LabelConnection = "LabelConnection" => Label,
     ReviewCommentConnection = "PullRequestReviewCommentConnection" => ReviewComment,
+    FirstCommentConnection = "PullRequestReviewCommentConnection" => FirstComment,
 }
 
 // Lists of nodes, and their nodes' types.
@@ -585,7 +586,7 @@ pub struct ReviewThread {
     /// The first comment: it's on the line the thread is about.
     #[arguments(first: 1)]
     #[cynic(rename = "comments", alias)]
-    pub first_comment: ReviewCommentConnection,
+    pub first_comment: FirstCommentConnection,
     /// The newest replies, oldest first; with how many there are in all.
     #[arguments(last: 99)]
     pub comments: ReviewCommentConnection,
@@ -605,6 +606,25 @@ pub struct ReviewComment {
     pub viewer_can_delete: bool,
     pub viewer_can_react: bool,
     pub reaction_groups: Option<Vec<crate::api::edit::WireReactionGroup>>,
+    /// The review that made it.
+    pub pull_request_review: Option<ReviewDatabaseId>,
+}
+
+/// A thread's first comment, with the diff it was made on: the lines
+/// it's about come last.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestReviewComment", schema_module = "schema")]
+pub struct FirstComment {
+    #[cynic(spread)]
+    pub comment: ReviewComment,
+    pub diff_hunk: String,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
+pub struct ReviewDatabaseId {
+    /// `databaseId` overflows GraphQL's `Int` on newer reviews.
+    pub full_database_id: Option<BigInt>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]

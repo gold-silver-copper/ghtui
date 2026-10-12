@@ -915,11 +915,11 @@ const THREADS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
      "originalLine":12,"originalStartLine":10,"isOutdated":false,"isResolved":false,"subjectType":"LINE",
      "viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":false,
      "first_comment":{"totalCount":150,"nodes":[
-       {"id":"C1","author":{"login":"alice"},"body":"Why?","createdAt":"2026-10-01T00:00:00Z",
+       {"id":"C1","diffHunk":"@@ -10,3 +10,3 @@\n-old\n+new","pullRequestReview":{"fullDatabaseId":"77"},"author":{"login":"alice"},"body":"Why?","createdAt":"2026-10-01T00:00:00Z",
         "url":"https://github.com/o/r/pull/7#discussion_r1","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":false,"viewerCanDelete":false,"viewerCanReact":true,"reactionGroups":[{"content":"HOORAY","viewerHasReacted":true,"reactors":{"totalCount":2}},{"content":"EYES","viewerHasReacted":false,"reactors":{"totalCount":0}}]}]},
      "comments":{"totalCount":150,"nodes":[
        {"id":"C2","author":null,"body":"Because.","createdAt":"2026-10-02T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r2","originalCommit":{"oid":"abc"},"state":"PENDING","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[]}]}},
+        "url":"https://github.com/o/r/pull/7#discussion_r2","originalCommit":{"oid":"abc"},"state":"PENDING","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[],"pullRequestReview":null}]}},
     {"id":"T2","path":"src/b.rs","diffSide":"LEFT","startDiffSide":null,"line":null,"startLine":null,
      "originalLine":5,"originalStartLine":null,"isOutdated":true,"isResolved":true,"subjectType":"LINE",
      "viewerCanReply":true,"viewerCanResolve":false,"viewerCanUnresolve":true,
@@ -928,11 +928,11 @@ const THREADS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
      "originalLine":null,"originalStartLine":null,"isOutdated":false,"isResolved":false,"subjectType":"FILE",
      "viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":false,
      "first_comment":{"totalCount":1,"nodes":[
-       {"id":"C3","author":{"login":"bob"},"body":"Typo","createdAt":"2026-10-03T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[]}]},
+       {"id":"C3","diffHunk":"","author":{"login":"bob"},"body":"Typo","createdAt":"2026-10-03T00:00:00Z",
+        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[],"pullRequestReview":null}]},
      "comments":{"totalCount":1,"nodes":[
        {"id":"C3","author":{"login":"bob"},"body":"Typo","createdAt":"2026-10-03T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[]}]}}
+        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[],"pullRequestReview":null}]}}
   ]}}}}}"#;
 
 #[tokio::test]
@@ -959,6 +959,9 @@ async fn decodes_review_threads() {
     assert_eq!(t1.comments[1].author, "ghost");
     assert!(t1.comments[1].pending);
     assert_eq!(t1.comments[0].original_commit.as_deref(), Some("abc"));
+    // The review its first comment came in, and the diff it was made on.
+    assert_eq!(t1.comments[0].review, Some(77));
+    assert!(t1.diff_hunk.ends_with("+new"));
     // What GitHub lets you do to each comment, and its reactions (only
     // those someone gave).
     let first = &t1.comments[0].editable;
@@ -1007,6 +1010,9 @@ async fn patches_paginate_until_a_short_page() {
     assert!(seen[1].request_line.contains("page=2"));
 }
 
+/// A run's artifacts, as REST lists them.
+const ARTIFACTS: &str = r#"{"total_count":1,"artifacts":[{"id":31,"name":"report","size_in_bytes":2048,"expires_at":"2026-12-31T00:00:00Z","expired":false}]}"#;
+
 /// A run's jobs come a page at a time until there are as many as GitHub
 /// counts.
 #[tokio::test]
@@ -1025,6 +1031,7 @@ async fn a_runs_jobs_paginate() {
             .on("/runs/9 "),
         Reply::new(200, page(0..100)).on("jobs?per_page=100 "),
         Reply::new(200, page(100..102)).on("page=2"),
+        Reply::new(200, ARTIFACTS).on("/artifacts"),
     ])
     .await;
     let run = gh
@@ -1032,7 +1039,8 @@ async fn a_runs_jobs_paginate() {
         .await
         .unwrap();
     assert_eq!(run.jobs.len(), 102);
-    assert_eq!(seen.lock().unwrap().len(), 3);
+    assert_eq!(seen.lock().unwrap().len(), 4);
+    assert_eq!(run.artifacts.len(), 1);
 }
 
 /// An organization's discussions are found in whichever of its
@@ -1071,7 +1079,7 @@ async fn a_searched_pr_is_shown_then_gets_its_checks() {
     let (gh, seen) = github(vec![
         Reply::new(
             200,
-            r#"{"data":{"search":{"issueCount":1,"repositoryCount":0,"userCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"__typename":"PullRequest","id":"PR_5","number":5,"title":"t","isDraft":true,"state":"OPEN","author":null,"createdAt":"2026-10-01T00:00:00Z","updatedAt":"2026-10-01T00:00:00Z","reviewDecision":null,"comments":{"totalCount":0},"labels":null,"repository":{"nameWithOwner":"o/r"}}]}}}"#,
+            r#"{"data":{"search":{"issueCount":1,"repositoryCount":0,"userCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"__typename":"PullRequest","id":"PR_5","number":5,"title":"t","isDraft":true,"state":"OPEN","author":null,"createdAt":"2026-10-01T00:00:00Z","updatedAt":"2026-10-01T00:00:00Z","reviewDecision":null,"latestOpinionatedReviews":null,"comments":{"totalCount":0},"labels":null,"repository":{"nameWithOwner":"o/r"}}]}}}"#,
         ),
         Reply::new(
             200,
@@ -1252,7 +1260,7 @@ async fn branches_page_by_name() {
 async fn checks_page_to_a_checks_newest_run() {
     let run = |name: &str, conclusion: &str, started: &str| {
         format!(
-            r#"{{"__typename":"CheckRun","name":"{name}","status":"COMPLETED","conclusion":"{conclusion}","startedAt":"{started}","completedAt":"{started}","title":null,"detailsUrl":null,"checkSuite":null}}"#
+            r#"{{"__typename":"CheckRun","name":"{name}","status":"COMPLETED","conclusion":"{conclusion}","startedAt":"{started}","completedAt":"{started}","title":null,"detailsUrl":null,"checkSuite":null,"annotations":null}}"#
         )
     };
     let page = |runs: &[String], next: Option<&str>| {
@@ -1841,7 +1849,7 @@ async fn a_failed_readme_isnt_taken_for_no_readme() {
     let recorded: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/corpus/6fd55acbc9fbaa3e.json"
+            "/tests/corpus/3e059505efc156de.json"
         ))
         .unwrap(),
     )
@@ -1974,6 +1982,7 @@ async fn a_runs_jobs_past_the_cap_are_counted() {
         Reply::new(200, r#"{"id":9,"run_number":1,"event":"push","head_sha":"abc","status":"completed","conclusion":"success"}"#)
             .on("/runs/9 "),
         Reply::new(200, page(base..base + 100)).on("jobs?per_page=100 "),
+        Reply::new(200, ARTIFACTS).on("/artifacts"),
     ];
     for n in 2..=11u64 {
         let on: &'static str = Box::leak(format!("&page={n} ").into_boxed_str());
@@ -2540,8 +2549,12 @@ async fn the_inbox_is_marked_read_at_once_and_done_thread_by_thread() {
         };
         gh.change(&change).await.unwrap();
     }
+    let thread = |id: &str| ghtui::api::notifications::ThreadAt {
+        id: id.into(),
+        updated_at: at.clone(),
+    };
     let each = Change::MarkEach {
-        threads: vec!["7".into(), "8".into()],
+        threads: vec![thread("7"), thread("8")],
         done: true,
     };
     let err = gh.change(&each).await.unwrap_err();
@@ -2570,9 +2583,12 @@ async fn the_inbox_is_marked_read_at_once_and_done_thread_by_thread() {
 async fn threads_are_marked_read_and_done() {
     use ghtui::api::change::Change;
     let (gh, seen) = github(vec![Reply::new(205, ""), Reply::new(204, "")]).await;
-    let thread = "42".to_owned();
+    let thread = ghtui::api::notifications::ThreadAt {
+        id: "42".into(),
+        updated_at: "2026-10-03T12:00:00Z".into(),
+    };
     gh.change(&Change::MarkRead {
-        thread: thread.clone(),
+        thread: thread.id.clone(),
     })
     .await
     .unwrap();
@@ -2587,6 +2603,46 @@ async fn threads_are_marked_read_and_done() {
     assert!(
         lines[1].starts_with("DELETE /notifications/threads/42 "),
         "{lines:?}"
+    );
+}
+
+/// GitHub's API goes on listing a thread marked done, read. The account
+/// keeps the threads it marked done, and the inbox leaves each out until
+/// GitHub updates it again: then it's back, for good.
+#[tokio::test]
+async fn a_thread_marked_done_stays_out_until_github_updates_it() {
+    use ghtui::api::change::Change;
+    use ghtui::api::notifications::ThreadAt;
+    let thread =
+        |id: u32, at: &str| thread_json(id, "mention", false).replace("2026-10-03T12:00:00Z", at);
+    let (old, new) = ("2026-10-03T12:00:00Z", "2026-10-04T08:00:00Z");
+    let inbox = |a: &str| Reply::new(200, format!("[{},{}]", thread(1, a), thread(2, old)));
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("cache.redb"));
+    let (base, seen) = serve(vec![
+        Reply::new(204, ""),
+        inbox(old),
+        inbox(new),
+        inbox(old),
+    ])
+    .await;
+    let gh = client(&base, store);
+    let done = ThreadAt {
+        id: "1".into(),
+        updated_at: old.into(),
+    };
+    gh.change(&Change::MarkDone { thread: done }).await.unwrap();
+    let ids = |inbox: ghtui::api::notifications::Inbox| -> Vec<String> {
+        inbox.list.items.into_iter().map(|n| n.id).collect()
+    };
+    assert_eq!(ids(gh.notifications("", None).await.unwrap()), ["2"]);
+    // A new comment: it's back, and stays.
+    assert_eq!(ids(gh.notifications("", None).await.unwrap()), ["1", "2"]);
+    assert_eq!(ids(gh.notifications("", None).await.unwrap()), ["1", "2"]);
+    let first = seen.lock().unwrap()[0].request_line.clone();
+    assert!(
+        first.starts_with("DELETE /notifications/threads/1 "),
+        "{first}"
     );
 }
 
@@ -2678,11 +2734,27 @@ async fn a_project_reads_its_view_and_the_items_its_filter_finds() {
     let items = r#"{"data":{"repositoryOwner":{"projectV2":{"items":{"totalCount":4,"pageInfo":{"hasNextPage":true,"endCursor":"c3"},"nodes":[
         {"id":"PVTI_1","fullDatabaseId":"1001","content":{"__typename":"Issue","number":14,"title":"Projects","url":"https://github.com/o/r/issues/14","state":"CLOSED","stateReason":"NOT_PLANNED","repository":{"nameWithOwner":"o/r"},"assignees":{"totalCount":1,"nodes":[{"login":"alice"}]},"labels":{"totalCount":0,"nodes":[]},"milestone":null},
          "fieldValues":{"totalCount":3,"nodes":[{"__typename":"ProjectV2ItemFieldTextValue","text":"Projects","field":{"id":"F_title"}},{"__typename":"ProjectV2ItemFieldSingleSelectValue","optionId":"O_todo","name":"Todo","field":{"id":"F_status"}},{"__typename":"ProjectV2ItemFieldLabelValue"}]}},
-        {"id":"PVTI_2","fullDatabaseId":"1002","content":{"__typename":"DraftIssue","title":"Draft","body":"Its body","assignees":{"totalCount":0,"nodes":[]}},
+        {"id":"PVTI_2","fullDatabaseId":"1002","content":{"__typename":"DraftIssue","id":"DI_2","title":"Draft","body":"Its body","assignees":{"totalCount":0,"nodes":[]}},
          "fieldValues":{"totalCount":1,"nodes":[{"__typename":"ProjectV2ItemFieldNumberValue","number":2.0,"field":{"id":"F_est"}}]}},
         {"id":"PVTI_3","fullDatabaseId":"1003","content":null,"fieldValues":{"totalCount":0,"nodes":[]}}]}}}}}"#;
-    let (gh, seen) = github(vec![Reply::new(200, project), Reply::new(200, items)]).await;
-    let p = gh.project(&roadmap(), Some(2), None).await.unwrap();
+    // The view sorts its items, so they're all fetched: the rest come
+    // after `c3`. Then the archived ones.
+    let rest = r#"{"data":{"repositoryOwner":{"projectV2":{"items":{"totalCount":4,"pageInfo":{"hasNextPage":false,"endCursor":"c4"},"nodes":[
+        {"id":"PVTI_4","fullDatabaseId":"1004","content":{"__typename":"DraftIssue","id":"DI_4","title":"Later","body":"","assignees":{"totalCount":0,"nodes":[]}},"fieldValues":{"totalCount":0,"nodes":[]}}]}}}}}"#;
+    let archived = r#"{"data":{"repositoryOwner":{"projectV2":{"items":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":"a1"},"nodes":[
+        {"id":"PVTI_9","fullDatabaseId":"1009","isArchived":true,"content":{"__typename":"DraftIssue","id":"DI_9","title":"Old","body":"","assignees":{"totalCount":0,"nodes":[]}},"fieldValues":{"totalCount":0,"nodes":[]}}]}}}}}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, project),
+        Reply::new(200, items),
+        Reply::new(200, rest),
+        Reply::new(200, archived),
+    ])
+    .await;
+    let mut p = gh.project(&roadmap(), Some(2), None).await.unwrap();
+    assert_eq!((p.items.items.len(), p.items.next.as_deref()), (4, None));
+    assert!(p.archived.items.iter().all(|it| it.archived));
+    assert_eq!(p.item(1009).map(|it| it.id.as_str()), Some("PVTI_9"));
+    p.items.items.truncate(3);
     assert_eq!((p.view, p.can_update), (2, true));
     let plan = p.shown().unwrap();
     assert_eq!(
@@ -2699,7 +2771,6 @@ async fn a_project_reads_its_view_and_the_items_its_filter_finds() {
         sprints.iter().map(|s| s.completed).collect::<Vec<_>>(),
         [false, true]
     );
-    assert_eq!(p.items.next.as_deref(), Some("c3"));
     let [issue, draft, hidden] = p.items.items.as_slice() else {
         panic!("{:?}", p.items);
     };
@@ -2725,6 +2796,62 @@ async fn a_project_reads_its_view_and_the_items_its_filter_finds() {
     // The items are what the view's filter finds.
     assert!(seen[1].query().contains("items(first: 50"));
     assert_eq!(seen[1].json()["variables"]["query"], "-status:Done");
+    assert_eq!(seen[2].json()["variables"]["after"], "c3");
+    assert_eq!(seen[3].json()["variables"]["archived"][0], "ARCHIVED");
+}
+
+/// Adding an issue names it by its node ID, which is asked for first; a
+/// draft, archiving and restoring, and a draft's edit are a mutation
+/// each.
+#[tokio::test]
+async fn project_items_are_added_archived_and_edited() {
+    use ghtui::api::change::Change;
+    use ghtui::api::project::ProjectChange;
+    let (gh, seen) = github(vec![
+        Reply::new(
+            200,
+            r#"{"data":{"repository":{"issueOrPullRequest":{"id":"I_20"}}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"addProjectV2ItemById":{"item":{"id":"PVTI_20"}}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"unarchiveProjectV2Item":{"item":{"id":"PVTI_9"}}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"updateProjectV2DraftIssue":{"draftIssue":{"id":"DI_2"}}}}"#,
+        ),
+    ])
+    .await;
+    let project = NodeId::new("PVT_1");
+    for change in [
+        ProjectChange::Add {
+            project: project.clone(),
+            repo: RepoId::new("o", "r"),
+            number: 20,
+        },
+        ProjectChange::Archive {
+            project: project.clone(),
+            item: NodeId::new("PVTI_9"),
+            archived: false,
+        },
+        ProjectChange::EditDraft {
+            draft: NodeId::new("DI_2"),
+            title: "Draft".into(),
+            body: "Its body".into(),
+        },
+    ] {
+        gh.change(&Change::Project(change)).await.unwrap();
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0].json()["variables"]["number"], 20);
+    assert!(seen[1].query().contains("addProjectV2ItemById"));
+    assert_eq!(seen[1].json()["variables"]["content"], "I_20");
+    assert!(seen[2].query().contains("unarchiveProjectV2Item"));
+    assert_eq!(seen[3].json()["variables"]["body"], "Its body");
 }
 
 /// Setting a field sends its value as GitHub takes it; clearing it is a
@@ -2810,4 +2937,498 @@ async fn an_owners_projects_page_and_say_what_scope_they_need() {
     assert!(seen[0].query().contains("projectsV2(first: 30"));
     assert_eq!(seen[0].json()["variables"]["login"], "o");
     assert_eq!(seen[0].json()["variables"]["after"], "p0");
+}
+
+// ---- the Security tab's alerts ------------------------------------------------
+
+/// A code scanning alert as GitHub sends it.
+const CODE_ALERT: &str = r#"{"number":2,"created_at":"2026-10-12T13:58:34Z","updated_at":"2026-10-12T13:58:34Z","state":"open","fixed_at":null,"dismissed_by":null,"dismissed_at":null,"dismissed_reason":null,"dismissed_comment":null,"rule":{"id":"ghtui/hardcoded-word","severity":"warning","description":"A hard-coded word","name":"HardcodedWord","tags":["security"],"full_description":"The file names a word.","help":"Read it from **configuration**.","security_severity_level":"high"},"tool":{"name":"ghtui-check","guid":null,"version":"1.0.0"},"most_recent_instance":{"ref":"refs/heads/main","commit_sha":"75c61df02bc009d61a80ad467606772ba0a92c22","message":{"text":"This line hard-codes a word."},"location":{"path":"file.txt","start_line":1,"end_line":1}}}"#;
+
+/// An alert list sends its filter as the API's parameters, pages by the
+/// `Link` header's own cursor, and reads each alert's file and line.
+#[tokio::test]
+async fn alert_lists_filter_and_page() {
+    use ghtui::api::security::{AlertKind, Detail};
+    let page: Vec<&str> = std::iter::repeat_n(CODE_ALERT, 30).collect();
+    let next = r#"<https://api.github.com/repositories/1/code-scanning/alerts?per_page=30&page=2>; rel="next""#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, format!("[{}]", page.join(","))).header("link", next),
+        Reply::new(200, format!("[{CODE_ALERT}]")),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let kind = AlertKind::CodeScanning;
+    let first = gh
+        .alerts(&repo, kind, "is:open branch:main", None)
+        .await
+        .unwrap();
+    assert_eq!(first.results.next.as_deref(), Some("page=2"));
+    let Some(Detail::Code(code)) = first.results.items.first().map(|a| &a.detail) else {
+        panic!("{first:?}");
+    };
+    assert_eq!(
+        (code.path.as_deref(), code.lines),
+        (Some("file.txt"), Some((1, 1)))
+    );
+    let more = gh
+        .alerts(&repo, kind, "is:open branch:main", first.results.next)
+        .await
+        .unwrap();
+    assert_eq!(more.results.next, None);
+    let lines: Vec<String> = (seen.lock().unwrap().iter())
+        .map(|s| s.request_line.clone())
+        .collect();
+    assert!(
+        lines[0].starts_with(
+            "GET /repos/o/r/code-scanning/alerts?per_page=30&state=open&ref=refs%2Fheads%2Fmain "
+        ),
+        "{lines:?}"
+    );
+    assert!(lines[1].contains("&page=2 "), "{lines:?}");
+}
+
+/// Alerts that are off are an empty list that says so; a token without
+/// the scope is told which and how to add it.
+#[tokio::test]
+async fn alerts_say_when_they_are_off_or_out_of_reach() {
+    use ghtui::api::security::AlertKind;
+    let (gh, _) = github(vec![
+        Reply::new(
+            403,
+            r#"{"message":"Dependabot alerts are disabled for this repository."}"#,
+        ),
+        Reply::new(404, r#"{"message":"Not Found"}"#).header("x-oauth-scopes", "gist, read:org"),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let off = gh
+        .alerts(&repo, AlertKind::Dependabot, "is:open", None)
+        .await
+        .unwrap();
+    assert_eq!(
+        off.off.as_deref(),
+        Some("Dependabot alerts are disabled for this repository")
+    );
+    match gh
+        .alerts(&repo, AlertKind::SecretScanning, "is:open", None)
+        .await
+    {
+        Err(ApiError::Denied(why)) => {
+            assert!(
+                why.contains("`gh auth refresh -s security_events`"),
+                "{why}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Dismissing sends each kind's own words; reopening, the open state.
+#[tokio::test]
+async fn alerts_are_dismissed_and_reopened() {
+    use ghtui::api::change::Change;
+    use ghtui::api::security::{AlertChange, AlertKind, AlertRef};
+    let (gh, seen) = github(vec![
+        Reply::new(200, "{}"),
+        Reply::new(200, "{}"),
+        Reply::new(200, "{}"),
+    ])
+    .await;
+    let alert = |kind| AlertRef {
+        repo: RepoId::new("o", "r"),
+        kind,
+        number: 3,
+    };
+    for (kind, dismiss) in [
+        (
+            AlertKind::Dependabot,
+            Some(("tolerable_risk".to_owned(), "fine".to_owned())),
+        ),
+        (
+            AlertKind::SecretScanning,
+            Some(("revoked".into(), String::new())),
+        ),
+        (AlertKind::CodeScanning, None),
+    ] {
+        let change = Change::Alert(AlertChange {
+            alert: alert(kind),
+            dismiss,
+        });
+        gh.change(&change).await.unwrap();
+    }
+    let seen = seen.lock().unwrap();
+    let sent: Vec<(String, serde_json::Value)> = (seen.iter())
+        .map(|s| (s.request_line.clone(), s.json()))
+        .collect();
+    assert!(
+        sent[0]
+            .0
+            .starts_with("PATCH /repos/o/r/dependabot/alerts/3 ")
+    );
+    assert_eq!(
+        sent[0].1,
+        serde_json::json!({"state": "dismissed", "dismissed_reason": "tolerable_risk", "dismissed_comment": "fine"})
+    );
+    assert!(
+        sent[1]
+            .0
+            .starts_with("PATCH /repos/o/r/secret-scanning/alerts/3 ")
+    );
+    assert_eq!(
+        sent[1].1,
+        serde_json::json!({"state": "resolved", "resolution": "revoked"})
+    );
+    assert!(
+        sent[2]
+            .0
+            .starts_with("PATCH /repos/o/r/code-scanning/alerts/3 ")
+    );
+    assert_eq!(sent[2].1, serde_json::json!({"state": "open"}));
+}
+
+// ---- releases, gists and subscriptions ------------------------------------------------
+
+/// A release is made with its tag, target, title and notes, and whether
+/// it's a draft, a pre-release or the latest; a pre-release is never the
+/// latest. GitHub's notes are asked for the tag; a 422 says what's wrong.
+#[tokio::test]
+async fn a_release_is_made_as_written() {
+    use ghtui::api::release::NewRelease;
+    let made = r#"{"tag_name":"v1.2","draft":false,"html_url":"https://github.com/o/r/releases/tag/v1.2"}"#;
+    let notes = r###"{"name":"v1.2","body":"## What's Changed\n* Fix by @a"}"###;
+    let taken = r#"{"message":"Validation Failed","errors":[{"resource":"Release","code":"already_exists","field":"tag_name"}]}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(201, made),
+        Reply::new(200, notes),
+        Reply::new(422, taken),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let new = NewRelease {
+        repo: repo.clone(),
+        tag: "v1.2".into(),
+        target: Some("main".into()),
+        name: "Version 1.2".into(),
+        notes: "Fixes".into(),
+        draft: false,
+        prerelease: true,
+        latest: true,
+    };
+    let made = gh.create_release(&new).await.unwrap();
+    assert!(!made.draft);
+    let notes = gh.release_notes(&repo, "v1.2", None).await.unwrap();
+    assert!(notes.body.starts_with("## What's Changed"));
+    match gh.create_release(&new).await {
+        Err(ApiError::Http {
+            status: 422,
+            message,
+        }) => {
+            assert_eq!(message, "tag_name already exists");
+        }
+        other => panic!("{other:?}"),
+    }
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("POST /repos/o/r/releases ")
+    );
+    let body = seen[0].json();
+    assert_eq!(body["tag_name"], "v1.2");
+    assert_eq!(body["target_commitish"], "main");
+    assert_eq!(body["name"], "Version 1.2");
+    assert_eq!(body["body"], "Fixes");
+    assert_eq!(body["draft"], false);
+    assert_eq!(body["prerelease"], true);
+    assert_eq!(body["make_latest"], "false");
+    assert!(
+        seen[1]
+            .request_line
+            .starts_with("POST /repos/o/r/releases/generate-notes ")
+    );
+    assert_eq!(seen[1].json(), serde_json::json!({ "tag_name": "v1.2" }));
+}
+
+/// A gist is made with its files and visibility; an edit sends only what
+/// changed (a removed file as null); deleting deletes it.
+#[tokio::test]
+async fn gists_are_made_changed_and_deleted() {
+    use ghtui::api::gist::{FileChange, GistChange, NewGist};
+    let made = r#"{"id":"aa5a315d61ae9438b18d","owner":{"login":"octocat"}}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(201, made),
+        Reply::new(200, made),
+        Reply::new(204, ""),
+    ])
+    .await;
+    let new = NewGist {
+        description: "Notes".into(),
+        public: false,
+        files: vec![("a.md".into(), "# A".into())],
+    };
+    let made = gh.create_gist(&new).await.unwrap();
+    assert_eq!(made.id, "aa5a315d61ae9438b18d");
+    let change = GistChange {
+        id: made.id.clone(),
+        description: "More notes".into(),
+        changed: vec![
+            FileChange {
+                was: "a.md".into(),
+                now: Some(("b.md".into(), "# B".into())),
+            },
+            FileChange {
+                was: "old.txt".into(),
+                now: None,
+            },
+        ],
+        added: vec![("c.rs".into(), "fn c() {}".into())],
+    };
+    gh.update_gist(&change).await.unwrap();
+    gh.delete_gist(&made.id).await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].request_line.starts_with("POST /gists "));
+    assert_eq!(
+        seen[0].json(),
+        serde_json::json!({
+            "description": "Notes",
+            "public": false,
+            "files": { "a.md": { "content": "# A" } },
+        })
+    );
+    assert!(
+        seen[1]
+            .request_line
+            .starts_with("PATCH /gists/aa5a315d61ae9438b18d ")
+    );
+    assert_eq!(
+        seen[1].json(),
+        serde_json::json!({
+            "description": "More notes",
+            "files": {
+                "a.md": { "filename": "b.md", "content": "# B" },
+                "old.txt": null,
+                "c.rs": { "content": "fn c() {}" },
+            },
+        })
+    );
+    assert!(
+        seen[2]
+            .request_line
+            .starts_with("DELETE /gists/aa5a315d61ae9438b18d ")
+    );
+}
+
+/// A thread's subscription is read from the issue or pull request, a
+/// repository's from it, and set with GitHub's one mutation.
+#[tokio::test]
+async fn subscriptions_are_read_and_set() {
+    use ghtui::api::watch::{SubscriptionState, Watched};
+    let thread = r#"{"data":{"repository":{"issueOrPullRequest":{"__typename":"PullRequest","id":"PR_1","viewerSubscription":"UNSUBSCRIBED","viewerCanSubscribe":true}}}}"#;
+    let repo = r#"{"data":{"repository":{"id":"R_1","viewerSubscription":"SUBSCRIBED","viewerCanSubscribe":true}}}"#;
+    let set = r#"{"data":{"updateSubscription":{"clientMutationId":null}}}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, thread),
+        Reply::new(200, repo),
+        Reply::new(200, set),
+        Reply::new(200, "{}"),
+        Reply::new(204, ""),
+    ])
+    .await;
+    let o_r = RepoId::new("o", "r");
+    let pr = Watched::Thread(o_r.clone(), 7);
+    let s = gh.subscription(&pr).await.unwrap();
+    assert_eq!(s.id, NodeId::new("PR_1"));
+    assert_eq!(s.state, Some(SubscriptionState::Unsubscribed));
+    let whole = Watched::Repo(o_r);
+    let s = gh.subscription(&whole).await.unwrap();
+    assert_eq!(s.state, Some(SubscriptionState::Subscribed));
+    gh.subscribe(&pr, &NodeId::new("PR_1"), SubscriptionState::Ignored)
+        .await
+        .unwrap();
+    // A repository's, through REST, which the repo scope allows.
+    let id = NodeId::new("R_1");
+    gh.subscribe(&whole, &id, SubscriptionState::Ignored)
+        .await
+        .unwrap();
+    gh.subscribe(&whole, &id, SubscriptionState::Unsubscribed)
+        .await
+        .unwrap();
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[3]
+            .request_line
+            .starts_with("PUT /repos/o/r/subscription ")
+    );
+    assert_eq!(
+        seen[3].json(),
+        serde_json::json!({ "subscribed": false, "ignored": true })
+    );
+    assert!(
+        seen[4]
+            .request_line
+            .starts_with("DELETE /repos/o/r/subscription ")
+    );
+    assert!(
+        seen[0]
+            .query()
+            .contains("issueOrPullRequest(number: $number)")
+    );
+    assert_eq!(seen[0].json()["variables"]["number"], 7);
+    assert!(!seen[1].query().contains("$number"));
+    assert!(seen[2].query().contains("updateSubscription"));
+    assert_eq!(seen[2].json()["variables"]["id"], "PR_1");
+    assert_eq!(seen[2].json()["variables"]["state"], "IGNORED");
+}
+
+/// Running a workflow by hand posts its branch and inputs, and asks for
+/// the run it starts; a server that doesn't say (204) started one anyway.
+#[tokio::test]
+async fn a_workflow_dispatch_posts_its_inputs_and_reads_the_run() {
+    let (gh, seen) = github(vec![
+        Reply::new(
+            200,
+            r#"{"workflow_run_id":55,"run_url":"u","html_url":"h"}"#,
+        ),
+        Reply::new(204, ""),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let inputs = [("outcome".to_owned(), "pass".to_owned())];
+    let run = gh.dispatch(&repo, "ci.yml", "main", &inputs).await.unwrap();
+    assert_eq!(run, Some(55));
+    assert_eq!(
+        gh.dispatch(&repo, "ci.yml", "main", &[]).await.unwrap(),
+        None
+    );
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("POST /repos/o/r/actions/workflows/ci.yml/dispatches "),
+        "{}",
+        seen[0].request_line
+    );
+    let body = seen[0].json();
+    assert_eq!(body["ref"], "main");
+    assert_eq!(body["inputs"]["outcome"], "pass");
+    assert_eq!(body["return_run_details"], true);
+}
+
+/// An artifact is saved where asked, and a file already there is kept
+/// unless replacing it was asked for.
+#[tokio::test]
+async fn an_artifact_is_saved_and_never_over_a_file_unasked() {
+    let (gh, seen) = github(vec![Reply::new(200, "zip bytes"), Reply::new(200, "newer")]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("report.zip");
+    let repo = RepoId::new("o", "r");
+    let size = gh.download_artifact(&repo, 31, &dest, false).await.unwrap();
+    assert_eq!(size, 9);
+    assert_eq!(std::fs::read_to_string(&dest).unwrap(), "zip bytes");
+    gh.download_artifact(&repo, 31, &dest, false)
+        .await
+        .unwrap_err();
+    assert_eq!(std::fs::read_to_string(&dest).unwrap(), "zip bytes");
+    assert!(
+        seen.lock().unwrap()[0]
+            .request_line
+            .starts_with("GET /repos/o/r/actions/artifacts/31/zip ")
+    );
+}
+
+/// A finished job's annotations come with it, worst first; a file's link
+/// opens its lines, one about the run has none.
+#[tokio::test]
+async fn a_jobs_annotations_come_with_it() {
+    let job = r#"{"id":2,"run_id":9,"name":"test","status":"completed","conclusion":"failure","run_attempt":1,"steps":[]}"#;
+    let run = r#"{"id":9,"run_number":1,"event":"push","head_sha":"abc","status":"completed","conclusion":"failure","run_attempt":1}"#;
+    let annotations = r#"[
+        {"path":".github","blob_href":"https://github.com/o/r/blob/abc/.github","start_line":1,"end_line":1,"annotation_level":"warning","title":"","message":"Node 20"},
+        {"path":"src/a.rs","blob_href":"https://github.com/o/r/blob/abc/src/a.rs","start_line":3,"end_line":4,"annotation_level":"failure","title":"t","message":"boom"}
+    ]"#;
+    let (gh, _) = github(vec![
+        Reply::new(200, job),
+        Reply::new(200, run),
+        Reply::new(200, r#"{"output":{"annotations_count":2}}"#),
+        Reply::new(200, annotations),
+    ])
+    .await;
+    let job = gh.job(&RepoId::new("o", "r"), 2).await.unwrap();
+    let a = &job.annotations;
+    assert_eq!(a.len(), 2);
+    assert_eq!(a[0].place(), "src/a.rs:3");
+    assert_eq!(
+        a[0].url.as_deref(),
+        Some("https://github.com/o/r/blob/abc/src/a.rs#L3-L4")
+    );
+    assert_eq!(
+        (a[1].place().as_str(), a[1].url.as_deref()),
+        ("the run", None)
+    );
+}
+
+/// A review's summary is edited, and your pending review deleted, with
+/// their own mutations; a commit is commented on, and its comments read,
+/// through REST.
+#[tokio::test]
+async fn reviews_and_commit_comments_send_their_requests() {
+    use ghtui::api::change::Change;
+    use ghtui::api::edit::{Edit, Written};
+    let ok = |field: &str| {
+        Reply::new(
+            200,
+            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
+        )
+    };
+    let comments = r#"[{"id":5,"node_id":"CC_5","user":{"login":"alice"},"body":"Nice",
+        "created_at":"2026-10-01T00:00:00Z","path":"src/a.rs","line":3,
+        "html_url":"https://github.com/o/r/commit/abc#commitcomment-5"},
+        {"id":6,"node_id":"CC_6","user":null,"body":"Whole","created_at":"2026-10-02T00:00:00Z",
+        "path":null,"line":null,"html_url":"https://github.com/o/r/commit/abc#commitcomment-6"}]"#;
+    let (gh, seen) = github(vec![
+        ok("updatePullRequestReview"),
+        ok("deletePullRequestReview"),
+        Reply::new(201, "{}"),
+        Reply::new(200, comments),
+    ])
+    .await;
+    let id = NodeId::new("PRR_1");
+    let body = "Better words".to_owned();
+    let of = Written::Review;
+    gh.edit(&Edit::Body {
+        of,
+        id: id.clone(),
+        body,
+    })
+    .await
+    .unwrap();
+    gh.edit(&Edit::Delete { of, id }).await.unwrap();
+    let repo = RepoId::new("o", "r");
+    gh.change(&Change::CommitComment {
+        repo: repo.clone(),
+        oid: "abc".into(),
+        body: "Why this?".into(),
+    })
+    .await
+    .unwrap();
+    let read = gh.commit_comments(&repo, "abc").await.unwrap();
+    assert_eq!(read.len(), 2);
+    assert_eq!(read[0].path.as_deref(), Some("src/a.rs"));
+    assert_eq!((read[1].author.as_str(), read[1].line), ("ghost", None));
+    assert!(read[0].as_thread().is_some() && read[1].as_thread().is_none());
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("updatePullRequestReview("));
+    assert_eq!(seen[0].json()["variables"]["body"], "Better words");
+    assert!(seen[1].query().contains("deletePullRequestReview("));
+    assert!(
+        seen[2]
+            .request_line
+            .starts_with("POST /repos/o/r/commits/abc/comments ")
+    );
+    assert_eq!(seen[2].json()["body"], "Why this?");
+    assert!(
+        seen[3]
+            .request_line
+            .starts_with("GET /repos/o/r/commits/abc/comments")
+    );
 }

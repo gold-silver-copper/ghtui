@@ -61,20 +61,23 @@ fn long_conversations_say_what_is_left_out() {
             .join("\n")
     };
     let mut issue = fixtures::issue();
-    issue.comments = Capped::new(issue.comments.items, 120);
+    let shown = issue.timeline.len() as u64;
+    issue.timeline = Capped::new(issue.timeline.items, shown + 116);
+    issue.comment_count = 120;
     let mut state = with_issue(Mode::Dark);
     let route = Route::Issue {
         repo: ghtui(),
         number: 14,
     };
     open(&mut state, route, Data::Issue(Some(Box::new(issue))));
-    assert!(text(&state).contains("… 119 earlier comments on GitHub"));
+    assert!(text(&state).contains("… 116 earlier comments and events on GitHub"));
     assert!(text(&state).contains("120 comments"));
 
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
     let mut activity = fixtures::activity();
-    activity.comments = Capped::new(activity.comments.items, 101);
-    activity.reviews = Capped::new(activity.reviews.items, 3);
+    let shown = activity.timeline.len() as u64;
+    activity.timeline = Capped::new(activity.timeline.items, shown + 1);
+    activity.comment_count = 101;
     activity.commits = Capped::new(activity.commits.items, 250);
     let mut state = with_pr(Mode::Dark);
     fetched(
@@ -83,8 +86,10 @@ fn long_conversations_say_what_is_left_out() {
         Data::PrActivity(Box::new(activity)),
     );
     let page = text(&state);
-    assert!(page.contains("… 100 earlier comments on GitHub"), "{page}");
-    assert!(page.contains("… 1 earlier review on GitHub"), "{page}");
+    assert!(
+        page.contains("… 1 earlier comment or event on GitHub"),
+        "{page}"
+    );
     let tabs = state.chrome().tabs;
     let count = |label: &str| {
         tabs.iter()
@@ -106,16 +111,14 @@ fn long_conversations_say_what_is_left_out() {
 fn a_dismissed_review_reads_as_dismissed() {
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
     let mut activity = fixtures::activity();
-    activity.reviews = crate::api::model::Capped::new(
-        vec![crate::api::browse::ReviewSummary {
-            id: None,
-            author: "hubot".into(),
-            state: crate::api::model::ReviewState::Dismissed,
-            body: String::new(),
-            submitted_at: "2026-10-01T10:00:00Z".into(),
-        }],
-        1,
+    let dismissed = fixtures::review(
+        9,
+        "hubot",
+        crate::api::model::ReviewState::Dismissed,
+        "",
+        "2026-10-01T10:00:00Z",
     );
+    activity.timeline = vec![crate::api::timeline::Item::Review(dismissed)].into();
     let mut state = with_pr(Mode::Dark);
     fetched(
         &mut state,
@@ -134,7 +137,7 @@ fn a_dismissed_review_reads_as_dismissed() {
         .join("\n");
     let hubot: Vec<&str> = page.lines().filter(|l| l.contains("hubot")).collect();
     assert!(
-        page.contains("had a review dismissed"),
+        page.contains("hubot reviewed (dismissed)"),
         "hubot's lines: {hubot:?}"
     );
 }
@@ -692,3 +695,15 @@ mod code_nav;
 
 /// Projects: their views, and moving and setting their items.
 mod projects;
+
+/// Discussions: writing an answer, replying in a thread, reacting and
+/// marking the answer, each followed until GitHub shows it.
+mod discussions;
+/// Reviews and timelines: what a review said and where, the reviewers,
+/// every review, and the events between comments.
+mod reviews;
+/// The Security tab's alerts: their lists and pages, and dismissing and
+/// reopening them.
+mod security;
+/// Releases, gists, wiki pages and subscriptions.
+mod writes;

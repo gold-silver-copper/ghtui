@@ -11,7 +11,7 @@
 
 mod page;
 pub mod templates;
-mod yaml;
+pub(crate) mod yaml;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -245,7 +245,11 @@ fn not_a_clone(repo: &RepoId) -> Failure {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Answer {
     Push,
-    Create { draft: bool },
+    Create {
+        draft: bool,
+    },
+    /// A release's, a gist's ([`crate::writes`]).
+    Write(crate::writes::Answer),
 }
 
 /// A question before a pull request is pushed or made: what, what's
@@ -268,6 +272,7 @@ impl Ask {
         Some(match answer {
             Answer::Push => "Pushing…",
             Answer::Create { .. } => "Creating the pull request…",
+            Answer::Write(answer) => answer.busy(),
         })
     }
 }
@@ -769,6 +774,9 @@ pub fn on_ask_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 
 #[must_use]
 fn answer_ask(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
+    if let Answer::Write(answer) = answer {
+        return crate::writes::answer(state, route, answer);
+    }
     let Some(form) = state.creating.forms.get(route) else {
         return Vec::new();
     };
@@ -777,6 +785,7 @@ fn answer_ask(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
     };
     let head = form.head.clone().unwrap_or_default();
     let work = match answer {
+        Answer::Write(_) => return Vec::new(),
         Answer::Push => Work::Push { repo, branch: head },
         Answer::Create { draft } => {
             let hs = match head_problem(state, form) {

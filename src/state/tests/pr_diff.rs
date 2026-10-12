@@ -23,18 +23,26 @@ fn a_pr_diff_opened_from_a_cached_pr_fetches_the_pr() {
     );
 }
 
-/// A commit's diff starts only the diff job; what belongs to pull
-/// requests says so.
+/// A commit's diff starts the diff job and reads the commit's comments;
+/// what belongs to pull requests says so.
 #[test]
 fn a_commit_diff_has_no_review() {
     let mut s = state();
     let of = DiffOf::Commit(RepoId::new("o", "r"), Oid::parse(&"a".repeat(40)).unwrap());
     let cmds = s.open_diff(of.clone(), None);
-    assert!(matches!(
-        &cmds[..],
-        [Cmd::Git(Git::LoadDiff { of: o, base, .. })]
-            if *o == of && *base == crate::diff_job::PrBase::default()
-    ));
+    assert!(
+        matches!(
+            &cmds[..],
+            [
+                Cmd::Git(Git::LoadDiff { of: o, base, .. }),
+                Cmd::Api(Api::Fetch {
+                    key: crate::browse::DataKey::CommitComments(..),
+                    ..
+                }),
+            ] if *o == of && *base == crate::diff_job::PrBase::default()
+        ),
+        "{cmds:?}"
+    );
     s.diffs.insert(of, crate::snapshot_tests::diff_fixture());
     for action in [Action::Comment, Action::ToggleViewed, Action::MarkReviewed] {
         s.notices.dismiss();

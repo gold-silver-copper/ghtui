@@ -96,8 +96,9 @@ fn arrows_move_comment_by_comment_and_enter_quotes() {
     for _ in 0..40 {
         press(&mut state, "<Down>");
     }
-    assert_eq!(page(&state).selected, Some(2), "the comment box at the end");
-    press(&mut state, "<Up>");
+    assert_eq!(page(&state).selected, Some(3), "the comment box at the end");
+    // Past the event that a pull request will close it.
+    press(&mut state, "<Up><Up>");
     assert_eq!(page(&state).selected, Some(1), "hubot's comment");
     press(&mut state, ">");
     let compose = overlay!(state, Compose);

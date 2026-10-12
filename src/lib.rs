@@ -12,8 +12,10 @@ pub mod theme;
 pub mod ui;
 
 mod act;
+mod actions;
 mod browse;
 mod chrome;
+mod code_index;
 mod code_nav;
 mod config;
 #[cfg(test)]
@@ -21,9 +23,11 @@ mod crawl;
 mod create;
 mod diff_job;
 mod diff_screen;
+mod discuss;
 mod edit;
 #[cfg(test)]
 mod fixtures;
+mod gist;
 mod home;
 mod join;
 mod keymap;
@@ -32,18 +36,24 @@ mod nav;
 mod notice;
 mod picker;
 mod projects;
+mod release;
 mod review;
 pub mod route;
 mod runtime;
+mod security;
 #[cfg(test)]
 mod sequence_tests;
 #[cfg(test)]
 mod snapshot_tests;
+mod source;
 mod state;
 mod tabs;
+mod talk;
 mod typing;
 mod view;
+mod watch;
 pub mod wiki;
+mod writes;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

@@ -25,7 +25,7 @@ use crate::theme::{Bg, Syntax};
 
 use crate::ui::markdown::{self, LinkBase};
 use crate::ui::page::{Frame, Link, Page, PageLine, Role, Seg, Tone};
-use crate::ui::text::noun;
+use crate::ui::text::{noun, short_sha};
 use crate::ui::{Fetched, Icons, cols, time};
 
 mod commits;
@@ -42,6 +42,9 @@ mod pull;
 mod repository;
 mod review;
 mod runs;
+mod security;
+mod timeline;
+mod writes;
 
 pub use commits::*;
 pub use conversation::*;
@@ -57,6 +60,9 @@ pub use pull::*;
 pub use repository::*;
 pub use review::*;
 pub use runs::*;
+pub use security::*;
+pub use timeline::{FOLD_AFTER, LinesAt, Marks, commit_comments, pinned_issues};
+pub use writes::*;
 
 // ---- URLs ----------------------------------------------------------------------
 
@@ -488,6 +494,7 @@ fn day(iso: &str) -> String {
 pub struct Keys<'a> {
     pub comment: &'a str,
     pub find_file: &'a str,
+    pub archive: &'a str,
     pub filter: &'a str,
 }
 
@@ -676,6 +683,7 @@ mod tests {
             has_wiki: false,
             branches: 1,
             tags: 0,
+            pinned_issues: Capped::default(),
             entries: vec![TreeEntry {
                 name: "a.rs".into(),
                 path: "a.rs".into(),

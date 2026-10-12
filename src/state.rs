@@ -62,6 +62,8 @@ pub enum Msg {
     },
     /// The next page of a list, asked for after the cursor.
     FetchedMore(DataKey, String, Result<Data, ApiError>),
+    /// Where a page's data came from, git or the API; sent before it.
+    Source(DataKey, crate::source::From),
     /// GitHub's answer to a change.
     Changed(Change, act::By, Result<(), ApiError>),
     Mouse(MouseEvent),
@@ -97,10 +99,10 @@ pub enum Msg {
         crate::api::model::RepoId,
         Result<crate::api::mention::Mentionable, ApiError>,
     ),
-    /// Where a name is defined in the repository.
-    Definitions(
+    /// What the repository's clone (or code search) answered about code.
+    Code(
         crate::code_nav::Ask,
-        Result<crate::code_nav::Found, ApiError>,
+        Result<crate::code_nav::Answer, String>,
     ),
     /// What GitHub answered when asked whether a watched pull request
     /// changed.
@@ -108,8 +110,21 @@ pub enum Msg {
         PrRef,
         Vec<(crate::live::Probe, Result<crate::api::Polled, ApiError>)>,
     ),
+    /// What GitHub answered when asked whether another watched page
+    /// changed.
+    Watched(
+        crate::live::page::Watched,
+        Vec<(
+            crate::live::page::Probe,
+            Result<crate::api::Polled, ApiError>,
+        )>,
+    ),
     /// New issues and pull requests, and checking one out.
     Create(crate::create::Done),
+    /// Releases, gists, wiki pages and subscriptions.
+    Write(crate::writes::Done),
+    /// An artifact saved, a workflow run by hand.
+    Actions(crate::actions::Done),
 }
 
 /// Why background work failed. Shows as its message with its causes
@@ -194,6 +209,9 @@ pub enum Cmd {
     /// Making an issue or pull request, or git work in your clone;
     /// answered by [`Msg::Create`].
     Create(crate::create::Work),
+    /// A release, a gist, a wiki page or a subscription; answered by
+    /// [`Msg::Write`].
+    Write(crate::writes::Work),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -250,13 +268,17 @@ pub enum Api {
     },
     /// Who and what the repository's comments can mention.
     FetchMentionable(crate::api::model::RepoId),
-    /// Where a name is defined in the repository, answered by
-    /// [`Msg::Definitions`].
-    FindDefinition(crate::code_nav::Ask),
     /// Whether a watched pull request changed, asked with ETags.
     Poll {
         pr: PrRef,
         asks: Vec<crate::live::Ask>,
+    },
+    /// Saving an artifact, running a workflow by hand.
+    Actions(crate::actions::Work),
+    /// Whether another watched page changed, asked with ETags.
+    Watch {
+        what: crate::live::page::Watched,
+        asks: Vec<crate::live::Ask<crate::live::page::Probe>>,
     },
 }
 
@@ -293,6 +315,9 @@ pub enum Git {
     /// review"; answered as the job's [`JobMsg::Since`].
     SinceReview(join::Joined<(PrRef, JobId, String)>),
     ListCommits(PrRef),
+    /// A question about the code at a revision (definitions, symbols,
+    /// references), answered by [`Msg::Code`].
+    Code(crate::code_nav::Ask),
 }
 
 /// Problems that last until they're fixed, shown in a banner above the
@@ -363,6 +388,15 @@ impl Screens {
         self.rest.push(screen);
     }
 
+    /// The screen under the last, if there's one.
+    pub fn below(&self) -> Option<&Screen> {
+        match self.rest.len() {
+            0 => None,
+            1 => Some(&self.first),
+            n => self.rest.get(n - 2),
+        }
+    }
+
     /// The last screen, unless it's the first.
     pub fn pop(&mut self) -> Option<Screen> {
         self.rest.pop()
@@ -425,6 +459,8 @@ pub struct State {
     pub data: HashMap<DataKey, Remote<Data>>,
     /// Bumped whenever data changes, so pages know to rebuild.
     pub data_gen: u64,
+    /// Where the data git can answer came from, git or the API.
+    pub sources: HashMap<DataKey, crate::source::From>,
     pub diffs: HashMap<DiffOf, DiffState>,
     pub viewer: Option<String>,
     /// How many notifications are unread, for the header.
@@ -464,12 +500,22 @@ pub struct State {
     pub pending: Option<act::Pending>,
     /// The pull request under review on screen, watched for changes.
     pub watch: Option<crate::live::Watch>,
+    /// Another page on screen watched for changes: a running job, runs,
+    /// an issue, a discussion.
+    pub page_watch: Option<crate::live::page::PageWatch>,
     /// The terminal has the focus.
     pub focused: bool,
     /// Who and what each repository's comments can mention, once asked.
     pub mentionable: HashMap<crate::api::model::RepoId, crate::api::mention::Mentionable>,
     /// New issues and pull requests being written, and your clones.
     pub creating: crate::create::Creating,
+    /// Releases, gists and wiki pages being written, and the change one
+    /// waits to see.
+    pub writing: crate::writes::Writing,
+    /// Workflows being run by hand: their forms.
+    pub dispatching: crate::actions::Dispatching,
+    /// Conversations: long reviews unfolded, and the like.
+    pub talk: crate::talk::Talk,
     pub quit: bool,
 }
 
@@ -489,6 +535,7 @@ impl State {
             prs: HashMap::new(),
             data: HashMap::new(),
             data_gen: 0,
+            sources: HashMap::new(),
             diffs: HashMap::new(),
             viewer: None,
             unread: None,
@@ -513,9 +560,13 @@ impl State {
             awaiting: None,
             pending: None,
             watch: None,
+            page_watch: None,
             focused: true,
             mentionable: HashMap::new(),
             creating: crate::create::Creating::default(),
+            writing: crate::writes::Writing::default(),
+            dispatching: crate::actions::Dispatching::default(),
+            talk: crate::talk::Talk::default(),
             quit: false,
         };
         state.sync_page();

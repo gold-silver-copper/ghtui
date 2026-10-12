@@ -89,7 +89,13 @@ pub struct Project {
     pub fields: Capped<ProjectField>,
     /// The view shown, by its number.
     pub view: u64,
+    /// The items the view's filter finds: all of them (up to
+    /// [`ALL_ITEMS`]) where the view sorts or groups them, as a board
+    /// does, else a page.
     pub items: Results<ProjectItem>,
+    /// The items archived, the newest 50 (whatever the view's filter):
+    /// what restoring one picks from.
+    pub archived: Results<ProjectItem>,
 }
 
 /// How a view lays out its items.
@@ -182,6 +188,8 @@ pub struct ProjectItem {
     pub id: NodeId,
     /// What its URL names it by (`?itemId=`).
     pub number: u64,
+    /// Out of the project's views, until it's restored.
+    pub archived: bool,
     pub content: ItemContent,
     /// Its values of the project's own fields, by field.
     pub values: Vec<(NodeId, FieldValue)>,
@@ -236,6 +244,8 @@ pub struct Linked {
 /// A draft issue: only in the project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Draft {
+    /// What editing it names it by (not the item's).
+    pub id: NodeId,
     pub title: String,
     pub body: String,
     pub assignees: Capped<String>,
@@ -294,9 +304,22 @@ impl Project {
         self.fields.iter().find(|f| f.id == *id)
     }
 
-    /// The item named `number` in URLs, if it's loaded.
+    /// The item named `number` in URLs, if it's loaded (in the view, or
+    /// archived).
     pub fn item(&self, number: u64) -> Option<&ProjectItem> {
-        self.items.items.iter().find(|i| i.number == number)
+        self.loaded().find(|i| i.number == number)
+    }
+
+    /// Every item loaded: the view's, then the archived.
+    pub fn loaded(&self) -> impl Iterator<Item = &ProjectItem> {
+        self.items.items.iter().chain(&self.archived.items)
+    }
+
+    /// Whether the view sorts or groups its items (a board's columns
+    /// group them): then they're all loaded, so the order and the groups
+    /// are the whole view's.
+    pub fn arranges(view: &ProjectView) -> bool {
+        view.layout == Layout::Board || view.group.is_some() || !view.sort.is_empty()
     }
 
     /// The field a board's columns are: the view's, or else Status (as
@@ -455,6 +478,38 @@ pub mod keys {
 /// How many items a page of a project has.
 const ITEMS: usize = 50;
 
+/// How many items a view that sorts or groups them loads at most.
+pub const ALL_ITEMS: usize = 1000;
+
+/// A change to a project's items, other than setting a field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectChange {
+    /// Add an issue or pull request, by its repository and number.
+    Add {
+        project: NodeId,
+        repo: RepoId,
+        number: u64,
+    },
+    /// Add a draft issue.
+    AddDraft {
+        project: NodeId,
+        title: String,
+        body: String,
+    },
+    /// Archive an item, or restore it (`archived: false`).
+    Archive {
+        project: NodeId,
+        item: NodeId,
+        archived: bool,
+    },
+    /// A draft issue's new title and body.
+    EditDraft {
+        draft: NodeId,
+        title: String,
+        body: String,
+    },
+}
+
 /// GitHub's word that the token lacks a scope projects need, said as what
 /// to do about it.
 fn scoped(err: ApiError) -> ApiError {
@@ -534,22 +589,33 @@ impl GitHub {
             return Err(ApiError::NotFound(format!("{project}'s {which}")));
         };
         let (number, filter) = (shown.number, shown.filter.clone());
-        let vars = serde_json::json!({
-            "login": login,
-            "number": project.number,
-            "after": after,
-            "query": filter,
-        });
-        let what = format!("{project}'s items");
-        let items: wire::Connection<WireItem> = (self.graphql_json(
-            &raw::project_items(),
-            vars,
-            &what,
-            "/repositoryOwner/projectV2/items",
-        ))
-        .await
-        .map_err(scoped)?;
-        self.check_connection(&items, ITEMS, &what);
+        // A view that sorts or groups its items does it over all of them,
+        // as GitHub does: they're all fetched, up to a limit.
+        let pages = if first && Project::arranges(shown) {
+            ALL_ITEMS / ITEMS
+        } else {
+            1
+        };
+        let mut items = self.project_items(project, &filter, after, false).await?;
+        for _ in 1..pages {
+            let Some(next) = items.next.take() else {
+                break;
+            };
+            let more = self
+                .project_items(project, &filter, Some(next), false)
+                .await?;
+            items.items.extend(more.items);
+            items.next = more.next;
+        }
+        let archived = if first {
+            self.project_items(project, "", None, true).await?
+        } else {
+            Results {
+                total: 0,
+                items: Vec::new(),
+                next: None,
+            }
+        };
         let key = keys::project(project, view);
         let found = Project {
             id: wire.id,
@@ -562,9 +628,96 @@ impl GitHub {
             views,
             fields,
             view: number,
-            items: items.filter_results(WireItem::into_item),
+            items,
+            archived,
         };
         Ok(self.kept_page(first, &key, found).await)
+    }
+
+    /// A page of a project's items that `filter` finds, from `after`: those
+    /// archived, or those not.
+    async fn project_items(
+        &self,
+        project: &ProjectRef,
+        filter: &str,
+        after: Option<String>,
+        archived: bool,
+    ) -> Result<Results<ProjectItem>, ApiError> {
+        let state = if archived { "ARCHIVED" } else { "NOT_ARCHIVED" };
+        let vars = serde_json::json!({
+            "login": project.owner.login(),
+            "number": project.number,
+            "after": after,
+            "query": filter,
+            "archived": [state],
+        });
+        let what = if archived {
+            format!("{project}'s archived items")
+        } else {
+            format!("{project}'s items")
+        };
+        let items: wire::Connection<WireItem> = (self.graphql_json(
+            &raw::project_items(),
+            vars,
+            &what,
+            "/repositoryOwner/projectV2/items",
+        ))
+        .await
+        .map_err(scoped)?;
+        self.check_connection(&items, ITEMS, &what);
+        Ok(items.filter_results(WireItem::into_item))
+    }
+
+    /// Makes a change to a project's items.
+    pub(crate) async fn change_project(&self, change: &ProjectChange) -> Result<(), ApiError> {
+        let (query, vars) = match change {
+            ProjectChange::Add {
+                project,
+                repo,
+                number,
+            } => {
+                #[derive(Deserialize)]
+                struct Found {
+                    id: NodeId,
+                }
+                let vars =
+                    serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
+                let found: Found = (self.graphql_json(
+                    raw::ISSUE_OR_PR_ID,
+                    vars,
+                    format!("{repo}#{number}"),
+                    "/repository/issueOrPullRequest",
+                ))
+                .await?;
+                let vars = serde_json::json!({ "project": project.as_str(), "content": found.id.as_str() });
+                (raw::ADD_PROJECT_ITEM, vars)
+            }
+            ProjectChange::AddDraft {
+                project,
+                title,
+                body,
+            } => (
+                raw::ADD_PROJECT_DRAFT,
+                serde_json::json!({ "project": project.as_str(), "title": title, "body": body }),
+            ),
+            ProjectChange::Archive {
+                project,
+                item,
+                archived,
+            } => (
+                if *archived {
+                    raw::ARCHIVE_PROJECT_ITEM
+                } else {
+                    raw::UNARCHIVE_PROJECT_ITEM
+                },
+                serde_json::json!({ "project": project.as_str(), "item": item.as_str() }),
+            ),
+            ProjectChange::EditDraft { draft, title, body } => (
+                raw::UPDATE_PROJECT_DRAFT,
+                serde_json::json!({ "draft": draft.as_str(), "title": title, "body": body }),
+            ),
+        };
+        self.mutate_json(query, vars).await.map_err(scoped)
     }
 
     /// Sets an item's field to `value`, or clears it (`None`).
@@ -789,6 +942,8 @@ struct WireItem {
     id: NodeId,
     /// A `BigInt`, which GitHub sends as a string.
     full_database_id: Option<serde_json::Value>,
+    #[serde(default)]
+    is_archived: bool,
     content: Option<WireContent>,
     field_values: wire::Counted<WireValue>,
 }
@@ -797,6 +952,7 @@ struct WireItem {
 #[serde(tag = "__typename")]
 enum WireContent {
     DraftIssue {
+        id: NodeId,
         title: String,
         body: String,
         assignees: wire::Counted<Login>,
@@ -944,10 +1100,12 @@ impl WireItem {
         let content = match self.content {
             None => ItemContent::Redacted,
             Some(WireContent::DraftIssue {
+                id,
                 title,
                 body,
                 assignees,
             }) => ItemContent::Draft(Draft {
+                id,
                 title,
                 body,
                 assignees: assignees.into_capped(|u| Some(u.login)),
@@ -974,6 +1132,7 @@ impl WireItem {
         Some(ProjectItem {
             id: self.id,
             number,
+            archived: self.is_archived,
             content,
             values: values.filter_map(WireValue::into_value).collect(),
         })

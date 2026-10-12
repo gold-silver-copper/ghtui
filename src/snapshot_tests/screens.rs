@@ -176,6 +176,11 @@ pub(super) fn with_pr(mode: Mode) -> State {
     update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(pr_detail()))));
     fetched(
         &mut state,
+        DataKey::InProjects(pr.repo.clone(), pr.number),
+        Data::InProjects(Box::default()),
+    );
+    fetched(
+        &mut state,
         DataKey::PrActivity(pr),
         Data::PrActivity(Box::new(fixtures::activity())),
     );
@@ -342,7 +347,23 @@ pub(super) fn with_commit(mode: Mode) -> State {
         oid: commit.oid.clone(),
         pr: None,
     };
+    let comments = DataKey::CommitComments(ghtui(), commit.oid.clone());
     open(&mut state, route, Data::Commit(Box::new(commit)));
+    let comment = crate::api::commit_comments::CommitComment {
+        id: 7,
+        node_id: "CC_7".into(),
+        author: "hubot".into(),
+        body: "This one broke the 256-color theme.".into(),
+        created_at: "2026-10-02T12:00:00Z".into(),
+        path: Some("src/theme.rs".into()),
+        line: Some(12),
+        url: String::new(),
+    };
+    fetched(
+        &mut state,
+        comments,
+        Data::CommitComments(Box::new(vec![comment].into())),
+    );
     state
 }
 
@@ -385,6 +406,11 @@ pub(super) fn with_pr_review(mode: Mode) -> State {
     ] {
         update(&mut state, Msg::Diff(of.clone(), msg));
     }
+    fetched(
+        &mut state,
+        DataKey::Reviews(pr),
+        Data::Reviews(Box::new(fixtures::reviews())),
+    );
     state
 }
 
@@ -688,6 +714,11 @@ pub(super) fn with_issue(mode: Mode) -> State {
     };
     let issue = Data::Issue(Some(Box::new(fixtures::issue())));
     open(&mut state, route, issue);
+    fetched(
+        &mut state,
+        DataKey::InProjects(ghtui(), 14),
+        Data::InProjects(Box::new(fixtures::in_projects())),
+    );
     state
 }
 
@@ -738,4 +769,37 @@ pub(super) fn render(state: &State) -> String {
     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
     terminal.draw(|frame| view(state, frame, NOW)).unwrap();
     format!("{:?}", terminal.backend().buffer())
+}
+
+/// `/` on a page selects the row it finds, so `↵` opens what was found,
+/// as vim's cursor goes to the match.
+#[test]
+fn a_search_selects_the_row_it_finds() {
+    let mut s = with_pr(Mode::Dark);
+    press(&mut s, "/Fixes #12<Enter><Enter>");
+    assert!(
+        matches!(s.route(), Some(Route::Issue { number: 12, .. }))
+            || matches!(s.route(), Some(Route::Pr { pr, .. }) if pr.number == 12),
+        "{:?}",
+        s.route()
+    );
+}
+
+/// GitHub lists none of a big repository's stargazers: the page says so
+/// rather than that nobody starred it.
+#[test]
+fn unlisted_stargazers_say_why() {
+    let mut state = with_repo(Mode::Dark, ColorDepth::TrueColor);
+    let mut none = fixtures::people();
+    (none.items, none.next) = (Vec::new(), None);
+    open(
+        &mut state,
+        Route::Stargazers(ghtui()),
+        Data::Users(Box::new(none)),
+    );
+    let screen = render(&state);
+    assert!(
+        screen.contains("GitHub doesn't list this repository's"),
+        "{screen}"
+    );
 }

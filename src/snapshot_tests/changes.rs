@@ -2,6 +2,7 @@ use crate::api::ApiError;
 use crate::api::browse::{CheckOutcome, IssueState, PrState, Status};
 use crate::api::change::{Change, MergeMethod};
 use crate::api::model::{MergeState, NodeId, PrRef, ReviewEvent};
+use crate::api::notifications::ThreadAt;
 use crate::store::{DraftComment, DraftSide, ReviewState};
 use crate::theme::Mode;
 
@@ -236,9 +237,31 @@ fn what_github_forbids_is_refused() {
     let mut s = pr_with(|d| d.merge_state = MergeState::Blocked);
     press(&mut s, ",m");
     says(&s, "blocked");
-    let mut s = pr_with(|d| d.merge_state = MergeState::Behind);
+    let mut s = pr_with(|d| {
+        d.merge_state = MergeState::Behind;
+        d.may.enable_auto_merge = false;
+    });
     press(&mut s, ",m");
     says(&s, ",u updates it");
+    // Behind, with auto-merge allowed: it merges once updated.
+    let mut s = pr_with(|d| {
+        d.merge_state = MergeState::Behind;
+        (d.may.enable_auto_merge, d.auto_merge_allowed) = (true, true);
+    });
+    press(&mut s, ",m");
+    let c = confirm(&s);
+    assert!(
+        c.choices
+            .iter()
+            .all(|(label, _)| label.ends_with("when ready")),
+        "{:?}",
+        c.choices
+    );
+    assert!(
+        c.facts.iter().any(|(f, _)| f.contains(",u updates it")),
+        "{:?}",
+        c.facts
+    );
 
     let mut s = with_run(Mode::Dark);
     let mut repo = crate::fixtures::overview();
@@ -463,24 +486,34 @@ fn notifications_are_marked_read_and_done() {
     if let Some(n) = inbox.list.items.first_mut() {
         n.unread = false;
     }
-    fetched(&mut s, key, Data::Notifications(Box::new(inbox)));
+    fetched(
+        &mut s,
+        key.clone(),
+        Data::Notifications(Box::new(inbox.clone())),
+    );
     assert!(s.awaiting.is_none());
     press(&mut s, ",n");
     says(&s, "It's read already");
 
-    // Done, GitHub's API lists it on, read: a read thread marked done
-    // already shows it.
+    // Done, the thread leaves the inbox (GitHub's API lists it on, read,
+    // but ghtui keeps it out until GitHub updates it again).
     let sent = press(&mut s, "jj,d");
     let done = Change::MarkDone {
-        thread: "103".into(),
+        thread: ThreadAt {
+            id: "103".into(),
+            updated_at: "2026-10-02T12:00:00Z".into(),
+        },
     };
     assert_eq!(
         sent,
         vec![Cmd::Api(Api::Change(done, By::Act(thread("103"))))]
     );
     answer(&mut s, &sent, Ok(()));
-    assert!(s.awaiting.is_none());
     says(&s, "Marked done");
+    assert!(s.awaiting.is_some());
+    inbox.list.items.retain(|n| n.id != "103");
+    fetched(&mut s, key, Data::Notifications(Box::new(inbox)));
+    assert!(s.awaiting.is_none());
 
     // Elsewhere, there's no notification to mark.
     let mut s = with_repo(Mode::Dark, crate::theme::ColorDepth::TrueColor);
@@ -537,9 +570,12 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
     let loaded = "Only the 4 loaded: those further down stay as they are";
     assert!(c.facts.iter().any(|(f, _)| f == loaded), "{:?}", c.facts);
     let sent = press(&mut s, "<Enter>");
-    let threads = ["101", "102", "103", "104"].map(String::from).to_vec();
+    let rows = crate::fixtures::notifications().list.items;
+    let threads: Vec<ThreadAt> = rows.iter().map(ThreadAt::of).collect();
+    let ids: Vec<&str> = threads.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(ids, ["101", "102", "103", "104"]);
     let done = Change::MarkEach {
-        threads,
+        threads: threads.clone(),
         done: true,
     };
     assert_eq!(sent, vec![Cmd::Api(Api::Change(done, By::Confirm(all)))]);
@@ -557,7 +593,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
     super::screens::open(&mut s, route, shown(&crate::fixtures::notifications()));
     press(&mut s, ",N");
     let each = Change::MarkEach {
-        threads: vec!["101".into(), "102".into()],
+        threads: threads[..2].to_vec(),
         done: false,
     };
     assert_eq!(confirm(&s).choices.first().map(|(_, c)| c), Some(&each));
@@ -643,49 +679,4 @@ fn a_rerun_job_is_followed_to_its_new_attempt() {
         cached: true,
     });
     assert!(cmds.contains(&fetch), "{cmds:?}");
-}
-
-/// While a job on screen is running, it's fetched again on a timer
-/// (never two at once); once it's done, the timer stops.
-#[test]
-fn a_running_job_is_followed_until_it_ends() {
-    let mut s = with_job(Mode::Dark, None);
-    let live = Cmd::Timer(Timer::Live, 5_000);
-    assert!(
-        !timers(&mut s).contains(&live),
-        "a finished job isn't followed"
-    );
-    let (mut job, mut log) = crate::fixtures::job();
-    job.outcome = CheckOutcome::Pending;
-    log.running = true;
-    fetched(
-        &mut s,
-        DataKey::Job(ghtui(), 2),
-        Data::Job(Box::new(job.clone())),
-    );
-    fetched(
-        &mut s,
-        DataKey::JobLog(ghtui(), 2),
-        Data::Log(std::sync::Arc::new(log)),
-    );
-    let cmds = timers(&mut s);
-    assert!(cmds.contains(&live), "{cmds:?}");
-    assert!(!timers(&mut s).contains(&live), "one timer at a time");
-    let cmds = update(&mut s, Msg::Timer(Timer::Live));
-    let fetch = |key| Cmd::Api(Api::Fetch { key, cached: false });
-    assert!(cmds.contains(&fetch(DataKey::Job(ghtui(), 2))), "{cmds:?}");
-    assert!(
-        cmds.contains(&fetch(DataKey::JobLog(ghtui(), 2))),
-        "{cmds:?}"
-    );
-    // It ends: no more fetching.
-    job.outcome = CheckOutcome::Failure;
-    let (_, log) = crate::fixtures::job();
-    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
-    fetched(
-        &mut s,
-        DataKey::JobLog(ghtui(), 2),
-        Data::Log(std::sync::Arc::new(log)),
-    );
-    assert!(s.running_here().is_empty());
 }
