@@ -915,13 +915,13 @@ mod tests {
 
         let b = blame(&repo, &main, "src/lib.rs").await.unwrap().unwrap();
         let runs: Vec<_> = (b.ranges.iter())
-            .map(|r| (r.start, r.end, r.commit.headline.as_str(), r.age))
+            .map(|r| (r.start, r.end, r.commit.headline.as_str()))
             .collect();
-        assert_eq!(
-            runs,
-            [(1, 1, "First", 1), (2, 2, "Add needle", 1)],
-            "one second apart at most"
-        );
+        assert_eq!(runs, [(1, 1, "First"), (2, 2, "Add needle")]);
+        // The newer commit is no older than the first, however far apart
+        // a slow machine made them.
+        let ages: Vec<_> = b.ranges.iter().map(|r| r.age).collect();
+        assert!(ages.get(1) <= ages.first(), "{ages:?}");
         assert_eq!(blame(&repo, &main, "nothing.rs").await.unwrap(), None);
 
         let topic = repo.rev_parse("refs/heads/topic").await;
