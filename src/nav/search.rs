@@ -124,6 +124,18 @@ impl State {
         chrome::header_layout(self.layout().header, &crumbs, &right).search
     }
 
+    /// "→ o/r#5 go to", for what's typed when it's a place or ends in a
+    /// link.
+    fn go_to(&self, q: &str) -> Option<(SuggestRow, Option<Pick>)> {
+        let dest = link_in(q, self.context_repo())?;
+        let label = match &dest.target {
+            Target::Page(r) => r.title(),
+            Target::Files(of) => format!("Files changed in {of}"),
+            Target::External(url) => url.clone(),
+        };
+        Some(suggestion("→", label, "go to", "↵", Pick::Go(dest)))
+    }
+
     /// The search box's suggestions: rows to draw, and what choosing each
     /// item does (headings have none).
     pub fn suggestions(&self, sb: &SearchBox) -> Vec<(SuggestRow, Option<Pick>)> {
@@ -140,6 +152,10 @@ impl State {
                 };
                 out.push(suggestion("⌕", q, what, "↵", pick));
                 return out;
+            }
+            // A link typed or pasted after the filter goes there.
+            if let Some(go) = self.go_to(q) {
+                out.push(go);
             }
             if !q.is_empty() {
                 let pick = Pick::Filter(q.to_owned());
@@ -210,13 +226,8 @@ impl State {
             }
             return out;
         }
-        if let Some(dest) = route::parse_input(q, self.context_repo()) {
-            let label = match &dest.target {
-                Target::Page(r) => r.title(),
-                Target::Files(of) => format!("Files changed in {of}"),
-                Target::External(url) => url.clone(),
-            };
-            out.push(suggestion("→", label, "go to", "↵", Pick::Go(dest)));
+        if let Some(go) = self.go_to(q) {
+            out.push(go);
         }
         // Jump to: pages you've visited, your repositories, live matches.
         let current = self.route().map(Route::url);
@@ -260,7 +271,7 @@ impl State {
         }
         if !q.is_empty() {
             out.push(heading("Search"));
-            if let Some(repo) = self.context_repo() {
+            if let Some(repo) = self.context_repo().filter(|_| !q.starts_with("repo:")) {
                 let pick = Pick::Search(SearchKind::Issues, format!("repo:{repo} {q}"));
                 out.push(suggestion("⌕", q, &format!("in {repo}"), "", pick));
             }
@@ -292,6 +303,20 @@ impl State {
         }
         out
     }
+}
+
+/// Where what's typed goes, if it is a place or ends in a link: all of
+/// it (`o/r#5`, `@octocat`), or its last word when that's a URL or a
+/// GitHub path, typed after a filter or a search's `repo:o/r`.
+pub(super) fn link_in(q: &str, context: Option<&RepoId>) -> Option<Dest> {
+    if let Some(dest) = route::parse_input(q, context) {
+        return Some(dest);
+    }
+    let last = q.split_whitespace().last()?;
+    let link = last.contains("://")
+        || last.matches('/').count() >= 2
+        || (last.contains('/') && last.contains('#'));
+    link.then(|| route::parse_input(last, context)).flatten()
 }
 
 /// A suggestion to choose.
@@ -354,7 +379,7 @@ pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 pub fn search_box_changed(sb: &mut SearchBox) -> Vec<Cmd> {
     sb.selected = 0;
     let q = sb.query();
-    if !sb.filter && q.chars().count() >= 2 && route::parse_input(&q, None).is_none() {
+    if !sb.filter && q.chars().count() >= 2 && link_in(&q, None).is_none() {
         vec![Cmd::SuggestLater(q)]
     } else {
         Vec::new()

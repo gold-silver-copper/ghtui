@@ -250,6 +250,8 @@ says where it works.
 - `/` searches what's on screen: the page, a file, the diff or a log, and
   `n` and `N` go through the matches. On a list it edits the list's
   filter instead, in place on the list. `g/` searches GitHub, as does `:`.
+  A URL or GitHub path typed or pasted into either, even after a filter
+  or a search's `repo:owner/name`, opens it.
 - In a file, `j` and `k` move line by line, `y` copies the line's link,
   `V` selects lines (then `y` copies `#L10-L20`), and `gb` blames the
   file at that line. In the blame, a run of lines opens its commit. A

@@ -371,3 +371,34 @@ fn visited_pages_come_back_as_suggestions() {
     press(&mut state, "octo<Enter>");
     assert_eq!(route(&state), Route::user("octocat"));
 }
+
+/// A URL or GitHub path typed after a search's `repo:o/r`, or after a
+/// list's filter, is noticed: `↵` goes there instead of searching for it.
+#[test]
+fn a_link_typed_after_a_scope_or_a_filter_opens() {
+    let pr = Route::pr(PrRef::parse("ratatui/ratatui#5").unwrap());
+    let mut state = with_repo();
+    press(
+        &mut state,
+        "g/repo:gold-silver-copper/ghtui https://github.com/ratatui/ratatui/pull/5<Enter>",
+    );
+    assert_eq!(route(&state), pr);
+
+    let search = Route::Search {
+        kind: crate::api::browse::SearchKind::Issues,
+        query: "repo:gold-silver-copper/ghtui bug".into(),
+    };
+    let _ = state.push(search.clone());
+    press(&mut state, "/");
+    assert!(overlay!(state, Search).filter);
+    press(&mut state, "ratatui/ratatui/pull/5<Enter>");
+    assert_eq!(route(&state), pr);
+
+    // Words stay a filter.
+    let _ = state.push(search);
+    press(&mut state, "/label:bug<Enter>");
+    let Route::Search { query, .. } = route(&state) else {
+        panic!("not a search");
+    };
+    assert_eq!(query, "repo:gold-silver-copper/ghtui bug label:bug");
+}
