@@ -2566,6 +2566,120 @@ mod keys {
         ));
     }
 
+    /// The selected line, and the word under the cursor.
+    fn word_here(s: &State) -> (Option<u32>, Option<String>) {
+        let Screen::Page(p) = s.screen() else {
+            panic!("not on a page")
+        };
+        let word = p
+            .word_cursor()
+            .map(|(_, code, w)| code.get(w.bytes).unwrap().to_owned());
+        (p.selected.and_then(|i| p.line_of(i)), word)
+    }
+
+    /// In a file, `w` and `b` move a word cursor along the line; `*` goes
+    /// to the word's next line below, the cursor on it, and `#` back up.
+    #[test]
+    fn words_in_a_file() {
+        let mut s = super::with_file(Mode::Dark);
+        press(&mut s, "1ggwww");
+        assert_eq!(word_here(&s), (Some(1), Some("::".into())));
+        press(&mut s, "wwwb");
+        assert_eq!(word_here(&s), (Some(1), Some("io".into())));
+        press(&mut s, "*");
+        assert_eq!(word_here(&s), (Some(4), Some("io".into())));
+        assert!(format!("{:?}", s.notices.shown()).contains("Match 2 of 2"));
+        press(&mut s, "#");
+        assert_eq!(word_here(&s), (Some(1), Some("io".into())));
+        // `n` after `#` goes on up: there's nothing above.
+        press(&mut s, "n");
+        assert!(format!("{:?}", s.notices.shown()).contains("No earlier match"));
+    }
+
+    /// `gx` opens the web address under the word cursor; elsewhere on
+    /// the line, its link.
+    #[test]
+    fn gx_opens_the_address_under_the_cursor() {
+        let mut s = super::with_repo(Mode::Dark, ColorDepth::TrueColor);
+        let route = Route::blob(super::ghtui(), "main".into(), "a.rs".into());
+        let blob = crate::api::browse::Blob {
+            path: "a.rs".into(),
+            text: Some("// See https://example.com/docs.\n".into()),
+            size: 32,
+            truncated: false,
+        };
+        super::open(&mut s, route, crate::browse::Data::Blob(Box::new(blob)));
+        let opened = |s: &mut State, keys: &str| match press(s, keys).as_slice() {
+            [crate::state::Cmd::OpenUrl(url)] => url.clone(),
+            cmds => panic!("{cmds:?}"),
+        };
+        assert!(opened(&mut s, "1gggx").ends_with("/a.rs#L1"));
+        assert_eq!(opened(&mut s, "wwwwgx"), "https://example.com/docs");
+    }
+
+    /// In Files changed, `w` moves along the cursor's line and `*` goes
+    /// to the word's next line, `#` back.
+    #[test]
+    fn words_in_the_diff() {
+        let at = Pos { file: 0, row: 0 };
+        let mut s = screen_state(Mode::Dark, ColorDepth::TrueColor, at, Pane::Diff);
+        let code = |s: &State| {
+            let Screen::Diff(screen) = s.screen() else {
+                panic!("not the diff")
+            };
+            let doc = &s.diff().unwrap().doc;
+            doc.code_at(screen.cursor, screen.half)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        for _ in 0..40 {
+            if code(&s).contains("pub fn new") {
+                break;
+            }
+            press(&mut s, "j");
+        }
+        press(&mut s, "wwwwwww");
+        let Screen::Diff(screen) = s.screen() else {
+            panic!()
+        };
+        assert_eq!(screen.word, Some(18), "the first i32");
+        press(&mut s, "*");
+        assert!(code(&s).contains("as i32"), "{}", code(&s));
+        press(&mut s, "#");
+        assert!(code(&s).contains("pub fn new"), "{}", code(&s));
+    }
+
+    /// A job's log lines are rows: one a link points at is selected, `j`
+    /// moves line by line, `y` copies a line's link, which opens at it.
+    #[test]
+    fn log_lines_are_rows() {
+        let mut s = with_job(Mode::Dark, Some((3, 2)));
+        let copied = |s: &mut State| match press(s, "y").as_slice() {
+            [crate::state::Cmd::Copy(url)] => url.clone(),
+            cmds => panic!("{cmds:?}"),
+        };
+        assert!(copied(&mut s).ends_with("/actions/runs/7/job/2#step:3:2"));
+        press(&mut s, "j");
+        let url = copied(&mut s);
+        assert!(url.ends_with("#step:3:3"), "{url}");
+        press(&mut s, "<Enter>");
+        assert!(format!("{:?}", s.notices.shown()).contains("Line 3 of step 3"));
+        let _ = s.go(crate::route::Dest::from_url(&url));
+        let (job, log) = crate::fixtures::job();
+        let ghtui = super::ghtui();
+        super::fetched(
+            &mut s,
+            crate::browse::DataKey::Job(ghtui.clone(), 2),
+            crate::browse::Data::Job(Box::new(job)),
+        );
+        super::fetched(
+            &mut s,
+            crate::browse::DataKey::JobLog(ghtui, 2),
+            crate::browse::Data::Log(std::sync::Arc::new(log)),
+        );
+        assert_eq!(copied(&mut s), url);
+    }
+
     /// A blame's runs of lines are rows that open their commit.
     #[test]
     fn blame_runs_open_their_commit() {

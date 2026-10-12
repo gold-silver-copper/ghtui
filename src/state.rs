@@ -1287,6 +1287,9 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             state.backwards = action == Action::SearchBack;
             return state.open_search(false);
         }
+        Action::SearchWord | Action::SearchWordBack => {
+            return nav::search_word(state, action == Action::SearchWord);
+        }
         Action::OpenLink => return nav::open_link(state),
         Action::Notifications => {
             let inbox = Route::Notifications {
@@ -2819,7 +2822,7 @@ pub(crate) mod tests {
         says(&s, "No matches for “no such text”");
     }
 
-    /// A failed job opens at its failing step's first error, the step
+    /// A failed job opens at its failing step's first error, that line
     /// selected.
     #[test]
     fn a_failed_job_opens_at_its_first_error() {

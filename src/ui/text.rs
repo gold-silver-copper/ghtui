@@ -1,5 +1,7 @@
 //! Width-aware text helpers.
 
+use std::ops::Range;
+
 use ratatui::buffer::CellWidth;
 use ratatui::text::Span;
 use unicode_segmentation::UnicodeSegmentation;
@@ -122,6 +124,109 @@ pub fn noun(n: u64, word: &str) -> String {
     }
 }
 
+/// A word of a line of code, as vim's `w` goes by them: a run of
+/// identifier characters, or of other characters that aren't blank. It's
+/// where it is in bytes, and in the columns it's drawn in (tabs to the
+/// next stop of four, hidden characters as one marker, as code draws them).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Word {
+    pub bytes: Range<usize>,
+    pub cols: Range<usize>,
+}
+
+/// The words of `line`, in order.
+pub fn words(line: &str) -> Vec<Word> {
+    let mut out: Vec<Word> = Vec::new();
+    let (mut byte, mut col) = (0, 0);
+    let mut last = None;
+    for (g, w) in graphemes(line) {
+        let w = match untab((g, w), col) {
+            (drawn, _) if drawn.contains(is_hidden) => 1,
+            (_, w) => w,
+        };
+        // Blank, an identifier's, or punctuation's.
+        let class = (g.chars().next())
+            .filter(|c| !c.is_whitespace() && !is_hidden(*c))
+            .map(|c| c.is_alphanumeric() || c == '_');
+        let (end, to) = (byte + g.len(), col + w);
+        match (class, out.last_mut()) {
+            (Some(_), Some(word)) if class == last => (word.bytes.end, word.cols.end) = (end, to),
+            (Some(_), _) => out.push(Word {
+                bytes: byte..end,
+                cols: col..to,
+            }),
+            (None, _) => {}
+        }
+        (last, byte, col) = (class, end, to);
+    }
+    out
+}
+
+/// The word at column `col` of `words`, or the one nearest it (the left
+/// one of two as near).
+pub fn word_at(words: &[Word], col: usize) -> Option<&Word> {
+    words.iter().min_by_key(|w| {
+        w.cols
+            .start
+            .saturating_sub(col)
+            .max((col + 1).saturating_sub(w.cols.end))
+    })
+}
+
+/// `w` (or `b`) from the word at column `col` of `line`: the next word
+/// (or the one before). With no word picked yet, the first.
+pub fn step_word(line: &str, col: Option<usize>, forward: bool) -> Option<Word> {
+    let words = words(line);
+    let Some(col) = col else {
+        return words.into_iter().next();
+    };
+    let at = word_at(&words, col)?.cols.start;
+    if forward {
+        words.into_iter().find(|w| w.cols.start > at)
+    } else {
+        words.into_iter().rev().find(|w| w.cols.start < at)
+    }
+}
+
+/// How far to scroll sideways, from `shift`, so columns `cols` show in
+/// `room` columns of code.
+pub fn reveal(shift: usize, cols: &Range<usize>, room: usize) -> usize {
+    if cols.start < shift {
+        cols.start
+    } else if cols.end > shift + room {
+        cols.start.min(cols.end - room)
+    } else {
+        shift
+    }
+}
+
+/// The web address in `line` that bytes `at` are part of: from `http://`
+/// or `https://` to a blank or a quote, less punctuation that ends it.
+pub fn url_at<'a>(line: &'a str, at: &Range<usize>) -> Option<&'a str> {
+    let mut from = 0;
+    while let Some(found) = line.get(from..)?.find("http") {
+        let start = from + found;
+        let rest = line.get(start..)?;
+        let len = rest
+            .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '`' | '<' | '>'))
+            .unwrap_or(rest.len());
+        let url = rest
+            .get(..len)?
+            .trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}']);
+        let scheme = ["https://", "http://"]
+            .into_iter()
+            .find(|s| url.starts_with(s));
+        if scheme.is_some_and(|s| url.len() > s.len())
+            && start < at.end
+            && at.start < start + url.len()
+        {
+            return Some(url);
+        }
+        from = start + len.max(1);
+    }
+    None
+}
+
 /// A commit id cut to GitHub's seven characters.
 pub fn short_sha(oid: &str) -> &str {
     oid.get(..7).unwrap_or(oid)
@@ -147,6 +252,30 @@ mod tests {
         assert_eq!(width("a\u{202e}b"), 2);
         assert_eq!(width("漢字"), 4);
         assert!(is_hidden('\u{202e}') && is_hidden('\u{200b}') && !is_hidden('\u{200d}'));
+    }
+
+    /// Words are vim's: identifiers, and runs of punctuation, by the
+    /// columns they're drawn in; a web address is found from any of its
+    /// words.
+    #[test]
+    fn words_go_as_vims_do() {
+        let line = "\tlet x_1 = a.b(); // https://example.com/a?b=c.";
+        let shown: Vec<&str> = (words(line).iter())
+            .map(|w| line.get(w.bytes.clone()).unwrap())
+            .collect();
+        let expected = [
+            "let", "x_1", "=", "a", ".", "b", "();", "//", "https", "://",
+        ];
+        assert_eq!(shown[..10], expected);
+        assert_eq!(words(line)[0].cols, 4..7, "after the tab");
+        let example = words(line)
+            .into_iter()
+            .find(|w| line.get(w.bytes.clone()).unwrap() == "example");
+        let url = url_at(line, &example.unwrap().bytes);
+        assert_eq!(url, Some("https://example.com/a?b=c"));
+        assert_eq!(url_at(line, &(1..4)), None);
+        assert_eq!(step_word(line, Some(5), true).unwrap().cols, 8..11);
+        assert_eq!(step_word(line, Some(5), false), None);
     }
 
     #[test]

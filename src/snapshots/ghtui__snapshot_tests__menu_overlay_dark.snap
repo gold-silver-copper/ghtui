@@ -26,7 +26,7 @@ Buffer {
         "  ├───────────────────      g/   Search GitHub or go to a page                                     ▐",
         "  │ … 29 more                o   Open the selection on GitHub                                      ▐",
         "  ╰───────────────────       y   Copy the selection's link                                         ▐",
-        "                            gx   Open the selected link in the browser                             ▐",
+        "                            gx   Open the link under the cursor in the browser                     ▐",
         "  ╭─ Your repositories       i   Follow any link by its letters                                    ▐",
         "  │ gold-silver-copper       -   Up a level                                                        ▐",
         "  │ A keyboard-driven   ctrl-o   Back (this is the first page)                                     ▐",

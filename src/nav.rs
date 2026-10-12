@@ -15,6 +15,7 @@ use crate::ui::chrome::{self, KeyRow, SuggestRow};
 use crate::ui::diff_doc::Row;
 use crate::ui::page::{self, HintLabel, Item, Link, Page};
 use crate::ui::pages::{self, PrTab, ProfileTab};
+use crate::ui::text::{self, Word};
 use crate::ui::{PAD_X, PAD_Y};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -22,7 +23,7 @@ use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
 use crate::browse::{self, Data, DataKey};
-use crate::diff_screen::Pane;
+use crate::diff_screen::{self, Pane};
 use crate::keymap::Action;
 use crate::picker::{fuzzy_score, move_in_list};
 use crate::review::ComposeTarget;
@@ -227,6 +228,9 @@ pub struct PageScreen {
     pub range: Option<usize>,
     /// Columns code is scrolled left by.
     pub shift: usize,
+    /// The word cursor, by its column in the code of the selected line:
+    /// `None` until `w` or `b` picks one.
+    pub word: Option<usize>,
 }
 
 impl PageScreen {
@@ -260,6 +264,7 @@ impl PageScreen {
             find: None,
             range: None,
             shift: 0,
+            word: None,
         }
     }
 
@@ -323,6 +328,30 @@ impl PageScreen {
     pub fn selected_link(&self) -> Option<&Link> {
         let item = self.page.items.get(self.selected?)?;
         self.page.target(item.link)
+    }
+
+    /// The selected row's code (a line of a file or a log): its line, its
+    /// code, and the columns the code has on screen.
+    fn code_line(&self) -> Option<(usize, String, usize)> {
+        let at = self.page.items.get(self.selected?)?.start;
+        let line = self.page.lines.get(at)?;
+        let (code, before) = line.code()?;
+        let room = usize::from(self.page.room(line.frame, line.indent)).saturating_sub(before);
+        Some((at, code, room))
+    }
+
+    /// The word under the cursor (before `w` or `b` picks one, the first
+    /// of the line), with its line and the line's code.
+    pub fn word_cursor(&self) -> Option<(usize, String, Word)> {
+        let (at, code, _) = self.code_line()?;
+        let word = text::word_at(&text::words(&code), self.word.unwrap_or(0))?.clone();
+        Some((at, code, word))
+    }
+
+    /// The word under the cursor.
+    fn word_text(&self) -> Option<String> {
+        let (_, code, word) = self.word_cursor()?;
+        code.get(word.bytes).map(str::to_owned)
     }
 }
 
@@ -522,6 +551,27 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 "Line {line} · {copy} copies its link · {blame} blames it"
             ));
         }
+        // So is a line of a job's log.
+        Action::Open if matches!(p.route, Route::Job { .. }) && p.code_line().is_some() => {
+            let at = match p.selected_link().and_then(Link::url).map(Dest::from_url) {
+                Some(Dest {
+                    target:
+                        Target::Page(Route::Job {
+                            step: Some((step, line)),
+                            ..
+                        }),
+                    ..
+                }) => format!("Line {line} of step {step}"),
+                _ => "A line of the log".to_owned(),
+            };
+            let (copy, word) = (
+                state.first_key(Action::Copy),
+                state.first_key(Action::SearchWord),
+            );
+            state.info(format!(
+                "{at} · {copy} copies its link · {word} searches the word under the cursor"
+            ));
+        }
         Action::Open => {
             return match p.selected_link().cloned() {
                 Some(link) => state.follow(&link),
@@ -663,6 +713,24 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                     _ => "Already there",
                 };
                 state.info(why);
+            }
+        }
+        Action::WordNext | Action::WordPrev => {
+            let forward = action == Action::WordNext;
+            let Some((_, code, room)) = p.code_line() else {
+                let down = state.first_key(Action::Down);
+                state.info(format!(
+                    "Words are a line of code's: {down} moves to a line of a file or a log"
+                ));
+                return Vec::new();
+            };
+            match text::step_word(&code, p.word, forward) {
+                Some(word) => {
+                    p.word = Some(word.cols.start);
+                    p.shift = text::reveal(p.shift, &word.cols, room);
+                }
+                None if forward => state.info("No more words on this line"),
+                None => state.info("No earlier word on this line"),
             }
         }
         Action::Blame => {
@@ -825,14 +893,11 @@ pub fn go_to_line(state: &mut State, n: usize) -> Vec<Cmd> {
     Vec::new()
 }
 
-/// `gx`: the link under the cursor (the selected row's), in the browser.
+/// `gx`: the link under the cursor (a web address in the word under it,
+/// else the selected row's), in the browser.
 #[must_use]
 pub fn open_link(state: &mut State) -> Vec<Cmd> {
-    let link = match state.screen() {
-        Screen::Page(p) => p.selected_link().and_then(Link::url).map(str::to_owned),
-        Screen::Diff(_) => None,
-    };
-    match link {
+    match state.link_under_cursor() {
         Some(url) => state.go(Target::External(url).into()),
         None => {
             state.info("No link under the cursor");
@@ -891,27 +956,74 @@ pub fn find(state: &mut State, query: &str, forward: bool) {
     } else {
         p.page.marks.iter().rposition(|&line| line < p.scroll)
     };
-    let text = match (
-        first.or_else(|| (!p.page.marks.is_empty()).then_some(0)),
-        p.page.marks.len(),
-    ) {
+    let first = first.or_else(|| (!p.page.marks.is_empty()).then_some(0));
+    let text = match first.and_then(|at| go_to_mark(p, at)) {
         _ if query.is_empty() => "Cleared the search".to_owned(),
-        (Some(at), of) => {
-            p.mark = Some(at);
-            p.fresh = false;
-            p.scroll = p
-                .page
-                .marks
-                .get(at)
-                .map_or(p.scroll, |m| m.saturating_sub(MARGIN));
-            format!("Match {} of {of}", at + 1)
-        }
-        _ => format!("No matches for “{query}”"),
+        Some((n, of)) => format!("Match {n} of {of}"),
+        None => format!("No matches for “{query}”"),
     };
     state.info(text);
 }
 
-/// Scrolls to the next (or previous) search match on the page: which
+/// `*` and `#`: searches the word under the cursor as `/` and `?` would,
+/// going to its next match below the cursor's line (or above).
+#[must_use]
+pub fn search_word(state: &mut State, forward: bool) -> Vec<Cmd> {
+    state.backwards = !forward;
+    if let Some((screen, diff)) = state.diff_parts() {
+        let code = diff.doc.code_at(screen.cursor, screen.half).unwrap_or("");
+        let words = text::words(code);
+        let word = text::word_at(&words, screen.word.unwrap_or(0));
+        match word.and_then(|w| code.get(w.bytes.clone())) {
+            Some(word) => {
+                // The word cursor goes with the match.
+                screen.word = Some(screen.word.unwrap_or(0));
+                let found = diff_screen::search(screen, diff, word.to_owned(), forward);
+                state.notices.say(found);
+            }
+            None => state.info("No word under the cursor: this row has no code"),
+        }
+        return Vec::new();
+    }
+    let Screen::Page(p) = state.screen_mut() else {
+        return Vec::new();
+    };
+    let Some(word) = p.word_text() else {
+        let down = state.first_key(Action::Down);
+        state.info(format!(
+            "No word under the cursor: {down} moves to a line of a file or a log"
+        ));
+        return Vec::new();
+    };
+    // The selection stays on its line as the search rebuilds the page,
+    // and the word cursor goes with the match.
+    p.fresh = false;
+    p.word = Some(p.word.unwrap_or(0));
+    if matches!(p.route, Route::Job { .. }) {
+        search_log(state, &word);
+    } else {
+        p.find = Some(word);
+        (p.built, p.mark) = (None, None);
+        state.sync_page();
+    }
+    let Screen::Page(p) = state.screen_mut() else {
+        return Vec::new();
+    };
+    // From the cursor's line, around to the other end.
+    let line = (p.selected.and_then(|i| p.page.items.get(i))).map_or(0, |it| it.start);
+    let marks = &p.page.marks;
+    let next = if forward {
+        (marks.iter().position(|&m| m > line)).or_else(|| (!marks.is_empty()).then_some(0))
+    } else {
+        (marks.iter().rposition(|&m| m < line)).or_else(|| marks.len().checked_sub(1))
+    };
+    if let Some((n, of)) = next.and_then(|n| go_to_mark(p, n)) {
+        state.info(format!("Match {n} of {of}"));
+    }
+    Vec::new()
+}
+
+/// Goes to the next (or previous) search match on the page: which
 /// one it is, of how many. Before any, the one the page opened at is.
 fn step_mark(p: &mut PageScreen, next: bool) -> Option<(usize, usize)> {
     let n = match (p.mark_at(), next) {
@@ -920,11 +1032,25 @@ fn step_mark(p: &mut PageScreen, next: bool) -> Option<(usize, usize)> {
         (Some(at), true) => at + 1,
         (Some(at), false) => at.checked_sub(1)?,
     };
-    let marks = &p.page.marks;
-    p.scroll = marks.get(n)?.saturating_sub(MARGIN);
-    p.mark = Some(n);
-    p.fresh = false;
-    Some((n + 1, marks.len()))
+    go_to_mark(p, n)
+}
+
+/// Scrolls to search match `n` and, in code, selects its line, the word
+/// cursor (if there's one) on the match: which one it is, of how many.
+fn go_to_mark(p: &mut PageScreen, n: usize) -> Option<(usize, usize)> {
+    let line = *p.page.marks.get(n)?;
+    p.scroll = line.saturating_sub(MARGIN);
+    (p.mark, p.fresh) = (Some(n), false);
+    let code = p.page.lines.get(line).filter(|l| l.code().is_some());
+    if let Some(i) = code.and_then(|_| p.page.item_at(line)) {
+        p.selected = Some(i);
+        if p.word.is_some()
+            && let Some(col) = code.and_then(page::PageLine::first_match)
+        {
+            p.word = Some(col);
+        }
+    }
+    Some((n + 1, p.page.marks.len()))
 }
 
 /// Goes to the page above this one.
@@ -2078,16 +2204,12 @@ impl State {
         };
         out.push(go(Action::OpenInBrowser, open, "browser"));
         out.push(go(Action::Copy, copy, "copy link"));
+        let mut link = go(Action::OpenLink, Action::OpenLink.description(), "");
+        if self.link_under_cursor().is_none() {
+            link.unavailable = Some("no link is under the cursor".into());
+        }
+        out.push(link);
         if let Screen::Page(_) = self.screen() {
-            let mut link = go(
-                Action::OpenLink,
-                "Open the selected link in the browser",
-                "",
-            );
-            if selected.and_then(Link::url).is_none() {
-                link.unavailable = Some("no link is selected".into());
-            }
-            out.push(link);
             out.push(go(Action::Hints, "Follow any link by its letters", "links"));
             out.push(go(Action::UpLevel, "Up a level", ""));
         }
@@ -2160,8 +2282,9 @@ impl State {
     fn page_doables(&self, p: &PageScreen, out: &mut Vec<Doable>) {
         let here = |action, label: &str, short| doable("This page", action, label, short);
         let route = &p.route;
-        // A file's line is this page: nothing to open.
-        if !matches!(route, Route::Blob { .. }) {
+        // A file's line is this page, as a log's is: nothing to open.
+        let line = matches!(route, Route::Job { .. }) && p.code_line().is_some();
+        if !matches!(route, Route::Blob { .. }) && !line {
             let mut open = here(Action::Open, "Open the selected row", "open");
             match p.selected_link() {
                 Some(link) => open.label = describe(link),
@@ -2221,6 +2344,23 @@ impl State {
         if let Route::Notifications { query } = route {
             let show = format!("Show {}", next_list_state(route, query));
             out.push(here(Action::ToggleState, &show, "unread/read"));
+        }
+        // A word cursor moves along a line of code.
+        if matches!(
+            route,
+            Route::Blob { .. } | Route::Blame { .. } | Route::Job { .. }
+        ) {
+            let why = (p.word_cursor().is_none()).then(|| "no line of code is selected".to_owned());
+            for action in [
+                Action::WordNext,
+                Action::WordPrev,
+                Action::SearchWord,
+                Action::SearchWordBack,
+            ] {
+                let mut row = here(action, action.description(), "");
+                row.unavailable.clone_from(&why);
+                out.push(row);
+            }
         }
         if let Some(query) = &list {
             let show = format!("Show {}", next_list_state(route, query));
@@ -2698,6 +2838,25 @@ fn run_menu_row(state: &mut State, row: Option<Doable>) -> Vec<Cmd> {
 // ---- copying -------------------------------------------------------------------------------------
 
 impl State {
+    /// The web address under the cursor: in the word under it, else the
+    /// selected row's link.
+    pub fn link_under_cursor(&self) -> Option<String> {
+        let in_word = |code: &str, col: Option<usize>| {
+            let words = text::words(code);
+            let word = text::word_at(&words, col.unwrap_or(0))?;
+            text::url_at(code, &word.bytes).map(str::to_owned)
+        };
+        match self.screen() {
+            Screen::Page(p) => (p.code_line())
+                .and_then(|(_, code, _)| in_word(&code, p.word))
+                .or_else(|| p.selected_link().and_then(Link::url).map(str::to_owned)),
+            Screen::Diff(screen) => {
+                let code = self.diff()?.doc.code_at(screen.cursor, screen.half)?;
+                in_word(code, screen.word)
+            }
+        }
+    }
+
     /// The link of the selection, or of the page.
     pub fn here_url(&self) -> String {
         // Lines selected in a file: their range.

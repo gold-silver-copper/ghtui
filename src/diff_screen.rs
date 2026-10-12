@@ -13,9 +13,10 @@ use crate::store::ReviewState;
 use crate::ui::annotations::Annotation;
 use crate::ui::bars::Notice;
 use crate::ui::diff_doc::{Doc, DocFile, DocInputs, Note, Pos, Row, ViewOptions, Viewed};
+use crate::ui::diff_view::code_room;
 use crate::ui::file_tree::{self, TreeRow, row_of_file, tree_rows, unfolded};
 use crate::ui::pages::url as links;
-use crate::ui::text::short_sha;
+use crate::ui::text::{self, short_sha};
 use ratatui::layout::Rect;
 
 use crate::diff_job::{DiffFiles, JobId, JobMsg, next_job};
@@ -177,6 +178,9 @@ pub struct DiffScreen {
     pub folded: HashSet<String>,
     /// Columns code is scrolled left by.
     pub shift: usize,
+    /// The word cursor, by its column in the code of the cursor's line:
+    /// `None` until `w` or `b` picks one.
+    pub word: Option<usize>,
     /// What a link pointed at, to go to once it's loaded: a file
     /// (`diff-<hash>`, GitHub's SHA-256 of its path), maybe at lines
     /// (`diff-<hash>L3-R5`), or a review comment (`discussion_r<id>`,
@@ -199,6 +203,7 @@ impl DiffScreen {
             selection: None,
             folded: HashSet::new(),
             shift: 0,
+            word: None,
             anchor: None,
         }
     }
@@ -735,6 +740,31 @@ pub fn apply(
                 "Folded every file"
             });
         }
+        Action::WordNext | Action::WordPrev => {
+            let forward = action == Action::WordNext;
+            let (cursor, half) = (screen.cursor, screen.half);
+            let code = state.doc.code_at(cursor, half);
+            let Some(word) = code.and_then(|code| text::step_word(code, screen.word, forward))
+            else {
+                notice.info(match code {
+                    None => "No code on this row",
+                    Some(_) if forward => "No more words on this line",
+                    Some(_) => "No earlier word on this line",
+                });
+                return Vec::new();
+            };
+            screen.word = Some(word.cols.start);
+            // The word stays on screen: in split view, in its half.
+            let split = state.doc.opts().split;
+            let width = if split {
+                lay.diff.width.saturating_sub(1) / 2
+            } else {
+                lay.diff.width
+            };
+            let file = state.doc.files().get(cursor.file);
+            let room = file.map_or(0, |f| code_room(f, width, split));
+            screen.shift = text::reveal(screen.shift, &word.cols, room);
+        }
         Action::ScrollLeft => screen.shift = screen.shift.saturating_sub(SHIFT),
         Action::ScrollRight => screen.shift = screen.shift.saturating_add(SHIFT).min(MAX_SHIFT),
         Action::ScrollDown | Action::ScrollUp => {
@@ -898,7 +928,7 @@ pub fn apply(
                 .doc
                 .search(&query, screen.cursor, action == Action::SearchNext)
             {
-                Some(pos) => screen.cursor = pos,
+                Some(pos) => go_to_match(screen, &state.doc, pos, &query),
                 None => notice.error(format!("No match for “{query}”")),
             }
         }
@@ -976,7 +1006,7 @@ fn jump(screen: &mut DiffScreen, pos: Pos) {
 pub fn search(screen: &mut DiffScreen, state: &DiffState, query: String, forward: bool) -> Notice {
     let notice = match state.doc.search(&query, screen.cursor, forward) {
         Some(pos) => {
-            screen.cursor = pos;
+            go_to_match(screen, &state.doc, pos, &query);
             let n = state.doc.count_matches(&query);
             Notice::Info(format!(
                 "{n} line{} match “{query}”",
@@ -987,6 +1017,25 @@ pub fn search(screen: &mut DiffScreen, state: &DiffState, query: String, forward
     };
     screen.search = Some(query);
     notice
+}
+
+/// Puts the cursor on a search match at `pos`, and the word cursor, if
+/// there's one, on the first word there that has `query`.
+fn go_to_match(screen: &mut DiffScreen, doc: &Doc, pos: Pos, query: &str) {
+    screen.cursor = pos;
+    let Some(code) = doc
+        .code_at(pos, screen.half)
+        .filter(|_| screen.word.is_some())
+    else {
+        return;
+    };
+    let query = query.to_lowercase();
+    let has = |w: &text::Word| {
+        (code.get(w.bytes.clone())).is_some_and(|t| t.to_lowercase().contains(&query))
+    };
+    if let Some(word) = text::words(code).into_iter().find(has) {
+        screen.word = Some(word.cols.start);
+    }
 }
 
 #[must_use]

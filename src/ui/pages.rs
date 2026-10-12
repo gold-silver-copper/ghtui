@@ -3350,9 +3350,21 @@ pub fn job(
             body(page, vec![Seg::new(text, Role::Meta)]);
         }
         let width = shown.last().map_or(1, |(i, _)| (i + 1).to_string().len());
+        // Each line is a row, as a file's are: `y` copies its link.
+        let line_url = |n: usize| {
+            format!(
+                "{}/actions/runs/{}/job/{}#step:{}:{n}",
+                url::repo(repo),
+                job.run_id,
+                job.id,
+                step.number
+            )
+        };
         for (n, (i, text)) in shown.iter().enumerate() {
-            if focus == Some(n) {
-                page.jump.get_or_insert(page.lines.len());
+            // The page opens there, with that line selected.
+            if focus == Some(n) && page.jump.is_none() {
+                page.jump = Some(page.lines.len());
+                page.selects = Some(page.items.len());
             }
             if matches(text) {
                 page.marks.push(page.lines.len());
@@ -3363,6 +3375,7 @@ pub fn job(
             );
             let mut segs = vec![number];
             segs.extend(crate::ui::page::highlight(log_seg(text), &q));
+            let start = page.lines.len();
             page.push(PageLine {
                 segs,
                 frame: Frame::Body,
@@ -3370,6 +3383,8 @@ pub fn job(
                 fixed: 1,
                 ..PageLine::default()
             });
+            let link = page.link(line_url(i + 1));
+            page.item(start, link);
         }
         if pointed && !searched {
             page.jump.get_or_insert(page.lines.len().saturating_sub(1));

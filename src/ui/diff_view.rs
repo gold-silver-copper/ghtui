@@ -10,6 +10,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
+use std::ops::Range;
+
 use crate::diff::anchor::{LinePos, Side};
 
 use crate::ui::annotations::{Annotation, Place, ThreadRowKind};
@@ -63,6 +65,8 @@ pub struct DiffView<'a> {
     pub selection: Option<(Pos, Pos)>,
     /// Columns code is scrolled left by.
     pub shift: usize,
+    /// The word cursor, by its column in the code of the cursor's line.
+    pub word: Option<usize>,
 }
 
 impl Widget for DiffView<'_> {
@@ -500,8 +504,6 @@ impl DiffView<'_> {
             ));
         }
         spans.push(Span::styled("  ", theme.body(bg)));
-        let used = text::spans_width(&spans);
-        let room = usize::from(area.width).saturating_sub(used + 1);
         // No emphasis on moved lines: the whole block is the change.
         let emphasis = match a.intraline.get(&e) {
             Some(ranges) if !moved => ranges.as_slice(),
@@ -519,11 +521,22 @@ impl DiffView<'_> {
         spans.push(Span::styled(" ", theme.body(bg)));
         // Unified shows one line per entry; a split half shows its own side.
         if let Some(at) = side.map_or(Some(line.shown()), |side| line.on(side)) {
-            let room = room.saturating_sub(2);
+            let room = code_room(file, area.width, side.is_some());
             let (code, tokens) = (text.line(at), text.spans(at));
+            // The word cursor, on the cursor's line (its half, if split).
+            let on = pos == self.doc.clamp(self.cursor) && side == self.doc.half_at(pos, self.half);
+            let word = (self.word.filter(|_| on))
+                .and_then(|col| Some(text::word_at(&text::words(code), col)?.cols.clone()));
             let cut = (room, self.shift);
             spans.extend(code_spans(
-                self.ctx, code, tokens, diff_bg, cursor, cut, emphasis,
+                self.ctx,
+                code,
+                tokens,
+                diff_bg,
+                cursor,
+                cut,
+                emphasis,
+                word.as_ref(),
             ));
             // Line endings only matter where they changed.
             if text.crlf(at) && line.is_change() {
@@ -725,12 +738,27 @@ fn line_bg(diff_bg: DiffBg, cursor: bool) -> Bg {
     }
 }
 
+/// Columns code gets in a row (or a split half) `width` wide: what the
+/// marks, line numbers (one side's, if split), sign and a column for `…`
+/// leave.
+pub fn code_room(file: &DocFile, width: u16, split: bool) -> usize {
+    let n = file.number_width();
+    let numbers = if split { n } else { 2 * n + 1 };
+    // A pad, two marks, the numbers, two spaces, `…`, the sign and a space.
+    usize::from(width).saturating_sub(numbers + 8)
+}
+
 fn number(n: Option<u32>, width: usize) -> String {
     n.map_or_else(|| " ".repeat(width), |n| format!("{n:>width$}"))
 }
 
 /// Styled code, with tabs expanded and control characters made visible,
-/// cut to `room` columns after skipping `skip`.
+/// cut to `room` columns after skipping `skip`, the columns of `word`
+/// shown as the word under the cursor.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the code, its tokens and how it's drawn"
+)]
 fn code_spans(
     ctx: Ctx<'_>,
     content: &str,
@@ -739,6 +767,7 @@ fn code_spans(
     cursor: bool,
     (room, skip): (usize, usize),
     emphasis: &[(u32, u32)],
+    word: Option<&Range<usize>>,
 ) -> Vec<Span<'static>> {
     let theme = ctx.theme;
     let bg = line_bg(diff_bg, cursor);
@@ -805,7 +834,16 @@ fn code_spans(
         let Some(slice) = content.get(s..e) else {
             continue;
         };
-        let mut piece = String::new();
+        let style = style_for(kind, emphasized);
+        let styled = |piece: &mut String, lit: bool| {
+            let style = if lit {
+                style.add_modifier(Modifier::REVERSED)
+            } else {
+                style
+            };
+            Span::styled(std::mem::take(piece), style)
+        };
+        let (mut piece, mut lit) = (String::new(), false);
         let mut truncated = false;
         for g in text::graphemes(slice) {
             let (g, w) = match text::untab(g, col) {
@@ -822,11 +860,16 @@ fn code_spans(
                 truncated = true;
                 break;
             }
+            let here = word.is_some_and(|word| word.contains(&(col - w)));
+            if here != lit && !piece.is_empty() {
+                out.push(styled(&mut piece, lit));
+            }
+            lit = here;
             piece.push_str(g);
             used += w;
         }
         if !piece.is_empty() {
-            out.push(Span::styled(piece, style_for(kind, emphasized)));
+            out.push(styled(&mut piece, lit));
         }
         if truncated {
             out.push(Span::styled("…", theme.meta(bg)));
@@ -870,7 +913,7 @@ mod tests {
             now: 0,
         };
         let line = "if a\u{202e} {\tb\u{200b}c";
-        let spans = code_spans(ctx, line, &[], DiffBg::Added, false, (80, 0), &[]);
+        let spans = code_spans(ctx, line, &[], DiffBg::Added, false, (80, 0), &[], None);
         let shown: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(shown, "if a� { b�c");
     }
@@ -931,6 +974,7 @@ mod tests {
             keys,
             selection: None,
             shift: 0,
+            word: None,
         }
         .render(area, &mut buf);
         let row = |y: u16, xs: std::ops::Range<u16>| -> String {

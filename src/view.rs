@@ -115,6 +115,10 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 current: p.current_match(),
                 hints: &hints,
                 shift: p.shift,
+                word: p
+                    .word
+                    .and_then(|_| p.word_cursor())
+                    .map(|(at, _, w)| (at, w.cols)),
             }
             .render(area, buf);
             comment_box.map(|(_, item, under)| {
@@ -411,6 +415,7 @@ fn render_diff(
         },
         selection: screen.selection.map(|anchor| (anchor, screen.cursor)),
         shift: screen.shift,
+        word: screen.word,
     }
     .render(area, buf);
 

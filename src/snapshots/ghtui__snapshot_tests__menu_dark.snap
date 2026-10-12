@@ -19,7 +19,7 @@ Buffer {
         "  ⚖ MIT license   ☆ 1.2k stars   ◉ 18      gT   Previous tab                                       ▐",
         "                                            o   Open the selection on GitHub                       ▐",
         "   ⎇ main ▾   ⎇ 14 branches  ◇ 9 tags       y   Copy the selection's link                          ▐",
-        "                                           gx   Open the selected link in the browser              ▐",
+        "                                           gx   Open the link under the cursor in the browser      ▐",
         "  ╭─ octocat  Browse GitHub like the        i   Follow any link by its letters                     ▐",
         "  │▌▸ .github     Run CI on macOS too       -   Up a level                                         ▐",
         "  │ ▸ crates      Browse GitHub like   ctrl-o   Back                                               ▐",

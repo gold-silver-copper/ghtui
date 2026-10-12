@@ -148,7 +148,8 @@ says where it works.
   filter instead, in place on the list. `g/` searches GitHub, as does `:`.
 - In a file, `j` and `k` move line by line, `y` copies the line's link,
   `V` selects lines (then `y` copies `#L10-L20`), and `gb` blames the
-  file at that line. In the blame, a run of lines opens its commit.
+  file at that line. In the blame, a run of lines opens its commit. A
+  job's log is the same: each line is a row with its own link.
 - `h` and `l` scroll code sideways in files, logs and the diff; in the
   diff's file tree they fold and unfold folders, and the diff shows the
   file selected there.
@@ -169,6 +170,9 @@ says where it works.
   writing. In Files changed the view toggles are under `z`: `zw`
   whitespace, `zs` split, `zf` the whole file, `zT` the file tree; `zc`
   `zo` `za` fold a thread or file, `zM` `zR` every file.
+- In files, logs and the diff, `w` and `b` move a word cursor along the
+  line: `*` and `#` search its word, down and up, and `gx` opens a web
+  address under it. A job log's lines are rows, as a file's are.
 
 **Everywhere** (`global:`)
 

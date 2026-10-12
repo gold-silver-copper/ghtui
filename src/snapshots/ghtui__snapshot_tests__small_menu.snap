@@ -19,7 +19,7 @@ Buffer {
         "  ⚖ MIT license        gT   Previous tab                                       ▐",
         "                        o   Open the selection on GitHub                       ▐",
         "   ⎇ main ▾   ⎇ 1       y   Copy the selection's link                          ▐",
-        "                       gx   Open the selected link in the browser               ",
+        "                       gx   Open the link under the cursor in the browser       ",
         "  ╭─ octocat  Bro       i   Follow any link by its letters                      ",
         "  │▌▸ .github           -   Up a level                                          ",
         "  │ ▸ crates       ctrl-o   Back                                                ",

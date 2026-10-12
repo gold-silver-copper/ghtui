@@ -1014,6 +1014,12 @@ impl Doc {
         }
     }
 
+    /// The code of the line [`Doc::line_at`] finds.
+    pub fn code_at(&self, pos: Pos, half: Side) -> Option<&str> {
+        let at = self.line_at(pos, half)?;
+        Some(self.files.get(pos.file)?.text()?.line(at))
+    }
+
     /// The half of a split row the cursor is on when it asks for `half`
     /// (`None` on rows that aren't split).
     pub fn half_at(&self, pos: Pos, half: Side) -> Option<Side> {
