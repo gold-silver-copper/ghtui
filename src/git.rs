@@ -209,19 +209,27 @@ fn parse_remotes(config: &str) -> Vec<Remote> {
 /// `ssh://`, `git://`).
 pub fn github_repo_from_url(url: &str) -> Option<GitHubRepo> {
     let url = url.trim();
-    let (host, path) = match url.split_once("://") {
-        Some((_, rest)) => {
+    let ours = crate::host::current();
+    let (serves, path) = match url.split_once("://") {
+        Some((scheme, rest)) => {
             let (authority, path) = rest.split_once('/')?;
             let host = authority.rsplit('@').next()?;
-            (host.split(':').next()?, path)
+            // A web remote's port is the website's; SSH's and git's are
+            // their own.
+            let serves = if scheme.starts_with("http") {
+                ours.serves(host)
+            } else {
+                ours.serves_hostname(host.split(':').next()?)
+            };
+            (serves, path)
         }
         // scp-style: `git@host:owner/name`.
         None => {
             let (authority, path) = url.split_once(':')?;
-            (authority.rsplit('@').next()?, path)
+            (ours.serves_hostname(authority.rsplit('@').next()?), path)
         }
     };
-    if !crate::host::current().serves(host) {
+    if !serves {
         return None;
     }
     let path = path.trim_end_matches('/');
@@ -319,6 +327,20 @@ mod tests {
             assert_eq!(github_repo_from_url(url), repo("o", "r"), "{url}");
         }
         assert_eq!(github_repo_from_url("git@github.com:o/r.git"), None);
+
+        // A website with a port: its web remotes name the port, SSH's don't.
+        let _host = crate::host::set_for_test("ghe.example.com:8443");
+        for url in [
+            "https://ghe.example.com:8443/o/r.git",
+            "git@ghe.example.com:o/r.git",
+            "ssh://git@ghe.example.com:2222/o/r.git",
+        ] {
+            assert_eq!(github_repo_from_url(url), repo("o", "r"), "{url}");
+        }
+        assert_eq!(
+            github_repo_from_url("https://ghe.example.com/o/r.git"),
+            None
+        );
     }
 
     #[test]

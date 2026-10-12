@@ -191,11 +191,7 @@ impl PrRef {
             });
         }
         let url = url::Url::parse(s).ok()?;
-        if !matches!(url.scheme(), "https" | "http")
-            || !url
-                .host_str()
-                .is_some_and(|h| crate::host::current().serves(h))
-        {
+        if !matches!(url.scheme(), "https" | "http") || !crate::host::current().serves_url(&url) {
             return None;
         }
         let mut segments = url.path_segments()?;

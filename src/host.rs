@@ -124,6 +124,19 @@ impl Host {
             || (!self.is_enterprise() && host.eq_ignore_ascii_case("www.github.com"))
     }
 
+    /// Whether `url` is on this GitHub's website: its host, and its port
+    /// when the host names one.
+    pub fn serves_url(self, url: &url::Url) -> bool {
+        url_host(url).is_some_and(|h| self.serves(&h))
+    }
+
+    /// Whether `name`, a hostname without a port (an SSH remote's, whose
+    /// port is SSH's), is this GitHub's.
+    pub fn serves_hostname(self, name: &str) -> bool {
+        let ours = self.0.split(':').next().unwrap_or(self.0);
+        name.eq_ignore_ascii_case(ours) || self.serves(name)
+    }
+
     /// Whether `host` is this GitHub's gist subdomain.
     pub fn serves_gists(self, host: &str) -> bool {
         host.len() > 5
@@ -134,6 +147,15 @@ impl Host {
                 .get(5..)
                 .is_some_and(|rest| rest.eq_ignore_ascii_case(self.0))
     }
+}
+
+/// A URL's host as hosts are named here: with its port, when it has one.
+pub fn url_host(url: &url::Url) -> Option<String> {
+    let name = url.host_str()?;
+    Some(match url.port() {
+        Some(port) => format!("{name}:{port}"),
+        None => name.to_owned(),
+    })
 }
 
 static CURRENT: OnceLock<Host> = OnceLock::new();

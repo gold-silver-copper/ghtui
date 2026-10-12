@@ -797,11 +797,11 @@ fn parse(parsed: &url::Url) -> Option<Target> {
         return None;
     }
     let host = crate::host::current();
-    let name = parsed.host_str()?;
-    if host.serves_gists(name) {
+    let name = crate::host::url_host(parsed)?;
+    if host.serves_gists(&name) {
         return gist(parsed.path_segments()?).map(Target::Page);
     }
-    if !host.serves(name) {
+    if !host.serves(&name) {
         return None;
     }
     // An Enterprise Server's gists are under `/gist`.
@@ -2157,6 +2157,26 @@ pub(crate) mod tests {
             parse_input("ghe.example.com/o/r", None).map(|d| d.target),
             Some(Target::Page(repo))
         );
+    }
+
+    /// A host with a port owns its links, port and all.
+    #[test]
+    fn a_host_with_a_port_owns_its_links() {
+        let _host = crate::host::set_for_test("ghe.example.com:8443");
+        let repo = Target::Page(Route::Repo(RepoId::new("o", "r")));
+        assert_eq!(
+            Dest::from_url("https://ghe.example.com:8443/o/r").target,
+            repo
+        );
+        assert_eq!(parse_input("o/r/pull/5/files", None).map(|d| d.target), {
+            let pr = crate::api::model::PrRef {
+                repo: RepoId::new("o", "r"),
+                number: 5,
+            };
+            Some(Target::Files(DiffOf::Pr(pr)))
+        });
+        let other = Dest::from_url("https://ghe.example.com/o/r").target;
+        assert!(matches!(other, Target::External(_)), "{other:?}");
     }
 
     /// Projects open from their owner's, their own and their views'
