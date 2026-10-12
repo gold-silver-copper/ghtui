@@ -803,6 +803,7 @@ async fn save_tabs(gh: &GitHub, state: &State) {
 /// What the cache has for a page, and when it was fetched.
 pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
     use crate::api::browse::keys;
+    use crate::api::project;
     fn at<T>(c: crate::store::Cached<T>, wrap: impl FnOnce(T) -> Data) -> (Data, u64) {
         (wrap(c.value), c.fetched_at)
     }
@@ -913,6 +914,12 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         }),
         DataKey::CommitChecks(repo, oid) => at(gh.cached(&keys::commit_checks(repo, oid))?, |v| {
             Data::Checks(Box::new(v))
+        }),
+        DataKey::Projects(of) => at(gh.cached(&project::keys::projects(of))?, |v| {
+            Data::Projects(Box::new(v))
+        }),
+        DataKey::Project(p, view) => at(gh.cached(&project::keys::project(p, *view))?, |v| {
+            Data::Project(Box::new(v))
         }),
         DataKey::History(repo, rev, path) => at(gh.cached(&keys::history(repo, rev, path))?, |v| {
             Data::History(Box::new(v))
@@ -1033,6 +1040,8 @@ pub(crate) async fn fetch(
         DataKey::CommitChecks(repo, oid) => {
             Data::Checks(Box::new(gh.commit_checks(repo, oid).await?))
         }
+        DataKey::Projects(of) => Data::Projects(Box::new(gh.projects(of, after).await?)),
+        DataKey::Project(p, view) => Data::Project(Box::new(gh.project(p, *view, after).await?)),
         DataKey::History(repo, rev, path) => {
             Data::History(Box::new(gh.history(repo, rev, path, after).await?))
         }

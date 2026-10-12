@@ -296,6 +296,9 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 }
             };
         }
+        _ if crate::projects::ACTIONS.contains(&action) => {
+            return crate::projects::act(state, action);
+        }
         Action::Star => return star(state),
         Action::Comment => return comment_with(state, "", None),
         Action::QuoteReply => return quote_reply(state),

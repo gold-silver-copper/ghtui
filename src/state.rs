@@ -556,6 +556,7 @@ impl State {
             Screen::Page(p) => match &p.route {
                 Route::Job { .. } => Context::Log,
                 Route::Blob { .. } | Route::Blame { .. } => Context::File,
+                Route::Project { .. } | Route::ProjectItem { .. } => Context::Project,
                 route if route.list_query().is_some() => Context::List,
                 _ => Context::Page,
             },

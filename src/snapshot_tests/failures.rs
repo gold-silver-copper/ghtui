@@ -190,6 +190,10 @@ fn every_route_says_why_when_its_needs_fail() {
         "https://github.com/o",
         "https://github.com/o?tab=followers",
         "https://github.com/o?tab=repositories",
+        "https://github.com/orgs/o/projects",
+        "https://github.com/o/r/projects",
+        "https://github.com/orgs/o/projects/1",
+        "https://github.com/orgs/o/projects/1/views/2?pane=issue&itemId=1003",
     ];
     for url in urls {
         let crate::route::Target::Page(route) = crate::route::Dest::from_url(url).target else {
@@ -317,5 +321,7 @@ fn sample(key: &DataKey) -> Data {
         K::Workflow(..) => Data::Workflow(Box::new(fixtures::workflow_runs().0)),
         K::Runs(..) => Data::Runs(Box::new(fixtures::workflow_runs().1)),
         K::Notifications(_) => Data::Notifications(Box::new(fixtures::notifications())),
+        K::Projects(_) => Data::Projects(Box::new(fixtures::projects())),
+        K::Project(..) => Data::Project(Box::new(fixtures::project())),
     }
 }

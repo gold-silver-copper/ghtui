@@ -291,7 +291,7 @@ impl GitHub {
 
     /// Checks a GraphQL list's page adds up: a short page is the last
     /// (nulls count: they're items the token can't see).
-    fn check_connection<T>(
+    pub(crate) fn check_connection<T>(
         &self,
         page: &browse::wire::Connection<T>,
         size: usize,
@@ -491,6 +491,13 @@ impl GitHub {
         self.ask(&serde_json::to_value(&op)?, false)
             .await?
             .mutation()
+    }
+
+    /// Runs a mutation given as text ([`crate::api::raw`]), which only has
+    /// to succeed: any error fails it, with GitHub's messages.
+    pub(crate) async fn mutate_json(&self, query: &str, variables: Value) -> Result<(), ApiError> {
+        let body = serde_json::json!({ "query": query, "variables": variables });
+        self.ask(&body, false).await?.mutation::<Value>().map(drop)
     }
 
     /// Runs a query given as text (built at run time, or read as JSON) for
@@ -2490,7 +2497,7 @@ impl GitHub {
 
     /// [`Self::kept`] for a list's first page; later pages aren't cached.
     /// A list's page, checked it adds up, then kept if it's the first.
-    async fn kept_page<T: Serialize + Clone + Send + browse::Page + 'static>(
+    pub(crate) async fn kept_page<T: Serialize + Clone + Send + browse::Page + 'static>(
         &self,
         first: bool,
         key: &str,

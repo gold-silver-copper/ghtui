@@ -2,6 +2,7 @@
 
 use crate::api::browse::{DiscussionsOf, RepoSort, SearchKind};
 use crate::api::model::{PrRef, RepoId};
+use crate::api::project::{ProjectOwner, ProjectRef, ProjectsOf};
 use crate::git::Oid;
 use crate::ui::pages::url as links;
 use crate::ui::pages::{PrTab, ProfileTab};
@@ -189,6 +190,20 @@ pub enum Route {
     NewIssue(RepoId),
     /// A new pull request's form.
     NewPr(RepoId),
+    /// An organization's or someone's projects, or a repository's.
+    Projects(ProjectsOf),
+    /// A project at one of its views (its first, if none is named).
+    Project {
+        project: ProjectRef,
+        view: Option<u64>,
+    },
+    /// One of a project's items, as the view's side pane shows it, by the
+    /// number its URL names it by (`?pane=issue&itemId=…`).
+    ProjectItem {
+        project: ProjectRef,
+        view: Option<u64>,
+        item: u64,
+    },
 }
 
 /// The pages at a revision.
@@ -514,6 +529,14 @@ impl Route {
                     links::encode(query)
                 )
             }
+            Route::Projects(ProjectsOf::Owner(owner)) => format!("{}/projects", owner.url()),
+            Route::Projects(ProjectsOf::Repo(repo)) => format!("{}/projects", links::repo(repo)),
+            Route::Project { project, view } => view_url(project, *view),
+            Route::ProjectItem {
+                project,
+                view,
+                item,
+            } => format!("{}?pane=issue&itemId={item}", view_url(project, *view)),
         }
     }
 
@@ -573,6 +596,16 @@ impl Route {
             Route::User { login, .. } => format!("@{login}"),
             Route::Search { query, .. } => format!("Search “{query}”"),
             Route::Notifications { .. } => "Notifications".to_owned(),
+            Route::Projects(ProjectsOf::Owner(owner)) => format!("@{} · Projects", owner.login()),
+            Route::Projects(ProjectsOf::Repo(repo)) => format!("{repo} · Projects"),
+            Route::Project { project, .. } => {
+                format!("@{} · Project {}", project.owner.login(), project.number)
+            }
+            Route::ProjectItem { project, item, .. } => format!(
+                "@{} · Project {} · Item {item}",
+                project.owner.login(),
+                project.number
+            ),
         }
     }
 
@@ -619,9 +652,13 @@ impl Route {
             | Route::Milestone { repo, .. }
             | Route::NewIssue(repo)
             | Route::NewPr(repo)
+            | Route::Projects(ProjectsOf::Repo(repo))
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
-            Route::Home
+            Route::Projects(ProjectsOf::Owner(_))
+            | Route::Project { .. }
+            | Route::ProjectItem { .. }
+            | Route::Home
             | Route::User { .. }
             | Route::Search { .. }
             | Route::Notifications { .. }
@@ -842,7 +879,15 @@ fn parse(parsed: &url::Url) -> Option<Target> {
             }
         }
         // Names that can't be GitHub's are pages GitHub doesn't have.
-        ["stars" | "orgs", login, ..] if !valid_login(login) => return None,
+        ["stars" | "orgs" | "users", login, ..] if !valid_login(login) => return None,
+        [kind @ ("orgs" | "users"), login, "projects", rest @ ..] => {
+            let owner = if *kind == "orgs" {
+                ProjectOwner::Org((*login).to_owned())
+            } else {
+                ProjectOwner::User((*login).to_owned())
+            };
+            project(owner, rest, parsed)?
+        }
         ["stars", login] => Route::User {
             login: (*login).to_owned(),
             tab: ProfileTab::Stars,
@@ -877,6 +922,14 @@ fn parse(parsed: &url::Url) -> Option<Target> {
                 repos()
             },
         },
+        // A profile's projects are an organization's at `/orgs/…/projects`.
+        [login]
+            if tab.as_deref() == Some("projects")
+                && !RESERVED.contains(login)
+                && valid_login(login) =>
+        {
+            Route::Projects(ProjectsOf::Owner(ProjectOwner::User((*login).to_owned())))
+        }
         [login] if !RESERVED.contains(login) && valid_login(login) => Route::User {
             login: (*login).to_owned(),
             tab: match tab.as_deref() {
@@ -885,7 +938,7 @@ fn parse(parsed: &url::Url) -> Option<Target> {
                 Some("stars") => ProfileTab::Stars,
                 Some("followers") => ProfileTab::Followers,
                 Some("following") => ProfileTab::Following,
-                // Packages and projects need scopes gh doesn't grant.
+                // Packages need a scope gh doesn't grant.
                 Some(_) => return None,
             },
         },
@@ -986,6 +1039,8 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
                 .map(|q| q.trim().to_owned())
                 .unwrap_or_default(),
         },
+        // Its linked projects; a classic project (`projects/1`) is gone.
+        ["projects"] => Route::Projects(ProjectsOf::Repo(repo)),
         ["stargazers"] => Route::Stargazers(repo),
         ["watchers"] => Route::Watchers(repo),
         ["forks"] | ["network", "members"] => Route::Forks(repo),
@@ -1246,6 +1301,40 @@ fn discussions(of: DiscussionsOf, rest: &[&str]) -> Option<Route> {
         },
         _ => return None,
     })
+}
+
+/// An owner's projects page, from what follows `/projects` in its URL: the
+/// list, a project, one of its views, or an item in a view's side pane.
+/// Its settings, insights and workflows are on GitHub.
+fn project(owner: ProjectOwner, rest: &[&str], url: &url::Url) -> Option<Route> {
+    let [number, rest @ ..] = rest else {
+        return Some(Route::Projects(ProjectsOf::Owner(owner)));
+    };
+    let project = ProjectRef {
+        owner,
+        number: number.parse().ok()?,
+    };
+    let view = match rest {
+        [] => None,
+        ["views", n] => Some(n.parse().ok()?),
+        _ => return None,
+    };
+    Some(match param(url, "itemId") {
+        Some(item) => Route::ProjectItem {
+            project,
+            view,
+            item: item.parse().ok()?,
+        },
+        None => Route::Project { project, view },
+    })
+}
+
+/// A project's view's URL (the project's, without one).
+fn view_url(project: &ProjectRef, view: Option<u64>) -> String {
+    match view {
+        Some(n) => format!("{}/views/{n}", project.url()),
+        None => project.url(),
+    }
 }
 
 fn discussions_url(of: &DiscussionsOf) -> String {
@@ -2060,6 +2149,74 @@ pub(crate) mod tests {
         );
     }
 
+    /// Projects open from their owner's, their own and their views'
+    /// URLs, and an item from a view's side pane; each URL leads back.
+    #[test]
+    fn projects_open_from_their_urls() {
+        let org = ProjectRef {
+            owner: ProjectOwner::Org("octo-org".into()),
+            number: 5,
+        };
+        let user = ProjectRef {
+            owner: ProjectOwner::User("octocat".into()),
+            number: 3,
+        };
+        let cases = [
+            (
+                "https://github.com/orgs/octo-org/projects",
+                Route::Projects(ProjectsOf::Owner(org.owner.clone())),
+            ),
+            (
+                "https://github.com/users/octocat/projects",
+                Route::Projects(ProjectsOf::Owner(user.owner.clone())),
+            ),
+            (
+                "https://github.com/octocat?tab=projects",
+                Route::Projects(ProjectsOf::Owner(user.owner.clone())),
+            ),
+            (
+                "https://github.com/o/r/projects",
+                Route::Projects(ProjectsOf::Repo(RepoId::new("o", "r"))),
+            ),
+            (
+                "https://github.com/orgs/octo-org/projects/5",
+                Route::Project {
+                    project: org.clone(),
+                    view: None,
+                },
+            ),
+            (
+                "https://github.com/users/octocat/projects/3/views/2",
+                Route::Project {
+                    project: user,
+                    view: Some(2),
+                },
+            ),
+            (
+                "https://github.com/orgs/octo-org/projects/5/views/1?pane=issue&itemId=42&issue=o%7Cr%7C1",
+                Route::ProjectItem {
+                    project: org,
+                    view: Some(1),
+                    item: 42,
+                },
+            ),
+        ];
+        for (url, route) in cases {
+            assert_eq!(page(url), route, "{url}");
+            assert_eq!(reopened(&route), Target::Page(route), "{url}");
+        }
+        for url in [
+            "https://github.com/orgs/octo-org/projects/5/settings",
+            "https://github.com/orgs/octo-org/projects/x",
+            "https://github.com/o/r/projects/1",
+        ] {
+            assert!(
+                matches!(Dest::from_url(url).target, Target::External(_)),
+                "{url}"
+            );
+        }
+    }
+
     /// A ref with slashes in it (`feature/x`, `dependabot/cargo/serde-1.0`,
     /// a `release/1.0` tag) is one revision: the page's URL leads back to
     /// that revision, not to its first segment with the rest as a path.
@@ -2460,6 +2617,38 @@ pub(crate) mod tests {
                             login: login.clone(),
                             tab,
                         })
+                    }),
+                repo().prop_map(|repo| Route::Projects(ProjectsOf::Repo(repo))),
+                (
+                    login(),
+                    any::<bool>(),
+                    1..u64::MAX,
+                    prop::option::of(1..u64::MAX)
+                )
+                    .prop_map(|(login, org, number, view)| {
+                        let owner = if org {
+                            ProjectOwner::Org(login)
+                        } else {
+                            ProjectOwner::User(login)
+                        };
+                        Route::Project {
+                            project: ProjectRef { owner, number },
+                            view,
+                        }
+                    }),
+                (
+                    login(),
+                    1..u64::MAX,
+                    prop::option::of(1..u64::MAX),
+                    1..u64::MAX
+                )
+                    .prop_map(|(login, number, view, item)| Route::ProjectItem {
+                        project: ProjectRef {
+                            owner: ProjectOwner::Org(login),
+                            number,
+                        },
+                        view,
+                        item,
                     }),
                 (any::<String>(), 0..7u8).prop_map(|(query, k)| Route::Search {
                     kind: [

@@ -19,7 +19,7 @@ type Make = fn() -> State;
 /// A list, a pull request, the diff with each pane focused (the
 /// selection away from the edges so moving can move), and every page
 /// links lead to.
-fn screens() -> [(&'static str, Make); 29] {
+fn screens() -> [(&'static str, Make); 31] {
     fn moved(mut s: State) -> State {
         press(&mut s, "jj");
         s
@@ -91,6 +91,12 @@ fn screens() -> [(&'static str, Make); 29] {
         ("wiki", || mid(with_wiki(Mode::Dark))),
         ("new issue", || moved(super::create::with_new_issue())),
         ("new pull request", || moved(super::create::with_new_pr())),
+        ("project board", || {
+            mid(super::projects::with_project(Mode::Dark, None))
+        }),
+        ("project table", || {
+            mid(super::projects::with_project(Mode::Dark, Some(2)))
+        }),
         ("code search", || {
             let results = crate::fixtures::code_results();
             mid(with_search(

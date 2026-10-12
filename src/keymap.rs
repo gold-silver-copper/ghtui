@@ -24,6 +24,8 @@ pub enum Context {
     Diff,
     /// The diff's file tree, when it has the focus.
     Tree,
+    /// A project: its board or table, or an item.
+    Project,
 }
 
 /// The stacks of contexts that can be active at once, innermost first.
@@ -33,6 +35,7 @@ const STACKS: &[&[Context]] = {
         &[List, Page, Global],
         &[File, Page, Global],
         &[Log, Page, Global],
+        &[Project, Page, Global],
         &[Page, Global],
         &[Tree, Diff, Global],
         &[Diff, Global],
@@ -40,12 +43,13 @@ const STACKS: &[&[Context]] = {
 };
 
 impl Context {
-    const ALL: [Context; 7] = [
+    const ALL: [Context; 8] = [
         Context::Global,
         Context::Page,
         Context::List,
         Context::File,
         Context::Log,
+        Context::Project,
         Context::Diff,
         Context::Tree,
     ];
@@ -60,6 +64,7 @@ impl Context {
             Context::Log => "log",
             Context::Diff => "diff",
             Context::Tree => "tree",
+            Context::Project => "project",
         }
     }
 
@@ -73,6 +78,7 @@ impl Context {
             Context::Log => "in job logs",
             Context::Diff => "in Files changed",
             Context::Tree => "in Files changed's file tree",
+            Context::Project => "in projects",
         }
     }
 
@@ -252,6 +258,10 @@ actions! {
     WordPrev          "word_prev"         ["b", "log:b", "diff:b"] File   "Previous word";
     Symbols           "symbols"           ["gO", "diff:gO"]        File   "Symbols in this file, to go to one";
     Definition        "go_to_definition"  ["gd", "diff:gd"]        File   "Go to the definition of the word under the cursor";
+    PrevColumn        "prev_column"       ["h"]                    Project "Previous column of the board";
+    NextColumn        "next_column"       ["l"]                    Project "Next column of the board";
+    MoveItem          "move_item"         [",c"]                   Project "Move the item to another column";
+    SetField          "set_field"         [",f"]                   Project "Set a field of the item";
 
     NextHunk          "next_change"       ["]c", "}"]              Diff   "Next change";
     PrevHunk          "prev_change"       ["[c", "{"]              Diff   "Previous change";

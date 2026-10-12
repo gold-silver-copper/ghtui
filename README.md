@@ -16,7 +16,7 @@ ghtui is pre-release, but it's usable every day.
   repositories (files, README, branches, tags, releases, commits, blame,
   comparisons), issues, pull requests, Actions runs and job logs,
   discussions, wikis, milestones, deployments, security advisories, gists,
-  teams, profiles and search, on github.com or a GitHub Enterprise
+  teams, profiles, projects and search, on github.com or a GitHub Enterprise
   Server. Every GitHub link opens in ghtui unless it can only work in a
   browser (a download, settings), and then it says why.
 - **Reviewing** is where ghtui goes furthest. Diffs are computed locally
@@ -26,16 +26,16 @@ ghtui is pre-release, but it's usable every day.
 - **Acting** works from a page or from a row in a list: merge (now, when
   checks pass, or through a merge queue), approve, mark ready for review,
   update a branch, close or reopen, re-run or cancel a workflow run,
-  comment and star, and mark notifications read or done, one at a time or
-  all at once.
+  comment and star, mark notifications read or done, one at a time or
+  all at once, and move a project's cards or set their fields.
 - **Editing** what's there: your comments and descriptions (or anyone's,
   where GitHub lets you), titles, reactions, and an issue's or pull
   request's labels, assignees, reviewers and milestone.
 - **Creating**: open issues (from the repository's templates) and pull
   requests, and check a pull request out in your clone.
 
-Not there yet: projects, code navigation with a language server's
-precision, and structural diffs.
+Not there yet: code navigation with a language server's precision,
+structural diffs, and adding, archiving or editing a project's items.
 
 ## Goals
 
@@ -76,7 +76,9 @@ Enterprise Server (see [Configuration](#configuration)), it reads
 --hostname HOST`, as gh does. The token stays in memory: it's never
 logged, written to disk, or put on a command line. Reading needs read
 access. Acting needs write access where you act (with a
-classic token, the `repo` scope covers it all).
+classic token, the `repo` scope covers it all, but projects: reading them
+takes `read:project` and changing them `project`, which `gh auth refresh
+-s project` adds).
 
 ## A short tour
 
@@ -103,6 +105,18 @@ read and `,d` marks it done; `,N` and `,D` mark everything shown. A
 filter GitHub can't apply (a reason, `is:read`) searches further pages
 until a page fills. The header counts your unread notifications, kept
 fresh as often as GitHub asks; click or follow it to open the inbox.
+
+**Projects** are a tab of a profile and of a repository, as on GitHub.
+A project opens at its first view, and its views are the page's tabs. A
+board shows each column (each value of its Status, or the field it's
+grouped by) as a box of cards, top to bottom; `h` and `l` go between
+columns. A table shows the view's fields in columns, as many as fit. A
+view's filter, sort and grouping apply. A card opens what it is: an
+issue, a pull request, or a draft's own page with its body and fields.
+Where GitHub lets you change the project, `,c` moves the card to another
+column and `,f` sets one of its fields (a single select, an iteration, a
+text, a number or a date), and the board follows GitHub until it shows
+the change.
 
 **Tabs** work like a browser's: `T` opens the selection in a new tab, `]b`
 and `[b` switch between them, and they come back next time you start.
@@ -251,6 +265,8 @@ says where it works.
   whitespace, `zs` split, `zf` the whole file, `zT` the file tree; `zc`
   `zo` `za` fold a thread or file, `zM` `zR` every file.
   In the file tree, `<` and `>` narrow and widen it.
+- On a project's board `h` and `l` go between columns; `,c` moves the
+  selected card to another column and `,f` sets one of its fields.
 - `gn` opens your notifications (`,n` marks one read, `,d` done, `,N`
   and `,D` everything shown) and `gr` a pull request's Review tab.
 - In files, logs and the diff, `w` and `b` move a word cursor along the
@@ -384,6 +400,15 @@ says where it works.
 | `l`  | Scroll right |
 | `w`  | Next word (for * and gx) |
 | `b`  | Previous word |
+
+**In projects** (`project:`)
+
+| Keys | Action |
+| ---- | ------ |
+| `h`  | Previous column of the board |
+| `l`  | Next column of the board |
+| `,c` | Move the item to another column |
+| `,f` | Set a field of the item |
 
 **In Files changed** (`diff:`)
 
@@ -610,3 +635,7 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   first is used.
 - An issue form's dropdowns become a comment listing their options, to
   answer in your own words; its validations aren't checked.
+- A project's board is its columns one above another, not side by side.
+  A view's sort orders the items loaded (50 a page), not the whole
+  project; a roadmap shows as a table, and a board's swimlanes aren't
+  drawn.

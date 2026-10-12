@@ -14,6 +14,7 @@ pub mod mention;
 pub mod model;
 pub mod notifications;
 mod person;
+pub mod project;
 pub mod queries;
 #[cfg(test)]
 mod query_check;

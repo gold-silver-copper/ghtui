@@ -8,7 +8,7 @@
 #     session     needs a browser session, writes, or needs rights the token
 #                 doesn't give (settings, login, security alerts)
 #     scope       needs a token scope gh doesn't grant by default
-#                 (read:project, read:packages)
+#                 (read:packages)
 #     not-github  not repository or user content (GitHub's marketing, docs
 #                 and other sites)
 #     no-api      the API doesn't expose it
@@ -23,7 +23,8 @@
 #   handled  ?q= (lists, search, dashboards, a job's log filter), ?type=
 #            (search), ?tab= and ?sort= (profiles), ?state=closed
 #            (milestones), ?environments_filter= (deployments), ?query=
-#            (notifications, a repository's runs); #L10-L20
+#            (notifications, a repository's runs), ?itemId= (a project's
+#            item, in its view's side pane); #L10-L20
 #            (files and blame, marked), #issuecomment-… and
 #            #discussioncomment-… (scrolled to), #discussion_r…/#r… (the
 #            review thread in the diff), #diff-<hash> (that file in the
@@ -122,9 +123,12 @@ https://github.com/marketplace/dependabot-preview                           exte
 https://github.com/marketplace/category/security                            external not-github
 https://github.com/sponsors/torvalds                                        external rare
 # Project, ProjectV2, ProjectCard, ProjectColumn
-https://github.com/orgs/octocat/projects/1/views/1                          external scope
-https://github.com/users/octocat/projects/3                                 external scope
-https://github.com/octocat/Hello-World/projects/1                           external scope
+https://github.com/orgs/octocat/projects/1/views/1                          Project
+https://github.com/users/octocat/projects/3                                 Project
+https://github.com/orgs/octocat/projects/1/views/1?pane=issue&itemId=42     ProjectItem
+https://github.com/orgs/octocat/projects/1/settings                         external session
+https://github.com/octocat/Hello-World/projects                             Projects
+https://github.com/octocat/Hello-World/projects/1                           external no-api
 # Package, PackageFile
 https://github.com/octocat/octo-name-repo/packages/40201                    external scope
 https://github.com/orgs/github/packages/container/package/hello_docker      external scope
@@ -196,11 +200,12 @@ https://github.com/torvalds?tab=stars                                       User
 https://github.com/torvalds?tab=followers                                   User
 https://github.com/torvalds?tab=following                                   User
 https://github.com/torvalds?tab=packages                                    external scope
-https://github.com/torvalds?tab=projects                                    external scope
+https://github.com/torvalds?tab=projects                                    Projects
+https://github.com/users/torvalds/projects                                  Projects
 https://github.com/stars/torvalds                                           User
 https://github.com/orgs/rust-lang/repositories                              User
 https://github.com/orgs/rust-lang/people                                    User
-https://github.com/orgs/rust-lang/projects                                  external scope
+https://github.com/orgs/rust-lang/projects                                  Projects
 https://github.com/orgs/rust-lang/packages                                  external scope
 https://github.com/orgs/rust-lang/discussions                               Discussions
 # A repository's tabs and lists

@@ -2,6 +2,7 @@
 //! page's tabs.
 
 use super::*;
+use crate::api::project::ProjectsOf;
 
 /// A page you visited, for "jump to" suggestions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,6 +220,7 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
         | Route::Deployments { repo, .. }
         | Route::Milestones { repo, .. }
         | Route::Wiki { repo, page: None }
+        | Route::Projects(ProjectsOf::Repo(repo))
         | Route::Actions { repo, .. } => Route::Repo(repo.clone()),
         Route::Discussion { of, .. } => Route::Discussions {
             of: of.clone(),
@@ -296,6 +298,12 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
         },
         Route::Advisory { repo, .. } => Route::Advisories(repo.clone()),
         Route::Advisories(repo) => repo.clone().map_or(Route::Home, Route::Repo),
+        Route::Projects(ProjectsOf::Owner(owner)) => Route::user(owner.login()),
+        Route::Project { project, .. } => Route::Projects(ProjectsOf::Owner(project.owner.clone())),
+        Route::ProjectItem { project, view, .. } => Route::Project {
+            project: project.clone(),
+            view: *view,
+        },
     })
 }
 

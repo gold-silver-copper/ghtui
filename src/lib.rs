@@ -31,6 +31,7 @@ mod live;
 mod nav;
 mod notice;
 mod picker;
+mod projects;
 mod review;
 pub mod route;
 mod runtime;

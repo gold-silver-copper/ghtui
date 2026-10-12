@@ -2653,3 +2653,161 @@ async fn code_search_asks_for_the_word_in_the_repository() {
         "{line}"
     );
 }
+
+fn roadmap() -> ghtui::api::project::ProjectRef {
+    use ghtui::api::project::{ProjectOwner, ProjectRef};
+    ProjectRef {
+        owner: ProjectOwner::Org("o".into()),
+        number: 1,
+    }
+}
+
+/// A project at a view: its fields and views, then the items the view's
+/// filter finds, each with what it is and its values (a draft's body, a
+/// number as GitHub writes it, the values ghtui doesn't read left out).
+#[tokio::test]
+async fn a_project_reads_its_view_and_the_items_its_filter_finds() {
+    use ghtui::api::project::{FieldKind, FieldValue, ItemContent, Layout};
+    let project = r#"{"data":{"repositoryOwner":{"projectV2":{"id":"PVT_1","title":"Roadmap","shortDescription":null,"url":"https://github.com/orgs/o/projects/1","closed":false,"public":true,"viewerCanUpdate":true,
+        "fields":{"totalCount":3,"nodes":[{"id":"F_title","name":"Title","dataType":"TITLE"},
+            {"id":"F_status","name":"Status","dataType":"SINGLE_SELECT","options":[{"id":"O_todo","name":"Todo","color":"GRAY","description":""},{"id":"O_done","name":"Done","color":"GREEN","description":"Shipped"}]},
+            {"id":"F_sprint","name":"Sprint","dataType":"ITERATION","configuration":{"iterations":[{"id":"I_2","title":"Sprint 2","startDate":"2026-10-01","duration":14}],"completedIterations":[{"id":"I_1","title":"Sprint 1","startDate":"2026-09-17","duration":14}]}}]},
+        "views":{"totalCount":2,"nodes":[
+            {"number":1,"name":"Board","layout":"BOARD_LAYOUT","filter":null,"fields":{"totalCount":2,"nodes":[{"id":"F_title"},{"id":"F_status"}]},"verticalGroupByFields":{"nodes":[{"id":"F_status"}]},"groupByFields":{"nodes":[]},"sortByFields":{"totalCount":0,"nodes":[]}},
+            {"number":2,"name":"Plan","layout":"TABLE_LAYOUT","filter":"-status:Done","fields":{"totalCount":1,"nodes":[{"id":"F_title"}]},"verticalGroupByFields":{"nodes":[]},"groupByFields":{"nodes":[]},"sortByFields":{"totalCount":1,"nodes":[{"direction":"DESC","field":{"id":"F_sprint"}}]}}]}}}}}"#;
+    let items = r#"{"data":{"repositoryOwner":{"projectV2":{"items":{"totalCount":4,"pageInfo":{"hasNextPage":true,"endCursor":"c3"},"nodes":[
+        {"id":"PVTI_1","fullDatabaseId":"1001","content":{"__typename":"Issue","number":14,"title":"Projects","url":"https://github.com/o/r/issues/14","state":"CLOSED","stateReason":"NOT_PLANNED","repository":{"nameWithOwner":"o/r"},"assignees":{"totalCount":1,"nodes":[{"login":"alice"}]},"labels":{"totalCount":0,"nodes":[]},"milestone":null},
+         "fieldValues":{"totalCount":3,"nodes":[{"__typename":"ProjectV2ItemFieldTextValue","text":"Projects","field":{"id":"F_title"}},{"__typename":"ProjectV2ItemFieldSingleSelectValue","optionId":"O_todo","name":"Todo","field":{"id":"F_status"}},{"__typename":"ProjectV2ItemFieldLabelValue"}]}},
+        {"id":"PVTI_2","fullDatabaseId":"1002","content":{"__typename":"DraftIssue","title":"Draft","body":"Its body","assignees":{"totalCount":0,"nodes":[]}},
+         "fieldValues":{"totalCount":1,"nodes":[{"__typename":"ProjectV2ItemFieldNumberValue","number":2.0,"field":{"id":"F_est"}}]}},
+        {"id":"PVTI_3","fullDatabaseId":"1003","content":null,"fieldValues":{"totalCount":0,"nodes":[]}}]}}}}}"#;
+    let (gh, seen) = github(vec![Reply::new(200, project), Reply::new(200, items)]).await;
+    let p = gh.project(&roadmap(), Some(2), None).await.unwrap();
+    assert_eq!((p.view, p.can_update), (2, true));
+    let plan = p.shown().unwrap();
+    assert_eq!(
+        (plan.layout, plan.filter.as_str()),
+        (Layout::Table, "-status:Done")
+    );
+    assert_eq!(plan.sort, [(NodeId::new("F_sprint"), true)]);
+    let board = p.views.first().unwrap();
+    assert_eq!(board.column, Some(NodeId::new("F_status")));
+    let Some(FieldKind::Iteration(sprints)) = p.fields.get(2).map(|f| &f.kind) else {
+        panic!("{:?}", p.fields);
+    };
+    assert_eq!(
+        sprints.iter().map(|s| s.completed).collect::<Vec<_>>(),
+        [false, true]
+    );
+    assert_eq!(p.items.next.as_deref(), Some("c3"));
+    let [issue, draft, hidden] = p.items.items.as_slice() else {
+        panic!("{:?}", p.items);
+    };
+    assert_eq!(issue.number, 1001);
+    assert!(matches!(
+        &issue.content,
+        ItemContent::Issue(l, ghtui::api::browse::IssueState::NotPlanned) if l.number == 14
+    ));
+    let todo = FieldValue::Option {
+        id: "O_todo".into(),
+        name: "Todo".into(),
+    };
+    assert_eq!(issue.value(&NodeId::new("F_status")), Some(&todo));
+    assert!(matches!(&draft.content, ItemContent::Draft(d) if d.body == "Its body"));
+    assert_eq!(
+        draft.value(&NodeId::new("F_est")),
+        Some(&FieldValue::Number("2".into()))
+    );
+    assert_eq!(hidden.content, ItemContent::Redacted);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0].json()["variables"]["login"], "o");
+    assert_eq!(seen[0].json()["variables"]["number"], 1);
+    // The items are what the view's filter finds.
+    assert!(seen[1].query().contains("items(first: 50"));
+    assert_eq!(seen[1].json()["variables"]["query"], "-status:Done");
+}
+
+/// Setting a field sends its value as GitHub takes it; clearing it is a
+/// mutation of its own; a token without the project scope says how to
+/// get it.
+#[tokio::test]
+async fn setting_a_project_field_sends_its_value() {
+    use ghtui::api::change::Change;
+    use ghtui::api::project::FieldValue;
+    let ok = r#"{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_1"}}}}"#;
+    let cleared = r#"{"data":{"clearProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_1"}}}}"#;
+    let scope = r#"{"data":{"updateProjectV2ItemFieldValue":null},"errors":[{"type":"INSUFFICIENT_SCOPES","message":"Your token has not been granted the required scopes to execute this query. The 'updateProjectV2ItemFieldValue' field requires one of the following scopes: ['project'], but your token has only been granted the: ['repo'] scopes."}]}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, ok),
+        Reply::new(200, ok),
+        Reply::new(200, cleared),
+        Reply::new(200, scope),
+    ])
+    .await;
+    let set = |value| Change::SetProjectField {
+        project: NodeId::new("PVT_1"),
+        item: NodeId::new("PVTI_1"),
+        field: NodeId::new("F_status"),
+        value,
+        said: "Status".into(),
+    };
+    let done = FieldValue::Option {
+        id: "O_done".into(),
+        name: "Done".into(),
+    };
+    gh.change(&set(Some(done.clone()))).await.unwrap();
+    gh.change(&set(Some(FieldValue::Number("2.5".into()))))
+        .await
+        .unwrap();
+    gh.change(&set(None)).await.unwrap();
+    match gh.change(&set(Some(done))).await {
+        Err(ApiError::GraphQl(errors)) => {
+            assert!(
+                errors[0].contains("gh auth refresh -s project"),
+                "{errors:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    let seen = seen.lock().unwrap();
+    let vars = |i: usize| seen[i].json()["variables"].clone();
+    assert!(seen[0].query().contains("updateProjectV2ItemFieldValue"));
+    assert_eq!(vars(0)["project"], "PVT_1");
+    assert_eq!(vars(0)["item"], "PVTI_1");
+    assert_eq!(vars(0)["field"], "F_status");
+    assert_eq!(
+        vars(0)["value"],
+        serde_json::json!({ "singleSelectOptionId": "O_done" })
+    );
+    assert_eq!(vars(1)["value"], serde_json::json!({ "number": 2.5 }));
+    assert!(seen[2].query().contains("clearProjectV2ItemFieldValue"));
+    assert!(vars(2).get("value").is_none());
+}
+
+/// An owner's projects are asked of the owner, whichever kind it is; a
+/// token without read:project says how to get it.
+#[tokio::test]
+async fn an_owners_projects_page_and_say_what_scope_they_need() {
+    use ghtui::api::project::ProjectsOf;
+    let list = r#"{"data":{"repositoryOwner":{"projectsV2":{"totalCount":31,"pageInfo":{"hasNextPage":true,"endCursor":"p1"},"nodes":[
+        {"number":1,"title":"Roadmap","shortDescription":"Next","url":"https://github.com/orgs/o/projects/1","closed":false,"public":true,"updatedAt":"2026-10-01T00:00:00Z","items":{"totalCount":12}}]}}}}"#;
+    let scope = r#"{"data":{"repositoryOwner":{"projectsV2":null}},"errors":[{"type":"INSUFFICIENT_SCOPES","path":["repositoryOwner","projectsV2"],"message":"Your token has not been granted the required scopes to execute this query. The 'projectsV2' field requires one of the following scopes: ['read:project'], but your token has only been granted the: ['repo'] scopes."}]}"#;
+    let (gh, seen) = github(vec![Reply::new(200, list), Reply::new(200, scope)]).await;
+    let owner = ProjectsOf::Owner(roadmap().owner);
+    let found = gh.projects(&owner, Some("p0".into())).await.unwrap();
+    assert_eq!((found.total, found.next.as_deref()), (31, Some("p1")));
+    assert_eq!(found.items[0].items, 12);
+    match gh.projects(&owner, None).await {
+        Err(ApiError::GraphQl(errors)) => {
+            assert!(
+                errors[0].contains("gh auth refresh -s read:project"),
+                "{errors:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("projectsV2(first: 30"));
+    assert_eq!(seen[0].json()["variables"]["login"], "o");
+    assert_eq!(seen[0].json()["variables"]["after"], "p0");
+}

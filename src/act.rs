@@ -14,6 +14,7 @@ use crate::api::model::{
     ChecksState, MergeState, PrDetail, PrRef, Readiness, RepoId, ReviewDecision,
 };
 use crate::api::notifications::Inbox;
+use crate::api::project::ProjectRef;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::browse::{DataKey, Need};
@@ -197,6 +198,8 @@ pub enum Subject {
     Inbox {
         query: String,
     },
+    /// A project's items, at a view.
+    Project(ProjectRef, Option<u64>),
 }
 
 impl Subject {
@@ -234,6 +237,10 @@ impl Subject {
             Subject::Thread { query, .. } | Subject::Inbox { query } => Route::Notifications {
                 query: query.clone(),
             },
+            Subject::Project(project, view) => Route::Project {
+                project: project.clone(),
+                view: *view,
+            },
         }
     }
 
@@ -249,6 +256,7 @@ impl Subject {
             Subject::Thread { query, .. } | Subject::Inbox { query } => {
                 Need::Data(DataKey::Notifications(query.clone()))
             }
+            Subject::Project(project, view) => Need::Data(DataKey::Project(project.clone(), *view)),
         }
     }
 
@@ -264,6 +272,8 @@ impl Subject {
             Subject::Run(..) | Subject::Job(..) => matches!(action, A::Rerun | A::Close),
             Subject::Thread { .. } => matches!(action, A::MarkRead | A::MarkDone),
             Subject::Inbox { .. } => matches!(action, A::MarkAllRead | A::MarkAllDone),
+            // Moving and setting go through `crate::projects`.
+            Subject::Project(..) => false,
         }
     }
 
@@ -275,6 +285,7 @@ impl Subject {
             Subject::Job(..) => "the job".to_owned(),
             Subject::Thread { .. } => "the notification".to_owned(),
             Subject::Inbox { .. } => "your notifications".to_owned(),
+            Subject::Project(..) => "the project".to_owned(),
         }
     }
 }
@@ -482,6 +493,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
             };
             inbox::plan(query, list, action)
         }
+        Subject::Project(..) => Err(elsewhere(action).to_owned()),
     }
 }
 
@@ -938,6 +950,9 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             let shows = state.picked::<Inbox>(&key);
             yes(shows.is_some_and(|i| inbox::shows(i, change)))
         }
+        (Change::SetProjectField { .. }, Subject::Project(project, view)) => {
+            yes(crate::projects::shows(state, change, project, *view))
+        }
         _ => Shown::Yes,
     }
 }
@@ -1037,6 +1052,8 @@ fn doing(change: &Change) -> &'static str {
         Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => "Marking them read",
         Change::MarkEach { .. } => "Marking them done",
         Change::Edit(edit) => crate::edit::doing(edit),
+        Change::SetProjectField { value: None, .. } => "Clearing the field",
+        Change::SetProjectField { .. } => "Setting the field",
     }
 }
 
@@ -1082,6 +1099,10 @@ fn done(change: &Change) -> String {
             }
         }
         Change::Edit(edit) => crate::edit::done(edit).into(),
+        Change::SetProjectField {
+            value: None, said, ..
+        } => format!("Cleared {said}"),
+        Change::SetProjectField { said, .. } => format!("Set {said}"),
     }
 }
 
@@ -1107,6 +1128,7 @@ pub fn needs(change: &Change) -> &'static str {
         | Change::MarkDone { .. }
         | Change::MarkAllRead { .. }
         | Change::MarkEach { .. } => "Notifications (classic tokens only)",
+        Change::SetProjectField { .. } => "Projects: write",
     }
 }
 
@@ -1134,6 +1156,7 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => "marking them read",
         Change::MarkEach { .. } => "marking them done",
         Change::Edit(edit) => crate::edit::what(edit),
+        Change::SetProjectField { .. } => "setting the field",
     };
     let reason = match err {
         ApiError::GraphQl(messages) => messages.join("; "),
@@ -1151,6 +1174,9 @@ fn failure(change: &Change, err: &ApiError) -> String {
     let mut text = format!("GitHub refused {what}: {reason}");
     match change {
         // Fine-grained tokens can't read notifications at all.
+        _ if denied && matches!(change, Change::SetProjectField { .. }) => text.push_str(
+            ". Your token may lack the permission: a classic token needs the project scope; a fine-grained one, Projects: write",
+        ),
         _ if denied && notifies(change) => text.push_str(
             ". Your token may lack the permission: notifications take a classic token with the notifications or repo scope",
         ),

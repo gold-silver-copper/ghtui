@@ -1,12 +1,13 @@
 ---
 source: src/snapshot_tests/create.rs
+assertion_line: 319
 expression: render(&s)
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 100, height: 30 },
     content: [
         "  ◆ ghtui   gold-silver-copper / ghtui                 ⌕ Type g/ to search                @octocat  ",
-        "   1 <> Code   2 ◉ Issues   3 ⇄ Pull requests  3    4 ◈ Discussions   5 ▶ Actions   6 ▤ Wiki   7 ⛨  ",
+        "   1 <> Code   2 ◉ Issues   3 ⇄ Pull requests  3    4 ◈ Discussions   5 ▶   6 ▥   7 ▤   8 ⛨         ",
         "───────────────────────────━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────────────────────────",
         "                                                                                                    ",
         "  Open a pull request in gold-silver-copper/ghtui                                                   ",
@@ -67,12 +68,15 @@ Buffer {
         x: 69, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: DIM,
         x: 71, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 74, y: 1, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 83, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: DIM,
-        x: 85, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 88, y: 1, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 94, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: DIM,
-        x: 96, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
-        x: 99, y: 1, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 75, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: DIM,
+        x: 77, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 80, y: 1, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 81, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: DIM,
+        x: 83, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 86, y: 1, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 87, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: DIM,
+        x: 89, y: 1, fg: Rgb(67, 71, 78), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
+        x: 92, y: 1, fg: Rgb(25, 28, 32), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 0, y: 2, fg: Rgb(190, 193, 201), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 27, y: 2, fg: Rgb(50, 83, 131), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,
         x: 50, y: 2, fg: Rgb(190, 193, 201), bg: Rgb(237, 237, 244), underline: Reset, modifier: NONE,

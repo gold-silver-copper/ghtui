@@ -1552,3 +1552,230 @@ pub fn user_results() -> SearchResults {
         next: None,
     })
 }
+
+/// An organization's projects.
+pub fn projects() -> Results<crate::api::project::ProjectSummary> {
+    let project = |number: u64, title: &str, closed: bool| crate::api::project::ProjectSummary {
+        number,
+        title: title.into(),
+        description: if closed {
+            String::new()
+        } else {
+            "What's next for ghtui".into()
+        },
+        url: format!("https://github.com/orgs/gold-silver-copper/projects/{number}"),
+        closed,
+        public: true,
+        updated_at: "2026-10-02T09:00:00Z".into(),
+        items: 5,
+    };
+    Results {
+        total: 2,
+        items: vec![project(1, "Roadmap", false), project(2, "Launch", true)],
+        next: None,
+    }
+}
+
+/// gold-silver-copper's Roadmap project: a board by Status and a table,
+/// with issues, a pull request and drafts.
+pub fn project() -> crate::api::project::Project {
+    use crate::api::project::{
+        Draft, FieldKind, FieldValue, ItemContent, Iteration, Layout, Linked, Project,
+        ProjectField, ProjectItem, ProjectView, SelectOption,
+    };
+    let field = |id: &str, name: &str, kind| ProjectField {
+        id: NodeId::new(id),
+        name: name.into(),
+        kind,
+    };
+    let option = |id: &str, name: &str, color: &str, description: &str| SelectOption {
+        id: id.into(),
+        name: name.into(),
+        color: color.into(),
+        description: description.into(),
+    };
+    let sprint = |id: &str, title: &str, start: &str, completed| Iteration {
+        id: id.into(),
+        title: title.into(),
+        start: start.into(),
+        days: 14,
+        completed,
+    };
+    let fields = vec![
+        field("F_title", "Title", FieldKind::Title),
+        field("F_assignees", "Assignees", FieldKind::Assignees),
+        field(
+            "F_status",
+            "Status",
+            FieldKind::SingleSelect(vec![
+                option("O_todo", "Todo", "GRAY", "Not started"),
+                option("O_doing", "In Progress", "YELLOW", ""),
+                option("O_done", "Done", "GREEN", "Shipped"),
+            ]),
+        ),
+        field("F_labels", "Labels", FieldKind::Labels),
+        field("F_estimate", "Estimate", FieldKind::Number),
+        field(
+            "F_sprint",
+            "Sprint",
+            FieldKind::Iteration(vec![
+                sprint("I_2", "Sprint 2", "2026-10-01", false),
+                sprint("I_1", "Sprint 1", "2026-09-17", true),
+            ]),
+        ),
+        field("F_due", "Due", FieldKind::Date),
+    ];
+    let ids = |ids: &[&str]| ids.iter().map(|id| NodeId::new(*id)).collect::<Vec<_>>();
+    let views = vec![
+        ProjectView {
+            number: 1,
+            name: "Board".into(),
+            layout: Layout::Board,
+            filter: String::new(),
+            fields: ids(&[
+                "F_title",
+                "F_status",
+                "F_assignees",
+                "F_labels",
+                "F_estimate",
+            ]),
+            column: Some(NodeId::new("F_status")),
+            group: None,
+            sort: Vec::new(),
+        },
+        ProjectView {
+            number: 2,
+            name: "Plan".into(),
+            layout: Layout::Table,
+            filter: "-status:Done".into(),
+            fields: ids(&[
+                "F_title",
+                "F_status",
+                "F_assignees",
+                "F_estimate",
+                "F_sprint",
+                "F_due",
+            ]),
+            column: None,
+            group: None,
+            sort: vec![(NodeId::new("F_estimate"), true)],
+        },
+    ];
+    let repo = RepoId::new("gold-silver-copper", "ghtui");
+    let linked = |number: u64, title: &str, pr: bool, who: &[&str], labels: Vec<Label>| Linked {
+        repo: repo.clone(),
+        number,
+        title: title.into(),
+        url: if pr {
+            format!("https://github.com/gold-silver-copper/ghtui/pull/{number}")
+        } else {
+            format!("https://github.com/gold-silver-copper/ghtui/issues/{number}")
+        },
+        assignees: Capped::new(
+            who.iter().map(|w| (*w).to_owned()).collect(),
+            who.len() as u64,
+        ),
+        labels: Capped::new(labels.clone(), labels.len() as u64),
+        milestone: None,
+    };
+    let status = |id: &str, name: &str| {
+        (
+            NodeId::new("F_status"),
+            FieldValue::Option {
+                id: id.into(),
+                name: name.into(),
+            },
+        )
+    };
+    let enhancement = Label {
+        name: "enhancement".into(),
+        color: "a2eeef".into(),
+    };
+    let item = |n: u64, content, values| ProjectItem {
+        id: NodeId::new(format!("PVTI_{n}")),
+        number: 1000 + n,
+        content,
+        values,
+    };
+    let items = vec![
+        item(
+            1,
+            ItemContent::Issue(
+                linked(
+                    14,
+                    "Projects aren't there yet",
+                    false,
+                    &["alice"],
+                    vec![enhancement],
+                ),
+                IssueState::Open,
+            ),
+            vec![
+                status("O_todo", "Todo"),
+                (NodeId::new("F_estimate"), FieldValue::Number("3".into())),
+                (NodeId::new("F_due"), FieldValue::Date("2026-10-31".into())),
+            ],
+        ),
+        item(
+            2,
+            ItemContent::Pr(
+                linked(12, "Show a project's views", true, &["bob"], Vec::new()),
+                PrState::Open,
+            ),
+            vec![
+                status("O_doing", "In Progress"),
+                (NodeId::new("F_estimate"), FieldValue::Number("5".into())),
+                (
+                    NodeId::new("F_sprint"),
+                    FieldValue::Iteration {
+                        id: "I_2".into(),
+                        title: "Sprint 2".into(),
+                    },
+                ),
+            ],
+        ),
+        item(
+            3,
+            ItemContent::Draft(Draft {
+                title: "Write the board's docs".into(),
+                body: "Explain **h** and **l**, and moving cards.".into(),
+                assignees: Capped::new(Vec::new(), 0),
+            }),
+            vec![status("O_todo", "Todo")],
+        ),
+        item(
+            4,
+            ItemContent::Issue(
+                linked(9, "Boards scroll sideways", false, &[], Vec::new()),
+                IssueState::Closed,
+            ),
+            vec![status("O_done", "Done")],
+        ),
+        item(
+            5,
+            ItemContent::Draft(Draft {
+                title: "Someday: roadmaps".into(),
+                body: String::new(),
+                assignees: Capped::new(Vec::new(), 0),
+            }),
+            Vec::new(),
+        ),
+    ];
+    Project {
+        id: NodeId::new("PVT_1"),
+        title: "Roadmap".into(),
+        description: "What's next for ghtui".into(),
+        url: "https://github.com/orgs/gold-silver-copper/projects/1".into(),
+        closed: false,
+        public: true,
+        can_update: true,
+        views: Capped::new(views, 2),
+        fields: Capped::new(fields, 7),
+        view: 1,
+        items: Results {
+            total: 5,
+            items,
+            next: None,
+        },
+    }
+}

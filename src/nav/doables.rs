@@ -386,6 +386,7 @@ impl State {
             }
             out.push(quote);
         }
+        crate::projects::doables(self, out);
         if let Route::Pr { tab, .. } = route {
             if *tab == PrTab::Conversation {
                 out.push(here(Action::Tab2, "Commits", ""));
@@ -547,6 +548,7 @@ impl State {
                 let key = match action {
                     Action::NextTab => pair(Action::NextTab, Action::PrevTab),
                     Action::NextHunk => pair(Action::NextHunk, Action::PrevHunk),
+                    Action::NextColumn => pair(Action::PrevColumn, Action::NextColumn),
                     Action::SearchNext => pair(Action::SearchNext, Action::SearchPrev),
                     action => self.key_here(action),
                 };

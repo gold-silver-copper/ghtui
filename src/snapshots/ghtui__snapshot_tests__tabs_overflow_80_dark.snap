@@ -6,7 +6,7 @@ Buffer {
     area: Rect { x: 0, y: 0, width: 80, height: 24 },
     content: [
         "  ◆ ghtui   ‹ 5   0a1b2c3   ghtui · Releases   6 ›   ⌕ Type g/ to search        ",
-        "   1 <> Code   2 ◉ Issues   3 ⇄ Pull requests   4 ◈   5 ▶   6 ▤   7 ⛨           ",
+        "   1 <> Code   2 ◉ Issues   3 ⇄ Pull requests   4 ◈   5 ▶   6 ▥   7 ▤   8 ⛨     ",
         "──━━━━━━━━━━━───────────────────────────────────────────────────────────────────",
         "                                                                                ",
         "  ╭─ Loading… ──────────────────────────────────────────────────────────────╮   ",
@@ -66,6 +66,9 @@ Buffer {
         x: 65, y: 1, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: DIM,
         x: 67, y: 1, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 70, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 71, y: 1, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: DIM,
+        x: 73, y: 1, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 76, y: 1, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 0, y: 2, fg: Rgb(72, 76, 83), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 2, y: 2, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 13, y: 2, fg: Rgb(72, 76, 83), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,

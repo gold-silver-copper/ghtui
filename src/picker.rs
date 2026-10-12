@@ -48,6 +48,8 @@ pub enum Kind {
         title: &'static str,
         rows: Vec<(PaletteItem, Choice)>,
     },
+    /// A project item's columns, fields or a field's values.
+    Project(crate::projects::Pick),
 }
 
 /// What a section's title is for.
@@ -78,6 +80,7 @@ impl Picker {
             Kind::Edit(ref c) => c.title(),
             Kind::Form(pick) => pick.title(),
             Kind::Code { title, .. } => title,
+            Kind::Project(ref pick) => pick.title(),
         }
     }
 }
@@ -110,6 +113,7 @@ pub enum Choice {
     Form(crate::create::Picked),
     /// Go to this line of the file on screen.
     Line(u32),
+    Project(crate::projects::Chosen),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -163,6 +167,7 @@ impl State {
             }
             Kind::Form(_) => "Type to filter",
             Kind::Code { .. } => "Type a name",
+            Kind::Project(ref pick) => pick.placeholder(),
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
@@ -247,6 +252,9 @@ impl State {
                 let choice = Choice::Title(titling.clone(), path.clone(), q.to_owned());
                 vec![(item(label, "↵"), Some(choice))]
             }
+            Kind::Project(pick) => (crate::projects::rows(self, pick, q).into_iter())
+                .map(|(row, chosen)| (row, chosen.map(Choice::Project)))
+                .collect(),
         }
     }
 
@@ -598,6 +606,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
             state.edit_home(path, crate::home::Edit::Rename { at, title }, what)
         }
         Choice::Edit(_) => Vec::new(),
+        Choice::Project(chosen) => crate::projects::choose(state, chosen),
     }
 }
 

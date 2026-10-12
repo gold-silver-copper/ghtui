@@ -689,3 +689,6 @@ mod merging;
 // ---- code navigation --------------------------------------------------------
 
 mod code_nav;
+
+/// Projects: their views, and moving and setting their items.
+mod projects;

@@ -111,6 +111,15 @@ pub enum Change {
     },
     /// Edit a comment, a title, a reaction or a sidebar.
     Edit(crate::api::edit::Edit),
+    /// Set a project item's field to a value, or clear it (`None`); `said`
+    /// is what it sets, as people say it ("Status to Done").
+    SetProjectField {
+        project: NodeId,
+        item: NodeId,
+        field: NodeId,
+        value: Option<crate::api::project::FieldValue>,
+        said: String,
+    },
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -301,6 +310,16 @@ impl GitHub {
                 Ok(())
             }
             Change::Edit(edit) => self.edit(edit).await,
+            Change::SetProjectField {
+                project,
+                item,
+                field,
+                value,
+                ..
+            } => {
+                self.set_project_field(project, item, field, value.as_ref())
+                    .await
+            }
         }
     }
 }

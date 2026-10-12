@@ -69,11 +69,11 @@ fn a_repositorys_pages_are_under_their_tabs() {
         let _ = state.push(route.clone());
         assert_eq!(active(&state).as_deref(), Some(tab), "{route:?}");
     }
-    // Every tab has a number key: `5` is Actions, `7` Security.
+    // Every tab has a number key: `5` is Actions, `8` Security.
     let _ = state.push(Route::Repo(repo()));
     press(&mut state, "5gt");
     assert_eq!(route(&state), Route::actions(repo()));
-    press(&mut state, "7gt");
+    press(&mut state, "8gt");
     assert_eq!(route(&state), Route::Advisories(Some(repo())));
 }
 
@@ -94,6 +94,7 @@ fn repo_tabs_filters_state_sort_and_star() {
             "Pull requests",
             "Discussions",
             "Actions",
+            "Projects",
             "Wiki",
             "Security"
         ]

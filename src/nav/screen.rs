@@ -123,6 +123,13 @@ impl PageScreen {
         self.page.marks.get(self.mark_at()?).copied()
     }
 
+    /// Selects item `i` and scrolls it into view, as moving to it does.
+    pub fn select(&mut self, i: usize, height: usize) {
+        self.fresh = false;
+        self.selected = Some(i);
+        reveal(self, i, height);
+    }
+
     /// The file line item `i` starts at, from 1.
     pub fn line_of(&self, i: usize) -> Option<u32> {
         let n = self.page.numbered.iter().position(|&it| it == i)?;
