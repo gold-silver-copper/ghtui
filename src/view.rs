@@ -84,20 +84,24 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             };
             let area = state.page_area();
             let page = p.page();
-            // The composer takes the comment box's place, scrolled into view.
-            // The composer takes the comment box's place, or goes under the
-            // comment it quotes, scrolled into view.
+            // The composer takes the comment box's place, goes under the
+            // comment it quotes, or takes the place of the comment it
+            // edits, scrolled into view.
             let comment_box = composing.and_then(|c| {
-                let quoted = match &c.target {
+                let (at, under) = match &c.target {
                     crate::review::ComposeTarget::Conversation {
                         quoting: Some(at), ..
-                    } => page.items.iter().find(|it| {
-                        matches!(page.target(it.link), Some(Link::Quote { at: was, .. }) if was == at)
-                    }),
-                    _ => None,
+                    } => (Some(at), true),
+                    crate::review::ComposeTarget::Edit(e) => (Some(&e.at), false),
+                    _ => (None, false),
                 };
-                let (item, under) = match quoted {
-                    Some(item) => (*item, true),
+                let comment = at.and_then(|at| {
+                    page.items.iter().find(|it| {
+                        matches!(page.target(it.link), Some(Link::Quote { at: was, .. }) if was == at)
+                    })
+                });
+                let (item, under) = match comment {
+                    Some(item) => (*item, under),
                     None => (*page.items.get(page.find(&Link::Comment, 0)?)?, false),
                 };
                 Some((usize::from(c.rows()), item, under))
@@ -188,6 +192,8 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
         }
         Some(Overlay::Compose(compose)) => {
             let title = compose.title();
+            let completions: Option<Vec<String>> = crate::typing::completions(state)
+                .map(|choices| choices.into_iter().map(|c| c.label).collect());
             let rows = compose.rows();
             // Where the comment will go, or (without room there) a strip
             // above the status bar.
@@ -216,8 +222,19 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 save: match compose.target {
                     crate::review::ComposeTarget::Reply { .. } => "post reply",
                     crate::review::ComposeTarget::Conversation { .. } => "post comment",
+                    crate::review::ComposeTarget::Form(crate::route::Route::NewPr(_)) => {
+                        "create pull request…"
+                    }
+                    crate::review::ComposeTarget::Form(_) => "create issue",
+                    crate::review::ComposeTarget::Edit(_) => "save",
                     _ => "add to review",
                 },
+                completions: (completions.as_deref()).map(|c| {
+                    (
+                        c,
+                        compose.completing.selected.min(c.len().saturating_sub(1)),
+                    )
+                }),
             }
             .render(sheet, buf);
         }
@@ -248,6 +265,19 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 selected: confirm.selected,
                 error: confirm.error.as_deref(),
                 sending: busy.as_deref(),
+            }
+            .render(area, buf);
+        }
+        Some(Overlay::Ask(ask)) => {
+            let choices: Vec<String> = ask.choices.iter().map(|(l, _)| l.clone()).collect();
+            ConfirmSheet {
+                ctx,
+                title: &ask.title,
+                facts: &ask.facts,
+                choices: &choices,
+                selected: ask.selected,
+                error: ask.error.as_deref(),
+                sending: ask.busy(),
             }
             .render(area, buf);
         }
@@ -418,6 +448,9 @@ fn render_diff(
         word: screen.word,
     }
     .render(area, buf);
+    if let Some(Overlay::Hints(hints)) = &state.overlay {
+        crate::ui::page::draw_hints(theme, &hints.shown(), area, buf);
+    }
 
     if let Some(tree) = lay.tree {
         FileTree {

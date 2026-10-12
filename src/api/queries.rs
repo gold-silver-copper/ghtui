@@ -101,6 +101,10 @@ fragments! {
     ReopenIssuePayload = "ReopenIssuePayload",
     ReadyPayload = "MarkPullRequestReadyForReviewPayload",
     UpdateBranchPayload = "UpdatePullRequestBranchPayload",
+    AutoMergePayload = "EnablePullRequestAutoMergePayload",
+    NoAutoMergePayload = "DisablePullRequestAutoMergePayload",
+    EnqueuePayload = "EnqueuePullRequestPayload",
+    DequeuePayload = "DequeuePullRequestPayload",
 }
 
 // Node IDs, and the mutation results that carry them.
@@ -288,6 +292,7 @@ pub struct RepositoryWithPr {
     pub rebase_merge_allowed: bool,
     pub viewer_default_merge_method: crate::api::change::MergeMethod,
     pub viewer_permission: Option<RepositoryPermission>,
+    pub auto_merge_allowed: bool,
 }
 
 /// What you may do in a repository.
@@ -332,9 +337,34 @@ pub struct PrDetail {
     pub viewer_did_author: bool,
     pub maintainer_can_modify: bool,
     pub is_cross_repository: bool,
+    pub viewer_can_enable_auto_merge: bool,
+    pub viewer_can_disable_auto_merge: bool,
+    pub auto_merge_request: Option<AutoMergeRequest>,
+    pub is_merge_queue_enabled: bool,
+    pub merge_queue_entry: Option<MergeQueueEntry>,
     #[arguments(first: 20)]
     pub labels: Option<LabelConnection>,
     pub milestone: Option<MilestoneName>,
+    pub viewer_can_react: bool,
+    pub viewer_can_label: bool,
+    pub viewer_can_assign: bool,
+    pub reaction_groups: Option<Vec<crate::api::edit::WireReactionGroup>>,
+    #[arguments(first: 10)]
+    pub assignees: crate::api::browse::Assignees,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "AutoMergeRequest", schema_module = "schema")]
+pub struct AutoMergeRequest {
+    pub enabled_by: Option<Actor>,
+    pub merge_method: crate::api::change::MergeMethod,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "MergeQueueEntry", schema_module = "schema")]
+pub struct MergeQueueEntry {
+    pub position: i32,
+    pub state: crate::api::model::QueueState,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -571,6 +601,10 @@ pub struct ReviewComment {
     pub url: Uri,
     pub original_commit: Option<CommitOid>,
     pub state: ReviewCommentState,
+    pub viewer_can_update: bool,
+    pub viewer_can_delete: bool,
+    pub viewer_can_react: bool,
+    pub reaction_groups: Option<Vec<crate::api::edit::WireReactionGroup>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]

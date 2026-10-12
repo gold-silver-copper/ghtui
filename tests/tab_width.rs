@@ -95,12 +95,15 @@ fn a_review_comment_keeps_its_tabs() {
                 body: "Try:\n\tx := 1".into(),
                 created_at: String::new(),
                 pending: false,
+                new: false,
+                editable: None,
             }],
             left_out: 0,
             error: None,
             can_reply: true,
             can_resolve: false,
             can_unresolve: false,
+            new: false,
         }],
         ..DocInputs::default()
     });

@@ -8,12 +8,13 @@
 //! then follows GitHub ([`follow`]) until it shows the change.
 
 use crate::api::ApiError;
-use crate::api::browse::{CheckOutcome, IssueState, Job, PrState, Results, WorkflowRun};
+use crate::api::browse::{CheckOutcome, IssueState, Job, PrState, WorkflowRun};
 use crate::api::change::{Change, CloseReason, MergeMethod};
 use crate::api::model::{
     ChecksState, MergeState, PrDetail, PrRef, Readiness, RepoId, ReviewDecision,
 };
-use crate::api::notifications::Notification;
+use crate::api::notifications::Inbox;
+use crate::api::project::ProjectRef;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::browse::{DataKey, Need};
@@ -22,10 +23,15 @@ use crate::nav;
 use crate::route::Route;
 use crate::state::{Api, Cmd, Overlay, Screen, State};
 
+mod inbox;
+mod merge;
+
 /// The actions that change GitHub, as the menu lists them.
-pub const ACTIONS: [Action; 8] = [
+pub const ACTIONS: [Action; 10] = [
     Action::MarkRead,
     Action::MarkDone,
+    Action::MarkAllRead,
+    Action::MarkAllDone,
     Action::Merge,
     Action::Approve,
     Action::ReadyForReview,
@@ -72,6 +78,9 @@ pub enum By {
     /// The composer, replying to one of this pull request's threads.
     Reply(PrRef),
     Star,
+    /// An edit to what's on GitHub (from the composer or a picker), about
+    /// this.
+    Edit(Subject),
 }
 
 /// A change GitHub accepted that the page it was made on doesn't show
@@ -171,8 +180,8 @@ fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
     }
 }
 
-/// What an action changes: a pull request, an issue, a run, a job or a
-/// notification's thread.
+/// What an action changes: a pull request, an issue, a run, a job, a
+/// notification's thread or what the inbox shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Subject {
     Pr(PrRef),
@@ -185,6 +194,12 @@ pub enum Subject {
         id: String,
         query: String,
     },
+    /// What the inbox `query` lists shows.
+    Inbox {
+        query: String,
+    },
+    /// A project's items, at a view.
+    Project(ProjectRef, Option<u64>),
 }
 
 impl Subject {
@@ -219,8 +234,12 @@ impl Subject {
                 step: None,
                 query: String::new(),
             },
-            Subject::Thread { query, .. } => Route::Notifications {
+            Subject::Thread { query, .. } | Subject::Inbox { query } => Route::Notifications {
                 query: query.clone(),
+            },
+            Subject::Project(project, view) => Route::Project {
+                project: project.clone(),
+                view: *view,
             },
         }
     }
@@ -234,7 +253,10 @@ impl Subject {
                 Need::Data(DataKey::Run(repo.clone(), *run, *attempt))
             }
             Subject::Job(repo, _, job) => Need::Data(DataKey::Job(repo.clone(), *job)),
-            Subject::Thread { query, .. } => Need::Data(DataKey::Notifications(query.clone())),
+            Subject::Thread { query, .. } | Subject::Inbox { query } => {
+                Need::Data(DataKey::Notifications(query.clone()))
+            }
+            Subject::Project(project, view) => Need::Data(DataKey::Project(project.clone(), *view)),
         }
     }
 
@@ -249,6 +271,9 @@ impl Subject {
             Subject::Issue(..) => action == A::Close,
             Subject::Run(..) | Subject::Job(..) => matches!(action, A::Rerun | A::Close),
             Subject::Thread { .. } => matches!(action, A::MarkRead | A::MarkDone),
+            Subject::Inbox { .. } => matches!(action, A::MarkAllRead | A::MarkAllDone),
+            // Moving and setting go through `crate::projects`.
+            Subject::Project(..) => false,
         }
     }
 
@@ -259,6 +284,8 @@ impl Subject {
             Subject::Run(..) => "the run".to_owned(),
             Subject::Job(..) => "the job".to_owned(),
             Subject::Thread { .. } => "the notification".to_owned(),
+            Subject::Inbox { .. } => "your notifications".to_owned(),
+            Subject::Project(..) => "the project".to_owned(),
         }
     }
 }
@@ -266,9 +293,16 @@ impl Subject {
 /// What an action would change here: the page's own subject (a pull
 /// request, its files, an issue, a run, a job), or on a list, the
 /// selected row's (in the inbox, its thread is what's marked read).
-fn subject(state: &State, action: Action) -> Option<Subject> {
+pub(crate) fn subject(state: &State, action: Action) -> Option<Subject> {
     if matches!(action, Action::MarkRead | Action::MarkDone) {
         return thread(state);
+    }
+    if matches!(action, Action::MarkAllRead | Action::MarkAllDone) {
+        let query = state.route().and_then(|r| match r {
+            Route::Notifications { query } => Some(query.clone()),
+            _ => None,
+        });
+        return query.map(|query| Subject::Inbox { query });
     }
     match state.screen() {
         Screen::Diff(d) => d.of.pr().map(|pr| Subject::Pr(pr.clone())),
@@ -293,8 +327,8 @@ fn thread(state: &State) -> Option<Subject> {
         return None;
     };
     let key = DataKey::Notifications(query.clone());
-    let list = state.picked::<Results<Notification>>(&key)?;
-    let n = list.items.get(p.selected?)?;
+    let inbox = state.picked::<Inbox>(&key)?;
+    let n = inbox.list.items.get(p.selected?)?;
     let url = p.selected_link().and_then(crate::ui::page::Link::url);
     (url == Some(n.url.as_str())).then(|| Subject::Thread {
         id: n.id.clone(),
@@ -306,6 +340,7 @@ fn thread(state: &State) -> Option<Subject> {
 fn elsewhere(action: Action) -> &'static str {
     match action {
         Action::MarkRead | Action::MarkDone => "That works on a notification in your inbox",
+        Action::MarkAllRead | Action::MarkAllDone => "That works in your inbox",
         Action::Close => {
             "Closing works on an issue, a pull request or a running workflow run (or its row)"
         }
@@ -438,8 +473,8 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
                 return Ok(Plan::Load(subject.need()));
             }
             let n = state
-                .picked::<Results<Notification>>(&key)
-                .and_then(|list| list.items.iter().find(|n| n.id == *id))
+                .picked::<Inbox>(&key)
+                .and_then(|inbox| inbox.list.items.iter().find(|n| n.id == *id))
                 .ok_or("It's no longer in your inbox")?;
             let thread = id.clone();
             match action {
@@ -448,6 +483,18 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
                 _ => Ok(Plan::Do(Change::MarkDone { thread })),
             }
         }
+        Subject::Inbox { query } => {
+            let key = DataKey::Notifications(query.clone());
+            let Some(data) = loaded(state.data.get(&key), &name)? else {
+                return Ok(Plan::Load(subject.need()));
+            };
+            let crate::browse::Data::Notifications(list) = data else {
+                return Err("GitHub sent something else for your notifications".into());
+            };
+            let fetched = (state.data.get(&key)).and_then(|r| r.cached_at.or(r.asked_at));
+            inbox::plan(query, list, fetched, action)
+        }
+        Subject::Project(..) => Err(elsewhere(action).to_owned()),
     }
 }
 
@@ -465,39 +512,11 @@ fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Pl
             key(Action::ReadyForReview)
         )),
         Action::Merge | Action::UpdateBranch | Action::Approve if !open => Err(not_open()),
-        Action::Merge if !d.may.merge => Err(format!("Merging takes write access to {}", pr.repo)),
-        Action::Merge if d.merge_methods.is_empty() => {
-            Err("The repository allows no way of merging".into())
-        }
-        Action::Merge | Action::UpdateBranch if readiness == Readiness::Conflicts => Err(format!(
+        Action::Merge => merge::plan(state, pr, d),
+        Action::UpdateBranch if readiness == Readiness::Conflicts => Err(format!(
             "It conflicts with {}: resolve that on GitHub",
             d.base_ref
         )),
-        Action::Merge if readiness == Readiness::Behind => Err(format!(
-            "{} requires its branch up to date with {}: {} updates it",
-            pr.repo,
-            d.base_ref,
-            key(Action::UpdateBranch)
-        )),
-        Action::Merge if readiness == Readiness::Blocked && !d.may.merge_as_admin => {
-            Err("GitHub says it's blocked: a required review or check is missing".into())
-        }
-        Action::Merge => {
-            let choices = d
-                .merge_methods
-                .iter()
-                .map(|&method| {
-                    let change = Change::Merge {
-                        pr: d.id.clone(),
-                        method,
-                        head: d.head_oid.clone(),
-                    };
-                    (method.describe().to_owned(), change)
-                })
-                .collect();
-            let title = format!("Merge {pr}: {}?", d.title);
-            Ok(Plan::Ask(title, merge_facts(state, d), choices))
-        }
         Action::Close => {
             let (title, label, reopen) = match d.state {
                 PrState::Merged => {
@@ -605,10 +624,11 @@ fn merge_facts(state: &State, d: &PrDetail) -> Vec<(String, bool)> {
             "GitHub is still working out whether it can merge".into(),
             true,
         ),
-        Readiness::Blocked => (
+        Readiness::Blocked if d.may.merge_as_admin => (
             "A required review or check is missing: you'd merge as an administrator".into(),
             true,
         ),
+        Readiness::Blocked => ("A required review or check is missing".into(), true),
         _ if d.merge_state == MergeState::Unstable => (
             "No failed check is required, so GitHub will merge it".into(),
             false,
@@ -737,7 +757,7 @@ pub fn on_changed(
                     .get(c.selected)
                     .is_some_and(|(_, sent)| sent == change)
         }
-        (By::Compose | By::Reply(_), Some(Overlay::Compose(c))) => c.sending,
+        (By::Compose | By::Reply(_) | By::Edit(_), Some(Overlay::Compose(c))) => c.sending,
         _ => false,
     };
     match result {
@@ -746,8 +766,13 @@ pub fn on_changed(
                 state.overlay = None;
             }
             state.info(done(change));
+            // The unread count follows, as the inbox does.
+            let mut cmds = Vec::from_iter(notifies(change).then_some(Cmd::Api(Api::FetchUnread)));
+            if let Change::Edit(_) = change {
+                cmds.extend(crate::edit::after(state));
+            }
             match by {
-                By::Confirm(about) | By::Act(about) => {
+                By::Confirm(about) | By::Act(about) | By::Edit(about) => {
                     state.awaiting = state.route().map(|route| Awaiting {
                         change: change.clone(),
                         route: route.clone(),
@@ -759,7 +784,8 @@ pub fn on_changed(
                 By::Reply(pr) => return vec![Cmd::Api(Api::FetchThreads(pr))],
                 By::Compose | By::Star => {}
             }
-            state.load_visible(false)
+            cmds.extend(state.load_visible(false));
+            cmds
         }
         Err(err) => {
             tracing::warn!(?change, %err, "a change to GitHub failed");
@@ -794,6 +820,8 @@ pub fn waiting(state: &State) -> Option<String> {
         Change::CancelRun { .. } => "Cancel requested: waiting for GitHub to stop the run",
         Change::Rerun { .. } | Change::RerunJob { .. } => "Waiting for GitHub to start the re-run",
         Change::Merge { .. } => "Waiting for GitHub to show the merge",
+        Change::EnableAutoMerge { .. } => "Waiting for GitHub to show auto-merge",
+        Change::Enqueue { .. } => "Waiting for GitHub to show it in the merge queue",
         Change::UpdateBranch { .. } => "Waiting for GitHub to update the branch",
         _ => "Waiting for GitHub to show the change",
     };
@@ -803,7 +831,13 @@ pub fn waiting(state: &State) -> Option<String> {
 /// What the live refresh fetches again for the change the page waits to
 /// see: what the page is about. Past [`POLLS`], it stops waiting.
 pub fn poll(state: &mut State) -> Vec<Need> {
-    let Some(need) = awaiting_here(state).map(|w| w.about.need()) else {
+    let Some((need, edit)) = awaiting_here(state).map(|w| {
+        let edit = matches!(w.change, Change::Edit(_));
+        (
+            w.about.need(),
+            edit.then(|| crate::edit::polls(&w.about)).flatten(),
+        )
+    }) else {
         return Vec::new();
     };
     if let Some(w) = &mut state.awaiting {
@@ -817,7 +851,7 @@ pub fn poll(state: &mut State) -> Vec<Need> {
             return Vec::new();
         }
     }
-    vec![need]
+    std::iter::once(need).chain(edit).collect()
 }
 
 /// Whether the page shows a change GitHub accepted.
@@ -832,12 +866,22 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
     let yes = |b: bool| if b { Shown::Yes } else { Shown::No };
     let pr = |pr: &PrRef| state.prs.get(pr).and_then(|r| r.data.as_ref());
     match (change, about) {
+        (Change::Edit(edit), about) => yes(crate::edit::shown(state, edit, about)),
         (_, Subject::Pr(r)) => {
             let Some(d) = pr(r) else {
                 return Shown::No;
             };
+            let merged = d.state == PrState::Merged;
             yes(match change {
-                Change::Merge { .. } => d.state == PrState::Merged,
+                Change::Merge { .. } => merged,
+                // Auto-merge ends once it merges, or in a queue, once
+                // it's queued.
+                Change::EnableAutoMerge { .. } => {
+                    d.auto_merge.is_some() || d.queued.is_some() || merged
+                }
+                Change::DisableAutoMerge { .. } => d.auto_merge.is_none(),
+                Change::Enqueue { .. } => d.queued.is_some() || merged,
+                Change::Dequeue { .. } => d.queued.is_none(),
                 Change::SetPrOpen { open, .. } => d.state.is_open() == *open,
                 Change::ReadyForReview { .. } => d.state != PrState::Draft,
                 Change::UpdateBranch { head, .. } => d.head_oid != *head,
@@ -891,16 +935,22 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             Subject::Thread { query, .. },
         ) => {
             let key = DataKey::Notifications(query.clone());
-            let Some(list) = state.picked::<Results<Notification>>(&key) else {
+            let Some(inbox) = state.picked::<Inbox>(&key) else {
                 return Shown::No;
             };
-            // Done, it leaves the inbox; read, it stays, read (or leaves
-            // a list of the unread).
-            let row = list.items.iter().find(|n| n.id == *thread);
-            yes(match change {
-                Change::MarkRead { .. } => row.is_none_or(|n| !n.unread),
-                _ => row.is_none(),
-            })
+            // Read, it stays, read (or leaves a list of the unread). Done
+            // reads as the same: GitHub's API goes on listing a thread
+            // marked done, read, though its website doesn't.
+            let row = inbox.list.items.iter().find(|n| n.id == *thread);
+            yes(row.is_none_or(|n| !n.unread))
+        }
+        (Change::MarkAllRead { .. } | Change::MarkEach { .. }, Subject::Inbox { query }) => {
+            let key = DataKey::Notifications(query.clone());
+            let shows = state.picked::<Inbox>(&key);
+            yes(shows.is_some_and(|i| inbox::shows(i, change)))
+        }
+        (Change::SetProjectField { .. }, Subject::Project(project, view)) => {
+            yes(crate::projects::shows(state, change, project, *view))
         }
         _ => Shown::Yes,
     }
@@ -930,6 +980,10 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
             Shown::Yes | Shown::There(_) => {
                 state.awaiting = None;
                 cmds.extend(state.ensure_route(&w.route, true));
+                // GitHub may count the unread later than it marks them.
+                if notifies(&w.change) {
+                    cmds.push(Cmd::Api(Api::FetchUnread));
+                }
             }
         }
     }
@@ -945,7 +999,8 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     let Some(Overlay::Confirm(confirm)) = &state.overlay else {
         return cmds;
     };
-    if confirm.sending {
+    // Another module's confirmation (deleting a comment) is its own.
+    if confirm.sending || !ACTIONS.contains(&confirm.action) {
         return cmds;
     }
     let planned = plan_for(state, &confirm.about, confirm.action);
@@ -963,6 +1018,17 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     cmds
 }
 
+/// Whether a change is to your notifications.
+fn notifies(change: &Change) -> bool {
+    matches!(
+        change,
+        Change::MarkRead { .. }
+            | Change::MarkDone { .. }
+            | Change::MarkAllRead { .. }
+            | Change::MarkEach { .. }
+    )
+}
+
 /// What a change is doing while GitHub answers: "Merging".
 fn doing(change: &Change) -> &'static str {
     match change {
@@ -970,6 +1036,10 @@ fn doing(change: &Change) -> &'static str {
         Change::Star { starred: true, .. } => "Starring",
         Change::Star { .. } => "Unstarring",
         Change::Merge { .. } => "Merging",
+        Change::EnableAutoMerge { .. } => "Enabling auto-merge",
+        Change::DisableAutoMerge { .. } => "Disabling auto-merge",
+        Change::Enqueue { .. } => "Adding it to the merge queue",
+        Change::Dequeue { .. } => "Removing it from the merge queue",
         Change::SetPrOpen { open: true, .. } | Change::ReopenIssue { .. } => "Reopening",
         Change::SetPrOpen { .. } | Change::CloseIssue { .. } => "Closing",
         Change::ReadyForReview { .. } => "Marking it ready for review",
@@ -978,6 +1048,11 @@ fn doing(change: &Change) -> &'static str {
         Change::CancelRun { .. } => "Cancelling the run",
         Change::MarkRead { .. } => "Marking it read",
         Change::MarkDone { .. } => "Marking it done",
+        Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => "Marking them read",
+        Change::MarkEach { .. } => "Marking them done",
+        Change::Edit(edit) => crate::edit::doing(edit),
+        Change::SetProjectField { value: None, .. } => "Clearing the field",
+        Change::SetProjectField { .. } => "Setting the field",
     }
 }
 
@@ -993,6 +1068,10 @@ fn done(change: &Change) -> String {
         } => format!("Starred {repo}"),
         Change::Star { repo, .. } => format!("Unstarred {repo}"),
         Change::Merge { .. } => "Merged".into(),
+        Change::EnableAutoMerge { .. } => "Auto-merge enabled: it merges when ready".into(),
+        Change::DisableAutoMerge { .. } => "Auto-merge disabled".into(),
+        Change::Enqueue { .. } => "Added to the merge queue".into(),
+        Change::Dequeue { .. } => "Removed from the merge queue".into(),
         Change::SetPrOpen { open: true, .. } | Change::ReopenIssue { .. } => "Reopened".into(),
         Change::SetPrOpen { .. } => "Closed".into(),
         Change::CloseIssue {
@@ -1009,27 +1088,46 @@ fn done(change: &Change) -> String {
         Change::Rerun { .. } => "Re-running the run".into(),
         Change::RerunJob { .. } => "Re-running the job".into(),
         Change::CancelRun { .. } => "Cancelling the run".into(),
-        Change::MarkRead { .. } => "Marked read".into(),
+        Change::MarkRead { .. } | Change::MarkAllRead { .. } => "Marked read".into(),
         Change::MarkDone { .. } => "Marked done".into(),
+        Change::MarkEach { threads, done } => {
+            let state = if *done { "done" } else { "read" };
+            match threads.len() {
+                1 => format!("Marked 1 notification {state}"),
+                n => format!("Marked {n} notifications {state}"),
+            }
+        }
+        Change::Edit(edit) => crate::edit::done(edit).into(),
+        Change::SetProjectField {
+            value: None, said, ..
+        } => format!("Cleared {said}"),
+        Change::SetProjectField { said, .. } => format!("Set {said}"),
     }
 }
 
 /// The permission a fine-grained token needs for `change`.
 pub fn needs(change: &Change) -> &'static str {
     match change {
-        Change::Comment { .. } => "Issues or Pull requests: write",
+        Change::Comment { .. } | Change::Edit(_) => "Issues or Pull requests: write",
         Change::Star { .. } => "Starring: write",
-        Change::Merge { .. } | Change::UpdateBranch { .. } => {
-            "Contents: write and Pull requests: write"
-        }
-        Change::SetPrOpen { .. } | Change::ReadyForReview { .. } | Change::Reply { .. } => {
-            "Pull requests: write"
-        }
+        Change::Merge { .. }
+        | Change::UpdateBranch { .. }
+        | Change::EnableAutoMerge { .. }
+        | Change::Enqueue { .. } => "Contents: write and Pull requests: write",
+        Change::SetPrOpen { .. }
+        | Change::ReadyForReview { .. }
+        | Change::Reply { .. }
+        | Change::DisableAutoMerge { .. }
+        | Change::Dequeue { .. } => "Pull requests: write",
         Change::CloseIssue { .. } | Change::ReopenIssue { .. } => "Issues: write",
         Change::Rerun { .. } | Change::RerunJob { .. } | Change::CancelRun { .. } => {
             "Actions: write"
         }
-        Change::MarkRead { .. } | Change::MarkDone { .. } => "Notifications (classic tokens only)",
+        Change::MarkRead { .. }
+        | Change::MarkDone { .. }
+        | Change::MarkAllRead { .. }
+        | Change::MarkEach { .. } => "Notifications (classic tokens only)",
+        Change::SetProjectField { .. } => "Projects: write",
     }
 }
 
@@ -1042,6 +1140,10 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::Star { starred: true, .. } => "the star",
         Change::Star { .. } => "removing the star",
         Change::Merge { .. } => "the merge",
+        Change::EnableAutoMerge { .. } => "enabling auto-merge",
+        Change::DisableAutoMerge { .. } => "disabling auto-merge",
+        Change::Enqueue { .. } => "adding it to the merge queue",
+        Change::Dequeue { .. } => "removing it from the merge queue",
         Change::SetPrOpen { open: true, .. } | Change::ReopenIssue { .. } => "reopening it",
         Change::SetPrOpen { .. } | Change::CloseIssue { .. } => "closing it",
         Change::ReadyForReview { .. } => "marking it ready for review",
@@ -1050,6 +1152,10 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::CancelRun { .. } => "cancelling the run",
         Change::MarkRead { .. } => "marking it read",
         Change::MarkDone { .. } => "marking it done",
+        Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => "marking them read",
+        Change::MarkEach { .. } => "marking them done",
+        Change::Edit(edit) => crate::edit::what(edit),
+        Change::SetProjectField { .. } => "setting the field",
     };
     let reason = match err {
         ApiError::GraphQl(messages) => messages.join("; "),
@@ -1067,7 +1173,10 @@ fn failure(change: &Change, err: &ApiError) -> String {
     let mut text = format!("GitHub refused {what}: {reason}");
     match change {
         // Fine-grained tokens can't read notifications at all.
-        Change::MarkRead { .. } | Change::MarkDone { .. } if denied => text.push_str(
+        _ if denied && matches!(change, Change::SetProjectField { .. }) => text.push_str(
+            ". Your token may lack the permission: a classic token needs the project scope; a fine-grained one, Projects: write",
+        ),
+        _ if denied && notifies(change) => text.push_str(
             ". Your token may lack the permission: notifications take a classic token with the notifications or repo scope",
         ),
         _ if denied => text.push_str(&format!(
@@ -1088,6 +1197,9 @@ pub fn doables(state: &State) -> Vec<(Action, String, Option<String>)> {
             let label = match (action, &subject) {
                 (Action::Close, Subject::Run(..) | Subject::Job(..)) => "Cancel the run",
                 (Action::Close, _) => "Close or reopen",
+                (Action::Merge, Subject::Pr(pr)) => (state.prs.get(pr))
+                    .and_then(|r| r.data.as_ref())
+                    .map_or(action.description(), merge::label),
                 (action, _) => action.description(),
             };
             let why = plan_for(state, &subject, action).err();

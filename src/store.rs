@@ -1,5 +1,6 @@
 //! On-disk cache, backed by redb, and review-state persistence
-//! ([`reviews`], kept outside the cache).
+//! ([`reviews`], kept outside the cache). Both keep each account's apart
+//! ([`account`]).
 //!
 //! The database carries a schema version. When it doesn't match
 //! [`SCHEMA_VERSION`] the file is discarded and recreated; there are no
@@ -15,15 +16,19 @@ use redb::{Database, ReadableDatabase, TableDefinition};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bump whenever the meaning or encoding of any table changes.
-pub const SCHEMA_VERSION: u64 = 11;
+pub const SCHEMA_VERSION: u64 = 13;
 
 const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 /// REST responses keyed by request path, stored with their ETag.
 const HTTP: TableDefinition<&str, &[u8]> = TableDefinition::new("http");
 /// Decoded GraphQL results keyed by a caller-chosen key.
 const QUERIES: TableDefinition<&str, &[u8]> = TableDefinition::new("queries");
+/// Logins keyed by `<host>/<token fingerprint>`.
+const ACCOUNTS: TableDefinition<&str, &[u8]> = TableDefinition::new("accounts");
+pub mod account;
 pub mod reviews;
 
+pub use account::Account;
 pub use reviews::Reviews;
 
 const VERSION_KEY: &str = "schema_version";
@@ -56,13 +61,20 @@ from_redb!(
 );
 
 /// A cached REST response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HttpEntry {
     pub etag: String,
+    /// The `Last-Modified` header, sent back as `If-Modified-Since`.
+    #[serde(default)]
+    pub last_modified: Option<String>,
     /// The `Link` header: where a list's next page is.
     #[serde(default)]
     pub link: Option<String>,
     pub body: String,
+    /// How many seconds GitHub asks to wait before asking again
+    /// (`X-Poll-Interval`), from the last answer: not kept.
+    #[serde(skip)]
+    pub poll_interval: Option<u64>,
 }
 
 /// A cached value with the time it was stored.
@@ -129,6 +141,8 @@ impl ReviewState {
 #[derive(Clone)]
 pub struct Store {
     db: Option<Arc<Database>>,
+    /// Whose entries this store reads and writes.
+    account: Account,
 }
 
 impl std::fmt::Debug for Store {
@@ -146,6 +160,7 @@ impl Store {
         match open_versioned(path) {
             Ok(db) => Self {
                 db: Some(Arc::new(db)),
+                account: Account::default(),
             },
             Err(err) => {
                 tracing::warn!(path = %path.display(), %err, "cache disabled");
@@ -156,7 +171,44 @@ impl Store {
 
     /// A store that never hits and drops all writes.
     pub fn disabled() -> Self {
-        Self { db: None }
+        Self {
+            db: None,
+            account: Account::default(),
+        }
+    }
+
+    /// This store, keeping to the account on `host` whose token has
+    /// `fingerprint`: the login last seen with it, if any.
+    #[must_use]
+    pub fn for_account(mut self, host: &str, fingerprint: &str) -> Self {
+        self.account = Account::new(host, fingerprint, None);
+        let login = self
+            .account
+            .token_key()
+            .and_then(|key| self.read_json::<String>(ACCOUNTS, &key));
+        if let Some(login) = login {
+            self.account.sign_in(&login);
+        }
+        self
+    }
+
+    pub fn account(&self) -> &Account {
+        &self.account
+    }
+
+    /// GitHub says the token is `login`'s: its entries from now on, and
+    /// from the start next time.
+    pub fn signed_in(&self, login: &str) {
+        if self.account.sign_in(login)
+            && let Some(key) = self.account.token_key()
+        {
+            tracing::info!(login, "caching for this account");
+            self.write_json(ACCOUNTS, &key, login);
+        }
+    }
+
+    fn scoped(&self, key: &str) -> String {
+        format!("{}{key}", self.account.scope())
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -164,15 +216,15 @@ impl Store {
     }
 
     pub fn http_get(&self, key: &str) -> Option<HttpEntry> {
-        self.read_json(HTTP, key)
+        self.read_json(HTTP, &self.scoped(key))
     }
 
     pub fn http_put(&self, key: &str, entry: &HttpEntry) {
-        self.write_json(HTTP, key, entry);
+        self.write_json(HTTP, &self.scoped(key), entry);
     }
 
     pub fn query_get<T: DeserializeOwned>(&self, key: &str) -> Option<Cached<T>> {
-        let entry: QueryEntry = self.read_json(QUERIES, key)?;
+        let entry: QueryEntry = self.read_json(QUERIES, &self.scoped(key))?;
         match serde_json::from_value(entry.value) {
             Ok(value) => Some(Cached {
                 value,
@@ -195,7 +247,7 @@ impl Store {
         };
         self.write_json(
             QUERIES,
-            key,
+            &self.scoped(key),
             &QueryEntry {
                 fetched_at: now(),
                 value,
@@ -309,8 +361,10 @@ mod tests {
 
         let entry = HttpEntry {
             etag: "W/\"abc\"".into(),
+            last_modified: None,
             link: None,
             body: "{}".into(),
+            poll_interval: None,
         };
         store.http_put("/user", &entry);
         assert_eq!(store.http_get("/user"), Some(entry));
@@ -368,6 +422,33 @@ mod tests {
         assert!(second.query_get::<i32>("k").is_none());
         // The first holder's data survives.
         assert_eq!(first.query_get::<i32>("k").unwrap().value, 1);
+    }
+
+    #[test]
+    fn keeps_accounts_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.redb");
+        {
+            let alice = Store::open(&path).for_account("github.com", "aaaa");
+            alice.query_put("tabs", &"alice's");
+            alice.signed_in("alice");
+            // What came before GitHub said whose the token is stays apart.
+            assert!(alice.query_get::<String>("tabs").is_none());
+            alice.query_put("tabs", &"alice's");
+            let bob = alice.clone().for_account("github.com", "bbbb");
+            assert!(bob.query_get::<String>("tabs").is_none());
+            bob.signed_in("bob");
+            bob.query_put("tabs", &"bob's");
+            let ghe = alice.for_account("ghe.example.com", "aaaa");
+            ghe.signed_in("alice");
+            assert!(ghe.query_get::<String>("tabs").is_none());
+        }
+        // Next time, each token finds its account's at once.
+        let alice = Store::open(&path).for_account("github.com", "aaaa");
+        assert_eq!(alice.query_get::<String>("tabs").unwrap().value, "alice's");
+        assert_eq!(alice.account().scope(), "github.com/alice/");
+        let bob = alice.for_account("github.com", "bbbb");
+        assert_eq!(bob.query_get::<String>("tabs").unwrap().value, "bob's");
     }
 
     #[test]

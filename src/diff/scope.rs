@@ -19,6 +19,8 @@ const PARSE_BUDGET: Duration = Duration::from_secs(1);
 pub struct Scope {
     pub lines: RangeInclusive<u32>,
     pub name: String,
+    /// The name it defines (`offset` for `fn offset`); an impl defines none.
+    pub defines: Option<String>,
 }
 
 /// Every named scope in `text`, outermost first (so the scopes containing
@@ -58,11 +60,12 @@ pub fn scopes(lang: Option<Language>, text: &Text) -> Vec<Scope> {
     let mut cursor = tree.walk();
     'walk: loop {
         let node = cursor.node();
-        if let Some(name) = name(lang, node, source) {
+        if let Some((name, defines)) = name(lang, node, source) {
             let row = |p: tree_sitter::Point| sat_u32(p.row).saturating_add(1);
             out.push(Scope {
                 lines: row(node.start_position())..=row(node.end_position()),
                 name,
+                defines,
             });
         }
         if cursor.goto_first_child() {
@@ -80,8 +83,9 @@ pub fn scopes(lang: Option<Language>, text: &Text) -> Vec<Scope> {
     out
 }
 
-/// How `node` is named in a scope path, if it's a scope at all.
-fn name(lang: Language, node: Node<'_>, source: &[u8]) -> Option<String> {
+/// How `node` is named in a scope path, if it's a scope at all, and the
+/// name it defines.
+fn name(lang: Language, node: Node<'_>, source: &[u8]) -> Option<(String, Option<String>)> {
     use Language::{Go, JavaScript, Python, Rust, Tsx, TypeScript};
     let field = |f: &str| {
         let text = node.child_by_field_name(f)?.utf8_text(source).ok()?;
@@ -91,13 +95,14 @@ fn name(lang: Language, node: Node<'_>, source: &[u8]) -> Option<String> {
     let js = matches!(lang, JavaScript | TypeScript | Tsx);
     let keyword = match (lang, node.kind()) {
         (Rust, "impl_item") => {
-            return Some(match field("trait") {
+            let name = match field("trait") {
                 Some(t) => format!("impl {t} for {}", field("type")?),
                 None => format!("impl {}", field("type")?),
-            });
+            };
+            return Some((name, None));
         }
         // Methods, and `const handler = () => {...}`: just the name.
-        (_, "method_definition") if js => return field("name"),
+        (_, "method_definition") if js => return field("name").map(|n| (n.clone(), Some(n))),
         (_, "variable_declarator")
             if js
                 && node.child_by_field_name("value").is_some_and(|v| {
@@ -107,7 +112,7 @@ fn name(lang: Language, node: Node<'_>, source: &[u8]) -> Option<String> {
                     )
                 }) =>
         {
-            return field("name");
+            return field("name").map(|n| (n.clone(), Some(n)));
         }
         (Rust, "function_item" | "function_signature_item") => "fn",
         (Rust, "struct_item") => "struct",
@@ -116,17 +121,22 @@ fn name(lang: Language, node: Node<'_>, source: &[u8]) -> Option<String> {
         (Rust, "trait_item") => "trait",
         (Rust, "mod_item") => "mod",
         (Rust, "macro_definition") => "macro_rules!",
+        (Rust, "const_item") => "const",
+        (Rust, "static_item") => "static",
         (Python, "function_definition") => "def",
         (Python, "class_definition") => "class",
         (_, "class_declaration" | "abstract_class_declaration") if js => "class",
         (Go, "function_declaration" | "method_declaration") => "func",
-        (Go, "type_spec") => "type",
+        (Go, "type_spec") | (Rust, "type_item") | (TypeScript | Tsx, "type_alias_declaration") => {
+            "type"
+        }
         (_, "function_declaration" | "generator_function_declaration") if js => "function",
         (TypeScript | Tsx, "interface_declaration") => "interface",
         (TypeScript | Tsx, "internal_module") => "namespace",
         _ => return None,
     };
-    Some(format!("{keyword} {}", field("name")?))
+    let name = field("name")?;
+    Some((format!("{keyword} {name}"), Some(name)))
 }
 
 /// The path of scopes containing `line`, outermost first.

@@ -25,7 +25,9 @@ use crate::git::files::{ChangedFile, is_lockfile};
 /// A file's viewed state, as GitHub keeps it.
 pub use crate::api::model::ViewedState as Viewed;
 
-use crate::ui::annotations::{Annotation, AnnotationKey, ThreadRow, ThreadRowKind};
+use crate::ui::annotations::{Annotation, AnnotationKey, Place, ThreadRow, ThreadRowKind};
+use crate::ui::comment::{self, CommentLine};
+use crate::ui::page::{Role, Seg};
 use crate::ui::{idx, page};
 
 /// Thread text wraps at this width unless the view says otherwise.
@@ -254,18 +256,24 @@ impl DocFile {
             self.push_thread_rows(index, ThreadRowKind::Summary, &first, usize::MAX);
             return;
         }
+        let original = self.suggested_on(ann);
         for (c, comment) in ann.comments.iter().enumerate() {
             let head = ThreadRowKind::Head {
                 comment: c,
                 first: c == 0,
             };
             self.push_thread_rows(index, head, &comment.author, usize::MAX);
-            let body = if comment.body.trim().is_empty() {
-                "(no text)"
-            } else {
-                &comment.body
-            };
-            self.push_thread_rows(index, ThreadRowKind::Body, body, wrap);
+            for line in comment::lines(&comment.body, wrap, original.as_deref()) {
+                self.push_thread_row(index, ThreadRowKind::Body, line);
+            }
+            let reactions = (comment.editable.iter()).flat_map(|e| &e.reactions);
+            let reactions: Vec<String> = reactions
+                .map(|r| format!("{} {}", r.content.emoji(), r.count))
+                .collect();
+            if !reactions.is_empty() {
+                let kind = ThreadRowKind::Reactions { comment: c };
+                self.push_thread_rows(index, kind, &reactions.join(" "), usize::MAX);
+            }
             if c == 0 && ann.left_out > 0 {
                 let gap =
                     crate::ui::pages::left_out_text(ann.left_out, "more reply", "more replies");
@@ -279,13 +287,40 @@ impl DocFile {
         self.push_thread_rows(index, ThreadRowKind::Footer, "", usize::MAX);
     }
 
+    /// The lines a suggested change in `ann` would replace: its lines on
+    /// the new side, when a comment in it suggests one.
+    fn suggested_on(&self, ann: &Annotation) -> Option<Vec<String>> {
+        let Place::Line { at, start } = ann.place else {
+            return None;
+        };
+        let suggests = (ann.comments.iter()).any(|c| c.body.contains("```suggestion"));
+        if at.side != Side::Right || !suggests {
+            return None;
+        }
+        let text = self.text()?;
+        let lines = start.unwrap_or(at.line).min(at.line)..=at.line;
+        Some(
+            lines
+                .map(|line| text.line(LinePos { line, ..at }).to_owned())
+                .collect(),
+        )
+    }
+
     /// `text` as rows of `kind`, wrapped to `wrap` columns as a page wraps
     /// it, so tabs are spaces and each row is measured as it's drawn.
     fn push_thread_rows(&mut self, ann: u32, kind: ThreadRowKind, text: &str, wrap: usize) {
         for text in page::wrap(text, wrap) {
-            self.rows.push(Row::Thread(idx(self.thread_rows.len())));
-            self.thread_rows.push(ThreadRow { ann, kind, text });
+            let line = CommentLine {
+                segs: vec![Seg::new(text, Role::Body)],
+                ..CommentLine::default()
+            };
+            self.push_thread_row(ann, kind, line);
         }
+    }
+
+    fn push_thread_row(&mut self, ann: u32, kind: ThreadRowKind, line: CommentLine) {
+        self.rows.push(Row::Thread(idx(self.thread_rows.len())));
+        self.thread_rows.push(ThreadRow { ann, kind, line });
     }
 
     fn rebuild(&mut self, opts: ViewOptions, extras: &Extras<'_>) {
@@ -1445,6 +1480,10 @@ impl Doc {
                 let halves: Vec<&str> = file.shows(row).map(text).collect();
                 halves.join("\n")
             }
+            Some(Row::Thread(t)) => file
+                .thread_row(t)
+                .map(|r| r.line.text())
+                .unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -1460,9 +1499,9 @@ impl Doc {
         move |pos| {
             let text = self.row_text(pos);
             if smart_case {
-                text.contains(&needle)
+                crate::ui::text::has(&text, &needle)
             } else {
-                text.to_lowercase().contains(&needle)
+                crate::ui::text::has(&text.to_lowercase(), &needle)
             }
         }
     }
@@ -1844,12 +1883,15 @@ pub(crate) mod tests {
                     body: "Is this right?\nSecond line.".into(),
                     created_at: String::new(),
                     pending: false,
+                    new: false,
+                    editable: None,
                 }],
                 left_out: 0,
                 error: None,
                 can_reply: true,
                 can_resolve: true,
                 can_unresolve: false,
+                new: false,
             }
         }
 
@@ -1875,8 +1917,9 @@ pub(crate) mod tests {
                 ],
             );
             let file = &doc.files[0];
-            // File-level thread right after the header (head, 2 body, footer).
-            assert!(rows_of(&doc).starts_with("HTTTT"), "{}", rows_of(&doc));
+            // File-level thread right after the header (head, its one
+            // paragraph, footer).
+            assert!(rows_of(&doc).starts_with("HTTTG"), "{}", rows_of(&doc));
             // The line thread follows the row showing new line 5.
             let row = line_row(file, |l| l.right().is_some_and(|p| p.line == 5)).unwrap();
             assert!(matches!(file.rows()[row + 1], Row::Thread(_)));
@@ -1914,13 +1957,13 @@ pub(crate) mod tests {
                 .rows()
                 .iter()
                 .filter_map(|r| match r {
-                    Row::Thread(t) => file.thread_row(*t).map(|t| (t.kind, t.text.clone())),
+                    Row::Thread(t) => file.thread_row(*t).map(|t| (t.kind, t.line.text())),
                     _ => None,
                 })
                 .collect();
             // After the first comment's body, before the footer.
             assert_eq!(
-                texts.get(3),
+                texts.get(2),
                 Some(&(
                     ThreadRowKind::Gap,
                     "… 120 more replies on GitHub".to_owned()
@@ -1949,7 +1992,7 @@ pub(crate) mod tests {
             set_annotations(&mut doc, vec![resolved]);
             assert!(!rows_of(&doc).contains('T'), "collapsed: marker only");
             doc.toggle_thread(0);
-            assert!(rows_of(&doc).contains("TTTT"));
+            assert!(rows_of(&doc).contains("TTT"));
             doc.toggle_thread(0);
             assert!(!rows_of(&doc).contains('T'));
         }

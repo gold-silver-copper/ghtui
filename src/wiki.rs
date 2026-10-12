@@ -63,7 +63,7 @@ pub async fn page(
         }
     };
     let name = format!("{}.wiki", repo.name);
-    let url = format!("https://github.com/{}/{name}.git", repo.owner);
+    let url = crate::host::current().git_url(&repo.owner, &name);
     let quiet = |_: String| {};
     let wiki = Repo::open_cache(
         &git.cache_root,

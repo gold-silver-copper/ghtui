@@ -1,7 +1,7 @@
 //! Reviewing: comment targets, drafts, suggestions, and turning GitHub
 //! threads and local drafts into annotations.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::api::model::{NewThread, ReviewEvent, ReviewThread, Side as ApiSide};
 use crate::api::model::{NodeId, PrRef};
@@ -45,6 +45,12 @@ pub enum ComposeTarget {
         name: String,
         quoting: Option<String>,
     },
+    /// Editing a comment or description already on GitHub, saved right
+    /// away.
+    Edit(crate::edit::Editing),
+    /// The title and description of the new issue or pull request on this
+    /// page ([`crate::create`]).
+    Form(crate::route::Route),
 }
 
 /// A suggested change and what it replaces.
@@ -65,6 +71,8 @@ pub struct Compose {
     /// The key (esc or ctrl-c) pressed once with text in the editor: only
     /// that key, pressed again, throws the text away.
     pub discard_armed: Option<&'static str>,
+    /// The list of who or what an `@` or `#` being typed can be.
+    pub completing: crate::typing::Completing,
 }
 
 impl Compose {
@@ -76,6 +84,7 @@ impl Compose {
             sending: false,
             error: None,
             discard_armed: None,
+            completing: crate::typing::Completing::default(),
         }
     }
 
@@ -119,6 +128,13 @@ impl Compose {
             ComposeTarget::Reply { .. } => "Reply".to_owned(),
             ComposeTarget::Draft { .. } => "Edit draft".to_owned(),
             ComposeTarget::Conversation { name, .. } => format!("Comment on {name}"),
+            ComposeTarget::Edit(e) => format!("Edit {}", e.name),
+            ComposeTarget::Form(crate::route::Route::NewPr(_)) => {
+                "New pull request: its title on the first line, then its description".to_owned()
+            }
+            ComposeTarget::Form(_) => {
+                "New issue: its title on the first line, then its description".to_owned()
+            }
         }
     }
 }
@@ -129,7 +145,7 @@ pub fn compose_anchor(doc: &Doc, screen: &DiffScreen, target: &ComposeTarget) ->
     let cursor = screen.cursor;
     match target {
         ComposeTarget::File { .. } => Pos { row: 0, ..cursor },
-        ComposeTarget::Reply { .. } | ComposeTarget::Draft { .. } => {
+        ComposeTarget::Reply { .. } | ComposeTarget::Draft { .. } | ComposeTarget::Edit(_) => {
             let ann = doc.annotation_under(cursor, screen.half);
             (cursor.row + 1..)
                 .map(|row| Pos { row, ..cursor })
@@ -139,7 +155,9 @@ pub fn compose_anchor(doc: &Doc, screen: &DiffScreen, target: &ComposeTarget) ->
                 .last()
                 .unwrap_or(cursor)
         }
-        ComposeTarget::Line { .. } | ComposeTarget::Conversation { .. } => screen
+        ComposeTarget::Line { .. }
+        | ComposeTarget::Conversation { .. }
+        | ComposeTarget::Form(_) => screen
             .selection
             .filter(|s| doc.to_global(*s) > doc.to_global(cursor))
             .unwrap_or(cursor),
@@ -206,8 +224,10 @@ impl SubmitDialog {
     }
 }
 
+/// A box for writing Markdown: long lines wrap, at words where they can.
 fn editor(theme: &Theme, text: &str) -> TextArea<'static> {
     let mut input = crate::nav::new_input(theme, Bg::ContainerHigh);
+    input.set_wrap_mode(ratatui_textarea::WrapMode::WordOrGlyph);
     input.insert_str(text.trim_end_matches('\n'));
     input
 }
@@ -323,7 +343,9 @@ pub fn draft(target: &ComposeTarget, body: &str, id: u64, commit: &str) -> Optio
         ComposeTarget::File { path, .. } => Some(base(path)),
         ComposeTarget::Reply { .. }
         | ComposeTarget::Draft { .. }
-        | ComposeTarget::Conversation { .. } => None,
+        | ComposeTarget::Conversation { .. }
+        | ComposeTarget::Edit(_)
+        | ComposeTarget::Form(_) => None,
     }
 }
 
@@ -345,10 +367,12 @@ pub fn new_thread(draft: &DraftComment) -> NewThread {
 /// GitHub threads and local drafts as annotations. Outdated threads whose
 /// line was mapped forward sit on their new line; unmapped ones go under the
 /// file header.
+/// Threads and comments in `fresh` came in since you started looking.
 pub fn annotations(
     threads: &[ReviewThread],
     mapped: &HashMap<NodeId, Option<u32>>,
     drafts: &[DraftComment],
+    fresh: &HashSet<NodeId>,
 ) -> Vec<Annotation> {
     let mut out: Vec<Annotation> = threads
         .iter()
@@ -380,6 +404,8 @@ pub fn annotations(
                         body: c.body.clone(),
                         created_at: c.created_at.clone(),
                         pending: c.pending,
+                        new: fresh.contains(&c.id),
+                        editable: Some(c.editable.clone()),
                     })
                     .collect(),
                 left_out: t.comments.left_out(),
@@ -387,6 +413,7 @@ pub fn annotations(
                 can_reply: t.can_reply,
                 can_resolve: t.can_resolve,
                 can_unresolve: t.can_unresolve,
+                new: fresh.contains(&t.id),
             }
         })
         .collect();
@@ -409,12 +436,15 @@ pub fn annotations(
             body: d.body.clone(),
             created_at: String::new(),
             pending: false,
+            new: false,
+            editable: None,
         }],
         left_out: 0,
         error: d.error.clone(),
         can_reply: false,
         can_resolve: false,
         can_unresolve: false,
+        new: false,
     }));
     out
 }
@@ -600,6 +630,28 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 let all = all_changes(state);
                 return error(state, &format!("First {all}"));
             }
+            // A push since the diff was made: the diff starts again at
+            // it, and compares once it's in.
+            let head = diff.head().map(|h| h.to_string());
+            if crate::live::pushed_past(state, &pr, head.as_deref())
+                && let Some(base) = state.pr_base(&pr)
+                && let Some((screen, diff)) = state.diff_parts()
+            {
+                diff.restart(None);
+                diff.since_requested = true;
+                screen.restart();
+                let job = diff.job;
+                state.info("Loading the new push, to compare with your last review…");
+                return vec![Cmd::Git(Git::LoadDiff {
+                    of: pr.into(),
+                    job,
+                    base,
+                    range: None,
+                })];
+            }
+            let Some((screen, diff)) = state.diff_parts() else {
+                return Vec::new();
+            };
             let active = !diff.doc.since_active();
             if diff_screen::preserving_position(screen, diff, |d| d.doc.show_since(active)) {
                 state.info(if active {
@@ -773,6 +825,16 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 let (id, body) = (draft.id, draft.body.clone());
                 return state.compose(ComposeTarget::Draft { id }, &body);
             }
+            // A line of a comment with a link follows it.
+            let url = match (diff.doc.row(cursor), diff.doc.files().get(cursor.file)) {
+                (Some(Row::Thread(t)), Some(file)) => file
+                    .thread_row(t)
+                    .and_then(|r| r.line.links.first().cloned()),
+                _ => None,
+            };
+            if let Some(url) = url {
+                return state.follow(&crate::ui::page::Link::Url(url));
+            }
             if let Some(at) = at {
                 diff.doc.toggle_thread(at);
             }
@@ -866,8 +928,20 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     if compose.sending {
         return Vec::new();
     }
+    if let Some(cmds) = crate::typing::on_compose_key(state, key) {
+        return cmds;
+    }
+    let Some(Overlay::Compose(compose)) = &mut state.overlay else {
+        return Vec::new();
+    };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
+        // A form keeps what's written: its page shows it.
+        KeyCode::Esc if let ComposeTarget::Form(route) = &compose.target => {
+            let (route, text) = (route.clone(), compose.text());
+            crate::create::keep_text(state, &route, text);
+            state.overlay = None;
+        }
         KeyCode::Esc => {
             if may_discard(state, "esc", "discard") {
                 state.overlay = None;
@@ -883,6 +957,7 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         _ => {
             compose.discard_armed = None;
             compose.error = None;
+            compose.completing.selected = 0;
             compose.input.input(key);
         }
     }
@@ -924,6 +999,21 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     }
     let target = compose.target.clone();
+    if let ComposeTarget::Edit(e) = target {
+        compose.sending = true;
+        let edit = crate::api::edit::Edit::Body {
+            of: e.of,
+            id: e.id,
+            body,
+        };
+        return vec![Cmd::Api(Api::Change(
+            Change::Edit(edit),
+            crate::act::By::Edit(e.about),
+        ))];
+    }
+    if let ComposeTarget::Form(_) = target {
+        return crate::create::submit(state);
+    }
     if let ComposeTarget::Conversation { subject_id, .. } = target {
         compose.sending = true;
         let change = Change::Comment {
@@ -959,7 +1049,9 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             state.overlay = None;
             save
         }
-        ComposeTarget::Conversation { .. } => Vec::new(),
+        ComposeTarget::Conversation { .. } | ComposeTarget::Edit(_) | ComposeTarget::Form(_) => {
+            Vec::new()
+        }
         target @ (ComposeTarget::Line { .. } | ComposeTarget::File { .. }) => {
             let Some(head) = diff.head() else {
                 return Vec::new();
@@ -1094,7 +1186,7 @@ mod tests {
             (NodeId::new("mapped"), Some(12)),
             (NodeId::new("lost"), None),
         ]);
-        let anns = annotations(&threads, &mapped, &[]);
+        let anns = annotations(&threads, &mapped, &[], &HashSet::new());
         assert!(matches!(anns[0].place, Place::Line { at, .. } if at.line == 3));
         assert!(matches!(anns[1].place, Place::Moved(at) if at.line == 12));
         assert_eq!(anns[2].place, Place::Outdated(Some(3)));
@@ -1149,7 +1241,7 @@ mod tests {
             .is_none()
         );
 
-        let anns = annotations(&[], &HashMap::new(), &[d_with_error()]);
+        let anns = annotations(&[], &HashMap::new(), &[d_with_error()], &HashSet::new());
         assert!(anns[0].is_draft());
         assert_eq!(anns[0].error.as_deref(), Some("nope"));
     }

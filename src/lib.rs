@@ -5,6 +5,7 @@
 pub mod api;
 pub mod diff;
 pub mod git;
+pub mod host;
 pub mod schema;
 pub mod store;
 pub mod theme;
@@ -13,19 +14,24 @@ pub mod ui;
 mod act;
 mod browse;
 mod chrome;
+mod code_nav;
 mod config;
 #[cfg(test)]
 mod crawl;
+mod create;
 mod diff_job;
 mod diff_screen;
+mod edit;
 #[cfg(test)]
 mod fixtures;
 mod home;
 mod join;
 mod keymap;
+mod live;
 mod nav;
 mod notice;
 mod picker;
+mod projects;
 mod review;
 pub mod route;
 mod runtime;
@@ -35,6 +41,7 @@ mod sequence_tests;
 mod snapshot_tests;
 mod state;
 mod tabs;
+mod typing;
 mod view;
 pub mod wiki;
 
@@ -68,7 +75,7 @@ const BACKGROUND_QUERY_TIMEOUT: Duration = Duration::from_millis(100);
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
-    /// What to open: owner/repo, owner/repo#123, @user, a github.com URL, or
+    /// What to open: owner/repo, owner/repo#123, @user, a GitHub URL, or
     /// #123 inside a clone. Without it, ghtui opens your home page.
     target: Option<String>,
     /// Config file (default: ~/.config/ghtui/config.toml).
@@ -124,19 +131,22 @@ pub fn main() -> std::process::ExitCode {
 async fn run(started: Instant) -> Result<()> {
     let cli = Cli::parse();
 
-    // Token resolution may run `gh` (~40ms); overlap it with the rest of
-    // startup.
-    let token = std::thread::spawn(crate::api::auth::resolve_token);
-
     let config_path = cli.config.clone().or_else(config::default_config_path);
     let config = match &config_path {
         Some(path) => Config::load(path)?,
         None => Config::default(),
     };
+    let host = host::Host::resolve(|k| std::env::var(k).ok(), config.github.host.as_deref())
+        .map_err(anyhow::Error::msg)?;
+    host::set(host);
+    // Token resolution may run `gh` (~40ms); overlap it with the rest of
+    // startup.
+    let token = std::thread::spawn(move || crate::api::auth::resolve_token(host));
+
     let keymap = Keymap::with_overrides(&config.keys).map_err(anyhow::Error::msg)?;
     let cache_dir = config::cache_dir().context("cannot determine a cache directory")?;
     let _log_guard = init_logging(&cache_dir);
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting");
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), %host, "starting");
 
     let target = match (&cli.command, &cli.target) {
         (Some(Command::Pr { target }), _) => Some(resolve_pr(target).await?),
@@ -149,18 +159,20 @@ async fn run(started: Instant) -> Result<()> {
         nerd_font: config.ui.nerd_font,
     };
     let store = Store::open(&cache_dir.join("cache.redb"));
-    let reviews = open_reviews();
 
     let (token, source) = token
         .join()
         .map_err(|_| anyhow::anyhow!("token resolution panicked"))??;
     tracing::info!(%source, "authenticated");
+    let store = store.for_account(host.name(), &token.fingerprint());
+    let reviews = open_reviews().map(|r| r.for_account(store.account().clone()));
     let git = GitContext {
-        cache_root: cache_dir.clone(),
+        // Clones are per host: `o/r` here isn't `o/r` on another GitHub.
+        cache_root: cache_dir.join(host.name()),
         credentials: git_credentials(&token, source),
         cwd: std::env::current_dir()?,
     };
-    let gh = GitHub::new(token, store);
+    let gh = GitHub::new(token, store, host);
 
     let size = crossterm::terminal::size().unwrap_or((80, 24));
     let mut state = State::new(theme, icons, keymap, size);
@@ -207,6 +219,7 @@ async fn run(started: Instant) -> Result<()> {
         .map(|c| c.value)
         .unwrap_or_default();
     cmds.push(state::Cmd::Timer(state::Timer::Minute, 60_000));
+    cmds.push(state::Cmd::Api(Api::FetchUnread));
     state.data_gen += 1;
     state.sync_page();
 
@@ -216,7 +229,7 @@ async fn run(started: Instant) -> Result<()> {
     // `restore_terminal` shows it instead.
     let mut terminal =
         std::mem::ManuallyDrop::new(init_terminal().context("needs an interactive terminal")?);
-    set_mouse(true);
+    capture_input(true);
     let result = runtime::run(&mut terminal, state, gh, git, reviews, cmds, started).await;
     restore_terminal();
     if let Err(err) = &result {
@@ -279,8 +292,12 @@ async fn resolve_target(target: &str) -> Result<PrRef> {
     };
     let cwd = std::env::current_dir()?;
     let remotes = crate::git::remotes(&cwd).await?;
-    let repo = crate::git::infer_github_repo(&remotes)
-        .context("not inside a clone with a github.com remote; use owner/repo#123")?;
+    let repo = crate::git::infer_github_repo(&remotes).with_context(|| {
+        format!(
+            "not inside a clone with a {} remote; use owner/repo#123",
+            host::current()
+        )
+    })?;
     Ok(PrRef {
         repo: RepoId::new(repo.owner, repo.name),
         number,
@@ -308,8 +325,13 @@ async fn resolve_open(target: &str) -> Result<Dest> {
         })
         .into());
     }
-    route::parse_input(target, None).with_context(|| {
-        format!("can't open `{target}`; use owner/repo, owner/repo#123, @user, or a github.com URL")
+    let shown = route::parse_input(target, None)
+        .filter(|dest| !matches!(dest.target, route::Target::External(_)));
+    shown.with_context(|| {
+        format!(
+            "can't open `{target}`; use owner/repo, owner/repo#123, @user, or a {} URL",
+            host::current()
+        )
     })
 }
 
@@ -351,27 +373,37 @@ fn init_logging(
     Some(guard)
 }
 
-/// Clicks and the wheel go to ghtui while it runs.
-pub fn set_mouse(on: bool) {
+/// Clicks, the wheel, pastes (as one piece of text, not keys) and focus
+/// go to ghtui while it runs.
+pub fn capture_input(on: bool) {
     use crossterm::ExecutableCommand;
-    use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+    use crossterm::event::{
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+        EnableFocusChange, EnableMouseCapture,
+    };
     let mut out = std::io::stdout();
     let result = if on {
-        out.execute(EnableMouseCapture).map(drop)
+        (out.execute(EnableMouseCapture))
+            .and_then(|out| out.execute(EnableBracketedPaste))
+            .and_then(|out| out.execute(EnableFocusChange))
+            .map(drop)
     } else {
-        out.execute(DisableMouseCapture).map(drop)
+        (out.execute(DisableMouseCapture))
+            .and_then(|out| out.execute(DisableBracketedPaste))
+            .and_then(|out| out.execute(DisableFocusChange))
+            .map(drop)
     };
     if let Err(err) = result {
-        tracing::warn!(%err, "mouse capture");
+        tracing::warn!(%err, "capturing input");
     }
 }
 
-/// Leaves raw mode, the alternate screen and mouse capture, and shows the
-/// cursor. Failures are logged, never printed: when the terminal is gone
+/// Leaves raw mode, the alternate screen and input capture, and shows
+/// the cursor. Failures are logged, never printed: when the terminal is gone
 /// (a closed pane sends SIGHUP), printing to it panics.
 pub fn restore_terminal() {
     use crossterm::ExecutableCommand;
-    set_mouse(false);
+    capture_input(false);
     let result = std::io::stdout()
         .execute(crossterm::cursor::Show)
         .map(drop)

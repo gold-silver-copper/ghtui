@@ -99,6 +99,9 @@ async fn drive(
             event = events.next() => match event {
                 Some(Ok(Event::Key(key))) if key.kind != KeyEventKind::Release => Msg::Key(key),
                 Some(Ok(Event::Resize(w, h))) => Msg::Resize(w, h),
+                Some(Ok(Event::Paste(text))) => Msg::Paste(text),
+                Some(Ok(Event::FocusGained)) => Msg::Focus(true),
+                Some(Ok(Event::FocusLost)) => Msg::Focus(false),
                 Some(Ok(Event::Mouse(m))) if matches!(
                     m.kind,
                     MouseEventKind::Down(_) | MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
@@ -190,6 +193,14 @@ impl Effects {
                 spawn_guarded(&self.tx, replies, |tx| async move {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                     let _ = tx.send(Msg::SuggestDue(q));
+                });
+            }
+            Cmd::Create(work) => {
+                let (gh, cwd) = (self.gh.clone(), self.git.cwd.clone());
+                spawn_guarded(&self.tx, replies, |tx| async move {
+                    let done = work.run(&gh, &cwd).await;
+                    let _ = tx.send(Msg::Create(done));
+                    let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
                 });
             }
             Cmd::LoadReview(pr) => self.load_review(pr, replies),
@@ -368,6 +379,7 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
     spawn_guarded(tx, replies, |tx| async move {
         let msg = match api {
             Api::FetchViewer => Msg::Viewer(gh.viewer_login().await),
+            Api::FetchUnread => Msg::Unread(gh.unread().await),
             Api::FetchPr(pr) => {
                 let result = gh.pull_request(&pr).await;
                 Msg::Pr(pr, Box::new(result))
@@ -486,6 +498,25 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 let result = gh.last_review_commit(&pr, &login).await;
                 Msg::Diff(pr.into(), DiffMsg::LastReview(result))
             }
+            Api::FetchMentionable(repo) => {
+                let result = gh.mentionable(&repo).await;
+                Msg::Mentionable(repo, result)
+            }
+            Api::FindDefinition(ask) => {
+                let result = crate::code_nav::find(&gh, &ask).await;
+                Msg::Definitions(ask, result)
+            }
+            Api::Poll { pr, asks } => {
+                let polls = asks.into_iter().map(|ask| {
+                    let (gh, path) = (&gh, ask.probe.path(&pr));
+                    async move {
+                        let answer = gh.poll(&path, ask.etag.as_deref()).await;
+                        (ask.probe, answer)
+                    }
+                });
+                let answers = futures::future::join_all(polls).await;
+                Msg::Polled(pr, answers)
+            }
         };
         let _ = tx.send(msg);
         let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
@@ -500,9 +531,9 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
             let _ = tx.send(Msg::Notice(Notice::Error(text)));
         }
         if let Some(rejected) = gh.token_rejected_change() {
-            let text =
-                "GitHub rejected the token: run `gh auth login` or set GH_TOKEN, then restart";
-            let _ = tx.send(Msg::Problem(Problem::Auth, rejected.then(|| text.into())));
+            let hint = crate::api::auth::sign_in_hint(crate::host::current());
+            let text = format!("GitHub rejected the token: {hint}, then restart");
+            let _ = tx.send(Msg::Problem(Problem::Auth, rejected.then_some(text)));
         }
     });
 }
@@ -563,6 +594,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
     }
     let msg = match cmd {
         Cmd::Api(Api::FetchViewer) => Msg::Viewer(api()),
+        Cmd::Api(Api::FetchUnread) => Msg::Unread(api()),
         Cmd::Api(Api::FetchPr(pr)) => Msg::Pr(pr.clone(), Box::new(api())),
         Cmd::Api(Api::Fetch { key, .. }) => Msg::Fetched {
             key: key.clone(),
@@ -611,6 +643,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             },
         ),
         Cmd::LoadReview(pr) => Msg::Diff(pr.clone().into(), DiffMsg::ReviewLoaded(git())),
+        Cmd::Create(work) => Msg::Create(work.failed()),
         Cmd::EditHome { edit, what, .. } => Msg::HomeEdited {
             edit: edit.clone(),
             result: Err("ghtui hit a bug".into()),
@@ -629,6 +662,9 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Cmd::Api(Api::FetchLastReview { pr, .. }) => {
             Msg::Diff(pr.clone().into(), DiffMsg::LastReview(api()))
         }
+        Cmd::Api(Api::FetchMentionable(repo)) => Msg::Mentionable(repo.clone(), api()),
+        Cmd::Api(Api::FindDefinition(ask)) => Msg::Definitions(ask.clone(), api()),
+        Cmd::Api(Api::Poll { pr, .. }) => Msg::Polled(pr.clone(), Vec::new()),
         Cmd::Git(Git::LoadDiff { of, job, .. }) => Msg::Diff(
             of.clone(),
             DiffMsg::Job(*job, JobMsg::Failed(Failure::msg("ghtui hit a bug"))),
@@ -767,6 +803,7 @@ async fn save_tabs(gh: &GitHub, state: &State) {
 /// What the cache has for a page, and when it was fetched.
 pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
     use crate::api::browse::keys;
+    use crate::api::project;
     fn at<T>(c: crate::store::Cached<T>, wrap: impl FnOnce(T) -> Data) -> (Data, u64) {
         (wrap(c.value), c.fetched_at)
     }
@@ -878,6 +915,12 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::CommitChecks(repo, oid) => at(gh.cached(&keys::commit_checks(repo, oid))?, |v| {
             Data::Checks(Box::new(v))
         }),
+        DataKey::Projects(of) => at(gh.cached(&project::keys::projects(of))?, |v| {
+            Data::Projects(Box::new(v))
+        }),
+        DataKey::Project(p, view) => at(gh.cached(&project::keys::project(p, *view))?, |v| {
+            Data::Project(Box::new(v))
+        }),
         DataKey::History(repo, rev, path) => at(gh.cached(&keys::history(repo, rev, path))?, |v| {
             Data::History(Box::new(v))
         }),
@@ -889,11 +932,14 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         // Files aren't cached; they can be large.
         // A wiki's clone is its cache.
         // Where a ref ends is asked anew each session.
+        // What a new issue can have is what it has now.
         DataKey::Blob(..)
         | DataKey::Files(..)
         | DataKey::JobLog(..)
         | DataKey::Wiki(..)
-        | DataKey::RefIn(..) => {
+        | DataKey::RefIn(..)
+        | DataKey::Sidebar(..)
+        | DataKey::NewForm(..) => {
             return None;
         }
     })
@@ -989,9 +1035,13 @@ pub(crate) async fn fetch(
         DataKey::Notifications(query) => {
             Data::Notifications(Box::new(gh.notifications(query, after).await?))
         }
+        DataKey::Sidebar(repo, number) => Data::Sidebar(Box::new(gh.sidebar(repo, *number).await?)),
+        DataKey::NewForm(repo) => Data::NewForm(Box::new(gh.new_form(repo).await?)),
         DataKey::CommitChecks(repo, oid) => {
             Data::Checks(Box::new(gh.commit_checks(repo, oid).await?))
         }
+        DataKey::Projects(of) => Data::Projects(Box::new(gh.projects(of, after).await?)),
+        DataKey::Project(p, view) => Data::Project(Box::new(gh.project(p, *view, after).await?)),
         DataKey::History(repo, rev, path) => {
             Data::History(Box::new(gh.history(repo, rev, path, after).await?))
         }
@@ -1210,7 +1260,7 @@ async fn edit_externally(
                     .map(drop)
             })
             .and_then(|()| terminal.clear());
-        crate::set_mouse(true);
+        crate::capture_input(true);
         if let Err(err) = restored {
             tracing::error!(%err, "couldn't restore the terminal after the editor");
         }

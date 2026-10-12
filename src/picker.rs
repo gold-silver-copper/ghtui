@@ -1,6 +1,6 @@
 //! One fuzzy picker for every list under a text field: the command
 //! palette, go to file (in a repository and in a diff), branches and tags,
-//! and the diff's commits.
+//! the diff's commits, and places in code (symbols, definitions).
 
 use crate::api::browse::SearchKind;
 use crate::api::model::RepoId;
@@ -39,6 +39,17 @@ pub enum Kind {
     Messages(Vec<(u64, Notice)>),
     /// A Home section's title, for the config file at the path: the field is all of it.
     SectionTitle(Titling, std::path::PathBuf),
+    /// Editing what's on GitHub: a sidebar field, a reaction, a title.
+    Edit(crate::edit::Choosing),
+    /// One of a new issue's or pull request's choices.
+    Form(crate::create::Pick),
+    /// Places in code: a file's symbols, a name's definitions.
+    Code {
+        title: &'static str,
+        rows: Vec<(PaletteItem, Choice)>,
+    },
+    /// A project item's columns, fields or a field's values.
+    Project(crate::projects::Pick),
 }
 
 /// What a section's title is for.
@@ -66,6 +77,10 @@ impl Picker {
             Kind::Messages(_) => "Messages",
             Kind::SectionTitle(Titling::New { .. }, _) => "Save to Home",
             Kind::SectionTitle(Titling::Rename { .. }, _) => "Rename the section",
+            Kind::Edit(ref c) => c.title(),
+            Kind::Form(pick) => pick.title(),
+            Kind::Code { title, .. } => title,
+            Kind::Project(ref pick) => pick.title(),
         }
     }
 }
@@ -92,6 +107,13 @@ pub enum Choice {
     Tab(usize),
     /// Title a Home section this, in the config file at the path.
     Title(Titling, std::path::PathBuf, String),
+    /// Handled while the picker is open ([`crate::edit::on_picker_key`]).
+    Edit(crate::edit::Pick),
+    /// Set one of a form's choices.
+    Form(crate::create::Picked),
+    /// Go to this line of the file on screen.
+    Line(u32),
+    Project(crate::projects::Chosen),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -101,6 +123,18 @@ fn item(label: impl Into<String>, hint: impl Into<String>) -> PaletteItem {
         label: label.into(),
         hint: hint.into(),
     }
+}
+
+/// Places in code that match `q`, best first; all of them in order
+/// before anything is typed.
+fn code_rows(rows: &[(PaletteItem, Choice)], q: &str) -> Rows {
+    let mut hits: Vec<_> = (rows.iter())
+        .filter_map(|(item, choice)| Some((fuzzy_score(q, item.label.trim_start())?, item, choice)))
+        .collect();
+    hits.sort_by_key(|(score, ..)| *score);
+    let hits = hits.into_iter();
+    hits.map(|(_, item, choice)| (item.clone(), Some(choice.clone())))
+        .collect()
 }
 
 /// Notices that match `q`; choosing one copies it.
@@ -127,10 +161,22 @@ impl State {
             Kind::Commits { .. } => "space marks a range start · ↵ views · esc cancels",
             Kind::Messages(_) => "↵ copies a message",
             Kind::SectionTitle(..) => "The section's title",
+            Kind::Edit(ref c) => c.placeholder(),
+            Kind::Form(pick) if pick.several() => {
+                "Type to filter · ↵ picks or unpicks · esc when done"
+            }
+            Kind::Form(_) => "Type to filter",
+            Kind::Code { .. } => "Type a name",
+            Kind::Project(ref pick) => pick.placeholder(),
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
             Kind::Branches { repo, .. } => Some(DataKey::Refs(repo.clone())),
+            Kind::Edit(c) => c.need(),
+            Kind::Form(crate::create::Pick::Base | crate::create::Pick::Head) => self
+                .route()
+                .and_then(Route::repo)
+                .map(|r| DataKey::Refs(r.clone())),
             _ => None,
         };
         let mut input = new_input(&self.theme, Bg::ContainerHigh);
@@ -192,6 +238,9 @@ impl State {
             Kind::DiffFiles => self.diff_file_rows(q),
             Kind::Commits { mark } => self.commit_rows(*mark),
             Kind::Messages(kept) => message_rows(kept, q, (self.clock)()),
+            Kind::Edit(c) => crate::edit::rows(self, c, q),
+            Kind::Form(pick) => crate::create::picker_rows(self, *pick, q),
+            Kind::Code { rows, .. } => code_rows(rows, q),
             Kind::SectionTitle(titling, path) => {
                 if q.is_empty() {
                     return vec![(item("Type a title", ""), None)];
@@ -203,6 +252,9 @@ impl State {
                 let choice = Choice::Title(titling.clone(), path.clone(), q.to_owned());
                 vec![(item(label, "↵"), Some(choice))]
             }
+            Kind::Project(pick) => (crate::projects::rows(self, pick, q).into_iter())
+                .map(|(row, chosen)| (row, chosen.map(Choice::Project)))
+                .collect(),
         }
     }
 
@@ -485,6 +537,9 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     if move_in_list(key, &mut p.selected, rows.len()) {
         return Vec::new();
     }
+    if let Kind::Edit(_) = p.kind {
+        return crate::edit::on_picker_key(state, key, rows);
+    }
     match (key.code, &mut p.kind) {
         (KeyCode::Esc, _) => state.overlay = None,
         (KeyCode::Enter, kind) => {
@@ -493,8 +548,12 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                 _ => None,
             };
             let selected = p.selected;
+            // Labels and assignees: several, so the picker stays.
+            let several = matches!(kind, Kind::Form(pick) if pick.several());
             if let Some(choice) = rows.get_mut(selected).and_then(|(_, c)| c.take()) {
-                state.overlay = None;
+                if !several {
+                    state.overlay = None;
+                }
                 return choose(state, choice, mark);
             }
         }
@@ -536,14 +595,18 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
             vec![Cmd::Copy(text)]
         }
         Choice::Tab(i) => state.switch_to_tab(i),
+        Choice::Line(line) => crate::code_nav::go_to_line(state, line),
         Choice::Title(Titling::New { kind, query }, path, title) => {
             let what = format!("Added “{title}” to Home");
             state.edit_home(path, crate::home::Edit::Add { title, kind, query }, what)
         }
+        Choice::Form(picked) => crate::create::pick(state, picked),
         Choice::Title(Titling::Rename { at }, path, title) => {
             let what = format!("Renamed it “{title}”");
             state.edit_home(path, crate::home::Edit::Rename { at, title }, what)
         }
+        Choice::Edit(_) => Vec::new(),
+        Choice::Project(chosen) => crate::projects::choose(state, chosen),
     }
 }
 

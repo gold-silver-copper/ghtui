@@ -1,7 +1,8 @@
-//! Routes: the pages ghtui shows, addressed by their github.com URLs.
+//! Routes: the pages ghtui shows, addressed by their GitHub URLs.
 
 use crate::api::browse::{DiscussionsOf, RepoSort, SearchKind};
 use crate::api::model::{PrRef, RepoId};
+use crate::api::project::{ProjectOwner, ProjectRef, ProjectsOf};
 use crate::git::Oid;
 use crate::ui::pages::url as links;
 use crate::ui::pages::{PrTab, ProfileTab};
@@ -148,7 +149,8 @@ pub enum Route {
         repo: RepoId,
         number: u64,
     },
-    /// A page at a revision from a plain github.com URL, which doesn't say
+    /// A page at a revision from a plain GitHub URL, which doesn't say
+
     /// where the ref ends and the path starts (`tree/feature/x/src`).
     /// GitHub takes the longest leading part naming a branch or tag; ghtui
     /// finds it, then shows the page (see [`Route::split`]).
@@ -183,6 +185,24 @@ pub enum Route {
     /// Your inbox, filtered as GitHub's is (`is:unread reason:mention`).
     Notifications {
         query: String,
+    },
+    /// A new issue: its templates, then its form.
+    NewIssue(RepoId),
+    /// A new pull request's form.
+    NewPr(RepoId),
+    /// An organization's or someone's projects, or a repository's.
+    Projects(ProjectsOf),
+    /// A project at one of its views (its first, if none is named).
+    Project {
+        project: ProjectRef,
+        view: Option<u64>,
+    },
+    /// One of a project's items, as the view's side pane shows it, by the
+    /// number its URL names it by (`?pane=issue&itemId=…`).
+    ProjectItem {
+        project: ProjectRef,
+        view: Option<u64>,
+        item: u64,
     },
 }
 
@@ -332,7 +352,7 @@ impl Route {
 
     pub fn url(&self) -> String {
         match self {
-            Route::Home => format!("{}/", links::BASE),
+            Route::Home => format!("{}/", links::base()),
             Route::Repo(repo) => links::repo(repo),
             Route::Tree { repo, rev, path } => links::tree(repo, rev, path),
             Route::Blob {
@@ -436,19 +456,19 @@ impl Route {
             },
             Route::Advisories(repo) => match repo {
                 Some(repo) => format!("{}/security/advisories", links::repo(repo)),
-                None => format!("{}/advisories", links::BASE),
+                None => format!("{}/advisories", links::base()),
             },
             Route::Advisory { repo, ghsa } => match repo {
                 Some(repo) => format!("{}/security/advisories/{ghsa}", links::repo(repo)),
-                None => format!("{}/advisories/{ghsa}", links::BASE),
+                None => format!("{}/advisories/{ghsa}", links::base()),
             },
-            Route::Teams(org) => format!("{}/orgs/{org}/teams", links::BASE),
-            Route::Team { org, slug } => format!("{}/orgs/{org}/teams/{slug}", links::BASE),
+            Route::Teams(org) => format!("{}/orgs/{org}/teams", links::base()),
+            Route::Team { org, slug } => format!("{}/orgs/{org}/teams/{slug}", links::base()),
             Route::Gist { owner, id } => match owner {
-                Some(owner) => format!("{GIST}/{owner}/{id}"),
-                None => format!("{GIST}/{id}"),
+                Some(owner) => format!("{}/{owner}/{id}", links::gists()),
+                None => format!("{}/{id}", links::gists()),
             },
-            Route::Gists(login) => format!("{GIST}/{login}"),
+            Route::Gists(login) => format!("{}/{login}", links::gists()),
             Route::Compare { repo, spec } => {
                 format!("{}/compare/{}", links::repo(repo), links::encode_path(spec))
             }
@@ -468,6 +488,8 @@ impl Route {
             Route::Milestone { repo, number } => {
                 format!("{}/milestone/{number}", links::repo(repo))
             }
+            Route::NewIssue(repo) => format!("{}/issues/new", links::repo(repo)),
+            Route::NewPr(repo) => format!("{}/compare", links::repo(repo)),
             Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
             Route::Commit {
                 repo,
@@ -494,19 +516,27 @@ impl Route {
                 ProfileTab::Stars => format!("{}?tab=stars", links::user(login)),
                 ProfileTab::Followers => format!("{}?tab=followers", links::user(login)),
                 ProfileTab::Following => format!("{}?tab=following", links::user(login)),
-                ProfileTab::People => format!("{}/orgs/{login}/people", links::BASE),
+                ProfileTab::People => format!("{}/orgs/{login}/people", links::base()),
             },
             Route::Search { kind, query } => links::search(*kind, query),
             Route::Notifications { query } if query.is_empty() => {
-                format!("{}/notifications", links::BASE)
+                format!("{}/notifications", links::base())
             }
             Route::Notifications { query } => {
                 format!(
                     "{}/notifications?query={}",
-                    links::BASE,
+                    links::base(),
                     links::encode(query)
                 )
             }
+            Route::Projects(ProjectsOf::Owner(owner)) => format!("{}/projects", owner.url()),
+            Route::Projects(ProjectsOf::Repo(repo)) => format!("{}/projects", links::repo(repo)),
+            Route::Project { project, view } => view_url(project, *view),
+            Route::ProjectItem {
+                project,
+                view,
+                item,
+            } => format!("{}?pane=issue&itemId={item}", view_url(project, *view)),
         }
     }
 
@@ -558,12 +588,24 @@ impl Route {
             Route::Deployments { repo, .. } => format!("{repo} · Deployments"),
             Route::Milestones { repo, .. } => format!("{repo} · Milestones"),
             Route::Milestone { repo, number } => format!("{repo} · Milestone {number}"),
+            Route::NewIssue(repo) => format!("{repo} · New issue"),
+            Route::NewPr(repo) => format!("{repo} · New pull request"),
             Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
             Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
             Route::Commit { repo, oid, .. } => format!("{repo}@{}", short_sha(oid)),
             Route::User { login, .. } => format!("@{login}"),
             Route::Search { query, .. } => format!("Search “{query}”"),
             Route::Notifications { .. } => "Notifications".to_owned(),
+            Route::Projects(ProjectsOf::Owner(owner)) => format!("@{} · Projects", owner.login()),
+            Route::Projects(ProjectsOf::Repo(repo)) => format!("{repo} · Projects"),
+            Route::Project { project, .. } => {
+                format!("@{} · Project {}", project.owner.login(), project.number)
+            }
+            Route::ProjectItem { project, item, .. } => format!(
+                "@{} · Project {} · Item {item}",
+                project.owner.login(),
+                project.number
+            ),
         }
     }
 
@@ -608,9 +650,15 @@ impl Route {
             | Route::Deployments { repo, .. }
             | Route::Milestones { repo, .. }
             | Route::Milestone { repo, .. }
+            | Route::NewIssue(repo)
+            | Route::NewPr(repo)
+            | Route::Projects(ProjectsOf::Repo(repo))
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
-            Route::Home
+            Route::Projects(ProjectsOf::Owner(_))
+            | Route::Project { .. }
+            | Route::ProjectItem { .. }
+            | Route::Home
             | Route::User { .. }
             | Route::Search { .. }
             | Route::Notifications { .. }
@@ -715,9 +763,11 @@ fn list_url(base: &str, query: &str) -> String {
 }
 
 impl Dest {
-    /// Parses a github.com URL (or a ghtui link). Other URLs are external.
+    /// Parses a URL of the GitHub ghtui works with (see [`crate::host`]),
+    /// with or without its scheme. Other URLs, another GitHub's too, are
+    /// external.
     pub fn from_url(s: &str) -> Dest {
-        let with_scheme = if s.starts_with("github.com/") {
+        let with_scheme = if has_host_prefix(s) {
             format!("https://{s}")
         } else {
             s.to_owned()
@@ -734,16 +784,32 @@ impl Dest {
     }
 }
 
+/// Whether `s` starts with the host's name, scheme left off
+/// (`github.com/o/r`).
+fn has_host_prefix(s: &str) -> bool {
+    s.split_once('/')
+        .is_some_and(|(host, _)| crate::host::current().serves(host))
+}
+
 /// What a URL opens in ghtui, or `None` for the browser.
 fn parse(parsed: &url::Url) -> Option<Target> {
     if !matches!(parsed.scheme(), "https" | "http") {
         return None;
     }
-    if parsed.host_str() == Some("gist.github.com") {
-        return gist(parsed).map(Target::Page);
+    let host = crate::host::current();
+    let name = crate::host::url_host(parsed)?;
+    if host.serves_gists(&name) {
+        return gist(parsed.path_segments()?).map(Target::Page);
     }
-    if !matches!(parsed.host_str(), Some("github.com" | "www.github.com")) {
+    if !host.serves(&name) {
         return None;
+    }
+    // An Enterprise Server's gists are under `/gist`.
+    if host.is_enterprise()
+        && let Some(mut segments) = parsed.path_segments()
+        && segments.next() == Some("gist")
+    {
+        return gist(segments).map(Target::Page);
     }
     let param = |name: &str| param(parsed, name);
     let (query, kind, tab) = (param("q"), param("type"), param("tab"));
@@ -813,7 +879,15 @@ fn parse(parsed: &url::Url) -> Option<Target> {
             }
         }
         // Names that can't be GitHub's are pages GitHub doesn't have.
-        ["stars" | "orgs", login, ..] if !valid_login(login) => return None,
+        ["stars" | "orgs" | "users", login, ..] if !valid_login(login) => return None,
+        [kind @ ("orgs" | "users"), login, "projects", rest @ ..] => {
+            let owner = if *kind == "orgs" {
+                ProjectOwner::Org((*login).to_owned())
+            } else {
+                ProjectOwner::User((*login).to_owned())
+            };
+            project(owner, rest, parsed)?
+        }
         ["stars", login] => Route::User {
             login: (*login).to_owned(),
             tab: ProfileTab::Stars,
@@ -848,6 +922,14 @@ fn parse(parsed: &url::Url) -> Option<Target> {
                 repos()
             },
         },
+        // A profile's projects are an organization's at `/orgs/…/projects`.
+        [login]
+            if tab.as_deref() == Some("projects")
+                && !RESERVED.contains(login)
+                && valid_login(login) =>
+        {
+            Route::Projects(ProjectsOf::Owner(ProjectOwner::User((*login).to_owned())))
+        }
         [login] if !RESERVED.contains(login) && valid_login(login) => Route::User {
             login: (*login).to_owned(),
             tab: match tab.as_deref() {
@@ -856,7 +938,7 @@ fn parse(parsed: &url::Url) -> Option<Target> {
                 Some("stars") => ProfileTab::Stars,
                 Some("followers") => ProfileTab::Followers,
                 Some("following") => ProfileTab::Following,
-                // Packages and projects need scopes gh doesn't grant.
+                // Packages need a scope gh doesn't grant.
                 Some(_) => return None,
             },
         },
@@ -957,6 +1039,8 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
                 .map(|q| q.trim().to_owned())
                 .unwrap_or_default(),
         },
+        // Its linked projects; a classic project (`projects/1`) is gone.
+        ["projects"] => Route::Projects(ProjectsOf::Repo(repo)),
         ["stargazers"] => Route::Stargazers(repo),
         ["watchers"] => Route::Watchers(repo),
         ["forks"] | ["network", "members"] => Route::Forks(repo),
@@ -991,7 +1075,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             let spec = rest.join("/");
             // Without revisions it's the form for opening a pull request.
             if spec.is_empty() {
-                return None;
+                return Some(Target::Page(Route::NewPr(repo)));
             }
             // Its files, from one commit to the other (`a..b`; with three
             // dots it's from their merge base, which the comparison page
@@ -1114,6 +1198,8 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
                 pr: None,
             }
         }
+        // The form, after the template chooser or straight to it.
+        ["issues", "new"] | ["issues", "new", "choose"] => Route::NewIssue(repo),
         ["issues", n] => Route::Issue {
             repo,
             number: n.parse().ok()?,
@@ -1154,21 +1240,19 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
     Some(Target::Page(route))
 }
 
-const GIST: &str = "https://gist.github.com";
-
-/// gist.github.com's own pages, not people's gists.
+/// The gist website's own pages, not people's gists.
 const GIST_PAGES: &[&str] = &[
     "discover", "starred", "search", "auth", "login", "join", "mine",
 ];
 
-/// Whether a gist.github.com path segment after an owner is a gist's ID
+/// Whether a gist path segment after an owner is a gist's ID
 /// (numbers for old gists, 20 or 32 hex digits for newer).
 fn is_gist_id(s: &str) -> bool {
     s.bytes().all(|b| b.is_ascii_digit())
         || (matches!(s.len(), 20 | 32) && s.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
-/// Whether a lone gist.github.com segment is a gist rather than someone's
+/// Whether a lone gist segment is a gist rather than someone's
 /// gists. GitHub tries a login first; ghtui can't ask, so it takes short
 /// numbers for logins (`/1`, `/2000`) and long ones for old gists
 /// (`/1162032`, which GitHub redirects to its owner's).
@@ -1176,10 +1260,10 @@ fn is_lone_gist_id(s: &str) -> bool {
     is_gist_id(s) && !(s.len() < 5 && s.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// A gist.github.com page: a gist (`/<id>`, `/<owner>/<id>`) or someone's
-/// gists (`/<owner>`). Raw files and embeds are downloads.
-fn gist(parsed: &url::Url) -> Option<Route> {
-    let segments: Vec<&str> = parsed.path_segments()?.filter(|s| !s.is_empty()).collect();
+/// A gist website's page, from its path: a gist (`/<id>`, `/<owner>/<id>`)
+/// or someone's gists (`/<owner>`). Raw files and embeds are downloads.
+fn gist<'a>(segments: impl Iterator<Item = &'a str>) -> Option<Route> {
+    let segments: Vec<&str> = segments.filter(|s| !s.is_empty()).collect();
     Some(match segments.as_slice() {
         [first, ..] if GIST_PAGES.contains(first) => return None,
         [id] if is_lone_gist_id(id) => Route::Gist {
@@ -1219,10 +1303,44 @@ fn discussions(of: DiscussionsOf, rest: &[&str]) -> Option<Route> {
     })
 }
 
+/// An owner's projects page, from what follows `/projects` in its URL: the
+/// list, a project, one of its views, or an item in a view's side pane.
+/// Its settings, insights and workflows are on GitHub.
+fn project(owner: ProjectOwner, rest: &[&str], url: &url::Url) -> Option<Route> {
+    let [number, rest @ ..] = rest else {
+        return Some(Route::Projects(ProjectsOf::Owner(owner)));
+    };
+    let project = ProjectRef {
+        owner,
+        number: number.parse().ok()?,
+    };
+    let view = match rest {
+        [] => None,
+        ["views", n] => Some(n.parse().ok()?),
+        _ => return None,
+    };
+    Some(match param(url, "itemId") {
+        Some(item) => Route::ProjectItem {
+            project,
+            view,
+            item: item.parse().ok()?,
+        },
+        None => Route::Project { project, view },
+    })
+}
+
+/// A project's view's URL (the project's, without one).
+fn view_url(project: &ProjectRef, view: Option<u64>) -> String {
+    match view {
+        Some(n) => format!("{}/views/{n}", project.url()),
+        None => project.url(),
+    }
+}
+
 fn discussions_url(of: &DiscussionsOf) -> String {
     match of {
         DiscussionsOf::Repo(repo) => format!("{}/discussions", links::repo(repo)),
-        DiscussionsOf::Org(org) => format!("{}/orgs/{org}/discussions", links::BASE),
+        DiscussionsOf::Org(org) => format!("{}/orgs/{org}/discussions", links::base()),
     }
 }
 
@@ -1251,7 +1369,7 @@ fn line_range(fragment: &str) -> Option<(u32, u32)> {
     Some((a.min(b), a.max(b)))
 }
 
-/// Top-level github.com paths that aren't users.
+/// Top-level GitHub paths that aren't users.
 const RESERVED: &[&str] = &[
     "about",
     "account",
@@ -1339,12 +1457,22 @@ fn strip_is(query: &str) -> String {
     }
 }
 
-/// What the command palette makes of its input.
+/// What the command palette makes of its input. A web link ghtui
+/// doesn't show (another GitHub's, say) is the browser's.
 pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
     let input = input.trim();
-    if input.contains("://") || input.starts_with("github.com/") {
-        let dest = Dest::from_url(input);
-        return (!matches!(dest.target, Target::External(_))).then_some(dest);
+    let url = |url: &str| {
+        let dest = Dest::from_url(url);
+        let web = url.starts_with("https://") || url.starts_with("http://");
+        (web || !matches!(dest.target, Target::External(_))).then_some(dest)
+    };
+    if input.contains("://") || has_host_prefix(input) {
+        return url(input);
+    }
+    // A path as GitHub writes it, without the host: `o/r/pull/5/files`.
+    let path = input.trim_start_matches('/');
+    if path.split('/').count() > 2 && !path.contains(char::is_whitespace) {
+        return url(&format!("{}/{path}", crate::host::current().web()));
     }
     if let Some(login) = input.strip_prefix('@') {
         return valid_login(login).then(|| Target::Page(Route::user(login)).into());
@@ -1993,6 +2121,132 @@ pub(crate) mod tests {
         }
     }
 
+    /// On an Enterprise Server, its links do what github.com's do (gists
+    /// are under `/gist`), its pages link to it, and github.com's links
+    /// open in the browser.
+    #[test]
+    fn an_enterprise_host_owns_its_links() {
+        let _host = crate::host::set_for_test("ghe.example.com");
+        let mut wrong = Vec::new();
+        for (url, expect, reason) in corpus() {
+            let moved = url
+                .replace("https://gist.github.com/", "https://ghe.example.com/gist/")
+                .replace("https://github.com/", "https://ghe.example.com/");
+            if moved == url {
+                continue;
+            }
+            let target = Dest::from_url(&moved).target;
+            if !as_expected(&target, expect, reason) {
+                wrong.push(format!("{moved}\n    expected {expect}, got {target:?}"));
+            }
+            if !matches!(Dest::from_url(url).target, Target::External(_)) {
+                wrong.push(format!("{url}\n    expected the browser"));
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+
+        let repo = Route::Repo(RepoId::new("o", "r"));
+        assert_eq!(repo.url(), "https://ghe.example.com/o/r");
+        let gist = Route::Gist {
+            owner: Some("o".into()),
+            id: "1162032".into(),
+        };
+        assert_eq!(gist.url(), "https://ghe.example.com/gist/o/1162032");
+        assert_eq!(reopened(&gist), Target::Page(gist));
+        assert_eq!(
+            parse_input("ghe.example.com/o/r", None).map(|d| d.target),
+            Some(Target::Page(repo))
+        );
+    }
+
+    /// A host with a port owns its links, port and all.
+    #[test]
+    fn a_host_with_a_port_owns_its_links() {
+        let _host = crate::host::set_for_test("ghe.example.com:8443");
+        let repo = Target::Page(Route::Repo(RepoId::new("o", "r")));
+        assert_eq!(
+            Dest::from_url("https://ghe.example.com:8443/o/r").target,
+            repo
+        );
+        assert_eq!(parse_input("o/r/pull/5/files", None).map(|d| d.target), {
+            let pr = crate::api::model::PrRef {
+                repo: RepoId::new("o", "r"),
+                number: 5,
+            };
+            Some(Target::Files(DiffOf::Pr(pr)))
+        });
+        let other = Dest::from_url("https://ghe.example.com/o/r").target;
+        assert!(matches!(other, Target::External(_)), "{other:?}");
+    }
+
+    /// Projects open from their owner's, their own and their views'
+    /// URLs, and an item from a view's side pane; each URL leads back.
+    #[test]
+    fn projects_open_from_their_urls() {
+        let org = ProjectRef {
+            owner: ProjectOwner::Org("octo-org".into()),
+            number: 5,
+        };
+        let user = ProjectRef {
+            owner: ProjectOwner::User("octocat".into()),
+            number: 3,
+        };
+        let cases = [
+            (
+                "https://github.com/orgs/octo-org/projects",
+                Route::Projects(ProjectsOf::Owner(org.owner.clone())),
+            ),
+            (
+                "https://github.com/users/octocat/projects",
+                Route::Projects(ProjectsOf::Owner(user.owner.clone())),
+            ),
+            (
+                "https://github.com/octocat?tab=projects",
+                Route::Projects(ProjectsOf::Owner(user.owner.clone())),
+            ),
+            (
+                "https://github.com/o/r/projects",
+                Route::Projects(ProjectsOf::Repo(RepoId::new("o", "r"))),
+            ),
+            (
+                "https://github.com/orgs/octo-org/projects/5",
+                Route::Project {
+                    project: org.clone(),
+                    view: None,
+                },
+            ),
+            (
+                "https://github.com/users/octocat/projects/3/views/2",
+                Route::Project {
+                    project: user,
+                    view: Some(2),
+                },
+            ),
+            (
+                "https://github.com/orgs/octo-org/projects/5/views/1?pane=issue&itemId=42&issue=o%7Cr%7C1",
+                Route::ProjectItem {
+                    project: org,
+                    view: Some(1),
+                    item: 42,
+                },
+            ),
+        ];
+        for (url, route) in cases {
+            assert_eq!(page(url), route, "{url}");
+            assert_eq!(reopened(&route), Target::Page(route), "{url}");
+        }
+        for url in [
+            "https://github.com/orgs/octo-org/projects/5/settings",
+            "https://github.com/orgs/octo-org/projects/x",
+            "https://github.com/o/r/projects/1",
+        ] {
+            assert!(
+                matches!(Dest::from_url(url).target, Target::External(_)),
+                "{url}"
+            );
+        }
+    }
+
     /// A ref with slashes in it (`feature/x`, `dependabot/cargo/serde-1.0`,
     /// a `release/1.0` tag) is one revision: the page's URL leads back to
     /// that revision, not to its first segment with the rest as a path.
@@ -2173,7 +2427,19 @@ pub(crate) mod tests {
                 number: 3
             }))
         );
+        assert_eq!(
+            target("a/b/pull/5/files", None),
+            Some(Target::Files(DiffOf::Pr(crate::api::model::PrRef {
+                repo: RepoId::new("a", "b"),
+                number: 5
+            })))
+        );
         assert_eq!(parse_input("ratatui", None), None);
+        assert_eq!(
+            target("https://example.com/a", None),
+            Some(Target::External("https://example.com/a".into()))
+        );
+        assert_eq!(parse_input("ftp://example.com", None), None);
     }
 
     #[test]
@@ -2258,6 +2524,8 @@ pub(crate) mod tests {
                 repo().prop_map(Route::Releases),
                 repo().prop_map(Route::Tags),
                 repo().prop_map(Route::Branches),
+                repo().prop_map(Route::NewIssue),
+                repo().prop_map(Route::NewPr),
                 (repo(), 1..u64::MAX, prop::option::of(1..100u64))
                     .prop_map(|(repo, run, attempt)| Route::WorkflowRun { repo, run, attempt }),
                 (
@@ -2391,6 +2659,38 @@ pub(crate) mod tests {
                             login: login.clone(),
                             tab,
                         })
+                    }),
+                repo().prop_map(|repo| Route::Projects(ProjectsOf::Repo(repo))),
+                (
+                    login(),
+                    any::<bool>(),
+                    1..u64::MAX,
+                    prop::option::of(1..u64::MAX)
+                )
+                    .prop_map(|(login, org, number, view)| {
+                        let owner = if org {
+                            ProjectOwner::Org(login)
+                        } else {
+                            ProjectOwner::User(login)
+                        };
+                        Route::Project {
+                            project: ProjectRef { owner, number },
+                            view,
+                        }
+                    }),
+                (
+                    login(),
+                    1..u64::MAX,
+                    prop::option::of(1..u64::MAX),
+                    1..u64::MAX
+                )
+                    .prop_map(|(login, number, view, item)| Route::ProjectItem {
+                        project: ProjectRef {
+                            owner: ProjectOwner::Org(login),
+                            number,
+                        },
+                        view,
+                        item,
                     }),
                 (any::<String>(), 0..7u8).prop_map(|(query, k)| Route::Search {
                     kind: [

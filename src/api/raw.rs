@@ -36,6 +36,11 @@ pub(crate) const DISCUSSIONS: &str = "query($owner: String!, $name: String!, $af
 /// A discussion and its comments.
 pub(crate) const DISCUSSION: &str = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { discussion(number: $number) { number title body author { login } createdAt category { name } isAnswered upvoteCount comments(first: 50) { totalCount nodes { databaseId author { login } body createdAt isAnswer upvoteCount replies(first: 30) { totalCount nodes { databaseId author { login } body createdAt } } } } } } }";
 
+/// What a new issue or pull request can have: labels, people to assign,
+/// open milestones, the issue templates' files, the pull request template,
+/// and what you may do.
+pub(crate) const NEW_FORM: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id viewerCanCreateIssues hasIssuesEnabled isArchived viewerPermission defaultBranchRef { name } labels(first: 100, orderBy: {field: NAME, direction: ASC}) { totalCount nodes { id name color description } } assignableUsers(first: 100) { totalCount nodes { id login name } } milestones(first: 100, states: OPEN, orderBy: {field: DUE_DATE, direction: ASC}) { totalCount nodes { id title dueOn } } issueTemplates: object(expression: \"HEAD:.github/ISSUE_TEMPLATE\") { ... on Tree { entries { name object { ... on Blob { text } } } } } pullRequestTemplates { filename body } } }";
+
 /// Branches by name, 100 at a time; with the first page, the newest 100 tags.
 pub(crate) const REFS: &str = "query($owner: String!, $name: String!, $after: String, $tags: Boolean!) { repository(owner: $owner, name: $name) { heads: refs(refPrefix: \"refs/heads/\", first: 100, after: $after, orderBy: {field: ALPHABETICAL, direction: ASC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name } } tags: refs(refPrefix: \"refs/tags/\", first: 100, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) @include(if: $tags) { totalCount pageInfo { hasNextPage endCursor } nodes { name } } } }";
 
@@ -113,6 +118,36 @@ pub(crate) fn team() -> String {
     )
 }
 
+/// An owner's projects, most recently updated first, 30 at a time.
+pub(crate) const OWNER_PROJECTS: &str = "query($login: String!, $after: String) { repositoryOwner(login: $login) { ... on ProjectV2Owner { projectsV2(first: 30, after: $after, orderBy: {field: UPDATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { number title shortDescription url closed public updatedAt items { totalCount } } } } } }";
+
+/// The projects linked to a repository, most recently updated first, 30
+/// at a time.
+pub(crate) const REPO_PROJECTS: &str = "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { projectsV2(first: 30, after: $after, orderBy: {field: UPDATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { number title shortDescription url closed public updatedAt items { totalCount } } } } }";
+
+/// A field's ID, of the fields a view or a value names.
+const FIELD_ID: &str = "... on ProjectV2FieldCommon { id }";
+
+/// A project, its fields and its views.
+pub(crate) const PROJECT: &str = "query($login: String!, $number: Int!) { repositoryOwner(login: $login) { ... on ProjectV2Owner { projectV2(number: $number) { id title shortDescription url closed public viewerCanUpdate fields(first: 50) { totalCount nodes { ... on ProjectV2FieldCommon { id name dataType } ... on ProjectV2SingleSelectField { options { id name color description } } ... on ProjectV2IterationField { configuration { iterations { id title startDate duration } completedIterations { id title startDate duration } } } } } views(first: 20) { totalCount nodes { number name layout filter fields(first: 50) { totalCount nodes { ... on ProjectV2FieldCommon { id } } } verticalGroupByFields(first: 1) { nodes { ... on ProjectV2FieldCommon { id } } } groupByFields(first: 1) { nodes { ... on ProjectV2FieldCommon { id } } } sortByFields(first: 5) { totalCount nodes { direction field { ... on ProjectV2FieldCommon { id } } } } } } } } } }";
+
+/// What an issue or pull request in a project shows.
+const LINKED: &str = "number title url state repository { nameWithOwner } assignees(first: 5) { totalCount nodes { login } } labels(first: 5) { totalCount nodes { name color } } milestone { title }";
+
+/// A project's items that a view's filter finds, 50 at a time, with
+/// their values.
+pub(crate) fn project_items() -> String {
+    format!(
+        "query($login: String!, $number: Int!, $after: String, $query: String) {{ repositoryOwner(login: $login) {{ ... on ProjectV2Owner {{ projectV2(number: $number) {{ items(first: 50, after: $after, query: $query) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ id fullDatabaseId content {{ __typename ... on DraftIssue {{ title body assignees(first: 5) {{ totalCount nodes {{ login }} }} }} ... on Issue {{ {LINKED} stateReason }} ... on PullRequest {{ {LINKED} isDraft }} }} fieldValues(first: 50) {{ totalCount nodes {{ __typename ... on ProjectV2ItemFieldTextValue {{ text field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldNumberValue {{ number field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldDateValue {{ date field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldSingleSelectValue {{ optionId name field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldIterationValue {{ iterationId title field {{ {FIELD_ID} }} }} }} }} }} }} }} }} }} }}"
+    )
+}
+
+/// Sets an item's field.
+pub(crate) const SET_PROJECT_FIELD: &str = "mutation($project: ID!, $item: ID!, $field: ID!, $value: ProjectV2FieldValue!) { updateProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field, value: $value}) { projectV2Item { id } } }";
+
+/// Clears an item's field.
+pub(crate) const CLEAR_PROJECT_FIELD: &str = "mutation($project: ID!, $item: ID!, $field: ID!) { clearProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field}) { projectV2Item { id } } }";
+
 /// Every query here, by name, built with sample input.
 #[cfg(test)]
 pub(crate) fn all() -> Vec<(&'static str, String)> {
@@ -127,6 +162,7 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ("DISCUSSIONS", DISCUSSIONS.to_owned()),
         ("DISCUSSION", DISCUSSION.to_owned()),
         ("REFS", REFS.to_owned()),
+        ("NEW_FORM", NEW_FORM.to_owned()),
         (
             "last_commits",
             last_commits(&["src/a \"b\".rs".into(), "README.md".into()]),
@@ -137,6 +173,12 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ("milestone", milestone()),
         ("teams", teams()),
         ("team", team()),
+        ("OWNER_PROJECTS", OWNER_PROJECTS.to_owned()),
+        ("REPO_PROJECTS", REPO_PROJECTS.to_owned()),
+        ("PROJECT", PROJECT.to_owned()),
+        ("project_items", project_items()),
+        ("SET_PROJECT_FIELD", SET_PROJECT_FIELD.to_owned()),
+        ("CLEAR_PROJECT_FIELD", CLEAR_PROJECT_FIELD.to_owned()),
     ];
     for field in ["stargazers", "watchers"] {
         all.push((

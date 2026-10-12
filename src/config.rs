@@ -1,5 +1,6 @@
-//! `config.toml`: theme, UI options and key bindings. Every field is
-//! optional; unknown fields are rejected so typos don't pass silently.
+//! `config.toml`: the GitHub host, theme, UI options and key bindings.
+//! Every field is optional; unknown fields are rejected so typos don't
+//! pass silently.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -11,12 +12,20 @@ use serde::Deserialize;
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    pub github: GithubConfig,
     pub theme: ThemeConfig,
     pub ui: UiConfig,
     /// Action name → key sequences.
     pub keys: HashMap<String, Vec<String>>,
     /// Home's sections, in order (`[[home]]` tables); none, the defaults.
     pub home: Option<Vec<crate::home::SectionConfig>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GithubConfig {
+    /// A GitHub Enterprise Server's hostname; none, github.com.
+    pub host: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -129,6 +138,9 @@ mod tests {
     fn parses_full_config() {
         let config = Config::parse(
             r##"
+            [github]
+            host = "ghe.example.com"
+
             [theme]
             mode = "light"
             seed = "#6750a4"
@@ -143,6 +155,7 @@ mod tests {
             "##,
         )
         .unwrap();
+        assert_eq!(config.github.host.as_deref(), Some("ghe.example.com"));
         assert_eq!(config.theme.mode, ModeSetting::Light);
         assert_eq!(config.theme.color_depth, DepthSetting::Ansi256);
         assert_eq!(config.seed().unwrap(), Rgb::from_u32(0x6750a4));

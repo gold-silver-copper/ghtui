@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::api::browse::filter_words;
+use crate::api::browse::{Results, filter_words};
 use crate::api::model::RepoId;
 
 /// What a notification is about, as GitHub types it.
@@ -54,6 +54,29 @@ pub struct Notification {
     pub unread: bool,
     /// Where it opens: its subject's page, at the latest comment.
     pub url: String,
+}
+
+/// The inbox a filter lists, as far as it's loaded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Inbox {
+    pub list: Results<Notification>,
+    /// How many notifications were looked through for these: more than
+    /// the list holds when the filter applies after fetching.
+    pub searched: u64,
+    /// The last fetch stopped at its limit, short of a full page and of
+    /// the end of the inbox.
+    pub cut: bool,
+}
+
+/// How many notifications are unread, as polled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unread {
+    /// The unread on the one page asked for.
+    pub count: u64,
+    /// More are unread past that page.
+    pub more: bool,
+    /// When GitHub asks to be asked again, in seconds.
+    pub poll_secs: u64,
 }
 
 /// Why GitHub notifies, as the API names it, and as its inbox says it.
@@ -144,6 +167,12 @@ impl InboxFilter {
         format!("{list}?{all}{participating}per_page={per_page}&page={page}")
     }
 
+    /// Whether the filter applies after fetching (a reason, `is:read`),
+    /// as REST can't apply it.
+    pub fn after_fetching(&self) -> bool {
+        !self.reasons.is_empty() || self.unread == Some(false)
+    }
+
     /// Whether a thread REST sent is one the filter keeps.
     pub fn keeps(&self, n: &Notification) -> bool {
         self.unread.is_none_or(|unread| n.unread == unread)
@@ -151,7 +180,7 @@ impl InboxFilter {
     }
 }
 
-/// Where a notification opens: its subject's page on github.com (its API
+/// Where a notification opens: its subject's page on GitHub (its API
 /// URL turned into the website's), at its latest comment when it has one.
 /// What has no API URL (a discussion, a check suite, an alert) opens the
 /// list it's in.
@@ -161,7 +190,7 @@ pub fn web_url(
     subject: Option<&str>,
     latest: Option<&str>,
 ) -> String {
-    let base = format!("https://github.com/{repo}");
+    let base = crate::ui::pages::url::repo(repo);
     let page = match api_path(subject).as_slice() {
         ["issues", n] => Some(format!("{base}/issues/{n}")),
         ["pulls", n] => Some(format!("{base}/pull/{n}")),

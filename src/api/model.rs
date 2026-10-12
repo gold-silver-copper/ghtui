@@ -8,6 +8,7 @@ use crate::schema::schema;
 use serde::{Deserialize, Serialize};
 
 use crate::api::change::MergeMethod;
+use crate::api::edit::{Editable, SidebarPermits, reactions};
 use crate::api::queries::{self as q, nodes};
 
 /// Some of a list: the items fetched, and how many GitHub has. A list
@@ -177,8 +178,8 @@ pub struct PrRef {
 }
 
 impl PrRef {
-    /// Parses `owner/repo#N` or a github.com pull request URL (any sub-page,
-    /// e.g. `/files`, is accepted).
+    /// Parses `owner/repo#N` or a pull request's URL on the GitHub ghtui
+    /// works with (any sub-page, e.g. `/files`, is accepted).
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.trim();
         if !s.contains("://")
@@ -190,9 +191,7 @@ impl PrRef {
             });
         }
         let url = url::Url::parse(s).ok()?;
-        if !matches!(url.scheme(), "https" | "http")
-            || !matches!(url.host_str(), Some("github.com" | "www.github.com"))
-        {
+        if !matches!(url.scheme(), "https" | "http") || !crate::host::current().serves_url(&url) {
             return None;
         }
         let mut segments = url.path_segments()?;
@@ -208,7 +207,7 @@ impl PrRef {
     }
 
     pub fn url(&self) -> String {
-        format!("https://github.com/{}/pull/{}", self.repo, self.number)
+        crate::ui::pages::url::pull(self)
     }
 }
 
@@ -365,10 +364,22 @@ pub struct PrDetail {
     pub behind_by: Option<u64>,
     /// The ways the repository allows merging, yours first.
     pub merge_methods: Vec<MergeMethod>,
+    /// The repository allows merging once every requirement is met.
+    pub auto_merge_allowed: bool,
+    /// Set to merge once every requirement is met.
+    pub auto_merge: Option<AutoMerge>,
+    /// Its base branch merges through a merge queue.
+    pub merge_queue: bool,
+    /// Its place in that queue, once it's in it.
+    pub queued: Option<Queued>,
     pub labels: Capped<Label>,
     pub milestone: Option<MilestoneRef>,
+    pub assignees: Capped<String>,
     /// What GitHub lets you do to it.
     pub may: PrPermits,
+    /// Its description, as edits name it.
+    pub editable: Editable,
+    pub sidebar: SidebarPermits,
 }
 
 /// Your pending review on a pull request: what you started and haven't
@@ -395,6 +406,36 @@ pub struct PrPermits {
     pub edit: bool,
     /// Push to its branch, which updating the branch does.
     pub push_head: bool,
+    pub enable_auto_merge: bool,
+    pub disable_auto_merge: bool,
+}
+
+/// Auto-merge, turned on: by whom, and how it will merge.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AutoMerge {
+    pub by: String,
+    pub method: MergeMethod,
+}
+
+/// A pull request's place in its base branch's merge queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Queued {
+    /// 1 is next.
+    pub position: u64,
+    pub state: QueueState,
+}
+
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[cynic(graphql_type = "MergeQueueEntryState", schema_module = "schema")]
+pub enum QueueState {
+    /// Its checks in the queue are running.
+    AwaitingChecks,
+    /// Being merged.
+    Locked,
+    Mergeable,
+    /// Waiting its turn.
+    Queued,
+    Unmergeable,
 }
 
 /// Whether GitHub would merge a pull request now, and if not, the first
@@ -432,12 +473,14 @@ impl PrDetail {
     }
 
     /// It's open and GitHub hasn't settled what it shows: whether it can
-    /// merge, or its checks. A page showing it fetches it again until it has.
+    /// merge, its checks, or its place in the merge queue. A page showing
+    /// it fetches it again until it has.
     pub fn settling(&self) -> bool {
         self.state.is_open()
             && (self.mergeable == Mergeable::Unknown
                 || self.merge_state == MergeState::Unknown
-                || self.checks == Some(ChecksState::Pending))
+                || self.checks == Some(ChecksState::Pending)
+                || self.queued.is_some())
     }
 }
 
@@ -496,6 +539,7 @@ pub struct ReviewComment {
     pub original_commit: Option<String>,
     /// Part of the viewer's unsubmitted review on GitHub.
     pub pending: bool,
+    pub editable: Editable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -612,7 +656,7 @@ impl PrDetail {
         let writes = q::RepositoryPermission::writes(repo.viewer_permission);
         let pr = repo.pull_request?;
         Some(Self {
-            id: pr.id.into(),
+            id: pr.id.clone().into(),
             title: pr.summary.title,
             author: author(pr.summary.author),
             state: pr.summary.status.into(),
@@ -633,8 +677,36 @@ impl PrDetail {
             merge_state: pr.merge_state_status,
             behind_by: None,
             merge_methods,
+            auto_merge_allowed: repo.auto_merge_allowed,
+            auto_merge: pr.auto_merge_request.map(|a| AutoMerge {
+                by: author(a.enabled_by),
+                method: a.merge_method,
+            }),
+            merge_queue: pr.is_merge_queue_enabled,
+            queued: pr.merge_queue_entry.map(|e| Queued {
+                position: count(e.position),
+                state: e.state,
+            }),
             labels: labels(pr.labels),
             milestone: pr.milestone.map(MilestoneRef::from_wire),
+            assignees: Capped::from_nodes(pr.assignees.total_count, pr.assignees.nodes, |u| {
+                u.login
+            }),
+            editable: Editable {
+                id: pr.id.into(),
+                can_update: pr.viewer_can_update,
+                can_delete: false,
+                can_react: pr.viewer_can_react,
+                reactions: reactions(pr.reaction_groups),
+            },
+            // GitHub doesn't say who may set a pull request's milestone
+            // or ask for reviews: both take triage access, as labelling does.
+            sidebar: SidebarPermits {
+                labels: pr.viewer_can_label,
+                assignees: pr.viewer_can_assign,
+                milestone: pr.viewer_can_label,
+                reviewers: pr.viewer_can_label,
+            },
             may: PrPermits {
                 merge: writes,
                 merge_as_admin: pr.viewer_can_merge_as_admin,
@@ -646,6 +718,8 @@ impl PrDetail {
                 } else {
                     writes
                 },
+                enable_auto_merge: pr.viewer_can_enable_auto_merge,
+                disable_auto_merge: pr.viewer_can_disable_auto_merge,
             },
         })
     }
@@ -671,6 +745,13 @@ impl ReviewThread {
             can_unresolve: t.viewer_can_unresolve,
             comments: {
                 let comment = |c: q::ReviewComment| ReviewComment {
+                    editable: Editable {
+                        id: c.id.clone().into(),
+                        can_update: c.viewer_can_update,
+                        can_delete: c.viewer_can_delete,
+                        can_react: c.viewer_can_react,
+                        reactions: reactions(c.reaction_groups),
+                    },
                     id: c.id.into(),
                     author: author(c.author),
                     body: c.body,

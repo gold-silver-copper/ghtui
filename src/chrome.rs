@@ -7,6 +7,7 @@ use crate::api::browse::{
     CommitDetail, Comparison, DiscussionsOf, Profile, RepoSort, SearchKind, SearchResults,
 };
 use crate::api::model::{PrRef, RepoId};
+use crate::api::project::{self, Project, ProjectOwner, ProjectRef, ProjectsOf};
 use crate::git::Oid;
 use crate::ui::chrome::{Crumb, PageTab};
 use crate::ui::pages::{PrTab, ProfileTab};
@@ -55,7 +56,7 @@ fn new_tab(icon: &'static str, label: &str, count: Option<u64>) -> PageTab {
 impl State {
     pub fn chrome(&self) -> Chrome {
         let mut c = self.screen_chrome();
-        // Right: review requests and you.
+        // Right: review requests, your unread notifications and you.
         // Review requests, once their search (Home's first section, unless
         // you changed it) is in.
         let requests = DataKey::Search(SearchKind::Pulls, crate::home::REVIEW_REQUESTS.into());
@@ -69,6 +70,12 @@ impl State {
                     query: crate::home::REVIEW_REQUESTS.into(),
                 }),
             ));
+        }
+        if let Some(unread) = self.unread_label() {
+            let inbox = Route::Notifications {
+                query: String::new(),
+            };
+            c.right.push((unread, Target::Page(inbox)));
         }
         if let Some(login) = &self.viewer {
             c.right
@@ -196,59 +203,16 @@ impl State {
             }
             Route::User { login, tab } => {
                 c.crumb(login, None);
-                let profile = self.picked::<Profile>(&DataKey::Profile(login.to_lowercase()));
-                let user = |tab| {
-                    Target::Page(Route::User {
-                        login: login.clone(),
-                        tab,
-                    })
-                };
-                let sort = match tab {
-                    ProfileTab::Repositories(sort) => *sort,
-                    _ => RepoSort::Updated,
-                };
-                let mut tabs = vec![
-                    ("◫", "Overview", None, ProfileTab::Overview),
-                    (
-                        "▤",
-                        "Repositories",
-                        profile.map(|p| p.repos.total()),
-                        ProfileTab::Repositories(sort),
-                    ),
-                ];
-                if profile.is_some_and(|p| p.is_org) {
-                    tabs.push((
-                        "⚇",
-                        "People",
-                        profile.map(|p| p.people.total()),
-                        ProfileTab::People,
-                    ));
-                } else {
-                    tabs.extend([
-                        (
-                            "☆",
-                            "Stars",
-                            profile.map(|p| p.star_count),
-                            ProfileTab::Stars,
-                        ),
-                        (
-                            "⚇",
-                            "Followers",
-                            profile.and_then(|p| p.followers),
-                            ProfileTab::Followers,
-                        ),
-                        (
-                            "⚇",
-                            "Following",
-                            profile.and_then(|p| p.following),
-                            ProfileTab::Following,
-                        ),
-                    ]);
-                }
-                c.active = tabs.iter().position(|(.., t)| t == tab);
-                for (icon, label, count, tab) in tabs {
-                    c.tabs.push((new_tab(icon, label, count), user(tab)));
-                }
+                self.profile_tabs(login, Some(*tab), None, c);
+            }
+            Route::Projects(ProjectsOf::Owner(owner)) => {
+                let login = owner.login();
+                c.crumb(login, Some(Target::Page(Route::user(login))));
+                let org = matches!(owner, ProjectOwner::Org(_));
+                self.profile_tabs(login, None, Some(org), c);
+            }
+            Route::Project { project, view } | Route::ProjectItem { project, view, .. } => {
+                self.project_chrome(project, *view, c);
             }
             Route::Search { kind, query } => {
                 c.crumb("Search", None);
@@ -360,6 +324,116 @@ impl State {
         }
     }
 
+    /// A profile's tabs, with `tab` active (none: its projects). Whether
+    /// it's an organization's is the profile's to say, else `org`'s.
+    fn profile_tabs(
+        &self,
+        login: &str,
+        tab: Option<ProfileTab>,
+        org: Option<bool>,
+        c: &mut Chrome,
+    ) {
+        let profile = self.picked::<Profile>(&DataKey::Profile(login.to_lowercase()));
+        let org = profile.map(|p| p.is_org).or(org);
+        let user = |tab| {
+            Target::Page(Route::User {
+                login: login.to_owned(),
+                tab,
+            })
+        };
+        let sort = match tab {
+            Some(ProfileTab::Repositories(sort)) => sort,
+            _ => RepoSort::Updated,
+        };
+        let mut tabs = vec![
+            ("◫", "Overview", None, user(ProfileTab::Overview)),
+            (
+                "▤",
+                "Repositories",
+                profile.map(|p| p.repos.total()),
+                user(ProfileTab::Repositories(sort)),
+            ),
+        ];
+        // An organization's projects or a user's, once that's known.
+        let projects = org.map(|org| {
+            let owner = if org {
+                ProjectOwner::Org(login.to_owned())
+            } else {
+                ProjectOwner::User(login.to_owned())
+            };
+            Target::Page(Route::Projects(ProjectsOf::Owner(owner)))
+        });
+        if let Some(projects) = &projects {
+            tabs.push(("▥", "Projects", None, projects.clone()));
+        }
+        if org == Some(true) {
+            tabs.push((
+                "⚇",
+                "People",
+                profile.map(|p| p.people.total()),
+                user(ProfileTab::People),
+            ));
+        } else {
+            tabs.extend([
+                (
+                    "☆",
+                    "Stars",
+                    profile.map(|p| p.star_count),
+                    user(ProfileTab::Stars),
+                ),
+                (
+                    "⚇",
+                    "Followers",
+                    profile.and_then(|p| p.followers),
+                    user(ProfileTab::Followers),
+                ),
+                (
+                    "⚇",
+                    "Following",
+                    profile.and_then(|p| p.following),
+                    user(ProfileTab::Following),
+                ),
+            ]);
+        }
+        let active = tab.map(user).or(projects);
+        c.active = tabs.iter().position(|(.., t)| Some(t) == active.as_ref());
+        for (icon, label, count, target) in tabs {
+            c.tabs.push((new_tab(icon, label, count), target));
+        }
+    }
+
+    /// A project's chrome: its owner and their projects, and its views as
+    /// tabs.
+    fn project_chrome(&self, project: &ProjectRef, view: Option<u64>, c: &mut Chrome) {
+        let login = project.owner.login();
+        c.crumb(login, Some(Target::Page(Route::user(login))));
+        let list = Route::Projects(ProjectsOf::Owner(project.owner.clone()));
+        c.crumb("Projects", Some(Target::Page(list)));
+        let data = self.picked::<Project>(&DataKey::Project(project.clone(), view));
+        let title = data.map_or_else(
+            || format!("Project {}", project.number),
+            |p| p.title.clone(),
+        );
+        c.crumb(&title, None);
+        let Some(p) = data else {
+            return;
+        };
+        for v in &p.views {
+            let icon = match v.layout {
+                project::Layout::Board => "▥",
+                project::Layout::Table => "▤",
+                project::Layout::Roadmap => "▬",
+            };
+            let route = Route::Project {
+                project: project.clone(),
+                view: Some(v.number),
+            };
+            c.tabs
+                .push((new_tab(icon, &v.name, None), Target::Page(route)));
+        }
+        c.active = p.views.iter().position(|v| v.number == p.view);
+    }
+
     /// A commit's tabs: the commit, and its files.
     fn commit_tabs(&self, repo: &RepoId, oid: &str, pr: Option<u64>, c: &mut Chrome) {
         let detail = self.picked::<CommitDetail>(&DataKey::Commit(repo.clone(), oid.to_owned()));
@@ -435,6 +509,10 @@ impl State {
         c.tabs.push((
             new_tab("▶", "Actions", None),
             Target::Page(Route::actions(repo.clone())),
+        ));
+        c.tabs.push((
+            new_tab("▥", "Projects", None),
+            Target::Page(Route::Projects(ProjectsOf::Repo(repo.clone()))),
         ));
         if o.is_some_and(|o| o.has_wiki) {
             c.tabs.push((
@@ -530,6 +608,7 @@ enum Section {
     Pulls,
     Discussions,
     Actions,
+    Projects,
     Wiki,
     Security,
 }
@@ -539,13 +618,15 @@ fn section(route: &Route) -> Section {
         Route::Issues { .. }
         | Route::Issue { .. }
         | Route::Milestones { .. }
-        | Route::Milestone { .. } => Section::Issues,
-        Route::Pulls { .. } | Route::Pr { .. } => Section::Pulls,
+        | Route::Milestone { .. }
+        | Route::NewIssue(_) => Section::Issues,
+        Route::Pulls { .. } | Route::Pr { .. } | Route::NewPr(_) => Section::Pulls,
         Route::Discussions { .. } | Route::Discussion { .. } => Section::Discussions,
         Route::Actions { .. }
         | Route::WorkflowRun { .. }
         | Route::Job { .. }
         | Route::Workflow { .. } => Section::Actions,
+        Route::Projects(_) => Section::Projects,
         Route::Wiki { .. } => Section::Wiki,
         Route::Advisories(_) | Route::Advisory { .. } => Section::Security,
         _ => Section::Code,

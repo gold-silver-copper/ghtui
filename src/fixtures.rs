@@ -13,7 +13,7 @@ use crate::api::browse::{
     UserSummary, Week, WikiPage, Workflow, WorkflowRun,
 };
 use crate::api::model::{Capped, Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
-use crate::api::notifications::Notification;
+use crate::api::notifications::{Inbox, Notification};
 use crossterm::event::KeyEvent;
 
 use crate::store::{DraftComment, DraftSide};
@@ -156,8 +156,64 @@ pub(crate) fn thread(id: &str, line: Option<u32>, resolved: bool, outdated: bool
             url: String::new(),
             original_commit: Some("abc".into()),
             pending: false,
+            editable: editable(&format!("{id}-c")),
         }]
         .into(),
+    }
+}
+
+/// A comment or description you may edit, delete and react to, without
+/// reactions yet.
+pub fn editable(id: &str) -> crate::api::edit::Editable {
+    crate::api::edit::Editable {
+        id: NodeId::new(id),
+        can_update: true,
+        can_delete: true,
+        can_react: true,
+        reactions: Vec::new(),
+    }
+}
+
+fn named(id: &str, name: &str) -> crate::api::edit::Named {
+    crate::api::edit::Named {
+        id: NodeId::new(id),
+        name: name.into(),
+    }
+}
+
+/// The sidebar of [`issue`] (or a pull request), with what its
+/// repository offers.
+pub fn sidebar() -> crate::api::edit::Sidebar {
+    crate::api::edit::Sidebar {
+        labels: vec![named("L_bug", "bug"), named("L_ui", "ui")].into(),
+        assignees: vec![named("U_hubot", "hubot")].into(),
+        milestone: Some(named("M_3", "Links")),
+        requested: crate::api::edit::Requested {
+            users: vec![named("U_defunkt", "defunkt")],
+            teams: vec![named("T_core", "octo-org/core")],
+            ..Default::default()
+        },
+        author: Some("octocat".into()),
+        all_labels: vec![
+            named("L_bug", "bug"),
+            named("L_docs", "documentation"),
+            named("L_good", "good first issue"),
+            named("L_ui", "ui"),
+        ]
+        .into(),
+        users: vec![
+            named("U_defunkt", "defunkt"),
+            named("U_hubot", "hubot"),
+            named("U_monalisa", "monalisa"),
+            named("U_octocat", "octocat"),
+        ]
+        .into(),
+        milestones: vec![named("M_3", "Links"), named("M_4", "1.0")].into(),
+        teams: Some(Ok(vec![
+            named("T_core", "octo-org/core"),
+            named("T_docs", "octo-org/docs"),
+        ]
+        .into())),
     }
 }
 
@@ -190,6 +246,46 @@ with a diff viewer that goes [beyond GitHub's](docs/diff.md).\n\n\
 ## Install\n\n```sh\ncargo install ghtui\n```\n\n\
 - [x] Browse repositories, issues and pull requests\n- [ ] Actions\n\n\
 > Everything is a link: press `Enter` to follow it.\n";
+
+/// What a new issue or pull request in the repository can have: labels,
+/// people, a milestone, two templates (a form and a Markdown one) and a
+/// pull request template.
+pub fn new_form() -> crate::api::create::NewForm {
+    let choice =
+        |id: &str, name: &str, about: &str, color: Option<&str>| crate::api::create::Choice {
+            id: NodeId::new(id),
+            name: name.into(),
+            about: about.into(),
+            color: color.map(str::to_owned),
+        };
+    let file = |name: &str, text: &str| (name.to_owned(), text.to_owned());
+    crate::api::create::NewForm {
+        repo_id: NodeId::new("R_ghtui"),
+        default_branch: Some("main".into()),
+        can_create_issues: true,
+        has_issues: true,
+        archived: false,
+        can_triage: true,
+        labels: vec![
+            choice("LA_bug", "bug", "Something isn't working", Some("d73a4a")),
+            choice("LA_docs", "documentation", "Docs", Some("0075ca")),
+        ]
+        .into(),
+        assignees: vec![choice("U_octo", "octocat", "The Octocat", None)].into(),
+        milestones: vec![choice("MI_1", "v1.0", "due 2026-12-01", None)].into(),
+        issue_templates: vec![
+            file(
+                "bug.yml",
+                "name: Bug report\ndescription: Something doesn't work\ntitle: \"[Bug]: \"\nlabels: [bug]\nassignees: octocat\nbody:\n  - type: textarea\n    attributes:\n      label: What happened?\n  - type: input\n    attributes:\n      label: Version\n",
+            ),
+            file(
+                "feature.md",
+                "---\nname: Feature request\nabout: Suggest an idea\nlabels: documentation\n---\n## The idea\n",
+            ),
+        ],
+        pr_template: Some("## Checklist\n\n- [ ] Tests".into()),
+    }
+}
 
 pub fn overview() -> RepoOverview {
     RepoOverview {
@@ -543,7 +639,7 @@ pub fn advisory() -> Advisory {
 }
 
 /// The first page of an inbox: two unread threads, two read.
-pub fn notifications() -> Results<Notification> {
+pub fn notifications() -> Inbox {
     use crate::api::notifications::SubjectKind;
     let thread =
         |id: &str, repo: &str, kind, title: &str, reason: &str, unread, url: &str| Notification {
@@ -601,10 +697,14 @@ pub fn notifications() -> Results<Notification> {
             "releases",
         ),
     ];
-    Results {
-        total: items.len() as u64,
-        items,
-        next: Some("2".into()),
+    Inbox {
+        searched: items.len() as u64,
+        list: Results {
+            total: items.len() as u64,
+            items,
+            next: Some("2".into()),
+        },
+        cut: false,
     }
 }
 
@@ -697,11 +797,19 @@ pub fn issue() -> IssueDetail {
             author: "hubot".into(),
             body: "Agreed. 120 columns, centered?".into(),
             created_at: "2026-10-02T12:00:00Z".into(),
+            editable: Some(editable("IC_1")),
         }]
         .into(),
         id: NodeId::new("I_14"),
         can_close: true,
         can_reopen: true,
+        editable: editable("I_14"),
+        sidebar: crate::api::edit::SidebarPermits {
+            labels: true,
+            assignees: true,
+            milestone: true,
+            reviewers: false,
+        },
     }
 }
 
@@ -713,6 +821,7 @@ pub fn activity() -> PrActivity {
             author: "hubot".into(),
             body: "Does this cover the 256-color fallback?".into(),
             created_at: "2026-10-01T09:00:00Z".into(),
+            editable: Some(editable("IC_2")),
         }]
         .into(),
         reviews: vec![
@@ -1350,6 +1459,7 @@ pub fn discussion() -> DiscussionDetail {
         author: author.into(),
         body: body.into(),
         created_at: "2026-10-03T12:00:00Z".into(),
+        editable: None,
     };
     DiscussionDetail {
         repo: RepoId::new("cli", "cli"),
@@ -1441,4 +1551,231 @@ pub fn user_results() -> SearchResults {
         }],
         next: None,
     })
+}
+
+/// An organization's projects.
+pub fn projects() -> Results<crate::api::project::ProjectSummary> {
+    let project = |number: u64, title: &str, closed: bool| crate::api::project::ProjectSummary {
+        number,
+        title: title.into(),
+        description: if closed {
+            String::new()
+        } else {
+            "What's next for ghtui".into()
+        },
+        url: format!("https://github.com/orgs/gold-silver-copper/projects/{number}"),
+        closed,
+        public: true,
+        updated_at: "2026-10-02T09:00:00Z".into(),
+        items: 5,
+    };
+    Results {
+        total: 2,
+        items: vec![project(1, "Roadmap", false), project(2, "Launch", true)],
+        next: None,
+    }
+}
+
+/// gold-silver-copper's Roadmap project: a board by Status and a table,
+/// with issues, a pull request and drafts.
+pub fn project() -> crate::api::project::Project {
+    use crate::api::project::{
+        Draft, FieldKind, FieldValue, ItemContent, Iteration, Layout, Linked, Project,
+        ProjectField, ProjectItem, ProjectView, SelectOption,
+    };
+    let field = |id: &str, name: &str, kind| ProjectField {
+        id: NodeId::new(id),
+        name: name.into(),
+        kind,
+    };
+    let option = |id: &str, name: &str, color: &str, description: &str| SelectOption {
+        id: id.into(),
+        name: name.into(),
+        color: color.into(),
+        description: description.into(),
+    };
+    let sprint = |id: &str, title: &str, start: &str, completed| Iteration {
+        id: id.into(),
+        title: title.into(),
+        start: start.into(),
+        days: 14,
+        completed,
+    };
+    let fields = vec![
+        field("F_title", "Title", FieldKind::Title),
+        field("F_assignees", "Assignees", FieldKind::Assignees),
+        field(
+            "F_status",
+            "Status",
+            FieldKind::SingleSelect(vec![
+                option("O_todo", "Todo", "GRAY", "Not started"),
+                option("O_doing", "In Progress", "YELLOW", ""),
+                option("O_done", "Done", "GREEN", "Shipped"),
+            ]),
+        ),
+        field("F_labels", "Labels", FieldKind::Labels),
+        field("F_estimate", "Estimate", FieldKind::Number),
+        field(
+            "F_sprint",
+            "Sprint",
+            FieldKind::Iteration(vec![
+                sprint("I_2", "Sprint 2", "2026-10-01", false),
+                sprint("I_1", "Sprint 1", "2026-09-17", true),
+            ]),
+        ),
+        field("F_due", "Due", FieldKind::Date),
+    ];
+    let ids = |ids: &[&str]| ids.iter().map(|id| NodeId::new(*id)).collect::<Vec<_>>();
+    let views = vec![
+        ProjectView {
+            number: 1,
+            name: "Board".into(),
+            layout: Layout::Board,
+            filter: String::new(),
+            fields: ids(&[
+                "F_title",
+                "F_status",
+                "F_assignees",
+                "F_labels",
+                "F_estimate",
+            ]),
+            column: Some(NodeId::new("F_status")),
+            group: None,
+            sort: Vec::new(),
+        },
+        ProjectView {
+            number: 2,
+            name: "Plan".into(),
+            layout: Layout::Table,
+            filter: "-status:Done".into(),
+            fields: ids(&[
+                "F_title",
+                "F_status",
+                "F_assignees",
+                "F_estimate",
+                "F_sprint",
+                "F_due",
+            ]),
+            column: None,
+            group: None,
+            sort: vec![(NodeId::new("F_estimate"), true)],
+        },
+    ];
+    let repo = RepoId::new("gold-silver-copper", "ghtui");
+    let linked = |number: u64, title: &str, pr: bool, who: &[&str], labels: Vec<Label>| Linked {
+        repo: repo.clone(),
+        number,
+        title: title.into(),
+        url: if pr {
+            format!("https://github.com/gold-silver-copper/ghtui/pull/{number}")
+        } else {
+            format!("https://github.com/gold-silver-copper/ghtui/issues/{number}")
+        },
+        assignees: Capped::new(
+            who.iter().map(|w| (*w).to_owned()).collect(),
+            who.len() as u64,
+        ),
+        labels: Capped::new(labels.clone(), labels.len() as u64),
+        milestone: None,
+    };
+    let status = |id: &str, name: &str| {
+        (
+            NodeId::new("F_status"),
+            FieldValue::Option {
+                id: id.into(),
+                name: name.into(),
+            },
+        )
+    };
+    let enhancement = Label {
+        name: "enhancement".into(),
+        color: "a2eeef".into(),
+    };
+    let item = |n: u64, content, values| ProjectItem {
+        id: NodeId::new(format!("PVTI_{n}")),
+        number: 1000 + n,
+        content,
+        values,
+    };
+    let items = vec![
+        item(
+            1,
+            ItemContent::Issue(
+                linked(
+                    14,
+                    "Projects aren't there yet",
+                    false,
+                    &["alice"],
+                    vec![enhancement],
+                ),
+                IssueState::Open,
+            ),
+            vec![
+                status("O_todo", "Todo"),
+                (NodeId::new("F_estimate"), FieldValue::Number("3".into())),
+                (NodeId::new("F_due"), FieldValue::Date("2026-10-31".into())),
+            ],
+        ),
+        item(
+            2,
+            ItemContent::Pr(
+                linked(12, "Show a project's views", true, &["bob"], Vec::new()),
+                PrState::Open,
+            ),
+            vec![
+                status("O_doing", "In Progress"),
+                (NodeId::new("F_estimate"), FieldValue::Number("5".into())),
+                (
+                    NodeId::new("F_sprint"),
+                    FieldValue::Iteration {
+                        id: "I_2".into(),
+                        title: "Sprint 2".into(),
+                    },
+                ),
+            ],
+        ),
+        item(
+            3,
+            ItemContent::Draft(Draft {
+                title: "Write the board's docs".into(),
+                body: "Explain **h** and **l**, and moving cards.".into(),
+                assignees: Capped::new(Vec::new(), 0),
+            }),
+            vec![status("O_todo", "Todo")],
+        ),
+        item(
+            4,
+            ItemContent::Issue(
+                linked(9, "Boards scroll sideways", false, &[], Vec::new()),
+                IssueState::Closed,
+            ),
+            vec![status("O_done", "Done")],
+        ),
+        item(
+            5,
+            ItemContent::Draft(Draft {
+                title: "Someday: roadmaps".into(),
+                body: String::new(),
+                assignees: Capped::new(Vec::new(), 0),
+            }),
+            Vec::new(),
+        ),
+    ];
+    Project {
+        id: NodeId::new("PVT_1"),
+        title: "Roadmap".into(),
+        description: "What's next for ghtui".into(),
+        url: "https://github.com/orgs/gold-silver-copper/projects/1".into(),
+        closed: false,
+        public: true,
+        can_update: true,
+        views: Capped::new(views, 2),
+        fields: Capped::new(fields, 7),
+        view: 1,
+        items: Results {
+            total: 5,
+            items,
+            next: None,
+        },
+    }
 }

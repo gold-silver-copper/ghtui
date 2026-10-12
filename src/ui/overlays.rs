@@ -80,17 +80,25 @@ impl Widget for Palette<'_> {
         let offset = cols(text::width(self.prompt))
             .saturating_add(1)
             .min(prompt.width);
-        self.input.render(
-            Rect {
-                x: prompt.x.saturating_add(offset),
-                width: prompt
-                    .width
-                    .saturating_sub(offset)
-                    .saturating_sub(count_w.saturating_add(1)),
-                ..prompt
-            },
-            buf,
-        );
+        let field = Rect {
+            x: prompt.x.saturating_add(offset),
+            width: prompt
+                .width
+                .saturating_sub(offset)
+                .saturating_sub(count_w.saturating_add(1)),
+            ..prompt
+        };
+        // A placeholder longer than the field ends in an ellipsis, past
+        // the cursor's cell.
+        let room = usize::from(field.width).saturating_sub(1);
+        let hint = self.input.placeholder_text();
+        if self.input.is_empty() && text::width(hint) > room {
+            let mut input = self.input.clone();
+            input.set_placeholder_text(text::truncate(hint, room));
+            input.render(field, buf);
+        } else {
+            self.input.render(field, buf);
+        }
 
         let list_top = inner.y.saturating_add(2);
         // Short screens leave fewer rows than planned.

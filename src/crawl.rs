@@ -140,9 +140,11 @@ async fn fetch(
 #[tokio::test]
 #[ignore = "crawls github.com; run by hand"]
 async fn link_crawl() {
-    let (token, _) = crate::api::auth::resolve_token().expect("a GitHub token");
+    let (token, _) =
+        crate::api::auth::resolve_token(crate::host::Host::GITHUB_COM).expect("a GitHub token");
     let cache = tempfile::tempdir().unwrap();
-    let gh = GitHub::new(token, Store::open(&cache.path().join("cache.redb")));
+    let store = Store::open(&cache.path().join("cache.redb"));
+    let gh = GitHub::new(token, store, crate::host::Host::GITHUB_COM);
     let git = GitContext {
         cache_root: cache.path().to_owned(),
         credentials: crate::git::credentials::Credentials::Ambient,

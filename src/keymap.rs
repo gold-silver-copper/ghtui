@@ -24,6 +24,8 @@ pub enum Context {
     Diff,
     /// The diff's file tree, when it has the focus.
     Tree,
+    /// A project: its board or table, or an item.
+    Project,
 }
 
 /// The stacks of contexts that can be active at once, innermost first.
@@ -33,6 +35,7 @@ const STACKS: &[&[Context]] = {
         &[List, Page, Global],
         &[File, Page, Global],
         &[Log, Page, Global],
+        &[Project, Page, Global],
         &[Page, Global],
         &[Tree, Diff, Global],
         &[Diff, Global],
@@ -40,12 +43,13 @@ const STACKS: &[&[Context]] = {
 };
 
 impl Context {
-    const ALL: [Context; 7] = [
+    const ALL: [Context; 8] = [
         Context::Global,
         Context::Page,
         Context::List,
         Context::File,
         Context::Log,
+        Context::Project,
         Context::Diff,
         Context::Tree,
     ];
@@ -60,6 +64,7 @@ impl Context {
             Context::Log => "log",
             Context::Diff => "diff",
             Context::Tree => "tree",
+            Context::Project => "project",
         }
     }
 
@@ -73,6 +78,7 @@ impl Context {
             Context::Log => "in job logs",
             Context::Diff => "in Files changed",
             Context::Tree => "in Files changed's file tree",
+            Context::Project => "in projects",
         }
     }
 
@@ -207,6 +213,10 @@ actions! {
     UpdateBranch      "update_branch"     [",u"]                   Global "Update the branch from its base";
     Close             "close"             [",x"]                   Global "Close or reopen; on a running run, cancel it";
     Rerun             "rerun"             [",R"]                   Global "Re-run the workflow run or job";
+    EditComment       "edit"              [",e"]                   Global "Edit the comment or description";
+    DeleteComment     "delete_comment"    [",D"]                   Global "Delete the comment";
+    React             "react"             [",+"]                   Global "React to the comment, issue or pull request";
+    Checkout          "checkout"          [",c"]                   Global "Check out the pull request in your clone";
     Delete            "delete"            ["<Delete>"]             Global "Delete the selection (a draft comment, a Home section)";
     UndoDelete        "undo_delete"       ["<C-z>"]                Global "Bring back what was just deleted";
     Quit              "quit"              ["ZZ", "<C-c>"]          Global "Quit";
@@ -219,13 +229,24 @@ actions! {
     PrevCommit        "prev_commit"       ["[C"]                   Page   "Previous commit of the pull request";
     QuoteReply        "quote_reply"       [">"]                    Page   "Reply quoting the comment";
     Star              "star"              [",*"]                   Page   "Star / unstar";
+    EditTitle         "edit_title"        [",T"]                   Page   "Edit the title";
+    EditLabels        "edit_labels"       [",l"]                   Page   "Edit the labels";
+    EditAssignees     "edit_assignees"    [",A"]                   Page   "Edit the assignees";
+    RequestReviews    "request_reviews"   [",q"]                   Page   "Ask for reviews";
+    EditMilestone     "edit_milestone"    [",M"]                   Page   "Set the milestone";
+    NewIssue          "new_issue"         [",i"]                   Page   "New issue";
+    NewPr             "new_pull_request"  [",p"]                   Page   "New pull request";
+    Create            "create"            [",s"]                   Page   "Create the issue or pull request";
+    PushBranch        "push_branch"       [",P"]                   Page   "Push the branch to GitHub";
     Branch            "branch"            ["B"]                    Page   "Switch branches or tags";
-    Hints             "hints"             ["i"]                    Page   "Follow a link by its letters";
-    HintsBrowser      "hints_browser"     ["I"]                    Page   "Follow a link, in the browser";
+    Hints             "hints"             ["i", "diff:i"]          Page   "Follow a link by its letters";
+    HintsBrowser      "hints_browser"     ["I", "diff:I"]          Page   "Follow a link, in the browser";
     ToggleState       "toggle_state"      ["t"]                    List   "Open / closed / all (in the inbox, unread / read)";
     Sort              "sort"              ["S"]                    List   "Change the sort";
     MarkRead          "mark_read"         [",n"]                   List   "Mark the notification read";
     MarkDone          "mark_done"         [",d"]                   List   "Mark the notification done";
+    MarkAllRead       "mark_all_read"     [",N"]                   List   "Mark everything shown read";
+    MarkAllDone       "mark_all_done"     [",D"]                   List   "Mark everything shown done";
     SaveSection       "save_to_home"      []                       List   "Save this list as a Home section";
     RenameSection     "rename_section"    []                       Page   "Rename the Home section";
     MoveSectionUp     "move_section_up"   ["<A-Up>"]               Page   "Move the Home section up";
@@ -235,6 +256,12 @@ actions! {
     ScrollRight       "scroll_right"      ["l", "log:l", "diff:l"] File   "Scroll right";
     WordNext          "word_next"         ["w", "log:w", "diff:w"] File   "Next word (for * and gx)";
     WordPrev          "word_prev"         ["b", "log:b", "diff:b"] File   "Previous word";
+    Symbols           "symbols"           ["gO", "diff:gO"]        File   "Symbols in this file, to go to one";
+    Definition        "go_to_definition"  ["gd", "diff:gd"]        File   "Go to the definition of the word under the cursor";
+    PrevColumn        "prev_column"       ["h"]                    Project "Previous column of the board";
+    NextColumn        "next_column"       ["l"]                    Project "Next column of the board";
+    MoveItem          "move_item"         [",c"]                   Project "Move the item to another column";
+    SetField          "set_field"         [",f"]                   Project "Set a field of the item";
 
     NextHunk          "next_change"       ["]c", "}"]              Diff   "Next change";
     PrevHunk          "prev_change"       ["[c", "{"]              Diff   "Previous change";

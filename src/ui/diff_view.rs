@@ -16,6 +16,7 @@ use crate::diff::anchor::{LinePos, Side};
 
 use crate::ui::annotations::{Annotation, Place, ThreadRowKind};
 use crate::ui::diff_doc::{Doc, DocFile, FoldReason, Note, Pos, Row, Viewed};
+use crate::ui::page::{Tone, role_style};
 use crate::ui::{
     Ctx, PAD_X, chips, cols, fill, fit_spans, inset, key_hints, render_split, text, time,
 };
@@ -556,12 +557,7 @@ impl DiffView<'_> {
             return;
         };
         fill(buf, area, theme, PANE);
-        let indent = cols(sign_column(file)).min(area.width);
-        let card = Rect {
-            x: area.x + indent,
-            width: area.width.saturating_sub(indent + PAD_X),
-            ..area
-        };
+        let card = thread_card(file, area);
         let bg = if cursor {
             Bg::Selected
         } else {
@@ -581,12 +577,21 @@ impl DiffView<'_> {
                 };
                 spans.push(Span::styled(format!("{mark} "), theme.style(fg, bg)));
                 spans.extend(self.state_chips(ann, bg));
+                if ann.comments.iter().any(|c| c.new) {
+                    spans.extend(chips::chip(
+                        ctx,
+                        "New",
+                        theme.fill(Bg::TertiaryContainer),
+                        bg,
+                    ));
+                    spans.push(Span::styled(" ", theme.body(bg)));
+                }
                 let n = ann.comments.len();
                 let tail = format!("  {n} comment{}", if n == 1 { "" } else { "s" });
                 let used = text::spans_width(&spans);
                 let text_room = room.saturating_sub(used + text::width(&tail));
                 spans.push(Span::styled(
-                    text::truncate(&row.text, text_room),
+                    text::truncate(&row.line.text(), text_room),
                     theme.body(bg),
                 ));
                 spans.push(Span::styled(tail, theme.meta(bg)));
@@ -596,6 +601,15 @@ impl DiffView<'_> {
                     return;
                 };
                 spans.push(Span::styled(c.author.clone(), theme.title(bg)));
+                if c.new {
+                    spans.push(Span::styled(" ", theme.body(bg)));
+                    spans.extend(chips::chip(
+                        ctx,
+                        "New",
+                        theme.fill(Bg::TertiaryContainer),
+                        bg,
+                    ));
+                }
                 if !c.created_at.is_empty() {
                     spans.push(Span::styled(
                         format!(" · {}", time::ago_iso(&c.created_at, ctx.now)),
@@ -625,13 +639,43 @@ impl DiffView<'_> {
                     ));
                 }
             }
-            ThreadRowKind::Body | ThreadRowKind::Gap | ThreadRowKind::Error => {
+            // Rendered Markdown: code and a suggestion's lines on their
+            // own tint.
+            ThreadRowKind::Body => {
+                let tint = |d| {
+                    if cursor {
+                        Bg::DiffSelected(d)
+                    } else {
+                        Bg::Diff(d)
+                    }
+                };
+                let bg = match row.line.tone {
+                    Tone::Plain => bg,
+                    Tone::Code | Tone::Marked => tint(DiffBg::Context),
+                    Tone::Added => tint(DiffBg::Added),
+                    Tone::Removed => tint(DiffBg::Removed),
+                };
+                fill(buf, inner, theme, bg);
+                let segs = row.line.segs.iter();
+                spans.extend(
+                    segs.map(|s| Span::styled(s.text().to_owned(), role_style(theme, &s.role, bg))),
+                );
+            }
+            ThreadRowKind::Reactions { comment } => {
+                let given = ann.comments.get(*comment).and_then(|c| c.editable.as_ref());
+                for r in given.iter().flat_map(|e| &e.reactions) {
+                    let fill = chips::reaction_fill(r.mine);
+                    let text = format!("{} {}", r.content.emoji(), r.count);
+                    spans.extend(chips::chip(ctx, text, theme.fill(fill), bg));
+                    spans.push(Span::styled(" ", theme.body(bg)));
+                }
+            }
+            ThreadRowKind::Gap | ThreadRowKind::Error => {
                 let style = match row.kind {
                     ThreadRowKind::Error => theme.error(bg),
-                    ThreadRowKind::Gap => theme.meta(bg),
-                    _ => theme.body(bg),
+                    _ => theme.meta(bg),
                 };
-                spans.push(Span::styled(text::truncate(&row.text, room), style));
+                spans.push(Span::styled(text::truncate(&row.line.text(), room), style));
             }
             ThreadRowKind::Footer => {
                 let mut hints = Vec::new();
@@ -713,6 +757,47 @@ fn scope_label(scope: &[&str], room: usize) -> String {
         })
         .find(|label| text::width(label) <= room)
         .unwrap_or_else(|| text::truncate(scope.last().copied().unwrap_or_default(), room))
+}
+
+/// Where a thread's card goes on a row of the diff `area`: from the sign
+/// column to the pane's padding. Its text is [`PAD_X`] in.
+fn thread_card(file: &DocFile, area: Rect) -> Rect {
+    let indent = cols(sign_column(file)).min(area.width);
+    Rect {
+        x: area.x + indent,
+        width: area.width.saturating_sub(indent + PAD_X),
+        ..area
+    }
+}
+
+/// The links in thread comments on screen, as the diff at `top` in `area`
+/// draws them, top to bottom: where each starts, and where it leads.
+pub fn link_spots(doc: &Doc, top: Pos, area: Rect) -> Vec<((u16, u16), String)> {
+    let mut out = Vec::new();
+    // The sticky header covers the first row once scrolled into a file.
+    let covered = (doc.clamp(top).row > 0).then_some(area.top());
+    let rows = doc.to_global(top)..doc.total_rows();
+    for (g, y) in rows.zip(area.top()..area.bottom()) {
+        let pos = doc.to_pos(g);
+        let (Some(Row::Thread(t)), Some(file)) = (doc.row(pos), doc.files().get(pos.file)) else {
+            continue;
+        };
+        let Some(row) = file.thread_row(t).filter(|_| covered != Some(y)) else {
+            continue;
+        };
+        let mut x = thread_card(file, area).x.saturating_add(PAD_X);
+        let mut seen = Vec::new();
+        for seg in &row.line.segs {
+            if let Some(link) = seg.link.filter(|l| !seen.contains(l)) {
+                seen.push(link);
+                if let Some(url) = row.line.links.get(link as usize) {
+                    out.push(((x, y), url.clone()));
+                }
+            }
+            x = x.saturating_add(cols(text::width(seg.text())));
+        }
+    }
+    out
 }
 
 /// Column of the +/- sign: hunk headers and gap text align to it, thread

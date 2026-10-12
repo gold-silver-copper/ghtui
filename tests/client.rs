@@ -156,7 +156,7 @@ fn parse_request(buf: &[u8]) -> Option<(Seen, usize)> {
 }
 
 fn client(base: &str, store: Store) -> GitHub {
-    GitHub::with_base_uri(Token::new("test-token"), store, Some(base))
+    GitHub::with_base_uri(Token::new("test-token"), store, base)
 }
 
 /// A client without a cache, against a server playing `replies`.
@@ -271,11 +271,15 @@ async fn tracks_rate_limit_headers() {
 const PR_RESPONSE: &str = r#"{"data":{"repository":{
   "mergeCommitAllowed": true, "squashMergeAllowed": true, "rebaseMergeAllowed": false,
   "viewerDefaultMergeMethod": "SQUASH", "viewerPermission": "WRITE",
+  "autoMergeAllowed": true,
   "pullRequest":{
   "id": "PR_7", "mergeStateStatus": "BEHIND",
   "viewerCanClose": true, "viewerCanReopen": true, "viewerCanUpdate": true,
   "viewerCanMergeAsAdmin": false, "viewerDidAuthor": false,
   "maintainerCanModify": true, "isCrossRepository": true,
+  "viewerCanEnableAutoMerge": false, "viewerCanDisableAutoMerge": true,
+  "autoMergeRequest": {"enabledBy": {"login": "alice"}, "mergeMethod": "SQUASH"},
+  "isMergeQueueEnabled": true, "mergeQueueEntry": {"position": 2, "state": "AWAITING_CHECKS"},
   "number": 7, "title": "Add thing", "body": "Body text", "url": "https://github.com/o/r/pull/7",
   "isDraft": false, "state": "OPEN", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-02T00:00:00Z",
   "author": {"login": "alice"}, "repository": {"nameWithOwner": "o/r"},
@@ -285,6 +289,9 @@ const PR_RESPONSE: &str = r#"{"data":{"repository":{
   "reviewDecision": "APPROVED",
   "labels": {"totalCount": 3, "nodes": [{"name": "bug", "color": "d73a4a"}]},
   "milestone": {"number": 3, "title": "v1"},
+  "viewerCanReact": true, "viewerCanLabel": false, "viewerCanAssign": true,
+  "reactionGroups": [{"content": "THUMBS_UP", "viewerHasReacted": false, "reactors": {"totalCount": 5}}],
+  "assignees": {"totalCount": 1, "nodes": [{"login": "bob"}]},
   "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]},
   "comments": {"totalCount": 4}
 }}, "rateLimit": {"cost": 1, "limit": 5000, "remaining": 4999, "resetAt": "2026-01-01T01:00:00Z"}}}"#;
@@ -325,6 +332,23 @@ async fn fetches_and_caches_pull_request() {
     assert_eq!(detail.labels.left_out(), 2);
     assert_eq!(detail.head_oid, "bbb");
     assert_eq!(detail.milestone.as_ref().map(|m| m.number), Some(3));
+    // Auto-merge and the merge queue, as the merge box shows them.
+    let auto = detail.auto_merge.as_ref().unwrap();
+    assert_eq!(
+        (auto.by.as_str(), auto.method),
+        ("alice", MergeMethod::Squash)
+    );
+    assert!(detail.auto_merge_allowed && detail.merge_queue);
+    assert!(detail.may.disable_auto_merge && !detail.may.enable_auto_merge);
+    let queued = detail.queued.unwrap();
+    assert_eq!(
+        (queued.position, queued.state),
+        (2, ghtui::api::model::QueueState::AwaitingChecks)
+    );
+    assert_eq!(detail.assignees.items, ["bob"]);
+    assert_eq!(detail.editable.reactions[0].count, 5);
+    let may = detail.sidebar;
+    assert!(may.assignees && !may.labels && !may.milestone && !may.reviewers);
 
     let cached = gh.cached_pull_request(&pr).unwrap();
     assert_eq!(cached.value, detail);
@@ -495,6 +519,59 @@ async fn a_merge_sends_its_method_and_head_and_a_refusal_says_why() {
     assert_eq!(sent["variables"]["head"], "bbb");
 }
 
+/// Auto-merge and the merge queue: each its own mutation, about the pull
+/// request, and enabling or queueing names the head it's for.
+#[tokio::test]
+async fn auto_merge_and_the_merge_queue_send_their_mutations() {
+    use ghtui::api::change::{Change, MergeMethod};
+    let ok = |field: &str| {
+        Reply::new(
+            200,
+            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
+        )
+    };
+    let (gh, seen) = github(vec![
+        ok("enablePullRequestAutoMerge"),
+        ok("disablePullRequestAutoMerge"),
+        ok("enqueuePullRequest"),
+        ok("dequeuePullRequest"),
+    ])
+    .await;
+    let pr = NodeId::new("PR_7");
+    let changes = [
+        Change::EnableAutoMerge {
+            pr: pr.clone(),
+            method: MergeMethod::Rebase,
+            head: "bbb".into(),
+        },
+        Change::DisableAutoMerge { pr: pr.clone() },
+        Change::Enqueue {
+            pr: pr.clone(),
+            head: "bbb".into(),
+        },
+        Change::Dequeue { pr },
+    ];
+    for change in &changes {
+        gh.change(change).await.unwrap();
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 4);
+    let enable = seen[0].json();
+    assert!(seen[0].query().contains("enablePullRequestAutoMerge"));
+    assert!(seen[0].query().contains("expectedHeadOid"));
+    assert_eq!(enable["variables"]["pr"], "PR_7");
+    assert_eq!(enable["variables"]["method"], "REBASE");
+    assert_eq!(enable["variables"]["head"], "bbb");
+    assert!(seen[1].query().contains("disablePullRequestAutoMerge"));
+    assert_eq!(seen[1].json()["variables"]["id"], "PR_7");
+    let enqueue = seen[2].json();
+    assert!(seen[2].query().contains("enqueuePullRequest"));
+    assert_eq!(enqueue["variables"]["pr"], "PR_7");
+    assert_eq!(enqueue["variables"]["head"], "bbb");
+    assert!(seen[3].query().contains("dequeuePullRequest"));
+    assert_eq!(seen[3].json()["variables"]["id"], "PR_7");
+}
+
 /// Re-runs and cancels post to Actions' paths; a refusal (here, a token
 /// without the permission) is GitHub's status and message, never retried.
 #[tokio::test]
@@ -542,6 +619,295 @@ async fn actions_changes_post_to_their_paths() {
     assert!(lines[2].starts_with("POST /repos/o/r/actions/jobs/9/rerun "));
 }
 
+/// Each edit sends its mutation, with the node IDs it names: labels and
+/// assignees are added and removed by two mutations, and only what
+/// changes is sent; asking for reviews names everyone asked; no milestone
+/// is a null.
+#[tokio::test]
+async fn edits_send_their_mutations() {
+    use ghtui::api::change::Change;
+    use ghtui::api::edit::{Edit, Named, ReactionContent, Written};
+    let ok = |field: &str| {
+        Reply::new(
+            200,
+            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
+        )
+    };
+    let (gh, seen) = github(vec![
+        ok("updateIssueComment"),
+        ok("updatePullRequestReviewComment"),
+        ok("updatePullRequest"),
+        ok("deleteIssueComment"),
+        ok("updateIssue"),
+        ok("addReaction"),
+        ok("removeReaction"),
+        ok("addLabelsToLabelable"),
+        ok("removeLabelsFromLabelable"),
+        ok("removeAssigneesFromAssignable"),
+        ok("requestReviews"),
+        ok("updateIssue"),
+    ])
+    .await;
+    let id = |s: &str| NodeId::new(s);
+    let named = |s: &str| Named {
+        id: id(s),
+        name: s.to_lowercase(),
+    };
+    let edits = [
+        Edit::Body {
+            of: Written::IssueComment,
+            id: id("IC_1"),
+            body: "Better".into(),
+        },
+        Edit::Body {
+            of: Written::ReviewComment,
+            id: id("PRRC_1"),
+            body: "Nit".into(),
+        },
+        Edit::Body {
+            of: Written::Pr,
+            id: id("PR_7"),
+            body: "Description".into(),
+        },
+        Edit::Delete {
+            of: Written::IssueComment,
+            id: id("IC_1"),
+        },
+        Edit::Title {
+            pr: false,
+            id: id("I_3"),
+            title: "New title".into(),
+        },
+        Edit::React {
+            subject: id("IC_1"),
+            content: ReactionContent::ThumbsUp,
+            on: true,
+        },
+        Edit::React {
+            subject: id("IC_1"),
+            content: ReactionContent::Heart,
+            on: false,
+        },
+        Edit::Labels {
+            subject: id("I_3"),
+            add: vec![named("L_bug")],
+            remove: vec![named("L_ui")],
+        },
+        Edit::Assignees {
+            subject: id("I_3"),
+            add: Vec::new(),
+            remove: vec![named("U_bob")],
+        },
+        Edit::Reviewers {
+            pr: id("PR_7"),
+            users: vec![named("U_amy")],
+            teams: vec![named("T_core")],
+            bots: Vec::new(),
+        },
+        Edit::Milestone {
+            pr: false,
+            id: id("I_3"),
+            milestone: None,
+        },
+    ];
+    for edit in edits {
+        gh.change(&Change::Edit(edit)).await.unwrap();
+    }
+    let seen = seen.lock().unwrap();
+    let sent: Vec<(String, serde_json::Value)> = seen
+        .iter()
+        .map(|s| (s.query(), s.json()["variables"].clone()))
+        .collect();
+    let field = |i: usize, name: &str| {
+        let (query, _) = &sent[i];
+        assert!(query.contains(name), "{i}: {query}");
+    };
+    let var = |i: usize, name: &str| sent[i].1[name].clone();
+    field(0, "updateIssueComment(input: {id: $id, body: $body})");
+    assert_eq!(
+        (var(0, "id"), var(0, "body")),
+        ("IC_1".into(), "Better".into())
+    );
+    field(1, "pullRequestReviewCommentId: $id");
+    field(
+        2,
+        "updatePullRequest(input: {pullRequestId: $id, body: $body})",
+    );
+    field(3, "deleteIssueComment");
+    field(4, "updateIssue(input: {id: $id, title: $title})");
+    assert_eq!(var(4, "title"), "New title");
+    field(5, "addReaction");
+    assert_eq!(
+        (var(5, "subject"), var(5, "content")),
+        ("IC_1".into(), "THUMBS_UP".into())
+    );
+    field(6, "removeReaction");
+    assert_eq!(var(6, "content"), "HEART");
+    field(7, "addLabelsToLabelable");
+    assert_eq!(var(7, "ids"), serde_json::json!(["L_bug"]));
+    field(8, "removeLabelsFromLabelable");
+    assert_eq!(var(8, "ids"), serde_json::json!(["L_ui"]));
+    // Nothing to add: only the removal.
+    field(9, "removeAssigneesFromAssignable");
+    field(10, "requestReviews");
+    assert_eq!(
+        (var(10, "users"), var(10, "teams"), var(10, "bots")),
+        (
+            serde_json::json!(["U_amy"]),
+            serde_json::json!(["T_core"]),
+            serde_json::json!([])
+        )
+    );
+    field(11, "milestoneId: $milestone");
+    assert_eq!(var(11, "milestone"), serde_json::Value::Null);
+    assert_eq!(sent.len(), 12);
+}
+
+/// A pull request's sidebar comes with the node IDs edits need, and what
+/// its repository offers; its organization's teams are asked apart, so a
+/// token that can't read them loses only them, and says why.
+#[tokio::test]
+async fn a_sidebar_keeps_what_its_teams_say() {
+    let sidebar = r#"{"data":{"repository":{
+      "issueOrPullRequest":{"__typename":"PullRequest",
+        "labels":{"totalCount":1,"nodes":[{"id":"L1","name":"bug"}]},
+        "assignees":{"totalCount":0,"nodes":[]},
+        "milestone":null,
+        "reviewRequests":{"totalCount":3,"nodes":[
+          {"requestedReviewer":{"__typename":"User","id":"U1","login":"amy"}},
+          {"requestedReviewer":{"__typename":"Team","id":"T1","combinedSlug":"o/core"}},
+          {"requestedReviewer":{"__typename":"Bot","id":"B1","login":"copilot"}}]},
+        "author":{"login":"bob"}},
+      "labels":{"totalCount":150,"nodes":[{"id":"L1","name":"bug"}]},
+      "assignableUsers":{"totalCount":1,"nodes":[{"id":"U1","login":"amy"}]},
+      "milestones":{"totalCount":0,"nodes":[]},
+      "owner":{"__typename":"Organization","login":"o"}}}}"#;
+    let forbidden = r#"{"data":{"organization":null},"errors":[{"type":"FORBIDDEN",
+      "path":["organization","teams"],"message":"Resource not accessible by personal access token"}]}"#;
+    let (gh, seen) = github(vec![Reply::new(200, sidebar), Reply::new(200, forbidden)]).await;
+    let s = gh.sidebar(&RepoId::new("o", "r"), 7).await.unwrap();
+    assert_eq!(s.labels[0].id, NodeId::new("L1"));
+    assert_eq!(s.all_labels.left_out(), 149);
+    let names =
+        |list: &[ghtui::api::edit::Named]| list.iter().map(|n| n.name.clone()).collect::<Vec<_>>();
+    assert_eq!(names(&s.requested.users), ["amy"]);
+    assert_eq!(names(&s.requested.teams), ["o/core"]);
+    assert_eq!(names(&s.requested.bots), ["copilot"]);
+    assert_eq!(s.author.as_deref(), Some("bob"));
+    match &s.teams {
+        Some(Err(why)) => assert!(why.contains("not accessible"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[1].json()["variables"]["org"], "o");
+}
+
+/// A new issue sends its title, text, labels, assignees and milestone, and
+/// comes back as its number; a new pull request its branches and whether
+/// it's a draft. Neither is sent twice.
+#[tokio::test]
+async fn new_issues_and_pull_requests_send_what_they_hold() {
+    use ghtui::api::create::{NewIssue, NewPr};
+    let (gh, seen) = github(vec![
+        Reply::new(200, r#"{"data":{"createIssue":{"issue":{"number":42}}}}"#),
+        Reply::new(
+            200,
+            r#"{"data":{"createPullRequest":{"pullRequest":{"number":7}}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"createPullRequest":null},"errors":[{"type":"UNPROCESSABLE","message":"No commits between main and topic"}]}"#,
+        ),
+    ])
+    .await;
+    let issue = NewIssue {
+        repo: NodeId::new("R_1"),
+        title: "It crashes".into(),
+        body: "### Version\n\n1.0".into(),
+        labels: vec![NodeId::new("LA_bug")],
+        assignees: vec![NodeId::new("U_me")],
+        milestone: Some(NodeId::new("MI_1")),
+    };
+    assert_eq!(gh.create_issue(&issue).await.unwrap(), 42);
+    let pr = NewPr {
+        repo: NodeId::new("R_1"),
+        base: "main".into(),
+        head: "fork:topic".into(),
+        title: "Fix it".into(),
+        body: String::new(),
+        draft: true,
+    };
+    assert_eq!(gh.create_pull_request(&pr).await.unwrap(), 7);
+    match gh.create_pull_request(&pr).await {
+        Err(ApiError::GraphQl(errors)) => assert_eq!(errors, ["No commits between main and topic"]),
+        other => panic!("{other:?}"),
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 3);
+    assert!(seen[0].query().contains("createIssue"));
+    let vars = &seen[0].json()["variables"];
+    assert_eq!(vars["repo"], "R_1");
+    assert_eq!(vars["title"], "It crashes");
+    assert_eq!(vars["body"], "### Version\n\n1.0");
+    assert_eq!(vars["labels"], serde_json::json!(["LA_bug"]));
+    assert_eq!(vars["assignees"], serde_json::json!(["U_me"]));
+    assert_eq!(vars["milestone"], "MI_1");
+    assert!(seen[1].query().contains("createPullRequest"));
+    let vars = &seen[1].json()["variables"];
+    assert_eq!(
+        (vars["base"].as_str(), vars["head"].as_str()),
+        (Some("main"), Some("fork:topic"))
+    );
+    assert_eq!(
+        (vars["title"].as_str(), vars["draft"].as_bool()),
+        (Some("Fix it"), Some(true))
+    );
+}
+
+/// A new form's choices, templates and permissions come from one query;
+/// a pull request's commits, with their whole messages, from a comparison.
+#[tokio::test]
+async fn a_new_form_reads_its_choices_and_templates() {
+    let (gh, seen) = github(vec![
+        Reply::new(
+            200,
+            r#"{"data":{"repository":{"id":"R_1","viewerCanCreateIssues":true,"hasIssuesEnabled":true,"isArchived":false,"viewerPermission":"READ","defaultBranchRef":{"name":"main"},
+              "labels":{"totalCount":120,"nodes":[{"id":"LA_1","name":"bug","color":"d73a4a","description":null}]},
+              "assignableUsers":{"totalCount":1,"nodes":[{"id":"U_1","login":"me","name":null}]},
+              "milestones":{"totalCount":0,"nodes":[]},
+              "issueTemplates":{"entries":[{"name":"bug.md","object":{"text":"---\nname: Bug\n---\nBody"}},{"name":"logo.png","object":{"text":null}}]},
+              "pullRequestTemplates":[{"filename":"pull_request_template.md","body":"Why:"}]}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"total_commits":2,"commits":[{"sha":"aaa","commit":{"message":"First\n\nWhy."}},{"sha":"bbb","commit":{"message":"Second"}}]}"#,
+        ),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let form = gh.new_form(&repo).await.unwrap();
+    assert!(!form.can_triage, "read access can't set labels");
+    assert_eq!(form.labels.left_out(), 119);
+    assert_eq!(
+        form.issue_templates,
+        [("bug.md".to_owned(), "---\nname: Bug\n---\nBody".to_owned())]
+    );
+    assert_eq!(form.pr_template.as_deref(), Some("Why:"));
+    let commits = gh
+        .commit_messages(&repo, "main", "fork:topic")
+        .await
+        .unwrap();
+    assert_eq!(commits[0].message, "First\n\nWhy.");
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[1]
+            .request_line
+            .starts_with("GET /repos/o/r/compare/main...fork:topic "),
+        "{}",
+        seen[1].request_line
+    );
+}
+
 const THREADS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
   "pageInfo":{"hasNextPage":false,"endCursor":null},
   "nodes":[
@@ -550,10 +916,10 @@ const THREADS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
      "viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":false,
      "first_comment":{"totalCount":150,"nodes":[
        {"id":"C1","author":{"login":"alice"},"body":"Why?","createdAt":"2026-10-01T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r1","originalCommit":{"oid":"abc"},"state":"SUBMITTED"}]},
+        "url":"https://github.com/o/r/pull/7#discussion_r1","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":false,"viewerCanDelete":false,"viewerCanReact":true,"reactionGroups":[{"content":"HOORAY","viewerHasReacted":true,"reactors":{"totalCount":2}},{"content":"EYES","viewerHasReacted":false,"reactors":{"totalCount":0}}]}]},
      "comments":{"totalCount":150,"nodes":[
        {"id":"C2","author":null,"body":"Because.","createdAt":"2026-10-02T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r2","originalCommit":{"oid":"abc"},"state":"PENDING"}]}},
+        "url":"https://github.com/o/r/pull/7#discussion_r2","originalCommit":{"oid":"abc"},"state":"PENDING","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[]}]}},
     {"id":"T2","path":"src/b.rs","diffSide":"LEFT","startDiffSide":null,"line":null,"startLine":null,
      "originalLine":5,"originalStartLine":null,"isOutdated":true,"isResolved":true,"subjectType":"LINE",
      "viewerCanReply":true,"viewerCanResolve":false,"viewerCanUnresolve":true,
@@ -563,10 +929,10 @@ const THREADS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
      "viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":false,
      "first_comment":{"totalCount":1,"nodes":[
        {"id":"C3","author":{"login":"bob"},"body":"Typo","createdAt":"2026-10-03T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED"}]},
+        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[]}]},
      "comments":{"totalCount":1,"nodes":[
        {"id":"C3","author":{"login":"bob"},"body":"Typo","createdAt":"2026-10-03T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED"}]}}
+        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[]}]}}
   ]}}}}}"#;
 
 #[tokio::test]
@@ -593,6 +959,17 @@ async fn decodes_review_threads() {
     assert_eq!(t1.comments[1].author, "ghost");
     assert!(t1.comments[1].pending);
     assert_eq!(t1.comments[0].original_commit.as_deref(), Some("abc"));
+    // What GitHub lets you do to each comment, and its reactions (only
+    // those someone gave).
+    let first = &t1.comments[0].editable;
+    assert!(!first.can_update && !first.can_delete && first.can_react);
+    let hooray = ghtui::api::edit::Reaction {
+        content: ghtui::api::edit::ReactionContent::Hooray,
+        count: 2,
+        mine: true,
+    };
+    assert_eq!(first.reactions, [hooray]);
+    assert!(t1.comments[1].editable.can_update);
     let t2 = &threads[1];
     assert!(t2.outdated && t2.resolved);
     assert_eq!(
@@ -1644,7 +2021,7 @@ fn root_not_found(data: &str, path: &str, message: &str) -> Reply {
 #[tokio::test]
 async fn a_missing_pull_request_isnt_also_left_out() {
     let (gh, _) = github(vec![root_not_found(
-        r#"{"repository":{"pullRequest":null,"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"MERGE","viewerPermission":"READ"},"rateLimit":null}"#,
+        r#"{"repository":{"pullRequest":null,"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"MERGE","viewerPermission":"READ","autoMergeAllowed":false},"rateLimit":null}"#,
         r#"["repository","pullRequest"]"#,
         "Could not resolve to a PullRequest with the number of 999999.",
     )])
@@ -1979,25 +2356,27 @@ async fn a_runs_filter_becomes_rest_parameters() {
     );
 }
 
+/// A thread in REST's words, about pull request `id`.
+fn thread_json(id: u32, reason: &str, unread: bool) -> String {
+    format!(
+        r#"{{"id":"{id}","unread":{unread},"reason":"{reason}","updated_at":"2026-10-03T12:00:00Z",
+          "subject":{{"title":"T{id}","type":"PullRequest","url":"https://api.github.com/repos/o/r/pulls/{id}",
+                      "latest_comment_url":"https://api.github.com/repos/o/r/issues/comments/9"}},
+          "repository":{{"full_name":"o/r"}}}}"#
+    )
+}
+
 /// The inbox's filter asks REST in its own words: `repo:` is the
 /// repository's notifications, `is:unread` leaves out `all`,
 /// `reason:participating` is REST's own; reasons and `is:read` are kept
 /// here. A next page is what GitHub's `Link` says, even from the cache.
 #[tokio::test]
 async fn an_inbox_filter_becomes_rest_parameters() {
-    let thread = |id: u32, reason: &str, unread: bool| {
-        format!(
-            r#"{{"id":"{id}","unread":{unread},"reason":"{reason}","updated_at":"2026-10-03T12:00:00Z",
-              "subject":{{"title":"T{id}","type":"PullRequest","url":"https://api.github.com/repos/o/r/pulls/{id}",
-                          "latest_comment_url":"https://api.github.com/repos/o/r/issues/comments/9"}},
-              "repository":{{"full_name":"o/r"}}}}"#
-        )
-    };
     let body = format!(
         "[{},{},{}]",
-        thread(1, "mention", true),
-        thread(2, "review_requested", true),
-        thread(3, "mention", false)
+        thread_json(1, "mention", true),
+        thread_json(2, "review_requested", true),
+        thread_json(3, "mention", false)
     );
     let next = r#"<https://api.github.com/repos/o/r/notifications?page=3>; rel="next""#;
     let dir = tempfile::tempdir().unwrap();
@@ -2011,14 +2390,14 @@ async fn an_inbox_filter_becomes_rest_parameters() {
     ])
     .await;
     let gh = client(&base, store);
-    let query = "repo:o/r reason:mention is:unread";
+    let query = "repo:o/r is:unread";
     for _ in 0..2 {
         let inbox = gh.notifications(query, Some("2".into())).await.unwrap();
-        let ids: Vec<&str> = inbox.items.iter().map(|n| n.id.as_str()).collect();
-        assert_eq!(ids, ["1"]);
-        assert_eq!(inbox.next.as_deref(), Some("3"));
+        let ids: Vec<&str> = inbox.list.items.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids, ["1", "2"]);
+        assert_eq!(inbox.list.next.as_deref(), Some("3"));
         assert_eq!(
-            inbox.items[0].url,
+            inbox.list.items[0].url,
             "https://github.com/o/r/pull/1#issuecomment-9"
         );
     }
@@ -2026,8 +2405,8 @@ async fn an_inbox_filter_becomes_rest_parameters() {
         .notifications("is:read reason:participating", None)
         .await
         .unwrap();
-    let ids: Vec<&str> = inbox.items.iter().map(|n| n.id.as_str()).collect();
-    assert_eq!((ids, inbox.next), (vec!["3"], None));
+    let ids: Vec<&str> = inbox.list.items.iter().map(|n| n.id.as_str()).collect();
+    assert_eq!((ids, inbox.list.next), (vec!["3"], None));
     let lines: Vec<String> = (seen.lock().unwrap().iter())
         .map(|s| s.request_line.clone())
         .collect();
@@ -2039,6 +2418,151 @@ async fn an_inbox_filter_becomes_rest_parameters() {
         lines[2].starts_with("GET /notifications?all=true&participating=true&per_page=30&page=1 "),
         "{lines:?}"
     );
+}
+
+/// A reason is filtered here, so a page of what GitHub sends can hold
+/// few that match: pages are fetched until one fills (30), or the inbox
+/// ends, or ten have been searched, which the inbox says.
+#[tokio::test]
+async fn a_reason_filter_fetches_pages_until_one_fills() {
+    // 30 threads a page, `mentions` of them mentions.
+    let page = |n: u32, mentions: u32, last: bool| {
+        let threads: Vec<String> = (0..30)
+            .map(|i| {
+                let reason = if i < mentions {
+                    "mention"
+                } else {
+                    "subscribed"
+                };
+                thread_json(n * 100 + i, reason, true)
+            })
+            .collect();
+        let reply = Reply::new(200, format!("[{}]", threads.join(",")));
+        if last {
+            reply
+        } else {
+            reply.header(
+                "link",
+                r#"<https://api.github.com/notifications?page=9>; rel="next""#,
+            )
+        }
+    };
+    let (gh, seen) = github(vec![
+        page(1, 10, false),
+        page(2, 10, false),
+        page(3, 10, false),
+    ])
+    .await;
+    let inbox = gh.notifications("reason:mention", None).await.unwrap();
+    assert_eq!(inbox.list.items.len(), 30);
+    assert_eq!(inbox.list.next.as_deref(), Some("4"));
+    assert_eq!((inbox.searched, inbox.cut), (90, false));
+    let lines: Vec<String> = (seen.lock().unwrap().iter())
+        .map(|s| s.request_line.clone())
+        .collect();
+    assert!(
+        lines[2].starts_with("GET /notifications?all=true&per_page=30&page=3 "),
+        "{lines:?}"
+    );
+
+    // The inbox ends first.
+    let (gh, _) = github(vec![page(1, 2, false), page(2, 1, true)]).await;
+    let inbox = gh.notifications("reason:mention", None).await.unwrap();
+    assert_eq!(inbox.list.items.len(), 3);
+    assert_eq!((inbox.list.next, inbox.cut), (None, false));
+
+    // Ten pages searched, it stops, and says so; Load more goes on.
+    let (gh, seen) = github((1..=11).map(|n| page(n, 1, false)).collect()).await;
+    let inbox = gh.notifications("reason:mention", None).await.unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 10);
+    assert_eq!(inbox.list.items.len(), 10);
+    assert_eq!(inbox.list.next.as_deref(), Some("11"));
+    assert_eq!((inbox.searched, inbox.cut), (300, true));
+}
+
+/// The unread count is asked only if the inbox changed since GitHub's
+/// `Last-Modified`, so an unchanged one is a 304 (free against the rate
+/// limit), and polled as often as `X-Poll-Interval` asks.
+#[tokio::test]
+async fn the_unread_count_is_asked_if_modified_at_githubs_interval() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("cache.redb"));
+    let modified = "Sat, 10 Oct 2026 12:00:00 GMT";
+    let (base, seen) = serve(vec![
+        Reply::new(200, r#"[{"id":"1"},{"id":"2"}]"#)
+            .header("last-modified", modified)
+            .header("x-poll-interval", "120")
+            .header(
+                "link",
+                r#"<https://api.github.com/notifications?page=2>; rel="next""#,
+            ),
+        Reply::new(304, "").header("x-poll-interval", "90"),
+    ])
+    .await;
+    let gh = client(&base, store);
+    let unread = gh.unread().await.unwrap();
+    assert_eq!(
+        (unread.count, unread.more, unread.poll_secs),
+        (2, true, 120)
+    );
+    let unread = gh.unread().await.unwrap();
+    assert_eq!((unread.count, unread.more, unread.poll_secs), (2, true, 90));
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("GET /notifications?per_page=50 "),
+        "{}",
+        seen[0].request_line
+    );
+    assert_eq!(seen[0].header("if-modified-since"), None);
+    assert_eq!(seen[1].header("if-modified-since"), Some(modified));
+}
+
+/// Marking the inbox read is one request, up to the newest shown: the
+/// whole inbox's, or a repository's. Done is a request a thread, and a
+/// refusal partway says how far it got.
+#[tokio::test]
+async fn the_inbox_is_marked_read_at_once_and_done_thread_by_thread() {
+    use ghtui::api::change::Change;
+    let (gh, seen) = github(vec![
+        Reply::new(205, ""),
+        Reply::new(202, r#"{"message":"queued"}"#),
+        Reply::new(204, ""),
+        Reply::new(403, r#"{"message":"Forbidden"}"#),
+    ])
+    .await;
+    let at = "2026-10-03T12:00:00Z".to_owned();
+    for repo in [None, Some(RepoId::new("o", "r"))] {
+        let change = Change::MarkAllRead {
+            repo,
+            last_read_at: at.clone(),
+        };
+        gh.change(&change).await.unwrap();
+    }
+    let each = Change::MarkEach {
+        threads: vec!["7".into(), "8".into()],
+        done: true,
+    };
+    let err = gh.change(&each).await.unwrap_err();
+    assert!(err.to_string().contains("(after 1 of 2)"), "{err}");
+    let seen = seen.lock().unwrap();
+    let lines: Vec<&str> = seen.iter().map(|s| s.request_line.as_str()).collect();
+    assert!(lines[0].starts_with("PUT /notifications "), "{lines:?}");
+    assert!(
+        lines[1].starts_with("PUT /repos/o/r/notifications "),
+        "{lines:?}"
+    );
+    assert!(
+        lines[2].starts_with("DELETE /notifications/threads/7 "),
+        "{lines:?}"
+    );
+    assert!(
+        lines[3].starts_with("DELETE /notifications/threads/8 "),
+        "{lines:?}"
+    );
+    let body = serde_json::json!({ "last_read_at": at, "read": true });
+    assert_eq!(seen[0].json(), body);
 }
 
 /// Marking a thread read patches it; done deletes it.
@@ -2064,4 +2588,226 @@ async fn threads_are_marked_read_and_done() {
         lines[1].starts_with("DELETE /notifications/threads/42 "),
         "{lines:?}"
     );
+}
+
+/// Polling asks with the ETag of the answer before, and a 304 is "the
+/// same" (which GitHub doesn't count against the rate limit).
+#[tokio::test]
+async fn polls_ask_with_the_last_etag() {
+    use ghtui::api::Polled;
+    let body = r#"{"head":{"sha":"abc"}}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, body).header("etag", "\"p1\""),
+        Reply::new(304, ""),
+    ])
+    .await;
+    let path = "/repos/o/r/pulls/7";
+    let first = gh.poll(path, None).await.unwrap();
+    let etag = "\"p1\"".to_owned();
+    let body = body.to_owned();
+    assert_eq!(first, Polled::Changed { etag, body });
+    assert_eq!(gh.poll(path, Some("\"p1\"")).await.unwrap(), Polled::Same);
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0].header("if-none-match"), None);
+    assert_eq!(seen[1].header("if-none-match"), Some("\"p1\""));
+    assert!(seen[1].request_line.starts_with("GET /repos/o/r/pulls/7 "));
+}
+
+/// Who and what a comment can mention: the repository's assignable
+/// users, and its issues and pull requests updated last.
+#[tokio::test]
+async fn mentionable_asks_for_assignees_and_recent_issues() {
+    let (gh, seen) = github(vec![
+        Reply::new(200, r#"[{"login":"alice"}]"#).on("/assignees"),
+        Reply::new(200, r#"[{"number":12,"title":"Fix it"}]"#).on("/issues"),
+    ])
+    .await;
+    let found = gh.mentionable(&RepoId::new("o", "r")).await.unwrap();
+    assert_eq!(found.users, ["alice"]);
+    assert_eq!(found.issues, [(12, "Fix it".to_owned())]);
+    let seen = seen.lock().unwrap();
+    let asked = |part: &str| seen.iter().any(|s| s.request_line.contains(part));
+    assert!(asked("GET /repos/o/r/assignees?per_page=100 "));
+    assert!(asked(
+        "GET /repos/o/r/issues?state=all&sort=updated&per_page=100 "
+    ));
+}
+
+/// Where `gd` looks for a name the file doesn't define: GitHub's code
+/// search for the word in the repository, in the file's language.
+#[tokio::test]
+async fn code_search_asks_for_the_word_in_the_repository() {
+    let body = r#"{"total_count":1,"incomplete_results":true,"items":[{"path":"src/a.rs","sha":"abc","repository":{"full_name":"o/r"}}]}"#;
+    let (gh, seen) = github(vec![Reply::new(200, body).on("/search/code")]).await;
+    let hits = gh
+        .code_search("offset repo:o/r language:Rust")
+        .await
+        .unwrap();
+    assert_eq!(hits.paths, ["src/a.rs"]);
+    assert!(hits.incomplete, "a search that gave up says so");
+    let seen = seen.lock().unwrap();
+    let line = &seen[0].request_line;
+    assert!(
+        line.starts_with("GET /search/code?q=offset+repo%3Ao%2Fr+language%3ARust&per_page=10 "),
+        "{line}"
+    );
+}
+
+fn roadmap() -> ghtui::api::project::ProjectRef {
+    use ghtui::api::project::{ProjectOwner, ProjectRef};
+    ProjectRef {
+        owner: ProjectOwner::Org("o".into()),
+        number: 1,
+    }
+}
+
+/// A project at a view: its fields and views, then the items the view's
+/// filter finds, each with what it is and its values (a draft's body, a
+/// number as GitHub writes it, the values ghtui doesn't read left out).
+#[tokio::test]
+async fn a_project_reads_its_view_and_the_items_its_filter_finds() {
+    use ghtui::api::project::{FieldKind, FieldValue, ItemContent, Layout};
+    let project = r#"{"data":{"repositoryOwner":{"projectV2":{"id":"PVT_1","title":"Roadmap","shortDescription":null,"url":"https://github.com/orgs/o/projects/1","closed":false,"public":true,"viewerCanUpdate":true,
+        "fields":{"totalCount":3,"nodes":[{"id":"F_title","name":"Title","dataType":"TITLE"},
+            {"id":"F_status","name":"Status","dataType":"SINGLE_SELECT","options":[{"id":"O_todo","name":"Todo","color":"GRAY","description":""},{"id":"O_done","name":"Done","color":"GREEN","description":"Shipped"}]},
+            {"id":"F_sprint","name":"Sprint","dataType":"ITERATION","configuration":{"iterations":[{"id":"I_2","title":"Sprint 2","startDate":"2026-10-01","duration":14}],"completedIterations":[{"id":"I_1","title":"Sprint 1","startDate":"2026-09-17","duration":14}]}}]},
+        "views":{"totalCount":2,"nodes":[
+            {"number":1,"name":"Board","layout":"BOARD_LAYOUT","filter":null,"fields":{"totalCount":2,"nodes":[{"id":"F_title"},{"id":"F_status"}]},"verticalGroupByFields":{"nodes":[{"id":"F_status"}]},"groupByFields":{"nodes":[]},"sortByFields":{"totalCount":0,"nodes":[]}},
+            {"number":2,"name":"Plan","layout":"TABLE_LAYOUT","filter":"-status:Done","fields":{"totalCount":1,"nodes":[{"id":"F_title"}]},"verticalGroupByFields":{"nodes":[]},"groupByFields":{"nodes":[]},"sortByFields":{"totalCount":1,"nodes":[{"direction":"DESC","field":{"id":"F_sprint"}}]}}]}}}}}"#;
+    let items = r#"{"data":{"repositoryOwner":{"projectV2":{"items":{"totalCount":4,"pageInfo":{"hasNextPage":true,"endCursor":"c3"},"nodes":[
+        {"id":"PVTI_1","fullDatabaseId":"1001","content":{"__typename":"Issue","number":14,"title":"Projects","url":"https://github.com/o/r/issues/14","state":"CLOSED","stateReason":"NOT_PLANNED","repository":{"nameWithOwner":"o/r"},"assignees":{"totalCount":1,"nodes":[{"login":"alice"}]},"labels":{"totalCount":0,"nodes":[]},"milestone":null},
+         "fieldValues":{"totalCount":3,"nodes":[{"__typename":"ProjectV2ItemFieldTextValue","text":"Projects","field":{"id":"F_title"}},{"__typename":"ProjectV2ItemFieldSingleSelectValue","optionId":"O_todo","name":"Todo","field":{"id":"F_status"}},{"__typename":"ProjectV2ItemFieldLabelValue"}]}},
+        {"id":"PVTI_2","fullDatabaseId":"1002","content":{"__typename":"DraftIssue","title":"Draft","body":"Its body","assignees":{"totalCount":0,"nodes":[]}},
+         "fieldValues":{"totalCount":1,"nodes":[{"__typename":"ProjectV2ItemFieldNumberValue","number":2.0,"field":{"id":"F_est"}}]}},
+        {"id":"PVTI_3","fullDatabaseId":"1003","content":null,"fieldValues":{"totalCount":0,"nodes":[]}}]}}}}}"#;
+    let (gh, seen) = github(vec![Reply::new(200, project), Reply::new(200, items)]).await;
+    let p = gh.project(&roadmap(), Some(2), None).await.unwrap();
+    assert_eq!((p.view, p.can_update), (2, true));
+    let plan = p.shown().unwrap();
+    assert_eq!(
+        (plan.layout, plan.filter.as_str()),
+        (Layout::Table, "-status:Done")
+    );
+    assert_eq!(plan.sort, [(NodeId::new("F_sprint"), true)]);
+    let board = p.views.first().unwrap();
+    assert_eq!(board.column, Some(NodeId::new("F_status")));
+    let Some(FieldKind::Iteration(sprints)) = p.fields.get(2).map(|f| &f.kind) else {
+        panic!("{:?}", p.fields);
+    };
+    assert_eq!(
+        sprints.iter().map(|s| s.completed).collect::<Vec<_>>(),
+        [false, true]
+    );
+    assert_eq!(p.items.next.as_deref(), Some("c3"));
+    let [issue, draft, hidden] = p.items.items.as_slice() else {
+        panic!("{:?}", p.items);
+    };
+    assert_eq!(issue.number, 1001);
+    assert!(matches!(
+        &issue.content,
+        ItemContent::Issue(l, ghtui::api::browse::IssueState::NotPlanned) if l.number == 14
+    ));
+    let todo = FieldValue::Option {
+        id: "O_todo".into(),
+        name: "Todo".into(),
+    };
+    assert_eq!(issue.value(&NodeId::new("F_status")), Some(&todo));
+    assert!(matches!(&draft.content, ItemContent::Draft(d) if d.body == "Its body"));
+    assert_eq!(
+        draft.value(&NodeId::new("F_est")),
+        Some(&FieldValue::Number("2".into()))
+    );
+    assert_eq!(hidden.content, ItemContent::Redacted);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0].json()["variables"]["login"], "o");
+    assert_eq!(seen[0].json()["variables"]["number"], 1);
+    // The items are what the view's filter finds.
+    assert!(seen[1].query().contains("items(first: 50"));
+    assert_eq!(seen[1].json()["variables"]["query"], "-status:Done");
+}
+
+/// Setting a field sends its value as GitHub takes it; clearing it is a
+/// mutation of its own; a token without the project scope says how to
+/// get it.
+#[tokio::test]
+async fn setting_a_project_field_sends_its_value() {
+    use ghtui::api::change::Change;
+    use ghtui::api::project::FieldValue;
+    let ok = r#"{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_1"}}}}"#;
+    let cleared = r#"{"data":{"clearProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_1"}}}}"#;
+    let scope = r#"{"data":{"updateProjectV2ItemFieldValue":null},"errors":[{"type":"INSUFFICIENT_SCOPES","message":"Your token has not been granted the required scopes to execute this query. The 'updateProjectV2ItemFieldValue' field requires one of the following scopes: ['project'], but your token has only been granted the: ['repo'] scopes."}]}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, ok),
+        Reply::new(200, ok),
+        Reply::new(200, cleared),
+        Reply::new(200, scope),
+    ])
+    .await;
+    let set = |value| Change::SetProjectField {
+        project: NodeId::new("PVT_1"),
+        item: NodeId::new("PVTI_1"),
+        field: NodeId::new("F_status"),
+        value,
+        said: "Status".into(),
+    };
+    let done = FieldValue::Option {
+        id: "O_done".into(),
+        name: "Done".into(),
+    };
+    gh.change(&set(Some(done.clone()))).await.unwrap();
+    gh.change(&set(Some(FieldValue::Number("2.5".into()))))
+        .await
+        .unwrap();
+    gh.change(&set(None)).await.unwrap();
+    match gh.change(&set(Some(done))).await {
+        Err(ApiError::GraphQl(errors)) => {
+            assert!(
+                errors[0].contains("gh auth refresh -s project"),
+                "{errors:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    let seen = seen.lock().unwrap();
+    let vars = |i: usize| seen[i].json()["variables"].clone();
+    assert!(seen[0].query().contains("updateProjectV2ItemFieldValue"));
+    assert_eq!(vars(0)["project"], "PVT_1");
+    assert_eq!(vars(0)["item"], "PVTI_1");
+    assert_eq!(vars(0)["field"], "F_status");
+    assert_eq!(
+        vars(0)["value"],
+        serde_json::json!({ "singleSelectOptionId": "O_done" })
+    );
+    assert_eq!(vars(1)["value"], serde_json::json!({ "number": 2.5 }));
+    assert!(seen[2].query().contains("clearProjectV2ItemFieldValue"));
+    assert!(vars(2).get("value").is_none());
+}
+
+/// An owner's projects are asked of the owner, whichever kind it is; a
+/// token without read:project says how to get it.
+#[tokio::test]
+async fn an_owners_projects_page_and_say_what_scope_they_need() {
+    use ghtui::api::project::ProjectsOf;
+    let list = r#"{"data":{"repositoryOwner":{"projectsV2":{"totalCount":31,"pageInfo":{"hasNextPage":true,"endCursor":"p1"},"nodes":[
+        {"number":1,"title":"Roadmap","shortDescription":"Next","url":"https://github.com/orgs/o/projects/1","closed":false,"public":true,"updatedAt":"2026-10-01T00:00:00Z","items":{"totalCount":12}}]}}}}"#;
+    let scope = r#"{"data":{"repositoryOwner":{"projectsV2":null}},"errors":[{"type":"INSUFFICIENT_SCOPES","path":["repositoryOwner","projectsV2"],"message":"Your token has not been granted the required scopes to execute this query. The 'projectsV2' field requires one of the following scopes: ['read:project'], but your token has only been granted the: ['repo'] scopes."}]}"#;
+    let (gh, seen) = github(vec![Reply::new(200, list), Reply::new(200, scope)]).await;
+    let owner = ProjectsOf::Owner(roadmap().owner);
+    let found = gh.projects(&owner, Some("p0".into())).await.unwrap();
+    assert_eq!((found.total, found.next.as_deref()), (31, Some("p1")));
+    assert_eq!(found.items[0].items, 12);
+    match gh.projects(&owner, None).await {
+        Err(ApiError::GraphQl(errors)) => {
+            assert!(
+                errors[0].contains("gh auth refresh -s read:project"),
+                "{errors:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("projectsV2(first: 30"));
+    assert_eq!(seen[0].json()["variables"]["login"], "o");
+    assert_eq!(seen[0].json()["variables"]["after"], "p0");
 }

@@ -68,7 +68,7 @@ pub fn is_safe_link(url: &str) -> bool {
     scheme(url).is_none_or(|s| matches!(s.as_str(), "http" | "https" | "mailto"))
 }
 
-/// Resolves a link the way github.com does for a document in a repo.
+/// Resolves a link the way GitHub does for a document in a repo.
 /// `None` for links content mustn't have (see [`is_safe_link`]).
 pub fn resolve(base: Option<&LinkBase>, url: &str) -> Option<String> {
     let url = url.trim();
@@ -84,11 +84,11 @@ fn resolve_safe(base: Option<&LinkBase>, url: &str) -> String {
     }
     if let Some(rest) = url.strip_prefix('/') {
         return match base {
-            // On a wiki, root-relative links are relative to github.com.
-            Some(b) if b.wiki => format!("https://github.com/{rest}"),
+            // On a wiki, root-relative links are relative to GitHub.
+            Some(b) if b.wiki => format!("{}/{rest}", crate::ui::pages::url::base()),
             // Root-relative links are relative to the repository on GitHub.
             Some(b) => crate::ui::pages::url::at_rev(&b.repo, "blob", &b.rev, rest),
-            None => format!("https://github.com/{rest}"),
+            None => format!("{}/{rest}", crate::ui::pages::url::base()),
         };
     }
     let Some(base) = base else {
@@ -96,7 +96,11 @@ fn resolve_safe(base: Option<&LinkBase>, url: &str) -> String {
     };
     if base.wiki {
         let page = url.trim_start_matches("./").trim_end_matches(".md");
-        return format!("https://github.com/{}/wiki/{page}", base.repo);
+        return format!(
+            "{}/{}/wiki/{page}",
+            crate::ui::pages::url::base(),
+            base.repo
+        );
     }
     let (path, frag) = url.split_once('#').map_or((url, ""), |(p, f)| (p, f));
     let mut parts: Vec<&str> = base.dir.split('/').filter(|p| !p.is_empty()).collect();
@@ -157,6 +161,10 @@ struct Renderer<'a> {
     pending_marker: Option<String>,
     quote_depth: u16,
     code: Option<(Option<Language>, String)>,
+    /// The code block is a suggested change.
+    suggesting: bool,
+    /// The lines a suggested change replaces, where they're known.
+    original: Option<&'a [String]>,
     table: Option<Vec<Vec<Vec<Seg>>>>,
     heading: Option<HeadingLevel>,
     /// Inside an image: its alt text so far, and the link outside it.
@@ -302,6 +310,7 @@ impl Renderer<'_> {
         if let Some((_, code)) = &mut self.code {
             match event {
                 Event::Text(t) => code.push_str(&t),
+                Event::End(TagEnd::CodeBlock) if self.suggesting => self.end_suggestion(),
                 Event::End(TagEnd::CodeBlock) => self.end_code(),
                 _ => {}
             }
@@ -353,10 +362,14 @@ impl Renderer<'_> {
             }
             Tag::CodeBlock(kind) => {
                 self.flush();
-                let lang = match kind {
-                    CodeBlockKind::Fenced(info) => language_for_fence(&info),
+                let lang = match &kind {
+                    CodeBlockKind::Fenced(info) => language_for_fence(info),
                     CodeBlockKind::Indented => None,
                 };
+                self.suggesting = matches!(
+                    &kind,
+                    CodeBlockKind::Fenced(info) if info.split([',', ' ']).next() == Some("suggestion")
+                );
                 self.code = Some((lang, String::new()));
             }
             Tag::List(start) => {
@@ -501,6 +514,37 @@ impl Renderer<'_> {
         self.page_blank();
     }
 
+    /// A suggested change, as a small diff: the lines it replaces (when
+    /// they're known), then the lines it suggests.
+    fn end_suggestion(&mut self) {
+        let Some((_, code)) = self.code.take() else {
+            return;
+        };
+        self.suggesting = false;
+        let (indent, frame) = (self.indent, self.frame);
+        let line = |sign: &str, role: Role, text: &str, tone: Tone| PageLine {
+            segs: vec![
+                Seg::new(sign, role),
+                Seg::new(text, Role::Syntax(Syntax::Default)),
+            ],
+            tone,
+            frame,
+            indent,
+            right: Vec::new(),
+            fixed: 1,
+        };
+        let title = vec![Seg::new("Suggested change", Role::Meta)];
+        self.page.add(frame, indent, title, Vec::new());
+        for old in self.original.unwrap_or_default() {
+            self.page
+                .push(line("- ", Role::Removed, old, Tone::Removed));
+        }
+        for new in code.lines() {
+            self.page.push(line("+ ", Role::Added, new, Tone::Added));
+        }
+        self.page_blank();
+    }
+
     fn end_table(&mut self) {
         let Some(rows) = self.table.take() else {
             return;
@@ -598,6 +642,23 @@ fn decode_entities(s: &str) -> String {
 /// Renders `markdown` into `page`, inside a box when `frame` is
 /// [`Frame::Body`].
 pub fn render(page: &mut Page, markdown: &str, base: Option<&LinkBase>, frame: Frame) {
+    render_with(page, markdown, base, frame, None);
+}
+
+/// Renders a review comment into `page`: a suggested change in it shows
+/// as a diff of `original`, the lines it replaces (when known), and the
+/// lines it suggests.
+pub fn render_comment(page: &mut Page, markdown: &str, original: Option<&[String]>) {
+    render_with(page, markdown, None, Frame::None, original);
+}
+
+fn render_with(
+    page: &mut Page,
+    markdown: &str,
+    base: Option<&LinkBase>,
+    frame: Frame,
+    original: Option<&[String]>,
+) {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
@@ -614,6 +675,8 @@ pub fn render(page: &mut Page, markdown: &str, base: Option<&LinkBase>, frame: F
         pending_marker: None,
         quote_depth: 0,
         code: None,
+        suggesting: false,
+        original,
         table: None,
         heading: None,
         image: None,

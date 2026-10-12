@@ -73,6 +73,23 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
+/// Unix seconds as GitHub writes times: `2026-10-03T11:40:00Z`.
+pub fn iso8601(secs: u64) -> String {
+    let (days, rest) = (secs / 86_400, secs % 86_400);
+    // Days since 1970-01-01 to a date (Howard Hinnant's algorithm).
+    let z = i64::try_from(days).unwrap_or(0) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    let (hour, min, sec) = (rest / 3600, rest % 3600 / 60, rest % 60);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z")
+}
+
 /// "just now", "5m ago", "3h ago", "2d ago", "6w ago", "1y ago".
 pub fn ago(then: u64, now: u64) -> String {
     let secs = now.saturating_sub(then);
@@ -105,6 +122,18 @@ pub fn duration_iso(start: &str, end: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Written times read back as they were, across leap days.
+    #[test]
+    fn iso8601_round_trips() {
+        for t in [
+            "1970-01-01T00:00:00Z",
+            "2024-02-29T23:59:59Z",
+            "2026-10-12T08:14:13Z",
+        ] {
+            assert_eq!(parse_iso8601(t).map(iso8601).as_deref(), Some(t));
+        }
+    }
 
     /// Relative times at each boundary, on both sides of it.
     #[test]

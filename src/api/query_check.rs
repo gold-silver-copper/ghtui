@@ -313,6 +313,7 @@ macro_rules! typed {
 fn typed() -> Vec<(&'static str, String)> {
     use crate::api::browse as b;
     use crate::api::change as c;
+    use crate::api::edit as e;
     use crate::api::queries as q;
     typed! {
         Query q::RollupsQuery, q::NodesVariables;
@@ -352,12 +353,37 @@ fn typed() -> Vec<(&'static str, String)> {
         Mutation c::AddStar, c::IdVariables;
         Mutation c::RemoveStar, c::IdVariables;
         Mutation c::MergePr, c::MergeVariables;
+        Mutation c::EnableAutoMerge, c::MergeVariables;
+        Mutation c::DisableAutoMerge, c::IdVariables;
+        Mutation c::Enqueue, c::EnqueueVariables;
+        Mutation c::Dequeue, c::IdVariables;
         Mutation c::ClosePr, c::IdVariables;
         Mutation c::ReopenPr, c::IdVariables;
         Mutation c::CloseIssue, c::CloseIssueVariables;
         Mutation c::ReopenIssue, c::IdVariables;
         Mutation c::MarkReady, c::IdVariables;
         Mutation c::UpdateBranch, c::UpdateBranchVariables;
+        Query e::SidebarQuery, q::NumberVariables;
+        Query e::TeamsQuery, e::TeamsVariables;
+        Mutation e::UpdateIssueBody, e::BodyVariables;
+        Mutation e::UpdatePrBody, e::BodyVariables;
+        Mutation e::UpdateIssueComment, e::BodyVariables;
+        Mutation e::UpdateReviewComment, e::BodyVariables;
+        Mutation e::DeleteIssueComment, e::EditIdVariables;
+        Mutation e::DeleteReviewComment, e::EditIdVariables;
+        Mutation e::UpdateIssueTitle, e::TitleVariables;
+        Mutation e::UpdatePrTitle, e::TitleVariables;
+        Mutation e::AddReaction, e::ReactVariables;
+        Mutation e::RemoveReaction, e::ReactVariables;
+        Mutation e::AddLabels, e::AddVariables;
+        Mutation e::RemoveLabels, e::RemoveVariables;
+        Mutation e::AddAssignees, e::AddVariables;
+        Mutation e::RemoveAssignees, e::RemoveVariables;
+        Mutation e::RequestReviews, e::ReviewersVariables;
+        Mutation e::SetIssueMilestone, e::MilestoneVariables;
+        Mutation e::SetPrMilestone, e::MilestoneVariables;
+        Mutation crate::api::create::CreateIssue, crate::api::create::CreateIssueVariables;
+        Mutation crate::api::create::CreatePr, crate::api::create::CreatePrVariables;
     }
 }
 
@@ -436,6 +462,8 @@ fn every_query_is_checked() {
         include_str!("queries.rs"),
         include_str!("browse.rs"),
         include_str!("change.rs"),
+        include_str!("edit.rs"),
+        include_str!("create.rs"),
     ]
     .concat();
     let operations = source.matches("graphql_type = \"Query\"").count()

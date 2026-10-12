@@ -22,3 +22,12 @@ pub fn chip<'a>(ctx: Ctx<'_>, text: impl Into<String>, style: Style, parent: Bg)
         _ => vec![Span::styled(format!(" {text} "), style)],
     }
 }
+
+/// A reaction's chip: the ones you gave stand out, as on the website.
+pub fn reaction_fill(mine: bool) -> Bg {
+    if mine {
+        Bg::PrimaryContainer
+    } else {
+        Bg::ContainerHighest
+    }
+}

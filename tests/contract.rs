@@ -26,8 +26,12 @@ use ghtui::store::Store;
 use serde_json::{Value, json};
 
 fn github() -> Option<GitHub> {
-    let (token, _) = ghtui::api::auth::resolve_token().ok()?;
-    Some(GitHub::new(token, Store::disabled()))
+    let (token, _) = ghtui::api::auth::resolve_token(ghtui::host::Host::GITHUB_COM).ok()?;
+    Some(GitHub::new(
+        token,
+        Store::disabled(),
+        ghtui::host::Host::GITHUB_COM,
+    ))
 }
 
 /// The client, or a quiet pass without a token.

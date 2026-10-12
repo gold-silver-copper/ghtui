@@ -1,0 +1,419 @@
+//! Keys on pages: moving, scrolling, following links, cancelling.
+
+use super::*;
+
+/// Actions on a page screen. Those that don't work on pages say where
+/// they do.
+#[must_use]
+pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
+    let height = state.page_height();
+    let Screen::Page(p) = state.screen_mut() else {
+        return Vec::new();
+    };
+    let half = (height / 2).max(1).cast_signed();
+    let page = height.saturating_sub(2).max(1).cast_signed();
+    match action {
+        Action::Down => step(p, height, true),
+        Action::Up => step(p, height, false),
+        Action::HalfPageDown => scroll_keep(p, half, height),
+        Action::HalfPageUp => scroll_keep(p, -half, height),
+        Action::PageDown => scroll_keep(p, page, height),
+        Action::PageUp => scroll_keep(p, -page, height),
+        // The first or last row on screen there: a note (an empty Home
+        // section's) isn't one.
+        Action::Top => {
+            scroll_by(p, isize::MIN, height);
+            let n = p.page.items.len();
+            p.selected = (0..n).find(|&i| is_row(p, i) && visible(p, i, height));
+        }
+        Action::Bottom => {
+            scroll_by(p, isize::MAX, height);
+            let n = p.page.items.len();
+            p.selected = (0..n)
+                .rev()
+                .find(|&i| is_row(p, i) && visible(p, i, height));
+        }
+        // A file's line is this page: say what you can do with it.
+        Action::Open if matches!(p.route, Route::Blob { .. }) && p.selected.is_some() => {
+            let line = p.selected.and_then(|i| p.line_of(i)).unwrap_or(1);
+            let (copy, blame) = (
+                state.first_key(Action::Copy),
+                state.first_key(Action::Blame),
+            );
+            state.info(format!(
+                "Line {line} · {copy} copies its link · {blame} blames it"
+            ));
+        }
+        // So is a line of a job's log.
+        Action::Open if matches!(p.route, Route::Job { .. }) && p.code_line().is_some() => {
+            let at = match p.selected_link().and_then(Link::url).map(Dest::from_url) {
+                Some(Dest {
+                    target:
+                        Target::Page(Route::Job {
+                            step: Some((step, line)),
+                            ..
+                        }),
+                    ..
+                }) => format!("Line {line} of step {step}"),
+                _ => "A line of the log".to_owned(),
+            };
+            let (copy, word) = (
+                state.first_key(Action::Copy),
+                state.first_key(Action::SearchWord),
+            );
+            state.info(format!(
+                "{at} · {copy} copies its link · {word} searches the word under the cursor"
+            ));
+        }
+        Action::Open => {
+            return match p.selected_link().cloned() {
+                Some(link) => state.follow(&link),
+                None => {
+                    let (down, hints) = (
+                        state.first_key(Action::Down),
+                        state.first_key(Action::Hints),
+                    );
+                    state.info(format!(
+                        "Nothing selected: {down} selects a row, {hints} picks any link"
+                    ));
+                    Vec::new()
+                }
+            };
+        }
+        Action::Hints | Action::HintsBrowser => {
+            start_hints(state, action == Action::HintsBrowser);
+        }
+        Action::SearchNext | Action::SearchPrev => {
+            let next = action == Action::SearchNext;
+            match step_mark(p, next) {
+                Some((n, of)) => state.info(format!("Match {n} of {of}")),
+                None if p.page.marks.is_empty() => {
+                    let query = match &p.route {
+                        Route::Job { query, .. } => Some(query.clone()),
+                        _ => p.find.clone(),
+                    };
+                    let search = state.first_key(Action::Search);
+                    state.info(match query.filter(|q| !q.is_empty()) {
+                        Some(q) => format!("No matches for “{q}”"),
+                        None => format!("No search yet: {search} searches here"),
+                    });
+                }
+                None => state.info(if next {
+                    "No later match"
+                } else {
+                    "No earlier match"
+                }),
+            }
+        }
+        Action::NextItem | Action::PrevItem => {
+            p.fresh = false;
+            let n = p.page.items.len();
+            let next = match p.selected {
+                Some(i) if action == Action::NextItem => (i + 1 < n).then_some(i + 1),
+                Some(i) => i.checked_sub(1),
+                None if action == Action::NextItem => {
+                    (0..n).find(|&i| p.page.items.get(i).is_some_and(|it| it.start >= p.scroll))
+                }
+                None => (0..n).rev().find(|&i| {
+                    p.page
+                        .items
+                        .get(i)
+                        .is_some_and(|it| it.start < p.scroll + height)
+                }),
+            };
+            match next {
+                Some(i) => {
+                    p.selected = Some(i);
+                    if let Some(item) = p.page.items.get(i) {
+                        p.scroll = item.start.saturating_sub(MARGIN).min(max_scroll(p, height));
+                    }
+                }
+                None => state.info("No more here"),
+            }
+        }
+        Action::NextSection | Action::PrevSection => {
+            let at = (p.selected.and_then(|i| p.page.items.get(i))).map_or(p.scroll, |it| it.start);
+            let sections = p.page.sections();
+            let to = if action == Action::NextSection {
+                sections.iter().find(|&&s| s > at)
+            } else {
+                sections.iter().rev().find(|&&s| s < at)
+            };
+            let before = (p.scroll, p.selected);
+            if let Some(line) = to.copied() {
+                p.fresh = false;
+                p.scroll = line.saturating_sub(MARGIN).min(max_scroll(p, height));
+                // Its first row, if it has one before the next section.
+                let end = sections.iter().find(|&&s| s > line).copied();
+                let n = p.page.items.len();
+                p.selected = (0..n).find(|&i| {
+                    let start = p.page.items.get(i).map_or(0, |it| it.start);
+                    start >= line
+                        && end.is_none_or(|e| start < e)
+                        && is_row(p, i)
+                        && visible(p, i, height)
+                });
+            }
+            if (p.scroll, p.selected) == before {
+                state.info(if action == Action::NextSection {
+                    "No more sections below"
+                } else {
+                    "No more sections above"
+                });
+            }
+        }
+        Action::ScreenTop | Action::ScreenMiddle | Action::ScreenBottom => {
+            let shown: Vec<usize> = (0..p.page.items.len())
+                .filter(|&i| is_row(p, i) && visible(p, i, height))
+                .collect();
+            let middle = p.scroll + height / 2;
+            let pick = match action {
+                Action::ScreenTop => shown.first(),
+                Action::ScreenBottom => shown.last(),
+                _ => shown.iter().min_by_key(|&&i| {
+                    p.page
+                        .items
+                        .get(i)
+                        .map_or(usize::MAX, |it| it.start.abs_diff(middle))
+                }),
+            };
+            match pick.copied() {
+                Some(i) if p.selected == Some(i) => state.info("Already there"),
+                Some(i) => {
+                    p.fresh = false;
+                    p.selected = Some(i);
+                }
+                None => state.info("Nothing to select on screen"),
+            }
+        }
+        Action::ScrollDown
+        | Action::ScrollUp
+        | Action::ScrollCenter
+        | Action::ScrollTop
+        | Action::ScrollBottom
+        | Action::ScrollLeft
+        | Action::ScrollRight => {
+            let before = (p.scroll, p.shift);
+            scroll_view(p, action, height);
+            if (p.scroll, p.shift) == before {
+                let why = match action {
+                    Action::ScrollLeft => "Already at the left edge",
+                    Action::ScrollRight if p.page.wide() == 0 => {
+                        "Nothing here is wider than the screen"
+                    }
+                    Action::ScrollRight => "Already at the right edge",
+                    _ if p.page.height() <= height => "It all fits on the screen",
+                    _ => "Already there",
+                };
+                state.info(why);
+            }
+        }
+        Action::WordNext | Action::WordPrev => {
+            let forward = action == Action::WordNext;
+            let Some((_, code, room)) = p.code_line() else {
+                let down = state.first_key(Action::Down);
+                state.info(format!(
+                    "Words are a line of code's: {down} moves to a line of a file or a log"
+                ));
+                return Vec::new();
+            };
+            match text::step_word(&code, p.word, forward) {
+                Some(word) => {
+                    p.word = Some(word.cols.start);
+                    p.shift = text::reveal(p.shift, &word.cols, room);
+                }
+                None if forward => state.info("No more words on this line"),
+                None => state.info("No earlier word on this line"),
+            }
+        }
+        Action::Blame => {
+            let line = p.selected.and_then(|i| p.line_of(i));
+            let lines = line.map(|n| (n, n));
+            let route = match p.route.clone() {
+                Route::Blob {
+                    repo, rev, path, ..
+                } => Route::Blame {
+                    repo,
+                    rev,
+                    path,
+                    lines,
+                },
+                Route::Blame {
+                    repo, rev, path, ..
+                } => Route::Blob {
+                    repo,
+                    rev,
+                    path,
+                    lines,
+                },
+                _ => {
+                    state.info(action.not_here());
+                    return Vec::new();
+                }
+            };
+            return state.push(route);
+        }
+        Action::VisualLines if matches!(p.route, Route::Blob { .. }) => {
+            let (range, what) = match p.range {
+                Some(_) => (None, "Selection cleared"),
+                None => (p.selected, "Selecting lines · y copies their link"),
+            };
+            p.range = range;
+            p.fresh = false;
+            state.info(what);
+        }
+        Action::NextCommit | Action::PrevCommit => {
+            let Route::Commit {
+                repo,
+                oid,
+                pr: Some(number),
+            } = p.route.clone()
+            else {
+                state.info(
+                    "Next and previous commits are a pull request's: open one from its Commits tab",
+                );
+                return Vec::new();
+            };
+            let at = state.pr_commit_at(&repo, number, &oid);
+            let to = match &at {
+                Some(at) if action == Action::NextCommit => at.next.clone(),
+                Some(at) => at.previous.clone(),
+                None => None,
+            };
+            return match (to, at) {
+                (Some(url), _) => state.go(Dest::from_url(&url)),
+                (None, Some(_)) => {
+                    state.info(if action == Action::NextCommit {
+                        "This is the newest commit"
+                    } else {
+                        "No earlier commit here"
+                    });
+                    Vec::new()
+                }
+                (None, None) => {
+                    state.info("The pull request's commits haven't loaded yet");
+                    Vec::new()
+                }
+            };
+        }
+        _ if crate::projects::ACTIONS.contains(&action) => {
+            return crate::projects::act(state, action);
+        }
+        Action::Star => return star(state),
+        Action::Comment => return comment_with(state, "", None),
+        Action::QuoteReply => return quote_reply(state),
+        Action::Branch => return state.open_finder(true),
+        Action::ToggleState => return cycle_state(state),
+        Action::Sort => return cycle_sort(state),
+        Action::SaveSection
+        | Action::RenameSection
+        | Action::MoveSectionUp
+        | Action::MoveSectionDown
+        | Action::Delete
+        | Action::UndoDelete => return crate::home::act(state, action),
+        _ => state.info(action.not_here()),
+    }
+    Vec::new()
+}
+
+/// Columns `h`/`l` scroll code sideways.
+pub(super) const SHIFT: usize = 8;
+
+/// `ctrl-e` `ctrl-y`, `zz` `zt` `zb`, `h` `l`: the view moves, the
+/// selection stays.
+pub(super) fn scroll_view(p: &mut PageScreen, action: Action, height: usize) {
+    let at = p
+        .selected
+        .and_then(|i| p.page.items.get(i))
+        .map_or(p.scroll, |it| it.start);
+    match action {
+        Action::ScrollDown => scroll_by(p, 1, height),
+        Action::ScrollUp => scroll_by(p, -1, height),
+        Action::ScrollTop => p.scroll = at.min(max_scroll(p, height)),
+        Action::ScrollBottom => {
+            p.scroll = (at + 1).saturating_sub(height).min(max_scroll(p, height));
+        }
+        Action::ScrollCenter => p.scroll = at.saturating_sub(height / 2).min(max_scroll(p, height)),
+        Action::ScrollLeft => p.shift = p.shift.saturating_sub(SHIFT),
+        _ => p.shift = p.shift.saturating_add(SHIFT).min(p.page.wide()),
+    }
+}
+
+pub(super) fn max_scroll(p: &PageScreen, height: usize) -> usize {
+    p.page.height().saturating_sub(height)
+}
+
+/// A count before `gg`: that line of a file, else that row.
+#[must_use]
+pub fn go_to_line(state: &mut State, n: usize) -> Vec<Cmd> {
+    let height = state.page_height();
+    // In the diff: that line of the file the cursor is in.
+    if let Some((screen, diff)) = state.diff_parts() {
+        // In its file tree, that row.
+        if screen.focus == Pane::Tree {
+            crate::diff_screen::select_tree_row(screen, diff, n.saturating_sub(1));
+            return Vec::new();
+        }
+        let line = u32::try_from(n).unwrap_or(u32::MAX);
+        let line = crate::diff::anchor::LinePos {
+            side: Side::Right,
+            line,
+        };
+        match diff.doc.line_row(screen.cursor.file, line) {
+            Some(pos) => screen.cursor = pos,
+            None => state.info(format!("There's no line {n} here")),
+        }
+        return Vec::new();
+    }
+    let Screen::Page(p) = state.screen_mut() else {
+        return Vec::new();
+    };
+    let item = match p.page.numbered.get(n.saturating_sub(1)) {
+        Some(&item) => Some(item),
+        None if p.page.numbered.is_empty() => n.checked_sub(1).filter(|&i| i < p.page.items.len()),
+        None => None,
+    };
+    match item {
+        Some(i) => {
+            p.fresh = false;
+            p.selected = Some(i);
+            if let Some(it) = p.page.items.get(i) {
+                p.scroll = it
+                    .start
+                    .saturating_sub(height / 2)
+                    .min(max_scroll(p, height));
+            }
+        }
+        None => state.info(format!("There's no line {n} here")),
+    }
+    Vec::new()
+}
+
+/// `gx`: the link under the cursor (a web address in the word under it,
+/// else the selected row's), in the browser.
+#[must_use]
+pub fn open_link(state: &mut State) -> Vec<Cmd> {
+    match state.link_under_cursor() {
+        Some(url) => state.go(Target::External(url).into()),
+        None => {
+            state.info("No link under the cursor");
+            Vec::new()
+        }
+    }
+}
+
+/// Esc on a page: ends a search on it or a selection of lines.
+pub fn cancel(state: &mut State) {
+    if let Screen::Page(p) = state.screen_mut() {
+        if p.range.take().is_some() {
+            state.info("Selection cleared");
+            return;
+        }
+        if p.find.is_some() {
+            find(state, "", true);
+            return;
+        }
+    }
+    let back = state.first_key(Action::Back);
+    state.info(format!("Nothing to cancel · {back} goes back"));
+}

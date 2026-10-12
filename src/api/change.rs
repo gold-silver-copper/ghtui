@@ -6,7 +6,8 @@ use crate::schema::schema;
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{NodeId, RepoId};
 use crate::api::queries::{
-    AddCommentPayload, CloseIssuePayload, ClosePrPayload, GitObjectId, MergePayload, ReadyPayload,
+    AddCommentPayload, AutoMergePayload, CloseIssuePayload, ClosePrPayload, DequeuePayload,
+    EnqueuePayload, GitObjectId, MergePayload, NoAutoMergePayload, ReadyPayload,
     ReopenIssuePayload, ReopenPrPayload, StarPayload, UnstarPayload, UpdateBranchPayload,
 };
 
@@ -33,6 +34,25 @@ pub enum Change {
         pr: NodeId,
         method: MergeMethod,
         head: String,
+    },
+    /// Merge a pull request once every requirement is met (with a merge
+    /// queue, add it to the queue then), if its head is still `head`.
+    EnableAutoMerge {
+        pr: NodeId,
+        method: MergeMethod,
+        head: String,
+    },
+    DisableAutoMerge {
+        pr: NodeId,
+    },
+    /// Add a pull request to its base branch's merge queue, if its head
+    /// is still `head`.
+    Enqueue {
+        pr: NodeId,
+        head: String,
+    },
+    Dequeue {
+        pr: NodeId,
     },
     /// Close (`open: false`) or reopen a pull request.
     SetPrOpen {
@@ -77,6 +97,28 @@ pub enum Change {
     /// Mark a notification's thread done: out of the inbox.
     MarkDone {
         thread: String,
+    },
+    /// Mark read every notification updated by `last_read_at`: all of
+    /// them, or one repository's.
+    MarkAllRead {
+        repo: Option<RepoId>,
+        last_read_at: String,
+    },
+    /// Mark each of these threads read, or done.
+    MarkEach {
+        threads: Vec<String>,
+        done: bool,
+    },
+    /// Edit a comment, a title, a reaction or a sidebar.
+    Edit(crate::api::edit::Edit),
+    /// Set a project item's field to a value, or clear it (`None`); `said`
+    /// is what it sets, as people say it ("Status to Done").
+    SetProjectField {
+        project: NodeId,
+        item: NodeId,
+        field: NodeId,
+        value: Option<crate::api::project::FieldValue>,
+        said: String,
     },
 }
 
@@ -153,6 +195,29 @@ impl GitHub {
                 });
                 self.mutate(op).await.map(drop)
             }
+            Change::EnableAutoMerge { pr, method, head } => {
+                let op = EnableAutoMerge::build(MergeVariables {
+                    pr: pr.gql(),
+                    method: *method,
+                    head: GitObjectId(head.clone()),
+                });
+                self.mutate(op).await.map(drop)
+            }
+            Change::DisableAutoMerge { pr } => {
+                let op = DisableAutoMerge::build(IdVariables { id: pr.gql() });
+                self.mutate(op).await.map(drop)
+            }
+            Change::Enqueue { pr, head } => {
+                let op = Enqueue::build(EnqueueVariables {
+                    pr: pr.gql(),
+                    head: GitObjectId(head.clone()),
+                });
+                self.mutate(op).await.map(drop)
+            }
+            Change::Dequeue { pr } => {
+                let op = Dequeue::build(IdVariables { id: pr.gql() });
+                self.mutate(op).await.map(drop)
+            }
             Change::SetPrOpen { pr, open } => {
                 let vars = IdVariables { id: pr.gql() };
                 if *open {
@@ -201,6 +266,7 @@ impl GitHub {
                 self.rest_write(
                     http::Method::POST,
                     &format!("/repos/{repo}/actions/runs/{run}/{what}"),
+                    None,
                 )
                 .await
             }
@@ -208,6 +274,7 @@ impl GitHub {
                 self.rest_write(
                     http::Method::POST,
                     &format!("/repos/{repo}/actions/jobs/{job}/rerun"),
+                    None,
                 )
                 .await
             }
@@ -215,18 +282,58 @@ impl GitHub {
                 self.rest_write(
                     http::Method::POST,
                     &format!("/repos/{repo}/actions/runs/{run}/cancel"),
+                    None,
                 )
                 .await
             }
-            Change::MarkRead { thread } => {
-                let path = format!("/notifications/threads/{thread}");
-                self.rest_write(http::Method::PATCH, &path).await
+            Change::MarkRead { thread } => self.mark(thread, false).await,
+            Change::MarkDone { thread } => self.mark(thread, true).await,
+            Change::MarkAllRead { repo, last_read_at } => {
+                let path = match repo {
+                    Some(repo) => format!("/repos/{repo}/notifications"),
+                    None => "/notifications".to_owned(),
+                };
+                let body = serde_json::json!({ "last_read_at": last_read_at, "read": true });
+                self.rest_write(http::Method::PUT, &path, Some(&body)).await
             }
-            Change::MarkDone { thread } => {
-                let path = format!("/notifications/threads/{thread}");
-                self.rest_write(http::Method::DELETE, &path).await
+            // GitHub marks threads done one at a time.
+            Change::MarkEach { threads, done } => {
+                for (n, thread) in threads.iter().enumerate() {
+                    self.mark(thread, *done).await.map_err(|err| match err {
+                        ApiError::Http { status, message } if n > 0 => ApiError::Http {
+                            status,
+                            message: format!("{message} (after {n} of {})", threads.len()),
+                        },
+                        err => err,
+                    })?;
+                }
+                Ok(())
+            }
+            Change::Edit(edit) => self.edit(edit).await,
+            Change::SetProjectField {
+                project,
+                item,
+                field,
+                value,
+                ..
+            } => {
+                self.set_project_field(project, item, field, value.as_ref())
+                    .await
             }
         }
+    }
+}
+
+impl GitHub {
+    /// Marks a notification's thread read, or done.
+    async fn mark(&self, thread: &str, done: bool) -> Result<(), ApiError> {
+        let path = format!("/notifications/threads/{thread}");
+        let method = if done {
+            http::Method::DELETE
+        } else {
+            http::Method::PATCH
+        };
+        self.rest_write(method, &path, None).await
     }
 }
 
@@ -290,6 +397,56 @@ pub struct MergeVariables {
 pub struct MergePr {
     #[arguments(input: { pullRequestId: $pr, mergeMethod: $method, expectedHeadOid: $head })]
     pub merge_pull_request: Option<MergePayload>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "MergeVariables"
+)]
+pub struct EnableAutoMerge {
+    #[arguments(input: { pullRequestId: $pr, mergeMethod: $method, expectedHeadOid: $head })]
+    pub enable_pull_request_auto_merge: Option<AutoMergePayload>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "IdVariables"
+)]
+pub struct DisableAutoMerge {
+    #[arguments(input: { pullRequestId: $id })]
+    pub disable_pull_request_auto_merge: Option<NoAutoMergePayload>,
+}
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct EnqueueVariables {
+    pub pr: cynic::Id,
+    pub head: GitObjectId,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "EnqueueVariables"
+)]
+pub struct Enqueue {
+    #[arguments(input: { pullRequestId: $pr, expectedHeadOid: $head })]
+    pub enqueue_pull_request: Option<EnqueuePayload>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "IdVariables"
+)]
+pub struct Dequeue {
+    #[arguments(input: { id: $id })]
+    pub dequeue_pull_request: Option<DequeuePayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]

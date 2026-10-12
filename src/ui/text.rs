@@ -147,7 +147,7 @@ pub fn words(line: &str) -> Vec<Word> {
         // Blank, an identifier's, or punctuation's.
         let class = (g.chars().next())
             .filter(|c| !c.is_whitespace() && !is_hidden(*c))
-            .map(|c| c.is_alphanumeric() || c == '_');
+            .map(is_ident);
         let (end, to) = (byte + g.len(), col + w);
         match (class, out.last_mut()) {
             (Some(_), Some(word)) if class == last => (word.bytes.end, word.cols.end) = (end, to),
@@ -198,6 +198,50 @@ pub fn reveal(shift: usize, cols: &Range<usize>, room: usize) -> usize {
     } else {
         shift
     }
+}
+
+/// Whether `c` is part of an identifier, as [`words`] splits them.
+fn is_ident(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// `word` as `*` and `#` search it: a whole word, between vim's `\<` and
+/// `\>` where its ends are an identifier's.
+pub fn whole_word(word: &str) -> String {
+    let start = if word.starts_with(is_ident) {
+        "\\<"
+    } else {
+        ""
+    };
+    let end = if word.ends_with(is_ident) { "\\>" } else { "" };
+    format!("{start}{word}{end}")
+}
+
+/// Where `query` is in `hay`, by bytes. Behind vim's `\<` it only starts
+/// a word, and before `\>` only ends one: `\<io\>` isn't in `ioctl`.
+pub fn hits<'a>(hay: &'a str, query: &'a str) -> impl Iterator<Item = Range<usize>> + 'a {
+    let (start, needle) = match query.strip_prefix("\\<") {
+        Some(rest) => (true, rest),
+        None => (false, query),
+    };
+    let (end, needle) = match needle.strip_suffix("\\>") {
+        Some(rest) => (true, rest),
+        None => (false, needle),
+    };
+    let at_edge = move |r: &Range<usize>| {
+        let before = hay.get(..r.start).and_then(|s| s.chars().next_back());
+        let after = hay.get(r.end..).and_then(|s| s.chars().next());
+        !(start && before.is_some_and(is_ident)) && !(end && after.is_some_and(is_ident))
+    };
+    (hay.match_indices(needle))
+        .filter(move |_| !needle.is_empty())
+        .map(|(at, m)| at..at + m.len())
+        .filter(at_edge)
+}
+
+/// Whether `query` is in `hay`, as [`hits`] finds it.
+pub fn has(hay: &str, query: &str) -> bool {
+    hits(hay, query).next().is_some()
 }
 
 /// The web address in `line` that bytes `at` are part of: from `http://`
@@ -276,6 +320,19 @@ mod tests {
         assert_eq!(url_at(line, &(1..4)), None);
         assert_eq!(step_word(line, Some(5), true).unwrap().cols, 8..11);
         assert_eq!(step_word(line, Some(5), false), None);
+    }
+
+    /// `*` searches a whole word: not inside a longer one.
+    #[test]
+    fn whole_words_match_only_whole() {
+        let io = whole_word("io");
+        assert_eq!(io, "\\<io\\>");
+        let found = |hay| hits(hay, &io).collect::<Vec<_>>();
+        assert_eq!(found("use std::io;").first(), Some(&(9..11)));
+        assert!(found("ioctl(fd); ratio").is_empty());
+        assert!(has("ratio", "io"), "a plain search still finds it inside");
+        assert_eq!(whole_word("->"), "->", "punctuation has no word edges");
+        assert!(has("a->b", &whole_word("->")));
     }
 
     #[test]

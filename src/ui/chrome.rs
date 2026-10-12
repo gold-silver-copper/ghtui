@@ -135,10 +135,11 @@ impl Widget for Header<'_> {
         Span::styled(LOGO, theme.accent(BAR).add_modifier(Modifier::BOLD)).render(lay.logo, buf);
         for (i, (c, r)) in self.crumbs.iter().zip(&lay.crumbs).enumerate() {
             if i > 0 {
-                let sep = c.sep();
+                // A crumb with no room left is an ellipsis after the last.
+                let sep = if r.width == 0 { " …" } else { c.sep() };
                 put(
                     buf,
-                    r.x.saturating_sub(cols(sep.len())),
+                    r.x.saturating_sub(cols(c.sep().len())),
                     r.y,
                     sep,
                     theme.meta(BAR),

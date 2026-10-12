@@ -27,6 +27,8 @@ pub struct ComposeSheet<'a> {
     pub sending: bool,
     /// What `ctrl-s` does: "post reply", "add to review"…
     pub save: &'a str,
+    /// What an `@` or `#` being typed can be, and the one selected.
+    pub completions: Option<(&'a [String], usize)>,
 }
 
 /// Rows a suggestion's preview of `lines` lines takes.
@@ -80,6 +82,7 @@ impl Widget for ComposeSheet<'_> {
             ..inner
         };
         self.input.render(input_area, buf);
+        let completions = self.completions.zip(cursor_in(theme, input_area, buf));
         y = y.saturating_add(input_rows).saturating_add(1);
 
         if let Some((start, original, suggested)) = self.preview {
@@ -127,6 +130,58 @@ impl Widget for ComposeSheet<'_> {
                 ("esc", "cancel"),
             ],
         );
+        if let Some(((choices, selected), at)) = completions {
+            completion_list(theme, choices, selected, at, buf);
+        }
+    }
+}
+
+/// Where the text box in `area` shows its cursor: the cell in its
+/// cursor's style (the box keeps where it's scrolled to itself).
+fn cursor_in(theme: &Theme, area: Rect, buf: &Buffer) -> Option<(u16, u16)> {
+    let cursor = theme.fill(Bg::Primary).bg;
+    area.rows()
+        .flat_map(Rect::columns)
+        .find(|p| buf.cell(*p).is_some_and(|c| Some(c.bg) == cursor))
+        .map(|p| (p.x, p.y))
+}
+
+/// The comment box's completion list, just under the cursor at `at` (or
+/// over it, without room below).
+fn completion_list(
+    theme: &Theme,
+    choices: &[String],
+    selected: usize,
+    (x, y): (u16, u16),
+    buf: &mut Buffer,
+) {
+    const LIST: Bg = Bg::ContainerHighest;
+    let screen = buf.area;
+    let widest = choices.iter().map(|c| text::width(c)).max().unwrap_or(0);
+    let width = cols(widest.saturating_add(2)).min(56).min(screen.width);
+    let height = cols(choices.len());
+    let below = y.saturating_add(1);
+    let top = if below.saturating_add(height) <= screen.bottom() {
+        below
+    } else {
+        y.saturating_sub(height)
+    };
+    let left = x.min(screen.right().saturating_sub(width));
+    for (i, choice) in choices.iter().enumerate() {
+        let bg = if i == selected {
+            Bg::SecondaryContainer
+        } else {
+            LIST
+        };
+        let row = Rect {
+            x: left,
+            y: top.saturating_add(cols(i)),
+            width,
+            height: 1,
+        };
+        fill(buf, row, theme, bg);
+        let shown = text::truncate(choice, usize::from(width.saturating_sub(2)));
+        Span::styled(format!(" {shown}"), theme.body(bg)).render(row, buf);
     }
 }
 

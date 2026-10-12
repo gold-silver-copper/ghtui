@@ -18,6 +18,6 @@ use ghtui::store::Store;
 #[tokio::test]
 async fn the_recorded_corpus_decodes_and_adds_up() {
     let base = common::replay(common::corpus_dir()).await;
-    let gh = GitHub::with_base_uri(Token::new("t"), Store::disabled(), Some(&base));
+    let gh = GitHub::with_base_uri(Token::new("t"), Store::disabled(), &base);
     common::run(&gh).await;
 }

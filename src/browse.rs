@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckOutcome, Checks, CommitDetail, CommitInfo, Comparison,
@@ -13,7 +13,8 @@ use crate::api::browse::{
     Workflow, WorkflowRun,
 };
 use crate::api::model::{PrRef, RepoId};
-use crate::api::notifications::Notification;
+use crate::api::notifications::Inbox;
+use crate::api::project::{Project, ProjectRef, ProjectSummary, ProjectsOf};
 use crate::ui::Fetched;
 use crate::ui::page::{Page, PageLine, Role, Seg};
 use crate::ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
@@ -98,6 +99,13 @@ pub enum DataKey {
     /// Your notifications, filtered as the inbox filters them
     /// ([`InboxFilter`](crate::api::notifications::InboxFilter)).
     Notifications(String),
+    /// An issue's or pull request's sidebar, with what can go there.
+    Sidebar(RepoId, u64),
+    /// What a new issue or pull request in a repository can have.
+    NewForm(RepoId),
+    Projects(ProjectsOf),
+    /// A project at a view (its first, if none is named).
+    Project(ProjectRef, Option<u64>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,7 +157,11 @@ pub enum Data {
     Deployments(Box<DeploymentList>),
     Milestones(Box<MilestoneList>),
     Milestone(Box<MilestoneDetail>),
-    Notifications(Box<Results<Notification>>),
+    Notifications(Box<Inbox>),
+    Sidebar(Box<crate::api::edit::Sidebar>),
+    NewForm(Box<crate::api::create::NewForm>),
+    Projects(Box<Results<ProjectSummary>>),
+    Project(Box<Project>),
 }
 
 impl Data {
@@ -187,7 +199,9 @@ impl Data {
             Data::Milestones(m) => m.results.next.as_deref(),
             Data::Milestone(m) => m.items.next.as_deref(),
             Data::Advisories(r) => r.next.as_deref(),
-            Data::Notifications(r) => r.next.as_deref(),
+            Data::Notifications(i) => i.list.next.as_deref(),
+            Data::Projects(r) => r.next.as_deref(),
+            Data::Project(p) => p.items.next.as_deref(),
             _ => None,
         }
     }
@@ -220,7 +234,13 @@ impl Data {
                 extend(&mut a.items, b.items, |i| (i.repo.clone(), i.number));
             }
             (Data::Advisories(a), Data::Advisories(b)) => extend(a, *b, |a| a.ghsa.clone()),
-            (Data::Notifications(a), Data::Notifications(b)) => extend(a, *b, |n| n.id.clone()),
+            (Data::Notifications(a), Data::Notifications(b)) => {
+                extend(&mut a.list, b.list, |n| n.id.clone());
+                a.searched += b.searched;
+                a.cut = b.cut;
+            }
+            (Data::Projects(a), Data::Projects(b)) => extend(a, *b, |p| p.number),
+            (Data::Project(a), Data::Project(b)) => extend(&mut a.items, b.items, |i| i.id.clone()),
             _ => {}
         }
     }
@@ -266,6 +286,10 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Milestone { repo, number } => Some(DataKey::Milestone(repo.clone(), *number)),
         Route::Advisories(repo) => Some(DataKey::Advisories(repo.clone())),
         Route::Notifications { query } => Some(DataKey::Notifications(query.clone())),
+        Route::Projects(of) => Some(DataKey::Projects(of.clone())),
+        Route::Project { project, view } | Route::ProjectItem { project, view, .. } => {
+            Some(DataKey::Project(project.clone(), *view))
+        }
         _ => route
             .search()
             .map(|(kind, query)| DataKey::Search(kind, query)),
@@ -347,13 +371,21 @@ pub fn needs(route: &Route) -> Vec<Need> {
             };
             repo.iter().map(header).chain([Need::Data(own)]).collect()
         }
-        Route::Gists(_) | Route::Teams(_) | Route::Notifications { .. } => {
+        Route::Gists(_)
+        | Route::Teams(_)
+        | Route::Notifications { .. }
+        | Route::Project { .. }
+        | Route::ProjectItem { .. }
+        | Route::Projects(ProjectsOf::Owner(_)) => {
             paged(route).map(Need::Data).into_iter().collect()
         }
         Route::Team { org, slug } => vec![Need::Data(K::Team(org.to_lowercase(), slug.clone()))],
         Route::Gist { id, .. } => vec![Need::Data(K::Gist(id.clone()))],
         Route::Issue { repo, number } => {
             vec![header(repo), Need::Data(K::Issue(repo.clone(), *number))]
+        }
+        Route::NewIssue(repo) | Route::NewPr(repo) => {
+            vec![header(repo), Need::Data(K::NewForm(repo.clone()))]
         }
         Route::Pr {
             pr,
@@ -411,7 +443,8 @@ pub fn needs(route: &Route) -> Vec<Need> {
         | Route::Compare { repo, .. }
         | Route::Deployments { repo, .. }
         | Route::Milestones { repo, .. }
-        | Route::Milestone { repo, .. } => std::iter::once(header(repo))
+        | Route::Milestone { repo, .. }
+        | Route::Projects(ProjectsOf::Repo(repo)) => std::iter::once(header(repo))
             .chain(paged(route).map(Need::Data))
             .collect(),
         Route::Commit { repo, oid, pr } => {
@@ -478,7 +511,9 @@ picked!(
     Teams => Results<TeamSummary>, Team => TeamDetail, Gist => Gist,
     Gists => Results<GistSummary>, Blame => Blame, Compare => Comparison,
     Deployments => DeploymentList, Milestones => MilestoneList, Milestone => MilestoneDetail,
-    Notifications => Results<Notification>,
+    Notifications => Inbox, Sidebar => crate::api::edit::Sidebar,
+    NewForm => crate::api::create::NewForm,
+    Projects => Results<ProjectSummary>, Project => Project,
 );
 
 /// A page's needs as the page shows them, failing with the key that
@@ -634,6 +669,9 @@ impl State {
             | Route::Discussion { .. }
             | Route::Release { .. }
             | Route::Advisory { .. }
+            | Route::NewIssue(_)
+            | Route::NewPr(_)
+            | Route::ProjectItem { .. }
             | Route::Pr {
                 tab: PrTab::Review, ..
             } => Page::new(reading),
@@ -649,6 +687,7 @@ impl State {
             | Route::Blame { .. }
             | Route::Branches(_)
             | Route::Tags(_)
+            | Route::Project { .. }
             | Route::Deployments { .. } => Page::new(width),
             _ => Page::new(lists),
         };
@@ -790,10 +829,13 @@ impl State {
             }
             Route::Pr { pr, tab } => {
                 let activity = f.get(&DataKey::PrActivity(pr.clone()));
+                let watch = crate::live::fresh(self, pr);
+                let (none, unseen) = (HashSet::new(), HashSet::new());
                 if let Some(d) = f.of(self.prs.get(pr)).show(&mut page, &pr.to_string()) {
                     match tab {
                         PrTab::Conversation => {
-                            pages::pr_conversation(&mut page, pr, d, activity, cx);
+                            let fresh = watch.map_or(&none, |w| &w.new_comments);
+                            pages::pr_conversation(&mut page, pr, d, activity, fresh, cx);
                         }
                         PrTab::Commits => pages::pr_commits(&mut page, pr, d, activity, now),
                         PrTab::Checks => {
@@ -808,10 +850,17 @@ impl State {
                                 drafts: inputs
                                     .filter(|i| i.review_loaded)
                                     .map(|i| i.review.pending.as_slice()),
+                                fresh: watch.map_or(&unseen, |w| &w.new_threads),
                             };
                             pages::pr_review(&mut page, pr, d, activity, glance, cx);
                         }
                     }
+                }
+            }
+            Route::NewIssue(repo) | Route::NewPr(repo) => {
+                let key = DataKey::NewForm(repo.clone());
+                if let Some(d) = f.get(&key).show(&mut page, &title) {
+                    crate::create::build(self, &mut page, route, d);
                 }
             }
             Route::Stargazers(_) => pages::people_list(&mut page, "Stargazers", f.paged(route)),
@@ -922,6 +971,21 @@ impl State {
             }
             Route::Notifications { query } => {
                 pages::notifications(&mut page, query, f.paged(route), cx);
+            }
+            Route::Projects(of) => pages::projects(&mut page, of, f.paged(route), now),
+            Route::Project { project, view } => {
+                if let Some(p) = f.paged(route).show(&mut page, &title) {
+                    pages::project_view(&mut page, project, *view, p, cx);
+                }
+            }
+            Route::ProjectItem {
+                project,
+                view,
+                item,
+            } => {
+                if let Some(p) = f.paged::<Project>(route).show(&mut page, &title) {
+                    pages::project_item(&mut page, project, *view, p, *item, cx);
+                }
             }
             Route::Commits { repo, rev, path } => {
                 pages::commit_history(&mut page, repo, rev, path, f.paged(route), now);
