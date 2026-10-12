@@ -5,6 +5,7 @@
 use std::collections::HashSet;
 
 use super::*;
+use crate::api::commit_comments::CommitComment;
 use crate::api::model::NodeId;
 use crate::api::timeline::{Closer, Event, Item, Latest, Linked, Requested, Review, What};
 use crate::ui::page::ReviewLink;
@@ -1024,6 +1025,103 @@ pub(super) fn relations_aside(page: &mut Page, icons: Icons, d: &IssueDetail) {
         };
         linked_aside(page, icons, &d.repo, &heading, &d.sub_issues, "None");
     }
+}
+
+/// A commit's comments, under its page: each on the commit as a whole,
+/// or on a line of its diff (which opens there), then the box to write
+/// one.
+pub fn commit_comments(
+    page: &mut Page,
+    repo: &RepoId,
+    d: &CommitDetail,
+    comments: Fetched<'_, Capped<CommitComment>>,
+    cx: PageCtx<'_>,
+) {
+    let loading = |page: &mut Page| {
+        page.blank();
+        page.line(vec![meta("Loading the comments…")]);
+    };
+    let Some(comments) = comments.show_or(page, "the commit's comments", loading) else {
+        return;
+    };
+    let talk = Conversation {
+        base: LinkBase::new(repo, &d.oid, ""),
+        op: "",
+        now: cx.now,
+    };
+    let diff = crate::git::Oid::parse(&d.oid)
+        .ok()
+        .map(|oid| crate::diff_screen::DiffOf::Commit(repo.clone(), oid));
+    page.blank();
+    let title = match comments.total() {
+        0 => "Comments".to_owned(),
+        n => format!("Comments · {n}"),
+    };
+    page.line(vec![Seg::new(title, Role::Strong)]);
+    for c in comments.iter() {
+        connector(page);
+        let at = c.path.as_ref().map(|path| {
+            let line = c.line.map(|l| {
+                let pos = crate::diff::anchor::LinePos {
+                    side: crate::diff::anchor::Side::Right,
+                    line: l,
+                };
+                (pos, pos)
+            });
+            let target = diff
+                .as_ref()
+                .map_or_else(|| url::commit(repo, &d.oid), |of| of.file_url(path, line));
+            (super::review::place(path, c.line), target)
+        });
+        let verb = match &at {
+            Some((place, _)) => format!("commented on {place}"),
+            None => "commented".to_owned(),
+        };
+        talk.said_at(
+            page,
+            Some(c.anchor()),
+            &c.author,
+            &verb,
+            &c.created_at,
+            &c.body,
+            None,
+            &[],
+        );
+        if let Some((place, target)) = at {
+            item(page, target, |page, link| {
+                page.add(
+                    Frame::None,
+                    5,
+                    vec![
+                        meta("↳ "),
+                        Seg::linked(format!("Open {place} in the diff"), Role::Link, link),
+                    ],
+                    Vec::new(),
+                );
+            });
+        }
+    }
+    if comments.left_out() > 0 {
+        page.wrapped(vec![meta("… more comments on GitHub")], 2, Frame::None);
+    }
+    add_comment(page, cx.keys);
+}
+
+/// A repository's pinned issues, above its list of issues, each opening
+/// the issue; nothing where none are pinned.
+pub fn pinned_issues(page: &mut Page, repo: &RepoId, pinned: &Capped<Linked>, icons: Icons) {
+    if pinned.is_empty() {
+        return;
+    }
+    page.box_top(vec![Seg::new("Pinned issues", Role::Strong)], Vec::new());
+    for l in pinned.iter() {
+        item(page, l.url(), |page, _| {
+            let segs = linked_segs(page, icons, repo, l);
+            hanging(page, Seg::new("⚲ ", Role::Meta), segs, Frame::Body);
+        });
+    }
+    page.box_bottom();
+    page.blank();
 }
 
 /// `Heading: ` then `segs`, wrapped under it: a sidebar's section on a

@@ -56,16 +56,31 @@ pub(super) fn by_update(query: &str) -> bool {
 pub(super) fn issue_row(
     page: &mut Page,
     i: &IssueSummary,
-    (show_repo, updated): (bool, bool),
+    shown: (bool, bool),
     icons: Icons,
     now: u64,
 ) {
+    issue_row_to(page, i, shown, icons, now, false);
+}
+
+/// An issue's or pull request's row; with `review`, a pull request's opens
+/// its Files changed, to review it.
+pub(super) fn issue_row_to(
+    page: &mut Page,
+    i: &IssueSummary,
+    (show_repo, updated): (bool, bool),
+    icons: Icons,
+    now: u64,
+    review: bool,
+) {
     let (icon, role) = issue_icon(icons, i.status());
+    let pr = PrRef {
+        repo: i.repo.clone(),
+        number: i.number,
+    };
     let target = match i.kind {
-        IssueKind::Pr { .. } => url::pull(&PrRef {
-            repo: i.repo.clone(),
-            number: i.number,
-        }),
+        IssueKind::Pr { .. } if review => url::pull_tab(&pr, "files"),
+        IssueKind::Pr { .. } => url::pull(&pr),
         IssueKind::Issue(_) => url::issue(&i.repo, i.number),
     };
     let place = if show_repo {
@@ -97,16 +112,21 @@ pub(super) fn issue_row(
         let when = format!("{place} {verb} {} by {}", time::ago_iso(at, now), i.author);
         let mut meta = vec![Seg::new(when, Role::Meta)];
         if let IssueKind::Pr {
-            review: Some(review),
-            ..
+            review, approvals, ..
         } = i.kind
         {
-            let (text, role) = match review {
-                ReviewDecision::Approved => ("Approved", Role::Success),
-                ReviewDecision::ChangesRequested => ("Changes requested", Role::Error),
-                ReviewDecision::ReviewRequired => ("Review required", Role::Meta),
-            };
-            meta.extend([Seg::new(" · ", Role::Meta), Seg::new(text, role)]);
+            if let Some(review) = review {
+                let (text, role) = match review {
+                    ReviewDecision::Approved => ("Approved", Role::Success),
+                    ReviewDecision::ChangesRequested => ("Changes requested", Role::Error),
+                    ReviewDecision::ReviewRequired => ("Review required", Role::Meta),
+                };
+                meta.extend([Seg::new(" · ", Role::Meta), Seg::new(text, role)]);
+            }
+            if approvals > 0 {
+                let text = format!(" · {}", plural(approvals, "approval"));
+                meta.push(Seg::new(text, Role::Meta));
+            }
         }
         page.box_line(meta, issue_signals(i, icons), 2);
     });

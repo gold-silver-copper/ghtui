@@ -516,6 +516,9 @@ says where it works.
 | `I`     | Follow a link, in the browser |
 | `alt-↑` | Move the Home section up |
 | `alt-↓` | Move the Home section down |
+| `zc`    | Fold the file, thread or review |
+| `zo`    | Unfold the file, thread or review |
+| `za`    | Fold or unfold the file, thread or review |
 
 **On lists** (`list:`)
 
@@ -588,9 +591,9 @@ says where it works.
 | `[t`           | Previous unresolved thread |
 | `%`            | Jump to the other end of moved code |
 | `⇥`            | Switch between the file tree and the diff |
-| `zc`           | Fold the file or thread |
-| `zo`           | Unfold the file or thread |
-| `za`           | Fold or unfold the file or thread |
+| `zc`           | Fold the file, thread or review |
+| `zo`           | Unfold the file, thread or review |
+| `za`           | Fold or unfold the file, thread or review |
 | `zM`           | Fold every file |
 | `zR`           | Unfold every file |
 | `zT`           | Show or hide the file tree |

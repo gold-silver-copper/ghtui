@@ -20,6 +20,12 @@ pub enum Change {
         subject: NodeId,
         body: String,
     },
+    /// Comment on a commit as a whole.
+    CommitComment {
+        repo: RepoId,
+        oid: String,
+        body: String,
+    },
     /// Reply to a review thread right away (outside any pending review).
     Reply {
         thread: NodeId,
@@ -179,6 +185,9 @@ impl GitHub {
                     body: body.clone(),
                 });
                 self.mutate(op).await.map(drop)
+            }
+            Change::CommitComment { repo, oid, body } => {
+                self.comment_on_commit(repo, oid, body).await
             }
             Change::Reply { thread, body } => {
                 let op = crate::api::queries::Reply::build(crate::api::queries::ReplyVariables {

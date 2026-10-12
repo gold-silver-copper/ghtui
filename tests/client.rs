@@ -915,11 +915,11 @@ const THREADS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
      "originalLine":12,"originalStartLine":10,"isOutdated":false,"isResolved":false,"subjectType":"LINE",
      "viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":false,
      "first_comment":{"totalCount":150,"nodes":[
-       {"id":"C1","author":{"login":"alice"},"body":"Why?","createdAt":"2026-10-01T00:00:00Z",
+       {"id":"C1","diffHunk":"@@ -10,3 +10,3 @@\n-old\n+new","pullRequestReview":{"fullDatabaseId":"77"},"author":{"login":"alice"},"body":"Why?","createdAt":"2026-10-01T00:00:00Z",
         "url":"https://github.com/o/r/pull/7#discussion_r1","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":false,"viewerCanDelete":false,"viewerCanReact":true,"reactionGroups":[{"content":"HOORAY","viewerHasReacted":true,"reactors":{"totalCount":2}},{"content":"EYES","viewerHasReacted":false,"reactors":{"totalCount":0}}]}]},
      "comments":{"totalCount":150,"nodes":[
        {"id":"C2","author":null,"body":"Because.","createdAt":"2026-10-02T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r2","originalCommit":{"oid":"abc"},"state":"PENDING","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[]}]}},
+        "url":"https://github.com/o/r/pull/7#discussion_r2","originalCommit":{"oid":"abc"},"state":"PENDING","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[],"pullRequestReview":null}]}},
     {"id":"T2","path":"src/b.rs","diffSide":"LEFT","startDiffSide":null,"line":null,"startLine":null,
      "originalLine":5,"originalStartLine":null,"isOutdated":true,"isResolved":true,"subjectType":"LINE",
      "viewerCanReply":true,"viewerCanResolve":false,"viewerCanUnresolve":true,
@@ -928,11 +928,11 @@ const THREADS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
      "originalLine":null,"originalStartLine":null,"isOutdated":false,"isResolved":false,"subjectType":"FILE",
      "viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":false,
      "first_comment":{"totalCount":1,"nodes":[
-       {"id":"C3","author":{"login":"bob"},"body":"Typo","createdAt":"2026-10-03T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[]}]},
+       {"id":"C3","diffHunk":"","author":{"login":"bob"},"body":"Typo","createdAt":"2026-10-03T00:00:00Z",
+        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[],"pullRequestReview":null}]},
      "comments":{"totalCount":1,"nodes":[
        {"id":"C3","author":{"login":"bob"},"body":"Typo","createdAt":"2026-10-03T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[]}]}}
+        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[],"pullRequestReview":null}]}}
   ]}}}}}"#;
 
 #[tokio::test]
@@ -959,6 +959,9 @@ async fn decodes_review_threads() {
     assert_eq!(t1.comments[1].author, "ghost");
     assert!(t1.comments[1].pending);
     assert_eq!(t1.comments[0].original_commit.as_deref(), Some("abc"));
+    // The review its first comment came in, and the diff it was made on.
+    assert_eq!(t1.comments[0].review, Some(77));
+    assert!(t1.diff_hunk.ends_with("+new"));
     // What GitHub lets you do to each comment, and its reactions (only
     // those someone gave).
     let first = &t1.comments[0].editable;
@@ -1076,7 +1079,7 @@ async fn a_searched_pr_is_shown_then_gets_its_checks() {
     let (gh, seen) = github(vec![
         Reply::new(
             200,
-            r#"{"data":{"search":{"issueCount":1,"repositoryCount":0,"userCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"__typename":"PullRequest","id":"PR_5","number":5,"title":"t","isDraft":true,"state":"OPEN","author":null,"createdAt":"2026-10-01T00:00:00Z","updatedAt":"2026-10-01T00:00:00Z","reviewDecision":null,"comments":{"totalCount":0},"labels":null,"repository":{"nameWithOwner":"o/r"}}]}}}"#,
+            r#"{"data":{"search":{"issueCount":1,"repositoryCount":0,"userCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"__typename":"PullRequest","id":"PR_5","number":5,"title":"t","isDraft":true,"state":"OPEN","author":null,"createdAt":"2026-10-01T00:00:00Z","updatedAt":"2026-10-01T00:00:00Z","reviewDecision":null,"latestOpinionatedReviews":null,"comments":{"totalCount":0},"labels":null,"repository":{"nameWithOwner":"o/r"}}]}}}"#,
         ),
         Reply::new(
             200,
@@ -1846,7 +1849,7 @@ async fn a_failed_readme_isnt_taken_for_no_readme() {
     let recorded: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/corpus/6fd55acbc9fbaa3e.json"
+            "/tests/corpus/3e059505efc156de.json"
         ))
         .unwrap(),
     )
@@ -3361,5 +3364,71 @@ async fn a_jobs_annotations_come_with_it() {
     assert_eq!(
         (a[1].place().as_str(), a[1].url.as_deref()),
         ("the run", None)
+    );
+}
+
+/// A review's summary is edited, and your pending review deleted, with
+/// their own mutations; a commit is commented on, and its comments read,
+/// through REST.
+#[tokio::test]
+async fn reviews_and_commit_comments_send_their_requests() {
+    use ghtui::api::change::Change;
+    use ghtui::api::edit::{Edit, Written};
+    let ok = |field: &str| {
+        Reply::new(
+            200,
+            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
+        )
+    };
+    let comments = r#"[{"id":5,"node_id":"CC_5","user":{"login":"alice"},"body":"Nice",
+        "created_at":"2026-10-01T00:00:00Z","path":"src/a.rs","line":3,
+        "html_url":"https://github.com/o/r/commit/abc#commitcomment-5"},
+        {"id":6,"node_id":"CC_6","user":null,"body":"Whole","created_at":"2026-10-02T00:00:00Z",
+        "path":null,"line":null,"html_url":"https://github.com/o/r/commit/abc#commitcomment-6"}]"#;
+    let (gh, seen) = github(vec![
+        ok("updatePullRequestReview"),
+        ok("deletePullRequestReview"),
+        Reply::new(201, "{}"),
+        Reply::new(200, comments),
+    ])
+    .await;
+    let id = NodeId::new("PRR_1");
+    let body = "Better words".to_owned();
+    let of = Written::Review;
+    gh.edit(&Edit::Body {
+        of,
+        id: id.clone(),
+        body,
+    })
+    .await
+    .unwrap();
+    gh.edit(&Edit::Delete { of, id }).await.unwrap();
+    let repo = RepoId::new("o", "r");
+    gh.change(&Change::CommitComment {
+        repo: repo.clone(),
+        oid: "abc".into(),
+        body: "Why this?".into(),
+    })
+    .await
+    .unwrap();
+    let read = gh.commit_comments(&repo, "abc").await.unwrap();
+    assert_eq!(read.len(), 2);
+    assert_eq!(read[0].path.as_deref(), Some("src/a.rs"));
+    assert_eq!((read[1].author.as_str(), read[1].line), ("ghost", None));
+    assert!(read[0].as_thread().is_some() && read[1].as_thread().is_none());
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("updatePullRequestReview("));
+    assert_eq!(seen[0].json()["variables"]["body"], "Better words");
+    assert!(seen[1].query().contains("deletePullRequestReview("));
+    assert!(
+        seen[2]
+            .request_line
+            .starts_with("POST /repos/o/r/commits/abc/comments ")
+    );
+    assert_eq!(seen[2].json()["body"], "Why this?");
+    assert!(
+        seen[3]
+            .request_line
+            .starts_with("GET /repos/o/r/commits/abc/comments")
     );
 }

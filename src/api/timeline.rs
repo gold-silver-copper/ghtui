@@ -800,6 +800,7 @@ fragments! {
     Branches = "LinkedBranchConnection" => WireLinkedBranch,
     LatestReviews = "PullRequestReviewConnection" => WireLatest,
     Requests = "ReviewRequestConnection" => WireRequest,
+    PendingReviews = "PullRequestReviewConnection" => WireReview,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -844,6 +845,40 @@ pub struct WireLatest {
     pub commit: Option<CommitOid>,
     #[arguments(first: 10)]
     pub on_behalf_of: OnBehalfOf,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
+pub struct Opinion {
+    pub state: ReviewState,
+}
+
+fragments! {
+    counted:
+    Opinions = "PullRequestReviewConnection" => Opinion,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "PinnedIssue", schema_module = "schema")]
+pub struct PinnedIssue {
+    pub issue: LinkedIssue,
+}
+
+fragments! {
+    counted:
+    PinnedIssues = "PinnedIssueConnection" => PinnedIssue,
+}
+
+/// A repository's pinned issues.
+pub(crate) fn pinned_issues(p: PinnedIssues) -> Capped<Linked> {
+    let items = nodes(p.nodes).filter_map(|p| p.issue.into_linked());
+    Capped::new(items.collect(), count(p.total_count))
+}
+
+/// How many reviewers' latest word is an approval.
+pub(crate) fn approvals(o: Option<Opinions>) -> u64 {
+    let approved = o.map(|o| nodes(o.nodes).filter(|r| r.state == ReviewState::Approved));
+    approved.map_or(0, |a| a.count() as u64)
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -1169,12 +1204,22 @@ impl IssueItem {
 }
 
 /// A timeline's items, oldest first, of how many there are in all.
-pub(crate) fn pr_timeline(t: PrTimeline) -> Capped<Item> {
+/// Your pending review, which the timeline may not have, comes last.
+pub(crate) fn pr_timeline(t: PrTimeline, pending: Option<PendingReviews>) -> Capped<Item> {
     let fetched = t.nodes.as_ref().map_or(0, Vec::len) as u64;
-    let items: Vec<Item> = nodes(t.nodes).filter_map(PrItem::into_item).collect();
+    let mut items: Vec<Item> = nodes(t.nodes).filter_map(PrItem::into_item).collect();
     // What ghtui doesn't show isn't left out.
     let unshown = fetched.saturating_sub(items.len() as u64);
-    Capped::new(items, count(t.total_count).saturating_sub(unshown))
+    let total = count(t.total_count).saturating_sub(unshown);
+    let has_pending = items
+        .iter()
+        .any(|i| matches!(i, Item::Review(r) if r.state == ReviewState::Pending));
+    let pending = pending.and_then(|p| nodes(p.nodes).next());
+    if let Some(p) = pending.filter(|_| !has_pending) {
+        items.push(Item::Review(p.into_review()));
+        return Capped::new(items, total + 1);
+    }
+    Capped::new(items, total)
 }
 
 pub(crate) fn issue_timeline(t: IssueTimeline) -> Capped<Item> {
@@ -1328,9 +1373,11 @@ mod tests {
             "latestReviews": null,
             "closingIssuesReferences": null,
             "mergeCommit": null,
+            "pending_review": {"totalCount": 1, "nodes": [review("PENDING")]},
         }));
         let a = wire.into_activity();
-        let [Item::Review(r), Item::Event(e)] = a.timeline.items.as_slice() else {
+        let [Item::Review(r), Item::Event(e), Item::Review(mine)] = a.timeline.items.as_slice()
+        else {
             panic!("{:?}", a.timeline);
         };
         assert_eq!(
@@ -1340,6 +1387,11 @@ mod tests {
         assert_eq!(
             (e.actor.as_str(), &e.what),
             ("ghost", &What::ReadyForReview)
+        );
+        assert_eq!(
+            mine.state,
+            ReviewState::Pending,
+            "your pending review comes last"
         );
         assert_eq!(a.timeline.left_out(), 2);
         assert!(a.requested.first().is_some_and(|r| r.code_owner));

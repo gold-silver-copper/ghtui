@@ -101,6 +101,7 @@ pub(crate) fn found_pr(pr: &str, title: &str, state: PrState) -> IssueSummary {
             id: NodeId::new(format!("PR_{pr}")),
             state,
             review: None,
+            approvals: 0,
             checks: None,
         },
         repo: pr.repo,
@@ -320,6 +321,13 @@ pub fn overview() -> RepoOverview {
         has_wiki: true,
         branches: 14,
         tags: 9,
+        pinned_issues: vec![Linked {
+            repo: RepoId::new("gold-silver-copper", "ghtui"),
+            number: 2,
+            title: "Roadmap".into(),
+            state: LinkedState::Issue(IssueState::Open),
+        }]
+        .into(),
         entries: vec![
             entry(".github", EntryKind::Dir, None),
             entry("crates", EntryKind::Dir, None),
@@ -759,6 +767,7 @@ pub fn issue_summary(number: u64, state: Status) -> IssueSummary {
                 id: NodeId::new(format!("PR_{number}")),
                 state,
                 review: None,
+                approvals: 0,
                 checks: None,
             },
         },

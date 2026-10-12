@@ -673,6 +673,7 @@ mod tests {
             has_wiki: false,
             branches: 0,
             tags: 0,
+            pinned_issues: Capped::default(),
             entries: vec![
                 TreeEntry {
                     name: "src".into(),

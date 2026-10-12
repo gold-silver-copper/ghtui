@@ -390,7 +390,10 @@ impl State {
                 out.push(here(Action::Star, label, "star"));
             }
         }
-        if matches!(route, Route::Issue { .. } | Route::Pr { .. }) {
+        if matches!(
+            route,
+            Route::Issue { .. } | Route::Pr { .. } | Route::Commit { .. }
+        ) {
             out.push(here(Action::Comment, "Write a comment", "comment"));
             let mut quote = here(Action::QuoteReply, "Reply quoting the selected comment", "");
             if !matches!(p.selected_link(), Some(Link::Quote { .. })) {

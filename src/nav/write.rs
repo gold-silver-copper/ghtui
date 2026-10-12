@@ -77,6 +77,14 @@ pub(super) fn comment_with(state: &mut State, text: &str, quoting: Option<String
         Some(Route::NewIssue(_) | Route::NewPr(_)) => return crate::create::compose(state),
         Some(Route::Discussion { .. }) => return crate::discuss::act(state, Action::Comment),
         Some(route) if crate::writes::is_form(route) => return crate::writes::compose(state),
+        // A commit's comments.
+        Some(Route::Commit { repo, oid, .. }) => {
+            let target = ComposeTarget::Commit {
+                repo: repo.clone(),
+                oid: oid.clone(),
+            };
+            return state.compose(target, text);
+        }
         _ => {
             state.info("Comments go on issues and pull requests");
             return Vec::new();

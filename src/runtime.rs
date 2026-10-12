@@ -1015,7 +1015,9 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         // A wiki's clone is its cache.
         // Where a ref ends is asked anew each session.
         // What a new issue can have is what it has now.
+        // A commit's comments revalidate with their ETag.
         DataKey::Blob(..)
+        | DataKey::CommitComments(..)
         | DataKey::Files(..)
         | DataKey::JobLog(..)
         | DataKey::Wiki(..)
@@ -1059,6 +1061,9 @@ pub(crate) async fn fetch(
         DataKey::Issue(repo, number) => Data::Issue(gh.issue(repo, *number).await?.map(Box::new)),
         DataKey::PrActivity(pr) => Data::PrActivity(Box::new(gh.pr_activity(pr).await?)),
         DataKey::Reviews(pr) => Data::Reviews(Box::new(gh.reviews(pr).await?)),
+        DataKey::CommitComments(repo, oid) => {
+            Data::CommitComments(Box::new(gh.commit_comments(repo, oid).await?))
+        }
         DataKey::Profile(login) => Data::Profile(Box::new(gh.profile(login).await?)),
         DataKey::Files(repo, rev) => {
             let (files, truncated) = gh.file_list(repo, rev).await?;

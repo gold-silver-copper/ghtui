@@ -342,7 +342,23 @@ pub(super) fn with_commit(mode: Mode) -> State {
         oid: commit.oid.clone(),
         pr: None,
     };
+    let comments = DataKey::CommitComments(ghtui(), commit.oid.clone());
     open(&mut state, route, Data::Commit(Box::new(commit)));
+    let comment = crate::api::commit_comments::CommitComment {
+        id: 7,
+        node_id: "CC_7".into(),
+        author: "hubot".into(),
+        body: "This one broke the 256-color theme.".into(),
+        created_at: "2026-10-02T12:00:00Z".into(),
+        path: Some("src/theme.rs".into()),
+        line: Some(12),
+        url: String::new(),
+    };
+    fetched(
+        &mut state,
+        comments,
+        Data::CommitComments(Box::new(vec![comment].into())),
+    );
     state
 }
 
@@ -385,6 +401,11 @@ pub(super) fn with_pr_review(mode: Mode) -> State {
     ] {
         update(&mut state, Msg::Diff(of.clone(), msg));
     }
+    fetched(
+        &mut state,
+        DataKey::Reviews(pr),
+        Data::Reviews(Box::new(fixtures::reviews())),
+    );
     state
 }
 

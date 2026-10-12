@@ -13,6 +13,7 @@ use crate::api::browse::{
     StateCounts, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage,
     Workflow, WorkflowRun,
 };
+use crate::api::commit_comments::CommitComment;
 use crate::api::model::{Capped, PrRef, RepoId};
 use crate::api::notifications::Inbox;
 use crate::api::project::{Project, ProjectRef, ProjectSummary, ProjectsOf};
@@ -48,6 +49,8 @@ pub enum DataKey {
     StateCounts(String),
     Issue(RepoId, u64),
     PrActivity(PrRef),
+    /// A commit's comments, by the revision linked.
+    CommitComments(RepoId, String),
     /// All of a pull request's reviews.
     Reviews(PrRef),
     Profile(String),
@@ -131,6 +134,7 @@ pub enum Data {
     Issue(Option<Box<IssueDetail>>),
     PrActivity(Box<PrActivity>),
     Reviews(Box<Capped<Review>>),
+    CommitComments(Box<Capped<CommitComment>>),
     Profile(Box<Profile>),
     /// Paths, and whether GitHub cut the list short.
     Files(Arc<Vec<String>>, bool),
@@ -499,6 +503,7 @@ pub fn needs(route: &Route) -> Vec<Need> {
         Route::Commit { repo, oid, pr } => {
             let mut needs = vec![
                 header(repo),
+                Need::Data(K::CommitComments(repo.clone(), oid.clone())),
                 Need::Data(K::Commit(repo.clone(), oid.clone())),
             ];
             // Its place among the pull request's commits.
@@ -549,6 +554,7 @@ picked!(
     Repo => RepoOverview, Readme => Option<Box<Readme>>, Tree => [TreeEntry], Blob => Blob,
     Search => SearchResults, StateCounts => StateCounts, Issue => Option<Box<IssueDetail>>,
     PrActivity => PrActivity, Reviews => Capped<Review>,
+    CommitComments => Capped<CommitComment>,
     Profile => Profile, Refs => Refs, RefIn => Option<String>,
     LastCommits => HashMap<String, CommitInfo>, Commit => CommitDetail,
     History => Results<CommitInfo>, Checks => Checks, Users => Results<UserSummary>,
@@ -876,6 +882,14 @@ impl State {
                     SearchResults::Issues(r) => Some(r),
                     _ => None,
                 });
+                // Pinned issues, above the list, as on GitHub.
+                #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
+                let overview = f
+                    .get::<RepoOverview>(&DataKey::Repo(repo.clone()))
+                    .ready_unchecked();
+                if let Some(o) = overview.filter(|_| !is_pr) {
+                    pages::pinned_issues(&mut page, repo, &o.pinned_issues, icons);
+                }
                 pages::issue_list(&mut page, query, counts, is_pr, results, cx);
             }
             Route::Search { kind, query } => {
@@ -1120,6 +1134,8 @@ impl State {
                     };
                     let files = format!("{}#files", files.url());
                     pages::commit(&mut page, repo, c, &files, now);
+                    let comments = DataKey::CommitComments(repo.clone(), oid.clone());
+                    pages::commit_comments(&mut page, repo, c, f.get(&comments), cx);
                 }
             }
             Route::User { login, tab } => {

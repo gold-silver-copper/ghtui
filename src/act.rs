@@ -1069,6 +1069,7 @@ fn notifies(change: &Change) -> bool {
 fn doing(change: &Change) -> &'static str {
     match change {
         Change::Comment { .. } | Change::Reply { .. } => "Posting",
+        Change::CommitComment { .. } => "Posting",
         Change::Star { starred: true, .. } => "Starring",
         Change::Star { .. } => "Unstarring",
         Change::Merge { .. } => "Merging",
@@ -1099,6 +1100,7 @@ fn doing(change: &Change) -> &'static str {
 fn done(change: &Change) -> String {
     match change {
         Change::Comment { .. } => "Comment posted".into(),
+        Change::CommitComment { .. } => "Comment posted".into(),
         Change::Reply { .. } => "Reply posted".into(),
         Change::Star {
             repo,
@@ -1151,6 +1153,7 @@ fn done(change: &Change) -> String {
 pub fn needs(change: &Change) -> &'static str {
     match change {
         Change::Comment { .. } | Change::Edit(_) => "Issues or Pull requests: write",
+        Change::CommitComment { .. } => "Contents: write",
         Change::Star { .. } => "Starring: write",
         Change::Merge { .. }
         | Change::UpdateBranch { .. }
@@ -1180,6 +1183,7 @@ pub fn needs(change: &Change) -> &'static str {
 fn failure(change: &Change, err: &ApiError) -> String {
     let what = match change {
         Change::Comment { .. } => "the comment",
+        Change::CommitComment { .. } => "the comment",
         Change::Reply { .. } => "the reply",
         Change::Star { starred: true, .. } => "the star",
         Change::Star { .. } => "removing the star",

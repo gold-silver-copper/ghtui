@@ -149,6 +149,8 @@ pub struct RepoOverview {
     pub has_wiki: bool,
     pub branches: u64,
     pub tags: u64,
+    /// The issues pinned at the top of its Issues tab.
+    pub pinned_issues: Capped<timeline::Linked>,
     /// Root directory at the default branch (empty for empty repos).
     pub entries: Vec<TreeEntry>,
 }
@@ -192,6 +194,8 @@ pub enum IssueKind {
         id: NodeId,
         state: PrState,
         review: Option<ReviewDecision>,
+        /// Reviewers whose latest word is an approval.
+        approvals: u64,
         /// Where known.
         checks: Option<ChecksState>,
     },
@@ -737,6 +741,9 @@ pub struct RepoFull {
     #[cynic(rename = "refs", alias)]
     #[arguments(refPrefix: "refs/tags/")]
     pub tag_count: Option<RefCount>,
+    /// The issues pinned at the top of its Issues tab (GitHub pins up to 3).
+    #[arguments(first: 3)]
+    pub pinned_issues: Option<timeline::PinnedIssues>,
     #[arguments(expression: $expression)]
     pub object: Option<GitObject>,
 }
@@ -974,6 +981,9 @@ pub struct PrCard {
     pub created_at: DateTime,
     pub updated_at: DateTime,
     pub review_decision: Option<ReviewDecision>,
+    /// Each reviewer's latest approval or change request.
+    #[arguments(first: 20)]
+    pub latest_opinionated_reviews: Option<timeline::Opinions>,
     pub comments: CommentCount,
     #[arguments(first: 6)]
     pub labels: Option<LabelConnection>,
@@ -1145,6 +1155,10 @@ pub struct WirePrActivity {
     #[arguments(first: 10)]
     pub closing_issues_references: Option<timeline::Closing>,
     pub merge_commit: Option<crate::api::queries::CommitOid>,
+    /// Your pending review: GitHub shows it only to you.
+    #[arguments(first: 1, states: [PENDING])]
+    #[cynic(rename = "reviews", alias)]
+    pub pending_review: Option<timeline::PendingReviews>,
 }
 
 #[derive(cynic::InlineFragments, Debug)]
@@ -5087,6 +5101,8 @@ impl RepoFull {
             has_wiki: self.has_wiki_enabled,
             branches: self.branch_count.map_or(0, |c| count(c.total_count)),
             tags: self.tag_count.map_or(0, |c| count(c.total_count)),
+            pinned_issues: (self.pinned_issues)
+                .map_or_else(Capped::default, timeline::pinned_issues),
             entries,
         })
     }
@@ -5114,6 +5130,7 @@ impl BrowseItem {
                     id: p.id.into(),
                     state: p.status.into(),
                     review: p.review_decision,
+                    approvals: timeline::approvals(p.latest_opinionated_reviews),
                     checks: None,
                 },
                 author: author(p.author),
@@ -5211,7 +5228,7 @@ impl WirePrActivity {
     pub(crate) fn into_activity(self) -> PrActivity {
         PrActivity {
             id: self.id.into(),
-            timeline: timeline::pr_timeline(self.timeline_items),
+            timeline: timeline::pr_timeline(self.timeline_items, self.pending_review),
             comment_count: count(self.comments.total_count),
             commits: Capped::from_nodes(self.commits.total_count, self.commits.nodes, |n| {
                 n.commit.into_info()

@@ -75,6 +75,10 @@ pub fn subject(state: &State) -> Option<Watched> {
                 Target::Page(
                     route @ (Route::Issue { .. } | Route::Pr { .. } | Route::Discussion { .. }),
                 ) => of_route(&route),
+                // A row that opens a pull request's files is about it too.
+                Target::Files(crate::diff_screen::DiffOf::Pr(pr)) => {
+                    Some(Watched::Thread(pr.repo, pr.number))
+                }
                 _ => None,
             });
             // A list's row is what it's about; a page is about itself.

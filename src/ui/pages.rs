@@ -62,7 +62,7 @@ pub use review::*;
 pub use runs::*;
 pub use security::*;
 pub use writes::*;
-pub use timeline::{FOLD_AFTER, Marks};
+pub use timeline::{FOLD_AFTER, Marks, commit_comments, pinned_issues};
 
 // ---- URLs ----------------------------------------------------------------------
 
@@ -683,6 +683,7 @@ mod tests {
             has_wiki: false,
             branches: 1,
             tags: 0,
+            pinned_issues: Capped::default(),
             entries: vec![TreeEntry {
                 name: "a.rs".into(),
                 path: "a.rs".into(),
