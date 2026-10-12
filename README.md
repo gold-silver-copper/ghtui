@@ -41,9 +41,17 @@ ghtui is pre-release, but it's usable every day.
   write gists and wiki pages.
 - **Notifications you choose**: subscribe to a thread or ignore it, and
   set how you watch a repository.
+- **Git first**: files, folders, history, blame, comparisons, tags and
+  code search come from your clone (or ghtui's own partial one), at
+  GitHub's revision, and code navigation (`gd`, `gS`, `gR`) from an
+  index of the repository's definitions built there.
+- **Live**: a pull request, an issue, a discussion, the Actions tab, a
+  run and a running job update while they're on screen, and what came
+  in since you looked is marked New.
 
-Not there yet: code navigation with a language server's precision, and
-structural diffs.
+Not there yet: code navigation with a language server's precision,
+structural diffs, release assets and editing a release, and a project
+board's swimlanes and roadmaps.
 
 ## Goals
 
