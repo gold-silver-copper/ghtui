@@ -249,7 +249,7 @@ pub fn symbols(state: &mut State) -> Vec<Cmd> {
         Ok(here) => {
             let rows = symbol_rows(&here.scopes);
             let mut cmds = state.open_picker(Kind::Code {
-                title: "Symbols in this file",
+                title: "Symbols in this file".to_owned(),
                 rows,
             });
             cmds.extend(here.ask(Want::Index).map(|a| Cmd::Git(Git::Code(a))));
@@ -339,13 +339,15 @@ pub fn definition(state: &mut State) -> Vec<Cmd> {
     match local.as_slice() {
         [one] => {
             state.info(format!("{} · line {}", one.name, one.lines.start()));
-            return go_to_line(state, *one.lines.start());
+            let cmds = go_to_line(state, *one.lines.start());
+            land_on(state, &word);
+            return cmds;
         }
         [] => {}
         many => {
             let rows = symbol_rows(many);
             return state.open_picker(Kind::Code {
-                title: "Definitions",
+                title: format!("Definitions of “{word}”"),
                 rows,
             });
         }
@@ -361,6 +363,15 @@ pub fn definition(state: &mut State) -> Vec<Cmd> {
         here.repo
     ));
     ask(state, &here, Want::Definition(word))
+}
+
+/// Puts the word cursor on `name` where the page on screen settles: on
+/// a definition, the name it defines, as vim's `gd` does.
+fn land_on(state: &mut State, name: &str) {
+    if let Screen::Page(p) = state.screen_mut() {
+        p.land = Some(name.to_owned());
+    }
+    state.sync_page();
 }
 
 /// The repository's answer to `ask`: one definition opens, several
@@ -391,11 +402,11 @@ pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) ->
         };
         Choice::Go(Target::Page(route).into())
     };
-    let title = match ask.want {
+    let title = match &ask.want {
         Want::Index => return Vec::new(),
-        Want::Definition(_) => "Definitions",
-        Want::Symbols => "Symbols in the repository",
-        Want::References(_) => "References",
+        Want::Definition(word) => format!("Definitions of “{word}”"),
+        Want::Symbols => "Symbols in the repository".to_owned(),
+        Want::References(word) => format!("Where “{word}” is used"),
     };
     let note = answer.note.clone();
     let cmds = match (&ask.want, answer.places.as_slice()) {
@@ -403,14 +414,18 @@ pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) ->
             state.info(note.map_or(answer.none.clone(), |n| format!("{} · {n}", answer.none)));
             return Vec::new();
         }
-        (Want::Definition(_), [one]) => match open(one) {
-            Choice::Line(line) => go_to_line(state, line),
-            Choice::Go(dest) => match dest.target {
-                Target::Page(route) => state.push(route),
+        (Want::Definition(word), [one]) => {
+            let cmds = match open(one) {
+                Choice::Line(line) => go_to_line(state, line),
+                Choice::Go(dest) => match dest.target {
+                    Target::Page(route) => state.push(route),
+                    _ => Vec::new(),
+                },
                 _ => Vec::new(),
-            },
-            _ => Vec::new(),
-        },
+            };
+            land_on(state, word);
+            cmds
+        }
         (_, places) => {
             let rows = places.iter().map(|p| {
                 let item = PaletteItem {

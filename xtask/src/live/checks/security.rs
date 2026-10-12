@@ -61,7 +61,7 @@ fn run(cx: &mut Cx) -> Result<()> {
     ghtui.wait_followed()?;
     cx.step(",x on the dismissed alert reopens it, after asking")?;
     ghtui.keys(", x")?;
-    ghtui.wait_for(&format!("Reopen Code scanning alert {ALERT}?"))?;
+    ghtui.wait_for(&format!("Reopen code scanning alert #{ALERT}?"))?;
     ghtui.keys("Enter")?;
     until("the alert open on GitHub", GITHUB, || {
         Ok((get()?["state"] == "open").then_some(()))

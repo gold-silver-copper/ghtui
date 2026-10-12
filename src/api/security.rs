@@ -41,6 +41,16 @@ impl AlertKind {
         Self::ALL.into_iter().find(|k| k.slug() == slug)
     }
 
+    /// An alert of this kind, mid-sentence: `code scanning alert #3`.
+    pub fn alert(self, number: u64) -> String {
+        let kind = match self {
+            AlertKind::Dependabot => "Dependabot",
+            AlertKind::CodeScanning => "code scanning",
+            AlertKind::SecretScanning => "secret scanning",
+        };
+        format!("{kind} alert #{number}")
+    }
+
     /// `Dependabot`, as the tab's menu names it.
     pub fn name(self) -> &'static str {
         match self {
@@ -598,7 +608,7 @@ impl GitHub {
     /// pull request, all of a secret's locations.
     pub async fn alert(&self, a: &AlertRef) -> Result<Alert, ApiError> {
         let path = format!("/repos/{}/{}/alerts/{}", a.repo, a.kind.slug(), a.number);
-        let what = format!("{}'s {} alert {}", a.repo, a.kind.name(), a.number);
+        let what = format!("{}'s {}", a.repo, a.kind.alert(a.number));
         let mut alert = match self.alerts_answer(a.kind, &path, &what).await? {
             Ok(answer) => wire::alert(a.kind, answer.body())?,
             Err(off) => return Err(ApiError::Denied(off)),

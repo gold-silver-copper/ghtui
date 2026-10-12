@@ -92,10 +92,32 @@ impl Widget for Palette<'_> {
         // the cursor's cell.
         let room = usize::from(field.width).saturating_sub(1);
         let hint = self.input.placeholder_text();
+        let typed = self.input.lines().first().map_or("", String::as_str);
         if self.input.is_empty() && text::width(hint) > room {
             let mut input = self.input.clone();
             input.set_placeholder_text(text::truncate(hint, room));
             input.render(field, buf);
+        } else if text::width(typed) > room && field.width > 2 {
+            // Text wider than the field shows where it's cut: an ellipsis
+            // before it when the cursor has scrolled its start away, else
+            // after it.
+            let col = self.input.cursor().1;
+            let narrower = field.width.saturating_sub(1);
+            let scrolled = col >= usize::from(narrower);
+            let (dots, rest) = if scrolled {
+                (field.x, field.x.saturating_add(1))
+            } else {
+                (field.right().saturating_sub(1), field.x)
+            };
+            self.input.render(
+                Rect {
+                    x: rest,
+                    width: narrower,
+                    ..field
+                },
+                buf,
+            );
+            buf.set_string(dots, field.y, "…", theme.meta(POPUP));
         } else {
             self.input.render(field, buf);
         }

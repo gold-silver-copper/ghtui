@@ -118,9 +118,13 @@ fn form_row(page: &mut Page, row: &FormRow) {
 }
 
 fn text_box(page: &mut Page, b: &TextBox<'_>, v: &WriteFormView<'_>) {
-    let right = vec![Seg::new(format!("{} writes", v.write), Role::Meta)];
-    // A file's name is its own row: Enter renames it.
+    // A file's name is its own row: Enter renames it, and says so.
     let rename = b.actions.iter().find(|(name, _)| *name == "rename");
+    let right = match rename {
+        Some(_) => format!("↵ renames · {} writes", v.write),
+        None => format!("{} writes", v.write),
+    };
+    let right = vec![Seg::new(right, Role::Meta)];
     let title_start = page.lines.len();
     let title_link = match rename {
         Some((_, target)) => page.link(Link::Write(target.clone())),

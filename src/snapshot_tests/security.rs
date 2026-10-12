@@ -157,7 +157,7 @@ fn a_closed_alert_reopens_after_asking() {
     let Some(Overlay::Confirm(confirm)) = &s.overlay else {
         panic!("no confirmation");
     };
-    assert_eq!(confirm.title, "Reopen Secret scanning alert 2?");
+    assert_eq!(confirm.title, "Reopen secret scanning alert #2?");
     let sent = press(&mut s, "<Enter>");
     let change = Change::Alert(AlertChange {
         alert: alert_ref(AlertKind::SecretScanning, 2),

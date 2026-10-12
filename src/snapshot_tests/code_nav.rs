@@ -63,8 +63,9 @@ fn gd_finds_a_definition_in_the_file() {
     press(&mut s, "4gg");
     assert_eq!(at(&s), (Some(4), Some("helper".into())));
     press(&mut s, "gd");
-    assert_eq!(at(&s).0, Some(8), "{}", said(&s));
+    assert_eq!(at(&s), (Some(8), Some("helper".into())), "{}", said(&s));
     // Not a name: says so.
+    let mut s = with_code();
     press(&mut s, "1ggwww");
     assert_eq!(at(&s).1.as_deref(), Some("::"));
     press(&mut s, "gd");

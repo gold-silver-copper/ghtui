@@ -36,6 +36,9 @@ pub struct PageScreen {
     /// The word cursor, by its column in the code of the selected line:
     /// `None` until `w` or `b` picks one.
     pub word: Option<usize>,
+    /// A name the word cursor goes to once its line is selected and
+    /// built (where `gd` lands).
+    pub land: Option<String>,
 }
 
 impl PageScreen {
@@ -70,6 +73,7 @@ impl PageScreen {
             range: None,
             shift: 0,
             word: None,
+            land: None,
         }
     }
 
@@ -257,6 +261,17 @@ pub(super) fn settle(p: &mut PageScreen, height: usize) {
     }
     if jump.is_some() || p.jumped.is_some() {
         p.jumped = Some(jump.map(|_| (p.scroll, p.selected)));
+    }
+    // The name `gd` went to, once its line is there.
+    if let Some(name) = p.land.clone()
+        && let Some((_, code, _)) = p.code_line()
+    {
+        let words = text::words(&code);
+        let at = words
+            .iter()
+            .find(|w| code.get(w.bytes.clone()) == Some(name.as_str()));
+        p.word = at.map(|w| w.cols.start).or(p.word);
+        p.land = None;
     }
 }
 

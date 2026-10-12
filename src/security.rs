@@ -59,7 +59,7 @@ pub fn plan(state: &State, a: &AlertRef) -> Result<Plan, String> {
     if state.overview(&a.repo).is_some_and(|o| !o.can_write) {
         return Err("GitHub lets only people with write access close its alerts".into());
     }
-    let name = format!("{} alert {}", a.kind.name(), a.number);
+    let name = a.kind.alert(a.number);
     match alert.state {
         s if s.is_open() => Ok(Plan::Dismiss(Dismissing(a.clone()))),
         crate::api::security::AlertState::Fixed => Err(

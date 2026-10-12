@@ -211,7 +211,11 @@ fn column(
         group_chip(column),
         Seg::new(format!("  {}", column.items.len()), Role::Meta),
     ];
-    let about = option_description(field, column);
+    // The description only where it fits beside the title and count,
+    // which matter more.
+    let room = usize::from(page.room(Frame::Top, 0));
+    let taken = title.iter().map(|s| width(s.text())).sum::<usize>() + 6;
+    let about = option_description(field, column).filter(|d| taken + width(d) <= room);
     page.box_top(
         title,
         about

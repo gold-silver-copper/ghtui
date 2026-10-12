@@ -45,7 +45,7 @@ pub enum Kind {
     Form(crate::create::Pick),
     /// Places in code: a file's symbols, a name's definitions.
     Code {
-        title: &'static str,
+        title: String,
         rows: Vec<(PaletteItem, Choice)>,
     },
     /// A project item's columns, fields or a field's values.
@@ -74,7 +74,7 @@ pub struct Picker {
 }
 
 impl Picker {
-    pub fn title(&self) -> &'static str {
+    pub fn title(&self) -> &str {
         match self.kind {
             Kind::Commands => ":",
             Kind::Files { .. } | Kind::DiffFiles => "Go to file",
@@ -85,7 +85,7 @@ impl Picker {
             Kind::SectionTitle(Titling::Rename { .. }, _) => "Rename the section",
             Kind::Edit(ref c) => c.title(),
             Kind::Form(pick) => pick.title(),
-            Kind::Code { title, .. } => title,
+            Kind::Code { ref title, .. } => title,
             Kind::Project(ref pick) => pick.title(),
             Kind::Alert(ref d) => d.title(),
             Kind::Write(ref pick) => pick.title(),
