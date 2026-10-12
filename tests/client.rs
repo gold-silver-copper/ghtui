@@ -2212,3 +2212,47 @@ async fn threads_are_marked_read_and_done() {
         "{lines:?}"
     );
 }
+
+/// Polling asks with the ETag of the answer before, and a 304 is "the
+/// same" (which GitHub doesn't count against the rate limit).
+#[tokio::test]
+async fn polls_ask_with_the_last_etag() {
+    use ghtui::api::Polled;
+    let body = r#"{"head":{"sha":"abc"}}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, body).header("etag", "\"p1\""),
+        Reply::new(304, ""),
+    ])
+    .await;
+    let path = "/repos/o/r/pulls/7";
+    let first = gh.poll(path, None).await.unwrap();
+    let etag = "\"p1\"".to_owned();
+    let body = body.to_owned();
+    assert_eq!(first, Polled::Changed { etag, body });
+    assert_eq!(gh.poll(path, Some("\"p1\"")).await.unwrap(), Polled::Same);
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0].header("if-none-match"), None);
+    assert_eq!(seen[1].header("if-none-match"), Some("\"p1\""));
+    assert!(seen[1].request_line.starts_with("GET /repos/o/r/pulls/7 "));
+}
+
+/// Who and what a comment can mention: the repository's assignable
+/// users, and its issues and pull requests updated last.
+#[tokio::test]
+async fn mentionable_asks_for_assignees_and_recent_issues() {
+    let (gh, seen) = github(vec![
+        Reply::new(200, r#"[{"login":"alice"}]"#).on("/assignees"),
+        Reply::new(200, r#"[{"number":12,"title":"Fix it"}]"#).on("/issues"),
+    ])
+    .await;
+    let found = gh.mentionable(&RepoId::new("o", "r")).await.unwrap();
+    assert_eq!(found.users, ["alice"]);
+    assert_eq!(found.issues, [(12, "Fix it".to_owned())]);
+    let seen = seen.lock().unwrap();
+    let asked = |part: &str| seen.iter().any(|s| s.request_line.contains(part));
+    assert!(asked("GET /repos/o/r/assignees?per_page=100 "));
+    assert!(asked(
+        "GET /repos/o/r/issues?state=all&sort=updated&per_page=100 "
+    ));
+}

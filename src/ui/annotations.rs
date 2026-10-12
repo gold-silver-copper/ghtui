@@ -22,6 +22,8 @@ pub struct AnnotationComment {
     pub created_at: String,
     /// In the viewer's unsubmitted review on GitHub.
     pub pending: bool,
+    /// Came in since you started looking.
+    pub new: bool,
 }
 
 /// Where an annotation sits in the current diff.
@@ -53,6 +55,8 @@ pub struct Annotation {
     pub can_reply: bool,
     pub can_resolve: bool,
     pub can_unresolve: bool,
+    /// Started since you started looking.
+    pub new: bool,
 }
 
 impl Annotation {
@@ -97,5 +101,7 @@ pub struct ThreadRow {
     /// Index into `Doc::annotations`.
     pub ann: u32,
     pub kind: ThreadRowKind,
-    pub text: String,
+    /// What it says: a line of a comment's rendered Markdown, or plain
+    /// text.
+    pub line: crate::ui::comment::CommentLine,
 }

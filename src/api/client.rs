@@ -68,6 +68,15 @@ impl From<serde_json::Error> for ApiError {
     }
 }
 
+/// What polling a REST path found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Polled {
+    /// The same as the answer tagged with the ETag asked with.
+    Same,
+    /// A new answer, and its ETag (empty if GitHub gave none).
+    Changed { etag: String, body: String },
+}
+
 /// Cheap to clone. The HTTP client is built lazily, on a blocking thread, by
 /// the first request: loading the platform's root certificates takes over
 /// 100ms on macOS and must not delay the first paint.
@@ -609,6 +618,34 @@ impl GitHub {
             spawn_store(move || store.http_put(&key, &kept)).await;
         }
         Ok(entry)
+    }
+
+    /// Asks whether a REST path's answer changed since the one tagged
+    /// `etag`: GitHub answers 304 for free (it doesn't count against the
+    /// rate limit) when it hasn't. Without an ETag, the answer is new.
+    pub async fn poll(&self, path: &str, etag: Option<&str>) -> Result<Polled, ApiError> {
+        let cached = etag.map(|etag| HttpEntry {
+            etag: etag.to_owned(),
+            ..HttpEntry::default()
+        });
+        let response = self
+            .send(&Request::Get {
+                path,
+                cached: cached.as_ref(),
+            })
+            .await?;
+        if response.status == StatusCode::NOT_MODIFIED && etag.is_some() {
+            return Ok(Polled::Same);
+        }
+        check_status(&response, path.strip_prefix("/repos/").unwrap_or(path))?;
+        let etag = (response.headers.get(header::ETAG))
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        Ok(Polled::Changed {
+            etag,
+            body: response.body,
+        })
     }
 
     /// Sends a REST change (a re-run, a cancel, marking a thread read),

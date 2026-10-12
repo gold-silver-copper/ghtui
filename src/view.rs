@@ -188,6 +188,8 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
         }
         Some(Overlay::Compose(compose)) => {
             let title = compose.title();
+            let completions: Option<Vec<String>> = crate::typing::completions(state)
+                .map(|choices| choices.into_iter().map(|c| c.label).collect());
             let rows = compose.rows();
             // Where the comment will go, or (without room there) a strip
             // above the status bar.
@@ -218,6 +220,12 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                     crate::review::ComposeTarget::Conversation { .. } => "post comment",
                     _ => "add to review",
                 },
+                completions: (completions.as_deref()).map(|c| {
+                    (
+                        c,
+                        compose.completing.selected.min(c.len().saturating_sub(1)),
+                    )
+                }),
             }
             .render(sheet, buf);
         }
@@ -418,6 +426,9 @@ fn render_diff(
         word: screen.word,
     }
     .render(area, buf);
+    if let Some(Overlay::Hints(hints)) = &state.overlay {
+        crate::ui::page::draw_hints(theme, &hints.shown(), area, buf);
+    }
 
     if let Some(tree) = lay.tree {
         FileTree {

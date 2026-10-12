@@ -1,6 +1,8 @@
 //! A pull request's Review tab.
 
 use super::*;
+use crate::api::model::NodeId;
+use std::collections::HashSet;
 
 /// What a pull request's Review tab shows of its diff: GitHub's review
 /// threads, and your drafts once they're read from disk.
@@ -8,6 +10,8 @@ use super::*;
 pub struct Glance<'a> {
     pub threads: Fetched<'a, Vec<ReviewThread>>,
     pub drafts: Option<&'a [DraftComment]>,
+    /// Threads and comments that came in since you started looking.
+    pub fresh: &'a HashSet<NodeId>,
 }
 
 /// A pull request's Review tab: your drafts, the threads still open, who
@@ -23,7 +27,7 @@ pub fn pr_review(
 ) {
     pr_summary(page, pr, d, cx.now);
     review_drafts(page, pr, glance.drafts);
-    open_threads(page, glance.threads, cx.now);
+    open_threads(page, glance.threads, glance.fresh, cx.now);
     reviewers(page, pr, d, activity, cx.now);
     merge_box(page, pr, d, cx.icons, false);
 }
@@ -83,7 +87,12 @@ pub(super) fn review_drafts(page: &mut Page, pr: &PrRef, drafts: Option<&[DraftC
 
 /// The unresolved review threads, in file order (as `]t` walks them),
 /// each opening Files changed at its thread.
-pub(super) fn open_threads(page: &mut Page, threads: Fetched<'_, Vec<ReviewThread>>, now: u64) {
+pub(super) fn open_threads(
+    page: &mut Page,
+    threads: Fetched<'_, Vec<ReviewThread>>,
+    fresh: &HashSet<NodeId>,
+    now: u64,
+) {
     let heading = "Unresolved threads";
     let loading = |page: &mut Page| {
         empty_box(page, Seg::new(heading, Role::Strong), "Loading…");
@@ -122,6 +131,10 @@ pub(super) fn open_threads(page: &mut Page, threads: Fetched<'_, Vec<ReviewThrea
             if thread.outdated {
                 segs.push(Seg::new(" ", Role::Meta));
                 segs.push(chip("Outdated", Bg::ContainerHigh));
+            }
+            if thread.comments.iter().any(|c| fresh.contains(&c.id)) {
+                segs.push(Seg::new(" ", Role::Meta));
+                segs.push(chip("New", Bg::TertiaryContainer));
             }
             let mut said = Vec::new();
             if let Some(c) = first {

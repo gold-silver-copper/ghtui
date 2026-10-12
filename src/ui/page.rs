@@ -187,6 +187,10 @@ pub enum Tone {
     Code,
     /// A code line a link points at.
     Marked,
+    /// A line a suggested change adds.
+    Added,
+    /// A line a suggested change replaces.
+    Removed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -823,6 +827,32 @@ pub struct HintLabel {
     pub label: String,
 }
 
+/// Letter hints over the links they follow, in `area`.
+pub fn draw_hints(theme: &crate::theme::Theme, hints: &[HintLabel], area: Rect, buf: &mut Buffer) {
+    for hint in hints {
+        let style = theme
+            .fill(Bg::TertiaryContainer)
+            .add_modifier(Modifier::BOLD);
+        // Just before the link (over the space, padding or icon there),
+        // so the link's own text stays readable.
+        let width = cols(text::width(&hint.label));
+        let x = hint
+            .x
+            .checked_sub(width)
+            .filter(|x| *x >= area.x)
+            .unwrap_or(hint.x);
+        Span::styled(hint.label.clone(), style).render(
+            Rect {
+                x,
+                y: hint.y,
+                width,
+                height: 1,
+            },
+            buf,
+        );
+    }
+}
+
 /// Renders a page scrolled to `scroll`, with `selected` item highlighted
 /// and the search match on line `current` marked as the one gone to.
 pub struct PageView<'a> {
@@ -876,28 +906,7 @@ impl Widget for PageView<'_> {
             }
         }
         self.scrollbar(area, buf);
-        for hint in self.hints {
-            let style = theme
-                .fill(Bg::TertiaryContainer)
-                .add_modifier(Modifier::BOLD);
-            // Just before the link (over the space, padding or icon there),
-            // so the link's own text stays readable.
-            let width = cols(text::width(&hint.label));
-            let x = hint
-                .x
-                .checked_sub(width)
-                .filter(|x| *x >= area.x)
-                .unwrap_or(hint.x);
-            Span::styled(hint.label.clone(), style).render(
-                Rect {
-                    x,
-                    y: hint.y,
-                    width,
-                    height: 1,
-                },
-                buf,
-            );
-        }
+        draw_hints(theme, self.hints, area, buf);
     }
 }
 
@@ -927,6 +936,8 @@ impl PageView<'_> {
             _ if current => Bg::Selected,
             (Tone::Code, _) => CODE_BG,
             (Tone::Marked, _) => MARKED_BG,
+            (Tone::Added, _) => Bg::Diff(DiffBg::Added),
+            (Tone::Removed, _) => Bg::Diff(DiffBg::Removed),
             (Tone::Plain, true) => Bg::Selected,
             (Tone::Plain, false) => PAGE_BG,
         };
@@ -1049,34 +1060,38 @@ impl PageView<'_> {
     }
 
     fn style(&self, role: &Role, bg: Bg) -> Style {
-        let theme = self.ctx.theme;
-        match role {
-            Role::Body => theme.body(bg),
-            Role::Title => theme.title(bg),
-            Role::Heading => theme.accent(bg).add_modifier(Modifier::BOLD),
-            Role::Strong => theme.body(bg).add_modifier(Modifier::BOLD),
-            Role::Emph => theme.body(bg).add_modifier(Modifier::ITALIC),
-            Role::Strike => theme.meta(bg).add_modifier(Modifier::CROSSED_OUT),
-            Role::Meta => theme.meta(bg),
-            Role::Link | Role::Accent => theme.accent(bg),
-            Role::Code => match bg {
-                Bg::Diff(_) | Bg::DiffSelected(_) => theme.style(Fg::Syntax(Syntax::String), bg),
-                // GitHub's gray chip.
-                _ => theme.fill(Bg::ContainerHigh),
-            },
-            Role::Syntax(s) => match bg {
-                Bg::Diff(_) | Bg::DiffSelected(_) => theme.style(Fg::Syntax(*s), bg),
-                _ => theme.body(bg),
-            },
-            Role::Success => theme.style(Fg::Success, bg),
-            Role::Error => theme.error(bg),
-            Role::Added => theme.style(Fg::DiffAddedSign, bg),
-            Role::Removed => theme.style(Fg::DiffRemovedSign, bg),
-            Role::Chip(chip) => theme.fill(*chip),
-            Role::Label(color) => theme.label_chip(color),
-            Role::Heat(level) => theme.style(Fg::Heat(*level), bg),
-            Role::Match => theme.fill(Bg::TertiaryContainer),
-        }
+        role_style(self.ctx.theme, role, bg)
+    }
+}
+
+/// How text in `role` looks on `bg`.
+pub(crate) fn role_style(theme: &crate::theme::Theme, role: &Role, bg: Bg) -> Style {
+    match role {
+        Role::Body => theme.body(bg),
+        Role::Title => theme.title(bg),
+        Role::Heading => theme.accent(bg).add_modifier(Modifier::BOLD),
+        Role::Strong => theme.body(bg).add_modifier(Modifier::BOLD),
+        Role::Emph => theme.body(bg).add_modifier(Modifier::ITALIC),
+        Role::Strike => theme.meta(bg).add_modifier(Modifier::CROSSED_OUT),
+        Role::Meta => theme.meta(bg),
+        Role::Link | Role::Accent => theme.accent(bg),
+        Role::Code => match bg {
+            Bg::Diff(_) | Bg::DiffSelected(_) => theme.style(Fg::Syntax(Syntax::String), bg),
+            // GitHub's gray chip.
+            _ => theme.fill(Bg::ContainerHigh),
+        },
+        Role::Syntax(s) => match bg {
+            Bg::Diff(_) | Bg::DiffSelected(_) => theme.style(Fg::Syntax(*s), bg),
+            _ => theme.body(bg),
+        },
+        Role::Success => theme.style(Fg::Success, bg),
+        Role::Error => theme.error(bg),
+        Role::Added => theme.style(Fg::DiffAddedSign, bg),
+        Role::Removed => theme.style(Fg::DiffRemovedSign, bg),
+        Role::Chip(chip) => theme.fill(*chip),
+        Role::Label(color) => theme.label_chip(color),
+        Role::Heat(level) => theme.style(Fg::Heat(*level), bg),
+        Role::Match => theme.fill(Bg::TertiaryContainer),
     }
 }
 

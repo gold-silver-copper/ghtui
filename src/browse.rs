@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckOutcome, Checks, CommitDetail, CommitInfo, Comparison,
@@ -794,10 +794,13 @@ impl State {
             }
             Route::Pr { pr, tab } => {
                 let activity = f.get(&DataKey::PrActivity(pr.clone()));
+                let watch = crate::live::fresh(self, pr);
+                let (none, unseen) = (HashSet::new(), HashSet::new());
                 if let Some(d) = f.of(self.prs.get(pr)).show(&mut page, &pr.to_string()) {
                     match tab {
                         PrTab::Conversation => {
-                            pages::pr_conversation(&mut page, pr, d, activity, cx);
+                            let fresh = watch.map_or(&none, |w| &w.new_comments);
+                            pages::pr_conversation(&mut page, pr, d, activity, fresh, cx);
                         }
                         PrTab::Commits => pages::pr_commits(&mut page, pr, d, activity, now),
                         PrTab::Checks => {
@@ -812,6 +815,7 @@ impl State {
                                 drafts: inputs
                                     .filter(|i| i.review_loaded)
                                     .map(|i| i.review.pending.as_slice()),
+                                fresh: watch.map_or(&unseen, |w| &w.new_threads),
                             };
                             pages::pr_review(&mut page, pr, d, activity, glance, cx);
                         }

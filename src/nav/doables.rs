@@ -168,8 +168,8 @@ impl State {
             link.unavailable = Some("no link is under the cursor".into());
         }
         out.push(link);
+        out.push(go(Action::Hints, "Follow any link by its letters", "links"));
         if let Screen::Page(_) = self.screen() {
-            out.push(go(Action::Hints, "Follow any link by its letters", "links"));
             out.push(go(Action::UpLevel, "Up a level", ""));
         }
         let mut back = go(Action::Back, "Back", "");

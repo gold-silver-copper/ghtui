@@ -35,11 +35,7 @@ pub(super) fn hint_labels(n: usize) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn start_hints(state: &mut State, browser: bool) {
-    let area = state.page_area();
-    let Screen::Page(p) = state.screen() else {
-        return;
-    };
+pub(crate) fn start_hints(state: &mut State, browser: bool) {
     // The page's own tabs first, then its links.
     let chrome = state.chrome();
     let tab_list: Vec<_> = chrome.tabs.iter().map(|(t, _)| t.clone()).collect();
@@ -61,9 +57,24 @@ pub(super) fn start_hints(state: &mut State, browser: bool) {
                 Some(i + 1),
             )
         });
-    let links = page::spots(&p.page, area, p.scroll)
-        .into_iter()
-        .filter_map(|s| Some(((s.x, s.y), p.page.target(s.link)?.clone(), None)));
+    let links: Vec<_> = match state.screen() {
+        Screen::Page(p) => page::spots(&p.page, state.page_area(), p.scroll)
+            .into_iter()
+            .filter_map(|s| Some(((s.x, s.y), p.page.target(s.link)?.clone(), None)))
+            .collect(),
+        // In Files changed, the links in its threads' comments.
+        Screen::Diff(screen) => match state.diffs.get(&screen.of) {
+            Some(diff) => {
+                let content = state.layout().content;
+                let area = diff_screen::layout(content, &screen.prefs, &diff.tree).diff;
+                crate::ui::diff_view::link_spots(&diff.doc, screen.top, area)
+                    .into_iter()
+                    .map(|(at, url)| (at, Link::Url(url), None))
+                    .collect()
+            }
+            None => Vec::new(),
+        },
+    };
     // Then the header's (your unread notifications, you).
     let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
     let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();

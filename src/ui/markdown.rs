@@ -157,6 +157,10 @@ struct Renderer<'a> {
     pending_marker: Option<String>,
     quote_depth: u16,
     code: Option<(Option<Language>, String)>,
+    /// The code block is a suggested change.
+    suggesting: bool,
+    /// The lines a suggested change replaces, where they're known.
+    original: Option<&'a [String]>,
     table: Option<Vec<Vec<Vec<Seg>>>>,
     heading: Option<HeadingLevel>,
     /// Inside an image: its alt text so far, and the link outside it.
@@ -302,6 +306,7 @@ impl Renderer<'_> {
         if let Some((_, code)) = &mut self.code {
             match event {
                 Event::Text(t) => code.push_str(&t),
+                Event::End(TagEnd::CodeBlock) if self.suggesting => self.end_suggestion(),
                 Event::End(TagEnd::CodeBlock) => self.end_code(),
                 _ => {}
             }
@@ -353,10 +358,14 @@ impl Renderer<'_> {
             }
             Tag::CodeBlock(kind) => {
                 self.flush();
-                let lang = match kind {
-                    CodeBlockKind::Fenced(info) => language_for_fence(&info),
+                let lang = match &kind {
+                    CodeBlockKind::Fenced(info) => language_for_fence(info),
                     CodeBlockKind::Indented => None,
                 };
+                self.suggesting = matches!(
+                    &kind,
+                    CodeBlockKind::Fenced(info) if info.split([',', ' ']).next() == Some("suggestion")
+                );
                 self.code = Some((lang, String::new()));
             }
             Tag::List(start) => {
@@ -501,6 +510,37 @@ impl Renderer<'_> {
         self.page_blank();
     }
 
+    /// A suggested change, as a small diff: the lines it replaces (when
+    /// they're known), then the lines it suggests.
+    fn end_suggestion(&mut self) {
+        let Some((_, code)) = self.code.take() else {
+            return;
+        };
+        self.suggesting = false;
+        let (indent, frame) = (self.indent, self.frame);
+        let line = |sign: &str, role: Role, text: &str, tone: Tone| PageLine {
+            segs: vec![
+                Seg::new(sign, role),
+                Seg::new(text, Role::Syntax(Syntax::Default)),
+            ],
+            tone,
+            frame,
+            indent,
+            right: Vec::new(),
+            fixed: 1,
+        };
+        let title = vec![Seg::new("Suggested change", Role::Meta)];
+        self.page.add(frame, indent, title, Vec::new());
+        for old in self.original.unwrap_or_default() {
+            self.page
+                .push(line("- ", Role::Removed, old, Tone::Removed));
+        }
+        for new in code.lines() {
+            self.page.push(line("+ ", Role::Added, new, Tone::Added));
+        }
+        self.page_blank();
+    }
+
     fn end_table(&mut self) {
         let Some(rows) = self.table.take() else {
             return;
@@ -598,6 +638,23 @@ fn decode_entities(s: &str) -> String {
 /// Renders `markdown` into `page`, inside a box when `frame` is
 /// [`Frame::Body`].
 pub fn render(page: &mut Page, markdown: &str, base: Option<&LinkBase>, frame: Frame) {
+    render_with(page, markdown, base, frame, None);
+}
+
+/// Renders a review comment into `page`: a suggested change in it shows
+/// as a diff of `original`, the lines it replaces (when known), and the
+/// lines it suggests.
+pub fn render_comment(page: &mut Page, markdown: &str, original: Option<&[String]>) {
+    render_with(page, markdown, None, Frame::None, original);
+}
+
+fn render_with(
+    page: &mut Page,
+    markdown: &str,
+    base: Option<&LinkBase>,
+    frame: Frame,
+    original: Option<&[String]>,
+) {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
@@ -614,6 +671,8 @@ pub fn render(page: &mut Page, markdown: &str, base: Option<&LinkBase>, frame: F
         pending_marker: None,
         quote_depth: 0,
         code: None,
+        suggesting: false,
+        original,
         table: None,
         heading: None,
         image: None,

@@ -144,11 +144,14 @@ pub(super) fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons,
     page.box_bottom();
 }
 
+/// Comments in `fresh` (by GitHub's number) came in since you started
+/// looking.
 pub fn pr_conversation(
     page: &mut Page,
     pr: &PrRef,
     d: &PrDetail,
     activity: Fetched<'_, PrActivity>,
+    fresh: &std::collections::HashSet<u64>,
     cx: PageCtx<'_>,
 ) {
     // Comments and reviews, merged in time order below.
@@ -209,7 +212,10 @@ pub fn pr_conversation(
     for (_, entry) in entries {
         connector(page);
         match entry {
-            Entry::Comment(c) => talk.comment(page, c),
+            Entry::Comment(c) => {
+                let new = c.id.is_some_and(|id| fresh.contains(&id));
+                talk.comment(page, c, new);
+            }
             Entry::Review(r) => {
                 let (icon, what) = match r.state {
                     ReviewState::Approved => (("✓", Role::Success), "approved these changes"),

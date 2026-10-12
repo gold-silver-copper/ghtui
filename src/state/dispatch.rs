@@ -37,7 +37,19 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         state.prs.values_mut().for_each(|r| r.stale = true);
         state.data.values_mut().for_each(|r| r.stale = true);
     }
+    // The conversation's comments, fresh from GitHub.
+    let activity = match &msg {
+        Msg::Fetched {
+            key: DataKey::PrActivity(pr),
+            result: Ok(_),
+            cached_at: None,
+        } => Some(pr.clone()),
+        _ => None,
+    };
     let mut cmds = handle(state, msg);
+    if let Some(pr) = activity {
+        crate::live::activity_loaded(state, &pr);
+    }
     if data {
         cmds.extend(act::follow(state));
     }
@@ -57,6 +69,7 @@ pub fn timers(state: &mut State) -> Vec<Cmd> {
         state.live = true;
         cmds.push(Cmd::Timer(Timer::Live, LIVE_MS));
     }
+    cmds.extend(crate::live::schedule(state));
     // Home keeps itself fresh while it's on screen, and only then.
     if !state.home_timer && state.route() == Some(&Route::Home) {
         state.home_timer = true;
@@ -196,6 +209,11 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Problem(problem, None) => {
             state.problems.remove(&problem);
         }
+        Msg::Timer(Timer::Watch(id)) => return crate::live::on_timer(state, id),
+        Msg::Polled(pr, answers) => return crate::live::on_polled(state, &pr, answers),
+        Msg::Paste(text) => return crate::typing::on_paste(state, &text),
+        Msg::Focus(focused) => crate::live::on_focus(state, focused),
+        Msg::Mentionable(repo, result) => crate::typing::on_mentionable(state, repo, result),
         Msg::Edited(purpose, result) => return on_edited(state, purpose, result),
         Msg::HomeEdited { edit, result, what } => return state.home_edited(&edit, result, what),
     }
@@ -417,6 +435,10 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Copy => return nav::copy_link(state),
         Action::OpenInBrowser => return state.go(Target::External(state.here_url()).into()),
         _ if act::ACTIONS.contains(&action) => return act::act(state, action),
+        // The diff's links are in its threads' comments.
+        Action::Hints | Action::HintsBrowser if diff.is_some() => {
+            nav::start_hints(state, action == Action::HintsBrowser);
+        }
         _ if diff.is_some() => return diff_action(state, action),
         _ => return nav::page_action(state, action),
     }

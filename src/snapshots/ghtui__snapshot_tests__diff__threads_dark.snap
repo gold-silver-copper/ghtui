@@ -1,5 +1,5 @@
 ---
-source: src/snapshot_tests.rs
+source: src/snapshot_tests/diff.rs
 expression: "render(&with_threads(Mode::Dark))"
 ---
 Buffer {
@@ -36,7 +36,7 @@ Buffer {
         "                                     14  +     pub fn origin() -> Self {                                      ",
         "                               ✎     15  +         Self::new(0, "0".len() as i32 - 1)                         ",
         "                                           You   Draft   Rejected                                             ",
-        "                                           Prefer `Self::default()` here.                                     ",
+        "                                           Prefer  Self::default()  here.                                     ",
         "                                           GitHub rejected this: pull_request_review_thread.line              ",
         "  ⠋ Diffing 7/8 files   space menu   ,s submit (1 pending)   ]c/[c change   ]f file            API 4987/5000  ",
     ],
@@ -418,6 +418,8 @@ Buffer {
         x: 0, y: 31, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 29, y: 31, fg: Rgb(226, 226, 233), bg: Rgb(17, 19, 24), underline: Reset, modifier: NONE,
         x: 41, y: 31, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
+        x: 50, y: 31, fg: Rgb(226, 226, 233), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,
+        x: 67, y: 31, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 108, y: 31, fg: Rgb(226, 226, 233), bg: Rgb(17, 19, 24), underline: Reset, modifier: NONE,
         x: 0, y: 32, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 29, y: 32, fg: Rgb(226, 226, 233), bg: Rgb(17, 19, 24), underline: Reset, modifier: NONE,

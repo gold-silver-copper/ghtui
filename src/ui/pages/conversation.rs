@@ -72,10 +72,15 @@ impl Conversation<'_> {
         page.item(start, quote);
     }
 
-    /// A comment, badged when it's by whoever opened the conversation.
-    pub(super) fn comment(&self, page: &mut Page, c: &Comment) {
+    /// A comment, badged when it's `new` (it came in since you started
+    /// looking), or else when it's by whoever opened the conversation.
+    pub(super) fn comment(&self, page: &mut Page, c: &Comment, new: bool) {
         let anchor = c.id.map(|id| format!("issuecomment-{id}"));
-        let badge = (c.author == self.op).then(|| chip("Author", Bg::SecondaryContainer));
+        let badge = if new {
+            Some(chip("New", Bg::TertiaryContainer))
+        } else {
+            (c.author == self.op).then(|| chip("Author", Bg::SecondaryContainer))
+        };
         self.said_at(
             page,
             anchor,
@@ -252,7 +257,7 @@ pub fn issue(page: &mut Page, d: &IssueDetail, icons: Icons, keys: Keys<'_>, now
     earlier_here(page, &d.comments, "comment", "comments");
     for c in &d.comments {
         connector(page);
-        talk.comment(page, c);
+        talk.comment(page, c, false);
     }
     add_comment(page, keys);
 }

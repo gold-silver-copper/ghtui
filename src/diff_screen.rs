@@ -261,6 +261,8 @@ pub struct DiffInputs {
     pub commits: Vec<Commit>,
     /// The draft deleted last, for undo.
     pub deleted: Option<crate::store::DraftComment>,
+    /// Threads and comments that came in since you started looking.
+    pub fresh: HashSet<NodeId>,
 }
 
 impl DiffInputs {
@@ -398,7 +400,7 @@ impl DiffState {
             },
             viewed: i.viewed.iter().flat_map(|v| v.states.clone()).collect(),
             reviewed: i.review.reviewed_hunks.iter().cloned().collect(),
-            annotations: annotations(i.thread_list(), &self.mapped, &i.review.pending),
+            annotations: annotations(i.thread_list(), &self.mapped, &i.review.pending, &i.fresh),
         }
     }
 
@@ -1457,6 +1459,7 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
                 state.error(format!("Couldn't load review threads: {err}"));
             }
             edit(state, of, |i| i.threads.finish(result));
+            crate::live::threads_loaded(state, &pr);
         }
         DiffMsg::PatchesLoaded(Ok(patches)) => {
             let commentable = |f: PatchFile| Some((f.filename, Commentable::from_patch(&f.patch?)));

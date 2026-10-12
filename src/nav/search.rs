@@ -329,14 +329,21 @@ pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         }
         _ => {
             type_into(&mut sb.input, key);
-            sb.selected = 0;
-            let q = sb.query();
-            if !sb.filter && q.chars().count() >= 2 && route::parse_input(&q, None).is_none() {
-                vec![Cmd::SuggestLater(q)]
-            } else {
-                Vec::new()
-            }
+            search_box_changed(sb)
         }
+    }
+}
+
+/// After the search box's text changed: its suggestions start over, and
+/// GitHub is asked for some once typing pauses.
+#[must_use]
+pub fn search_box_changed(sb: &mut SearchBox) -> Vec<Cmd> {
+    sb.selected = 0;
+    let q = sb.query();
+    if !sb.filter && q.chars().count() >= 2 && route::parse_input(&q, None).is_none() {
+        vec![Cmd::SuggestLater(q)]
+    } else {
+        Vec::new()
     }
 }
 

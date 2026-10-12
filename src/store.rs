@@ -56,7 +56,7 @@ from_redb!(
 );
 
 /// A cached REST response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HttpEntry {
     pub etag: String,
     /// The `Last-Modified` header, sent back as `If-Modified-Since`.

@@ -109,7 +109,19 @@ doesn't:
 
 Comments are kept on disk until you submit, so a crash never loses them.
 Threads that GitHub calls outdated are moved to their line when it still
-exists.
+exists. A thread's comments are rendered Markdown, as in the
+conversation: links follow (`i` letters them, `↵` on a link's line
+follows it), and a suggested change shows as a small diff of the lines it
+replaces.
+
+**While you review**, ghtui keeps an eye on the pull request: while its
+Files changed, its Review tab or its conversation is on screen, it asks
+GitHub now and then for new review comments, a new push and check
+results. It asks with ETags, so an answer that hasn't changed costs
+nothing, and it asks less often while nothing changes or the terminal is
+out of focus. What came in since you started looking is marked New, and
+the status bar says what it was; after a push to a pull request you've
+reviewed, it offers the changes since your last review.
 
 **A pull request's Review tab** (`gr` from any of its tabs) shows where
 its review stands, so you don't have to piece it together:
@@ -298,6 +310,8 @@ says where it works.
 
 | Keys           | Action |
 | -------------- | ------ |
+| `i`            | Follow a link by its letters |
+| `I`            | Follow a link, in the browser |
 | `h`            | Scroll left |
 | `l`            | Scroll right |
 | `w`            | Next word (for * and gx) |
@@ -345,6 +359,11 @@ The comment editor opens where the comment will go: under the lines, the
 thread or the file header in Files changed, and in place of the comment
 box on a conversation. In it, `ctrl-s` adds the comment, `ctrl-e`
 continues in `$EDITOR`, and `esc` cancels (keeping the lines selected).
+Long lines wrap, and a paste arrives as text, newlines and all (in a
+one-line box, as one line). Typing `@` offers the people taking part and
+the repository's assignable users, `#` its recent issues and pull
+requests, narrowed as you type: `⇥` or `↵` takes the one chosen, `↑` and
+`↓` choose, and `esc` closes the list.
 
 ## Configuration
 
@@ -462,7 +481,6 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 - github.com only.
 - Long code lines are cut at the edge: `h` and `l` scroll them sideways,
   but they don't wrap.
-- Comments in diff threads show as plain text, not rendered Markdown.
 - Markdown in the terminal: images show their alt text, and HTML is reduced
   to its text and links.
 - The cache isn't kept per account. After switching accounts, the old
@@ -478,3 +496,6 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   `o`, a restored tab) is the conversation's.
 - `*` and `#` find the word as text, inside longer words too, not as a
   whole word.
+- `@` offers as taking part only who has written what's loaded (the
+  newest 100 comments, and the review threads), and `#` the 100 issues and
+  pull requests updated last.

@@ -99,6 +99,9 @@ async fn drive(
             event = events.next() => match event {
                 Some(Ok(Event::Key(key))) if key.kind != KeyEventKind::Release => Msg::Key(key),
                 Some(Ok(Event::Resize(w, h))) => Msg::Resize(w, h),
+                Some(Ok(Event::Paste(text))) => Msg::Paste(text),
+                Some(Ok(Event::FocusGained)) => Msg::Focus(true),
+                Some(Ok(Event::FocusLost)) => Msg::Focus(false),
                 Some(Ok(Event::Mouse(m))) if matches!(
                     m.kind,
                     MouseEventKind::Down(_) | MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
@@ -487,6 +490,21 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 let result = gh.last_review_commit(&pr, &login).await;
                 Msg::Diff(pr.into(), DiffMsg::LastReview(result))
             }
+            Api::FetchMentionable(repo) => {
+                let result = gh.mentionable(&repo).await;
+                Msg::Mentionable(repo, result)
+            }
+            Api::Poll { pr, asks } => {
+                let polls = asks.into_iter().map(|ask| {
+                    let (gh, path) = (&gh, ask.probe.path(&pr));
+                    async move {
+                        let answer = gh.poll(&path, ask.etag.as_deref()).await;
+                        (ask.probe, answer)
+                    }
+                });
+                let answers = futures::future::join_all(polls).await;
+                Msg::Polled(pr, answers)
+            }
         };
         let _ = tx.send(msg);
         let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
@@ -631,6 +649,8 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Cmd::Api(Api::FetchLastReview { pr, .. }) => {
             Msg::Diff(pr.clone().into(), DiffMsg::LastReview(api()))
         }
+        Cmd::Api(Api::FetchMentionable(repo)) => Msg::Mentionable(repo.clone(), api()),
+        Cmd::Api(Api::Poll { pr, .. }) => Msg::Polled(pr.clone(), Vec::new()),
         Cmd::Git(Git::LoadDiff { of, job, .. }) => Msg::Diff(
             of.clone(),
             DiffMsg::Job(*job, JobMsg::Failed(Failure::msg("ghtui hit a bug"))),
@@ -1212,7 +1232,7 @@ async fn edit_externally(
                     .map(drop)
             })
             .and_then(|()| terminal.clear());
-        crate::set_mouse(true);
+        crate::capture_input(true);
         if let Err(err) = restored {
             tracing::error!(%err, "couldn't restore the terminal after the editor");
         }

@@ -26,7 +26,7 @@ impl Menu {
     }
 
     /// Selects the first row that can run, after the filter changed.
-    pub(super) fn reselect(&mut self) {
+    pub(crate) fn reselect(&mut self) {
         self.selected = self
             .shown()
             .iter()

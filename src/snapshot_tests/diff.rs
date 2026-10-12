@@ -553,6 +553,55 @@ fn threads_light() {
     assert_snapshot!(render(&with_threads(Mode::Light)));
 }
 
+/// A thread whose first comment is Markdown: a link to follow, inline
+/// code, a list, a quote, and a suggested change, shown as a diff of the
+/// line it replaces.
+fn with_markdown_thread(mode: Mode) -> State {
+    let mut s = with_threads(mode);
+    let body = "See [the guide](https://example.com/guide) on `Point`:\n\n\
+                - spell out *two-dimensional*\n- keep it short\n\n\
+                > The rest of the docs spell it out.\n\n\
+                ```suggestion\n/// A point in two dimensions.\n```";
+    let diff = s.diffs.get_mut(&DiffOf::Pr(pr())).unwrap();
+    diff.edit(|i| {
+        let threads = i.threads.data.as_mut().unwrap();
+        threads.truncate(1);
+        threads[0].comments.items[0].body = body.into();
+        i.review = crate::store::ReviewState::default();
+    });
+    let _ = s.settle_diff();
+    s
+}
+
+#[test]
+fn markdown_thread_dark() {
+    assert_snapshot!(render(&with_markdown_thread(Mode::Dark)));
+}
+
+/// `i` in Files changed letters the links in threads' comments, and the
+/// letter follows one; so does Enter on its line.
+#[test]
+fn links_in_threads_are_followed() {
+    use crate::state::{Cmd, Overlay};
+    use crate::ui::page::Link;
+    let guide = "https://example.com/guide";
+    let mut s = with_markdown_thread(Mode::Dark);
+    press(&mut s, "i");
+    let Some(Overlay::Hints(hints)) = &s.overlay else {
+        panic!("no hints: {:?}", s.notices.shown());
+    };
+    let at = hints.links.iter().position(|l| *l == Link::from(guide));
+    let label = hints.labels[at.expect("the guide is lettered")]
+        .label
+        .clone();
+    let cmds = press(&mut s, &label);
+    assert!(cmds.contains(&Cmd::OpenUrl(guide.into())), "{cmds:?}");
+
+    press(&mut s, "/the guide<Enter>");
+    let cmds = press(&mut s, "<Enter>");
+    assert!(cmds.contains(&Cmd::OpenUrl(guide.into())), "{cmds:?}");
+}
+
 #[test]
 fn compose_suggestion_dark() {
     use crate::diff::anchor::{LinePos, Side};

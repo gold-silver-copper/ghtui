@@ -1,7 +1,7 @@
 //! Reviewing: comment targets, drafts, suggestions, and turning GitHub
 //! threads and local drafts into annotations.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::api::model::{NewThread, ReviewEvent, ReviewThread, Side as ApiSide};
 use crate::api::model::{NodeId, PrRef};
@@ -65,6 +65,8 @@ pub struct Compose {
     /// The key (esc or ctrl-c) pressed once with text in the editor: only
     /// that key, pressed again, throws the text away.
     pub discard_armed: Option<&'static str>,
+    /// The list of who or what an `@` or `#` being typed can be.
+    pub completing: crate::typing::Completing,
 }
 
 impl Compose {
@@ -76,6 +78,7 @@ impl Compose {
             sending: false,
             error: None,
             discard_armed: None,
+            completing: crate::typing::Completing::default(),
         }
     }
 
@@ -206,8 +209,10 @@ impl SubmitDialog {
     }
 }
 
+/// A box for writing Markdown: long lines wrap, at words where they can.
 fn editor(theme: &Theme, text: &str) -> TextArea<'static> {
     let mut input = crate::nav::new_input(theme, Bg::ContainerHigh);
+    input.set_wrap_mode(ratatui_textarea::WrapMode::WordOrGlyph);
     input.insert_str(text.trim_end_matches('\n'));
     input
 }
@@ -345,10 +350,12 @@ pub fn new_thread(draft: &DraftComment) -> NewThread {
 /// GitHub threads and local drafts as annotations. Outdated threads whose
 /// line was mapped forward sit on their new line; unmapped ones go under the
 /// file header.
+/// Threads and comments in `fresh` came in since you started looking.
 pub fn annotations(
     threads: &[ReviewThread],
     mapped: &HashMap<NodeId, Option<u32>>,
     drafts: &[DraftComment],
+    fresh: &HashSet<NodeId>,
 ) -> Vec<Annotation> {
     let mut out: Vec<Annotation> = threads
         .iter()
@@ -380,6 +387,7 @@ pub fn annotations(
                         body: c.body.clone(),
                         created_at: c.created_at.clone(),
                         pending: c.pending,
+                        new: fresh.contains(&c.id),
                     })
                     .collect(),
                 left_out: t.comments.left_out(),
@@ -387,6 +395,7 @@ pub fn annotations(
                 can_reply: t.can_reply,
                 can_resolve: t.can_resolve,
                 can_unresolve: t.can_unresolve,
+                new: fresh.contains(&t.id),
             }
         })
         .collect();
@@ -409,12 +418,14 @@ pub fn annotations(
             body: d.body.clone(),
             created_at: String::new(),
             pending: false,
+            new: false,
         }],
         left_out: 0,
         error: d.error.clone(),
         can_reply: false,
         can_resolve: false,
         can_unresolve: false,
+        new: false,
     }));
     out
 }
@@ -600,6 +611,28 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 let all = all_changes(state);
                 return error(state, &format!("First {all}"));
             }
+            // A push since the diff was made: the diff starts again at
+            // it, and compares once it's in.
+            let head = diff.head().map(|h| h.to_string());
+            if crate::live::pushed_past(state, &pr, head.as_deref())
+                && let Some(base) = state.pr_base(&pr)
+                && let Some((screen, diff)) = state.diff_parts()
+            {
+                diff.restart(None);
+                diff.since_requested = true;
+                screen.restart();
+                let job = diff.job;
+                state.info("Loading the new push, to compare with your last review…");
+                return vec![Cmd::Git(Git::LoadDiff {
+                    of: pr.into(),
+                    job,
+                    base,
+                    range: None,
+                })];
+            }
+            let Some((screen, diff)) = state.diff_parts() else {
+                return Vec::new();
+            };
             let active = !diff.doc.since_active();
             if diff_screen::preserving_position(screen, diff, |d| d.doc.show_since(active)) {
                 state.info(if active {
@@ -773,6 +806,16 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 let (id, body) = (draft.id, draft.body.clone());
                 return state.compose(ComposeTarget::Draft { id }, &body);
             }
+            // A line of a comment with a link follows it.
+            let url = match (diff.doc.row(cursor), diff.doc.files().get(cursor.file)) {
+                (Some(Row::Thread(t)), Some(file)) => file
+                    .thread_row(t)
+                    .and_then(|r| r.line.links.first().cloned()),
+                _ => None,
+            };
+            if let Some(url) = url {
+                return state.follow(&crate::ui::page::Link::Url(url));
+            }
             if let Some(at) = at {
                 diff.doc.toggle_thread(at);
             }
@@ -866,6 +909,12 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     if compose.sending {
         return Vec::new();
     }
+    if let Some(cmds) = crate::typing::on_compose_key(state, key) {
+        return cmds;
+    }
+    let Some(Overlay::Compose(compose)) = &mut state.overlay else {
+        return Vec::new();
+    };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Esc => {
@@ -883,6 +932,7 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         _ => {
             compose.discard_armed = None;
             compose.error = None;
+            compose.completing.selected = 0;
             compose.input.input(key);
         }
     }
@@ -1094,7 +1144,7 @@ mod tests {
             (NodeId::new("mapped"), Some(12)),
             (NodeId::new("lost"), None),
         ]);
-        let anns = annotations(&threads, &mapped, &[]);
+        let anns = annotations(&threads, &mapped, &[], &HashSet::new());
         assert!(matches!(anns[0].place, Place::Line { at, .. } if at.line == 3));
         assert!(matches!(anns[1].place, Place::Moved(at) if at.line == 12));
         assert_eq!(anns[2].place, Place::Outdated(Some(3)));
@@ -1149,7 +1199,7 @@ mod tests {
             .is_none()
         );
 
-        let anns = annotations(&[], &HashMap::new(), &[d_with_error()]);
+        let anns = annotations(&[], &HashMap::new(), &[d_with_error()], &HashSet::new());
         assert!(anns[0].is_draft());
         assert_eq!(anns[0].error.as_deref(), Some("nope"));
     }

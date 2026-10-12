@@ -23,6 +23,7 @@ mod fixtures;
 mod home;
 mod join;
 mod keymap;
+mod live;
 mod nav;
 mod notice;
 mod picker;
@@ -35,6 +36,7 @@ mod sequence_tests;
 mod snapshot_tests;
 mod state;
 mod tabs;
+mod typing;
 mod view;
 pub mod wiki;
 
@@ -217,7 +219,7 @@ async fn run(started: Instant) -> Result<()> {
     // `restore_terminal` shows it instead.
     let mut terminal =
         std::mem::ManuallyDrop::new(init_terminal().context("needs an interactive terminal")?);
-    set_mouse(true);
+    capture_input(true);
     let result = runtime::run(&mut terminal, state, gh, git, reviews, cmds, started).await;
     restore_terminal();
     if let Err(err) = &result {
@@ -352,27 +354,37 @@ fn init_logging(
     Some(guard)
 }
 
-/// Clicks and the wheel go to ghtui while it runs.
-pub fn set_mouse(on: bool) {
+/// Clicks, the wheel, pastes (as one piece of text, not keys) and focus
+/// go to ghtui while it runs.
+pub fn capture_input(on: bool) {
     use crossterm::ExecutableCommand;
-    use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+    use crossterm::event::{
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+        EnableFocusChange, EnableMouseCapture,
+    };
     let mut out = std::io::stdout();
     let result = if on {
-        out.execute(EnableMouseCapture).map(drop)
+        (out.execute(EnableMouseCapture))
+            .and_then(|out| out.execute(EnableBracketedPaste))
+            .and_then(|out| out.execute(EnableFocusChange))
+            .map(drop)
     } else {
-        out.execute(DisableMouseCapture).map(drop)
+        (out.execute(DisableMouseCapture))
+            .and_then(|out| out.execute(DisableBracketedPaste))
+            .and_then(|out| out.execute(DisableFocusChange))
+            .map(drop)
     };
     if let Err(err) = result {
-        tracing::warn!(%err, "mouse capture");
+        tracing::warn!(%err, "capturing input");
     }
 }
 
-/// Leaves raw mode, the alternate screen and mouse capture, and shows the
-/// cursor. Failures are logged, never printed: when the terminal is gone
+/// Leaves raw mode, the alternate screen and input capture, and shows
+/// the cursor. Failures are logged, never printed: when the terminal is gone
 /// (a closed pane sends SIGHUP), printing to it panics.
 pub fn restore_terminal() {
     use crossterm::ExecutableCommand;
-    set_mouse(false);
+    capture_input(false);
     let result = std::io::stdout()
         .execute(crossterm::cursor::Show)
         .map(drop)

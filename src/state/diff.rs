@@ -105,7 +105,7 @@ impl State {
     pub fn compose(&mut self, target: ComposeTarget, text: &str) -> Vec<Cmd> {
         let compose = Compose::new(&self.theme, target, text);
         self.overlay = Some(Overlay::Compose(Box::new(compose)));
-        Vec::new()
+        crate::typing::fetch_mentionable(self)
     }
 
     /// The diff on screen, if it's one.

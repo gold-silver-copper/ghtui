@@ -220,8 +220,8 @@ actions! {
     QuoteReply        "quote_reply"       [">"]                    Page   "Reply quoting the comment";
     Star              "star"              [",*"]                   Page   "Star / unstar";
     Branch            "branch"            ["B"]                    Page   "Switch branches or tags";
-    Hints             "hints"             ["i"]                    Page   "Follow a link by its letters";
-    HintsBrowser      "hints_browser"     ["I"]                    Page   "Follow a link, in the browser";
+    Hints             "hints"             ["i", "diff:i"]          Page   "Follow a link by its letters";
+    HintsBrowser      "hints_browser"     ["I", "diff:I"]          Page   "Follow a link, in the browser";
     ToggleState       "toggle_state"      ["t"]                    List   "Open / closed / all (in the inbox, unread / read)";
     Sort              "sort"              ["S"]                    List   "Change the sort";
     MarkRead          "mark_read"         [",n"]                   List   "Mark the notification read";

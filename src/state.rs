@@ -88,6 +88,21 @@ pub enum Msg {
     },
     /// For a PR's diff screen.
     Diff(DiffOf, DiffMsg),
+    /// Text pasted into the terminal, whole.
+    Paste(String),
+    /// The terminal came into focus (`true`) or left it.
+    Focus(bool),
+    /// Who and what a repository's comments can mention.
+    Mentionable(
+        crate::api::model::RepoId,
+        Result<crate::api::mention::Mentionable, ApiError>,
+    ),
+    /// What GitHub answered when asked whether a watched pull request
+    /// changed.
+    Polled(
+        PrRef,
+        Vec<(crate::live::Probe, Result<crate::api::Polled, ApiError>)>,
+    ),
 }
 
 /// Why background work failed. Shows as its message with its causes
@@ -223,6 +238,13 @@ pub enum Api {
         pr: PrRef,
         login: String,
     },
+    /// Who and what the repository's comments can mention.
+    FetchMentionable(crate::api::model::RepoId),
+    /// Whether a watched pull request changed, asked with ETags.
+    Poll {
+        pr: PrRef,
+        asks: Vec<crate::live::Ask>,
+    },
 }
 
 /// An outdated thread to place on the current diff: where it was.
@@ -285,6 +307,8 @@ pub enum Timer {
     Home,
     /// Poll the unread count, if this is still the latest poll.
     Unread(u64),
+    /// Ask whether the pull request watched (by its watch's id) changed.
+    Watch(u64),
 }
 
 /// Braille spinner frames.
@@ -423,6 +447,12 @@ pub struct State {
     pub awaiting: Option<act::Awaiting>,
     /// An action waiting for what it's about to load.
     pub pending: Option<act::Pending>,
+    /// The pull request under review on screen, watched for changes.
+    pub watch: Option<crate::live::Watch>,
+    /// The terminal has the focus.
+    pub focused: bool,
+    /// Who and what each repository's comments can mention, once asked.
+    pub mentionable: HashMap<crate::api::model::RepoId, crate::api::mention::Mentionable>,
     pub quit: bool,
 }
 
@@ -465,6 +495,9 @@ impl State {
             live: false,
             awaiting: None,
             pending: None,
+            watch: None,
+            focused: true,
+            mentionable: HashMap::new(),
             quit: false,
         };
         state.sync_page();

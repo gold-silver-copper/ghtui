@@ -414,7 +414,13 @@ fn whitespace_and_full_file_keep_the_cursor_line() {
 }
 mod better;
 
+/// Watching the pull request under review for what's new.
+mod live;
+
 mod review;
+
+/// The comment box: pastes, wrapping, and completing mentions.
+mod typing;
 
 /// What a diff is built from (GitHub's patches, viewed marks, the
 /// screen's toggles) outlasts each rebuild of what's shown.
