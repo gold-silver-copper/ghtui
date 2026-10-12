@@ -26,8 +26,9 @@ ghtui is pre-release, but it's usable every day.
   submit a review.
 - **Acting** works from a page or from a row in a list: merge (now, when
   checks pass, or through a merge queue), approve, mark ready for review,
-  update a branch, close or reopen, re-run or cancel a workflow run,
-  comment and star, mark notifications read or done, one at a time or
+  update a branch, close or reopen, re-run or cancel a workflow run, run
+  a workflow by hand with its inputs, save a run's artifacts, comment
+  and star, mark notifications read or done, one at a time or
   all at once, answer and reply in discussions and mark their answer,
   add, move, archive and restore a project's cards, set their fields
   and edit its drafts, and dismiss or reopen a security alert.
@@ -214,6 +215,43 @@ out of focus. What came in since you started looking is marked New, and
 the status bar says what it was; after a push to a pull request you've
 reviewed, it offers the changes since your last review.
 
+**Other pages are watched the same way**, with the same pace:
+- a running job: its steps as they start and end, then, once it ends,
+  its log. The page follows the job the way `tail -f` follows a file,
+  staying on the step running and ending at its log, until you move;
+  then it says how the job ended. GitHub writes a job's log only when
+  the job ends, so the lines themselves can't arrive sooner;
+- the Actions tab and a workflow's runs: new runs appear (and are said),
+  running ones update;
+- a run: its outcome, its jobs' and its artifacts;
+- an issue: new comments, edits, its state, labels and assignees;
+- a discussion: new comments and replies, edits, its answer.
+
+Another author's new comments are marked New; yours aren't. The first
+answer after opening a page counts as a change when it shows something
+the page doesn't, so what came in while the page loaded isn't lost.
+
+**Why a check failed** is on the page that shows it:
+- the Checks tab lists each check run's annotations (the failures,
+  warnings and notices it attached to lines of files) under it, and a
+  job's page lists all of its own; opening one goes to its lines, in the
+  file at the commit that was checked;
+- in Files changed, they sit on their lines, as on GitHub, named by
+  their check;
+- a run's page opens on its first failed job, and a job's page opens on
+  its failing step's first error: a failure's log lines are one `↵`
+  away;
+- a run's artifacts are listed with their size and when they expire;
+  `↵` on one asks where to save it (the current folder unless you type a
+  file or folder), and a file already there is replaced only when you
+  choose the row that says so.
+
+**Running a workflow by hand** (`,w` on a workflow's page or one of its
+runs) opens GitHub's "Run workflow" form: the branch, then the inputs
+its file declares on that branch (choices, booleans and text, with their
+defaults). `↵` changes one; `,w` (or the form's last row) runs it, and
+the page follows the run it started.
+
 **A pull request's Review tab** (`gr` from any of its tabs) shows where
 its review stands, so you don't have to piece it together:
 - your drafts that aren't submitted yet;
@@ -342,7 +380,8 @@ says where it works.
   assignees, `,q` asks for reviews and `,M` sets its milestone.
 - New things wait behind `,` as well: `,i` writes a new issue and `,p` a
   new pull request, which `,s` creates (and `,P` pushes its branch
-  first); `,c` checks a pull request out in your clone. `,V` makes a
+  first); `,c` checks a pull request out in your clone; `,E` runs a
+  workflow by hand. `,V` makes a
   release, `,G` a gist and `,W` a wiki page; `,s` makes or saves each,
   and `,e` and `,D` edit a wiki page or your gist and delete your gist.
 - `,w` subscribes to a thread or ignores it, or sets how you watch the
@@ -787,6 +826,18 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 
 ## Known limitations
 
+- A running job's log shows once the job ends: GitHub's API has no log
+  until then (its website streams it over a connection only a signed-in
+  browser can open). Its steps follow it meanwhile.
+- A job's summary (what a workflow writes to `$GITHUB_STEP_SUMMARY`)
+  isn't shown: GitHub keeps it out of its API, REST and GraphQL alike.
+- A check's annotations are its first 50; the Checks tab shows each
+  check's first five, and its page the rest.
+- A discussion is watched over GraphQL, which has no ETags: each ask
+  costs a point of the rate limit (the backing off and the slower pace
+  out of focus keep that low).
+- On an Enterprise Server that doesn't say which run a workflow run by
+  hand started, the workflow's runs open instead of the run.
 - One GitHub at a time: the host is chosen at start.
 - On an Enterprise Server, gists are taken to be at `HOST/gist`, and
   ghtui's queries are checked against github.com's schema: a server too

@@ -165,3 +165,32 @@ fn an_artifact_is_saved_where_you_say() {
     let cmds = press(&mut s, "<Enter>");
     assert!(matches!(work(&cmds), Work::Save { replace: true, .. }));
 }
+
+/// A check's annotation on a file shows in Files changed on its line, as
+/// on GitHub, named by its check; one about the run doesn't.
+#[test]
+fn check_annotations_show_on_their_lines_in_files_changed() {
+    use crate::ui::annotations::{AnnotationKey, Place};
+    let (mut s, pr) = super::diff::diff_state(120);
+    let mut checks = crate::fixtures::checks();
+    let mut on_run = crate::fixtures::check_annotation();
+    on_run.path = None;
+    let mut on_file = crate::fixtures::check_annotation();
+    on_file.path = Some("src/point.rs".into());
+    checks.items.items[0].annotations = vec![on_file, on_run].into();
+    fetched(
+        &mut s,
+        DataKey::PrChecks(pr.clone()),
+        Data::Checks(Box::new(checks)),
+    );
+    let anns = s.diffs[&crate::diff_screen::DiffOf::Pr(pr)]
+        .doc
+        .annotations();
+    let shown: Vec<_> = (anns.iter())
+        .filter(|a| matches!(a.key, AnnotationKey::Check(_)))
+        .collect();
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].path, "src/point.rs");
+    assert!(matches!(shown[0].place, Place::Line { at, .. } if at.line == 3));
+    assert!(shown[0].comments[0].author.contains("test (ubuntu)"));
+}

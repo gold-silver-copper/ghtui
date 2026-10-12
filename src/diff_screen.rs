@@ -263,6 +263,8 @@ pub struct DiffInputs {
     pub deleted: Option<crate::store::DraftComment>,
     /// Threads and comments that came in since you started looking.
     pub fresh: HashSet<NodeId>,
+    /// What the head's check runs say about its lines, by check.
+    pub checks: Vec<(String, crate::api::actions::Annotation)>,
 }
 
 impl DiffInputs {
@@ -400,7 +402,10 @@ impl DiffState {
             },
             viewed: i.viewed.iter().flat_map(|v| v.states.clone()).collect(),
             reviewed: i.review.reviewed_hunks.iter().cloned().collect(),
-            annotations: annotations(i.thread_list(), &self.mapped, &i.review.pending, &i.fresh),
+            annotations: (annotations(i.thread_list(), &self.mapped, &i.review.pending, &i.fresh))
+                .into_iter()
+                .chain(crate::actions::in_diff(&i.checks))
+                .collect(),
         }
     }
 

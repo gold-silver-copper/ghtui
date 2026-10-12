@@ -196,7 +196,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
             let Some((repo, _)) = here(state) else {
                 return note("The form isn't on screen".into());
             };
-            let key = DataKey::Refs(repo.clone());
+            let key = DataKey::Refs(repo);
             let Some(refs) = state.picked::<Refs>(&key) else {
                 let failed = state.data.get(&key).and_then(|r| r.error.clone());
                 return note(failed.map_or_else(
@@ -625,4 +625,78 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
         short: "",
         unavailable: refused(state, &repo, &file),
     });
+}
+
+// ---- annotations in Files changed -----------------------------------------------
+
+/// A pull request's checks came in: its diff shows their annotations.
+pub fn checks_loaded(state: &mut State, pr: &crate::api::model::PrRef) {
+    let key = DataKey::PrChecks(pr.clone());
+    let Some(checks) = state.picked::<crate::api::browse::Checks>(&key) else {
+        return;
+    };
+    let list: Vec<(String, crate::api::actions::Annotation)> = (checks.items.iter())
+        .flat_map(|c| c.annotations.iter().map(|a| (c.name.clone(), a.clone())))
+        .filter(|(_, a)| a.path.is_some())
+        .collect();
+    let of = crate::diff_screen::DiffOf::Pr(pr.clone());
+    if let Some(diff) = state.diffs.get_mut(&of)
+        && diff.inputs().checks != list
+    {
+        diff.edit(|i| i.checks = list);
+    }
+}
+
+/// Check annotations as the diff shows them: on their lines, as GitHub
+/// shows them in Files changed, each a one-comment thread from its check.
+pub fn in_diff(
+    checks: &[(String, crate::api::actions::Annotation)],
+) -> Vec<crate::ui::annotations::Annotation> {
+    use crate::api::actions::Level;
+    use crate::ui::annotations::{Annotation, AnnotationComment, AnnotationKey, Place};
+    (checks.iter().enumerate())
+        .filter_map(|(n, (check, a))| {
+            let path = a.path.clone()?;
+            let mark = match a.level {
+                Level::Failure => "✗",
+                Level::Warning => "!",
+                Level::Notice => "i",
+            };
+            let place = match a.start_line {
+                0 => Place::File { outdated: false },
+                line => Place::Line {
+                    at: crate::diff::anchor::LinePos {
+                        side: crate::diff::anchor::Side::Right,
+                        line: a.end_line.max(line),
+                    },
+                    start: (a.end_line > line).then_some(line),
+                },
+            };
+            let body = if a.title.is_empty() {
+                a.message.clone()
+            } else {
+                format!("**{}**\n\n{}", a.title, a.message)
+            };
+            Some(Annotation {
+                key: AnnotationKey::Check(n),
+                path,
+                place,
+                resolved: false,
+                comments: vec![AnnotationComment {
+                    author: format!("{mark} {check} · {}", a.level.word()),
+                    body,
+                    created_at: String::new(),
+                    pending: false,
+                    new: false,
+                    editable: None,
+                }],
+                left_out: 0,
+                error: None,
+                can_reply: false,
+                can_resolve: false,
+                can_unresolve: false,
+                new: false,
+            })
+        })
+        .collect()
 }

@@ -51,6 +51,15 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         } => Some(pr.clone()),
         _ => None,
     };
+    // A pull request's checks, for its diff's annotations.
+    let checks = match &msg {
+        Msg::Fetched {
+            key: DataKey::PrChecks(pr),
+            result: Ok(_),
+            ..
+        } => Some(pr.clone()),
+        _ => None,
+    };
     // Any page's data, fresh from GitHub, for the page watchers.
     let fresh = match &msg {
         Msg::Fetched {
@@ -66,6 +75,9 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     }
     if let Some(key) = fresh {
         crate::live::page::loaded(state, &key);
+    }
+    if let Some(pr) = checks {
+        crate::actions::checks_loaded(state, &pr);
     }
     if data {
         cmds.extend(act::follow(state));

@@ -351,7 +351,10 @@ pub fn on_polled(
                 threads = true;
                 vec![talk.clone()]
             }
-            Probe::CheckRuns(_) | Probe::Statuses(_) => vec![Some(Need::Pr(pr.clone()))],
+            Probe::CheckRuns(_) | Probe::Statuses(_) => vec![
+                Some(Need::Pr(pr.clone())),
+                Some(Need::Data(DataKey::PrChecks(pr.clone()))),
+            ],
         };
         for need in fetch.into_iter().flatten() {
             if !needs.contains(&need) {

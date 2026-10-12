@@ -837,7 +837,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             let pending = &diff.inputs().review.pending;
             let draft = annotation.and_then(|a| match a.key {
                 AnnotationKey::Draft(id) => pending.iter().find(|d| d.id == id),
-                AnnotationKey::Thread(_) => None,
+                AnnotationKey::Thread(_) | AnnotationKey::Check(_) => None,
             });
             if let Some(draft) = draft {
                 let (id, body) = (draft.id, draft.body.clone());

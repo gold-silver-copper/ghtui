@@ -66,6 +66,9 @@ impl State {
                 Cmd::Api(Api::FetchThreads(pr.clone())),
                 Cmd::Api(Api::FetchPatches(pr.clone())),
             ]);
+            // Its checks' annotations show on their lines.
+            cmds.extend(self.ensure(Need::Data(DataKey::PrChecks(pr.clone())), false));
+            crate::actions::checks_loaded(self, pr);
         }
         cmds
     }

@@ -400,7 +400,10 @@ pub fn on_watched(
     let k = key(what);
     let busy = state.data.get(&k).and_then(|r| r.data.as_ref());
     let running = busy.is_some_and(crate::browse::Data::running);
-    let extended = state.data.get(&k).is_some_and(|r| r.extended());
+    let extended = state
+        .data
+        .get(&k)
+        .is_some_and(crate::state::Remote::extended);
     let any = !changed.is_empty();
     if let Some(w) = state.page_watch.as_mut() {
         w.pace

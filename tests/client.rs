@@ -3322,7 +3322,9 @@ async fn an_artifact_is_saved_and_never_over_a_file_unasked() {
     let size = gh.download_artifact(&repo, 31, &dest, false).await.unwrap();
     assert_eq!(size, 9);
     assert_eq!(std::fs::read_to_string(&dest).unwrap(), "zip bytes");
-    assert!(gh.download_artifact(&repo, 31, &dest, false).await.is_err());
+    gh.download_artifact(&repo, 31, &dest, false)
+        .await
+        .unwrap_err();
     assert_eq!(std::fs::read_to_string(&dest).unwrap(), "zip bytes");
     assert!(
         seen.lock().unwrap()[0]

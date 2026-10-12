@@ -105,7 +105,10 @@ fn an_issue_is_watched_and_another_authors_comment_is_new() {
         (Probe::Issue(repo(), 14), changed("\"i2\"", &rest_issue(3))),
         (comments, Ok(Polled::Same)),
     ];
-    assert_eq!(fetched_keys(&answer_with(&mut s, came)), [key.clone()]);
+    assert_eq!(
+        fetched_keys(&answer_with(&mut s, came)),
+        std::slice::from_ref(&key)
+    );
 
     let mut issue = crate::fixtures::issue();
     let comment = |id, author: &str| crate::api::browse::Comment {
@@ -130,7 +133,7 @@ fn an_issue_is_watched_and_another_authors_comment_is_new() {
     let lines = &page(&s).page().lines;
     let badged: Vec<String> = (lines.iter())
         .filter(|l| l.right.iter().any(|r| r.text().contains("New")))
-        .map(|l| l.text())
+        .map(crate::ui::page::PageLine::text)
         .collect();
     assert_eq!(badged, ["monalisa commented 9d ago"]);
 }
@@ -190,7 +193,7 @@ fn a_running_job_is_followed_to_its_end() {
         let p = page(s).page();
         p.jump
             .and_then(|j| p.lines.get(j))
-            .map(|l| l.text())
+            .map(crate::ui::page::PageLine::text)
             .unwrap_or_default()
     };
     assert!(shown(&s).contains("cargo test"), "{}", shown(&s));
@@ -243,7 +246,7 @@ fn new_runs_on_the_actions_tab_are_said() {
         &mut s,
         vec![(asks[0].probe.clone(), changed("\"r\"", &wire.to_string()))],
     );
-    assert_eq!(fetched_keys(&cmds), [key.clone()]);
+    assert_eq!(fetched_keys(&cmds), std::slice::from_ref(&key));
     let mut more = runs;
     let mut new = more.items[0].clone();
     (new.id, new.actor) = (999, Some("monalisa".into()));
