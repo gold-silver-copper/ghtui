@@ -17,6 +17,8 @@ include = ["/src/**/*.rs", "/src/schema/github.graphql", "/build.rs", "/README.m
 # real GitHub; it's run by hand, not by `cargo test`.
 [workspace]
 members = [".", "xtask"]
+# Agent and tool worktrees nested here are projects of their own.
+exclude = [".claude"]
 
 # The library has everything; the binary runs it. The two share a name,
 # so only the library is documented.
