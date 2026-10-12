@@ -18,6 +18,7 @@ mod config;
 mod crawl;
 mod diff_job;
 mod diff_screen;
+mod edit;
 #[cfg(test)]
 mod fixtures;
 mod home;

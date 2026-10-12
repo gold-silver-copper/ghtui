@@ -28,6 +28,9 @@ ghtui is pre-release, but it's usable every day.
   update a branch, close or reopen, re-run or cancel a workflow run,
   comment and star, and mark notifications read or done, one at a time or
   all at once.
+- **Editing** what's there: your comments and descriptions (or anyone's,
+  where GitHub lets you), titles, reactions, and an issue's or pull
+  request's labels, assignees, reviewers and milestone.
 
 Not there yet: projects, GitHub Enterprise Server, code navigation and
 structural diffs.
@@ -136,9 +139,18 @@ Each row opens what it's about: a draft or a thread in Files changed at
 its line, a review in the conversation.
 
 **Acting on GitHub** asks first wherever it matters (merging, closing,
-cancelling, updating a branch). It asks GitHub what you may do and says
-why when you can't. After a change, the page follows GitHub until it shows
-it.
+cancelling, updating a branch, deleting a comment). It asks GitHub what
+you may do and says why when you can't. After a change, the page follows
+GitHub until it shows it.
+
+**Editing** works on what's selected: a comment (or, with none selected,
+the description) opens in the comment editor in its own place, with its
+text. Reactions show under each comment as GitHub shows them, yours
+marked, and `,+` picks one of GitHub's eight to give or take back. The
+sidebar's fields are edited in pickers, as on GitHub: check and uncheck
+labels, assignees or reviewers (people and teams), then apply them with
+`ctrl-s`; a milestone is one choice. In Files changed, the same keys work
+on the review comment under the cursor.
 
 ## Keys
 
@@ -183,6 +195,10 @@ says where it works.
   merge queue where its base branch has one. Once it's set to merge or
   queued, the merge box says so (who turned auto-merge on and how it
   will merge; its place in the queue), and `,m` takes that back.
+- Edits wait behind `,` too: `,e` edits the selected comment or the
+  description, `,D` deletes a comment, `,+` reacts, and on an issue or
+  pull request `,T` edits its title, `,l` its labels, `,A` its
+  assignees, `,q` asks for reviews and `,M` sets its milestone.
 - `q` closes the view: back a page, or the tab when there's nothing to go
   back to. `ZZ`, `:q` in the palette, or `ctrl-c` quits; `ctrl-c` also
   works in the comment editor, asking before it throws away your text.
@@ -259,6 +275,9 @@ says where it works.
 | `,u`                 | Update the branch from its base |
 | `,x`                 | Close or reopen; on a running run, cancel it |
 | `,R`                 | Re-run the workflow run or job |
+| `,e`                 | Edit the comment or description |
+| `,D`                 | Delete the comment |
+| `,+`                 | React to the comment, issue or pull request |
 | `del`                | Delete the selection (a draft comment, a Home section) |
 | `ctrl-z`             | Bring back what was just deleted |
 | `ZZ` `ctrl-c`        | Quit |
@@ -275,6 +294,11 @@ says where it works.
 | `[C`    | Previous commit of the pull request |
 | `>`     | Reply quoting the comment |
 | `,*`    | Star / unstar |
+| `,T`    | Edit the title |
+| `,l`    | Edit the labels |
+| `,A`    | Edit the assignees |
+| `,q`    | Ask for reviews |
+| `,M`    | Set the milestone |
 | `B`     | Switch branches or tags |
 | `i`     | Follow a link by its letters |
 | `I`     | Follow a link, in the browser |
@@ -363,7 +387,7 @@ says where it works.
 
 The comment editor opens where the comment will go: under the lines, the
 thread or the file header in Files changed, and in place of the comment
-box on a conversation. In it, `ctrl-s` adds the comment, `ctrl-e`
+box on a conversation (or of the comment it edits). In it, `ctrl-s` adds the comment, `ctrl-e`
 continues in `$EDITOR`, and `esc` cancels (keeping the lines selected).
 Long lines wrap, and a paste arrives as text, newlines and all (in a
 one-line box, as one line). Typing `@` offers the people taking part and
@@ -504,3 +528,10 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 - `@` offers as taking part only who has written what's loaded (the
   newest 100 comments, and the review threads), and `#` the 100 issues and
   pull requests updated last.
+- A review's summary can't be edited, and a discussion's comments show no
+  reactions.
+- The sidebar's pickers list a repository's first 100 labels, people,
+  open milestones and teams, and say how many more GitHub has. Teams are
+  listed only where your token can read the organization.
+- GitHub doesn't say who may set a pull request's milestone or ask for
+  its reviews; ghtui offers them to whoever may label it (triage access).

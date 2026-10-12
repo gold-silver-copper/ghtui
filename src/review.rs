@@ -45,6 +45,9 @@ pub enum ComposeTarget {
         name: String,
         quoting: Option<String>,
     },
+    /// Editing a comment or description already on GitHub, saved right
+    /// away.
+    Edit(crate::edit::Editing),
 }
 
 /// A suggested change and what it replaces.
@@ -122,6 +125,7 @@ impl Compose {
             ComposeTarget::Reply { .. } => "Reply".to_owned(),
             ComposeTarget::Draft { .. } => "Edit draft".to_owned(),
             ComposeTarget::Conversation { name, .. } => format!("Comment on {name}"),
+            ComposeTarget::Edit(e) => format!("Edit {}", e.name),
         }
     }
 }
@@ -132,7 +136,7 @@ pub fn compose_anchor(doc: &Doc, screen: &DiffScreen, target: &ComposeTarget) ->
     let cursor = screen.cursor;
     match target {
         ComposeTarget::File { .. } => Pos { row: 0, ..cursor },
-        ComposeTarget::Reply { .. } | ComposeTarget::Draft { .. } => {
+        ComposeTarget::Reply { .. } | ComposeTarget::Draft { .. } | ComposeTarget::Edit(_) => {
             let ann = doc.annotation_under(cursor, screen.half);
             (cursor.row + 1..)
                 .map(|row| Pos { row, ..cursor })
@@ -328,7 +332,8 @@ pub fn draft(target: &ComposeTarget, body: &str, id: u64, commit: &str) -> Optio
         ComposeTarget::File { path, .. } => Some(base(path)),
         ComposeTarget::Reply { .. }
         | ComposeTarget::Draft { .. }
-        | ComposeTarget::Conversation { .. } => None,
+        | ComposeTarget::Conversation { .. }
+        | ComposeTarget::Edit(_) => None,
     }
 }
 
@@ -388,6 +393,7 @@ pub fn annotations(
                         created_at: c.created_at.clone(),
                         pending: c.pending,
                         new: fresh.contains(&c.id),
+                        editable: Some(c.editable.clone()),
                     })
                     .collect(),
                 left_out: t.comments.left_out(),
@@ -419,6 +425,7 @@ pub fn annotations(
             created_at: String::new(),
             pending: false,
             new: false,
+            editable: None,
         }],
         left_out: 0,
         error: d.error.clone(),
@@ -974,6 +981,18 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     }
     let target = compose.target.clone();
+    if let ComposeTarget::Edit(e) = target {
+        compose.sending = true;
+        let edit = crate::api::edit::Edit::Body {
+            of: e.of,
+            id: e.id,
+            body,
+        };
+        return vec![Cmd::Api(Api::Change(
+            Change::Edit(edit),
+            crate::act::By::Edit(e.about),
+        ))];
+    }
     if let ComposeTarget::Conversation { subject_id, .. } = target {
         compose.sending = true;
         let change = Change::Comment {
@@ -1009,7 +1028,7 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             state.overlay = None;
             save
         }
-        ComposeTarget::Conversation { .. } => Vec::new(),
+        ComposeTarget::Conversation { .. } | ComposeTarget::Edit(_) => Vec::new(),
         target @ (ComposeTarget::Line { .. } | ComposeTarget::File { .. }) => {
             let Some(head) = diff.head() else {
                 return Vec::new();

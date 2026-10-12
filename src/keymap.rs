@@ -207,6 +207,9 @@ actions! {
     UpdateBranch      "update_branch"     [",u"]                   Global "Update the branch from its base";
     Close             "close"             [",x"]                   Global "Close or reopen; on a running run, cancel it";
     Rerun             "rerun"             [",R"]                   Global "Re-run the workflow run or job";
+    EditComment       "edit"              [",e"]                   Global "Edit the comment or description";
+    DeleteComment     "delete_comment"    [",D"]                   Global "Delete the comment";
+    React             "react"             [",+"]                   Global "React to the comment, issue or pull request";
     Delete            "delete"            ["<Delete>"]             Global "Delete the selection (a draft comment, a Home section)";
     UndoDelete        "undo_delete"       ["<C-z>"]                Global "Bring back what was just deleted";
     Quit              "quit"              ["ZZ", "<C-c>"]          Global "Quit";
@@ -219,6 +222,11 @@ actions! {
     PrevCommit        "prev_commit"       ["[C"]                   Page   "Previous commit of the pull request";
     QuoteReply        "quote_reply"       [">"]                    Page   "Reply quoting the comment";
     Star              "star"              [",*"]                   Page   "Star / unstar";
+    EditTitle         "edit_title"        [",T"]                   Page   "Edit the title";
+    EditLabels        "edit_labels"       [",l"]                   Page   "Edit the labels";
+    EditAssignees     "edit_assignees"    [",A"]                   Page   "Edit the assignees";
+    RequestReviews    "request_reviews"   [",q"]                   Page   "Ask for reviews";
+    EditMilestone     "edit_milestone"    [",M"]                   Page   "Set the milestone";
     Branch            "branch"            ["B"]                    Page   "Switch branches or tags";
     Hints             "hints"             ["i", "diff:i"]          Page   "Follow a link by its letters";
     HintsBrowser      "hints_browser"     ["I", "diff:I"]          Page   "Follow a link, in the browser";

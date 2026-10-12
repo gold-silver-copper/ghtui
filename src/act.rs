@@ -77,6 +77,9 @@ pub enum By {
     /// The composer, replying to one of this pull request's threads.
     Reply(PrRef),
     Star,
+    /// An edit to what's on GitHub (from the composer or a picker), about
+    /// this.
+    Edit(Subject),
 }
 
 /// A change GitHub accepted that the page it was made on doesn't show
@@ -741,7 +744,7 @@ pub fn on_changed(
                     .get(c.selected)
                     .is_some_and(|(_, sent)| sent == change)
         }
-        (By::Compose | By::Reply(_), Some(Overlay::Compose(c))) => c.sending,
+        (By::Compose | By::Reply(_) | By::Edit(_), Some(Overlay::Compose(c))) => c.sending,
         _ => false,
     };
     match result {
@@ -752,8 +755,11 @@ pub fn on_changed(
             state.info(done(change));
             // The unread count follows, as the inbox does.
             let mut cmds = Vec::from_iter(notifies(change).then_some(Cmd::Api(Api::FetchUnread)));
+            if let Change::Edit(_) = change {
+                cmds.extend(crate::edit::after(state));
+            }
             match by {
-                By::Confirm(about) | By::Act(about) => {
+                By::Confirm(about) | By::Act(about) | By::Edit(about) => {
                     state.awaiting = state.route().map(|route| Awaiting {
                         change: change.clone(),
                         route: route.clone(),
@@ -812,7 +818,13 @@ pub fn waiting(state: &State) -> Option<String> {
 /// What the live refresh fetches again for the change the page waits to
 /// see: what the page is about. Past [`POLLS`], it stops waiting.
 pub fn poll(state: &mut State) -> Vec<Need> {
-    let Some(need) = awaiting_here(state).map(|w| w.about.need()) else {
+    let Some((need, edit)) = awaiting_here(state).map(|w| {
+        let edit = matches!(w.change, Change::Edit(_));
+        (
+            w.about.need(),
+            edit.then(|| crate::edit::polls(&w.about)).flatten(),
+        )
+    }) else {
         return Vec::new();
     };
     if let Some(w) = &mut state.awaiting {
@@ -826,7 +838,7 @@ pub fn poll(state: &mut State) -> Vec<Need> {
             return Vec::new();
         }
     }
-    vec![need]
+    std::iter::once(need).chain(edit).collect()
 }
 
 /// Whether the page shows a change GitHub accepted.
@@ -841,6 +853,7 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
     let yes = |b: bool| if b { Shown::Yes } else { Shown::No };
     let pr = |pr: &PrRef| state.prs.get(pr).and_then(|r| r.data.as_ref());
     match (change, about) {
+        (Change::Edit(edit), about) => yes(crate::edit::shown(state, edit, about)),
         (_, Subject::Pr(r)) => {
             let Some(d) = pr(r) else {
                 return Shown::No;
@@ -972,7 +985,8 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     let Some(Overlay::Confirm(confirm)) = &state.overlay else {
         return cmds;
     };
-    if confirm.sending {
+    // Another module's confirmation (deleting a comment) is its own.
+    if confirm.sending || !ACTIONS.contains(&confirm.action) {
         return cmds;
     }
     let planned = plan_for(state, &confirm.about, confirm.action);
@@ -1022,6 +1036,7 @@ fn doing(change: &Change) -> &'static str {
         Change::MarkDone { .. } => "Marking it done",
         Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => "Marking them read",
         Change::MarkEach { .. } => "Marking them done",
+        Change::Edit(edit) => crate::edit::doing(edit),
     }
 }
 
@@ -1066,13 +1081,14 @@ fn done(change: &Change) -> String {
                 n => format!("Marked {n} notifications {state}"),
             }
         }
+        Change::Edit(edit) => crate::edit::done(edit).into(),
     }
 }
 
 /// The permission a fine-grained token needs for `change`.
 pub fn needs(change: &Change) -> &'static str {
     match change {
-        Change::Comment { .. } => "Issues or Pull requests: write",
+        Change::Comment { .. } | Change::Edit(_) => "Issues or Pull requests: write",
         Change::Star { .. } => "Starring: write",
         Change::Merge { .. }
         | Change::UpdateBranch { .. }
@@ -1117,6 +1133,7 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::MarkDone { .. } => "marking it done",
         Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => "marking them read",
         Change::MarkEach { .. } => "marking them done",
+        Change::Edit(edit) => crate::edit::what(edit),
     };
     let reason = match err {
         ApiError::GraphQl(messages) => messages.join("; "),

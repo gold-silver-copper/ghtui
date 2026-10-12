@@ -1,6 +1,7 @@
 //! Conversations: issues and discussions.
 
 use super::*;
+use crate::api::edit::Reaction;
 
 /// What the comment boxes of a conversation share.
 pub(super) struct Conversation<'a> {
@@ -12,7 +13,9 @@ pub(super) struct Conversation<'a> {
 
 impl Conversation<'_> {
     /// A comment box: `╭─ author commented 3d ago ─── Author ─╮`, the
-    /// Markdown body, `╰──╯`. `verb` is "commented", "opened"...
+    /// Markdown body, its reactions, `╰──╯`. `verb` is "commented",
+    /// "opened"...
+    #[expect(clippy::too_many_arguments, reason = "the parts of a comment box")]
     pub(super) fn said(
         &self,
         page: &mut Page,
@@ -21,6 +24,7 @@ impl Conversation<'_> {
         when: &str,
         body: &str,
         badge: bool,
+        reactions: &[Reaction],
     ) {
         self.said_at(
             page,
@@ -30,6 +34,7 @@ impl Conversation<'_> {
             when,
             body,
             badge.then(|| chip("Author", Bg::SecondaryContainer)),
+            reactions,
         );
     }
 
@@ -45,6 +50,7 @@ impl Conversation<'_> {
         when: &str,
         body: &str,
         chip: Option<Seg>,
+        reactions: &[Reaction],
     ) {
         if let Some(anchor) = anchor {
             page.anchor(anchor);
@@ -62,6 +68,7 @@ impl Conversation<'_> {
         } else {
             markdown::render(page, body, Some(&self.base), Frame::Body);
         }
+        reaction_chips(page, reactions);
         page.box_bottom();
         // The whole comment is a row: Enter quote-replies, as GitHub's `r` does.
         let quote = page.link(Link::Quote {
@@ -81,6 +88,7 @@ impl Conversation<'_> {
         } else {
             (c.author == self.op).then(|| chip("Author", Bg::SecondaryContainer))
         };
+        let reactions = c.editable.as_ref().map_or(&[][..], |e| &e.reactions);
         self.said_at(
             page,
             anchor,
@@ -89,6 +97,7 @@ impl Conversation<'_> {
             &c.created_at,
             &c.body,
             badge,
+            reactions,
         );
     }
 
@@ -111,6 +120,24 @@ impl Conversation<'_> {
             Vec::new(),
         );
     }
+}
+
+/// The reactions under a comment, as GitHub shows them: each one's emoji
+/// and count, the ones you gave marked.
+fn reaction_chips(page: &mut Page, reactions: &[Reaction]) {
+    if reactions.is_empty() {
+        return;
+    }
+    let mut segs = Vec::new();
+    for r in reactions {
+        if !segs.is_empty() {
+            segs.push(space());
+        }
+        let text = format!("{} {}", r.content.emoji(), r.count);
+        segs.push(chip(text, crate::ui::chips::reaction_fill(r.mine)));
+    }
+    body(page, Vec::new());
+    body(page, segs);
 }
 
 /// The line between timeline entries.
@@ -253,7 +280,16 @@ pub fn issue(page: &mut Page, d: &IssueDetail, icons: Icons, keys: Keys<'_>, now
         op: &d.author,
         now,
     };
-    talk.said(page, &d.author, "opened", &d.created_at, &d.body, true);
+    let reactions = &d.editable.reactions;
+    talk.said(
+        page,
+        &d.author,
+        "opened",
+        &d.created_at,
+        &d.body,
+        true,
+        reactions,
+    );
     earlier_here(page, &d.comments, "comment", "comments");
     for c in &d.comments {
         connector(page);
@@ -362,7 +398,15 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
         op: &d.author,
         now,
     };
-    talk.said(page, &d.author, "started", &d.created_at, &d.body, true);
+    talk.said(
+        page,
+        &d.author,
+        "started",
+        &d.created_at,
+        &d.body,
+        true,
+        &[],
+    );
     let anchor = |c: &Comment| c.id.map(|id| format!("discussioncomment-{id}"));
     for c in &d.comments {
         connector(page);
@@ -381,6 +425,7 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
             &comment.created_at,
             &comment.body,
             badge,
+            &[],
         );
         for r in &c.replies {
             let badge = (r.author == d.author).then(|| chip("Author", Bg::SecondaryContainer));
@@ -392,6 +437,7 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, now: u64) {
                 &r.created_at,
                 &r.body,
                 badge,
+                &[],
             );
         }
         more_here(page, &c.replies, "reply", "replies");

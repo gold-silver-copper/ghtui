@@ -915,7 +915,8 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         | DataKey::Files(..)
         | DataKey::JobLog(..)
         | DataKey::Wiki(..)
-        | DataKey::RefIn(..) => {
+        | DataKey::RefIn(..)
+        | DataKey::Sidebar(..) => {
             return None;
         }
     })
@@ -1011,6 +1012,7 @@ pub(crate) async fn fetch(
         DataKey::Notifications(query) => {
             Data::Notifications(Box::new(gh.notifications(query, after).await?))
         }
+        DataKey::Sidebar(repo, number) => Data::Sidebar(Box::new(gh.sidebar(repo, *number).await?)),
         DataKey::CommitChecks(repo, oid) => {
             Data::Checks(Box::new(gh.commit_checks(repo, oid).await?))
         }

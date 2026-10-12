@@ -457,7 +457,7 @@ impl GitHub {
     /// Runs a query for the one thing `pick`ed from its data. Nothing picked
     /// is `subject` not found when GitHub's only errors (if any) said what
     /// wasn't there, and GitHub's other errors otherwise.
-    async fn find<Q: DeserializeOwned + cynic::QueryFragment, V: Serialize, T>(
+    pub(crate) async fn find<Q: DeserializeOwned + cynic::QueryFragment, V: Serialize, T>(
         &self,
         op: cynic::Operation<Q, V>,
         subject: impl std::fmt::Display,

@@ -129,6 +129,7 @@ impl State {
             change.unavailable = why;
             out.push(change);
         }
+        out.extend(crate::edit::doables(self));
         let go = |action, label: &str, short| doable("Go", action, label, short);
         out.push(go(
             Action::SearchGithub,

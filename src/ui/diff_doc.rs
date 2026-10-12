@@ -266,6 +266,14 @@ impl DocFile {
             for line in comment::lines(&comment.body, wrap, original.as_deref()) {
                 self.push_thread_row(index, ThreadRowKind::Body, line);
             }
+            let reactions = (comment.editable.iter()).flat_map(|e| &e.reactions);
+            let reactions: Vec<String> = reactions
+                .map(|r| format!("{} {}", r.content.emoji(), r.count))
+                .collect();
+            if !reactions.is_empty() {
+                let kind = ThreadRowKind::Reactions { comment: c };
+                self.push_thread_rows(index, kind, &reactions.join(" "), usize::MAX);
+            }
             if c == 0 && ann.left_out > 0 {
                 let gap =
                     crate::ui::pages::left_out_text(ann.left_out, "more reply", "more replies");
@@ -1876,6 +1884,7 @@ pub(crate) mod tests {
                     created_at: String::new(),
                     pending: false,
                     new: false,
+                    editable: None,
                 }],
                 left_out: 0,
                 error: None,

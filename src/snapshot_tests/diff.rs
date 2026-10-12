@@ -489,6 +489,7 @@ fn with_threads(mode: Mode) -> State {
         url: String::new(),
         original_commit: Some("abc".into()),
         pending,
+        editable: crate::fixtures::editable(id),
     };
     let thread =
         |id: &str, line: Option<u32>, resolved: bool, file_level: bool, comments| ReviewThread {
@@ -508,21 +509,54 @@ fn with_threads(mode: Mode) -> State {
             can_unresolve: true,
             comments,
         };
+    // Two reacted to the question, you among them.
+    let mut asked = comment(
+        "c1",
+        "alice",
+        "Should this say \"2D\" or \"two-dimensional\"? The rest of the docs spell it out.",
+        false,
+    );
+    asked.editable.reactions = vec![crate::api::edit::Reaction {
+        content: crate::api::edit::ReactionContent::Hooray,
+        count: 2,
+        mine: true,
+    }];
     let diff = s.diffs.get_mut(&DiffOf::Pr(pr())).unwrap();
-    diff.edit(|i| i.threads.finish(Ok(vec![
-        thread(
-            "t1",
-            Some(3),
-            false,
-            false,
-            vec![
-                comment("c1", "alice", "Should this say \"2D\" or \"two-dimensional\"? The rest of the docs spell it out.", false),
-                comment("c2", "octocat", "Good point, I'll spell it out.", true),
-            ].into(),
-        ),
-        thread("t2", Some(10), true, false, vec![comment("c3", "bob", "Looks fine now.", false)].into()),
-        thread("t3", None, false, true, vec![comment("c4", "carol", "Please add tests for this file.", false)].into()),
-    ])));
+    diff.edit(|i| {
+        i.threads.finish(Ok(vec![
+            thread(
+                "t1",
+                Some(3),
+                false,
+                false,
+                vec![
+                    asked,
+                    comment("c2", "octocat", "Good point, I'll spell it out.", true),
+                ]
+                .into(),
+            ),
+            thread(
+                "t2",
+                Some(10),
+                true,
+                false,
+                vec![comment("c3", "bob", "Looks fine now.", false)].into(),
+            ),
+            thread(
+                "t3",
+                None,
+                false,
+                true,
+                vec![comment(
+                    "c4",
+                    "carol",
+                    "Please add tests for this file.",
+                    false,
+                )]
+                .into(),
+            ),
+        ]));
+    });
     diff.edit(|i| {
         i.review = crate::store::ReviewState {
             pending: vec![crate::store::DraftComment {
@@ -600,6 +634,72 @@ fn links_in_threads_are_followed() {
     press(&mut s, "/the guide<Enter>");
     let cmds = press(&mut s, "<Enter>");
     assert!(cmds.contains(&Cmd::OpenUrl(guide.into())), "{cmds:?}");
+}
+
+/// In Files changed, `,e` edits the review comment the cursor is on, in
+/// the thread; once GitHub takes it, the threads are fetched again to
+/// show it. A draft is edited with the draft's own keys.
+#[test]
+fn a_review_comment_is_edited_in_its_thread() {
+    use crate::act::{By, Subject};
+    use crate::api::change::Change;
+    use crate::api::edit::{Edit, Written};
+    use crate::state::{Api, Cmd, Overlay};
+    use crate::ui::annotations::{Annotation, ThreadRowKind};
+    use crate::ui::diff_doc::Row;
+    let mut s = with_threads(Mode::Dark);
+    // The reply's author line.
+    let reply = {
+        let doc = &s.diff().unwrap().doc;
+        let file = &doc.files()[0];
+        (0..)
+            .map(|row| Pos { file: 0, row })
+            .take_while(|p| doc.row(*p).is_some())
+            .find(|p| {
+                matches!(doc.row(*p), Some(Row::Thread(t))
+                    if file.thread_row(t).is_some_and(|r| matches!(r.kind, ThreadRowKind::Head { comment: 1, .. })))
+            })
+            .unwrap()
+    };
+    if let Screen::Diff(d) = s.screen_mut() {
+        d.cursor = Pos {
+            row: reply.row + 1,
+            ..reply
+        };
+    }
+    press(&mut s, ",e");
+    let Some(Overlay::Compose(c)) = &s.overlay else {
+        panic!(",e opens the composer")
+    };
+    assert_eq!(c.text(), "Good point, I'll spell it out.");
+    let cmds = press(&mut s, "!<C-s>");
+    let edit = Edit::Body {
+        of: Written::ReviewComment,
+        id: crate::api::model::NodeId::new("c2"),
+        body: "Good point, I'll spell it out.!".into(),
+    };
+    let sent = Cmd::Api(Api::Change(Change::Edit(edit), By::Edit(Subject::Pr(pr()))));
+    assert_eq!(cmds, [sent]);
+    let after = crate::fixtures::answer(&mut s, &cmds, Ok(()));
+    assert!(
+        after.contains(&Cmd::Api(Api::FetchThreads(pr()))),
+        "{after:?}"
+    );
+    assert!(s.overlay.is_none());
+
+    // On the draft.
+    let doc = &s.diff().unwrap().doc;
+    let draft = doc.annotations().iter().position(Annotation::is_draft);
+    let at = doc.annotation_pos(u32::try_from(draft.unwrap()).unwrap());
+    let at = at.unwrap();
+    if let Screen::Diff(d) = s.screen_mut() {
+        d.cursor = Pos {
+            row: at.row + 1,
+            ..at
+        };
+    }
+    press(&mut s, ",e");
+    crate::fixtures::says(&s, "That's your draft");
 }
 
 #[test]

@@ -24,6 +24,9 @@ pub struct AnnotationComment {
     pub pending: bool,
     /// Came in since you started looking.
     pub new: bool,
+    /// What edits name it by, what you may do to it, and its reactions;
+    /// `None` for a draft.
+    pub editable: Option<crate::api::edit::Editable>,
 }
 
 /// Where an annotation sits in the current diff.
@@ -89,6 +92,10 @@ pub enum ThreadRowKind {
         first: bool,
     },
     Body,
+    /// The reactions under comment `comment`.
+    Reactions {
+        comment: usize,
+    },
     /// The replies left out, after the first comment.
     Gap,
     /// Why GitHub rejected a draft.

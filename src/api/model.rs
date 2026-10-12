@@ -8,6 +8,7 @@ use crate::schema::schema;
 use serde::{Deserialize, Serialize};
 
 use crate::api::change::MergeMethod;
+use crate::api::edit::{Editable, SidebarPermits, reactions};
 use crate::api::queries::{self as q, nodes};
 
 /// Some of a list: the items fetched, and how many GitHub has. A list
@@ -375,8 +376,12 @@ pub struct PrDetail {
     pub queued: Option<Queued>,
     pub labels: Capped<Label>,
     pub milestone: Option<MilestoneRef>,
+    pub assignees: Capped<String>,
     /// What GitHub lets you do to it.
     pub may: PrPermits,
+    /// Its description, as edits name it.
+    pub editable: Editable,
+    pub sidebar: SidebarPermits,
 }
 
 /// Your pending review on a pull request: what you started and haven't
@@ -536,6 +541,7 @@ pub struct ReviewComment {
     pub original_commit: Option<String>,
     /// Part of the viewer's unsubmitted review on GitHub.
     pub pending: bool,
+    pub editable: Editable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -652,7 +658,7 @@ impl PrDetail {
         let writes = q::RepositoryPermission::writes(repo.viewer_permission);
         let pr = repo.pull_request?;
         Some(Self {
-            id: pr.id.into(),
+            id: pr.id.clone().into(),
             title: pr.summary.title,
             author: author(pr.summary.author),
             state: pr.summary.status.into(),
@@ -685,6 +691,24 @@ impl PrDetail {
             }),
             labels: labels(pr.labels),
             milestone: pr.milestone.map(MilestoneRef::from_wire),
+            assignees: Capped::from_nodes(pr.assignees.total_count, pr.assignees.nodes, |u| {
+                u.login
+            }),
+            editable: Editable {
+                id: pr.id.into(),
+                can_update: pr.viewer_can_update,
+                can_delete: false,
+                can_react: pr.viewer_can_react,
+                reactions: reactions(pr.reaction_groups),
+            },
+            // GitHub doesn't say who may set a pull request's milestone
+            // or ask for reviews: both take triage access, as labelling does.
+            sidebar: SidebarPermits {
+                labels: pr.viewer_can_label,
+                assignees: pr.viewer_can_assign,
+                milestone: pr.viewer_can_label,
+                reviewers: pr.viewer_can_label,
+            },
             may: PrPermits {
                 merge: writes,
                 merge_as_admin: pr.viewer_can_merge_as_admin,
@@ -723,6 +747,13 @@ impl ReviewThread {
             can_unresolve: t.viewer_can_unresolve,
             comments: {
                 let comment = |c: q::ReviewComment| ReviewComment {
+                    editable: Editable {
+                        id: c.id.clone().into(),
+                        can_update: c.viewer_can_update,
+                        can_delete: c.viewer_can_delete,
+                        can_react: c.viewer_can_react,
+                        reactions: reactions(c.reaction_groups),
+                    },
                     id: c.id.into(),
                     author: author(c.author),
                     body: c.body,

@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::api::edit::{Editable, SidebarPermits, WireReactionGroup, reactions};
 use crate::api::model::{
     Capped, ChecksState, Label, MilestoneRef, NodeId, PrStatus, RepoId, ReviewDecision,
     ReviewState, author, count, labels,
@@ -420,6 +421,9 @@ pub struct Comment {
     pub author: String,
     pub body: String,
     pub created_at: String,
+    /// What edits name it by, what GitHub lets you do to it, and its
+    /// reactions; `None` where ghtui doesn't edit it (a discussion's).
+    pub editable: Option<Editable>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -440,6 +444,9 @@ pub struct IssueDetail {
     pub id: NodeId,
     pub can_close: bool,
     pub can_reopen: bool,
+    /// Its description, as edits name it.
+    pub editable: Editable,
+    pub sidebar: SidebarPermits,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1007,16 +1014,27 @@ pub struct IssueFull {
     pub repository: RepositoryName,
     pub viewer_can_close: bool,
     pub viewer_can_reopen: bool,
+    pub viewer_can_update: bool,
+    pub viewer_can_react: bool,
+    pub viewer_can_label: bool,
+    pub viewer_can_assign: bool,
+    pub viewer_can_set_milestone: bool,
+    pub reaction_groups: Option<Vec<WireReactionGroup>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "IssueComment", schema_module = "schema")]
 pub struct WireComment {
+    pub id: cynic::Id,
     /// `databaseId` overflows GraphQL's `Int` on newer comments.
     pub full_database_id: Option<crate::api::queries::BigInt>,
     pub author: Option<Actor>,
     pub body: String,
     pub created_at: DateTime,
+    pub viewer_can_update: bool,
+    pub viewer_can_delete: bool,
+    pub viewer_can_react: bool,
+    pub reaction_groups: Option<Vec<WireReactionGroup>>,
 }
 
 // ---- PR activity -----------------------------------------------------------------
@@ -3783,6 +3801,7 @@ impl wire_discussions::Detail {
             author: author(who),
             body,
             created_at,
+            editable: None,
         };
         DiscussionDetail {
             repo,
@@ -5044,9 +5063,22 @@ impl IssueFull {
             }),
             milestone: self.milestone.map(MilestoneRef::from_wire),
             comments: comments(self.comments),
+            editable: Editable {
+                id: self.id.clone().into(),
+                can_update: self.viewer_can_update,
+                can_delete: false,
+                can_react: self.viewer_can_react,
+                reactions: reactions(self.reaction_groups),
+            },
             id: self.id.into(),
             can_close: self.viewer_can_close,
             can_reopen: self.viewer_can_reopen,
+            sidebar: SidebarPermits {
+                labels: self.viewer_can_label,
+                assignees: self.viewer_can_assign,
+                milestone: self.viewer_can_set_milestone,
+                reviewers: false,
+            },
         })
     }
 }
@@ -5057,6 +5089,13 @@ fn comments(c: IssueComments) -> Capped<Comment> {
         author: author(c.author),
         body: c.body,
         created_at: c.created_at.0,
+        editable: Some(Editable {
+            id: c.id.into(),
+            can_update: c.viewer_can_update,
+            can_delete: c.viewer_can_delete,
+            can_react: c.viewer_can_react,
+            reactions: reactions(c.reaction_groups),
+        }),
     })
 }
 

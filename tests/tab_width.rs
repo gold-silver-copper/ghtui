@@ -96,6 +96,7 @@ fn a_review_comment_keeps_its_tabs() {
                 created_at: String::new(),
                 pending: false,
                 new: false,
+                editable: None,
             }],
             left_out: 0,
             error: None,

@@ -39,6 +39,8 @@ pub enum Kind {
     Messages(Vec<(u64, Notice)>),
     /// A Home section's title, for the config file at the path: the field is all of it.
     SectionTitle(Titling, std::path::PathBuf),
+    /// Editing what's on GitHub: a sidebar field, a reaction, a title.
+    Edit(crate::edit::Choosing),
 }
 
 /// What a section's title is for.
@@ -66,6 +68,7 @@ impl Picker {
             Kind::Messages(_) => "Messages",
             Kind::SectionTitle(Titling::New { .. }, _) => "Save to Home",
             Kind::SectionTitle(Titling::Rename { .. }, _) => "Rename the section",
+            Kind::Edit(ref c) => c.title(),
         }
     }
 }
@@ -92,6 +95,8 @@ pub enum Choice {
     Tab(usize),
     /// Title a Home section this, in the config file at the path.
     Title(Titling, std::path::PathBuf, String),
+    /// Handled while the picker is open ([`crate::edit::on_picker_key`]).
+    Edit(crate::edit::Pick),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -127,10 +132,12 @@ impl State {
             Kind::Commits { .. } => "space marks a range start · ↵ views · esc cancels",
             Kind::Messages(_) => "↵ copies a message",
             Kind::SectionTitle(..) => "The section's title",
+            Kind::Edit(ref c) => c.placeholder(),
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
             Kind::Branches { repo, .. } => Some(DataKey::Refs(repo.clone())),
+            Kind::Edit(c) => c.need(),
             _ => None,
         };
         let mut input = new_input(&self.theme, Bg::ContainerHigh);
@@ -192,6 +199,7 @@ impl State {
             Kind::DiffFiles => self.diff_file_rows(q),
             Kind::Commits { mark } => self.commit_rows(*mark),
             Kind::Messages(kept) => message_rows(kept, q, (self.clock)()),
+            Kind::Edit(c) => crate::edit::rows(self, c, q),
             Kind::SectionTitle(titling, path) => {
                 if q.is_empty() {
                     return vec![(item("Type a title", ""), None)];
@@ -485,6 +493,9 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     if move_in_list(key, &mut p.selected, rows.len()) {
         return Vec::new();
     }
+    if let Kind::Edit(_) = p.kind {
+        return crate::edit::on_picker_key(state, key, rows);
+    }
     match (key.code, &mut p.kind) {
         (KeyCode::Esc, _) => state.overlay = None,
         (KeyCode::Enter, kind) => {
@@ -544,6 +555,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
             let what = format!("Renamed it “{title}”");
             state.edit_home(path, crate::home::Edit::Rename { at, title }, what)
         }
+        Choice::Edit(_) => Vec::new(),
     }
 }
 

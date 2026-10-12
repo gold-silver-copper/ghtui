@@ -222,6 +222,9 @@ pub fn pr_conversation(
         let earlier = reviews.is_some_and(|r| r.left_out() > 0);
         let none = if reviews.is_some() { "No reviews" } else { "" };
         people(side, "Reviewers", &reviewers, maybe_others(earlier), none);
+        let more = (d.assignees.left_out() > 0)
+            .then(|| left_out_text(d.assignees.left_out(), "more", "more"));
+        people(side, "Assignees", &d.assignees, more, "No one assigned");
         label_list(side, &d.labels);
         milestone_aside(side, &pr.repo, d.milestone.as_ref());
         aside_heading(side, "Size");
@@ -239,7 +242,15 @@ pub fn pr_conversation(
         op,
         now,
     };
-    talk.said(page, op, "opened", &d.created_at, &d.body, true);
+    talk.said(
+        page,
+        op,
+        "opened",
+        &d.created_at,
+        &d.body,
+        true,
+        &d.editable.reactions,
+    );
     let Some(a) = activity.show_or(page, "the conversation", |page| {
         connector(page);
         page.line(vec![Seg::new("   Loading the conversation…", Role::Meta)]);
@@ -288,6 +299,7 @@ pub fn pr_conversation(
                         &r.submitted_at,
                         &r.body,
                         false,
+                        &[],
                     );
                 }
             }

@@ -289,6 +289,9 @@ const PR_RESPONSE: &str = r#"{"data":{"repository":{
   "reviewDecision": "APPROVED",
   "labels": {"totalCount": 3, "nodes": [{"name": "bug", "color": "d73a4a"}]},
   "milestone": {"number": 3, "title": "v1"},
+  "viewerCanReact": true, "viewerCanLabel": false, "viewerCanAssign": true,
+  "reactionGroups": [{"content": "THUMBS_UP", "viewerHasReacted": false, "reactors": {"totalCount": 5}}],
+  "assignees": {"totalCount": 1, "nodes": [{"login": "bob"}]},
   "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]},
   "comments": {"totalCount": 4}
 }}, "rateLimit": {"cost": 1, "limit": 5000, "remaining": 4999, "resetAt": "2026-01-01T01:00:00Z"}}}"#;
@@ -342,6 +345,10 @@ async fn fetches_and_caches_pull_request() {
         (queued.position, queued.state),
         (2, ghtui::api::model::QueueState::AwaitingChecks)
     );
+    assert_eq!(detail.assignees.items, ["bob"]);
+    assert_eq!(detail.editable.reactions[0].count, 5);
+    let may = detail.sidebar;
+    assert!(may.assignees && !may.labels && !may.milestone && !may.reviewers);
 
     let cached = gh.cached_pull_request(&pr).unwrap();
     assert_eq!(cached.value, detail);
@@ -612,6 +619,189 @@ async fn actions_changes_post_to_their_paths() {
     assert!(lines[2].starts_with("POST /repos/o/r/actions/jobs/9/rerun "));
 }
 
+/// Each edit sends its mutation, with the node IDs it names: labels and
+/// assignees are added and removed by two mutations, and only what
+/// changes is sent; asking for reviews names everyone asked; no milestone
+/// is a null.
+#[tokio::test]
+async fn edits_send_their_mutations() {
+    use ghtui::api::change::Change;
+    use ghtui::api::edit::{Edit, Named, ReactionContent, Written};
+    let ok = |field: &str| {
+        Reply::new(
+            200,
+            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
+        )
+    };
+    let (gh, seen) = github(vec![
+        ok("updateIssueComment"),
+        ok("updatePullRequestReviewComment"),
+        ok("updatePullRequest"),
+        ok("deleteIssueComment"),
+        ok("updateIssue"),
+        ok("addReaction"),
+        ok("removeReaction"),
+        ok("addLabelsToLabelable"),
+        ok("removeLabelsFromLabelable"),
+        ok("removeAssigneesFromAssignable"),
+        ok("requestReviews"),
+        ok("updateIssue"),
+    ])
+    .await;
+    let id = |s: &str| NodeId::new(s);
+    let named = |s: &str| Named {
+        id: id(s),
+        name: s.to_lowercase(),
+    };
+    let edits = [
+        Edit::Body {
+            of: Written::IssueComment,
+            id: id("IC_1"),
+            body: "Better".into(),
+        },
+        Edit::Body {
+            of: Written::ReviewComment,
+            id: id("PRRC_1"),
+            body: "Nit".into(),
+        },
+        Edit::Body {
+            of: Written::Pr,
+            id: id("PR_7"),
+            body: "Description".into(),
+        },
+        Edit::Delete {
+            of: Written::IssueComment,
+            id: id("IC_1"),
+        },
+        Edit::Title {
+            pr: false,
+            id: id("I_3"),
+            title: "New title".into(),
+        },
+        Edit::React {
+            subject: id("IC_1"),
+            content: ReactionContent::ThumbsUp,
+            on: true,
+        },
+        Edit::React {
+            subject: id("IC_1"),
+            content: ReactionContent::Heart,
+            on: false,
+        },
+        Edit::Labels {
+            subject: id("I_3"),
+            add: vec![named("L_bug")],
+            remove: vec![named("L_ui")],
+        },
+        Edit::Assignees {
+            subject: id("I_3"),
+            add: Vec::new(),
+            remove: vec![named("U_bob")],
+        },
+        Edit::Reviewers {
+            pr: id("PR_7"),
+            users: vec![named("U_amy")],
+            teams: vec![named("T_core")],
+            bots: Vec::new(),
+        },
+        Edit::Milestone {
+            pr: false,
+            id: id("I_3"),
+            milestone: None,
+        },
+    ];
+    for edit in edits {
+        gh.change(&Change::Edit(edit)).await.unwrap();
+    }
+    let seen = seen.lock().unwrap();
+    let sent: Vec<(String, serde_json::Value)> = seen
+        .iter()
+        .map(|s| (s.query(), s.json()["variables"].clone()))
+        .collect();
+    let field = |i: usize, name: &str| {
+        let (query, _) = &sent[i];
+        assert!(query.contains(name), "{i}: {query}");
+    };
+    let var = |i: usize, name: &str| sent[i].1[name].clone();
+    field(0, "updateIssueComment(input: {id: $id, body: $body})");
+    assert_eq!(
+        (var(0, "id"), var(0, "body")),
+        ("IC_1".into(), "Better".into())
+    );
+    field(1, "pullRequestReviewCommentId: $id");
+    field(
+        2,
+        "updatePullRequest(input: {pullRequestId: $id, body: $body})",
+    );
+    field(3, "deleteIssueComment");
+    field(4, "updateIssue(input: {id: $id, title: $title})");
+    assert_eq!(var(4, "title"), "New title");
+    field(5, "addReaction");
+    assert_eq!(
+        (var(5, "subject"), var(5, "content")),
+        ("IC_1".into(), "THUMBS_UP".into())
+    );
+    field(6, "removeReaction");
+    assert_eq!(var(6, "content"), "HEART");
+    field(7, "addLabelsToLabelable");
+    assert_eq!(var(7, "ids"), serde_json::json!(["L_bug"]));
+    field(8, "removeLabelsFromLabelable");
+    assert_eq!(var(8, "ids"), serde_json::json!(["L_ui"]));
+    // Nothing to add: only the removal.
+    field(9, "removeAssigneesFromAssignable");
+    field(10, "requestReviews");
+    assert_eq!(
+        (var(10, "users"), var(10, "teams"), var(10, "bots")),
+        (
+            serde_json::json!(["U_amy"]),
+            serde_json::json!(["T_core"]),
+            serde_json::json!([])
+        )
+    );
+    field(11, "milestoneId: $milestone");
+    assert_eq!(var(11, "milestone"), serde_json::Value::Null);
+    assert_eq!(sent.len(), 12);
+}
+
+/// A pull request's sidebar comes with the node IDs edits need, and what
+/// its repository offers; its organization's teams are asked apart, so a
+/// token that can't read them loses only them, and says why.
+#[tokio::test]
+async fn a_sidebar_keeps_what_its_teams_say() {
+    let sidebar = r#"{"data":{"repository":{
+      "issueOrPullRequest":{"__typename":"PullRequest",
+        "labels":{"totalCount":1,"nodes":[{"id":"L1","name":"bug"}]},
+        "assignees":{"totalCount":0,"nodes":[]},
+        "milestone":null,
+        "reviewRequests":{"totalCount":3,"nodes":[
+          {"requestedReviewer":{"__typename":"User","id":"U1","login":"amy"}},
+          {"requestedReviewer":{"__typename":"Team","id":"T1","combinedSlug":"o/core"}},
+          {"requestedReviewer":{"__typename":"Bot","id":"B1","login":"copilot"}}]},
+        "author":{"login":"bob"}},
+      "labels":{"totalCount":150,"nodes":[{"id":"L1","name":"bug"}]},
+      "assignableUsers":{"totalCount":1,"nodes":[{"id":"U1","login":"amy"}]},
+      "milestones":{"totalCount":0,"nodes":[]},
+      "owner":{"__typename":"Organization","login":"o"}}}}"#;
+    let forbidden = r#"{"data":{"organization":null},"errors":[{"type":"FORBIDDEN",
+      "path":["organization","teams"],"message":"Resource not accessible by personal access token"}]}"#;
+    let (gh, seen) = github(vec![Reply::new(200, sidebar), Reply::new(200, forbidden)]).await;
+    let s = gh.sidebar(&RepoId::new("o", "r"), 7).await.unwrap();
+    assert_eq!(s.labels[0].id, NodeId::new("L1"));
+    assert_eq!(s.all_labels.left_out(), 149);
+    let names =
+        |list: &[ghtui::api::edit::Named]| list.iter().map(|n| n.name.clone()).collect::<Vec<_>>();
+    assert_eq!(names(&s.requested.users), ["amy"]);
+    assert_eq!(names(&s.requested.teams), ["o/core"]);
+    assert_eq!(names(&s.requested.bots), ["copilot"]);
+    assert_eq!(s.author.as_deref(), Some("bob"));
+    match &s.teams {
+        Some(Err(why)) => assert!(why.contains("not accessible"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[1].json()["variables"]["org"], "o");
+}
+
 const THREADS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
   "pageInfo":{"hasNextPage":false,"endCursor":null},
   "nodes":[
@@ -620,10 +810,10 @@ const THREADS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
      "viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":false,
      "first_comment":{"totalCount":150,"nodes":[
        {"id":"C1","author":{"login":"alice"},"body":"Why?","createdAt":"2026-10-01T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r1","originalCommit":{"oid":"abc"},"state":"SUBMITTED"}]},
+        "url":"https://github.com/o/r/pull/7#discussion_r1","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":false,"viewerCanDelete":false,"viewerCanReact":true,"reactionGroups":[{"content":"HOORAY","viewerHasReacted":true,"reactors":{"totalCount":2}},{"content":"EYES","viewerHasReacted":false,"reactors":{"totalCount":0}}]}]},
      "comments":{"totalCount":150,"nodes":[
        {"id":"C2","author":null,"body":"Because.","createdAt":"2026-10-02T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r2","originalCommit":{"oid":"abc"},"state":"PENDING"}]}},
+        "url":"https://github.com/o/r/pull/7#discussion_r2","originalCommit":{"oid":"abc"},"state":"PENDING","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[]}]}},
     {"id":"T2","path":"src/b.rs","diffSide":"LEFT","startDiffSide":null,"line":null,"startLine":null,
      "originalLine":5,"originalStartLine":null,"isOutdated":true,"isResolved":true,"subjectType":"LINE",
      "viewerCanReply":true,"viewerCanResolve":false,"viewerCanUnresolve":true,
@@ -633,10 +823,10 @@ const THREADS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
      "viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":false,
      "first_comment":{"totalCount":1,"nodes":[
        {"id":"C3","author":{"login":"bob"},"body":"Typo","createdAt":"2026-10-03T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED"}]},
+        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[]}]},
      "comments":{"totalCount":1,"nodes":[
        {"id":"C3","author":{"login":"bob"},"body":"Typo","createdAt":"2026-10-03T00:00:00Z",
-        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED"}]}}
+        "url":"https://github.com/o/r/pull/7#discussion_r3","originalCommit":{"oid":"abc"},"state":"SUBMITTED","viewerCanUpdate":true,"viewerCanDelete":true,"viewerCanReact":true,"reactionGroups":[]}]}}
   ]}}}}}"#;
 
 #[tokio::test]
@@ -663,6 +853,17 @@ async fn decodes_review_threads() {
     assert_eq!(t1.comments[1].author, "ghost");
     assert!(t1.comments[1].pending);
     assert_eq!(t1.comments[0].original_commit.as_deref(), Some("abc"));
+    // What GitHub lets you do to each comment, and its reactions (only
+    // those someone gave).
+    let first = &t1.comments[0].editable;
+    assert!(!first.can_update && !first.can_delete && first.can_react);
+    let hooray = ghtui::api::edit::Reaction {
+        content: ghtui::api::edit::ReactionContent::Hooray,
+        count: 2,
+        mine: true,
+    };
+    assert_eq!(first.reactions, [hooray]);
+    assert!(t1.comments[1].editable.can_update);
     let t2 = &threads[1];
     assert!(t2.outdated && t2.resolved);
     assert_eq!(

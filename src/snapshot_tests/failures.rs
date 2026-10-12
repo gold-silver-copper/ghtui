@@ -298,6 +298,7 @@ fn sample(key: &DataKey) -> Data {
             }))
         }
         K::Advisory(..) => Data::Advisory(Box::new(fixtures::advisory())),
+        K::Sidebar(..) => Data::Sidebar(Box::new(fixtures::sidebar())),
         K::Teams(_) => Data::Teams(Box::new(fixtures::teams())),
         K::Team(..) => Data::Team(Box::new(fixtures::team())),
         K::Gist(_) => Data::Gist(Box::new(fixtures::gist())),

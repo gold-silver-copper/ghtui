@@ -661,6 +661,15 @@ impl DiffView<'_> {
                     segs.map(|s| Span::styled(s.text().to_owned(), role_style(theme, &s.role, bg))),
                 );
             }
+            ThreadRowKind::Reactions { comment } => {
+                let given = ann.comments.get(*comment).and_then(|c| c.editable.as_ref());
+                for r in given.iter().flat_map(|e| &e.reactions) {
+                    let fill = chips::reaction_fill(r.mine);
+                    let text = format!("{} {}", r.content.emoji(), r.count);
+                    spans.extend(chips::chip(ctx, text, theme.fill(fill), bg));
+                    spans.push(Span::styled(" ", theme.body(bg)));
+                }
+            }
             ThreadRowKind::Gap | ThreadRowKind::Error => {
                 let style = match row.kind {
                     ThreadRowKind::Error => theme.error(bg),

@@ -98,6 +98,8 @@ pub enum DataKey {
     /// Your notifications, filtered as the inbox filters them
     /// ([`InboxFilter`](crate::api::notifications::InboxFilter)).
     Notifications(String),
+    /// An issue's or pull request's sidebar, with what can go there.
+    Sidebar(RepoId, u64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,6 +152,7 @@ pub enum Data {
     Milestones(Box<MilestoneList>),
     Milestone(Box<MilestoneDetail>),
     Notifications(Box<Inbox>),
+    Sidebar(Box<crate::api::edit::Sidebar>),
 }
 
 impl Data {
@@ -482,7 +485,7 @@ picked!(
     Teams => Results<TeamSummary>, Team => TeamDetail, Gist => Gist,
     Gists => Results<GistSummary>, Blame => Blame, Compare => Comparison,
     Deployments => DeploymentList, Milestones => MilestoneList, Milestone => MilestoneDetail,
-    Notifications => Inbox,
+    Notifications => Inbox, Sidebar => crate::api::edit::Sidebar,
 );
 
 /// A page's needs as the page shows them, failing with the key that

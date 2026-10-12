@@ -5,6 +5,7 @@ pub mod browse;
 pub mod change;
 mod client;
 pub mod corpus;
+pub mod edit;
 #[doc(hidden)]
 pub mod fuzz;
 pub mod mention;

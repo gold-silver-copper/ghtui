@@ -439,6 +439,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Hints | Action::HintsBrowser if diff.is_some() => {
             nav::start_hints(state, action == Action::HintsBrowser);
         }
+        _ if crate::edit::ACTIONS.contains(&action) => return crate::edit::act(state, action),
         _ if diff.is_some() => return diff_action(state, action),
         _ => return nav::page_action(state, action),
     }

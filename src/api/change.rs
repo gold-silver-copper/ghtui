@@ -109,6 +109,8 @@ pub enum Change {
         threads: Vec<String>,
         done: bool,
     },
+    /// Edit a comment, a title, a reaction or a sidebar.
+    Edit(crate::api::edit::Edit),
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -298,6 +300,7 @@ impl GitHub {
                 }
                 Ok(())
             }
+            Change::Edit(edit) => self.edit(edit).await,
         }
     }
 }

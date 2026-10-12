@@ -156,8 +156,64 @@ pub(crate) fn thread(id: &str, line: Option<u32>, resolved: bool, outdated: bool
             url: String::new(),
             original_commit: Some("abc".into()),
             pending: false,
+            editable: editable(&format!("{id}-c")),
         }]
         .into(),
+    }
+}
+
+/// A comment or description you may edit, delete and react to, without
+/// reactions yet.
+pub fn editable(id: &str) -> crate::api::edit::Editable {
+    crate::api::edit::Editable {
+        id: NodeId::new(id),
+        can_update: true,
+        can_delete: true,
+        can_react: true,
+        reactions: Vec::new(),
+    }
+}
+
+fn named(id: &str, name: &str) -> crate::api::edit::Named {
+    crate::api::edit::Named {
+        id: NodeId::new(id),
+        name: name.into(),
+    }
+}
+
+/// The sidebar of [`issue`] (or a pull request), with what its
+/// repository offers.
+pub fn sidebar() -> crate::api::edit::Sidebar {
+    crate::api::edit::Sidebar {
+        labels: vec![named("L_bug", "bug"), named("L_ui", "ui")].into(),
+        assignees: vec![named("U_hubot", "hubot")].into(),
+        milestone: Some(named("M_3", "Links")),
+        requested: crate::api::edit::Requested {
+            users: vec![named("U_defunkt", "defunkt")],
+            teams: vec![named("T_core", "octo-org/core")],
+            ..Default::default()
+        },
+        author: Some("octocat".into()),
+        all_labels: vec![
+            named("L_bug", "bug"),
+            named("L_docs", "documentation"),
+            named("L_good", "good first issue"),
+            named("L_ui", "ui"),
+        ]
+        .into(),
+        users: vec![
+            named("U_defunkt", "defunkt"),
+            named("U_hubot", "hubot"),
+            named("U_monalisa", "monalisa"),
+            named("U_octocat", "octocat"),
+        ]
+        .into(),
+        milestones: vec![named("M_3", "Links"), named("M_4", "1.0")].into(),
+        teams: Some(Ok(vec![
+            named("T_core", "octo-org/core"),
+            named("T_docs", "octo-org/docs"),
+        ]
+        .into())),
     }
 }
 
@@ -701,11 +757,19 @@ pub fn issue() -> IssueDetail {
             author: "hubot".into(),
             body: "Agreed. 120 columns, centered?".into(),
             created_at: "2026-10-02T12:00:00Z".into(),
+            editable: Some(editable("IC_1")),
         }]
         .into(),
         id: NodeId::new("I_14"),
         can_close: true,
         can_reopen: true,
+        editable: editable("I_14"),
+        sidebar: crate::api::edit::SidebarPermits {
+            labels: true,
+            assignees: true,
+            milestone: true,
+            reviewers: false,
+        },
     }
 }
 
@@ -717,6 +781,7 @@ pub fn activity() -> PrActivity {
             author: "hubot".into(),
             body: "Does this cover the 256-color fallback?".into(),
             created_at: "2026-10-01T09:00:00Z".into(),
+            editable: Some(editable("IC_2")),
         }]
         .into(),
         reviews: vec![
@@ -1354,6 +1419,7 @@ pub fn discussion() -> DiscussionDetail {
         author: author.into(),
         body: body.into(),
         created_at: "2026-10-03T12:00:00Z".into(),
+        editable: None,
     };
     DiscussionDetail {
         repo: RepoId::new("cli", "cli"),

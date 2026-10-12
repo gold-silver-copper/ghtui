@@ -84,20 +84,24 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             };
             let area = state.page_area();
             let page = p.page();
-            // The composer takes the comment box's place, scrolled into view.
-            // The composer takes the comment box's place, or goes under the
-            // comment it quotes, scrolled into view.
+            // The composer takes the comment box's place, goes under the
+            // comment it quotes, or takes the place of the comment it
+            // edits, scrolled into view.
             let comment_box = composing.and_then(|c| {
-                let quoted = match &c.target {
+                let (at, under) = match &c.target {
                     crate::review::ComposeTarget::Conversation {
                         quoting: Some(at), ..
-                    } => page.items.iter().find(|it| {
-                        matches!(page.target(it.link), Some(Link::Quote { at: was, .. }) if was == at)
-                    }),
-                    _ => None,
+                    } => (Some(at), true),
+                    crate::review::ComposeTarget::Edit(e) => (Some(&e.at), false),
+                    _ => (None, false),
                 };
-                let (item, under) = match quoted {
-                    Some(item) => (*item, true),
+                let comment = at.and_then(|at| {
+                    page.items.iter().find(|it| {
+                        matches!(page.target(it.link), Some(Link::Quote { at: was, .. }) if was == at)
+                    })
+                });
+                let (item, under) = match comment {
+                    Some(item) => (*item, under),
                     None => (*page.items.get(page.find(&Link::Comment, 0)?)?, false),
                 };
                 Some((usize::from(c.rows()), item, under))

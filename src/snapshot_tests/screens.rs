@@ -130,6 +130,14 @@ pub(crate) fn pr_detail() -> PrDetail {
             },
         ]
         .into(),
+        assignees: vec!["octocat".into()].into(),
+        editable: fixtures::editable("PR_12"),
+        sidebar: crate::api::edit::SidebarPermits {
+            labels: true,
+            assignees: true,
+            milestone: true,
+            reviewers: true,
+        },
     }
 }
 

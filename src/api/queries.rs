@@ -345,6 +345,12 @@ pub struct PrDetail {
     #[arguments(first: 20)]
     pub labels: Option<LabelConnection>,
     pub milestone: Option<MilestoneName>,
+    pub viewer_can_react: bool,
+    pub viewer_can_label: bool,
+    pub viewer_can_assign: bool,
+    pub reaction_groups: Option<Vec<crate::api::edit::WireReactionGroup>>,
+    #[arguments(first: 10)]
+    pub assignees: crate::api::browse::Assignees,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -595,6 +601,10 @@ pub struct ReviewComment {
     pub url: Uri,
     pub original_commit: Option<CommitOid>,
     pub state: ReviewCommentState,
+    pub viewer_can_update: bool,
+    pub viewer_can_delete: bool,
+    pub viewer_can_react: bool,
+    pub reaction_groups: Option<Vec<crate::api::edit::WireReactionGroup>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
