@@ -78,7 +78,7 @@ fn run(cx: &mut Cx) -> Result<()> {
         selected_line(screen, used_at, "ASKPASS_FLAG")
     })?;
     ghtui.keys("g R")?;
-    ghtui.wait_for("References")?;
+    ghtui.wait_for("Where “ASKPASS_FLAG” is used")?;
     ghtui.wait_for(&format!("src/git/credentials.rs:{defined_at}"))?;
     ghtui.wait_for(&format!("src/lib.rs:{used_at}"))?;
     ghtui.keys("Escape")?;
