@@ -117,7 +117,7 @@ impl Widget for Palette<'_> {
                 },
                 buf,
             );
-            buf.set_string(dots, field.y, "…", theme.meta(POPUP));
+            crate::ui::put(buf, dots, field.y, "…", theme.meta(POPUP));
         } else {
             self.input.render(field, buf);
         }

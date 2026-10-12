@@ -534,7 +534,7 @@ impl State {
                 use crate::picker::Kind;
                 // What ↵ does depends on what's being picked.
                 let enter = match &p.kind {
-                    Kind::Edit(Choosing::Title { .. }) => "save",
+                    Kind::Edit(Choosing::Title { .. }) | Kind::SectionTitle(..) => "save",
                     Kind::Edit(Choosing::Many { .. }) => "pick or unpick · ctrl-s apply",
                     Kind::Form(pick) if pick.several() => "pick or unpick",
                     Kind::Edit(_)
@@ -545,7 +545,6 @@ impl State {
                     | Kind::Actions(_) => "choose",
                     Kind::Code { .. } => "go there",
                     Kind::Messages(_) => "copy",
-                    Kind::SectionTitle(..) => "save",
                     Kind::Commands
                     | Kind::Files { .. }
                     | Kind::Branches { .. }
