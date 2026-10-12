@@ -699,11 +699,11 @@ mod projects;
 /// Discussions: writing an answer, replying in a thread, reacting and
 /// marking the answer, each followed until GitHub shows it.
 mod discussions;
+/// Reviews and timelines: what a review said and where, the reviewers,
+/// every review, and the events between comments.
+mod reviews;
 /// The Security tab's alerts: their lists and pages, and dismissing and
 /// reopening them.
 mod security;
 /// Releases, gists, wiki pages and subscriptions.
 mod writes;
-/// Reviews and timelines: what a review said and where, the reviewers,
-/// every review, and the events between comments.
-mod reviews;

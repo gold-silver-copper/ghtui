@@ -26,8 +26,8 @@ pub mod rate_limit;
 mod raw;
 pub mod release;
 pub mod security;
-pub mod watch;
 pub mod timeline;
+pub mod watch;
 
 pub use crate::store::Cached;
 pub use client::{ApiError, GitHub, Polled};

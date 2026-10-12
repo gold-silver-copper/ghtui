@@ -223,7 +223,9 @@ fn seen_now(state: &State, what: &Watched) -> Option<HashSet<u64>> {
 
 /// An issue's comments' numbers, with their authors.
 fn issue_comments(issue: &IssueDetail) -> impl Iterator<Item = (u64, &str)> {
-    issue.comments().filter_map(|c| Some((c.id?, c.author.as_str())))
+    issue
+        .comments()
+        .filter_map(|c| Some((c.id?, c.author.as_str())))
 }
 
 /// A discussion's comments' and replies' numbers, with their authors.
@@ -505,7 +507,8 @@ fn differs(state: &State, probe: &Probe, body: &str) -> bool {
                 return true;
             };
             wire.iter().any(|c| {
-                !shown.comments()
+                !shown
+                    .comments()
                     .any(|s| s.id == Some(c.id) && same_text(&s.body, c.body.as_deref()))
             })
         }

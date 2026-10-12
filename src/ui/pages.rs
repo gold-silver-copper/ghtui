@@ -43,8 +43,8 @@ mod repository;
 mod review;
 mod runs;
 mod security;
-mod writes;
 mod timeline;
+mod writes;
 
 pub use commits::*;
 pub use conversation::*;
@@ -61,8 +61,8 @@ pub use repository::*;
 pub use review::*;
 pub use runs::*;
 pub use security::*;
-pub use writes::*;
 pub use timeline::{FOLD_AFTER, LinesAt, Marks, commit_comments, pinned_issues};
+pub use writes::*;
 
 // ---- URLs ----------------------------------------------------------------------
 
