@@ -263,12 +263,12 @@ actions! {
     ExpandContext     "expand_context"    ["e"]                    Diff   "Show more context";
     ToggleSinceReview "since_review"      []                       Diff   "Show only changes since your last review";
     PickCommits       "pick_commits"      []                       Diff   "Choose commits to view";
-    ToggleViewed      "toggle_viewed"     ["v"]                    Diff   "Mark the file viewed (syncs with GitHub)";
+    ToggleViewed      "toggle_viewed"     [",v"]                     Diff   "Mark the file viewed (syncs with GitHub)";
     MarkReviewed      "mark_reviewed"     ["m"]                    Diff   "Mark the change reviewed";
     VisualLines       "select_lines"      ["V", "x", "file:V"]     Diff   "Select lines";
     Suggest           "suggest"           []                       Diff   "Suggest a change (opens $EDITOR)";
     FileComment       "file_comment"      ["C"]                    Diff   "Comment on the whole file";
-    ResolveThread     "resolve"           ["R"]                    Diff   "Resolve or unresolve the thread";
+    ResolveThread     "resolve"           [",t"]                     Diff   "Resolve or unresolve the thread";
     SubmitReview      "submit_review"     [",s"]                   Diff   "Submit your review";
 }
 

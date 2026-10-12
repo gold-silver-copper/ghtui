@@ -157,8 +157,9 @@ says where it works.
   selected, as GitHub writes it; such a link opens back on those lines.
 - What changes GitHub waits behind `,`: `,m` merges, `,a` approves, `,r`
   marks a draft ready, `,u` updates the branch, `,x` closes or reopens
-  (or cancels a run), `,R` re-runs, `,*` stars, and in Files changed `,s`
-  submits your review. Each asks first where it matters.
+  (or cancels a run), `,R` re-runs, `,*` stars, and in Files changed `,v`
+  marks a file viewed, `,t` resolves a thread and `,s` submits your
+  review. Each asks first where it matters.
 - `q` closes the view: back a page, or the tab when there's nothing to go
   back to. `ZZ` (or `ctrl-c`) quits.
 - `]]` and `[[` jump by section: a Home section, a box, a heading, a
@@ -311,11 +312,11 @@ says where it works.
 | `zw`           | Ignore whitespace changes |
 | `zf`           | Show the whole file |
 | `e`            | Show more context |
-| `v`            | Mark the file viewed (syncs with GitHub) |
+| `,v`           | Mark the file viewed (syncs with GitHub) |
 | `m`            | Mark the change reviewed |
 | `V` `x`        | Select lines |
 | `C`            | Comment on the whole file |
-| `R`            | Resolve or unresolve the thread |
+| `,t`           | Resolve or unresolve the thread |
 | `,s`           | Submit your review |
 
 **In Files changed's file tree** (`tree:`)

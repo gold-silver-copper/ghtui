@@ -4389,7 +4389,7 @@ pub(crate) mod tests {
         fn viewed_state_applies_and_rolls_back_on_failure() {
             let (mut s, pr) = diff_state(120);
             // Before GitHub's state arrives, toggling explains why not.
-            assert!(press(&mut s, "v").is_empty());
+            assert!(press(&mut s, ",v").is_empty());
             warns(&s, "");
 
             diff_msg(
@@ -4412,7 +4412,7 @@ pub(crate) mod tests {
             assert_eq!(screen(&s).cursor.file, 1);
 
             // Toggle file 1 viewed: optimistic, then GitHub refuses.
-            let cmds = press(&mut s, "v");
+            let cmds = press(&mut s, ",v");
             assert!(cmds.iter().any(|c| matches!(
                 c,
                 Cmd::Api(Api::SetViewed { viewed: true, previous: Viewed::Unviewed, pull_request_id, .. })
@@ -4893,7 +4893,12 @@ pub(crate) mod tests {
                 let hints = s.key_hints();
                 assert_eq!(
                     hints.get(1..3),
-                    Some(&[("c".into(), "reply".into()), ("R".into(), "resolve".into())][..])
+                    Some(
+                        &[
+                            ("c".into(), "reply".into()),
+                            (",t".into(), "resolve".into())
+                        ][..]
+                    )
                 );
 
                 // Resolve: optimistic, rolled back on failure.
@@ -5453,7 +5458,7 @@ pub(crate) mod tests {
                         states: std::collections::HashMap::new(),
                     }))),
                 );
-                let cmds = press(&mut s, "v");
+                let cmds = press(&mut s, ",v");
                 assert!(
                     cmds.iter()
                         .any(|c| matches!(c, Cmd::Api(Api::SetViewed { viewed: true, .. }))),
