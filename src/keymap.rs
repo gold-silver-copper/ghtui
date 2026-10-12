@@ -263,6 +263,8 @@ actions! {
     NextColumn        "next_column"       ["l"]                    Project "Next column of the board";
     MoveItem          "move_item"         [",c"]                   Project "Move the item to another column";
     SetField          "set_field"         [",f"]                   Project "Set a field of the item";
+    AddItem           "add_item"          [",i"]                   Project "Add an issue, a pull request or a draft";
+    ArchiveItem       "archive_item"      [",X"]                   Project "Archive the item, or restore it";
 
     NextHunk          "next_change"       ["]c", "}"]              Diff   "Next change";
     PrevHunk          "prev_change"       ["[c", "{"]              Diff   "Previous change";

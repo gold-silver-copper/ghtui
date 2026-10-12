@@ -2725,11 +2725,27 @@ async fn a_project_reads_its_view_and_the_items_its_filter_finds() {
     let items = r#"{"data":{"repositoryOwner":{"projectV2":{"items":{"totalCount":4,"pageInfo":{"hasNextPage":true,"endCursor":"c3"},"nodes":[
         {"id":"PVTI_1","fullDatabaseId":"1001","content":{"__typename":"Issue","number":14,"title":"Projects","url":"https://github.com/o/r/issues/14","state":"CLOSED","stateReason":"NOT_PLANNED","repository":{"nameWithOwner":"o/r"},"assignees":{"totalCount":1,"nodes":[{"login":"alice"}]},"labels":{"totalCount":0,"nodes":[]},"milestone":null},
          "fieldValues":{"totalCount":3,"nodes":[{"__typename":"ProjectV2ItemFieldTextValue","text":"Projects","field":{"id":"F_title"}},{"__typename":"ProjectV2ItemFieldSingleSelectValue","optionId":"O_todo","name":"Todo","field":{"id":"F_status"}},{"__typename":"ProjectV2ItemFieldLabelValue"}]}},
-        {"id":"PVTI_2","fullDatabaseId":"1002","content":{"__typename":"DraftIssue","title":"Draft","body":"Its body","assignees":{"totalCount":0,"nodes":[]}},
+        {"id":"PVTI_2","fullDatabaseId":"1002","content":{"__typename":"DraftIssue","id":"DI_2","title":"Draft","body":"Its body","assignees":{"totalCount":0,"nodes":[]}},
          "fieldValues":{"totalCount":1,"nodes":[{"__typename":"ProjectV2ItemFieldNumberValue","number":2.0,"field":{"id":"F_est"}}]}},
         {"id":"PVTI_3","fullDatabaseId":"1003","content":null,"fieldValues":{"totalCount":0,"nodes":[]}}]}}}}}"#;
-    let (gh, seen) = github(vec![Reply::new(200, project), Reply::new(200, items)]).await;
-    let p = gh.project(&roadmap(), Some(2), None).await.unwrap();
+    // The view sorts its items, so they're all fetched: the rest come
+    // after `c3`. Then the archived ones.
+    let rest = r#"{"data":{"repositoryOwner":{"projectV2":{"items":{"totalCount":4,"pageInfo":{"hasNextPage":false,"endCursor":"c4"},"nodes":[
+        {"id":"PVTI_4","fullDatabaseId":"1004","content":{"__typename":"DraftIssue","id":"DI_4","title":"Later","body":"","assignees":{"totalCount":0,"nodes":[]}},"fieldValues":{"totalCount":0,"nodes":[]}}]}}}}}"#;
+    let archived = r#"{"data":{"repositoryOwner":{"projectV2":{"items":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":"a1"},"nodes":[
+        {"id":"PVTI_9","fullDatabaseId":"1009","isArchived":true,"content":{"__typename":"DraftIssue","id":"DI_9","title":"Old","body":"","assignees":{"totalCount":0,"nodes":[]}},"fieldValues":{"totalCount":0,"nodes":[]}}]}}}}}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, project),
+        Reply::new(200, items),
+        Reply::new(200, rest),
+        Reply::new(200, archived),
+    ])
+    .await;
+    let mut p = gh.project(&roadmap(), Some(2), None).await.unwrap();
+    assert_eq!((p.items.items.len(), p.items.next.as_deref()), (4, None));
+    assert!(p.archived.items.iter().all(|it| it.archived));
+    assert_eq!(p.item(1009).map(|it| it.id.as_str()), Some("PVTI_9"));
+    p.items.items.truncate(3);
     assert_eq!((p.view, p.can_update), (2, true));
     let plan = p.shown().unwrap();
     assert_eq!(
@@ -2746,7 +2762,6 @@ async fn a_project_reads_its_view_and_the_items_its_filter_finds() {
         sprints.iter().map(|s| s.completed).collect::<Vec<_>>(),
         [false, true]
     );
-    assert_eq!(p.items.next.as_deref(), Some("c3"));
     let [issue, draft, hidden] = p.items.items.as_slice() else {
         panic!("{:?}", p.items);
     };
@@ -2772,6 +2787,62 @@ async fn a_project_reads_its_view_and_the_items_its_filter_finds() {
     // The items are what the view's filter finds.
     assert!(seen[1].query().contains("items(first: 50"));
     assert_eq!(seen[1].json()["variables"]["query"], "-status:Done");
+    assert_eq!(seen[2].json()["variables"]["after"], "c3");
+    assert_eq!(seen[3].json()["variables"]["archived"][0], "ARCHIVED");
+}
+
+/// Adding an issue names it by its node ID, which is asked for first; a
+/// draft, archiving and restoring, and a draft's edit are a mutation
+/// each.
+#[tokio::test]
+async fn project_items_are_added_archived_and_edited() {
+    use ghtui::api::change::Change;
+    use ghtui::api::project::ProjectChange;
+    let (gh, seen) = github(vec![
+        Reply::new(
+            200,
+            r#"{"data":{"repository":{"issueOrPullRequest":{"id":"I_20"}}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"addProjectV2ItemById":{"item":{"id":"PVTI_20"}}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"unarchiveProjectV2Item":{"item":{"id":"PVTI_9"}}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"updateProjectV2DraftIssue":{"draftIssue":{"id":"DI_2"}}}}"#,
+        ),
+    ])
+    .await;
+    let project = NodeId::new("PVT_1");
+    for change in [
+        ProjectChange::Add {
+            project: project.clone(),
+            repo: RepoId::new("o", "r"),
+            number: 20,
+        },
+        ProjectChange::Archive {
+            project: project.clone(),
+            item: NodeId::new("PVTI_9"),
+            archived: false,
+        },
+        ProjectChange::EditDraft {
+            draft: NodeId::new("DI_2"),
+            title: "Draft".into(),
+            body: "Its body".into(),
+        },
+    ] {
+        gh.change(&Change::Project(change)).await.unwrap();
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0].json()["variables"]["number"], 20);
+    assert!(seen[1].query().contains("addProjectV2ItemById"));
+    assert_eq!(seen[1].json()["variables"]["content"], "I_20");
+    assert!(seen[2].query().contains("unarchiveProjectV2Item"));
+    assert_eq!(seen[3].json()["variables"]["body"], "Its body");
 }
 
 /// Setting a field sends its value as GitHub takes it; clearing it is a

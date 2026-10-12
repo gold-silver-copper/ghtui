@@ -1732,6 +1732,7 @@ pub fn project() -> crate::api::project::Project {
     let item = |n: u64, content, values| ProjectItem {
         id: NodeId::new(format!("PVTI_{n}")),
         number: 1000 + n,
+        archived: false,
         content,
         values,
     };
@@ -1775,6 +1776,7 @@ pub fn project() -> crate::api::project::Project {
         item(
             3,
             ItemContent::Draft(Draft {
+                id: NodeId::new("DI_3"),
                 title: "Write the board's docs".into(),
                 body: "Explain **h** and **l**, and moving cards.".into(),
                 assignees: Capped::new(Vec::new(), 0),
@@ -1792,6 +1794,7 @@ pub fn project() -> crate::api::project::Project {
         item(
             5,
             ItemContent::Draft(Draft {
+                id: NodeId::new("DI_5"),
                 title: "Someday: roadmaps".into(),
                 body: String::new(),
                 assignees: Capped::new(Vec::new(), 0),
@@ -1813,6 +1816,23 @@ pub fn project() -> crate::api::project::Project {
         items: Results {
             total: 5,
             items,
+            next: None,
+        },
+        archived: Results {
+            total: 1,
+            items: vec![ProjectItem {
+                archived: true,
+                ..item(
+                    6,
+                    ItemContent::Draft(Draft {
+                        id: NodeId::new("DI_6"),
+                        title: "Classic projects".into(),
+                        body: String::new(),
+                        assignees: Capped::new(Vec::new(), 0),
+                    }),
+                    vec![status("O_done", "Done")],
+                )
+            }],
             next: None,
         },
     }

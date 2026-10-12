@@ -1,14 +1,18 @@
 //! Working a project from its pages: going between a board's columns,
-//! moving an item to another column, and setting its fields. A picker
-//! lists the choices; the one taken goes to GitHub as a [`Change`], and
-//! the page follows GitHub until it shows it ([`crate::act::follow`],
-//! which asks [`shows`]).
+//! moving an item to another column and setting its fields, adding an
+//! item (an issue or pull request, or a draft), archiving and restoring
+//! one, and editing a draft's title and body. A picker or the composer
+//! takes what's chosen; it goes to GitHub as a [`Change`], and the page
+//! follows GitHub until it shows it ([`crate::act::follow`], which asks
+//! [`shows`]).
 
 use crate::api::change::Change;
 use crate::api::model::NodeId;
 use crate::api::project::{
-    FieldKind, FieldValue, Layout, Project, ProjectField, ProjectItem, ProjectRef, grouped,
+    FieldKind, FieldValue, ItemContent, Layout, Project, ProjectChange, ProjectField, ProjectItem,
+    ProjectRef, grouped,
 };
+use crate::review::ComposeTarget;
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::Link;
 use crate::ui::pages::item_link;
@@ -22,12 +26,64 @@ use crate::route::Route;
 use crate::state::{Api, Cmd, Screen, State};
 
 /// The actions on a project's pages.
-pub const ACTIONS: [Action; 4] = [
+pub const ACTIONS: [Action; 8] = [
     Action::PrevColumn,
     Action::NextColumn,
     Action::MoveItem,
     Action::SetField,
+    Action::AddItem,
+    Action::ArchiveItem,
+    Action::EditComment,
+    Action::EditTitle,
 ];
+
+/// Whether `action` is the project's on screen to do: its own, and
+/// editing (a draft's text).
+pub fn takes(state: &State, action: Action) -> bool {
+    ACTIONS.contains(&action) && here(state).is_some()
+}
+
+/// A draft being written in the composer: a new one, or new text for
+/// one (`draft`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Drafting {
+    pub project: ProjectRef,
+    pub view: Option<u64>,
+    /// The project's node ID, which adding names it by.
+    pub project_id: NodeId,
+    pub draft: Option<NodeId>,
+    /// The composer's title.
+    pub title: String,
+}
+
+impl Drafting {
+    /// Sends what the composer wrote: the title on the first line, then
+    /// the body.
+    pub fn send(&self, text: &str) -> Result<Vec<Cmd>, String> {
+        let (title, body) = text.split_once('\n').unwrap_or((text, ""));
+        let (title, body) = (title.trim().to_owned(), body.trim().to_owned());
+        if title.is_empty() {
+            return Err("Write its title on the first line".into());
+        }
+        let change = match &self.draft {
+            Some(draft) => ProjectChange::EditDraft {
+                draft: draft.clone(),
+                title,
+                body,
+            },
+            None => ProjectChange::AddDraft {
+                project: self.project_id.clone(),
+                title,
+                body,
+            },
+        };
+        let about = Subject::Project(self.project.clone(), self.view);
+        Ok(vec![Cmd::Api(Api::Change(
+            Change::Project(change),
+            By::Edit(about),
+        ))])
+    }
+}
 
 /// An item of a project at a view: what a change is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +102,8 @@ pub enum Pick {
     Field(At),
     /// The values of one of its fields.
     Value(At, NodeId),
+    /// What to add to the project at a view.
+    Add(ProjectRef, Option<u64>),
 }
 
 impl Pick {
@@ -54,6 +112,7 @@ impl Pick {
             Pick::Column(_) => "Move to column",
             Pick::Field(_) => "Set a field",
             Pick::Value(..) => "Set the field",
+            Pick::Add(..) => "Add an item",
         }
     }
 
@@ -62,6 +121,7 @@ impl Pick {
             Pick::Column(_) => "Find a column",
             Pick::Field(_) => "Find a field",
             Pick::Value(..) => "Find a value, or type one",
+            Pick::Add(..) => "owner/repo#123, a link, or a new draft's title",
         }
     }
 }
@@ -72,6 +132,10 @@ pub enum Chosen {
     /// List this field's values.
     Field(At, NodeId),
     Set(At, Change),
+    /// Add an issue or pull request to the project at a view.
+    Add(ProjectRef, Option<u64>, Change),
+    /// Write a new draft, starting from its title.
+    Draft(Drafting, String),
 }
 
 /// The project on screen at its view, as loaded, and its item that's
@@ -103,7 +167,8 @@ fn here(state: &State) -> Option<Here<'_>> {
         Some(n) => d.item(n),
         None => {
             let url = p.selected_link()?.url()?;
-            (d.items.items.iter()).find(|it| item_link(project, view, it).as_deref() == Some(url))
+            d.loaded()
+                .find(|it| item_link(project, view, it).as_deref() == Some(url))
         }
     });
     Some(Here {
@@ -128,17 +193,7 @@ fn board<'a>(h: &Here<'a>) -> Result<(&'a Project, &'a ProjectField), String> {
 
 /// What a change to the item here is about, or why there's none to make.
 fn editable<'a>(state: &State, h: &Here<'a>) -> Result<(&'a Project, &'a ProjectItem), String> {
-    let p = h.data.ok_or("The project hasn't loaded yet")?;
-    if !p.can_update {
-        return Err(
-            "GitHub doesn't let you change this project: that takes write access to it".into(),
-        );
-    }
-    if let Some(waiting) = awaiting_here(state)
-        && matches!(waiting.change, Change::SetProjectField { .. })
-    {
-        return Err("GitHub hasn't shown the last change yet: wait a moment".into());
-    }
+    let p = changeable(state, h)?;
     let Some(item) = h.item else {
         let down = state.first_key(Action::Down);
         return Err(format!("No item is selected: {down} selects one"));
@@ -149,14 +204,54 @@ fn editable<'a>(state: &State, h: &Here<'a>) -> Result<(&'a Project, &'a Project
     Ok((p, item))
 }
 
+/// The project, if GitHub lets you change it and it shows the last
+/// change.
+fn changeable<'a>(state: &State, h: &Here<'a>) -> Result<&'a Project, String> {
+    let p = h.data.ok_or("The project hasn't loaded yet")?;
+    if !p.can_update {
+        return Err(
+            "GitHub doesn't let you change this project: that takes write access to it".into(),
+        );
+    }
+    if let Some(waiting) = awaiting_here(state)
+        && matches!(
+            waiting.change,
+            Change::SetProjectField { .. } | Change::Project(_)
+        )
+    {
+        return Err("GitHub hasn't shown the last change yet: wait a moment".into());
+    }
+    Ok(p)
+}
+
+/// The draft here to edit, or why there's none.
+fn draft<'a>(state: &State, h: &Here<'a>) -> Result<&'a crate::api::project::Draft, String> {
+    let (_, item) = editable(state, h)?;
+    match &item.content {
+        ItemContent::Draft(d) => Ok(d),
+        _ => Err(format!(
+            "Only a draft's text is edited here: {} opens the issue or pull request, to edit it there",
+            state.first_key(Action::Open)
+        )),
+    }
+}
+
 /// Why `action` can't be done here, if it can't.
 fn why_not(state: &State, h: &Here<'_>, action: Action) -> Option<String> {
+    let archived = h.item.is_some_and(|it| it.archived);
     match action {
         Action::PrevColumn | Action::NextColumn if !h.on_view => {
             Some("Columns are a board's: open the project's view".into())
         }
         Action::PrevColumn | Action::NextColumn => board(h).err(),
+        Action::MoveItem if archived => Some(format!(
+            "It's archived: {} restores it",
+            state.first_key(Action::ArchiveItem)
+        )),
         Action::MoveItem => board(h).and_then(|_| editable(state, h).map(drop)).err(),
+        Action::AddItem => changeable(state, h).err(),
+        Action::ArchiveItem => editable(state, h).err(),
+        Action::EditComment | Action::EditTitle => draft(state, h).err(),
         Action::SetField => {
             let (p, _) = match editable(state, h) {
                 Ok(found) => found,
@@ -191,10 +286,34 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
             "Set a field of the item",
             "set field",
         ),
+        (
+            Action::AddItem,
+            "Change",
+            "Add an issue, a pull request or a draft",
+            "add",
+        ),
+        (
+            Action::ArchiveItem,
+            "Change",
+            if h.item.is_some_and(|it| it.archived) {
+                "Restore the item"
+            } else {
+                "Archive the item"
+            },
+            "",
+        ),
+        (Action::EditComment, "Edit", "Edit the draft", ""),
+        (Action::EditTitle, "Edit", "Edit the draft's title", ""),
     ];
+    let is_draft = h
+        .item
+        .is_some_and(|it| matches!(it.content, ItemContent::Draft(_)));
     for (action, section, label, short) in rows {
         // An item's page has no columns to go between.
         if !h.on_view && matches!(action, Action::PrevColumn | Action::NextColumn) {
+            continue;
+        }
+        if !is_draft && matches!(action, Action::EditComment | Action::EditTitle) {
             continue;
         }
         out.push(Doable {
@@ -220,10 +339,66 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     }
     let (project, view) = (h.project.clone(), h.view);
     let item = h.item.map(|it| it.id.clone());
+    let project_id = h.data.map(|p| p.id.clone()).unwrap_or_default();
     match (action, item) {
         (Action::PrevColumn | Action::NextColumn, _) => {
             column_step(state, action == Action::NextColumn);
             Vec::new()
+        }
+        (Action::AddItem, _) => state.open_picker(Kind::Project(Pick::Add(project, view))),
+        (Action::ArchiveItem, Some(id)) => {
+            let Some(it) = h.item else {
+                return Vec::new();
+            };
+            let archived = !it.archived;
+            let change = Change::Project(ProjectChange::Archive {
+                project: project_id,
+                item: id,
+                archived,
+            });
+            let about = Subject::Project(project, view);
+            if !archived {
+                state.info("Restoring it…");
+                return vec![Cmd::Api(Api::Change(change, By::Act(about)))];
+            }
+            // GitHub asks first.
+            let title = crate::ui::text::truncate(it.title(), 50);
+            let restore = state.first_key(Action::ArchiveItem);
+            let confirm = crate::act::Confirm {
+                action,
+                about,
+                title: format!("Archive “{title}”?"),
+                facts: vec![(
+                    format!(
+                        "It leaves the project's views; {restore} on it under Archived restores it"
+                    ),
+                    false,
+                )],
+                choices: vec![("Archive".into(), change)],
+                selected: 0,
+                sending: false,
+                error: None,
+            };
+            state.overlay = Some(crate::state::Overlay::Confirm(Box::new(confirm)));
+            Vec::new()
+        }
+        (Action::EditComment | Action::EditTitle, _) => {
+            let Ok(d) = draft(state, &h) else {
+                return Vec::new();
+            };
+            let text = if d.body.trim().is_empty() {
+                format!("{}\n\n", d.title)
+            } else {
+                format!("{}\n\n{}", d.title, d.body)
+            };
+            let drafting = Drafting {
+                project,
+                view,
+                project_id,
+                draft: Some(d.id.clone()),
+                title: "Edit the draft: its title on the first line, then its text".into(),
+            };
+            state.compose(ComposeTarget::ProjectDraft(drafting), &text)
         }
         (Action::MoveItem, Some(item)) => {
             let at = At {
@@ -315,10 +490,11 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
     };
     let at = match pick {
         Pick::Column(at) | Pick::Field(at) | Pick::Value(at, _) => at,
+        Pick::Add(project, view) => return adding(state, project, *view, q),
     };
     let key = DataKey::Project(at.project.clone(), at.view);
     let found = state.picked::<Project>(&key).and_then(|p| {
-        let item = p.items.items.iter().find(|it| it.id == at.item)?;
+        let item = p.loaded().find(|it| it.id == at.item)?;
         Some((p, item))
     });
     let Some((p, it)) = found else {
@@ -341,6 +517,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
     let field = match pick {
         Pick::Column(_) => p.column_field(),
         Pick::Value(_, id) => p.field(id),
+        Pick::Add(..) => None,
         Pick::Field(_) => {
             return (p.fields.iter())
                 .filter(|f| f.kind.settable() && fuzzy_score(q, &f.name).is_some())
@@ -409,6 +586,76 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
     rows
 }
 
+/// The rows adding an item offers for what's typed: the issue or pull
+/// request it names (`owner/repo#123`, or its link), and a new draft
+/// titled with it.
+fn adding(
+    state: &State,
+    project: &ProjectRef,
+    view: Option<u64>,
+    q: &str,
+) -> Vec<(PaletteItem, Option<Chosen>)> {
+    let row = |label: String, hint: &str, chosen: Option<Chosen>| {
+        let item = PaletteItem {
+            label,
+            hint: hint.to_owned(),
+        };
+        (item, chosen)
+    };
+    let q = q.trim();
+    let key = DataKey::Project(project.clone(), view);
+    let Some(p) = state.picked::<Project>(&key) else {
+        return vec![row("The project hasn't loaded yet".into(), "", None)];
+    };
+    if q.is_empty() {
+        let what = "Type owner/repo#123 or a link to add it, or a new draft's title";
+        return vec![row(what.into(), "", None)];
+    }
+    let mut rows = Vec::new();
+    let named = crate::route::parse_input(q, None).and_then(|dest| match dest.target {
+        crate::route::Target::Page(Route::Issue { repo, number }) => Some((repo, number)),
+        crate::route::Target::Page(Route::Pr { pr, .. }) => Some((pr.repo, pr.number)),
+        _ => None,
+    });
+    if let Some((repo, number)) = named {
+        let here = p.loaded().find(|it| match &it.content {
+            ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => {
+                l.repo == repo && l.number == number
+            }
+            _ => false,
+        });
+        let label = format!("Add {repo}#{number}");
+        match here {
+            Some(it) if it.archived => {
+                rows.push(row(label, "archived: restore it", None));
+            }
+            Some(_) => rows.push(row(label, "already in the project", None)),
+            None => {
+                let change = Change::Project(ProjectChange::Add {
+                    project: p.id.clone(),
+                    repo,
+                    number,
+                });
+                let chosen = Chosen::Add(project.clone(), view, change);
+                rows.push(row(label, "↵", Some(chosen)));
+            }
+        }
+    }
+    let drafting = Drafting {
+        project: project.clone(),
+        view,
+        project_id: p.id.clone(),
+        draft: None,
+        title: "New draft: its title on the first line, then its text".into(),
+    };
+    rows.push(row(
+        format!("New draft “{q}”"),
+        "↵ writes it",
+        Some(Chosen::Draft(drafting, q.to_owned())),
+    ));
+    rows
+}
+
 /// The row a typed value makes: setting it, or why it can't be.
 fn typed(
     field: &ProjectField,
@@ -456,6 +703,25 @@ fn is_date(s: &str) -> bool {
 pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
     match chosen {
         Chosen::Field(at, field) => state.open_picker(Kind::Project(Pick::Value(at, field))),
+        Chosen::Add(project, view, change) => {
+            if let Change::Project(c) = &change {
+                state.info(format!("{}…", doing(c)));
+            }
+            vec![Cmd::Api(Api::Change(
+                change,
+                By::Act(Subject::Project(project, view)),
+            ))]
+        }
+        Chosen::Draft(drafting, title) => {
+            state.overlay = None;
+            let cmds = state.compose(ComposeTarget::ProjectDraft(drafting), &title);
+            // Its text goes below the title.
+            if let Some(crate::state::Overlay::Compose(c)) = &mut state.overlay {
+                c.input.insert_newline();
+                c.input.insert_newline();
+            }
+            cmds
+        }
         Chosen::Set(at, change) => {
             if let Change::SetProjectField { said, value, .. } = &change {
                 let doing = if value.is_some() {
@@ -472,23 +738,90 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
 }
 
 /// Whether the project at `view`, as loaded, shows `change`: the item has
-/// the value now, or has left the view (its filter no longer finds it).
+/// the value now, has come or gone, or is archived or back; or it may be
+/// past what's loaded, or left out by the view's filter, where it can't
+/// be told.
 pub fn shows(state: &State, change: &Change, project: &ProjectRef, view: Option<u64>) -> bool {
-    let Change::SetProjectField {
-        item, field, value, ..
-    } = change
-    else {
-        return true;
-    };
     let key = DataKey::Project(project.clone(), view);
     let Some(p) = state.picked::<Project>(&key) else {
         return false;
     };
-    let Some(it) = p.items.items.iter().find(|it| it.id == *item) else {
-        return true;
-    };
-    match value {
-        Some(value) => it.value(field).is_some_and(|v| v.same(value)),
-        None => it.value(field).is_none(),
+    // An item that's not loaded may be further down, or filtered out.
+    let unseen = p.items.next.is_some() || p.shown().is_some_and(|v| !v.filter.is_empty());
+    match change {
+        Change::SetProjectField {
+            item, field, value, ..
+        } => {
+            let Some(it) = p.loaded().find(|it| it.id == *item) else {
+                return true;
+            };
+            match value {
+                Some(value) => it.value(field).is_some_and(|v| v.same(value)),
+                None => it.value(field).is_none(),
+            }
+        }
+        Change::Project(ProjectChange::Add { repo, number, .. }) => {
+            unseen
+                || p.loaded().any(|it| match &it.content {
+                    ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => {
+                        l.repo == *repo && l.number == *number
+                    }
+                    _ => false,
+                })
+        }
+        Change::Project(ProjectChange::AddDraft { title, .. }) => {
+            unseen
+                || p.loaded()
+                    .any(|it| matches!(&it.content, ItemContent::Draft(d) if d.title == *title))
+        }
+        Change::Project(ProjectChange::Archive { item, archived, .. }) => {
+            let viewed = p.items.items.iter().any(|it| it.id == *item);
+            let put_away = p.archived.items.iter().any(|it| it.id == *item);
+            if *archived {
+                !viewed && (put_away || p.archived.next.is_some())
+            } else {
+                !put_away && (viewed || unseen)
+            }
+        }
+        Change::Project(ProjectChange::EditDraft { draft, title, body }) => {
+            let found = p.loaded().find_map(|it| match &it.content {
+                ItemContent::Draft(d) if d.id == *draft => Some(d),
+                _ => None,
+            });
+            found.is_none_or(|d| d.title == *title && d.body.trim() == body.trim())
+        }
+        _ => true,
+    }
+}
+
+/// What a change is doing while it's sent.
+pub fn doing(change: &ProjectChange) -> &'static str {
+    match change {
+        ProjectChange::Add { .. } | ProjectChange::AddDraft { .. } => "Adding it to the project",
+        ProjectChange::Archive { archived: true, .. } => "Archiving it",
+        ProjectChange::Archive { .. } => "Restoring it",
+        ProjectChange::EditDraft { .. } => "Saving the draft",
+    }
+}
+
+/// What a change did, once GitHub said so.
+pub fn done(change: &ProjectChange) -> &'static str {
+    match change {
+        ProjectChange::Add { .. } => "Added to the project",
+        ProjectChange::AddDraft { .. } => "Draft added",
+        ProjectChange::Archive { archived: true, .. } => "Archived",
+        ProjectChange::Archive { .. } => "Restored",
+        ProjectChange::EditDraft { .. } => "Draft saved",
+    }
+}
+
+/// What was refused, for "GitHub refused …".
+pub fn what(change: &ProjectChange) -> &'static str {
+    match change {
+        ProjectChange::Add { .. } => "adding it",
+        ProjectChange::AddDraft { .. } => "the draft",
+        ProjectChange::Archive { archived: true, .. } => "archiving it",
+        ProjectChange::Archive { .. } => "restoring it",
+        ProjectChange::EditDraft { .. } => "the draft's edit",
     }
 }

@@ -115,6 +115,8 @@ pub enum Change {
     Edit(crate::api::edit::Edit),
     /// Write in a discussion, or mark its answer.
     Discussion(crate::api::discussion::Discuss),
+    /// Add, archive or restore a project's item, or edit a draft's text.
+    Project(crate::api::project::ProjectChange),
     /// Set a project item's field to a value, or clear it (`None`); `said`
     /// is what it sets, as people say it ("Status to Done").
     SetProjectField {
@@ -332,6 +334,7 @@ impl GitHub {
             }
             Change::Edit(edit) => self.edit(edit).await,
             Change::Discussion(change) => self.discuss(change).await,
+            Change::Project(change) => self.change_project(change).await,
             Change::SetProjectField {
                 project,
                 item,

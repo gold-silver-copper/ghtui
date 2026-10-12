@@ -302,6 +302,9 @@ pub struct Item {
     pub start: usize,
     pub end: usize,
     pub link: u32,
+    /// The columns of its lines it takes (from, how many), when it shares
+    /// them with others laid out beside it ([`Page::side_by_side`]).
+    pub cols: Option<(u16, u16)>,
 }
 
 /// Columns a box's border and padding take on each side.
@@ -535,7 +538,57 @@ impl Page {
                 .count(),
         );
         if end > start {
-            self.items.push(Item { start, end, link });
+            self.items.push(Item {
+                start,
+                end,
+                link,
+                cols: None,
+            });
+        }
+    }
+
+    /// Lays out pages side by side, `gap` columns apart: `f` builds the
+    /// one `widths[i]` wide (sharing this page's links), and their lines
+    /// are put together row by row. Their items keep to their columns,
+    /// in order, column by column.
+    pub fn side_by_side(&mut self, widths: &[u16], gap: u16, mut f: impl FnMut(usize, &mut Page)) {
+        let mut columns = Vec::new();
+        for (i, width) in widths.iter().enumerate() {
+            let mut column = Page::new(*width);
+            column.compact = self.compact;
+            column.links = std::mem::take(&mut self.links);
+            column.link_ids = std::mem::take(&mut self.link_ids);
+            f(i, &mut column);
+            self.links = std::mem::take(&mut column.links);
+            self.link_ids = std::mem::take(&mut column.link_ids);
+            columns.push(column);
+        }
+        let base = self.lines.len();
+        let rows = columns.iter().map(|c| c.lines.len()).max().unwrap_or(0);
+        for row in 0..rows {
+            let mut segs = Vec::new();
+            for (i, column) in columns.iter().enumerate() {
+                if i > 0 {
+                    segs.push(Seg::new(" ".repeat(usize::from(gap)), Role::Body));
+                }
+                match column.lines.get(row) {
+                    Some(line) => segs.extend(flatten(line, column.width)),
+                    None => segs.push(Seg::new(" ".repeat(usize::from(column.width)), Role::Body)),
+                }
+            }
+            self.add(Frame::None, 0, segs, Vec::new());
+        }
+        let mut x = 0u16;
+        for column in &columns {
+            for it in &column.items {
+                self.items.push(Item {
+                    start: base.saturating_add(it.start),
+                    end: base.saturating_add(it.end),
+                    link: it.link,
+                    cols: Some((x, column.width)),
+                });
+            }
+            x = x.saturating_add(column.width).saturating_add(gap);
         }
     }
 
@@ -787,6 +840,71 @@ fn lay_out<'a>(out: &mut Vec<(u16, String, &'a Seg)>, segs: &'a [Seg], mut x: u1
     }
 }
 
+/// A line `width` columns wide drawn as plain segments, its box's edges
+/// and all, as [`PageView`] would draw it: to lay it beside others.
+fn flatten(line: &PageLine, width: u16) -> Vec<Seg> {
+    let w = usize::from(width);
+    // Each column's text and how it looks; `None` is the second column
+    // of a wide character.
+    let blank = Some((" ".to_owned(), Role::Body, None));
+    let mut cells: Vec<Option<(String, Role, Option<u32>)>> = vec![blank; w];
+    let put = |cells: &mut Vec<_>, x: usize, text: &str, role: Role, link: Option<u32>| {
+        if let Some(cell) = cells.get_mut(x) {
+            *cell = Some((text.to_owned(), role, link));
+        }
+    };
+    let edges = match line.frame {
+        Frame::Top => Some(("╭", "─", "╮")),
+        Frame::Rule => Some(("├", "─", "┤")),
+        Frame::Bottom => Some(("╰", "─", "╯")),
+        Frame::Body => Some(("│", " ", "│")),
+        Frame::None => None,
+    };
+    if let Some((left, middle, right)) = edges {
+        for x in 0..w {
+            let edge = match x {
+                0 => left,
+                x if x.saturating_add(1) == w => right,
+                _ => middle,
+            };
+            put(&mut cells, x, edge, Role::Meta, None);
+        }
+    }
+    for (sx, shown, seg) in place(line, 0, width) {
+        let mut x = usize::from(sx);
+        // Titles sit in gaps cut into a top edge.
+        if line.frame == Frame::Top {
+            let after = x.saturating_add(text::width(&shown));
+            for gap in [x.saturating_sub(1), after] {
+                put(&mut cells, gap, " ", Role::Body, None);
+            }
+        }
+        for c in shown.chars() {
+            let mut buf = [0; 4];
+            let c = c.encode_utf8(&mut buf);
+            let cw = text::width(c);
+            if x.saturating_add(cw) > w {
+                break;
+            }
+            put(&mut cells, x, c, seg.role.clone(), seg.link);
+            for k in 1..cw {
+                if let Some(cell) = cells.get_mut(x.saturating_add(k)) {
+                    *cell = None;
+                }
+            }
+            x = x.saturating_add(cw);
+        }
+    }
+    let mut out: Vec<Seg> = Vec::new();
+    for (text, role, link) in cells.into_iter().flatten() {
+        match out.last_mut() {
+            Some(last) if last.role == role && last.link == link => last.text.push_str(&text),
+            _ => out.push(Seg::linked(text, role, link)),
+        }
+    }
+    out
+}
+
 /// Visible links' positions, main column then aside, top to bottom.
 pub fn spots(page: &Page, area: Rect, scroll: usize) -> Vec<Spot> {
     let layout = columns(page, area);
@@ -898,10 +1016,15 @@ impl Widget for PageView<'_> {
         let layout = columns(self.page, area);
         // The selected lines: an item's, or a run of items'.
         let items = |i: Option<usize>| i.and_then(|i| self.page.items.get(i)).copied();
-        let selected = items(self.selected).map(|s| match items(self.from) {
-            Some(f) => s.start.min(f.start)..s.end.max(f.end),
-            None => s.start..s.end,
-        });
+        // An item beside others is marked in its own columns, below.
+        let beside = items(self.selected).filter(|s| s.cols.is_some() && self.from.is_none());
+        let selected =
+            items(self.selected)
+                .filter(|_| beside.is_none())
+                .map(|s| match items(self.from) {
+                    Some(f) => s.start.min(f.start)..s.end.max(f.end),
+                    None => s.start..s.end,
+                });
         for (row, y) in (area.top()..area.bottom()).enumerate() {
             let i = self.scroll.saturating_add(row);
             if let Some(line) = self.page.lines.get(i) {
@@ -918,6 +1041,25 @@ impl Widget for PageView<'_> {
                 );
                 if let Some((_, cols)) = self.word.as_ref().filter(|(at, _)| *at == i) {
                     self.word(buf, line, (layout.main_x, y), cols);
+                }
+                if let Some(Item {
+                    cols: Some((from, width)),
+                    ..
+                }) = beside.filter(|s| (s.start..s.end).contains(&i))
+                {
+                    // Just inside its box's edges, as a framed line's.
+                    let x = layout.main_x.saturating_add(from).saturating_add(1);
+                    let band = Rect {
+                        x,
+                        y,
+                        width: width.saturating_sub(2),
+                        height: 1,
+                    }
+                    .intersection(area);
+                    if let Some(bg) = theme.fill(Bg::Selected).bg {
+                        buf.set_style(band, Style::new().bg(bg));
+                    }
+                    put(buf, x, y, "▌", theme.accent(Bg::Selected));
                 }
             }
             if let (Some(ax), Some(a)) = (layout.aside_x, &self.page.aside)
@@ -1186,7 +1328,8 @@ mod tests {
             [Item {
                 start: 2,
                 end: 4,
-                link: a
+                link: a,
+                cols: None,
             }]
         );
         assert_eq!(page.item_at(3), Some(0));

@@ -490,6 +490,7 @@ fn day(iso: &str) -> String {
 pub struct Keys<'a> {
     pub comment: &'a str,
     pub find_file: &'a str,
+    pub archive: &'a str,
     pub filter: &'a str,
 }
 

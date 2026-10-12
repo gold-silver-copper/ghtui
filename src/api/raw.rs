@@ -170,7 +170,7 @@ const LINKED: &str = "number title url state repository { nameWithOwner } assign
 /// their values.
 pub(crate) fn project_items() -> String {
     format!(
-        "query($login: String!, $number: Int!, $after: String, $query: String) {{ repositoryOwner(login: $login) {{ ... on ProjectV2Owner {{ projectV2(number: $number) {{ items(first: 50, after: $after, query: $query) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ id fullDatabaseId content {{ __typename ... on DraftIssue {{ title body assignees(first: 5) {{ totalCount nodes {{ login }} }} }} ... on Issue {{ {LINKED} stateReason }} ... on PullRequest {{ {LINKED} isDraft }} }} fieldValues(first: 50) {{ totalCount nodes {{ __typename ... on ProjectV2ItemFieldTextValue {{ text field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldNumberValue {{ number field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldDateValue {{ date field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldSingleSelectValue {{ optionId name field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldIterationValue {{ iterationId title field {{ {FIELD_ID} }} }} }} }} }} }} }} }} }} }}"
+        "query($login: String!, $number: Int!, $after: String, $query: String, $archived: [ProjectV2ItemArchivedState!]) {{ repositoryOwner(login: $login) {{ ... on ProjectV2Owner {{ projectV2(number: $number) {{ items(first: 50, after: $after, query: $query, archivedStates: $archived) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ id fullDatabaseId isArchived content {{ __typename ... on DraftIssue {{ id title body assignees(first: 5) {{ totalCount nodes {{ login }} }} }} ... on Issue {{ {LINKED} stateReason }} ... on PullRequest {{ {LINKED} isDraft }} }} fieldValues(first: 50) {{ totalCount nodes {{ __typename ... on ProjectV2ItemFieldTextValue {{ text field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldNumberValue {{ number field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldDateValue {{ date field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldSingleSelectValue {{ optionId name field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldIterationValue {{ iterationId title field {{ {FIELD_ID} }} }} }} }} }} }} }} }} }} }}"
     )
 }
 
@@ -179,6 +179,22 @@ pub(crate) const SET_PROJECT_FIELD: &str = "mutation($project: ID!, $item: ID!, 
 
 /// Clears an item's field.
 pub(crate) const CLEAR_PROJECT_FIELD: &str = "mutation($project: ID!, $item: ID!, $field: ID!) { clearProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field}) { projectV2Item { id } } }";
+
+/// An issue's or pull request's node ID, to add it to a project.
+pub(crate) const ISSUE_OR_PR_ID: &str = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issueOrPullRequest(number: $number) { ... on Issue { id } ... on PullRequest { id } } } }";
+
+/// Adds an issue or pull request to a project.
+pub(crate) const ADD_PROJECT_ITEM: &str = "mutation($project: ID!, $content: ID!) { addProjectV2ItemById(input: {projectId: $project, contentId: $content}) { item { id } } }";
+
+/// Adds a draft issue to a project.
+pub(crate) const ADD_PROJECT_DRAFT: &str = "mutation($project: ID!, $title: String!, $body: String) { addProjectV2DraftIssue(input: {projectId: $project, title: $title, body: $body}) { projectItem { id } } }";
+
+pub(crate) const ARCHIVE_PROJECT_ITEM: &str = "mutation($project: ID!, $item: ID!) { archiveProjectV2Item(input: {projectId: $project, itemId: $item}) { item { id } } }";
+
+pub(crate) const UNARCHIVE_PROJECT_ITEM: &str = "mutation($project: ID!, $item: ID!) { unarchiveProjectV2Item(input: {projectId: $project, itemId: $item}) { item { id } } }";
+
+/// A draft issue's new title and body.
+pub(crate) const UPDATE_PROJECT_DRAFT: &str = "mutation($draft: ID!, $title: String!, $body: String!) { updateProjectV2DraftIssue(input: {draftIssueId: $draft, title: $title, body: $body}) { draftIssue { id } } }";
 
 /// Every query here, by name, built with sample input.
 #[cfg(test)]
@@ -224,6 +240,12 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ("SET_PROJECT_FIELD", SET_PROJECT_FIELD.to_owned()),
         ("CLEAR_PROJECT_FIELD", CLEAR_PROJECT_FIELD.to_owned()),
         ("DEPENDABOT_UPDATE", DEPENDABOT_UPDATE.to_owned()),
+        ("ISSUE_OR_PR_ID", ISSUE_OR_PR_ID.to_owned()),
+        ("ADD_PROJECT_ITEM", ADD_PROJECT_ITEM.to_owned()),
+        ("ADD_PROJECT_DRAFT", ADD_PROJECT_DRAFT.to_owned()),
+        ("ARCHIVE_PROJECT_ITEM", ARCHIVE_PROJECT_ITEM.to_owned()),
+        ("UNARCHIVE_PROJECT_ITEM", UNARCHIVE_PROJECT_ITEM.to_owned()),
+        ("UPDATE_PROJECT_DRAFT", UPDATE_PROJECT_DRAFT.to_owned()),
     ];
     for field in ["stargazers", "watchers"] {
         all.push((

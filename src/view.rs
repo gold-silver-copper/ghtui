@@ -229,6 +229,8 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                     crate::review::ComposeTarget::Form(_) => "create issue",
                     crate::review::ComposeTarget::Edit(_) => "save",
                     crate::review::ComposeTarget::Discussion(w) => w.save(),
+                    crate::review::ComposeTarget::ProjectDraft(d) if d.draft.is_some() => "save",
+                    crate::review::ComposeTarget::ProjectDraft(_) => "add draft",
                     _ => "add to review",
                 },
                 completions: (completions.as_deref()).map(|c| {

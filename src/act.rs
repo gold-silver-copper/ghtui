@@ -984,7 +984,7 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             let shows = state.picked::<Inbox>(&key);
             yes(shows.is_some_and(|i| inbox::shows(i, change)))
         }
-        (Change::SetProjectField { .. }, Subject::Project(project, view)) => {
+        (Change::SetProjectField { .. } | Change::Project(_), Subject::Project(project, view)) => {
             yes(crate::projects::shows(state, change, project, *view))
         }
         (Change::Alert(c), _) => yes(crate::security::shows(state, c)),
@@ -1091,6 +1091,7 @@ fn doing(change: &Change) -> &'static str {
         Change::SetProjectField { value: None, .. } => "Clearing the field",
         Change::SetProjectField { .. } => "Setting the field",
         Change::Alert(c) => crate::security::doing(c),
+        Change::Project(c) => crate::projects::doing(c),
     }
 }
 
@@ -1142,6 +1143,7 @@ fn done(change: &Change) -> String {
         } => format!("Cleared {said}"),
         Change::SetProjectField { said, .. } => format!("Set {said}"),
         Change::Alert(c) => crate::security::done(c),
+        Change::Project(c) => crate::projects::done(c).into(),
     }
 }
 
@@ -1167,7 +1169,7 @@ pub fn needs(change: &Change) -> &'static str {
         | Change::MarkDone { .. }
         | Change::MarkAllRead { .. }
         | Change::MarkEach { .. } => "Notifications (classic tokens only)",
-        Change::SetProjectField { .. } => "Projects: write",
+        Change::SetProjectField { .. } | Change::Project(_) => "Projects: write",
         Change::Alert(c) => crate::security::needs(c),
         Change::Discussion(_) => "Discussions: write",
     }
@@ -1200,6 +1202,7 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::Discussion(d) => crate::discuss::what(d),
         Change::SetProjectField { .. } => "setting the field",
         Change::Alert(c) => crate::security::what(c),
+        Change::Project(c) => crate::projects::what(c),
     };
     let reason = match err {
         ApiError::GraphQl(messages) => messages.join("; "),
@@ -1217,7 +1220,7 @@ fn failure(change: &Change, err: &ApiError) -> String {
     let mut text = format!("GitHub refused {what}: {reason}");
     match change {
         // Fine-grained tokens can't read notifications at all.
-        _ if denied && matches!(change, Change::SetProjectField { .. }) => text.push_str(
+        _ if denied && matches!(change, Change::SetProjectField { .. } | Change::Project(_)) => text.push_str(
             ". Your token may lack the permission: a classic token needs the project scope; a fine-grained one, Projects: write",
         ),
         _ if denied && matches!(change, Change::Alert(_)) => text.push_str(&format!(

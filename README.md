@@ -29,16 +29,16 @@ ghtui is pre-release, but it's usable every day.
   update a branch, close or reopen, re-run or cancel a workflow run,
   comment and star, mark notifications read or done, one at a time or
   all at once, answer and reply in discussions and mark their answer,
-  move a project's cards or set their fields, and dismiss or reopen a
-  security alert.
+  add, move, archive and restore a project's cards, set their fields
+  and edit its drafts, and dismiss or reopen a security alert.
 - **Editing** what's there: your comments and descriptions (or anyone's,
   where GitHub lets you), titles, reactions, and an issue's or pull
   request's labels, assignees, reviewers and milestone.
 - **Creating**: open issues (from the repository's templates) and pull
   requests, and check a pull request out in your clone.
 
-Not there yet: code navigation with a language server's precision,
-structural diffs, and adding, archiving or editing a project's items.
+Not there yet: code navigation with a language server's precision, and
+structural diffs.
 
 ## Goals
 
@@ -120,14 +120,19 @@ fresh as often as GitHub asks; click or follow it to open the inbox.
 **Projects** are a tab of a profile and of a repository, as on GitHub.
 A project opens at its first view, and its views are the page's tabs. A
 board shows each column (each value of its Status, or the field it's
-grouped by) as a box of cards, top to bottom; `h` and `l` go between
+grouped by) as a box of cards, side by side as many as fit (the rest
+below), or one above another on a narrow screen; `h` and `l` go between
 columns. A table shows the view's fields in columns, as many as fit. A
-view's filter, sort and grouping apply. A card opens what it is: an
-issue, a pull request, or a draft's own page with its body and fields.
-Where GitHub lets you change the project, `,c` moves the card to another
-column and `,f` sets one of its fields (a single select, an iteration, a
-text, a number or a date), and the board follows GitHub until it shows
-the change.
+view's filter applies, and its sort and grouping (a board's columns
+too) cover all its items, not only a page of them. A card opens what it
+is: an issue, a pull request, or a draft's own page with its body and
+fields. Where GitHub lets you change the project, `,c` moves the card to
+another column and `,f` sets one of its fields (a single select, an
+iteration, a text, a number or a date); `,i` adds an issue or pull
+request (`owner/repo#123` or its link) or a new draft, written in the
+comment editor; `,e` edits a draft's title and text; `,X` archives an
+item, asking first, and on one under Archived (below the view), restores
+it. The board follows GitHub until it shows the change.
 
 **The Security tab** has GitHub's own menu: published advisories, then
 Dependabot alerts (the vulnerable dependency, its manifest, the affected
@@ -300,7 +305,8 @@ says where it works.
   `zo` `za` fold a thread or file, `zM` `zR` every file.
   In the file tree, `<` and `>` narrow and widen it.
 - On a project's board `h` and `l` go between columns; `,c` moves the
-  selected card to another column and `,f` sets one of its fields.
+  selected card to another column and `,f` sets one of its fields; `,i`
+  adds an item, `,X` archives or restores one, and `,e` edits a draft.
 - `gn` opens your notifications (`,n` marks one read, `,d` done, `,N`
   and `,D` everything shown) and `gr` a pull request's Review tab.
 - In files, logs and the diff, `w` and `b` move a word cursor along the
@@ -444,6 +450,8 @@ says where it works.
 | `l`  | Next column of the board |
 | `,c` | Move the item to another column |
 | `,f` | Set a field of the item |
+| `,i` | Add an issue, a pull request or a draft |
+| `,X` | Archive the item, or restore it |
 
 **In Files changed** (`diff:`)
 
@@ -734,7 +742,7 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   (GitHub's API doesn't count them); `S` doesn't sort them. A dismissal's
   comment is one line, and a code scanning alert shows its latest instance,
   not every branch it's on.
-- A project's board is its columns one above another, not side by side.
-  A view's sort orders the items loaded (50 a page), not the whole
-  project; a roadmap shows as a table, and a board's swimlanes aren't
-  drawn.
+- A view that sorts or groups its items (a board does) loads them all
+  up to 1,000, and says so when there are more; a roadmap shows as a
+  table, and a board's swimlanes aren't drawn. Archived items are listed
+  50 at a time, newest first, whatever the view's filter.

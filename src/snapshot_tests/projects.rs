@@ -262,3 +262,128 @@ fn a_project_you_cant_change_says_so() {
     says(&s, "GitHub doesn't let you change this project");
     assert!(s.overlay.is_none());
 }
+
+fn change_sent(cmds: &[Cmd]) -> &Change {
+    match cmds {
+        [Cmd::Api(Api::Change(change, _))] => change,
+        _ => panic!("{cmds:?}"),
+    }
+}
+
+/// `,i` adds what's typed: an issue or pull request by its reference
+/// (not one already in the project), or a new draft, written in the
+/// composer with its title on the first line. The board follows GitHub
+/// until the item is in it.
+#[test]
+fn items_are_added_by_reference_or_as_drafts() {
+    use crate::api::project::{ItemContent, ProjectChange};
+    let mut s = with_project(Mode::Dark, None);
+    press(&mut s, ",i");
+    press(&mut s, "gold-silver-copper/ghtui#14");
+    let Some(Overlay::Picker(picker)) = &s.overlay else {
+        panic!("no picker");
+    };
+    let rows = s.picker_rows(picker);
+    assert_eq!(rows[0].0.hint, "already in the project");
+    press(&mut s, "<C-u>gold-silver-copper/ghtui#20");
+    let sent = press(&mut s, "<Enter>");
+    let add = Change::Project(ProjectChange::Add {
+        project: NodeId::new("PVT_1"),
+        repo: crate::api::model::RepoId::new("gold-silver-copper", "ghtui"),
+        number: 20,
+    });
+    assert_eq!(change_sent(&sent), &add);
+    answer(&mut s, &sent, Ok(()));
+    says(&s, "Added to the project");
+    assert!(s.awaiting.is_some());
+    let key = DataKey::Project(roadmap(), None);
+    let mut p = fixtures::project();
+    let mut added = p.items.items[0].clone();
+    if let ItemContent::Issue(l, _) = &mut added.content {
+        l.number = 20;
+    }
+    p.items.items.push(added);
+    fetched(&mut s, key, Data::Project(Box::new(p)));
+    assert!(s.awaiting.is_none());
+
+    // A draft: its title typed, its text written in the composer.
+    press(&mut s, ",i");
+    press(&mut s, "Plan the release<Enter>");
+    assert!(matches!(s.overlay, Some(Overlay::Compose(_))));
+    let sent = press(&mut s, "Dates and notes<C-s>");
+    let draft = Change::Project(ProjectChange::AddDraft {
+        project: NodeId::new("PVT_1"),
+        title: "Plan the release".into(),
+        body: "Dates and notes".into(),
+    });
+    assert_eq!(change_sent(&sent), &draft);
+}
+
+/// `,X` archives the selected item, asking first, as GitHub does; it's
+/// then under Archived, where `,X` restores it.
+#[test]
+fn items_are_archived_and_restored() {
+    use crate::api::project::ProjectChange;
+    let mut s = with_project(Mode::Dark, None);
+    press(&mut s, "l");
+    assert!(press(&mut s, ",X").is_empty());
+    let Some(Overlay::Confirm(c)) = &s.overlay else {
+        panic!("not asked");
+    };
+    assert_eq!(c.title, "Archive “Projects aren't there yet”?");
+    let sent = press(&mut s, "<Enter>");
+    let archive = Change::Project(ProjectChange::Archive {
+        project: NodeId::new("PVT_1"),
+        item: NodeId::new("PVTI_1"),
+        archived: true,
+    });
+    assert_eq!(change_sent(&sent), &archive);
+    answer(&mut s, &sent, Ok(()));
+    let key = DataKey::Project(roadmap(), None);
+    let mut p = fixtures::project();
+    let mut gone = p.items.items.remove(0);
+    gone.archived = true;
+    p.archived.items.push(gone);
+    fetched(&mut s, key, Data::Project(Box::new(p)));
+    assert!(s.awaiting.is_none());
+
+    // Restoring asks nothing.
+    press(&mut s, "G");
+    while !selected(&s).contains("itemId=1006") {
+        press(&mut s, "k");
+    }
+    let sent = press(&mut s, ",X");
+    let restore = Change::Project(ProjectChange::Archive {
+        project: NodeId::new("PVT_1"),
+        item: NodeId::new("PVTI_6"),
+        archived: false,
+    });
+    assert_eq!(change_sent(&sent), &restore);
+}
+
+/// `,e` on a draft edits its title (the first line) and its text; on an
+/// issue, it says where that's edited.
+#[test]
+fn a_drafts_title_and_text_are_edited() {
+    use crate::api::project::ProjectChange;
+    let mut s = with_project(Mode::Dark, None);
+    press(&mut s, "lj");
+    press(&mut s, ",e");
+    let Some(Overlay::Compose(c)) = &s.overlay else {
+        panic!("no composer");
+    };
+    assert_eq!(
+        c.text(),
+        "Write the board's docs\n\nExplain **h** and **l**, and moving cards."
+    );
+    let sent = press(&mut s, "<C-s>");
+    let edit = Change::Project(ProjectChange::EditDraft {
+        draft: NodeId::new("DI_3"),
+        title: "Write the board's docs".into(),
+        body: "Explain **h** and **l**, and moving cards.".into(),
+    });
+    assert_eq!(change_sent(&sent), &edit);
+    s.overlay = None;
+    press(&mut s, "k,e");
+    says(&s, "Only a draft's text is edited here");
+}

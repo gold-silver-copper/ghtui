@@ -449,6 +449,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         // A discussion's and a project's own ways to write and edit.
         _ if crate::discuss::takes(state, action) => return crate::discuss::act(state, action),
+        _ if crate::projects::takes(state, action) => return crate::projects::act(state, action),
         _ if crate::edit::ACTIONS.contains(&action) => return crate::edit::act(state, action),
         Action::NewIssue
         | Action::NewPr

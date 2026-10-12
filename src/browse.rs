@@ -669,10 +669,12 @@ impl State {
             self.first_key(Action::FindFile),
             self.first_key(Action::Search),
         );
+        let archive = self.first_key(Action::ArchiveItem);
         let keys = Keys {
             comment: &comment,
             find_file: &find_file,
             filter: &filter,
+            archive: &archive,
         };
         let cx = pages::PageCtx { icons, keys, now };
         // Reading stays narrow enough to follow, lists get room for their
