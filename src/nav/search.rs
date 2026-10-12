@@ -258,17 +258,26 @@ impl State {
         }
         let most = if q.is_empty() { 8 } else { 5 };
         let mut seen: Vec<String> = Vec::new();
-        for (_, title, url, icon, detail) in jumps {
-            if seen.contains(&url) || seen.len() >= most {
-                continue;
+        // A page whose title has what's typed comes before searching for
+        // it; one that only has its letters scattered, after.
+        let (near, far): (Vec<_>, Vec<_>) =
+            (jumps.into_iter()).partition(|(score, ..)| q.is_empty() || *score < 1000);
+        let mut jump = |out: &mut Vec<_>, jumps: Vec<(usize, String, String, &str, &str)>| {
+            let mut headed = false;
+            for (_, title, url, icon, detail) in jumps {
+                if seen.contains(&url) || seen.len() >= most {
+                    continue;
+                }
+                if !headed {
+                    out.push(heading(if q.is_empty() { "Recent" } else { "Jump to" }));
+                    headed = true;
+                }
+                let pick = Pick::Go(Dest::from_url(&url));
+                out.push(suggestion(icon, title, detail, "", pick));
+                seen.push(url);
             }
-            if seen.is_empty() {
-                out.push(heading(if q.is_empty() { "Recent" } else { "Jump to" }));
-            }
-            let pick = Pick::Go(Dest::from_url(&url));
-            out.push(suggestion(icon, title, detail, "", pick));
-            seen.push(url);
-        }
+        };
+        jump(&mut out, near);
         if !q.is_empty() {
             out.push(heading("Search"));
             if let Some(repo) = self.context_repo().filter(|_| !q.starts_with("repo:")) {
@@ -285,6 +294,7 @@ impl State {
                 out.push(suggestion("⌕", q, what, "", pick));
             }
         }
+        jump(&mut out, far);
         // Live matches come last, so they never move what's selected.
         if sb.remote_for == q && !q.is_empty() {
             let live: Vec<&RepoSummary> = sb

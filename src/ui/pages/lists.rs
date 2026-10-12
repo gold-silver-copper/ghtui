@@ -174,8 +174,13 @@ pub(super) fn user_row(page: &mut Page, u: &UserSummary) {
 }
 
 /// A list of people (stargazers, watchers, followers…) that loads more.
-pub fn people_list(page: &mut Page, title: &str, people: Fetched<'_, Results<UserSummary>>) {
-    paged_list(page, title, people, "Nobody here yet.", user_row);
+pub fn people_list(
+    page: &mut Page,
+    title: &str,
+    people: Fetched<'_, Results<UserSummary>>,
+    empty: &str,
+) {
+    paged_list(page, title, people, empty, user_row);
 }
 
 /// A list of repositories (forks…) that loads more.

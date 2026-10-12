@@ -351,9 +351,13 @@ impl State {
             out.push(references);
         }
         if let Some(query) = &list {
-            let show = format!("Show {}", next_list_state(route, query));
-            out.push(here(Action::ToggleState, &show, "open/closed"));
-            out.push(here(Action::Sort, "Change the sort", "sort"));
+            // Open, closed and sorting are issues', pull requests' and
+            // discussions'; repositories, people, commits and code have none.
+            if super::lists::plain_search(route).is_none() {
+                let show = format!("Show {}", next_list_state(route, query));
+                out.push(here(Action::ToggleState, &show, "open/closed"));
+                out.push(here(Action::Sort, "Change the sort", "sort"));
+            }
             let mut save = here(Action::SaveSection, "Save this list to Home", "");
             save.unavailable = crate::home::unavailable(self, Action::SaveSection);
             out.push(save);

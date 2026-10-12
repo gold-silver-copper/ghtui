@@ -784,3 +784,22 @@ fn a_search_selects_the_row_it_finds() {
         s.route()
     );
 }
+
+/// GitHub lists none of a big repository's stargazers: the page says so
+/// rather than that nobody starred it.
+#[test]
+fn unlisted_stargazers_say_why() {
+    let mut state = with_repo(Mode::Dark, ColorDepth::TrueColor);
+    let mut none = fixtures::people();
+    (none.items, none.next) = (Vec::new(), None);
+    open(
+        &mut state,
+        Route::Stargazers(ghtui()),
+        Data::Users(Box::new(none)),
+    );
+    let screen = render(&state);
+    assert!(
+        screen.contains("GitHub doesn't list this repository's"),
+        "{screen}"
+    );
+}

@@ -997,8 +997,21 @@ impl State {
                     crate::wiki::form::build(self, &mut page, route);
                 }
             }
-            Route::Stargazers(_) => pages::people_list(&mut page, "Stargazers", f.paged(route)),
-            Route::Watchers(_) => pages::people_list(&mut page, "Watchers", f.paged(route)),
+            Route::Stargazers(repo) => {
+                // GitHub lists none of a big repository's stargazers.
+                let stars = self.overview(repo).map_or(0, |o| o.summary.stars);
+                let empty = match stars {
+                    0 => "Nobody here yet.".to_owned(),
+                    n => format!(
+                        "GitHub doesn't list this repository's {} stargazers.",
+                        pages::compact(n)
+                    ),
+                };
+                pages::people_list(&mut page, "Stargazers", f.paged(route), &empty);
+            }
+            Route::Watchers(_) => {
+                pages::people_list(&mut page, "Watchers", f.paged(route), "Nobody here yet.");
+            }
             Route::Forks(_) => pages::repos(&mut page, "Forks", f.paged(route), now),
             Route::Releases(repo) => pages::releases(&mut page, repo, f.paged(route), now),
             Route::Tags(repo) => pages::tags(&mut page, repo, f.paged(route), now),

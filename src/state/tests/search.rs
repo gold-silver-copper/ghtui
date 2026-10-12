@@ -371,6 +371,11 @@ fn visited_pages_come_back_as_suggestions() {
     );
     press(&mut state, "octo<Enter>");
     assert_eq!(route(&state), Route::user("octocat"));
+    // Its letters scattered in a visited page's title aren't that page:
+    // ↵ searches for what's typed.
+    let _ = state.push(Route::Home);
+    press(&mut state, "g/occat<Enter>");
+    assert!(route(&state).search().is_some(), "{:?}", route(&state));
 }
 
 /// A URL or GitHub path typed after a search's `repo:o/r`, or after a
@@ -402,4 +407,19 @@ fn a_link_typed_after_a_scope_or_a_filter_opens() {
         panic!("not a search");
     };
     assert_eq!(query, "repo:gold-silver-copper/ghtui bug label:bug");
+}
+
+/// People aren't open or closed: `t` says so on a search for them,
+/// rather than adding `is:open` to it.
+#[test]
+fn a_people_search_has_no_open_or_closed() {
+    let mut state = with_repo();
+    let route = Route::Search {
+        kind: crate::api::browse::SearchKind::Users,
+        query: "octo".into(),
+    };
+    let _ = state.push(route.clone());
+    assert!(press(&mut state, "t").is_empty());
+    assert_eq!(super::route(&state), route);
+    says(&state, "People aren't open or closed");
 }
