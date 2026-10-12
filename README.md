@@ -161,7 +161,8 @@ says where it works.
   marks a file viewed, `,t` resolves a thread and `,s` submits your
   review. Each asks first where it matters.
 - `q` closes the view: back a page, or the tab when there's nothing to go
-  back to. `ZZ` (or `ctrl-c`) quits.
+  back to. `ZZ`, `:q` in the palette, or `ctrl-c` quits (each asking
+  before it throws away a comment you're writing).
 - `]]` and `[[` jump by section: a Home section, a box, a heading, a
   folder in the file tree, a file in the diff. `}` and `{` go row by row,
   comment by comment, and change by change in the diff. `H` `M` `L` go to
@@ -171,6 +172,9 @@ says where it works.
   writing. In Files changed the view toggles are under `z`: `zw`
   whitespace, `zs` split, `zf` the whole file, `zT` the file tree; `zc`
   `zo` `za` fold a thread or file, `zM` `zR` every file.
+  In the file tree, `<` and `>` narrow and widen it.
+- `gn` opens your notifications (`,n` marks one read, `,d` done) and
+  `gr` a pull request's Review tab.
 - In files, logs and the diff, `w` and `b` move a word cursor along the
   line: `*` and `#` search its word, down and up, and `gx` opens a web
   address under it. A job log's lines are rows, as a file's are.
