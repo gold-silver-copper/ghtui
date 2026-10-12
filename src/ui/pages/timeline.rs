@@ -1120,7 +1120,7 @@ pub fn commit_comments(
         .map(|oid| crate::diff_screen::DiffOf::Commit(repo.clone(), oid));
     page.blank();
     let title = match comments.total() {
-        0 => "Comments".to_owned(),
+        0 => "No comments yet".to_owned(),
         n => format!("Comments · {n}"),
     };
     page.line(vec![Seg::new(title, Role::Strong)]);
