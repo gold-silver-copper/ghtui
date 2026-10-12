@@ -161,8 +161,8 @@ says where it works.
   marks a file viewed, `,t` resolves a thread and `,s` submits your
   review. Each asks first where it matters.
 - `q` closes the view: back a page, or the tab when there's nothing to go
-  back to. `ZZ`, `:q` in the palette, or `ctrl-c` quits (each asking
-  before it throws away a comment you're writing).
+  back to. `ZZ`, `:q` in the palette, or `ctrl-c` quits; `ctrl-c` also
+  works in the comment editor, asking before it throws away your text.
 - `]]` and `[[` jump by section: a Home section, a box, a heading, a
   folder in the file tree, a file in the diff. `}` and `{` go row by row,
   comment by comment, and change by change in the diff. `H` `M` `L` go to
