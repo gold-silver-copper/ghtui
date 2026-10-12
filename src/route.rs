@@ -1457,12 +1457,14 @@ fn strip_is(query: &str) -> String {
     }
 }
 
-/// What the command palette makes of its input.
+/// What the command palette makes of its input. A web link ghtui
+/// doesn't show (another GitHub's, say) is the browser's.
 pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
     let input = input.trim();
     let url = |url: &str| {
         let dest = Dest::from_url(url);
-        (!matches!(dest.target, Target::External(_))).then_some(dest)
+        let web = url.starts_with("https://") || url.starts_with("http://");
+        (web || !matches!(dest.target, Target::External(_))).then_some(dest)
     };
     if input.contains("://") || has_host_prefix(input) {
         return url(input);
@@ -2413,6 +2415,11 @@ pub(crate) mod tests {
             })))
         );
         assert_eq!(parse_input("ratatui", None), None);
+        assert_eq!(
+            target("https://example.com/a", None),
+            Some(Target::External("https://example.com/a".into()))
+        );
+        assert_eq!(parse_input("ftp://example.com", None), None);
     }
 
     #[test]

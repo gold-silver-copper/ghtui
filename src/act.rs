@@ -491,7 +491,8 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
             let crate::browse::Data::Notifications(list) = data else {
                 return Err("GitHub sent something else for your notifications".into());
             };
-            inbox::plan(query, list, action)
+            let fetched = (state.data.get(&key)).and_then(|r| r.cached_at.or(r.asked_at));
+            inbox::plan(query, list, fetched, action)
         }
         Subject::Project(..) => Err(elsewhere(action).to_owned()),
     }
@@ -937,13 +938,11 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             let Some(inbox) = state.picked::<Inbox>(&key) else {
                 return Shown::No;
             };
-            // Done, it leaves the inbox; read, it stays, read (or leaves
-            // a list of the unread).
+            // Read, it stays, read (or leaves a list of the unread). Done
+            // reads as the same: GitHub's API goes on listing a thread
+            // marked done, read, though its website doesn't.
             let row = inbox.list.items.iter().find(|n| n.id == *thread);
-            yes(match change {
-                Change::MarkRead { .. } => row.is_none_or(|n| !n.unread),
-                _ => row.is_none(),
-            })
+            yes(row.is_none_or(|n| !n.unread))
         }
         (Change::MarkAllRead { .. } | Change::MarkEach { .. }, Subject::Inbox { query }) => {
             let key = DataKey::Notifications(query.clone());

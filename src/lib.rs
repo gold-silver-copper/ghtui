@@ -325,7 +325,9 @@ async fn resolve_open(target: &str) -> Result<Dest> {
         })
         .into());
     }
-    route::parse_input(target, None).with_context(|| {
+    let shown = route::parse_input(target, None)
+        .filter(|dest| !matches!(dest.target, route::Target::External(_)));
+    shown.with_context(|| {
         format!(
             "can't open `{target}`; use owner/repo, owner/repo#123, @user, or a {} URL",
             host::current()

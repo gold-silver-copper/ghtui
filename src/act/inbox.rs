@@ -10,8 +10,13 @@ use crate::keymap::Action;
 /// as it changes many threads, saying how many. REST marks read
 /// everything up to a time, all of the inbox or a repository's; a filter
 /// it can't apply that way (a reason) is marked thread by thread, as
-/// done always is.
-pub(super) fn plan(query: &str, inbox: &Inbox, action: Action) -> Result<Plan, String> {
+/// done always is. `loaded` is when the inbox was fetched.
+pub(super) fn plan(
+    query: &str,
+    inbox: &Inbox,
+    loaded: Option<u64>,
+    action: Action,
+) -> Result<Plan, String> {
     let filter = InboxFilter::parse(query);
     let rows = &inbox.list.items;
     let more = inbox.list.next.is_some();
@@ -29,18 +34,21 @@ pub(super) fn plan(query: &str, inbox: &Inbox, action: Action) -> Result<Plan, S
         }
         let title = format!("Mark {} read?", threads(unread.len()));
         let whole = filter.reasons.is_empty() && !filter.participating;
-        // Rows come newest first: a thread updated after the newest shown
-        // isn't one you saw, and stays unread.
-        let newest = rows.iter().map(|n| n.updated_at.as_str()).max();
-        let change = match newest {
-            Some(newest) if whole => {
+        // Up to when the inbox was fetched: a thread updated after isn't
+        // one you saw, and stays unread. Not up to the newest shown: GitHub
+        // keeps a thread's time a little past the one it says, and leaves
+        // a thread marked read up to the time it says unread.
+        let newest = rows.iter().map(|n| n.updated_at.clone()).max();
+        let upto = loaded.map(crate::ui::time::iso8601).or(newest);
+        let change = match upto {
+            Some(upto) if whole => {
                 if more {
                     let older = "And the older ones further down, not loaded yet";
                     facts.push((older.to_owned(), false));
                 }
                 Change::MarkAllRead {
                     repo: filter.repo,
-                    last_read_at: newest.to_owned(),
+                    last_read_at: upto,
                 }
             }
             _ => {
@@ -81,17 +89,18 @@ fn loaded_only(n: usize) -> String {
 }
 
 /// Whether the inbox shows a change to many threads: none it was about
-/// is unread, or, done, still there.
+/// is unread. Done shows as read: GitHub's API goes on listing a thread
+/// marked done.
 pub(super) fn shows(inbox: &Inbox, change: &Change) -> bool {
     let rows = &inbox.list.items;
     match change {
         Change::MarkAllRead { last_read_at, .. } => rows
             .iter()
             .all(|n| !n.unread || n.updated_at.as_str() > last_read_at.as_str()),
-        Change::MarkEach { threads, done } => rows
+        Change::MarkEach { threads, .. } => rows
             .iter()
             .filter(|n| threads.contains(&n.id))
-            .all(|n| !*done && !n.unread),
+            .all(|n| !n.unread),
         _ => true,
     }
 }

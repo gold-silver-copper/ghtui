@@ -217,6 +217,12 @@ fn head_of(body: &str) -> Option<String> {
     Some(json.get("head")?.get("sha")?.as_str()?.to_owned())
 }
 
+/// The newest review comment a review comments answer names.
+fn newest_comment(body: &str) -> Option<NodeId> {
+    let json: serde_json::Value = serde_json::from_str(body).ok()?;
+    Some(NodeId::new(json.get(0)?.get("node_id")?.as_str()?))
+}
+
 /// GitHub's answers to an ask: what changed is fetched again, and a push
 /// is said, with the way to see what it changed since your review.
 #[must_use]
@@ -228,6 +234,10 @@ pub fn on_polled(
     // The conversation is fetched again where it's shown: on a page.
     let talk = matches!(state.screen(), Screen::Page(_))
         .then(|| Need::Data(DataKey::PrActivity(pr.clone())));
+    // The review comments the diff shows, to tell whether the first
+    // answer is newer than they are.
+    let shown = (state.diffs.get(&DiffOf::Pr(pr.clone())))
+        .and_then(|d| d.inputs().threads.data.as_deref().map(thread_ids));
     let Some(w) = state.watch.as_mut().filter(|w| w.pr == *pr) else {
         return Vec::new();
     };
@@ -251,12 +261,16 @@ pub fn on_polled(
             }
             w.head = Some(head);
         }
-        // The first answer is only what's there.
+        // The first answer is only what's there, unless a comment came in
+        // after the diff's threads were fetched.
         let first = !w.etags.contains_key(&probe);
         if !etag.is_empty() {
             w.etags.insert(probe.clone(), etag);
         }
-        if first && pushed.is_none() {
+        let unseen = probe == Probe::ReviewComments
+            && (shown.as_ref())
+                .is_some_and(|ids| newest_comment(&body).is_some_and(|id| !ids.contains(&id)));
+        if first && pushed.is_none() && !unseen {
             continue;
         }
         changed = true;

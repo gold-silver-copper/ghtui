@@ -79,6 +79,37 @@ fn polling_asks_with_etags_and_marks_new_threads() {
     says(&s, "New on o/r#7: 1 thread");
 }
 
+/// A comment that came in between fetching the threads and the first
+/// ask isn't taken for what was there: the threads are fetched again.
+#[test]
+fn a_comment_before_the_first_answer_is_fetched() {
+    let (mut s, pr) = diff_state(120);
+    diff_msg(
+        &mut s,
+        &pr,
+        DiffMsg::ThreadsLoaded(Ok(vec![thread("old", Some(1), false, false)])),
+    );
+    let _ = next_ask(&mut s);
+    let seen = vec![(
+        Probe::ReviewComments,
+        changed("\"c1\"", r#"[{"node_id":"old-c"}]"#),
+    )];
+    assert!(update(&mut s, Msg::Polled(pr.clone(), seen)).is_empty());
+    let (mut s, pr) = diff_state(120);
+    diff_msg(
+        &mut s,
+        &pr,
+        DiffMsg::ThreadsLoaded(Ok(vec![thread("old", Some(1), false, false)])),
+    );
+    let _ = next_ask(&mut s);
+    let came = vec![(
+        Probe::ReviewComments,
+        changed("\"c1\"", r#"[{"node_id":"new-c"}]"#),
+    )];
+    let cmds = update(&mut s, Msg::Polled(pr.clone(), came));
+    assert!(cmds.contains(&Cmd::Api(Api::FetchThreads(pr))), "{cmds:?}");
+}
+
 /// Leaving the pull request stops the asking.
 #[test]
 fn nothing_else_is_polled() {

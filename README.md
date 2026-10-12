@@ -611,7 +611,8 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   are filtered after fetching, as GitHub's API can't filter them: a load
   searches up to 300 notifications for a page of matches, and says when
   it stopped short. Marking done goes thread by thread, and only through
-  those loaded. Fine-grained tokens can't read notifications at all; a
+  those loaded. A thread marked done leaves github.com's inbox, but
+  GitHub's API goes on listing it, read, so ghtui's All and Read do too. Fine-grained tokens can't read notifications at all; a
   classic token can.
 - A pull request's Review tab has no page on GitHub, so its link (`y`,
   `o`, a restored tab) is the conversation's.

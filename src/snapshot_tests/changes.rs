@@ -463,16 +463,13 @@ fn notifications_are_marked_read_and_done() {
     if let Some(n) = inbox.list.items.first_mut() {
         n.unread = false;
     }
-    fetched(
-        &mut s,
-        key.clone(),
-        Data::Notifications(Box::new(inbox.clone())),
-    );
+    fetched(&mut s, key, Data::Notifications(Box::new(inbox)));
     assert!(s.awaiting.is_none());
     press(&mut s, ",n");
     says(&s, "It's read already");
 
-    // Done, it leaves the inbox.
+    // Done, GitHub's API lists it on, read: a read thread marked done
+    // already shows it.
     let sent = press(&mut s, "jj,d");
     let done = Change::MarkDone {
         thread: "103".into(),
@@ -482,10 +479,8 @@ fn notifications_are_marked_read_and_done() {
         vec![Cmd::Api(Api::Change(done, By::Act(thread("103"))))]
     );
     answer(&mut s, &sent, Ok(()));
-    assert!(s.awaiting.is_some());
-    inbox.list.items.retain(|n| n.id != "103");
-    fetched(&mut s, key, Data::Notifications(Box::new(inbox)));
     assert!(s.awaiting.is_none());
+    says(&s, "Marked done");
 
     // Elsewhere, there's no notification to mark.
     let mut s = with_repo(Mode::Dark, crate::theme::ColorDepth::TrueColor);
@@ -494,7 +489,8 @@ fn notifications_are_marked_read_and_done() {
 }
 
 /// `,N` marks everything the inbox shows read, and `,D` done: asked
-/// first, saying how many. Read is one request, up to the newest shown;
+/// first, saying how many. Read is one request, up to when the inbox was
+/// fetched (GitHub leaves a thread marked up to its own time unread);
 /// done, one a thread loaded. The inbox follows GitHub until it shows
 /// the change, and the unread count is asked again.
 #[test]
@@ -511,7 +507,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
     assert!(c.facts.iter().any(|(f, _)| f == older), "{:?}", c.facts);
     let read = Change::MarkAllRead {
         repo: None,
-        last_read_at: "2026-10-03T11:40:00Z".into(),
+        last_read_at: "2026-10-03T12:00:00Z".into(),
     };
     let sent = press(&mut s, "<Enter>");
     assert_eq!(
