@@ -2540,8 +2540,12 @@ async fn the_inbox_is_marked_read_at_once_and_done_thread_by_thread() {
         };
         gh.change(&change).await.unwrap();
     }
+    let thread = |id: &str| ghtui::api::notifications::ThreadAt {
+        id: id.into(),
+        updated_at: at.clone(),
+    };
     let each = Change::MarkEach {
-        threads: vec!["7".into(), "8".into()],
+        threads: vec![thread("7"), thread("8")],
         done: true,
     };
     let err = gh.change(&each).await.unwrap_err();
@@ -2570,9 +2574,12 @@ async fn the_inbox_is_marked_read_at_once_and_done_thread_by_thread() {
 async fn threads_are_marked_read_and_done() {
     use ghtui::api::change::Change;
     let (gh, seen) = github(vec![Reply::new(205, ""), Reply::new(204, "")]).await;
-    let thread = "42".to_owned();
+    let thread = ghtui::api::notifications::ThreadAt {
+        id: "42".into(),
+        updated_at: "2026-10-03T12:00:00Z".into(),
+    };
     gh.change(&Change::MarkRead {
-        thread: thread.clone(),
+        thread: thread.id.clone(),
     })
     .await
     .unwrap();
@@ -2587,6 +2594,46 @@ async fn threads_are_marked_read_and_done() {
     assert!(
         lines[1].starts_with("DELETE /notifications/threads/42 "),
         "{lines:?}"
+    );
+}
+
+/// GitHub's API goes on listing a thread marked done, read. The account
+/// keeps the threads it marked done, and the inbox leaves each out until
+/// GitHub updates it again: then it's back, for good.
+#[tokio::test]
+async fn a_thread_marked_done_stays_out_until_github_updates_it() {
+    use ghtui::api::change::Change;
+    use ghtui::api::notifications::ThreadAt;
+    let thread =
+        |id: u32, at: &str| thread_json(id, "mention", false).replace("2026-10-03T12:00:00Z", at);
+    let (old, new) = ("2026-10-03T12:00:00Z", "2026-10-04T08:00:00Z");
+    let inbox = |a: &str| Reply::new(200, format!("[{},{}]", thread(1, a), thread(2, old)));
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("cache.redb"));
+    let (base, seen) = serve(vec![
+        Reply::new(204, ""),
+        inbox(old),
+        inbox(new),
+        inbox(old),
+    ])
+    .await;
+    let gh = client(&base, store);
+    let done = ThreadAt {
+        id: "1".into(),
+        updated_at: old.into(),
+    };
+    gh.change(&Change::MarkDone { thread: done }).await.unwrap();
+    let ids = |inbox: ghtui::api::notifications::Inbox| -> Vec<String> {
+        inbox.list.items.into_iter().map(|n| n.id).collect()
+    };
+    assert_eq!(ids(gh.notifications("", None).await.unwrap()), ["2"]);
+    // A new comment: it's back, and stays.
+    assert_eq!(ids(gh.notifications("", None).await.unwrap()), ["1", "2"]);
+    assert_eq!(ids(gh.notifications("", None).await.unwrap()), ["1", "2"]);
+    let first = seen.lock().unwrap()[0].request_line.clone();
+    assert!(
+        first.starts_with("DELETE /notifications/threads/1 "),
+        "{first}"
     );
 }
 

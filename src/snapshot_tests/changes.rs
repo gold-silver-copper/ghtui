@@ -2,6 +2,7 @@ use crate::api::ApiError;
 use crate::api::browse::{CheckOutcome, IssueState, PrState, Status};
 use crate::api::change::{Change, MergeMethod};
 use crate::api::model::{MergeState, NodeId, PrRef, ReviewEvent};
+use crate::api::notifications::ThreadAt;
 use crate::store::{DraftComment, DraftSide, ReviewState};
 use crate::theme::Mode;
 
@@ -463,24 +464,34 @@ fn notifications_are_marked_read_and_done() {
     if let Some(n) = inbox.list.items.first_mut() {
         n.unread = false;
     }
-    fetched(&mut s, key, Data::Notifications(Box::new(inbox)));
+    fetched(
+        &mut s,
+        key.clone(),
+        Data::Notifications(Box::new(inbox.clone())),
+    );
     assert!(s.awaiting.is_none());
     press(&mut s, ",n");
     says(&s, "It's read already");
 
-    // Done, GitHub's API lists it on, read: a read thread marked done
-    // already shows it.
+    // Done, the thread leaves the inbox (GitHub's API lists it on, read,
+    // but ghtui keeps it out until GitHub updates it again).
     let sent = press(&mut s, "jj,d");
     let done = Change::MarkDone {
-        thread: "103".into(),
+        thread: ThreadAt {
+            id: "103".into(),
+            updated_at: "2026-10-02T12:00:00Z".into(),
+        },
     };
     assert_eq!(
         sent,
         vec![Cmd::Api(Api::Change(done, By::Act(thread("103"))))]
     );
     answer(&mut s, &sent, Ok(()));
-    assert!(s.awaiting.is_none());
     says(&s, "Marked done");
+    assert!(s.awaiting.is_some());
+    inbox.list.items.retain(|n| n.id != "103");
+    fetched(&mut s, key, Data::Notifications(Box::new(inbox)));
+    assert!(s.awaiting.is_none());
 
     // Elsewhere, there's no notification to mark.
     let mut s = with_repo(Mode::Dark, crate::theme::ColorDepth::TrueColor);
@@ -537,9 +548,12 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
     let loaded = "Only the 4 loaded: those further down stay as they are";
     assert!(c.facts.iter().any(|(f, _)| f == loaded), "{:?}", c.facts);
     let sent = press(&mut s, "<Enter>");
-    let threads = ["101", "102", "103", "104"].map(String::from).to_vec();
+    let rows = crate::fixtures::notifications().list.items;
+    let threads: Vec<ThreadAt> = rows.iter().map(ThreadAt::of).collect();
+    let ids: Vec<&str> = threads.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(ids, ["101", "102", "103", "104"]);
     let done = Change::MarkEach {
-        threads,
+        threads: threads.clone(),
         done: true,
     };
     assert_eq!(sent, vec![Cmd::Api(Api::Change(done, By::Confirm(all)))]);
@@ -557,7 +571,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
     super::screens::open(&mut s, route, shown(&crate::fixtures::notifications()));
     press(&mut s, ",N");
     let each = Change::MarkEach {
-        threads: vec!["101".into(), "102".into()],
+        threads: threads.get(..2).unwrap().to_vec(),
         done: false,
     };
     assert_eq!(confirm(&s).choices.first().map(|(_, c)| c), Some(&each));

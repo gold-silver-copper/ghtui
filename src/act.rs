@@ -493,11 +493,12 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
                 .picked::<Inbox>(&key)
                 .and_then(|inbox| inbox.list.items.iter().find(|n| n.id == *id))
                 .ok_or("It's no longer in your inbox")?;
-            let thread = id.clone();
             match action {
                 Action::MarkRead if !n.unread => Err("It's read already".into()),
-                Action::MarkRead => Ok(Plan::Do(Change::MarkRead { thread })),
-                _ => Ok(Plan::Do(Change::MarkDone { thread })),
+                Action::MarkRead => Ok(Plan::Do(Change::MarkRead { thread: id.clone() })),
+                _ => Ok(Plan::Do(Change::MarkDone {
+                    thread: crate::api::notifications::ThreadAt::of(n),
+                })),
             }
         }
         Subject::Inbox { query } => {
@@ -952,19 +953,19 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
                 _ => yes(latest && running && j.attempt > 1),
             }
         }
-        (
-            Change::MarkRead { thread } | Change::MarkDone { thread },
-            Subject::Thread { query, .. },
-        ) => {
+        (Change::MarkRead { .. } | Change::MarkDone { .. }, Subject::Thread { query, .. }) => {
             let key = DataKey::Notifications(query.clone());
             let Some(inbox) = state.picked::<Inbox>(&key) else {
                 return Shown::No;
             };
-            // Read, it stays, read (or leaves a list of the unread). Done
-            // reads as the same: GitHub's API goes on listing a thread
-            // marked done, read, though its website doesn't.
-            let row = inbox.list.items.iter().find(|n| n.id == *thread);
-            yes(row.is_none_or(|n| !n.unread))
+            // Read, it stays, read (or leaves a list of the unread); done,
+            // it leaves.
+            let row = |id: &str| inbox.list.items.iter().find(|n| n.id == id);
+            yes(match change {
+                Change::MarkDone { thread } => row(&thread.id).is_none(),
+                Change::MarkRead { thread } => row(thread).is_none_or(|n| !n.unread),
+                _ => true,
+            })
         }
         (Change::MarkAllRead { .. } | Change::MarkEach { .. }, Subject::Inbox { query }) => {
             let key = DataKey::Notifications(query.clone());

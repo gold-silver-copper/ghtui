@@ -1,7 +1,7 @@
 //! Marking everything the inbox shows read, or done.
 
 use crate::api::change::Change;
-use crate::api::notifications::{Inbox, InboxFilter};
+use crate::api::notifications::{Inbox, InboxFilter, ThreadAt};
 
 use super::Plan;
 use crate::keymap::Action;
@@ -26,8 +26,8 @@ pub(super) fn plan(
     };
     let mut facts = Vec::new();
     let (title, label, change) = if action == Action::MarkAllRead {
-        let unread: Vec<String> = (rows.iter().filter(|n| n.unread))
-            .map(|n| n.id.clone())
+        let unread: Vec<ThreadAt> = (rows.iter().filter(|n| n.unread))
+            .map(ThreadAt::of)
             .collect();
         if unread.is_empty() {
             return Err("Nothing shown is unread".into());
@@ -71,7 +71,7 @@ pub(super) fn plan(
             facts.push((loaded_only(rows.len()), false));
         }
         let change = Change::MarkEach {
-            threads: rows.iter().map(|n| n.id.clone()).collect(),
+            threads: rows.iter().map(ThreadAt::of).collect(),
             done: true,
         };
         (
@@ -89,18 +89,22 @@ fn loaded_only(n: usize) -> String {
 }
 
 /// Whether the inbox shows a change to many threads: none it was about
-/// is unread. Done shows as read: GitHub's API goes on listing a thread
-/// marked done.
+/// is unread, or, marked done, none is still there.
 pub(super) fn shows(inbox: &Inbox, change: &Change) -> bool {
     let rows = &inbox.list.items;
     match change {
         Change::MarkAllRead { last_read_at, .. } => rows
             .iter()
             .all(|n| !n.unread || n.updated_at.as_str() > last_read_at.as_str()),
-        Change::MarkEach { threads, .. } => rows
-            .iter()
-            .filter(|n| threads.contains(&n.id))
-            .all(|n| !n.unread),
+        Change::MarkEach { threads, done } => {
+            let marked = |id: &str| threads.iter().any(|t| t.id == id);
+            let mut about = rows.iter().filter(|n| marked(&n.id));
+            if *done {
+                about.next().is_none()
+            } else {
+                about.all(|n| !n.unread)
+            }
+        }
         _ => true,
     }
 }

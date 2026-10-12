@@ -2264,24 +2264,30 @@ impl GitHub {
             Some(repo) => format!("your notifications from {repo}"),
             None => "your notifications".to_owned(),
         };
+        let mut done = self.done_threads().await;
         let (mut items, mut searched, mut page, mut more) = (Vec::new(), 0, first, false);
+        let mut forgot = false;
         for _ in 0..INBOX_PAGES {
             let fetched = self
                 .rest_fetch(&filter.path(page, REST_PAGE), &what)
                 .await?;
             let wire: Vec<notifications::rest::Thread> = serde_json::from_str(&fetched.body)?;
             searched += wire.len() as u64;
-            items.extend(
-                (wire.into_iter())
-                    .filter_map(notifications::rest::Thread::into_notification)
-                    .filter(|n| filter.keeps(n)),
-            );
+            let threads: Vec<notifications::Notification> = (wire.into_iter())
+                .filter_map(notifications::rest::Thread::into_notification)
+                .collect();
+            // A thread marked done that GitHub updated since is back.
+            forgot |= done.forget_updated(&threads);
+            items.extend((threads.into_iter()).filter(|n| filter.keeps(n) && !done.hides(n)));
             more = fetched.link.as_deref().is_some_and(has_next);
             page = page.saturating_add(1);
             let full = items.len() as u64 >= REST_PAGE;
             if !more || full || !filter.after_fetching() {
                 break;
             }
+        }
+        if forgot {
+            self.remember(notifications::Done::KEY, done).await;
         }
         let cut = more && filter.after_fetching() && (items.len() as u64) < REST_PAGE;
         let inbox = notifications::Inbox {
@@ -2296,6 +2302,26 @@ impl GitHub {
         Ok(self
             .kept_page(first == 1, &browse::keys::notifications(query), inbox)
             .await)
+    }
+
+    /// The threads this account marked done (see
+    /// [`notifications::Done`]).
+    async fn done_threads(&self) -> notifications::Done {
+        let store = self.store.clone();
+        let read = move || store.query_get::<notifications::Done>(notifications::Done::KEY);
+        let found = tokio::task::spawn_blocking(read).await.ok().flatten();
+        found.map(|c| c.value).unwrap_or_default()
+    }
+
+    /// Keeps that `threads` are marked done, so the inbox leaves them out
+    /// until GitHub updates them again.
+    pub(crate) async fn remember_done(&self, threads: &[notifications::ThreadAt]) {
+        if threads.is_empty() {
+            return;
+        }
+        let mut done = self.done_threads().await;
+        done.mark(threads);
+        self.remember(notifications::Done::KEY, done).await;
     }
 
     /// How many of your notifications are unread, up to a page of them.

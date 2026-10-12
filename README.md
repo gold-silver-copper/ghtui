@@ -110,6 +110,8 @@ unread ones marked. `/` filters it as GitHub does (`is:unread`,
 `reason:review-requested`, `repo:owner/name`), `t` shows unread, read or
 all, and `↵` opens the thread at its latest comment. `,n` marks a thread
 read and `,d` marks it done; `,N` and `,D` mark everything shown. A
+thread marked done leaves the inbox until GitHub updates it again (a new
+comment, say), and then it's back, as on github.com. A
 filter GitHub can't apply (a reason, `is:read`) searches further pages
 until a page fills. The header counts your unread notifications, kept
 fresh as often as GitHub asks; click or follow it to open the inbox.
@@ -691,9 +693,11 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   are filtered after fetching, as GitHub's API can't filter them: a load
   searches up to 300 notifications for a page of matches, and says when
   it stopped short. Marking done goes thread by thread, and only through
-  those loaded. A thread marked done leaves github.com's inbox, but
-  GitHub's API goes on listing it, read, so ghtui's All and Read do too. Fine-grained tokens can't read notifications at all; a
-  classic token can.
+  those loaded. GitHub's API goes on listing a thread marked done, so
+  ghtui keeps its own record of the threads you marked done here (per
+  account, in its cache): one marked done on github.com or in another
+  ghtui shows on, read. Fine-grained tokens can't read notifications at
+  all; a classic token can.
 - A pull request's Review tab has no page on GitHub, so its link (`y`,
   `o`, a restored tab) is the conversation's.
 - `gd` doesn't know types or imports: it goes by name. Outside the
