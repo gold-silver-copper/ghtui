@@ -3,6 +3,7 @@
 use super::*;
 use crate::api::browse::DiscussionComment;
 use crate::api::edit::Reaction;
+use std::collections::HashSet;
 
 /// What the comment boxes of a conversation share.
 pub(super) struct Conversation<'a> {
@@ -214,7 +215,16 @@ pub(super) fn label_list(page: &mut Page, l: &Capped<Label>) {
     }
 }
 
-pub fn issue(page: &mut Page, d: &IssueDetail, icons: Icons, keys: Keys<'_>, now: u64) {
+/// Comments in `fresh` (by GitHub's number) came in since you started
+/// looking.
+pub fn issue(
+    page: &mut Page,
+    d: &IssueDetail,
+    fresh: &HashSet<u64>,
+    icons: Icons,
+    keys: Keys<'_>,
+    now: u64,
+) {
     let participants =
         unique(std::iter::once(&d.author).chain(d.comments.iter().map(|c| &c.author)));
     let aside = page.build_aside(|a| {
@@ -294,7 +304,7 @@ pub fn issue(page: &mut Page, d: &IssueDetail, icons: Icons, keys: Keys<'_>, now
     earlier_here(page, &d.comments, "comment", "comments");
     for c in &d.comments {
         connector(page);
-        talk.comment(page, c, false);
+        talk.comment(page, c, c.id.is_some_and(|id| fresh.contains(&id)));
     }
     add_comment(page, keys);
 }
@@ -370,8 +380,14 @@ pub fn discussions(
 
 /// A discussion: its post, the answer at the top as GitHub shows it, then
 /// its comments (the answer marked) with their replies, each named for
-/// links to it (`#discussioncomment-…`), and the box to write in.
-pub fn discussion(page: &mut Page, d: &DiscussionDetail, cx: PageCtx<'_>) {
+/// links to it (`#discussioncomment-…`), and the box to write in. Those
+/// in `fresh` (by GitHub's number) came in since you started looking.
+pub fn discussion(
+    page: &mut Page,
+    d: &DiscussionDetail,
+    fresh: &HashSet<u64>,
+    cx: PageCtx<'_>,
+) {
     page.wrapped(
         vec![
             Seg::new(d.title.clone(), Role::Title),
@@ -414,13 +430,16 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, cx: PageCtx<'_>) {
         &d.editable.reactions,
     );
     let anchor = |c: &Comment| c.id.map(|id| format!("discussioncomment-{id}"));
+    let new = |c: &Comment| c.id.is_some_and(|id| fresh.contains(&id));
     let reactions = |c: &Comment| {
         c.editable
             .as_ref()
             .map_or(Vec::new(), |e| e.reactions.clone())
     };
     let comment = |page: &mut Page, c: &DiscussionComment, anchored: bool| {
-        let badge = if c.answer {
+        let badge = if new(&c.comment) && anchored {
+            Some(chip("New", Bg::TertiaryContainer))
+        } else if c.answer {
             Some(chip("✓ Answer", Bg::SuccessContainer))
         } else {
             (c.comment.author == d.author).then(|| chip("Author", Bg::SecondaryContainer))
@@ -460,7 +479,11 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, cx: PageCtx<'_>) {
         connector(page);
         comment(page, c, true);
         for r in &c.replies {
-            let badge = (r.author == d.author).then(|| chip("Author", Bg::SecondaryContainer));
+            let badge = if new(r) {
+                Some(chip("New", Bg::TertiaryContainer))
+            } else {
+                (r.author == d.author).then(|| chip("Author", Bg::SecondaryContainer))
+            };
             talk.said_at(
                 page,
                 anchor(r),

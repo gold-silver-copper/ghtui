@@ -432,7 +432,7 @@ pub fn job(
     if job.steps.is_empty() {
         let text = match &log {
             Err(why) => why.clone(),
-            Ok(l) if l.running => "The job is still running (o follows it on GitHub)".to_owned(),
+            Ok(l) if l.running => RUNNING_LOG.to_owned(),
             Ok(_) => "GitHub lists no steps for this job: open it on GitHub.".to_owned(),
         };
         empty_row(page, &text);
@@ -444,19 +444,37 @@ pub fn job(
         .iter()
         .flatten()
         .any(|(_, _, l)| l.iter().any(|t| matches(t)));
-    // It opens on the step a link points at, else the first that failed,
-    // else the first, so Enter opens it.
+    // It opens on the step a link points at, else the first that failed;
+    // followed, on the step running, or once it's done, the last that
+    // logged; else the first, so Enter opens it.
+    let has_lines =
+        |n: u32| (lines.iter().flatten()).any(|(s, cut, l)| *s == n && (*cut > 0 || !l.is_empty()));
+    let followed = (at.follows && at.step.is_none() && at.query.is_empty())
+        .then(|| {
+            let running = job
+                .steps
+                .iter()
+                .find(|s| s.outcome == CheckOutcome::Pending && s.started_at.is_some());
+            running.or_else(|| job.steps.iter().rev().find(|s| has_lines(s.number)))
+        })
+        .flatten();
     let opens = (job.steps.iter())
         .find(|s| at.step.is_some_and(|(n, _)| n == s.number))
         .or_else(|| (job.steps.iter()).find(|s| s.outcome == CheckOutcome::Failure))
+        .or(followed)
         .or(job.steps.first())
         .map(|s| s.number);
+    let follow = followed.map(|s| s.number).filter(|n| opens == Some(*n));
     for (n, step) in job.steps.iter().enumerate() {
         if n > 0 {
             page.box_rule();
         }
         if opens == Some(step.number) {
             page.selects = Some(page.items.len());
+            // Followed while it runs: the page stays on the step running.
+            if follow == Some(step.number) && lines.is_none() {
+                page.jump = Some(page.lines.len());
+            }
         }
         let target = format!(
             "{}/actions/runs/{}/job/{}#step:{}:1",
@@ -502,13 +520,14 @@ pub fn job(
             })
             .unwrap_or_default();
         let found = shown.iter().any(|(_, l)| matches(l));
-        if !(pointed || failed || found) {
+        let followed = follow == Some(step.number);
+        if !(pointed || failed || found || followed) {
             continue;
         }
         if lines.is_none() {
             let text = match &log {
                 Err(why) => why.clone(),
-                Ok(_) => "The job is still running: GitHub has its log once it ends (o follows it on GitHub)".to_owned(),
+                Ok(_) => RUNNING_LOG.to_owned(),
             };
             body(page, vec![Seg::new(text, Role::Meta)]);
             continue;
@@ -526,6 +545,8 @@ pub fn job(
             _ if searched => shown.iter().position(|(_, l)| matches(l)),
             Some((_, l)) if pointed => at_line(l),
             _ if failed => first_error(),
+            // Followed to its end, as `tail -f` leaves it.
+            _ if followed => shown.len().checked_sub(1),
             _ => None,
         };
         let pointed_cut = at
@@ -591,12 +612,17 @@ pub fn job(
     page.box_bottom();
 }
 
-/// Where a job page is: the step a link points at, the log's filter.
+/// What a running job's page says in place of its log.
+const RUNNING_LOG: &str = "GitHub writes the log when the job ends: it shows here then, and the steps follow the job until it does";
+
+/// Where a job page is: the step a link points at, the log's filter, and
+/// whether it follows the job (it was running when you started looking).
 #[derive(Clone, Copy)]
 pub struct JobAt<'a> {
     pub step: Option<(u32, u32)>,
     pub query: &'a str,
     pub keys: Keys<'a>,
+    pub follows: bool,
 }
 
 /// A workflow and its runs, newest first.
@@ -823,6 +849,7 @@ mod tests {
                 step: Some((1, 10)),
                 query,
                 keys: Keys::default(),
+                follows: false,
             };
             job_page(&mut page, &job, &log, at);
             let lines: Vec<String> = page.lines.iter().map(PageLine::text).collect();
@@ -864,6 +891,7 @@ mod tests {
             step: None,
             query: "cd src",
             keys: Keys::default(),
+            follows: false,
         };
         let mut page = Page::new(100);
         job_page(&mut page, &job, log, at);
@@ -951,6 +979,7 @@ mod tests {
             step: None,
             query: "",
             keys: Keys::default(),
+            follows: false,
         };
         let expired = "this log has expired";
         super::job(
@@ -1026,6 +1055,7 @@ mod tests {
                 step: Some((1, u32::try_from(line).unwrap())),
                 query: "",
                 keys: Keys::default(),
+                follows: false,
             };
             super::job(
                 &mut page,
@@ -1060,6 +1090,7 @@ mod tests {
                 step: Some((1, 1)),
                 query: "",
                 keys: Keys::default(),
+                follows: false,
             };
             super::job(&mut page, &RepoId::new("o", "r"), job, log, at, 0);
             page.lines
@@ -1076,7 +1107,7 @@ mod tests {
             &one_step_job(CheckOutcome::Pending),
             Fetched::ready(&running),
         );
-        assert!(page.contains("still running"), "{page}");
+        assert!(page.contains("when the job ends"), "{page}");
         let page = text(
             &one_step_job(CheckOutcome::Failure),
             Fetched::failed("this log has expired"),

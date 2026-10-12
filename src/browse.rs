@@ -868,8 +868,10 @@ impl State {
             Route::Issue { repo, number } => {
                 let issue =
                     f.get::<Option<Box<IssueDetail>>>(&DataKey::Issue(repo.clone(), *number));
+                let none = HashSet::new();
+                let fresh = crate::live::page::fresh(self, route).unwrap_or(&none);
                 match issue.show(&mut page, &format!("{repo}#{number}")) {
-                    Some(Some(issue)) => pages::issue(&mut page, issue, icons, keys, now),
+                    Some(Some(issue)) => pages::issue(&mut page, issue, fresh, icons, keys, now),
                     // Redirecting to the pull request.
                     Some(None) => page.line(vec![Seg::new("Loading…", Role::Meta)]),
                     None => {}
@@ -1010,8 +1012,10 @@ impl State {
             }
             Route::Discussion { of, number } => {
                 let key = DataKey::Discussion(of.clone(), *number);
+                let none = HashSet::new();
+                let fresh = crate::live::page::fresh(self, route).unwrap_or(&none);
                 if let Some(d) = f.get(&key).show(&mut page, &title) {
-                    pages::discussion(&mut page, d, cx);
+                    pages::discussion(&mut page, d, fresh, cx);
                 }
             }
             Route::WorkflowRun { repo, run, attempt } => {
@@ -1034,6 +1038,7 @@ impl State {
                         step: *step,
                         query,
                         keys,
+                        follows: crate::live::page::follows(self, repo, *job),
                     };
                     pages::job(&mut page, repo, j, log, at, now);
                 }

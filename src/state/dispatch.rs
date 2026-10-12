@@ -51,9 +51,21 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         } => Some(pr.clone()),
         _ => None,
     };
+    // Any page's data, fresh from GitHub, for the page watchers.
+    let fresh = match &msg {
+        Msg::Fetched {
+            key,
+            result: Ok(_),
+            cached_at: None,
+        } => Some(key.clone()),
+        _ => None,
+    };
     let mut cmds = handle(state, msg);
     if let Some(pr) = activity {
         crate::live::activity_loaded(state, &pr);
+    }
+    if let Some(key) = fresh {
+        crate::live::page::loaded(state, &key);
     }
     if data {
         cmds.extend(act::follow(state));
@@ -225,6 +237,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::Timer(Timer::Watch(id)) => return crate::live::on_timer(state, id),
         Msg::Polled(pr, answers) => return crate::live::on_polled(state, &pr, answers),
+        Msg::Watched(what, answers) => return crate::live::page::on_watched(state, &what, answers),
         Msg::Paste(text) => return crate::typing::on_paste(state, &text),
         Msg::Focus(focused) => crate::live::on_focus(state, focused),
         Msg::Mentionable(repo, result) => crate::typing::on_mentionable(state, repo, result),

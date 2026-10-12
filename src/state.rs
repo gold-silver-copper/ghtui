@@ -110,6 +110,15 @@ pub enum Msg {
         PrRef,
         Vec<(crate::live::Probe, Result<crate::api::Polled, ApiError>)>,
     ),
+    /// What GitHub answered when asked whether another watched page
+    /// changed.
+    Watched(
+        crate::live::page::Watched,
+        Vec<(
+            crate::live::page::Probe,
+            Result<crate::api::Polled, ApiError>,
+        )>,
+    ),
     /// New issues and pull requests, and checking one out.
     Create(crate::create::Done),
     /// Releases, gists, wiki pages and subscriptions.
@@ -264,6 +273,11 @@ pub enum Api {
     Poll {
         pr: PrRef,
         asks: Vec<crate::live::Ask>,
+    },
+    /// Whether another watched page changed, asked with ETags.
+    Watch {
+        what: crate::live::page::Watched,
+        asks: Vec<crate::live::Ask<crate::live::page::Probe>>,
     },
 }
 
@@ -482,6 +496,9 @@ pub struct State {
     pub pending: Option<act::Pending>,
     /// The pull request under review on screen, watched for changes.
     pub watch: Option<crate::live::Watch>,
+    /// Another page on screen watched for changes: a running job, runs,
+    /// an issue, a discussion.
+    pub page_watch: Option<crate::live::page::PageWatch>,
     /// The terminal has the focus.
     pub focused: bool,
     /// Who and what each repository's comments can mention, once asked.
@@ -535,6 +552,7 @@ impl State {
             awaiting: None,
             pending: None,
             watch: None,
+            page_watch: None,
             focused: true,
             mentionable: HashMap::new(),
             creating: crate::create::Creating::default(),

@@ -173,3 +173,4 @@ mod lists;
 mod pr_diff;
 mod repo;
 mod search;
+mod watch;

@@ -2224,26 +2224,8 @@ impl GitHub {
         query: &str,
         after: Option<String>,
     ) -> Result<browse::Results<browse::RunSummary>, ApiError> {
-        let filter = browse::RunFilter::parse(query);
-        let base = format!("/repos/{}/{}/actions", repo.owner, repo.name);
-        let (list, what) = match &filter.workflow {
-            Some(w) => {
-                let id = encode_path(&self.workflow_id(repo, w).await?);
-                (
-                    format!("{base}/workflows/{id}/runs"),
-                    format!("{repo}'s workflow {w}"),
-                )
-            }
-            None => (format!("{base}/runs"), format!("{repo}'s workflow runs")),
-        };
         let page = rest_page(after.as_deref());
-        let path = {
-            let mut params = url::form_urlencoded::Serializer::new(String::new());
-            params.extend_pairs(&filter.params);
-            params.append_pair("per_page", &REST_PAGE.to_string());
-            params.append_pair("page", &page.to_string());
-            format!("{list}?{}", params.finish())
-        };
+        let (path, what) = self.runs_path(repo, query, page).await?;
         let wire: browse::rest_actions::Runs = self.rest_json(&path, what).await?;
         let runs = browse::Results {
             total: wire.total_count,
@@ -2257,6 +2239,65 @@ impl GitHub {
         Ok(self
             .kept_page(page == 1, &browse::keys::runs(repo, query), runs)
             .await)
+    }
+
+    /// Where page `page` of the runs `query` filters is (see
+    /// [`browse::RunFilter`]), and what it's called: a workflow named by
+    /// its name is looked up first.
+    pub async fn runs_path(
+        &self,
+        repo: &RepoId,
+        query: &str,
+        page: u64,
+    ) -> Result<(String, String), ApiError> {
+        let filter = browse::RunFilter::parse(query);
+        let base = format!("/repos/{}/{}/actions", repo.owner, repo.name);
+        let (list, what) = match &filter.workflow {
+            Some(w) => {
+                let id = encode_path(&self.workflow_id(repo, w).await?);
+                (
+                    format!("{base}/workflows/{id}/runs"),
+                    format!("{repo}'s workflow {w}"),
+                )
+            }
+            None => (format!("{base}/runs"), format!("{repo}'s workflow runs")),
+        };
+        let mut params = url::form_urlencoded::Serializer::new(String::new());
+        params.extend_pairs(&filter.params);
+        params.append_pair("per_page", &REST_PAGE.to_string());
+        params.append_pair("page", &page.to_string());
+        Ok((format!("{list}?{}", params.finish()), what))
+    }
+
+    /// Asks whether a discussion changed since the answer `seen` (its
+    /// title, text, answer, and its comments' count and newest, as
+    /// [`raw::DISCUSSION_PROBE`] has them). GraphQL has no ETags: the
+    /// answer is its own tag, and each ask costs a point of the rate limit.
+    pub async fn poll_discussion(
+        &self,
+        repo: &RepoId,
+        number: u64,
+        seen: Option<&str>,
+    ) -> Result<Polled, ApiError> {
+        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
+        let subject = format!("{repo} discussion {number}");
+        let node: Value = self
+            .graphql_json(
+                raw::DISCUSSION_PROBE,
+                vars,
+                subject,
+                "/repository/discussion",
+            )
+            .await?;
+        let body = node.to_string();
+        Ok(if seen == Some(body.as_str()) {
+            Polled::Same
+        } else {
+            Polled::Changed {
+                etag: body.clone(),
+                body,
+            }
+        })
     }
 
     /// Your notifications that `query` keeps (see

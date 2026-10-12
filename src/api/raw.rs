@@ -64,6 +64,10 @@ pub(crate) const MARK_ANSWER: &str =
 
 pub(crate) const UNMARK_ANSWER: &str = "mutation($id: ID!) { unmarkDiscussionCommentAsAnswer(input: {id: $id}) { discussion { id } } }";
 
+/// What says a discussion changed: its title, text and answer, and how
+/// many comments it has, with the newest and its newest reply.
+pub(crate) const DISCUSSION_PROBE: &str = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { discussion(number: $number) { title body updatedAt isAnswered comments(last: 1) { totalCount nodes { databaseId updatedAt replies(last: 1) { totalCount nodes { databaseId updatedAt } } } } } } }";
+
 /// What a new issue or pull request can have: labels, people to assign,
 /// open milestones, the issue templates' files, the pull request template,
 /// and what you may do.
@@ -221,6 +225,7 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ),
         ("MARK_ANSWER", MARK_ANSWER.to_owned()),
         ("UNMARK_ANSWER", UNMARK_ANSWER.to_owned()),
+        ("DISCUSSION_PROBE", DISCUSSION_PROBE.to_owned()),
         ("REFS", REFS.to_owned()),
         ("NEW_FORM", NEW_FORM.to_owned()),
         (

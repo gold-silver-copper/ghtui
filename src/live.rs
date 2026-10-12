@@ -1,12 +1,18 @@
-//! Watching a pull request while you review it. While its Files changed,
-//! its Review tab or its conversation is on screen, ghtui asks GitHub now
+//! Watching what's on screen. While a pull request's Files changed, its
+//! Review tab or its conversation is on screen, ghtui asks GitHub now
 //! and then whether anything changed there (review comments, a push,
-//! check results), with the ETag of the answer before, so an unchanged
-//! answer costs nothing. It asks less often while nothing changes, and
-//! seldom while the terminal is out of focus. What came in since you
-//! started looking is marked, and the status bar says what it was.
+//! check results); other pages have their own watchers ([`page`]): a
+//! running job, the Actions tab, a run, an issue, a discussion. Every
+//! watcher asks with the ETag of the answer before, so an unchanged
+//! answer costs nothing, and keeps the same [`Pace`]: it asks less often
+//! while nothing changes, and seldom while the terminal is out of focus.
+//! What came in since you started looking is marked, and the status bar
+//! says what it was. The first answer after opening a page is only "what
+//! was there" when it shows nothing the page doesn't: one newer than what
+//! the page loaded is a change.
 
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::api::browse::PrActivity;
@@ -26,6 +32,91 @@ pub const FIRST_MS: u64 = 10_000;
 const MOST_MS: u64 = 160_000;
 /// The wait while the terminal is out of focus.
 const AWAY_MS: u64 = 300_000;
+
+pub mod page;
+
+/// When a watcher asks next, and what it asked last: shared by every
+/// watcher.
+#[derive(Debug)]
+pub struct Pace<P> {
+    /// Which watch a timer is for: a new one ignores an old one's.
+    id: u64,
+    /// The last answers' ETags.
+    etags: HashMap<P, String>,
+    /// How long until the next ask.
+    wait: u64,
+    /// An ask is scheduled, or on its way.
+    busy: bool,
+}
+
+impl<P: Clone + Eq + Hash> Pace<P> {
+    fn new() -> Self {
+        Self {
+            id: next_id(),
+            etags: HashMap::new(),
+            wait: FIRST_MS,
+            busy: false,
+        }
+    }
+
+    /// Whether `id` is this watch's timer.
+    fn is(&self, id: u64) -> bool {
+        self.id == id
+    }
+
+    /// The timer for the next ask, unless one is scheduled or on its way.
+    fn due(&mut self, focused: bool) -> Option<Cmd> {
+        if self.busy {
+            return None;
+        }
+        self.busy = true;
+        let wait = if focused {
+            self.wait
+        } else {
+            self.wait.max(AWAY_MS)
+        };
+        Some(Cmd::Timer(Timer::Watch(self.id), wait))
+    }
+
+    /// Back in focus: the next ask is soon. A timer already running is
+    /// the old wait's, and ignored.
+    fn refocus(&mut self) {
+        (self.id, self.busy, self.wait) = (next_id(), false, FIRST_MS);
+    }
+
+    /// `probe`, asked with the ETag of its last answer.
+    fn ask(&self, probe: P) -> Ask<P> {
+        Ask {
+            etag: self.etags.get(&probe).cloned(),
+            probe,
+        }
+    }
+
+    /// Notes an answer's ETag; true if it's the first answer to `probe`.
+    fn answered(&mut self, probe: &P, etag: String) -> bool {
+        let first = !self.etags.contains_key(probe);
+        if !etag.is_empty() {
+            self.etags.insert(probe.clone(), etag);
+        }
+        first
+    }
+
+    /// The answers are in: soon again after a change, else later, up to
+    /// `most`.
+    fn settle(&mut self, changed: bool, most: u64) {
+        self.busy = false;
+        self.wait = if changed {
+            FIRST_MS
+        } else {
+            self.wait.saturating_mul(2).min(most)
+        };
+    }
+
+    /// Nothing was asked this time (what to ask isn't loaded yet).
+    fn idle(&mut self) {
+        self.busy = false;
+    }
+}
 
 /// What's asked about a pull request: a REST answer whose ETag says
 /// whether it changed.
@@ -60,8 +151,8 @@ impl Probe {
 
 /// A probe, asked with the ETag of its last answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Ask {
-    pub probe: Probe,
+pub struct Ask<P = Probe> {
+    pub probe: P,
     pub etag: Option<String>,
 }
 
@@ -69,14 +160,8 @@ pub struct Ask {
 #[derive(Debug)]
 pub struct Watch {
     pub pr: PrRef,
-    /// Which watch a timer is for: a new one ignores an old one's.
-    id: u64,
-    /// The last answers' ETags.
-    etags: HashMap<Probe, String>,
-    /// How long until the next ask.
-    wait: u64,
-    /// An ask is scheduled, or on its way.
-    busy: bool,
+    /// When it asks next, and the last answers' ETags.
+    pace: Pace<Probe>,
     /// The head GitHub last showed.
     head: Option<String>,
     /// Review threads and their comments, by id, there when you started
@@ -105,10 +190,7 @@ impl Watch {
         let threads = threads.and_then(|d| d.inputs().threads.data.as_deref());
         let activity = state.picked::<PrActivity>(&DataKey::PrActivity(pr.clone()));
         Self {
-            id: next_id(),
-            etags: HashMap::new(),
-            wait: FIRST_MS,
-            busy: false,
+            pace: Pace::new(),
             head: head.map(|d| d.head_oid.clone()),
             seen_threads: threads.map(thread_ids),
             seen_comments: activity.map(|a| comment_ids(a).map(|(id, _)| id).collect()),
@@ -163,33 +245,32 @@ pub fn schedule(state: &mut State) -> Vec<Cmd> {
         }
         state.watch = here.map(|pr| Watch::new(pr, state));
     }
+    let mut cmds = page::schedule(state);
     let focused = state.focused;
-    let Some(w) = state.watch.as_mut().filter(|w| !w.busy) else {
-        return Vec::new();
-    };
-    w.busy = true;
-    let wait = if focused { w.wait } else { w.wait.max(AWAY_MS) };
-    vec![Cmd::Timer(Timer::Watch(w.id), wait)]
+    if let Some(w) = state.watch.as_mut() {
+        cmds.extend(w.pace.due(focused));
+    }
+    cmds
 }
 
 /// The terminal came into focus (`true`) or left it. Back in focus, the
 /// next ask is soon.
 pub fn on_focus(state: &mut State, focused: bool) {
     let was = std::mem::replace(&mut state.focused, focused);
-    if focused
-        && !was
-        && let Some(w) = &mut state.watch
-    {
-        // A timer already running is the old wait's: it's ignored.
-        (w.id, w.busy, w.wait) = (next_id(), false, FIRST_MS);
+    if focused && !was {
+        if let Some(w) = &mut state.watch {
+            w.pace.refocus();
+        }
+        page::refocus(state);
     }
 }
 
-/// Time to ask about the watched pull request, if the timer is still its.
+/// Time to ask about the watched pull request (or page), if the timer is
+/// still its.
 #[must_use]
 pub fn on_timer(state: &mut State, id: u64) -> Vec<Cmd> {
-    let Some(w) = state.watch.as_mut().filter(|w| w.id == id) else {
-        return Vec::new();
+    let Some(w) = state.watch.as_mut().filter(|w| w.pace.is(id)) else {
+        return page::on_timer(state, id);
     };
     let mut probes = vec![Probe::Pull, Probe::ReviewComments];
     if let Some(head) = &w.head {
@@ -198,13 +279,7 @@ pub fn on_timer(state: &mut State, id: u64) -> Vec<Cmd> {
             Probe::Statuses(head.clone()),
         ]);
     }
-    let asks = probes
-        .into_iter()
-        .map(|probe| Ask {
-            etag: w.etags.get(&probe).cloned(),
-            probe,
-        })
-        .collect();
+    let asks = probes.into_iter().map(|probe| w.pace.ask(probe)).collect();
     vec![Cmd::Api(Api::Poll {
         pr: w.pr.clone(),
         asks,
@@ -241,7 +316,6 @@ pub fn on_polled(
     let Some(w) = state.watch.as_mut().filter(|w| w.pr == *pr) else {
         return Vec::new();
     };
-    w.busy = false;
     let (mut changed, mut threads, mut pushed) = (false, false, None);
     let mut needs: Vec<Need> = Vec::new();
     for (probe, answer) in answers {
@@ -263,10 +337,7 @@ pub fn on_polled(
         }
         // The first answer is only what's there, unless a comment came in
         // after the diff's threads were fetched.
-        let first = !w.etags.contains_key(&probe);
-        if !etag.is_empty() {
-            w.etags.insert(probe.clone(), etag);
-        }
+        let first = w.pace.answered(&probe, etag);
         let unseen = probe == Probe::ReviewComments
             && (shown.as_ref())
                 .is_some_and(|ids| newest_comment(&body).is_some_and(|id| !ids.contains(&id)));
@@ -288,11 +359,7 @@ pub fn on_polled(
             }
         }
     }
-    w.wait = if changed {
-        FIRST_MS
-    } else {
-        w.wait.saturating_mul(2).min(MOST_MS)
-    };
+    w.pace.settle(changed, MOST_MS);
     let mut cmds: Vec<Cmd> = needs
         .into_iter()
         .flat_map(|need| state.ensure(need, true))

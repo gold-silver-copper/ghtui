@@ -23,6 +23,13 @@ pub struct Remote<T> {
     pub(super) more_wanted: bool,
 }
 
+impl<T> Remote<T> {
+    /// Pages were added with Load more.
+    pub fn extended(&self) -> bool {
+        self.extended
+    }
+}
+
 impl<T> Default for Remote<T> {
     fn default() -> Self {
         Self {
@@ -217,6 +224,8 @@ impl State {
         self.needs(&p.route)
             .into_iter()
             .filter(|need| match need {
+                // A watcher fetches these when GitHub says they changed.
+                Need::Data(key) if crate::live::page::watches(key) => false,
                 Need::Data(key) => self
                     .data
                     .get(key)
