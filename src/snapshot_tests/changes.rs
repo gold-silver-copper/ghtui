@@ -237,9 +237,31 @@ fn what_github_forbids_is_refused() {
     let mut s = pr_with(|d| d.merge_state = MergeState::Blocked);
     press(&mut s, ",m");
     says(&s, "blocked");
-    let mut s = pr_with(|d| d.merge_state = MergeState::Behind);
+    let mut s = pr_with(|d| {
+        d.merge_state = MergeState::Behind;
+        d.may.enable_auto_merge = false;
+    });
     press(&mut s, ",m");
     says(&s, ",u updates it");
+    // Behind, with auto-merge allowed: it merges once updated.
+    let mut s = pr_with(|d| {
+        d.merge_state = MergeState::Behind;
+        (d.may.enable_auto_merge, d.auto_merge_allowed) = (true, true);
+    });
+    press(&mut s, ",m");
+    let c = confirm(&s);
+    assert!(
+        c.choices
+            .iter()
+            .all(|(label, _)| label.ends_with("when ready")),
+        "{:?}",
+        c.choices
+    );
+    assert!(
+        c.facts.iter().any(|(f, _)| f.contains(",u updates it")),
+        "{:?}",
+        c.facts
+    );
 
     let mut s = with_run(Mode::Dark);
     let mut repo = crate::fixtures::overview();

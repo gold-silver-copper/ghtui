@@ -189,6 +189,11 @@ fn deleting_a_comment_asks_first() {
     says(&s, "Deleted");
     deliver(&mut s, |_| {});
     assert!(s.awaiting.is_some());
+    // Meanwhile, another edit waits too, and says so.
+    on_hubot(&mut s);
+    assert!(press(&mut s, ",D").is_empty());
+    assert!(s.overlay.is_none());
+    says(&s, "GitHub hasn't shown the last change yet");
     deliver(&mut s, |d| {
         d.timeline
             .items
