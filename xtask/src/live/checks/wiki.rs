@@ -1,5 +1,6 @@
 //! The wiki, written with git: `,W` writes a new page, which ghtui commits
-//! in its clone of the wiki and pushes. GitHub makes a wiki's git
+//! in its clone of the wiki and pushes; `,e` edits it; and a page changed
+//! on GitHub while you write isn't overwritten. GitHub makes a wiki's git
 //! repository only with its first page, made on github.com, so without
 //! one the check is skipped and says so. The page is removed after, with
 //! git.
@@ -14,7 +15,7 @@ use crate::live::{Check, Cx, gh, until};
 
 pub const CHECK: Check = Check::new(
     "wiki",
-    ",W writes a wiki page, committed and pushed with git",
+    ",W writes a wiki page and ,e edits it, committed and pushed with git; a page changed meanwhile isn't overwritten",
     run,
 );
 
@@ -68,6 +69,70 @@ fn run(cx: &mut Cx) -> Result<()> {
             .then_some(()))
     })?;
     ghtui.wait_for(&title)?;
+    ghtui.wait_followed()?;
+
+    cx.step(",e edits the page, pushed as a commit on the wiki's latest")?;
+    ghtui.keys(", e")?;
+    ghtui.wait_for("open in $EDITOR")?;
+    ghtui.keys("C-End Enter")?;
+    ghtui.type_text("Edited by ghtui's live check.")?;
+    ghtui.keys("C-s")?;
+    until("the edit on GitHub's wiki", GITHUB, || {
+        Ok(page_on_github(&work, &file)?
+            .contains("Edited by ghtui's live check.")
+            .then_some(()))
+    })?;
+    ghtui.wait_followed()?;
+
+    cx.step("a page changed on GitHub while it's written isn't overwritten")?;
+    ghtui.keys(", e")?;
+    ghtui.wait_for("open in $EDITOR")?;
+    // Meanwhile, someone else changes the page.
+    let _ = page_on_github(&work, &file)?;
+    let mut text = std::fs::read_to_string(work.join(&file)).unwrap_or_default();
+    text.push_str("\nChanged meanwhile, elsewhere.\n");
+    std::fs::write(work.join(&file), text)?;
+    commit_and_push(&work, &["add", &file], "Change the page meanwhile")?;
+    ghtui.keys("C-End Enter")?;
+    ghtui.type_text("This must not overwrite it.")?;
+    ghtui.keys("C-s")?;
+    ghtui.wait_for("changed on GitHub since you opened it")?;
+    let now = page_on_github(&work, &file)?;
+    if !now.contains("Changed meanwhile, elsewhere.") || now.contains("This must not overwrite it.")
+    {
+        bail!("the page changed meanwhile was overwritten: {now}");
+    }
+    ghtui.keys("Escape")?;
+    Ok(())
+}
+
+/// The page as GitHub's wiki has it now, from a fresh clone at `work`.
+fn page_on_github(work: &Path, file: &str) -> Result<String> {
+    let _ = std::fs::remove_dir_all(work);
+    git(
+        None,
+        &["clone", "-q", &wiki_url(), &crate::live::path(work)],
+    )?;
+    Ok(std::fs::read_to_string(work.join(file)).unwrap_or_default())
+}
+
+/// Stages with `stage`, commits as the live check, and pushes.
+fn commit_and_push(work: &Path, stage: &[&str], message: &str) -> Result<()> {
+    git(Some(work), stage)?;
+    git(
+        Some(work),
+        &[
+            "-c",
+            "user.name=ghtui live check",
+            "-c",
+            "user.email=ghtui-live@example.com",
+            "commit",
+            "-q",
+            "-m",
+            message,
+        ],
+    )?;
+    git(Some(work), &["push", "-q"])?;
     Ok(())
 }
 
@@ -81,22 +146,7 @@ fn remove_page(work: &Path, file: &str) -> Result<()> {
     if !work.join(file).exists() {
         return Ok(());
     }
-    git(Some(work), &["rm", "-q", file])?;
-    git(
-        Some(work),
-        &[
-            "-c",
-            "user.name=ghtui live check",
-            "-c",
-            "user.email=ghtui-live@example.com",
-            "commit",
-            "-q",
-            "-m",
-            "Remove the live check's page",
-        ],
-    )?;
-    git(Some(work), &["push", "-q"])?;
-    Ok(())
+    commit_and_push(work, &["rm", "-q", file], "Remove the live check's page")
 }
 
 fn git(dir: Option<&Path>, args: &[&str]) -> Result<String> {
