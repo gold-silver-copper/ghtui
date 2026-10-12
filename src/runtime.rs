@@ -531,9 +531,9 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
             let _ = tx.send(Msg::Notice(Notice::Error(text)));
         }
         if let Some(rejected) = gh.token_rejected_change() {
-            let text =
-                "GitHub rejected the token: run `gh auth login` or set GH_TOKEN, then restart";
-            let _ = tx.send(Msg::Problem(Problem::Auth, rejected.then(|| text.into())));
+            let hint = crate::api::auth::sign_in_hint(crate::host::current());
+            let text = format!("GitHub rejected the token: {hint}, then restart");
+            let _ = tx.send(Msg::Problem(Problem::Auth, rejected.then_some(text)));
         }
     });
 }

@@ -5,7 +5,7 @@ use super::*;
 pub(super) fn team_row(page: &mut Page, org: &str, t: &TeamSummary) {
     item(
         page,
-        format!("{}/orgs/{org}/teams/{}", url::BASE, t.slug),
+        format!("{}/orgs/{org}/teams/{}", url::base(), t.slug),
         |page, link| {
             let mut segs = vec![Seg::linked(t.name.clone(), Role::Strong, link)];
             if t.secret {
@@ -58,7 +58,7 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
         );
     }
     if let Some(parent) = &d.parent {
-        let target = format!("{}/orgs/{org}/teams/{}", url::BASE, parent.slug);
+        let target = format!("{}/orgs/{org}/teams/{}", url::base(), parent.slug);
         let link = link_seg(page, parent.name.clone(), target, Role::Link);
         page.wrapped(vec![Seg::new("Part of ", Role::Meta), link], 0, Frame::None);
     }
@@ -105,8 +105,6 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
     }
 }
 
-pub(super) const GIST: &str = "https://gist.github.com";
-
 /// A gist: who and when, its description, and each of its files.
 pub fn gist(page: &mut Page, g: &Gist, now: u64) {
     let first = g.files.first().map_or(g.id.as_str(), |f| f.name.as_str());
@@ -115,7 +113,7 @@ pub fn gist(page: &mut Page, g: &Gist, now: u64) {
         title.push(link_seg(
             page,
             owner.clone(),
-            format!("{GIST}/{owner}"),
+            format!("{}/{owner}", url::gists()),
             Role::Link,
         ));
         title.push(Seg::new(" / ", Role::Meta));
@@ -188,21 +186,25 @@ pub fn gist(page: &mut Page, g: &Gist, now: u64) {
 /// Someone's public gists, most recently updated first.
 pub fn gists(page: &mut Page, login: &str, list: Fetched<'_, Results<GistSummary>>, now: u64) {
     paged_list(page, "Gists", list, "No public gists.", |page, g| {
-        item(page, format!("{GIST}/{login}/{}", g.id), |page, link| {
-            let name = g.files.first().cloned().unwrap_or_else(|| g.id.clone());
-            let right = vec![Seg::new(time::ago_iso(&g.updated_at, now), Role::Meta)];
-            page.box_line(vec![Seg::linked(name, Role::Strong, link)], right, 0);
-            if !g.description.is_empty() {
-                body(page, vec![Seg::new(g.description.clone(), Role::Body)]);
-            }
-            let meta = format!(
-                "{} · {} · ★ {}",
-                plural(g.files.len() as u64, "file"),
-                plural(g.comments, "comment"),
-                compact(g.stars)
-            );
-            body(page, vec![Seg::new(meta, Role::Meta)]);
-        });
+        item(
+            page,
+            format!("{}/{login}/{}", url::gists(), g.id),
+            |page, link| {
+                let name = g.files.first().cloned().unwrap_or_else(|| g.id.clone());
+                let right = vec![Seg::new(time::ago_iso(&g.updated_at, now), Role::Meta)];
+                page.box_line(vec![Seg::linked(name, Role::Strong, link)], right, 0);
+                if !g.description.is_empty() {
+                    body(page, vec![Seg::new(g.description.clone(), Role::Body)]);
+                }
+                let meta = format!(
+                    "{} · {} · ★ {}",
+                    plural(g.files.len() as u64, "file"),
+                    plural(g.comments, "comment"),
+                    compact(g.stars)
+                );
+                body(page, vec![Seg::new(meta, Role::Meta)]);
+            },
+        );
     });
 }
 
@@ -394,7 +396,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
             page.wrapped(people, 0, Frame::Body);
         }
         // The rest are on the People tab.
-        let all = format!("{}/orgs/{}/people", url::BASE, p.login);
+        let all = format!("{}/orgs/{}/people", url::base(), p.login);
         rest_row(page, p.people.len(), At(&p.people, Some(all)).rest());
         page.box_bottom();
         let languages = top_languages(&p.repos);
@@ -518,7 +520,7 @@ pub(super) fn contribution_activity(page: &mut Page, c: &Contributions) {
                 let name = link_seg(
                     page,
                     repo.clone(),
-                    format!("{}/{repo}", url::BASE),
+                    format!("{}/{repo}", url::base()),
                     Role::Link,
                 );
                 page.line(vec![
@@ -549,9 +551,9 @@ pub(super) fn contribution_activity(page: &mut Page, c: &Contributions) {
             page.line(vec![Seg::new(format!("{icon} {verb} {what}"), Role::Body)]);
             for item in items.iter().take(5) {
                 let target = if icon == "◉" {
-                    format!("{}/{}/issues/{}", url::BASE, item.repo, item.number)
+                    format!("{}/{}/issues/{}", url::base(), item.repo, item.number)
                 } else {
-                    format!("{}/{}/pull/{}", url::BASE, item.repo, item.number)
+                    format!("{}/{}/pull/{}", url::base(), item.repo, item.number)
                 };
                 let place = format!("{}#{}", item.repo, item.number);
                 let link = link_seg(page, item.title.clone(), target, Role::Link);

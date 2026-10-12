@@ -178,8 +178,8 @@ pub struct PrRef {
 }
 
 impl PrRef {
-    /// Parses `owner/repo#N` or a github.com pull request URL (any sub-page,
-    /// e.g. `/files`, is accepted).
+    /// Parses `owner/repo#N` or a pull request's URL on the GitHub ghtui
+    /// works with (any sub-page, e.g. `/files`, is accepted).
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.trim();
         if !s.contains("://")
@@ -192,7 +192,9 @@ impl PrRef {
         }
         let url = url::Url::parse(s).ok()?;
         if !matches!(url.scheme(), "https" | "http")
-            || !matches!(url.host_str(), Some("github.com" | "www.github.com"))
+            || !url
+                .host_str()
+                .is_some_and(|h| crate::host::current().serves(h))
         {
             return None;
         }
@@ -209,7 +211,7 @@ impl PrRef {
     }
 
     pub fn url(&self) -> String {
-        format!("https://github.com/{}/pull/{}", self.repo, self.number)
+        crate::ui::pages::url::pull(self)
     }
 }
 

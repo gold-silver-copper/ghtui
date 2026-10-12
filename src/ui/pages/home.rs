@@ -45,7 +45,7 @@ pub fn home(page: &mut Page, sections: &[HomeSection<'_>], icons: Icons, now: u6
     let inbox = button(
         page,
         "Notifications",
-        format!("{}/notifications", url::BASE),
+        format!("{}/notifications", url::base()),
     );
     page.line(vec![inbox]);
     page.blank();

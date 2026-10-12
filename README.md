@@ -16,9 +16,9 @@ ghtui is pre-release, but it's usable every day.
   repositories (files, README, branches, tags, releases, commits, blame,
   comparisons), issues, pull requests, Actions runs and job logs,
   discussions, wikis, milestones, deployments, security advisories, gists,
-  teams, profiles and search. Every github.com link opens in ghtui unless
-  it can only work in a browser (a download, settings), and then it says
-  why.
+  teams, profiles and search, on github.com or a GitHub Enterprise
+  Server. Every GitHub link opens in ghtui unless it can only work in a
+  browser (a download, settings), and then it says why.
 - **Reviewing** is where ghtui goes furthest. Diffs are computed locally
   with git, highlighted with tree-sitter, and shown unified or split. You
   can reply, resolve, comment on lines or ranges, suggest changes, and
@@ -34,8 +34,8 @@ ghtui is pre-release, but it's usable every day.
 - **Creating**: open issues (from the repository's templates) and pull
   requests, and check a pull request out in your clone.
 
-Not there yet: projects, GitHub Enterprise Server, code navigation with
-a language server's precision, and structural diffs.
+Not there yet: projects, code navigation with a language server's
+precision, and structural diffs.
 
 ## Goals
 
@@ -70,9 +70,12 @@ ghtui --theme light                     # override the color scheme
 ```
 
 ghtui takes its token from `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh auth
-token`. If none works, it asks you to run `gh auth login`. The token stays
-in memory: it's never logged, written to disk, or put on a command line.
-Reading needs read access. Acting needs write access where you act (with a
+token`. If none works, it asks you to run `gh auth login`. On a GitHub
+Enterprise Server (see [Configuration](#configuration)), it reads
+`GH_ENTERPRISE_TOKEN`, then `GITHUB_ENTERPRISE_TOKEN`, then `gh auth token
+--hostname HOST`, as gh does. The token stays in memory: it's never
+logged, written to disk, or put on a command line. Reading needs read
+access. Acting needs write access where you act (with a
 classic token, the `repo` scope covers it all).
 
 ## A short tour
@@ -449,6 +452,9 @@ requests, narrowed as you type: `⇥` or `↵` takes the one chosen, `↑` and
 optional, and an unknown key is an error, so typos don't go unnoticed.
 
 ```toml
+[github]
+host = "github.example.com"  # a GitHub Enterprise Server; default github.com
+
 [theme]
 mode = "auto"         # auto | light | dark
 seed = "#3f6fb5"      # the whole color scheme is generated from this
@@ -468,6 +474,14 @@ title = "Bugs in our repos"
 issues = "is:open label:bug org:my-org sort:updated-desc"
 rows = 10
 ```
+
+The host can also come from `GHTUI_HOST`, which wins over the config file,
+or from gh's `GH_HOST`, which doesn't. On an Enterprise Server, ghtui asks
+its API at `https://HOST/api/v3` and `https://HOST/api/graphql`, its links
+and its clones' remotes open in ghtui, and links to github.com open in the
+browser (and the other way round). The cache, the tabs and the review
+drafts are kept per host and per account, so switching accounts or hosts
+never shows another's pages.
 
 A section lists `pulls`, `issues` or `repos`, and shows up to 30 rows; its
 last row opens the rest. Without any `[[home]]` tables, Home shows your
@@ -556,13 +570,18 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 
 ## Known limitations
 
-- github.com only.
+- One GitHub at a time: the host is chosen at start.
+- On an Enterprise Server, gists are taken to be at `HOST/gist`, and
+  ghtui's queries are checked against github.com's schema: a server too
+  old for a field ghtui asks for answers with an error instead.
 - Long code lines are cut at the edge: `h` and `l` scroll them sideways,
   but they don't wrap.
 - Markdown in the terminal: images show their alt text, and HTML is reduced
   to its text and links.
-- The cache isn't kept per account. After switching accounts, the old
-  account's pages show until they refresh.
+- The first time a token is used, until GitHub says whose it is (a moment
+  after starting), the cache and drafts are kept under the token's
+  fingerprint, and don't carry over to its account's.
+
 - Notifications filtered by a reason (`reason:mention`) or by `is:read`
   are filtered after fetching, as GitHub's API can't filter them: a load
   searches up to 300 notifications for a page of matches, and says when

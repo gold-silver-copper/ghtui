@@ -29,7 +29,7 @@ pub fn advisories(
     paged_list(page, "Security advisories", list, empty, |page, a| {
         let target = match repo {
             Some(repo) => format!("{}/security/advisories/{}", url::repo(repo), a.ghsa),
-            None => format!("{}/advisories/{}", url::BASE, a.ghsa),
+            None => format!("{}/advisories/{}", url::base(), a.ghsa),
         };
         item(page, target, |page, link| {
             let segs = vec![

@@ -38,12 +38,7 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
     }
     let blame = url::blame(repo, rev, path);
     let blame = link_seg(page, "Blame", blame, Role::Link);
-    let raw = link_seg(
-        page,
-        "Raw",
-        format!("https://raw.githubusercontent.com/{repo}/{rev}/{path}"),
-        Role::Link,
-    );
+    let raw = link_seg(page, "Raw", url::raw(repo, rev, path), Role::Link);
     let right = vec![blame, Seg::new("  ", Role::Meta), raw];
     page.box_top(vec![Seg::new(info, Role::Meta)], right);
     if is_markdown(path) {

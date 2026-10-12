@@ -204,23 +204,26 @@ fn parse_remotes(config: &str) -> Vec<Remote> {
         .collect()
 }
 
-/// Extracts `owner/name` from a github.com remote URL in any of the usual
-/// forms (HTTPS, scp-style SSH, `ssh://`, `git://`).
+/// Extracts `owner/name` from a remote URL on the GitHub ghtui works with
+/// (see [`crate::host`]), in any of the usual forms (HTTPS, scp-style SSH,
+/// `ssh://`, `git://`).
 pub fn github_repo_from_url(url: &str) -> Option<GitHubRepo> {
     let url = url.trim();
-    let path = if let Some(rest) = url.strip_prefix("git@github.com:") {
-        rest
-    } else {
-        let (_, rest) = url.split_once("://")?;
-        let (authority, path) = rest.split_once('/')?;
-        let host = authority.rsplit('@').next()?;
-        let host = host.split(':').next()?;
-        if !host.eq_ignore_ascii_case("github.com") && !host.eq_ignore_ascii_case("www.github.com")
-        {
-            return None;
+    let (host, path) = match url.split_once("://") {
+        Some((_, rest)) => {
+            let (authority, path) = rest.split_once('/')?;
+            let host = authority.rsplit('@').next()?;
+            (host.split(':').next()?, path)
         }
-        path
+        // scp-style: `git@host:owner/name`.
+        None => {
+            let (authority, path) = url.split_once(':')?;
+            (authority.rsplit('@').next()?, path)
+        }
     };
+    if !crate::host::current().serves(host) {
+        return None;
+    }
     let path = path.trim_end_matches('/');
     let path = path.strip_suffix(".git").unwrap_or(path);
     let (owner, name) = path.split_once('/')?;
@@ -235,7 +238,7 @@ pub fn github_repo_from_url(url: &str) -> Option<GitHubRepo> {
 
 /// The repository a bare PR number most likely refers to. In a fork clone,
 /// `upstream` is the base repository, so it wins over `origin`; otherwise the
-/// first github.com remote.
+/// first remote on the GitHub ghtui works with.
 pub fn infer_github_repo(remotes: &[Remote]) -> Option<GitHubRepo> {
     let by_name = |name: &str| {
         remotes
@@ -303,6 +306,19 @@ mod tests {
         ] {
             assert_eq!(github_repo_from_url(url), None, "{url}");
         }
+    }
+
+    #[test]
+    fn recognises_the_enterprise_host_only() {
+        let _host = crate::host::set_for_test("ghe.example.com");
+        for url in [
+            "https://ghe.example.com/o/r.git",
+            "git@ghe.example.com:o/r.git",
+            "ssh://git@ghe.example.com:2222/o/r.git",
+        ] {
+            assert_eq!(github_repo_from_url(url), repo("o", "r"), "{url}");
+        }
+        assert_eq!(github_repo_from_url("git@github.com:o/r.git"), None);
     }
 
     #[test]

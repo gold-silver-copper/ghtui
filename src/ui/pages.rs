@@ -1,7 +1,7 @@
 //! Page builders: GitHub's pages (repository, file, lists, issue, pull
 //! request, profile, search, home) as [`Page`]s, laid out the way GitHub
 //! lays them out: boxes for file lists, READMEs, lists and comments, and a
-//! sidebar when there's room. Every link is the github.com URL of what it
+//! sidebar when there's room. Every link is the GitHub URL of what it
 //! points at; `ghtui:` links are actions (star, load more, filter...).
 
 use std::collections::HashMap;
@@ -568,7 +568,7 @@ mod tests {
             .iter()
             .filter_map(|l| l.url())
             .filter(|u| {
-                let path = u.strip_prefix(&format!("{}/", url::BASE));
+                let path = u.strip_prefix(&format!("{}/", url::base()));
                 path.is_some_and(|p| !p.is_empty() && !p.contains('/'))
             })
             .map(str::to_owned)

@@ -156,7 +156,7 @@ fn parse_request(buf: &[u8]) -> Option<(Seen, usize)> {
 }
 
 fn client(base: &str, store: Store) -> GitHub {
-    GitHub::with_base_uri(Token::new("test-token"), store, Some(base))
+    GitHub::with_base_uri(Token::new("test-token"), store, base)
 }
 
 /// A client without a cache, against a server playing `replies`.

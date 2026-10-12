@@ -180,7 +180,7 @@ impl InboxFilter {
     }
 }
 
-/// Where a notification opens: its subject's page on github.com (its API
+/// Where a notification opens: its subject's page on GitHub (its API
 /// URL turned into the website's), at its latest comment when it has one.
 /// What has no API URL (a discussion, a check suite, an alert) opens the
 /// list it's in.
@@ -190,7 +190,7 @@ pub fn web_url(
     subject: Option<&str>,
     latest: Option<&str>,
 ) -> String {
-    let base = format!("https://github.com/{repo}");
+    let base = crate::ui::pages::url::repo(repo);
     let page = match api_path(subject).as_slice() {
         ["issues", n] => Some(format!("{base}/issues/{n}")),
         ["pulls", n] => Some(format!("{base}/pull/{n}")),

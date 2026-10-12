@@ -225,7 +225,7 @@ pub(super) fn reviewers(
                 let (org, slug) = team.split_once('/').unwrap_or(("", team));
                 (
                     team.clone(),
-                    format!("{}/orgs/{org}/teams/{slug}", url::BASE),
+                    format!("{}/orgs/{org}/teams/{slug}", url::base()),
                 )
             }
         };

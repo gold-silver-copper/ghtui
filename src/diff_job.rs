@@ -179,7 +179,7 @@ async fn run_inner(
                 &ctx.cache_root,
                 owner,
                 name,
-                &format!("https://github.com/{owner}/{name}.git"),
+                &crate::host::current().git_url(owner, name),
                 ctx.credentials.clone(),
                 &progress,
             )

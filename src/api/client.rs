@@ -22,6 +22,7 @@ use crate::api::notifications;
 use crate::api::queries::{self, nodes};
 use crate::api::rate_limit::{RateLimits, retry_after};
 use crate::api::raw;
+use crate::host::Host;
 
 const MAX_ATTEMPTS: u32 = 3;
 /// About when GitHub gives up on a request (it allows 10 seconds).
@@ -31,7 +32,10 @@ const MAX_INLINE_WAIT_SECS: u64 = 10;
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ApiError {
-    #[error("GitHub rejected the token. Run `gh auth login` or check GH_TOKEN.")]
+    #[error(
+        "GitHub rejected the token: {}.",
+        crate::api::auth::sign_in_hint(crate::host::current())
+    )]
     Unauthorized,
     #[error("rate limited by GitHub; retry in {0}s")]
     RateLimited(u64),
@@ -98,8 +102,13 @@ pub struct GitHub {
 
 struct Http {
     token: Token,
-    /// `https://api.github.com`, or a local server in tests.
-    base_uri: String,
+    /// Its website links are this GitHub's.
+    host: Host,
+    /// The REST API's base (see [`Host::rest_api`]), or a local server in
+    /// tests.
+    rest: String,
+    /// The GraphQL endpoint.
+    graphql: String,
     client: tokio::sync::OnceCell<reqwest::Client>,
 }
 
@@ -123,8 +132,8 @@ enum Request<'a> {
         path: &'a str,
         cached: Option<&'a HttpEntry>,
     },
+    /// A GraphQL request.
     Post {
-        path: &'a str,
         body: &'a serde_json::Value,
         /// Safe to send twice: a query, not a mutation.
         idempotent: bool,
@@ -149,19 +158,26 @@ impl Request<'_> {
 }
 
 impl GitHub {
-    pub fn new(token: Token, store: Store) -> Self {
-        Self::with_base_uri(token, store, None)
+    /// A client for `host`'s API.
+    pub fn new(token: Token, store: Store, host: Host) -> Self {
+        Self::with_bases(token, store, host, host.rest_api(), host.graphql_api())
     }
 
-    /// For tests: point the client at a local server.
-    pub fn with_base_uri(token: Token, store: Store, base_uri: Option<&str>) -> Self {
+    /// For tests: point the client at a local server, its GraphQL at
+    /// `/graphql`.
+    pub fn with_base_uri(token: Token, store: Store, base_uri: &str) -> Self {
+        let rest = base_uri.trim_end_matches('/');
+        let graphql = format!("{rest}/graphql");
+        Self::with_bases(token, store, Host::GITHUB_COM, rest.to_owned(), graphql)
+    }
+
+    fn with_bases(token: Token, store: Store, host: Host, rest: String, graphql: String) -> Self {
         Self {
             http: Arc::new(Http {
                 token,
-                base_uri: base_uri
-                    .unwrap_or("https://api.github.com")
-                    .trim_end_matches('/')
-                    .to_owned(),
+                host,
+                rest,
+                graphql,
                 client: tokio::sync::OnceCell::new(),
             }),
             store,
@@ -345,7 +361,7 @@ impl GitHub {
             let sent = std::time::Instant::now();
             let result = match request {
                 Request::Get { path, cached } => {
-                    let mut get = client.get(format!("{}{path}", self.http.base_uri));
+                    let mut get = client.get(format!("{}{path}", self.http.rest));
                     // Unchanged since the cached copy, GitHub answers 304,
                     // which doesn't count against the rate limit.
                     let validators = cached.iter().flat_map(|c| {
@@ -363,12 +379,11 @@ impl GitHub {
                     }
                     get.send().await
                 }
-                Request::Post { path, body, .. } => {
-                    let url = format!("{}{path}", self.http.base_uri);
-                    client.post(url).json(body).send().await
+                Request::Post { body, .. } => {
+                    client.post(&self.http.graphql).json(body).send().await
                 }
                 Request::Write { method, path, body } => {
-                    let url = format!("{}{path}", self.http.base_uri);
+                    let url = format!("{}{path}", self.http.rest);
                     let write = client.request(method.clone(), url);
                     match body {
                         Some(body) => write.json(body).send().await,
@@ -420,7 +435,7 @@ impl GitHub {
             if let Some(recorder) = &self.recorder {
                 let (request, sent) = match request {
                     Request::Get { path, .. } => (format!("GET {path}"), None),
-                    Request::Post { path, body, .. } => (format!("POST {path}"), Some(*body)),
+                    Request::Post { body, .. } => ("POST /graphql".to_owned(), Some(*body)),
                     Request::Write { method, path, body } => (format!("{method} {path}"), *body),
                 };
                 let link = headers
@@ -505,13 +520,7 @@ impl GitHub {
             data: Value,
             errors: Option<Vec<GqlError>>,
         }
-        let response = self
-            .send(&Request::Post {
-                path: "/graphql",
-                body,
-                idempotent,
-            })
-            .await?;
+        let response = self.send(&Request::Post { body, idempotent }).await?;
         check_status(&response, "GitHub's GraphQL API")?;
         let wire: Wire = serde_json::from_str(&response.body)?;
         let errors = wire.errors.unwrap_or_default();
@@ -693,6 +702,8 @@ impl GitHub {
             login: String,
         }
         let user: User = self.rest_json("/user", "your account").await?;
+        // Now the cache (and drafts) can be this account's.
+        self.store.signed_in(&user.login);
         Ok(user.login)
     }
 
@@ -2312,9 +2323,11 @@ impl GitHub {
             browse::DiscussionsOf::Org(org) => org,
         };
         let prefix = &format!(
-            "https://github.com/orgs/{}/discussions/",
+            "{}/orgs/{}/discussions/",
+            self.http.host.web(),
             org.to_lowercase()
         );
+
         // The organization's discussions are among its repositories', in
         // best-match order: look through the search's pages for them.
         let page = move |after| async move {
@@ -2432,7 +2445,7 @@ impl GitHub {
         Ok(self.kept(&browse::keys::refs(repo), refs).await)
     }
 
-    /// The ref a plain github.com URL's `spot` (`feature/x/src/lib.rs`)
+    /// The ref a plain GitHub URL's `spot` (`feature/x/src/lib.rs`)
     /// starts with, as GitHub reads it: the longest leading run of
     /// segments that names a branch or tag, in one query. `None` when no
     /// run of two or more does: the ref is the first segment (a one-word
@@ -2883,6 +2896,17 @@ fn blocked_text(block: Option<(&str, Option<&str>)>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_enterprise_server_is_asked_at_its_own_api() {
+        let ghe = Host::parse("ghe.example.com").unwrap();
+        let gh = GitHub::new(Token::new("t"), Store::disabled(), ghe);
+        assert_eq!(gh.http.rest, "https://ghe.example.com/api/v3");
+        assert_eq!(gh.http.graphql, "https://ghe.example.com/api/graphql");
+        let gh = GitHub::new(Token::new("t"), Store::disabled(), Host::GITHUB_COM);
+        assert_eq!(gh.http.rest, "https://api.github.com");
+        assert_eq!(gh.http.graphql, "https://api.github.com/graphql");
+    }
 
     /// A REST list has another page while the pages so far hold fewer than
     /// its total.

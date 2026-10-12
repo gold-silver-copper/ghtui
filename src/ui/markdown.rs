@@ -68,7 +68,7 @@ pub fn is_safe_link(url: &str) -> bool {
     scheme(url).is_none_or(|s| matches!(s.as_str(), "http" | "https" | "mailto"))
 }
 
-/// Resolves a link the way github.com does for a document in a repo.
+/// Resolves a link the way GitHub does for a document in a repo.
 /// `None` for links content mustn't have (see [`is_safe_link`]).
 pub fn resolve(base: Option<&LinkBase>, url: &str) -> Option<String> {
     let url = url.trim();
@@ -84,11 +84,11 @@ fn resolve_safe(base: Option<&LinkBase>, url: &str) -> String {
     }
     if let Some(rest) = url.strip_prefix('/') {
         return match base {
-            // On a wiki, root-relative links are relative to github.com.
-            Some(b) if b.wiki => format!("https://github.com/{rest}"),
+            // On a wiki, root-relative links are relative to GitHub.
+            Some(b) if b.wiki => format!("{}/{rest}", crate::ui::pages::url::base()),
             // Root-relative links are relative to the repository on GitHub.
             Some(b) => crate::ui::pages::url::at_rev(&b.repo, "blob", &b.rev, rest),
-            None => format!("https://github.com/{rest}"),
+            None => format!("{}/{rest}", crate::ui::pages::url::base()),
         };
     }
     let Some(base) = base else {
@@ -96,7 +96,11 @@ fn resolve_safe(base: Option<&LinkBase>, url: &str) -> String {
     };
     if base.wiki {
         let page = url.trim_start_matches("./").trim_end_matches(".md");
-        return format!("https://github.com/{}/wiki/{page}", base.repo);
+        return format!(
+            "{}/{}/wiki/{page}",
+            crate::ui::pages::url::base(),
+            base.repo
+        );
     }
     let (path, frag) = url.split_once('#').map_or((url, ""), |(p, f)| (p, f));
     let mut parts: Vec<&str> = base.dir.split('/').filter(|p| !p.is_empty()).collect();

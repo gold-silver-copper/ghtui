@@ -1,12 +1,23 @@
 use super::*;
 
-pub const BASE: &str = "https://github.com";
+/// The website of the GitHub ghtui works with.
+pub fn base() -> String {
+    crate::host::current().web()
+}
+/// Gists' website.
+pub fn gists() -> String {
+    crate::host::current().gists()
+}
+/// A file's raw content, to download.
+pub fn raw(repo: &RepoId, rev: &str, path: &str) -> String {
+    format!("{}/{repo}/{rev}/{path}", crate::host::current().raw())
+}
 
 pub fn user(login: &str) -> String {
-    format!("{BASE}/{login}")
+    format!("{}/{login}", base())
 }
 pub fn repo(repo: &RepoId) -> String {
-    format!("{BASE}/{repo}")
+    format!("{}/{repo}", base())
 }
 pub fn tree(repo: &RepoId, rev: &str, path: &str) -> String {
     at_rev(repo, "tree", rev, &encode_path(path))
@@ -18,16 +29,16 @@ pub fn blame(repo: &RepoId, rev: &str, path: &str) -> String {
     at_rev(repo, "blame", rev, &encode_path(path))
 }
 pub fn issues(repo: &RepoId) -> String {
-    format!("{BASE}/{repo}/issues")
+    format!("{}/{repo}/issues", base())
 }
 pub fn pulls(repo: &RepoId) -> String {
-    format!("{BASE}/{repo}/pulls")
+    format!("{}/{repo}/pulls", base())
 }
 pub fn issue(repo: &RepoId, number: u64) -> String {
-    format!("{BASE}/{repo}/issues/{number}")
+    format!("{}/{repo}/issues/{number}", base())
 }
 pub fn pull(pr: &PrRef) -> String {
-    format!("{BASE}/{}/pull/{}", pr.repo, pr.number)
+    format!("{}/{}/pull/{}", base(), pr.repo, pr.number)
 }
 pub fn pull_tab(pr: &PrRef, tab: &str) -> String {
     format!("{}/{tab}", pull(pr))
@@ -53,7 +64,7 @@ pub fn search(kind: SearchKind, query: &str) -> String {
         SearchKind::Commits => "commits",
         SearchKind::Code => "code",
     };
-    format!("{BASE}/search?q={}&type={kind}", encode(query))
+    format!("{}/search?q={}&type={kind}", base(), encode(query))
 }
 pub fn commit(repo: &RepoId, oid: &str) -> String {
     at_rev(repo, "commit", oid, "")
@@ -62,7 +73,7 @@ pub fn compare(repo: &RepoId, from: &str, to: &str) -> String {
     format!("{}/compare/{from}..{to}", self::repo(repo))
 }
 pub fn release(repo: &RepoId, tag: &str) -> String {
-    format!("{BASE}/{repo}/releases/tag/{}", encode_path(tag))
+    format!("{}/{repo}/releases/tag/{}", base(), encode_path(tag))
 }
 /// A revision's history, of `path` if it isn't empty.
 pub fn commits(repo: &RepoId, rev: &str, path: &str) -> String {
@@ -74,9 +85,9 @@ pub fn commits(repo: &RepoId, rev: &str, path: &str) -> String {
 pub(crate) fn at_rev(repo: impl std::fmt::Display, view: &str, rev: &str, path: &str) -> String {
     let rev = escape(rev, b"-_.~", false);
     if path.is_empty() {
-        format!("{BASE}/{repo}/{view}/{rev}")
+        format!("{}/{repo}/{view}/{rev}", base())
     } else {
-        format!("{BASE}/{repo}/{view}/{rev}/{path}")
+        format!("{}/{repo}/{view}/{rev}/{path}", base())
     }
 }
 

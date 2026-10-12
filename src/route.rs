@@ -1,4 +1,4 @@
-//! Routes: the pages ghtui shows, addressed by their github.com URLs.
+//! Routes: the pages ghtui shows, addressed by their GitHub URLs.
 
 use crate::api::browse::{DiscussionsOf, RepoSort, SearchKind};
 use crate::api::model::{PrRef, RepoId};
@@ -148,7 +148,8 @@ pub enum Route {
         repo: RepoId,
         number: u64,
     },
-    /// A page at a revision from a plain github.com URL, which doesn't say
+    /// A page at a revision from a plain GitHub URL, which doesn't say
+
     /// where the ref ends and the path starts (`tree/feature/x/src`).
     /// GitHub takes the longest leading part naming a branch or tag; ghtui
     /// finds it, then shows the page (see [`Route::split`]).
@@ -336,7 +337,7 @@ impl Route {
 
     pub fn url(&self) -> String {
         match self {
-            Route::Home => format!("{}/", links::BASE),
+            Route::Home => format!("{}/", links::base()),
             Route::Repo(repo) => links::repo(repo),
             Route::Tree { repo, rev, path } => links::tree(repo, rev, path),
             Route::Blob {
@@ -440,19 +441,19 @@ impl Route {
             },
             Route::Advisories(repo) => match repo {
                 Some(repo) => format!("{}/security/advisories", links::repo(repo)),
-                None => format!("{}/advisories", links::BASE),
+                None => format!("{}/advisories", links::base()),
             },
             Route::Advisory { repo, ghsa } => match repo {
                 Some(repo) => format!("{}/security/advisories/{ghsa}", links::repo(repo)),
-                None => format!("{}/advisories/{ghsa}", links::BASE),
+                None => format!("{}/advisories/{ghsa}", links::base()),
             },
-            Route::Teams(org) => format!("{}/orgs/{org}/teams", links::BASE),
-            Route::Team { org, slug } => format!("{}/orgs/{org}/teams/{slug}", links::BASE),
+            Route::Teams(org) => format!("{}/orgs/{org}/teams", links::base()),
+            Route::Team { org, slug } => format!("{}/orgs/{org}/teams/{slug}", links::base()),
             Route::Gist { owner, id } => match owner {
-                Some(owner) => format!("{GIST}/{owner}/{id}"),
-                None => format!("{GIST}/{id}"),
+                Some(owner) => format!("{}/{owner}/{id}", links::gists()),
+                None => format!("{}/{id}", links::gists()),
             },
-            Route::Gists(login) => format!("{GIST}/{login}"),
+            Route::Gists(login) => format!("{}/{login}", links::gists()),
             Route::Compare { repo, spec } => {
                 format!("{}/compare/{}", links::repo(repo), links::encode_path(spec))
             }
@@ -500,16 +501,16 @@ impl Route {
                 ProfileTab::Stars => format!("{}?tab=stars", links::user(login)),
                 ProfileTab::Followers => format!("{}?tab=followers", links::user(login)),
                 ProfileTab::Following => format!("{}?tab=following", links::user(login)),
-                ProfileTab::People => format!("{}/orgs/{login}/people", links::BASE),
+                ProfileTab::People => format!("{}/orgs/{login}/people", links::base()),
             },
             Route::Search { kind, query } => links::search(*kind, query),
             Route::Notifications { query } if query.is_empty() => {
-                format!("{}/notifications", links::BASE)
+                format!("{}/notifications", links::base())
             }
             Route::Notifications { query } => {
                 format!(
                     "{}/notifications?query={}",
-                    links::BASE,
+                    links::base(),
                     links::encode(query)
                 )
             }
@@ -725,9 +726,11 @@ fn list_url(base: &str, query: &str) -> String {
 }
 
 impl Dest {
-    /// Parses a github.com URL (or a ghtui link). Other URLs are external.
+    /// Parses a URL of the GitHub ghtui works with (see [`crate::host`]),
+    /// with or without its scheme. Other URLs, another GitHub's too, are
+    /// external.
     pub fn from_url(s: &str) -> Dest {
-        let with_scheme = if s.starts_with("github.com/") {
+        let with_scheme = if has_host_prefix(s) {
             format!("https://{s}")
         } else {
             s.to_owned()
@@ -744,16 +747,32 @@ impl Dest {
     }
 }
 
+/// Whether `s` starts with the host's name, scheme left off
+/// (`github.com/o/r`).
+fn has_host_prefix(s: &str) -> bool {
+    s.split_once('/')
+        .is_some_and(|(host, _)| crate::host::current().serves(host))
+}
+
 /// What a URL opens in ghtui, or `None` for the browser.
 fn parse(parsed: &url::Url) -> Option<Target> {
     if !matches!(parsed.scheme(), "https" | "http") {
         return None;
     }
-    if parsed.host_str() == Some("gist.github.com") {
-        return gist(parsed).map(Target::Page);
+    let host = crate::host::current();
+    let name = parsed.host_str()?;
+    if host.serves_gists(name) {
+        return gist(parsed.path_segments()?).map(Target::Page);
     }
-    if !matches!(parsed.host_str(), Some("github.com" | "www.github.com")) {
+    if !host.serves(name) {
         return None;
+    }
+    // An Enterprise Server's gists are under `/gist`.
+    if host.is_enterprise()
+        && let Some(mut segments) = parsed.path_segments()
+        && segments.next() == Some("gist")
+    {
+        return gist(segments).map(Target::Page);
     }
     let param = |name: &str| param(parsed, name);
     let (query, kind, tab) = (param("q"), param("type"), param("tab"));
@@ -1166,21 +1185,19 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
     Some(Target::Page(route))
 }
 
-const GIST: &str = "https://gist.github.com";
-
-/// gist.github.com's own pages, not people's gists.
+/// The gist website's own pages, not people's gists.
 const GIST_PAGES: &[&str] = &[
     "discover", "starred", "search", "auth", "login", "join", "mine",
 ];
 
-/// Whether a gist.github.com path segment after an owner is a gist's ID
+/// Whether a gist path segment after an owner is a gist's ID
 /// (numbers for old gists, 20 or 32 hex digits for newer).
 fn is_gist_id(s: &str) -> bool {
     s.bytes().all(|b| b.is_ascii_digit())
         || (matches!(s.len(), 20 | 32) && s.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
-/// Whether a lone gist.github.com segment is a gist rather than someone's
+/// Whether a lone gist segment is a gist rather than someone's
 /// gists. GitHub tries a login first; ghtui can't ask, so it takes short
 /// numbers for logins (`/1`, `/2000`) and long ones for old gists
 /// (`/1162032`, which GitHub redirects to its owner's).
@@ -1188,10 +1205,10 @@ fn is_lone_gist_id(s: &str) -> bool {
     is_gist_id(s) && !(s.len() < 5 && s.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// A gist.github.com page: a gist (`/<id>`, `/<owner>/<id>`) or someone's
-/// gists (`/<owner>`). Raw files and embeds are downloads.
-fn gist(parsed: &url::Url) -> Option<Route> {
-    let segments: Vec<&str> = parsed.path_segments()?.filter(|s| !s.is_empty()).collect();
+/// A gist website's page, from its path: a gist (`/<id>`, `/<owner>/<id>`)
+/// or someone's gists (`/<owner>`). Raw files and embeds are downloads.
+fn gist<'a>(segments: impl Iterator<Item = &'a str>) -> Option<Route> {
+    let segments: Vec<&str> = segments.filter(|s| !s.is_empty()).collect();
     Some(match segments.as_slice() {
         [first, ..] if GIST_PAGES.contains(first) => return None,
         [id] if is_lone_gist_id(id) => Route::Gist {
@@ -1234,7 +1251,7 @@ fn discussions(of: DiscussionsOf, rest: &[&str]) -> Option<Route> {
 fn discussions_url(of: &DiscussionsOf) -> String {
     match of {
         DiscussionsOf::Repo(repo) => format!("{}/discussions", links::repo(repo)),
-        DiscussionsOf::Org(org) => format!("{}/orgs/{org}/discussions", links::BASE),
+        DiscussionsOf::Org(org) => format!("{}/orgs/{org}/discussions", links::base()),
     }
 }
 
@@ -1263,7 +1280,7 @@ fn line_range(fragment: &str) -> Option<(u32, u32)> {
     Some((a.min(b), a.max(b)))
 }
 
-/// Top-level github.com paths that aren't users.
+/// Top-level GitHub paths that aren't users.
 const RESERVED: &[&str] = &[
     "about",
     "account",
@@ -1354,7 +1371,7 @@ fn strip_is(query: &str) -> String {
 /// What the command palette makes of its input.
 pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
     let input = input.trim();
-    if input.contains("://") || input.starts_with("github.com/") {
+    if input.contains("://") || has_host_prefix(input) {
         let dest = Dest::from_url(input);
         return (!matches!(dest.target, Target::External(_))).then_some(dest);
     }
@@ -2003,6 +2020,44 @@ pub(crate) mod tests {
         ] {
             assert_eq!(reopened(&route), Target::Page(route));
         }
+    }
+
+    /// On an Enterprise Server, its links do what github.com's do (gists
+    /// are under `/gist`), its pages link to it, and github.com's links
+    /// open in the browser.
+    #[test]
+    fn an_enterprise_host_owns_its_links() {
+        let _host = crate::host::set_for_test("ghe.example.com");
+        let mut wrong = Vec::new();
+        for (url, expect, reason) in corpus() {
+            let moved = url
+                .replace("https://gist.github.com/", "https://ghe.example.com/gist/")
+                .replace("https://github.com/", "https://ghe.example.com/");
+            if moved == url {
+                continue;
+            }
+            let target = Dest::from_url(&moved).target;
+            if !as_expected(&target, expect, reason) {
+                wrong.push(format!("{moved}\n    expected {expect}, got {target:?}"));
+            }
+            if !matches!(Dest::from_url(url).target, Target::External(_)) {
+                wrong.push(format!("{url}\n    expected the browser"));
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+
+        let repo = Route::Repo(RepoId::new("o", "r"));
+        assert_eq!(repo.url(), "https://ghe.example.com/o/r");
+        let gist = Route::Gist {
+            owner: Some("o".into()),
+            id: "1162032".into(),
+        };
+        assert_eq!(gist.url(), "https://ghe.example.com/gist/o/1162032");
+        assert_eq!(reopened(&gist), Target::Page(gist));
+        assert_eq!(
+            parse_input("ghe.example.com/o/r", None).map(|d| d.target),
+            Some(Target::Page(repo))
+        );
     }
 
     /// A ref with slashes in it (`feature/x`, `dependabot/cargo/serde-1.0`,

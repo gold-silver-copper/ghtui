@@ -1,17 +1,19 @@
 //! Review state (draft comments, reviewed marks) kept apart from the cache,
-//! as one JSON file per pull request under the data directory. Clearing or
-//! discarding the cache never touches it. Files are replaced atomically, so
-//! a crash mid-write leaves the previous version.
+//! as one JSON file per pull request under the data directory, in the
+//! account's folder (`<host>/<login>/`). Clearing or discarding the cache
+//! never touches it. Files are replaced atomically, so a crash mid-write
+//! leaves the previous version.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::store::{ReviewState, StoreError};
+use crate::store::{Account, ReviewState, StoreError};
 
 /// Cheap to clone.
 #[derive(Debug, Clone)]
 pub struct Reviews {
     dir: PathBuf,
+    account: Account,
 }
 
 impl Reviews {
@@ -20,7 +22,14 @@ impl Reviews {
         std::fs::create_dir_all(dir)?;
         Ok(Self {
             dir: dir.to_owned(),
+            account: Account::default(),
         })
+    }
+
+    /// These reviews, keeping to `account`'s (as the cache does).
+    #[must_use]
+    pub fn for_account(self, account: Account) -> Self {
+        Self { account, ..self }
     }
 
     fn path(&self, owner: &str, repo: &str, number: u64) -> Result<PathBuf, StoreError> {
@@ -33,6 +42,7 @@ impl Reviews {
         }
         Ok(self
             .dir
+            .join(self.account.scope())
             .join(owner)
             .join(repo)
             .join(format!("{number}.json")))
@@ -137,6 +147,21 @@ mod tests {
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
         assert!(kept.iter().any(|n| n.contains("corrupt")), "{kept:?}");
+    }
+
+    #[test]
+    fn keeps_accounts_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let account = Account::new("github.com", "aaaa", None);
+        let reviews = Reviews::open(dir.path())
+            .unwrap()
+            .for_account(account.clone());
+        reviews.put("o", "r", 1, &draft("mine")).unwrap();
+        assert!(dir.path().join("github.com/token-aaaa/o/r/1.json").exists());
+        account.sign_in("alice");
+        assert_eq!(reviews.get("o", "r", 1).unwrap(), ReviewState::default());
+        reviews.put("o", "r", 1, &draft("alice's")).unwrap();
+        assert!(dir.path().join("github.com/alice/o/r/1.json").exists());
     }
 
     #[test]
