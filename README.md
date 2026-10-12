@@ -90,7 +90,8 @@ The screen is laid out like GitHub's:
 - **The status bar** names the keys that do something here.
 
 `Space` lists everything you can do where you are. `:` opens a command
-palette that also goes places (`owner/repo#123`, `@user`, a URL).
+palette that also goes places (`owner/repo#123`, `@user`, a URL or its
+path, like `owner/repo/pull/5/files`).
 
 **Home** is your own saved searches: by default your review requests, your
 open pull requests and your repositories. Save any list to Home from its

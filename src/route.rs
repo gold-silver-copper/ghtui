@@ -1460,9 +1460,17 @@ fn strip_is(query: &str) -> String {
 /// What the command palette makes of its input.
 pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
     let input = input.trim();
+    let url = |url: &str| {
+        let dest = Dest::from_url(url);
+        (!matches!(dest.target, Target::External(_))).then_some(dest)
+    };
     if input.contains("://") || has_host_prefix(input) {
-        let dest = Dest::from_url(input);
-        return (!matches!(dest.target, Target::External(_))).then_some(dest);
+        return url(input);
+    }
+    // A path as GitHub writes it, without the host: `o/r/pull/5/files`.
+    let path = input.trim_start_matches('/');
+    if path.split('/').count() > 2 && !path.contains(char::is_whitespace) {
+        return url(&format!("{}/{path}", crate::host::current().web()));
     }
     if let Some(login) = input.strip_prefix('@') {
         return valid_login(login).then(|| Target::Page(Route::user(login)).into());
@@ -2396,6 +2404,13 @@ pub(crate) mod tests {
                 repo: RepoId::new("a", "b"),
                 number: 3
             }))
+        );
+        assert_eq!(
+            target("a/b/pull/5/files", None),
+            Some(Target::Files(DiffOf::Pr(crate::api::model::PrRef {
+                repo: RepoId::new("a", "b"),
+                number: 5
+            })))
         );
         assert_eq!(parse_input("ratatui", None), None);
     }

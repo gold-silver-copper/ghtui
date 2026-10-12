@@ -51,7 +51,7 @@ pub(super) fn quote_reply(state: &mut State) -> Vec<Cmd> {
         _ => {
             let down = state.first_key(Action::NextItem);
             state.info(format!(
-                "Select a comment to quote ({down} goes comment by comment)"
+                "Select a comment to quote: {down} goes comment by comment"
             ));
             Vec::new()
         }

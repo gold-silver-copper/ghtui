@@ -251,7 +251,7 @@ fn page_spot(state: &State, about: &Subject, fallback: bool) -> Result<Spot, Str
         }
         let next = state.first_key(Action::NextItem);
         return Err(format!(
-            "Select a comment first ({next} goes comment by comment)"
+            "Select a comment first: {next} goes comment by comment"
         ));
     };
     let said = description(state, about)?;

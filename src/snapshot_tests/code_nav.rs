@@ -148,3 +148,31 @@ fn symbols_and_definitions_in_the_diff() {
     press(&mut s, "jwwwgd");
     assert_eq!(line(&s), Some(10), "{}", said(&s));
 }
+
+/// A `/` match carries the word cursor, so `gd` reads the word found.
+#[test]
+fn a_search_match_is_the_word_gd_reads() {
+    let mut s = with_code();
+    press(&mut s, "/other<Enter>");
+    assert_eq!(at(&s), (Some(5), Some("other".into())), "{}", said(&s));
+    press(&mut s, "gg/helper<Enter>");
+    assert_eq!(at(&s), (Some(4), Some("helper".into())), "{}", said(&s));
+    let mut long = "fn pad() {}\n".repeat(1500);
+    long.push_str("fn last() {\n    valid_login(login).then(|| x);\n}\n");
+    let mut s = with_repo(Mode::Dark, ColorDepth::TrueColor);
+    let route = Route::blob(ghtui(), "main".into(), "src/lib.rs".into());
+    let blob = Blob {
+        path: "src/lib.rs".into(),
+        text: Some(long),
+        size: 100,
+        truncated: false,
+    };
+    open(&mut s, route, Data::Blob(Box::new(blob)));
+    press(&mut s, "gOlast<Enter>ww/valid_login<Enter>");
+    assert_eq!(
+        at(&s),
+        (Some(1502), Some("valid_login".into())),
+        "{}",
+        said(&s)
+    );
+}
