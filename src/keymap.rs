@@ -243,6 +243,7 @@ actions! {
     NewRelease        "new_release"       [",V"]                   Page   "New release";
     NewGist           "new_gist"          [",G"]                   Page   "New gist";
     NewWikiPage       "new_wiki_page"     [",W"]                   Page   "New wiki page";
+    RunWorkflow       "run_workflow"      [",E"]                   Page   "Run the workflow by hand";
     Branch            "branch"            ["B"]                    Page   "Switch branches or tags";
     Hints             "hints"             ["i", "diff:i"]          Page   "Follow a link by its letters";
     HintsBrowser      "hints_browser"     ["I", "diff:I"]          Page   "Follow a link, in the browser";

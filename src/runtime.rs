@@ -566,6 +566,7 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 let answers = futures::future::join_all(polls).await;
                 Msg::Polled(pr, answers)
             }
+            Api::Actions(work) => Msg::Actions(work.run(&gh).await),
             Api::Watch { what, asks } => {
                 let polls = asks.into_iter().map(|ask| {
                     let gh = &gh;
@@ -727,6 +728,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Cmd::Api(Api::FindDefinition(ask)) => Msg::Definitions(ask.clone(), api()),
         Cmd::Api(Api::Poll { pr, .. }) => Msg::Polled(pr.clone(), Vec::new()),
         Cmd::Api(Api::Watch { what, .. }) => Msg::Watched(what.clone(), Vec::new()),
+        Cmd::Api(Api::Actions(work)) => Msg::Actions(work.failed()),
         Cmd::Git(Git::LoadDiff { of, job, .. }) => Msg::Diff(
             of.clone(),
             DiffMsg::Job(*job, JobMsg::Failed(Failure::msg("ghtui hit a bug"))),

@@ -11,7 +11,7 @@
 
 mod page;
 pub mod templates;
-mod yaml;
+pub(crate) mod yaml;
 
 use std::collections::HashMap;
 use std::path::Path;

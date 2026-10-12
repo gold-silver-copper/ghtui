@@ -164,6 +164,7 @@ mod tabs;
 
 pub(super) mod diff;
 
+mod actions;
 mod fetch;
 mod home;
 mod jobs;

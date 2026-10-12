@@ -54,6 +54,8 @@ pub enum Kind {
     Alert(crate::security::Dismissing),
     /// A subscription, a release's tag, a gist's names ([`crate::writes`]).
     Write(crate::writes::Pick),
+    /// Where to save an artifact; a workflow's branch or input.
+    Actions(crate::actions::Pick),
 }
 
 /// What a section's title is for.
@@ -87,6 +89,7 @@ impl Picker {
             Kind::Project(ref pick) => pick.title(),
             Kind::Alert(ref d) => d.title(),
             Kind::Write(ref pick) => pick.title(),
+            Kind::Actions(ref pick) => pick.title(),
         }
     }
 }
@@ -123,6 +126,7 @@ pub enum Choice {
     /// Dismiss a security alert so.
     Alert(crate::api::change::Change),
     Write(crate::writes::Chosen),
+    Actions(crate::actions::Chosen),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -179,6 +183,7 @@ impl State {
             Kind::Project(ref pick) => pick.placeholder(),
             Kind::Alert(ref d) => d.placeholder(),
             Kind::Write(ref pick) => pick.placeholder(),
+            Kind::Actions(ref pick) => pick.placeholder(),
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
@@ -264,6 +269,9 @@ impl State {
                 let choice = Choice::Title(titling.clone(), path.clone(), q.to_owned());
                 vec![(item(label, "↵"), Some(choice))]
             }
+            Kind::Actions(pick) => (crate::actions::rows(self, pick, q).into_iter())
+                .map(|(row, chosen)| (row, chosen.map(Choice::Actions)))
+                .collect(),
             Kind::Project(pick) => (crate::projects::rows(self, pick, q).into_iter())
                 .map(|(row, chosen)| (row, chosen.map(Choice::Project)))
                 .collect(),
@@ -627,6 +635,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
         Choice::Project(chosen) => crate::projects::choose(state, chosen),
         Choice::Alert(change) => crate::security::choose(state, change),
         Choice::Write(chosen) => crate::writes::choose(state, chosen),
+        Choice::Actions(chosen) => crate::actions::choose(state, chosen),
     }
 }
 

@@ -625,7 +625,8 @@ fn section(route: &Route) -> Section {
         Route::Actions { .. }
         | Route::WorkflowRun { .. }
         | Route::Job { .. }
-        | Route::Workflow { .. } => Section::Actions,
+        | Route::Workflow { .. }
+        | Route::Dispatch { .. } => Section::Actions,
         Route::Projects(_) => Section::Projects,
         Route::Wiki { .. } | Route::WikiEdit { .. } => Section::Wiki,
         Route::Advisories(_)

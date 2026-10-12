@@ -91,6 +91,12 @@ pub enum Route {
         repo: RepoId,
         file: String,
     },
+    /// The form that runs a workflow by hand (GitHub's "Run workflow"
+    /// menu, on the workflow's page).
+    Dispatch {
+        repo: RepoId,
+        file: String,
+    },
     /// The checks on a commit.
     CommitChecks {
         repo: RepoId,
@@ -454,7 +460,7 @@ impl Route {
                 }
                 url
             }
-            Route::Workflow { repo, file } => {
+            Route::Workflow { repo, file } | Route::Dispatch { repo, file } => {
                 format!(
                     "{}/actions/workflows/{}",
                     links::repo(repo),
@@ -613,6 +619,7 @@ impl Route {
             Route::WorkflowRun { repo, run, .. } => format!("{repo} · Run {run}"),
             Route::Job { repo, job, .. } => format!("{repo} · Job {job}"),
             Route::Workflow { repo, file } => format!("{repo} · {file}"),
+            Route::Dispatch { repo, file } => format!("{repo} · Run {file}"),
             Route::CommitChecks { repo, oid } => format!("{repo}@{} · Checks", short_sha(oid)),
             Route::Stargazers(repo) => format!("{repo} · Stargazers"),
             Route::Watchers(repo) => format!("{repo} · Watchers"),
@@ -718,6 +725,7 @@ impl Route {
             | Route::NewPr(repo)
             | Route::NewRelease(repo)
             | Route::WikiEdit { repo, .. }
+            | Route::Dispatch { repo, .. }
             | Route::Projects(ProjectsOf::Repo(repo))
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),

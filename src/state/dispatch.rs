@@ -107,6 +107,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Diff(of, msg) => return diff_screen::update(state, &of, msg),
         Msg::Create(done) => return crate::create::on_done(state, done),
         Msg::Write(done) => return crate::writes::on_done(state, done),
+        Msg::Actions(done) => return crate::actions::on_done(state, done),
         Msg::Key(key) => return on_key(state, key),
         Msg::Resize(w, h) => state.size = (w, h),
         Msg::Viewer(Ok(login)) => state.viewer = Some(login),
@@ -475,6 +476,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         _ if crate::projects::takes(state, action) => return crate::projects::act(state, action),
         _ if crate::writes::claims(state, action) => return crate::writes::act(state, action),
         _ if crate::edit::ACTIONS.contains(&action) => return crate::edit::act(state, action),
+        Action::RunWorkflow => return crate::actions::action(state),
         Action::NewIssue
         | Action::NewPr
         | Action::Create

@@ -63,7 +63,8 @@ fn screens() -> [(&'static str, Make); 31] {
         // From the top: a failed job opens at its first error.
         ("job", || {
             let mut s = super::sized(with_job(Mode::Dark, None), 100, 12);
-            press(&mut s, "ggjj");
+            // Past the annotation and two steps: a line of the log.
+            press(&mut s, "ggjjj");
             s
         }),
         ("workflow", || mid(with_workflow(Mode::Dark))),

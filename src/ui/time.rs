@@ -104,6 +104,21 @@ pub fn ago(then: u64, now: u64) -> String {
     format!("{n}{unit} ago")
 }
 
+/// How long until an ISO timestamp: "in 5m", "in 3d"; "now" once past.
+pub fn until_iso(iso: &str, now: u64) -> String {
+    let Some(then) = parse_iso8601(iso) else {
+        return iso.to_owned();
+    };
+    let secs = then.saturating_sub(now);
+    let (n, unit) = match secs {
+        0..60 => return "now".to_owned(),
+        60..3600 => (secs / 60, "m"),
+        3600..86_400 => (secs / 3600, "h"),
+        _ => (secs / 86_400, "d"),
+    };
+    format!("in {n}{unit}")
+}
+
 /// Relative time for an ISO timestamp, or the raw string if unparseable.
 pub fn ago_iso(iso: &str, now: u64) -> String {
     parse_iso8601(iso).map_or_else(|| iso.to_owned(), |t| ago(t, now))

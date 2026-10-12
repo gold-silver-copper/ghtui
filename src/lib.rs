@@ -12,6 +12,7 @@ pub mod theme;
 pub mod ui;
 
 mod act;
+mod actions;
 mod browse;
 mod chrome;
 mod code_nav;

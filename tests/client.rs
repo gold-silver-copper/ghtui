@@ -1007,6 +1007,9 @@ async fn patches_paginate_until_a_short_page() {
     assert!(seen[1].request_line.contains("page=2"));
 }
 
+/// A run's artifacts, as REST lists them.
+const ARTIFACTS: &str = r#"{"total_count":1,"artifacts":[{"id":31,"name":"report","size_in_bytes":2048,"expires_at":"2026-12-31T00:00:00Z","expired":false}]}"#;
+
 /// A run's jobs come a page at a time until there are as many as GitHub
 /// counts.
 #[tokio::test]
@@ -1025,6 +1028,7 @@ async fn a_runs_jobs_paginate() {
             .on("/runs/9 "),
         Reply::new(200, page(0..100)).on("jobs?per_page=100 "),
         Reply::new(200, page(100..102)).on("page=2"),
+        Reply::new(200, ARTIFACTS).on("/artifacts"),
     ])
     .await;
     let run = gh
@@ -1032,7 +1036,8 @@ async fn a_runs_jobs_paginate() {
         .await
         .unwrap();
     assert_eq!(run.jobs.len(), 102);
-    assert_eq!(seen.lock().unwrap().len(), 3);
+    assert_eq!(seen.lock().unwrap().len(), 4);
+    assert_eq!(run.artifacts.len(), 1);
 }
 
 /// An organization's discussions are found in whichever of its
@@ -1252,7 +1257,7 @@ async fn branches_page_by_name() {
 async fn checks_page_to_a_checks_newest_run() {
     let run = |name: &str, conclusion: &str, started: &str| {
         format!(
-            r#"{{"__typename":"CheckRun","name":"{name}","status":"COMPLETED","conclusion":"{conclusion}","startedAt":"{started}","completedAt":"{started}","title":null,"detailsUrl":null,"checkSuite":null}}"#
+            r#"{{"__typename":"CheckRun","name":"{name}","status":"COMPLETED","conclusion":"{conclusion}","startedAt":"{started}","completedAt":"{started}","title":null,"detailsUrl":null,"checkSuite":null,"annotations":null}}"#
         )
     };
     let page = |runs: &[String], next: Option<&str>| {
@@ -1974,6 +1979,7 @@ async fn a_runs_jobs_past_the_cap_are_counted() {
         Reply::new(200, r#"{"id":9,"run_number":1,"event":"push","head_sha":"abc","status":"completed","conclusion":"success"}"#)
             .on("/runs/9 "),
         Reply::new(200, page(base..base + 100)).on("jobs?per_page=100 "),
+        Reply::new(200, ARTIFACTS).on("/artifacts"),
     ];
     for n in 2..=11u64 {
         let on: &'static str = Box::leak(format!("&page={n} ").into_boxed_str());
@@ -3269,4 +3275,89 @@ async fn subscriptions_are_read_and_set() {
     assert!(seen[2].query().contains("updateSubscription"));
     assert_eq!(seen[2].json()["variables"]["id"], "PR_1");
     assert_eq!(seen[2].json()["variables"]["state"], "IGNORED");
+}
+
+/// Running a workflow by hand posts its branch and inputs, and asks for
+/// the run it starts; a server that doesn't say (204) started one anyway.
+#[tokio::test]
+async fn a_workflow_dispatch_posts_its_inputs_and_reads_the_run() {
+    let (gh, seen) = github(vec![
+        Reply::new(
+            200,
+            r#"{"workflow_run_id":55,"run_url":"u","html_url":"h"}"#,
+        ),
+        Reply::new(204, ""),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let inputs = [("outcome".to_owned(), "pass".to_owned())];
+    let run = gh.dispatch(&repo, "ci.yml", "main", &inputs).await.unwrap();
+    assert_eq!(run, Some(55));
+    assert_eq!(
+        gh.dispatch(&repo, "ci.yml", "main", &[]).await.unwrap(),
+        None
+    );
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("POST /repos/o/r/actions/workflows/ci.yml/dispatches "),
+        "{}",
+        seen[0].request_line
+    );
+    let body = seen[0].json();
+    assert_eq!(body["ref"], "main");
+    assert_eq!(body["inputs"]["outcome"], "pass");
+    assert_eq!(body["return_run_details"], true);
+}
+
+/// An artifact is saved where asked, and a file already there is kept
+/// unless replacing it was asked for.
+#[tokio::test]
+async fn an_artifact_is_saved_and_never_over_a_file_unasked() {
+    let (gh, seen) = github(vec![Reply::new(200, "zip bytes"), Reply::new(200, "newer")]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("report.zip");
+    let repo = RepoId::new("o", "r");
+    let size = gh.download_artifact(&repo, 31, &dest, false).await.unwrap();
+    assert_eq!(size, 9);
+    assert_eq!(std::fs::read_to_string(&dest).unwrap(), "zip bytes");
+    assert!(gh.download_artifact(&repo, 31, &dest, false).await.is_err());
+    assert_eq!(std::fs::read_to_string(&dest).unwrap(), "zip bytes");
+    assert!(
+        seen.lock().unwrap()[0]
+            .request_line
+            .starts_with("GET /repos/o/r/actions/artifacts/31/zip ")
+    );
+}
+
+/// A finished job's annotations come with it, worst first; a file's link
+/// opens its lines, one about the run has none.
+#[tokio::test]
+async fn a_jobs_annotations_come_with_it() {
+    let job = r#"{"id":2,"run_id":9,"name":"test","status":"completed","conclusion":"failure","run_attempt":1,"steps":[]}"#;
+    let run = r#"{"id":9,"run_number":1,"event":"push","head_sha":"abc","status":"completed","conclusion":"failure","run_attempt":1}"#;
+    let annotations = r#"[
+        {"path":".github","blob_href":"https://github.com/o/r/blob/abc/.github","start_line":1,"end_line":1,"annotation_level":"warning","title":"","message":"Node 20"},
+        {"path":"src/a.rs","blob_href":"https://github.com/o/r/blob/abc/src/a.rs","start_line":3,"end_line":4,"annotation_level":"failure","title":"t","message":"boom"}
+    ]"#;
+    let (gh, _) = github(vec![
+        Reply::new(200, job),
+        Reply::new(200, run),
+        Reply::new(200, r#"{"output":{"annotations_count":2}}"#),
+        Reply::new(200, annotations),
+    ])
+    .await;
+    let job = gh.job(&RepoId::new("o", "r"), 2).await.unwrap();
+    let a = &job.annotations;
+    assert_eq!(a.len(), 2);
+    assert_eq!(a[0].place(), "src/a.rs:3");
+    assert_eq!(
+        a[0].url.as_deref(),
+        Some("https://github.com/o/r/blob/abc/src/a.rs#L3-L4")
+    );
+    assert_eq!(
+        (a[1].place().as_str(), a[1].url.as_deref()),
+        ("the run", None)
+    );
 }

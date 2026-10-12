@@ -738,6 +738,70 @@ impl GitHub {
         Ok(serde_json::from_str(&response.body)?)
     }
 
+    /// [`Self::rest_write`], for a change GitHub answers with what it
+    /// made: its answer (empty for 204).
+    pub(crate) async fn rest_write_answer(
+        &self,
+        method: http::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<String, ApiError> {
+        let response = (self.send(&Request::Write { method, path, body })).await?;
+        check_status(&response, path.strip_prefix("/repos/").unwrap_or(path))?;
+        Ok(response.body)
+    }
+
+    /// Saves what a REST path answers (following GitHub's redirect to its
+    /// storage, without the token) to `dest`, as it arrives, through a
+    /// temporary file beside it: an existing `dest` is replaced only if
+    /// `replace`. Its size, in bytes.
+    pub(crate) async fn download(
+        &self,
+        path: &str,
+        dest: &std::path::Path,
+        replace: bool,
+    ) -> Result<u64, ApiError> {
+        let failed =
+            |e: &dyn std::fmt::Display| ApiError::Network(format!("{}: {e}", dest.display()));
+        let client = self.client().await?;
+        let mut response = client
+            .get(format!("{}{path}", self.http.rest))
+            .send()
+            .await
+            .map_err(|e| ApiError::Network(e.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            let headers = HeaderMap::new();
+            let answer = Response {
+                status,
+                headers,
+                body,
+            };
+            check_status(&answer, path.strip_prefix("/repos/").unwrap_or(path))?;
+            return Err(ApiError::Network(format!("{path}: {status}")));
+        }
+        let dir = dest.parent().filter(|d| !d.as_os_str().is_empty());
+        let dir = dir.unwrap_or_else(|| std::path::Path::new("."));
+        let mut part = tempfile::NamedTempFile::new_in(dir).map_err(|e| failed(&e))?;
+        let mut size = 0u64;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| ApiError::Network(e.to_string()))?
+        {
+            std::io::Write::write_all(&mut part, &chunk).map_err(|e| failed(&e))?;
+            size += chunk.len() as u64;
+        }
+        let kept = if replace {
+            part.persist(dest).map(drop)
+        } else {
+            part.persist_noclobber(dest).map(drop)
+        };
+        kept.map_err(|e| failed(&e.error))?;
+        Ok(size)
+    }
+
     /// GETs a REST path and decodes its JSON.
     async fn rest_json<T: DeserializeOwned>(
         &self,
@@ -2113,10 +2177,12 @@ impl GitHub {
             Ok(results(page, jobs))
         };
         let what = format!("run {run}'s jobs");
-        let jobs = self
-            .more_pages(what, results(1, jobs?), PAGES, page)
-            .await?;
-        let run = wire?.into_run(jobs);
+        let (jobs, artifacts) = tokio::join!(
+            self.more_pages(what, results(1, jobs?), PAGES, page),
+            self.artifacts(repo, run)
+        );
+        let mut run = wire?.into_run(jobs?);
+        run.artifacts = artifacts?;
         Ok(self
             .kept(&browse::keys::run(repo, run.id, attempt), run)
             .await)
@@ -2145,7 +2211,12 @@ impl GitHub {
         } else {
             None
         };
-        let job = wire.into_job(run.into_job_run(rerun));
+        let mut job = wire.into_job(run.into_job_run(rerun));
+        // A running job's annotations come with its steps' ends: asked once
+        // it's done.
+        if job.outcome != browse::CheckOutcome::Pending {
+            job.annotations = self.job_annotations(repo, job.id).await?;
+        }
         Ok(self.kept(&browse::keys::job(repo, job.id), job).await)
     }
 

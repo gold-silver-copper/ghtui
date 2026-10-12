@@ -134,6 +134,7 @@ impl State {
         out.extend(crate::edit::doables(self));
         out.extend(crate::create::checkout_doable(self));
         out.extend(crate::writes::change_doables(self));
+        crate::actions::doables(self, &mut out);
         let go = |action, label: &str, short| doable("Go", action, label, short);
         out.push(go(
             Action::SearchGithub,
@@ -651,5 +652,6 @@ pub(super) fn describe(link: &Link) -> String {
         Link::Section(_) => "Open the section's list".into(),
         Link::Form(link) => crate::create::describe(link).into(),
         Link::Write(link) => crate::writes::describe(link).into(),
+        Link::Artifact { .. } | Link::Dispatch(_) => crate::actions::describe(link).into(),
     }
 }

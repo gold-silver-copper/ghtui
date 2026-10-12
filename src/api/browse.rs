@@ -64,6 +64,9 @@ pub struct CheckItem {
     pub summary: Option<String>,
     /// Its details page (logs, re-runs).
     pub url: Option<String>,
+    /// What a check run says about lines of code, worst first.
+    #[serde(default)]
+    pub annotations: Capped<crate::api::actions::Annotation>,
 }
 
 /// The checks on a commit.
@@ -1444,6 +1447,8 @@ pub struct WireCheckRun {
     pub title: Option<String>,
     pub details_url: Option<Uri>,
     pub check_suite: Option<WireSuite>,
+    #[arguments(first: 50)]
+    pub annotations: Option<crate::api::actions::WireAnnotations>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -1786,7 +1791,7 @@ mod tests {
         let run = |name: &str, title: &str| {
             serde_json::json!({"__typename": "CheckRun", "name": name, "status": "COMPLETED",
                 "conclusion": "SUCCESS", "startedAt": null, "completedAt": null, "title": title,
-                "detailsUrl": null, "checkSuite": null})
+                "detailsUrl": null, "checkSuite": null, "annotations": null})
         };
         let commit: ChecksCommit = serde_json::from_value(serde_json::json!({
             "oid": "abc",
@@ -2011,6 +2016,7 @@ mod tests {
             completed_at: None,
             summary: None,
             url: None,
+            annotations: Capped::default(),
         }
     }
 
@@ -2121,6 +2127,13 @@ impl WireCheckRun {
             completed_at: self.completed_at.map(|d| d.0),
             summary: self.title.filter(|t| !t.trim().is_empty()),
             url: self.details_url.map(|u| u.0),
+            annotations: (self.annotations)
+                .map(|a| {
+                    let a = a.into_capped();
+                    let total = a.total();
+                    Capped::new(crate::api::actions::sorted(a.items), total)
+                })
+                .unwrap_or_default(),
         }
     }
 }
@@ -2140,6 +2153,7 @@ impl WireStatusContext {
             completed_at: None,
             summary: self.description.filter(|d| !d.trim().is_empty()),
             url: self.target_url.map(|u| u.0),
+            annotations: Capped::default(),
         }
     }
 }
@@ -2168,6 +2182,9 @@ pub struct WorkflowRun {
     /// The workflow file, `.github/workflows/ci.yml`.
     pub path: String,
     pub jobs: Capped<JobSummary>,
+    /// What it made to keep.
+    #[serde(default)]
+    pub artifacts: Capped<crate::api::actions::Artifact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2264,6 +2281,9 @@ pub struct Job {
     pub attempt: u64,
     /// Its run, as it is now: a job can end while its run goes on.
     pub run: JobRun,
+    /// What it says about lines of code, worst first.
+    #[serde(default)]
+    pub annotations: Capped<crate::api::actions::Annotation>,
 }
 
 /// The run a job is in.
@@ -2698,6 +2718,7 @@ impl rest_actions::Run {
             started_at: self.run_started_at.or(self.created_at),
             updated_at: self.updated_at,
             path: self.path,
+            artifacts: Capped::default(),
             jobs: jobs.map(|j| JobSummary {
                 outcome: CheckOutcome::of(j.status, j.conclusion),
                 id: j.id,
@@ -2748,6 +2769,7 @@ impl rest_actions::Job {
             outcome: self.outcome(),
             attempt: self.run_attempt.unwrap_or(1),
             run,
+            annotations: Capped::default(),
             id: self.id,
             run_id: self.run_id,
             name: self.name,

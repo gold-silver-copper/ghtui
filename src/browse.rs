@@ -447,6 +447,7 @@ pub fn needs(route: &Route) -> Vec<Need> {
             .chain([Need::Data(K::Workflow(repo.clone(), file.clone()))])
             .chain(paged(route).map(Need::Data))
             .collect(),
+        Route::Dispatch { repo, file } => crate::actions::needs(repo, file),
         Route::CommitChecks { repo, oid } => vec![
             header(repo),
             Need::Data(K::Commit(repo.clone(), oid.clone())),
@@ -714,6 +715,7 @@ impl State {
             | Route::NewGist
             | Route::EditGist { .. }
             | Route::WikiEdit { .. }
+            | Route::Dispatch { .. }
             | Route::ProjectItem { .. }
             | Route::Pr {
                 tab: PrTab::Review, ..
@@ -1047,6 +1049,7 @@ impl State {
                 let wf = f.get(&DataKey::Workflow(repo.clone(), file.clone()));
                 pages::workflow(&mut page, repo, wf, f.paged(route), now);
             }
+            Route::Dispatch { repo, file } => crate::actions::build(self, &mut page, repo, file),
             Route::CommitChecks { repo, oid } => {
                 let checks = f.get(&DataKey::CommitChecks(repo.clone(), oid.clone()));
                 pages::commit_checks(&mut page, checks, now);

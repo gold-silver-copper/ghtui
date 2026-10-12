@@ -123,6 +123,8 @@ pub enum Msg {
     Create(crate::create::Done),
     /// Releases, gists, wiki pages and subscriptions.
     Write(crate::writes::Done),
+    /// An artifact saved, a workflow run by hand.
+    Actions(crate::actions::Done),
 }
 
 /// Why background work failed. Shows as its message with its causes
@@ -274,6 +276,8 @@ pub enum Api {
         pr: PrRef,
         asks: Vec<crate::live::Ask>,
     },
+    /// Saving an artifact, running a workflow by hand.
+    Actions(crate::actions::Work),
     /// Whether another watched page changed, asked with ETags.
     Watch {
         what: crate::live::page::Watched,
@@ -508,6 +512,8 @@ pub struct State {
     /// Releases, gists and wiki pages being written, and the change one
     /// waits to see.
     pub writing: crate::writes::Writing,
+    /// Workflows being run by hand: their forms.
+    pub dispatching: crate::actions::Dispatching,
     pub quit: bool,
 }
 
@@ -557,6 +563,7 @@ impl State {
             mentionable: HashMap::new(),
             creating: crate::create::Creating::default(),
             writing: crate::writes::Writing::default(),
+            dispatching: crate::actions::Dispatching::default(),
             quit: false,
         };
         state.sync_page();

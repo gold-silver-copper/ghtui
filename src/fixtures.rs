@@ -419,6 +419,10 @@ pub fn checks() -> Checks {
             url: Some(format!(
                 "https://github.com/gold-silver-copper/ghtui/actions/runs/7/job/{job}"
             )),
+            annotations: match outcome {
+                CheckOutcome::Failure => vec![check_annotation()].into(),
+                _ => Default::default(),
+            },
         }
     };
     let mut items = vec![
@@ -464,6 +468,7 @@ pub fn checks() -> Checks {
         completed_at: None,
         summary: Some("92.31% of diff hit (target 80.00%)".into()),
         url: Some("https://app.codecov.io/gh/gold-silver-copper/ghtui/pull/12".into()),
+        annotations: Default::default(),
     });
     Checks {
         oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
@@ -1160,6 +1165,29 @@ pub fn workflow_run() -> WorkflowRun {
             job(3, "test (macos)", CheckOutcome::Pending, None),
         ]
         .into(),
+        artifacts: vec![crate::api::actions::Artifact {
+            id: 31,
+            name: "coverage-report".into(),
+            size: 1_572_864,
+            expires_at: Some("2026-12-31T12:00:00Z".into()),
+            expired: false,
+        }]
+        .into(),
+    }
+}
+
+/// A failing test's annotation, on a line of a file.
+pub fn check_annotation() -> crate::api::actions::Annotation {
+    crate::api::actions::Annotation {
+        path: Some("src/theme.rs".into()),
+        start_line: 3,
+        end_line: 3,
+        level: crate::api::actions::Level::Failure,
+        title: "heat_levels_stay_apart".into(),
+        message: "assertion failed: contrast(a, b) > 1.5".into(),
+        url: Some(
+            "https://github.com/gold-silver-copper/ghtui/blob/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/src/theme.rs#L3".into(),
+        ),
     }
 }
 
@@ -1183,6 +1211,7 @@ pub fn job() -> (Job, crate::api::browse::JobLog) {
             attempt: 1,
             rerun: None,
         },
+        annotations: vec![check_annotation()].into(),
         name: "test (ubuntu)".into(),
         outcome: CheckOutcome::Failure,
         started_at: Some("2026-10-03T12:00:00Z".into()),

@@ -55,6 +55,13 @@ pub enum Link {
     Form(FormLink),
     /// One of a release's, a gist's or a wiki page's form's rows.
     Write(WriteLink),
+    /// A run's artifact, by its ID: opening it saves it.
+    Artifact {
+        id: u64,
+        name: String,
+    },
+    /// One of the rows of the form that runs a workflow by hand.
+    Dispatch(DispatchLink),
 }
 
 /// What a row of a release's, a gist's or a wiki page's form does
@@ -77,6 +84,17 @@ pub enum WriteLink {
     Remove(usize),
     AddFile,
     Save,
+}
+
+/// What a row of the form that runs a workflow by hand does.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DispatchLink {
+    /// Choose the branch it runs on.
+    Ref,
+    /// Set this input.
+    Input(String),
+    /// Run it.
+    Run,
 }
 
 /// What a row of a new issue's or pull request's form does.

@@ -463,6 +463,7 @@ says where it works.
 | `,V`    | New release |
 | `,G`    | New gist |
 | `,W`    | New wiki page |
+| `,E`    | Run the workflow by hand |
 | `B`     | Switch branches or tags |
 | `i`     | Follow a link by its letters |
 | `I`     | Follow a link, in the browser |

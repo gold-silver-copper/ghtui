@@ -1,6 +1,8 @@
 //! Checks, and Actions: workflows, runs, jobs and their logs.
 
 use super::*;
+use crate::api::actions::{Annotation, Artifact, Input, InputKind, Level};
+use crate::ui::page::DispatchLink;
 
 pub(super) fn outcome_mark(o: CheckOutcome) -> (&'static str, Role) {
     match o {
@@ -97,6 +99,64 @@ pub(super) fn check_row(page: &mut Page, check: &CheckItem, now: u64) {
     match &check.url {
         Some(url) => item(page, url.clone(), |page, link| row(page, Some(link))),
         None => row(page, None),
+    }
+    annotation_rows(page, &check.annotations, check.url.as_deref(), 2);
+}
+
+/// How many of a check's annotations a list of checks shows; its own
+/// page (a job's) shows all it has.
+const CHECK_ANNOTATIONS: usize = 5;
+
+/// A check's annotations, worst first, each a row that opens the file at
+/// its lines (one about the run opens `run`, the check's page). Under a
+/// check in a list (`indent` > 0), only the first few.
+pub(super) fn annotation_rows(
+    page: &mut Page,
+    list: &Capped<Annotation>,
+    run: Option<&str>,
+    indent: u16,
+) {
+    let shown = if indent > 0 {
+        CHECK_ANNOTATIONS
+    } else {
+        usize::MAX
+    };
+    for a in list.iter().take(shown) {
+        let (mark, role) = match a.level {
+            Level::Failure => ("✗", Role::Error),
+            Level::Warning => ("!", Role::Accent),
+            Level::Notice => ("i", Role::Meta),
+        };
+        let row = |page: &mut Page, link: Option<u32>| {
+            let place = match link {
+                Some(link) => Seg::linked(a.place(), Role::Link, link),
+                None => Seg::new(a.place(), Role::Meta),
+            };
+            let mut segs = vec![Seg::new(format!("{mark} "), role), place];
+            if !a.title.is_empty() {
+                segs.push(Seg::new(format!("  {}", a.title), Role::Strong));
+            }
+            page.box_line(segs, Vec::new(), indent);
+            let message = a.message.lines().next().unwrap_or_default();
+            page.box_line(
+                vec![Seg::new(message.to_owned(), Role::Body)],
+                Vec::new(),
+                indent + 2,
+            );
+        };
+        match a.url.as_deref().or(run) {
+            Some(url) => item(page, url.to_owned(), |page, link| row(page, Some(link))),
+            None => row(page, None),
+        }
+    }
+    let more = list.total().saturating_sub(list.len().min(shown) as u64);
+    if more > 0 {
+        let text = format!("… {more} more {}", noun(more, "annotation"));
+        let segs = match run {
+            Some(url) => vec![link_seg(page, text, url.to_owned(), Role::Link)],
+            None => vec![Seg::new(text, Role::Meta)],
+        };
+        page.box_line(segs, Vec::new(), indent);
     }
 }
 
@@ -201,6 +261,11 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
     } else {
         "No jobs."
     };
+    // A failure is a key away: the page opens on the first failed job.
+    let failed = jobs.iter().position(|j| j.outcome == CheckOutcome::Failure);
+    if failed.is_some() {
+        page.selects = Some(page.items.len());
+    }
     list_box(page, title, Vec::new(), &jobs, none, |page, job| {
         let target = format!("{}/actions/runs/{}/job/{}", url::repo(repo), run.id, job.id);
         item(page, target, |page, link| {
@@ -215,6 +280,44 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
             let segs = vec![
                 Seg::new(format!("{mark} "), role),
                 Seg::linked(job.name.clone(), Role::Strong, link),
+            ];
+            page.box_line(segs, right, 0);
+        });
+    });
+    artifacts(page, &run.artifacts, now);
+}
+
+/// A run's artifacts: each one's size and when it expires; opening one
+/// saves it.
+fn artifacts(page: &mut Page, list: &Capped<Artifact>, now: u64) {
+    if list.is_empty() {
+        return;
+    }
+    page.blank();
+    let title = vec![Seg::new(
+        format!("Artifacts  {}", count_of(list)),
+        Role::Strong,
+    )];
+    let right = vec![Seg::new("↵ saves one", Role::Meta)];
+    list_box(page, title, right, list, "", |page, a| {
+        let when = match (&a.expires_at, a.expired) {
+            (_, true) => "expired".to_owned(),
+            (Some(at), false) => format!("expires {}", time::until_iso(at, now)),
+            (None, false) => String::new(),
+        };
+        let right = vec![Seg::new(
+            format!("{}  {when}", crate::ui::text::size(a.size)),
+            Role::Meta,
+        )];
+        let target = Link::Artifact {
+            id: a.id,
+            name: a.name.clone(),
+        };
+        item(page, target, |page, link| {
+            let role = if a.expired { Role::Meta } else { Role::Strong };
+            let segs = vec![
+                Seg::new("▤ ", Role::Meta),
+                Seg::linked(a.name.clone(), role, link),
             ];
             page.box_line(segs, right, 0);
         });
@@ -408,6 +511,16 @@ pub fn job(
     }
     page.wrapped(meta, 0, Frame::None);
     page.blank();
+    if !job.annotations.is_empty() {
+        let title = vec![Seg::new(
+            format!("Annotations  {}", count_of(&job.annotations)),
+            Role::Strong,
+        )];
+        page.box_top(title, Vec::new());
+        annotation_rows(page, &job.annotations, None, 0);
+        page.box_bottom();
+        page.blank();
+    }
     filter_field(page, at.query, at.keys, "search");
     page.blank();
     #[expect(
@@ -703,6 +816,126 @@ pub(super) fn run_list(
     });
 }
 
+/// The form that runs a workflow by hand, as GitHub's "Run workflow"
+/// menu has it.
+pub struct DispatchView<'a> {
+    pub name: &'a str,
+    pub path: &'a str,
+    /// The branch it runs on.
+    pub git_ref: &'a str,
+    /// Its inputs, or why there are none to show.
+    pub inputs: Result<&'a [Input], String>,
+    /// The values chosen, by input.
+    pub values: &'a std::collections::HashMap<String, String>,
+    pub sending: bool,
+    pub error: Option<&'a str>,
+    /// The key that runs it.
+    pub run_key: &'a str,
+}
+
+pub fn dispatch_form(page: &mut Page, v: &DispatchView<'_>) {
+    page.wrapped(
+        vec![
+            Seg::new("▶ ", Role::Accent),
+            Seg::new(format!("Run {}", v.name), Role::Title),
+        ],
+        0,
+        Frame::None,
+    );
+    page.wrapped(
+        vec![Seg::new(v.path.to_owned(), Role::Code)],
+        0,
+        Frame::None,
+    );
+    page.blank();
+    page.box_top(
+        vec![Seg::new("Use workflow from", Role::Strong)],
+        Vec::new(),
+    );
+    item(page, Link::Dispatch(DispatchLink::Ref), |page, link| {
+        let segs = vec![
+            Seg::new("Branch  ", Role::Meta),
+            Seg::linked(format!("{} ▾", v.git_ref), Role::Code, link),
+        ];
+        page.box_line(segs, Vec::new(), 0);
+    });
+    page.box_bottom();
+    page.blank();
+    let inputs = match &v.inputs {
+        Ok(inputs) => *inputs,
+        Err(why) => {
+            page.wrapped(vec![Seg::new(why.clone(), Role::Meta)], 0, Frame::None);
+            return;
+        }
+    };
+    if !inputs.is_empty() {
+        let title = vec![Seg::new(format!("Inputs  {}", inputs.len()), Role::Strong)];
+        let right = vec![Seg::new("↵ sets one", Role::Meta)];
+        page.box_top(title, right);
+        for (n, input) in inputs.iter().enumerate() {
+            if n > 0 {
+                page.box_rule();
+            }
+            let value = v
+                .values
+                .get(&input.name)
+                .cloned()
+                .unwrap_or_else(|| input.start());
+            item(
+                page,
+                Link::Dispatch(DispatchLink::Input(input.name.clone())),
+                |page, link| {
+                    let mut segs = vec![Seg::linked(input.name.clone(), Role::Strong, link)];
+                    if input.required {
+                        segs.push(Seg::new(" *", Role::Error));
+                    }
+                    let shown = match input.kind {
+                        InputKind::Choice(_) => format!("{value} ▾"),
+                        InputKind::Boolean => {
+                            if value == "true" {
+                                "☑ true".to_owned()
+                            } else {
+                                "☐ false".to_owned()
+                            }
+                        }
+                        InputKind::Text if value.is_empty() => "(empty)".to_owned(),
+                        InputKind::Text => format!("“{value}”"),
+                    };
+                    page.box_line(segs, vec![Seg::new(shown, Role::Code)], 0);
+                    if !input.description.is_empty() {
+                        let text = Seg::new(input.description.clone(), Role::Meta);
+                        page.box_line(vec![text], Vec::new(), 2);
+                    }
+                },
+            );
+        }
+        page.box_bottom();
+        page.blank();
+    }
+    if let Some(error) = v.error {
+        page.wrapped(
+            vec![Seg::new(error.to_owned(), Role::Error)],
+            0,
+            Frame::None,
+        );
+    }
+    item(page, Link::Dispatch(DispatchLink::Run), |page, link| {
+        let label = if v.sending {
+            "Starting the run…"
+        } else {
+            "▶ Run workflow"
+        };
+        let segs = vec![
+            Seg::linked(label, Role::Link, link),
+            Seg::new(
+                format!("   ↵ or {} runs it on {}", v.run_key, v.git_ref),
+                Role::Meta,
+            ),
+        ];
+        page.line(segs);
+    });
+}
+
 /// A commit's checks.
 pub fn commit_checks(page: &mut Page, c: Fetched<'_, Checks>, now: u64) {
     checks(page, c, now);
@@ -739,6 +972,7 @@ mod tests {
             run_id: 1,
             attempt: 1,
             run: finished_run(),
+            annotations: Default::default(),
             name: String::new(),
             outcome: CheckOutcome::Success,
             started_at: None,
@@ -831,6 +1065,7 @@ mod tests {
             run_id: 1,
             attempt: 1,
             run: finished_run(),
+            annotations: Default::default(),
             name: String::new(),
             outcome: CheckOutcome::Success,
             started_at: None,
@@ -874,6 +1109,7 @@ mod tests {
             run_id: 1,
             attempt: 1,
             run: finished_run(),
+            annotations: Default::default(),
             name: String::new(),
             outcome: CheckOutcome::Success,
             started_at: None,
@@ -923,6 +1159,7 @@ mod tests {
             updated_at: None,
             path: ".github/workflows/ci.yml".into(),
             jobs: Capped::new(vec![job], 51),
+            artifacts: Capped::default(),
         };
         let mut page = Page::new(100);
         workflow_run(&mut page, &RepoId::new("o", "r"), &run, 0);
@@ -954,6 +1191,7 @@ mod tests {
             run_id: 1,
             attempt: 1,
             run: finished_run(),
+            annotations: Default::default(),
             name: String::new(),
             outcome,
             started_at: None,
@@ -1134,6 +1372,7 @@ mod tests {
             run_id: 1,
             attempt: 1,
             run: finished_run(),
+            annotations: Default::default(),
             name: String::new(),
             outcome: CheckOutcome::Success,
             started_at: None,
