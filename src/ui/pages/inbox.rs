@@ -4,13 +4,9 @@ use super::*;
 
 /// Your notifications, as GitHub's inbox lists them: what each is about,
 /// why you got it and when, the unread ones marked. Words the inbox can't
-/// be filtered by are said.
-pub fn notifications(
-    page: &mut Page,
-    query: &str,
-    list: Fetched<'_, Results<Notification>>,
-    cx: PageCtx<'_>,
-) {
+/// be filtered by are said, and so is how far a filter applied after
+/// fetching searched.
+pub fn notifications(page: &mut Page, query: &str, inbox: Fetched<'_, Inbox>, cx: PageCtx<'_>) {
     let PageCtx { icons, keys, now } = cx;
     filter_field(page, query, keys, "filter");
     let ignored = InboxFilter::parse(query).ignored;
@@ -23,9 +19,10 @@ pub fn notifications(
         page.wrapped(vec![Seg::new(text, Role::Meta)], 0, Frame::None);
     }
     page.blank();
-    let Some(l) = list.show(page, "your notifications") else {
+    let Some(inbox) = inbox.show(page, "your notifications") else {
         return;
     };
+    let l = &inbox.list;
     let shown = list_state(query);
     let mut title = Vec::new();
     for (state, label) in [("all", "All"), ("unread", "Unread"), ("read", "Read")] {
@@ -65,6 +62,16 @@ pub fn notifications(
             page.box_line(vec![Seg::new(meta, Role::Meta)], Vec::new(), 4);
         });
     });
+    // The filter applies after fetching, and the search stopped short.
+    if inbox.cut {
+        let text = format!(
+            "Searched {} notifications, {} match: Load more searches further.",
+            inbox.searched,
+            l.items.len()
+        );
+        page.blank();
+        page.wrapped(vec![Seg::new(text, Role::Meta)], 0, Frame::None);
+    }
 }
 
 /// What a notification is about, as an icon.

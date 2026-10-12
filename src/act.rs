@@ -8,12 +8,12 @@
 //! then follows GitHub ([`follow`]) until it shows the change.
 
 use crate::api::ApiError;
-use crate::api::browse::{CheckOutcome, IssueState, Job, PrState, Results, WorkflowRun};
+use crate::api::browse::{CheckOutcome, IssueState, Job, PrState, WorkflowRun};
 use crate::api::change::{Change, CloseReason, MergeMethod};
 use crate::api::model::{
     ChecksState, MergeState, PrDetail, PrRef, Readiness, RepoId, ReviewDecision,
 };
-use crate::api::notifications::Notification;
+use crate::api::notifications::Inbox;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::browse::{DataKey, Need};
@@ -22,10 +22,14 @@ use crate::nav;
 use crate::route::Route;
 use crate::state::{Api, Cmd, Overlay, Screen, State};
 
+mod inbox;
+
 /// The actions that change GitHub, as the menu lists them.
-pub const ACTIONS: [Action; 8] = [
+pub const ACTIONS: [Action; 10] = [
     Action::MarkRead,
     Action::MarkDone,
+    Action::MarkAllRead,
+    Action::MarkAllDone,
     Action::Merge,
     Action::Approve,
     Action::ReadyForReview,
@@ -171,8 +175,8 @@ fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
     }
 }
 
-/// What an action changes: a pull request, an issue, a run, a job or a
-/// notification's thread.
+/// What an action changes: a pull request, an issue, a run, a job, a
+/// notification's thread or what the inbox shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Subject {
     Pr(PrRef),
@@ -183,6 +187,10 @@ pub enum Subject {
     /// A thread, by its ID, in the inbox `query` lists.
     Thread {
         id: String,
+        query: String,
+    },
+    /// What the inbox `query` lists shows.
+    Inbox {
         query: String,
     },
 }
@@ -219,7 +227,7 @@ impl Subject {
                 step: None,
                 query: String::new(),
             },
-            Subject::Thread { query, .. } => Route::Notifications {
+            Subject::Thread { query, .. } | Subject::Inbox { query } => Route::Notifications {
                 query: query.clone(),
             },
         }
@@ -234,7 +242,9 @@ impl Subject {
                 Need::Data(DataKey::Run(repo.clone(), *run, *attempt))
             }
             Subject::Job(repo, _, job) => Need::Data(DataKey::Job(repo.clone(), *job)),
-            Subject::Thread { query, .. } => Need::Data(DataKey::Notifications(query.clone())),
+            Subject::Thread { query, .. } | Subject::Inbox { query } => {
+                Need::Data(DataKey::Notifications(query.clone()))
+            }
         }
     }
 
@@ -249,6 +259,7 @@ impl Subject {
             Subject::Issue(..) => action == A::Close,
             Subject::Run(..) | Subject::Job(..) => matches!(action, A::Rerun | A::Close),
             Subject::Thread { .. } => matches!(action, A::MarkRead | A::MarkDone),
+            Subject::Inbox { .. } => matches!(action, A::MarkAllRead | A::MarkAllDone),
         }
     }
 
@@ -259,6 +270,7 @@ impl Subject {
             Subject::Run(..) => "the run".to_owned(),
             Subject::Job(..) => "the job".to_owned(),
             Subject::Thread { .. } => "the notification".to_owned(),
+            Subject::Inbox { .. } => "your notifications".to_owned(),
         }
     }
 }
@@ -269,6 +281,13 @@ impl Subject {
 fn subject(state: &State, action: Action) -> Option<Subject> {
     if matches!(action, Action::MarkRead | Action::MarkDone) {
         return thread(state);
+    }
+    if matches!(action, Action::MarkAllRead | Action::MarkAllDone) {
+        let query = state.route().and_then(|r| match r {
+            Route::Notifications { query } => Some(query.clone()),
+            _ => None,
+        });
+        return query.map(|query| Subject::Inbox { query });
     }
     match state.screen() {
         Screen::Diff(d) => d.of.pr().map(|pr| Subject::Pr(pr.clone())),
@@ -293,8 +312,8 @@ fn thread(state: &State) -> Option<Subject> {
         return None;
     };
     let key = DataKey::Notifications(query.clone());
-    let list = state.picked::<Results<Notification>>(&key)?;
-    let n = list.items.get(p.selected?)?;
+    let inbox = state.picked::<Inbox>(&key)?;
+    let n = inbox.list.items.get(p.selected?)?;
     let url = p.selected_link().and_then(crate::ui::page::Link::url);
     (url == Some(n.url.as_str())).then(|| Subject::Thread {
         id: n.id.clone(),
@@ -306,6 +325,7 @@ fn thread(state: &State) -> Option<Subject> {
 fn elsewhere(action: Action) -> &'static str {
     match action {
         Action::MarkRead | Action::MarkDone => "That works on a notification in your inbox",
+        Action::MarkAllRead | Action::MarkAllDone => "That works in your inbox",
         Action::Close => {
             "Closing works on an issue, a pull request or a running workflow run (or its row)"
         }
@@ -438,8 +458,8 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
                 return Ok(Plan::Load(subject.need()));
             }
             let n = state
-                .picked::<Results<Notification>>(&key)
-                .and_then(|list| list.items.iter().find(|n| n.id == *id))
+                .picked::<Inbox>(&key)
+                .and_then(|inbox| inbox.list.items.iter().find(|n| n.id == *id))
                 .ok_or("It's no longer in your inbox")?;
             let thread = id.clone();
             match action {
@@ -447,6 +467,16 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
                 Action::MarkRead => Ok(Plan::Do(Change::MarkRead { thread })),
                 _ => Ok(Plan::Do(Change::MarkDone { thread })),
             }
+        }
+        Subject::Inbox { query } => {
+            let key = DataKey::Notifications(query.clone());
+            let Some(data) = loaded(state.data.get(&key), &name)? else {
+                return Ok(Plan::Load(subject.need()));
+            };
+            let crate::browse::Data::Notifications(list) = data else {
+                return Err("GitHub sent something else for your notifications".into());
+            };
+            inbox::plan(query, list, action)
         }
     }
 }
@@ -746,6 +776,8 @@ pub fn on_changed(
                 state.overlay = None;
             }
             state.info(done(change));
+            // The unread count follows, as the inbox does.
+            let mut cmds = Vec::from_iter(notifies(change).then_some(Cmd::Api(Api::FetchUnread)));
             match by {
                 By::Confirm(about) | By::Act(about) => {
                     state.awaiting = state.route().map(|route| Awaiting {
@@ -759,7 +791,8 @@ pub fn on_changed(
                 By::Reply(pr) => return vec![Cmd::Api(Api::FetchThreads(pr))],
                 By::Compose | By::Star => {}
             }
-            state.load_visible(false)
+            cmds.extend(state.load_visible(false));
+            cmds
         }
         Err(err) => {
             tracing::warn!(?change, %err, "a change to GitHub failed");
@@ -891,16 +924,21 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             Subject::Thread { query, .. },
         ) => {
             let key = DataKey::Notifications(query.clone());
-            let Some(list) = state.picked::<Results<Notification>>(&key) else {
+            let Some(inbox) = state.picked::<Inbox>(&key) else {
                 return Shown::No;
             };
             // Done, it leaves the inbox; read, it stays, read (or leaves
             // a list of the unread).
-            let row = list.items.iter().find(|n| n.id == *thread);
+            let row = inbox.list.items.iter().find(|n| n.id == *thread);
             yes(match change {
                 Change::MarkRead { .. } => row.is_none_or(|n| !n.unread),
                 _ => row.is_none(),
             })
+        }
+        (Change::MarkAllRead { .. } | Change::MarkEach { .. }, Subject::Inbox { query }) => {
+            let key = DataKey::Notifications(query.clone());
+            let shows = state.picked::<Inbox>(&key);
+            yes(shows.is_some_and(|i| inbox::shows(i, change)))
         }
         _ => Shown::Yes,
     }
@@ -930,6 +968,10 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
             Shown::Yes | Shown::There(_) => {
                 state.awaiting = None;
                 cmds.extend(state.ensure_route(&w.route, true));
+                // GitHub may count the unread later than it marks them.
+                if notifies(&w.change) {
+                    cmds.push(Cmd::Api(Api::FetchUnread));
+                }
             }
         }
     }
@@ -963,6 +1005,17 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     cmds
 }
 
+/// Whether a change is to your notifications.
+fn notifies(change: &Change) -> bool {
+    matches!(
+        change,
+        Change::MarkRead { .. }
+            | Change::MarkDone { .. }
+            | Change::MarkAllRead { .. }
+            | Change::MarkEach { .. }
+    )
+}
+
 /// What a change is doing while GitHub answers: "Merging".
 fn doing(change: &Change) -> &'static str {
     match change {
@@ -978,6 +1031,8 @@ fn doing(change: &Change) -> &'static str {
         Change::CancelRun { .. } => "Cancelling the run",
         Change::MarkRead { .. } => "Marking it read",
         Change::MarkDone { .. } => "Marking it done",
+        Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => "Marking them read",
+        Change::MarkEach { .. } => "Marking them done",
     }
 }
 
@@ -1009,8 +1064,15 @@ fn done(change: &Change) -> String {
         Change::Rerun { .. } => "Re-running the run".into(),
         Change::RerunJob { .. } => "Re-running the job".into(),
         Change::CancelRun { .. } => "Cancelling the run".into(),
-        Change::MarkRead { .. } => "Marked read".into(),
+        Change::MarkRead { .. } | Change::MarkAllRead { .. } => "Marked read".into(),
         Change::MarkDone { .. } => "Marked done".into(),
+        Change::MarkEach { threads, done } => {
+            let state = if *done { "done" } else { "read" };
+            match threads.len() {
+                1 => format!("Marked 1 notification {state}"),
+                n => format!("Marked {n} notifications {state}"),
+            }
+        }
     }
 }
 
@@ -1029,7 +1091,10 @@ pub fn needs(change: &Change) -> &'static str {
         Change::Rerun { .. } | Change::RerunJob { .. } | Change::CancelRun { .. } => {
             "Actions: write"
         }
-        Change::MarkRead { .. } | Change::MarkDone { .. } => "Notifications (classic tokens only)",
+        Change::MarkRead { .. }
+        | Change::MarkDone { .. }
+        | Change::MarkAllRead { .. }
+        | Change::MarkEach { .. } => "Notifications (classic tokens only)",
     }
 }
 
@@ -1050,6 +1115,8 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::CancelRun { .. } => "cancelling the run",
         Change::MarkRead { .. } => "marking it read",
         Change::MarkDone { .. } => "marking it done",
+        Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => "marking them read",
+        Change::MarkEach { .. } => "marking them done",
     };
     let reason = match err {
         ApiError::GraphQl(messages) => messages.join("; "),
@@ -1067,7 +1134,7 @@ fn failure(change: &Change, err: &ApiError) -> String {
     let mut text = format!("GitHub refused {what}: {reason}");
     match change {
         // Fine-grained tokens can't read notifications at all.
-        Change::MarkRead { .. } | Change::MarkDone { .. } if denied => text.push_str(
+        _ if denied && notifies(change) => text.push_str(
             ". Your token may lack the permission: notifications take a classic token with the notifications or repo scope",
         ),
         _ if denied => text.push_str(&format!(

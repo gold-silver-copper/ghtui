@@ -1979,25 +1979,27 @@ async fn a_runs_filter_becomes_rest_parameters() {
     );
 }
 
+/// A thread in REST's words, about pull request `id`.
+fn thread_json(id: u32, reason: &str, unread: bool) -> String {
+    format!(
+        r#"{{"id":"{id}","unread":{unread},"reason":"{reason}","updated_at":"2026-10-03T12:00:00Z",
+          "subject":{{"title":"T{id}","type":"PullRequest","url":"https://api.github.com/repos/o/r/pulls/{id}",
+                      "latest_comment_url":"https://api.github.com/repos/o/r/issues/comments/9"}},
+          "repository":{{"full_name":"o/r"}}}}"#
+    )
+}
+
 /// The inbox's filter asks REST in its own words: `repo:` is the
 /// repository's notifications, `is:unread` leaves out `all`,
 /// `reason:participating` is REST's own; reasons and `is:read` are kept
 /// here. A next page is what GitHub's `Link` says, even from the cache.
 #[tokio::test]
 async fn an_inbox_filter_becomes_rest_parameters() {
-    let thread = |id: u32, reason: &str, unread: bool| {
-        format!(
-            r#"{{"id":"{id}","unread":{unread},"reason":"{reason}","updated_at":"2026-10-03T12:00:00Z",
-              "subject":{{"title":"T{id}","type":"PullRequest","url":"https://api.github.com/repos/o/r/pulls/{id}",
-                          "latest_comment_url":"https://api.github.com/repos/o/r/issues/comments/9"}},
-              "repository":{{"full_name":"o/r"}}}}"#
-        )
-    };
     let body = format!(
         "[{},{},{}]",
-        thread(1, "mention", true),
-        thread(2, "review_requested", true),
-        thread(3, "mention", false)
+        thread_json(1, "mention", true),
+        thread_json(2, "review_requested", true),
+        thread_json(3, "mention", false)
     );
     let next = r#"<https://api.github.com/repos/o/r/notifications?page=3>; rel="next""#;
     let dir = tempfile::tempdir().unwrap();
@@ -2011,14 +2013,14 @@ async fn an_inbox_filter_becomes_rest_parameters() {
     ])
     .await;
     let gh = client(&base, store);
-    let query = "repo:o/r reason:mention is:unread";
+    let query = "repo:o/r is:unread";
     for _ in 0..2 {
         let inbox = gh.notifications(query, Some("2".into())).await.unwrap();
-        let ids: Vec<&str> = inbox.items.iter().map(|n| n.id.as_str()).collect();
-        assert_eq!(ids, ["1"]);
-        assert_eq!(inbox.next.as_deref(), Some("3"));
+        let ids: Vec<&str> = inbox.list.items.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids, ["1", "2"]);
+        assert_eq!(inbox.list.next.as_deref(), Some("3"));
         assert_eq!(
-            inbox.items[0].url,
+            inbox.list.items[0].url,
             "https://github.com/o/r/pull/1#issuecomment-9"
         );
     }
@@ -2026,8 +2028,8 @@ async fn an_inbox_filter_becomes_rest_parameters() {
         .notifications("is:read reason:participating", None)
         .await
         .unwrap();
-    let ids: Vec<&str> = inbox.items.iter().map(|n| n.id.as_str()).collect();
-    assert_eq!((ids, inbox.next), (vec!["3"], None));
+    let ids: Vec<&str> = inbox.list.items.iter().map(|n| n.id.as_str()).collect();
+    assert_eq!((ids, inbox.list.next), (vec!["3"], None));
     let lines: Vec<String> = (seen.lock().unwrap().iter())
         .map(|s| s.request_line.clone())
         .collect();
@@ -2039,6 +2041,151 @@ async fn an_inbox_filter_becomes_rest_parameters() {
         lines[2].starts_with("GET /notifications?all=true&participating=true&per_page=30&page=1 "),
         "{lines:?}"
     );
+}
+
+/// A reason is filtered here, so a page of what GitHub sends can hold
+/// few that match: pages are fetched until one fills (30), or the inbox
+/// ends, or ten have been searched, which the inbox says.
+#[tokio::test]
+async fn a_reason_filter_fetches_pages_until_one_fills() {
+    // 30 threads a page, `mentions` of them mentions.
+    let page = |n: u32, mentions: u32, last: bool| {
+        let threads: Vec<String> = (0..30)
+            .map(|i| {
+                let reason = if i < mentions {
+                    "mention"
+                } else {
+                    "subscribed"
+                };
+                thread_json(n * 100 + i, reason, true)
+            })
+            .collect();
+        let reply = Reply::new(200, format!("[{}]", threads.join(",")));
+        if last {
+            reply
+        } else {
+            reply.header(
+                "link",
+                r#"<https://api.github.com/notifications?page=9>; rel="next""#,
+            )
+        }
+    };
+    let (gh, seen) = github(vec![
+        page(1, 10, false),
+        page(2, 10, false),
+        page(3, 10, false),
+    ])
+    .await;
+    let inbox = gh.notifications("reason:mention", None).await.unwrap();
+    assert_eq!(inbox.list.items.len(), 30);
+    assert_eq!(inbox.list.next.as_deref(), Some("4"));
+    assert_eq!((inbox.searched, inbox.cut), (90, false));
+    let lines: Vec<String> = (seen.lock().unwrap().iter())
+        .map(|s| s.request_line.clone())
+        .collect();
+    assert!(
+        lines[2].starts_with("GET /notifications?all=true&per_page=30&page=3 "),
+        "{lines:?}"
+    );
+
+    // The inbox ends first.
+    let (gh, _) = github(vec![page(1, 2, false), page(2, 1, true)]).await;
+    let inbox = gh.notifications("reason:mention", None).await.unwrap();
+    assert_eq!(inbox.list.items.len(), 3);
+    assert_eq!((inbox.list.next, inbox.cut), (None, false));
+
+    // Ten pages searched, it stops, and says so; Load more goes on.
+    let (gh, seen) = github((1..=11).map(|n| page(n, 1, false)).collect()).await;
+    let inbox = gh.notifications("reason:mention", None).await.unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 10);
+    assert_eq!(inbox.list.items.len(), 10);
+    assert_eq!(inbox.list.next.as_deref(), Some("11"));
+    assert_eq!((inbox.searched, inbox.cut), (300, true));
+}
+
+/// The unread count is asked only if the inbox changed since GitHub's
+/// `Last-Modified`, so an unchanged one is a 304 (free against the rate
+/// limit), and polled as often as `X-Poll-Interval` asks.
+#[tokio::test]
+async fn the_unread_count_is_asked_if_modified_at_githubs_interval() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("cache.redb"));
+    let modified = "Sat, 10 Oct 2026 12:00:00 GMT";
+    let (base, seen) = serve(vec![
+        Reply::new(200, r#"[{"id":"1"},{"id":"2"}]"#)
+            .header("last-modified", modified)
+            .header("x-poll-interval", "120")
+            .header(
+                "link",
+                r#"<https://api.github.com/notifications?page=2>; rel="next""#,
+            ),
+        Reply::new(304, "").header("x-poll-interval", "90"),
+    ])
+    .await;
+    let gh = client(&base, store);
+    let unread = gh.unread().await.unwrap();
+    assert_eq!(
+        (unread.count, unread.more, unread.poll_secs),
+        (2, true, 120)
+    );
+    let unread = gh.unread().await.unwrap();
+    assert_eq!((unread.count, unread.more, unread.poll_secs), (2, true, 90));
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("GET /notifications?per_page=50 "),
+        "{}",
+        seen[0].request_line
+    );
+    assert_eq!(seen[0].header("if-modified-since"), None);
+    assert_eq!(seen[1].header("if-modified-since"), Some(modified));
+}
+
+/// Marking the inbox read is one request, up to the newest shown: the
+/// whole inbox's, or a repository's. Done is a request a thread, and a
+/// refusal partway says how far it got.
+#[tokio::test]
+async fn the_inbox_is_marked_read_at_once_and_done_thread_by_thread() {
+    use ghtui::api::change::Change;
+    let (gh, seen) = github(vec![
+        Reply::new(205, ""),
+        Reply::new(202, r#"{"message":"queued"}"#),
+        Reply::new(204, ""),
+        Reply::new(403, r#"{"message":"Forbidden"}"#),
+    ])
+    .await;
+    let at = "2026-10-03T12:00:00Z".to_owned();
+    for repo in [None, Some(RepoId::new("o", "r"))] {
+        let change = Change::MarkAllRead {
+            repo,
+            last_read_at: at.clone(),
+        };
+        gh.change(&change).await.unwrap();
+    }
+    let each = Change::MarkEach {
+        threads: vec!["7".into(), "8".into()],
+        done: true,
+    };
+    let err = gh.change(&each).await.unwrap_err();
+    assert!(err.to_string().contains("(after 1 of 2)"), "{err}");
+    let seen = seen.lock().unwrap();
+    let lines: Vec<&str> = seen.iter().map(|s| s.request_line.as_str()).collect();
+    assert!(lines[0].starts_with("PUT /notifications "), "{lines:?}");
+    assert!(
+        lines[1].starts_with("PUT /repos/o/r/notifications "),
+        "{lines:?}"
+    );
+    assert!(
+        lines[2].starts_with("DELETE /notifications/threads/7 "),
+        "{lines:?}"
+    );
+    assert!(
+        lines[3].starts_with("DELETE /notifications/threads/8 "),
+        "{lines:?}"
+    );
+    let body = serde_json::json!({ "last_read_at": at, "read": true });
+    assert_eq!(seen[0].json(), body);
 }
 
 /// Marking a thread read patches it; done deletes it.

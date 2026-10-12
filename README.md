@@ -25,7 +25,8 @@ ghtui is pre-release, but it's usable every day.
   submit a review.
 - **Acting** works from a page or from a row in a list: merge, approve,
   mark ready for review, update a branch, close or reopen, re-run or cancel
-  a workflow run, comment and star, and mark notifications read or done.
+  a workflow run, comment and star, and mark notifications read or done,
+  one at a time or all at once.
 
 Not there yet: projects, GitHub Enterprise Server, code navigation and
 structural diffs.
@@ -89,7 +90,10 @@ as on GitHub: what each thread is about, why you got it and when, the
 unread ones marked. `/` filters it as GitHub does (`is:unread`,
 `reason:review-requested`, `repo:owner/name`), `t` shows unread, read or
 all, and `↵` opens the thread at its latest comment. `,n` marks a thread
-read and `,d` marks it done.
+read and `,d` marks it done; `,N` and `,D` mark everything shown. A
+filter GitHub can't apply (a reason, `is:read`) searches further pages
+until a page fills. The header counts your unread notifications, kept
+fresh as often as GitHub asks; click or follow it to open the inbox.
 
 **Tabs** work like a browser's: `T` opens the selection in a new tab, `]b`
 and `[b` switch between them, and they come back next time you start.
@@ -174,8 +178,8 @@ says where it works.
   whitespace, `zs` split, `zf` the whole file, `zT` the file tree; `zc`
   `zo` `za` fold a thread or file, `zM` `zR` every file.
   In the file tree, `<` and `>` narrow and widen it.
-- `gn` opens your notifications (`,n` marks one read, `,d` done) and
-  `gr` a pull request's Review tab.
+- `gn` opens your notifications (`,n` marks one read, `,d` done, `,N`
+  and `,D` everything shown) and `gr` a pull request's Review tab.
 - In files, logs and the diff, `w` and `b` move a word cursor along the
   line: `*` and `#` search its word, down and up, and `gx` opens a web
   address under it. A job log's lines are rows, as a file's are.
@@ -267,6 +271,8 @@ says where it works.
 | `S`  | Change the sort |
 | `,n` | Mark the notification read |
 | `,d` | Mark the notification done |
+| `,N` | Mark everything shown read |
+| `,D` | Mark everything shown done |
 
 **In files** (`file:`)
 
@@ -400,7 +406,8 @@ token on a command line or in a config file.
 
 **Fast from the cache.** The first paint comes from a local cache (redb),
 then everything is refreshed in the background. REST requests revalidate
-with ETags, so unchanged data costs nothing against the rate limit.
+with ETags (and `Last-Modified`), so unchanged data costs nothing against
+the rate limit.
 
 **Colors from one seed.** Light and dark schemes are generated with
 Material 3's tonal palettes. Every foreground and background pair the UI
@@ -462,9 +469,11 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   account's pages show until they refresh.
 - Merging doesn't offer auto-merge or merge queues.
 - Notifications filtered by a reason (`reason:mention`) or by `is:read`
-  are filtered after fetching, as GitHub's API can't filter them: a page
-  can show few rows with "Load more" still offered. Fine-grained tokens
-  can't read notifications at all; a classic token can.
+  are filtered after fetching, as GitHub's API can't filter them: a load
+  searches up to 300 notifications for a page of matches, and says when
+  it stopped short. Marking done goes thread by thread, and only through
+  those loaded. Fine-grained tokens can't read notifications at all; a
+  classic token can.
 - A pull request's Review tab has no page on GitHub, so its link (`y`,
   `o`, a restored tab) is the conversation's.
 - `*` and `#` find the word as text, inside longer words too, not as a

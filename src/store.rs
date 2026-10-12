@@ -59,10 +59,17 @@ from_redb!(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HttpEntry {
     pub etag: String,
+    /// The `Last-Modified` header, sent back as `If-Modified-Since`.
+    #[serde(default)]
+    pub last_modified: Option<String>,
     /// The `Link` header: where a list's next page is.
     #[serde(default)]
     pub link: Option<String>,
     pub body: String,
+    /// How many seconds GitHub asks to wait before asking again
+    /// (`X-Poll-Interval`), from the last answer: not kept.
+    #[serde(skip)]
+    pub poll_interval: Option<u64>,
 }
 
 /// A cached value with the time it was stored.
@@ -309,8 +316,10 @@ mod tests {
 
         let entry = HttpEntry {
             etag: "W/\"abc\"".into(),
+            last_modified: None,
             link: None,
             body: "{}".into(),
+            poll_interval: None,
         };
         store.http_put("/user", &entry);
         assert_eq!(store.http_get("/user"), Some(entry));

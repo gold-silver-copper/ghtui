@@ -55,7 +55,7 @@ fn new_tab(icon: &'static str, label: &str, count: Option<u64>) -> PageTab {
 impl State {
     pub fn chrome(&self) -> Chrome {
         let mut c = self.screen_chrome();
-        // Right: review requests and you.
+        // Right: review requests, your unread notifications and you.
         // Review requests, once their search (Home's first section, unless
         // you changed it) is in.
         let requests = DataKey::Search(SearchKind::Pulls, crate::home::REVIEW_REQUESTS.into());
@@ -69,6 +69,12 @@ impl State {
                     query: crate::home::REVIEW_REQUESTS.into(),
                 }),
             ));
+        }
+        if let Some(unread) = self.unread_label() {
+            let inbox = Route::Notifications {
+                query: String::new(),
+            };
+            c.right.push((unread, Target::Page(inbox)));
         }
         if let Some(login) = &self.viewer {
             c.right

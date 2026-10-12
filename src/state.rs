@@ -40,6 +40,7 @@ use crate::tabs::Tab;
 mod diff;
 mod dispatch;
 mod fetch;
+mod unread;
 
 pub use dispatch::*;
 pub use fetch::*;
@@ -49,6 +50,8 @@ pub enum Msg {
     Key(KeyEvent),
     Resize(u16, u16),
     Viewer(Result<String, ApiError>),
+    /// How many notifications are unread.
+    Unread(Result<crate::api::notifications::Unread, ApiError>),
     Pr(PrRef, Box<Result<PrDetail, ApiError>>),
     /// Page data; with `cached_at` (when it was fetched), the cached copy
     /// shown while fetching.
@@ -171,6 +174,8 @@ pub enum Cmd {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Api {
     FetchViewer,
+    /// How many notifications are unread, answered by [`Msg::Unread`].
+    FetchUnread,
     FetchPr(PrRef),
     /// Fetch page data; with `cached`, first send what the cache has.
     Fetch {
@@ -278,6 +283,8 @@ pub enum Timer {
     Live,
     /// Home's sections, on screen, are fetched again when old.
     Home,
+    /// Poll the unread count, if this is still the latest poll.
+    Unread(u64),
 }
 
 /// Braille spinner frames.
@@ -381,6 +388,11 @@ pub struct State {
     pub data_gen: u64,
     pub diffs: HashMap<DiffOf, DiffState>,
     pub viewer: Option<String>,
+    /// How many notifications are unread, for the header.
+    pub unread: Option<crate::api::notifications::Unread>,
+    /// The latest poll of the unread count: an older poll's timer is
+    /// let go.
+    pub unread_poll: u64,
     pub rate_limits: RateLimits,
     pub overlay: Option<Overlay>,
     pub notices: Notices,
@@ -432,6 +444,8 @@ impl State {
             data_gen: 0,
             diffs: HashMap::new(),
             viewer: None,
+            unread: None,
+            unread_poll: 0,
             rate_limits: RateLimits::default(),
             overlay: None,
             notices: Notices::default(),

@@ -184,3 +184,67 @@ fn the_mouse_follows_links_switches_tabs_and_scrolls() {
     );
     assert_eq!(page(&state).scroll, before + 3);
 }
+
+/// The header counts your unread notifications as GitHub does, polled
+/// when GitHub asks (an older poll's timer lets go), and hidden when it
+/// can't be asked; clicked or followed by its letters, it opens the
+/// inbox.
+#[test]
+fn the_header_counts_the_unread_and_opens_the_inbox() {
+    use crate::api::notifications::Unread;
+    let mut state = with_repo();
+    let inbox = Route::Notifications {
+        query: String::new(),
+    };
+    let header =
+        |s: &State| -> Vec<String> { s.chrome().right.into_iter().map(|(t, _)| t).collect() };
+    let polled = |count, more, poll_secs| {
+        Msg::Unread(Ok(Unread {
+            count,
+            more,
+            poll_secs,
+        }))
+    };
+    let cmds = update(&mut state, polled(3, false, 60));
+    assert_eq!(cmds, vec![Cmd::Timer(Timer::Unread(1), 60_000)]);
+    assert!(header(&state).contains(&"● 3 unread".to_owned()));
+    let poll = vec![Cmd::Api(Api::FetchUnread)];
+    assert_eq!(update(&mut state, Msg::Timer(Timer::Unread(1))), poll);
+    // Asked again after a change: the earlier timer lets go.
+    let cmds = update(&mut state, polled(50, true, 120));
+    assert_eq!(cmds, vec![Cmd::Timer(Timer::Unread(2), 120_000)]);
+    assert!(update(&mut state, Msg::Timer(Timer::Unread(1))).is_empty());
+    assert!(header(&state).contains(&"● 50+ unread".to_owned()));
+
+    // Clicked.
+    let lay = state.layout();
+    let chrome = state.chrome();
+    let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
+    let rects = crate::ui::chrome::header_layout(lay.header, &crumbs, &header(&state)).right;
+    let _ = click(&mut state, rects[0].x + 1, rects[0].y);
+    assert_eq!(route(&state), inbox);
+
+    // Followed by its letters.
+    let _ = state.back();
+    press(&mut state, "i");
+    let Some(Overlay::Hints(hints)) = &state.overlay else {
+        panic!("no hints");
+    };
+    let label = (hints.labels.iter())
+        .find(|h| (h.x, h.y) == (rects[0].x, rects[0].y))
+        .map(|h| h.label.clone())
+        .unwrap();
+    press(&mut state, &label);
+    assert_eq!(route(&state), inbox);
+
+    // None unread, or a poll that failed: no count.
+    update(&mut state, polled(0, false, 60));
+    assert!(header(&state).is_empty(), "{:?}", header(&state));
+    update(&mut state, polled(2, false, 60));
+    let failed = Msg::Unread(Err(ApiError::Network("down".into())));
+    assert_eq!(
+        update(&mut state, failed),
+        vec![Cmd::Timer(Timer::Unread(5), 60_000)]
+    );
+    assert!(header(&state).is_empty());
+}

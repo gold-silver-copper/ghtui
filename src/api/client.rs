@@ -109,9 +109,10 @@ struct Response {
 }
 
 enum Request<'a> {
+    /// With the cached copy, answered 304 if it hasn't changed since.
     Get {
         path: &'a str,
-        etag: Option<&'a str>,
+        cached: Option<&'a HttpEntry>,
     },
     Post {
         path: &'a str,
@@ -119,8 +120,13 @@ enum Request<'a> {
         /// Safe to send twice: a query, not a mutation.
         idempotent: bool,
     },
-    /// A REST change without a body (a re-run, marking a thread read).
-    Write { method: http::Method, path: &'a str },
+    /// A REST change (a re-run, marking a thread read), with a JSON body
+    /// if it takes one.
+    Write {
+        method: http::Method,
+        path: &'a str,
+        body: Option<&'a serde_json::Value>,
+    },
 }
 
 impl Request<'_> {
@@ -329,12 +335,22 @@ impl GitHub {
             let last = attempt >= MAX_ATTEMPTS;
             let sent = std::time::Instant::now();
             let result = match request {
-                Request::Get { path, etag } => {
+                Request::Get { path, cached } => {
                     let mut get = client.get(format!("{}{path}", self.http.base_uri));
-                    if let Some(etag) = etag
-                        && let Ok(value) = HeaderValue::from_str(etag)
-                    {
-                        get = get.header(header::IF_NONE_MATCH, value);
+                    // Unchanged since the cached copy, GitHub answers 304,
+                    // which doesn't count against the rate limit.
+                    let validators = cached.iter().flat_map(|c| {
+                        [
+                            (header::IF_NONE_MATCH, Some(c.etag.as_str())),
+                            (header::IF_MODIFIED_SINCE, c.last_modified.as_deref()),
+                        ]
+                    });
+                    for (name, value) in validators {
+                        if let Some(value) = value.filter(|v| !v.is_empty())
+                            && let Ok(value) = HeaderValue::from_str(value)
+                        {
+                            get = get.header(name, value);
+                        }
                     }
                     get.send().await
                 }
@@ -342,9 +358,13 @@ impl GitHub {
                     let url = format!("{}{path}", self.http.base_uri);
                     client.post(url).json(body).send().await
                 }
-                Request::Write { method, path } => {
+                Request::Write { method, path, body } => {
                     let url = format!("{}{path}", self.http.base_uri);
-                    client.request(method.clone(), url).send().await
+                    let write = client.request(method.clone(), url);
+                    match body {
+                        Some(body) => write.json(body).send().await,
+                        None => write.send().await,
+                    }
                 }
             };
             // A mutation that may have reached GitHub is never sent again:
@@ -392,7 +412,7 @@ impl GitHub {
                 let (request, sent) = match request {
                     Request::Get { path, .. } => (format!("GET {path}"), None),
                     Request::Post { path, body, .. } => (format!("POST {path}"), Some(*body)),
-                    Request::Write { method, path } => (format!("{method} {path}"), None),
+                    Request::Write { method, path, body } => (format!("{method} {path}"), *body),
                 };
                 let link = headers
                     .get(header::LINK)
@@ -519,7 +539,7 @@ impl GitHub {
         let response = self
             .send(&Request::Get {
                 path: &path,
-                etag: None,
+                cached: None,
             })
             .await;
         let response = response.ok()?;
@@ -528,8 +548,9 @@ impl GitHub {
             .flatten()
     }
 
-    /// GETs a REST path, revalidating with the cached ETag. A 304 serves the
-    /// cached body (and doesn't count against the rate limit). `what` is
+    /// GETs a REST path, revalidating with the cached copy's `ETag` and
+    /// `Last-Modified`. A 304 serves the cached body (and doesn't count
+    /// against the rate limit). `what` is
     /// what's asked for, to name if it isn't there.
     pub async fn rest_get(
         &self,
@@ -540,7 +561,8 @@ impl GitHub {
     }
 
     /// [`Self::rest_get`], with the `Link` header that says where the next
-    /// page is (kept with the cached copy, for a 304).
+    /// page is (kept with the cached copy, for a 304), and how soon GitHub
+    /// asks to be asked again.
     async fn rest_fetch(
         &self,
         path: &str,
@@ -558,39 +580,46 @@ impl GitHub {
         let response = self
             .send(&Request::Get {
                 path,
-                etag: cached.as_ref().map(|c| c.etag.as_str()),
+                cached: cached.as_ref(),
             })
             .await?;
-        if response.status == StatusCode::NOT_MODIFIED
-            && let Some(cached) = cached
-        {
-            return Ok(cached);
-        }
-        check_status(&response, what)?;
-        let named = |name| {
+        let named = |name: &str| {
             let value = response.headers.get(name)?.to_str().ok();
             value.map(str::to_owned)
         };
+        let poll_interval = named("x-poll-interval").and_then(|s| s.trim().parse().ok());
+        if response.status == StatusCode::NOT_MODIFIED
+            && let Some(cached) = cached
+        {
+            return Ok(HttpEntry {
+                poll_interval,
+                ..cached
+            });
+        }
+        check_status(&response, what)?;
         let entry = HttpEntry {
-            etag: named(header::ETAG).unwrap_or_default(),
-            link: named(header::LINK),
+            etag: named(header::ETAG.as_str()).unwrap_or_default(),
+            last_modified: named(header::LAST_MODIFIED.as_str()),
+            link: named(header::LINK.as_str()),
             body: response.body,
+            poll_interval,
         };
-        if !entry.etag.is_empty() {
+        if !entry.etag.is_empty() || entry.last_modified.is_some() {
             let (store, key, kept) = (self.store.clone(), path.to_owned(), entry.clone());
             spawn_store(move || store.http_put(&key, &kept)).await;
         }
         Ok(entry)
     }
 
-    /// Sends a REST change without a body (a re-run, a cancel, marking a
-    /// thread read), which only has to succeed. Never sent twice.
+    /// Sends a REST change (a re-run, a cancel, marking a thread read),
+    /// which only has to succeed. Never sent twice.
     pub(crate) async fn rest_write(
         &self,
         method: http::Method,
         path: &str,
+        body: Option<&serde_json::Value>,
     ) -> Result<(), ApiError> {
-        let response = self.send(&Request::Write { method, path }).await?;
+        let response = (self.send(&Request::Write { method, path, body })).await?;
         let path = path.strip_prefix("/repos/").unwrap_or(path);
         check_status(&response, path)
     }
@@ -611,7 +640,7 @@ impl GitHub {
         path: &str,
         what: impl std::fmt::Display,
     ) -> Result<(T, Option<String>), ApiError> {
-        let response = self.send(&Request::Get { path, etag: None }).await?;
+        let response = self.send(&Request::Get { path, cached: None }).await?;
         check_status(&response, what)?;
         let next = response
             .headers
@@ -2030,7 +2059,7 @@ impl GitHub {
         let response = self
             .send(&Request::Get {
                 path: &path,
-                etag: None,
+                cached: None,
             })
             .await?;
         if response.status == StatusCode::GONE {
@@ -2117,37 +2146,67 @@ impl GitHub {
     /// Your notifications that `query` keeps (see
     /// [`notifications::InboxFilter`]), most recently updated first, a page
     /// at a time; `after` is the page number (REST pages by number). GitHub
-    /// doesn't count them: a page says only whether another follows. The
-    /// first page is cached.
+    /// doesn't count them: a page says only whether another follows. A
+    /// filter applied here can leave a page nearly empty, so pages are
+    /// fetched until one fills or the inbox ends, [`INBOX_PAGES`] at most.
+    /// The first page is cached.
     pub async fn notifications(
         &self,
         query: &str,
         after: Option<String>,
-    ) -> Result<browse::Results<notifications::Notification>, ApiError> {
+    ) -> Result<notifications::Inbox, ApiError> {
         let filter = notifications::InboxFilter::parse(query);
-        let page = rest_page(after.as_deref());
-        let path = filter.path(page, REST_PAGE);
+        let first = rest_page(after.as_deref());
         let what = match &filter.repo {
             Some(repo) => format!("your notifications from {repo}"),
             None => "your notifications".to_owned(),
         };
-        let fetched = self.rest_fetch(&path, what).await?;
-        let wire: Vec<notifications::rest::Thread> = serde_json::from_str(&fetched.body)?;
-        let items: Vec<_> = (wire.into_iter())
-            .filter_map(notifications::rest::Thread::into_notification)
-            .filter(|n| filter.keeps(n))
-            .collect();
-        let more = fetched
-            .link
-            .is_some_and(|l| l.split(',').any(|l| l.contains("rel=\"next\"")));
-        let list = browse::Results {
-            total: items.len() as u64,
-            items,
-            next: more.then(|| page.saturating_add(1).to_string()),
+        let (mut items, mut searched, mut page, mut more) = (Vec::new(), 0, first, false);
+        for _ in 0..INBOX_PAGES {
+            let fetched = self
+                .rest_fetch(&filter.path(page, REST_PAGE), &what)
+                .await?;
+            let wire: Vec<notifications::rest::Thread> = serde_json::from_str(&fetched.body)?;
+            searched += wire.len() as u64;
+            items.extend(
+                (wire.into_iter())
+                    .filter_map(notifications::rest::Thread::into_notification)
+                    .filter(|n| filter.keeps(n)),
+            );
+            more = fetched.link.as_deref().is_some_and(has_next);
+            page = page.saturating_add(1);
+            let full = items.len() as u64 >= REST_PAGE;
+            if !more || full || !filter.after_fetching() {
+                break;
+            }
+        }
+        let cut = more && filter.after_fetching() && (items.len() as u64) < REST_PAGE;
+        let inbox = notifications::Inbox {
+            list: browse::Results {
+                total: items.len() as u64,
+                items,
+                next: more.then(|| page.to_string()),
+            },
+            searched,
+            cut,
         };
         Ok(self
-            .kept_page(page == 1, &browse::keys::notifications(query), list)
+            .kept_page(first == 1, &browse::keys::notifications(query), inbox)
             .await)
+    }
+
+    /// How many of your notifications are unread, up to a page of them.
+    /// Asked only if the inbox changed since it was last asked, so polling
+    /// an unchanged one costs nothing; GitHub says how often to poll.
+    pub async fn unread(&self) -> Result<notifications::Unread, ApiError> {
+        let path = format!("/notifications?per_page={UNREAD_PAGE}");
+        let fetched = self.rest_fetch(&path, "your notifications").await?;
+        let threads: Vec<serde::de::IgnoredAny> = serde_json::from_str(&fetched.body)?;
+        Ok(notifications::Unread {
+            count: threads.len() as u64,
+            more: fetched.link.as_deref().is_some_and(has_next),
+            poll_secs: fetched.poll_interval.unwrap_or(UNREAD_POLL_SECS),
+        })
     }
 
     /// A workflow's ID for REST: its file name or ID as it is, else found
@@ -2562,6 +2621,19 @@ const REF_DEPTH: usize = 20;
 /// Pages of 100 of a PR's files (GitHub's own cap is 3000) or review
 /// threads.
 const FILE_PAGES: u32 = 30;
+
+/// Pages of your notifications fetched at most to fill one, when the
+/// inbox's filter applies after fetching.
+const INBOX_PAGES: u32 = 10;
+/// The unread notifications counted (GitHub's largest page of them).
+const UNREAD_PAGE: u64 = 50;
+/// How often the unread count is polled when GitHub doesn't say.
+const UNREAD_POLL_SECS: u64 = 60;
+
+/// Whether a `Link` header says there's a next page.
+fn has_next(link: &str) -> bool {
+    link.split(',').any(|l| l.contains("rel=\"next\""))
+}
 
 /// A REST list's page number from its cursor (pages count from 1).
 fn rest_page(after: Option<&str>) -> u64 {

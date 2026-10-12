@@ -43,27 +43,35 @@ pub(super) fn start_hints(state: &mut State, browser: bool) {
     // The page's own tabs first, then its links.
     let chrome = state.chrome();
     let tab_list: Vec<_> = chrome.tabs.iter().map(|(t, _)| t.clone()).collect();
-    let tab_rects = (state.layout_of(&chrome).tabs)
+    let lay = state.layout_of(&chrome);
+    let tab_rects = (lay.tabs)
         .map(|bar| chrome::tab_layout(bar, &tab_list, chrome.active))
         .unwrap_or_default();
+    let url = |target: &Target| match target {
+        Target::Page(route) => route.url(),
+        Target::Files(of) => of.url(),
+        Target::External(url) => url.clone(),
+    };
     let tabs = (chrome.tabs.iter().zip(tab_rects).enumerate())
         .filter(|(i, _)| chrome.active != Some(*i))
         .map(|(i, ((_, target), rect))| {
-            let url = match target {
-                Target::Page(route) => route.url(),
-                Target::Files(of) => of.url(),
-                Target::External(url) => url.clone(),
-            };
             (
                 (rect.x.saturating_add(2), rect.y),
-                Link::Url(url),
+                Link::Url(url(target)),
                 Some(i + 1),
             )
         });
     let links = page::spots(&p.page, area, p.scroll)
         .into_iter()
         .filter_map(|s| Some(((s.x, s.y), p.page.target(s.link)?.clone(), None)));
-    let spots: Vec<((u16, u16), Link, Option<usize>)> = tabs.chain(links).collect();
+    // Then the header's (your unread notifications, you).
+    let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
+    let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
+    let header = chrome::header_layout(lay.header, &crumbs, &right).right;
+    let header = (chrome.right.iter().zip(header))
+        .filter(|(_, rect)| rect.width > 0)
+        .map(|((_, target), rect)| ((rect.x, rect.y), Link::Url(url(target)), None));
+    let spots: Vec<((u16, u16), Link, Option<usize>)> = tabs.chain(links).chain(header).collect();
     if spots.is_empty() {
         state.info("No links on screen");
         return;

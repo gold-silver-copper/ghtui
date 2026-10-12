@@ -368,6 +368,7 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
     spawn_guarded(tx, replies, |tx| async move {
         let msg = match api {
             Api::FetchViewer => Msg::Viewer(gh.viewer_login().await),
+            Api::FetchUnread => Msg::Unread(gh.unread().await),
             Api::FetchPr(pr) => {
                 let result = gh.pull_request(&pr).await;
                 Msg::Pr(pr, Box::new(result))
@@ -563,6 +564,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
     }
     let msg = match cmd {
         Cmd::Api(Api::FetchViewer) => Msg::Viewer(api()),
+        Cmd::Api(Api::FetchUnread) => Msg::Unread(api()),
         Cmd::Api(Api::FetchPr(pr)) => Msg::Pr(pr.clone(), Box::new(api())),
         Cmd::Api(Api::Fetch { key, .. }) => Msg::Fetched {
             key: key.clone(),

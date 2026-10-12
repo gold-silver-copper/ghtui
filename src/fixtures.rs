@@ -13,7 +13,7 @@ use crate::api::browse::{
     UserSummary, Week, WikiPage, Workflow, WorkflowRun,
 };
 use crate::api::model::{Capped, Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
-use crate::api::notifications::Notification;
+use crate::api::notifications::{Inbox, Notification};
 use crossterm::event::KeyEvent;
 
 use crate::store::{DraftComment, DraftSide};
@@ -543,7 +543,7 @@ pub fn advisory() -> Advisory {
 }
 
 /// The first page of an inbox: two unread threads, two read.
-pub fn notifications() -> Results<Notification> {
+pub fn notifications() -> Inbox {
     use crate::api::notifications::SubjectKind;
     let thread =
         |id: &str, repo: &str, kind, title: &str, reason: &str, unread, url: &str| Notification {
@@ -601,10 +601,14 @@ pub fn notifications() -> Results<Notification> {
             "releases",
         ),
     ];
-    Results {
-        total: items.len() as u64,
-        items,
-        next: Some("2".into()),
+    Inbox {
+        searched: items.len() as u64,
+        list: Results {
+            total: items.len() as u64,
+            items,
+            next: Some("2".into()),
+        },
+        cut: false,
     }
 }
 

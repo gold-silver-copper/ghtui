@@ -226,6 +226,8 @@ actions! {
     Sort              "sort"              ["S"]                    List   "Change the sort";
     MarkRead          "mark_read"         [",n"]                   List   "Mark the notification read";
     MarkDone          "mark_done"         [",d"]                   List   "Mark the notification done";
+    MarkAllRead       "mark_all_read"     [",N"]                   List   "Mark everything shown read";
+    MarkAllDone       "mark_all_done"     [",D"]                   List   "Mark everything shown done";
     SaveSection       "save_to_home"      []                       List   "Save this list as a Home section";
     RenameSection     "rename_section"    []                       Page   "Rename the Home section";
     MoveSectionUp     "move_section_up"   ["<A-Up>"]               Page   "Move the Home section up";

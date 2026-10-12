@@ -78,6 +78,17 @@ pub enum Change {
     MarkDone {
         thread: String,
     },
+    /// Mark read every notification updated by `last_read_at`: all of
+    /// them, or one repository's.
+    MarkAllRead {
+        repo: Option<RepoId>,
+        last_read_at: String,
+    },
+    /// Mark each of these threads read, or done.
+    MarkEach {
+        threads: Vec<String>,
+        done: bool,
+    },
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -201,6 +212,7 @@ impl GitHub {
                 self.rest_write(
                     http::Method::POST,
                     &format!("/repos/{repo}/actions/runs/{run}/{what}"),
+                    None,
                 )
                 .await
             }
@@ -208,6 +220,7 @@ impl GitHub {
                 self.rest_write(
                     http::Method::POST,
                     &format!("/repos/{repo}/actions/jobs/{job}/rerun"),
+                    None,
                 )
                 .await
             }
@@ -215,18 +228,47 @@ impl GitHub {
                 self.rest_write(
                     http::Method::POST,
                     &format!("/repos/{repo}/actions/runs/{run}/cancel"),
+                    None,
                 )
                 .await
             }
-            Change::MarkRead { thread } => {
-                let path = format!("/notifications/threads/{thread}");
-                self.rest_write(http::Method::PATCH, &path).await
+            Change::MarkRead { thread } => self.mark(thread, false).await,
+            Change::MarkDone { thread } => self.mark(thread, true).await,
+            Change::MarkAllRead { repo, last_read_at } => {
+                let path = match repo {
+                    Some(repo) => format!("/repos/{repo}/notifications"),
+                    None => "/notifications".to_owned(),
+                };
+                let body = serde_json::json!({ "last_read_at": last_read_at, "read": true });
+                self.rest_write(http::Method::PUT, &path, Some(&body)).await
             }
-            Change::MarkDone { thread } => {
-                let path = format!("/notifications/threads/{thread}");
-                self.rest_write(http::Method::DELETE, &path).await
+            // GitHub marks threads done one at a time.
+            Change::MarkEach { threads, done } => {
+                for (n, thread) in threads.iter().enumerate() {
+                    self.mark(thread, *done).await.map_err(|err| match err {
+                        ApiError::Http { status, message } if n > 0 => ApiError::Http {
+                            status,
+                            message: format!("{message} (after {n} of {})", threads.len()),
+                        },
+                        err => err,
+                    })?;
+                }
+                Ok(())
             }
         }
+    }
+}
+
+impl GitHub {
+    /// Marks a notification's thread read, or done.
+    async fn mark(&self, thread: &str, done: bool) -> Result<(), ApiError> {
+        let path = format!("/notifications/threads/{thread}");
+        let method = if done {
+            http::Method::DELETE
+        } else {
+            http::Method::PATCH
+        };
+        self.rest_write(method, &path, None).await
     }
 }
 

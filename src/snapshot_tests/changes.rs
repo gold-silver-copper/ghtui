@@ -460,7 +460,7 @@ fn notifications_are_marked_read_and_done() {
         Data::Notifications(Box::new(inbox.clone())),
     );
     assert!(s.awaiting.is_some());
-    if let Some(n) = inbox.items.first_mut() {
+    if let Some(n) = inbox.list.items.first_mut() {
         n.unread = false;
     }
     fetched(
@@ -483,7 +483,7 @@ fn notifications_are_marked_read_and_done() {
     );
     answer(&mut s, &sent, Ok(()));
     assert!(s.awaiting.is_some());
-    inbox.items.retain(|n| n.id != "103");
+    inbox.list.items.retain(|n| n.id != "103");
     fetched(&mut s, key, Data::Notifications(Box::new(inbox)));
     assert!(s.awaiting.is_none());
 
@@ -491,6 +491,80 @@ fn notifications_are_marked_read_and_done() {
     let mut s = with_repo(Mode::Dark, crate::theme::ColorDepth::TrueColor);
     press(&mut s, ",n");
     says(&s, "works on lists");
+}
+
+/// `,N` marks everything the inbox shows read, and `,D` done: asked
+/// first, saying how many. Read is one request, up to the newest shown;
+/// done, one a thread loaded. The inbox follows GitHub until it shows
+/// the change, and the unread count is asked again.
+#[test]
+fn the_inbox_is_marked_read_and_done_all_at_once() {
+    let mut s = with_notifications(Mode::Dark);
+    let key = DataKey::Notifications(String::new());
+    let all = Subject::Inbox {
+        query: String::new(),
+    };
+    assert!(press(&mut s, ",N").is_empty());
+    let c = confirm(&s);
+    assert_eq!(c.title, "Mark 2 notifications read?");
+    let older = "And the older ones further down, not loaded yet";
+    assert!(c.facts.iter().any(|(f, _)| f == older), "{:?}", c.facts);
+    let read = Change::MarkAllRead {
+        repo: None,
+        last_read_at: "2026-10-03T11:40:00Z".into(),
+    };
+    let sent = press(&mut s, "<Enter>");
+    assert_eq!(
+        sent,
+        vec![Cmd::Api(Api::Change(read, By::Confirm(all.clone())))]
+    );
+    let cmds = answer(&mut s, &sent, Ok(()));
+    says(&s, "Marked read");
+    assert!(cmds.contains(&Cmd::Api(Api::FetchUnread)), "{cmds:?}");
+    // GitHub marks them a moment later: until then, the inbox is asked
+    // again.
+    let mut inbox = crate::fixtures::notifications();
+    let shown = |i: &crate::api::notifications::Inbox| Data::Notifications(Box::new(i.clone()));
+    fetched(&mut s, key.clone(), shown(&inbox));
+    assert!(s.awaiting.is_some());
+    inbox.list.items.iter_mut().for_each(|n| n.unread = false);
+    let cmds = fetched(&mut s, key.clone(), shown(&inbox));
+    assert!(s.awaiting.is_none());
+    assert!(cmds.contains(&Cmd::Api(Api::FetchUnread)), "{cmds:?}");
+    press(&mut s, ",N");
+    says(&s, "Nothing shown is unread");
+
+    // Done: each thread loaded, and only those.
+    press(&mut s, ",D");
+    let c = confirm(&s);
+    assert_eq!(c.title, "Mark 4 notifications done?");
+    let loaded = "Only the 4 loaded: those further down stay as they are";
+    assert!(c.facts.iter().any(|(f, _)| f == loaded), "{:?}", c.facts);
+    let sent = press(&mut s, "<Enter>");
+    let threads = ["101", "102", "103", "104"].map(String::from).to_vec();
+    let done = Change::MarkEach {
+        threads,
+        done: true,
+    };
+    assert_eq!(sent, vec![Cmd::Api(Api::Change(done, By::Confirm(all)))]);
+    answer(&mut s, &sent, Ok(()));
+    says(&s, "Marked 4 notifications done");
+    (inbox.list.items, inbox.list.next) = (Vec::new(), None);
+    fetched(&mut s, key, shown(&inbox));
+    assert!(s.awaiting.is_none());
+
+    // REST can't mark read by a reason: what's shown is marked thread
+    // by thread.
+    let route = Route::Notifications {
+        query: "reason:mention".to_owned(),
+    };
+    super::screens::open(&mut s, route, shown(&crate::fixtures::notifications()));
+    press(&mut s, ",N");
+    let each = Change::MarkEach {
+        threads: vec!["101".into(), "102".into()],
+        done: false,
+    };
+    assert_eq!(confirm(&s).choices.first().map(|(_, c)| c), Some(&each));
 }
 
 /// A job that ended in a run still going is the run's to cancel, and

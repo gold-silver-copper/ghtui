@@ -13,7 +13,7 @@ use crate::api::browse::{
     Workflow, WorkflowRun,
 };
 use crate::api::model::{PrRef, RepoId};
-use crate::api::notifications::Notification;
+use crate::api::notifications::Inbox;
 use crate::ui::Fetched;
 use crate::ui::page::{Page, PageLine, Role, Seg};
 use crate::ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
@@ -149,7 +149,7 @@ pub enum Data {
     Deployments(Box<DeploymentList>),
     Milestones(Box<MilestoneList>),
     Milestone(Box<MilestoneDetail>),
-    Notifications(Box<Results<Notification>>),
+    Notifications(Box<Inbox>),
 }
 
 impl Data {
@@ -187,7 +187,7 @@ impl Data {
             Data::Milestones(m) => m.results.next.as_deref(),
             Data::Milestone(m) => m.items.next.as_deref(),
             Data::Advisories(r) => r.next.as_deref(),
-            Data::Notifications(r) => r.next.as_deref(),
+            Data::Notifications(i) => i.list.next.as_deref(),
             _ => None,
         }
     }
@@ -220,7 +220,11 @@ impl Data {
                 extend(&mut a.items, b.items, |i| (i.repo.clone(), i.number));
             }
             (Data::Advisories(a), Data::Advisories(b)) => extend(a, *b, |a| a.ghsa.clone()),
-            (Data::Notifications(a), Data::Notifications(b)) => extend(a, *b, |n| n.id.clone()),
+            (Data::Notifications(a), Data::Notifications(b)) => {
+                extend(&mut a.list, b.list, |n| n.id.clone());
+                a.searched += b.searched;
+                a.cut = b.cut;
+            }
             _ => {}
         }
     }
@@ -478,7 +482,7 @@ picked!(
     Teams => Results<TeamSummary>, Team => TeamDetail, Gist => Gist,
     Gists => Results<GistSummary>, Blame => Blame, Compare => Comparison,
     Deployments => DeploymentList, Milestones => MilestoneList, Milestone => MilestoneDetail,
-    Notifications => Results<Notification>,
+    Notifications => Inbox,
 );
 
 /// A page's needs as the page shows them, failing with the key that

@@ -76,6 +76,8 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Resize(w, h) => state.size = (w, h),
         Msg::Viewer(Ok(login)) => state.viewer = Some(login),
         Msg::Viewer(Err(err)) => tracing::warn!(%err, "could not fetch viewer"),
+        Msg::Unread(result) => return state.unread_polled(result),
+        Msg::Timer(Timer::Unread(poll)) => return state.unread_due(poll),
         Msg::Pr(pr, result) => {
             if let Err(err) = result.as_ref() {
                 tracing::warn!(%pr, %err, "PR fetch failed");

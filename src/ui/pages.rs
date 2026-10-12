@@ -19,7 +19,7 @@ use crate::api::model::{
     Capped, ChecksState, Label, Mergeable, MilestoneRef, PrDetail, PrRef, Readiness, RepoId,
     ReviewDecision, ReviewState, ReviewThread,
 };
-use crate::api::notifications::{InboxFilter, Notification, SubjectKind, reason_label};
+use crate::api::notifications::{Inbox, InboxFilter, SubjectKind, reason_label};
 use crate::store::{DraftComment, DraftSide};
 use crate::theme::{Bg, Syntax};
 

@@ -316,6 +316,7 @@ page_in! {
     MilestoneDetail => items,
     DeploymentList => results,
     DiscussionList => results,
+    crate::api::notifications::Inbox => list,
 }
 
 impl<T> Results<T> {
