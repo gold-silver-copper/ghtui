@@ -297,6 +297,12 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             page: None,
         },
         Route::Advisory { repo, .. } => Route::Advisories(repo.clone()),
+        Route::Alert { repo, kind, .. } => Route::Alerts {
+            repo: repo.clone(),
+            kind: *kind,
+            query: crate::route::OPEN.into(),
+        },
+        Route::Alerts { repo, .. } => Route::Advisories(Some(repo.clone())),
         Route::Advisories(repo) => repo.clone().map_or(Route::Home, Route::Repo),
         Route::Projects(ProjectsOf::Owner(owner)) => Route::user(owner.login()),
         Route::Project { project, .. } => Route::Projects(ProjectsOf::Owner(project.owner.clone())),

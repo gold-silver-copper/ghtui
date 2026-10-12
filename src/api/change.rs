@@ -120,6 +120,8 @@ pub enum Change {
         value: Option<crate::api::project::FieldValue>,
         said: String,
     },
+    /// Dismiss (for a secret, resolve) a security alert, or reopen it.
+    Alert(crate::api::security::AlertChange),
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -320,6 +322,7 @@ impl GitHub {
                 self.set_project_field(project, item, field, value.as_ref())
                     .await
             }
+            Change::Alert(change) => self.set_alert(change).await,
         }
     }
 }

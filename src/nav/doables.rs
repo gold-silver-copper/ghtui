@@ -507,7 +507,7 @@ impl State {
                     Kind::Edit(Choosing::Title { .. }) => "save",
                     Kind::Edit(Choosing::Many { .. }) => "pick or unpick · ctrl-s apply",
                     Kind::Form(pick) if pick.several() => "pick or unpick",
-                    Kind::Edit(_) | Kind::Form(_) | Kind::Project(_) => "choose",
+                    Kind::Edit(_) | Kind::Form(_) | Kind::Project(_) | Kind::Alert(_) => "choose",
                     Kind::Code { .. } => "go there",
                     _ => "open",
                 };

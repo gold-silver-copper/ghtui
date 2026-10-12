@@ -2811,3 +2811,150 @@ async fn an_owners_projects_page_and_say_what_scope_they_need() {
     assert_eq!(seen[0].json()["variables"]["login"], "o");
     assert_eq!(seen[0].json()["variables"]["after"], "p0");
 }
+
+// ---- the Security tab's alerts ------------------------------------------------
+
+/// A code scanning alert as GitHub sends it.
+const CODE_ALERT: &str = r#"{"number":2,"created_at":"2026-10-12T13:58:34Z","updated_at":"2026-10-12T13:58:34Z","state":"open","fixed_at":null,"dismissed_by":null,"dismissed_at":null,"dismissed_reason":null,"dismissed_comment":null,"rule":{"id":"ghtui/hardcoded-word","severity":"warning","description":"A hard-coded word","name":"HardcodedWord","tags":["security"],"full_description":"The file names a word.","help":"Read it from **configuration**.","security_severity_level":"high"},"tool":{"name":"ghtui-check","guid":null,"version":"1.0.0"},"most_recent_instance":{"ref":"refs/heads/main","commit_sha":"75c61df02bc009d61a80ad467606772ba0a92c22","message":{"text":"This line hard-codes a word."},"location":{"path":"file.txt","start_line":1,"end_line":1}}}"#;
+
+/// An alert list sends its filter as the API's parameters, pages by the
+/// `Link` header's own cursor, and reads each alert's file and line.
+#[tokio::test]
+async fn alert_lists_filter_and_page() {
+    use ghtui::api::security::{AlertKind, Detail};
+    let page: Vec<&str> = std::iter::repeat_n(CODE_ALERT, 30).collect();
+    let next = r#"<https://api.github.com/repositories/1/code-scanning/alerts?per_page=30&page=2>; rel="next""#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, format!("[{}]", page.join(","))).header("link", next),
+        Reply::new(200, format!("[{CODE_ALERT}]")),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let kind = AlertKind::CodeScanning;
+    let first = gh
+        .alerts(&repo, kind, "is:open branch:main", None)
+        .await
+        .unwrap();
+    assert_eq!(first.results.next.as_deref(), Some("page=2"));
+    let Some(Detail::Code(code)) = first.results.items.first().map(|a| &a.detail) else {
+        panic!("{first:?}");
+    };
+    assert_eq!(
+        (code.path.as_deref(), code.lines),
+        (Some("file.txt"), Some((1, 1)))
+    );
+    let more = gh
+        .alerts(&repo, kind, "is:open branch:main", first.results.next)
+        .await
+        .unwrap();
+    assert_eq!(more.results.next, None);
+    let lines: Vec<String> = (seen.lock().unwrap().iter())
+        .map(|s| s.request_line.clone())
+        .collect();
+    assert!(
+        lines[0].starts_with(
+            "GET /repos/o/r/code-scanning/alerts?per_page=30&state=open&ref=refs%2Fheads%2Fmain "
+        ),
+        "{lines:?}"
+    );
+    assert!(lines[1].contains("&page=2 "), "{lines:?}");
+}
+
+/// Alerts that are off are an empty list that says so; a token without
+/// the scope is told which and how to add it.
+#[tokio::test]
+async fn alerts_say_when_they_are_off_or_out_of_reach() {
+    use ghtui::api::security::AlertKind;
+    let (gh, _) = github(vec![
+        Reply::new(
+            403,
+            r#"{"message":"Dependabot alerts are disabled for this repository."}"#,
+        ),
+        Reply::new(404, r#"{"message":"Not Found"}"#).header("x-oauth-scopes", "gist, read:org"),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let off = gh
+        .alerts(&repo, AlertKind::Dependabot, "is:open", None)
+        .await
+        .unwrap();
+    assert_eq!(
+        off.off.as_deref(),
+        Some("Dependabot alerts are disabled for this repository")
+    );
+    match gh
+        .alerts(&repo, AlertKind::SecretScanning, "is:open", None)
+        .await
+    {
+        Err(ApiError::Denied(why)) => {
+            assert!(
+                why.contains("`gh auth refresh -s security_events`"),
+                "{why}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Dismissing sends each kind's own words; reopening, the open state.
+#[tokio::test]
+async fn alerts_are_dismissed_and_reopened() {
+    use ghtui::api::change::Change;
+    use ghtui::api::security::{AlertChange, AlertKind, AlertRef};
+    let (gh, seen) = github(vec![
+        Reply::new(200, "{}"),
+        Reply::new(200, "{}"),
+        Reply::new(200, "{}"),
+    ])
+    .await;
+    let alert = |kind| AlertRef {
+        repo: RepoId::new("o", "r"),
+        kind,
+        number: 3,
+    };
+    for (kind, dismiss) in [
+        (
+            AlertKind::Dependabot,
+            Some(("tolerable_risk".to_owned(), "fine".to_owned())),
+        ),
+        (
+            AlertKind::SecretScanning,
+            Some(("revoked".into(), String::new())),
+        ),
+        (AlertKind::CodeScanning, None),
+    ] {
+        let change = Change::Alert(AlertChange {
+            alert: alert(kind),
+            dismiss,
+        });
+        gh.change(&change).await.unwrap();
+    }
+    let seen = seen.lock().unwrap();
+    let sent: Vec<(String, serde_json::Value)> = (seen.iter())
+        .map(|s| (s.request_line.clone(), s.json()))
+        .collect();
+    assert!(
+        sent[0]
+            .0
+            .starts_with("PATCH /repos/o/r/dependabot/alerts/3 ")
+    );
+    assert_eq!(
+        sent[0].1,
+        serde_json::json!({"state": "dismissed", "dismissed_reason": "tolerable_risk", "dismissed_comment": "fine"})
+    );
+    assert!(
+        sent[1]
+            .0
+            .starts_with("PATCH /repos/o/r/secret-scanning/alerts/3 ")
+    );
+    assert_eq!(
+        sent[1].1,
+        serde_json::json!({"state": "resolved", "resolution": "revoked"})
+    );
+    assert!(
+        sent[2]
+            .0
+            .starts_with("PATCH /repos/o/r/code-scanning/alerts/3 ")
+    );
+    assert_eq!(sent[2].1, serde_json::json!({"state": "open"}));
+}

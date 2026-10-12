@@ -146,6 +146,20 @@ impl State {
                 out.push(suggestion("⌕", q, "filter this list", "↵", pick));
             }
             out.push(heading("Quick filters"));
+            // Alerts filter by their own words, and aren't searched.
+            if let Some(Route::Alerts { repo, kind, .. }) = self.route() {
+                let branch = (self.overview(repo).and_then(|o| o.default_branch.as_ref()))
+                    .filter(|_| *kind == crate::api::security::AlertKind::CodeScanning);
+                if let Some(b) = branch {
+                    let f = format!("branch:{b}");
+                    let pick = Pick::Filter(f.clone());
+                    out.push(suggestion("⚑", f, &format!("on {b}"), "", pick));
+                }
+                for (f, what) in kind.filters() {
+                    out.push(suggestion("⚑", *f, what, "", Pick::Filter((*f).to_owned())));
+                }
+                return out;
+            }
             // Runs filter by GitHub's Actions words, and aren't searched.
             if let Some(Route::Actions { repo, .. }) = self.route() {
                 if let Some(b) = self.overview(repo).and_then(|o| o.default_branch.as_ref()) {

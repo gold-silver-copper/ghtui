@@ -48,6 +48,10 @@ pub enum ApiError {
     /// It was there, and GitHub has since dropped it.
     #[error("{0}")]
     Gone(String),
+    /// GitHub refuses it to this token or this account, said as what's
+    /// missing and how to add it.
+    #[error("{0}")]
+    Denied(String),
     /// Reading through git (a wiki) failed.
     #[error("git: {0}")]
     Git(String),
@@ -124,6 +128,41 @@ struct Response {
     status: StatusCode,
     headers: HeaderMap,
     body: String,
+}
+
+/// A REST answer, whatever its status ([`GitHub::rest_answer`]).
+pub(crate) struct Answer(Response);
+
+impl Answer {
+    pub(crate) fn status(&self) -> u16 {
+        self.0.status.as_u16()
+    }
+
+    pub(crate) fn body(&self) -> &str {
+        &self.0.body
+    }
+
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
+        self.0.headers.get(name).and_then(|v| v.to_str().ok())
+    }
+
+    /// The error its status means, as any other request's would be.
+    pub(crate) fn checked(&self, what: impl std::fmt::Display) -> Result<(), ApiError> {
+        check_status(&self.0, what)
+    }
+
+    /// The cursor for the next page in its `Link` header: `after=…` or
+    /// `page=…`, as a query parameter to send.
+    pub(crate) fn next_page(&self) -> Option<String> {
+        let link = self.header(header::LINK.as_str())?;
+        let next = link.split(',').find(|l| l.contains("rel=\"next\""))?;
+        let url = next.split(['<', '>']).nth(1)?;
+        let query = url.split_once('?')?.1;
+        query
+            .split('&')
+            .find(|kv| kv.starts_with("after=") || kv.starts_with("page="))
+            .map(str::to_owned)
+    }
 }
 
 enum Request<'a> {
@@ -675,6 +714,15 @@ impl GitHub {
         let response = (self.send(&Request::Write { method, path, body })).await?;
         let path = path.strip_prefix("/repos/").unwrap_or(path);
         check_status(&response, path)
+    }
+
+    /// GETs a REST path and hands back GitHub's answer whatever its
+    /// status, for a caller that reads a refusal itself (what a token's
+    /// scopes lack). Not cached.
+    pub(crate) async fn rest_answer(&self, path: &str) -> Result<Answer, ApiError> {
+        Ok(Answer(
+            self.send(&Request::Get { path, cached: None }).await?,
+        ))
     }
 
     /// GETs a REST path and decodes its JSON.

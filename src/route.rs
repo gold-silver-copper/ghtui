@@ -3,6 +3,7 @@
 use crate::api::browse::{DiscussionsOf, RepoSort, SearchKind};
 use crate::api::model::{PrRef, RepoId};
 use crate::api::project::{ProjectOwner, ProjectRef, ProjectsOf};
+use crate::api::security::AlertKind;
 use crate::git::Oid;
 use crate::ui::pages::url as links;
 use crate::ui::pages::{PrTab, ProfileTab};
@@ -116,6 +117,19 @@ pub enum Route {
     Advisory {
         repo: Option<RepoId>,
         ghsa: String,
+    },
+    /// A repository's Dependabot, code scanning or secret scanning
+    /// alerts, filtered as GitHub's lists are (`is:open severity:high`).
+    Alerts {
+        repo: RepoId,
+        kind: AlertKind,
+        query: String,
+    },
+    /// One security alert.
+    Alert {
+        repo: RepoId,
+        kind: AlertKind,
+        number: u64,
     },
     /// An organization's teams.
     Teams(String),
@@ -462,6 +476,17 @@ impl Route {
                 Some(repo) => format!("{}/security/advisories/{ghsa}", links::repo(repo)),
                 None => format!("{}/advisories/{ghsa}", links::base()),
             },
+            Route::Alerts { repo, kind, query } => {
+                let base = format!("{}/security/{}", links::repo(repo), kind.slug());
+                if query == OPEN {
+                    base
+                } else {
+                    format!("{base}?{}={}", kind.query_param(), links::encode(query))
+                }
+            }
+            Route::Alert { repo, kind, number } => {
+                format!("{}/security/{}/{number}", links::repo(repo), kind.slug())
+            }
             Route::Teams(org) => format!("{}/orgs/{org}/teams", links::base()),
             Route::Team { org, slug } => format!("{}/orgs/{org}/teams/{slug}", links::base()),
             Route::Gist { owner, id } => match owner {
@@ -580,6 +605,10 @@ impl Route {
             Route::Advisories(Some(repo)) => format!("{repo} · Security"),
             Route::Advisories(None) => "Advisories".to_owned(),
             Route::Advisory { ghsa, .. } => ghsa.clone(),
+            Route::Alerts { repo, kind, .. } => format!("{repo} · {}", kind.name()),
+            Route::Alert { repo, kind, number } => {
+                format!("{repo} · {} alert {number}", kind.name())
+            }
             Route::Teams(org) => format!("@{org} · Teams"),
             Route::Team { org, slug } => format!("@{org}/{slug}"),
             Route::Gist { id, .. } => format!("Gist {}", id.get(..7).unwrap_or(id)),
@@ -644,6 +673,8 @@ impl Route {
             | Route::Advisory {
                 repo: Some(repo), ..
             }
+            | Route::Alerts { repo, .. }
+            | Route::Alert { repo, .. }
             | Route::Blame { repo, .. }
             | Route::Unsplit { repo, .. }
             | Route::Compare { repo, .. }
@@ -686,6 +717,7 @@ impl Route {
             Route::Issues { query, .. }
             | Route::Pulls { query, .. }
             | Route::Actions { query, .. }
+            | Route::Alerts { query, .. }
             | Route::Search { query, .. }
             | Route::Notifications { query } => Some(query),
             _ => None,
@@ -709,6 +741,11 @@ impl Route {
                 query,
             },
             Route::Notifications { .. } => Route::Notifications { query },
+            Route::Alerts { repo, kind, .. } => Route::Alerts {
+                repo: repo.clone(),
+                kind: *kind,
+                query,
+            },
             _ => return None,
         })
     }
@@ -1095,6 +1132,21 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
         ["security", "advisories", ghsa] if valid_ghsa(ghsa) => Route::Advisory {
             repo: Some(repo),
             ghsa: (*ghsa).to_owned(),
+        },
+        // Dependabot's, code scanning's and secret scanning's alerts.
+        ["security", slug] if AlertKind::from_slug(slug).is_some() => {
+            let kind = AlertKind::from_slug(slug)?;
+            let query = param(kind.query_param())
+                .or_else(|| param("q").or_else(|| param("query")))
+                .map(|q| q.trim().to_owned())
+                .filter(|q| !q.is_empty())
+                .unwrap_or_else(|| OPEN.to_owned());
+            Route::Alerts { repo, kind, query }
+        }
+        ["security", slug, n] if AlertKind::from_slug(slug).is_some() => Route::Alert {
+            repo,
+            kind: AlertKind::from_slug(slug)?,
+            number: n.parse().ok().filter(|&n| n > 0)?,
         },
         // A page's revisions and history: the page.
         ["wiki", rest @ ..] if !rest.iter().any(|p| p.contains(char::is_control)) => Route::Wiki {
@@ -2558,6 +2610,26 @@ pub(crate) mod tests {
                     })
                     .prop_map(|(repo, page)| Route::Wiki { repo, page }),
                 prop::option::of(repo()).prop_map(Route::Advisories),
+                (
+                    repo(),
+                    prop::sample::select(AlertKind::ALL.to_vec()),
+                    prop_oneof![Just(OPEN.to_owned()), query()]
+                )
+                    .prop_map(|(repo, kind, query)| Route::Alerts {
+                        repo,
+                        kind,
+                        query
+                    }),
+                (
+                    repo(),
+                    prop::sample::select(AlertKind::ALL.to_vec()),
+                    1..u64::MAX
+                )
+                    .prop_map(|(repo, kind, number)| Route::Alert {
+                        repo,
+                        kind,
+                        number
+                    }),
                 (prop::option::of(repo()), "GHSA(-[2-9a-z]{4}){3}")
                     .prop_map(|(repo, ghsa)| Route::Advisory { repo, ghsa }),
                 login().prop_map(Route::Teams),

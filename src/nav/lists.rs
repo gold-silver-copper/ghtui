@@ -95,6 +95,10 @@ pub(super) fn cycle_sort(state: &mut State) -> Vec<Cmd> {
         state.info("Notifications are newest first: GitHub doesn't sort them otherwise");
         return Vec::new();
     }
+    if let Some(Route::Alerts { .. }) = state.route() {
+        state.info("Alerts are newest first: ghtui doesn't sort them otherwise");
+        return Vec::new();
+    }
     let Some((route, query)) = list_query(state) else {
         state.info("Only lists can be sorted");
         return Vec::new();

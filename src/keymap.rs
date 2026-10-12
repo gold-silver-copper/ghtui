@@ -211,7 +211,7 @@ actions! {
     Approve           "approve"           [",a"]                   Global "Approve the pull request";
     ReadyForReview    "ready_for_review"  [",r"]                   Global "Mark the draft ready for review";
     UpdateBranch      "update_branch"     [",u"]                   Global "Update the branch from its base";
-    Close             "close"             [",x"]                   Global "Close or reopen; on a running run, cancel it";
+    Close             "close"             [",x"]                   Global "Close or reopen (an alert: dismiss it); on a running run, cancel it";
     Rerun             "rerun"             [",R"]                   Global "Re-run the workflow run or job";
     EditComment       "edit"              [",e"]                   Global "Edit the comment or description";
     DeleteComment     "delete_comment"    [",D"]                   Global "Delete the comment";

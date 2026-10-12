@@ -323,5 +323,7 @@ fn sample(key: &DataKey) -> Data {
         K::Notifications(_) => Data::Notifications(Box::new(fixtures::notifications())),
         K::Projects(_) => Data::Projects(Box::new(fixtures::projects())),
         K::Project(..) => Data::Project(Box::new(fixtures::project())),
+        K::Alerts(_, kind, _) => Data::Alerts(Box::new(crate::security::fixtures::alerts(*kind))),
+        K::Alert(a) => Data::Alert(Box::new(crate::security::fixtures::alert(a.kind, a.number))),
     }
 }

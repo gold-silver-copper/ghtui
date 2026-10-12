@@ -44,6 +44,10 @@ pub(crate) const NEW_FORM: &str = "query($owner: String!, $name: String!) { repo
 /// Branches by name, 100 at a time; with the first page, the newest 100 tags.
 pub(crate) const REFS: &str = "query($owner: String!, $name: String!, $after: String, $tags: Boolean!) { repository(owner: $owner, name: $name) { heads: refs(refPrefix: \"refs/heads/\", first: 100, after: $after, orderBy: {field: ALPHABETICAL, direction: ASC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name } } tags: refs(refPrefix: \"refs/tags/\", first: 100, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) @include(if: $tags) { totalCount pageInfo { hasNextPage endCursor } nodes { name } } } }";
 
+/// Dependabot's pull request for a vulnerability alert, or why it
+/// couldn't make one.
+pub(crate) const DEPENDABOT_UPDATE: &str = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { vulnerabilityAlert(number: $number) { dependabotUpdate { pullRequest { number title state } error { title body } } } } }";
+
 /// The latest commit touching each of `paths`: one `history` each.
 pub(crate) fn last_commits(paths: &[String]) -> String {
     let quote = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
@@ -179,6 +183,7 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ("project_items", project_items()),
         ("SET_PROJECT_FIELD", SET_PROJECT_FIELD.to_owned()),
         ("CLEAR_PROJECT_FIELD", CLEAR_PROJECT_FIELD.to_owned()),
+        ("DEPENDABOT_UPDATE", DEPENDABOT_UPDATE.to_owned()),
     ];
     for field in ["stargazers", "watchers"] {
         all.push((

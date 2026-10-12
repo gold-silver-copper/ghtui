@@ -20,6 +20,7 @@ pub mod queries;
 mod query_check;
 pub mod rate_limit;
 mod raw;
+pub mod security;
 
 pub use crate::store::Cached;
 pub use client::{ApiError, GitHub, Polled};

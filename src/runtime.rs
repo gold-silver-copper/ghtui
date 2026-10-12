@@ -921,6 +921,13 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Project(p, view) => at(gh.cached(&project::keys::project(p, *view))?, |v| {
             Data::Project(Box::new(v))
         }),
+        DataKey::Alerts(repo, kind, query) => {
+            let key = crate::api::security::keys::alerts(repo, *kind, query);
+            at(gh.cached(&key)?, |v| Data::Alerts(Box::new(v)))
+        }
+        DataKey::Alert(a) => at(gh.cached(&crate::api::security::keys::alert(a))?, |v| {
+            Data::Alert(Box::new(v))
+        }),
         DataKey::History(repo, rev, path) => at(gh.cached(&keys::history(repo, rev, path))?, |v| {
             Data::History(Box::new(v))
         }),
@@ -1042,6 +1049,10 @@ pub(crate) async fn fetch(
         }
         DataKey::Projects(of) => Data::Projects(Box::new(gh.projects(of, after).await?)),
         DataKey::Project(p, view) => Data::Project(Box::new(gh.project(p, *view, after).await?)),
+        DataKey::Alerts(repo, kind, query) => {
+            Data::Alerts(Box::new(gh.alerts(repo, *kind, query, after).await?))
+        }
+        DataKey::Alert(a) => Data::Alert(Box::new(gh.alert(a).await?)),
         DataKey::History(repo, rev, path) => {
             Data::History(Box::new(gh.history(repo, rev, path, after).await?))
         }

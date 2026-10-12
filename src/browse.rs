@@ -15,6 +15,7 @@ use crate::api::browse::{
 use crate::api::model::{PrRef, RepoId};
 use crate::api::notifications::Inbox;
 use crate::api::project::{Project, ProjectRef, ProjectSummary, ProjectsOf};
+use crate::api::security::{Alert, AlertKind, AlertList, AlertRef};
 use crate::ui::Fetched;
 use crate::ui::page::{Page, PageLine, Role, Seg};
 use crate::ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
@@ -106,6 +107,9 @@ pub enum DataKey {
     Projects(ProjectsOf),
     /// A project at a view (its first, if none is named).
     Project(ProjectRef, Option<u64>),
+    /// A repository's security alerts of a kind, filtered.
+    Alerts(RepoId, AlertKind, String),
+    Alert(AlertRef),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,6 +166,8 @@ pub enum Data {
     NewForm(Box<crate::api::create::NewForm>),
     Projects(Box<Results<ProjectSummary>>),
     Project(Box<Project>),
+    Alerts(Box<AlertList>),
+    Alert(Box<Alert>),
 }
 
 impl Data {
@@ -202,6 +208,7 @@ impl Data {
             Data::Notifications(i) => i.list.next.as_deref(),
             Data::Projects(r) => r.next.as_deref(),
             Data::Project(p) => p.items.next.as_deref(),
+            Data::Alerts(a) => a.results.next.as_deref(),
             _ => None,
         }
     }
@@ -241,6 +248,7 @@ impl Data {
             }
             (Data::Projects(a), Data::Projects(b)) => extend(a, *b, |p| p.number),
             (Data::Project(a), Data::Project(b)) => extend(&mut a.items, b.items, |i| i.id.clone()),
+            (Data::Alerts(a), Data::Alerts(b)) => extend(&mut a.results, b.results, |a| a.number),
             _ => {}
         }
     }
@@ -289,6 +297,9 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Projects(of) => Some(DataKey::Projects(of.clone())),
         Route::Project { project, view } | Route::ProjectItem { project, view, .. } => {
             Some(DataKey::Project(project.clone(), *view))
+        }
+        Route::Alerts { repo, kind, query } => {
+            Some(DataKey::Alerts(repo.clone(), *kind, query.clone()))
         }
         _ => route
             .search()
@@ -444,9 +455,18 @@ pub fn needs(route: &Route) -> Vec<Need> {
         | Route::Deployments { repo, .. }
         | Route::Milestones { repo, .. }
         | Route::Milestone { repo, .. }
+        | Route::Alerts { repo, .. }
         | Route::Projects(ProjectsOf::Repo(repo)) => std::iter::once(header(repo))
             .chain(paged(route).map(Need::Data))
             .collect(),
+        Route::Alert { repo, kind, number } => {
+            let a = AlertRef {
+                repo: repo.clone(),
+                kind: *kind,
+                number: *number,
+            };
+            vec![header(repo), Need::Data(K::Alert(a))]
+        }
         Route::Commit { repo, oid, pr } => {
             let mut needs = vec![
                 header(repo),
@@ -514,6 +534,7 @@ picked!(
     Notifications => Inbox, Sidebar => crate::api::edit::Sidebar,
     NewForm => crate::api::create::NewForm,
     Projects => Results<ProjectSummary>, Project => Project,
+    Alerts => AlertList, Alert => Alert,
 );
 
 /// A page's needs as the page shows them, failing with the key that
@@ -669,6 +690,7 @@ impl State {
             | Route::Discussion { .. }
             | Route::Release { .. }
             | Route::Advisory { .. }
+            | Route::Alert { .. }
             | Route::NewIssue(_)
             | Route::NewPr(_)
             | Route::ProjectItem { .. }
@@ -889,7 +911,24 @@ impl State {
                 }
             }
             Route::Advisories(repo) => {
+                if let Some(repo) = repo {
+                    pages::security_nav(&mut page, repo, None);
+                }
                 pages::advisories(&mut page, repo.as_ref(), f.paged(route), now);
+            }
+            Route::Alerts { repo, kind, query } => {
+                pages::security_nav(&mut page, repo, Some(*kind));
+                pages::alerts(&mut page, repo, *kind, query, f.paged(route), cx);
+            }
+            Route::Alert { repo, kind, number } => {
+                let key = DataKey::Alert(AlertRef {
+                    repo: repo.clone(),
+                    kind: *kind,
+                    number: *number,
+                });
+                if let Some(a) = f.get(&key).show(&mut page, &title) {
+                    pages::alert(&mut page, repo, a, cx);
+                }
             }
             Route::Advisory { repo, ghsa } => {
                 let key = DataKey::Advisory(repo.clone(), ghsa.clone());

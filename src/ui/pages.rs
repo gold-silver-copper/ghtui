@@ -42,6 +42,7 @@ mod pull;
 mod repository;
 mod review;
 mod runs;
+mod security;
 
 pub use commits::*;
 pub use conversation::*;
@@ -57,6 +58,7 @@ pub use pull::*;
 pub use repository::*;
 pub use review::*;
 pub use runs::*;
+pub use security::*;
 
 // ---- URLs ----------------------------------------------------------------------
 

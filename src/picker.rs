@@ -50,6 +50,8 @@ pub enum Kind {
     },
     /// A project item's columns, fields or a field's values.
     Project(crate::projects::Pick),
+    /// Why to dismiss a security alert; the field is the comment.
+    Alert(crate::security::Dismissing),
 }
 
 /// What a section's title is for.
@@ -81,6 +83,7 @@ impl Picker {
             Kind::Form(pick) => pick.title(),
             Kind::Code { title, .. } => title,
             Kind::Project(ref pick) => pick.title(),
+            Kind::Alert(ref d) => d.title(),
         }
     }
 }
@@ -114,6 +117,8 @@ pub enum Choice {
     /// Go to this line of the file on screen.
     Line(u32),
     Project(crate::projects::Chosen),
+    /// Dismiss a security alert so.
+    Alert(crate::api::change::Change),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -168,6 +173,7 @@ impl State {
             Kind::Form(_) => "Type to filter",
             Kind::Code { .. } => "Type a name",
             Kind::Project(ref pick) => pick.placeholder(),
+            Kind::Alert(ref d) => d.placeholder(),
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
@@ -254,6 +260,9 @@ impl State {
             }
             Kind::Project(pick) => (crate::projects::rows(self, pick, q).into_iter())
                 .map(|(row, chosen)| (row, chosen.map(Choice::Project)))
+                .collect(),
+            Kind::Alert(d) => (crate::security::rows(d, q).into_iter())
+                .map(|(row, change)| (row, Some(Choice::Alert(change))))
                 .collect(),
         }
     }
@@ -607,6 +616,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
         }
         Choice::Edit(_) => Vec::new(),
         Choice::Project(chosen) => crate::projects::choose(state, chosen),
+        Choice::Alert(change) => crate::security::choose(state, change),
     }
 }
 

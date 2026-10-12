@@ -692,3 +692,7 @@ mod code_nav;
 
 /// Projects: their views, and moving and setting their items.
 mod projects;
+
+/// The Security tab's alerts: their lists and pages, and dismissing and
+/// reopening them.
+mod security;

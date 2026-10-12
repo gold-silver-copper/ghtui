@@ -15,7 +15,8 @@ ghtui is pre-release, but it's usable every day.
 - **Browsing** covers most of GitHub: your home page and notifications,
   repositories (files, README, branches, tags, releases, commits, blame,
   comparisons), issues, pull requests, Actions runs and job logs,
-  discussions, wikis, milestones, deployments, security advisories, gists,
+  discussions, wikis, milestones, deployments, security advisories and
+  alerts (Dependabot, code scanning, secret scanning), gists,
   teams, profiles, projects and search, on github.com or a GitHub Enterprise
   Server. Every GitHub link opens in ghtui unless it can only work in a
   browser (a download, settings), and then it says why.
@@ -27,7 +28,8 @@ ghtui is pre-release, but it's usable every day.
   checks pass, or through a merge queue), approve, mark ready for review,
   update a branch, close or reopen, re-run or cancel a workflow run,
   comment and star, mark notifications read or done, one at a time or
-  all at once, and move a project's cards or set their fields.
+  all at once, move a project's cards or set their fields, and dismiss or
+  reopen a security alert.
 - **Editing** what's there: your comments and descriptions (or anyone's,
   where GitHub lets you), titles, reactions, and an issue's or pull
   request's labels, assignees, reviewers and milestone.
@@ -78,7 +80,12 @@ logged, written to disk, or put on a command line. Reading needs read
 access. Acting needs write access where you act (with a
 classic token, the `repo` scope covers it all, but projects: reading them
 takes `read:project` and changing them `project`, which `gh auth refresh
--s project` adds).
+-s project` adds). The Security tab's alerts take `security_events` (or
+`repo`) with a classic token, and a fine-grained token's Dependabot, Code
+scanning or Secret scanning alerts permission; GitHub shows them only to
+people with write access (secrets: admins) and security managers. Where
+something's missing, the page says what, and the `gh auth refresh`
+command that adds a scope.
 
 ## A short tour
 
@@ -118,6 +125,20 @@ Where GitHub lets you change the project, `,c` moves the card to another
 column and `,f` sets one of its fields (a single select, an iteration, a
 text, a number or a date), and the board follows GitHub until it shows
 the change.
+
+**The Security tab** has GitHub's own menu: published advisories, then
+Dependabot alerts (the vulnerable dependency, its manifest, the affected
+and fixed versions, the advisory, and Dependabot's pull request or why it
+couldn't make one), code scanning alerts (the rule, the tool's message, and
+the file at the line the tool flagged, at the commit it read), and secret
+scanning alerts (the kind of secret, whether it still works, and where it
+is; never the secret itself). Each list filters with `/` as GitHub's does
+(`is:open`, `severity:high`, `ecosystem:npm`, `package:`, `manifest:`,
+`scope:runtime`; `tool:`, `branch:`; `secret-type:`, `validity:active`,
+`resolution:revoked`) and `t` goes between open, closed and all. Where
+GitHub lets you, `,x` dismisses an open alert (for a secret, closes it):
+pick GitHub's reason, after typing a comment if you like. On a closed one
+it reopens it, after asking. A list whose alerts are off says so.
 
 **Tabs** work like a browser's: `T` opens the selection in a new tab, `]b`
 and `[b` switch between them, and they come back next time you start.
@@ -332,7 +353,7 @@ says where it works.
 | `,a`                 | Approve the pull request |
 | `,r`                 | Mark the draft ready for review |
 | `,u`                 | Update the branch from its base |
-| `,x`                 | Close or reopen; on a running run, cancel it |
+| `,x`                 | Close or reopen (an alert: dismiss it); on a running run, cancel it |
 | `,R`                 | Re-run the workflow run or job |
 | `,e`                 | Edit the comment or description |
 | `,D`                 | Delete the comment |
@@ -695,6 +716,10 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   first is used.
 - An issue form's dropdowns become a comment listing their options, to
   answer in your own words; its validations aren't checked.
+- Security alerts are listed newest first, 30 at a time, without counts
+  (GitHub's API doesn't count them); `S` doesn't sort them. A dismissal's
+  comment is one line, and a code scanning alert shows its latest instance,
+  not every branch it's on.
 - A project's board is its columns one above another, not side by side.
   A view's sort orders the items loaded (50 a page), not the whole
   project; a roadmap shows as a table, and a board's swimlanes aren't

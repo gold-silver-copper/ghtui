@@ -35,6 +35,7 @@ mod projects;
 mod review;
 pub mod route;
 mod runtime;
+mod security;
 #[cfg(test)]
 mod sequence_tests;
 #[cfg(test)]

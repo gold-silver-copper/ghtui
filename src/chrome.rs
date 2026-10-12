@@ -628,7 +628,10 @@ fn section(route: &Route) -> Section {
         | Route::Workflow { .. } => Section::Actions,
         Route::Projects(_) => Section::Projects,
         Route::Wiki { .. } => Section::Wiki,
-        Route::Advisories(_) | Route::Advisory { .. } => Section::Security,
+        Route::Advisories(_)
+        | Route::Advisory { .. }
+        | Route::Alerts { .. }
+        | Route::Alert { .. } => Section::Security,
         _ => Section::Code,
     }
 }

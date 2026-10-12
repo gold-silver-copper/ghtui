@@ -119,6 +119,8 @@ enum Plan {
     Approve(PrRef),
     /// It's about something that has to load first.
     Load(Need),
+    /// Choose why to dismiss a security alert.
+    Dismiss(crate::security::Dismissing),
 }
 
 /// Runs one of [`ACTIONS`] on what's on screen, or on the selected row
@@ -167,6 +169,7 @@ fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
             vec![Cmd::Api(Api::Change(change, By::Act(subject)))]
         }
         Ok(Plan::Approve(pr)) => crate::review::open_approve(state, pr),
+        Ok(Plan::Dismiss(d)) => crate::security::open_dismiss(state, d),
         Ok(Plan::Load(need)) => {
             state.info(format!("Loading {}…", subject.name()));
             let route = state.route().cloned();
@@ -200,6 +203,8 @@ pub enum Subject {
     },
     /// A project's items, at a view.
     Project(ProjectRef, Option<u64>),
+    /// A security alert.
+    Alert(crate::api::security::AlertRef),
 }
 
 impl Subject {
@@ -210,6 +215,11 @@ impl Subject {
             Route::Issue { repo, number } => Subject::Issue(repo.clone(), *number),
             Route::WorkflowRun { repo, run, attempt } => Subject::Run(repo.clone(), *run, *attempt),
             Route::Job { repo, run, job, .. } => Subject::Job(repo.clone(), *run, *job),
+            Route::Alert { repo, kind, number } => Subject::Alert(crate::api::security::AlertRef {
+                repo: repo.clone(),
+                kind: *kind,
+                number: *number,
+            }),
             _ => return None,
         })
     }
@@ -241,6 +251,11 @@ impl Subject {
                 project: project.clone(),
                 view: *view,
             },
+            Subject::Alert(a) => Route::Alert {
+                repo: a.repo.clone(),
+                kind: a.kind,
+                number: a.number,
+            },
         }
     }
 
@@ -257,6 +272,7 @@ impl Subject {
                 Need::Data(DataKey::Notifications(query.clone()))
             }
             Subject::Project(project, view) => Need::Data(DataKey::Project(project.clone(), *view)),
+            Subject::Alert(a) => Need::Data(DataKey::Alert(a.clone())),
         }
     }
 
@@ -268,7 +284,7 @@ impl Subject {
                 action,
                 A::Merge | A::Approve | A::ReadyForReview | A::UpdateBranch | A::Close
             ),
-            Subject::Issue(..) => action == A::Close,
+            Subject::Issue(..) | Subject::Alert(_) => action == A::Close,
             Subject::Run(..) | Subject::Job(..) => matches!(action, A::Rerun | A::Close),
             Subject::Thread { .. } => matches!(action, A::MarkRead | A::MarkDone),
             Subject::Inbox { .. } => matches!(action, A::MarkAllRead | A::MarkAllDone),
@@ -286,6 +302,7 @@ impl Subject {
             Subject::Thread { .. } => "the notification".to_owned(),
             Subject::Inbox { .. } => "your notifications".to_owned(),
             Subject::Project(..) => "the project".to_owned(),
+            Subject::Alert(_) => "the alert".to_owned(),
         }
     }
 }
@@ -342,7 +359,7 @@ fn elsewhere(action: Action) -> &'static str {
         Action::MarkRead | Action::MarkDone => "That works on a notification in your inbox",
         Action::MarkAllRead | Action::MarkAllDone => "That works in your inbox",
         Action::Close => {
-            "Closing works on an issue, a pull request or a running workflow run (or its row)"
+            "Closing works on an issue, a pull request, a security alert or a running workflow run (or its row)"
         }
         Action::Rerun => "Re-running works on a workflow run or a job",
         _ => "That works on a pull request (or its row in a list)",
@@ -495,6 +512,11 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
             inbox::plan(query, list, fetched, action)
         }
         Subject::Project(..) => Err(elsewhere(action).to_owned()),
+        Subject::Alert(a) => Ok(match crate::security::plan(state, a)? {
+            crate::security::Plan::Load(need) => Plan::Load(need),
+            crate::security::Plan::Ask(title, facts, choices) => Plan::Ask(title, facts, choices),
+            crate::security::Plan::Dismiss(d) => Plan::Dismiss(d),
+        }),
     }
 }
 
@@ -952,6 +974,7 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
         (Change::SetProjectField { .. }, Subject::Project(project, view)) => {
             yes(crate::projects::shows(state, change, project, *view))
         }
+        (Change::Alert(c), _) => yes(crate::security::shows(state, c)),
         _ => Shown::Yes,
     }
 }
@@ -1053,6 +1076,7 @@ fn doing(change: &Change) -> &'static str {
         Change::Edit(edit) => crate::edit::doing(edit),
         Change::SetProjectField { value: None, .. } => "Clearing the field",
         Change::SetProjectField { .. } => "Setting the field",
+        Change::Alert(c) => crate::security::doing(c),
     }
 }
 
@@ -1102,6 +1126,7 @@ fn done(change: &Change) -> String {
             value: None, said, ..
         } => format!("Cleared {said}"),
         Change::SetProjectField { said, .. } => format!("Set {said}"),
+        Change::Alert(c) => crate::security::done(c),
     }
 }
 
@@ -1128,6 +1153,7 @@ pub fn needs(change: &Change) -> &'static str {
         | Change::MarkAllRead { .. }
         | Change::MarkEach { .. } => "Notifications (classic tokens only)",
         Change::SetProjectField { .. } => "Projects: write",
+        Change::Alert(c) => crate::security::needs(c),
     }
 }
 
@@ -1156,6 +1182,7 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::MarkEach { .. } => "marking them done",
         Change::Edit(edit) => crate::edit::what(edit),
         Change::SetProjectField { .. } => "setting the field",
+        Change::Alert(c) => crate::security::what(c),
     };
     let reason = match err {
         ApiError::GraphQl(messages) => messages.join("; "),
@@ -1176,6 +1203,10 @@ fn failure(change: &Change, err: &ApiError) -> String {
         _ if denied && matches!(change, Change::SetProjectField { .. }) => text.push_str(
             ". Your token may lack the permission: a classic token needs the project scope; a fine-grained one, Projects: write",
         ),
+        _ if denied && matches!(change, Change::Alert(_)) => text.push_str(&format!(
+            ". Your token may lack the permission: a fine-grained token needs {}; a classic one, the security_events or repo scope",
+            needs(change)
+        )),
         _ if denied && notifies(change) => text.push_str(
             ". Your token may lack the permission: notifications take a classic token with the notifications or repo scope",
         ),
@@ -1196,6 +1227,7 @@ pub fn doables(state: &State) -> Vec<(Action, String, Option<String>)> {
             let subject = subject(state, action).filter(|s| s.fits(action))?;
             let label = match (action, &subject) {
                 (Action::Close, Subject::Run(..) | Subject::Job(..)) => "Cancel the run",
+                (Action::Close, Subject::Alert(_)) => "Dismiss or reopen the alert",
                 (Action::Close, _) => "Close or reopen",
                 (Action::Merge, Subject::Pr(pr)) => (state.prs.get(pr))
                     .and_then(|r| r.data.as_ref())
