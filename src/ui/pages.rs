@@ -25,7 +25,7 @@ use crate::theme::{Bg, Syntax};
 
 use crate::ui::markdown::{self, LinkBase};
 use crate::ui::page::{Frame, Link, Page, PageLine, Role, Seg, Tone};
-use crate::ui::text::noun;
+use crate::ui::text::{noun, short_sha};
 use crate::ui::{Fetched, Icons, cols, time};
 
 mod commits;
@@ -44,6 +44,7 @@ mod review;
 mod runs;
 mod security;
 mod writes;
+mod timeline;
 
 pub use commits::*;
 pub use conversation::*;
@@ -61,6 +62,7 @@ pub use review::*;
 pub use runs::*;
 pub use security::*;
 pub use writes::*;
+pub use timeline::{FOLD_AFTER, Marks};
 
 // ---- URLs ----------------------------------------------------------------------
 

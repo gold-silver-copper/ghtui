@@ -648,6 +648,10 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 let all = all_changes(state);
                 return error(state, &format!("First {all}"));
             }
+            // Another review's comparison isn't yours: yours is made anew.
+            if diff.since_commit.take().is_some() {
+                diff.doc.set_since(None, false);
+            }
             // A push since the diff was made: the diff starts again at
             // it, and compares once it's in.
             let head = diff.head().map(|h| h.to_string());

@@ -514,6 +514,8 @@ pub struct State {
     pub writing: crate::writes::Writing,
     /// Workflows being run by hand: their forms.
     pub dispatching: crate::actions::Dispatching,
+    /// Conversations: long reviews unfolded, and the like.
+    pub talk: crate::talk::Talk,
     pub quit: bool,
 }
 
@@ -564,6 +566,7 @@ impl State {
             creating: crate::create::Creating::default(),
             writing: crate::writes::Writing::default(),
             dispatching: crate::actions::Dispatching::default(),
+            talk: crate::talk::Talk::default(),
             quit: false,
         };
         state.sync_page();

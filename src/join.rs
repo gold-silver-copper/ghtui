@@ -8,6 +8,7 @@ use crate::diff_screen::{DiffOf, LastReview};
 use crate::keymap::Action;
 use crate::review;
 use crate::state::{Cmd, Git, Screen, State};
+use crate::ui::text::short_sha;
 
 /// What each piece of a diff's joined work last ran for: it runs again
 /// when that changes. Only [`join`] sees inside.
@@ -98,6 +99,19 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
             Ok(Some(warning)) => state.notices.error(warning),
             Err(error) => diff.error = Some(error),
         }
+    }
+    // A review's commit, compared with the whole PR's diff.
+    if diff.since_requested
+        && let Some(old) = diff.since_commit.clone()
+    {
+        diff.since_requested = false;
+        if old == *head {
+            state.info(format!("Nothing new since {}", short_sha(&old)));
+        } else {
+            let since = Joined((pr.clone(), diff.job, old));
+            cmds.push(Cmd::Git(Git::SinceReview(since)));
+        }
+        return cmds;
     }
     // "Since my last review", compared with the whole PR's diff.
     if diff.since_requested && diff.inputs().last_review != LastReview::Unknown {

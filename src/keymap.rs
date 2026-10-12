@@ -288,9 +288,9 @@ actions! {
     Unfold            "unfold"            ["l"]                    Tree   "Unfold the folder";
     TreeNarrower      "tree_narrower"     ["<"]                    Tree   "Narrow the file tree";
     TreeWider         "tree_wider"        [">"]                    Tree   "Widen the file tree";
-    FoldClose         "fold_close"        ["zc"]                   Diff   "Fold the file or thread";
-    FoldOpen          "fold_open"         ["zo"]                   Diff   "Unfold the file or thread";
-    FoldToggle        "fold_toggle"       ["za"]                   Diff   "Fold or unfold the file or thread";
+    FoldClose         "fold_close"        ["zc", "page:zc"]        Diff   "Fold the file, thread or review";
+    FoldOpen          "fold_open"         ["zo", "page:zo"]        Diff   "Unfold the file, thread or review";
+    FoldToggle        "fold_toggle"       ["za", "page:za"]        Diff   "Fold or unfold the file, thread or review";
     FoldAll           "fold_all"          ["zM"]                   Diff   "Fold every file";
     UnfoldAll         "unfold_all"        ["zR"]                   Diff   "Unfold every file";
     ToggleTree        "toggle_tree"       ["zT"]                   Diff   "Show or hide the file tree";

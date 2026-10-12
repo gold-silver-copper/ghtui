@@ -169,11 +169,15 @@ pub struct Watch {
     seen_threads: Option<HashSet<NodeId>>,
     /// The conversation's comments, by GitHub's number, likewise.
     seen_comments: Option<HashSet<u64>>,
+    /// Its reviews, by GitHub's number, likewise.
+    seen_reviews: Option<HashSet<u64>>,
     /// Review threads and comments that came in since you started
     /// looking (not yours).
     pub new_threads: HashSet<NodeId>,
     /// The conversation's comments that did.
     pub new_comments: HashSet<u64>,
+    /// The reviews that did.
+    pub new_reviews: HashSet<u64>,
 }
 
 /// An id no watch has had.
@@ -189,13 +193,17 @@ impl Watch {
         let threads = state.diffs.get(&DiffOf::Pr(pr.clone()));
         let threads = threads.and_then(|d| d.inputs().threads.data.as_deref());
         let activity = state.picked::<PrActivity>(&DataKey::PrActivity(pr.clone()));
+        // The conversation's threads, when the diff's aren't here.
+        let threads = threads.or(activity.map(|a| a.threads.as_slice()));
         Self {
             pace: Pace::new(),
             head: head.map(|d| d.head_oid.clone()),
             seen_threads: threads.map(thread_ids),
             seen_comments: activity.map(|a| comment_ids(a).map(|(id, _)| id).collect()),
+            seen_reviews: activity.map(|a| review_ids(a).map(|(id, _)| id).collect()),
             new_threads: HashSet::new(),
             new_comments: HashSet::new(),
+            new_reviews: HashSet::new(),
             pr,
         }
     }
@@ -216,7 +224,14 @@ fn thread_ids(threads: &[ReviewThread]) -> HashSet<NodeId> {
 
 /// The conversation's comments' numbers, with their authors.
 fn comment_ids(activity: &PrActivity) -> impl Iterator<Item = (u64, &str)> {
-    (activity.comments.iter()).filter_map(|c| Some((c.id?, c.author.as_str())))
+    (activity.comments()).filter_map(|c| Some((c.id?, c.author.as_str())))
+}
+
+/// The conversation's submitted reviews' numbers, with their authors.
+fn review_ids(activity: &PrActivity) -> impl Iterator<Item = (u64, &str)> {
+    (activity.reviews())
+        .filter(|r| r.state != crate::api::model::ReviewState::Pending)
+        .filter_map(|r| Some((r.id?, r.author.as_str())))
 }
 
 /// The pull request whose review is on screen: its Files changed, its
@@ -227,7 +242,7 @@ pub fn watched(state: &State) -> Option<&PrRef> {
         Screen::Page(p) => match &p.route {
             Route::Pr {
                 pr,
-                tab: PrTab::Conversation | PrTab::Review,
+                tab: PrTab::Conversation | PrTab::Review | PrTab::Reviewed(_),
             } => Some(pr),
             _ => None,
         },
@@ -292,6 +307,12 @@ fn head_of(body: &str) -> Option<String> {
     Some(json.get("head")?.get("sha")?.as_str()?.to_owned())
 }
 
+/// When a pull request's REST answer says it was last updated.
+fn updated_of(body: &str) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_str(body).ok()?;
+    Some(json.get("updated_at")?.as_str()?.to_owned())
+}
+
 /// The newest review comment a review comments answer names.
 fn newest_comment(body: &str) -> Option<NodeId> {
     let json: serde_json::Value = serde_json::from_str(body).ok()?;
@@ -306,13 +327,30 @@ pub fn on_polled(
     pr: &PrRef,
     answers: Vec<(Probe, Result<Polled, ApiError>)>,
 ) -> Vec<Cmd> {
-    // The conversation is fetched again where it's shown: on a page.
-    let talk = matches!(state.screen(), Screen::Page(_))
-        .then(|| Need::Data(DataKey::PrActivity(pr.clone())));
+    // The conversation is fetched again where it's shown: on a page; and
+    // every review, where they're listed.
+    let page = match state.screen() {
+        Screen::Page(p) => Some(&p.route),
+        Screen::Diff(_) => None,
+    };
+    let lists_reviews = matches!(
+        page,
+        Some(Route::Pr {
+            tab: PrTab::Review | PrTab::Reviewed(_),
+            ..
+        })
+    );
+    let talk: Vec<Need> = (page.is_some())
+        .then(|| Need::Data(DataKey::PrActivity(pr.clone())))
+        .into_iter()
+        .chain(lists_reviews.then(|| Need::Data(DataKey::Reviews(pr.clone()))))
+        .collect();
     // The review comments the diff shows, to tell whether the first
     // answer is newer than they are.
     let shown = (state.diffs.get(&DiffOf::Pr(pr.clone())))
         .and_then(|d| d.inputs().threads.data.as_deref().map(thread_ids));
+    // When the pull request shown was last updated, likewise (a review).
+    let updated = (state.prs.get(pr).and_then(|r| r.data.as_ref())).map(|d| d.updated_at.clone());
     let Some(w) = state.watch.as_mut().filter(|w| w.pr == *pr) else {
         return Vec::new();
     };
@@ -338,25 +376,33 @@ pub fn on_polled(
         // The first answer is only what's there, unless a comment came in
         // after the diff's threads were fetched.
         let first = w.pace.answered(&probe, etag);
-        let unseen = probe == Probe::ReviewComments
-            && (shown.as_ref())
-                .is_some_and(|ids| newest_comment(&body).is_some_and(|id| !ids.contains(&id)));
+        let unseen = match probe {
+            Probe::ReviewComments => (shown.as_ref())
+                .is_some_and(|ids| newest_comment(&body).is_some_and(|id| !ids.contains(&id))),
+            // Updated after what's shown was fetched: a review, a comment.
+            Probe::Pull => updated_of(&body)
+                .zip(updated.as_deref())
+                .is_some_and(|(now, shown)| now.as_str() > shown),
+            Probe::CheckRuns(_) | Probe::Statuses(_) => false,
+        };
         if first && pushed.is_none() && !unseen {
             continue;
         }
         changed = true;
         let fetch = match probe {
-            Probe::Pull => vec![Some(Need::Pr(pr.clone())), talk.clone()],
+            Probe::Pull => std::iter::once(Need::Pr(pr.clone()))
+                .chain(talk.iter().cloned())
+                .collect(),
             Probe::ReviewComments => {
                 threads = true;
-                vec![talk.clone()]
+                talk.clone()
             }
             Probe::CheckRuns(_) | Probe::Statuses(_) => vec![
-                Some(Need::Pr(pr.clone())),
-                Some(Need::Data(DataKey::PrChecks(pr.clone()))),
+                Need::Pr(pr.clone()),
+                Need::Data(DataKey::PrChecks(pr.clone())),
             ],
         };
-        for need in fetch.into_iter().flatten() {
+        for need in fetch {
             if !needs.contains(&need) {
                 needs.push(need);
             }
@@ -401,6 +447,49 @@ pub fn pushed_past(state: &State, pr: &PrRef, shown: Option<&str>) -> bool {
     matches!((head, shown), (Some(head), Some(shown)) if head != shown)
 }
 
+/// Notes review threads that are in: the first time, they're what was
+/// there; after, what wasn't (and isn't yours) is new. How many threads
+/// and replies came.
+fn note_threads(w: &mut Watch, threads: &[ReviewThread], viewer: Option<&str>) -> (u64, u64) {
+    let mine = |author: &str| viewer == Some(author);
+    let (mut new_threads, mut replies) = (0u64, 0u64);
+    let ids = thread_ids(threads);
+    let Some(seen) = &mut w.seen_threads else {
+        w.seen_threads = Some(ids);
+        return (0, 0);
+    };
+    for t in threads {
+        let came: Vec<&NodeId> = (t.comments.iter())
+            .filter(|c| !seen.contains(&c.id) && !mine(&c.author))
+            .map(|c| &c.id)
+            .collect();
+        if came.is_empty() {
+            continue;
+        }
+        w.new_threads.extend(came.iter().map(|id| (*id).clone()));
+        if seen.contains(&t.id) {
+            replies += came.len() as u64;
+        } else {
+            w.new_threads.insert(t.id.clone());
+            new_threads += 1;
+        }
+    }
+    seen.extend(ids);
+    (new_threads, replies)
+}
+
+/// "2 threads, 1 reply", for the status bar.
+fn threads_said(new_threads: u64, replies: u64) -> Vec<String> {
+    let mut what = Vec::new();
+    if new_threads > 0 {
+        what.push(format!("{new_threads} {}", noun(new_threads, "thread")));
+    }
+    if replies > 0 {
+        what.push(format!("{replies} {}", noun(replies, "reply")));
+    }
+    what
+}
+
 /// The pull request's review threads are in: the first time, they're
 /// what was there; after, what wasn't is new, and said. The diff marks
 /// them.
@@ -421,74 +510,82 @@ pub fn threads_loaded(state: &mut State, pr: &PrRef) {
     let Some(threads) = diff.inputs().threads.data.as_ref() else {
         return;
     };
-    let mine = |author: &str| viewer.as_deref() == Some(author);
-    let (mut new_threads, mut replies) = (0u64, 0u64);
-    let ids = thread_ids(threads);
-    match &mut w.seen_threads {
-        None => w.seen_threads = Some(ids),
-        Some(seen) => {
-            for t in threads {
-                let came: Vec<&NodeId> = (t.comments.iter())
-                    .filter(|c| !seen.contains(&c.id) && !mine(&c.author))
-                    .map(|c| &c.id)
-                    .collect();
-                if came.is_empty() {
-                    continue;
-                }
-                w.new_threads.extend(came.iter().map(|id| (*id).clone()));
-                if seen.contains(&t.id) {
-                    replies += came.len() as u64;
-                } else {
-                    w.new_threads.insert(t.id.clone());
-                    new_threads += 1;
-                }
-            }
-            seen.extend(ids);
-        }
-    }
+    let (new_threads, replies) = note_threads(w, threads, viewer.as_deref());
     if diff.inputs().fresh != w.new_threads {
         let fresh = w.new_threads.clone();
         diff.edit(|i| i.fresh = fresh);
     }
-    let mut what = Vec::new();
-    if new_threads > 0 {
-        what.push(format!("{new_threads} {}", noun(new_threads, "thread")));
-    }
-    if replies > 0 {
-        what.push(format!("{replies} {}", noun(replies, "reply")));
-    }
+    let what = threads_said(new_threads, replies);
     if !what.is_empty() {
         notices.info(format!("New on {pr}: {}", what.join(", ")));
     }
 }
 
-/// The conversation's comments are in: as with threads, what wasn't
-/// there before is new, and said.
+/// The conversation is in: as with threads, its comments, reviews and
+/// threads that weren't there before are new, and said (a review by who
+/// and what they decided).
 pub fn activity_loaded(state: &mut State, pr: &PrRef) {
-    let Some(activity) = state.picked::<PrActivity>(&DataKey::PrActivity(pr.clone())) else {
+    let State {
+        watch,
+        data,
+        viewer,
+        notices,
+        data_gen,
+        ..
+    } = state;
+    let activity = (data.get(&DataKey::PrActivity(pr.clone())))
+        .and_then(|r| r.data.as_ref())
+        .and_then(<PrActivity as crate::browse::Picked>::pick);
+    let Some(activity) = activity else {
         return;
     };
-    let viewer = state.viewer.as_deref();
-    let comments: Vec<(u64, bool)> = comment_ids(activity)
-        .map(|(id, author)| (id, viewer == Some(author)))
-        .collect();
-    let Some(w) = state.watch.as_mut().filter(|w| w.pr == *pr) else {
+    let viewer = viewer.as_deref();
+    let Some(w) = watch.as_mut().filter(|w| w.pr == *pr) else {
         return;
     };
-    let Some(seen) = &mut w.seen_comments else {
-        w.seen_comments = Some(comments.iter().map(|(id, _)| *id).collect());
-        return;
-    };
-    let mut new = 0;
-    for (id, mine) in comments {
-        if seen.insert(id) && !mine {
-            w.new_comments.insert(id);
-            new += 1;
+    let mut what = Vec::new();
+    // Comments.
+    let comments: Vec<(u64, &str)> = comment_ids(activity).collect();
+    match &mut w.seen_comments {
+        None => w.seen_comments = Some(comments.iter().map(|(id, _)| *id).collect()),
+        Some(seen) => {
+            let mut new = 0;
+            for (id, author) in comments {
+                if seen.insert(id) && viewer != Some(author) {
+                    w.new_comments.insert(id);
+                    new += 1;
+                }
+            }
+            if new > 0 {
+                what.push(format!("{new} {}", noun(new, "comment")));
+            }
         }
     }
-    if new > 0 {
-        state.data_gen += 1;
-        state.info(format!("New on {pr}: {new} {}", noun(new, "comment")));
+    // Reviews, each named.
+    let reviews: Vec<(u64, &str)> = review_ids(activity).collect();
+    match &mut w.seen_reviews {
+        None => w.seen_reviews = Some(reviews.iter().map(|(id, _)| *id).collect()),
+        Some(seen) => {
+            for (id, author) in reviews {
+                if seen.insert(id) && viewer != Some(author) {
+                    w.new_reviews.insert(id);
+                    let r = activity.reviews().find(|r| r.id == Some(id));
+                    let said = r.map_or("reviewed", |r| match r.state {
+                        crate::api::model::ReviewState::Approved => "approved",
+                        crate::api::model::ReviewState::ChangesRequested => "requested changes",
+                        _ => "reviewed",
+                    });
+                    what.push(format!("{author} {said}"));
+                }
+            }
+        }
+    }
+    // Threads, which the diff's own fetch may have noted already.
+    let (new_threads, replies) = note_threads(w, &activity.threads, viewer);
+    what.extend(threads_said(new_threads, replies));
+    if !what.is_empty() {
+        *data_gen += 1;
+        notices.info(format!("New on {pr}: {}", what.join(", ")));
     }
 }
 

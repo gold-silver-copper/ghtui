@@ -1,8 +1,9 @@
 //! Browsing: the data behind each page, and building pages from it.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 use crate::api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckOutcome, Checks, CommitDetail, CommitInfo, Comparison,
@@ -12,10 +13,11 @@ use crate::api::browse::{
     StateCounts, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage,
     Workflow, WorkflowRun,
 };
-use crate::api::model::{PrRef, RepoId};
+use crate::api::model::{Capped, PrRef, RepoId};
 use crate::api::notifications::Inbox;
 use crate::api::project::{Project, ProjectRef, ProjectSummary, ProjectsOf};
 use crate::api::security::{Alert, AlertKind, AlertList, AlertRef};
+use crate::api::timeline::Review;
 use crate::ui::Fetched;
 use crate::ui::page::{Page, PageLine, Role, Seg};
 use crate::ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
@@ -46,6 +48,8 @@ pub enum DataKey {
     StateCounts(String),
     Issue(RepoId, u64),
     PrActivity(PrRef),
+    /// All of a pull request's reviews.
+    Reviews(PrRef),
     Profile(String),
     /// Every file path at a revision ("Go to file").
     Files(RepoId, String),
@@ -126,6 +130,7 @@ pub enum Data {
     /// `None`: the number is a pull request.
     Issue(Option<Box<IssueDetail>>),
     PrActivity(Box<PrActivity>),
+    Reviews(Box<Capped<Review>>),
     Profile(Box<Profile>),
     /// Paths, and whether GitHub cut the list short.
     Files(Arc<Vec<String>>, bool),
@@ -420,6 +425,15 @@ pub fn needs(route: &Route) -> Vec<Need> {
             Need::Data(K::PrActivity(pr.clone())),
             Need::Data(K::PrChecks(pr.clone())),
         ],
+        // The Review tab and a review list every review.
+        Route::Pr {
+            pr,
+            tab: PrTab::Review | PrTab::Reviewed(_),
+        } => vec![
+            Need::Pr(pr.clone()),
+            Need::Data(K::PrActivity(pr.clone())),
+            Need::Data(K::Reviews(pr.clone())),
+        ],
         Route::Pr { pr, .. } => vec![Need::Pr(pr.clone()), Need::Data(K::PrActivity(pr.clone()))],
         Route::Discussions { of, .. } | Route::Discussion { of, .. } => {
             let header = match of {
@@ -534,7 +548,7 @@ macro_rules! picked {
 picked!(
     Repo => RepoOverview, Readme => Option<Box<Readme>>, Tree => [TreeEntry], Blob => Blob,
     Search => SearchResults, StateCounts => StateCounts, Issue => Option<Box<IssueDetail>>,
-    PrActivity => PrActivity,
+    PrActivity => PrActivity, Reviews => Capped<Review>,
     Profile => Profile, Refs => Refs, RefIn => Option<String>,
     LastCommits => HashMap<String, CommitInfo>, Commit => CommitDetail,
     History => Results<CommitInfo>, Checks => Checks, Users => Results<UserSummary>,
@@ -718,7 +732,8 @@ impl State {
             | Route::Dispatch { .. }
             | Route::ProjectItem { .. }
             | Route::Pr {
-                tab: PrTab::Review, ..
+                tab: PrTab::Review | PrTab::Reviewed(_),
+                ..
             } => Page::new(reading),
             Route::Pr {
                 tab: PrTab::Checks, ..
@@ -873,7 +888,11 @@ impl State {
                 let none = HashSet::new();
                 let fresh = crate::live::page::fresh(self, route).unwrap_or(&none);
                 match issue.show(&mut page, &format!("{repo}#{number}")) {
-                    Some(Some(issue)) => pages::issue(&mut page, issue, fresh, icons, keys, now),
+                    Some(Some(issue)) => {
+                        let mut marks = crate::talk::marks(self, None);
+                        marks.comments = fresh;
+                        pages::issue(&mut page, issue, marks, cx);
+                    }
                     // Redirecting to the pull request.
                     Some(None) => page.line(vec![Seg::new("Loading…", Role::Meta)]),
                     None => {}
@@ -881,13 +900,12 @@ impl State {
             }
             Route::Pr { pr, tab } => {
                 let activity = f.get(&DataKey::PrActivity(pr.clone()));
-                let watch = crate::live::fresh(self, pr);
-                let (none, unseen) = (HashSet::new(), HashSet::new());
+                let reviews = f.get(&DataKey::Reviews(pr.clone()));
+                let marks = crate::talk::marks(self, Some(pr));
                 if let Some(d) = f.of(self.prs.get(pr)).show(&mut page, &pr.to_string()) {
                     match tab {
                         PrTab::Conversation => {
-                            let fresh = watch.map_or(&none, |w| &w.new_comments);
-                            pages::pr_conversation(&mut page, pr, d, activity, fresh, cx);
+                            pages::pr_conversation(&mut page, pr, d, activity, marks, cx);
                         }
                         PrTab::Commits => pages::pr_commits(&mut page, pr, d, activity, now),
                         PrTab::Checks => {
@@ -902,9 +920,14 @@ impl State {
                                 drafts: inputs
                                     .filter(|i| i.review_loaded)
                                     .map(|i| i.review.pending.as_slice()),
-                                fresh: watch.map_or(&unseen, |w| &w.new_threads),
+                                fresh: marks.threads,
+                                reviews,
+                                new_reviews: marks.reviews,
                             };
                             pages::pr_review(&mut page, pr, d, activity, glance, cx);
+                        }
+                        PrTab::Reviewed(id) => {
+                            pages::pr_reviewed(&mut page, pr, d, *id, activity, reviews, marks, cx);
                         }
                     }
                 }

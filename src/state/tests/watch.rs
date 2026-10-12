@@ -118,12 +118,14 @@ fn an_issue_is_watched_and_another_authors_comment_is_new() {
         created_at: "2026-10-03T12:00:00Z".into(),
         editable: None,
     };
-    issue.comments = vec![
-        issue.comments[0].clone(),
-        comment(2, "monalisa"),
-        comment(3, "octocat"),
+    let first = issue.comments().next().cloned().expect("a comment");
+    issue.timeline = vec![
+        crate::api::timeline::Item::Comment(first),
+        crate::api::timeline::Item::Comment(comment(2, "monalisa")),
+        crate::api::timeline::Item::Comment(comment(3, "octocat")),
     ]
     .into();
+    issue.comment_count = 3;
     fetched(&mut s, key, Data::Issue(Some(Box::new(issue))));
     says(&s, "New on gold-silver-copper/ghtui#14: 1 comment");
     let fresh = crate::live::page::fresh(&s, &route(&s)).cloned();

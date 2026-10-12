@@ -527,7 +527,7 @@ pub enum Side {
     Right,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewComment {
     pub id: NodeId,
     pub author: String,
@@ -540,9 +540,11 @@ pub struct ReviewComment {
     /// Part of the viewer's unsubmitted review on GitHub.
     pub pending: bool,
     pub editable: Editable,
+    /// The review it was made in, by GitHub's number for it.
+    pub review: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewThread {
     pub id: NodeId,
     pub path: String,
@@ -563,6 +565,9 @@ pub struct ReviewThread {
     pub can_unresolve: bool,
     /// The first comment and the newest replies.
     pub comments: Capped<ReviewComment>,
+    /// The diff the first comment was made on, as GitHub kept it: the
+    /// lines it's about come last.
+    pub diff_hunk: String,
 }
 
 /// GitHub's patch for one file (from REST `pulls/{n}/files`).
@@ -728,6 +733,7 @@ impl PrDetail {
 impl ReviewThread {
     pub(crate) fn from_wire(t: q::ReviewThread) -> Self {
         let line = |n: Option<i32>| n.and_then(|n| u32::try_from(n).ok());
+        let mut diff_hunk = String::new();
         Self {
             id: t.id.into(),
             path: t.path,
@@ -759,9 +765,15 @@ impl ReviewThread {
                     url: c.url.0,
                     original_commit: c.original_commit.map(|o| o.oid.0),
                     pending: c.state == q::ReviewCommentState::Pending,
+                    review: (c.pull_request_review)
+                        .and_then(|r| r.full_database_id?.0.parse().ok()),
                 };
-                let mut items: Vec<ReviewComment> =
-                    nodes(t.first_comment.nodes).map(comment).collect();
+                let mut items: Vec<ReviewComment> = nodes(t.first_comment.nodes)
+                    .map(|first| {
+                        diff_hunk = first.diff_hunk;
+                        comment(first.comment)
+                    })
+                    .collect();
                 let first = items.first().map(|c| c.id.clone());
                 // In a short thread the first is among the newest too.
                 items.extend(
@@ -774,6 +786,7 @@ impl ReviewThread {
                     u64::try_from(t.comments.total_count).unwrap_or_default(),
                 )
             },
+            diff_hunk,
         }
     }
 }

@@ -894,6 +894,9 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Issue(repo, number) => at(gh.cached(&keys::issue(repo, *number))?, |v| {
             Data::Issue(Some(Box::new(v)))
         }),
+        DataKey::Reviews(pr) => at(gh.cached(&keys::reviews(pr))?, |v| {
+            Data::Reviews(Box::new(v))
+        }),
         DataKey::PrActivity(pr) => at(gh.cached(&keys::pr_activity(pr))?, |v| {
             Data::PrActivity(Box::new(v))
         }),
@@ -1055,6 +1058,7 @@ pub(crate) async fn fetch(
         DataKey::StateCounts(query) => Data::StateCounts(gh.state_counts(query).await?),
         DataKey::Issue(repo, number) => Data::Issue(gh.issue(repo, *number).await?.map(Box::new)),
         DataKey::PrActivity(pr) => Data::PrActivity(Box::new(gh.pr_activity(pr).await?)),
+        DataKey::Reviews(pr) => Data::Reviews(Box::new(gh.reviews(pr).await?)),
         DataKey::Profile(login) => Data::Profile(Box::new(gh.profile(login).await?)),
         DataKey::Files(repo, rev) => {
             let (files, truncated) = gh.file_list(repo, rev).await?;

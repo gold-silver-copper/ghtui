@@ -136,6 +136,7 @@ impl State {
             Link::Form(link) => crate::create::follow_link(self, link),
             Link::Write(link) => crate::writes::follow_link(self, link),
             Link::Artifact { .. } | Link::Dispatch(_) => crate::actions::follow_link(self, link),
+            Link::Review(link) => crate::talk::follow(self, link),
             Link::State(state) => set_list_state(self, state),
             // Enter on a comment doesn't start writing: `>` does.
             Link::Quote { .. } => {

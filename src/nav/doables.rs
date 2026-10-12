@@ -400,6 +400,19 @@ impl State {
         }
         crate::projects::doables(self, out);
         crate::discuss::doables(self, out);
+        // Long reviews fold, in a conversation and on a review's page.
+        let folds = p
+            .page
+            .links
+            .iter()
+            .any(|l| matches!(l, Link::Review(crate::ui::page::ReviewLink::Fold(_))));
+        if folds {
+            out.push(here(
+                Action::FoldToggle,
+                "Fold or unfold the review",
+                "fold",
+            ));
+        }
         if let Route::Pr { tab, .. } = route {
             if *tab == PrTab::Conversation {
                 out.push(here(Action::Tab2, "Commits", ""));
@@ -660,5 +673,6 @@ pub(super) fn describe(link: &Link) -> String {
         Link::Form(link) => crate::create::describe(link).into(),
         Link::Write(link) => crate::writes::describe(link).into(),
         Link::Artifact { .. } | Link::Dispatch(_) => crate::actions::describe(link).into(),
+        Link::Review(link) => crate::talk::describe(link).into(),
     }
 }

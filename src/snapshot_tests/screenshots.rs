@@ -168,9 +168,11 @@ fn stretch(state: &mut State) {
             Some(Data::Issue(Some(d))) => {
                 d.title = awful(40);
                 d.body = format!("{}\n\n```\n{}\n```", awful(30), "x".repeat(5000));
-                for c in d.comments.iter_mut() {
-                    c.author = "a".repeat(39);
-                    c.body = awful(20);
+                for i in d.timeline.iter_mut() {
+                    if let crate::api::timeline::Item::Comment(c) = i {
+                        c.author = "a".repeat(39);
+                        c.body = awful(20);
+                    }
                 }
             }
             Some(Data::Branches(r)) => {

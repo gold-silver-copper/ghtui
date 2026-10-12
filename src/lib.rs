@@ -48,6 +48,7 @@ mod snapshot_tests;
 mod source;
 mod state;
 mod tabs;
+mod talk;
 mod typing;
 mod view;
 mod watch;

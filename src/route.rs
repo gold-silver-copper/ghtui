@@ -421,6 +421,7 @@ impl Route {
             Route::Pr { pr, tab } => match tab {
                 // GitHub shows a review in the conversation.
                 PrTab::Conversation | PrTab::Review => links::pull(pr),
+                PrTab::Reviewed(id) => format!("{}#pullrequestreview-{id}", links::pull(pr)),
                 PrTab::Commits => links::pull_tab(pr, "commits"),
                 PrTab::Checks => links::pull_tab(pr, "checks"),
             },

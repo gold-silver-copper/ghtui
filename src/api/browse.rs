@@ -8,14 +8,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::edit::{Editable, SidebarPermits, WireReactionGroup, reactions};
 use crate::api::model::{
-    Capped, ChecksState, Label, MilestoneRef, NodeId, PrStatus, RepoId, ReviewDecision,
-    ReviewState, author, count, labels,
+    Capped, ChecksState, Label, MilestoneRef, NodeId, PrStatus, RepoId, ReviewDecision, author,
+    count, labels,
 };
 use crate::api::queries::{
     Actor, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount, GitObjectId,
     IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount, RefCount,
     RepositoryName, StatusState, Uri, UserCount, fragments, nodes,
 };
+use crate::api::timeline;
 use crate::schema::schema;
 
 pub use crate::api::model::{IssueState, PrState, Status};
@@ -449,8 +450,19 @@ pub struct IssueDetail {
     pub labels: Capped<Label>,
     pub assignees: Capped<String>,
     pub milestone: Option<MilestoneRef>,
-    /// The newest comments, oldest first, of how many there are in all.
-    pub comments: Capped<Comment>,
+    /// The newest comments and events, oldest first, of how many there
+    /// are in all.
+    pub timeline: Capped<timeline::Item>,
+    /// Comments in all, loaded or not.
+    pub comment_count: u64,
+    /// The pull requests that will close it (GitHub's "Development").
+    pub closed_by: Capped<timeline::Linked>,
+    /// Branches made for it.
+    pub branches: Capped<String>,
+    pub parent: Option<timeline::Linked>,
+    pub sub_issues: Capped<timeline::Linked>,
+    pub progress: Option<timeline::Progress>,
+    pub issue_type: Option<String>,
     /// Node ID, for commenting.
     pub id: NodeId,
     pub can_close: bool,
@@ -460,15 +472,28 @@ pub struct IssueDetail {
     pub sidebar: SidebarPermits,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReviewSummary {
-    /// GitHub's number for it, which its link's anchor uses
-    /// (`#pullrequestreview-…`).
-    pub id: Option<u64>,
-    pub author: String,
-    pub state: ReviewState,
-    pub body: String,
-    pub submitted_at: String,
+impl IssueDetail {
+    /// The comments loaded, oldest first.
+    pub fn comments(&self) -> impl Iterator<Item = &Comment> {
+        comments_in(&self.timeline)
+    }
+
+    /// The first comment loaded, to change in a test.
+    #[cfg(test)]
+    pub(crate) fn first_comment(&mut self) -> Option<&mut Comment> {
+        self.timeline.iter_mut().find_map(|i| match i {
+            timeline::Item::Comment(c) => Some(c),
+            _ => None,
+        })
+    }
+}
+
+/// The comments among a timeline's items.
+fn comments_in(timeline: &[timeline::Item]) -> impl Iterator<Item = &Comment> {
+    timeline.iter().filter_map(|i| match i {
+        timeline::Item::Comment(c) => Some(c),
+        _ => None,
+    })
 }
 
 /// Everything on a PR's Conversation and Commits tabs that `PrDetail`
@@ -477,13 +502,38 @@ pub struct ReviewSummary {
 pub struct PrActivity {
     /// Node ID, for commenting.
     pub id: NodeId,
-    /// The newest comments, reviews and commits, oldest first, of how
+    /// The newest comments, reviews and events, oldest first, of how
     /// many there are in all.
-    pub comments: Capped<Comment>,
-    pub reviews: Capped<ReviewSummary>,
+    pub timeline: Capped<timeline::Item>,
+    /// Comments in all, loaded or not.
+    pub comment_count: u64,
+    /// The newest commits, oldest first, of how many there are in all.
     pub commits: Capped<CommitInfo>,
     /// Who has been asked for a review and hasn't given one since.
-    pub requested: Capped<Reviewer>,
+    pub requested: Capped<timeline::Requested>,
+    /// Each reviewer's latest review.
+    pub latest: Capped<timeline::Latest>,
+    /// The issues it will close when it merges.
+    pub closing: Capped<timeline::Linked>,
+    /// Its merge commit, once merged.
+    pub merge_commit: Option<String>,
+    /// Its review threads, which its reviews' comments start.
+    pub threads: Vec<crate::api::model::ReviewThread>,
+}
+
+impl PrActivity {
+    /// The comments loaded, oldest first.
+    pub fn comments(&self) -> impl Iterator<Item = &Comment> {
+        comments_in(&self.timeline)
+    }
+
+    /// The reviews loaded, oldest first.
+    pub fn reviews(&self) -> impl Iterator<Item = &timeline::Review> {
+        self.timeline.iter().filter_map(|i| match i {
+            timeline::Item::Review(r) => Some(r),
+            _ => None,
+        })
+    }
 }
 
 /// Someone asked for a review: a person (or a bot), or a team.
@@ -613,10 +663,7 @@ pub struct Language {
 // it) and how many there are, so what's left out can be said.
 fragments! {
     counted:
-    IssueComments = "IssueCommentConnection" => WireComment,
-    Reviews = "PullRequestReviewConnection" => WireReview,
     PrCommits = "PullRequestCommitConnection" => PrCommitNode,
-    ReviewRequests = "ReviewRequestConnection" => WireReviewRequest,
 }
 
 // Lists of nodes, and their nodes' types.
@@ -1020,8 +1067,18 @@ pub struct IssueFull {
     #[arguments(first: 10)]
     pub assignees: Assignees,
     pub milestone: Option<crate::api::queries::MilestoneName>,
-    #[arguments(last: 100)]
-    pub comments: IssueComments,
+    pub comments: CommentCount,
+    #[arguments(last: 100, itemTypes: [ISSUE_COMMENT, CLOSED_EVENT, REOPENED_EVENT, CROSS_REFERENCED_EVENT, REFERENCED_EVENT, LABELED_EVENT, UNLABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, MILESTONED_EVENT, DEMILESTONED_EVENT, ADDED_TO_PROJECT_V2_EVENT, REMOVED_FROM_PROJECT_V2_EVENT, PROJECT_V2_ITEM_STATUS_CHANGED_EVENT, RENAMED_TITLE_EVENT, LOCKED_EVENT, UNLOCKED_EVENT, PINNED_EVENT, UNPINNED_EVENT, TRANSFERRED_EVENT, MARKED_AS_DUPLICATE_EVENT, UNMARKED_AS_DUPLICATE_EVENT, SUB_ISSUE_ADDED_EVENT, SUB_ISSUE_REMOVED_EVENT, PARENT_ISSUE_ADDED_EVENT, PARENT_ISSUE_REMOVED_EVENT, ISSUE_TYPE_ADDED_EVENT, ISSUE_TYPE_CHANGED_EVENT, ISSUE_TYPE_REMOVED_EVENT, CONVERTED_TO_DISCUSSION_EVENT])]
+    pub timeline_items: timeline::IssueTimeline,
+    #[arguments(first: 10, includeClosedPrs: true)]
+    pub closed_by_pull_requests_references: Option<timeline::ClosedBy>,
+    #[arguments(first: 10)]
+    pub linked_branches: timeline::Branches,
+    pub parent: Option<timeline::LinkedIssue>,
+    #[arguments(first: 50)]
+    pub sub_issues: timeline::SubIssues,
+    pub sub_issues_summary: timeline::WireProgress,
+    pub issue_type: Option<timeline::TypeName>,
     pub repository: RepositoryName,
     pub viewer_can_close: bool,
     pub viewer_can_reopen: bool,
@@ -1076,30 +1133,18 @@ pub struct RepoPrActivity {
 #[cynic(graphql_type = "PullRequest", schema_module = "schema")]
 pub struct WirePrActivity {
     pub id: cynic::Id,
-    #[arguments(last: 100)]
-    pub comments: IssueComments,
-    #[arguments(last: 50)]
-    pub reviews: Option<Reviews>,
+    pub comments: CommentCount,
+    #[arguments(last: 100, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, CLOSED_EVENT, REOPENED_EVENT, MERGED_EVENT, CROSS_REFERENCED_EVENT, REFERENCED_EVENT, LABELED_EVENT, UNLABELED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, MILESTONED_EVENT, DEMILESTONED_EVENT, ADDED_TO_PROJECT_V2_EVENT, REMOVED_FROM_PROJECT_V2_EVENT, PROJECT_V2_ITEM_STATUS_CHANGED_EVENT, REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT, REVIEW_DISMISSED_EVENT, RENAMED_TITLE_EVENT, READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, HEAD_REF_FORCE_PUSHED_EVENT, BASE_REF_FORCE_PUSHED_EVENT, HEAD_REF_DELETED_EVENT, HEAD_REF_RESTORED_EVENT, BASE_REF_CHANGED_EVENT, LOCKED_EVENT, UNLOCKED_EVENT, MARKED_AS_DUPLICATE_EVENT, UNMARKED_AS_DUPLICATE_EVENT, AUTO_MERGE_ENABLED_EVENT, AUTO_MERGE_DISABLED_EVENT, ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT])]
+    pub timeline_items: timeline::PrTimeline,
     #[arguments(last: 100)]
     pub commits: PrCommits,
     #[arguments(first: 100)]
-    pub review_requests: Option<ReviewRequests>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
-pub struct WireReview {
-    pub full_database_id: Option<crate::api::queries::BigInt>,
-    pub author: Option<Actor>,
-    pub state: ReviewState,
-    pub body: String,
-    pub submitted_at: Option<DateTime>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ReviewRequest", schema_module = "schema")]
-pub struct WireReviewRequest {
-    pub requested_reviewer: Option<RequestedReviewer>,
+    pub review_requests: Option<timeline::Requests>,
+    #[arguments(first: 100)]
+    pub latest_reviews: Option<timeline::LatestReviews>,
+    #[arguments(first: 10)]
+    pub closing_issues_references: Option<timeline::Closing>,
+    pub merge_commit: Option<crate::api::queries::CommitOid>,
 }
 
 #[derive(cynic::InlineFragments, Debug)]
@@ -1603,23 +1648,6 @@ fn latest_runs(items: Vec<CheckItem>) -> Vec<CheckItem> {
 #[cfg(test)]
 mod tests {
 
-    /// Your pending review is neither among a PR's reviews nor counted as
-    /// one left out.
-    #[test]
-    fn a_pending_review_is_not_counted_among_the_reviews() {
-        let review = |state: &str| serde_json::json!({"fullDatabaseId": null, "author": null, "state": state, "body": "", "submittedAt": null});
-        let wire: WirePrActivity = serde_json::from_value(serde_json::json!({
-            "id": "PR_1",
-            "comments": {"totalCount": 0, "nodes": []},
-            "reviews": {"totalCount": 3, "nodes": [review("APPROVED"), review("PENDING"), review("COMMENTED")]},
-            "commits": {"totalCount": 0, "nodes": []},
-            "reviewRequests": null,
-        }))
-        .unwrap();
-        let reviews = wire.into_activity().reviews;
-        assert_eq!((reviews.len(), reviews.left_out()), (2, 0));
-    }
-
     /// A tag's commit, lightweight or annotated; a tree's entries by kind,
     /// directories first, then by name whatever its case.
     #[test]
@@ -1918,30 +1946,6 @@ mod tests {
         .unwrap();
         let info = branch.into_info(&RepoId::new("cli", "cli"), None);
         assert_eq!(info.pr, Some((5, PrState::Draft)));
-    }
-
-    /// A dismissed review keeps GitHub's own state, the one the UI's
-    /// conversation matches (`a_dismissed_review_reads_as_dismissed`, app).
-    #[test]
-    fn a_dismissed_reviews_wire_spelling() {
-        let activity: WirePrActivity = serde_json::from_value(serde_json::json!({
-            "id": "PR_1",
-            "comments": { "totalCount": 0, "nodes": [] },
-            "reviews": { "totalCount": 1, "nodes": [
-                { "fullDatabaseId": "1", "author": { "__typename": "User", "login": "hubot" }, "state": "DISMISSED",
-                  "body": "", "submittedAt": "2026-10-01T00:00:00Z" },
-            ] },
-            "commits": { "totalCount": 0, "nodes": [] },
-            "reviewRequests": null,
-        }))
-        .unwrap();
-        let states: Vec<ReviewState> = activity
-            .into_activity()
-            .reviews
-            .into_iter()
-            .map(|r| r.state)
-            .collect();
-        assert_eq!(states, [ReviewState::Dismissed]);
     }
 
     /// A branch whose tip has no author shows only its headline, not a
@@ -4843,6 +4847,9 @@ pub mod keys {
     pub fn issue(repo: &RepoId, number: u64) -> String {
         format!("issue:{repo}#{number}")
     }
+    pub fn reviews(pr: &PrRef) -> String {
+        format!("pr-reviews:{pr}")
+    }
     pub fn pr_activity(pr: &PrRef) -> String {
         format!("pr-activity:{pr}")
     }
@@ -4952,7 +4959,7 @@ pub mod keys {
 
 // ---- conversions ---------------------------------------------------------------------
 
-fn issue_state(state: WireIssueState, reason: Option<StateReason>) -> IssueState {
+pub(crate) fn issue_state(state: WireIssueState, reason: Option<StateReason>) -> IssueState {
     match (state, reason) {
         (WireIssueState::Open, _) => IssueState::Open,
         (WireIssueState::Closed, Some(StateReason::NotPlanned | StateReason::Duplicate)) => {
@@ -4987,7 +4994,7 @@ impl WireCommit {
 }
 
 impl CommitCard {
-    fn into_info(self) -> CommitInfo {
+    pub(crate) fn into_info(self) -> CommitInfo {
         CommitInfo {
             author: self.author.into(),
             oid: self.oid.0,
@@ -5153,7 +5160,15 @@ impl IssueFull {
                 u.login
             }),
             milestone: self.milestone.map(MilestoneRef::from_wire),
-            comments: comments(self.comments),
+            timeline: timeline::issue_timeline(self.timeline_items),
+            comment_count: count(self.comments.total_count),
+            closed_by: (self.closed_by_pull_requests_references)
+                .map_or_else(Capped::default, timeline::linked_prs),
+            branches: timeline::branches(self.linked_branches),
+            parent: self.parent.and_then(timeline::LinkedIssue::into_linked),
+            sub_issues: timeline::sub_issues(self.sub_issues),
+            progress: timeline::progress(self.sub_issues_summary),
+            issue_type: self.issue_type.map(|t| t.name),
             editable: Editable {
                 id: self.id.clone().into(),
                 can_update: self.viewer_can_update,
@@ -5174,8 +5189,8 @@ impl IssueFull {
     }
 }
 
-fn comments(c: IssueComments) -> Capped<Comment> {
-    Capped::from_nodes(c.total_count, c.nodes, |c| Comment {
+pub(crate) fn comment(c: WireComment) -> Comment {
+    Comment {
         id: c.full_database_id.and_then(|id| id.0.parse().ok()),
         author: author(c.author),
         body: c.body,
@@ -5187,49 +5202,28 @@ fn comments(c: IssueComments) -> Capped<Comment> {
             can_react: c.viewer_can_react,
             reactions: reactions(c.reaction_groups),
         }),
-    })
-}
-
-impl WirePrActivity {
-    pub(crate) fn into_activity(self) -> PrActivity {
-        let reviews = self.reviews.as_ref().map_or(0, |r| count(r.total_count));
-        // Your pending review isn't one yet: neither shown nor left out.
-        let (pending, submitted): (Vec<_>, Vec<_>) = nodes(self.reviews.and_then(|r| r.nodes))
-            .partition(|r| r.state == ReviewState::Pending);
-        PrActivity {
-            id: self.id.into(),
-            comments: comments(self.comments),
-            reviews: Capped::new(
-                submitted
-                    .into_iter()
-                    .map(|r| ReviewSummary {
-                        id: r.full_database_id.and_then(|id| id.0.parse().ok()),
-                        author: author(r.author),
-                        state: r.state,
-                        body: r.body,
-                        submitted_at: r.submitted_at.map(|d| d.0).unwrap_or_default(),
-                    })
-                    .collect(),
-                reviews.saturating_sub(pending.len() as u64),
-            ),
-            commits: Capped::from_nodes(self.commits.total_count, self.commits.nodes, |n| {
-                n.commit.into_info()
-            }),
-            requested: self.review_requests.map_or_else(Capped::default, requested),
-        }
     }
 }
 
-/// Who a pull request's review requests name; one GitHub's types don't
-/// cover (an enterprise team) counts as left out.
-fn requested(r: ReviewRequests) -> Capped<Reviewer> {
-    let named = nodes(r.nodes).filter_map(|r| match r.requested_reviewer? {
-        RequestedReviewer::User(u) => Some(Reviewer::User(u.login)),
-        RequestedReviewer::Bot(b) => Some(Reviewer::User(b.login)),
-        RequestedReviewer::Team(t) => Some(Reviewer::Team(t.combined_slug)),
-        RequestedReviewer::Other => None,
-    });
-    Capped::new(named.collect(), count(r.total_count))
+impl WirePrActivity {
+    /// The pull request's activity, its review threads apart (they're
+    /// fetched apart, a page at a time).
+    pub(crate) fn into_activity(self) -> PrActivity {
+        PrActivity {
+            id: self.id.into(),
+            timeline: timeline::pr_timeline(self.timeline_items),
+            comment_count: count(self.comments.total_count),
+            commits: Capped::from_nodes(self.commits.total_count, self.commits.nodes, |n| {
+                n.commit.into_info()
+            }),
+            requested: timeline::requested(self.review_requests),
+            latest: timeline::latest(self.latest_reviews),
+            closing: (self.closing_issues_references)
+                .map_or_else(Capped::default, timeline::linked_issues),
+            merge_commit: self.merge_commit.map(|c| c.oid.0),
+            threads: Vec::new(),
+        }
+    }
 }
 
 fn pinned(p: Pinned) -> Vec<RepoSummary> {

@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::api::model::NodeId;
+use crate::api::timeline::Review;
+use crate::ui::page::ReviewLink;
 use std::collections::HashSet;
 
 /// What a pull request's Review tab shows of its diff: GitHub's review
@@ -12,11 +14,15 @@ pub struct Glance<'a> {
     pub drafts: Option<&'a [DraftComment]>,
     /// Threads and comments that came in since you started looking.
     pub fresh: &'a HashSet<NodeId>,
+    /// All its reviews, oldest first.
+    pub reviews: Fetched<'a, Capped<Review>>,
+    /// Reviews that came in since you started looking.
+    pub new_reviews: &'a HashSet<u64>,
 }
 
 /// A pull request's Review tab: your drafts, the threads still open, who
-/// has reviewed and who hasn't yet, and what stops the merge. Each row
-/// opens what it's about.
+/// has reviewed and who hasn't yet, every review, and what stops the
+/// merge. Each row opens what it's about.
 pub fn pr_review(
     page: &mut Page,
     pr: &PrRef,
@@ -28,8 +34,226 @@ pub fn pr_review(
     pr_summary(page, pr, d, cx.now);
     review_drafts(page, pr, glance.drafts);
     open_threads(page, glance.threads, glance.fresh, cx.now);
-    reviewers(page, pr, d, activity, cx.now);
+    reviewers(page, pr, d, activity);
+    all_reviews(page, pr, d, glance, cx.now);
     merge_box(page, pr, d, cx.icons, false);
+}
+
+/// Who has reviewed and what they said last (an approval of an older
+/// head marked), then who is asked and hasn't yet (code owners marked).
+/// A review opens its page; someone asked, their profile.
+fn reviewers(page: &mut Page, pr: &PrRef, d: &PrDetail, activity: Fetched<'_, PrActivity>) {
+    let title = Seg::new("Reviewers", Role::Strong);
+    let loading = |page: &mut Page| empty_box(page, title.clone(), "Loading…");
+    let Some(a) = activity.show_or(page, "the reviews", loading) else {
+        return;
+    };
+    let latest: Vec<_> = a.latest.iter().filter(|l| l.author != d.author).collect();
+    page.box_top(vec![title], Vec::new());
+    if latest.is_empty() && a.requested.is_empty() && a.requested.left_out() == 0 {
+        empty_row(page, "No reviews yet, and no one is asked for one.");
+    }
+    for l in latest {
+        let ((mark, role), what) = timeline::review_said(l.state);
+        let target = match l.id {
+            Some(id) => Link::Review(ReviewLink::Open { pr: pr.clone(), id }),
+            None => Link::Url(url::user(&l.author)),
+        };
+        item(page, target, |page, link| {
+            let mut segs = vec![
+                Seg::new(format!("{mark}  "), role),
+                Seg::linked(l.author.clone(), Role::Link, link),
+                Seg::new(format!(" {what}"), Role::Meta),
+            ];
+            let stale = l.state == ReviewState::Approved
+                && l.commit.as_deref().is_some_and(|c| c != d.head_oid);
+            if stale {
+                segs.push(Seg::new(" · before the last push", Role::Meta));
+            }
+            for team in &l.for_teams {
+                segs.push(Seg::new(format!(" · for {team}"), Role::Meta));
+            }
+            body(page, segs);
+        });
+    }
+    for r in a.requested.iter() {
+        let (name, target) = timeline::reviewer_link(&r.who);
+        item(page, target, |page, link| {
+            let what = if r.code_owner {
+                " is asked to review, as a code owner"
+            } else {
+                " is asked to review"
+            };
+            body(
+                page,
+                vec![
+                    Seg::new("●  ", Role::Accent),
+                    Seg::linked(name, Role::Link, link),
+                    Seg::new(what, Role::Meta),
+                ],
+            );
+        });
+    }
+    if a.requested.left_out() > 0 {
+        let more = format!("And {} more asked.", a.requested.left_out());
+        empty_row(page, &more);
+    }
+    page.box_bottom();
+}
+
+/// Every review, newest first: who, what they decided, when, on which
+/// commit, how many comments, and the start of the summary. Each opens
+/// its page.
+fn all_reviews(page: &mut Page, pr: &PrRef, d: &PrDetail, glance: Glance<'_>, now: u64) {
+    let heading = "Reviews";
+    let loading = |page: &mut Page| empty_box(page, Seg::new(heading, Role::Strong), "Loading…");
+    let Some(reviews) = glance.reviews.show_or(page, "the reviews", loading) else {
+        return;
+    };
+    let title = match reviews.total() {
+        0 => heading.to_owned(),
+        n => format!("{heading} · {n}"),
+    };
+    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
+    if reviews.is_empty() {
+        empty_row(page, "None yet.");
+    }
+    for (n, r) in reviews.iter().rev().enumerate() {
+        if n > 0 {
+            page.box_rule();
+        }
+        let Some(id) = r.id else { continue };
+        let link = Link::Review(ReviewLink::Open { pr: pr.clone(), id });
+        item(page, link, |page, link| {
+            let ((mark, role), what) = timeline::review_said(r.state);
+            let mut segs = vec![
+                Seg::new(format!("{mark}  "), role),
+                Seg::linked(r.author.clone(), Role::Link, link),
+                Seg::new(format!(" {what}"), Role::Meta),
+            ];
+            if glance.new_reviews.contains(&id) {
+                segs.push(space());
+                segs.push(chip("New", Bg::TertiaryContainer));
+            }
+            let mut right = vec![Seg::new(time::ago_iso(&r.at, now), Role::Meta)];
+            if r.comments > 0 {
+                right.insert(
+                    0,
+                    Seg::new(format!("{} · ", plural(r.comments, "comment")), Role::Meta),
+                );
+            }
+            page.box_line(segs, right, 0);
+            let mut on = Vec::new();
+            if let Some(c) = &r.commit {
+                let at = if *c == d.head_oid {
+                    format!("on {} (the head)", short_sha(c))
+                } else {
+                    format!("on {}", short_sha(c))
+                };
+                on.push(Seg::new(at, Role::Meta));
+            }
+            let said = first_line(&r.body, page.room(Frame::Body, 0));
+            if !said.is_empty() {
+                if !on.is_empty() {
+                    on.push(Seg::new(" · ", Role::Meta));
+                }
+                on.push(Seg::new(said, Role::Body));
+            }
+            if !on.is_empty() {
+                page.wrapped(on, 0, Frame::Body);
+            }
+        });
+    }
+    if reviews.left_out() > 0 {
+        let text = left_out_text(reviews.left_out(), "more review", "more reviews");
+        empty_row(page, &text);
+    }
+    page.box_bottom();
+}
+
+/// One review: its summary and every thread it started or replied in,
+/// then the changes it reviewed (as they were at its commit) and what
+/// changed since.
+#[expect(clippy::too_many_arguments, reason = "a page's data and context")]
+pub fn pr_reviewed(
+    page: &mut Page,
+    pr: &PrRef,
+    d: &PrDetail,
+    id: u64,
+    activity: Fetched<'_, PrActivity>,
+    reviews: Fetched<'_, Capped<Review>>,
+    marks: Marks<'_>,
+    cx: PageCtx<'_>,
+) {
+    pr_summary(page, pr, d, cx.now);
+    let Some(a) = activity.show(page, "the review's comments") else {
+        return;
+    };
+    // From all of them, or else from the conversation's newest.
+    #[expect(clippy::disallowed_methods, reason = "either says where it is")]
+    let all = reviews.ready_unchecked();
+    let found = all
+        .and_then(|all| all.iter().find(|r| r.id == Some(id)))
+        .or_else(|| a.reviews().find(|r| r.id == Some(id)));
+    let Some(r) = found else {
+        let what = if all.is_some() {
+            "GitHub has no such review on this pull request."
+        } else {
+            "Loading the review…"
+        };
+        page.wrapped(vec![Seg::new(what, Role::Meta)], 0, Frame::None);
+        return;
+    };
+    let talk = Conversation {
+        base: LinkBase::new(&pr.repo, &d.head_oid, ""),
+        op: &d.author,
+        now: cx.now,
+    };
+    let place = timeline::Place {
+        repo: &pr.repo,
+        pr: Some(pr),
+        threads: &a.threads,
+        icons: cx.icons,
+    };
+    // All of it: nothing folds here.
+    let unfolded: HashSet<String> = r.anchor().into_iter().collect();
+    let marks = Marks {
+        unfolded: &unfolded,
+        ..marks
+    };
+    timeline::review(page, &talk, &place, r, marks);
+    let Some(commit) = &r.commit else {
+        return;
+    };
+    page.box_top(vec![Seg::new("Its changes", Role::Strong)], Vec::new());
+    let reviewed = Link::Review(ReviewLink::AsReviewed {
+        pr: pr.clone(),
+        commit: commit.clone(),
+    });
+    item(page, reviewed, |page, link| {
+        let text = format!(
+            "The changes it reviewed, as they were at {}",
+            short_sha(commit)
+        );
+        body(page, vec![Seg::linked(text, Role::Link, link)]);
+    });
+    if *commit == d.head_oid {
+        empty_row(page, "Nothing changed since: it reviewed the head.");
+    } else {
+        let since = Link::Review(ReviewLink::Since {
+            pr: pr.clone(),
+            commit: commit.clone(),
+        });
+        item(page, since, |page, link| {
+            let text = format!(
+                "What changed since, from {} to {}",
+                short_sha(commit),
+                short_sha(&d.head_oid)
+            );
+            body(page, vec![Seg::linked(text, Role::Link, link)]);
+        });
+    }
+    page.box_bottom();
 }
 
 /// The first line of `text` with words in it, cut to `max` columns.
@@ -157,92 +381,6 @@ pub(super) fn open_threads(
             Some(url) => item(page, url, |page, link| row(page, Some(link))),
             None => row(page, None),
         }
-    }
-    page.box_bottom();
-}
-
-/// Who has reviewed and what they said last, then who is asked and
-/// hasn't yet. A review opens in the conversation; someone asked, their
-/// profile. Replies the author writes in threads are reviews too, which
-/// GitHub doesn't count, so neither does this.
-pub(super) fn reviewers(
-    page: &mut Page,
-    pr: &PrRef,
-    d: &PrDetail,
-    activity: Fetched<'_, PrActivity>,
-    now: u64,
-) {
-    let title = Seg::new("Reviewers", Role::Strong);
-    let loading = |page: &mut Page| empty_box(page, title.clone(), "Loading…");
-    let Some(a) = activity.show_or(page, "the reviews", loading) else {
-        return;
-    };
-    // Commenting after approving or asking for changes doesn't take it back.
-    let mut said: Vec<&crate::api::browse::ReviewSummary> = Vec::new();
-    for r in a.reviews.iter().filter(|r| r.author != d.author) {
-        let decided =
-            |s: ReviewState| matches!(s, ReviewState::Approved | ReviewState::ChangesRequested);
-        match said.iter_mut().find(|s| s.author == r.author) {
-            Some(s) if r.state == ReviewState::Commented && decided(s.state) => {}
-            Some(s) => *s = r,
-            None => said.push(r),
-        }
-    }
-    page.box_top(vec![title], Vec::new());
-    if said.is_empty() && a.requested.is_empty() && a.requested.left_out() == 0 {
-        empty_row(page, "No reviews yet, and no one is asked for one.");
-    }
-    for r in said {
-        let ((mark, role), what) = match r.state {
-            ReviewState::Approved => (("✓", Role::Success), "approved"),
-            ReviewState::ChangesRequested => (("✗", Role::Error), "requested changes"),
-            ReviewState::Dismissed => (("○", Role::Meta), "had a review dismissed"),
-            ReviewState::Commented | ReviewState::Pending => (("◉", Role::Meta), "commented"),
-        };
-        let target = match r.id {
-            Some(id) => format!("{}#pullrequestreview-{id}", url::pull(pr)),
-            None => url::user(&r.author),
-        };
-        item(page, target, |page, link| {
-            let ago = time::ago_iso(&r.submitted_at, now);
-            body(
-                page,
-                vec![
-                    Seg::new(format!("{mark}  "), role),
-                    Seg::linked(r.author.clone(), Role::Link, link),
-                    Seg::new(format!(" {what} {ago}"), Role::Meta),
-                ],
-            );
-        });
-    }
-    if a.reviews.left_out() > 0 {
-        empty_row(page, "Earlier reviews are on GitHub.");
-    }
-    for who in &a.requested {
-        let (name, target) = match who {
-            Reviewer::User(login) => (login.clone(), url::user(login)),
-            Reviewer::Team(team) => {
-                let (org, slug) = team.split_once('/').unwrap_or(("", team));
-                (
-                    team.clone(),
-                    format!("{}/orgs/{org}/teams/{slug}", url::base()),
-                )
-            }
-        };
-        item(page, target, |page, link| {
-            body(
-                page,
-                vec![
-                    Seg::new("●  ", Role::Accent),
-                    Seg::linked(name, Role::Link, link),
-                    Seg::new(" is asked to review", Role::Meta),
-                ],
-            );
-        });
-    }
-    if a.requested.left_out() > 0 {
-        let more = format!("And {} more asked.", a.requested.left_out());
-        empty_row(page, &more);
     }
     page.box_bottom();
 }

@@ -315,6 +315,7 @@ fn typed() -> Vec<(&'static str, String)> {
     use crate::api::change as c;
     use crate::api::edit as e;
     use crate::api::queries as q;
+    use crate::api::timeline as t;
     typed! {
         Query q::RollupsQuery, q::NodesVariables;
         Query q::PullRequestQuery, q::NumberVariables;
@@ -371,6 +372,9 @@ fn typed() -> Vec<(&'static str, String)> {
         Mutation e::UpdateReviewComment, e::BodyVariables;
         Mutation e::DeleteIssueComment, e::EditIdVariables;
         Mutation e::DeleteReviewComment, e::EditIdVariables;
+        Mutation e::UpdateReview, e::BodyVariables;
+        Mutation e::DeleteReview, e::EditIdVariables;
+        Query t::ReviewsQuery, q::PageVariables;
         Mutation e::UpdateIssueTitle, e::TitleVariables;
         Mutation e::UpdatePrTitle, e::TitleVariables;
         Mutation e::AddReaction, e::ReactVariables;
@@ -471,6 +475,7 @@ fn every_query_is_checked() {
         include_str!("create.rs"),
         include_str!("watch.rs"),
         include_str!("release.rs"),
+        include_str!("timeline.rs"),
     ]
     .concat();
     let operations = source.matches("graphql_type = \"Query\"").count()

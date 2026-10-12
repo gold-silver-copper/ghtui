@@ -22,6 +22,7 @@ use crate::api::notifications;
 use crate::api::queries::{self, nodes};
 use crate::api::rate_limit::{RateLimits, retry_after};
 use crate::api::raw;
+use crate::api::timeline;
 use crate::host::Host;
 
 const MAX_ATTEMPTS: u32 = 3;
@@ -1465,15 +1466,35 @@ impl GitHub {
         ))
     }
 
-    /// Comments, reviews and commits of a pull request.
+    /// A pull request's timeline (comments, reviews, events), commits and
+    /// review threads: the threads apart, in pages, at the same time.
     pub async fn pr_activity(&self, pr: &PrRef) -> Result<browse::PrActivity, ApiError> {
         let op = browse::PrActivityQuery::build(number_vars(pr)?);
-        let activity = self
-            .find(op, pr, |q| {
-                Some(q.repository?.pull_request?.into_activity())
-            })
-            .await?;
+        let activity = self.find(op, pr, |q| {
+            Some(q.repository?.pull_request?.into_activity())
+        });
+        let (activity, threads) = tokio::try_join!(activity, self.review_threads(pr))?;
+        let activity = browse::PrActivity {
+            threads,
+            ..activity
+        };
         Ok(self.kept(&browse::keys::pr_activity(pr), activity).await)
+    }
+
+    /// All of a pull request's reviews, oldest first.
+    pub async fn reviews(&self, pr: &PrRef) -> Result<Capped<timeline::Review>, ApiError> {
+        let page = move |after| async move {
+            let op = timeline::ReviewsQuery::build(page_vars(pr, after)?);
+            let page = self
+                .find(op, pr, |q| q.repository?.pull_request?.reviews)
+                .await?;
+            let reviews = nodes(page.nodes).map(timeline::WireReview::into_review);
+            let reviews = reviews.collect();
+            Ok(browse::Results::uncounted(reviews, page.page_info.next()))
+        };
+        let what = format!("{pr}'s reviews");
+        let reviews = self.more_pages(what, page(None).await?, FILE_PAGES, page);
+        Ok(self.kept(&browse::keys::reviews(pr), reviews.await?).await)
     }
 
     /// A user's or organization's profile.

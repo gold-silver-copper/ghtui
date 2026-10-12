@@ -121,6 +121,8 @@ pub enum Written {
     IssueComment,
     /// A comment in a review thread.
     ReviewComment,
+    /// A review's summary; deleting one throws away your pending review.
+    Review,
 }
 
 /// An edit to something already on GitHub.
@@ -222,6 +224,7 @@ impl GitHub {
                         .mutate(UpdateReviewComment::build(vars))
                         .await
                         .map(drop),
+                    Written::Review => self.mutate(UpdateReview::build(vars)).await.map(drop),
                 }
             }
             Edit::Delete { of, id } => {
@@ -231,6 +234,7 @@ impl GitHub {
                         .mutate(DeleteReviewComment::build(vars))
                         .await
                         .map(drop),
+                    Written::Review => self.mutate(DeleteReview::build(vars)).await.map(drop),
                     _ => self.mutate(DeleteIssueComment::build(vars)).await.map(drop),
                 }
             }
@@ -627,6 +631,8 @@ fragments! {
     UpdateReviewCommentPayload = "UpdatePullRequestReviewCommentPayload",
     DeleteIssueCommentPayload = "DeleteIssueCommentPayload",
     DeleteReviewCommentPayload = "DeletePullRequestReviewCommentPayload",
+    UpdateReviewPayload = "UpdatePullRequestReviewPayload",
+    DeleteReviewPayload = "DeletePullRequestReviewPayload",
     AddReactionPayload = "AddReactionPayload",
     RemoveReactionPayload = "RemoveReactionPayload",
     AddLabelsPayload = "AddLabelsToLabelablePayload",
@@ -752,6 +758,30 @@ pub struct DeleteIssueComment {
 pub struct DeleteReviewComment {
     #[arguments(input: { id: $id })]
     pub delete_pull_request_review_comment: Option<DeleteReviewCommentPayload>,
+}
+
+/// A review's summary.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "BodyVariables"
+)]
+pub struct UpdateReview {
+    #[arguments(input: { pullRequestReviewId: $id, body: $body })]
+    pub update_pull_request_review: Option<UpdateReviewPayload>,
+}
+
+/// Your pending review, thrown away with its comments.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "Mutation",
+    schema_module = "schema",
+    variables = "EditIdVariables"
+)]
+pub struct DeleteReview {
+    #[arguments(input: { pullRequestReviewId: $id })]
+    pub delete_pull_request_review: Option<DeleteReviewPayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]

@@ -62,6 +62,8 @@ pub enum Link {
     },
     /// One of the rows of the form that runs a workflow by hand.
     Dispatch(DispatchLink),
+    /// Something a pull request's review leads to.
+    Review(ReviewLink),
 }
 
 /// What a row of a release's, a gist's or a wiki page's form does
@@ -95,6 +97,29 @@ pub enum DispatchLink {
     Input(String),
     /// Run it.
     Run,
+}
+
+/// What a row about a review does.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ReviewLink {
+    /// Folds or unfolds a long review's threads, by the review's anchor.
+    Fold(String),
+    /// A review's own page, by GitHub's number for it.
+    Open {
+        pr: crate::api::model::PrRef,
+        id: u64,
+    },
+    /// The pull request's changes as the review saw them: up to its
+    /// commit, from git.
+    AsReviewed {
+        pr: crate::api::model::PrRef,
+        commit: String,
+    },
+    /// What changed since the review's commit.
+    Since {
+        pr: crate::api::model::PrRef,
+        commit: String,
+    },
 }
 
 /// What a row of a new issue's or pull request's form does.

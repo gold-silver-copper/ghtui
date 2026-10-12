@@ -311,6 +311,13 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
         | Action::MoveSectionDown
         | Action::Delete
         | Action::UndoDelete => return crate::home::act(state, action),
+        // A long review in a conversation.
+        Action::FoldClose | Action::FoldOpen | Action::FoldToggle => {
+            match crate::talk::fold_key(state, action) {
+                Some(cmds) => return cmds,
+                None => state.info("Select a long review to fold or unfold it"),
+            }
+        }
         _ => state.info(action.not_here()),
     }
     Vec::new()

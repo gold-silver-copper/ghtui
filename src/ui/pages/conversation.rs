@@ -102,31 +102,11 @@ impl Conversation<'_> {
             reactions,
         );
     }
-
-    /// A timeline event: `● author approved these changes 1d ago`.
-    pub(super) fn event(
-        &self,
-        page: &mut Page,
-        (icon, role): (&str, Role),
-        author: &str,
-        what: &str,
-        when: &str,
-    ) {
-        let who = login_seg(page, author, Role::Strong);
-        let when = time::ago_iso(when, self.now);
-        let what = Seg::new(format!(" {what} {when}"), Role::Meta);
-        page.add(
-            Frame::None,
-            2,
-            vec![Seg::new(format!("{icon}  "), role), who, what],
-            Vec::new(),
-        );
-    }
 }
 
 /// The reactions under a comment, as GitHub shows them: each one's emoji
 /// and count, the ones you gave marked.
-fn reaction_chips(page: &mut Page, reactions: &[Reaction]) {
+pub(super) fn reaction_chips(page: &mut Page, reactions: &[Reaction]) {
     if reactions.is_empty() {
         return;
     }
@@ -215,18 +195,9 @@ pub(super) fn label_list(page: &mut Page, l: &Capped<Label>) {
     }
 }
 
-/// Comments in `fresh` (by GitHub's number) came in since you started
-/// looking.
-pub fn issue(
-    page: &mut Page,
-    d: &IssueDetail,
-    fresh: &HashSet<u64>,
-    icons: Icons,
-    keys: Keys<'_>,
-    now: u64,
-) {
-    let participants =
-        unique(std::iter::once(&d.author).chain(d.comments.iter().map(|c| &c.author)));
+pub fn issue(page: &mut Page, d: &IssueDetail, marks: Marks<'_>, cx: PageCtx<'_>) {
+    let PageCtx { icons, keys, now } = cx;
+    let participants = unique(std::iter::once(&d.author).chain(d.comments().map(|c| &c.author)));
     let aside = page.build_aside(|a| {
         people(
             a,
@@ -238,7 +209,8 @@ pub fn issue(
         );
         label_list(a, &d.labels);
         milestone_aside(a, &d.repo, d.milestone.as_ref());
-        let earlier = d.comments.left_out() > 0;
+        timeline::relations_aside(a, icons, d);
+        let earlier = d.timeline.left_out() > 0;
         people(a, "Participants", &participants, maybe_others(earlier), "");
     });
     page.wrapped(
@@ -258,7 +230,7 @@ pub fn issue(
             format!(
                 " opened this issue {} · {}",
                 time::ago_iso(&d.created_at, now),
-                plural(d.comments.total(), "comment")
+                plural(d.comment_count, "comment")
             ),
             Role::Meta,
         ),
@@ -286,6 +258,9 @@ pub fn issue(
         more_chips(&mut segs, &d.assignees);
         page.line(segs);
     }
+    if !aside {
+        timeline::relations_inline(page, icons, d);
+    }
     let talk = Conversation {
         base: LinkBase::new(&d.repo, "HEAD", ""),
         op: &d.author,
@@ -301,11 +276,14 @@ pub fn issue(
         true,
         reactions,
     );
-    earlier_here(page, &d.comments, "comment", "comments");
-    for c in &d.comments {
-        connector(page);
-        talk.comment(page, c, c.id.is_some_and(|id| fresh.contains(&id)));
-    }
+    earlier_here(page, &d.timeline, "comment or event", "comments and events");
+    let place = timeline::Place {
+        repo: &d.repo,
+        pr: None,
+        threads: &[],
+        icons,
+    };
+    timeline::entries(page, &talk, &place, &d.timeline, marks);
     add_comment(page, keys);
 }
 

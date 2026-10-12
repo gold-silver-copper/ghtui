@@ -116,7 +116,7 @@ fn a_comment_is_edited_in_place_and_followed() {
     press(&mut s, ",e");
     says(&s, "hasn't shown the last change");
     deliver(&mut s, |d| {
-        d.comments[0].body = "Agreed. 120 columns, centered?!".into();
+        d.first_comment().unwrap().body = "Agreed. 120 columns, centered?!".into();
     });
     assert!(s.awaiting.is_none());
 }
@@ -126,7 +126,7 @@ fn a_comment_is_edited_in_place_and_followed() {
 #[test]
 fn edits_are_offered_only_where_github_allows_them() {
     let mut s = issue_with(|d| {
-        let mine = d.comments[0].editable.as_mut().unwrap();
+        let mine = d.first_comment().unwrap().editable.as_mut().unwrap();
         (mine.can_update, mine.can_delete) = (false, false);
     });
     on_hubot(&mut s);
@@ -189,7 +189,11 @@ fn deleting_a_comment_asks_first() {
     says(&s, "Deleted");
     deliver(&mut s, |_| {});
     assert!(s.awaiting.is_some());
-    deliver(&mut s, |d| d.comments.items.clear());
+    deliver(&mut s, |d| {
+        d.timeline
+            .items
+            .retain(|i| !matches!(i, crate::api::timeline::Item::Comment(_)));
+    });
     assert!(s.awaiting.is_none());
 }
 
@@ -203,7 +207,7 @@ fn reactions_under_a_comment_dark() {
             count: 3,
             mine: false,
         }];
-        let comment = d.comments[0].editable.as_mut().unwrap();
+        let comment = d.first_comment().unwrap().editable.as_mut().unwrap();
         comment.reactions = vec![
             hooray(2, true),
             Reaction {
@@ -348,11 +352,13 @@ fn reviewers_include_teams() {
     assert!(teams.is_empty());
     answer(&mut s, &cmds, Ok(()));
     let mut activity = fixtures::activity();
-    activity.requested = vec![
-        crate::api::browse::Reviewer::User("defunkt".into()),
-        crate::api::browse::Reviewer::User("hubot".into()),
-    ]
-    .into();
+    activity.requested = ["defunkt", "hubot"]
+        .map(|who| crate::api::timeline::Requested {
+            who: crate::api::browse::Reviewer::User(who.into()),
+            code_owner: false,
+        })
+        .to_vec()
+        .into();
     fetched(
         &mut s,
         DataKey::PrActivity(pr()),

@@ -8,12 +8,15 @@ use crate::api::browse::{
     DiscussionDetail, DiscussionHit, DiscussionList, DiscussionSummary, EntryKind, Gist, GistFile,
     GistSummary, IssueDetail, IssueKind, IssueState, IssueSummary, Job, JobSummary, Login,
     MilestoneDetail, MilestoneInfo, MilestoneList, MonthActivity, Person, PrActivity, PrState,
-    Profile, Readme, Release, RepoOverview, RepoSummary, Results, ReviewSummary, Reviewer,
-    RunSummary, SearchResults, Status, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary, TreeEntry,
+    Profile, Readme, Release, RepoOverview, RepoSummary, Results, Reviewer, RunSummary,
+    SearchResults, Status, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary, TreeEntry,
     UserSummary, Week, WikiPage, Workflow, WorkflowRun,
 };
-use crate::api::model::{Capped, Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
+use crate::api::model::{
+    Capped, Label, NodeId, PrRef, RepoId, ReviewComment, ReviewState, ReviewThread, Side,
+};
 use crate::api::notifications::{Inbox, Notification};
+use crate::api::timeline::{Event, Item, Latest, Linked, LinkedState, Requested, Review, What};
 use crossterm::event::KeyEvent;
 
 use crate::store::{DraftComment, DraftSide};
@@ -157,8 +160,10 @@ pub(crate) fn thread(id: &str, line: Option<u32>, resolved: bool, outdated: bool
             original_commit: Some("abc".into()),
             pending: false,
             editable: editable(&format!("{id}-c")),
+            review: None,
         }]
         .into(),
+        diff_hunk: String::new(),
     }
 }
 
@@ -799,14 +804,33 @@ pub fn issue() -> IssueDetail {
             number: 3,
             title: "Links".into(),
         }),
-        comments: vec![Comment {
-            id: Some(1_000_001),
-            author: "hubot".into(),
-            body: "Agreed. 120 columns, centered?".into(),
-            created_at: "2026-10-02T12:00:00Z".into(),
-            editable: Some(editable("IC_1")),
-        }]
+        timeline: vec![
+            event("octocat", "2026-10-01T12:05:00Z", labeled("bug", "d73a4a")),
+            event("octocat", "2026-10-01T12:06:00Z", labeled("ui", "1d76db")),
+            Item::Comment(Comment {
+                id: Some(1_000_001),
+                author: "hubot".into(),
+                body: "Agreed. 120 columns, centered?".into(),
+                created_at: "2026-10-02T12:00:00Z".into(),
+                editable: Some(editable("IC_1")),
+            }),
+            event(
+                "monalisa",
+                "2026-10-02T13:00:00Z",
+                What::CrossReferenced {
+                    from: linked_pr(12, "Cap the reading width"),
+                    will_close: true,
+                },
+            ),
+        ]
         .into(),
+        comment_count: 1,
+        closed_by: vec![linked_pr(12, "Cap the reading width")].into(),
+        branches: Capped::default(),
+        parent: None,
+        sub_issues: Capped::default(),
+        progress: None,
+        issue_type: Some("Bug".into()),
         id: NodeId::new("I_14"),
         can_close: true,
         can_reopen: true,
@@ -820,54 +844,186 @@ pub fn issue() -> IssueDetail {
     }
 }
 
+/// An event on a timeline.
+pub(crate) fn event(actor: &str, at: &str, what: What) -> Item {
+    Item::Event(Event {
+        actor: actor.into(),
+        at: at.into(),
+        what,
+    })
+}
+
+fn labeled(name: &str, color: &str) -> What {
+    What::Labeled {
+        label: label(name, color),
+        added: true,
+    }
+}
+
+/// An open pull request in ghtui's repository, as a timeline names it.
+pub(crate) fn linked_pr(number: u64, title: &str) -> Linked {
+    Linked {
+        repo: RepoId::new("gold-silver-copper", "ghtui"),
+        number,
+        title: title.into(),
+        state: LinkedState::Pr(PrState::Open),
+    }
+}
+
+/// A review on the fixture pull request.
+pub(crate) fn review(id: u64, author: &str, state: ReviewState, body: &str, at: &str) -> Review {
+    Review {
+        id: Some(id),
+        author: author.into(),
+        state,
+        body: body.into(),
+        at: at.into(),
+        commit: Some("1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into()),
+        comments: 0,
+        editable: editable(&format!("PRR_{id}")),
+    }
+}
+
+/// Every review of the fixture pull request, oldest first.
+pub fn reviews() -> Capped<Review> {
+    activity().reviews().cloned().collect::<Vec<_>>().into()
+}
+
+/// The two commits of the fixture pull request.
+fn pr_commits() -> Vec<CommitInfo> {
+    vec![
+        CommitInfo {
+            oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
+            headline: "Theme: derive syntax colors from the seed".into(),
+            author: Person::User(Login::unchecked("octocat")),
+            date: "2026-09-30T12:00:00Z".into(),
+        },
+        CommitInfo {
+            oid: "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into(),
+            headline: "Check every syntax role against diff backgrounds".into(),
+            author: Person::User(Login::unchecked("octocat")),
+            date: "2026-10-01T12:00:00Z".into(),
+        },
+    ]
+}
+
 pub fn activity() -> PrActivity {
+    let mut commits = pr_commits().into_iter().map(|c| {
+        let at = c.date.clone();
+        event("octocat", &at, What::Committed(c))
+    });
+    let (first, second) = (commits.next(), commits.next());
+    // hubot's review started a thread on the theme, which octocat answered.
+    let mut thread = thread("PRRT_1", Some(42), false, false);
+    thread.path = "src/theme.rs".into();
+    thread.original_line = Some(42);
+    thread.diff_hunk = "@@ -40,3 +40,4 @@ impl Theme {\n     fn syntax(&self) -> Syntax {\n-        Syntax::default()\n+        let seed = self.seed;\n+        Syntax::from_seed(seed)".into();
+    let said = thread.comments.items.clone();
+    thread.comments = said
+        .into_iter()
+        .flat_map(|c| {
+            [
+                ReviewComment {
+                    body: "Is the seed's tone checked against the diff backgrounds?".into(),
+                    author: "hubot".into(),
+                    review: Some(2_000_002),
+                    url: "https://github.com/gold-silver-copper/ghtui/pull/12#discussion_r3000001"
+                        .into(),
+                    ..c.clone()
+                },
+                ReviewComment {
+                    id: NodeId::new("PRRC_2"),
+                    body: "Yes, in `contrast_tests`.".into(),
+                    author: "octocat".into(),
+                    created_at: "2026-10-01T11:00:00Z".into(),
+                    review: Some(2_000_003),
+                    ..c
+                },
+            ]
+        })
+        .collect::<Vec<_>>()
+        .into();
+    let mut commented = review(
+        2_000_002,
+        "hubot",
+        ReviewState::Commented,
+        "Yes: every role is checked at both depths.",
+        "2026-10-01T10:00:00Z",
+    );
+    commented.comments = 1;
     PrActivity {
         id: NodeId::new("PR_12"),
-        comments: vec![Comment {
-            id: Some(1_000_001),
-            author: "hubot".into(),
-            body: "Does this cover the 256-color fallback?".into(),
-            created_at: "2026-10-01T09:00:00Z".into(),
-            editable: Some(editable("IC_2")),
+        timeline: first
+            .into_iter()
+            .chain([Item::Comment(Comment {
+                id: Some(1_000_001),
+                author: "hubot".into(),
+                body: "Does this cover the 256-color fallback?".into(),
+                created_at: "2026-10-01T09:00:00Z".into(),
+                editable: Some(editable("IC_2")),
+            })])
+            .chain([Item::Review(commented)])
+            .chain(second)
+            .chain([
+                event(
+                    "octocat",
+                    "2026-10-01T12:30:00Z",
+                    What::ReviewRequested {
+                        who: Some(Reviewer::User("defunkt".into())),
+                        added: true,
+                    },
+                ),
+                Item::Review(review(
+                    2_000_001,
+                    "monalisa",
+                    ReviewState::Approved,
+                    "",
+                    "2026-10-02T09:00:00Z",
+                )),
+            ])
+            .collect::<Vec<_>>()
+            .into(),
+        comment_count: 1,
+        commits: pr_commits().into(),
+        requested: vec![
+            Requested {
+                who: Reviewer::User("defunkt".into()),
+                code_owner: true,
+            },
+            Requested {
+                who: Reviewer::Team("octo-org/core".into()),
+                code_owner: false,
+            },
+        ]
+        .into(),
+        latest: vec![
+            Latest {
+                author: "hubot".into(),
+                state: ReviewState::Commented,
+                id: Some(2_000_002),
+                at: "2026-10-01T10:00:00Z".into(),
+                commit: Some("0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into()),
+                for_teams: Vec::new(),
+            },
+            Latest {
+                author: "monalisa".into(),
+                state: ReviewState::Approved,
+                id: Some(2_000_001),
+                at: "2026-10-02T09:00:00Z".into(),
+                commit: Some("1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into()),
+                for_teams: vec!["octo-org/design".into()],
+            },
+        ]
+        .into(),
+        closing: vec![Linked {
+            repo: RepoId::new("gold-silver-copper", "ghtui"),
+            number: 14,
+            title: "Pages wrap at the terminal width".into(),
+            state: LinkedState::Issue(IssueState::Open),
         }]
         .into(),
-        reviews: vec![
-            ReviewSummary {
-                id: Some(2_000_001),
-                author: "monalisa".into(),
-                state: crate::api::model::ReviewState::Approved,
-                body: String::new(),
-                submitted_at: "2026-10-02T09:00:00Z".into(),
-            },
-            ReviewSummary {
-                id: Some(2_000_002),
-                author: "hubot".into(),
-                state: crate::api::model::ReviewState::Commented,
-                body: "Yes: every role is checked at both depths.".into(),
-                submitted_at: "2026-10-01T10:00:00Z".into(),
-            },
-        ]
-        .into(),
-        commits: vec![
-            CommitInfo {
-                oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
-                headline: "Theme: derive syntax colors from the seed".into(),
-                author: Person::User(Login::unchecked("octocat")),
-                date: "2026-09-30T12:00:00Z".into(),
-            },
-            CommitInfo {
-                oid: "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into(),
-                headline: "Check every syntax role against diff backgrounds".into(),
-                author: Person::User(Login::unchecked("octocat")),
-                date: "2026-10-01T12:00:00Z".into(),
-            },
-        ]
-        .into(),
-        requested: vec![
-            Reviewer::User("defunkt".into()),
-            Reviewer::Team("octo-org/core".into()),
-        ]
-        .into(),
+        merge_commit: None,
+        threads: vec![thread],
     }
 }
 
