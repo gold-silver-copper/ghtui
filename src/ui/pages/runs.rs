@@ -137,12 +137,15 @@ pub(super) fn annotation_rows(
                 segs.push(Seg::new(format!("  {}", a.title), Role::Strong));
             }
             page.box_line(segs, Vec::new(), indent);
-            let message = a.message.lines().next().unwrap_or_default();
-            page.box_line(
-                vec![Seg::new(message.to_owned(), Role::Body)],
-                Vec::new(),
-                indent + 2,
-            );
+            // Under a check, its first line; on its own page, all of it.
+            let lines = a
+                .message
+                .lines()
+                .take(if indent > 0 { 1 } else { usize::MAX });
+            for line in lines {
+                let text = vec![Seg::new(line.to_owned(), Role::Body)];
+                page.wrapped(text, indent + 2, Frame::Body);
+            }
         };
         match a.url.as_deref().or(run) {
             Some(url) => item(page, url.to_owned(), |page, link| row(page, Some(link))),

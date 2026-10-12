@@ -793,6 +793,15 @@ impl GitHub {
             std::io::Write::write_all(&mut part, &chunk).map_err(|e| failed(&e))?;
             size += chunk.len() as u64;
         }
+        // A temporary file is private; what's saved reads like any download.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let open = std::fs::Permissions::from_mode(0o644);
+            part.as_file()
+                .set_permissions(open)
+                .map_err(|e| failed(&e))?;
+        }
         let kept = if replace {
             part.persist(dest).map(drop)
         } else {
@@ -2162,6 +2171,18 @@ impl GitHub {
             self.rest_json::<browse::rest_actions::Run>(&path, &asked),
             self.rest_json::<browse::rest_actions::Jobs>(jobs_path, &jobs_asked)
         );
+        let wire = wire?;
+        // A run just started has no jobs, nor artifacts, for GitHub to
+        // find for a moment: none yet.
+        let starting =
+            browse::CheckOutcome::of(wire.status, wire.conclusion) == browse::CheckOutcome::Pending;
+        let jobs = match jobs {
+            Err(ApiError::NotFound(_)) if starting => Ok(browse::rest_actions::Jobs {
+                jobs: Vec::new(),
+                total_count: 0,
+            }),
+            jobs => jobs,
+        };
         // Big matrices have more than a page of jobs; an empty page is the last.
         let results = |page: u64, jobs: browse::rest_actions::Jobs| browse::Results {
             next: next_page(page, 100, jobs.total_count).filter(|_| !jobs.jobs.is_empty()),
@@ -2181,8 +2202,11 @@ impl GitHub {
             self.more_pages(what, results(1, jobs?), PAGES, page),
             self.artifacts(repo, run)
         );
-        let mut run = wire?.into_run(jobs?);
-        run.artifacts = artifacts?;
+        let mut run = wire.into_run(jobs?);
+        run.artifacts = match artifacts {
+            Err(ApiError::NotFound(_)) if starting => Capped::default(),
+            artifacts => artifacts?,
+        };
         Ok(self
             .kept(&browse::keys::run(repo, run.id, attempt), run)
             .await)
