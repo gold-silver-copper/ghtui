@@ -238,6 +238,7 @@ actions! {
     NewPr             "new_pull_request"  [",p"]                   Page   "New pull request";
     Create            "create"            [",s"]                   Page   "Create the issue or pull request";
     PushBranch        "push_branch"       [",P"]                   Page   "Push the branch to GitHub";
+    MarkAnswer        "mark_answer"       [",!"]                   Page   "Mark the comment as the discussion's answer, or unmark it";
     Branch            "branch"            ["B"]                    Page   "Switch branches or tags";
     Hints             "hints"             ["i", "diff:i"]          Page   "Follow a link by its letters";
     HintsBrowser      "hints_browser"     ["I", "diff:I"]          Page   "Follow a link, in the browser";

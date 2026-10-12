@@ -113,6 +113,8 @@ pub enum Change {
     },
     /// Edit a comment, a title, a reaction or a sidebar.
     Edit(crate::api::edit::Edit),
+    /// Write in a discussion, or mark its answer.
+    Discussion(crate::api::discussion::Discuss),
     /// Set a project item's field to a value, or clear it (`None`); `said`
     /// is what it sets, as people say it ("Status to Done").
     SetProjectField {
@@ -329,6 +331,7 @@ impl GitHub {
                 sent
             }
             Change::Edit(edit) => self.edit(edit).await,
+            Change::Discussion(change) => self.discuss(change).await,
             Change::SetProjectField {
                 project,
                 item,

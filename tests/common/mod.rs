@@ -82,9 +82,9 @@ pub async fn run(gh: &GitHub) {
     assert_eq!(bot_pr.author, "dependabot");
     no_doubts(gh, "ghost and bot authors");
 
-    // A discussion whose newer comments' IDs overflow GraphQL's Int, so
-    // come back null.
-    gh.discussion(&DiscussionsOf::Repo(cli.clone()), 14603)
+    // An answered discussion (its answer at the top); newer comments' IDs
+    // overflow GraphQL's Int, so come back null.
+    gh.discussion(&DiscussionsOf::Repo(cli.clone()), 8794)
         .await
         .unwrap();
     no_doubts(gh, "a discussion");

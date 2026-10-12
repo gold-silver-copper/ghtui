@@ -28,8 +28,9 @@ ghtui is pre-release, but it's usable every day.
   checks pass, or through a merge queue), approve, mark ready for review,
   update a branch, close or reopen, re-run or cancel a workflow run,
   comment and star, mark notifications read or done, one at a time or
-  all at once, move a project's cards or set their fields, and dismiss or
-  reopen a security alert.
+  all at once, answer and reply in discussions and mark their answer,
+  move a project's cards or set their fields, and dismiss or reopen a
+  security alert.
 - **Editing** what's there: your comments and descriptions (or anyone's,
   where GitHub lets you), titles, reactions, and an issue's or pull
   request's labels, assignees, reviewers and milestone.
@@ -141,6 +142,13 @@ is; never the secret itself). Each list filters with `/` as GitHub's does
 GitHub lets you, `,x` dismisses an open alert (for a secret, closes it):
 pick GitHub's reason, after typing a comment if you like. On a closed one
 it reopens it, after asking. A list whose alerts are off says so.
+
+**A discussion** shows its answer at the top, as GitHub does, then its
+comments with their replies and reactions. `c` writes an answer (or, in
+a category without answers, a comment); on a comment or one of its
+replies, it replies in that comment's thread, and `>` replies quoting
+it. `,!` marks the selected comment as the answer, or unmarks it, `,+`
+reacts, and `,e` and `,D` edit and delete, where GitHub lets you.
 
 **Tabs** work like a browser's: `T` opens the selection in a new tab, `]b`
 and `[b` switch between them, and they come back next time you start.
@@ -388,6 +396,7 @@ says where it works.
 | `,p`    | New pull request |
 | `,s`    | Create the issue or pull request |
 | `,P`    | Push the branch to GitHub |
+| `,!`    | Mark the comment as the discussion's answer, or unmark it |
 | `B`     | Switch branches or tags |
 | `i`     | Follow a link by its letters |
 | `I`     | Follow a link, in the browser |
@@ -709,8 +718,7 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 - `@` offers as taking part only who has written what's loaded (the
   newest 100 comments, and the review threads), and `#` the 100 issues and
   pull requests updated last.
-- A review's summary can't be edited, and a discussion's comments show no
-  reactions.
+- A review's summary can't be edited.
 - The sidebar's pickers list a repository's first 100 labels, people,
   open milestones and teams, and say how many more GitHub has. Teams are
   listed only where your token can read the organization.

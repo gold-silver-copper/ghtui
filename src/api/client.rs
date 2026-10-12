@@ -2485,7 +2485,8 @@ impl GitHub {
         let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
         let subject = format!("{repo} discussion {number}");
         let wire: browse::wire_discussions::Detail =
-            (self.graphql_json(raw::DISCUSSION, vars, subject, "/repository/discussion")).await?;
+            (self.graphql_json(&raw::discussion(), vars, subject, "/repository/discussion"))
+                .await?;
         let detail = wire.into_detail(repo);
         Ok(self
             .kept(&browse::keys::discussion(of, number), detail)

@@ -571,7 +571,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
     super::screens::open(&mut s, route, shown(&crate::fixtures::notifications()));
     press(&mut s, ",N");
     let each = Change::MarkEach {
-        threads: threads.get(..2).unwrap().to_vec(),
+        threads: threads[..2].to_vec(),
         done: false,
     };
     assert_eq!(confirm(&s).choices.first().map(|(_, c)| c), Some(&each));

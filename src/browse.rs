@@ -964,7 +964,7 @@ impl State {
             Route::Discussion { of, number } => {
                 let key = DataKey::Discussion(of.clone(), *number);
                 if let Some(d) = f.get(&key).show(&mut page, &title) {
-                    pages::discussion(&mut page, d, now);
+                    pages::discussion(&mut page, d, cx);
                 }
             }
             Route::WorkflowRun { repo, run, attempt } => {

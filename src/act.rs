@@ -205,6 +205,8 @@ pub enum Subject {
     Project(ProjectRef, Option<u64>),
     /// A security alert.
     Alert(crate::api::security::AlertRef),
+    /// A discussion and its comments.
+    Discussion(crate::api::browse::DiscussionsOf, u64),
 }
 
 impl Subject {
@@ -256,6 +258,10 @@ impl Subject {
                 kind: a.kind,
                 number: a.number,
             },
+            Subject::Discussion(of, number) => Route::Discussion {
+                of: of.clone(),
+                number: *number,
+            },
         }
     }
 
@@ -273,6 +279,7 @@ impl Subject {
             }
             Subject::Project(project, view) => Need::Data(DataKey::Project(project.clone(), *view)),
             Subject::Alert(a) => Need::Data(DataKey::Alert(a.clone())),
+            Subject::Discussion(of, number) => Need::Data(DataKey::Discussion(of.clone(), *number)),
         }
     }
 
@@ -288,8 +295,9 @@ impl Subject {
             Subject::Run(..) | Subject::Job(..) => matches!(action, A::Rerun | A::Close),
             Subject::Thread { .. } => matches!(action, A::MarkRead | A::MarkDone),
             Subject::Inbox { .. } => matches!(action, A::MarkAllRead | A::MarkAllDone),
-            // Moving and setting go through `crate::projects`.
-            Subject::Project(..) => false,
+            // Moving and setting go through `crate::projects`, writing in
+            // a discussion through `crate::discuss`.
+            Subject::Project(..) | Subject::Discussion(..) => false,
         }
     }
 
@@ -303,6 +311,7 @@ impl Subject {
             Subject::Inbox { .. } => "your notifications".to_owned(),
             Subject::Project(..) => "the project".to_owned(),
             Subject::Alert(_) => "the alert".to_owned(),
+            Subject::Discussion(..) => "the discussion".to_owned(),
         }
     }
 }
@@ -512,12 +521,12 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
             let fetched = (state.data.get(&key)).and_then(|r| r.cached_at.or(r.asked_at));
             inbox::plan(query, list, fetched, action)
         }
-        Subject::Project(..) => Err(elsewhere(action).to_owned()),
         Subject::Alert(a) => Ok(match crate::security::plan(state, a)? {
             crate::security::Plan::Load(need) => Plan::Load(need),
             crate::security::Plan::Ask(title, facts, choices) => Plan::Ask(title, facts, choices),
             crate::security::Plan::Dismiss(d) => Plan::Dismiss(d),
         }),
+        Subject::Project(..) | Subject::Discussion(..) => Err(elsewhere(action).to_owned()),
     }
 }
 
@@ -889,6 +898,9 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
     let yes = |b: bool| if b { Shown::Yes } else { Shown::No };
     let pr = |pr: &PrRef| state.prs.get(pr).and_then(|r| r.data.as_ref());
     match (change, about) {
+        (_, Subject::Discussion(of, number)) => {
+            yes(crate::discuss::shows(state, change, of, *number))
+        }
         (Change::Edit(edit), about) => yes(crate::edit::shown(state, edit, about)),
         (_, Subject::Pr(r)) => {
             let Some(d) = pr(r) else {
@@ -1075,6 +1087,7 @@ fn doing(change: &Change) -> &'static str {
         Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => "Marking them read",
         Change::MarkEach { .. } => "Marking them done",
         Change::Edit(edit) => crate::edit::doing(edit),
+        Change::Discussion(d) => crate::discuss::doing(d),
         Change::SetProjectField { value: None, .. } => "Clearing the field",
         Change::SetProjectField { .. } => "Setting the field",
         Change::Alert(c) => crate::security::doing(c),
@@ -1123,6 +1136,7 @@ fn done(change: &Change) -> String {
             }
         }
         Change::Edit(edit) => crate::edit::done(edit).into(),
+        Change::Discussion(d) => crate::discuss::done(d).into(),
         Change::SetProjectField {
             value: None, said, ..
         } => format!("Cleared {said}"),
@@ -1155,6 +1169,7 @@ pub fn needs(change: &Change) -> &'static str {
         | Change::MarkEach { .. } => "Notifications (classic tokens only)",
         Change::SetProjectField { .. } => "Projects: write",
         Change::Alert(c) => crate::security::needs(c),
+        Change::Discussion(_) => "Discussions: write",
     }
 }
 
@@ -1182,6 +1197,7 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => "marking them read",
         Change::MarkEach { .. } => "marking them done",
         Change::Edit(edit) => crate::edit::what(edit),
+        Change::Discussion(d) => crate::discuss::what(d),
         Change::SetProjectField { .. } => "setting the field",
         Change::Alert(c) => crate::security::what(c),
     };

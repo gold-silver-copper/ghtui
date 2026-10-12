@@ -33,8 +33,36 @@ pub(crate) const DISCUSSION_CATEGORIES: &str = "query($owner: String!, $name: St
 /// A repository's discussions, most recently updated first.
 pub(crate) const DISCUSSIONS: &str = "query($owner: String!, $name: String!, $after: String, $category: ID) { repository(owner: $owner, name: $name) { discussions(first: 25, after: $after, categoryId: $category, orderBy: {field: UPDATED_AT, direction: DESC}) { totalCount pageInfo { hasNextPage endCursor } nodes { number title author { login } category { name } comments { totalCount } isAnswered upvoteCount updatedAt } } } }";
 
-/// A discussion and its comments.
-pub(crate) const DISCUSSION: &str = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { discussion(number: $number) { number title body author { login } createdAt category { name } isAnswered upvoteCount comments(first: 50) { totalCount nodes { databaseId author { login } body createdAt isAnswer upvoteCount replies(first: 30) { totalCount nodes { databaseId author { login } body createdAt } } } } } } }";
+/// What a discussion's comments and replies show, and what you may do
+/// to them.
+const DISCUSSION_REPLY: &str = "id databaseId author { login } body createdAt viewerCanUpdate viewerCanDelete viewerCanReact reactionGroups { content viewerHasReacted reactors { totalCount } }";
+
+/// A discussion, its answer and its comments, with what you may do.
+pub(crate) fn discussion() -> String {
+    let comment = format!(
+        "{DISCUSSION_REPLY} isAnswer upvoteCount viewerCanMarkAsAnswer viewerCanUnmarkAsAnswer"
+    );
+    format!(
+        "query($owner: String!, $name: String!, $number: Int!) {{ repository(owner: $owner, name: $name) {{ discussion(number: $number) {{ id number title body author {{ login }} createdAt category {{ name isAnswerable }} isAnswered locked upvoteCount viewerCanUpdate viewerCanReact reactionGroups {{ content viewerHasReacted reactors {{ totalCount }} }} answerChosenBy {{ login }} answer {{ {comment} }} comments(first: 50) {{ totalCount nodes {{ {comment} replies(first: 30) {{ totalCount nodes {{ {DISCUSSION_REPLY} }} }} }} }} }} }} }}"
+    )
+}
+
+/// A comment on a discussion, or a reply in a comment's thread.
+pub(crate) const ADD_DISCUSSION_COMMENT: &str = "mutation($discussion: ID!, $replyTo: ID, $body: String!) { addDiscussionComment(input: {discussionId: $discussion, replyToId: $replyTo, body: $body}) { comment { id } } }";
+
+/// New text for a discussion comment or reply.
+pub(crate) const UPDATE_DISCUSSION_COMMENT: &str = "mutation($id: ID!, $body: String!) { updateDiscussionComment(input: {commentId: $id, body: $body}) { comment { id } } }";
+
+/// New text for a discussion's post.
+pub(crate) const UPDATE_DISCUSSION: &str = "mutation($id: ID!, $body: String!) { updateDiscussion(input: {discussionId: $id, body: $body}) { discussion { id } } }";
+
+pub(crate) const DELETE_DISCUSSION_COMMENT: &str =
+    "mutation($id: ID!) { deleteDiscussionComment(input: {id: $id}) { comment { id } } }";
+
+pub(crate) const MARK_ANSWER: &str =
+    "mutation($id: ID!) { markDiscussionCommentAsAnswer(input: {id: $id}) { discussion { id } } }";
+
+pub(crate) const UNMARK_ANSWER: &str = "mutation($id: ID!) { unmarkDiscussionCommentAsAnswer(input: {id: $id}) { discussion { id } } }";
 
 /// What a new issue or pull request can have: labels, people to assign,
 /// open milestones, the issue templates' files, the pull request template,
@@ -164,7 +192,19 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ("DISCUSSION_URLS", DISCUSSION_URLS.to_owned()),
         ("DISCUSSION_CATEGORIES", DISCUSSION_CATEGORIES.to_owned()),
         ("DISCUSSIONS", DISCUSSIONS.to_owned()),
-        ("DISCUSSION", DISCUSSION.to_owned()),
+        ("discussion", discussion()),
+        ("ADD_DISCUSSION_COMMENT", ADD_DISCUSSION_COMMENT.to_owned()),
+        (
+            "UPDATE_DISCUSSION_COMMENT",
+            UPDATE_DISCUSSION_COMMENT.to_owned(),
+        ),
+        ("UPDATE_DISCUSSION", UPDATE_DISCUSSION.to_owned()),
+        (
+            "DELETE_DISCUSSION_COMMENT",
+            DELETE_DISCUSSION_COMMENT.to_owned(),
+        ),
+        ("MARK_ANSWER", MARK_ANSWER.to_owned()),
+        ("UNMARK_ANSWER", UNMARK_ANSWER.to_owned()),
         ("REFS", REFS.to_owned()),
         ("NEW_FORM", NEW_FORM.to_owned()),
         (

@@ -7,6 +7,7 @@ mod client;
 pub mod code_search;
 pub mod corpus;
 pub mod create;
+pub mod discussion;
 pub mod edit;
 #[doc(hidden)]
 pub mod fuzz;

@@ -93,6 +93,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                         quoting: Some(at), ..
                     } => (Some(at), true),
                     crate::review::ComposeTarget::Edit(e) => (Some(&e.at), false),
+                    crate::review::ComposeTarget::Discussion(w) => w.place(),
                     _ => (None, false),
                 };
                 let comment = at.and_then(|at| {
@@ -219,7 +220,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 note: compose.note(),
                 error: compose.error.as_deref(),
                 sending: compose.sending,
-                save: match compose.target {
+                save: match &compose.target {
                     crate::review::ComposeTarget::Reply { .. } => "post reply",
                     crate::review::ComposeTarget::Conversation { .. } => "post comment",
                     crate::review::ComposeTarget::Form(crate::route::Route::NewPr(_)) => {
@@ -227,6 +228,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                     }
                     crate::review::ComposeTarget::Form(_) => "create issue",
                     crate::review::ComposeTarget::Edit(_) => "save",
+                    crate::review::ComposeTarget::Discussion(w) => w.save(),
                     _ => "add to review",
                 },
                 completions: (completions.as_deref()).map(|c| {

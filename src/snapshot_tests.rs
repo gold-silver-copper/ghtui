@@ -696,3 +696,6 @@ mod projects;
 /// The Security tab's alerts: their lists and pages, and dismissing and
 /// reopening them.
 mod security;
+/// Discussions: writing an answer, replying in a thread, reacting and
+/// marking the answer, each followed until GitHub shows it.
+mod discussions;

@@ -387,6 +387,7 @@ impl State {
             out.push(quote);
         }
         crate::projects::doables(self, out);
+        crate::discuss::doables(self, out);
         if let Route::Pr { tab, .. } = route {
             if *tab == PrTab::Conversation {
                 out.push(here(Action::Tab2, "Commits", ""));

@@ -75,6 +75,7 @@ pub(super) fn comment_with(state: &mut State, text: &str, quoting: Option<String
         Some(Route::Pr { pr, .. }) => state.activity(pr).map(|a| (a.id.clone(), pr.to_string())),
         // A new issue's or pull request's title and description.
         Some(Route::NewIssue(_) | Route::NewPr(_)) => return crate::create::compose(state),
+        Some(Route::Discussion { .. }) => return crate::discuss::act(state, Action::Comment),
         _ => {
             state.info("Comments go on issues and pull requests");
             return Vec::new();

@@ -21,6 +21,7 @@ mod crawl;
 mod create;
 mod diff_job;
 mod diff_screen;
+mod discuss;
 mod edit;
 #[cfg(test)]
 mod fixtures;

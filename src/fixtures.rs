@@ -1454,14 +1454,46 @@ pub fn discussions() -> DiscussionList {
 
 /// A question with an answer and a reply.
 pub fn discussion() -> DiscussionDetail {
-    let comment = |id, author: &str, body: &str| Comment {
+    use crate::api::edit::{Editable, Reaction, ReactionContent};
+    let comment = |id: u64, author: &str, body: &str, hour: u32| Comment {
         id: Some(id),
         author: author.into(),
         body: body.into(),
-        created_at: "2026-10-03T12:00:00Z".into(),
-        editable: None,
+        created_at: format!("2026-10-03T{hour:02}:00:00Z"),
+        editable: Some(Editable {
+            id: NodeId::new(format!("DC_{id}")),
+            can_update: author == "octocat",
+            can_delete: author == "octocat",
+            can_react: true,
+            reactions: Vec::new(),
+        }),
     };
+    let mut answer = DiscussionComment {
+        comment: comment(
+            18765024,
+            "hubot",
+            "Fetch the PR first; the diff then works offline.",
+            10,
+        ),
+        upvotes: 5,
+        answer: true,
+        can_mark: false,
+        can_unmark: true,
+        // More than came: the page says how many more.
+        replies: Capped::new(
+            vec![comment(18765030, "octocat", "That works, thanks!", 11)],
+            3,
+        ),
+    };
+    if let Some(e) = &mut answer.comment.editable {
+        e.reactions = vec![Reaction {
+            content: ReactionContent::Hooray,
+            count: 3,
+            mine: true,
+        }];
+    }
     DiscussionDetail {
+        id: NodeId::new("D_14603"),
         repo: RepoId::new("cli", "cli"),
         number: 14603,
         title: "How do I review a PR offline?".into(),
@@ -1469,24 +1501,30 @@ pub fn discussion() -> DiscussionDetail {
         author: "octocat".into(),
         created_at: "2026-10-02T12:00:00Z".into(),
         category: "Q&A".into(),
+        answerable: true,
         answered: true,
+        locked: false,
         upvotes: 12,
+        editable: Editable {
+            id: NodeId::new("D_14603"),
+            can_update: true,
+            can_delete: false,
+            can_react: true,
+            reactions: Vec::new(),
+        },
+        answer: Some(Box::new(DiscussionComment {
+            replies: Capped::default(),
+            ..answer.clone()
+        })),
+        answer_by: Some("octocat".into()),
         comments: vec![
+            answer,
             DiscussionComment {
-                comment: comment(
-                    18765024,
-                    "hubot",
-                    "Fetch the PR first; the diff then works offline.",
-                ),
-                upvotes: 5,
-                answer: true,
-                // More than came: the page says how many more.
-                replies: Capped::new(vec![comment(18765030, "octocat", "That works, thanks!")], 3),
-            },
-            DiscussionComment {
-                comment: comment(18765100, "monalisa", "Drafts are saved locally too."),
+                comment: comment(18765100, "monalisa", "Drafts are saved locally too.", 12),
                 upvotes: 1,
                 answer: false,
+                can_mark: true,
+                can_unmark: false,
                 replies: Capped::default(),
             },
         ]

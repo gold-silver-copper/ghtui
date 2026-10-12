@@ -422,7 +422,7 @@ pub struct Comment {
     pub body: String,
     pub created_at: String,
     /// What edits name it by, what GitHub lets you do to it, and its
-    /// reactions; `None` where ghtui doesn't edit it (a discussion's).
+    /// reactions; `None` where ghtui doesn't edit it.
     pub editable: Option<Editable>,
 }
 
@@ -3668,6 +3668,8 @@ pub struct DiscussionList {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscussionDetail {
+    /// What comments and edits name it by.
+    pub id: NodeId,
     /// The repository it's in.
     pub repo: RepoId,
     pub number: u64,
@@ -3676,18 +3678,34 @@ pub struct DiscussionDetail {
     pub author: String,
     pub created_at: String,
     pub category: String,
+    /// Its category takes answers (Q&A): its comments are answers, and one
+    /// can be marked the answer.
+    pub answerable: bool,
     pub answered: bool,
+    /// Only those with write access can comment.
+    pub locked: bool,
     pub upvotes: u64,
+    /// The post: what GitHub lets you do to it, and its reactions.
+    pub editable: Editable,
+    /// The comment marked as the answer (shown at the top), and who
+    /// marked it.
+    pub answer: Option<Box<DiscussionComment>>,
+    pub answer_by: Option<String>,
     /// The first 50 comments, of how many there are.
     pub comments: Capped<DiscussionComment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscussionComment {
+    /// Its editable is always there: what replies, reactions and marking
+    /// the answer name it by.
     pub comment: Comment,
     pub upvotes: u64,
     /// The answer to a question.
     pub answer: bool,
+    /// GitHub lets you mark it the answer, or unmark it.
+    pub can_mark: bool,
+    pub can_unmark: bool,
     /// The first 30 replies, of how many there are.
     pub replies: Capped<Comment>,
 }
@@ -3718,38 +3736,58 @@ pub(crate) mod wire_discussions {
         pub slug: String,
     }
 
+    /// A reply, or what a comment and a reply share.
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Reply {
+        pub id: crate::api::model::NodeId,
         pub database_id: Option<u64>,
         pub author: Option<Actor>,
         pub body: String,
         pub created_at: String,
+        pub viewer_can_update: bool,
+        pub viewer_can_delete: bool,
+        pub viewer_can_react: bool,
+        pub reaction_groups: Option<Vec<crate::api::edit::WireReactionGroup>>,
     }
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct WireComment {
-        pub database_id: Option<u64>,
-        pub author: Option<Actor>,
-        pub body: String,
-        pub created_at: String,
+        #[serde(flatten)]
+        pub said: Reply,
         pub is_answer: bool,
         pub upvote_count: u64,
-        pub replies: Counted<Reply>,
+        pub viewer_can_mark_as_answer: bool,
+        pub viewer_can_unmark_as_answer: bool,
+        pub replies: Option<Counted<Reply>>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct InCategory {
+        pub name: String,
+        pub is_answerable: bool,
     }
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Detail {
+        pub id: crate::api::model::NodeId,
         pub number: u64,
         pub title: String,
         pub body: String,
         pub author: Option<Actor>,
         pub created_at: String,
-        pub category: Name,
+        pub category: InCategory,
         pub is_answered: Option<bool>,
+        pub locked: bool,
         pub upvote_count: u64,
+        pub viewer_can_update: bool,
+        pub viewer_can_react: bool,
+        pub reaction_groups: Option<Vec<crate::api::edit::WireReactionGroup>>,
+        pub answer: Option<WireComment>,
+        pub answer_chosen_by: Option<Actor>,
         pub comments: Counted<WireComment>,
     }
 
@@ -3796,14 +3834,36 @@ impl wire_discussions::Summary {
 
 impl wire_discussions::Detail {
     pub(crate) fn into_detail(self, repo: RepoId) -> DiscussionDetail {
-        let comment = |id, who, body, created_at| Comment {
-            id,
-            author: author(who),
-            body,
-            created_at,
-            editable: None,
+        let said = |r: wire_discussions::Reply| Comment {
+            id: r.database_id,
+            author: author(r.author),
+            body: r.body,
+            created_at: r.created_at,
+            editable: Some(Editable {
+                id: r.id,
+                can_update: r.viewer_can_update,
+                can_delete: r.viewer_can_delete,
+                can_react: r.viewer_can_react,
+                reactions: reactions(r.reaction_groups),
+            }),
+        };
+        let comment = |c: wire_discussions::WireComment| DiscussionComment {
+            upvotes: c.upvote_count,
+            answer: c.is_answer,
+            can_mark: c.viewer_can_mark_as_answer,
+            can_unmark: c.viewer_can_unmark_as_answer,
+            replies: (c.replies).map_or_else(Capped::default, |r| r.into_capped(|r| Some(said(r)))),
+            comment: said(c.said),
         };
         DiscussionDetail {
+            editable: Editable {
+                id: self.id.clone(),
+                can_update: self.viewer_can_update,
+                can_delete: false,
+                can_react: self.viewer_can_react,
+                reactions: reactions(self.reaction_groups),
+            },
+            id: self.id,
             repo,
             number: self.number,
             title: self.title,
@@ -3811,18 +3871,13 @@ impl wire_discussions::Detail {
             author: author(self.author),
             created_at: self.created_at,
             category: self.category.name,
+            answerable: self.category.is_answerable,
             answered: self.is_answered.unwrap_or(false),
+            locked: self.locked,
             upvotes: self.upvote_count,
-            comments: self.comments.into_capped(|c| {
-                Some(DiscussionComment {
-                    upvotes: c.upvote_count,
-                    answer: c.is_answer,
-                    replies: c.replies.into_capped(|r| {
-                        Some(comment(r.database_id, r.author, r.body, r.created_at))
-                    }),
-                    comment: comment(c.database_id, c.author, c.body, c.created_at),
-                })
-            }),
+            answer: self.answer.map(|a| Box::new(comment(a))),
+            answer_by: self.answer_chosen_by.map(|a| a.login),
+            comments: self.comments.into_capped(|c| Some(comment(c))),
         }
     }
 }

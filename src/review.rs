@@ -51,6 +51,9 @@ pub enum ComposeTarget {
     /// The title and description of the new issue or pull request on this
     /// page ([`crate::create`]).
     Form(crate::route::Route),
+    /// A comment, a reply or an edit in a discussion
+    /// ([`crate::discuss`]), saved right away.
+    Discussion(crate::discuss::Writing),
 }
 
 /// A suggested change and what it replaces.
@@ -129,6 +132,7 @@ impl Compose {
             ComposeTarget::Draft { .. } => "Edit draft".to_owned(),
             ComposeTarget::Conversation { name, .. } => format!("Comment on {name}"),
             ComposeTarget::Edit(e) => format!("Edit {}", e.name),
+            ComposeTarget::Discussion(w) => w.title.clone(),
             ComposeTarget::Form(crate::route::Route::NewPr(_)) => {
                 "New pull request: its title on the first line, then its description".to_owned()
             }
@@ -157,6 +161,7 @@ pub fn compose_anchor(doc: &Doc, screen: &DiffScreen, target: &ComposeTarget) ->
         }
         ComposeTarget::Line { .. }
         | ComposeTarget::Conversation { .. }
+        | ComposeTarget::Discussion(_)
         | ComposeTarget::Form(_) => screen
             .selection
             .filter(|s| doc.to_global(*s) > doc.to_global(cursor))
@@ -345,6 +350,7 @@ pub fn draft(target: &ComposeTarget, body: &str, id: u64, commit: &str) -> Optio
         | ComposeTarget::Draft { .. }
         | ComposeTarget::Conversation { .. }
         | ComposeTarget::Edit(_)
+        | ComposeTarget::Discussion(_)
         | ComposeTarget::Form(_) => None,
     }
 }
@@ -1014,6 +1020,10 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
     if let ComposeTarget::Form(_) = target {
         return crate::create::submit(state);
     }
+    if let ComposeTarget::Discussion(w) = target {
+        compose.sending = true;
+        return crate::discuss::send(&w, body);
+    }
     if let ComposeTarget::Conversation { subject_id, .. } = target {
         compose.sending = true;
         let change = Change::Comment {
@@ -1049,9 +1059,10 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             state.overlay = None;
             save
         }
-        ComposeTarget::Conversation { .. } | ComposeTarget::Edit(_) | ComposeTarget::Form(_) => {
-            Vec::new()
-        }
+        ComposeTarget::Conversation { .. }
+        | ComposeTarget::Edit(_)
+        | ComposeTarget::Discussion(_)
+        | ComposeTarget::Form(_) => Vec::new(),
         target @ (ComposeTarget::Line { .. } | ComposeTarget::File { .. }) => {
             let Some(head) = diff.head() else {
                 return Vec::new();
