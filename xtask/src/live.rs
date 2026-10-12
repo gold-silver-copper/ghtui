@@ -277,7 +277,7 @@ fn run(args: &Args) -> Result<bool> {
     let (login, scopes) = gh::account()?;
     let fux_bin = fux::find(args.fux.as_deref())?;
     // A run that was killed left its server behind.
-    fux::Fux::stop_at(&fux_bin, &work.join("run/fux.sock"));
+    fux::Fux::stop_at(&fux_bin, &work.join("run"));
     if work.exists() {
         std::fs::remove_dir_all(&work)
             .with_context(|| format!("cannot empty {}", work.display()))?;

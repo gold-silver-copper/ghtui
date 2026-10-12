@@ -20,7 +20,7 @@ pub const NARROW: (u16, u16) = (90, 40);
 const WAIT: Duration = Duration::from_secs(30);
 
 /// The fux binary: `--fux`, else `fux` on PATH, else ~/code/fux's build;
-/// one new enough to have `fux help agents` (its `-S`, `run` and waits).
+/// one that speaks fuxth (`fux help-agents`): its words drive the server.
 pub fn find(given: Option<&Path>) -> Result<PathBuf> {
     if let Some(given) = given {
         return Ok(given.to_path_buf());
@@ -28,7 +28,7 @@ pub fn find(given: Option<&Path>) -> Result<PathBuf> {
     let recent = |p: &PathBuf| {
         p.is_file()
             && Command::new(p)
-                .args(["help", "agents"])
+                .arg("help-agents")
                 .output()
                 .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("# Driving programs"))
     };
@@ -46,14 +46,13 @@ pub fn find(given: Option<&Path>) -> Result<PathBuf> {
         .into_iter()
         .chain([home.join("code/fux/target/release/fux")])
         .find(recent)
-        .context("no fux new enough to have `fux help agents`: install it, or pass --fux PATH")
+        .context("no fux that speaks fuxth (`fux help-agents`): install it, or pass --fux PATH")
 }
 
 /// A private fux server.
 #[derive(Clone)]
 pub struct Fux {
     bin: PathBuf,
-    socket: PathBuf,
     runtime: PathBuf,
     path: OsString,
 }
@@ -69,12 +68,11 @@ impl Fux {
         ));
         let fux = Fux {
             bin: bin.to_path_buf(),
-            socket: work.join("run/fux.sock"),
             runtime: work.join("run"),
             path: std::env::join_paths(paths)?,
         };
         let mut cmd = fux.command();
-        cmd.args(["server", "--background"]);
+        cmd.arg("start");
         for (k, v) in extra {
             cmd.env(k, v);
         }
@@ -82,32 +80,39 @@ impl Fux {
         Ok(fux)
     }
 
-    /// Stops a server left at `socket`, if one answers there.
-    pub fn stop_at(bin: &Path, socket: &Path) {
-        if socket.exists() {
+    /// Stops a server left under `runtime`, if one answers there.
+    pub fn stop_at(bin: &Path, runtime: &Path) {
+        if runtime.join("fux").join(format!("{SERVER}.sock")).exists() {
             let _ = Command::new(bin)
-                .arg("-S")
-                .arg(socket)
-                .args(["kill-server", "--force"])
+                .args(["str", SERVER, "server", "force-kill-server"])
                 .env_remove("FUX_PANE")
                 .env_remove("FUX_SERVER")
+                .env_remove("FUX_SOCKET")
+                .env("XDG_RUNTIME_DIR", runtime)
                 .output();
         }
     }
 
     pub fn stop(&self) {
-        let _ = self.command().args(["kill-server", "--force"]).output();
+        let _ = self.command().arg("force-kill-server").output();
     }
 
+    /// A fuxth program for this server: its words follow.
     fn command(&self) -> Command {
         let mut cmd = Command::new(&self.bin);
-        cmd.arg("-S")
-            .arg(&self.socket)
+        cmd.args(["str", SERVER, "server"])
             .env_remove("FUX_PANE")
             .env_remove("FUX_SERVER")
-            .env("FUX_SOCKET", &self.socket)
+            .env_remove("FUX_SOCKET")
             .env("XDG_RUNTIME_DIR", &self.runtime)
             .env("PATH", &self.path);
+        cmd
+    }
+
+    /// A fuxth program about pane `name`: `str NAME pane`, then its words.
+    fn pane(&self, name: &str) -> Command {
+        let mut cmd = self.command();
+        cmd.args(["str", name, "pane"]);
         cmd
     }
 
@@ -121,13 +126,22 @@ impl Fux {
         argv: &[String],
     ) -> Result<Pane> {
         let mut cmd = self.command();
-        cmd.args(["run", "-n", name, "--size", &format!("{cols}x{rows}")])
-            .arg("--cwd")
-            .arg(cwd);
+        cmd.args(["opts", "str", name, "name"])
+            .args([cols.to_string(), rows.to_string(), "size".into()])
+            .arg("str")
+            .arg(cwd)
+            .arg("cwd");
         for (k, v) in env {
-            cmd.arg("--env").arg(format!("{k}={v}"));
+            cmd.args(["str", k, "str", v, "env"]);
         }
-        cmd.arg("--").args(argv);
+        let mut argv = argv.iter();
+        if let Some(program) = argv.next() {
+            cmd.args(["str", program, "program"]);
+        }
+        for a in argv {
+            cmd.args(["str", a, "arg"]);
+        }
+        cmd.arg("run");
         check(&cmd.output()?, "fux run")?;
         Ok(Pane {
             name: name.to_owned(),
@@ -167,10 +181,13 @@ impl Pane {
         if stopping() {
             bail!("stopped");
         }
-        let mut cmd = self.fux.command();
-        cmd.args(["send-keys", "-t", &self.name]);
-        cmd.args(keys.split_whitespace());
-        cmd.args(["--wait-idle", "400", "--timeout", "20"]);
+        let mut cmd = self.fux.pane(&self.name);
+        cmd.arg("keys");
+        for word in keys.split_whitespace() {
+            let kind = if is_key(word) { "key" } else { "text" };
+            cmd.args(["str", word, kind]);
+        }
+        cmd.args(["400", "wait-idle", "20", "timeout", "send-keys"]);
         settled(&cmd.output()?, &format!("keys `{keys}`"))
     }
 
@@ -183,26 +200,16 @@ impl Pane {
             if selected(&self.screen_marked()?) {
                 return Ok(());
             }
-            let mut cmd = self.fux.command();
-            cmd.args([
-                "wait",
-                "-t",
-                &self.name,
-                "--idle",
-                "1000",
-                "--timeout",
-                "10",
-            ]);
-            let _ = cmd.output();
+            self.wait_idle();
         }
         bail!("`{keys}` doesn't select {what}")
     }
 
     /// Types `text` as it is, then waits for the screen to settle.
     pub fn type_text(&self, text: &str) -> Result<()> {
-        let mut cmd = self.fux.command();
-        cmd.args(["send-keys", "-t", &self.name, "--text", text]);
-        cmd.args(["--wait-idle", "200", "--timeout", "20"]);
+        let mut cmd = self.fux.pane(&self.name);
+        cmd.args(["keys", "str", text, "text"]);
+        cmd.args(["200", "wait-idle", "20", "timeout", "send-keys"]);
         settled(&cmd.output()?, "typing")
     }
 
@@ -213,10 +220,8 @@ impl Pane {
 
     /// The screen with highlights marked `⟦…⟧` (a selection, a menu's row).
     pub fn screen_marked(&self) -> Result<String> {
-        let out = self
-            .fux
-            .command()
-            .args(["capture-pane", "-t", &self.name, "--marks"])
+        let out = (self.fux.pane(&self.name))
+            .args(["opts", "marks", "capture"])
             .output()?;
         check(&out, "fux capture-pane")?;
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
@@ -224,10 +229,8 @@ impl Pane {
 
     /// The screen and its revision.
     fn capture(&self) -> Result<(String, u64)> {
-        let out = self
-            .fux
-            .command()
-            .args(["capture-pane", "-t", &self.name, "--json"])
+        let out = (self.fux.pane(&self.name))
+            .args(["opts", "json", "capture"])
             .output()?;
         check(&out, "fux capture-pane")?;
         let json: Value = serde_json::from_slice(&out.stdout)?;
@@ -270,17 +273,7 @@ impl Pane {
                 |screen| (!busy(screen)).then_some(()),
             )?;
             // Settled for a second: it may not have started waiting yet.
-            let mut cmd = self.fux.command();
-            cmd.args([
-                "wait",
-                "-t",
-                &self.name,
-                "--idle",
-                "1000",
-                "--timeout",
-                "10",
-            ]);
-            let _ = cmd.output();
+            self.wait_idle();
             if !busy(&self.screen()?) {
                 return Ok(());
             }
@@ -296,7 +289,9 @@ impl Pane {
     }
 
     /// Waits until `found` finds something on screen, waking at each
-    /// change of it (fux's `wait --change --since`), so nothing is missed.
+    /// change of it (fux's `wait-change`, a couple of seconds at a time, so
+    /// a change between reading the screen and waiting is never missed by
+    /// more than that).
     pub fn wait_until<T>(
         &self,
         what: &str,
@@ -305,7 +300,7 @@ impl Pane {
     ) -> Result<T> {
         let began = Instant::now();
         loop {
-            let (screen, revision) = self.capture()?;
+            let (screen, _revision) = self.capture()?;
             if let Some(it) = found(&screen) {
                 return Ok(it);
             }
@@ -323,15 +318,12 @@ impl Pane {
                     timeout.as_secs()
                 );
             }
-            let out = self
-                .fux
-                .command()
-                .args(["wait", "-t", &self.name, "--change", "--since"])
-                .arg(revision.to_string())
-                .args(["--timeout", &left.as_secs().max(1).to_string(), "--json"])
+            let secs = left.as_secs().clamp(1, 2).to_string();
+            let out = (self.fux.pane(&self.name))
+                .args(["opts", "wait-change", &secs, "timeout", "wait"])
                 .output()?;
             match out.status.code() {
-                Some(0 | 124) => {}
+                Some(0 | 6 | 124) => {}
                 Some(3) => bail!("ghtui exited while waiting for {what}: {}", tail(&out)),
                 _ => check(&out, "fux wait")?,
             }
@@ -364,11 +356,37 @@ impl Pane {
     }
 
     pub fn kill(&self) {
-        let _ = self
-            .fux
-            .command()
-            .args(["kill-tab", "-t", &self.name])
+        let _ = (self.fux.pane(&self.name)).arg("kill").output();
+    }
+
+    /// Waits for the screen to be still for a second (ten at most).
+    fn wait_idle(&self) {
+        let _ = (self.fux.pane(&self.name))
+            .args(["opts", "1000", "wait-idle", "10", "timeout", "wait"])
             .output();
+    }
+}
+
+/// The private server's name, under the run's own `XDG_RUNTIME_DIR`.
+const SERVER: &str = "live";
+
+/// A key's name, as fux's `key-names` lists them and `C-`, `M-` and `S-`
+/// prefix them; any other word is text.
+fn is_key(word: &str) -> bool {
+    const NAMES: [&str; 17] = [
+        "Enter", "Tab", "Escape", "Space", "BSpace", "Up", "Down", "Left", "Right", "Home", "End",
+        "PageUp", "PageDown", "Insert", "Delete", "BTab", "F1",
+    ];
+    let bare = (word.strip_prefix("C-").or_else(|| word.strip_prefix("M-")))
+        .or_else(|| word.strip_prefix("S-"));
+    match bare {
+        Some(rest) => !rest.is_empty(),
+        None => {
+            NAMES.contains(&word)
+                || word
+                    .strip_prefix('F')
+                    .is_some_and(|n| n.parse::<u8>().is_ok())
+        }
     }
 }
 

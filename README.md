@@ -855,7 +855,7 @@ issue inbox` runs only those.
   that need more are skipped without it, and say so: `project` for the
   Projects checks (`gh auth refresh -s project`), `notifications` for
   subscribing to a thread (without it, the check sees ghtui name the
-  scope). It also needs git; openssl; and a fux with `fux help agents` (on `PATH`, or `~/code/fux`'s release build,
+  scope). It also needs git; openssl; and a fux that speaks fuxth (`fux help-agents`) (on `PATH`, or `~/code/fux`'s release build,
   or `--fux PATH`). It builds `target/release/ghtui` unless given
   `--ghtui PATH`.
 - **Where it runs:** ghtui runs in a private fux server, one pane at a
