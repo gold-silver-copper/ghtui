@@ -45,7 +45,7 @@ Buffer {
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
-        "  ↵ pick or unpick · ctrl-s apply   ctrl-j/k choose   esc close                      API 4987/5000  ",
+        "  ↵ pick or unpick · ctrl-s apply   ctrl-j/k move   esc close                        API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
@@ -179,10 +179,10 @@ Buffer {
         x: 33, y: 39, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 36, y: 39, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
         x: 44, y: 39, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 51, y: 39, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 54, y: 39, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
-        x: 57, y: 39, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 63, y: 39, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 49, y: 39, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 52, y: 39, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
+        x: 55, y: 39, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 61, y: 39, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 85, y: 39, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 98, y: 39, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
     ]

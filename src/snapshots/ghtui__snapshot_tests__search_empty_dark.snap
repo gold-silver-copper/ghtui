@@ -1,5 +1,6 @@
 ---
 source: src/snapshot_tests.rs
+assertion_line: 535
 expression: render(&state)
 ---
 Buffer {
@@ -34,7 +35,7 @@ Buffer {
         "  │ A keyboard-driven terminal client for GitHub, with a diff viewer that goes beyond GitHub's. │   ",
         "  │                                                                                             │   ",
         "  │ Install                                                                                     │   ",
-        "  ↵ go   ctrl-j/k choose   esc close                                                 API 4987/5000  ",
+        "  ↵ go   ctrl-j/k move   esc close                                                   API 4987/5000  ",
     ],
     styles: [
         x: 0, y: 0, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
@@ -235,10 +236,10 @@ Buffer {
         x: 6, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 9, y: 29, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
         x: 17, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 24, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 27, y: 29, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
-        x: 30, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
-        x: 36, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 22, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 25, y: 29, fg: Rgb(169, 199, 255), bg: Rgb(29, 32, 36), underline: Reset, modifier: BOLD,
+        x: 28, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
+        x: 34, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 85, y: 29, fg: Rgb(196, 198, 207), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
         x: 98, y: 29, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,
     ]
