@@ -505,6 +505,8 @@ pub struct State {
     pub count: Option<usize>,
     /// The page's other tabs as they were left, to come back to.
     pub parked: Vec<Screen>,
+    /// The last search went backwards (`?`): `n` goes up.
+    pub backwards: bool,
     pub theme: Theme,
     pub icons: Icons,
     pub density: crate::config::Density,
@@ -549,6 +551,7 @@ impl State {
             typed: Vec::new(),
             count: None,
             parked: Vec::new(),
+            backwards: false,
             theme,
             icons,
             density: crate::config::Density::default(),
@@ -672,6 +675,10 @@ impl State {
             Screen::Page(p) => {
                 let route = p.route.clone();
                 cmds.extend(self.ensure_route(&route, force));
+                // A Review tab's diff starts again, as Files changed's does.
+                if force && let Some(pr) = browse::glanced(&route) {
+                    self.diffs.remove(&DiffOf::Pr(pr.clone()));
+                }
                 // An issue or pull request list's open and closed counts
                 // are the header's, so refreshing the list refreshes them.
                 if force && let Route::Issues { repo, .. } | Route::Pulls { repo, .. } = &route {
@@ -823,13 +830,17 @@ impl State {
     /// due, and re-runs the diff screen's clamping and prioritization.
     #[must_use]
     pub fn settle_diff(&mut self) -> Vec<Cmd> {
-        let mut cmds = match self.screen() {
-            Screen::Diff(screen)
-                if !self.diffs.contains_key(&screen.of)
-                    && (screen.of.pr())
-                        .is_none_or(|pr| self.prs.get(pr).is_none_or(|r| !r.loading)) =>
+        // A pull request's Review tab shows its diff's threads and drafts.
+        let of = match self.screen() {
+            Screen::Diff(screen) => Some(screen.of.clone()),
+            Screen::Page(p) => browse::glanced(&p.route).cloned().map(DiffOf::Pr),
+        };
+        let mut cmds = match of {
+            Some(of)
+                if !self.diffs.contains_key(&of)
+                    && (of.pr()).is_none_or(|pr| self.prs.get(pr).is_none_or(|r| !r.loading)) =>
             {
-                self.start_diff(&screen.of.clone())
+                self.start_diff(&of)
             }
             _ => Vec::new(),
         };
@@ -1180,13 +1191,14 @@ fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         KeyCode::Enter => {
             let query = input.lines().join("");
             state.overlay = None;
+            let forward = !state.backwards;
             if !query.is_empty() {
                 match state.diff_parts() {
                     Some((screen, diff)) => {
-                        let found = diff_screen::search(screen, diff, query);
+                        let found = diff_screen::search(screen, diff, query, forward);
                         state.notices.say(found);
                     }
-                    None => nav::find(state, &query),
+                    None => nav::find(state, &query, forward),
                 }
             }
         }
@@ -1207,6 +1219,24 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
     };
     match action {
         Action::Quit => state.quit = true,
+        // After `?`, `n` goes up and `N` down.
+        Action::SearchNext | Action::SearchPrev if state.backwards => {
+            let flipped = if action == Action::SearchNext {
+                Action::SearchPrev
+            } else {
+                Action::SearchNext
+            };
+            state.backwards = false;
+            let cmds = apply(state, flipped);
+            state.backwards = true;
+            return cmds;
+        }
+        Action::CloseView if state.screens.len() > 1 => return state.back(),
+        Action::CloseView if state.tab_count() > 1 => return state.close_tab(),
+        Action::CloseView => {
+            let quit = state.first_key(Action::Quit);
+            state.info(format!("Nothing left to close · {quit} quits"));
+        }
         // Esc ends a search or selection, and never leaves.
         Action::Cancel if diff == Some(true) => {
             if let Screen::Diff(screen) = state.screen_mut() {
@@ -1248,11 +1278,30 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::GoHome if state.route() == Some(&Route::Home) => state.info("Already home"),
         Action::GoHome => return state.push(Route::Home),
-        Action::Search if diff.is_some() || !nav::searches_itself(state) => {
+        Action::Search | Action::SearchBack if diff.is_some() || !nav::searches_itself(state) => {
+            state.backwards = action == Action::SearchBack;
             let input = nav::new_input(&state.theme, Bg::Container);
             state.overlay = Some(Overlay::Find(Box::new(input)));
         }
-        Action::Search => return state.open_search(false),
+        Action::Search | Action::SearchBack => {
+            state.backwards = action == Action::SearchBack;
+            return state.open_search(false);
+        }
+        Action::SearchWord | Action::SearchWordBack => {
+            return nav::search_word(state, action == Action::SearchWord);
+        }
+        Action::OpenLink => return nav::open_link(state),
+        Action::Notifications => {
+            let inbox = Route::Notifications {
+                query: String::new(),
+            };
+            if state.route() == Some(&inbox) {
+                state.info("Already in your notifications");
+            } else {
+                return state.push(inbox);
+            }
+        }
+        Action::ReviewGlance => return nav::review_glance(state),
         Action::SearchGithub => return state.open_search(true),
         Action::FindFile if diff.is_some() => return state.open_picker(picker::Kind::DiffFiles),
         Action::FindFile => return state.open_finder(false),
@@ -1595,9 +1644,15 @@ pub(crate) mod tests {
         );
         act(&mut state, Action::Forward);
         assert_eq!(route(&state), Route::pr(pr), "forward again");
-        press(&mut state, "H");
+        press(&mut state, "gh");
         assert!(!state.quit);
+        // q closes a view; ZZ, or :q in the palette, quits.
         press(&mut state, "q");
+        assert!(!state.quit);
+        press(&mut state, ":q<Enter>");
+        assert!(state.quit, ":q quits");
+        state.quit = false;
+        press(&mut state, "ZZ");
         assert!(state.quit);
     }
 
@@ -1687,7 +1742,7 @@ pub(crate) mod tests {
         assert_eq!(page(&state).selected, Some(2), "the comment box at the end");
         press(&mut state, "<Up>");
         assert_eq!(page(&state).selected, Some(1), "hubot's comment");
-        press(&mut state, "<Enter>");
+        press(&mut state, ">");
         let compose = overlay!(state, Compose);
         assert!(
             compose.text().starts_with("> @hubot wrote:\n> Agreed."),
@@ -2773,7 +2828,7 @@ pub(crate) mod tests {
         says(&s, "No matches for “no such text”");
     }
 
-    /// A failed job opens at its failing step's first error, the step
+    /// A failed job opens at its failing step's first error, that line
     /// selected.
     #[test]
     fn a_failed_job_opens_at_its_first_error() {
@@ -3170,7 +3225,7 @@ pub(crate) mod tests {
         press(&mut state, "1gt");
         assert_eq!(route(&state), Route::Repo(repo()));
 
-        let cmds = press(&mut state, "s");
+        let cmds = press(&mut state, ",*");
         let star = Change::Star {
             repo: repo(),
             id: NodeId::new("R_ghtui"),
@@ -3239,7 +3294,7 @@ pub(crate) mod tests {
                 DataKey::Files(repo(), "main".into()),
                 "Couldn't load files",
             ),
-            ("b", DataKey::Refs(repo()), "Couldn't load branches"),
+            ("B", DataKey::Refs(repo()), "Couldn't load branches"),
         ] {
             assert_eq!(press(&mut state, keys), vec![fetch(key.clone())]);
             let result = Err(ApiError::Network("timed out".into()));
@@ -3293,7 +3348,7 @@ pub(crate) mod tests {
         assert_eq!(rows, ["src/main.rs", "crates/ui/src/main_view.rs"]);
         press(&mut state, "<Enter>");
         assert_eq!(route(&state), blob("main", "src/main.rs"));
-        let cmds = press(&mut state, "b");
+        let cmds = press(&mut state, "B");
         assert_eq!(cmds, vec![fetch(DataKey::Refs(repo()))]);
         fetched(
             &mut state,
@@ -4132,7 +4187,7 @@ pub(crate) mod tests {
     #[test]
     fn key_scopes_follow_the_screen() {
         let mut state = with_repo();
-        press(&mut state, "a");
+        press(&mut state, "zw");
         // A review key on a page says where it works.
         says(&state, "Files changed");
         press(&mut state, "i");
@@ -4234,6 +4289,57 @@ pub(crate) mod tests {
             );
         }
 
+        /// A pull request's Review tab reads the drafts and threads its
+        /// diff does, without the diff open. It lists the drafts and the
+        /// unresolved threads, and a thread opens Files changed on it.
+        #[test]
+        fn the_review_tab_lists_drafts_and_threads_and_opens_them() {
+            let mut s = state();
+            let pr = PrRef::parse("o/r#7").unwrap();
+            let of = DiffOf::Pr(pr.clone());
+            let _ = s.push(Route::Pr {
+                pr: pr.clone(),
+                tab: PrTab::Review,
+            });
+            let detail = Box::new(Ok(crate::snapshot_tests::pr_detail()));
+            let cmds = update(&mut s, Msg::Pr(pr.clone(), detail));
+            assert!(cmds.contains(&Cmd::LoadReview(pr.clone())), "{cmds:?}");
+            assert!(cmds.contains(&Cmd::Api(Api::FetchThreads(pr.clone()))));
+            // The diff job lists the files.
+            s.diffs
+                .insert(of.clone(), crate::snapshot_tests::diff_fixture());
+            let review = ReviewState {
+                pending: vec![crate::fixtures::draft(1, 5, "Name it for what it holds")],
+                ..ReviewState::default()
+            };
+            diff_msg(&mut s, &pr, DiffMsg::ReviewLoaded(Ok(review)));
+            let url = "https://github.com/o/r/pull/7#discussion_r42";
+            let mut open = thread("open", Some(14), false, false);
+            open.comments[0].url = url.into();
+            let threads = vec![thread("done", Some(3), true, false), open];
+            diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(threads)));
+            let text = crate::snapshot_tests::page_text(&s);
+            assert!(text.contains("src/point.rs:5"), "{text}");
+            assert!(text.contains("Name it for what it holds"), "{text}");
+            assert!(text.contains("Thread open"), "{text}");
+            assert!(!text.contains("Thread done"), "resolved: {text}");
+            for _ in 0..9 {
+                if page(&s)
+                    .selected_link()
+                    .and_then(crate::ui::page::Link::url)
+                    == Some(url)
+                {
+                    break;
+                }
+                press(&mut s, "j");
+            }
+            press(&mut s, "<Enter>");
+            let screen = screen(&s);
+            assert_eq!(screen.of, of);
+            let doc = &s.diffs[&of].doc;
+            assert_eq!(doc.annotation_at(screen.cursor), Some(1), "the open thread");
+        }
+
         /// Threads arriving above the cursor push its line down, and the
         /// cursor goes with it.
         #[test]
@@ -4289,7 +4395,7 @@ pub(crate) mod tests {
         fn viewed_state_applies_and_rolls_back_on_failure() {
             let (mut s, pr) = diff_state(120);
             // Before GitHub's state arrives, toggling explains why not.
-            assert!(press(&mut s, "v").is_empty());
+            assert!(press(&mut s, ",v").is_empty());
             warns(&s, "");
 
             diff_msg(
@@ -4312,7 +4418,7 @@ pub(crate) mod tests {
             assert_eq!(screen(&s).cursor.file, 1);
 
             // Toggle file 1 viewed: optimistic, then GitHub refuses.
-            let cmds = press(&mut s, "v");
+            let cmds = press(&mut s, ",v");
             assert!(cmds.iter().any(|c| matches!(
                 c,
                 Cmd::Api(Api::SetViewed { viewed: true, previous: Viewed::Unviewed, pull_request_id, .. })
@@ -4502,7 +4608,7 @@ pub(crate) mod tests {
                     .row_text(screen(&s).cursor),
                 text
             );
-            press(&mut s, "w");
+            press(&mut s, "zw");
             assert_eq!(
                 s.diffs[&DiffOf::Pr(pr)].doc.opts().whitespace,
                 crate::diff::Whitespace::Ignore
@@ -4793,7 +4899,12 @@ pub(crate) mod tests {
                 let hints = s.key_hints();
                 assert_eq!(
                     hints.get(1..3),
-                    Some(&[("c".into(), "reply".into()), ("R".into(), "resolve".into())][..])
+                    Some(
+                        &[
+                            ("c".into(), "reply".into()),
+                            (",t".into(), "resolve".into())
+                        ][..]
+                    )
                 );
 
                 // Resolve: optimistic, rolled back on failure.
@@ -4802,7 +4913,7 @@ pub(crate) mod tests {
                     &cmds[..],
                     [Cmd::Api(Api::SetResolved { resolved: true, .. }), ..]
                 ));
-                assert!(s.diffs[&DiffOf::Pr(pr.clone())].inputs().threads[1].resolved);
+                assert!(s.diffs[&DiffOf::Pr(pr.clone())].inputs().thread_list()[1].resolved);
                 diff_msg(
                     &mut s,
                     &pr,
@@ -4812,7 +4923,7 @@ pub(crate) mod tests {
                         result: Err(ApiError::Network("down".into())),
                     },
                 );
-                assert!(!s.diffs[&DiffOf::Pr(pr.clone())].inputs().threads[1].resolved);
+                assert!(!s.diffs[&DiffOf::Pr(pr.clone())].inputs().thread_list()[1].resolved);
                 warns(&s, "");
             }
 
@@ -4955,7 +5066,7 @@ pub(crate) mod tests {
                 assert!(matches!(&s.overlay, Some(Overlay::Compose(c)) if c.text() == "nit"));
 
                 let (mut s, _) = diff_state(120);
-                press(&mut s, "alooks good<Esc>");
+                press(&mut s, ",slooks good<Esc>");
                 assert!(
                     matches!(&s.overlay, Some(Overlay::Submit(d)) if d.input.lines() == ["looks good"])
                 );
@@ -4972,7 +5083,7 @@ pub(crate) mod tests {
                 press(&mut s, "<C-s>");
                 let id = s.diffs[&DiffOf::Pr(pr.clone())].inputs().review.pending[0].id;
 
-                press(&mut s, "a");
+                press(&mut s, ",s");
                 assert!(matches!(s.overlay, Some(Overlay::Submit(_))));
                 press(&mut s, "<Tab>");
                 let cmds = press(&mut s, "<C-s>");
@@ -5006,7 +5117,7 @@ pub(crate) mod tests {
                     s.diffs[&DiffOf::Pr(pr.clone())].inputs().review.pending[0].line,
                     None
                 );
-                press(&mut s, "a");
+                press(&mut s, ",s");
                 press(&mut s, "<C-s>");
                 diff_msg(
                     &mut s,
@@ -5038,7 +5149,7 @@ pub(crate) mod tests {
             #[test]
             fn request_changes_needs_a_summary() {
                 let (mut s, _) = diff_state(120);
-                press(&mut s, "a");
+                press(&mut s, ",s");
                 press(&mut s, "<Tab><Tab>");
                 assert!(press(&mut s, "<C-s>").is_empty());
                 assert!(matches!(&s.overlay, Some(Overlay::Submit(d)) if d.error.is_some()));
@@ -5313,9 +5424,9 @@ pub(crate) mod tests {
             fn choosing_a_commit_keeps_the_view_toggles() {
                 let (mut s, pr, job) = loading();
                 deliver(&mut s, &pr, job);
-                press(&mut s, "w");
-                press(&mut s, "S");
-                press(&mut s, "t");
+                press(&mut s, "zw");
+                press(&mut s, "zs");
+                press(&mut s, "zT");
                 let before = {
                     let d = screen(&s);
                     (
@@ -5353,7 +5464,7 @@ pub(crate) mod tests {
                         states: std::collections::HashMap::new(),
                     }))),
                 );
-                let cmds = press(&mut s, "v");
+                let cmds = press(&mut s, ",v");
                 assert!(
                     cmds.iter()
                         .any(|c| matches!(c, Cmd::Api(Api::SetViewed { viewed: true, .. }))),

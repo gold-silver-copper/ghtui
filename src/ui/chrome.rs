@@ -151,25 +151,15 @@ impl Widget for Header<'_> {
             };
             Span::styled(text::truncate(&c.text, usize::from(r.width)), style).render(*r, buf);
         }
-        fill(buf, lay.search, theme, FIELD);
-        let inner = Rect {
-            x: lay.search.x.saturating_add(1),
-            width: lay.search.width.saturating_sub(2),
-            ..lay.search
-        };
         match self.input {
-            Some(input) => {
-                Span::styled("⌕ ", theme.accent(FIELD)).render(inner, buf);
-                input.render(
-                    Rect {
-                        x: inner.x.saturating_add(2),
-                        width: inner.width.saturating_sub(2),
-                        ..inner
-                    },
-                    buf,
-                );
+            Some(input) => SearchField {
+                ctx: self.ctx,
+                input,
             }
+            .render(lay.search, buf),
             None => {
+                fill(buf, lay.search, theme, FIELD);
+                let inner = inner(lay.search);
                 Span::styled(
                     text::truncate(&format!("⌕ {}", self.placeholder), usize::from(inner.width)),
                     theme.meta(FIELD),
@@ -180,6 +170,38 @@ impl Widget for Header<'_> {
         for (item, r) in self.right.iter().zip(&lay.right) {
             Span::styled(item.clone(), theme.meta(BAR)).render(*r, buf);
         }
+    }
+}
+
+/// A search field being typed into: the header's, or a list's own filter
+/// field edited in place.
+pub struct SearchField<'a> {
+    pub ctx: Ctx<'a>,
+    pub input: &'a TextArea<'static>,
+}
+
+impl Widget for SearchField<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        fill(buf, area, self.ctx.theme, FIELD);
+        let inner = inner(area);
+        Span::styled("⌕ ", self.ctx.theme.accent(FIELD)).render(inner, buf);
+        self.input.render(
+            Rect {
+                x: inner.x.saturating_add(2),
+                width: inner.width.saturating_sub(2),
+                ..inner
+            },
+            buf,
+        );
+    }
+}
+
+/// A field's text, a column in from each side.
+fn inner(field: Rect) -> Rect {
+    Rect {
+        x: field.x.saturating_add(1),
+        width: field.width.saturating_sub(2),
+        ..field
     }
 }
 
@@ -259,7 +281,8 @@ fn tab_width(tab: &PageTab, level: Fit, active: bool) -> u16 {
         0
     };
     cols(
-        [2, text::width(tab.icon), label, count]
+        // ` 3 ◷ `: its number, for `3gt`, and its icon.
+        [4, text::width(tab.icon), label, count]
             .into_iter()
             .fold(0, usize::saturating_add),
     )
@@ -302,7 +325,18 @@ impl Widget for TabBar<'_> {
             } else {
                 theme.body(BAR)
             };
-            let mut spans = vec![Span::styled(format!(" {} ", tab.icon), theme.meta(BAR))];
+            let number = if i < 9 {
+                char::from_digit(u32::try_from(i.saturating_add(1)).unwrap_or(0), 10).unwrap_or(' ')
+            } else {
+                ' '
+            };
+            let mut spans = vec![
+                Span::styled(
+                    format!(" {number}"),
+                    theme.meta(BAR).add_modifier(Modifier::DIM),
+                ),
+                Span::styled(format!(" {} ", tab.icon), theme.meta(BAR)),
+            ];
             if shown(Fit::NoCounts) {
                 spans.push(Span::styled(tab.label.clone(), label_style));
             }
@@ -357,7 +391,7 @@ pub enum SuggestRow {
     },
 }
 
-/// The dropdown under the header's search field.
+/// The dropdown under the search field being typed into.
 pub struct SearchPanel<'a> {
     pub ctx: Ctx<'a>,
     pub rows: &'a [SuggestRow],
@@ -374,10 +408,12 @@ impl SearchPanel<'_> {
             .x
             .min(screen.right().saturating_sub(width))
             .max(screen.x);
+        // Down to the status bar.
+        let y = self.field.y.saturating_add(1);
         let height = cols(self.rows.len())
             .saturating_add(2)
-            .min(screen.height.saturating_sub(2));
-        Rect::new(x, self.field.y.saturating_add(1), width, height)
+            .min(screen.bottom().saturating_sub(y).saturating_sub(1));
+        Rect::new(x, y, width, height)
     }
 
     /// The first row shown, keeping the selection in view, and the
@@ -483,7 +519,8 @@ pub struct KeyPanel<'a> {
     pub ctx: Ctx<'a>,
     pub title: &'a str,
     pub rows: &'a [KeyRow],
-    pub selected: usize,
+    /// The highlighted row, if one is (which-key's hints have none).
+    pub selected: Option<usize>,
     /// Where the selection is among the items (`3/40`), shown when they
     /// don't all fit.
     pub position: (usize, usize),
@@ -545,10 +582,12 @@ impl Widget for KeyPanel<'_> {
         let title = vec![Span::styled(self.title, theme.title(PANEL))];
         let position = vec![Span::styled(position, theme.meta(PANEL))];
         render_split(title_row, buf, &title, &position, 1);
-        let skip = self.selected.saturating_add(1).saturating_sub(rows);
+        let skip = self
+            .selected
+            .map_or(0, |s| s.saturating_add(1).saturating_sub(rows));
         let shown = self.rows.iter().enumerate().skip(skip).take(rows);
         for ((n, row), y) in shown.zip(area.y.saturating_add(2)..area.bottom()) {
-            let (line, bg) = list_row(buf, theme, area, y, self.selected == n, PANEL);
+            let (line, bg) = list_row(buf, theme, area, y, self.selected == Some(n), PANEL);
             if row.heading {
                 Span::styled(row.label.as_str(), heading(theme)).render(line, buf);
                 continue;

@@ -18,6 +18,7 @@ use crate::api::model::{
     Capped, ChecksState, NewThread, NodeId, PatchFile, PendingReview, PrDetail, PrRef, RepoId,
     ReviewEvent, ReviewThread, ViewedFiles,
 };
+use crate::api::notifications;
 use crate::api::queries::{self, nodes};
 use crate::api::rate_limit::{RateLimits, retry_after};
 use crate::api::raw;
@@ -118,6 +119,8 @@ enum Request<'a> {
         /// Safe to send twice: a query, not a mutation.
         idempotent: bool,
     },
+    /// A REST change without a body (a re-run, marking a thread read).
+    Write { method: http::Method, path: &'a str },
 }
 
 impl Request<'_> {
@@ -125,6 +128,7 @@ impl Request<'_> {
         match self {
             Request::Get { .. } => true,
             Request::Post { idempotent, .. } => *idempotent,
+            Request::Write { .. } => false,
         }
     }
 }
@@ -338,6 +342,10 @@ impl GitHub {
                     let url = format!("{}{path}", self.http.base_uri);
                     client.post(url).json(body).send().await
                 }
+                Request::Write { method, path } => {
+                    let url = format!("{}{path}", self.http.base_uri);
+                    client.request(method.clone(), url).send().await
+                }
             };
             // A mutation that may have reached GitHub is never sent again:
             // it could post a comment twice. A failed connect never left.
@@ -384,6 +392,7 @@ impl GitHub {
                 let (request, sent) = match request {
                     Request::Get { path, .. } => (format!("GET {path}"), None),
                     Request::Post { path, body, .. } => (format!("POST {path}"), Some(*body)),
+                    Request::Write { method, path } => (format!("{method} {path}"), None),
                 };
                 let link = headers
                     .get(header::LINK)
@@ -527,6 +536,16 @@ impl GitHub {
         path: &str,
         what: impl std::fmt::Display,
     ) -> Result<String, ApiError> {
+        Ok(self.rest_fetch(path, what).await?.body)
+    }
+
+    /// [`Self::rest_get`], with the `Link` header that says where the next
+    /// page is (kept with the cached copy, for a 304).
+    async fn rest_fetch(
+        &self,
+        path: &str,
+        what: impl std::fmt::Display,
+    ) -> Result<HttpEntry, ApiError> {
         let cached = {
             let (store, key) = (self.store.clone(), path.to_owned());
             tokio::task::spawn_blocking(move || store.http_get(&key))
@@ -545,36 +564,33 @@ impl GitHub {
         if response.status == StatusCode::NOT_MODIFIED
             && let Some(cached) = cached
         {
-            return Ok(cached.body);
+            return Ok(cached);
         }
         check_status(&response, what)?;
-        if let Some(etag) = response
-            .headers
-            .get(header::ETAG)
-            .and_then(|v| v.to_str().ok())
-        {
-            let entry = HttpEntry {
-                etag: etag.to_owned(),
-                body: response.body.clone(),
-            };
-            let store = self.store.clone();
-            let key = path.to_owned();
-            spawn_store(move || store.http_put(&key, &entry)).await;
+        let named = |name| {
+            let value = response.headers.get(name)?.to_str().ok();
+            value.map(str::to_owned)
+        };
+        let entry = HttpEntry {
+            etag: named(header::ETAG).unwrap_or_default(),
+            link: named(header::LINK),
+            body: response.body,
+        };
+        if !entry.etag.is_empty() {
+            let (store, key, kept) = (self.store.clone(), path.to_owned(), entry.clone());
+            spawn_store(move || store.http_put(&key, &kept)).await;
         }
-        Ok(response.body)
+        Ok(entry)
     }
 
-    /// POSTs to a REST path with an empty body, for an action (re-run,
-    /// cancel) that only has to succeed. Never sent twice.
-    pub(crate) async fn rest_post(&self, path: &str) -> Result<(), ApiError> {
-        let body = serde_json::json!({});
-        let response = self
-            .send(&Request::Post {
-                path,
-                body: &body,
-                idempotent: false,
-            })
-            .await?;
+    /// Sends a REST change without a body (a re-run, a cancel, marking a
+    /// thread read), which only has to succeed. Never sent twice.
+    pub(crate) async fn rest_write(
+        &self,
+        method: http::Method,
+        path: &str,
+    ) -> Result<(), ApiError> {
+        let response = self.send(&Request::Write { method, path }).await?;
         let path = path.strip_prefix("/repos/").unwrap_or(path);
         check_status(&response, path)
     }
@@ -2095,6 +2111,42 @@ impl GitHub {
         };
         Ok(self
             .kept_page(page == 1, &browse::keys::runs(repo, query), runs)
+            .await)
+    }
+
+    /// Your notifications that `query` keeps (see
+    /// [`notifications::InboxFilter`]), most recently updated first, a page
+    /// at a time; `after` is the page number (REST pages by number). GitHub
+    /// doesn't count them: a page says only whether another follows. The
+    /// first page is cached.
+    pub async fn notifications(
+        &self,
+        query: &str,
+        after: Option<String>,
+    ) -> Result<browse::Results<notifications::Notification>, ApiError> {
+        let filter = notifications::InboxFilter::parse(query);
+        let page = rest_page(after.as_deref());
+        let path = filter.path(page, REST_PAGE);
+        let what = match &filter.repo {
+            Some(repo) => format!("your notifications from {repo}"),
+            None => "your notifications".to_owned(),
+        };
+        let fetched = self.rest_fetch(&path, what).await?;
+        let wire: Vec<notifications::rest::Thread> = serde_json::from_str(&fetched.body)?;
+        let items: Vec<_> = (wire.into_iter())
+            .filter_map(notifications::rest::Thread::into_notification)
+            .filter(|n| filter.keeps(n))
+            .collect();
+        let more = fetched
+            .link
+            .is_some_and(|l| l.split(',').any(|l| l.contains("rel=\"next\"")));
+        let list = browse::Results {
+            total: items.len() as u64,
+            items,
+            next: more.then(|| page.saturating_add(1).to_string()),
+        };
+        Ok(self
+            .kept_page(page == 1, &browse::keys::notifications(query), list)
             .await)
     }
 

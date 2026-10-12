@@ -15,7 +15,7 @@ use redb::{Database, ReadableDatabase, TableDefinition};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bump whenever the meaning or encoding of any table changes.
-pub const SCHEMA_VERSION: u64 = 10;
+pub const SCHEMA_VERSION: u64 = 11;
 
 const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 /// REST responses keyed by request path, stored with their ETag.
@@ -59,6 +59,9 @@ from_redb!(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HttpEntry {
     pub etag: String,
+    /// The `Link` header: where a list's next page is.
+    #[serde(default)]
+    pub link: Option<String>,
     pub body: String,
 }
 
@@ -306,6 +309,7 @@ mod tests {
 
         let entry = HttpEntry {
             etag: "W/\"abc\"".into(),
+            link: None,
             body: "{}".into(),
         };
         store.http_put("/user", &entry);

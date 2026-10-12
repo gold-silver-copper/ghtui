@@ -8,6 +8,7 @@ pub mod corpus;
 #[doc(hidden)]
 pub mod fuzz;
 pub mod model;
+pub mod notifications;
 mod person;
 pub mod queries;
 #[cfg(test)]

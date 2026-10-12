@@ -2,7 +2,7 @@
 
 use crate::theme::Bg;
 use crate::ui::bars::{Banner, StatusBar};
-use crate::ui::chrome::{Header, KeyPanel, SearchPanel, TabBar, TitleBar, header_layout};
+use crate::ui::chrome::{Header, KeyPanel, SearchField, SearchPanel, TabBar, TitleBar};
 use crate::ui::overlays::Palette;
 use crate::ui::page::{Link, PageView, columns};
 use crate::ui::{Ctx, PAD_X, PAD_Y, fill};
@@ -39,8 +39,9 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
     // Header: where you are, the search field, you.
     let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
     let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
+    // A filter is typed into the list's own field, not the header's.
     let search_input = match &state.overlay {
-        Some(Overlay::Search(sb)) => Some(&sb.input),
+        Some(Overlay::Search(sb)) if !state.search_field(sb).1 => Some(&sb.input),
         _ => None,
     };
     let placeholder = format!("Type {} to search", state.first_key(Action::SearchGithub));
@@ -84,12 +85,26 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             let area = state.page_area();
             let page = p.page();
             // The composer takes the comment box's place, scrolled into view.
+            // The composer takes the comment box's place, or goes under the
+            // comment it quotes, scrolled into view.
             let comment_box = composing.and_then(|c| {
-                let item = page.items.get(page.find(&Link::Comment, 0)?)?;
-                Some((usize::from(c.rows()), item))
+                let quoted = match &c.target {
+                    crate::review::ComposeTarget::Conversation {
+                        quoting: Some(at), ..
+                    } => page.items.iter().find(|it| {
+                        matches!(page.target(it.link), Some(Link::Quote { at: was, .. }) if was == at)
+                    }),
+                    _ => None,
+                };
+                let (item, under) = match quoted {
+                    Some(item) => (*item, true),
+                    None => (*page.items.get(page.find(&Link::Comment, 0)?)?, false),
+                };
+                Some((usize::from(c.rows()), item, under))
             });
-            let scroll = comment_box.map_or(p.scroll, |(rows, item)| {
-                scroll_to(item.start, item.start, rows, p.scroll, area.height)
+            let scroll = comment_box.map_or(p.scroll, |(rows, item, under)| {
+                let at = if under { item.end } else { item.start };
+                scroll_to(item.start, at, rows, p.scroll, area.height)
             });
             PageView {
                 ctx,
@@ -100,18 +115,27 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 current: p.current_match(),
                 hints: &hints,
                 shift: p.shift,
+                word: p
+                    .word
+                    .and_then(|_| p.word_cursor())
+                    .map(|(at, _, w)| (at, w.cols)),
             }
             .render(area, buf);
-            comment_box.map(|(_, item)| {
+            comment_box.map(|(_, item, under)| {
                 let x = columns(page, area).main_x;
+                let (at, replaced) = if under {
+                    (item.end, 0)
+                } else {
+                    (item.start, item.end.saturating_sub(item.start))
+                };
                 Slot {
                     area: Rect {
                         x,
                         width: page.width.min(area.right().saturating_sub(x)),
                         ..area
                     },
-                    offset: item.start.saturating_sub(scroll),
-                    replaced: item.end.saturating_sub(item.start),
+                    offset: at.saturating_sub(scroll),
+                    replaced,
                 }
             })
         }
@@ -237,14 +261,21 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 ctx,
                 title: &title,
                 rows: &rows,
-                selected,
+                selected: Some(selected),
                 position: (menu.selected + 1, menu.shown().len()),
             }
             .render(area, buf);
         }
         Some(Overlay::Search(sb)) => {
             let rows: Vec<_> = state.suggestions(sb).into_iter().map(|(r, _)| r).collect();
-            let field = header_layout(lay.header, &crumbs, &right).search;
+            let (field, in_place) = state.search_field(sb);
+            if in_place {
+                SearchField {
+                    ctx,
+                    input: &sb.input,
+                }
+                .render(field, buf);
+            }
             SearchPanel {
                 ctx,
                 rows: &rows,
@@ -261,7 +292,8 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 width: status.width.saturating_sub(2 * PAD_X),
                 ..status
             };
-            Span::styled("/", ctx.theme.accent(Bg::Container)).render(row, buf);
+            let prompt = if state.backwards { "?" } else { "/" };
+            Span::styled(prompt, ctx.theme.accent(Bg::Container)).render(row, buf);
             input.render(
                 Rect {
                     x: row.x + 1,
@@ -271,7 +303,20 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 buf,
             );
         }
-        Some(Overlay::Hints(_)) | None => {}
+        // After the first keys of a sequence: what can follow.
+        None => {
+            if let Some((typed, rows)) = state.which_key() {
+                KeyPanel {
+                    ctx,
+                    title: &typed,
+                    rows: &rows,
+                    selected: None,
+                    position: (0, rows.len()),
+                }
+                .render(area, buf);
+            }
+        }
+        Some(Overlay::Hints(_)) => {}
     }
 }
 
@@ -286,9 +331,9 @@ fn render_diff(
     composing: Option<&Compose>,
 ) -> Option<Slot> {
     let theme = ctx.theme;
-    let lay = diff_screen::layout(content, screen.prefs.tree_visible);
     fill(buf, content, theme, Bg::Surface);
     let diff = state.diffs.get(&screen.of)?;
+    let lay = diff_screen::layout(content, &screen.prefs, &diff.tree);
     let mut area = lay.diff;
     if let Some(err) = &diff.error {
         let text = format!("Couldn't load the diff: {err}");
@@ -370,6 +415,7 @@ fn render_diff(
         },
         selection: screen.selection.map(|anchor| (anchor, screen.cursor)),
         shift: screen.shift,
+        word: screen.word,
     }
     .render(area, buf);
 

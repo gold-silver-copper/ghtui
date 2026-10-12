@@ -11,14 +11,16 @@ use crate::api::browse::{
     CommitInfo, Comparison, Contributions, DeploymentList, DiscussionDetail, DiscussionList,
     EntryKind, Gist, GistSummary, IssueDetail, IssueKind, IssueState, IssueSummary, Job, JobLog,
     MilestoneDetail, MilestoneInfo, MilestoneList, Person, PrActivity, PrState, Profile, Readme,
-    Release, RepoOverview, RepoSort, RepoSummary, Results, RunFilter, RunSummary, SearchKind,
-    SearchResults, Severity, Short, Status, TagInfo, TeamDetail, TeamSummary, TreeEntry,
-    UserSummary, WikiPage, Workflow, WorkflowRun,
+    Release, RepoOverview, RepoSort, RepoSummary, Results, Reviewer, RunFilter, RunSummary,
+    SearchKind, SearchResults, Severity, Short, Status, TagInfo, TeamDetail, TeamSummary,
+    TreeEntry, UserSummary, WikiPage, Workflow, WorkflowRun,
 };
 use crate::api::model::{
     Capped, ChecksState, Label, Mergeable, MilestoneRef, PrDetail, PrRef, Readiness, RepoId,
-    ReviewDecision, ReviewState,
+    ReviewDecision, ReviewState, ReviewThread,
 };
+use crate::api::notifications::{InboxFilter, Notification, SubjectKind, reason_label};
+use crate::store::{DraftComment, DraftSide};
 use crate::theme::{Bg, Syntax};
 
 use crate::ui::markdown::{self, LinkBase};
@@ -62,6 +64,17 @@ pub mod url {
     }
     pub fn pull_tab(pr: &PrRef, tab: &str) -> String {
         format!("{}/{tab}", pull(pr))
+    }
+    /// A file in a pull request's Files changed, at a line (`R12` new,
+    /// `L12` old) if given.
+    pub fn diff_line(pr: &PrRef, path: &str, line: Option<(char, u32)>) -> String {
+        let hash = crate::diff_screen::path_hash(path);
+        let line = line.map(|(side, n)| format!("{side}{n}"));
+        format!(
+            "{}#diff-{hash}{}",
+            pull_tab(pr, "files"),
+            line.unwrap_or_default()
+        )
     }
     pub fn search(kind: SearchKind, query: &str) -> String {
         let kind = match kind {
@@ -1743,6 +1756,10 @@ pub fn list_state(query: &str) -> &'static str {
         "closed"
     } else if has("open") {
         "open"
+    } else if has("unread") {
+        "unread"
+    } else if has("read") {
+        "read"
     } else {
         "all"
     }
@@ -2181,6 +2198,9 @@ pub enum PrTab {
     Conversation,
     Commits,
     Checks,
+    /// Where its review stands: drafts, open threads, reviewers, what
+    /// blocks the merge. ghtui's own: GitHub has no page for it.
+    Review,
 }
 
 /// The lines under a PR's title: branches, size (the state is in the
@@ -2220,13 +2240,16 @@ fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
     page.rule(0, Frame::None);
 }
 
-/// GitHub's merge box: checks, reviews, conflicts.
-fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons) {
+/// GitHub's merge box: checks, reviews, conflicts. On a timeline, it's
+/// joined to what's above.
+fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons, timeline: bool) {
     let readiness = d.readiness();
     if matches!(readiness, Readiness::Merged | Readiness::Closed) {
         return;
     }
-    connector(page);
+    if timeline {
+        connector(page);
+    }
     let (headline, role) = match (readiness, d.checks, d.review) {
         (Readiness::Draft, ..) => ("This pull request is still a draft", Role::Meta),
         (Readiness::Conflicts, ..) => (
@@ -2387,6 +2410,9 @@ pub fn pr_conversation(
                         (("◉", Role::Meta), "reviewed")
                     }
                 };
+                if let Some(id) = r.id {
+                    page.anchor(format!("pullrequestreview-{id}"));
+                }
                 talk.event(page, icon, &r.author, what, &r.submitted_at);
                 if !r.body.trim().is_empty() {
                     connector(page);
@@ -2402,8 +2428,240 @@ pub fn pr_conversation(
             }
         }
     }
-    merge_box(page, pr, d, icons);
+    merge_box(page, pr, d, icons, true);
     add_comment(page, keys);
+}
+
+/// What a pull request's Review tab shows of its diff: GitHub's review
+/// threads, and your drafts once they're read from disk.
+#[derive(Debug, Clone, Copy)]
+pub struct Glance<'a> {
+    pub threads: Fetched<'a, Vec<ReviewThread>>,
+    pub drafts: Option<&'a [DraftComment]>,
+}
+
+/// A pull request's Review tab: your drafts, the threads still open, who
+/// has reviewed and who hasn't yet, and what stops the merge. Each row
+/// opens what it's about.
+pub fn pr_review(
+    page: &mut Page,
+    pr: &PrRef,
+    d: &PrDetail,
+    activity: Fetched<'_, PrActivity>,
+    glance: Glance<'_>,
+    cx: PageCtx<'_>,
+) {
+    pr_summary(page, pr, d, cx.now);
+    review_drafts(page, pr, glance.drafts);
+    open_threads(page, glance.threads, cx.now);
+    reviewers(page, pr, d, activity, cx.now);
+    merge_box(page, pr, d, cx.icons, false);
+}
+
+/// The first line of `text` with words in it, cut to `max` columns.
+fn first_line(text: &str, max: u16) -> String {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty());
+    crate::ui::text::truncate(line.unwrap_or_default(), usize::from(max))
+}
+
+/// `path:line`, or the path alone for a comment on the whole file.
+fn place(path: &str, line: Option<u32>) -> String {
+    line.map_or_else(|| path.to_owned(), |line| format!("{path}:{line}"))
+}
+
+/// Your drafts, in file order, each opening its line in Files changed.
+fn review_drafts(page: &mut Page, pr: &PrRef, drafts: Option<&[DraftComment]>) {
+    let title = |n: usize| match n {
+        0 => Seg::new("Your drafts", Role::Strong),
+        n => Seg::new(format!("Your drafts · {n}"), Role::Strong),
+    };
+    let Some(drafts) = drafts else {
+        empty_box(page, title(0), "Reading your drafts…");
+        return;
+    };
+    if drafts.is_empty() {
+        let none = "None. Comments you write in Files changed wait here until you submit them.";
+        empty_box(page, title(0), none);
+        return;
+    }
+    let mut drafts = Vec::from_iter(drafts);
+    drafts.sort_by_key(|d| (&d.path, d.line));
+    let right = vec![Seg::new("not submitted yet", Role::Meta)];
+    page.box_top(vec![title(drafts.len())], right);
+    for (n, draft) in drafts.into_iter().enumerate() {
+        if n > 0 {
+            page.box_rule();
+        }
+        let side = match draft.side {
+            DraftSide::Left => 'L',
+            DraftSide::Right => 'R',
+        };
+        let target = url::diff_line(pr, &draft.path, draft.line.map(|l| (side, l)));
+        item(page, target, |page, link| {
+            let at = place(&draft.path, draft.line);
+            body(page, vec![Seg::linked(at, Role::Link, link)]);
+            let text = first_line(&draft.body, page.room(Frame::Body, 0));
+            body(page, vec![Seg::new(text, Role::Body)]);
+            if let Some(err) = &draft.error {
+                let why = format!("GitHub refused it: {err}");
+                body(page, vec![Seg::new(why, Role::Error)]);
+            }
+        });
+    }
+    page.box_bottom();
+}
+
+/// The unresolved review threads, in file order (as `]t` walks them),
+/// each opening Files changed at its thread.
+fn open_threads(page: &mut Page, threads: Fetched<'_, Vec<ReviewThread>>, now: u64) {
+    let heading = "Unresolved threads";
+    let loading = |page: &mut Page| {
+        empty_box(page, Seg::new(heading, Role::Strong), "Loading…");
+    };
+    let Some(threads) = threads.show_or(page, "the review threads", loading) else {
+        return;
+    };
+    let mut open: Vec<&ReviewThread> = threads.iter().filter(|t| !t.resolved).collect();
+    open.sort_by_key(|t| (&t.path, t.line.or(t.original_line)));
+    let resolved = threads.len() - open.len();
+    let title = match open.len() {
+        0 => heading.to_owned(),
+        n => format!("{heading} · {n}"),
+    };
+    let right = (resolved > 0).then(|| Seg::new(format!("{resolved} resolved"), Role::Meta));
+    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::from_iter(right));
+    if open.is_empty() {
+        empty_row(page, "None.");
+    }
+    for (n, thread) in open.into_iter().enumerate() {
+        if n > 0 {
+            page.box_rule();
+        }
+        let first = thread.comments.first();
+        let row = |page: &mut Page, link: Option<u32>| {
+            let line = if thread.file_level {
+                None
+            } else {
+                thread.line.or(thread.original_line)
+            };
+            let at = place(&thread.path, line);
+            let mut segs = vec![match link {
+                Some(link) => Seg::linked(at, Role::Link, link),
+                None => Seg::new(at, Role::Strong),
+            }];
+            if thread.outdated {
+                segs.push(Seg::new(" ", Role::Meta));
+                segs.push(chip("Outdated", Bg::ContainerHigh));
+            }
+            let mut said = Vec::new();
+            if let Some(c) = first {
+                said.push(login_seg(page, &c.author, Role::Meta));
+                let ago = time::ago_iso(&c.created_at, now);
+                said.push(Seg::new(format!(" · {ago}"), Role::Meta));
+            }
+            let replies = thread.comments.total().saturating_sub(1);
+            if replies > 0 {
+                said.push(Seg::new(
+                    format!(" · {}", plural(replies, "reply")),
+                    Role::Meta,
+                ));
+            }
+            page.box_line(segs, said, 0);
+            let text = first.map(|c| first_line(&c.body, page.room(Frame::Body, 0)));
+            body(page, vec![Seg::new(text.unwrap_or_default(), Role::Body)]);
+        };
+        match first.map(|c| c.url.clone()).filter(|u| !u.is_empty()) {
+            Some(url) => item(page, url, |page, link| row(page, Some(link))),
+            None => row(page, None),
+        }
+    }
+    page.box_bottom();
+}
+
+/// Who has reviewed and what they said last, then who is asked and
+/// hasn't yet. A review opens in the conversation; someone asked, their
+/// profile. Replies the author writes in threads are reviews too, which
+/// GitHub doesn't count, so neither does this.
+fn reviewers(
+    page: &mut Page,
+    pr: &PrRef,
+    d: &PrDetail,
+    activity: Fetched<'_, PrActivity>,
+    now: u64,
+) {
+    let title = Seg::new("Reviewers", Role::Strong);
+    let loading = |page: &mut Page| empty_box(page, title.clone(), "Loading…");
+    let Some(a) = activity.show_or(page, "the reviews", loading) else {
+        return;
+    };
+    // Commenting after approving or asking for changes doesn't take it back.
+    let mut said: Vec<&crate::api::browse::ReviewSummary> = Vec::new();
+    for r in a.reviews.iter().filter(|r| r.author != d.author) {
+        let decided =
+            |s: ReviewState| matches!(s, ReviewState::Approved | ReviewState::ChangesRequested);
+        match said.iter_mut().find(|s| s.author == r.author) {
+            Some(s) if r.state == ReviewState::Commented && decided(s.state) => {}
+            Some(s) => *s = r,
+            None => said.push(r),
+        }
+    }
+    page.box_top(vec![title], Vec::new());
+    if said.is_empty() && a.requested.is_empty() && a.requested.left_out() == 0 {
+        empty_row(page, "No reviews yet, and no one is asked for one.");
+    }
+    for r in said {
+        let ((mark, role), what) = match r.state {
+            ReviewState::Approved => (("✓", Role::Success), "approved"),
+            ReviewState::ChangesRequested => (("✗", Role::Error), "requested changes"),
+            ReviewState::Dismissed => (("○", Role::Meta), "had a review dismissed"),
+            ReviewState::Commented | ReviewState::Pending => (("◉", Role::Meta), "commented"),
+        };
+        let target = match r.id {
+            Some(id) => format!("{}#pullrequestreview-{id}", url::pull(pr)),
+            None => url::user(&r.author),
+        };
+        item(page, target, |page, link| {
+            let ago = time::ago_iso(&r.submitted_at, now);
+            body(
+                page,
+                vec![
+                    Seg::new(format!("{mark}  "), role),
+                    Seg::linked(r.author.clone(), Role::Link, link),
+                    Seg::new(format!(" {what} {ago}"), Role::Meta),
+                ],
+            );
+        });
+    }
+    if a.reviews.left_out() > 0 {
+        empty_row(page, "Earlier reviews are on GitHub.");
+    }
+    for who in &a.requested {
+        let (name, target) = match who {
+            Reviewer::User(login) => (login.clone(), url::user(login)),
+            Reviewer::Team(team) => {
+                let (org, slug) = team.split_once('/').unwrap_or(("", team));
+                (
+                    team.clone(),
+                    format!("{}/orgs/{org}/teams/{slug}", url::BASE),
+                )
+            }
+        };
+        item(page, target, |page, link| {
+            body(
+                page,
+                vec![
+                    Seg::new("●  ", Role::Accent),
+                    Seg::linked(name, Role::Link, link),
+                    Seg::new(" is asked to review", Role::Meta),
+                ],
+            );
+        });
+    }
+    if a.requested.left_out() > 0 {
+        let more = format!("And {} more asked.", a.requested.left_out());
+        empty_row(page, &more);
+    }
+    page.box_bottom();
 }
 
 /// A pull request's Checks tab: the checks on its head.
@@ -2952,10 +3210,8 @@ pub fn job(
     }
     page.wrapped(meta, 0, Frame::None);
     page.blank();
-    if !at.query.is_empty() {
-        filter_field(page, at.query, at.keys, "search");
-        page.blank();
-    }
+    filter_field(page, at.query, at.keys, "search");
+    page.blank();
     #[expect(
         clippy::disallowed_methods,
         reason = "said under each open step, or in place of the steps"
@@ -3094,9 +3350,21 @@ pub fn job(
             body(page, vec![Seg::new(text, Role::Meta)]);
         }
         let width = shown.last().map_or(1, |(i, _)| (i + 1).to_string().len());
+        // Each line is a row, as a file's are: `y` copies its link.
+        let line_url = |n: usize| {
+            format!(
+                "{}/actions/runs/{}/job/{}#step:{}:{n}",
+                url::repo(repo),
+                job.run_id,
+                job.id,
+                step.number
+            )
+        };
         for (n, (i, text)) in shown.iter().enumerate() {
-            if focus == Some(n) {
-                page.jump.get_or_insert(page.lines.len());
+            // The page opens there, with that line selected.
+            if focus == Some(n) && page.jump.is_none() {
+                page.jump = Some(page.lines.len());
+                page.selects = Some(page.items.len());
             }
             if matches(text) {
                 page.marks.push(page.lines.len());
@@ -3107,6 +3375,7 @@ pub fn job(
             );
             let mut segs = vec![number];
             segs.extend(crate::ui::page::highlight(log_seg(text), &q));
+            let start = page.lines.len();
             page.push(PageLine {
                 segs,
                 frame: Frame::Body,
@@ -3114,6 +3383,8 @@ pub fn job(
                 fixed: 1,
                 ..PageLine::default()
             });
+            let link = page.link(line_url(i + 1));
+            page.item(start, link);
         }
         if pointed && !searched {
             page.jump.get_or_insert(page.lines.len().saturating_sub(1));
@@ -3206,6 +3477,88 @@ fn run_list(
             },
         );
     });
+}
+
+// ---- notifications --------------------------------------------------------------------------
+
+/// Your notifications, as GitHub's inbox lists them: what each is about,
+/// why you got it and when, the unread ones marked. Words the inbox can't
+/// be filtered by are said.
+pub fn notifications(
+    page: &mut Page,
+    query: &str,
+    list: Fetched<'_, Results<Notification>>,
+    cx: PageCtx<'_>,
+) {
+    let PageCtx { icons, keys, now } = cx;
+    filter_field(page, query, keys, "filter");
+    let ignored = InboxFilter::parse(query).ignored;
+    if !ignored.is_empty() {
+        let words = ignored.iter().map(|w| format!("“{w}”")).collect::<Vec<_>>();
+        let text = format!(
+            "Not filtered by {}: notifications filter by is:unread, is:read, reason: and repo:",
+            words.join(", ")
+        );
+        page.wrapped(vec![Seg::new(text, Role::Meta)], 0, Frame::None);
+    }
+    page.blank();
+    let Some(l) = list.show(page, "your notifications") else {
+        return;
+    };
+    let shown = list_state(query);
+    let mut title = Vec::new();
+    for (state, label) in [("all", "All"), ("unread", "Unread"), ("read", "Read")] {
+        let role = if state == shown {
+            Role::Strong
+        } else {
+            Role::Meta
+        };
+        if !title.is_empty() {
+            title.push(Seg::new("   ", Role::Body));
+        }
+        title.push(link_seg(page, label, Link::State(state.to_owned()), role));
+    }
+    let empty = if query.is_empty() {
+        "All caught up: no notifications."
+    } else {
+        "No notifications match this filter."
+    };
+    let count = vec![Seg::new(count_of(l), Role::Meta)];
+    list_box(page, title, count, l, empty, |page, n| {
+        item(page, n.url.clone(), |page, link| {
+            let (mark, role) = if n.unread {
+                ("● ", Role::Strong)
+            } else {
+                ("  ", Role::Body)
+            };
+            page.box_line(
+                vec![
+                    Seg::new(mark, Role::Accent),
+                    Seg::new(format!("{} ", subject_icon(&n.kind, icons)), Role::Meta),
+                    Seg::linked(n.title.clone(), role, link),
+                ],
+                vec![Seg::new(time::ago_iso(&n.updated_at, now), Role::Meta)],
+                0,
+            );
+            let meta = format!("{} · {}", n.repo, reason_label(&n.reason));
+            page.box_line(vec![Seg::new(meta, Role::Meta)], Vec::new(), 4);
+        });
+    });
+}
+
+/// What a notification is about, as an icon.
+fn subject_icon(kind: &SubjectKind, icons: Icons) -> &'static str {
+    let (nerd, plain) = match kind {
+        SubjectKind::PullRequest => return icons.pr_state(PrState::Open),
+        SubjectKind::Discussion => return icons.comment(),
+        SubjectKind::Issue => ("\u{f41b}", "◉"),
+        SubjectKind::Release => ("\u{f412}", "◇"),
+        SubjectKind::Commit => ("\u{f417}", "◦"),
+        SubjectKind::CheckSuite => ("\u{f04b}", "▷"),
+        SubjectKind::Alert => ("\u{f421}", "△"),
+        SubjectKind::Other(_) => ("·", "·"),
+    };
+    if icons.nerd_font { nerd } else { plain }
 }
 
 /// A commit's checks.
@@ -4343,6 +4696,14 @@ impl<T> Rows<T> for Start<'_, T> {
 /// many of how many, ending in a row that opens the rest. A section that
 /// fails, or is written wrong, says why in its box; the others show.
 pub fn home(page: &mut Page, sections: &[HomeSection<'_>], icons: Icons, now: u64) {
+    // Where GitHub's header has its inbox.
+    let inbox = button(
+        page,
+        "Notifications",
+        format!("{}/notifications", url::BASE),
+    );
+    page.line(vec![inbox]);
+    page.blank();
     if sections.is_empty() {
         page.box_top(vec![Seg::new("Home", Role::Strong)], Vec::new());
         empty_row(

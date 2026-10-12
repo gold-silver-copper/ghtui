@@ -136,8 +136,8 @@ macro_rules! actions {
 }
 
 actions! {
-    Down              "down"              ["j", "<Down>"]          Global "Move down";
-    Up                "up"                ["k", "<Up>"]            Global "Move up";
+    Down              "down"              ["j", "<Down>", "<C-n>"] Global "Move down";
+    Up                "up"                ["k", "<Up>", "<C-p>"]   Global "Move up";
     HalfPageDown      "half_page_down"    ["<C-d>"]                Global "Half page down";
     HalfPageUp        "half_page_up"      ["<C-u>"]                Global "Half page up";
     PageDown          "page_down"         ["<C-f>", "<PageDown>"]  Global "Page down";
@@ -147,12 +147,16 @@ actions! {
     ScrollCenter      "scroll_center"     ["zz"]                   Global "Scroll the cursor to the middle";
     ScrollTop         "scroll_top"        ["zt"]                   Global "Scroll the cursor to the top";
     ScrollBottom      "scroll_bottom"     ["zb"]                   Global "Scroll the cursor to the bottom";
+    ScreenTop         "screen_top"        ["H"]                    Global "To the top of the screen";
+    ScreenMiddle      "screen_middle"     ["M"]                    Global "To the middle of the screen";
+    ScreenBottom      "screen_bottom"     ["L"]                    Global "To the bottom of the screen";
     Top               "top"               ["gg", "<Home>"]         Global "Go to the top (with a count, to that line)";
     Bottom            "bottom"            ["G", "<End>"]           Global "Go to the bottom";
     Open              "open"              ["<Enter>"]              Global "Open the selection";
     Cancel            "cancel"            ["<Esc>"]                Global "Cancel a search, a selection or keys typed so far";
     Back              "back"              ["<C-o>", "<BS>", "<A-Left>"] Global "Back";
     Forward           "forward"           ["<C-i>", "<A-Right>"]   Global "Forward";
+    CloseView         "close_view"        ["q"]                    Global "Close this view: back, or close the tab";
     UpLevel           "up_level"          ["-", "u"]               Global "Up a level";
     NextTab           "next_page_tab"     ["gt"]                   Global "Next tab of the page (with a count, that tab)";
     PrevTab           "prev_page_tab"     ["gT"]                   Global "Previous tab of the page";
@@ -178,39 +182,50 @@ actions! {
     OpenTab7          "open_tab_7"        ["<A-7>"]                Global "Go to open tab 7";
     OpenTab8          "open_tab_8"        ["<A-8>"]                Global "Go to open tab 8";
     OpenTab9          "open_tab_9"        ["<A-9>"]                Global "Go to open tab 9";
-    GoHome            "go_home"           ["gh", "H"]              Global "Go home";
+    GoHome            "go_home"           ["gh"]                   Global "Go home";
+    Notifications     "notifications"     ["gn"]                   Global "Your notifications";
+    ReviewGlance      "review_glance"     ["gr"]                   Global "The pull request's review at a glance";
     Search            "search"            ["/"]                    Global "Search what's on screen (on a list, filter it)";
+    SearchBack        "search_back"       ["?"]                    Global "Search what's on screen, backwards";
     SearchNext        "search_next"       ["n"]                    Global "Next search match";
     SearchPrev        "search_prev"       ["N"]                    Global "Previous search match";
+    SearchWord        "search_word"       ["*"]                    Global "Search the word under the cursor";
+    SearchWordBack    "search_word_back"  ["#"]                    Global "Search the word under the cursor, backwards";
     SearchGithub      "search_github"     ["g/"]                   Global "Search GitHub or go to a page";
     FindFile          "find_file"         ["f"]                    Global "Go to file";
     Comment           "comment"           ["c"]                    Global "Comment (on a thread, reply)";
     Copy              "copy_link"         ["y"]                    Global "Copy the link";
     OpenInBrowser     "open_in_browser"   ["o"]                    Global "Open on GitHub";
-    Refresh           "refresh"           ["r"]                    Global "Refresh";
-    Menu              "actions_menu"      ["<Space>", "?"]         Global "Everything you can do here";
+    OpenLink          "open_link"         ["gx"]                   Global "Open the link under the cursor in the browser";
+    Refresh           "refresh"           ["r", "<C-l>"]           Global "Refresh";
+    Menu              "actions_menu"      ["<Space>"]              Global "Everything you can do here";
     CommandPalette    "command_palette"   [":", "<C-k>"]           Global "Command palette";
     Messages          "messages"          []                       Global "Recent messages and errors";
-    Merge             "merge"             ["M"]                    Global "Merge the pull request";
-    Approve           "approve"           ["A"]                    Global "Approve the pull request";
-    ReadyForReview    "ready_for_review"  ["W"]                    Global "Mark the draft ready for review";
-    UpdateBranch      "update_branch"     ["B"]                    Global "Update the branch from its base";
-    Close             "close"             ["X"]                    Global "Close or reopen; on a running run, cancel it";
-    Rerun             "rerun"             ["<C-r>"]                Global "Re-run the workflow run or job";
+    Merge             "merge"             [",m"]                   Global "Merge the pull request";
+    Approve           "approve"           [",a"]                   Global "Approve the pull request";
+    ReadyForReview    "ready_for_review"  [",r"]                   Global "Mark the draft ready for review";
+    UpdateBranch      "update_branch"     [",u"]                   Global "Update the branch from its base";
+    Close             "close"             [",x"]                   Global "Close or reopen; on a running run, cancel it";
+    Rerun             "rerun"             [",R"]                   Global "Re-run the workflow run or job";
     Delete            "delete"            ["<Delete>"]             Global "Delete the selection (a draft comment, a Home section)";
     UndoDelete        "undo_delete"       ["<C-z>"]                Global "Bring back what was just deleted";
-    Quit              "quit"              ["q", "<C-c>"]           Global "Quit";
+    Quit              "quit"              ["ZZ", "<C-c>"]          Global "Quit";
 
-    NextItem          "next_item"         ["]]"]                   Page   "Next comment or row";
-    PrevItem          "prev_item"         ["[["]                   Page   "Previous comment or row";
+    NextSection       "next_section"      ["]]", "tree:]]"]        Page   "Next section (a box, a Home section, a folder)";
+    PrevSection       "prev_section"      ["[[", "tree:[["]        Page   "Previous section";
+    NextItem          "next_item"         ["}"]                    Page   "Next comment or row";
+    PrevItem          "prev_item"         ["{"]                    Page   "Previous comment or row";
     NextCommit        "next_commit"       ["]C"]                   Page   "Next commit of the pull request";
     PrevCommit        "prev_commit"       ["[C"]                   Page   "Previous commit of the pull request";
-    Star              "star"              ["s"]                    Page   "Star / unstar";
-    Branch            "branch"            ["b"]                    Page   "Switch branches or tags";
+    QuoteReply        "quote_reply"       [">"]                    Page   "Reply quoting the comment";
+    Star              "star"              [",*"]                   Page   "Star / unstar";
+    Branch            "branch"            ["B"]                    Page   "Switch branches or tags";
     Hints             "hints"             ["i"]                    Page   "Follow a link by its letters";
     HintsBrowser      "hints_browser"     ["I"]                    Page   "Follow a link, in the browser";
-    ToggleState       "toggle_state"      ["t"]                    List   "Open / closed / all";
+    ToggleState       "toggle_state"      ["t"]                    List   "Open / closed / all (in the inbox, unread / read)";
     Sort              "sort"              ["S"]                    List   "Change the sort";
+    MarkRead          "mark_read"         [",n"]                   List   "Mark the notification read";
+    MarkDone          "mark_done"         [",d"]                   List   "Mark the notification done";
     SaveSection       "save_to_home"      []                       List   "Save this list as a Home section";
     RenameSection     "rename_section"    []                       Page   "Rename the Home section";
     MoveSectionUp     "move_section_up"   ["<A-Up>"]               Page   "Move the Home section up";
@@ -218,11 +233,13 @@ actions! {
     Blame             "blame"             ["gb"]                   File   "Blame the file at this line, or back to the file";
     ScrollLeft        "scroll_left"       ["h", "log:h", "diff:h"] File   "Scroll left";
     ScrollRight       "scroll_right"      ["l", "log:l", "diff:l"] File   "Scroll right";
+    WordNext          "word_next"         ["w", "log:w", "diff:w"] File   "Next word (for * and gx)";
+    WordPrev          "word_prev"         ["b", "log:b", "diff:b"] File   "Previous word";
 
-    NextHunk          "next_change"       ["]c"]                   Diff   "Next change";
-    PrevHunk          "prev_change"       ["[c"]                   Diff   "Previous change";
-    NextFile          "next_file"         ["]f", "<S-Down>"]       Diff   "Next file";
-    PrevFile          "prev_file"         ["[f", "<S-Up>"]         Diff   "Previous file";
+    NextHunk          "next_change"       ["]c", "}"]              Diff   "Next change";
+    PrevHunk          "prev_change"       ["[c", "{"]              Diff   "Previous change";
+    NextFile          "next_file"         ["]f", "]]", "<S-Down>"] Diff   "Next file";
+    PrevFile          "prev_file"         ["[f", "[[", "<S-Up>"]   Diff   "Previous file";
     OldSide           "old_side"          ["<S-Left>"]             Diff   "Old side of a split row (for comments)";
     NewSide           "new_side"          ["<S-Right>"]            Diff   "New side of a split row (for comments)";
     NextUnviewed      "next_unviewed"     ["U"]                    Diff   "Next unviewed file";
@@ -230,22 +247,29 @@ actions! {
     PrevThread        "prev_thread"       ["[t"]                   Diff   "Previous unresolved thread";
     JumpMove          "jump_move"         ["%"]                    Diff   "Jump to the other end of moved code";
     SwitchPane        "switch_pane"       ["<Tab>"]                Diff   "Switch between the file tree and the diff";
-    ToggleTree        "toggle_tree"       ["t"]                    Diff   "Show or hide the file tree";
     Fold              "fold"              ["h"]                    Tree   "Fold the folder (on a file, go to its folder)";
     Unfold            "unfold"            ["l"]                    Tree   "Unfold the folder";
-    ToggleSplit       "toggle_split"      ["S"]                    Diff   "Split or unified view";
-    IgnoreWhitespace  "ignore_whitespace" ["w"]                    Diff   "Ignore whitespace changes";
+    TreeNarrower      "tree_narrower"     ["<"]                    Tree   "Narrow the file tree";
+    TreeWider         "tree_wider"        [">"]                    Tree   "Widen the file tree";
+    FoldClose         "fold_close"        ["zc"]                   Diff   "Fold the file or thread";
+    FoldOpen          "fold_open"         ["zo"]                   Diff   "Unfold the file or thread";
+    FoldToggle        "fold_toggle"       ["za"]                   Diff   "Fold or unfold the file or thread";
+    FoldAll           "fold_all"          ["zM"]                   Diff   "Fold every file";
+    UnfoldAll         "unfold_all"        ["zR"]                   Diff   "Unfold every file";
+    ToggleTree        "toggle_tree"       ["zT"]                   Diff   "Show or hide the file tree";
+    ToggleSplit       "toggle_split"      ["zs"]                   Diff   "Split or unified view";
+    IgnoreWhitespace  "ignore_whitespace" ["zw"]                   Diff   "Ignore whitespace changes";
+    FullFile          "full_file"         ["zf"]                   Diff   "Show the whole file";
     ExpandContext     "expand_context"    ["e"]                    Diff   "Show more context";
-    FullFile          "full_file"         ["F"]                    Diff   "Show the whole file";
     ToggleSinceReview "since_review"      []                       Diff   "Show only changes since your last review";
     PickCommits       "pick_commits"      []                       Diff   "Choose commits to view";
-    ToggleViewed      "toggle_viewed"     ["v"]                    Diff   "Mark the file viewed (syncs with GitHub)";
+    ToggleViewed      "toggle_viewed"     [",v"]                     Diff   "Mark the file viewed (syncs with GitHub)";
     MarkReviewed      "mark_reviewed"     ["m"]                    Diff   "Mark the change reviewed";
     VisualLines       "select_lines"      ["V", "x", "file:V"]     Diff   "Select lines";
     Suggest           "suggest"           []                       Diff   "Suggest a change (opens $EDITOR)";
     FileComment       "file_comment"      ["C"]                    Diff   "Comment on the whole file";
-    ResolveThread     "resolve"           ["R"]                    Diff   "Resolve or unresolve the thread";
-    SubmitReview      "submit_review"     ["a"]                    Diff   "Submit your review";
+    ResolveThread     "resolve"           [",t"]                     Diff   "Resolve or unresolve the thread";
+    SubmitReview      "submit_review"     [",s"]                   Diff   "Submit your review";
 }
 
 impl Action {
@@ -314,6 +338,13 @@ impl Action {
                 | ScrollCenter
                 | ScrollTop
                 | ScrollBottom
+                | ScreenTop
+                | ScreenMiddle
+                | ScreenBottom
+                | NextSection
+                | PrevSection
+                | WordNext
+                | WordPrev
                 | ScrollLeft
                 | ScrollRight
                 | Top
@@ -347,6 +378,10 @@ impl Action {
                 | SearchPrev
                 | NextItem
                 | PrevItem
+                | NextSection
+                | PrevSection
+                | WordNext
+                | WordPrev
                 | NextHunk
                 | PrevHunk
                 | NextFile
@@ -742,7 +777,7 @@ pub fn readme_tables() -> String {
             .filter_map(|&action| {
                 let mut keys = keys_of(action);
                 // Open tabs 1 to 9 are one row.
-                if action == Action::OpenTab1 {
+                if action == Action::OpenTab1 && !keys.is_empty() {
                     keys.extend(keys_of(Action::OpenTab9));
                     return Some((keys.join("–"), "Go to open tab 1 to 9"));
                 }
@@ -896,8 +931,26 @@ mod tests {
             Resolved::Run(Action::ToggleState)
         );
         assert_eq!(
-            keymap.resolve(&keys("t"), DIFF),
+            keymap.resolve(&keys("zT"), DIFF),
             Resolved::Run(Action::ToggleTree)
+        );
+        // Writes to GitHub wait behind `,`; H M L are vim's screen motions.
+        assert_eq!(keymap.resolve(&keys(","), PAGE), Resolved::Wait);
+        assert_eq!(
+            keymap.resolve(&keys(",m"), PAGE),
+            Resolved::Run(Action::Merge)
+        );
+        assert_eq!(
+            keymap.resolve(&keys("M"), PAGE),
+            Resolved::Run(Action::ScreenMiddle)
+        );
+        assert_eq!(
+            keymap.resolve(&keys("]]"), DIFF),
+            Resolved::Run(Action::NextFile)
+        );
+        assert_eq!(
+            keymap.resolve(&keys("]]"), TREE),
+            Resolved::Run(Action::NextSection)
         );
         assert_eq!(
             keymap.resolve(&keys("h"), DIFF),
@@ -946,7 +999,7 @@ mod tests {
         );
         assert_eq!(
             keymap.resolve(&keys("q"), DIFF),
-            Resolved::Run(Action::Quit)
+            Resolved::Run(Action::CloseView)
         );
         let scoped = HashMap::from([("star".to_owned(), vec!["page:z".to_owned()])]);
         assert!(

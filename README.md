@@ -12,22 +12,23 @@ the terminal.
 
 ghtui is pre-release, but it's usable every day.
 
-- **Browsing** covers most of GitHub: your home page, repositories (files,
-  README, branches, tags, releases, commits, blame, comparisons), issues,
-  pull requests, Actions runs and job logs, discussions, wikis, milestones,
-  deployments, security advisories, gists, teams, profiles and search. Every
-  github.com link opens in ghtui unless it can only work in a browser (a
-  download, settings, notifications), and then it says why.
+- **Browsing** covers most of GitHub: your home page and notifications,
+  repositories (files, README, branches, tags, releases, commits, blame,
+  comparisons), issues, pull requests, Actions runs and job logs,
+  discussions, wikis, milestones, deployments, security advisories, gists,
+  teams, profiles and search. Every github.com link opens in ghtui unless
+  it can only work in a browser (a download, settings), and then it says
+  why.
 - **Reviewing** is where ghtui goes furthest. Diffs are computed locally
   with git, highlighted with tree-sitter, and shown unified or split. You
   can reply, resolve, comment on lines or ranges, suggest changes, and
   submit a review.
 - **Acting** works from a page or from a row in a list: merge, approve,
   mark ready for review, update a branch, close or reopen, re-run or cancel
-  a workflow run, comment and star.
+  a workflow run, comment and star, and mark notifications read or done.
 
-Not there yet: notifications, projects, GitHub Enterprise Server, code
-navigation and structural diffs.
+Not there yet: projects, GitHub Enterprise Server, code navigation and
+structural diffs.
 
 ## Goals
 
@@ -83,6 +84,13 @@ palette that also goes places (`owner/repo#123`, `@user`, a URL).
 open pull requests and your repositories. Save any list to Home from its
 `Space` menu, and rename, reorder or remove sections in place.
 
+**Notifications** (`gn`, or the link at the top of Home) is your inbox,
+as on GitHub: what each thread is about, why you got it and when, the
+unread ones marked. `/` filters it as GitHub does (`is:unread`,
+`reason:review-requested`, `repo:owner/name`), `t` shows unread, read or
+all, and `↵` opens the thread at its latest comment. `,n` marks a thread
+read and `,d` marks it done.
+
 **Tabs** work like a browser's: `T` opens the selection in a new tab, `]b`
 and `[b` switch between them, and they come back next time you start.
 
@@ -99,6 +107,17 @@ Comments are kept on disk until you submit, so a crash never loses them.
 Threads that GitHub calls outdated are moved to their line when it still
 exists.
 
+**A pull request's Review tab** (`gr` from any of its tabs) shows where
+its review stands, so you don't have to piece it together:
+- your drafts that aren't submitted yet;
+- the threads still unresolved, in every file;
+- who has reviewed and what they said last, and who is asked and hasn't
+  answered yet;
+- what still stops the merge.
+
+Each row opens what it's about: a draft or a thread in Files changed at
+its line, a review in the conversation.
+
 **Acting on GitHub** asks first wherever it matters (merging, closing,
 cancelling, updating a branch). It asks GitHub what you may do and says
 why when you can't. After a change, the page follows GitHub until it shows
@@ -108,8 +127,9 @@ it.
 
 The keys are vim's where vim has one. A binding is a key sequence (`gg`,
 `]c`), and digits before it are a count: `5j` moves five rows, `3gt` goes
-to the page's third tab, `120gg` to line 120 of a file. After the first key
-of a sequence, the status bar lists what can follow it.
+to the page's third tab (the tab bar numbers them), `120gg` to line 120 of
+a file. After the first key of a sequence, a panel lists what can follow
+it here.
 
 What a key does depends on where you are: the innermost of the contexts
 below that binds it wins. A list adds its keys to a page's, which add
@@ -119,25 +139,53 @@ says where it works.
 
 - `esc` only cancels: a search, a selection, an overlay or keys typed so
   far. It never leaves the page. Back is `ctrl-o` (or `⌫`), forward is
-  `ctrl-i`, which terminals send as `⇥`.
-- A page's own tabs (a pull request's Conversation, Commits, Checks and
-  Files changed) aren't history: `gt` and `gT` switch them in place, and
-  each keeps where you were.
+  `ctrl-i`, which terminals send as `⇥` (in Files changed `⇥` switches
+  between the file tree and the diff, so forward there is `alt-→`).
+- A page's own tabs (a pull request's Conversation, Commits, Checks,
+  Files changed and Review) aren't history: `gt` and `gT` switch them in
+  place, and each keeps where you were.
 - `/` searches what's on screen: the page, a file, the diff or a log, and
-  `n` and `N` go through the matches. On a list it filters the list
-  instead. `g/` searches GitHub, as does `:`.
+  `n` and `N` go through the matches. On a list it edits the list's
+  filter instead, in place on the list. `g/` searches GitHub, as does `:`.
 - In a file, `j` and `k` move line by line, `y` copies the line's link,
   `V` selects lines (then `y` copies `#L10-L20`), and `gb` blames the
-  file at that line. In the blame, a run of lines opens its commit.
+  file at that line. In the blame, a run of lines opens its commit. A
+  job's log is the same: each line is a row with its own link.
 - `h` and `l` scroll code sideways in files, logs and the diff; in the
-  diff's file tree they fold and unfold folders.
+  diff's file tree they fold and unfold folders, and the diff shows the
+  file selected there.
+- In the diff, `y` copies the link to the line, or to the lines `V`
+  selected, as GitHub writes it; such a link opens back on those lines.
+- What changes GitHub waits behind `,`: `,m` merges, `,a` approves, `,r`
+  marks a draft ready, `,u` updates the branch, `,x` closes or reopens
+  (or cancels a run), `,R` re-runs, `,*` stars, and in Files changed `,v`
+  marks a file viewed, `,t` resolves a thread and `,s` submits your
+  review. Each asks first where it matters.
+- `q` closes the view: back a page, or the tab when there's nothing to go
+  back to. `ZZ`, `:q` in the palette, or `ctrl-c` quits; `ctrl-c` also
+  works in the comment editor, asking before it throws away your text.
+- `]]` and `[[` jump by section: a Home section, a box, a heading, a
+  folder in the file tree, a file in the diff. `}` and `{` go row by row,
+  comment by comment, and change by change in the diff. `H` `M` `L` go to
+  the top, middle and bottom of the screen.
+- `?` searches backwards, and `n` and `N` follow its direction. `>`
+  replies quoting the selected comment; Enter on a comment doesn't start
+  writing. In Files changed the view toggles are under `z`: `zw`
+  whitespace, `zs` split, `zf` the whole file, `zT` the file tree; `zc`
+  `zo` `za` fold a thread or file, `zM` `zR` every file.
+  In the file tree, `<` and `>` narrow and widen it.
+- `gn` opens your notifications (`,n` marks one read, `,d` done) and
+  `gr` a pull request's Review tab.
+- In files, logs and the diff, `w` and `b` move a word cursor along the
+  line: `*` and `#` search its word, down and up, and `gx` opens a web
+  address under it. A job log's lines are rows, as a file's are.
 
 **Everywhere** (`global:`)
 
 | Keys                 | Action |
 | -------------------- | ------ |
-| `j` `↓`              | Move down |
-| `k` `↑`              | Move up |
+| `j` `↓` `ctrl-n`     | Move down |
+| `k` `↑` `ctrl-p`     | Move up |
 | `ctrl-d`             | Half page down |
 | `ctrl-u`             | Half page up |
 | `ctrl-f` `pgdn`      | Page down |
@@ -147,12 +195,16 @@ says where it works.
 | `zz`                 | Scroll the cursor to the middle |
 | `zt`                 | Scroll the cursor to the top |
 | `zb`                 | Scroll the cursor to the bottom |
+| `H`                  | To the top of the screen |
+| `M`                  | To the middle of the screen |
+| `L`                  | To the bottom of the screen |
 | `gg` `home`          | Go to the top (with a count, to that line) |
 | `G` `end`            | Go to the bottom |
 | `↵`                  | Open the selection |
 | `esc`                | Cancel a search, a selection or keys typed so far |
 | `ctrl-o` `⌫` `alt-←` | Back |
 | `⇥` `alt-→`          | Forward |
+| `q`                  | Close this view: back, or close the tab |
 | `-` `u`              | Up a level |
 | `gt`                 | Next tab of the page (with a count, that tab) |
 | `gT`                 | Previous tab of the page |
@@ -161,39 +213,47 @@ says where it works.
 | `T`                  | Open the selection in a new tab |
 | `ctrl-w`             | Close the tab |
 | `alt-1`–`alt-9`      | Go to open tab 1 to 9 |
-| `gh` `H`             | Go home |
+| `gh`                 | Go home |
+| `gn`                 | Your notifications |
+| `gr`                 | The pull request's review at a glance |
 | `/`                  | Search what's on screen (on a list, filter it) |
+| `?`                  | Search what's on screen, backwards |
 | `n`                  | Next search match |
 | `N`                  | Previous search match |
+| `*`                  | Search the word under the cursor |
+| `#`                  | Search the word under the cursor, backwards |
 | `g/`                 | Search GitHub or go to a page |
 | `f`                  | Go to file |
 | `c`                  | Comment (on a thread, reply) |
 | `y`                  | Copy the link |
 | `o`                  | Open on GitHub |
-| `r`                  | Refresh |
-| `space` `?`          | Everything you can do here |
+| `gx`                 | Open the link under the cursor in the browser |
+| `r` `ctrl-l`         | Refresh |
+| `space`              | Everything you can do here |
 | `:` `ctrl-k`         | Command palette |
-| `M`                  | Merge the pull request |
-| `A`                  | Approve the pull request |
-| `W`                  | Mark the draft ready for review |
-| `B`                  | Update the branch from its base |
-| `X`                  | Close or reopen; on a running run, cancel it |
-| `ctrl-r`             | Re-run the workflow run or job |
+| `,m`                 | Merge the pull request |
+| `,a`                 | Approve the pull request |
+| `,r`                 | Mark the draft ready for review |
+| `,u`                 | Update the branch from its base |
+| `,x`                 | Close or reopen; on a running run, cancel it |
+| `,R`                 | Re-run the workflow run or job |
 | `del`                | Delete the selection (a draft comment, a Home section) |
 | `ctrl-z`             | Bring back what was just deleted |
-| `q` `ctrl-c`         | Quit |
+| `ZZ` `ctrl-c`        | Quit |
 
 **On pages** (`page:`)
 
 | Keys    | Action |
 | ------- | ------ |
-|         | Go to open tab 1 to 9 |
-| `]]`    | Next comment or row |
-| `[[`    | Previous comment or row |
+| `]]`    | Next section (a box, a Home section, a folder) |
+| `[[`    | Previous section |
+| `}`     | Next comment or row |
+| `{`     | Previous comment or row |
 | `]C`    | Next commit of the pull request |
 | `[C`    | Previous commit of the pull request |
-| `s`     | Star / unstar |
-| `b`     | Switch branches or tags |
+| `>`     | Reply quoting the comment |
+| `,*`    | Star / unstar |
+| `B`     | Switch branches or tags |
 | `i`     | Follow a link by its letters |
 | `I`     | Follow a link, in the browser |
 | `alt-↑` | Move the Home section up |
@@ -203,65 +263,77 @@ says where it works.
 
 | Keys | Action |
 | ---- | ------ |
-|      | Go to open tab 1 to 9 |
-| `t`  | Open / closed / all |
+| `t`  | Open / closed / all (in the inbox, unread / read) |
 | `S`  | Change the sort |
+| `,n` | Mark the notification read |
+| `,d` | Mark the notification done |
 
 **In files** (`file:`)
 
 | Keys | Action |
 | ---- | ------ |
-|      | Go to open tab 1 to 9 |
 | `gb` | Blame the file at this line, or back to the file |
 | `h`  | Scroll left |
 | `l`  | Scroll right |
+| `w`  | Next word (for * and gx) |
+| `b`  | Previous word |
 | `V`  | Select lines |
 
 **In job logs** (`log:`)
 
 | Keys | Action |
 | ---- | ------ |
-|      | Go to open tab 1 to 9 |
 | `h`  | Scroll left |
 | `l`  | Scroll right |
+| `w`  | Next word (for * and gx) |
+| `b`  | Previous word |
 
 **In Files changed** (`diff:`)
 
-| Keys      | Action |
-| --------- | ------ |
-|           | Go to open tab 1 to 9 |
-| `h`       | Scroll left |
-| `l`       | Scroll right |
-| `]c`      | Next change |
-| `[c`      | Previous change |
-| `]f` `⇧↓` | Next file |
-| `[f` `⇧↑` | Previous file |
-| `⇧←`      | Old side of a split row (for comments) |
-| `⇧→`      | New side of a split row (for comments) |
-| `U`       | Next unviewed file |
-| `]t`      | Next unresolved thread |
-| `[t`      | Previous unresolved thread |
-| `%`       | Jump to the other end of moved code |
-| `⇥`       | Switch between the file tree and the diff |
-| `t`       | Show or hide the file tree |
-| `S`       | Split or unified view |
-| `w`       | Ignore whitespace changes |
-| `e`       | Show more context |
-| `F`       | Show the whole file |
-| `v`       | Mark the file viewed (syncs with GitHub) |
-| `m`       | Mark the change reviewed |
-| `V` `x`   | Select lines |
-| `C`       | Comment on the whole file |
-| `R`       | Resolve or unresolve the thread |
-| `a`       | Submit your review |
+| Keys           | Action |
+| -------------- | ------ |
+| `h`            | Scroll left |
+| `l`            | Scroll right |
+| `w`            | Next word (for * and gx) |
+| `b`            | Previous word |
+| `]c` `}`       | Next change |
+| `[c` `{`       | Previous change |
+| `]f` `]]` `⇧↓` | Next file |
+| `[f` `[[` `⇧↑` | Previous file |
+| `⇧←`           | Old side of a split row (for comments) |
+| `⇧→`           | New side of a split row (for comments) |
+| `U`            | Next unviewed file |
+| `]t`           | Next unresolved thread |
+| `[t`           | Previous unresolved thread |
+| `%`            | Jump to the other end of moved code |
+| `⇥`            | Switch between the file tree and the diff |
+| `zc`           | Fold the file or thread |
+| `zo`           | Unfold the file or thread |
+| `za`           | Fold or unfold the file or thread |
+| `zM`           | Fold every file |
+| `zR`           | Unfold every file |
+| `zT`           | Show or hide the file tree |
+| `zs`           | Split or unified view |
+| `zw`           | Ignore whitespace changes |
+| `zf`           | Show the whole file |
+| `e`            | Show more context |
+| `,v`           | Mark the file viewed (syncs with GitHub) |
+| `m`            | Mark the change reviewed |
+| `V` `x`        | Select lines |
+| `C`            | Comment on the whole file |
+| `,t`           | Resolve or unresolve the thread |
+| `,s`           | Submit your review |
 
 **In Files changed's file tree** (`tree:`)
 
 | Keys | Action |
 | ---- | ------ |
-|      | Go to open tab 1 to 9 |
+| `]]` | Next section (a box, a Home section, a folder) |
+| `[[` | Previous section |
 | `h`  | Fold the folder (on a file, go to its folder) |
 | `l`  | Unfold the folder |
+| `<`  | Narrow the file tree |
+| `>`  | Widen the file tree |
 
 The comment editor opens where the comment will go: under the lines, the
 thread or the file header in Files changed, and in place of the comment
@@ -284,7 +356,7 @@ nerd_font = false
 density = "auto"      # auto | compact | comfortable
 
 [keys]                # each action listed replaces its default keys
-down = ["j", "<Down>", "<C-n>"]
+down = ["j", "<Down>"]  # without ctrl-n
 sort = ["list:O"]     # a context first binds it there only
 go_home = ["gh", "<A-h>"]   # sequences or modified keys
 
@@ -389,3 +461,11 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 - The cache isn't kept per account. After switching accounts, the old
   account's pages show until they refresh.
 - Merging doesn't offer auto-merge or merge queues.
+- Notifications filtered by a reason (`reason:mention`) or by `is:read`
+  are filtered after fetching, as GitHub's API can't filter them: a page
+  can show few rows with "Load more" still offered. Fine-grained tokens
+  can't read notifications at all; a classic token can.
+- A pull request's Review tab has no page on GitHub, so its link (`y`,
+  `o`, a restored tab) is the conversation's.
+- `*` and `#` find the word as text, inside longer words too, not as a
+  whole word.

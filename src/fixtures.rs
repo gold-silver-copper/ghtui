@@ -8,13 +8,15 @@ use crate::api::browse::{
     DiscussionDetail, DiscussionHit, DiscussionList, DiscussionSummary, EntryKind, Gist, GistFile,
     GistSummary, IssueDetail, IssueKind, IssueState, IssueSummary, Job, JobSummary, Login,
     MilestoneDetail, MilestoneInfo, MilestoneList, MonthActivity, Person, PrActivity, PrState,
-    Profile, Readme, Release, RepoOverview, RepoSummary, Results, ReviewSummary, RunSummary,
-    SearchResults, Status, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary, TreeEntry,
+    Profile, Readme, Release, RepoOverview, RepoSummary, Results, ReviewSummary, Reviewer,
+    RunSummary, SearchResults, Status, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary, TreeEntry,
     UserSummary, Week, WikiPage, Workflow, WorkflowRun,
 };
 use crate::api::model::{Capped, Label, NodeId, PrRef, RepoId, ReviewComment, ReviewThread, Side};
+use crate::api::notifications::Notification;
 use crossterm::event::KeyEvent;
 
+use crate::store::{DraftComment, DraftSide};
 use crate::ui::bars::Notice;
 
 use crate::browse::{Data, DataKey};
@@ -112,6 +114,21 @@ pub(crate) fn found_pr(pr: &str, title: &str, state: PrState) -> IssueSummary {
 /// Delivers a message for `pr`'s diff.
 pub(crate) fn diff_msg(state: &mut State, pr: &PrRef, msg: DiffMsg) -> Vec<Cmd> {
     update(state, Msg::Diff(DiffOf::Pr(pr.clone()), msg))
+}
+
+/// A draft comment on new line `line` of `src/point.rs`.
+pub(crate) fn draft(id: u64, line: u32, body: &str) -> DraftComment {
+    DraftComment {
+        id,
+        path: "src/point.rs".into(),
+        body: body.into(),
+        side: DraftSide::Right,
+        line: Some(line),
+        start_line: None,
+        start_side: None,
+        commit: "e".repeat(40),
+        error: None,
+    }
 }
 
 /// A review thread on `src/point.rs`, with one comment.
@@ -525,6 +542,72 @@ pub fn advisory() -> Advisory {
     }
 }
 
+/// The first page of an inbox: two unread threads, two read.
+pub fn notifications() -> Results<Notification> {
+    use crate::api::notifications::SubjectKind;
+    let thread =
+        |id: &str, repo: &str, kind, title: &str, reason: &str, unread, url: &str| Notification {
+            id: id.into(),
+            repo: RepoId::parse(repo).unwrap_or_else(|| RepoId::new("o", "r")),
+            kind,
+            title: title.into(),
+            reason: reason.into(),
+            // Newest first, as GitHub lists them.
+            updated_at: match id {
+                "101" => "2026-10-03T11:40:00Z",
+                "102" => "2026-10-03T09:00:00Z",
+                "103" => "2026-10-02T12:00:00Z",
+                _ => "2026-09-28T12:00:00Z",
+            }
+            .into(),
+            unread,
+            url: format!("https://github.com/{repo}/{url}"),
+        };
+    let items = vec![
+        thread(
+            "101",
+            "gold-silver-copper/ghtui",
+            SubjectKind::PullRequest,
+            "Theme: generate syntax palette from seed",
+            "review_requested",
+            true,
+            "pull/12",
+        ),
+        thread(
+            "102",
+            "ratatui/ratatui",
+            SubjectKind::Issue,
+            "Add a virtualized list widget for very long collections",
+            "mention",
+            true,
+            "issues/1820#issuecomment-7",
+        ),
+        thread(
+            "103",
+            "gold-silver-copper/ghtui",
+            SubjectKind::CheckSuite,
+            "CI workflow run failed for main branch",
+            "ci_activity",
+            false,
+            "actions",
+        ),
+        thread(
+            "104",
+            "tokio-rs/tokio",
+            SubjectKind::Release,
+            "Tokio v1.48.0",
+            "subscribed",
+            false,
+            "releases",
+        ),
+    ];
+    Results {
+        total: items.len() as u64,
+        items,
+        next: Some("2".into()),
+    }
+}
+
 /// A repository's three advisories.
 pub fn advisories() -> Vec<Advisory> {
     let mut low = advisory();
@@ -634,12 +717,14 @@ pub fn activity() -> PrActivity {
         .into(),
         reviews: vec![
             ReviewSummary {
+                id: Some(2_000_001),
                 author: "monalisa".into(),
                 state: crate::api::model::ReviewState::Approved,
                 body: String::new(),
                 submitted_at: "2026-10-02T09:00:00Z".into(),
             },
             ReviewSummary {
+                id: Some(2_000_002),
                 author: "hubot".into(),
                 state: crate::api::model::ReviewState::Commented,
                 body: "Yes: every role is checked at both depths.".into(),
@@ -660,6 +745,11 @@ pub fn activity() -> PrActivity {
                 author: Person::User(Login::unchecked("octocat")),
                 date: "2026-10-01T12:00:00Z".into(),
             },
+        ]
+        .into(),
+        requested: vec![
+            Reviewer::User("defunkt".into()),
+            Reviewer::Team("octo-org/core".into()),
         ]
         .into(),
     }

@@ -22,11 +22,13 @@
 # Query strings and fragments that carry meaning:
 #   handled  ?q= (lists, search, dashboards, a job's log filter), ?type=
 #            (search), ?tab= and ?sort= (profiles), ?state=closed
-#            (milestones), ?environments_filter= (deployments); #L10-L20
+#            (milestones), ?environments_filter= (deployments), ?query=
+#            (notifications, a repository's runs); #L10-L20
 #            (files and blame, marked), #issuecomment-… and
 #            #discussioncomment-… (scrolled to), #discussion_r…/#r… (the
 #            review thread in the diff), #diff-<hash> (that file in the
-#            diff), #step:3:12 (that step and line), #files (a commit's or
+#            diff), #diff-<hash>R139-R141 (its lines, L for the old side,
+#            selected), #step:3:12 (that step and line), #files (a commit's or
 #            comparison's diff)
 #   ignored  ?plain=1 (ghtui shows the file; Markdown renders), ?query= on
 #            a workflow (its runs aren't filtered), ?from=/?to= on a
@@ -172,7 +174,9 @@ https://github.com/pulls/mentioned                                          Sear
 https://github.com/issues                                                   Search
 https://github.com/issues/assigned                                          Search
 https://github.com/issues/mentioned                                         Search
-https://github.com/notifications                                            external session
+https://github.com/notifications                                            Notifications
+https://github.com/notifications?query=is%3Aunread+reason%3Amention         Notifications
+https://github.com/notifications/subscriptions                              external rare
 # Search, every type
 https://github.com/search?q=tui&type=repositories                           Search
 https://github.com/search?q=tui&type=issues                                 Search
@@ -260,6 +264,7 @@ https://github.com/rust-lang/rust/commits/main/compiler                     Comm
 https://github.com/rust-lang/rust/commits/automation%2Fbors%2Ftry            Commits
 https://github.com/rust-lang/rust/commits                                   Commits
 https://github.com/rust-lang/rust/commit/8d1a76430406c877b35d0b627e7f796dcf0dfeca#diff-0123abcd files
+https://github.com/rust-lang/rust/commit/8d1a76430406c877b35d0b627e7f796dcf0dfeca#diff-b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5R139 files
 https://github.com/rust-lang/rust/commit/8d1a76430406c877b35d0b627e7f796dcf0dfeca.diff files
 # A short SHA or a ref names no commit until resolved: its page.
 https://github.com/rust-lang/rust/commit/8d1a764.diff Commit
@@ -271,6 +276,7 @@ https://github.com/rust-lang/rust/compare/rust-lang:88d9e12...rust-lang:b940084 
 https://github.com/rust-lang/rust/compare/main...ytmimi:rust:subtree        Compare
 https://github.com/rust-lang/rust/compare/stable                            Compare
 https://github.com/rust-lang/rust/compare/8d1a76430406c877b35d0b627e7f796dcf0dfeca..b940084d7eb6a299eb4bfeb8e34901bc051e7ac4#files files
+https://github.com/rust-lang/rust/compare/8d1a76430406c877b35d0b627e7f796dcf0dfeca..b940084d7eb6a299eb4bfeb8e34901bc051e7ac4#diff-b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5L7-R9 files
 https://github.com/rust-lang/rust/compare                                   external session
 https://github.com/rust-lang/rust/find/main                                 external rare
 https://github.com/rust-lang/rust/edit/main/README.md                       external session
@@ -279,6 +285,7 @@ https://github.com/rust-lang/rust/fork                                      exte
 # A pull request's views
 https://github.com/rust-lang/rust/pull/163831/files                         files
 https://github.com/rust-lang/rust/pull/163831/files#diff-b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5R12 files
+https://github.com/rust-lang/rust/pull/163831/files#diff-b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5R139-R141 files
 https://github.com/rust-lang/rust/pull/163831/files/843fa25..8d1a764        files
 https://github.com/rust-lang/rust/pull/163831/changes                       files
 https://github.com/rust-lang/rust/pull/163831/commits                       Pr

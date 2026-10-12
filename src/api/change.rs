@@ -70,6 +70,14 @@ pub enum Change {
         repo: RepoId,
         run: u64,
     },
+    /// Mark a notification's thread read.
+    MarkRead {
+        thread: String,
+    },
+    /// Mark a notification's thread done: out of the inbox.
+    MarkDone {
+        thread: String,
+    },
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -190,16 +198,33 @@ impl GitHub {
                 } else {
                     "rerun"
                 };
-                self.rest_post(&format!("/repos/{repo}/actions/runs/{run}/{what}"))
-                    .await
+                self.rest_write(
+                    http::Method::POST,
+                    &format!("/repos/{repo}/actions/runs/{run}/{what}"),
+                )
+                .await
             }
             Change::RerunJob { repo, job } => {
-                self.rest_post(&format!("/repos/{repo}/actions/jobs/{job}/rerun"))
-                    .await
+                self.rest_write(
+                    http::Method::POST,
+                    &format!("/repos/{repo}/actions/jobs/{job}/rerun"),
+                )
+                .await
             }
             Change::CancelRun { repo, run } => {
-                self.rest_post(&format!("/repos/{repo}/actions/runs/{run}/cancel"))
-                    .await
+                self.rest_write(
+                    http::Method::POST,
+                    &format!("/repos/{repo}/actions/runs/{run}/cancel"),
+                )
+                .await
+            }
+            Change::MarkRead { thread } => {
+                let path = format!("/notifications/threads/{thread}");
+                self.rest_write(http::Method::PATCH, &path).await
+            }
+            Change::MarkDone { thread } => {
+                let path = format!("/notifications/threads/{thread}");
+                self.rest_write(http::Method::DELETE, &path).await
             }
         }
     }

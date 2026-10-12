@@ -210,6 +210,12 @@ impl State {
     /// order first), and searching GitHub.
     pub fn commands(&self, input: &str) -> Rows {
         let mut out = Vec::new();
+        // vim's way out, first.
+        let quit_first = matches!(input.trim(), "q" | "q!" | "qa" | "qa!" | "quit");
+        if quit_first {
+            let key = self.key_here(Action::Quit).unwrap_or_default();
+            out.push((item("Quit", key), Some(Choice::Action(Action::Quit))));
+        }
         if let Some(dest) = route::parse_input(input, self.context_repo()) {
             let label = match &dest.target {
                 Target::Page(route) => format!("Go to {}", route.title()),
@@ -241,12 +247,17 @@ impl State {
         let contexts = self.contexts();
         let doables = self.doables();
         let mut order: Vec<Action> = doables.iter().map(|d| d.action).collect();
-        // Not moving around: those are keys, not commands to look for.
-        order
-            .extend((Action::ALL.iter()).filter(|a| contexts.contains(&a.context()) && !a.moves()));
+        // Not moving around (those are keys, not commands to look for), and
+        // only what does something here.
+        order.extend((Action::ALL.iter()).filter(|a| {
+            contexts.contains(&a.context()) && !a.moves() && self.availability(**a).is_ok()
+        }));
         let mut actions: Vec<(usize, Action)> = Vec::new();
         for a in order {
-            if a == Action::CommandPalette || actions.iter().any(|(_, b)| *b == a) {
+            if a == Action::CommandPalette
+                || (quit_first && a == Action::Quit)
+                || actions.iter().any(|(_, b)| *b == a)
+            {
                 continue;
             }
             let by_name = fuzzy_score(input, &a.name().replace('_', " "));

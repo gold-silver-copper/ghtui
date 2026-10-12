@@ -180,6 +180,10 @@ pub enum Route {
         kind: SearchKind,
         query: String,
     },
+    /// Your inbox, filtered as GitHub's is (`is:unread reason:mention`).
+    Notifications {
+        query: String,
+    },
 }
 
 /// The pages at a revision.
@@ -361,7 +365,8 @@ impl Route {
             Route::Pulls { repo, query } => list_url(&links::pulls(repo), query),
             Route::Issue { repo, number } => links::issue(repo, *number),
             Route::Pr { pr, tab } => match tab {
-                PrTab::Conversation => links::pull(pr),
+                // GitHub shows a review in the conversation.
+                PrTab::Conversation | PrTab::Review => links::pull(pr),
                 PrTab::Commits => links::pull_tab(pr, "commits"),
                 PrTab::Checks => links::pull_tab(pr, "checks"),
             },
@@ -492,6 +497,16 @@ impl Route {
                 ProfileTab::People => format!("{}/orgs/{login}/people", links::BASE),
             },
             Route::Search { kind, query } => links::search(*kind, query),
+            Route::Notifications { query } if query.is_empty() => {
+                format!("{}/notifications", links::BASE)
+            }
+            Route::Notifications { query } => {
+                format!(
+                    "{}/notifications?query={}",
+                    links::BASE,
+                    links::encode(query)
+                )
+            }
         }
     }
 
@@ -548,6 +563,7 @@ impl Route {
             Route::Commit { repo, oid, .. } => format!("{repo}@{}", short_sha(oid)),
             Route::User { login, .. } => format!("@{login}"),
             Route::Search { query, .. } => format!("Search “{query}”"),
+            Route::Notifications { .. } => "Notifications".to_owned(),
         }
     }
 
@@ -597,6 +613,7 @@ impl Route {
             Route::Home
             | Route::User { .. }
             | Route::Search { .. }
+            | Route::Notifications { .. }
             | Route::Gist { .. }
             | Route::Gists(_)
             | Route::Teams(_)
@@ -614,13 +631,15 @@ impl Route {
         }
     }
 
-    /// A list's filter: issues, pull requests, search results, runs.
+    /// A list's filter: issues, pull requests, search results, runs,
+    /// notifications.
     pub fn list_query(&self) -> Option<&str> {
         match self {
             Route::Issues { query, .. }
             | Route::Pulls { query, .. }
             | Route::Actions { query, .. }
-            | Route::Search { query, .. } => Some(query),
+            | Route::Search { query, .. }
+            | Route::Notifications { query } => Some(query),
             _ => None,
         }
     }
@@ -641,6 +660,7 @@ impl Route {
                 repo: repo.clone(),
                 query,
             },
+            Route::Notifications { .. } => Route::Notifications { query },
             _ => return None,
         })
     }
@@ -799,6 +819,11 @@ fn parse(parsed: &url::Url) -> Option<Target> {
             tab: ProfileTab::Stars,
         },
         ["orgs", login] => Route::user(login),
+        ["notifications"] => Route::Notifications {
+            query: param("query")
+                .map(|q| q.trim().to_owned())
+                .unwrap_or_default(),
+        },
         ["advisories"] => Route::Advisories(None),
         ["advisories", ghsa] if valid_ghsa(ghsa) => Route::Advisory {
             repo: None,
@@ -971,7 +996,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             // Its files, from one commit to the other (`a..b`; with three
             // dots it's from their merge base, which the comparison page
             // finds).
-            if fragment == Some("files")
+            if fragment.is_some_and(|f| f == "files" || f.starts_with("diff-"))
                 && !spec.contains("...")
                 && let Some((from, to)) = spec.split_once("..")
                 && let Ok(from) = Oid::parse(from)
@@ -1765,14 +1790,23 @@ pub(crate) mod tests {
                 spec: format!("{sha}...{other}")
             }
         );
-        // A diff's link leads back to it.
+        // A diff's link leads back to it, and a link to its lines to them.
         let (from, to) = (Oid::parse(sha).unwrap(), Oid::parse(&other).unwrap());
+        let line = |side, line| crate::diff::anchor::LinePos { side, line };
+        let lines = (
+            line(crate::diff::anchor::Side::Left, 3),
+            line(crate::diff::anchor::Side::Right, 5),
+        );
+        let anchor = format!("diff-{}L3-R5", crate::diff_screen::path_hash("a.rs"));
         for of in [
             DiffOf::Pr(pr.clone()),
             DiffOf::Commit(pr.repo.clone(), from.clone()),
             DiffOf::Range(pr.repo.clone(), from, to),
         ] {
             assert_eq!(Dest::from_url(&of.url()).target, Target::Files(of.clone()));
+            let dest = Dest::from_url(&of.file_url("a.rs", Some(lines)));
+            assert_eq!(dest.target, Target::Files(of.clone()));
+            assert_eq!(dest.anchor.as_deref(), Some(anchor.as_str()));
         }
         // A topic search without a topic is an empty search, not `topic:`.
         assert_eq!(
@@ -1802,6 +1836,18 @@ pub(crate) mod tests {
             lines: None,
         };
         assert_eq!(reopened(&blame), Target::Page(blame));
+        assert_eq!(
+            page("https://github.com/notifications"),
+            Route::Notifications {
+                query: String::new()
+            }
+        );
+        assert_eq!(
+            page("https://github.com/notifications?query=is%3Aunread+repo%3Ao%2Fr"),
+            Route::Notifications {
+                query: "is:unread repo:o/r".into()
+            }
+        );
         assert!(matches!(
             Dest::from_url("https://github.com/settings/tokens").target,
             Target::External(_)
@@ -2203,6 +2249,8 @@ pub(crate) mod tests {
                     });
             prop_oneof![
                 Just(Route::Home),
+                prop_oneof![Just(String::new()), query()]
+                    .prop_map(|query| Route::Notifications { query }),
                 (repo(), query()).prop_map(|(repo, query)| Route::Actions { repo, query }),
                 repo().prop_map(Route::Stargazers),
                 repo().prop_map(Route::Watchers),

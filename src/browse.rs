@@ -13,10 +13,12 @@ use crate::api::browse::{
     Workflow, WorkflowRun,
 };
 use crate::api::model::{PrRef, RepoId};
+use crate::api::notifications::Notification;
 use crate::ui::Fetched;
 use crate::ui::page::{Page, PageLine, Role, Seg};
 use crate::ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
 
+use crate::diff_screen::{DiffOf, DiffState};
 use crate::keymap::Action;
 use crate::route::Route;
 use crate::state::{Remote, State};
@@ -93,6 +95,9 @@ pub enum DataKey {
     OwnerRepos(String, RepoSort),
     /// What someone starred.
     Stars(String),
+    /// Your notifications, filtered as the inbox filters them
+    /// ([`InboxFilter`](crate::api::notifications::InboxFilter)).
+    Notifications(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +149,7 @@ pub enum Data {
     Deployments(Box<DeploymentList>),
     Milestones(Box<MilestoneList>),
     Milestone(Box<MilestoneDetail>),
+    Notifications(Box<Results<Notification>>),
 }
 
 impl Data {
@@ -181,6 +187,7 @@ impl Data {
             Data::Milestones(m) => m.results.next.as_deref(),
             Data::Milestone(m) => m.items.next.as_deref(),
             Data::Advisories(r) => r.next.as_deref(),
+            Data::Notifications(r) => r.next.as_deref(),
             _ => None,
         }
     }
@@ -213,6 +220,7 @@ impl Data {
                 extend(&mut a.items, b.items, |i| (i.repo.clone(), i.number));
             }
             (Data::Advisories(a), Data::Advisories(b)) => extend(a, *b, |a| a.ghsa.clone()),
+            (Data::Notifications(a), Data::Notifications(b)) => extend(a, *b, |n| n.id.clone()),
             _ => {}
         }
     }
@@ -257,6 +265,7 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Milestones { repo, closed } => Some(DataKey::Milestones(repo.clone(), *closed)),
         Route::Milestone { repo, number } => Some(DataKey::Milestone(repo.clone(), *number)),
         Route::Advisories(repo) => Some(DataKey::Advisories(repo.clone())),
+        Route::Notifications { query } => Some(DataKey::Notifications(query.clone())),
         _ => route
             .search()
             .map(|(kind, query)| DataKey::Search(kind, query)),
@@ -268,6 +277,18 @@ pub fn paged(route: &Route) -> Option<DataKey> {
 pub enum Need {
     Pr(PrRef),
     Data(DataKey),
+}
+
+/// The pull request whose review a page shows at a glance: its Review
+/// tab's. Its diff's threads and drafts load with it.
+pub(crate) fn glanced(route: &Route) -> Option<&PrRef> {
+    match route {
+        Route::Pr {
+            pr,
+            tab: PrTab::Review,
+        } => Some(pr),
+        _ => None,
+    }
 }
 
 /// What a page needs fetched, but Home's (its sections are the state's:
@@ -326,7 +347,9 @@ pub fn needs(route: &Route) -> Vec<Need> {
             };
             repo.iter().map(header).chain([Need::Data(own)]).collect()
         }
-        Route::Gists(_) | Route::Teams(_) => paged(route).map(Need::Data).into_iter().collect(),
+        Route::Gists(_) | Route::Teams(_) | Route::Notifications { .. } => {
+            paged(route).map(Need::Data).into_iter().collect()
+        }
         Route::Team { org, slug } => vec![Need::Data(K::Team(org.to_lowercase(), slug.clone()))],
         Route::Gist { id, .. } => vec![Need::Data(K::Gist(id.clone()))],
         Route::Issue { repo, number } => {
@@ -455,6 +478,7 @@ picked!(
     Teams => Results<TeamSummary>, Team => TeamDetail, Gist => Gist,
     Gists => Results<GistSummary>, Blame => Blame, Compare => Comparison,
     Deployments => DeploymentList, Milestones => MilestoneList, Milestone => MilestoneDetail,
+    Notifications => Results<Notification>,
 );
 
 /// A page's needs as the page shows them, failing with the key that
@@ -533,6 +557,13 @@ impl State {
         self.picked(&DataKey::PrActivity(pr.clone()))
     }
 
+    /// Which state of its diff's inputs a page shows: a pull request's
+    /// Review tab shows the diff's threads and drafts.
+    pub(crate) fn diff_version(&self, route: &Route) -> Option<u64> {
+        let of = DiffOf::Pr(glanced(route)?.clone());
+        self.diffs.get(&of).map(DiffState::version)
+    }
+
     /// How a page's fetches are going (the ones that have started).
     pub(crate) fn fetches(&self, route: &Route) -> impl Iterator<Item = Remote<()>> {
         self.needs(route).into_iter().filter_map(|need| match need {
@@ -602,7 +633,10 @@ impl State {
             Route::Wiki { .. }
             | Route::Discussion { .. }
             | Route::Release { .. }
-            | Route::Advisory { .. } => Page::new(reading),
+            | Route::Advisory { .. }
+            | Route::Pr {
+                tab: PrTab::Review, ..
+            } => Page::new(reading),
             Route::Pr {
                 tab: PrTab::Checks, ..
             }
@@ -766,6 +800,17 @@ impl State {
                             let checks = f.get(&DataKey::PrChecks(pr.clone()));
                             pages::pr_checks(&mut page, pr, d, checks, now);
                         }
+                        PrTab::Review => {
+                            let diff = self.diffs.get(&DiffOf::Pr(pr.clone()));
+                            let inputs = diff.map(DiffState::inputs);
+                            let glance = pages::Glance {
+                                threads: Remote::fetched(inputs.map(|i| &i.threads), &retry),
+                                drafts: inputs
+                                    .filter(|i| i.review_loaded)
+                                    .map(|i| i.review.pending.as_slice()),
+                            };
+                            pages::pr_review(&mut page, pr, d, activity, glance, cx);
+                        }
                     }
                 }
             }
@@ -874,6 +919,9 @@ impl State {
             }
             Route::Actions { repo, query } => {
                 pages::actions(&mut page, repo, query, f.paged(route), cx);
+            }
+            Route::Notifications { query } => {
+                pages::notifications(&mut page, query, f.paged(route), cx);
             }
             Route::Commits { repo, rev, path } => {
                 pages::commit_history(&mut page, repo, rev, path, f.paged(route), now);

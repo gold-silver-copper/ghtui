@@ -64,7 +64,7 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
             cmds.push(Cmd::Git(Git::DetectMoves(Joined((of.clone(), job, diffs)))));
         }
         let DiffOf::Pr(pr) = of else { continue };
-        let threads = review::outdated_to_map(&diff.inputs().threads);
+        let threads = review::outdated_to_map(diff.inputs().thread_list());
         let ids = threads.iter().map(|t| t.thread.clone()).collect();
         if claim(&mut diff.joins.mapped, (job, ids)) && !threads.is_empty() {
             let work = (pr.clone(), job, head, threads);

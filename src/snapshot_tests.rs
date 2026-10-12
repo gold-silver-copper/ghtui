@@ -254,6 +254,7 @@ fn a_dismissed_review_reads_as_dismissed() {
     let mut activity = fixtures::activity();
     activity.reviews = crate::api::model::Capped::new(
         vec![crate::api::browse::ReviewSummary {
+            id: None,
             author: "hubot".into(),
             state: crate::api::model::ReviewState::Dismissed,
             body: String::new(),
@@ -465,12 +466,48 @@ fn with_pr_checks(mode: Mode) -> State {
     state
 }
 
+/// A pull request's Review tab: a draft, a thread still open (and one
+/// resolved), the reviewers and what stops the merge.
+fn with_pr_review(mode: Mode) -> State {
+    let mut state = with_pr(mode);
+    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    press(&mut state, "gr");
+    // The diff it starts reads the drafts and threads.
+    let of = crate::diff_screen::DiffOf::Pr(pr.clone());
+    state.diffs.insert(of.clone(), diff::diff_state());
+    let review = crate::store::ReviewState {
+        pending: vec![fixtures::draft(1, 5, "Could this name say what it holds?")],
+        ..Default::default()
+    };
+    let mut open = fixtures::thread("t", Some(14), false, false);
+    open.comments[0].url = format!("{}#discussion_r42", pr.url());
+    let threads = vec![open, fixtures::thread("done", Some(3), true, false)];
+    for msg in [
+        crate::state::DiffMsg::ReviewLoaded(Ok(review)),
+        crate::state::DiffMsg::ThreadsLoaded(Ok(threads)),
+    ] {
+        update(&mut state, Msg::Diff(of.clone(), msg));
+    }
+    state
+}
+
 /// A repository's Actions tab.
 fn with_actions(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
     let route = Route::actions(ghtui());
     let runs = Data::Runs(Box::new(fixtures::workflow_runs().1));
     open(&mut state, route, runs);
+    state
+}
+
+/// Your inbox, from Home.
+fn with_notifications(mode: Mode) -> State {
+    let mut state = with_home(mode, ColorDepth::TrueColor);
+    let route = Route::Notifications {
+        query: String::new(),
+    };
+    let inbox = Data::Notifications(Box::new(fixtures::notifications()));
+    open(&mut state, route, inbox);
     state
 }
 
@@ -880,8 +917,18 @@ fn pr_checks_dark() {
 }
 
 #[test]
+fn pr_review_dark() {
+    insta::assert_snapshot!(render(&sized(with_pr_review(Mode::Dark), 100, 44)));
+}
+
+#[test]
 fn actions_light() {
     insta::assert_snapshot!(render(&with_actions(Mode::Light)));
+}
+
+#[test]
+fn notifications_dark() {
+    insta::assert_snapshot!(render(&with_notifications(Mode::Dark)));
 }
 
 #[test]
@@ -1220,6 +1267,33 @@ fn list_filter_light() {
     insta::assert_snapshot!(render(&state));
 }
 
+/// A filter is typed into the list's own field, not the header's, and
+/// Enter applies it.
+#[test]
+fn a_filter_is_edited_in_place() {
+    let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
+    press(&mut state, "2gt/label:bug");
+    let Some(Overlay::Search(sb)) = &state.overlay else {
+        panic!("not filtering");
+    };
+    let (field, in_place) = state.search_field(sb);
+    assert!(in_place);
+    let (w, h) = state.size;
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+    terminal.draw(|frame| view(&state, frame, NOW)).unwrap();
+    let buf = terminal.backend().buffer();
+    let row = |r: ratatui::layout::Rect| -> String {
+        (r.left()..r.right())
+            .map(|x| buf[(x, r.y)].symbol())
+            .collect()
+    };
+    assert!(row(field).contains("⌕ is:open label:bug"), "{}", row(field));
+    assert!(!row(state.header_search()).contains("label:bug"));
+    press(&mut state, "<Enter>");
+    let query = state.route().and_then(Route::list_query);
+    assert_eq!(query, Some("is:open label:bug"));
+}
+
 #[test]
 fn profile_stars_dark() {
     insta::assert_snapshot!(render(&with_profile(Mode::Dark, ProfileTab::Stars)));
@@ -1474,6 +1548,158 @@ pub(crate) mod diff {
         assert_eq!(d.anchor, None);
     }
 
+    /// The diff on screen and its file tree.
+    fn diff_parts(s: &mut State) -> (DiffScreen, &DiffState) {
+        let (screen, diff) = s.diff_parts().expect("a diff");
+        (screen.clone(), diff)
+    }
+
+    /// Every way the tree's selection moves shows its file in the diff.
+    #[test]
+    fn the_diff_follows_the_file_tree() {
+        let mut s = screen_state(
+            Mode::Dark,
+            ColorDepth::TrueColor,
+            Pos::default(),
+            Pane::Tree,
+        );
+        let at = |s: &mut State| {
+            let (screen, _) = diff_parts(s);
+            (screen.tree_selected, screen.cursor.file)
+        };
+        let file = |s: &mut State, keys: &str| {
+            press(s, keys);
+            at(s)
+        };
+        // Into src/, then docs/, from folder to folder.
+        assert_eq!(file(&mut s, "ggl"), (1, 0), "src/point.rs");
+        assert_eq!(file(&mut s, "]]l"), (3, 1), "docs/new.md");
+        assert_eq!(file(&mut s, "2j"), (5, 3), "gone.py");
+        assert_eq!(file(&mut s, "G"), (10, 7), "zz/pending.rs");
+        assert_eq!(file(&mut s, "5gg"), (4, 2), "notes.txt");
+        // A click in the tree selects there.
+        let content = s.layout().content;
+        let (screen, diff) = diff_parts(&mut s);
+        let tree = crate::diff_screen::layout(content, &screen.prefs, &diff.tree).tree;
+        let tree = tree.expect("a tree");
+        let _ = update(
+            &mut s,
+            Msg::Mouse(crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: tree.x + 2,
+                row: tree.y + 3 + 6,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            }),
+        );
+        assert_eq!(at(&mut s), (6, 4), "logo.png");
+    }
+
+    /// `y` copies the line's link, or the selected lines', as GitHub
+    /// anchors them; the link opens on those lines, selected.
+    #[test]
+    fn line_links_copy_and_open_on_their_lines() {
+        let mut s = diff_at(Mode::Dark, 0, 4);
+        let copied = |s: &mut State, keys: &str| match press(s, keys).as_slice() {
+            [crate::state::Cmd::Copy(url)] => url.clone(),
+            cmds => panic!("{cmds:?}"),
+        };
+        let hash = crate::diff_screen::path_hash("src/point.rs");
+        let files = format!("https://github.com/o/r/pull/7/files#diff-{hash}");
+        assert_eq!(
+            copied(&mut s, "y"),
+            format!("{files}L3"),
+            "the removed line"
+        );
+        let url = copied(&mut s, "Vjjy");
+        assert_eq!(url, format!("{files}L3-R4"));
+        press(&mut s, "<Esc>");
+        let _ = s.follow(&crate::ui::page::Link::Url(url));
+        let _ = s.settle_diff();
+        let (screen, _) = diff_parts(&mut s);
+        assert_eq!(screen.anchor, None);
+        assert_eq!(screen.selection, Some(Pos { file: 0, row: 4 }));
+        assert_eq!(screen.cursor, Pos { file: 0, row: 6 });
+        // A commit's lines are on its page.
+        let mut s = diff_at(Mode::Dark, 0, 4);
+        s.diffs.insert(commit_of(), diff_state());
+        if let Some((screen, _)) = s.diff_parts() {
+            screen.of = commit_of();
+        }
+        let url = copied(&mut s, "y");
+        assert!(url.contains("/commit/"), "{url}");
+        assert!(url.ends_with(&format!("#diff-{hash}L3")), "{url}");
+    }
+
+    /// `zc`, `zo` and `za` fold the thread under the cursor, or the file;
+    /// `zM` and `zR` every file.
+    #[test]
+    fn folds_close_threads_and_files() {
+        let mut s = with_threads(Mode::Dark);
+        let rows = |s: &mut State, file: usize| diff_parts(s).1.doc.files()[file].rows().len();
+        let open = |s: &mut State| {
+            let (screen, diff) = diff_parts(s);
+            let thread = diff.doc.annotation_under(screen.cursor, screen.half);
+            thread.map(|t| diff.doc.thread_open(t))
+        };
+        let thread = diff_parts(&mut s)
+            .1
+            .doc
+            .annotation_pos(0)
+            .expect("a thread");
+        if let Some((screen, _)) = s.diff_parts() {
+            screen.cursor = thread;
+        }
+        assert_eq!(open(&mut s), Some(true));
+        press(&mut s, "zc");
+        assert_eq!(open(&mut s), Some(false), "the thread folds");
+        press(&mut s, "za");
+        assert_eq!(open(&mut s), Some(true));
+        // Folding a folded thread folds its file.
+        press(&mut s, "zczc");
+        assert_eq!(rows(&mut s, 0), 2, "the header, and the space after it");
+        assert_eq!(diff_parts(&mut s).0.cursor, Pos { file: 0, row: 0 });
+        press(&mut s, "za");
+        assert!(rows(&mut s, 0) > 2);
+        press(&mut s, "zM");
+        let doc = &diff_parts(&mut s).1.doc;
+        assert!(
+            doc.files()
+                .iter()
+                .all(crate::ui::diff_doc::DocFile::collapsed)
+        );
+        press(&mut s, "zR");
+        let doc = &diff_parts(&mut s).1.doc;
+        assert!(doc.files().iter().all(|f| !f.collapsed()), "generated too");
+    }
+
+    /// The file tree fits its names within a third of the screen, and `<`
+    /// and `>` narrow and widen it.
+    #[test]
+    fn the_file_tree_fits_its_names_and_resizes() {
+        let long = "src/snapshots/ghtui__snapshot_tests__diff__diff_split_wide_light.snap";
+        let doc = Doc::new(
+            vec![file(FileStatus::Added, None, Some(long), (0, 0o100644))],
+            &HashSet::new(),
+            Default::default(),
+        );
+        let mut s = state(Mode::Dark, ColorDepth::TrueColor);
+        s.size = (216, 40);
+        open_diff(&mut s, loaded(&doc), Pos::default(), Pane::Tree);
+        let width = |s: &mut State| {
+            let content = s.layout().content;
+            let (screen, diff) = diff_parts(s);
+            let tree = crate::diff_screen::layout(content, &screen.prefs, &diff.tree).tree;
+            tree.map(|t| t.width)
+        };
+        assert_eq!(width(&mut s), Some(72), "a third of 216");
+        press(&mut s, "<lt><lt>");
+        assert_eq!(width(&mut s), Some(64));
+        press(&mut s, ">");
+        assert_eq!(width(&mut s), Some(68));
+        s.size = (110, 34);
+        assert_eq!(width(&mut s), Some(55), "at most half");
+    }
+
     /// A link to a review comment (`#discussion_r<id>`) opens the diff at
     /// its thread once the threads are in.
     #[test]
@@ -1491,7 +1717,10 @@ pub(crate) mod diff {
         thread.comments[0].url = "https://github.com/o/r/pull/7#discussion_r42".into();
         if let Some(diff) = s.diffs.get_mut(&DiffOf::Pr(pr())) {
             diff.edit(|i| {
-                i.threads = vec![crate::fixtures::thread("u", Some(1), false, false), thread];
+                i.threads.finish(Ok(vec![
+                    crate::fixtures::thread("u", Some(1), false, false),
+                    thread,
+                ]));
             });
         }
         let _ = s.settle_diff();
@@ -1531,7 +1760,7 @@ pub(crate) mod diff {
         ));
         let mut thread = crate::fixtures::thread("t", Some(3), false, false);
         thread.comments[0].url = "https://github.com/o/r/pull/7#discussion_r42".into();
-        diff.edit(|i| i.threads = vec![thread]);
+        diff.edit(|i| i.threads.finish(Ok(vec![thread])));
         s.diffs.insert(DiffOf::Pr(pr()), diff);
         let _ = s.settle_diff();
         let waiting = matches!(s.screen(), Screen::Diff(d) if d.anchor.is_some());
@@ -1648,7 +1877,7 @@ pub(crate) mod diff {
             }
         };
         let diff = s.diffs.get_mut(&DiffOf::Pr(pr())).unwrap();
-        diff.edit(|i| i.threads = vec![
+        diff.edit(|i| i.threads.finish(Ok(vec![
             thread(
                 "t1",
                 Some(3),
@@ -1661,7 +1890,7 @@ pub(crate) mod diff {
             ),
             thread("t2", Some(10), true, false, vec![comment("c3", "bob", "Looks fine now.", false)].into()),
             thread("t3", None, false, true, vec![comment("c4", "carol", "Please add tests for this file.", false)].into()),
-        ]);
+        ])));
         diff.edit(|i| {
             i.review = crate::store::ReviewState {
                 pending: vec![crate::store::DraftComment {
@@ -1841,7 +2070,7 @@ pub(crate) mod diff {
     fn every_screen_survives_every_size() {
         use super::{
             DataKey, Overlay, ProfileTab, fetched, ghtui, with_file, with_home, with_issue,
-            with_issues, with_pr, with_profile, with_repo, with_repo_search,
+            with_issues, with_job, with_pr, with_profile, with_repo, with_repo_search,
         };
         use crate::browse::Data;
         type Build = Box<dyn Fn() -> State>;
@@ -1890,6 +2119,10 @@ pub(crate) mod diff {
             (
                 "list filter",
                 Box::new(move || pressed(with_repo(Mode::Light, tc), "2gt/")),
+            ),
+            (
+                "log search",
+                Box::new(move || pressed(with_job(Mode::Light, None), "/")),
             ),
             (
                 "palette",
@@ -2076,7 +2309,7 @@ pub(crate) mod diff {
 
         // Full-file mode on 50k lines must stay interactive too.
         let start = Instant::now();
-        press(&mut s, "F");
+        press(&mut s, "zf");
         terminal.draw(|frame| view(&s, frame, NOW)).unwrap();
         let full_file = start.elapsed();
 
@@ -2100,9 +2333,9 @@ mod links {
         press, with_actions, with_advisories, with_advisory, with_blame, with_branches,
         with_commit, with_compare, with_deployments, with_discussion, with_discussions, with_file,
         with_forks, with_gist, with_gists, with_history, with_home, with_issue, with_issues,
-        with_job, with_milestone, with_milestones, with_pr, with_pr_checks, with_profile,
-        with_release, with_releases, with_repo, with_repo_search, with_run, with_search,
-        with_stargazers, with_tags, with_team, with_teams, with_wiki, with_workflow,
+        with_job, with_milestone, with_milestones, with_notifications, with_pr, with_pr_checks,
+        with_profile, with_release, with_releases, with_repo, with_repo_search, with_run,
+        with_search, with_stargazers, with_tags, with_team, with_teams, with_wiki, with_workflow,
     };
     use crate::route::{Dest, Target};
     use crate::state::{Screen, State};
@@ -2214,6 +2447,7 @@ mod links {
             ("discussion", with_discussion(Mode::Dark)),
             ("job", with_job(Mode::Dark, None)),
             ("workflow", with_workflow(Mode::Dark)),
+            ("notifications", with_notifications(Mode::Dark)),
         ]
     }
 
@@ -2315,8 +2549,8 @@ mod keys {
     use super::{
         press, render, with_advisories, with_advisory, with_blame, with_branches, with_commit,
         with_compare, with_deployments, with_discussion, with_discussions, with_gist, with_gists,
-        with_issues, with_job, with_milestone, with_milestones, with_pr, with_run, with_search,
-        with_team, with_teams, with_wiki, with_workflow,
+        with_issues, with_job, with_milestone, with_milestones, with_notifications, with_pr,
+        with_pr_review, with_run, with_search, with_team, with_teams, with_wiki, with_workflow,
     };
     use crate::diff_screen::Pane;
     use crate::keymap::Action;
@@ -2327,7 +2561,7 @@ mod keys {
     /// A list, a pull request, the diff with each pane focused (the
     /// selection away from the edges so moving can move), and every page
     /// links lead to.
-    fn screens() -> [(&'static str, Make); 25] {
+    fn screens() -> [(&'static str, Make); 27] {
         fn moved(mut s: State) -> State {
             press(&mut s, "jj");
             s
@@ -2342,6 +2576,7 @@ mod keys {
         [
             ("issue list", || moved(with_issues(Mode::Dark))),
             ("pull request", || moved(with_pr(Mode::Dark))),
+            ("review", || moved(with_pr_review(Mode::Dark))),
             ("diff", || {
                 let at = Pos { file: 0, row: 4 };
                 screen_state(Mode::Dark, ColorDepth::TrueColor, at, Pane::Diff)
@@ -2393,6 +2628,7 @@ mod keys {
             ("teams", || mid(with_teams(Mode::Dark))),
             ("team", || mid(with_team(Mode::Dark))),
             ("advisories", || mid(with_advisories(Mode::Dark))),
+            ("notifications", || mid(with_notifications(Mode::Dark))),
             ("advisory", || mid(with_advisory(Mode::Dark))),
             ("wiki", || mid(with_wiki(Mode::Dark))),
             ("code search", || {
@@ -2495,20 +2731,27 @@ mod keys {
         assert_eq!(s.screens.len(), depth, "no history");
     }
 
-    /// After a key that starts sequences, the status bar lists what can
-    /// follow; a count goes before.
+    /// After a key that starts sequences, a panel lists what can follow;
+    /// a count goes before.
     #[test]
     fn sequences_say_what_can_follow() {
         let mut s = with_pr(Mode::Dark);
         press(&mut s, "2g");
-        let hints = s.key_hints();
-        assert_eq!(hints.first().map(|(k, _)| k.as_str()), Some("2g…"));
-        assert!(hints.iter().any(|(k, _)| k == "t"), "{hints:?}");
+        let (typed, rows) = s.which_key().unwrap();
+        assert_eq!(typed, "2g…");
+        assert!(rows.iter().any(|r| r.key == "t"), "{rows:?}");
+        // Only what does something here: `gb` is a file's.
+        assert!(!rows.iter().any(|r| r.key == "b"), "{rows:?}");
         press(&mut s, "t");
         assert_eq!(s.chrome().active, Some(1), "2gt: the second tab");
+        let depth = s.screens.len();
         press(&mut s, "z");
         press(&mut s, "q");
-        assert!(!s.quit, "zq is no binding; q in it doesn't quit");
+        assert_eq!(
+            s.screens.len(),
+            depth,
+            "zq is no binding; q in it doesn't close"
+        );
         // A key of another screen says so, not what it would do there.
         press(&mut s, "w");
         let said = format!("{:?}", s.notices.shown());
@@ -2535,6 +2778,120 @@ mod keys {
                 ..
             })
         ));
+    }
+
+    /// The selected line, and the word under the cursor.
+    fn word_here(s: &State) -> (Option<u32>, Option<String>) {
+        let Screen::Page(p) = s.screen() else {
+            panic!("not on a page")
+        };
+        let word = p
+            .word_cursor()
+            .map(|(_, code, w)| code.get(w.bytes).unwrap().to_owned());
+        (p.selected.and_then(|i| p.line_of(i)), word)
+    }
+
+    /// In a file, `w` and `b` move a word cursor along the line; `*` goes
+    /// to the word's next line below, the cursor on it, and `#` back up.
+    #[test]
+    fn words_in_a_file() {
+        let mut s = super::with_file(Mode::Dark);
+        press(&mut s, "1ggwww");
+        assert_eq!(word_here(&s), (Some(1), Some("::".into())));
+        press(&mut s, "wwwb");
+        assert_eq!(word_here(&s), (Some(1), Some("io".into())));
+        press(&mut s, "*");
+        assert_eq!(word_here(&s), (Some(4), Some("io".into())));
+        assert!(format!("{:?}", s.notices.shown()).contains("Match 2 of 2"));
+        press(&mut s, "#");
+        assert_eq!(word_here(&s), (Some(1), Some("io".into())));
+        // `n` after `#` goes on up: there's nothing above.
+        press(&mut s, "n");
+        assert!(format!("{:?}", s.notices.shown()).contains("No earlier match"));
+    }
+
+    /// `gx` opens the web address under the word cursor; elsewhere on
+    /// the line, its link.
+    #[test]
+    fn gx_opens_the_address_under_the_cursor() {
+        let mut s = super::with_repo(Mode::Dark, ColorDepth::TrueColor);
+        let route = Route::blob(super::ghtui(), "main".into(), "a.rs".into());
+        let blob = crate::api::browse::Blob {
+            path: "a.rs".into(),
+            text: Some("// See https://example.com/docs.\n".into()),
+            size: 32,
+            truncated: false,
+        };
+        super::open(&mut s, route, crate::browse::Data::Blob(Box::new(blob)));
+        let opened = |s: &mut State, keys: &str| match press(s, keys).as_slice() {
+            [crate::state::Cmd::OpenUrl(url)] => url.clone(),
+            cmds => panic!("{cmds:?}"),
+        };
+        assert!(opened(&mut s, "1gggx").ends_with("/a.rs#L1"));
+        assert_eq!(opened(&mut s, "wwwwgx"), "https://example.com/docs");
+    }
+
+    /// In Files changed, `w` moves along the cursor's line and `*` goes
+    /// to the word's next line, `#` back.
+    #[test]
+    fn words_in_the_diff() {
+        let at = Pos { file: 0, row: 0 };
+        let mut s = screen_state(Mode::Dark, ColorDepth::TrueColor, at, Pane::Diff);
+        let code = |s: &State| {
+            let Screen::Diff(screen) = s.screen() else {
+                panic!("not the diff")
+            };
+            let doc = &s.diff().unwrap().doc;
+            doc.code_at(screen.cursor, screen.half)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        for _ in 0..40 {
+            if code(&s).contains("pub fn new") {
+                break;
+            }
+            press(&mut s, "j");
+        }
+        press(&mut s, "wwwwwww");
+        let Screen::Diff(screen) = s.screen() else {
+            panic!()
+        };
+        assert_eq!(screen.word, Some(18), "the first i32");
+        press(&mut s, "*");
+        assert!(code(&s).contains("as i32"), "{}", code(&s));
+        press(&mut s, "#");
+        assert!(code(&s).contains("pub fn new"), "{}", code(&s));
+    }
+
+    /// A job's log lines are rows: one a link points at is selected, `j`
+    /// moves line by line, `y` copies a line's link, which opens at it.
+    #[test]
+    fn log_lines_are_rows() {
+        let mut s = with_job(Mode::Dark, Some((3, 2)));
+        let copied = |s: &mut State| match press(s, "y").as_slice() {
+            [crate::state::Cmd::Copy(url)] => url.clone(),
+            cmds => panic!("{cmds:?}"),
+        };
+        assert!(copied(&mut s).ends_with("/actions/runs/7/job/2#step:3:2"));
+        press(&mut s, "j");
+        let url = copied(&mut s);
+        assert!(url.ends_with("#step:3:3"), "{url}");
+        press(&mut s, "<Enter>");
+        assert!(format!("{:?}", s.notices.shown()).contains("Line 3 of step 3"));
+        let _ = s.go(crate::route::Dest::from_url(&url));
+        let (job, log) = crate::fixtures::job();
+        let ghtui = super::ghtui();
+        super::fetched(
+            &mut s,
+            crate::browse::DataKey::Job(ghtui.clone(), 2),
+            crate::browse::Data::Job(Box::new(job)),
+        );
+        super::fetched(
+            &mut s,
+            crate::browse::DataKey::JobLog(ghtui, 2),
+            crate::browse::Data::Log(std::sync::Arc::new(log)),
+        );
+        assert_eq!(copied(&mut s), url);
     }
 
     /// A blame's runs of lines are rows that open their commit.
@@ -2576,6 +2933,41 @@ mod keys {
         );
         press(&mut s, "u");
         assert_eq!(s.route(), Some(&Route::pr(pr)));
+    }
+
+    /// `>` replies quoting the selected comment, in an editor right under
+    /// it; Enter on a comment doesn't start writing.
+    #[test]
+    fn a_quote_reply_opens_under_the_comment() {
+        use crate::ui::page::Link;
+        let mut s = super::sized(super::with_issue(Mode::Dark), 100, 40);
+        let on_hubot = |s: &State| match s.screen() {
+            Screen::Page(p) => {
+                matches!(p.selected_link(), Some(Link::Quote { author, .. }) if author == "hubot")
+            }
+            Screen::Diff(_) => false,
+        };
+        for _ in 0..10 {
+            if on_hubot(&s) {
+                break;
+            }
+            press(&mut s, "}");
+        }
+        assert!(on_hubot(&s), "hubot's comment is selected");
+        press(&mut s, "<Enter>");
+        assert!(s.overlay.is_none(), "Enter doesn't start writing");
+        press(&mut s, ">");
+        let Some(Overlay::Compose(c)) = &s.overlay else {
+            panic!("> opens the editor")
+        };
+        assert!(c.text().starts_with("> @hubot wrote:"), "{}", c.text());
+        let screen = render(&s);
+        let row = |text: &str| screen.lines().position(|l| l.contains(text));
+        let (comment, editor) = (row("Agreed. 120 columns"), row("Comment on"));
+        assert!(
+            comment.zip(editor).is_some_and(|(c, e)| c < e && e - c < 6),
+            "the editor is just under the comment: {comment:?} {editor:?}\n{screen}"
+        );
     }
 
     /// In the menu, `h` and `l` are `←` and `→`: close it, run the row.
@@ -2835,7 +3227,7 @@ fn every_screen_renders_at_odd_sizes() {
 }
 
 /// The page's lines, as text.
-fn page_text(state: &State) -> String {
+pub(crate) fn page_text(state: &State) -> String {
     let crate::state::Screen::Page(p) = state.screen() else {
         panic!("not a page");
     };
@@ -3146,6 +3538,7 @@ fn sample(key: &DataKey) -> Data {
         K::JobLog(..) => Data::Log(Arc::new(fixtures::job().1)),
         K::Workflow(..) => Data::Workflow(Box::new(fixtures::workflow_runs().0)),
         K::Runs(..) => Data::Runs(Box::new(fixtures::workflow_runs().1)),
+        K::Notifications(_) => Data::Notifications(Box::new(fixtures::notifications())),
     }
 }
 
@@ -3159,7 +3552,9 @@ mod changes {
     use crate::store::{DraftComment, DraftSide, ReviewState};
     use crate::theme::Mode;
 
-    use super::{ghtui, pr_detail, render, with_job, with_pr, with_repo, with_run};
+    use super::{
+        ghtui, pr_detail, render, with_job, with_notifications, with_pr, with_repo, with_run,
+    };
     use crate::act::{By, Subject};
     use crate::browse::{Data, DataKey};
     use crate::fixtures::{answer, fetched, press, says, warns};
@@ -3204,7 +3599,7 @@ mod changes {
     #[test]
     fn merge_confirm_dark() {
         let mut s = pr_with(|_| {});
-        press(&mut s, "M");
+        press(&mut s, ",m");
         insta::assert_snapshot!(render(&s));
     }
 
@@ -3214,7 +3609,7 @@ mod changes {
     #[test]
     fn merging_asks_first_and_ends_up_as_github_has_it() {
         let mut s = pr_with(|_| {});
-        assert!(press(&mut s, "M").is_empty());
+        assert!(press(&mut s, ",m").is_empty());
         let c = confirm(&s);
         let problems: Vec<&str> = (c.facts.iter())
             .filter(|(_, p)| *p)
@@ -3224,7 +3619,7 @@ mod changes {
         assert!(
             c.facts
                 .iter()
-                .any(|(f, _)| f == "Its branch is 2 commits behind main (B updates it)"),
+                .any(|(f, _)| f == "Its branch is 2 commits behind main (,u updates it)"),
             "{:?}",
             c.facts
         );
@@ -3261,7 +3656,7 @@ mod changes {
             "the pull request is fetched again: {cmds:?}"
         );
         // Until GitHub shows it merged, nothing else is offered.
-        press(&mut s, "X");
+        press(&mut s, ",x");
         says(&s, "hasn't shown the last change");
         let merged = mergeable(|d| d.state = PrState::Merged);
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(merged))));
@@ -3277,7 +3672,7 @@ mod changes {
         let mut s = super::with_home(Mode::Dark, crate::theme::ColorDepth::TrueColor);
         s.prs.clear();
         press(&mut s, "jj");
-        let cmds = press(&mut s, "M");
+        let cmds = press(&mut s, ",m");
         assert_eq!(cmds, vec![Cmd::Api(Api::FetchPr(pr()))]);
         says(&s, "Loading gold-silver-copper/ghtui#12");
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
@@ -3289,7 +3684,7 @@ mod changes {
         );
         // The list moves; the dialog is still about #12.
         press(&mut s, "<Esc>");
-        press(&mut s, "M");
+        press(&mut s, ",m");
         let mine = crate::fixtures::found_prs(Vec::new(), 0);
         crate::fixtures::section(&mut s, 1, mine);
         assert_eq!(confirm(&s).about, Subject::Pr(pr()));
@@ -3324,7 +3719,7 @@ mod changes {
             ),
         );
         press(&mut s, "ggjj");
-        press(&mut s, "M");
+        press(&mut s, ",m");
         says(&s, "That works on a pull request");
     }
 
@@ -3335,7 +3730,7 @@ mod changes {
     fn after_updating_the_branch_merging_waits_for_the_new_head() {
         // Behind, though the repository doesn't require it up to date.
         let mut s = pr_with(|_| {});
-        press(&mut s, "B");
+        press(&mut s, ",u");
         let update_branch = Change::UpdateBranch {
             pr: NodeId::new("PR_12"),
             rebase: false,
@@ -3350,7 +3745,7 @@ mod changes {
         answer(&mut s, &sent, Ok(()));
         // GitHub still shows the old head.
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
-        press(&mut s, "M");
+        press(&mut s, ",m");
         says(&s, "hasn't shown the last change");
         let cmds = timers(&mut s);
         assert!(cmds.contains(&Cmd::Timer(Timer::Live, 5_000)), "{cmds:?}");
@@ -3361,14 +3756,14 @@ mod changes {
             d.behind_by = Some(0);
         });
         update(&mut s, Msg::Pr(pr(), Box::new(Ok(moved))));
-        press(&mut s, "M");
+        press(&mut s, ",m");
         let head = match &confirm(&s).choices[0].1 {
             Change::Merge { head, .. } => head.clone(),
             other => panic!("{other:?}"),
         };
         assert_eq!(head, "1".repeat(40));
         press(&mut s, "<Esc>");
-        press(&mut s, "B");
+        press(&mut s, ",u");
         says(&s, "It's up to date with main");
     }
 
@@ -3377,28 +3772,28 @@ mod changes {
     #[test]
     fn what_github_forbids_is_refused() {
         let mut s = pr_with(|d| d.may = crate::api::model::PrPermits::default());
-        press(&mut s, "M");
+        press(&mut s, ",m");
         says(&s, "Merging takes write access to gold-silver-copper/ghtui");
-        press(&mut s, "X");
+        press(&mut s, ",x");
         says(&s, "GitHub doesn't let you close it");
-        press(&mut s, "B");
+        press(&mut s, ",u");
         says(&s, "which you can't push to");
 
         let mut s = with_pr(Mode::Dark);
-        press(&mut s, "M");
+        press(&mut s, ",m");
         says(&s, "It conflicts with main: resolve that on GitHub");
         let mut s = pr_with(|d| d.merge_state = MergeState::Blocked);
-        press(&mut s, "M");
+        press(&mut s, ",m");
         says(&s, "blocked");
         let mut s = pr_with(|d| d.merge_state = MergeState::Behind);
-        press(&mut s, "M");
-        says(&s, "B updates it");
+        press(&mut s, ",m");
+        says(&s, ",u updates it");
 
         let mut s = with_run(Mode::Dark);
         let mut repo = crate::fixtures::overview();
         repo.can_write = false;
         fetched(&mut s, DataKey::Repo(ghtui()), Data::Repo(Box::new(repo)));
-        press(&mut s, "<C-r>");
+        press(&mut s, ",R");
         says(
             &s,
             "Re-running and cancelling take write access to gold-silver-copper/ghtui",
@@ -3410,27 +3805,27 @@ mod changes {
     #[test]
     fn what_cant_be_done_says_why() {
         let mut s = pr_in(PrState::Merged);
-        assert!(press(&mut s, "M").is_empty());
+        assert!(press(&mut s, ",m").is_empty());
         assert!(s.overlay.is_none());
         says(&s, "It's merged");
         let merge = (s.doables().into_iter())
             .find(|d| d.action == Action::Merge)
             .unwrap();
         assert_eq!(merge.unavailable.as_deref(), Some("It's merged"));
-        press(&mut s, "X");
+        press(&mut s, ",x");
         says(&s, "can't be reopened");
 
         let mut s = with_pr(Mode::Dark);
-        press(&mut s, "W");
+        press(&mut s, ",r");
         says(&s, "It isn't a draft");
         s.viewer = Some(pr_detail().author);
-        press(&mut s, "A");
+        press(&mut s, ",a");
         says(&s, "You can't approve your own pull request");
 
         let mut s = with_repo(Mode::Dark, crate::theme::ColorDepth::TrueColor);
-        press(&mut s, "M");
+        press(&mut s, ",m");
         says(&s, "That works on a pull request (or its row in a list)");
-        press(&mut s, "<C-r>");
+        press(&mut s, ",R");
         says(&s, "Re-running works on a workflow run or a job");
     }
 
@@ -3443,12 +3838,12 @@ mod changes {
         let ready = Change::ReadyForReview {
             pr: NodeId::new("PR_12"),
         };
-        let sent = press(&mut s, "W");
+        let sent = press(&mut s, ",r");
         assert_eq!(
             sent,
             vec![Cmd::Api(Api::Change(ready, By::Act(Subject::Pr(pr()))))]
         );
-        press(&mut s, "X");
+        press(&mut s, ",x");
         let refused = ApiError::GraphQl(vec!["Not now".into()]);
         answer(&mut s, &sent, Err(refused));
         assert_eq!(confirm(&s).error, None);
@@ -3469,9 +3864,9 @@ mod changes {
         let mut s = super::with_workflow(Mode::Dark);
         let run = Data::Run(Box::new(crate::fixtures::workflow_run()));
         fetched(&mut s, DataKey::Run(ghtui(), 7, None), run);
-        let rerun = press(&mut s, "<C-r><Enter>");
+        let rerun = press(&mut s, ",R<Enter>");
         press(&mut s, "<Esc>");
-        let star = press(&mut s, "s");
+        let star = press(&mut s, ",*");
         answer(&mut s, &star, Ok(()));
         answer(&mut s, &rerun, Ok(()));
         // The page follows the run, not the list.
@@ -3488,7 +3883,7 @@ mod changes {
         let mut s = with_pr(Mode::Dark);
         s.viewer = Some("me".into());
         assert_eq!(
-            press(&mut s, "A"),
+            press(&mut s, ",a"),
             vec![
                 Cmd::Api(Api::FetchPendingReview(pr())),
                 Cmd::LoadReview(pr())
@@ -3556,7 +3951,7 @@ mod changes {
     #[test]
     fn runs_rerun_and_cancel() {
         let mut s = with_run(Mode::Dark);
-        press(&mut s, "<C-r>");
+        press(&mut s, ",R");
         let choices: Vec<&str> = confirm(&s)
             .choices
             .iter()
@@ -3575,14 +3970,76 @@ mod changes {
             ))]
         );
         let mut s = with_run(Mode::Dark);
-        press(&mut s, "X");
+        press(&mut s, ",x");
         says(&s, "The run has finished: there's nothing to cancel");
 
         let mut s = with_job(Mode::Dark, None);
-        press(&mut s, "<C-r>");
+        press(&mut s, ",R");
         assert_eq!(confirm(&s).title, "Re-run CI #412?");
         let first = confirm(&s).choices.first().map(|(l, _)| l.clone());
         assert_eq!(first.as_deref(), Some("Re-run this job"));
+    }
+
+    /// In the inbox, `,n` marks the selected thread read and `,d` done,
+    /// asking nothing first (as GitHub doesn't); the inbox follows GitHub
+    /// until it shows the change. Read already, there's nothing to mark.
+    #[test]
+    fn notifications_are_marked_read_and_done() {
+        let mut s = with_notifications(Mode::Dark);
+        let key = DataKey::Notifications(String::new());
+        let thread = |id: &str| Subject::Thread {
+            id: id.into(),
+            query: String::new(),
+        };
+        let sent = press(&mut s, ",n");
+        let read = Change::MarkRead {
+            thread: "101".into(),
+        };
+        assert_eq!(
+            sent,
+            vec![Cmd::Api(Api::Change(read, By::Act(thread("101"))))]
+        );
+        answer(&mut s, &sent, Ok(()));
+        says(&s, "Marked read");
+        // Until GitHub shows it read, the inbox is fetched again.
+        let mut inbox = crate::fixtures::notifications();
+        fetched(
+            &mut s,
+            key.clone(),
+            Data::Notifications(Box::new(inbox.clone())),
+        );
+        assert!(s.awaiting.is_some());
+        if let Some(n) = inbox.items.first_mut() {
+            n.unread = false;
+        }
+        fetched(
+            &mut s,
+            key.clone(),
+            Data::Notifications(Box::new(inbox.clone())),
+        );
+        assert!(s.awaiting.is_none());
+        press(&mut s, ",n");
+        says(&s, "It's read already");
+
+        // Done, it leaves the inbox.
+        let sent = press(&mut s, "jj,d");
+        let done = Change::MarkDone {
+            thread: "103".into(),
+        };
+        assert_eq!(
+            sent,
+            vec![Cmd::Api(Api::Change(done, By::Act(thread("103"))))]
+        );
+        answer(&mut s, &sent, Ok(()));
+        assert!(s.awaiting.is_some());
+        inbox.items.retain(|n| n.id != "103");
+        fetched(&mut s, key, Data::Notifications(Box::new(inbox)));
+        assert!(s.awaiting.is_none());
+
+        // Elsewhere, there's no notification to mark.
+        let mut s = with_repo(Mode::Dark, crate::theme::ColorDepth::TrueColor);
+        press(&mut s, ",n");
+        says(&s, "works on lists");
     }
 
     /// A job that ended in a run still going is the run's to cancel, and
@@ -3597,9 +4054,9 @@ mod changes {
             DataKey::Job(ghtui(), 2),
             Data::Job(Box::new(job.clone())),
         );
-        press(&mut s, "<C-r>");
-        says(&s, "The run is still going: X cancels it");
-        press(&mut s, "X");
+        press(&mut s, ",R");
+        says(&s, "The run is still going: ,x cancels it");
+        press(&mut s, ",x");
         assert_eq!(confirm(&s).title, "Cancel CI #412?");
         let cancel = Change::CancelRun {
             repo: ghtui(),
@@ -3615,7 +4072,7 @@ mod changes {
         );
         answer(&mut s, &sent, Ok(()));
         // GitHub takes a while to stop it: it's asked for once.
-        press(&mut s, "X");
+        press(&mut s, ",x");
         says(&s, "hasn't shown the last change");
         assert!(s.busy().is_some_and(|b| b.starts_with("Cancel requested")));
         job.run.outcome = CheckOutcome::Cancelled;

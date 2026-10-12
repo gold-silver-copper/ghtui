@@ -167,8 +167,9 @@ pub struct DocFile {
     /// `linguist-generated`, `linguist-vendored` or a lockfile.
     pub generated: bool,
     pub viewed: Viewed,
-    /// Shown despite being generated or viewed.
-    pub expanded: bool,
+    /// Folded to its header (`false`) or shown (`true`) by hand, whatever
+    /// it is; `None` folds generated and viewed files.
+    pub open: Option<bool>,
     pub diff: Option<Arc<FileDiff>>,
     /// Show every line.
     pub full: bool,
@@ -206,7 +207,9 @@ impl DocFile {
     }
 
     pub fn collapsed(&self) -> bool {
-        !self.expanded && (self.generated || self.viewed == Viewed::Viewed)
+        !self
+            .open
+            .unwrap_or(!self.generated && self.viewed != Viewed::Viewed)
     }
 
     pub fn text(&self) -> Option<&TextDiff> {
@@ -308,6 +311,11 @@ impl DocFile {
             }
         }
         self.rows.push(Row::Header);
+        // Folded by hand: just its header.
+        if self.open == Some(false) {
+            self.rows.push(Row::Spacer);
+            return;
+        }
         // File-level comments, and outdated threads that can't be placed,
         // sit under the header.
         for (i, ann) in anns {
@@ -684,6 +692,14 @@ pub struct Anchor {
 }
 
 impl Anchor {
+    /// Line `at` of the file at `path`.
+    pub fn line(path: &str, at: LinePos) -> Self {
+        Self {
+            path: path.to_owned(),
+            held: Held::Line(at),
+        }
+    }
+
     /// The side of the line held, for the half of a split row to be on.
     pub fn side(&self) -> Option<Side> {
         match &self.held {
@@ -759,7 +775,7 @@ impl Doc {
                     generated: generated.contains(&path) || is_lockfile(&path),
                     meta,
                     viewed: inputs.viewed.get(&path).copied().unwrap_or_default(),
-                    expanded: false,
+                    open: None,
                     diff: None,
                     full: false,
                     windows: Vec::new(),
@@ -793,7 +809,7 @@ impl Doc {
         for (i, f) in self.files.iter_mut().enumerate() {
             let now = viewed.get(f.meta.path()).copied().unwrap_or_default();
             if f.viewed != now {
-                (f.viewed, f.expanded) = (now, false);
+                (f.viewed, f.open) = (now, None);
             } else if !all {
                 continue;
             }
@@ -960,6 +976,11 @@ impl Doc {
             .is_some_and(|f| f.blocks.iter().any(|b| !since.contains(&b.hash)))
     }
 
+    /// Whether thread `index` is open.
+    pub fn thread_open(&self, index: u32) -> bool {
+        (self.inputs.annotations.get(index as usize)).is_some_and(|a| is_open(&self.thread_open, a))
+    }
+
     /// Opens or closes a thread.
     pub fn toggle_thread(&mut self, index: u32) {
         let Some(ann) = self.inputs.annotations.get(index as usize) else {
@@ -991,6 +1012,12 @@ impl Doc {
             row @ (Row::Line(_) | Row::Split { .. }) => file.line_of(row, half),
             _ => None,
         }
+    }
+
+    /// The code of the line [`Doc::line_at`] finds.
+    pub fn code_at(&self, pos: Pos, half: Side) -> Option<&str> {
+        let at = self.line_at(pos, half)?;
+        Some(self.files.get(pos.file)?.text()?.line(at))
     }
 
     /// The half of a split row the cursor is on when it asks for `half`
@@ -1106,9 +1133,17 @@ impl Doc {
         self.rebuild_all();
     }
 
-    /// Shows or hides a collapsed (generated or viewed) file.
-    pub fn toggle_expanded(&mut self, index: usize) {
-        self.update(index, |file| file.expanded = !file.expanded);
+    /// Shows a file, or folds it to its header.
+    pub fn set_open(&mut self, index: usize, open: bool) {
+        self.update(index, |file| file.open = Some(open));
+    }
+
+    /// Shows every file, or folds each to its header.
+    pub fn set_all_open(&mut self, open: bool) {
+        for file in &mut self.files {
+            file.open = Some(open);
+        }
+        self.rebuild_all();
     }
 
     pub fn toggle_full(&mut self, index: usize) {
@@ -1205,16 +1240,25 @@ impl Doc {
         at(here.min_by_key(|(p, _)| p.line).map_or(0, |(_, row)| row))
     }
 
-    /// The row showing new line `line` of file `file`, or the nearest line
-    /// after it that shows.
-    pub fn new_line(&self, file: usize, line: u32) -> Option<Pos> {
+    /// The row showing `line` of file `file`, or the nearest line after it
+    /// on its side that shows.
+    pub fn line_row(&self, file: usize, line: LinePos) -> Option<Pos> {
         let f = self.files.get(file)?;
         let shown = f.rows.iter().enumerate();
         let shown = shown.flat_map(|(i, r)| f.shows(*r).map(move |p| (p, i)));
         let (_, row) = shown
-            .filter(|(p, _)| p.side == Side::Right && p.line >= line)
+            .filter(|(p, _)| p.side == line.side && p.line >= line.line)
             .min_by_key(|(p, _)| p.line)?;
         Some(Pos { file, row })
+    }
+
+    /// The first and last lines that rows `a` to `b` (either way round)
+    /// show, on `half` of split rows.
+    pub fn line_range(&self, a: Pos, b: Pos, half: Side) -> Option<(LinePos, LinePos)> {
+        let (a, b) = (self.to_global(a), self.to_global(b));
+        let mut lines = (a.min(b)..=a.max(b)).filter_map(|g| self.line_at(self.to_pos(g), half));
+        let first = lines.next()?;
+        Some((first, lines.next_back().unwrap_or(first)))
     }
 
     pub fn total_rows(&self) -> usize {
@@ -1569,7 +1613,7 @@ pub(crate) mod tests {
         let mut doc = doc();
         let cursor = Pos { file: 2, row: 1 };
         let before = doc.to_global(cursor);
-        doc.toggle_expanded(1);
+        doc.set_open(1, true);
         doc.set_diff(1, compute("Cargo.lock", "a\n", "b\nc\n"));
         assert_eq!(doc.row(cursor), Some(Row::Note(Note::Loading)));
         assert_ne!(doc.to_global(cursor), before);

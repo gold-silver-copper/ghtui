@@ -443,6 +443,9 @@ pub struct IssueDetail {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewSummary {
+    /// GitHub's number for it, which its link's anchor uses
+    /// (`#pullrequestreview-…`).
+    pub id: Option<u64>,
     pub author: String,
     pub state: ReviewState,
     pub body: String,
@@ -460,6 +463,16 @@ pub struct PrActivity {
     pub comments: Capped<Comment>,
     pub reviews: Capped<ReviewSummary>,
     pub commits: Capped<CommitInfo>,
+    /// Who has been asked for a review and hasn't given one since.
+    pub requested: Capped<Reviewer>,
+}
+
+/// Someone asked for a review: a person (or a bot), or a team.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Reviewer {
+    User(String),
+    /// `org/slug`.
+    Team(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -584,6 +597,7 @@ fragments! {
     IssueComments = "IssueCommentConnection" => WireComment,
     Reviews = "PullRequestReviewConnection" => WireReview,
     PrCommits = "PullRequestCommitConnection" => PrCommitNode,
+    ReviewRequests = "ReviewRequestConnection" => WireReviewRequest,
 }
 
 // Lists of nodes, and their nodes' types.
@@ -1038,15 +1052,47 @@ pub struct WirePrActivity {
     pub reviews: Option<Reviews>,
     #[arguments(last: 100)]
     pub commits: PrCommits,
+    #[arguments(first: 100)]
+    pub review_requests: Option<ReviewRequests>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
 pub struct WireReview {
+    pub full_database_id: Option<crate::api::queries::BigInt>,
     pub author: Option<Actor>,
     pub state: ReviewState,
     pub body: String,
     pub submitted_at: Option<DateTime>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "ReviewRequest", schema_module = "schema")]
+pub struct WireReviewRequest {
+    pub requested_reviewer: Option<RequestedReviewer>,
+}
+
+#[derive(cynic::InlineFragments, Debug)]
+#[cynic(graphql_type = "RequestedReviewer", schema_module = "schema")]
+pub enum RequestedReviewer {
+    User(UserLogin),
+    Bot(BotLogin),
+    Team(TeamSlug),
+    #[cynic(fallback)]
+    Other,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Bot", schema_module = "schema")]
+pub struct BotLogin {
+    pub login: String,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Team", schema_module = "schema")]
+pub struct TeamSlug {
+    /// `org/slug`.
+    pub combined_slug: String,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -1529,12 +1575,13 @@ mod tests {
     /// one left out.
     #[test]
     fn a_pending_review_is_not_counted_among_the_reviews() {
-        let review = |state: &str| serde_json::json!({"author": null, "state": state, "body": "", "submittedAt": null});
+        let review = |state: &str| serde_json::json!({"fullDatabaseId": null, "author": null, "state": state, "body": "", "submittedAt": null});
         let wire: WirePrActivity = serde_json::from_value(serde_json::json!({
             "id": "PR_1",
             "comments": {"totalCount": 0, "nodes": []},
             "reviews": {"totalCount": 3, "nodes": [review("APPROVED"), review("PENDING"), review("COMMENTED")]},
             "commits": {"totalCount": 0, "nodes": []},
+            "reviewRequests": null,
         }))
         .unwrap();
         let reviews = wire.into_activity().reviews;
@@ -1849,10 +1896,11 @@ mod tests {
             "id": "PR_1",
             "comments": { "totalCount": 0, "nodes": [] },
             "reviews": { "totalCount": 1, "nodes": [
-                { "author": { "__typename": "User", "login": "hubot" }, "state": "DISMISSED",
+                { "fullDatabaseId": "1", "author": { "__typename": "User", "login": "hubot" }, "state": "DISMISSED",
                   "body": "", "submittedAt": "2026-10-01T00:00:00Z" },
             ] },
             "commits": { "totalCount": 0, "nodes": [] },
+            "reviewRequests": null,
         }))
         .unwrap();
         let states: Vec<ReviewState> = activity
@@ -2304,7 +2352,7 @@ impl RunFilter {
 
 /// A filter's words, a quoted part's spaces kept and its quotes dropped
 /// (`workflow:"Build and test"`).
-fn filter_words(query: &str) -> Vec<String> {
+pub(crate) fn filter_words(query: &str) -> Vec<String> {
     let (mut words, mut word, mut quoted) = (Vec::new(), String::new(), false);
     for c in query.chars() {
         match c {
@@ -4711,6 +4759,9 @@ pub mod keys {
     pub fn runs(repo: &RepoId, query: &str) -> String {
         format!("runs:{repo}:{query}")
     }
+    pub fn notifications(query: &str) -> String {
+        format!("notifications:{query}")
+    }
     pub fn commit_checks(repo: &RepoId, rev: &str) -> String {
         format!("commit-checks:{repo}@{rev}")
     }
@@ -5021,6 +5072,7 @@ impl WirePrActivity {
                 submitted
                     .into_iter()
                     .map(|r| ReviewSummary {
+                        id: r.full_database_id.and_then(|id| id.0.parse().ok()),
                         author: author(r.author),
                         state: r.state,
                         body: r.body,
@@ -5032,8 +5084,21 @@ impl WirePrActivity {
             commits: Capped::from_nodes(self.commits.total_count, self.commits.nodes, |n| {
                 n.commit.into_info()
             }),
+            requested: self.review_requests.map_or_else(Capped::default, requested),
         }
     }
+}
+
+/// Who a pull request's review requests name; one GitHub's types don't
+/// cover (an enterprise team) counts as left out.
+fn requested(r: ReviewRequests) -> Capped<Reviewer> {
+    let named = nodes(r.nodes).filter_map(|r| match r.requested_reviewer? {
+        RequestedReviewer::User(u) => Some(Reviewer::User(u.login)),
+        RequestedReviewer::Bot(b) => Some(Reviewer::User(b.login)),
+        RequestedReviewer::Team(t) => Some(Reviewer::Team(t.combined_slug)),
+        RequestedReviewer::Other => None,
+    });
+    Capped::new(named.collect(), count(r.total_count))
 }
 
 fn pinned(p: Pinned) -> Vec<RepoSummary> {

@@ -18,6 +18,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use crate::ui::{Ctx, cols, fill, idx, put, text};
 
@@ -210,6 +211,32 @@ impl PageLine {
 
     pub fn text(&self) -> String {
         self.segs.iter().map(|s| s.text.as_str()).collect()
+    }
+
+    /// A code line's code (after its fixed segments), and the columns
+    /// the fixed segments take before it.
+    pub fn code(&self) -> Option<(String, usize)> {
+        if self.tone == Tone::Plain {
+            return None;
+        }
+        let fixed = usize::from(self.fixed);
+        let before = (self.segs.iter().take(fixed))
+            .fold(0, |w: usize, s| w.saturating_add(text::width(&s.text)));
+        let code = self.segs.iter().skip(fixed).map(|s| s.text.as_str());
+        Some((code.collect(), before))
+    }
+
+    /// The column in a code line's code where a search's first match on
+    /// it starts.
+    pub fn first_match(&self) -> Option<usize> {
+        let mut col = 0usize;
+        for seg in self.segs.iter().skip(usize::from(self.fixed)) {
+            if seg.role == Role::Match {
+                return Some(col);
+            }
+            col = col.saturating_add(text::width(&seg.text));
+        }
+        None
     }
 
     /// The line with its code (after the fixed segments) scrolled left
@@ -506,6 +533,26 @@ impl Page {
     }
 
     /// Rows the page takes (the longer of the column and the aside).
+    /// Where sections start: boxes, and headings.
+    pub fn sections(&self) -> Vec<usize> {
+        let starts = self.lines.iter().enumerate().filter(|(_, l)| {
+            l.frame == Frame::Top
+                || l.segs
+                    .first()
+                    .is_some_and(|s| matches!(s.role, Role::Heading | Role::Title))
+        });
+        // A heading wrapped onto several lines starts one section.
+        let mut out = Vec::new();
+        let mut previous = None;
+        for (i, _) in starts {
+            if previous.is_none_or(|p: usize| p.saturating_add(1) != i) {
+                out.push(i);
+            }
+            previous = Some(i);
+        }
+        out
+    }
+
     /// Picks out `query` on every line it's on, and marks those lines
     /// for `n`/`N`.
     pub fn mark(&mut self, query: &str) {
@@ -529,6 +576,12 @@ impl Page {
     pub fn height(&self) -> usize {
         let aside = self.aside.as_ref().map_or(0, |a| a.lines.len());
         self.lines.len().max(aside)
+    }
+
+    /// The first line of the main column with a link to `link`.
+    pub fn line_of(&self, link: &Link) -> Option<usize> {
+        let id = *self.link_ids.get(link)?;
+        (self.lines.iter()).position(|l| l.segs.iter().any(|s| s.link == Some(id)))
     }
 
     /// The item containing `line`.
@@ -650,19 +703,27 @@ pub struct PageHit {
     pub link: Option<u32>,
 }
 
-/// Segments of a line placed on a row: `(x, visible text, seg)`.
-fn place(line: &PageLine, x: u16, width: u16) -> Vec<(u16, String, &Seg)> {
-    let (tx, tw) = match line.frame {
-        Frame::None => (
+/// Where a line's text goes on a row from `x`, `width` wide: its first
+/// column and how many it has (none on a box's edge).
+fn inside(line: &PageLine, x: u16, width: u16) -> Option<(u16, u16)> {
+    match line.frame {
+        Frame::None => Some((
             x.saturating_add(line.indent),
             width.saturating_sub(line.indent),
-        ),
-        Frame::Body => (
+        )),
+        Frame::Body => Some((
             x.saturating_add(BOX_PAD).saturating_add(line.indent),
             width.saturating_sub((2 * BOX_PAD).saturating_add(line.indent)),
-        ),
-        Frame::Top => (x.saturating_add(3), width.saturating_sub(6)),
-        Frame::Rule | Frame::Bottom => return Vec::new(),
+        )),
+        Frame::Top => Some((x.saturating_add(3), width.saturating_sub(6))),
+        Frame::Rule | Frame::Bottom => None,
+    }
+}
+
+/// Segments of a line placed on a row: `(x, visible text, seg)`.
+fn place(line: &PageLine, x: u16, width: u16) -> Vec<(u16, String, &Seg)> {
+    let Some((tx, tw)) = inside(line, x, width) else {
+        return Vec::new();
     };
     // Between the sides; a top edge keeps a column of rule on each.
     let gap = if line.frame == Frame::Top { 4 } else { 2 };
@@ -775,6 +836,8 @@ pub struct PageView<'a> {
     pub hints: &'a [HintLabel],
     /// Columns code is scrolled left by.
     pub shift: usize,
+    /// The word cursor: its line, and its columns in the line's code.
+    pub word: Option<(usize, Range<usize>)>,
 }
 
 impl Widget for PageView<'_> {
@@ -802,6 +865,9 @@ impl Widget for PageView<'_> {
                     sel || here,
                     here,
                 );
+                if let Some((_, cols)) = self.word.as_ref().filter(|(at, _)| *at == i) {
+                    self.word(buf, line, (layout.main_x, y), cols);
+                }
             }
             if let (Some(ax), Some(a)) = (layout.aside_x, &self.page.aside)
                 && let Some(line) = a.lines.get(i)
@@ -934,6 +1000,29 @@ impl PageView<'_> {
             };
             Line::from(Span::styled(shown, style)).render(row(sx, w), buf);
         }
+    }
+
+    /// Shows columns `cols` of a code line's code, drawn from `(x, y)`,
+    /// as the word under the cursor.
+    fn word(&self, buf: &mut Buffer, line: &PageLine, (x, y): (u16, u16), cols: &Range<usize>) {
+        let (Some((_, before)), Some((tx, tw))) = (line.code(), inside(line, x, self.page.width))
+        else {
+            return;
+        };
+        let code_x = usize::from(tx).saturating_add(before);
+        let end = usize::from(tx.saturating_add(tw));
+        let at = |c: usize| {
+            let c = code_x.saturating_add(c.saturating_sub(self.shift));
+            u16::try_from(c.min(end)).unwrap_or(u16::MAX)
+        };
+        let from = at(cols.start);
+        let area = Rect {
+            x: from,
+            y,
+            width: at(cols.end).saturating_sub(from),
+            height: 1,
+        };
+        buf.set_style(area, Style::new().add_modifier(Modifier::REVERSED));
     }
 
     fn scrollbar(&self, area: Rect, buf: &mut Buffer) {

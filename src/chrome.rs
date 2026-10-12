@@ -127,6 +127,7 @@ impl State {
     fn page_chrome(&self, route: &Route, c: &mut Chrome) {
         match route {
             Route::Home => c.crumb("Home", None),
+            Route::Notifications { .. } => c.crumb("Notifications", None),
             Route::Pr { pr, tab } => {
                 repo_crumbs(&pr.repo, c);
                 self.pr_tabs(pr, c);
@@ -134,6 +135,7 @@ impl State {
                     PrTab::Conversation => 0,
                     PrTab::Commits => 1,
                     PrTab::Checks => 2,
+                    PrTab::Review => 4,
                 });
                 c.title = Some(pr.clone());
             }
@@ -473,6 +475,13 @@ impl State {
         c.tabs.push((
             new_tab("±", "Files changed", detail.map(|d| d.changed_files)),
             Target::Files(DiffOf::Pr(pr.clone())),
+        ));
+        c.tabs.push((
+            new_tab("◎", "Review", None),
+            Target::Page(Route::Pr {
+                pr: pr.clone(),
+                tab: PrTab::Review,
+            }),
         ));
     }
 
