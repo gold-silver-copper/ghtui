@@ -456,3 +456,11 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 - The cache isn't kept per account. After switching accounts, the old
   account's pages show until they refresh.
 - Merging doesn't offer auto-merge or merge queues.
+- Notifications filtered by a reason (`reason:mention`) or by `is:read`
+  are filtered after fetching, as GitHub's API can't filter them: a page
+  can show few rows with "Load more" still offered. Fine-grained tokens
+  can't read notifications at all; a classic token can.
+- A pull request's Review tab has no page on GitHub, so its link (`y`,
+  `o`, a restored tab) is the conversation's.
+- `*` and `#` find the word as text, inside longer words too, not as a
+  whole word.

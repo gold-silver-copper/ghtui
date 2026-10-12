@@ -2721,6 +2721,41 @@ mod keys {
         assert_eq!(s.route(), Some(&Route::pr(pr)));
     }
 
+    /// `>` replies quoting the selected comment, in an editor right under
+    /// it; Enter on a comment doesn't start writing.
+    #[test]
+    fn a_quote_reply_opens_under_the_comment() {
+        use crate::ui::page::Link;
+        let mut s = super::sized(super::with_issue(Mode::Dark), 100, 40);
+        let on_hubot = |s: &State| match s.screen() {
+            Screen::Page(p) => {
+                matches!(p.selected_link(), Some(Link::Quote { author, .. }) if author == "hubot")
+            }
+            Screen::Diff(_) => false,
+        };
+        for _ in 0..10 {
+            if on_hubot(&s) {
+                break;
+            }
+            press(&mut s, "}");
+        }
+        assert!(on_hubot(&s), "hubot's comment is selected");
+        press(&mut s, "<Enter>");
+        assert!(s.overlay.is_none(), "Enter doesn't start writing");
+        press(&mut s, ">");
+        let Some(Overlay::Compose(c)) = &s.overlay else {
+            panic!("> opens the editor")
+        };
+        assert!(c.text().starts_with("> @hubot wrote:"), "{}", c.text());
+        let screen = render(&s);
+        let row = |text: &str| screen.lines().position(|l| l.contains(text));
+        let (comment, editor) = (row("Agreed. 120 columns"), row("Comment on"));
+        assert!(
+            comment.zip(editor).is_some_and(|(c, e)| c < e && e - c < 6),
+            "the editor is just under the comment: {comment:?} {editor:?}\n{screen}"
+        );
+    }
+
     /// In the menu, `h` and `l` are `←` and `→`: close it, run the row.
     #[test]
     fn vim_keys_work_in_the_menu() {
