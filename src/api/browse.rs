@@ -5184,7 +5184,7 @@ impl IssueFull {
             branches: timeline::branches(self.linked_branches),
             parent: self.parent.and_then(timeline::LinkedIssue::into_linked),
             sub_issues: timeline::sub_issues(self.sub_issues),
-            progress: timeline::progress(self.sub_issues_summary),
+            progress: timeline::progress(&self.sub_issues_summary),
             issue_type: self.issue_type.map(|t| t.name),
             editable: Editable {
                 id: self.id.clone().into(),

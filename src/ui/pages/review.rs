@@ -76,7 +76,7 @@ fn reviewers(page: &mut Page, pr: &PrRef, d: &PrDetail, activity: Fetched<'_, Pr
             body(page, segs);
         });
     }
-    for r in a.requested.iter() {
+    for r in &a.requested {
         let (name, target) = timeline::reviewer_link(&r.who);
         item(page, target, |page, link| {
             let what = if r.code_owner {

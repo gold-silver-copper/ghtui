@@ -7,8 +7,12 @@ use std::collections::HashSet;
 use super::*;
 use crate::api::commit_comments::CommitComment;
 use crate::api::model::NodeId;
+use crate::api::timeline::InProject;
 use crate::api::timeline::{Closer, Event, Item, Latest, Linked, Requested, Review, What};
 use crate::ui::page::ReviewLink;
+
+/// Files' lines at commits, by commit and path.
+pub type LinesAt<'a> = std::collections::HashMap<(String, String), &'a [String]>;
 
 /// What's marked on a timeline, and what's unfolded.
 #[derive(Debug, Clone, Copy)]
@@ -24,6 +28,9 @@ pub struct Marks<'a> {
     pub unfolded: &'a HashSet<String>,
     /// You: your pending review is yours.
     pub viewer: Option<&'a str>,
+    /// Files' lines at commits (by commit and path), read from git for
+    /// the threads on them.
+    pub lines: &'a LinesAt<'a>,
 }
 
 impl Marks<'static> {
@@ -32,12 +39,15 @@ impl Marks<'static> {
         static NUMBERS: std::sync::LazyLock<HashSet<u64>> = std::sync::LazyLock::new(HashSet::new);
         static IDS: std::sync::LazyLock<HashSet<NodeId>> = std::sync::LazyLock::new(HashSet::new);
         static NAMES: std::sync::LazyLock<HashSet<String>> = std::sync::LazyLock::new(HashSet::new);
+        static LINES: std::sync::LazyLock<LinesAt<'static>> =
+            std::sync::LazyLock::new(LinesAt::new);
         Marks {
             comments: &NUMBERS,
             reviews: &NUMBERS,
             threads: &IDS,
             unfolded: &NAMES,
             viewer: None,
+            lines: &LINES,
         }
     }
 }
@@ -247,7 +257,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
                     segs.push(meta(" and"));
                 }
                 segs.push(meta(verb));
-                for e in list.iter() {
+                for e in list {
                     if let What::Labeled { label, .. } = &e.what {
                         segs.push(space());
                         segs.push(Seg::new(
@@ -746,7 +756,7 @@ pub(super) fn review(
     if folds {
         page.box_rule();
         let hidden = started.len().saturating_sub(shown) as u64;
-        let link = ReviewLink::Fold(anchor.clone());
+        let link = ReviewLink::Fold(anchor);
         item(page, Link::Review(link), |page, link| {
             body(
                 page,
@@ -847,7 +857,7 @@ fn thread(page: &mut Page, place: &Place<'_>, t: &ReviewThread, marks: Marks<'_>
             );
             return;
         }
-        if !t.file_level {
+        if !t.file_level && !git_lines(page, t, marks.lines) {
             hunk_lines(page, t);
         }
         for (n, c) in t.comments.iter().enumerate() {
@@ -877,6 +887,62 @@ fn thread(page: &mut Page, place: &Place<'_>, t: &ReviewThread, marks: Marks<'_>
 
 /// The lines a thread is on, as GitHub kept them when it was started:
 /// the end of its diff hunk, up to four lines (or the lines it spans).
+/// Lines before a one-line thread's line, for context.
+const CONTEXT: u32 = 3;
+
+/// The lines a thread is on, numbered, as the file was at the commit its
+/// first comment was made on, read from git; a few lines before a
+/// one-line thread's for context. False when git hasn't read them (no
+/// clone, or not yet), or the thread is on the old side.
+fn git_lines(page: &mut Page, t: &ReviewThread, lines: &LinesAt<'_>) -> bool {
+    let (Some(end), Some(first)) = (t.original_line, t.comments.first()) else {
+        return false;
+    };
+    if t.side != crate::api::model::Side::Right {
+        return false;
+    }
+    let Some(commit) = &first.original_commit else {
+        return false;
+    };
+    let Some(text) = lines.get(&(commit.clone(), t.path.clone())) else {
+        return false;
+    };
+    let on = t.original_start_line.unwrap_or(end)..=end;
+    let start = if on.start() == on.end() {
+        end.saturating_sub(CONTEXT).max(1)
+    } else {
+        *on.start()
+    };
+    let width = end.to_string().len();
+    let room = usize::from(page.room(Frame::Body, 2)).saturating_sub(width + 3);
+    for n in start..=end {
+        let Some(code) = usize::try_from(n.saturating_sub(1))
+            .ok()
+            .and_then(|i| text.get(i))
+        else {
+            return n > start;
+        };
+        let tone = if on.contains(&n) {
+            crate::ui::page::Tone::Marked
+        } else {
+            crate::ui::page::Tone::Code
+        };
+        let code = crate::ui::text::truncate(&code.replace('\t', "    "), room);
+        page.push(PageLine {
+            segs: vec![
+                Seg::new(format!("{n:>width$} │ "), Role::Meta),
+                Seg::new(code, Role::Code),
+            ],
+            indent: 2,
+            right: Vec::new(),
+            frame: Frame::Body,
+            tone,
+            fixed: 1,
+        });
+    }
+    true
+}
+
 fn hunk_lines(page: &mut Page, t: &ReviewThread) {
     let lines: Vec<&str> = (t.diff_hunk.lines())
         .filter(|l| !l.starts_with("@@"))
@@ -953,7 +1019,7 @@ pub(super) fn reviewers_aside(
         }
         page.wrapped(segs, 2, Frame::None);
     }
-    for r in requested.iter() {
+    for r in requested {
         let (name, target) = reviewer_link(&r.who);
         let who = link_seg(page, name, target, Role::Link);
         let mut segs = vec![Seg::new("● ", Role::Accent), who, meta(" asked")];
@@ -982,7 +1048,7 @@ pub(super) fn linked_aside(
     if list.is_empty() {
         page.wrapped(vec![meta(none)], 0, Frame::None);
     }
-    for l in list.iter() {
+    for l in list {
         let segs = linked_segs(page, icons, here, l);
         page.wrapped(segs, 2, Frame::None);
     }
@@ -1004,11 +1070,11 @@ pub(super) fn relations_aside(page: &mut Page, icons: Icons, d: &IssueDetail) {
     if d.closed_by.is_empty() && d.branches.is_empty() {
         page.wrapped(vec![meta("No pull requests or branches")], 0, Frame::None);
     }
-    for l in d.closed_by.iter() {
+    for l in &d.closed_by {
         let segs = linked_segs(page, icons, &d.repo, l);
         page.wrapped(segs, 2, Frame::None);
     }
-    for b in d.branches.iter() {
+    for b in &d.branches {
         let target = url::tree(&d.repo, b, "");
         let branch = link_seg(page, b.clone(), target, Role::Link);
         page.wrapped(vec![meta("⌥ "), branch], 2, Frame::None);
@@ -1058,7 +1124,7 @@ pub fn commit_comments(
         n => format!("Comments · {n}"),
     };
     page.line(vec![Seg::new(title, Role::Strong)]);
-    for c in comments.iter() {
+    for c in comments {
         connector(page);
         let at = c.path.as_ref().map(|path| {
             let line = c.line.map(|l| {
@@ -1114,7 +1180,7 @@ pub fn pinned_issues(page: &mut Page, repo: &RepoId, pinned: &Capped<Linked>, ic
         return;
     }
     page.box_top(vec![Seg::new("Pinned issues", Role::Strong)], Vec::new());
-    for l in pinned.iter() {
+    for l in pinned {
         item(page, l.url(), |page, _| {
             let segs = linked_segs(page, icons, repo, l);
             hanging(page, Seg::new("⚲ ", Role::Meta), segs, Frame::Body);
@@ -1122,6 +1188,55 @@ pub fn pinned_issues(page: &mut Page, repo: &RepoId, pinned: &Capped<Linked>, ic
     }
     page.box_bottom();
     page.blank();
+}
+
+/// The projects an issue or pull request is in, with its status in each
+/// (each opens the project, where `,f` sets its fields); or why they
+/// can't be read (a token without read:project).
+pub(super) fn projects_aside(page: &mut Page, projects: Fetched<'_, Capped<InProject>>) {
+    aside_heading(page, "Projects");
+    #[expect(clippy::disallowed_methods, reason = "said in the sidebar's row")]
+    match projects.text("the projects") {
+        Ok(list) if list.is_empty() => page.wrapped(vec![meta("None yet")], 0, Frame::None),
+        Ok(list) => {
+            for p in list {
+                let title = link_seg(page, p.title.clone(), p.url.clone(), Role::Link);
+                let mut segs = vec![meta("▦ "), title];
+                if let Some(status) = &p.status {
+                    segs.push(meta(" · "));
+                    segs.push(Seg::new(status.clone(), Role::Strong));
+                }
+                page.wrapped(segs, 2, Frame::None);
+            }
+            if list.left_out() > 0 {
+                let more = left_out_text(list.left_out(), "more", "more");
+                page.wrapped(vec![meta(more)], 0, Frame::None);
+            }
+        }
+        Err(why) => page.wrapped(vec![meta(why)], 0, Frame::None),
+    }
+}
+
+/// The projects on a page too narrow for a sidebar.
+pub(super) fn projects_inline(page: &mut Page, projects: Fetched<'_, Capped<InProject>>) {
+    // Said once loaded, or once it failed; while it loads, nothing.
+    #[expect(clippy::disallowed_methods, reason = "a failure is said in its row")]
+    let list = match projects.text("the projects") {
+        Ok(list) => list,
+        Err(why) if why.starts_with("Loading") => return,
+        Err(why) => return inline(page, "Projects", vec![meta(why)]),
+    };
+    let mut segs = Vec::new();
+    for p in list {
+        if !segs.is_empty() {
+            segs.push(meta(", "));
+        }
+        segs.push(link_seg(page, p.title.clone(), p.url.clone(), Role::Link));
+        if let Some(status) = &p.status {
+            segs.push(meta(format!(" ({status})")));
+        }
+    }
+    inline(page, "Projects", segs);
 }
 
 /// `Heading: ` then `segs`, wrapped under it: a sidebar's section on a
@@ -1153,7 +1268,7 @@ pub(super) fn pr_inline(page: &mut Page, icons: Icons, pr: &PrRef, d: &PrDetail,
             segs.push(meta(" (before the last push)"));
         }
     }
-    for r in a.requested.iter() {
+    for r in &a.requested {
         sep(&mut segs);
         let (name, target) = reviewer_link(&r.who);
         segs.push(Seg::new("● ", Role::Accent));
@@ -1166,7 +1281,7 @@ pub(super) fn pr_inline(page: &mut Page, icons: Icons, pr: &PrRef, d: &PrDetail,
     }
     inline(page, "Reviewers", segs);
     let mut closes = Vec::new();
-    for l in a.closing.iter() {
+    for l in &a.closing {
         if !closes.is_empty() {
             closes.push(meta(", "));
         }
@@ -1190,20 +1305,20 @@ pub(super) fn relations_inline(page: &mut Page, icons: Icons, d: &IssueDetail) {
     }
     if let Some(p) = d.progress {
         let mut segs = vec![meta(format!("{} of {} done", p.done, p.total))];
-        for l in d.sub_issues.iter() {
+        for l in &d.sub_issues {
             segs.push(meta(" · "));
             segs.extend(linked_segs(page, icons, &d.repo, l));
         }
         inline(page, "Sub-issues", segs);
     }
     let mut dev = Vec::new();
-    for l in d.closed_by.iter() {
+    for l in &d.closed_by {
         if !dev.is_empty() {
             dev.push(meta(", "));
         }
         dev.extend(linked_segs(page, icons, &d.repo, l));
     }
-    for b in d.branches.iter() {
+    for b in &d.branches {
         if !dev.is_empty() {
             dev.push(meta(", "));
         }

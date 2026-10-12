@@ -28,7 +28,11 @@ fn text(s: &State) -> String {
     };
     // Each line with what's on its right (a box's chips).
     let lines = p.page().lines.iter().map(|l| {
-        let right: String = l.right.iter().map(|s| s.text()).collect();
+        let right: String = l
+            .right
+            .iter()
+            .map(super::super::ui::page::Seg::text)
+            .collect();
         format!("{}  {right}", l.text())
     });
     lines.collect::<Vec<_>>().join("\n")
@@ -92,7 +96,11 @@ fn the_sidebar_says_where_each_reviewer_stands() {
         panic!("not a page")
     };
     let aside = p.page().aside.as_ref().expect("a sidebar");
-    let aside: Vec<String> = aside.lines.iter().map(|l| l.text()).collect();
+    let aside: Vec<String> = aside
+        .lines
+        .iter()
+        .map(super::super::ui::page::PageLine::text)
+        .collect();
     let aside = aside.join("\n");
     for part in [
         "✓ monalisa approved · before the",
@@ -248,11 +256,16 @@ fn an_issues_timeline_and_development() {
         panic!()
     };
     let aside = p.page().aside.as_ref().expect("a sidebar");
-    let aside: Vec<String> = aside.lines.iter().map(|l| l.text()).collect();
+    let aside: Vec<String> = aside
+        .lines
+        .iter()
+        .map(super::super::ui::page::PageLine::text)
+        .collect();
     let aside = aside.join("\n");
     assert!(aside.contains("Development"), "{aside}");
     assert!(aside.contains("#12 Cap the reading width"), "{aside}");
     assert!(aside.contains("Bug"), "{aside}");
+    assert!(aside.contains("▦ Roadmap · In progress"), "{aside}");
 }
 
 /// A closed pull request says who closed it and when.
@@ -316,4 +329,21 @@ fn a_new_review_is_marked_new() {
     assert!(defunkt.is_some_and(|l| l.contains("New")), "{page}");
     let mine = page.lines().find(|l| l.contains("octocat reviewed"));
     assert!(mine.is_some_and(|l| !l.contains("New")), "{page}");
+}
+
+/// Once git has read the file at the thread's commit, the thread shows
+/// those lines, numbered, rather than GitHub's diff hunk.
+#[test]
+fn a_thread_shows_its_lines_from_git() {
+    let mut s = conversation();
+    let file: Vec<String> = (1..=42).map(|n| format!("line {n}")).collect();
+    fetched(
+        &mut s,
+        DataKey::Lines(pr().repo, "abc".into(), "src/theme.rs".into()),
+        Data::Lines(std::sync::Arc::new(file)),
+    );
+    let page = text(&s);
+    assert!(page.contains("42 │ line 42"), "{page}");
+    assert!(page.contains("39 │ line 39"), "{page}");
+    assert!(!page.contains("Syntax::from_seed"), "{page}");
 }

@@ -195,7 +195,13 @@ pub(super) fn label_list(page: &mut Page, l: &Capped<Label>) {
     }
 }
 
-pub fn issue(page: &mut Page, d: &IssueDetail, marks: Marks<'_>, cx: PageCtx<'_>) {
+pub fn issue(
+    page: &mut Page,
+    d: &IssueDetail,
+    projects: Fetched<'_, Capped<crate::api::timeline::InProject>>,
+    marks: Marks<'_>,
+    cx: PageCtx<'_>,
+) {
     let PageCtx { icons, keys, now } = cx;
     let participants = unique(std::iter::once(&d.author).chain(d.comments().map(|c| &c.author)));
     let aside = page.build_aside(|a| {
@@ -210,6 +216,7 @@ pub fn issue(page: &mut Page, d: &IssueDetail, marks: Marks<'_>, cx: PageCtx<'_>
         label_list(a, &d.labels);
         milestone_aside(a, &d.repo, d.milestone.as_ref());
         timeline::relations_aside(a, icons, d);
+        timeline::projects_aside(a, projects);
         let earlier = d.timeline.left_out() > 0;
         people(a, "Participants", &participants, maybe_others(earlier), "");
     });
@@ -260,6 +267,7 @@ pub fn issue(page: &mut Page, d: &IssueDetail, marks: Marks<'_>, cx: PageCtx<'_>
     }
     if !aside {
         timeline::relations_inline(page, icons, d);
+        timeline::projects_inline(page, projects);
     }
     let talk = Conversation {
         base: LinkBase::new(&d.repo, "HEAD", ""),

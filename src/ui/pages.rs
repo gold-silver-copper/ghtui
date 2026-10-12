@@ -62,7 +62,7 @@ pub use review::*;
 pub use runs::*;
 pub use security::*;
 pub use writes::*;
-pub use timeline::{FOLD_AFTER, Marks, commit_comments, pinned_issues};
+pub use timeline::{FOLD_AFTER, LinesAt, Marks, commit_comments, pinned_issues};
 
 // ---- URLs ----------------------------------------------------------------------
 

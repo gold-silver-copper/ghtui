@@ -1068,8 +1068,7 @@ fn notifies(change: &Change) -> bool {
 /// What a change is doing while GitHub answers: "Merging".
 fn doing(change: &Change) -> &'static str {
     match change {
-        Change::Comment { .. } | Change::Reply { .. } => "Posting",
-        Change::CommitComment { .. } => "Posting",
+        Change::Comment { .. } | Change::CommitComment { .. } | Change::Reply { .. } => "Posting",
         Change::Star { starred: true, .. } => "Starring",
         Change::Star { .. } => "Unstarring",
         Change::Merge { .. } => "Merging",
@@ -1099,8 +1098,7 @@ fn doing(change: &Change) -> &'static str {
 /// What a change did, once GitHub said so.
 fn done(change: &Change) -> String {
     match change {
-        Change::Comment { .. } => "Comment posted".into(),
-        Change::CommitComment { .. } => "Comment posted".into(),
+        Change::Comment { .. } | Change::CommitComment { .. } => "Comment posted".into(),
         Change::Reply { .. } => "Reply posted".into(),
         Change::Star {
             repo,
@@ -1182,8 +1180,7 @@ pub fn needs(change: &Change) -> &'static str {
 /// when GitHub says the token lacks one.
 fn failure(change: &Change, err: &ApiError) -> String {
     let what = match change {
-        Change::Comment { .. } => "the comment",
-        Change::CommitComment { .. } => "the comment",
+        Change::Comment { .. } | Change::CommitComment { .. } => "the comment",
         Change::Reply { .. } => "the reply",
         Change::Star { starred: true, .. } => "the star",
         Change::Star { .. } => "removing the star",

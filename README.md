@@ -23,7 +23,8 @@ ghtui is pre-release, but it's usable every day.
 - **Reviewing** is where ghtui goes furthest. Diffs are computed locally
   with git, highlighted with tree-sitter, and shown unified or split. You
   can reply, resolve, comment on lines or ranges, suggest changes, and
-  submit a review.
+  submit a review. Every review reads as on GitHub, with the threads it
+  started, and opens the changes it reviewed and what changed since.
 - **Acting** works from a page or from a row in a list: merge (now, when
   checks pass, or through a merge queue), approve, mark ready for review,
   update a branch, close or reopen, re-run or cancel a workflow run, run
@@ -111,7 +112,39 @@ path, like `owner/repo/pull/5/files`).
 
 **Home** is your own saved searches: by default your review requests, your
 open pull requests and your repositories. Save any list to Home from its
-`Space` menu, and rename, reorder or remove sections in place.
+`Space` menu, and rename, reorder or remove sections in place. A review
+request opens straight to its Files changed, and a pull request's row
+says its review decision and how many approve it.
+
+**A conversation** is GitHub's timeline, in GitHub's order: comments,
+reviews and events. An event is one line (closed by whom and in which
+commit or pull request, reopened, merged, mentioned from elsewhere and
+whether that will close it, labels, assignees, milestone, projects,
+reviewers asked, the title changed, ready for review or back to draft,
+commits added, a force-push with a link to compare the two heads,
+branches deleted or restored, locked, pinned, transferred, a duplicate),
+and a run of one kind by one person reads as one line. A review shows its
+state and its summary, then each thread it started: the lines it's on
+(read from your clone, or the cache's, at the commit it was made on;
+GitHub's diff hunk where there's no clone), its comments and replies, and
+whether it's resolved or outdated. `↵` on a thread opens it in Files
+changed. A review with more than three threads folds after the first
+two: `za` (or `↵` on its fold row) shows the rest. Your own pending
+review on GitHub shows as yours, not submitted, with its comments.
+
+The sidebar has what GitHub's has: each reviewer's latest review (an
+approval of an older head marked as before the last push, and the teams
+it was for), who is asked and hasn't answered (code owners marked), what
+a pull request will close, its merge commit, and the projects it's in
+with its status there. An issue's has its type, its parent and
+sub-issues with how many are done, and its Development: the pull
+requests that will close it and the branches made for it. On a page too
+narrow for a sidebar, the same is said above the conversation.
+
+A commit's page lists its comments (those on a line open the diff
+there, where they show as threads) and `c` writes one. A repository's
+Issues tab starts with its pinned issues, and a discussion's answer is
+shown at the top as well as where it is.
 
 **Notifications** (`gn`, or the link at the top of Home) is your inbox,
 as on GitHub: what each thread is about, why you got it and when, the
@@ -217,9 +250,10 @@ Files changed, its Review tab or its conversation is on screen, it asks
 GitHub now and then for new review comments, a new push and check
 results. It asks with ETags, so an answer that hasn't changed costs
 nothing, and it asks less often while nothing changes or the terminal is
-out of focus. What came in since you started looking is marked New, and
-the status bar says what it was; after a push to a pull request you've
-reviewed, it offers the changes since your last review.
+out of focus. What came in since you started looking (another's review,
+comment, thread or reply) is marked New, and the status bar says what it
+was ("alice approved"); after a push to a pull request you've reviewed,
+it offers the changes since your last review.
 
 **Other pages are watched the same way**, with the same pace:
 - a running job: its steps as they start and end, then, once it ends,
@@ -264,10 +298,16 @@ its review stands, so you don't have to piece it together:
 - the threads still unresolved, in every file;
 - who has reviewed and what they said last, and who is asked and hasn't
   answered yet;
+- every review, newest first;
 - what still stops the merge.
 
 Each row opens what it's about: a draft or a thread in Files changed at
-its line, a review in the conversation.
+its line, a review its own page. A review's page has its summary and
+every thread it started or replied in, then two ways into Files
+changed: the changes it reviewed, as the pull request was at its commit
+(from git), and what changed since, marked as "since your last review"
+marks it. `,e` edits a review's summary where GitHub lets you, and `,D`
+throws away your pending review.
 
 **Acting on GitHub** asks first wherever it matters (merging, closing,
 cancelling, updating a branch, deleting a comment). It asks GitHub what
@@ -380,10 +420,11 @@ says where it works.
   merge queue where its base branch has one. Once it's set to merge or
   queued, the merge box says so (who turned auto-merge on and how it
   will merge; its place in the queue), and `,m` takes that back.
-- Edits wait behind `,` too: `,e` edits the selected comment or the
-  description, `,D` deletes a comment, `,+` reacts, and on an issue or
-  pull request `,T` edits its title, `,l` its labels, `,A` its
-  assignees, `,q` asks for reviews and `,M` sets its milestone.
+- Edits wait behind `,` too: `,e` edits the selected comment, a review's
+  summary or the description, `,D` deletes a comment (or throws away
+  your pending review), `,+` reacts, and on an issue or pull request
+  `,T` edits its title, `,l` its labels, `,A` its assignees, `,q` asks
+  for reviews and `,M` sets its milestone.
 - New things wait behind `,` as well: `,i` writes a new issue and `,p` a
   new pull request, which `,s` creates (and `,P` pushes its branch
   first); `,c` checks a pull request out in your clone; `,E` runs a
@@ -403,7 +444,8 @@ says where it works.
   replies quoting the selected comment; Enter on a comment doesn't start
   writing. In Files changed the view toggles are under `z`: `zw`
   whitespace, `zs` split, `zf` the whole file, `zT` the file tree; `zc`
-  `zo` `za` fold a thread or file, `zM` `zR` every file.
+  `zo` `za` fold a thread or file, `zM` `zR` every file; in a
+  conversation, `zc` `zo` `za` fold a long review.
   In the file tree, `<` and `>` narrow and widen it.
 - On a project's board `h` and `l` go between columns; `,c` moves the
   selected card to another column and `,f` sets one of its fields; `,i`
@@ -694,9 +736,17 @@ Non-test code can't panic: the lints reject `unwrap`, indexing and the like.
 **Diffs come from git, not from GitHub.** ghtui uses your clone if you start
 it inside one, and otherwise a bare partial clone in its cache. It diffs
 from the merge base, as GitHub does, and can also rebuild the diff as it was
-at your last review. Comments still anchor to GitHub's own hunks, so they
-land where GitHub expects them. Git never sees the
-token on a command line or in a config file.
+at your last review, or at any review's commit. Comments still anchor to
+GitHub's own hunks, so they land where GitHub expects them. A review
+thread's lines in the conversation come from the same clone, at the
+commit the thread was started on; the conversation never clones for
+them. Git never sees the token on a command line or in a config file.
+
+**A conversation is GitHub's timeline.** Comments, reviews and events come
+in one request (`timelineItems`), in GitHub's order, so what's shown and
+what's left out ("120 earlier comments and events") are one list. Review
+threads come in pages beside it, and each comment names the review it
+was made in, which is how a review shows its threads.
 
 **So does code.** Whatever git can answer, git answers: trees, files,
 paths, histories, commits, blame, comparisons, branches and tags, code
@@ -884,8 +934,19 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   account, in its cache): one marked done on github.com or in another
   ghtui shows on, read. Fine-grained tokens can't read notifications at
   all; a classic token can.
-- A pull request's Review tab has no page on GitHub, so its link (`y`,
-  `o`, a restored tab) is the conversation's.
+- A pull request's Review tab and a review's page have no page on
+  GitHub, so their links (`y`, `o`, a restored tab) are the
+  conversation's (at the review).
+- A conversation shows the newest 100 entries of its timeline and says
+  how many earlier ones are on GitHub. A thread's lines are read from git
+  only where a clone is already there (yours, or the cache's once Files
+  changed made one), for up to 40 files; elsewhere, and for lines on the
+  old side, it shows GitHub's diff hunk.
+- A commit's comments are its first 100, and only a comment on the
+  whole commit is written here (GitHub's REST API takes a line comment
+  only by its place in the diff). The projects an item is in show its
+  Status; its other fields are set on the project's board (`,f`), which
+  its row opens.
 - `gd` and `gS` go by name: the index knows functions, types, traits,
   classes and modules, not imports, re-exports, names macros make, or
   what type a value has, so a name defined in several places offers
@@ -901,7 +962,6 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 - `@` offers as taking part only who has written what's loaded (the
   newest 100 comments, and the review threads), and `#` the 100 issues and
   pull requests updated last.
-- A review's summary can't be edited.
 - The sidebar's pickers list a repository's first 100 labels, people,
   open milestones and teams, and say how many more GitHub has. Teams are
   listed only where your token can read the organization.

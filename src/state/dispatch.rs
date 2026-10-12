@@ -72,6 +72,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     let mut cmds = handle(state, msg);
     if let Some(pr) = activity {
         crate::live::activity_loaded(state, &pr);
+        cmds.extend(crate::talk::want_lines(state, &pr));
     }
     if let Some(key) = fresh {
         crate::live::page::loaded(state, &key);

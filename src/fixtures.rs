@@ -893,6 +893,16 @@ pub(crate) fn review(id: u64, author: &str, state: ReviewState, body: &str, at: 
     }
 }
 
+/// The projects the fixture issue is in.
+pub fn in_projects() -> Capped<crate::api::timeline::InProject> {
+    vec![crate::api::timeline::InProject {
+        title: "Roadmap".into(),
+        url: "https://github.com/users/octocat/projects/1".into(),
+        status: Some("In progress".into()),
+    }]
+    .into()
+}
+
 /// Every review of the fixture pull request, oldest first.
 pub fn reviews() -> Capped<Review> {
     activity().reviews().cloned().collect::<Vec<_>>().into()

@@ -277,6 +277,8 @@ fn sample(key: &DataKey) -> Data {
         K::PrActivity(_) => Data::PrActivity(Box::new(fixtures::activity())),
         K::Reviews(_) => Data::Reviews(Box::new(fixtures::reviews())),
         K::CommitComments(..) => Data::CommitComments(Box::default()),
+        K::Lines(..) => Data::Lines(Arc::default()),
+        K::InProjects(..) => Data::InProjects(Box::default()),
         K::Profile(_) => Data::Profile(Box::new(fixtures::profile())),
         K::Files(..) => Data::Files(Arc::new(vec!["README.md".into()]), false),
         K::Refs(_) => Data::Refs(Box::default()),

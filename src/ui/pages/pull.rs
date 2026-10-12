@@ -206,6 +206,7 @@ pub fn pr_conversation(
     pr: &PrRef,
     d: &PrDetail,
     activity: Fetched<'_, PrActivity>,
+    projects: Fetched<'_, Capped<crate::api::timeline::InProject>>,
     marks: Marks<'_>,
     cx: PageCtx<'_>,
 ) {
@@ -236,6 +237,7 @@ pub fn pr_conversation(
         people(side, "Assignees", &d.assignees, more, "No one assigned");
         label_list(side, &d.labels);
         milestone_aside(side, &pr.repo, d.milestone.as_ref());
+        timeline::projects_aside(side, projects);
         if let Some(a) = a {
             let none = "No issues linked";
             timeline::linked_aside(side, icons, &pr.repo, "Closes", &a.closing, none);
@@ -258,6 +260,7 @@ pub fn pr_conversation(
     // Without a sidebar, what it would say is said up here.
     if !aside && let Some(a) = a {
         timeline::pr_inline(page, icons, pr, d, a);
+        timeline::projects_inline(page, projects);
     }
     let op = &d.author;
     let talk = Conversation {

@@ -176,6 +176,11 @@ pub(super) fn with_pr(mode: Mode) -> State {
     update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(pr_detail()))));
     fetched(
         &mut state,
+        DataKey::InProjects(pr.repo.clone(), pr.number),
+        Data::InProjects(Box::default()),
+    );
+    fetched(
+        &mut state,
         DataKey::PrActivity(pr),
         Data::PrActivity(Box::new(fixtures::activity())),
     );
@@ -709,6 +714,11 @@ pub(super) fn with_issue(mode: Mode) -> State {
     };
     let issue = Data::Issue(Some(Box::new(fixtures::issue())));
     open(&mut state, route, issue);
+    fetched(
+        &mut state,
+        DataKey::InProjects(ghtui(), 14),
+        Data::InProjects(Box::new(fixtures::in_projects())),
+    );
     state
 }
 

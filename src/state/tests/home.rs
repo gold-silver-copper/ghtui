@@ -19,6 +19,7 @@ fn home_selects_the_first_row_and_opens_it() {
         cmds,
         vec![
             Cmd::Api(Api::FetchPr(pr.clone())),
+            fetch(DataKey::InProjects(pr.repo.clone(), pr.number)),
             fetch(DataKey::PrActivity(pr.clone()))
         ]
     );

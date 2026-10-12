@@ -13,6 +13,7 @@ fn palette_goes_places_and_runs_actions() {
         cmds,
         vec![
             fetch(DataKey::Repo(RepoId::new("a", "b"))),
+            fetch(DataKey::InProjects(RepoId::new("a", "b"), 9)),
             fetch(key.clone())
         ]
     );

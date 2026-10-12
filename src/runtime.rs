@@ -178,6 +178,10 @@ impl Effects {
                 key: DataKey::Wiki(repo, page),
                 ..
             }) => self.wiki(repo, page, replies),
+            Cmd::Api(Api::Fetch {
+                key: DataKey::Lines(repo, commit, path),
+                ..
+            }) => self.lines(repo, commit, path, replies),
             Cmd::Api(Api::Fetch { key, cached }) if crate::source::by_git(&key, None) => {
                 self.local(key, None, cached, replies);
             }
@@ -382,6 +386,19 @@ impl Effects {
                 Err(err) => Err(Failure::msg(err)),
             };
             let _ = tx.send(Msg::Diff(pr.into(), DiffMsg::ReviewLoaded(review)));
+        });
+    }
+
+    /// Reads a file's lines at a commit through git, for a review thread.
+    fn lines(&self, repo: RepoId, commit: String, path: String, replies: Vec<Msg>) {
+        let git = self.git.clone();
+        spawn_guarded(&self.tx, replies, |tx| async move {
+            let result = crate::talk::read_lines(&git, &repo, &commit, &path).await;
+            let _ = tx.send(Msg::Fetched {
+                key: DataKey::Lines(repo, commit, path),
+                result: result.map(|l| Data::Lines(Arc::new(l))),
+                cached_at: None,
+            });
         });
     }
 
@@ -1018,6 +1035,8 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         // A commit's comments revalidate with their ETag.
         DataKey::Blob(..)
         | DataKey::CommitComments(..)
+        | DataKey::Lines(..)
+        | DataKey::InProjects(..)
         | DataKey::Files(..)
         | DataKey::JobLog(..)
         | DataKey::Wiki(..)
@@ -1061,6 +1080,7 @@ pub(crate) async fn fetch(
         DataKey::Issue(repo, number) => Data::Issue(gh.issue(repo, *number).await?.map(Box::new)),
         DataKey::PrActivity(pr) => Data::PrActivity(Box::new(gh.pr_activity(pr).await?)),
         DataKey::Reviews(pr) => Data::Reviews(Box::new(gh.reviews(pr).await?)),
+        DataKey::InProjects(repo, n) => Data::InProjects(Box::new(gh.projects_of(repo, *n).await?)),
         DataKey::CommitComments(repo, oid) => {
             Data::CommitComments(Box::new(gh.commit_comments(repo, oid).await?))
         }
@@ -1083,6 +1103,12 @@ pub(crate) async fn fetch(
         DataKey::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
         DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, after).await?)),
         DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, after).await?)),
+        // A thread's lines come through git (see `Effects::lines`).
+        DataKey::Lines(repo, ..) => {
+            return Err(ApiError::NotFound(format!(
+                "{repo}'s lines, which git reads"
+            )));
+        }
         // Wikis come through git (see `Effects::wiki`).
         DataKey::Wiki(repo, _) => {
             return Err(ApiError::NotFound(format!(

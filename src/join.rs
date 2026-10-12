@@ -57,7 +57,10 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
             let key = crate::browse::DataKey::CommitComments(repo.clone(), oid.to_string());
             let comments = state.data.get(&key).and_then(|r| r.data.as_ref());
             if let Some(crate::browse::Data::CommitComments(c)) = comments {
-                let threads: Vec<_> = c.iter().filter_map(|c| c.as_thread()).collect();
+                let threads: Vec<_> = c
+                    .iter()
+                    .filter_map(super::api::commit_comments::CommitComment::as_thread)
+                    .collect();
                 if diff.inputs().threads.data.as_ref() != Some(&threads) {
                     diff.edit(|i| i.threads.data = Some(threads));
                 }
