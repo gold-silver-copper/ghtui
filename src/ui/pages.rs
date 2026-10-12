@@ -30,6 +30,7 @@ use crate::ui::{Fetched, Icons, cols, time};
 
 mod commits;
 mod conversation;
+mod create;
 mod files;
 mod home;
 mod inbox;
@@ -43,6 +44,7 @@ mod runs;
 
 pub use commits::*;
 pub use conversation::*;
+pub use create::*;
 pub use files::*;
 pub use home::*;
 pub use inbox::*;

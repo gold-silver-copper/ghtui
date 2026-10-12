@@ -247,6 +247,46 @@ with a diff viewer that goes [beyond GitHub's](docs/diff.md).\n\n\
 - [x] Browse repositories, issues and pull requests\n- [ ] Actions\n\n\
 > Everything is a link: press `Enter` to follow it.\n";
 
+/// What a new issue or pull request in the repository can have: labels,
+/// people, a milestone, two templates (a form and a Markdown one) and a
+/// pull request template.
+pub fn new_form() -> crate::api::create::NewForm {
+    let choice =
+        |id: &str, name: &str, about: &str, color: Option<&str>| crate::api::create::Choice {
+            id: NodeId::new(id),
+            name: name.into(),
+            about: about.into(),
+            color: color.map(str::to_owned),
+        };
+    let file = |name: &str, text: &str| (name.to_owned(), text.to_owned());
+    crate::api::create::NewForm {
+        repo_id: NodeId::new("R_ghtui"),
+        default_branch: Some("main".into()),
+        can_create_issues: true,
+        has_issues: true,
+        archived: false,
+        can_triage: true,
+        labels: vec![
+            choice("LA_bug", "bug", "Something isn't working", Some("d73a4a")),
+            choice("LA_docs", "documentation", "Docs", Some("0075ca")),
+        ]
+        .into(),
+        assignees: vec![choice("U_octo", "octocat", "The Octocat", None)].into(),
+        milestones: vec![choice("MI_1", "v1.0", "due 2026-12-01", None)].into(),
+        issue_templates: vec![
+            file(
+                "bug.yml",
+                "name: Bug report\ndescription: Something doesn't work\ntitle: \"[Bug]: \"\nlabels: [bug]\nassignees: octocat\nbody:\n  - type: textarea\n    attributes:\n      label: What happened?\n  - type: input\n    attributes:\n      label: Version\n",
+            ),
+            file(
+                "feature.md",
+                "---\nname: Feature request\nabout: Suggest an idea\nlabels: documentation\n---\n## The idea\n",
+            ),
+        ],
+        pr_template: Some("## Checklist\n\n- [ ] Tests".into()),
+    }
+}
+
 pub fn overview() -> RepoOverview {
     RepoOverview {
         summary: repo_summary("gold-silver-copper/ghtui", 1234),

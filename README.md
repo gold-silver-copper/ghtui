@@ -31,6 +31,8 @@ ghtui is pre-release, but it's usable every day.
 - **Editing** what's there: your comments and descriptions (or anyone's,
   where GitHub lets you), titles, reactions, and an issue's or pull
   request's labels, assignees, reviewers and milestone.
+- **Creating**: open issues (from the repository's templates) and pull
+  requests, and check a pull request out in your clone.
 
 Not there yet: projects, GitHub Enterprise Server, code navigation and
 structural diffs.
@@ -152,6 +154,28 @@ labels, assignees or reviewers (people and teams), then apply them with
 `ctrl-s`; a milestone is one choice. In Files changed, the same keys work
 on the review comment under the cursor.
 
+**A new issue** (`,i` from any of a repository's pages) starts from the
+repository's templates, as on GitHub: choose one, and its title, text,
+labels and assignees fill the form (a YAML form's fields become headings
+to answer under). The comment editor opens in place of the text: the
+first line is the title, the rest the description. Labels, assignees and
+a milestone are rows of the form, each with its picker. `ctrl-s` (or
+`,s` on the form) creates it, and the new issue opens.
+
+**A new pull request** (`,p`) proposes, inside a clone, the branch you're
+on, into the default branch; Enter on either branch picks another. It's
+filled in as GitHub fills it: one commit's message, or the branch's name
+and a list of its commits, then the repository's template. A branch
+GitHub doesn't have, or has behind yours, says so, and `,P` pushes it
+with your own `git push` after asking. `,s` asks whether it's a draft,
+then creates it.
+
+**Checking out** a pull request (`,c` on it or its row), inside a clone
+of its repository, fetches its head and switches to a branch for it: its
+own branch's name (tracking it), or `owner/branch` for a fork's. It
+refuses while you have changes that aren't committed, and says which
+branch you're on.
+
 ## Keys
 
 The keys are vim's where vim has one. A binding is a key sequence (`gg`,
@@ -199,6 +223,9 @@ says where it works.
   description, `,D` deletes a comment, `,+` reacts, and on an issue or
   pull request `,T` edits its title, `,l` its labels, `,A` its
   assignees, `,q` asks for reviews and `,M` sets its milestone.
+- New things wait behind `,` as well: `,i` writes a new issue and `,p` a
+  new pull request, which `,s` creates (and `,P` pushes its branch
+  first); `,c` checks a pull request out in your clone.
 - `q` closes the view: back a page, or the tab when there's nothing to go
   back to. `ZZ`, `:q` in the palette, or `ctrl-c` quits; `ctrl-c` also
   works in the comment editor, asking before it throws away your text.
@@ -278,6 +305,7 @@ says where it works.
 | `,e`                 | Edit the comment or description |
 | `,D`                 | Delete the comment |
 | `,+`                 | React to the comment, issue or pull request |
+| `,c`                 | Check out the pull request in your clone |
 | `del`                | Delete the selection (a draft comment, a Home section) |
 | `ctrl-z`             | Bring back what was just deleted |
 | `ZZ` `ctrl-c`        | Quit |
@@ -299,6 +327,10 @@ says where it works.
 | `,A`    | Edit the assignees |
 | `,q`    | Ask for reviews |
 | `,M`    | Set the milestone |
+| `,i`    | New issue |
+| `,p`    | New pull request |
+| `,s`    | Create the issue or pull request |
+| `,P`    | Push the branch to GitHub |
 | `B`     | Switch branches or tags |
 | `i`     | Follow a link by its letters |
 | `I`     | Follow a link, in the browser |
@@ -535,3 +567,9 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   listed only where your token can read the organization.
 - GitHub doesn't say who may set a pull request's milestone or ask for
   its reviews; ghtui offers them to whoever may label it (triage access).
+- A new pull request can't set labels, assignees or a milestone (GitHub's
+  `createPullRequest` doesn't take them), and a fork's branch is proposed
+  only from a clone that's on it. Of several pull request templates, the
+  first is used.
+- An issue form's dropdowns become a comment listing their options, to
+  answer in your own words; its validations aren't checked.

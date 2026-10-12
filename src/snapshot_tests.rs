@@ -679,6 +679,8 @@ mod keys;
 /// when it can't, sends one change, and ends up showing what GitHub says.
 mod changes;
 
+/// New issues and pull requests, and checking one out.
+mod create;
 /// Editing what's on GitHub: comments in place, titles, reactions and the
 /// sidebar, offered where GitHub allows them, then followed.
 mod edits;

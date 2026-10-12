@@ -103,6 +103,8 @@ pub enum Msg {
         PrRef,
         Vec<(crate::live::Probe, Result<crate::api::Polled, ApiError>)>,
     ),
+    /// New issues and pull requests, and checking one out.
+    Create(crate::create::Done),
 }
 
 /// Why background work failed. Shows as its message with its causes
@@ -184,6 +186,9 @@ pub enum Cmd {
         edit: crate::home::Edit,
         what: String,
     },
+    /// Making an issue or pull request, or git work in your clone;
+    /// answered by [`Msg::Create`].
+    Create(crate::create::Work),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -383,6 +388,8 @@ pub enum Overlay {
     Submit(Box<SubmitDialog>),
     /// Asking before a change to GitHub.
     Confirm(Box<act::Confirm>),
+    /// Asking before pushing a branch or opening a pull request.
+    Ask(Box<crate::create::Ask>),
 }
 
 pub struct State {
@@ -453,6 +460,8 @@ pub struct State {
     pub focused: bool,
     /// Who and what each repository's comments can mention, once asked.
     pub mentionable: HashMap<crate::api::model::RepoId, crate::api::mention::Mentionable>,
+    /// New issues and pull requests being written, and your clones.
+    pub creating: crate::create::Creating,
     pub quit: bool,
 }
 
@@ -498,6 +507,7 @@ impl State {
             watch: None,
             focused: true,
             mentionable: HashMap::new(),
+            creating: crate::create::Creating::default(),
             quit: false,
         };
         state.sync_page();

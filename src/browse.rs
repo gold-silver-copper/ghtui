@@ -100,6 +100,8 @@ pub enum DataKey {
     Notifications(String),
     /// An issue's or pull request's sidebar, with what can go there.
     Sidebar(RepoId, u64),
+    /// What a new issue or pull request in a repository can have.
+    NewForm(RepoId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,6 +155,7 @@ pub enum Data {
     Milestone(Box<MilestoneDetail>),
     Notifications(Box<Inbox>),
     Sidebar(Box<crate::api::edit::Sidebar>),
+    NewForm(Box<crate::api::create::NewForm>),
 }
 
 impl Data {
@@ -362,6 +365,9 @@ pub fn needs(route: &Route) -> Vec<Need> {
         Route::Issue { repo, number } => {
             vec![header(repo), Need::Data(K::Issue(repo.clone(), *number))]
         }
+        Route::NewIssue(repo) | Route::NewPr(repo) => {
+            vec![header(repo), Need::Data(K::NewForm(repo.clone()))]
+        }
         Route::Pr {
             pr,
             tab: PrTab::Checks,
@@ -486,6 +492,7 @@ picked!(
     Gists => Results<GistSummary>, Blame => Blame, Compare => Comparison,
     Deployments => DeploymentList, Milestones => MilestoneList, Milestone => MilestoneDetail,
     Notifications => Inbox, Sidebar => crate::api::edit::Sidebar,
+    NewForm => crate::api::create::NewForm,
 );
 
 /// A page's needs as the page shows them, failing with the key that
@@ -641,6 +648,8 @@ impl State {
             | Route::Discussion { .. }
             | Route::Release { .. }
             | Route::Advisory { .. }
+            | Route::NewIssue(_)
+            | Route::NewPr(_)
             | Route::Pr {
                 tab: PrTab::Review, ..
             } => Page::new(reading),
@@ -823,6 +832,12 @@ impl State {
                             pages::pr_review(&mut page, pr, d, activity, glance, cx);
                         }
                     }
+                }
+            }
+            Route::NewIssue(repo) | Route::NewPr(repo) => {
+                let key = DataKey::NewForm(repo.clone());
+                if let Some(d) = f.get(&key).show(&mut page, &title) {
+                    crate::create::build(self, &mut page, route, d);
                 }
             }
             Route::Stargazers(_) => pages::people_list(&mut page, "Stargazers", f.paged(route)),

@@ -51,6 +51,27 @@ pub enum Link {
         at: String,
         body: String,
     },
+    /// One of a new issue's or pull request's rows.
+    Form(FormLink),
+}
+
+/// What a row of a new issue's or pull request's form does.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FormLink {
+    /// Start from the template in this file (empty: a blank issue).
+    Template(String),
+    /// Choose another template.
+    Templates,
+    Labels,
+    Assignees,
+    Milestone,
+    /// The branch to merge into.
+    Base,
+    /// The branch with the changes.
+    Head,
+    /// Push the head branch.
+    Push,
+    Create,
 }
 
 impl Link {

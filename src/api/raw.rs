@@ -36,6 +36,11 @@ pub(crate) const DISCUSSIONS: &str = "query($owner: String!, $name: String!, $af
 /// A discussion and its comments.
 pub(crate) const DISCUSSION: &str = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { discussion(number: $number) { number title body author { login } createdAt category { name } isAnswered upvoteCount comments(first: 50) { totalCount nodes { databaseId author { login } body createdAt isAnswer upvoteCount replies(first: 30) { totalCount nodes { databaseId author { login } body createdAt } } } } } } }";
 
+/// What a new issue or pull request can have: labels, people to assign,
+/// open milestones, the issue templates' files, the pull request template,
+/// and what you may do.
+pub(crate) const NEW_FORM: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id viewerCanCreateIssues hasIssuesEnabled isArchived viewerPermission defaultBranchRef { name } labels(first: 100, orderBy: {field: NAME, direction: ASC}) { totalCount nodes { id name color description } } assignableUsers(first: 100) { totalCount nodes { id login name } } milestones(first: 100, states: OPEN, orderBy: {field: DUE_DATE, direction: ASC}) { totalCount nodes { id title dueOn } } issueTemplates: object(expression: \"HEAD:.github/ISSUE_TEMPLATE\") { ... on Tree { entries { name object { ... on Blob { text } } } } } pullRequestTemplates { filename body } } }";
+
 /// Branches by name, 100 at a time; with the first page, the newest 100 tags.
 pub(crate) const REFS: &str = "query($owner: String!, $name: String!, $after: String, $tags: Boolean!) { repository(owner: $owner, name: $name) { heads: refs(refPrefix: \"refs/heads/\", first: 100, after: $after, orderBy: {field: ALPHABETICAL, direction: ASC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name } } tags: refs(refPrefix: \"refs/tags/\", first: 100, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) @include(if: $tags) { totalCount pageInfo { hasNextPage endCursor } nodes { name } } } }";
 
@@ -127,6 +132,7 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ("DISCUSSIONS", DISCUSSIONS.to_owned()),
         ("DISCUSSION", DISCUSSION.to_owned()),
         ("REFS", REFS.to_owned()),
+        ("NEW_FORM", NEW_FORM.to_owned()),
         (
             "last_commits",
             last_commits(&["src/a \"b\".rs".into(), "README.md".into()]),

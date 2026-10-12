@@ -282,7 +282,7 @@ impl Subject {
 /// What an action would change here: the page's own subject (a pull
 /// request, its files, an issue, a run, a job), or on a list, the
 /// selected row's (in the inbox, its thread is what's marked read).
-fn subject(state: &State, action: Action) -> Option<Subject> {
+pub(crate) fn subject(state: &State, action: Action) -> Option<Subject> {
     if matches!(action, Action::MarkRead | Action::MarkDone) {
         return thread(state);
     }

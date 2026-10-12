@@ -802,6 +802,112 @@ async fn a_sidebar_keeps_what_its_teams_say() {
     assert_eq!(seen[1].json()["variables"]["org"], "o");
 }
 
+/// A new issue sends its title, text, labels, assignees and milestone, and
+/// comes back as its number; a new pull request its branches and whether
+/// it's a draft. Neither is sent twice.
+#[tokio::test]
+async fn new_issues_and_pull_requests_send_what_they_hold() {
+    use ghtui::api::create::{NewIssue, NewPr};
+    let (gh, seen) = github(vec![
+        Reply::new(200, r#"{"data":{"createIssue":{"issue":{"number":42}}}}"#),
+        Reply::new(
+            200,
+            r#"{"data":{"createPullRequest":{"pullRequest":{"number":7}}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"createPullRequest":null},"errors":[{"type":"UNPROCESSABLE","message":"No commits between main and topic"}]}"#,
+        ),
+    ])
+    .await;
+    let issue = NewIssue {
+        repo: NodeId::new("R_1"),
+        title: "It crashes".into(),
+        body: "### Version\n\n1.0".into(),
+        labels: vec![NodeId::new("LA_bug")],
+        assignees: vec![NodeId::new("U_me")],
+        milestone: Some(NodeId::new("MI_1")),
+    };
+    assert_eq!(gh.create_issue(&issue).await.unwrap(), 42);
+    let pr = NewPr {
+        repo: NodeId::new("R_1"),
+        base: "main".into(),
+        head: "fork:topic".into(),
+        title: "Fix it".into(),
+        body: String::new(),
+        draft: true,
+    };
+    assert_eq!(gh.create_pull_request(&pr).await.unwrap(), 7);
+    match gh.create_pull_request(&pr).await {
+        Err(ApiError::GraphQl(errors)) => assert_eq!(errors, ["No commits between main and topic"]),
+        other => panic!("{other:?}"),
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 3);
+    assert!(seen[0].query().contains("createIssue"));
+    let vars = &seen[0].json()["variables"];
+    assert_eq!(vars["repo"], "R_1");
+    assert_eq!(vars["title"], "It crashes");
+    assert_eq!(vars["body"], "### Version\n\n1.0");
+    assert_eq!(vars["labels"], serde_json::json!(["LA_bug"]));
+    assert_eq!(vars["assignees"], serde_json::json!(["U_me"]));
+    assert_eq!(vars["milestone"], "MI_1");
+    assert!(seen[1].query().contains("createPullRequest"));
+    let vars = &seen[1].json()["variables"];
+    assert_eq!(
+        (vars["base"].as_str(), vars["head"].as_str()),
+        (Some("main"), Some("fork:topic"))
+    );
+    assert_eq!(
+        (vars["title"].as_str(), vars["draft"].as_bool()),
+        (Some("Fix it"), Some(true))
+    );
+}
+
+/// A new form's choices, templates and permissions come from one query;
+/// a pull request's commits, with their whole messages, from a comparison.
+#[tokio::test]
+async fn a_new_form_reads_its_choices_and_templates() {
+    let (gh, seen) = github(vec![
+        Reply::new(
+            200,
+            r#"{"data":{"repository":{"id":"R_1","viewerCanCreateIssues":true,"hasIssuesEnabled":true,"isArchived":false,"viewerPermission":"READ","defaultBranchRef":{"name":"main"},
+              "labels":{"totalCount":120,"nodes":[{"id":"LA_1","name":"bug","color":"d73a4a","description":null}]},
+              "assignableUsers":{"totalCount":1,"nodes":[{"id":"U_1","login":"me","name":null}]},
+              "milestones":{"totalCount":0,"nodes":[]},
+              "issueTemplates":{"entries":[{"name":"bug.md","object":{"text":"---\nname: Bug\n---\nBody"}},{"name":"logo.png","object":{"text":null}}]},
+              "pullRequestTemplates":[{"filename":"pull_request_template.md","body":"Why:"}]}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"total_commits":2,"commits":[{"sha":"aaa","commit":{"message":"First\n\nWhy."}},{"sha":"bbb","commit":{"message":"Second"}}]}"#,
+        ),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let form = gh.new_form(&repo).await.unwrap();
+    assert!(!form.can_triage, "read access can't set labels");
+    assert_eq!(form.labels.left_out(), 119);
+    assert_eq!(
+        form.issue_templates,
+        [("bug.md".to_owned(), "---\nname: Bug\n---\nBody".to_owned())]
+    );
+    assert_eq!(form.pr_template.as_deref(), Some("Why:"));
+    let commits = gh
+        .commit_messages(&repo, "main", "fork:topic")
+        .await
+        .unwrap();
+    assert_eq!(commits[0].message, "First\n\nWhy.");
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[1]
+            .request_line
+            .starts_with("GET /repos/o/r/compare/main...fork:topic "),
+        "{}",
+        seen[1].request_line
+    );
+}
+
 const THREADS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
   "pageInfo":{"hasNextPage":false,"endCursor":null},
   "nodes":[

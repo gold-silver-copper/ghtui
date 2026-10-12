@@ -22,6 +22,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
             | Msg::Fetched { .. }
             | Msg::FetchedMore(..)
             | Msg::Changed(..)
+            | Msg::Create(_)
     );
     if data {
         state.data_gen += 1;
@@ -29,6 +30,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     // A write changes what GitHub shows, wherever it shows it.
     let wrote = match &msg {
         Msg::Changed(_, _, r) => r.is_ok(),
+        Msg::Create(crate::create::Done::Created(_, r)) => r.is_ok(),
         // Drafts GitHub accepted wait in a pending review there.
         Msg::Diff(_, DiffMsg::ReviewSubmitted(o)) => o.error.is_none() || !o.accepted.is_empty(),
         _ => false,
@@ -52,6 +54,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     }
     if data {
         cmds.extend(act::follow(state));
+        cmds.extend(crate::create::follow(state));
     }
     cmds
 }
@@ -85,6 +88,7 @@ pub(super) const LIVE_MS: u64 = 5_000;
 pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Diff(of, msg) => return diff_screen::update(state, &of, msg),
+        Msg::Create(done) => return crate::create::on_done(state, done),
         Msg::Key(key) => return on_key(state, key),
         Msg::Resize(w, h) => state.size = (w, h),
         Msg::Viewer(Ok(login)) => state.viewer = Some(login),
@@ -235,6 +239,7 @@ pub(super) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         Some(Overlay::Compose(_)) => return on_compose_key(state, key),
         Some(Overlay::Submit(_)) => return on_submit_key(state, key),
         Some(Overlay::Confirm(_)) => return act::on_confirm_key(state, key),
+        Some(Overlay::Ask(_)) => return crate::create::on_ask_key(state, key),
         None => {}
     }
     // Any keypress dismisses the last notice; Esc on an error does only
@@ -440,6 +445,11 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             nav::start_hints(state, action == Action::HintsBrowser);
         }
         _ if crate::edit::ACTIONS.contains(&action) => return crate::edit::act(state, action),
+        Action::NewIssue
+        | Action::NewPr
+        | Action::Create
+        | Action::PushBranch
+        | Action::Checkout => return crate::create::action(state, action),
         _ if diff.is_some() => return diff_action(state, action),
         _ => return nav::page_action(state, action),
     }

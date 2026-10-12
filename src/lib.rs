@@ -16,6 +16,7 @@ mod chrome;
 mod config;
 #[cfg(test)]
 mod crawl;
+mod create;
 mod diff_job;
 mod diff_screen;
 mod edit;

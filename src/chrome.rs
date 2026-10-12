@@ -545,8 +545,9 @@ fn section(route: &Route) -> Section {
         Route::Issues { .. }
         | Route::Issue { .. }
         | Route::Milestones { .. }
-        | Route::Milestone { .. } => Section::Issues,
-        Route::Pulls { .. } | Route::Pr { .. } => Section::Pulls,
+        | Route::Milestone { .. }
+        | Route::NewIssue(_) => Section::Issues,
+        Route::Pulls { .. } | Route::Pr { .. } | Route::NewPr(_) => Section::Pulls,
         Route::Discussions { .. } | Route::Discussion { .. } => Section::Discussions,
         Route::Actions { .. }
         | Route::WorkflowRun { .. }

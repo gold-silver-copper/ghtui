@@ -184,6 +184,10 @@ pub enum Route {
     Notifications {
         query: String,
     },
+    /// A new issue: its templates, then its form.
+    NewIssue(RepoId),
+    /// A new pull request's form.
+    NewPr(RepoId),
 }
 
 /// The pages at a revision.
@@ -468,6 +472,8 @@ impl Route {
             Route::Milestone { repo, number } => {
                 format!("{}/milestone/{number}", links::repo(repo))
             }
+            Route::NewIssue(repo) => format!("{}/issues/new", links::repo(repo)),
+            Route::NewPr(repo) => format!("{}/compare", links::repo(repo)),
             Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
             Route::Commit {
                 repo,
@@ -558,6 +564,8 @@ impl Route {
             Route::Deployments { repo, .. } => format!("{repo} · Deployments"),
             Route::Milestones { repo, .. } => format!("{repo} · Milestones"),
             Route::Milestone { repo, number } => format!("{repo} · Milestone {number}"),
+            Route::NewIssue(repo) => format!("{repo} · New issue"),
+            Route::NewPr(repo) => format!("{repo} · New pull request"),
             Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
             Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
             Route::Commit { repo, oid, .. } => format!("{repo}@{}", short_sha(oid)),
@@ -608,6 +616,8 @@ impl Route {
             | Route::Deployments { repo, .. }
             | Route::Milestones { repo, .. }
             | Route::Milestone { repo, .. }
+            | Route::NewIssue(repo)
+            | Route::NewPr(repo)
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
             Route::Home
@@ -991,7 +1001,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             let spec = rest.join("/");
             // Without revisions it's the form for opening a pull request.
             if spec.is_empty() {
-                return None;
+                return Some(Target::Page(Route::NewPr(repo)));
             }
             // Its files, from one commit to the other (`a..b`; with three
             // dots it's from their merge base, which the comparison page
@@ -1114,6 +1124,8 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
                 pr: None,
             }
         }
+        // The form, after the template chooser or straight to it.
+        ["issues", "new"] | ["issues", "new", "choose"] => Route::NewIssue(repo),
         ["issues", n] => Route::Issue {
             repo,
             number: n.parse().ok()?,
@@ -2258,6 +2270,8 @@ pub(crate) mod tests {
                 repo().prop_map(Route::Releases),
                 repo().prop_map(Route::Tags),
                 repo().prop_map(Route::Branches),
+                repo().prop_map(Route::NewIssue),
+                repo().prop_map(Route::NewPr),
                 (repo(), 1..u64::MAX, prop::option::of(1..100u64))
                     .prop_map(|(repo, run, attempt)| Route::WorkflowRun { repo, run, attempt }),
                 (

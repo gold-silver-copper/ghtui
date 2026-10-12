@@ -48,6 +48,9 @@ pub enum ComposeTarget {
     /// Editing a comment or description already on GitHub, saved right
     /// away.
     Edit(crate::edit::Editing),
+    /// The title and description of the new issue or pull request on this
+    /// page ([`crate::create`]).
+    Form(crate::route::Route),
 }
 
 /// A suggested change and what it replaces.
@@ -126,6 +129,12 @@ impl Compose {
             ComposeTarget::Draft { .. } => "Edit draft".to_owned(),
             ComposeTarget::Conversation { name, .. } => format!("Comment on {name}"),
             ComposeTarget::Edit(e) => format!("Edit {}", e.name),
+            ComposeTarget::Form(crate::route::Route::NewPr(_)) => {
+                "New pull request: its title on the first line, then its description".to_owned()
+            }
+            ComposeTarget::Form(_) => {
+                "New issue: its title on the first line, then its description".to_owned()
+            }
         }
     }
 }
@@ -146,7 +155,9 @@ pub fn compose_anchor(doc: &Doc, screen: &DiffScreen, target: &ComposeTarget) ->
                 .last()
                 .unwrap_or(cursor)
         }
-        ComposeTarget::Line { .. } | ComposeTarget::Conversation { .. } => screen
+        ComposeTarget::Line { .. }
+        | ComposeTarget::Conversation { .. }
+        | ComposeTarget::Form(_) => screen
             .selection
             .filter(|s| doc.to_global(*s) > doc.to_global(cursor))
             .unwrap_or(cursor),
@@ -333,7 +344,8 @@ pub fn draft(target: &ComposeTarget, body: &str, id: u64, commit: &str) -> Optio
         ComposeTarget::Reply { .. }
         | ComposeTarget::Draft { .. }
         | ComposeTarget::Conversation { .. }
-        | ComposeTarget::Edit(_) => None,
+        | ComposeTarget::Edit(_)
+        | ComposeTarget::Form(_) => None,
     }
 }
 
@@ -924,6 +936,12 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
+        // A form keeps what's written: its page shows it.
+        KeyCode::Esc if let ComposeTarget::Form(route) = &compose.target => {
+            let (route, text) = (route.clone(), compose.text());
+            crate::create::keep_text(state, &route, text);
+            state.overlay = None;
+        }
         KeyCode::Esc => {
             if may_discard(state, "esc", "discard") {
                 state.overlay = None;
@@ -993,6 +1011,9 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             crate::act::By::Edit(e.about),
         ))];
     }
+    if let ComposeTarget::Form(_) = target {
+        return crate::create::submit(state);
+    }
     if let ComposeTarget::Conversation { subject_id, .. } = target {
         compose.sending = true;
         let change = Change::Comment {
@@ -1028,7 +1049,9 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             state.overlay = None;
             save
         }
-        ComposeTarget::Conversation { .. } | ComposeTarget::Edit(_) => Vec::new(),
+        ComposeTarget::Conversation { .. } | ComposeTarget::Edit(_) | ComposeTarget::Form(_) => {
+            Vec::new()
+        }
         target @ (ComposeTarget::Line { .. } | ComposeTarget::File { .. }) => {
             let Some(head) = diff.head() else {
                 return Vec::new();

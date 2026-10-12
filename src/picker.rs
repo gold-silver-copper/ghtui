@@ -41,6 +41,8 @@ pub enum Kind {
     SectionTitle(Titling, std::path::PathBuf),
     /// Editing what's on GitHub: a sidebar field, a reaction, a title.
     Edit(crate::edit::Choosing),
+    /// One of a new issue's or pull request's choices.
+    Form(crate::create::Pick),
 }
 
 /// What a section's title is for.
@@ -69,6 +71,7 @@ impl Picker {
             Kind::SectionTitle(Titling::New { .. }, _) => "Save to Home",
             Kind::SectionTitle(Titling::Rename { .. }, _) => "Rename the section",
             Kind::Edit(ref c) => c.title(),
+            Kind::Form(pick) => pick.title(),
         }
     }
 }
@@ -97,6 +100,8 @@ pub enum Choice {
     Title(Titling, std::path::PathBuf, String),
     /// Handled while the picker is open ([`crate::edit::on_picker_key`]).
     Edit(crate::edit::Pick),
+    /// Set one of a form's choices.
+    Form(crate::create::Picked),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -133,11 +138,19 @@ impl State {
             Kind::Messages(_) => "↵ copies a message",
             Kind::SectionTitle(..) => "The section's title",
             Kind::Edit(ref c) => c.placeholder(),
+            Kind::Form(pick) if pick.several() => {
+                "Type to filter · ↵ picks or unpicks · esc when done"
+            }
+            Kind::Form(_) => "Type to filter",
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
             Kind::Branches { repo, .. } => Some(DataKey::Refs(repo.clone())),
             Kind::Edit(c) => c.need(),
+            Kind::Form(crate::create::Pick::Base | crate::create::Pick::Head) => self
+                .route()
+                .and_then(Route::repo)
+                .map(|r| DataKey::Refs(r.clone())),
             _ => None,
         };
         let mut input = new_input(&self.theme, Bg::ContainerHigh);
@@ -200,6 +213,7 @@ impl State {
             Kind::Commits { mark } => self.commit_rows(*mark),
             Kind::Messages(kept) => message_rows(kept, q, (self.clock)()),
             Kind::Edit(c) => crate::edit::rows(self, c, q),
+            Kind::Form(pick) => crate::create::picker_rows(self, *pick, q),
             Kind::SectionTitle(titling, path) => {
                 if q.is_empty() {
                     return vec![(item("Type a title", ""), None)];
@@ -504,8 +518,12 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                 _ => None,
             };
             let selected = p.selected;
+            // Labels and assignees: several, so the picker stays.
+            let several = matches!(kind, Kind::Form(pick) if pick.several());
             if let Some(choice) = rows.get_mut(selected).and_then(|(_, c)| c.take()) {
-                state.overlay = None;
+                if !several {
+                    state.overlay = None;
+                }
                 return choose(state, choice, mark);
             }
         }
@@ -551,6 +569,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
             let what = format!("Added “{title}” to Home");
             state.edit_home(path, crate::home::Edit::Add { title, kind, query }, what)
         }
+        Choice::Form(picked) => crate::create::pick(state, picked),
         Choice::Title(Titling::Rename { at }, path, title) => {
             let what = format!("Renamed it “{title}”");
             state.edit_home(path, crate::home::Edit::Rename { at, title }, what)

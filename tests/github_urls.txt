@@ -6,7 +6,7 @@
 #   external <reason>   the browser, for one of these reasons:
 #     download    a file to save (archives, release assets, raw files, .patch)
 #     session     needs a browser session, writes, or needs rights the token
-#                 doesn't give (settings, login, new issue, security alerts)
+#                 doesn't give (settings, login, security alerts)
 #     scope       needs a token scope gh doesn't grant by default
 #                 (read:project, read:packages)
 #     not-github  not repository or user content (GitHub's marketing, docs
@@ -92,7 +92,7 @@ https://github.com/licenses/mit                                             exte
 https://github.com/rust-lang/rust/blob/main/CODE_OF_CONDUCT.md              Blob
 https://github.com/rust-lang/rust/blob/main/CONTRIBUTING.md                 Blob
 # RepositoryContactLink: a new issue, or another site
-https://github.com/rust-lang/rust-clippy/issues/new/choose                  external session
+https://github.com/rust-lang/rust-clippy/issues/new/choose                  NewIssue
 # FundingLink, SocialAccount: other sites
 # Discussion, DiscussionComment
 https://github.com/cli/cli/discussions/14603                                Discussion
@@ -277,7 +277,7 @@ https://github.com/rust-lang/rust/compare/main...ytmimi:rust:subtree        Comp
 https://github.com/rust-lang/rust/compare/stable                            Compare
 https://github.com/rust-lang/rust/compare/8d1a76430406c877b35d0b627e7f796dcf0dfeca..b940084d7eb6a299eb4bfeb8e34901bc051e7ac4#files files
 https://github.com/rust-lang/rust/compare/8d1a76430406c877b35d0b627e7f796dcf0dfeca..b940084d7eb6a299eb4bfeb8e34901bc051e7ac4#diff-b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5L7-R9 files
-https://github.com/rust-lang/rust/compare                                   external session
+https://github.com/rust-lang/rust/compare                                   NewPr
 https://github.com/rust-lang/rust/find/main                                 external rare
 https://github.com/rust-lang/rust/edit/main/README.md                       external session
 https://github.com/rust-lang/rust/new/main                                  external session
@@ -292,9 +292,9 @@ https://github.com/rust-lang/rust/pull/163831/commits                       Pr
 https://github.com/rust-lang/rust/pull/163831/checks                        Pr
 https://github.com/rust-lang/rust/pull/163831.diff                          files
 https://github.com/rust-lang/rust/pull/163831.patch                         external download
-# Issues: new ones are written in the browser
-https://github.com/rust-lang/rust/issues/new                                external session
-https://github.com/rust-lang/rust/issues/new/choose                         external session
+# Issues: a new one, from its template chooser
+https://github.com/rust-lang/rust/issues/new                                NewIssue
+https://github.com/rust-lang/rust/issues/new/choose                         NewIssue
 # GitHub's own site, accounts and settings
 https://github.com/login                                                    external session
 https://github.com/signup                                                   external session

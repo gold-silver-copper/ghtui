@@ -132,6 +132,7 @@ impl State {
             Link::Branch => self.open_finder(true),
             Link::FindFile => self.open_finder(false),
             Link::Section(i) => self.open_section(*i),
+            Link::Form(link) => crate::create::follow_link(self, link),
             Link::State(state) => set_list_state(self, state),
             // Enter on a comment doesn't start writing: `>` does.
             Link::Quote { .. } => {
@@ -228,6 +229,14 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             ..
         } => Route::user(org),
         Route::Release { repo, .. } => Route::Releases(repo.clone()),
+        Route::NewIssue(repo) => Route::Issues {
+            repo: repo.clone(),
+            query: crate::route::OPEN.to_owned(),
+        },
+        Route::NewPr(repo) => Route::Pulls {
+            repo: repo.clone(),
+            query: crate::route::OPEN.to_owned(),
+        },
         Route::Milestone { repo, .. } => Route::Milestones {
             repo: repo.clone(),
             closed: false,

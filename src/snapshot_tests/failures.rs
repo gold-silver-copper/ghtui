@@ -274,6 +274,7 @@ fn sample(key: &DataKey) -> Data {
         K::Profile(_) => Data::Profile(Box::new(fixtures::profile())),
         K::Files(..) => Data::Files(Arc::new(vec!["README.md".into()]), false),
         K::Refs(_) => Data::Refs(Box::default()),
+        K::NewForm(_) => Data::NewForm(Box::new(fixtures::new_form())),
         K::RefIn(..) => Data::RefIn(None),
         K::LastCommits(..) => Data::LastCommits(Arc::new(fixtures::last_commits())),
         K::Commit(..) => Data::Commit(Box::new(fixtures::commit())),

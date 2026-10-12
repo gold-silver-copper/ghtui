@@ -382,6 +382,8 @@ fn typed() -> Vec<(&'static str, String)> {
         Mutation e::RequestReviews, e::ReviewersVariables;
         Mutation e::SetIssueMilestone, e::MilestoneVariables;
         Mutation e::SetPrMilestone, e::MilestoneVariables;
+        Mutation crate::api::create::CreateIssue, crate::api::create::CreateIssueVariables;
+        Mutation crate::api::create::CreatePr, crate::api::create::CreatePrVariables;
     }
 }
 
@@ -461,6 +463,7 @@ fn every_query_is_checked() {
         include_str!("browse.rs"),
         include_str!("change.rs"),
         include_str!("edit.rs"),
+        include_str!("create.rs"),
     ]
     .concat();
     let operations = source.matches("graphql_type = \"Query\"").count()

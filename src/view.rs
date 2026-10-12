@@ -222,6 +222,10 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 save: match compose.target {
                     crate::review::ComposeTarget::Reply { .. } => "post reply",
                     crate::review::ComposeTarget::Conversation { .. } => "post comment",
+                    crate::review::ComposeTarget::Form(crate::route::Route::NewPr(_)) => {
+                        "create pull request…"
+                    }
+                    crate::review::ComposeTarget::Form(_) => "create issue",
                     _ => "add to review",
                 },
                 completions: (completions.as_deref()).map(|c| {
@@ -260,6 +264,19 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 selected: confirm.selected,
                 error: confirm.error.as_deref(),
                 sending: busy.as_deref(),
+            }
+            .render(area, buf);
+        }
+        Some(Overlay::Ask(ask)) => {
+            let choices: Vec<String> = ask.choices.iter().map(|(l, _)| l.clone()).collect();
+            ConfirmSheet {
+                ctx,
+                title: &ask.title,
+                facts: &ask.facts,
+                choices: &choices,
+                selected: ask.selected,
+                error: ask.error.as_deref(),
+                sending: ask.busy(),
             }
             .render(area, buf);
         }
