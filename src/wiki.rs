@@ -74,7 +74,10 @@ pub async fn page(
     let unread = |err: &dyn std::fmt::Display| ApiError::Git(format!("{repo}'s wiki: {err}"));
     let failed = |err: &crate::git::GitError| {
         if absent(err) {
-            ApiError::NotFound(format!("{repo} has no wiki"))
+            // GitHub makes a wiki's repository only with its first page.
+            ApiError::NotFound(format!(
+                "{repo}'s wiki: it's turned off, or has no pages yet (GitHub makes the first on github.com)"
+            ))
         } else {
             unread(err)
         }
