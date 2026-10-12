@@ -1,0 +1,32 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "ghtui's development tasks: `cargo xtask live` checks ghtui in the real app"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+serde_json = "1"
+# The stand-in Enterprise Server: an HTTPS proxy, rustls with ring only
+# (scripts/check-tls-deps.sh).
+bytes = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+# Not indexing_slicing: serde_json's `value["key"]`, all over the checks, gives
+# Null for a missing key and never panics.
+uninlined_format_args = "warn"

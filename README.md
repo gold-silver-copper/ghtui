@@ -586,6 +586,65 @@ A contract suite checks ghtui's assumptions against live GitHub, read-only
 kind of github.com link is listed with what it must open in
 `tests/github_urls.txt`.
 
+### The live check
+
+`cargo xtask live` runs ghtui for real, against real GitHub, and checks
+every write and live update against GitHub's own answer (`gh api`), not
+only the screen. It's run by hand, not in CI, and takes about five
+minutes. `cargo xtask live --list` names the checks; `cargo xtask live
+issue inbox` runs only those.
+
+- **What it needs:** `gh`, logged in as the owner of
+  `gold-silver-copper/ghtui-test-writes`, with a classic token's `repo`
+  scope (and `project` for the Projects check, which is
+  skipped without it: `gh auth refresh -s project`); git; openssl; and a
+  fux with `fux help agents` (on `PATH`, or `~/code/fux`'s release build,
+  or `--fux PATH`). It builds `target/release/ghtui` unless given
+  `--ghtui PATH`.
+- **Where it runs:** ghtui runs in a private fux server, one pane at a
+  time, at 216 or 90 columns, with its own socket and `XDG_RUNTIME_DIR`
+  and a scratch cache, config and clones, all under
+  `~/.cache/claude-tmp/ghtui-live` (`GHTUI_LIVE_DIR`), which a run empties
+  when it starts. A failing check leaves its last screen in `failures/`.
+- **What it touches:** it writes only to the test repository, whose
+  `mention.yml` (the Actions bot mentions the owner on an issue),
+  `botreview.yml` (it leaves a review comment on PR #11) and protected
+  `main` the checks rely on. The inbox is filtered to that repository
+  before anything is marked. A stand-in `xdg-open`, first on the
+  server's `PATH`, writes down the URLs ghtui opens instead of opening a
+  browser.
+- **Cleaning up:** each check undoes what it made, pass or fail (issues,
+  comments, pull requests, branches, projects, repository settings), and
+  the fux server and the stand-in server are stopped. ctrl-c stops the
+  run after cleaning up. A run that was killed is swept up by the next
+  one: issues and pull requests titled `[ghtui live]`, `ghtui-live-`
+  branches, its projects, and settings put back.
+- **Enterprise Server:** `cargo xtask ghes` serves a stand-in on
+  `https://localhost:8443` that relays an Enterprise Server's paths to
+  github.com (`/api/v3`, `/api/graphql`, `/raw`, git) and rewrites
+  github.com's URLs in its answers to its own host. Its certificate
+  authority is trusted only by the programs given `SSL_CERT_FILE` and
+  `GIT_SSL_CAINFO`; it prints how to run ghtui against it. `--strip
+  FIELD` drops a field from its GraphQL answers, as an older server
+  would lack it.
+- **GitHub's own delays:** a notification can take GitHub many minutes
+  to deliver, so the inbox check runs last, and is skipped (not failed)
+  when no unread thread has arrived; the mention it asked for serves the
+  next run.
+
+Adding a check: write a `Check` (a name, what it shows, and a function)
+in a file under `xtask/src/live/checks/`, and list it in `ALL` there.
+The function starts ghtui (`cx.ghtui(&[…])`, or `cx.launch` for a size,
+a directory or environment), presses keys (`ghtui.keys(", m")`,
+`ghtui.type_text(…)`), waits for the screen (`wait_for`, `wait_gone`,
+`wait_followed`, `select`), asks GitHub (`gh::get`, `gh::send`,
+`gh::graphql`, retried with `until`), and registers what to undo with
+`cx.defer` as soon as it has made something. Assert behaviour: "the
+comment shows", "GitHub shows it read", "this text ends in `…`"
+(`expect_whole_or_cut`), never whole screens. `.prepare(…)` starts
+something slow (a workflow) before any check runs; `.sweep(…)` puts
+back what a killed run may have left.
+
 `demo/record.sh` records a captioned tour of ghtui to a video, on a hidden
 Hyprland monitor (it needs foot, grim and ffmpeg, and an unlocked session). It
 uses a scratch config and cache, and only reads public GitHub.
