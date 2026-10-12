@@ -139,7 +139,8 @@ says where it works.
 
 - `esc` only cancels: a search, a selection, an overlay or keys typed so
   far. It never leaves the page. Back is `ctrl-o` (or `⌫`), forward is
-  `ctrl-i`, which terminals send as `⇥`.
+  `ctrl-i`, which terminals send as `⇥` (in Files changed `⇥` switches
+  between the file tree and the diff, so forward there is `alt-→`).
 - A page's own tabs (a pull request's Conversation, Commits, Checks,
   Files changed and Review) aren't history: `gt` and `gT` switch them in
   place, and each keeps where you were.
