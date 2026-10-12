@@ -1,10 +1,10 @@
 use crate::api::browse::Blob;
 use crate::browse::Data;
-use crate::code_nav::{Ask, Definition, Found};
+use crate::code_nav::{Answer, Ask, Place, Want};
 use crate::diff::anchor::Side;
 use crate::diff_screen::Pane;
 use crate::route::Route;
-use crate::state::{Api, Cmd, Msg, Overlay, Screen, State, update};
+use crate::state::{Cmd, Git, Msg, Overlay, Screen, State, update};
 use crate::theme::{ColorDepth, Mode};
 use crate::ui::diff_doc::Pos;
 
@@ -75,38 +75,29 @@ fn gd_finds_a_definition_in_the_file() {
     );
 }
 
-/// A name the file doesn't define is asked of GitHub's code search; the
-/// one definition it finds opens at its line, at the file's revision.
+/// A name the file doesn't define is asked of the repository, at the
+/// file's revision; the one definition found opens at its line there.
 #[test]
-fn gd_asks_github_for_one_outside_the_file() {
+fn gd_asks_the_repository_for_one_outside_the_file() {
     let mut s = with_code();
     press(&mut s, "5gg");
     let ask = Ask {
         repo: ghtui(),
         rev: "main".into(),
         path: "src/lib.rs".into(),
-        word: "other".into(),
-        language: "Rust",
+        want: Want::Definition("other".into()),
     };
-    assert_eq!(
-        ask.query(),
-        "other repo:gold-silver-copper/ghtui language:Rust"
-    );
-    assert_eq!(
-        press(&mut s, "gd"),
-        [Cmd::Api(Api::FindDefinition(ask.clone()))]
-    );
-    let found = Found {
-        definitions: vec![Definition {
+    assert_eq!(press(&mut s, "gd"), [Cmd::Git(Git::Code(ask.clone()))]);
+    let answer = Answer {
+        places: vec![Place {
             path: "src/other.rs".into(),
             line: 12,
-            name: "fn other".into(),
+            label: "fn other".into(),
         }],
-        total: 2,
-        read: 2,
-        incomplete: false,
+        note: Some("Still indexing".into()),
+        none: String::new(),
     };
-    update(&mut s, Msg::Definitions(ask, Ok(found)));
+    update(&mut s, Msg::Code(ask, Ok(answer)));
     assert_eq!(
         s.route(),
         Some(&Route::Blob {
@@ -115,6 +106,81 @@ fn gd_asks_github_for_one_outside_the_file() {
             path: "src/other.rs".into(),
             lines: Some((12, 12)),
         })
+    );
+    assert!(said(&s).contains("Still indexing"), "{}", said(&s));
+}
+
+/// `gS` lists the repository's symbols and `gR` the lines using the word;
+/// a place in this file goes to its line, one elsewhere opens its file.
+#[test]
+fn repository_symbols_and_references_are_listed() {
+    let mut s = with_code();
+    press(&mut s, "4gg");
+    let ask = |want| Ask {
+        repo: ghtui(),
+        rev: "main".into(),
+        path: "src/lib.rs".into(),
+        want,
+    };
+    let place = |path: &str, line, label: &str| Place {
+        path: path.into(),
+        line,
+        label: label.into(),
+    };
+    let symbols = ask(Want::Symbols);
+    assert_eq!(press(&mut s, "gS"), [Cmd::Git(Git::Code(symbols.clone()))]);
+    let answer = Answer {
+        places: vec![
+            place("src/other.rs", 12, "fn other"),
+            place("src/lib.rs", 10, "fn ioctl"),
+        ],
+        ..Answer::default()
+    };
+    update(&mut s, Msg::Code(symbols, Ok(answer)));
+    press(&mut s, "ioctl<Enter>");
+    assert_eq!(at(&s).0, Some(10));
+
+    press(&mut s, "4gg");
+    let refs = ask(Want::References("helper".into()));
+    assert_eq!(press(&mut s, "gR"), [Cmd::Git(Git::Code(refs.clone()))]);
+    let answer = Answer {
+        places: vec![
+            place("src/lib.rs", 4, "helper(io::stdin());"),
+            place("src/main.rs", 2, "lib::helper(x)"),
+        ],
+        ..Answer::default()
+    };
+    update(&mut s, Msg::Code(refs.clone(), Ok(answer)));
+    let Some(Overlay::Picker(p)) = &s.overlay else {
+        panic!("no picker")
+    };
+    let rows: Vec<(String, String)> = (s.picker_rows(p).into_iter())
+        .map(|(item, _)| (item.label, item.hint))
+        .collect();
+    assert_eq!(rows[1], ("lib::helper(x)".into(), "src/main.rs:2".into()));
+    press(&mut s, "lib::<Enter>");
+    assert_eq!(
+        s.route(),
+        Some(&Route::Blob {
+            repo: ghtui(),
+            rev: "main".into(),
+            path: "src/main.rs".into(),
+            lines: Some((2, 2)),
+        })
+    );
+
+    // None found: says so, and what the index doesn't hold yet.
+    let mut s = with_code();
+    let none = Answer {
+        note: Some("Still indexing".into()),
+        none: "“helper” isn't used".into(),
+        ..Answer::default()
+    };
+    update(&mut s, Msg::Code(refs, Ok(none)));
+    assert!(
+        said(&s).contains("isn't used · Still indexing"),
+        "{}",
+        said(&s)
     );
 }
 

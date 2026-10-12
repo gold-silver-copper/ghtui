@@ -36,6 +36,8 @@ struct Effects {
     writer: tokio::task::JoinHandle<()>,
     /// What git answers in place of GitHub's API.
     local: Arc<crate::source::Local>,
+    /// Repositories' code indexes.
+    index: Arc<crate::code_index::Indexer>,
 }
 
 pub async fn run(
@@ -49,7 +51,9 @@ pub async fn run(
 ) -> Result<()> {
     let (tx, rx) = mpsc::unbounded_channel::<Msg>();
     let (save_review, writer) = review_writer(reviews.clone(), &tx);
+    let index = Arc::new(crate::code_index::Indexer::new(git.clone()));
     let mut effects = Effects {
+        index,
         gh,
         local: crate::source::Local::new(git.clone()),
         git,
@@ -335,6 +339,14 @@ impl Effects {
                     let _ = tx.send(Msg::Diff(pr.into(), DiffMsg::CommitsListed(result)));
                 });
             }
+            Git::Code(ask) => {
+                let (gh, index) = (self.gh.clone(), self.index.clone());
+                spawn_guarded(&self.tx, replies, |tx| async move {
+                    if let Some(answer) = crate::code_nav::answer(&gh, &index, &ask).await {
+                        let _ = tx.send(Msg::Code(ask, answer));
+                    }
+                });
+            }
             Git::MapOutdated(joined) => {
                 let (pr, job, head, threads) = joined.into_inner();
                 let Some(git) = self.job_git(&DiffOf::Pr(pr.clone())) else {
@@ -551,10 +563,6 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 let result = gh.mentionable(&repo).await;
                 Msg::Mentionable(repo, result)
             }
-            Api::FindDefinition(ask) => {
-                let result = crate::code_nav::find(&gh, &ask).await;
-                Msg::Definitions(ask, result)
-            }
             Api::Poll { pr, asks } => {
                 let polls = asks.into_iter().map(|ask| {
                     let (gh, path) = (&gh, ask.probe.path(&pr));
@@ -725,7 +733,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             Msg::Diff(pr.clone().into(), DiffMsg::LastReview(api()))
         }
         Cmd::Api(Api::FetchMentionable(repo)) => Msg::Mentionable(repo.clone(), api()),
-        Cmd::Api(Api::FindDefinition(ask)) => Msg::Definitions(ask.clone(), api()),
+        Cmd::Git(Git::Code(ask)) => Msg::Code(ask.clone(), Err("ghtui hit a bug".into())),
         Cmd::Api(Api::Poll { pr, .. }) => Msg::Polled(pr.clone(), Vec::new()),
         Cmd::Api(Api::Watch { what, .. }) => Msg::Watched(what.clone(), Vec::new()),
         Cmd::Api(Api::Actions(work)) => Msg::Actions(work.failed()),

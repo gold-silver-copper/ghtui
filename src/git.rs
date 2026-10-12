@@ -8,6 +8,7 @@
 pub mod blobs;
 pub mod credentials;
 pub mod files;
+pub mod index;
 pub mod local;
 pub mod read;
 pub mod repo;

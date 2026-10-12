@@ -264,6 +264,8 @@ actions! {
     WordPrev          "word_prev"         ["b", "log:b", "diff:b"] File   "Previous word";
     Symbols           "symbols"           ["gO", "diff:gO"]        File   "Symbols in this file, to go to one";
     Definition        "go_to_definition"  ["gd", "diff:gd"]        File   "Go to the definition of the word under the cursor";
+    RepoSymbols       "repo_symbols"      ["gS", "diff:gS"]        File   "Symbols in the repository, to go to one";
+    References        "references"        ["gR", "diff:gR"]        File   "Where the word under the cursor is used";
     PrevColumn        "prev_column"       ["h"]                    Project "Previous column of the board";
     NextColumn        "next_column"       ["l"]                    Project "Next column of the board";
     MoveItem          "move_item"         [",c"]                   Project "Move the item to another column";

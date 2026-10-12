@@ -99,10 +99,10 @@ pub enum Msg {
         crate::api::model::RepoId,
         Result<crate::api::mention::Mentionable, ApiError>,
     ),
-    /// Where a name is defined in the repository.
-    Definitions(
+    /// What the repository's clone (or code search) answered about code.
+    Code(
         crate::code_nav::Ask,
-        Result<crate::code_nav::Found, ApiError>,
+        Result<crate::code_nav::Answer, String>,
     ),
     /// What GitHub answered when asked whether a watched pull request
     /// changed.
@@ -268,9 +268,6 @@ pub enum Api {
     },
     /// Who and what the repository's comments can mention.
     FetchMentionable(crate::api::model::RepoId),
-    /// Where a name is defined in the repository, answered by
-    /// [`Msg::Definitions`].
-    FindDefinition(crate::code_nav::Ask),
     /// Whether a watched pull request changed, asked with ETags.
     Poll {
         pr: PrRef,
@@ -318,6 +315,9 @@ pub enum Git {
     /// review"; answered as the job's [`JobMsg::Since`].
     SinceReview(join::Joined<(PrRef, JobId, String)>),
     ListCommits(PrRef),
+    /// A question about the code at a revision (definitions, symbols,
+    /// references), answered by [`Msg::Code`].
+    Code(crate::code_nav::Ask),
 }
 
 /// Problems that last until they're fixed, shown in a banner above the

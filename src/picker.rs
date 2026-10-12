@@ -140,12 +140,16 @@ fn item(label: impl Into<String>, hint: impl Into<String>) -> PaletteItem {
 
 /// Places in code that match `q`, best first; all of them in order
 /// before anything is typed.
+/// Places in code listed at once.
+const CODE_ROWS: usize = 1000;
+
 fn code_rows(rows: &[(PaletteItem, Choice)], q: &str) -> Rows {
     let mut hits: Vec<_> = (rows.iter())
         .filter_map(|(item, choice)| Some((fuzzy_score(q, item.label.trim_start())?, item, choice)))
         .collect();
     hits.sort_by_key(|(score, ..)| *score);
-    let hits = hits.into_iter();
+    // A repository's symbols can be many: the best few are what's read.
+    let hits = hits.into_iter().take(CODE_ROWS);
     hits.map(|(_, item, choice)| (item.clone(), Some(choice.clone())))
         .collect()
 }

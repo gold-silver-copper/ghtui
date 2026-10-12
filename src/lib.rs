@@ -15,6 +15,7 @@ mod act;
 mod actions;
 mod browse;
 mod chrome;
+mod code_index;
 mod code_nav;
 mod config;
 #[cfg(test)]

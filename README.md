@@ -193,11 +193,17 @@ it needs, and takes nothing from GitHub's rate limit.
 **Reading code** goes beyond the file on screen, without a language
 server. `gO` lists a file's functions, types, impls and modules, nested
 as in the code, and goes to the one you pick (in Files changed, the
-file under the cursor's). `gd` goes to the definition of the word under
-the cursor: in the file when it's there, else in the files GitHub's
-code search finds the word in, read at the revision you're viewing, and
-it says when it can't tell. Symbols are read for Rust, TypeScript,
-JavaScript, Python and Go.
+file under the cursor's). Across the repository, ghtui indexes the
+definitions at the revision you're viewing, from a clone (yours, or
+its cache's), in the background; in Files changed it's the pull
+request's head, so definitions the PR adds are found. `gd` goes to the
+definition of the word under the cursor: in the file when it's there,
+else from the index. `gS` lists the repository's symbols, nearest the
+file first, and `gR` the lines that use the word (`git grep`, whole
+words, at that revision). Symbols are read for Rust, TypeScript,
+JavaScript, Python and Go. ghtui says when the index is still building
+or stopped at a limit, and only then (or with no clone to read) asks
+GitHub's code search instead.
 
 Comments are kept on disk until you submit, so a crash never loses them.
 Threads that GitHub calls outdated are moved to their line when it still
@@ -409,7 +415,9 @@ says where it works.
   `/` takes `\<` and `\>` too), down and up, and `gx` opens a web
   address under it. A job log's lines are rows, as a file's are.
 - In files and the diff, `gO` lists the file's symbols and `gd` goes to
-  the definition of the word under the cursor.
+  the definition of the word under the cursor; `gS` lists the
+  repository's symbols and `gR` where the word is used. (`gr` is the
+  review at a glance; vim's `gR` replaces text, which ghtui doesn't.)
 
 **Everywhere** (`global:`)
 
@@ -531,6 +539,8 @@ says where it works.
 | `b`  | Previous word |
 | `gO` | Symbols in this file, to go to one |
 | `gd` | Go to the definition of the word under the cursor |
+| `gS` | Symbols in the repository, to go to one |
+| `gR` | Where the word under the cursor is used |
 | `V`  | Select lines |
 
 **In job logs** (`log:`)
@@ -565,6 +575,8 @@ says where it works.
 | `b`            | Previous word |
 | `gO`           | Symbols in this file, to go to one |
 | `gd`           | Go to the definition of the word under the cursor |
+| `gS`           | Symbols in the repository, to go to one |
+| `gR`           | Where the word under the cursor is used |
 | `]c` `}`       | Next change |
 | `[c` `{`       | Previous change |
 | `]f` `]]` `⇧↓` | Next file |
@@ -711,6 +723,17 @@ a page is read from the wiki's clone in the cache, at the commit it was
 fetched at, and saved as a commit on the wiki's latest, made without a
 working tree and pushed as a fast-forward, so a page changed meanwhile
 is never overwritten.
+
+**Code navigation comes from git too.** The index of a repository's
+definitions (`code_index`) is read from the same clone at a commit: a
+branch is fetched first, so a stale local branch is never taken for
+GitHub's. It's kept per commit in the cache (`code-index/`), and kept by
+file contents, so when the revision moves only the changed files are
+read. In the cache's partial clone, the files it reads are fetched in
+batches of a thousand, never one by one, within limits: 20,000 files,
+64 MiB and two minutes, nearest the file you asked from first. On
+rust-lang/rust (39,000 Rust files), once cloned, that is about 5,000 files in 18
+seconds, using about 130 MB.
 
 **Fast from the cache.** The first paint comes from a local cache (redb),
 then everything is refreshed in the background. REST requests revalidate
@@ -860,10 +883,18 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   all; a classic token can.
 - A pull request's Review tab has no page on GitHub, so its link (`y`,
   `o`, a restored tab) is the conversation's.
-- `gd` doesn't know types or imports: it goes by name. Outside the
-  file, it searches with GitHub's code search API, which reads only the
-  default branch and searches text, not symbols; it reads the first five
-  files it finds at the revision you're viewing.
+- `gd` and `gS` go by name: the index knows functions, types, traits,
+  classes and modules, not imports, re-exports, names macros make, or
+  what type a value has, so a name defined in several places offers
+  them all. A repository bigger than the index's limits is indexed
+  nearest the file you're in, and ghtui says so. Without a clone to
+  read, or while the index is still building, `gd` asks GitHub's code
+  search, which reads only the default branch and searches text; it
+  reads the first five files it finds.
+- `gR` in the cache's partial clone searches only the files fetched for
+  the index (Rust, TypeScript, JavaScript, Python and Go, within its
+  limits), and says so; in your own clone it searches every text file.
+  It lists the first 1,000 lines.
 - `@` offers as taking part only who has written what's loaded (the
   newest 100 comments, and the review threads), and `#` the 100 issues and
   pull requests updated last.

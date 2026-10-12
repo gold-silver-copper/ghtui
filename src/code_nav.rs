@@ -1,64 +1,83 @@
 //! Code navigation without a language server. The symbols of the file on
 //! screen come from its syntax tree, as the diff's scope names do (`gO`).
-//! The definition of the word under the cursor (`gd`) is looked for in
-//! the file, then in the files GitHub's code search finds the word in.
+//! Beyond the file, a clone answers: the repository's definitions are
+//! indexed at the revision on screen ([`crate::code_index`]) for `gd` and
+//! the repository's symbols (`gS`), and `git grep` finds where a word is
+//! used (`gR`). GitHub's code search is asked only when there's no clone
+//! to read, or it can't be read in time.
+
+use std::time::Duration;
 
 use crate::api::browse::Blob;
 use crate::api::model::RepoId;
 use crate::api::{ApiError, GitHub};
 use crate::browse::DataKey;
+use crate::code_index::{Indexer, Snapshot, Stage, settle};
 use crate::diff::Language;
 use crate::diff::anchor::{LinePos, Side};
 use crate::diff::scope::{self, Scope};
 use crate::diff::text::Text;
+use crate::git::index::grep_word;
 use crate::picker::{Choice, Kind};
 use crate::route::{Route, Target};
-use crate::state::{Api, Cmd, Screen, State};
+use crate::state::{Cmd, Git, Screen, State};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::text;
 
 /// Files code search finds that are read for a definition.
 const READ: usize = 5;
+/// How long `gd` waits for the index before asking GitHub instead.
+const DEFINITION_WAIT: Duration = Duration::from_secs(3);
+/// How long the symbols wait for the index before listing what's read.
+const SYMBOLS_WAIT: Duration = Duration::from_secs(1);
+/// How long references wait for the revision (fetched, if it's a branch).
+const REFERENCES_WAIT: Duration = Duration::from_secs(20);
+/// Symbols listed: the index holds them nearest the file first.
+const SYMBOLS: usize = 50_000;
+/// References listed, and how long `git grep` may look for them.
+const REFERENCES: usize = 1000;
+const GREP_TIME: Duration = Duration::from_secs(10);
 
-/// A definition `gd` asks GitHub to look for: `word`, from `path` of
-/// `repo` at `rev`, in files of the same language (GitHub's name for it).
+/// What's wanted of the repository.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Want {
+    /// Its index, built ahead of a question: nothing is answered.
+    Index,
+    /// Where this name is defined.
+    Definition(String),
+    /// Its symbols.
+    Symbols,
+    /// Where this word is used.
+    References(String),
+}
+
+/// A question about `repo` at `rev`, asked from the file at `path`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ask {
     pub repo: RepoId,
     pub rev: String,
     pub path: String,
-    pub word: String,
-    pub language: &'static str,
+    pub want: Want,
 }
 
-impl Ask {
-    /// What GitHub's code search is asked.
-    pub fn query(&self) -> String {
-        format!(
-            "{} repo:{} language:{}",
-            self.word, self.repo, self.language
-        )
-    }
-}
-
-/// A name's definition in a file.
+/// A line of a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Definition {
+pub struct Place {
     pub path: String,
     pub line: u32,
-    /// As the symbols list it: `fn offset`.
-    pub name: String,
+    /// As it's listed: `fn offset`, or the line's text.
+    pub label: String,
 }
 
-/// What looking through the repository found.
+/// What the repository answered.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Found {
-    pub definitions: Vec<Definition>,
-    /// Files code search found the word in, and how many were read.
-    pub total: u64,
-    pub read: usize,
-    /// The search timed out, finding only some.
-    pub incomplete: bool,
+pub struct Answer {
+    pub places: Vec<Place>,
+    /// Said with them: what the index doesn't hold yet, or where they
+    /// came from instead.
+    pub note: Option<String>,
+    /// Said when there are none.
+    pub none: String,
 }
 
 /// The file on screen: where it is, its symbols and the word under the
@@ -70,6 +89,17 @@ struct Here {
     path: String,
     scopes: Vec<Scope>,
     word: Option<String>,
+}
+
+impl Here {
+    fn ask(&self, want: Want) -> Option<Ask> {
+        Some(Ask {
+            repo: self.repo.clone(),
+            rev: self.rev.clone()?,
+            path: self.path.clone(),
+            want,
+        })
+    }
 }
 
 /// GitHub's name for a language whose symbols ghtui reads.
@@ -85,8 +115,20 @@ fn github_language(lang: Language) -> Option<&'static str> {
     })
 }
 
+/// Languages whose names are one another's: JavaScript's, TypeScript's
+/// and TSX's.
+fn family(path: &str) -> Option<&'static str> {
+    match Language::from_path(path)? {
+        Language::TypeScript | Language::Tsx | Language::JavaScript => Some("JavaScript"),
+        lang => github_language(lang),
+    }
+}
+
 /// The languages whose symbols ghtui reads.
 const LANGUAGES: &str = "Rust, TypeScript, JavaScript, Python and Go";
+
+/// What the index doesn't know, said when a name isn't in it.
+const UNKNOWN: &str = "it knows functions, types, traits, classes and modules by name, not imports, re-exports, macros or types of values";
 
 /// Why a file of `path` lists no symbols.
 fn no_symbols(path: &str) -> String {
@@ -146,6 +188,7 @@ fn here(state: &State) -> Result<Here, String> {
                     let word = text::word_at(&words, screen.word.unwrap_or(0))?;
                     Some(code.get(word.bytes.clone())?.to_owned())
                 });
+            // The pull request's head: what its new definitions are in.
             Ok(Here {
                 repo: screen.of.repo().clone(),
                 rev: diff.head().map(|oid| oid.to_string()),
@@ -176,21 +219,75 @@ fn symbol_rows(scopes: &[Scope]) -> Vec<(PaletteItem, Choice)> {
     rows
 }
 
-/// `gO`: the symbols of the file on screen, to go to one.
+/// The word under the cursor if it's a name, or says how to get one.
+fn name_here(state: &mut State, word: Option<String>) -> Option<String> {
+    let name = word.filter(|w| w.starts_with(|c: char| c.is_alphanumeric() || c == '_'));
+    if name.is_none() {
+        let next = state.first_key(crate::keymap::Action::WordNext);
+        state.info(format!("No name under the cursor: {next} moves to one"));
+    }
+    name
+}
+
+/// Asks the repository, once the revision on screen is known.
+fn ask(state: &mut State, here: &Here, want: Want) -> Vec<Cmd> {
+    match here.ask(want) {
+        Some(ask) => vec![Cmd::Git(Git::Code(ask))],
+        None => {
+            state.info("The diff's head commit isn't known yet");
+            Vec::new()
+        }
+    }
+}
+
+/// `gO`: the symbols of the file on screen, to go to one. The
+/// repository's index starts building, for what comes next.
 #[must_use]
 pub fn symbols(state: &mut State) -> Vec<Cmd> {
     match here(state) {
         Ok(here) if here.scopes.is_empty() => state.info(no_symbols(&here.path)),
         Ok(here) => {
             let rows = symbol_rows(&here.scopes);
-            return state.open_picker(Kind::Code {
+            let mut cmds = state.open_picker(Kind::Code {
                 title: "Symbols in this file",
                 rows,
             });
+            cmds.extend(here.ask(Want::Index).map(|a| Cmd::Git(Git::Code(a))));
+            return cmds;
         }
         Err(why) => state.info(why),
     }
     Vec::new()
+}
+
+/// `gS`: the symbols of the whole repository, at the revision on screen.
+#[must_use]
+pub fn repo_symbols(state: &mut State) -> Vec<Cmd> {
+    match here(state) {
+        Ok(here) => ask(state, &here, Want::Symbols),
+        Err(why) => {
+            state.info(why);
+            Vec::new()
+        }
+    }
+}
+
+/// `gR`: where the word under the cursor is used in the repository, at
+/// the revision on screen.
+#[must_use]
+pub fn references(state: &mut State) -> Vec<Cmd> {
+    let here = match here(state) {
+        Ok(here) => here,
+        Err(why) => {
+            state.info(why);
+            return Vec::new();
+        }
+    };
+    let Some(word) = name_here(state, here.word.clone()) else {
+        return Vec::new();
+    };
+    state.info(format!("Looking for “{word}” in {}", here.repo));
+    ask(state, &here, Want::References(word))
 }
 
 /// Goes to line `line` of the file on screen. In the diff, a line the
@@ -224,7 +321,7 @@ pub fn go_to_line(state: &mut State, line: u32) -> Vec<Cmd> {
 }
 
 /// `gd`: the definition of the word under the cursor. One in this file
-/// is gone to (several are offered); else GitHub's code search is asked.
+/// is gone to (several are offered); else the repository is asked.
 #[must_use]
 pub fn definition(state: &mut State) -> Vec<Cmd> {
     let here = match here(state) {
@@ -234,12 +331,7 @@ pub fn definition(state: &mut State) -> Vec<Cmd> {
             return Vec::new();
         }
     };
-    let name = here
-        .word
-        .filter(|w| w.starts_with(|c: char| c.is_alphanumeric() || c == '_'));
-    let Some(word) = name else {
-        let next = state.first_key(crate::keymap::Action::WordNext);
-        state.info(format!("No name under the cursor: {next} moves to one"));
+    let Some(word) = name_here(state, here.word.clone()) else {
         return Vec::new();
     };
     let defines = |s: &&Scope| s.defines.as_deref() == Some(word.as_str());
@@ -258,33 +350,263 @@ pub fn definition(state: &mut State) -> Vec<Cmd> {
             });
         }
     }
-    let Some(language) = Language::from_path(&here.path).and_then(github_language) else {
+    if family(&here.path).is_none() {
         state.info(format!(
             "Can't tell where “{word}” is defined: ghtui reads {LANGUAGES} only"
         ));
         return Vec::new();
-    };
-    let Some(rev) = here.rev else {
-        state.info("The diff's head commit isn't known yet");
-        return Vec::new();
-    };
+    }
     state.info(format!(
-        "“{word}” isn't defined in this file: searching {} for it",
+        "“{word}” isn't defined in this file: looking in {}",
         here.repo
     ));
-    vec![Cmd::Api(Api::FindDefinition(Ask {
-        repo: here.repo,
-        rev,
-        path: here.path,
-        word,
-        language,
-    }))]
+    ask(state, &here, Want::Definition(word))
 }
 
-/// Looks for `ask`'s definition in the files GitHub's code search finds
-/// its word in, read at its revision.
-pub async fn find(gh: &GitHub, ask: &Ask) -> Result<Found, ApiError> {
-    let hits = gh.code_search(&ask.query()).await?;
+/// The repository's answer to `ask`: one definition opens, several
+/// places are offered. It's dropped once the file it was asked from
+/// isn't on screen.
+#[must_use]
+pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) -> Vec<Cmd> {
+    let still = here(state).is_ok_and(|h| h.repo == ask.repo && h.path == ask.path);
+    if !still {
+        return Vec::new();
+    }
+    let answer = match answer {
+        Ok(answer) => answer,
+        Err(why) => {
+            state.error(why);
+            return Vec::new();
+        }
+    };
+    let open = |p: &Place| {
+        if p.path == ask.path {
+            return Choice::Line(p.line);
+        }
+        let route = Route::Blob {
+            repo: ask.repo.clone(),
+            rev: ask.rev.clone(),
+            path: p.path.clone(),
+            lines: Some((p.line, p.line)),
+        };
+        Choice::Go(Target::Page(route).into())
+    };
+    let title = match ask.want {
+        Want::Index => return Vec::new(),
+        Want::Definition(_) => "Definitions",
+        Want::Symbols => "Symbols in the repository",
+        Want::References(_) => "References",
+    };
+    let note = answer.note.clone();
+    let cmds = match (&ask.want, answer.places.as_slice()) {
+        (_, []) => {
+            state.info(note.map_or(answer.none.clone(), |n| format!("{} · {n}", answer.none)));
+            return Vec::new();
+        }
+        (Want::Definition(_), [one]) => match open(one) {
+            Choice::Line(line) => go_to_line(state, line),
+            Choice::Go(dest) => match dest.target {
+                Target::Page(route) => state.push(route),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        },
+        (_, places) => {
+            let rows = places.iter().map(|p| {
+                let item = PaletteItem {
+                    label: p.label.clone(),
+                    hint: format!("{}:{}", p.path, p.line),
+                };
+                (item, open(p))
+            });
+            let rows = rows.collect();
+            state.open_picker(Kind::Code { title, rows })
+        }
+    };
+    if let Some(note) = note {
+        state.info(note);
+    }
+    cmds
+}
+
+/// Answers `ask` from the clone, or from GitHub's code search when the
+/// clone can't say. Building the index is asked for nothing.
+pub async fn answer(gh: &GitHub, index: &Indexer, ask: &Ask) -> Option<Result<Answer, String>> {
+    let mut rx = index.get(&ask.repo, &ask.rev, &ask.path);
+    Some(match &ask.want {
+        Want::Index => return None,
+        Want::Definition(word) => {
+            let snap = settle(&mut rx, DEFINITION_WAIT, |_| false).await;
+            definitions(gh, ask, word, &snap).await
+        }
+        Want::Symbols => {
+            let snap = settle(&mut rx, SYMBOLS_WAIT, |_| false).await;
+            repo_symbol_places(ask, &snap)
+        }
+        Want::References(word) => {
+            // A clone of every file is grepped once the commit is known; a
+            // partial one, once its files are fetched.
+            let known =
+                |s: &Snapshot| s.commit.is_some() && s.repo.as_ref().is_some_and(|r| !r.partial);
+            let snap = settle(&mut rx, REFERENCES_WAIT, known).await;
+            uses(index, ask, word, &snap).await
+        }
+    })
+}
+
+/// `gd` from the index, else from GitHub's code search.
+async fn definitions(
+    gh: &GitHub,
+    ask: &Ask,
+    word: &str,
+    snap: &Snapshot,
+) -> Result<Answer, String> {
+    let same = family(&ask.path);
+    let defs = snap
+        .index
+        .definitions(word, |p| p != ask.path && family(p) == same);
+    let places: Vec<Place> = defs
+        .map(|(f, d)| Place {
+            path: f.path.clone(),
+            line: d.line,
+            label: d.name.clone(),
+        })
+        .collect();
+    let repo = &ask.repo;
+    let short = snap.short_of(repo);
+    if !places.is_empty() {
+        return Ok(Answer {
+            places,
+            note: short.filter(|_| !snap.done()).or(snap.stale.clone()),
+            none: String::new(),
+        });
+    }
+    // The whole index, and it isn't there.
+    if snap.stage == Stage::Ready && short.is_none() {
+        return Ok(Answer {
+            none: format!(
+                "No definition of “{word}” in {repo} at {}: {UNKNOWN}",
+                snap.at()
+            ),
+            ..Answer::default()
+        });
+    }
+    let why = short.unwrap_or_default();
+    let Some(language) = Language::from_path(&ask.path).and_then(github_language) else {
+        return Ok(Answer {
+            none: why,
+            ..Answer::default()
+        });
+    };
+    let found = find(gh, ask, word, language).await;
+    let found = found
+        .map_err(|err| format!("{why} · couldn't search GitHub's code for “{word}”: {err}"))?;
+    Ok(searched(
+        repo,
+        word,
+        found,
+        format!("{why}: asked GitHub's code search"),
+    ))
+}
+
+/// The repository's symbols, as far as they're indexed.
+fn repo_symbol_places(ask: &Ask, snap: &Snapshot) -> Result<Answer, String> {
+    if let Stage::Failed(why) = &snap.stage {
+        return Err(format!("Couldn't index {}: {why}", ask.repo));
+    }
+    let all = snap.index.symbols();
+    let symbols = all.take(SYMBOLS).map(|(f, d)| Place {
+        path: f.path.clone(),
+        line: d.line,
+        label: d.name.clone(),
+    });
+    let symbols: Vec<Place> = symbols.collect();
+    let more = (symbols.len() == SYMBOLS && snap.index.symbols().nth(SYMBOLS).is_some())
+        .then(|| format!("Listing the {SYMBOLS} symbols nearest this file"));
+    let note = [snap.short_of(&ask.repo), more, snap.stale.clone()];
+    let note: Vec<String> = note.into_iter().flatten().collect();
+    let note = (!note.is_empty()).then(|| note.join(" · "));
+    let none = match &note {
+        Some(_) => "No symbols indexed yet".to_owned(),
+        None => format!(
+            "No functions, types or modules in {}'s {LANGUAGES} files",
+            ask.repo
+        ),
+    };
+    Ok(Answer {
+        places: symbols,
+        note,
+        none,
+    })
+}
+
+/// Where `word` is used, from `git grep` at the commit. A partial clone
+/// greps the files fetched for the index, not ones it would fetch.
+async fn uses(index: &Indexer, ask: &Ask, word: &str, snap: &Snapshot) -> Result<Answer, String> {
+    let repo_id = &ask.repo;
+    let (Some(repo), Some(commit)) = (&snap.repo, &snap.commit) else {
+        let why = snap.short_of(repo_id).unwrap_or_default();
+        return Err(format!("Can't look for “{word}” yet · {why}"));
+    };
+    let failed = |err: crate::git::GitError| format!("Couldn't look for “{word}”: {err}");
+    let (tree, read) = if repo.partial {
+        let files: Vec<(&str, &str)> = (snap.index.files.iter())
+            .map(|f| (f.path.as_str(), f.blob.as_str()))
+            .collect();
+        let tree = crate::git::index::tree_of(repo, &files, &index.scratch())
+            .await
+            .map_err(failed)?;
+        let mut read = format!(
+            "Read in the {} code files fetched for the index",
+            files.len()
+        );
+        if let Some(short) = snap.short_of(repo_id) {
+            read = format!("{read} · {short}");
+        }
+        (tree, Some(read))
+    } else {
+        (commit.clone(), None)
+    };
+    let found = grep_word(repo, &tree, word, REFERENCES, GREP_TIME)
+        .await
+        .map_err(failed)?;
+    let more = found
+        .more
+        .then(|| format!("Only the first {REFERENCES} are listed"));
+    let note = [read, more, snap.stale.clone()].into_iter().flatten();
+    let note: Vec<String> = note.collect();
+    let places = found.hits.into_iter().map(|h| Place {
+        label: h.text.trim().to_owned(),
+        path: h.path,
+        line: h.line,
+    });
+    Ok(Answer {
+        places: places.collect(),
+        note: (!note.is_empty()).then(|| note.join(" · ")),
+        none: format!("“{word}” isn't used in {repo_id} at {}", snap.at()),
+    })
+}
+
+/// What GitHub's code search is asked for `word`.
+fn query(repo: &RepoId, word: &str, language: &str) -> String {
+    format!("{word} repo:{repo} language:{language}")
+}
+
+/// What looking through code search's files found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Found {
+    places: Vec<Place>,
+    /// Files code search found the word in, and how many were read.
+    total: u64,
+    read: usize,
+    /// The search timed out, finding only some.
+    incomplete: bool,
+}
+
+/// Looks for `word`'s definition in the files GitHub's code search finds
+/// it in, read at `ask`'s revision.
+async fn find(gh: &GitHub, ask: &Ask, word: &str, language: &str) -> Result<Found, ApiError> {
+    let hits = gh.code_search(&query(&ask.repo, word, language)).await?;
     let paths: Vec<String> = (hits.paths.into_iter())
         .filter(|path| *path != ask.path)
         .take(READ)
@@ -307,7 +629,7 @@ pub async fn find(gh: &GitHub, ask: &Ask) -> Result<Found, ApiError> {
     if let Some(err) = failed.filter(|_| read == 0) {
         return Err(err);
     }
-    let word = ask.word.clone();
+    let word = word.to_owned();
     let parse = move || {
         let mut out = Vec::new();
         for (path, source) in &files {
@@ -315,75 +637,45 @@ pub async fn find(gh: &GitHub, ask: &Ask) -> Result<Found, ApiError> {
             let defines = scopes
                 .into_iter()
                 .filter(|s| s.defines.as_ref() == Some(&word));
-            out.extend(defines.map(|s| Definition {
+            out.extend(defines.map(|s| Place {
                 path: path.clone(),
                 line: *s.lines.start(),
-                name: s.name,
+                label: s.name,
             }));
         }
         out
     };
-    let definitions = tokio::task::spawn_blocking(parse).await.unwrap_or_default();
+    let places = tokio::task::spawn_blocking(parse).await.unwrap_or_default();
     Ok(Found {
-        definitions,
+        places,
         total: hits.total,
         read,
         incomplete: hits.incomplete,
     })
 }
 
-/// GitHub's answer to `ask`: one definition opens, several are offered.
-/// It's dropped once the file it was asked from isn't on screen.
-#[must_use]
-pub fn found(state: &mut State, ask: &Ask, result: Result<Found, ApiError>) -> Vec<Cmd> {
-    let still = here(state).is_ok_and(|h| h.repo == ask.repo && h.path == ask.path);
-    if !still {
-        return Vec::new();
-    }
-    let Ask {
-        repo, rev, word, ..
-    } = ask;
-    let found = match result {
-        Ok(found) => found,
-        Err(err) => {
-            state.error(format!("Couldn't search the code for “{word}”: {err}"));
-            return Vec::new();
-        }
-    };
-    let open = |d: &Definition| Route::Blob {
-        repo: repo.clone(),
-        rev: rev.clone(),
-        path: d.path.clone(),
-        lines: Some((d.line, d.line)),
-    };
-    match found.definitions.as_slice() {
-        [one] => return state.push(open(one)),
-        [] if found.total == 0 && found.incomplete => state.info(format!(
+/// Code search's answer, said as it is.
+fn searched(repo: &RepoId, word: &str, found: Found, why: String) -> Answer {
+    let none = match found {
+        Found {
+            total: 0,
+            incomplete: true,
+            ..
+        } => format!(
             "Can't tell where “{word}” is defined: GitHub's code search gave up before finding it in {repo}"
-        )),
-        [] if found.total == 0 => state.info(format!(
+        ),
+        Found { total: 0, .. } => format!(
             "GitHub's code search finds no “{word}” in {repo} (it reads only the default branch)"
-        )),
-        [] => state.info(format!(
-            "No definition of “{word}” in the {} of {} files GitHub's code search finds it in",
-            found.read, found.total
-        )),
-        many => {
-            let rows = many.iter().map(|d| {
-                let item = PaletteItem {
-                    label: d.name.clone(),
-                    hint: format!("{}:{}", d.path, d.line),
-                };
-                (item, Choice::Go(Target::Page(open(d)).into()))
-            });
-            let rows = rows.collect();
-            return state.open_picker(Kind::Code {
-                title: "Definitions",
-                rows,
-            });
-        }
+        ),
+        Found { total, read, .. } => format!(
+            "No definition of “{word}” in the {read} of {total} files GitHub's code search finds it in"
+        ),
+    };
+    Answer {
+        places: found.places,
+        note: Some(why),
+        none,
     }
-    Vec::new()
 }
 
 #[cfg(test)]
@@ -419,5 +711,16 @@ mod tests {
             .map(|(label, _)| label)
             .collect();
         assert_eq!(labels, ["class Shape", "  def area", "def main"]);
+    }
+
+    #[test]
+    fn code_search_is_asked_by_language() {
+        let repo = RepoId::new("o", "r");
+        assert_eq!(
+            query(&repo, "other", "Rust"),
+            "other repo:o/r language:Rust"
+        );
+        assert_eq!(family("a.tsx"), family("b.js"));
+        assert_ne!(family("a.rs"), family("b.go"));
     }
 }

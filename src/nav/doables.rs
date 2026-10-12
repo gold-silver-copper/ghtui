@@ -57,6 +57,8 @@ pub(super) const DIFF_DOABLES: &[(&str, &[(Action, &str)])] = {
                 (A::WordPrev, ""),
                 (A::Symbols, ""),
                 (A::Definition, ""),
+                (A::RepoSymbols, ""),
+                (A::References, ""),
                 (A::FindFile, ""),
                 (A::SwitchPane, ""),
                 (A::Fold, ""),
@@ -341,7 +343,12 @@ impl State {
             if p.word_cursor().is_none() {
                 definition.unavailable = Some("no line of code is selected".into());
             }
+            let definition_unavailable = definition.unavailable.clone();
             out.push(definition);
+            out.push(here(Action::RepoSymbols, "Symbols in the repository", ""));
+            let mut references = here(Action::References, Action::References.description(), "");
+            references.unavailable.clone_from(&definition_unavailable);
+            out.push(references);
         }
         if let Some(query) = &list {
             let show = format!("Show {}", next_list_state(route, query));
