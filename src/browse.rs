@@ -110,6 +110,8 @@ pub enum DataKey {
     /// A repository's security alerts of a kind, filtered.
     Alerts(RepoId, AlertKind, String),
     Alert(AlertRef),
+    /// Your subscription to a thread or a repository.
+    Subscription(crate::api::watch::Watched),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,6 +170,7 @@ pub enum Data {
     Project(Box<Project>),
     Alerts(Box<AlertList>),
     Alert(Box<Alert>),
+    Subscription(Box<crate::api::watch::Subscription>),
 }
 
 impl Data {
@@ -335,7 +338,7 @@ pub fn needs(route: &Route) -> Vec<Need> {
         .search()
         .map(|(kind, query)| Need::Data(K::Search(kind, query)));
     match route {
-        Route::Home => Vec::new(),
+        Route::Home | Route::NewGist => Vec::new(),
         Route::Repo(repo) => vec![
             header(repo),
             Need::Data(K::Readme(repo.clone())),
@@ -391,13 +394,24 @@ pub fn needs(route: &Route) -> Vec<Need> {
             paged(route).map(Need::Data).into_iter().collect()
         }
         Route::Team { org, slug } => vec![Need::Data(K::Team(org.to_lowercase(), slug.clone()))],
-        Route::Gist { id, .. } => vec![Need::Data(K::Gist(id.clone()))],
+        Route::Gist { id, .. } | Route::EditGist { id, .. } => {
+            vec![Need::Data(K::Gist(id.clone()))]
+        }
         Route::Issue { repo, number } => {
             vec![header(repo), Need::Data(K::Issue(repo.clone(), *number))]
         }
         Route::NewIssue(repo) | Route::NewPr(repo) => {
             vec![header(repo), Need::Data(K::NewForm(repo.clone()))]
         }
+        Route::NewRelease(repo) => vec![
+            header(repo),
+            Need::Data(K::Tags(repo.clone())),
+            Need::Data(K::Branches(repo.clone())),
+        ],
+        Route::WikiEdit { repo, page } => vec![
+            header(repo),
+            Need::Data(crate::wiki::form::key(repo, page.as_ref())),
+        ],
         Route::Pr {
             pr,
             tab: PrTab::Checks,
@@ -535,6 +549,7 @@ picked!(
     NewForm => crate::api::create::NewForm,
     Projects => Results<ProjectSummary>, Project => Project,
     Alerts => AlertList, Alert => Alert,
+    Subscription => crate::api::watch::Subscription,
 );
 
 /// A page's needs as the page shows them, failing with the key that
@@ -695,6 +710,10 @@ impl State {
             | Route::Alert { .. }
             | Route::NewIssue(_)
             | Route::NewPr(_)
+            | Route::NewRelease(_)
+            | Route::NewGist
+            | Route::EditGist { .. }
+            | Route::WikiEdit { .. }
             | Route::ProjectItem { .. }
             | Route::Pr {
                 tab: PrTab::Review, ..
@@ -890,6 +909,27 @@ impl State {
                 let key = DataKey::NewForm(repo.clone());
                 if let Some(d) = f.get(&key).show(&mut page, &title) {
                     crate::create::build(self, &mut page, route, d);
+                }
+            }
+            Route::NewRelease(repo) => {
+                let header = f.get::<RepoOverview>(&DataKey::Repo(repo.clone()));
+                if header.show(&mut page, &title).is_some() {
+                    crate::release::build(self, &mut page, repo);
+                }
+            }
+            Route::NewGist => crate::gist::build(self, &mut page, route),
+            Route::EditGist { id, .. } => {
+                if f.get::<Gist>(&DataKey::Gist(id.clone()))
+                    .show(&mut page, &title)
+                    .is_some()
+                {
+                    crate::gist::build(self, &mut page, route);
+                }
+            }
+            Route::WikiEdit { repo, page: name } => {
+                let key = crate::wiki::form::key(repo, name.as_ref());
+                if f.get::<WikiPage>(&key).show(&mut page, &title).is_some() {
+                    crate::wiki::form::build(self, &mut page, route);
                 }
             }
             Route::Stargazers(_) => pages::people_list(&mut page, "Stargazers", f.paged(route)),

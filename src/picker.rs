@@ -52,6 +52,8 @@ pub enum Kind {
     Project(crate::projects::Pick),
     /// Why to dismiss a security alert; the field is the comment.
     Alert(crate::security::Dismissing),
+    /// A subscription, a release's tag, a gist's names ([`crate::writes`]).
+    Write(crate::writes::Pick),
 }
 
 /// What a section's title is for.
@@ -84,6 +86,7 @@ impl Picker {
             Kind::Code { title, .. } => title,
             Kind::Project(ref pick) => pick.title(),
             Kind::Alert(ref d) => d.title(),
+            Kind::Write(ref pick) => pick.title(),
         }
     }
 }
@@ -119,6 +122,7 @@ pub enum Choice {
     Project(crate::projects::Chosen),
     /// Dismiss a security alert so.
     Alert(crate::api::change::Change),
+    Write(crate::writes::Chosen),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -174,11 +178,13 @@ impl State {
             Kind::Code { .. } => "Type a name",
             Kind::Project(ref pick) => pick.placeholder(),
             Kind::Alert(ref d) => d.placeholder(),
+            Kind::Write(ref pick) => pick.placeholder(),
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
             Kind::Branches { repo, .. } => Some(DataKey::Refs(repo.clone())),
             Kind::Edit(c) => c.need(),
+            Kind::Write(pick) => pick.need(),
             Kind::Form(crate::create::Pick::Base | crate::create::Pick::Head) => self
                 .route()
                 .and_then(Route::repo)
@@ -263,6 +269,9 @@ impl State {
                 .collect(),
             Kind::Alert(d) => (crate::security::rows(d, q).into_iter())
                 .map(|(row, change)| (row, Some(Choice::Alert(change))))
+                .collect(),
+            Kind::Write(pick) => (crate::writes::rows(self, pick, q).into_iter())
+                .map(|(row, chosen)| (row, chosen.map(Choice::Write)))
                 .collect(),
         }
     }
@@ -617,6 +626,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
         Choice::Edit(_) => Vec::new(),
         Choice::Project(chosen) => crate::projects::choose(state, chosen),
         Choice::Alert(change) => crate::security::choose(state, change),
+        Choice::Write(chosen) => crate::writes::choose(state, chosen),
     }
 }
 

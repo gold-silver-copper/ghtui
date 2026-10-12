@@ -35,7 +35,10 @@ ghtui is pre-release, but it's usable every day.
   where GitHub lets you), titles, reactions, and an issue's or pull
   request's labels, assignees, reviewers and milestone.
 - **Creating**: open issues (from the repository's templates) and pull
-  requests, and check a pull request out in your clone.
+  requests, and check a pull request out in your clone; make releases,
+  write gists and wiki pages.
+- **Notifications you choose**: subscribe to a thread or ignore it, and
+  set how you watch a repository.
 
 Not there yet: code navigation with a language server's precision, and
 structural diffs.
@@ -81,12 +84,16 @@ logged, written to disk, or put on a command line. Reading needs read
 access. Acting needs write access where you act (with a
 classic token, the `repo` scope covers it all, but projects: reading them
 takes `read:project` and changing them `project`, which `gh auth refresh
--s project` adds). The Security tab's alerts take `security_events` (or
+-s project` adds; gists take `gist`, which gh asks for; subscribing to a
+thread takes `notifications`, which `gh auth refresh -s notifications`
+adds). The Security tab's alerts take `security_events` (or
 `repo`) with a classic token, and a fine-grained token's Dependabot, Code
 scanning or Secret scanning alerts permission; GitHub shows them only to
 people with write access (secrets: admins) and security managers. Where
 something's missing, the page says what, and the `gh auth refresh`
 command that adds a scope.
+A wiki is pushed with the git credentials ghtui uses for its
+clones.
 
 ## A short tour
 
@@ -248,6 +255,36 @@ GitHub doesn't have, or has behind yours, says so, and `,P` pushes it
 with your own `git push` after asking. `,s` asks whether it's a draft,
 then creates it.
 
+**A new release** (`,V` from a repository's pages) starts, as on GitHub,
+with its tag: one GitHub has, or a new one, which GitHub makes when the
+release is published, at the default branch or the branch or commit you
+choose. ghtui asks GitHub about the tag first, and says when it has a
+release already. The composer takes the title (the first line) and the
+notes; "Generate release notes" has GitHub write them from the pull
+requests since the last release. Pre-release and latest are rows to
+toggle. `,s` asks whether to publish it or save a draft, then the
+release's page (a draft's: the releases) opens and follows GitHub until
+it shows it.
+
+**Gists**: `,G` writes a new one, file by file in the composer, with a
+description; `,s` asks whether it's secret or public, as GitHub's two
+buttons do. On your own gist, `,e` opens it as the same form (rename,
+add or remove files; only what changed is sent) and `,D` deletes it
+after asking.
+
+**A wiki** is a git repository, and ghtui writes it with git: `,e` on a
+page opens it in the composer (or `$EDITOR`), `,W` writes a new one
+(its title on the first line). Saving commits the page in the wiki's
+clone in ghtui's cache, on the wiki's latest commit, and pushes it with
+the git credentials ghtui uses. If the page changed on GitHub since you
+opened it, nothing is overwritten: saving says so and keeps your text.
+
+**Subscriptions**: `,w` on an issue, a pull request or a discussion (or
+its row in a list, your inbox included) subscribes to it, unsubscribes
+or ignores it; anywhere else in a repository it sets how you watch the
+repository (participating and @mentions, all activity, or ignore). The
+current choice is marked.
+
 **Checking out** a pull request (`,c` on it or its row), inside a clone
 of its repository, fetches its head and switches to a branch for it: its
 own branch's name (tracking it), or `owner/branch` for a fork's. It
@@ -305,7 +342,11 @@ says where it works.
   assignees, `,q` asks for reviews and `,M` sets its milestone.
 - New things wait behind `,` as well: `,i` writes a new issue and `,p` a
   new pull request, which `,s` creates (and `,P` pushes its branch
-  first); `,c` checks a pull request out in your clone.
+  first); `,c` checks a pull request out in your clone. `,V` makes a
+  release, `,G` a gist and `,W` a wiki page; `,s` makes or saves each,
+  and `,e` and `,D` edit a wiki page or your gist and delete your gist.
+- `,w` subscribes to a thread or ignores it, or sets how you watch the
+  repository.
 - `q` closes the view: back a page, or the tab when there's nothing to go
   back to. `ZZ`, `:q` in the palette, or `ctrl-c` quits; `ctrl-c` also
   works in the comment editor, asking before it throws away your text.
@@ -388,10 +429,11 @@ says where it works.
 | `,u`                 | Update the branch from its base |
 | `,x`                 | Close or reopen (an alert: dismiss it); on a running run, cancel it |
 | `,R`                 | Re-run the workflow run or job |
-| `,e`                 | Edit the comment or description |
-| `,D`                 | Delete the comment |
+| `,e`                 | Edit the comment or description (a wiki page, your gist) |
+| `,D`                 | Delete the comment (your gist) |
 | `,+`                 | React to the comment, issue or pull request |
 | `,c`                 | Check out the pull request in your clone |
+| `,w`                 | Subscribe to or ignore the thread; watch the repository |
 | `del`                | Delete the selection (a draft comment, a Home section) |
 | `ctrl-z`             | Bring back what was just deleted |
 | `ZZ` `ctrl-c`        | Quit |
@@ -415,9 +457,12 @@ says where it works.
 | `,M`    | Set the milestone |
 | `,i`    | New issue |
 | `,p`    | New pull request |
-| `,s`    | Create the issue or pull request |
+| `,s`    | Create or save the form: an issue, a pull request, a release, a gist, a wiki page |
 | `,P`    | Push the branch to GitHub |
 | `,!`    | Mark the comment as the discussion's answer, or unmark it |
+| `,V`    | New release |
+| `,G`    | New gist |
+| `,W`    | New wiki page |
 | `B`     | Switch branches or tags |
 | `i`     | Follow a link by its letters |
 | `I`     | Follow a link, in the browser |
@@ -621,6 +666,12 @@ page into a download, and the API answers past them, saying which:
   and 1 for the walk that finds each entry's latest commit, the rest of
   which GitHub finds), then the API answers while git carries on.
 
+**Wikis are git repositories**, and ghtui reads and writes them as such:
+a page is read from the wiki's clone in the cache, at the commit it was
+fetched at, and saved as a commit on the wiki's latest, made without a
+working tree and pushed as a fast-forward, so a page changed meanwhile
+is never overwritten.
+
 **Fast from the cache.** The first paint comes from a local cache (redb),
 then everything is refreshed in the background. REST requests revalidate
 with ETags (and `Last-Modified`), so unchanged data costs nothing against
@@ -774,6 +825,19 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   `createPullRequest` doesn't take them), and a fork's branch is proposed
   only from a clone that's on it. Of several pull request templates, the
   first is used.
+- A wiki without pages has no git repository yet: GitHub makes it with
+  the first page, which has to be made on github.com. A wiki page can't
+  be renamed or deleted here, and its commit message is GitHub's own
+  ("Updated Home (markdown)").
+- GitHub's API can't change whether a gist is public: a secret gist is
+  made public on github.com. A gist file over GitHub's size limit for
+  its API can't be changed here.
+- A repository's custom watch settings (only releases, issues…) and a
+  thread's custom events can only be set on github.com; `,w` offers
+  participating, all activity and ignore. A release's assets aren't
+  uploaded, and a release can't be edited or deleted here. A new tag is
+  made by GitHub when the release is published; a tag only in your clone
+  has to be pushed first.
 - An issue form's dropdowns become a comment listing their options, to
   answer in your own words; its validations aren't checked.
 - Security alerts are listed newest first, 30 at a time, without counts

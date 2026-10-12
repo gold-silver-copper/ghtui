@@ -112,6 +112,8 @@ pub enum Msg {
     ),
     /// New issues and pull requests, and checking one out.
     Create(crate::create::Done),
+    /// Releases, gists, wiki pages and subscriptions.
+    Write(crate::writes::Done),
 }
 
 /// Why background work failed. Shows as its message with its causes
@@ -196,6 +198,9 @@ pub enum Cmd {
     /// Making an issue or pull request, or git work in your clone;
     /// answered by [`Msg::Create`].
     Create(crate::create::Work),
+    /// A release, a gist, a wiki page or a subscription; answered by
+    /// [`Msg::Write`].
+    Write(crate::writes::Work),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -365,6 +370,15 @@ impl Screens {
         self.rest.push(screen);
     }
 
+    /// The screen under the last, if there's one.
+    pub fn below(&self) -> Option<&Screen> {
+        match self.rest.len() {
+            0 => None,
+            1 => Some(&self.first),
+            n => self.rest.get(n - 2),
+        }
+    }
+
     /// The last screen, unless it's the first.
     pub fn pop(&mut self) -> Option<Screen> {
         self.rest.pop()
@@ -474,6 +488,9 @@ pub struct State {
     pub mentionable: HashMap<crate::api::model::RepoId, crate::api::mention::Mentionable>,
     /// New issues and pull requests being written, and your clones.
     pub creating: crate::create::Creating,
+    /// Releases, gists and wiki pages being written, and the change one
+    /// waits to see.
+    pub writing: crate::writes::Writing,
     pub quit: bool,
 }
 
@@ -521,6 +538,7 @@ impl State {
             focused: true,
             mentionable: HashMap::new(),
             creating: crate::create::Creating::default(),
+            writing: crate::writes::Writing::default(),
             quit: false,
         };
         state.sync_page();

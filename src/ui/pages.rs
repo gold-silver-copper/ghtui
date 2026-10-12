@@ -43,6 +43,7 @@ mod repository;
 mod review;
 mod runs;
 mod security;
+mod writes;
 
 pub use commits::*;
 pub use conversation::*;
@@ -59,6 +60,7 @@ pub use repository::*;
 pub use review::*;
 pub use runs::*;
 pub use security::*;
+pub use writes::*;
 
 // ---- URLs ----------------------------------------------------------------------
 

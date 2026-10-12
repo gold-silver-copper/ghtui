@@ -213,10 +213,11 @@ actions! {
     UpdateBranch      "update_branch"     [",u"]                   Global "Update the branch from its base";
     Close             "close"             [",x"]                   Global "Close or reopen (an alert: dismiss it); on a running run, cancel it";
     Rerun             "rerun"             [",R"]                   Global "Re-run the workflow run or job";
-    EditComment       "edit"              [",e"]                   Global "Edit the comment or description";
-    DeleteComment     "delete_comment"    [",D"]                   Global "Delete the comment";
+    EditComment       "edit"              [",e"]                   Global "Edit the comment or description (a wiki page, your gist)";
+    DeleteComment     "delete_comment"    [",D"]                   Global "Delete the comment (your gist)";
     React             "react"             [",+"]                   Global "React to the comment, issue or pull request";
     Checkout          "checkout"          [",c"]                   Global "Check out the pull request in your clone";
+    Watch             "watch"             [",w"]                   Global "Subscribe to or ignore the thread; watch the repository";
     Delete            "delete"            ["<Delete>"]             Global "Delete the selection (a draft comment, a Home section)";
     UndoDelete        "undo_delete"       ["<C-z>"]                Global "Bring back what was just deleted";
     Quit              "quit"              ["ZZ", "<C-c>"]          Global "Quit";
@@ -236,9 +237,12 @@ actions! {
     EditMilestone     "edit_milestone"    [",M"]                   Page   "Set the milestone";
     NewIssue          "new_issue"         [",i"]                   Page   "New issue";
     NewPr             "new_pull_request"  [",p"]                   Page   "New pull request";
-    Create            "create"            [",s"]                   Page   "Create the issue or pull request";
+    Create            "create"            [",s"]                   Page   "Create or save the form: an issue, a pull request, a release, a gist, a wiki page";
     PushBranch        "push_branch"       [",P"]                   Page   "Push the branch to GitHub";
     MarkAnswer        "mark_answer"       [",!"]                   Page   "Mark the comment as the discussion's answer, or unmark it";
+    NewRelease        "new_release"       [",V"]                   Page   "New release";
+    NewGist           "new_gist"          [",G"]                   Page   "New gist";
+    NewWikiPage       "new_wiki_page"     [",W"]                   Page   "New wiki page";
     Branch            "branch"            ["B"]                    Page   "Switch branches or tags";
     Hints             "hints"             ["i", "diff:i"]          Page   "Follow a link by its letters";
     HintsBrowser      "hints_browser"     ["I", "diff:I"]          Page   "Follow a link, in the browser";

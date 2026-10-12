@@ -730,6 +730,8 @@ pub fn wiki() -> WikiPage {
         markdown: true,
         pages: vec!["FAQ".into(), "Getting started".into(), "Home".into()],
         sidebar: Some("**[Home](Home)** · [FAQ](FAQ)".into()),
+        commit: Some("4b7d0c2e9a1f3d5b6c8e0a2b4d6f8a0c2e4b6d8f".into()),
+        file: Some("Home.md".into()),
     }
 }
 fn label(name: &str, color: &str) -> Label {
@@ -1837,5 +1839,14 @@ pub fn project() -> crate::api::project::Project {
             }],
             next: None,
         },
+    }
+}
+
+/// Your subscription to a thread: notified of everything.
+pub fn subscription() -> crate::api::watch::Subscription {
+    crate::api::watch::Subscription {
+        id: NodeId::new("I_sub"),
+        state: Some(crate::api::watch::SubscriptionState::Subscribed),
+        can: true,
     }
 }

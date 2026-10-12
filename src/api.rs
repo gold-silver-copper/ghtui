@@ -11,6 +11,7 @@ pub mod discussion;
 pub mod edit;
 #[doc(hidden)]
 pub mod fuzz;
+pub mod gist;
 pub mod mention;
 pub mod model;
 pub mod notifications;
@@ -22,6 +23,8 @@ mod query_check;
 pub mod rate_limit;
 mod raw;
 pub mod security;
+pub mod release;
+pub mod watch;
 
 pub use crate::store::Cached;
 pub use client::{ApiError, GitHub, Polled};

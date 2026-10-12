@@ -218,6 +218,20 @@ pub enum Route {
         view: Option<u64>,
         item: u64,
     },
+    /// A new release's form.
+    NewRelease(RepoId),
+    /// A new gist's form.
+    NewGist,
+    /// The form changing one of your gists.
+    EditGist {
+        owner: String,
+        id: String,
+    },
+    /// The form writing a wiki page (a new one without `page`).
+    WikiEdit {
+        repo: RepoId,
+        page: Option<String>,
+    },
 }
 
 /// The pages at a revision.
@@ -515,6 +529,17 @@ impl Route {
             }
             Route::NewIssue(repo) => format!("{}/issues/new", links::repo(repo)),
             Route::NewPr(repo) => format!("{}/compare", links::repo(repo)),
+            Route::NewRelease(repo) => format!("{}/releases/new", links::repo(repo)),
+            Route::NewGist => format!("{}/", links::gists()),
+            Route::EditGist { owner, id } => format!("{}/{owner}/{id}/edit", links::gists()),
+            Route::WikiEdit { repo, page } => match page {
+                Some(page) => format!(
+                    "{}/wiki/{}/_edit",
+                    links::repo(repo),
+                    links::encode_path(page)
+                ),
+                None => format!("{}/wiki/_new", links::repo(repo)),
+            },
             Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
             Route::Commit {
                 repo,
@@ -619,6 +644,14 @@ impl Route {
             Route::Milestone { repo, number } => format!("{repo} · Milestone {number}"),
             Route::NewIssue(repo) => format!("{repo} · New issue"),
             Route::NewPr(repo) => format!("{repo} · New pull request"),
+            Route::NewRelease(repo) => format!("{repo} · New release"),
+            Route::NewGist => "New gist".to_owned(),
+            Route::EditGist { id, .. } => format!("Editing gist {}", id.get(..7).unwrap_or(id)),
+            Route::WikiEdit { repo, page: None } => format!("{repo} · New wiki page"),
+            Route::WikiEdit {
+                repo,
+                page: Some(page),
+            } => format!("{repo} · Editing {page}"),
             Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
             Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
             Route::Commit { repo, oid, .. } => format!("{repo}@{}", short_sha(oid)),
@@ -683,6 +716,8 @@ impl Route {
             | Route::Milestone { repo, .. }
             | Route::NewIssue(repo)
             | Route::NewPr(repo)
+            | Route::NewRelease(repo)
+            | Route::WikiEdit { repo, .. }
             | Route::Projects(ProjectsOf::Repo(repo))
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
@@ -695,6 +730,8 @@ impl Route {
             | Route::Notifications { .. }
             | Route::Gist { .. }
             | Route::Gists(_)
+            | Route::NewGist
+            | Route::EditGist { .. }
             | Route::Teams(_)
             | Route::Team { .. }
             | Route::Advisories(None)
@@ -1085,11 +1122,17 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             repo,
             tag: tag.join("/"),
         },
-        // The network graph is a picture. Assets are downloads; writing
-        // wiki pages, and the form for a new advisory, are on GitHub.
+        ["releases", "new"] => Route::NewRelease(repo),
+        ["wiki", "_new"] => Route::WikiEdit { repo, page: None },
+        ["wiki", page, "_edit"] if !page.contains(char::is_control) => Route::WikiEdit {
+            repo,
+            page: Some((*page).to_owned()),
+        },
+        // The network graph is a picture. Assets are downloads; a wiki's
+        // comparisons, and the form for a new advisory, are on GitHub.
         ["network"]
         | ["releases", "download", ..]
-        | ["wiki", .., "_new" | "_edit" | "_compare"]
+        | ["wiki", .., "_compare"]
         | ["security", "advisories", "new"] => return None,
         // A wiki's own pages but its list (history, comparisons).
         ["wiki", special, ..] if special.starts_with('_') && *special != "_pages" => return None,
@@ -1317,7 +1360,13 @@ fn is_lone_gist_id(s: &str) -> bool {
 fn gist<'a>(segments: impl Iterator<Item = &'a str>) -> Option<Route> {
     let segments: Vec<&str> = segments.filter(|s| !s.is_empty()).collect();
     Some(match segments.as_slice() {
+        // The gist website's front page is the form for a new gist.
+        [] => Route::NewGist,
         [first, ..] if GIST_PAGES.contains(first) => return None,
+        [owner, id, "edit"] if is_gist_id(id) && valid_login(owner) => Route::EditGist {
+            owner: (*owner).to_owned(),
+            id: (*id).to_owned(),
+        },
         [id] if is_lone_gist_id(id) => Route::Gist {
             owner: None,
             id: (*id).to_owned(),
@@ -2578,6 +2627,15 @@ pub(crate) mod tests {
                 repo().prop_map(Route::Branches),
                 repo().prop_map(Route::NewIssue),
                 repo().prop_map(Route::NewPr),
+                repo().prop_map(Route::NewRelease),
+                Just(Route::NewGist),
+                (login(), "[0-9a-f]{20}")
+                    .prop_filter("an owner isn't a gist ID or a gist page", |(o, _)| {
+                        !is_gist_id(o) && !GIST_PAGES.contains(&o.as_str())
+                    })
+                    .prop_map(|(owner, id)| Route::EditGist { owner, id }),
+                (repo(), prop::option::of("[A-Za-z0-9][A-Za-z0-9 _-]{0,15}"))
+                    .prop_map(|(repo, page)| Route::WikiEdit { repo, page }),
                 (repo(), 1..u64::MAX, prop::option::of(1..100u64))
                     .prop_map(|(repo, run, attempt)| Route::WorkflowRun { repo, run, attempt }),
                 (

@@ -386,6 +386,27 @@ impl Repo {
         self.run(&["cat-file", "blob", &format!("{rev}:{path}")])
             .await
     }
+    /// Runs git here with this repository's credentials, `env` set and
+    /// `input` on its stdin: for what the methods here don't cover (a
+    /// wiki's commits, [`crate::wiki`]).
+    pub(crate) async fn git(
+        &self,
+        args: &[&str],
+        env: &[(&str, &str)],
+        input: Option<String>,
+    ) -> Result<String, GitError> {
+        let mut cmd = self.cmd();
+        cmd.args(args);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        let what = args.join(" ");
+        match input {
+            Some(input) => run_with_stdin(cmd, &what, input).await,
+            None => stdout(&cmd.output().await?, &what),
+        }
+    }
+
     /// Makes sure a commit is here, fetching it by SHA if it isn't (e.g. a
     /// head that was force-pushed away). GitHub serves commits it still has
     /// even when no ref points at them.

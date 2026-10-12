@@ -384,6 +384,11 @@ fn typed() -> Vec<(&'static str, String)> {
         Mutation e::SetPrMilestone, e::MilestoneVariables;
         Mutation crate::api::create::CreateIssue, crate::api::create::CreateIssueVariables;
         Mutation crate::api::create::CreatePr, crate::api::create::CreatePrVariables;
+        Query crate::api::watch::RepoWatchQuery, crate::api::watch::RepoNameVariables;
+        Query crate::api::watch::ThreadWatchQuery, q::NumberVariables;
+        Query crate::api::watch::DiscussionWatchQuery, q::NumberVariables;
+        Mutation crate::api::watch::UpdateSubscription, crate::api::watch::SubscribeVariables;
+        Query crate::api::release::TagQuery, crate::api::release::TagVariables;
     }
 }
 
@@ -464,6 +469,8 @@ fn every_query_is_checked() {
         include_str!("change.rs"),
         include_str!("edit.rs"),
         include_str!("create.rs"),
+        include_str!("watch.rs"),
+        include_str!("release.rs"),
     ]
     .concat();
     let operations = source.matches("graphql_type = \"Query\"").count()

@@ -3076,3 +3076,197 @@ async fn alerts_are_dismissed_and_reopened() {
     );
     assert_eq!(sent[2].1, serde_json::json!({"state": "open"}));
 }
+
+// ---- releases, gists and subscriptions ------------------------------------------------
+
+/// A release is made with its tag, target, title and notes, and whether
+/// it's a draft, a pre-release or the latest; a pre-release is never the
+/// latest. GitHub's notes are asked for the tag; a 422 says what's wrong.
+#[tokio::test]
+async fn a_release_is_made_as_written() {
+    use ghtui::api::release::NewRelease;
+    let made = r#"{"tag_name":"v1.2","draft":false,"html_url":"https://github.com/o/r/releases/tag/v1.2"}"#;
+    let notes = r###"{"name":"v1.2","body":"## What's Changed\n* Fix by @a"}"###;
+    let taken = r#"{"message":"Validation Failed","errors":[{"resource":"Release","code":"already_exists","field":"tag_name"}]}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(201, made),
+        Reply::new(200, notes),
+        Reply::new(422, taken),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let new = NewRelease {
+        repo: repo.clone(),
+        tag: "v1.2".into(),
+        target: Some("main".into()),
+        name: "Version 1.2".into(),
+        notes: "Fixes".into(),
+        draft: false,
+        prerelease: true,
+        latest: true,
+    };
+    let made = gh.create_release(&new).await.unwrap();
+    assert!(!made.draft);
+    let notes = gh.release_notes(&repo, "v1.2", None).await.unwrap();
+    assert!(notes.body.starts_with("## What's Changed"));
+    match gh.create_release(&new).await {
+        Err(ApiError::Http {
+            status: 422,
+            message,
+        }) => {
+            assert_eq!(message, "tag_name already exists");
+        }
+        other => panic!("{other:?}"),
+    }
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("POST /repos/o/r/releases ")
+    );
+    let body = seen[0].json();
+    assert_eq!(body["tag_name"], "v1.2");
+    assert_eq!(body["target_commitish"], "main");
+    assert_eq!(body["name"], "Version 1.2");
+    assert_eq!(body["body"], "Fixes");
+    assert_eq!(body["draft"], false);
+    assert_eq!(body["prerelease"], true);
+    assert_eq!(body["make_latest"], "false");
+    assert!(
+        seen[1]
+            .request_line
+            .starts_with("POST /repos/o/r/releases/generate-notes ")
+    );
+    assert_eq!(seen[1].json(), serde_json::json!({ "tag_name": "v1.2" }));
+}
+
+/// A gist is made with its files and visibility; an edit sends only what
+/// changed (a removed file as null); deleting deletes it.
+#[tokio::test]
+async fn gists_are_made_changed_and_deleted() {
+    use ghtui::api::gist::{FileChange, GistChange, NewGist};
+    let made = r#"{"id":"aa5a315d61ae9438b18d","owner":{"login":"octocat"}}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(201, made),
+        Reply::new(200, made),
+        Reply::new(204, ""),
+    ])
+    .await;
+    let new = NewGist {
+        description: "Notes".into(),
+        public: false,
+        files: vec![("a.md".into(), "# A".into())],
+    };
+    let made = gh.create_gist(&new).await.unwrap();
+    assert_eq!(made.id, "aa5a315d61ae9438b18d");
+    let change = GistChange {
+        id: made.id.clone(),
+        description: "More notes".into(),
+        changed: vec![
+            FileChange {
+                was: "a.md".into(),
+                now: Some(("b.md".into(), "# B".into())),
+            },
+            FileChange {
+                was: "old.txt".into(),
+                now: None,
+            },
+        ],
+        added: vec![("c.rs".into(), "fn c() {}".into())],
+    };
+    gh.update_gist(&change).await.unwrap();
+    gh.delete_gist(&made.id).await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].request_line.starts_with("POST /gists "));
+    assert_eq!(
+        seen[0].json(),
+        serde_json::json!({
+            "description": "Notes",
+            "public": false,
+            "files": { "a.md": { "content": "# A" } },
+        })
+    );
+    assert!(
+        seen[1]
+            .request_line
+            .starts_with("PATCH /gists/aa5a315d61ae9438b18d ")
+    );
+    assert_eq!(
+        seen[1].json(),
+        serde_json::json!({
+            "description": "More notes",
+            "files": {
+                "a.md": { "filename": "b.md", "content": "# B" },
+                "old.txt": null,
+                "c.rs": { "content": "fn c() {}" },
+            },
+        })
+    );
+    assert!(
+        seen[2]
+            .request_line
+            .starts_with("DELETE /gists/aa5a315d61ae9438b18d ")
+    );
+}
+
+/// A thread's subscription is read from the issue or pull request, a
+/// repository's from it, and set with GitHub's one mutation.
+#[tokio::test]
+async fn subscriptions_are_read_and_set() {
+    use ghtui::api::watch::{SubscriptionState, Watched};
+    let thread = r#"{"data":{"repository":{"issueOrPullRequest":{"__typename":"PullRequest","id":"PR_1","viewerSubscription":"UNSUBSCRIBED","viewerCanSubscribe":true}}}}"#;
+    let repo = r#"{"data":{"repository":{"id":"R_1","viewerSubscription":"SUBSCRIBED","viewerCanSubscribe":true}}}"#;
+    let set = r#"{"data":{"updateSubscription":{"clientMutationId":null}}}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, thread),
+        Reply::new(200, repo),
+        Reply::new(200, set),
+        Reply::new(200, "{}"),
+        Reply::new(204, ""),
+    ])
+    .await;
+    let o_r = RepoId::new("o", "r");
+    let pr = Watched::Thread(o_r.clone(), 7);
+    let s = gh.subscription(&pr).await.unwrap();
+    assert_eq!(s.id, NodeId::new("PR_1"));
+    assert_eq!(s.state, Some(SubscriptionState::Unsubscribed));
+    let whole = Watched::Repo(o_r);
+    let s = gh.subscription(&whole).await.unwrap();
+    assert_eq!(s.state, Some(SubscriptionState::Subscribed));
+    gh.subscribe(&pr, &NodeId::new("PR_1"), SubscriptionState::Ignored)
+        .await
+        .unwrap();
+    // A repository's, through REST, which the repo scope allows.
+    let id = NodeId::new("R_1");
+    gh.subscribe(&whole, &id, SubscriptionState::Ignored)
+        .await
+        .unwrap();
+    gh.subscribe(&whole, &id, SubscriptionState::Unsubscribed)
+        .await
+        .unwrap();
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[3]
+            .request_line
+            .starts_with("PUT /repos/o/r/subscription ")
+    );
+    assert_eq!(
+        seen[3].json(),
+        serde_json::json!({ "subscribed": false, "ignored": true })
+    );
+    assert!(
+        seen[4]
+            .request_line
+            .starts_with("DELETE /repos/o/r/subscription ")
+    );
+    assert!(
+        seen[0]
+            .query()
+            .contains("issueOrPullRequest(number: $number)")
+    );
+    assert_eq!(seen[0].json()["variables"]["number"], 7);
+    assert!(!seen[1].query().contains("$number"));
+    assert!(seen[2].query().contains("updateSubscription"));
+    assert_eq!(seen[2].json()["variables"]["id"], "PR_1");
+    assert_eq!(seen[2].json()["variables"]["state"], "IGNORED");
+}

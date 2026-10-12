@@ -3583,6 +3583,10 @@ pub struct WikiPage {
     /// Every page's title, in order.
     pub pages: Vec<String>,
     pub sidebar: Option<String>,
+    /// The commit it was read at, and the page's file there: what an
+    /// edit is made on.
+    pub commit: Option<String>,
+    pub file: Option<String>,
 }
 // ---- search: discussions, commits, code -------------------------------------------------------
 

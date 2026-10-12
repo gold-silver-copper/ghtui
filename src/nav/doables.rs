@@ -133,6 +133,7 @@ impl State {
         }
         out.extend(crate::edit::doables(self));
         out.extend(crate::create::checkout_doable(self));
+        out.extend(crate::writes::change_doables(self));
         let go = |action, label: &str, short| doable("Go", action, label, short);
         out.push(go(
             Action::SearchGithub,
@@ -253,6 +254,9 @@ impl State {
                 // A new issue's or pull request's text box.
                 Some(Link::Comment) if matches!(route, Route::NewIssue(_) | Route::NewPr(_)) => {
                     open.label = "Write the title and description".into();
+                }
+                Some(Link::Comment) if crate::writes::is_form(route) => {
+                    open.label = "Write it in the composer".into();
                 }
                 Some(link) => open.label = describe(link),
                 None => open.unavailable = Some("nothing is selected".into()),
@@ -395,6 +399,7 @@ impl State {
             out.push(here(Action::Tab4, "Files changed (review)", ""));
         }
         crate::create::doables(self, route, out);
+        crate::writes::page_doables(self, route, out);
     }
 
     /// After a count or the first keys of a sequence: what's typed, and
@@ -645,5 +650,6 @@ pub(super) fn describe(link: &Link) -> String {
         Link::Quote { .. } => "Quote reply".into(),
         Link::Section(_) => "Open the section's list".into(),
         Link::Form(link) => crate::create::describe(link).into(),
+        Link::Write(link) => crate::writes::describe(link).into(),
     }
 }

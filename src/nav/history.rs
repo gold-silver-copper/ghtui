@@ -134,6 +134,7 @@ impl State {
             Link::FindFile => self.open_finder(false),
             Link::Section(i) => self.open_section(*i),
             Link::Form(link) => crate::create::follow_link(self, link),
+            Link::Write(link) => crate::writes::follow_link(self, link),
             Link::State(state) => set_list_state(self, state),
             // Enter on a comment doesn't start writing: `>` does.
             Link::Quote { .. } => {
@@ -230,7 +231,7 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             of: DiscussionsOf::Org(org),
             ..
         } => Route::user(org),
-        Route::Release { repo, .. } => Route::Releases(repo.clone()),
+        Route::Release { repo, .. } | Route::NewRelease(repo) => Route::Releases(repo.clone()),
         Route::NewIssue(repo) => Route::Issues {
             repo: repo.clone(),
             query: crate::route::OPEN.to_owned(),
@@ -287,6 +288,15 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
         },
         Route::User { .. } | Route::Search { .. } | Route::Notifications { .. } => Route::Home,
         Route::Gist { owner, .. } => Route::Gists(owner.clone()?),
+        Route::NewGist => Route::Gists(state.viewer.clone()?),
+        Route::EditGist { owner, id } => Route::Gist {
+            owner: Some(owner.clone()),
+            id: id.clone(),
+        },
+        Route::WikiEdit { repo, page } => Route::Wiki {
+            repo: repo.clone(),
+            page: page.clone(),
+        },
         Route::Gists(login) | Route::Teams(login) => Route::user(login),
         Route::Team { org, .. } => Route::Teams(org.clone()),
         Route::Wiki {

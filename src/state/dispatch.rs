@@ -24,6 +24,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
             | Msg::Source(..)
             | Msg::Changed(..)
             | Msg::Create(_)
+            | Msg::Write(_)
     );
     if data {
         state.data_gen += 1;
@@ -32,6 +33,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     let wrote = match &msg {
         Msg::Changed(_, _, r) => r.is_ok(),
         Msg::Create(crate::create::Done::Created(_, r)) => r.is_ok(),
+        Msg::Write(done) => done.wrote(),
         // Drafts GitHub accepted wait in a pending review there.
         Msg::Diff(_, DiffMsg::ReviewSubmitted(o)) => o.error.is_none() || !o.accepted.is_empty(),
         _ => false,
@@ -56,6 +58,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     if data {
         cmds.extend(act::follow(state));
         cmds.extend(crate::create::follow(state));
+        cmds.extend(crate::writes::follow(state));
     }
     cmds
 }
@@ -69,7 +72,8 @@ pub fn timers(state: &mut State) -> Vec<Cmd> {
         state.spinning = true;
         cmds.push(Cmd::Timer(Timer::Spin, 90));
     }
-    if !state.live && (!state.running_here().is_empty() || act::awaiting_here(state).is_some()) {
+    let awaiting = act::awaiting_here(state).is_some() || crate::writes::awaiting(state);
+    if !state.live && (!state.running_here().is_empty() || awaiting) {
         state.live = true;
         cmds.push(Cmd::Timer(Timer::Live, LIVE_MS));
     }
@@ -90,6 +94,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Diff(of, msg) => return diff_screen::update(state, &of, msg),
         Msg::Create(done) => return crate::create::on_done(state, done),
+        Msg::Write(done) => return crate::writes::on_done(state, done),
         Msg::Key(key) => return on_key(state, key),
         Msg::Resize(w, h) => state.size = (w, h),
         Msg::Viewer(Ok(login)) => state.viewer = Some(login),
@@ -182,6 +187,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             let mut cmds = Vec::new();
             let mut needs = state.running_here();
             needs.extend(act::poll(state));
+            needs.extend(crate::writes::poll(state));
             for need in needs {
                 cmds.extend(state.ensure(need, true));
             }
@@ -454,6 +460,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         // A discussion's and a project's own ways to write and edit.
         _ if crate::discuss::takes(state, action) => return crate::discuss::act(state, action),
         _ if crate::projects::takes(state, action) => return crate::projects::act(state, action),
+        _ if crate::writes::claims(state, action) => return crate::writes::act(state, action),
         _ if crate::edit::ACTIONS.contains(&action) => return crate::edit::act(state, action),
         Action::NewIssue
         | Action::NewPr

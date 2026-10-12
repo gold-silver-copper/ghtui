@@ -53,6 +53,30 @@ pub enum Link {
     },
     /// One of a new issue's or pull request's rows.
     Form(FormLink),
+    /// One of a release's, a gist's or a wiki page's form's rows.
+    Write(WriteLink),
+}
+
+/// What a row of a release's, a gist's or a wiki page's form does
+/// ([`crate::writes`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum WriteLink {
+    /// Choose the release's tag.
+    Tag,
+    /// Choose what a new tag is made at.
+    Target,
+    /// Have GitHub write the release notes.
+    Notes,
+    Prerelease,
+    Latest,
+    /// The gist's description.
+    Description,
+    /// Write the gist's file at this place.
+    File(usize),
+    Rename(usize),
+    Remove(usize),
+    AddFile,
+    Save,
 }
 
 /// What a row of a new issue's or pull request's form does.

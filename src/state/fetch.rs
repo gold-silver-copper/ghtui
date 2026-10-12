@@ -230,7 +230,7 @@ impl State {
 
     /// What's loading on the visible screen, for the status bar.
     pub fn busy(&self) -> Option<String> {
-        if let Some(waiting) = act::waiting(self) {
+        if let Some(waiting) = act::waiting(self).or_else(|| crate::writes::waiting(self)) {
             return Some(waiting);
         }
         match self.screen() {

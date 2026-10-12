@@ -214,6 +214,14 @@ impl Effects {
                     let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
                 });
             }
+            Cmd::Write(work) => {
+                let (gh, git) = (self.gh.clone(), self.git.clone());
+                spawn_guarded(&self.tx, replies, |tx| async move {
+                    let done = work.run(&gh, &git).await;
+                    let _ = tx.send(Msg::Write(done));
+                    let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
+                });
+            }
             Cmd::LoadReview(pr) => self.load_review(pr, replies),
             Cmd::SaveReview(pr, review) => {
                 let _ = self.save_review.send((pr, review));
@@ -685,6 +693,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         ),
         Cmd::LoadReview(pr) => Msg::Diff(pr.clone().into(), DiffMsg::ReviewLoaded(git())),
         Cmd::Create(work) => Msg::Create(work.failed()),
+        Cmd::Write(work) => Msg::Write(work.failed()),
         Cmd::EditHome { edit, what, .. } => Msg::HomeEdited {
             edit: edit.clone(),
             result: Err("ghtui hit a bug".into()),
@@ -987,7 +996,8 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         | DataKey::Wiki(..)
         | DataKey::RefIn(..)
         | DataKey::Sidebar(..)
-        | DataKey::NewForm(..) => {
+        | DataKey::NewForm(..)
+        | DataKey::Subscription(..) => {
             return None;
         }
     })
@@ -1085,6 +1095,7 @@ pub(crate) async fn fetch(
         }
         DataKey::Sidebar(repo, number) => Data::Sidebar(Box::new(gh.sidebar(repo, *number).await?)),
         DataKey::NewForm(repo) => Data::NewForm(Box::new(gh.new_form(repo).await?)),
+        DataKey::Subscription(of) => Data::Subscription(Box::new(gh.subscription(of).await?)),
         DataKey::CommitChecks(repo, oid) => {
             Data::Checks(Box::new(gh.commit_checks(repo, oid).await?))
         }

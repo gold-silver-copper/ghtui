@@ -25,6 +25,7 @@ mod discuss;
 mod edit;
 #[cfg(test)]
 mod fixtures;
+mod gist;
 mod home;
 mod join;
 mod keymap;
@@ -33,6 +34,7 @@ mod nav;
 mod notice;
 mod picker;
 mod projects;
+mod release;
 mod review;
 pub mod route;
 mod runtime;
@@ -46,7 +48,9 @@ mod state;
 mod tabs;
 mod typing;
 mod view;
+mod watch;
 pub mod wiki;
+mod writes;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

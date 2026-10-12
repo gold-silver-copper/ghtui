@@ -57,6 +57,9 @@ pub enum ComposeTarget {
     /// A project's draft issue, new or edited ([`crate::projects`]):
     /// its title on the first line, then its text.
     ProjectDraft(crate::projects::Drafting),
+    /// A release's, a gist's or a wiki page's text, on its form's page
+    /// ([`crate::writes`]).
+    Write(crate::writes::Text),
 }
 
 /// A suggested change and what it replaces.
@@ -143,6 +146,7 @@ impl Compose {
             ComposeTarget::Form(_) => {
                 "New issue: its title on the first line, then its description".to_owned()
             }
+            ComposeTarget::Write(_) => "Write".to_owned(),
         }
     }
 }
@@ -167,7 +171,8 @@ pub fn compose_anchor(doc: &Doc, screen: &DiffScreen, target: &ComposeTarget) ->
         | ComposeTarget::Conversation { .. }
         | ComposeTarget::Discussion(_)
         | ComposeTarget::ProjectDraft(_)
-        | ComposeTarget::Form(_) => screen
+        | ComposeTarget::Form(_)
+        | ComposeTarget::Write(_) => screen
             .selection
             .filter(|s| doc.to_global(*s) > doc.to_global(cursor))
             .unwrap_or(cursor),
@@ -357,7 +362,8 @@ pub fn draft(target: &ComposeTarget, body: &str, id: u64, commit: &str) -> Optio
         | ComposeTarget::Edit(_)
         | ComposeTarget::Discussion(_)
         | ComposeTarget::ProjectDraft(_)
-        | ComposeTarget::Form(_) => None,
+        | ComposeTarget::Form(_)
+        | ComposeTarget::Write(_) => None,
     }
 }
 
@@ -954,6 +960,11 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             crate::create::keep_text(state, &route, text);
             state.overlay = None;
         }
+        KeyCode::Esc if let ComposeTarget::Write(target) = &compose.target => {
+            let (target, text) = (target.clone(), compose.text());
+            crate::writes::keep_text(state, &target, text);
+            state.overlay = None;
+        }
         KeyCode::Esc => {
             if may_discard(state, "esc", "discard") {
                 state.overlay = None;
@@ -1005,6 +1016,10 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
     let Some(Overlay::Compose(compose)) = &mut state.overlay else {
         return Vec::new();
     };
+    // A form says itself what it lacks.
+    if let ComposeTarget::Write(_) = compose.target {
+        return crate::writes::save(state);
+    }
     let body = compose.text();
     if body.trim().is_empty() {
         compose.error = Some("Write something first".into());
@@ -1081,7 +1096,8 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
         | ComposeTarget::Edit(_)
         | ComposeTarget::Discussion(_)
         | ComposeTarget::ProjectDraft(_)
-        | ComposeTarget::Form(_) => Vec::new(),
+        | ComposeTarget::Form(_)
+        | ComposeTarget::Write(_) => Vec::new(),
         target @ (ComposeTarget::Line { .. } | ComposeTarget::File { .. }) => {
             let Some(head) = diff.head() else {
                 return Vec::new();

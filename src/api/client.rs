@@ -725,6 +725,19 @@ impl GitHub {
         ))
     }
 
+    /// [`Self::rest_write`], for a change whose answer says what it made
+    /// (a release, a gist).
+    pub(crate) async fn rest_write_json<T: DeserializeOwned>(
+        &self,
+        method: http::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<T, ApiError> {
+        let response = (self.send(&Request::Write { method, path, body })).await?;
+        check_status(&response, path.strip_prefix("/repos/").unwrap_or(path))?;
+        Ok(serde_json::from_str(&response.body)?)
+    }
+
     /// GETs a REST path and decodes its JSON.
     async fn rest_json<T: DeserializeOwned>(
         &self,
@@ -2803,7 +2816,7 @@ fn encode_query(s: &str) -> String {
 }
 
 /// Percent-encodes a ref for a URL path (branch names may contain `/`).
-fn encode_path(s: &str) -> String {
+pub(crate) fn encode_path(s: &str) -> String {
     escape(s, false)
 }
 
@@ -2911,9 +2924,24 @@ fn check_status(response: &Response, what: impl std::fmt::Display) -> Result<(),
         #[serde(default)]
         errors: Vec<Detail>,
     }
+    /// One thing a 422 found wrong: its message, or what and why
+    /// (`tag_name`, `already_exists`).
     #[derive(serde::Deserialize)]
     struct Detail {
         message: Option<String>,
+        field: Option<String>,
+        code: Option<String>,
+    }
+    impl Detail {
+        fn text(self) -> Option<String> {
+            self.message.or_else(|| {
+                let code = self.code?.replace('_', " ");
+                Some(match self.field {
+                    Some(field) => format!("{field} {code}"),
+                    None => code,
+                })
+            })
+        }
     }
     #[derive(serde::Deserialize)]
     struct Block {
@@ -2939,7 +2967,7 @@ fn check_status(response: &Response, what: impl std::fmt::Display) -> Result<(),
     }
     let message = match wire {
         Some(m) => {
-            let details: Vec<String> = m.errors.into_iter().filter_map(|d| d.message).collect();
+            let details: Vec<String> = m.errors.into_iter().filter_map(Detail::text).collect();
             if details.is_empty() {
                 m.message
             } else {

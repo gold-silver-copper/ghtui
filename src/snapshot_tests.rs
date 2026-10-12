@@ -699,3 +699,5 @@ mod security;
 /// Discussions: writing an answer, replying in a thread, reacting and
 /// marking the answer, each followed until GitHub shows it.
 mod discussions;
+/// Releases, gists, wiki pages and subscriptions.
+mod writes;

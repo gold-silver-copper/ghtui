@@ -9,6 +9,8 @@ use crate::git::repo::Repo;
 
 use crate::diff_job::GitContext;
 
+pub(crate) mod form;
+
 /// Where the wiki's latest pages are fetched to.
 const HEAD: &str = "refs/ghtui/wiki";
 
@@ -48,6 +50,21 @@ fn absent(err: &crate::git::GitError) -> bool {
         if stderr.contains("fatal: repository '") && stderr.contains("' not found"))
 }
 
+/// The wiki's clone in the cache, cloned on first use.
+async fn open(git: &GitContext, repo: &RepoId) -> Result<Repo, crate::git::GitError> {
+    let name = format!("{}.wiki", repo.name);
+    let url = crate::host::current().git_url(&repo.owner, &name);
+    Repo::open_cache(
+        &git.cache_root,
+        &repo.owner,
+        &name,
+        &url,
+        git.credentials.clone(),
+        &|_| {},
+    )
+    .await
+}
+
 /// A wiki's page (its Home without one; its list of pages for `_pages`).
 pub async fn page(
     git: &GitContext,
@@ -62,32 +79,39 @@ pub async fn page(
             unread(err)
         }
     };
-    let name = format!("{}.wiki", repo.name);
-    let url = crate::host::current().git_url(&repo.owner, &name);
-    let quiet = |_: String| {};
-    let wiki = Repo::open_cache(
-        &git.cache_root,
-        &repo.owner,
-        &name,
-        &url,
-        git.credentials.clone(),
-        &quiet,
-    )
-    .await
-    .map_err(|e| failed(&e))?;
+    let wiki = open(git, repo).await.map_err(|e| failed(&e))?;
     // Offline, the pages fetched before still read.
-    if let Err(err) = wiki.fetch_head(HEAD, &quiet).await
+    if let Err(err) = wiki.fetch_head(HEAD, &|_| {}).await
         && !wiki.has(HEAD).await
     {
         return Err(failed(&err));
     }
-    let files = wiki.file_names(HEAD).await.map_err(|e| unread(&e))?;
+    read(&wiki, page).await.map_err(|e| match e {
+        Read::Git(err) => unread(&err),
+        Read::NoPage(wanted) => ApiError::NotFound(format!("{repo}'s wiki has no page {wanted}")),
+    })
+}
+
+/// Why a page couldn't be read.
+enum Read {
+    Git(crate::git::GitError),
+    NoPage(String),
+}
+
+impl From<crate::git::GitError> for Read {
+    fn from(err: crate::git::GitError) -> Self {
+        Read::Git(err)
+    }
+}
+
+/// A page of the wiki, as fetched last.
+async fn read(wiki: &Repo, page: Option<&str>) -> Result<WikiPage, Read> {
+    let commit = wiki.rev_parse(HEAD).await?.to_string();
+    let files = wiki.file_names(&commit).await?;
     let pages: Vec<(&str, &str, &String)> = files
         .iter()
         .filter_map(|f| page_file(f).map(|(title, ext)| (title, ext, f)))
         .collect();
-    // Pages are files at any depth, named by their file names.
-    let title_of = |title: &str| title.rsplit('/').next().unwrap_or(title).to_owned();
     let mut titles: Vec<String> = pages
         .iter()
         .map(|(t, _, _)| title_of(t))
@@ -100,7 +124,7 @@ pub async fn page(
             .find(|(t, _, _)| slug(&title_of(t)).eq_ignore_ascii_case(&slug(wanted)))
     };
     let sidebar = match find("_Sidebar") {
-        Some((_, _, path)) => Some(wiki.file_text(HEAD, path).await.map_err(|e| unread(&e))?),
+        Some((_, _, path)) => Some(wiki.file_text(&commit, path).await?),
         None => None,
     };
     let wanted = page.unwrap_or("Home");
@@ -109,19 +133,20 @@ pub async fn page(
     } else {
         find(wanted)
     };
-    let (title, text, markdown) = match found {
+    let (title, text, markdown, file) = match found {
         Some((t, ext, path)) => {
-            let text = wiki.file_text(HEAD, path).await.map_err(|e| unread(&e))?;
+            let text = wiki.file_text(&commit, path).await?;
             let markdown = matches!(ext.to_ascii_lowercase().as_str(), "md" | "markdown");
-            (Some(title_of(t)), Some(text), markdown)
+            (
+                Some(title_of(t)),
+                Some(text),
+                markdown,
+                Some((*path).clone()),
+            )
         }
         // The list of pages, also what a wiki without a Home shows.
-        None if page.is_none() || wanted == "_pages" => (None, None, false),
-        None => {
-            return Err(ApiError::NotFound(format!(
-                "{repo}'s wiki has no page {wanted}"
-            )));
-        }
+        None if page.is_none() || wanted == "_pages" => (None, None, false, None),
+        None => return Err(Read::NoPage(wanted.to_owned())),
     };
     Ok(WikiPage {
         title,
@@ -129,7 +154,198 @@ pub async fn page(
         markdown,
         pages: titles,
         sidebar,
+        commit: Some(commit),
+        file,
     })
+}
+
+/// A page's title from its file's path without the extension: pages are
+/// files at any depth, named by their file names.
+fn title_of(path: &str) -> String {
+    path.rsplit('/').next().unwrap_or(path).to_owned()
+}
+
+// ---- saving a page ------------------------------------------------------------
+
+/// A page to save: a new one (without `file`), or the one at `file` as it
+/// was at `base`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Save {
+    pub repo: RepoId,
+    pub title: String,
+    pub file: Option<String>,
+    pub base: Option<String>,
+    pub text: String,
+    /// Your GitHub login: the commit's author when git has no name for
+    /// you.
+    pub login: Option<String>,
+}
+
+/// Commits a page to the wiki and pushes it, with the git credentials
+/// ghtui uses: its title, as its URL names it.
+pub async fn save(git: &GitContext, save: &Save) -> Result<String, String> {
+    let repo = &save.repo;
+    let wiki = open(git, repo).await.map_err(|err| {
+        if absent(&err) {
+            no_wiki(repo)
+        } else {
+            format!("Couldn't read {repo}'s wiki: {err}")
+        }
+    })?;
+    save_in(&wiki, save).await
+}
+
+/// What saving says when the wiki has no repository yet.
+fn no_wiki(repo: &RepoId) -> String {
+    format!(
+        "{repo}'s wiki has no pages yet, and GitHub makes its git repository only with the first page: create that on github.com"
+    )
+}
+
+/// [`save`], in the wiki's clone.
+async fn save_in(wiki: &Repo, save: &Save) -> Result<String, String> {
+    let repo = &save.repo;
+    let failed = |err: crate::git::GitError| format!("Couldn't save the page: {err}");
+    // Once more if GitHub's wiki moves on between looking and pushing.
+    for attempt in 0..2 {
+        wiki.fetch_head(HEAD, &|_| {}).await.map_err(|err| {
+            if absent(&err) {
+                no_wiki(repo)
+            } else {
+                format!("Couldn't fetch {repo}'s wiki: {err}")
+            }
+        })?;
+        let head = wiki.rev_parse(HEAD).await.map_err(failed)?.to_string();
+        let file = match &save.file {
+            Some(file) => {
+                let changed = match &save.base {
+                    Some(base) if *base != head => {
+                        blob(wiki, base, file).await != blob(wiki, &head, file).await
+                    }
+                    _ => false,
+                };
+                if changed {
+                    return Err(format!(
+                        "{} changed on GitHub since you opened it: saving would overwrite that, so it isn't saved. Your text is kept here; open the page again to see GitHub's",
+                        save.title
+                    ));
+                }
+                file.clone()
+            }
+            None => {
+                let files = wiki.file_names(&head).await.map_err(failed)?;
+                let taken = (files.iter())
+                    .filter_map(|f| page_file(f))
+                    .any(|(t, _)| slug(&title_of(t)).eq_ignore_ascii_case(&slug(&save.title)));
+                if taken {
+                    return Err(format!(
+                        "The wiki has a page named {} already: choose another title",
+                        save.title
+                    ));
+                }
+                format!("{}.md", slug(&save.title))
+            }
+        };
+        let commit = commit(wiki, &head, &file, save).await.map_err(failed)?;
+        let branch = branch(wiki).await;
+        let spec = format!("{commit}:refs/heads/{branch}");
+        let push = ["push", "--quiet", wiki.remote.as_str(), spec.as_str()];
+        match wiki.git(&push, &[], None).await {
+            Ok(_) => {
+                wiki.git(&["update-ref", HEAD, &commit], &[], None)
+                    .await
+                    .map_err(failed)?;
+                return Ok(slug(&save.title));
+            }
+            Err(crate::git::GitError::Failed { stderr, .. })
+                if attempt == 0
+                    && (stderr.contains("[rejected]") || stderr.contains("fetch first")) => {}
+            Err(crate::git::GitError::Failed { stderr, .. }) => {
+                return Err(format!("GitHub refused the page: {}", stderr.trim()));
+            }
+            Err(err) => return Err(failed(err)),
+        }
+    }
+    Err(format!(
+        "{repo}'s wiki kept changing while saving: save again"
+    ))
+}
+
+/// The blob at `rev:path`, if there's one.
+async fn blob(wiki: &Repo, rev: &str, path: &str) -> Option<String> {
+    let spec = format!("{rev}:{path}");
+    let args = ["rev-parse", "--verify", "--quiet", &spec];
+    let out = wiki.git(&args, &[], None).await;
+    out.ok().map(|o| o.trim().to_owned())
+}
+
+/// The branch the wiki's pages are on: its remote's `HEAD`.
+async fn branch(wiki: &Repo) -> String {
+    let out = wiki
+        .git(&["ls-remote", "--symref", &wiki.remote, "HEAD"], &[], None)
+        .await
+        .unwrap_or_default();
+    out.lines()
+        .find_map(|l| l.strip_prefix("ref: refs/heads/")?.split('\t').next())
+        .map_or_else(|| "master".to_owned(), str::to_owned)
+}
+
+/// A commit on `parent` with `file` holding the page's text, made
+/// without a working tree: through an index of its own.
+async fn commit(
+    wiki: &Repo,
+    parent: &str,
+    file: &str,
+    save: &Save,
+) -> Result<String, crate::git::GitError> {
+    let mut text = save.text.clone();
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    let blob = wiki
+        .git(&["hash-object", "-w", "--stdin"], &[], Some(text))
+        .await?;
+    let index = (wiki.path).join(format!("ghtui-wiki-index-{}", std::process::id()));
+    let index_path = index.to_string_lossy().into_owned();
+    let env = [("GIT_INDEX_FILE", index_path.as_str())];
+    let cacheinfo = format!("100644,{},{file}", blob.trim());
+    let tree = async {
+        wiki.git(&["read-tree", parent], &env, None).await?;
+        let add = ["update-index", "--add", "--cacheinfo", &cacheinfo];
+        wiki.git(&add, &env, None).await?;
+        wiki.git(&["write-tree", "--missing-ok"], &env, None).await
+    }
+    .await;
+    let _ = std::fs::remove_file(&index);
+    let tree = tree?;
+    let markup = match file.rsplit_once('.') {
+        Some((_, "md" | "markdown")) | None => "markdown",
+        Some((_, ext)) => ext,
+    };
+    let verb = if save.file.is_some() {
+        "Updated"
+    } else {
+        "Created"
+    };
+    let message = format!("{verb} {} ({markup})", save.title);
+    let config = |key: &'static str| async move {
+        let value = wiki.git(&["config", key], &[], None).await.ok()?;
+        Some(value.trim().to_owned()).filter(|v| !v.is_empty())
+    };
+    let login = save.login.as_deref().unwrap_or("ghtui");
+    let name = config("user.name")
+        .await
+        .unwrap_or_else(|| login.to_owned());
+    let email =
+        (config("user.email").await).unwrap_or_else(|| format!("{login}@users.noreply.github.com"));
+    let who = [
+        ("GIT_AUTHOR_NAME", name.as_str()),
+        ("GIT_AUTHOR_EMAIL", email.as_str()),
+        ("GIT_COMMITTER_NAME", name.as_str()),
+        ("GIT_COMMITTER_EMAIL", email.as_str()),
+    ];
+    let args = ["commit-tree", tree.trim(), "-p", parent, "-m", &message];
+    Ok(wiki.git(&args, &who, None).await?.trim().to_owned())
 }
 
 #[cfg(test)]
@@ -217,5 +433,124 @@ mod tests {
         let list = page(&git, &repo, Some("_pages")).await.unwrap();
         assert!(list.text.is_none() && !list.pages.is_empty());
         page(&git, &repo, Some("No-such-page")).await.unwrap_err();
+    }
+
+    async fn run(dir: &std::path::Path, args: &[&str]) -> String {
+        crate::git::run(Some(dir), args).await.unwrap()
+    }
+
+    /// A commit of `file` holding `text` in the working clone `dir`,
+    /// pushed to "GitHub".
+    async fn push_page(dir: &std::path::Path, file: &str, text: &str) {
+        std::fs::write(dir.join(file), text).unwrap();
+        run(dir, &["add", file]).await;
+        run(dir, &["commit", "-q", "-m", file]).await;
+        run(dir, &["push", "-q", "origin", "master"]).await;
+    }
+
+    /// "GitHub"'s wiki (a bare repository with a Home page), someone
+    /// else's clone of it, and ghtui's clone in its cache.
+    async fn wiki_setup() -> (tempfile::TempDir, Repo, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let github = dir.path().join("github.wiki.git");
+        let theirs = dir.path().join("theirs");
+        std::fs::create_dir_all(&theirs).unwrap();
+        run(
+            dir.path(),
+            &["init", "-q", "--bare", "-b", "master", "github.wiki.git"],
+        )
+        .await;
+        // As GitHub's, it serves partial clones: blobs come when read.
+        run(&github, &["config", "uploadpack.allowFilter", "true"]).await;
+        run(&theirs, &["init", "-q", "-b", "master"]).await;
+        for (key, value) in [("user.name", "Them"), ("user.email", "them@example.com")] {
+            run(&theirs, &["config", key, value]).await;
+        }
+        let url = format!("file://{}", github.display());
+        run(&theirs, &["remote", "add", "origin", &url]).await;
+        push_page(&theirs, "Home.md", "Welcome.\n").await;
+        let quiet = |_: String| {};
+        let cache = dir.path().join("cache");
+        let ours = Repo::open_cache(
+            &cache,
+            "o",
+            "r.wiki",
+            &url,
+            crate::git::credentials::Credentials::Ambient,
+            &quiet,
+        )
+        .await
+        .unwrap();
+        assert!(ours.partial);
+        ours.fetch_head(HEAD, &quiet).await.unwrap();
+        (dir, ours, theirs)
+    }
+
+    fn edit(w: &WikiPage, text: &str) -> Save {
+        Save {
+            repo: RepoId::new("o", "r"),
+            title: w.title.clone().unwrap(),
+            file: w.file.clone(),
+            base: w.commit.clone(),
+            text: text.into(),
+            login: Some("octocat".into()),
+        }
+    }
+
+    /// A page edited from the cache's clone is committed on GitHub's
+    /// latest and pushed, and reads back as saved; another page changed
+    /// meanwhile doesn't stop it.
+    #[tokio::test]
+    async fn a_page_is_saved_on_top_of_githubs_latest() {
+        let (_dir, ours, theirs) = wiki_setup().await;
+        let home = read(&ours, None).await.ok().unwrap();
+        assert_eq!(home.file.as_deref(), Some("Home.md"));
+        push_page(&theirs, "FAQ.md", "Questions.\n").await;
+        let saved = save_in(&ours, &edit(&home, "Welcome, all.")).await;
+        assert_eq!(saved.as_deref(), Ok("Home"));
+        let again = read(&ours, None).await.ok().unwrap();
+        assert_eq!(again.text.as_deref(), Some("Welcome, all.\n"));
+        assert_eq!(again.pages, ["FAQ", "Home"]);
+        run(&theirs, &["pull", "-q", "origin", "master"]).await;
+        let log = run(&theirs, &["log", "-1", "--format=%s|%an"]).await;
+        assert!(log.starts_with("Updated Home (markdown)|"), "{log}");
+        assert_eq!(
+            std::fs::read_to_string(theirs.join("Home.md")).unwrap(),
+            "Welcome, all.\n"
+        );
+    }
+
+    /// A page changed on GitHub since it was opened isn't overwritten:
+    /// saving says so, and GitHub keeps its text.
+    #[tokio::test]
+    async fn a_page_changed_meanwhile_is_never_overwritten() {
+        let (_dir, ours, theirs) = wiki_setup().await;
+        let home = read(&ours, None).await.ok().unwrap();
+        push_page(&theirs, "Home.md", "Theirs.\n").await;
+        let refused = save_in(&ours, &edit(&home, "Mine.")).await.unwrap_err();
+        assert!(refused.contains("Home changed on GitHub"), "{refused}");
+        let now = read(&ours, None).await.ok().unwrap();
+        assert_eq!(now.text.as_deref(), Some("Theirs.\n"));
+    }
+
+    /// A new page is a new file named by its title; a title taken is
+    /// refused.
+    #[tokio::test]
+    async fn a_new_page_is_made_once() {
+        let (_dir, ours, _theirs) = wiki_setup().await;
+        let new = Save {
+            repo: RepoId::new("o", "r"),
+            title: "Getting started".into(),
+            file: None,
+            base: None,
+            text: "Steps.".into(),
+            login: None,
+        };
+        assert_eq!(save_in(&ours, &new).await.as_deref(), Ok("Getting-started"));
+        let page = read(&ours, Some("Getting-started")).await.ok().unwrap();
+        assert_eq!(page.file.as_deref(), Some("Getting-started.md"));
+        assert_eq!(page.text.as_deref(), Some("Steps.\n"));
+        let again = save_in(&ours, &new).await.unwrap_err();
+        assert!(again.contains("has a page named"), "{again}");
     }
 }
