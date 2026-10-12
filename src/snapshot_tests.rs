@@ -466,6 +466,31 @@ fn with_pr_checks(mode: Mode) -> State {
     state
 }
 
+/// A pull request's Review tab: a draft, a thread still open (and one
+/// resolved), the reviewers and what stops the merge.
+fn with_pr_review(mode: Mode) -> State {
+    let mut state = with_pr(mode);
+    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    press(&mut state, "gr");
+    // The diff it starts reads the drafts and threads.
+    let of = crate::diff_screen::DiffOf::Pr(pr.clone());
+    state.diffs.insert(of.clone(), diff::diff_state());
+    let review = crate::store::ReviewState {
+        pending: vec![fixtures::draft(1, 5, "Could this name say what it holds?")],
+        ..Default::default()
+    };
+    let mut open = fixtures::thread("t", Some(14), false, false);
+    open.comments[0].url = format!("{}#discussion_r42", pr.url());
+    let threads = vec![open, fixtures::thread("done", Some(3), true, false)];
+    for msg in [
+        crate::state::DiffMsg::ReviewLoaded(Ok(review)),
+        crate::state::DiffMsg::ThreadsLoaded(Ok(threads)),
+    ] {
+        update(&mut state, Msg::Diff(of.clone(), msg));
+    }
+    state
+}
+
 /// A repository's Actions tab.
 fn with_actions(mode: Mode) -> State {
     let mut state = with_repo(mode, ColorDepth::TrueColor);
@@ -892,6 +917,11 @@ fn pr_checks_dark() {
 }
 
 #[test]
+fn pr_review_dark() {
+    insta::assert_snapshot!(render(&sized(with_pr_review(Mode::Dark), 100, 44)));
+}
+
+#[test]
 fn actions_light() {
     insta::assert_snapshot!(render(&with_actions(Mode::Light)));
 }
@@ -1237,6 +1267,33 @@ fn list_filter_light() {
     insta::assert_snapshot!(render(&state));
 }
 
+/// A filter is typed into the list's own field, not the header's, and
+/// Enter applies it.
+#[test]
+fn a_filter_is_edited_in_place() {
+    let mut state = with_repo(Mode::Light, ColorDepth::TrueColor);
+    press(&mut state, "2gt/label:bug");
+    let Some(Overlay::Search(sb)) = &state.overlay else {
+        panic!("not filtering");
+    };
+    let (field, in_place) = state.search_field(sb);
+    assert!(in_place);
+    let (w, h) = state.size;
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+    terminal.draw(|frame| view(&state, frame, NOW)).unwrap();
+    let buf = terminal.backend().buffer();
+    let row = |r: ratatui::layout::Rect| -> String {
+        (r.left()..r.right())
+            .map(|x| buf[(x, r.y)].symbol())
+            .collect()
+    };
+    assert!(row(field).contains("⌕ is:open label:bug"), "{}", row(field));
+    assert!(!row(state.header_search()).contains("label:bug"));
+    press(&mut state, "<Enter>");
+    let query = state.route().and_then(Route::list_query);
+    assert_eq!(query, Some("is:open label:bug"));
+}
+
 #[test]
 fn profile_stars_dark() {
     insta::assert_snapshot!(render(&with_profile(Mode::Dark, ProfileTab::Stars)));
@@ -1489,6 +1546,158 @@ pub(crate) mod diff {
         let doc = &s.diffs[&d.of].doc;
         assert_eq!(doc.files()[d.cursor.file].meta.path(), "notes.txt");
         assert_eq!(d.anchor, None);
+    }
+
+    /// The diff on screen and its file tree.
+    fn diff_parts(s: &mut State) -> (DiffScreen, &DiffState) {
+        let (screen, diff) = s.diff_parts().expect("a diff");
+        (screen.clone(), diff)
+    }
+
+    /// Every way the tree's selection moves shows its file in the diff.
+    #[test]
+    fn the_diff_follows_the_file_tree() {
+        let mut s = screen_state(
+            Mode::Dark,
+            ColorDepth::TrueColor,
+            Pos::default(),
+            Pane::Tree,
+        );
+        let at = |s: &mut State| {
+            let (screen, _) = diff_parts(s);
+            (screen.tree_selected, screen.cursor.file)
+        };
+        let file = |s: &mut State, keys: &str| {
+            press(s, keys);
+            at(s)
+        };
+        // Into src/, then docs/, from folder to folder.
+        assert_eq!(file(&mut s, "ggl"), (1, 0), "src/point.rs");
+        assert_eq!(file(&mut s, "]]l"), (3, 1), "docs/new.md");
+        assert_eq!(file(&mut s, "2j"), (5, 3), "gone.py");
+        assert_eq!(file(&mut s, "G"), (10, 7), "zz/pending.rs");
+        assert_eq!(file(&mut s, "5gg"), (4, 2), "notes.txt");
+        // A click in the tree selects there.
+        let content = s.layout().content;
+        let (screen, diff) = diff_parts(&mut s);
+        let tree = crate::diff_screen::layout(content, &screen.prefs, &diff.tree).tree;
+        let tree = tree.expect("a tree");
+        let _ = update(
+            &mut s,
+            Msg::Mouse(crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: tree.x + 2,
+                row: tree.y + 3 + 6,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            }),
+        );
+        assert_eq!(at(&mut s), (6, 4), "logo.png");
+    }
+
+    /// `y` copies the line's link, or the selected lines', as GitHub
+    /// anchors them; the link opens on those lines, selected.
+    #[test]
+    fn line_links_copy_and_open_on_their_lines() {
+        let mut s = diff_at(Mode::Dark, 0, 4);
+        let copied = |s: &mut State, keys: &str| match press(s, keys).as_slice() {
+            [crate::state::Cmd::Copy(url)] => url.clone(),
+            cmds => panic!("{cmds:?}"),
+        };
+        let hash = crate::diff_screen::path_hash("src/point.rs");
+        let files = format!("https://github.com/o/r/pull/7/files#diff-{hash}");
+        assert_eq!(
+            copied(&mut s, "y"),
+            format!("{files}L3"),
+            "the removed line"
+        );
+        let url = copied(&mut s, "Vjjy");
+        assert_eq!(url, format!("{files}L3-R4"));
+        press(&mut s, "<Esc>");
+        let _ = s.follow(&crate::ui::page::Link::Url(url));
+        let _ = s.settle_diff();
+        let (screen, _) = diff_parts(&mut s);
+        assert_eq!(screen.anchor, None);
+        assert_eq!(screen.selection, Some(Pos { file: 0, row: 4 }));
+        assert_eq!(screen.cursor, Pos { file: 0, row: 6 });
+        // A commit's lines are on its page.
+        let mut s = diff_at(Mode::Dark, 0, 4);
+        s.diffs.insert(commit_of(), diff_state());
+        if let Some((screen, _)) = s.diff_parts() {
+            screen.of = commit_of();
+        }
+        let url = copied(&mut s, "y");
+        assert!(url.contains("/commit/"), "{url}");
+        assert!(url.ends_with(&format!("#diff-{hash}L3")), "{url}");
+    }
+
+    /// `zc`, `zo` and `za` fold the thread under the cursor, or the file;
+    /// `zM` and `zR` every file.
+    #[test]
+    fn folds_close_threads_and_files() {
+        let mut s = with_threads(Mode::Dark);
+        let rows = |s: &mut State, file: usize| diff_parts(s).1.doc.files()[file].rows().len();
+        let open = |s: &mut State| {
+            let (screen, diff) = diff_parts(s);
+            let thread = diff.doc.annotation_under(screen.cursor, screen.half);
+            thread.map(|t| diff.doc.thread_open(t))
+        };
+        let thread = diff_parts(&mut s)
+            .1
+            .doc
+            .annotation_pos(0)
+            .expect("a thread");
+        if let Some((screen, _)) = s.diff_parts() {
+            screen.cursor = thread;
+        }
+        assert_eq!(open(&mut s), Some(true));
+        press(&mut s, "zc");
+        assert_eq!(open(&mut s), Some(false), "the thread folds");
+        press(&mut s, "za");
+        assert_eq!(open(&mut s), Some(true));
+        // Folding a folded thread folds its file.
+        press(&mut s, "zczc");
+        assert_eq!(rows(&mut s, 0), 2, "the header, and the space after it");
+        assert_eq!(diff_parts(&mut s).0.cursor, Pos { file: 0, row: 0 });
+        press(&mut s, "za");
+        assert!(rows(&mut s, 0) > 2);
+        press(&mut s, "zM");
+        let doc = &diff_parts(&mut s).1.doc;
+        assert!(
+            doc.files()
+                .iter()
+                .all(crate::ui::diff_doc::DocFile::collapsed)
+        );
+        press(&mut s, "zR");
+        let doc = &diff_parts(&mut s).1.doc;
+        assert!(doc.files().iter().all(|f| !f.collapsed()), "generated too");
+    }
+
+    /// The file tree fits its names within a third of the screen, and `<`
+    /// and `>` narrow and widen it.
+    #[test]
+    fn the_file_tree_fits_its_names_and_resizes() {
+        let long = "src/snapshots/ghtui__snapshot_tests__diff__diff_split_wide_light.snap";
+        let doc = Doc::new(
+            vec![file(FileStatus::Added, None, Some(long), (0, 0o100644))],
+            &HashSet::new(),
+            Default::default(),
+        );
+        let mut s = state(Mode::Dark, ColorDepth::TrueColor);
+        s.size = (216, 40);
+        open_diff(&mut s, loaded(&doc), Pos::default(), Pane::Tree);
+        let width = |s: &mut State| {
+            let content = s.layout().content;
+            let (screen, diff) = diff_parts(s);
+            let tree = crate::diff_screen::layout(content, &screen.prefs, &diff.tree).tree;
+            tree.map(|t| t.width)
+        };
+        assert_eq!(width(&mut s), Some(72), "a third of 216");
+        press(&mut s, "<lt><lt>");
+        assert_eq!(width(&mut s), Some(64));
+        press(&mut s, ">");
+        assert_eq!(width(&mut s), Some(68));
+        s.size = (110, 34);
+        assert_eq!(width(&mut s), Some(55), "at most half");
     }
 
     /// A link to a review comment (`#discussion_r<id>`) opens the diff at
@@ -1861,7 +2070,7 @@ pub(crate) mod diff {
     fn every_screen_survives_every_size() {
         use super::{
             DataKey, Overlay, ProfileTab, fetched, ghtui, with_file, with_home, with_issue,
-            with_issues, with_pr, with_profile, with_repo, with_repo_search,
+            with_issues, with_job, with_pr, with_profile, with_repo, with_repo_search,
         };
         use crate::browse::Data;
         type Build = Box<dyn Fn() -> State>;
@@ -1910,6 +2119,10 @@ pub(crate) mod diff {
             (
                 "list filter",
                 Box::new(move || pressed(with_repo(Mode::Light, tc), "2gt/")),
+            ),
+            (
+                "log search",
+                Box::new(move || pressed(with_job(Mode::Light, None), "/")),
             ),
             (
                 "palette",
@@ -2337,7 +2550,7 @@ mod keys {
         press, render, with_advisories, with_advisory, with_blame, with_branches, with_commit,
         with_compare, with_deployments, with_discussion, with_discussions, with_gist, with_gists,
         with_issues, with_job, with_milestone, with_milestones, with_notifications, with_pr,
-        with_run, with_search, with_team, with_teams, with_wiki, with_workflow,
+        with_pr_review, with_run, with_search, with_team, with_teams, with_wiki, with_workflow,
     };
     use crate::diff_screen::Pane;
     use crate::keymap::Action;
@@ -2348,7 +2561,7 @@ mod keys {
     /// A list, a pull request, the diff with each pane focused (the
     /// selection away from the edges so moving can move), and every page
     /// links lead to.
-    fn screens() -> [(&'static str, Make); 26] {
+    fn screens() -> [(&'static str, Make); 27] {
         fn moved(mut s: State) -> State {
             press(&mut s, "jj");
             s
@@ -2363,6 +2576,7 @@ mod keys {
         [
             ("issue list", || moved(with_issues(Mode::Dark))),
             ("pull request", || moved(with_pr(Mode::Dark))),
+            ("review", || moved(with_pr_review(Mode::Dark))),
             ("diff", || {
                 let at = Pos { file: 0, row: 4 };
                 screen_state(Mode::Dark, ColorDepth::TrueColor, at, Pane::Diff)

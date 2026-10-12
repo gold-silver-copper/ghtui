@@ -1646,6 +1646,12 @@ pub(crate) mod tests {
         assert_eq!(route(&state), Route::pr(pr), "forward again");
         press(&mut state, "gh");
         assert!(!state.quit);
+        // q closes a view; ZZ, or :q in the palette, quits.
+        press(&mut state, "q");
+        assert!(!state.quit);
+        press(&mut state, ":q<Enter>");
+        assert!(state.quit, ":q quits");
+        state.quit = false;
         press(&mut state, "ZZ");
         assert!(state.quit);
     }
