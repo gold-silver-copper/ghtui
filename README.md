@@ -607,7 +607,6 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 - The first time a token is used, until GitHub says whose it is (a moment
   after starting), the cache and drafts are kept under the token's
   fingerprint, and don't carry over to its account's.
-
 - Notifications filtered by a reason (`reason:mention`) or by `is:read`
   are filtered after fetching, as GitHub's API can't filter them: a load
   searches up to 300 notifications for a page of matches, and says when
