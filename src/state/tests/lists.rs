@@ -233,11 +233,7 @@ fn advisories_load_more() {
     let key = DataKey::Advisories(Some(ghtui()));
     let cmds = state.push(route);
     assert!(cmds.contains(&fetch(key.clone())), "{cmds:?}");
-    let list = crate::api::browse::Results {
-        total: 3,
-        items: crate::fixtures::advisories(),
-        next: Some("c1".into()),
-    };
+    let list = crate::fixtures::page(3, crate::fixtures::advisories(), Some("c1"));
     fetched(&mut state, key.clone(), Data::Advisories(Box::new(list)));
     press(&mut state, "G");
     assert!(

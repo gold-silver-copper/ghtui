@@ -64,11 +64,7 @@ pub(crate) fn fill_home(state: &mut State) {
         fixtures::repo_summary("gold-silver-copper/ghtui", 1234),
         fixtures::repo_summary("gold-silver-copper/fux", 87),
     ];
-    let repos = SearchResults::Repos(crate::api::browse::Results {
-        total: 2,
-        items: repos,
-        next: None,
-    });
+    let repos = SearchResults::Repos(crate::fixtures::page(2, repos, None));
     fixtures::section(state, 2, repos);
 }
 
@@ -225,11 +221,7 @@ pub(crate) fn with_advisories() -> State {
     let mut state = with_repo();
     let route = Route::Advisories(Some(ghtui()));
     let items = fixtures::advisories();
-    let list = crate::api::browse::Results {
-        total: items.len() as u64,
-        items,
-        next: None,
-    };
+    let list = crate::fixtures::page(items.len() as u64, items, None);
     open(&mut state, route, Data::Advisories(Box::new(list)));
     state
 }

@@ -213,7 +213,7 @@ impl IssueSummary {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserSummary {
     pub login: String,
     pub name: Option<String>,
@@ -435,7 +435,7 @@ pub struct CodeHit {
     pub rev: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Comment {
     /// GitHub's number for it, which its links' anchors use
     /// (`#issuecomment-…`, `#discussioncomment-…`).
@@ -565,7 +565,7 @@ pub enum Reviewer {
     Team(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
     pub login: String,
     pub name: Option<String>,
@@ -3791,7 +3791,7 @@ pub struct DiscussionDetail {
     pub comments: Capped<DiscussionComment>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscussionComment {
     /// Its editable is always there: what replies, reactions and marking
     /// the answer name it by.

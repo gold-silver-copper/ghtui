@@ -139,16 +139,14 @@ fn a_fresh_copy_keeps_the_selected_issue() {
     let (kind, query) = route(&state).search().unwrap();
     let key = DataKey::Search(kind, query);
     let list = |numbers: &[u64]| {
-        Data::Search(Box::new(SearchResults::Issues(
-            crate::api::browse::Results {
-                total: numbers.len() as u64,
-                items: numbers
-                    .iter()
-                    .map(|&n| crate::fixtures::issue_summary(n, Status::Issue(IssueState::Open)))
-                    .collect(),
-                next: None,
-            },
-        )))
+        Data::Search(Box::new(SearchResults::Issues(crate::fixtures::page(
+            numbers.len() as u64,
+            numbers
+                .iter()
+                .map(|&n| crate::fixtures::issue_summary(n, Status::Issue(IssueState::Open)))
+                .collect(),
+            None,
+        ))))
     };
     update(
         &mut state,

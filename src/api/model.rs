@@ -533,7 +533,7 @@ pub enum Side {
     Right,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewComment {
     pub id: NodeId,
     pub author: String,

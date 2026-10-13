@@ -243,14 +243,14 @@ pub fn package_detail() -> PackageDetail {
     };
     PackageDetail {
         package: package(),
-        versions: crate::api::browse::Results {
-            total: 2,
-            items: vec![
+        versions: crate::fixtures::page(
+            2,
+            vec![
                 version(102, "sha256:9f1c0d2e", &["latest", "0.2.0"]),
                 version(101, "sha256:3a7b55e1", &[]),
             ],
-            next: None,
-        },
+            None,
+        ),
     }
 }
 

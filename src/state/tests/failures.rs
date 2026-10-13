@@ -252,7 +252,6 @@ fn decoration(route: &Route, need: &Need) -> bool {
 
 /// What GitHub might answer for `key`, for the needs that don't fail.
 fn sample(key: &DataKey) -> Data {
-    use crate::api::browse::Results;
     use DataKey as K;
     let search = |kind: &SearchKind| match kind {
         SearchKind::Repos => fixtures::repo_results(),
@@ -298,11 +297,7 @@ fn sample(key: &DataKey) -> Data {
         K::Advisories(_) => {
             let items = fixtures::advisories();
             let total = items.len() as u64;
-            Data::Advisories(Box::new(Results {
-                total,
-                items,
-                next: None,
-            }))
+            Data::Advisories(Box::new(fixtures::page(total, items, None)))
         }
         K::Advisory(..) => Data::Advisory(Box::new(fixtures::advisory())),
         K::Sidebar(..) => Data::Sidebar(Box::new(fixtures::sidebar())),
