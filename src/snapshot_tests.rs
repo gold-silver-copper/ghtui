@@ -709,5 +709,8 @@ mod reviews;
 /// The Security tab's alerts: their lists and pages, and dismissing and
 /// reopening them.
 mod security;
+/// Insights, Explore and topics, starred lists, packages and their
+/// writes.
+mod site;
 /// Releases, gists, wiki pages and subscriptions.
 mod writes;

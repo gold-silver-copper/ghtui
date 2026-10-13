@@ -70,8 +70,7 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     let mut facts = vec![(
-        "It can't be brought back, and whoever pulls it by name or digest gets an error"
-            .to_owned(),
+        "It can't be brought back, and whoever pulls it by name or digest gets an error".to_owned(),
         true,
     )];
     if !v.tags.is_empty() {
@@ -114,7 +113,9 @@ pub fn delete(state: &mut State, route: &Route, id: u64) -> Vec<Cmd> {
         id,
         name,
     };
-    vec![Cmd::Write(crate::writes::Work::Site(super::Work::DeleteVersion(delete)))]
+    vec![Cmd::Write(crate::writes::Work::Site(
+        super::Work::DeleteVersion(delete),
+    ))]
 }
 
 /// GitHub's answer: the package's page follows until the version is

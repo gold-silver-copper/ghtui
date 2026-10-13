@@ -15,6 +15,7 @@ pub mod lists;
 pub mod packages;
 pub mod replies;
 
+use crate::api::browse::SearchKind;
 use crate::api::explore::{Since, Topic, Topics};
 use crate::api::insights::{Activity, Dependencies, Traffic};
 use crate::api::lists::{ListPage, MyLists, StarList};
@@ -22,7 +23,6 @@ use crate::api::model::{Capped, RepoId};
 use crate::api::packages::{Kind, PackageDetail, PackageList, PackageRef, PackagesOf};
 use crate::api::replies::SavedReply;
 use crate::api::{ApiError, GitHub};
-use crate::api::browse::SearchKind;
 use crate::ui::pages::url as links;
 
 use crate::browse::{Data, DataKey, Need, Picked};
@@ -45,7 +45,10 @@ pub enum Page {
     /// An owner's packages, or a repository's.
     Packages(PackagesOf),
     /// A package and its versions, at one of them (else its newest).
-    Package { at: PackageRef, version: Option<u64> },
+    Package {
+        at: PackageRef,
+        version: Option<u64>,
+    },
 }
 
 /// Insights' tabs, as GitHub's sidebar lists them.
@@ -102,7 +105,11 @@ impl Page {
             }
             Page::Topic(name) => format!("{}/topics/{}", links::base(), links::encode_path(name)),
             Page::StarList { login, slug } => {
-                format!("{}/stars/{login}/lists/{}", links::base(), links::encode_path(slug))
+                format!(
+                    "{}/stars/{login}/lists/{}",
+                    links::base(),
+                    links::encode_path(slug)
+                )
             }
             Page::Packages(PackagesOf::Owner(login)) => {
                 format!("{}?tab=packages", links::user(login))
@@ -230,7 +237,6 @@ impl Page {
             Page::Package { .. } => paged.into_iter().collect(),
         }
     }
-
 }
 
 /// A language as GitHub's Trending URLs write it (`c++`, `visual-basic-.net`).
@@ -658,7 +664,10 @@ pub fn rows(
     state: &crate::state::State,
     pick: &Pick,
     q: &str,
-) -> Vec<(crate::ui::overlays::PaletteItem, Option<crate::writes::Chosen>)> {
+) -> Vec<(
+    crate::ui::overlays::PaletteItem,
+    Option<crate::writes::Chosen>,
+)> {
     match pick {
         Pick::Lists(repo) => lists::rows(state, repo, q),
     }
@@ -767,19 +776,28 @@ pub fn build(
             let Some(key) = p.paged() else {
                 return;
             };
-            if let Some(l) = get(&key).pick(<ListPage as Picked>::pick).show(page, "the list") {
+            if let Some(l) = get(&key)
+                .pick(<ListPage as Picked>::pick)
+                .show(page, "the list")
+            {
                 pages::star_list(page, login, l, now);
             }
         }
         Page::Packages(of) => {
             let f = get(&site(Key::Packages(of.clone())));
-            if let Some(list) = f.pick(<PackageList as Picked>::pick).show(page, "the packages") {
+            if let Some(list) = f
+                .pick(<PackageList as Picked>::pick)
+                .show(page, "the packages")
+            {
                 pages::packages(page, of, list, now);
             }
         }
         Page::Package { at, version } => {
             let f = get(&site(Key::Package(at.clone())));
-            if let Some(d) = f.pick(<PackageDetail as Picked>::pick).show(page, "the package") {
+            if let Some(d) = f
+                .pick(<PackageDetail as Picked>::pick)
+                .show(page, "the package")
+            {
                 let delete = state.first_key(crate::keymap::Action::DeleteComment);
                 pages::package(page, d, *version, &delete, now);
             }

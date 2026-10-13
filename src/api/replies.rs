@@ -53,7 +53,10 @@ impl GitHub {
             )
             .await
             .map_err(refusal)?;
-        let replies = Capped::new(found.nodes.into_iter().flatten().collect(), found.total_count);
+        let replies = Capped::new(
+            found.nodes.into_iter().flatten().collect(),
+            found.total_count,
+        );
         self.remember(keys::REPLIES, replies.clone()).await;
         Ok(replies)
     }
@@ -72,6 +75,10 @@ mod tests {
         let err = ApiError::GraphQl(vec![
             "The 'savedReplies' field requires one of the following scopes: ['read:user']".into(),
         ]);
-        assert!(refusal(err).to_string().contains("`gh auth refresh -s read:user`"));
+        assert!(
+            refusal(err)
+                .to_string()
+                .contains("`gh auth refresh -s read:user`")
+        );
     }
 }

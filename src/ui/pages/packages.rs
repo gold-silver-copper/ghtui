@@ -29,31 +29,38 @@ pub fn packages(page: &mut Page, of: &PackagesOf, list: &PackageList, now: u64) 
         PackagesOf::Owner(_) => "No packages published.",
         PackagesOf::Repo(_) => "This repository hasn't published packages.",
     };
-    list_box(page, title, Vec::new(), &Whole(&list.items), empty, |page, p| {
-        let target = Route::Site(Site::Package {
-            at: p.at.clone(),
-            version: None,
-        });
-        item(page, target.url(), |page, link| {
-            let mut segs = vec![
-                Seg::linked(p.at.name.clone(), Role::Link, link),
-                space(),
-                chip(p.at.kind.name(), Bg::ContainerHigh),
-            ];
-            if let Some(v) = visibility(&p.visibility) {
-                segs.extend([space(), v]);
-            }
-            page.box_line(segs, Vec::new(), 0);
-            let mut meta = plural(p.versions, "version");
-            if let Some(at) = &p.updated_at {
-                meta.push_str(&format!(" · updated {}", time::ago_iso(at, now)));
-            }
-            if let (Some(repo), PackagesOf::Owner(_)) = (&p.repo, of) {
-                meta.push_str(&format!(" · {repo}"));
-            }
-            body(page, vec![Seg::new(meta, Role::Meta)]);
-        });
-    });
+    list_box(
+        page,
+        title,
+        Vec::new(),
+        &Whole(&list.items),
+        empty,
+        |page, p| {
+            let target = Route::Site(Site::Package {
+                at: p.at.clone(),
+                version: None,
+            });
+            item(page, target.url(), |page, link| {
+                let mut segs = vec![
+                    Seg::linked(p.at.name.clone(), Role::Link, link),
+                    space(),
+                    chip(p.at.kind.name(), Bg::ContainerHigh),
+                ];
+                if let Some(v) = visibility(&p.visibility) {
+                    segs.extend([space(), v]);
+                }
+                page.box_line(segs, Vec::new(), 0);
+                let mut meta = plural(p.versions, "version");
+                if let Some(at) = &p.updated_at {
+                    meta.push_str(&format!(" · updated {}", time::ago_iso(at, now)));
+                }
+                if let (Some(repo), PackagesOf::Owner(_)) = (&p.repo, of) {
+                    meta.push_str(&format!(" · {repo}"));
+                }
+                body(page, vec![Seg::new(meta, Role::Meta)]);
+            });
+        },
+    );
     if !list.cut.is_empty() {
         let kinds: Vec<&str> = list.cut.iter().map(|k| k.name()).collect();
         let text = format!(
@@ -89,7 +96,12 @@ pub fn package(
     ];
     if let Some(repo) = &p.repo {
         meta.push(Seg::new(" · from ", Role::Meta));
-        meta.push(link_seg(page, repo.to_string(), url::repo(repo), Role::Link));
+        meta.push(link_seg(
+            page,
+            repo.to_string(),
+            url::repo(repo),
+            Role::Link,
+        ));
     }
     meta.push(Seg::new(
         format!(" · {}", plural(p.versions, "version")),
@@ -102,7 +114,8 @@ pub fn package(
         None => d.versions.items.first(),
     };
     if let Some(v) = shown {
-        let title = vec![Seg::new(format!("Install {}", v.name), Role::Strong)];
+        let name = v.tags.first().unwrap_or(&v.name);
+        let title = vec![Seg::new(format!("Install {name}"), Role::Strong)];
         page.box_top(title, Vec::new());
         for line in install(&p.at, p.repo.as_ref(), v) {
             page.wrapped(vec![Seg::new(line, Role::Code)], 0, Frame::Body);
@@ -119,26 +132,33 @@ pub fn package(
         Role::Strong,
     )];
     let right = vec![Seg::new(format!("{delete_key} deletes one"), Role::Meta)];
-    list_box(page, title, right, &d.versions, "No versions.", |page, v| {
-        let target = Route::Site(Site::Package {
-            at: p.at.clone(),
-            version: Some(v.id),
-        });
-        item(page, target.url(), |page, link| {
-            let role = if shown.is_some_and(|s| s.id == v.id) {
-                Role::Strong
-            } else {
-                Role::Link
-            };
-            let mut segs = vec![Seg::linked(v.name.clone(), role, link)];
-            for tag in &v.tags {
-                segs.extend([space(), chip(tag, Bg::TertiaryContainer)]);
-            }
-            page.box_line(segs, Vec::new(), 0);
-            if let Some(at) = &v.created_at {
-                let meta = format!("published {}", time::ago_iso(at, now));
-                body(page, vec![Seg::new(meta, Role::Meta)]);
-            }
-        });
-    });
+    list_box(
+        page,
+        title,
+        right,
+        &d.versions,
+        "No versions.",
+        |page, v| {
+            let target = Route::Site(Site::Package {
+                at: p.at.clone(),
+                version: Some(v.id),
+            });
+            item(page, target.url(), |page, link| {
+                let role = if shown.is_some_and(|s| s.id == v.id) {
+                    Role::Strong
+                } else {
+                    Role::Link
+                };
+                let mut segs = vec![Seg::linked(v.name.clone(), role, link)];
+                for tag in &v.tags {
+                    segs.extend([space(), chip(tag, Bg::TertiaryContainer)]);
+                }
+                page.box_line(segs, Vec::new(), 0);
+                if let Some(at) = &v.created_at {
+                    let meta = format!("published {}", time::ago_iso(at, now));
+                    body(page, vec![Seg::new(meta, Role::Meta)]);
+                }
+            });
+        },
+    );
 }

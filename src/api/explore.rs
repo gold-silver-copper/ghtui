@@ -141,8 +141,12 @@ impl GitHub {
             )
             .await?;
         let found: wire::Found = serde_json::from_str(&body)?;
-        let mut topics: Vec<Topic> = found.items.into_iter().map(wire::Topic::into_topic).collect();
-        topics.sort_by(|a, b| a.title().to_lowercase().cmp(&b.title().to_lowercase()));
+        let mut topics: Vec<Topic> = found
+            .items
+            .into_iter()
+            .map(wire::Topic::into_topic)
+            .collect();
+        topics.sort_by_key(|t| t.title().to_lowercase());
         let topics = Topics {
             topics,
             total: found.total_count,
@@ -154,6 +158,16 @@ impl GitHub {
     /// A topic: what GitHub says of it, its stars and related topics. A
     /// topic nobody described is only its name.
     pub async fn topic(&self, name: &str) -> Result<Topic, ApiError> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Graph {
+            stargazer_count: u64,
+            related_topics: Vec<Named>,
+        }
+        #[derive(Deserialize)]
+        struct Named {
+            name: String,
+        }
         let path = format!(
             "/search/topics?q={}&per_page=10",
             url::form_urlencoded::byte_serialize(name.as_bytes()).collect::<String>()
@@ -168,16 +182,6 @@ impl GitHub {
                 },
                 wire::Topic::into_topic,
             );
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Graph {
-            stargazer_count: u64,
-            related_topics: Vec<Named>,
-        }
-        #[derive(Deserialize)]
-        struct Named {
-            name: String,
-        }
         let vars = serde_json::json!({ "name": name });
         let graph: Result<Graph, _> = self
             .graphql_json(crate::api::raw::TOPIC, vars, name, "/topic")

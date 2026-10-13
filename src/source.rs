@@ -120,14 +120,10 @@ pub fn shown(route: &Route) -> Option<DataKey> {
         Route::Commit { repo, oid, .. } => DataKey::Commit(repo.clone(), oid.clone()),
         Route::Compare { repo, spec } => DataKey::Compare(repo.clone(), spec.clone()),
         Route::Tags(repo) => DataKey::Tags(repo.clone()),
-        Route::Site(crate::site::Page::Insights { repo, tab })
-            if matches!(
-                tab,
-                crate::site::InsightsTab::Contributors | crate::site::InsightsTab::Commits
-            ) =>
-        {
-            DataKey::Site(crate::site::Key::Activity(repo.clone()))
-        }
+        Route::Site(crate::site::Page::Insights {
+            repo,
+            tab: crate::site::InsightsTab::Contributors | crate::site::InsightsTab::Commits,
+        }) => DataKey::Site(crate::site::Key::Activity(repo.clone())),
         Route::Search {
             kind: SearchKind::Code,
             query,

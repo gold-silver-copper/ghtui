@@ -45,7 +45,10 @@ impl Work {
     pub async fn run(self, gh: &GitHub) -> Result<(), String> {
         let mut lists = self.lists.clone();
         if let Some(name) = &self.create {
-            let id = gh.create_list(name).await.map_err(|e| crate::writes::reason(&e))?;
+            let id = gh
+                .create_list(name)
+                .await
+                .map_err(|e| crate::writes::reason(&e))?;
             lists.push(id);
         }
         let set = gh.set_lists(&self.item, &lists).await;
@@ -64,7 +67,9 @@ impl Work {
 
 impl Delete {
     pub async fn run(self, gh: &GitHub) -> Result<(), String> {
-        gh.delete_list(&self.id).await.map_err(|e| crate::writes::reason(&e))
+        gh.delete_list(&self.id)
+            .await
+            .map_err(|e| crate::writes::reason(&e))
     }
 }
 
@@ -131,13 +136,20 @@ pub fn open(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     let mut cmds = state.ensure(Need::Data(site(Key::MyLists(repo.clone()))), true);
-    cmds.extend(crate::writes::open_picker(state, Pick::Site(super::Pick::Lists(repo))));
+    cmds.extend(crate::writes::open_picker(
+        state,
+        Pick::Site(super::Pick::Lists(repo)),
+    ));
     cmds
 }
 
 /// The picker's rows: each of your lists that fits what's typed, checked
 /// if the repository's in it; and, for a name no list has, making it.
-pub fn rows(state: &State, repo: &RepoId, q: &str) -> Vec<(crate::ui::overlays::PaletteItem, Option<Chosen>)> {
+pub fn rows(
+    state: &State,
+    repo: &RepoId,
+    q: &str,
+) -> Vec<(crate::ui::overlays::PaletteItem, Option<Chosen>)> {
     let key = site(Key::MyLists(repo.clone()));
     #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
     let fetched = Remote::fetched(state.data.get(&key), "")
@@ -183,7 +195,12 @@ pub fn rows(state: &State, repo: &RepoId, q: &str) -> Vec<(crate::ui::overlays::
         })
         .collect();
     let name = q.trim();
-    if !name.is_empty() && mine.lists.iter().all(|l| !l.name.eq_ignore_ascii_case(name)) {
+    if !name.is_empty()
+        && mine
+            .lists
+            .iter()
+            .all(|l| !l.name.eq_ignore_ascii_case(name))
+    {
         let work = Work {
             repo: repo.clone(),
             item: mine.repo.clone(),
@@ -193,11 +210,19 @@ pub fn rows(state: &State, repo: &RepoId, q: &str) -> Vec<(crate::ui::overlays::
             add: true,
         };
         let label = format!("+ Make the list “{name}” and add it");
-        rows.push(item(label, "↵", Some(Chosen::Site(super::Chosen::Lists(work)))));
+        rows.push(item(
+            label,
+            "↵",
+            Some(Chosen::Site(super::Chosen::Lists(work))),
+        ));
     }
     if mine.lists.left_out() > 0 {
         let n = mine.lists.left_out();
-        rows.push(item(format!("{n} more lists on GitHub, not listed"), "", None));
+        rows.push(item(
+            format!("{n} more lists on GitHub, not listed"),
+            "",
+            None,
+        ));
     }
     if rows.is_empty() {
         rows.push(item("You have no lists: type a name to make one", "", None));
@@ -209,7 +234,9 @@ pub fn rows(state: &State, repo: &RepoId, q: &str) -> Vec<(crate::ui::overlays::
 #[must_use]
 pub fn choose(state: &mut State, work: Work) -> Vec<Cmd> {
     state.info(format!("{}…", work.said()));
-    vec![Cmd::Write(crate::writes::Work::Site(super::Work::Lists(work)))]
+    vec![Cmd::Write(crate::writes::Work::Site(super::Work::Lists(
+        work,
+    )))]
 }
 
 /// GitHub's answer: your lists are read again until they show it.
@@ -224,7 +251,11 @@ pub fn on_done(state: &mut State, work: Work, result: Result<(), String>) -> Vec
                     list: work.list.clone(),
                     add: work.add,
                 };
-                crate::writes::expect(state, route, crate::writes::Expected::Site(super::Expected::Lists(what)));
+                crate::writes::expect(
+                    state,
+                    route,
+                    crate::writes::Expected::Site(super::Expected::Lists(what)),
+                );
             }
             let mut cmds = state.ensure(Need::Data(site(Key::MyLists(work.repo))), true);
             cmds.extend(state.load_visible(false));
@@ -305,7 +336,9 @@ pub fn delete(state: &mut State, route: &Route) -> Vec<Cmd> {
         id: list.id,
         name: list.name,
     };
-    vec![Cmd::Write(crate::writes::Work::Site(super::Work::DeleteList(delete)))]
+    vec![Cmd::Write(crate::writes::Work::Site(
+        super::Work::DeleteList(delete),
+    ))]
 }
 
 /// GitHub's answer to deleting a list: your Stars follow until it's gone.
@@ -356,6 +389,12 @@ pub fn doable(state: &State) -> Option<Doable> {
 pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
     if let Route::Site(Page::StarList { login, .. }) = route {
         let why = yours(state, login).err();
-        out.push(row("Edit", Action::DeleteComment, "Delete the list", "", why));
+        out.push(row(
+            "Edit",
+            Action::DeleteComment,
+            "Delete the list",
+            "",
+            why,
+        ));
     }
 }

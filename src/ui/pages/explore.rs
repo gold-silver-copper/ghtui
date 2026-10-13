@@ -38,20 +38,28 @@ pub fn explore(
         tabs.push(link_seg(page, s.label(), target.url(), role));
     }
     page.wrapped(tabs, 0, Frame::None);
+    languages(page, language, since);
     page.blank();
-    let shown = language.map_or_else(|| "Any language".to_owned(), |l| format!("language:{l}"));
-    filter_field(page, &shown, cx.keys, "choose a language");
-    page.blank();
-    page.wrapped(vec![Seg::new(not_trending(since), Role::Meta)], 0, Frame::None);
+    page.wrapped(
+        vec![Seg::new(not_trending(since), Role::Meta)],
+        0,
+        Frame::None,
+    );
     page.blank();
     let repos = repos.pick(|r| match r {
         SearchResults::Repos(r) => Some(r),
         _ => None,
     });
     let title = format!("New and most starred, {}", since.label().to_lowercase());
-    paged_list(page, &title, repos, "No repositories made in that time.", |page, r| {
-        repo_row(page, r, cx.now, true);
-    });
+    paged_list(
+        page,
+        &title,
+        repos,
+        "No repositories made in that time.",
+        |page, r| {
+            repo_row(page, r, cx.now, true);
+        },
+    );
     page.blank();
     let Some(t) = topics.show(page, "featured topics") else {
         return;
@@ -61,9 +69,65 @@ pub fn explore(
         n => format!("{} of {}", t.topics.len(), t.topics.len() as u64 + n),
     };
     let title = vec![Seg::new(format!("Featured topics  {count}"), Role::Strong)];
-    list_box(page, title, Vec::new(), &Whole(&t.topics), "None.", |page, topic| {
-        topic_row(page, topic);
-    });
+    list_box(
+        page,
+        title,
+        Vec::new(),
+        &Whole(&t.topics),
+        "None.",
+        |page, topic| {
+            topic_row(page, topic);
+        },
+    );
+}
+
+/// Languages to narrow it to, as Trending's menu offers the common
+/// ones; another is a `g/` away (`github.com/trending/zig`).
+const LANGUAGES: [&str; 12] = [
+    "C",
+    "C#",
+    "C++",
+    "Go",
+    "Java",
+    "JavaScript",
+    "Kotlin",
+    "Python",
+    "Ruby",
+    "Rust",
+    "Swift",
+    "TypeScript",
+];
+
+fn languages(page: &mut Page, language: Option<&str>, since: Since) {
+    let mut segs = vec![Seg::new("Language  ", Role::Meta)];
+    let here = |l: Option<&str>| match (l, language) {
+        (None, None) => true,
+        (Some(l), Some(on)) => l.eq_ignore_ascii_case(on),
+        _ => false,
+    };
+    let add = |page: &mut Page, segs: &mut Vec<Seg>, l: Option<&str>| {
+        if segs.len() > 1 {
+            segs.push(Seg::new(" · ", Role::Meta));
+        }
+        let target = Route::Site(Site::Explore {
+            language: l.map(str::to_lowercase),
+            since,
+        });
+        let role = if here(l) { Role::Strong } else { Role::Link };
+        segs.push(link_seg(page, l.unwrap_or("Any"), target.url(), role));
+    };
+    add(page, &mut segs, None);
+    for l in LANGUAGES {
+        add(page, &mut segs, Some(l));
+    }
+    if let Some(other) = language.filter(|l| !LANGUAGES.iter().any(|k| k.eq_ignore_ascii_case(l))) {
+        add(page, &mut segs, Some(other));
+    }
+    segs.push(Seg::new(
+        " · another: g/ github.com/trending/<language>",
+        Role::Meta,
+    ));
+    page.wrapped(segs, 0, Frame::None);
 }
 
 /// A topic's row: its name and what it is.
@@ -102,7 +166,11 @@ pub fn topic(page: &mut Page, t: &Topic, repos: Fetched<'_, SearchResults>, now:
         facts.push(format!("☆ {}", plural(stars, "star")));
     }
     if !facts.is_empty() {
-        page.wrapped(vec![Seg::new(facts.join(" · "), Role::Meta)], 0, Frame::None);
+        page.wrapped(
+            vec![Seg::new(facts.join(" · "), Role::Meta)],
+            0,
+            Frame::None,
+        );
     }
     if !t.related.is_empty() {
         let mut segs = vec![Seg::new("Related  ", Role::Meta)];

@@ -4,7 +4,7 @@
 use super::charts::{bar, buckets, column_dates, columns, date, month, sparkline};
 use super::*;
 use crate::api::insights::{
-    Activity, Counter, Counted, Dependencies, Popular, Traffic, WEEK, YEAR_WEEKS,
+    Activity, Counted, Counter, Dependencies, Popular, Traffic, WEEK, YEAR_WEEKS,
 };
 use crate::site::{InsightsTab, Page as Site};
 
@@ -306,7 +306,7 @@ pub fn dependencies(page: &mut Page, d: &Dependencies) {
         );
         return;
     }
-    for m in d.manifests.iter() {
+    for m in &d.manifests {
         let count = match m.dependencies.left_out() {
             0 => m.dependencies.len().to_string(),
             _ => format!("{} of {}", m.dependencies.len(), m.dependencies.total()),
@@ -328,7 +328,7 @@ pub fn dependencies(page: &mut Page, d: &Dependencies) {
             .max()
             .unwrap_or(0)
             .min(40);
-        for dep in m.dependencies.iter() {
+        for dep in &m.dependencies {
             let name = crate::ui::text::truncate(&dep.package, names);
             let pad = " ".repeat(names.saturating_sub(crate::ui::text::width(&name)) + 2);
             let rest = vec![

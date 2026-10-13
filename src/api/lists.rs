@@ -107,11 +107,19 @@ impl GitHub {
         let Some(list) = lists.iter().find(|l| l.slug == slug).cloned() else {
             return Err(ApiError::NotFound(format!("@{login}'s list {slug}")));
         };
-        let cursor = after.as_deref().and_then(|a| a.split_once(' ')).map(|(_, c)| c);
+        let cursor = after
+            .as_deref()
+            .and_then(|a| a.split_once(' '))
+            .map(|(_, c)| c);
         let first = cursor.is_none();
         let vars = serde_json::json!({ "id": list.id.as_str(), "after": cursor });
         let items: wire::Items = self
-            .graphql_json(&crate::api::raw::star_list_items(), vars, &list.name, "/node/items")
+            .graphql_json(
+                &crate::api::raw::star_list_items(),
+                vars,
+                &list.name,
+                "/node/items",
+            )
             .await?;
         let next = (items.page_info.has_next_page)
             .then_some(items.page_info.end_cursor)
@@ -119,7 +127,12 @@ impl GitHub {
             .map(|c| format!("{} {c}", list.id.as_str()));
         let repos = Results {
             total: items.total_count,
-            items: items.nodes.into_iter().flatten().filter_map(wire::Repo::summary).collect(),
+            items: items
+                .nodes
+                .into_iter()
+                .flatten()
+                .filter_map(wire::Repo::summary)
+                .collect(),
             next,
         };
         let page = ListPage { list, repos };
@@ -168,10 +181,18 @@ impl GitHub {
         let mut read = 0;
         loop {
             read += page.nodes.len();
-            if page.nodes.iter().flatten().any(|n| n.id.as_ref() == Some(item)) {
+            if page
+                .nodes
+                .iter()
+                .flatten()
+                .any(|n| n.id.as_ref() == Some(item))
+            {
                 return Ok((Some(true), total));
             }
-            let next = page.page_info.end_cursor.filter(|_| page.page_info.has_next_page);
+            let next = page
+                .page_info
+                .end_cursor
+                .filter(|_| page.page_info.has_next_page);
             let Some(after) = next else {
                 return Ok((Some(false), total));
             };
@@ -180,20 +201,25 @@ impl GitHub {
             }
             let vars = serde_json::json!({ "id": list.as_str(), "after": after });
             page = self
-                .graphql_json(crate::api::raw::LIST_MEMBERS, vars, list.as_str(), "/node/items")
+                .graphql_json(
+                    crate::api::raw::LIST_MEMBERS,
+                    vars,
+                    list.as_str(),
+                    "/node/items",
+                )
                 .await?;
         }
     }
 
     /// Puts repository `item` in exactly `lists` of yours.
-    pub(crate) async fn set_lists(&self, item: &NodeId, lists: &[NodeId]) -> Result<(), ApiError> {
+    pub async fn set_lists(&self, item: &NodeId, lists: &[NodeId]) -> Result<(), ApiError> {
         let lists: Vec<&str> = lists.iter().map(NodeId::as_str).collect();
         let vars = serde_json::json!({ "item": item.as_str(), "lists": lists });
         self.mutate_json(crate::api::raw::SET_LISTS, vars).await
     }
 
     /// Makes a list named `name`; its ID.
-    pub(crate) async fn create_list(&self, name: &str) -> Result<NodeId, ApiError> {
+    pub async fn create_list(&self, name: &str) -> Result<NodeId, ApiError> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Answer {
@@ -213,7 +239,7 @@ impl GitHub {
     }
 
     /// Deletes one of your lists.
-    pub(crate) async fn delete_list(&self, list: &NodeId) -> Result<(), ApiError> {
+    pub async fn delete_list(&self, list: &NodeId) -> Result<(), ApiError> {
         let vars = serde_json::json!({ "list": list.as_str() });
         self.mutate_json(crate::api::raw::DELETE_LIST, vars).await
     }

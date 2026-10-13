@@ -130,7 +130,11 @@ fn a_saved_reply_goes_in_at_the_cursor() {
     press(&mut s, "Hi. ");
     let cmds = press(&mut s, "<C-g>");
     let key = crate::site::site(crate::site::Key::SavedReplies);
-    assert!(cmds.iter().any(|c| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if *k == key)), "{cmds:?}");
+    assert!(
+        cmds.iter()
+            .any(|c| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if *k == key)),
+        "{cmds:?}"
+    );
     saved_replies(
         &mut s,
         Ok(vec![
@@ -157,8 +161,16 @@ fn saved_replies_say_what_the_token_lacks() {
     let why = "Saved replies take your token's read:user scope, which it lacks: `gh auth refresh -s read:user` adds it";
     saved_replies(&mut s, Err(ApiError::Denied(why.into())));
     let (rows, _) = crate::site::replies::shown(&s).unwrap();
-    assert!(rows.iter().any(|r| r.contains("gh auth refresh -s read:user")), "{rows:?}");
-    assert!(rows.iter().any(|r| r.contains("github.com/settings/replies")), "{rows:?}");
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("gh auth refresh -s read:user")),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("github.com/settings/replies")),
+        "{rows:?}"
+    );
     // esc closes the list, not the composer.
     press(&mut s, "<Esc>");
     assert!(crate::site::replies::shown(&s).is_none());

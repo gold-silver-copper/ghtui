@@ -208,9 +208,7 @@ pub fn install(p: &PackageRef, repo: Option<&RepoId>, version: &Version) -> Vec<
 /// What a refusal of packages means, given the token's scopes (when
 /// GitHub said them).
 fn refusal(status: u16, message: &str, scopes: Option<&str>, deleting: bool) -> Option<String> {
-    let has = |scope: &str| {
-        scopes.is_some_and(|s| s.split(',').any(|s| s.trim() == scope))
-    };
+    let has = |scope: &str| scopes.is_some_and(|s| s.split(',').any(|s| s.trim() == scope));
     let reads = has("read:packages") || has("write:packages");
     let flag = match crate::host::current() {
         h if h.is_enterprise() => format!("--hostname {} ", h.name()),
@@ -244,7 +242,12 @@ pub mod keys {
     }
 
     pub fn package(p: &PackageRef) -> String {
-        format!("package:{}:{}:{}", p.owner.to_lowercase(), p.kind.slug(), p.name)
+        format!(
+            "package:{}:{}:{}",
+            p.owner.to_lowercase(),
+            p.kind.slug(),
+            p.name
+        )
     }
 }
 
@@ -253,11 +256,7 @@ const VERSIONS: usize = 30;
 
 impl GitHub {
     /// GitHub's answer for a packages path, or what its refusal means.
-    async fn packages_answer(
-        &self,
-        path: &str,
-        what: &str,
-    ) -> Result<Answer, ApiError> {
+    async fn packages_answer(&self, path: &str, what: &str) -> Result<Answer, ApiError> {
         #[derive(Deserialize)]
         struct Message {
             message: Option<String>,
@@ -275,7 +274,10 @@ impl GitHub {
             return Err(ApiError::Denied(why));
         }
         answer.checked(what)?;
-        Err(ApiError::Decode(format!("{what}: status {}", answer.status())))
+        Err(ApiError::Decode(format!(
+            "{what}: status {}",
+            answer.status()
+        )))
     }
 
     /// Whether `login` is an organization.
@@ -285,7 +287,9 @@ impl GitHub {
             #[serde(rename = "type")]
             kind: String,
         }
-        let body = self.rest_get(&format!("/users/{login}"), format!("@{login}")).await?;
+        let body = self
+            .rest_get(&format!("/users/{login}"), format!("@{login}"))
+            .await?;
         let owner: Owner = serde_json::from_str(&body)?;
         Ok(owner.kind == "Organization")
     }
@@ -299,7 +303,9 @@ impl GitHub {
         let pages = futures::future::join_all(Kind::ALL.into_iter().map(|kind| {
             let path = format!("{base}?package_type={}&per_page=100", kind.slug());
             async move {
-                let answer = self.packages_answer(&path, &format!("@{owner}'s packages")).await?;
+                let answer = self
+                    .packages_answer(&path, &format!("@{owner}'s packages"))
+                    .await?;
                 let found: Vec<wire::Package> = serde_json::from_str(answer.body())?;
                 Ok::<_, ApiError>((kind, found, answer.next_page().is_some()))
             }
@@ -356,12 +362,15 @@ impl GitHub {
     }
 
     /// Deletes a package's version.
-    pub(crate) async fn delete_version(&self, p: &PackageRef, id: u64) -> Result<(), ApiError> {
+    pub async fn delete_version(&self, p: &PackageRef, id: u64) -> Result<(), ApiError> {
         let base = p.path(self.is_org(&p.owner).await?);
         let path = format!("{base}/versions/{id}");
         let result = self.rest_write(http::Method::DELETE, &path, None).await;
         match result {
-            Err(ApiError::Http { status: 403, message }) => {
+            Err(ApiError::Http {
+                status: 403,
+                message,
+            }) => {
                 // The scopes GitHub said, from a read of the package.
                 let scopes = match self.rest_answer(&base).await {
                     Ok(answer) => answer.header("x-oauth-scopes").map(str::to_owned),
@@ -484,17 +493,31 @@ mod tests {
             install(&at(Kind::Npm, "lib"), None, &version("1.2.0", &[])),
             ["npm install @octo-org/lib@1.2.0 --registry=https://npm.pkg.github.com"]
         );
-        let maven = install(&at(Kind::Maven, "com.example.app"), None, &version("2.0", &[]));
-        assert!(maven.first().is_some_and(|l| l.contains("<groupId>com.example</groupId><artifactId>app</artifactId>")));
+        let maven = install(
+            &at(Kind::Maven, "com.example.app"),
+            None,
+            &version("2.0", &[]),
+        );
+        assert!(maven.first().is_some_and(|l| {
+            l.contains("<groupId>com.example</groupId><artifactId>app</artifactId>")
+        }));
     }
 
     #[test]
     fn a_missing_scope_is_named() {
-        let why = refusal(403, "You need at least read:packages scope to list packages.", Some("repo, gist"), false);
+        let why = refusal(
+            403,
+            "You need at least read:packages scope to list packages.",
+            Some("repo, gist"),
+            false,
+        );
         assert!(why.is_some_and(|w| w.contains("`gh auth refresh -s read:packages`")));
         let why = refusal(403, "Forbidden", Some("repo, read:packages"), true);
         assert!(why.is_some_and(|w| w.contains("delete:packages")));
-        assert_eq!(refusal(404, "Not Found", Some("read:packages"), false), None);
+        assert_eq!(
+            refusal(404, "Not Found", Some("read:packages"), false),
+            None
+        );
     }
 
     #[test]

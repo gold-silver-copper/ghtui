@@ -30,17 +30,21 @@ fn about(list: &StarList) -> Vec<Seg> {
 
 /// Someone's lists, above what they starred, when they have any.
 pub fn star_lists(page: &mut Page, login: &str, lists: Fetched<'_, Capped<StarList>>) {
-    #[expect(clippy::disallowed_methods, reason = "said in the box")]
-    let lists = match lists.text("the lists") {
-        Ok(lists) if lists.is_empty() => return,
-        Ok(lists) => lists,
-        Err(why) => {
-            empty_box(page, Seg::new("Lists", Role::Strong), &why);
-            page.blank();
-            return;
-        }
+    // Nothing while they load: most people have none.
+    let failed = |page: &mut Page, why: &str| {
+        empty_box(page, Seg::new("Lists", Role::Strong), why);
+        page.blank();
     };
-    let title = vec![Seg::new(format!("Lists  {}", count_of(lists)), Role::Strong)];
+    let Some(lists) = lists.show_with(page, "the lists", |_| {}, failed) else {
+        return;
+    };
+    if lists.is_empty() {
+        return;
+    }
+    let title = vec![Seg::new(
+        format!("Lists  {}", count_of(lists)),
+        Role::Strong,
+    )];
     list_box(page, title, Vec::new(), lists, "", |page, list| {
         item(page, list_url(login, list), |page, link| {
             let mut segs = vec![Seg::linked(list.name.clone(), Role::Link, link)];

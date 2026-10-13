@@ -3634,3 +3634,186 @@ async fn reviews_and_commit_comments_send_their_requests() {
             .starts_with("GET /repos/o/r/commits/abc/comments")
     );
 }
+
+// ---- Insights, starred lists and packages -------------------------------------------
+
+/// Traffic is four reads, made together; a 403 says only people who can
+/// push see it. GitHub's statistics say when they're still being
+/// counted, and the dependency graph is asked under its preview.
+#[tokio::test]
+async fn insights_read_traffic_statistics_and_the_dependency_graph() {
+    let counted = r#"{"count":5,"uniques":2,"views":[{"timestamp":"2026-10-10T00:00:00Z","count":5,"uniques":2}],"clones":[]}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, counted).on("/traffic/views"),
+        Reply::new(200, r#"{"count":1,"uniques":1,"clones":[]}"#).on("/traffic/clones"),
+        Reply::new(200, r#"[{"referrer":"github.com","count":3,"uniques":1}]"#)
+            .on("/popular/referrers"),
+        Reply::new(200, r#"[{"path":"/o/r","title":"o/r","count":4,"uniques":2}]"#)
+            .on("/popular/paths"),
+        Reply::new(202, "{}").on("/stats/contributors"),
+        Reply::new(
+            200,
+            r#"{"data":{"repository":{"dependencyGraphManifests":{"totalCount":1,"nodes":[{"filename":"Cargo.lock","blobPath":"/o/r/blob/main/Cargo.lock","parseable":true,"exceedsMaxSize":false,"dependencies":{"totalCount":1,"nodes":[{"packageName":"rand","packageManager":"RUST","requirements":"= 0.9.2","repository":{"nameWithOwner":"rust-random/rand"}}]}}]}}}}"#,
+        )
+        .on("/graphql"),
+        Reply::new(403, r#"{"message":"Must have push access to repository"}"#),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let t = gh.traffic(&repo).await.unwrap();
+    assert_eq!(
+        (t.views.count, t.views.days.len(), t.clones.count),
+        (5, 1, 1)
+    );
+    assert_eq!(t.referrers[0].name, "github.com");
+    assert_eq!(t.paths[0].title.as_deref(), Some("o/r"));
+    let counting = gh.activity(&repo).await.unwrap_err();
+    assert!(
+        counting.to_string().contains("still counting"),
+        "{counting}"
+    );
+    let deps = gh.dependencies(&repo).await.unwrap();
+    assert_eq!(deps.manifests[0].path, "Cargo.lock");
+    assert_eq!(
+        deps.manifests[0].dependencies[0].repo,
+        Some(RepoId::new("rust-random", "rand"))
+    );
+    let refused = gh.traffic(&repo).await.unwrap_err();
+    assert!(
+        refused.to_string().contains("only to people who can push"),
+        "{refused}"
+    );
+    let seen = seen.lock().unwrap();
+    let graph = seen
+        .iter()
+        .find(|s| s.request_line.starts_with("POST /graphql"))
+        .unwrap();
+    assert_eq!(
+        graph.header("accept"),
+        Some("application/vnd.github.hawkgirl-preview+json")
+    );
+    assert!(
+        graph
+            .query()
+            .contains("dependencyGraphManifests(first: 20)")
+    );
+}
+
+/// Which of your lists have a repository is read past a list's first
+/// 100; putting it in lists sends every list it's to be in, and making
+/// a list answers its ID.
+#[tokio::test]
+async fn starred_lists_are_read_and_set() {
+    let page = |ids: &[&str], next: bool| {
+        let nodes: Vec<String> = ids.iter().map(|id| format!(r#"{{"id":"{id}"}}"#)).collect();
+        format!(
+            r#"{{"totalCount":101,"pageInfo":{{"hasNextPage":{next},"endCursor":"c1"}},"nodes":[{}]}}"#,
+            nodes.join(",")
+        )
+    };
+    let mine = format!(
+        r#"{{"data":{{"repository":{{"id":"R_1","viewerHasStarred":true}},"viewer":{{"login":"octocat","lists":{{"totalCount":1,"nodes":[{{"id":"UL_1","name":"Tools","slug":"tools","isPrivate":false,"items":{}}}]}}}}}}}}"#,
+        page(&["R_2"], true)
+    );
+    let more = format!(
+        r#"{{"data":{{"node":{{"items":{}}}}}}}"#,
+        page(&["R_1"], false)
+    );
+    let (gh, seen) = github(vec![
+        Reply::new(200, mine),
+        Reply::new(200, more),
+        Reply::new(200, r#"{"data":{"updateUserListsForItem":{"lists":[]}}}"#),
+        Reply::new(200, r#"{"data":{"createUserList":{"list":{"id":"UL_9"}}}}"#),
+        Reply::new(
+            200,
+            r#"{"data":{"deleteUserList":{"clientMutationId":null}}}"#,
+        ),
+    ])
+    .await;
+    let lists = gh.my_lists(&RepoId::new("o", "r")).await.unwrap();
+    assert_eq!(lists.repo, NodeId::new("R_1"));
+    assert_eq!(lists.lists[0].has, Some(true));
+    assert_eq!(lists.lists[0].count, 101);
+    let set = [NodeId::new("UL_1")];
+    gh.set_lists(&NodeId::new("R_1"), &set).await.unwrap();
+    assert_eq!(gh.create_list("Rust").await.unwrap(), NodeId::new("UL_9"));
+    gh.delete_list(&NodeId::new("UL_9")).await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[1].json()["variables"]["after"], "c1");
+    assert!(seen[2].query().contains("updateUserListsForItem"));
+    assert_eq!(
+        seen[2].json()["variables"],
+        serde_json::json!({"item": "R_1", "lists": ["UL_1"]})
+    );
+    assert_eq!(
+        seen[3].json()["variables"],
+        serde_json::json!({"name": "Rust"})
+    );
+    assert_eq!(
+        seen[4].json()["variables"],
+        serde_json::json!({"list": "UL_9"})
+    );
+}
+
+/// Packages are read kind by kind, under `/orgs/` for an organization;
+/// without the scope, ghtui names it. A version is deleted by its ID.
+#[tokio::test]
+async fn packages_are_listed_and_a_version_deleted() {
+    use ghtui::api::packages::{Kind, PackageRef, PackagesOf};
+    let mut replies = vec![Reply::new(200, r#"{"login":"acme","type":"Organization"}"#)];
+    for kind in Kind::ALL {
+        let body = if kind == Kind::Container {
+            r#"[{"name":"app","visibility":"public","version_count":2,"updated_at":"2026-10-01T00:00:00Z","repository":{"full_name":"acme/app"}}]"#
+        } else {
+            "[]"
+        };
+        let kind: &'static str =
+            Box::leak(format!("package_type={}", kind.slug()).into_boxed_str());
+        replies.push(Reply::new(200, body).on(kind));
+    }
+    replies.push(Reply::new(200, r#"{"login":"acme","type":"Organization"}"#));
+    replies.push(Reply::new(204, ""));
+    replies.push(Reply::new(200, r#"{"login":"me","type":"User"}"#));
+    for _ in Kind::ALL {
+        replies.push(
+            Reply::new(
+                403,
+                r#"{"message":"You need at least read:packages scope to list packages."}"#,
+            )
+            .header("x-oauth-scopes", "repo, gist")
+            .on("/users/me/packages"),
+        );
+    }
+    let (gh, seen) = github(replies).await;
+    let list = gh
+        .packages(&PackagesOf::Owner("acme".into()))
+        .await
+        .unwrap();
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].repo, Some(RepoId::new("acme", "app")));
+    let app = PackageRef {
+        owner: "acme".into(),
+        kind: Kind::Container,
+        name: "app".into(),
+    };
+    gh.delete_version(&app, 7).await.unwrap();
+    let denied = gh
+        .packages(&PackagesOf::Owner("me".into()))
+        .await
+        .unwrap_err();
+    assert!(
+        denied
+            .to_string()
+            .contains("gh auth refresh -s read:packages"),
+        "{denied}"
+    );
+    let seen = seen.lock().unwrap();
+    assert!(seen.iter().any(|s| {
+        s.request_line
+            .starts_with("GET /orgs/acme/packages?package_type=container&per_page=100 ")
+    }));
+    assert!(seen.iter().any(|s| {
+        s.request_line
+            .starts_with("DELETE /orgs/acme/packages/container/app/versions/7 ")
+    }));
+}

@@ -289,16 +289,19 @@ pub(crate) const MY_LISTS: &str = "query($owner: String!, $name: String!) { repo
 pub(crate) const LIST_MEMBERS: &str = "query($id: ID!, $after: String) { node(id: $id) { ... on UserList { items(first: 100, after: $after) { totalCount pageInfo { hasNextPage endCursor } nodes { ... on Repository { id } } } } } }";
 
 /// Makes a starred list.
-pub(crate) const CREATE_LIST: &str = "mutation($name: String!) { createUserList(input: {name: $name}) { list { id } } }";
+pub(crate) const CREATE_LIST: &str =
+    "mutation($name: String!) { createUserList(input: {name: $name}) { list { id } } }";
 
 /// Sets the lists a repository is in.
 pub(crate) const SET_LISTS: &str = "mutation($item: ID!, $lists: [ID!]!) { updateUserListsForItem(input: {itemId: $item, listIds: $lists}) { lists { id } } }";
 
 /// Deletes one of your starred lists.
-pub(crate) const DELETE_LIST: &str = "mutation($list: ID!) { deleteUserList(input: {listId: $list}) { clientMutationId } }";
+pub(crate) const DELETE_LIST: &str =
+    "mutation($list: ID!) { deleteUserList(input: {listId: $list}) { clientMutationId } }";
 
 /// Your saved replies, most recently changed first.
-pub(crate) const SAVED_REPLIES: &str = "query { viewer { savedReplies(first: 100) { totalCount nodes { id title body } } } }";
+pub(crate) const SAVED_REPLIES: &str =
+    "query { viewer { savedReplies(first: 100) { totalCount nodes { id title body } } } }";
 
 /// Every query here, by name, built with sample input.
 #[cfg(test)]

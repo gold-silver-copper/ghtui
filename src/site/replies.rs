@@ -127,7 +127,11 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
             choosing.selected = 0;
         }
         KeyCode::Enter => {
-            if let Some(text) = rows.into_iter().nth(choosing.selected).and_then(|r| r.insert) {
+            if let Some(text) = rows
+                .into_iter()
+                .nth(choosing.selected)
+                .and_then(|r| r.insert)
+            {
                 c.input.insert_str(&text);
                 c.saved = None;
                 c.error = None;
@@ -137,4 +141,3 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
     }
     Some(Vec::new())
 }
-

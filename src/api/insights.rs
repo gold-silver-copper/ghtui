@@ -23,6 +23,11 @@ pub fn week_of(secs: u64) -> u64 {
     secs.saturating_sub(SUNDAY) / WEEK * WEEK + SUNDAY
 }
 
+/// How many whole weeks from `from` to `to`.
+pub fn weeks_between(from: u64, to: u64) -> usize {
+    usize::try_from(to.saturating_sub(from) / WEEK).unwrap_or(usize::MAX)
+}
+
 /// Who counted the commits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Counter {
@@ -330,13 +335,13 @@ fn from_stats(contributors: Vec<wire::Contributor>, weekdays: [u32; 7], now: u64
         .min()
         .unwrap_or_else(|| week_of(now));
     let start = week_of(first);
-    let len = ((week_of(now).saturating_sub(start)) / WEEK + 1) as usize;
+    let len = weeks_between(start, week_of(now)).saturating_add(1);
     let mut weeks = vec![0u32; len];
     let mut authors: Vec<Author> = (contributors.into_iter())
         .map(|c| {
             let mut own = vec![0u32; len];
             for w in c.weeks.iter().filter(|w| w.c > 0) {
-                let at = (week_of(w.w).saturating_sub(start) / WEEK) as usize;
+                let at = weeks_between(start, week_of(w.w));
                 if let (Some(mine), Some(all)) = (own.get_mut(at), weeks.get_mut(at)) {
                     *mine += w.c;
                     *all += w.c;
@@ -514,14 +519,24 @@ mod tests {
         assert_eq!(a.start, sunday);
         assert_eq!(a.weeks, vec![1, 7, 0]);
         assert_eq!(a.total, 8);
-        let names: Vec<_> = a.authors.iter().map(|a| (a.name.as_str(), a.commits)).collect();
+        let names: Vec<_> = a
+            .authors
+            .iter()
+            .map(|a| (a.name.as_str(), a.commits))
+            .collect();
         assert_eq!(names, [("bob", 5), ("alice", 3)]);
-        assert_eq!(a.authors.get(1).map(|a| a.weeks.clone()), Some(vec![1, 2, 0]));
+        assert_eq!(
+            a.authors.get(1).map(|a| a.weeks.clone()),
+            Some(vec![1, 2, 0])
+        );
     }
 
     #[test]
     fn a_manifests_path_is_read_from_its_blob() {
-        assert_eq!(blob_path("/o/r/blob/main/xtask/Cargo.toml"), "xtask/Cargo.toml");
+        assert_eq!(
+            blob_path("/o/r/blob/main/xtask/Cargo.toml"),
+            "xtask/Cargo.toml"
+        );
         assert_eq!(blob_path("Cargo.lock"), "Cargo.lock");
     }
 }

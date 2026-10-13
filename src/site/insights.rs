@@ -7,7 +7,9 @@
 
 use std::collections::HashMap;
 
-use crate::api::insights::{AUTHORS, Activity, Author, Counter, WEEK, YEAR_WEEKS, week_of};
+use crate::api::insights::{
+    AUTHORS, Activity, Author, Counter, WEEK, YEAR_WEEKS, week_of, weeks_between,
+};
 use crate::git::Oid;
 use crate::git::read::ReadError;
 use crate::git::repo::Repo;
@@ -72,8 +74,8 @@ pub fn count_commits<'a>(lines: impl Iterator<Item = &'a str>, now: u64) -> Acti
         commits.push((time.min(now), i));
     }
     let start = (commits.iter().map(|c| week_of(c.0)).min()).unwrap_or(this_week);
-    let len = (this_week.saturating_sub(start) / WEEK + 1) as usize;
-    let index = |week: u64| (week.saturating_sub(start) / WEEK) as usize;
+    let len = weeks_between(start, this_week).saturating_add(1);
+    let index = |week: u64| weeks_between(start, week);
     // The authors listed: the most commits first.
     let mut order: Vec<usize> = (0..authors.len()).collect();
     order.sort_by(|&a, &b| {
@@ -102,8 +104,8 @@ pub fn count_commits<'a>(lines: impl Iterator<Item = &'a str>, now: u64) -> Acti
         let at = index(week_of(time));
         if time >= year_ago {
             // 1970-01-01 was a Thursday.
-            let day = ((time / 86_400 + 4) % 7) as usize;
-            if let Some(n) = weekdays.get_mut(day) {
+            let day = (time / 86_400 + 4) % 7;
+            if let Some(n) = usize::try_from(day).ok().and_then(|d| weekdays.get_mut(d)) {
                 *n += 1;
             }
         }

@@ -48,7 +48,6 @@ pub fn activity() -> Activity {
     }
 }
 
-
 pub fn traffic() -> Traffic {
     let day = |d: u32, n: u64, u: u64| (format!("2026-10-{d:02}T00:00:00Z"), n, u);
     Traffic {

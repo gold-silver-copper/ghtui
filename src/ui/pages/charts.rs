@@ -16,9 +16,9 @@ fn eighths(value: u64, max: u64, cells: usize) -> usize {
     if value == 0 || max == 0 {
         return 0;
     }
-    let full = cells * 8;
-    let n = (value as u128 * full as u128).div_ceil(max as u128);
-    (n as usize).clamp(1, full)
+    let full = cells.saturating_mul(8);
+    let n = (u128::from(value) * full as u128).div_ceil(u128::from(max));
+    usize::try_from(n).unwrap_or(full).clamp(1, full)
 }
 
 /// A horizontal bar `cells` wide at most: `value` of `max`.

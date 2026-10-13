@@ -371,9 +371,8 @@ impl State {
         if let Some(projects) = &projects {
             tabs.push(("▥", "Projects", None, projects.clone()));
         }
-        let packages = crate::site::Page::Packages(crate::api::packages::PackagesOf::Owner(
-            login.to_owned(),
-        ));
+        let packages =
+            crate::site::Page::Packages(crate::api::packages::PackagesOf::Owner(login.to_owned()));
         tabs.push(("⬢", "Packages", None, Target::Page(Route::Site(packages))));
         if org == Some(true) {
             tabs.push((
