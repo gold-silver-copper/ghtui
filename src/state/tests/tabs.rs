@@ -3,7 +3,7 @@ use super::*;
 /// Two routes to tell tabs apart by.
 fn issue(n: u64) -> Route {
     Route::Issue {
-        repo: repo(),
+        repo: ghtui(),
         number: n,
     }
 }
@@ -183,19 +183,19 @@ fn anchors_survive_every_way_in() {
 fn plain_links_open_the_branch_github_names() {
     let mut s = with_repo();
     let url = "https://github.com/gold-silver-copper/ghtui/blob/feature/x/src/lib.rs#L2";
-    let key = DataKey::RefIn(repo(), "feature/x/src/lib.rs".into());
+    let key = DataKey::RefIn(ghtui(), "feature/x/src/lib.rs".into());
     assert_eq!(fetches(s.go(Dest::from_url(url))), vec![fetch(key.clone())]);
     let depth = s.screens.len();
     let cmds = fetched(&mut s, key, Data::RefIn(Some("feature/x".into())));
     let file = Route::Blob {
-        repo: repo(),
+        repo: ghtui(),
         rev: "feature/x".into(),
         path: "src/lib.rs".into(),
         lines: Some((2, 2)),
     };
     assert_eq!(route(&s), file);
     assert_eq!(s.screens.len(), depth, "in its place");
-    let text = DataKey::Blob(repo(), "feature/x".into(), "src/lib.rs".into());
+    let text = DataKey::Blob(ghtui(), "feature/x".into(), "src/lib.rs".into());
     assert_eq!(fetches(cmds), vec![fetch(text)]);
 
     let base = "https://github.com/gold-silver-copper/ghtui";
@@ -203,7 +203,7 @@ fn plain_links_open_the_branch_github_names() {
     assert_eq!(
         route(&s),
         Route::Tree {
-            repo: repo(),
+            repo: ghtui(),
             rev: "feature/x".into(),
             path: "src".into()
         }

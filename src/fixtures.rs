@@ -1,4 +1,4 @@
-//! Page data and key presses for tests and snapshots.
+//! Page data and key presses for tests.
 
 use crate::api::ApiError;
 use crate::api::browse::{
@@ -977,6 +977,81 @@ fn pr_commits() -> Vec<CommitInfo> {
             date: "2026-10-01T12:00:00Z".into(),
         },
     ]
+}
+
+/// gold-silver-copper/ghtui#12, open, approved, failing checks and in
+/// conflict.
+pub(crate) fn pr_detail() -> crate::api::model::PrDetail {
+    use crate::api::model::{ChecksState, Mergeable, ReviewDecision};
+    crate::api::model::PrDetail {
+        id: crate::api::model::NodeId::new("PR_12"),
+        merge_state: crate::api::model::MergeState::Dirty,
+        behind_by: Some(2),
+        may: crate::api::model::PrPermits {
+            merge: true,
+            merge_as_admin: false,
+            close: true,
+            reopen: true,
+            edit: true,
+            push_head: true,
+            enable_auto_merge: false,
+            disable_auto_merge: false,
+            delete_head: false,
+        },
+        head_gone: false,
+        locked: None,
+        merge_methods: vec![
+            crate::api::change::MergeMethod::Squash,
+            crate::api::change::MergeMethod::Merge,
+        ],
+        auto_merge_allowed: true,
+        auto_merge: None,
+        merge_queue: false,
+        queued: None,
+        title: "Theme: generate syntax palette from seed".into(),
+        author: "octocat".into(),
+        state: PrState::Open,
+        updated_at: "2026-10-03T09:00:00Z".into(),
+        additions: 120,
+        deletions: 34,
+        review: Some(ReviewDecision::Approved),
+        checks: Some(ChecksState::Failing),
+        body: "Derives keyword, string and type colors from the seed's HCT palettes.\n\n\
+               Every syntax role is now checked against every diff background, in both \
+               schemes and at both color depths."
+            .into(),
+        created_at: "2026-09-30T12:00:00Z".into(),
+        base_ref: "main".into(),
+        head_ref: "syntax-palette".into(),
+        base_oid: "0123456789abcdef0123456789abcdef01234567".into(),
+        head_oid: "fedcba9876543210fedcba9876543210fedcba98".into(),
+        head_repo: Some("octocat/ghtui".into()),
+        changed_files: 7,
+        mergeable: Mergeable::Conflicting,
+        milestone: Some(crate::api::model::MilestoneRef {
+            number: 3,
+            title: "Links".into(),
+        }),
+        labels: vec![
+            Label {
+                name: "enhancement".into(),
+                color: "a2eeef".into(),
+            },
+            Label {
+                name: "theme".into(),
+                color: "7057ff".into(),
+            },
+        ]
+        .into(),
+        assignees: vec!["octocat".into()].into(),
+        editable: editable("PR_12"),
+        sidebar: crate::api::edit::SidebarPermits {
+            labels: true,
+            assignees: true,
+            milestone: true,
+            reviewers: true,
+        },
+    }
 }
 
 pub fn activity() -> PrActivity {

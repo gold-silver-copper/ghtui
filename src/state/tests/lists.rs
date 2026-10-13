@@ -7,11 +7,11 @@ use super::*;
 #[test]
 fn commit_history_loads_more() {
     let mut state = with_repo();
-    let url = format!("https://github.com/{}/commits/main/src", repo());
+    let url = format!("https://github.com/{}/commits/main/src", ghtui());
     let Target::Page(route) = Dest::from_url(&url).target else {
         panic!("{url}");
     };
-    let key = DataKey::History(repo(), "main".into(), "src".into());
+    let key = DataKey::History(ghtui(), "main".into(), "src".into());
     let cmds = state.push(route);
     assert!(cmds.contains(&fetch(key.clone())), "{cmds:?}");
     fetched(
@@ -58,8 +58,11 @@ fn commit_history_loads_more() {
 fn an_extended_list_is_kept_until_asked() {
     let mut state = with_repo();
     let file = "ci.yml".to_owned();
-    let key = DataKey::Runs(repo(), format!("workflow:{file}"));
-    let _ = state.push(Route::Workflow { repo: repo(), file });
+    let key = DataKey::Runs(ghtui(), format!("workflow:{file}"));
+    let _ = state.push(Route::Workflow {
+        repo: ghtui(),
+        file,
+    });
     let page = |id: u64, next: Option<&str>| {
         let mut runs = crate::fixtures::workflow_runs().1;
         for (i, run) in runs.items.iter_mut().enumerate() {
@@ -82,7 +85,7 @@ fn an_extended_list_is_kept_until_asked() {
         Msg::FetchedMore(key.clone(), "2".into(), Ok(page(20, None))),
     );
     let star = Change::Star {
-        repo: repo(),
+        repo: ghtui(),
         id: NodeId::new("R_1"),
         starred: true,
     };
@@ -104,11 +107,11 @@ fn an_extended_list_is_kept_until_asked() {
 #[test]
 fn a_next_page_from_before_a_refresh_is_not_appended() {
     let mut state = with_repo();
-    let url = format!("https://github.com/{}/commits/main/src", repo());
+    let url = format!("https://github.com/{}/commits/main/src", ghtui());
     let Target::Page(route) = Dest::from_url(&url).target else {
         panic!("{url}");
     };
-    let key = DataKey::History(repo(), "main".into(), "src".into());
+    let key = DataKey::History(ghtui(), "main".into(), "src".into());
     let _ = state.push(route);
     // Commits named `c0`, `c1`, ...
     let page = |c: char, next: Option<&str>| {
@@ -165,11 +168,11 @@ fn a_next_page_from_before_a_refresh_is_not_appended() {
 #[test]
 fn load_more_during_a_refresh_waits_for_it() {
     let mut state = with_repo();
-    let url = format!("https://github.com/{}/commits/main/src", repo());
+    let url = format!("https://github.com/{}/commits/main/src", ghtui());
     let Target::Page(route) = Dest::from_url(&url).target else {
         panic!("{url}");
     };
-    let key = DataKey::History(repo(), "main".into(), "src".into());
+    let key = DataKey::History(ghtui(), "main".into(), "src".into());
     let _ = state.push(route);
     let page = |next| Data::History(Box::new(crate::fixtures::history(next)));
     fetched(&mut state, key.clone(), page(Some("h1")));
@@ -189,11 +192,11 @@ fn load_more_during_a_refresh_waits_for_it() {
 #[test]
 fn a_next_page_survives_a_failed_refresh() {
     let mut state = with_repo();
-    let url = format!("https://github.com/{}/commits/main/src", repo());
+    let url = format!("https://github.com/{}/commits/main/src", ghtui());
     let Target::Page(route) = Dest::from_url(&url).target else {
         panic!("{url}");
     };
-    let key = DataKey::History(repo(), "main".into(), "src".into());
+    let key = DataKey::History(ghtui(), "main".into(), "src".into());
     let _ = state.push(route);
     let page = |next: Option<&str>| Data::History(Box::new(crate::fixtures::history(next)));
     fetched(&mut state, key.clone(), page(Some("h1")));
@@ -226,8 +229,8 @@ fn a_next_page_survives_a_failed_refresh() {
 #[test]
 fn advisories_load_more() {
     let mut state = with_repo();
-    let route = Route::Advisories(Some(repo()));
-    let key = DataKey::Advisories(Some(repo()));
+    let route = Route::Advisories(Some(ghtui()));
+    let key = DataKey::Advisories(Some(ghtui()));
     let cmds = state.push(route);
     assert!(cmds.contains(&fetch(key.clone())), "{cmds:?}");
     let list = crate::api::browse::Results {
@@ -289,7 +292,7 @@ fn org_people_say_how_many_are_left_out() {
 #[test]
 fn a_list_cut_short_keeps_its_count() {
     let mut state = with_repo();
-    let (repo, number) = (repo(), 3);
+    let (repo, number) = (ghtui(), 3);
     let _ = state.push(Route::Milestone {
         repo: repo.clone(),
         number,
@@ -384,7 +387,7 @@ fn a_filtered_list_counts_what_it_finds() {
         "repo:gold-silver-copper/ghtui is:issue author:octocat"
     );
     let overview = Data::Repo(Box::new(crate::fixtures::overview()));
-    let _ = fetched(&mut s, DataKey::Repo(repo()), overview);
+    let _ = fetched(&mut s, DataKey::Repo(ghtui()), overview);
     let header = |s: &State| {
         let lines = page(s).page().lines.iter();
         let lines = lines.map(crate::ui::page::PageLine::text);

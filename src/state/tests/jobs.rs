@@ -20,7 +20,7 @@ fn output_takes_the_screen_and_reading_stays_narrow() {
         )
     };
     let job = Route::Job {
-        repo: repo(),
+        repo: ghtui(),
         run: Some(7),
         job: 2,
         step: None,
@@ -40,7 +40,7 @@ fn output_takes_the_screen_and_reading_stays_narrow() {
 fn a_jobs_log_search_goes_through_its_matches() {
     let mut s = with_repo();
     let job_route = Route::Job {
-        repo: repo(),
+        repo: ghtui(),
         run: Some(7),
         job: 2,
         step: Some((1, 1)),
@@ -49,8 +49,12 @@ fn a_jobs_log_search_goes_through_its_matches() {
     let _ = s.push(job_route.clone());
     let depth = s.screens.len();
     let (job, log) = crate::fixtures::job();
-    fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
-    fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
+    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
+    fetched(
+        &mut s,
+        DataKey::JobLog(ghtui(), 2),
+        Data::Log(Arc::new(log)),
+    );
     press(&mut s, "/");
     press(&mut s, "TEST");
     press(&mut s, "<Enter>");
@@ -99,15 +103,19 @@ fn a_jobs_log_search_goes_through_its_matches() {
 fn a_failed_job_opens_at_its_first_error() {
     let mut s = with_repo();
     let _ = s.push(Route::Job {
-        repo: repo(),
+        repo: ghtui(),
         run: Some(7),
         job: 2,
         step: None,
         query: String::new(),
     });
     let (job, log) = crate::fixtures::job();
-    fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
-    fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
+    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
+    fetched(
+        &mut s,
+        DataKey::JobLog(ghtui(), 2),
+        Data::Log(Arc::new(log)),
+    );
     let Screen::Page(p) = s.screen() else {
         panic!()
     };
@@ -132,7 +140,7 @@ fn a_failed_job_opens_at_its_first_error() {
 fn a_running_jobs_log_is_checked_again() {
     let mut s = with_repo();
     let job_route = Route::Job {
-        repo: repo(),
+        repo: ghtui(),
         run: Some(7),
         job: 2,
         step: None,
@@ -145,13 +153,13 @@ fn a_running_jobs_log_is_checked_again() {
         running: true,
         ..Default::default()
     };
-    fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
+    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
     fetched(
         &mut s,
-        DataKey::JobLog(repo(), 2),
+        DataKey::JobLog(ghtui(), 2),
         Data::Log(Arc::new(running)),
     );
-    let _ = s.push(Route::Repo(repo()));
+    let _ = s.push(Route::Repo(ghtui()));
     let fetched_keys = |cmds: Vec<Cmd>| -> Vec<DataKey> {
         fetches(cmds)
             .into_iter()
@@ -162,12 +170,16 @@ fn a_running_jobs_log_is_checked_again() {
             .collect()
     };
     let keys = fetched_keys(s.back());
-    assert!(keys.contains(&DataKey::JobLog(repo(), 2)), "{keys:?}");
-    assert!(keys.contains(&DataKey::Job(repo(), 2)), "{keys:?}");
+    assert!(keys.contains(&DataKey::JobLog(ghtui(), 2)), "{keys:?}");
+    assert!(keys.contains(&DataKey::Job(ghtui(), 2)), "{keys:?}");
     // A finished one isn't.
     let (job, log) = crate::fixtures::job();
-    fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
-    fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
-    let _ = s.push(Route::Repo(repo()));
+    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
+    fetched(
+        &mut s,
+        DataKey::JobLog(ghtui(), 2),
+        Data::Log(Arc::new(log)),
+    );
+    let _ = s.push(Route::Repo(ghtui()));
     assert_eq!(fetched_keys(s.back()), Vec::new());
 }

@@ -13,20 +13,15 @@
 use std::collections::{HashMap, HashSet};
 
 use proptest::prelude::*;
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
 
 use crate::api::ApiError;
 use crate::api::browse::{
     BranchInfo, IssueState, PrState, Results, SearchKind, SearchResults, Status,
 };
 use crate::api::model::RepoId;
-use crate::theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
-use crate::ui::Icons;
 
 use crate::browse::{Data, DataKey};
 use crate::fixtures::{self, press};
-use crate::keymap::Keymap;
 use crate::route::Route;
 use crate::state::{Msg, Remote, Screen, State, update};
 
@@ -306,17 +301,9 @@ fn apply(state: &mut State, model: &mut Model, event: &Event) {
     }
 }
 
-fn fail(e: impl std::fmt::Display) -> TestCaseError {
-    TestCaseError::fail(e.to_string())
-}
-
 fn check(state: &State, model: &Model) -> Result<(), TestCaseError> {
     // Renders at its size.
-    let (w, h) = state.size;
-    let mut terminal = Terminal::new(TestBackend::new(w, h)).map_err(fail)?;
-    terminal
-        .draw(|frame| crate::view::view(state, frame, 0))
-        .map_err(fail)?;
+    crate::state::tests::draw(state);
     // The selection is on an item.
     if let Screen::Page(p) = state.screen() {
         prop_assert!(
@@ -352,18 +339,6 @@ fn check(state: &State, model: &Model) -> Result<(), TestCaseError> {
     Ok(())
 }
 
-fn new_state() -> State {
-    let mut state = State::new(
-        Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor),
-        Icons::default(),
-        Keymap::default(),
-        (100, 30),
-    );
-    state.viewer = Some("octocat".into());
-    state.clock = || 1_700_000_000;
-    state
-}
-
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 256,
@@ -373,7 +348,7 @@ proptest! {
 
     #[test]
     fn any_sequence_of_events_keeps_the_app_sound(events in proptest::collection::vec(event(), 1..60)) {
-        let mut state = new_state();
+        let mut state = crate::state::tests::state();
         let mut model = Model::default();
         for event in &events {
             apply(&mut state, &mut model, event);
@@ -395,7 +370,7 @@ fn joined_diff_work_is_the_same_in_every_arrival_order() {
 
     let pr = PrRef::parse("o/r#1").unwrap();
     let of = DiffOf::Pr(pr.clone());
-    let detail = crate::snapshot_tests::pr_detail();
+    let detail = crate::fixtures::pr_detail();
     let orders = [
         [0, 1, 2],
         [0, 2, 1],
@@ -405,7 +380,7 @@ fn joined_diff_work_is_the_same_in_every_arrival_order() {
         [2, 1, 0],
     ];
     for order in orders {
-        let mut state = new_state();
+        let mut state = crate::state::tests::state();
         let cached = crate::store::Cached {
             value: detail.clone(),
             fetched_at: 0,

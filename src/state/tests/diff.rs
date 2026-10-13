@@ -3,16 +3,13 @@ use crate::api::model::{ViewedFiles, ViewedState};
 use crate::diff_screen::DiffScreen;
 use crate::ui::diff_doc::{Doc, Pos, Row, Viewed};
 
-/// A diff screen on o/r#7 built from the snapshot fixture, before
+/// A diff screen on o/r#7 built from the fixture diff, before
 /// its saved review is read.
 fn unread_diff_state(width: u16) -> (State, PrRef) {
     let mut s = state();
     s.size = (width, 40);
     let pr = PrRef::parse("o/r#7").unwrap();
-    s.diffs.insert(
-        DiffOf::Pr(pr.clone()),
-        crate::snapshot_tests::diff_fixture(),
-    );
+    s.diffs.insert(DiffOf::Pr(pr.clone()), fixture_diff());
     s.screens.push(Screen::Diff(Box::new(DiffScreen::new(
         DiffOf::Pr(pr.clone()),
         DiffPrefs::fit(width),
@@ -98,13 +95,12 @@ fn the_review_tab_lists_drafts_and_threads_and_opens_them() {
         pr: pr.clone(),
         tab: PrTab::Review,
     });
-    let detail = Box::new(Ok(crate::snapshot_tests::pr_detail()));
+    let detail = Box::new(Ok(crate::fixtures::pr_detail()));
     let cmds = update(&mut s, Msg::Pr(pr.clone(), detail));
     assert!(cmds.contains(&Cmd::LoadReview(pr.clone())), "{cmds:?}");
     assert!(cmds.contains(&Cmd::Api(Api::FetchThreads(pr.clone()))));
     // The diff job lists the files.
-    s.diffs
-        .insert(of.clone(), crate::snapshot_tests::diff_fixture());
+    s.diffs.insert(of.clone(), fixture_diff());
     let review = ReviewState {
         pending: vec![crate::fixtures::draft(1, 5, "Name it for what it holds")],
         ..ReviewState::default()
@@ -115,7 +111,7 @@ fn the_review_tab_lists_drafts_and_threads_and_opens_them() {
     open.comments[0].url = url.into();
     let threads = vec![thread("done", Some(3), true, false), open];
     diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(threads)));
-    let text = crate::snapshot_tests::page_text(&s);
+    let text = super::page_text(&s);
     assert!(text.contains("src/point.rs:5"), "{text}");
     assert!(text.contains("Name it for what it holds"), "{text}");
     assert!(text.contains("Thread open"), "{text}");
@@ -412,6 +408,9 @@ fn whitespace_and_full_file_keep_the_cursor_line() {
     );
     press(&mut s, "e");
 }
+pub(in crate::state) mod screen;
+pub(in crate::state) use screen::{commit_of, fixture_diff, screen_state};
+
 mod better;
 
 /// Watching the pull request under review for what's new.

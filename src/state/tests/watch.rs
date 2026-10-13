@@ -64,7 +64,7 @@ fn on_issue() -> (State, DataKey) {
     let mut s = with_repo();
     s.viewer = Some("octocat".into());
     let _ = s.push(issue(14));
-    let key = DataKey::Issue(repo(), 14);
+    let key = DataKey::Issue(ghtui(), 14);
     let detail = Some(Box::new(crate::fixtures::issue()));
     fetched(&mut s, key.clone(), Data::Issue(detail));
     (s, key)
@@ -93,7 +93,7 @@ fn an_issue_is_watched_and_another_authors_comment_is_new() {
     ));
     let comments = asks[1].probe.clone();
     let first = vec![
-        (Probe::Issue(repo(), 14), changed("\"i1\"", &rest_issue(1))),
+        (Probe::Issue(ghtui(), 14), changed("\"i1\"", &rest_issue(1))),
         (comments.clone(), changed("\"c1\"", "[]")),
     ];
     assert_eq!(fetched_keys(&answer_with(&mut s, first)), Vec::new());
@@ -102,7 +102,7 @@ fn an_issue_is_watched_and_another_authors_comment_is_new() {
     assert!(wait > crate::live::FIRST_MS);
     assert_eq!(asks[0].etag.as_deref(), Some("\"i1\""));
     let came = vec![
-        (Probe::Issue(repo(), 14), changed("\"i2\"", &rest_issue(3))),
+        (Probe::Issue(ghtui(), 14), changed("\"i2\"", &rest_issue(3))),
         (comments, Ok(Polled::Same)),
     ];
     assert_eq!(
@@ -138,7 +138,7 @@ fn an_issue_is_watched_and_another_authors_comment_is_new() {
         .filter(|l| l.right.iter().any(|r| r.text().contains("New")))
         .map(crate::ui::page::PageLine::text)
         .collect();
-    assert_eq!(badged, ["monalisa commented 9d ago"]);
+    assert_eq!(badged, ["monalisa commented just now"]);
 }
 
 /// A first answer newer than the page (a comment came in between
@@ -149,7 +149,7 @@ fn a_first_answer_newer_than_the_issue_is_fetched() {
     let (asks, _) = next_ask(&mut s);
     let comments = asks[1].probe.clone();
     let first = vec![
-        (Probe::Issue(repo(), 14), changed("\"i1\"", &rest_issue(2))),
+        (Probe::Issue(ghtui(), 14), changed("\"i1\"", &rest_issue(2))),
         (comments, changed("\"c1\"", "[]")),
     ];
     assert_eq!(fetched_keys(&answer_with(&mut s, first)), [key]);
@@ -162,7 +162,7 @@ fn a_first_answer_newer_than_the_issue_is_fetched() {
 fn a_running_job_is_followed_to_its_end() {
     let mut s = with_repo();
     let _ = s.push(Route::Job {
-        repo: repo(),
+        repo: ghtui(),
         run: Some(7),
         job: 2,
         step: None,
@@ -179,7 +179,7 @@ fn a_running_job_is_followed_to_its_end() {
     running.steps[3].started_at = None;
     fetched(
         &mut s,
-        DataKey::Job(repo(), 2),
+        DataKey::Job(ghtui(), 2),
         Data::Job(Box::new(running)),
     );
     let waiting = JobLog {
@@ -188,7 +188,7 @@ fn a_running_job_is_followed_to_its_end() {
     };
     fetched(
         &mut s,
-        DataKey::JobLog(repo(), 2),
+        DataKey::JobLog(ghtui(), 2),
         Data::Log(Arc::new(waiting)),
     );
     let (asks, _) = next_ask(&mut s);
@@ -200,7 +200,7 @@ fn a_running_job_is_followed_to_its_end() {
             .unwrap_or_default()
     };
     assert!(shown(&s).contains("cargo test"), "{}", shown(&s));
-    assert_eq!(asks[0].probe, Probe::Job(repo(), 2));
+    assert_eq!(asks[0].probe, Probe::Job(ghtui(), 2));
     let body = serde_json::json!({
         "id": 2, "run_id": 7, "name": "test (ubuntu)", "status": "completed",
         "conclusion": "failure", "started_at": null, "completed_at": null, "steps": [],
@@ -210,12 +210,16 @@ fn a_running_job_is_followed_to_its_end() {
         vec![(asks[0].probe.clone(), changed("\"j\"", &body.to_string()))],
     );
     let keys = fetched_keys(&cmds);
-    assert!(keys.contains(&DataKey::Job(repo(), 2)), "{keys:?}");
-    assert!(keys.contains(&DataKey::JobLog(repo(), 2)), "{keys:?}");
+    assert!(keys.contains(&DataKey::Job(ghtui(), 2)), "{keys:?}");
+    assert!(keys.contains(&DataKey::JobLog(ghtui(), 2)), "{keys:?}");
 
-    fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(done)));
+    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(done)));
     says(&s, "test (ubuntu) failed");
-    fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
+    fetched(
+        &mut s,
+        DataKey::JobLog(ghtui(), 2),
+        Data::Log(Arc::new(log)),
+    );
     s.sync_page();
     assert!(shown(&s).contains("exit code 101"), "{}", shown(&s));
     let asking = timers(&mut s)
@@ -231,14 +235,14 @@ fn new_runs_on_the_actions_tab_are_said() {
     s.viewer = Some("octocat".into());
     let query = String::new();
     let _ = s.push(Route::Actions {
-        repo: repo(),
+        repo: ghtui(),
         query: query.clone(),
     });
-    let key = DataKey::Runs(repo(), query.clone());
+    let key = DataKey::Runs(ghtui(), query.clone());
     let (_, runs) = crate::fixtures::workflow_runs();
     fetched(&mut s, key.clone(), Data::Runs(Box::new(runs.clone())));
     let (asks, _) = next_ask(&mut s);
-    assert_eq!(asks[0].probe, Probe::Runs(repo(), query));
+    assert_eq!(asks[0].probe, Probe::Runs(ghtui(), query));
     let wire = serde_json::json!({ "total_count": 1, "workflow_runs": [{
         "id": 999, "name": "CI", "display_title": "New", "run_number": 99, "event": "push",
         "head_branch": "main", "head_sha": "abc", "status": "queued", "conclusion": null,

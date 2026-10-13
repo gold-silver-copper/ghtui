@@ -3,7 +3,6 @@
 //! sent again, copied or thrown away from there.
 
 use super::*;
-use crate::api::model::NodeId;
 use crate::offline::queue::{Entry, Op, Status, Told, Write};
 use crate::offline::{Cmd as Off, Msg as OffMsg};
 
@@ -11,21 +10,11 @@ fn offline(state: &mut State, msg: OffMsg) -> Vec<Cmd> {
     update(state, Msg::Offline(msg))
 }
 
-/// The page's text, line by line.
-fn text(state: &State) -> String {
-    let lines = page(state)
-        .page()
-        .lines
-        .iter()
-        .map(crate::ui::page::PageLine::text);
-    lines.collect::<Vec<_>>().join("\n")
-}
-
 fn on_issue() -> State {
     let mut state = state();
     let _ = state.push(issue(14));
     let data = Data::Issue(Some(Box::new(crate::fixtures::issue())));
-    fetched(&mut state, DataKey::Issue(repo(), 14), data);
+    fetched(&mut state, DataKey::Issue(ghtui(), 14), data);
     state
 }
 
@@ -59,7 +48,7 @@ fn a_comment_github_can_t_be_reached_for_waits_on_its_page_and_goes_when_it_s_ba
         ..*entry.clone()
     };
     offline(&mut state, OffMsg::Queue(Told::All(vec![queued.clone()])));
-    let shown = text(&state);
+    let shown = page_text(&state);
     assert!(shown.contains("Queued for GitHub  1"), "{shown}");
     assert!(shown.contains("Thanks!"), "{shown}");
     assert_eq!(crate::offline::header(&state), ["⚠ Offline", "1 queued"]);
@@ -81,7 +70,7 @@ fn a_comment_github_can_t_be_reached_for_waits_on_its_page_and_goes_when_it_s_ba
     let cmds = offline(&mut state, OffMsg::Queue(Told::Taken(Box::new(queued))));
     says(&state, "Sent to GitHub: A comment");
     let refetch = Cmd::Api(Api::Fetch {
-        key: DataKey::Issue(repo(), 14),
+        key: DataKey::Issue(ghtui(), 14),
         cached: false,
     });
     assert!(cmds.contains(&refetch), "{cmds:?}");
@@ -99,7 +88,7 @@ fn what_can_t_wait_isn_t_queued() {
     let err = Err(ApiError::Offline("not sent while offline".into()));
     let sent = [Cmd::Api(Api::Change(
         merge,
-        act::By::Act(act::Subject::Issue(repo(), 14)),
+        act::By::Act(act::Subject::Issue(ghtui(), 14)),
     ))];
     let cmds = answer(&mut state, &sent, err);
     assert!(cmds.is_empty(), "{cmds:?}");
@@ -122,7 +111,7 @@ fn a_refused_write_is_sent_again_copied_or_thrown_away_from_its_row() {
     };
     offline(&mut state, OffMsg::Queue(Told::All(vec![refused.clone()])));
     assert_eq!(crate::offline::header(&state), ["⚠ 1 not sent"]);
-    assert!(text(&state).contains("GitHub said: the conversation is locked"));
+    assert!(page_text(&state).contains("GitHub said: the conversation is locked"));
     let _ = act(&mut state, Action::Offline);
     assert_eq!(route(&state), Route::Offline);
     while page(&state).selected_link() != Some(&crate::ui::page::Link::Queued(3)) {

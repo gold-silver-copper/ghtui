@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn palette_goes_places_and_runs_actions() {
-    let mut state = with_home(1);
+    let mut state = with_prs(1);
     press(&mut state, ":");
     assert!(matches!(state.overlay, Some(Overlay::Picker(_))));
     let cmds = fetches(press(&mut state, "a/b#9<Enter>"));
@@ -148,10 +148,10 @@ fn a_picker_list_that_failed_says_why() {
     for (keys, key, why) in [
         (
             "f",
-            DataKey::Files(repo(), "main".into()),
+            DataKey::Files(ghtui(), "main".into()),
             "Couldn't load files",
         ),
-        ("B", DataKey::Refs(repo()), "Couldn't load branches"),
+        ("B", DataKey::Refs(ghtui()), "Couldn't load branches"),
     ] {
         assert_eq!(press(&mut state, keys), vec![fetch(key.clone())]);
         let result = Err(ApiError::Network("timed out".into()));
@@ -181,7 +181,7 @@ fn a_picker_list_that_failed_says_why() {
 fn go_to_file_and_switch_branches() {
     let mut state = with_repo();
     let cmds = press(&mut state, "f");
-    let files = DataKey::Files(repo(), "main".into());
+    let files = DataKey::Files(ghtui(), "main".into());
     assert_eq!(cmds, vec![fetch(files.clone())]);
     fetched(
         &mut state,
@@ -206,10 +206,10 @@ fn go_to_file_and_switch_branches() {
     press(&mut state, "<Enter>");
     assert_eq!(route(&state), blob("main", "src/main.rs"));
     let cmds = press(&mut state, "B");
-    assert_eq!(cmds, vec![fetch(DataKey::Refs(repo()))]);
+    assert_eq!(cmds, vec![fetch(DataKey::Refs(ghtui()))]);
     fetched(
         &mut state,
-        DataKey::Refs(repo()),
+        DataKey::Refs(ghtui()),
         Data::Refs(Box::new(crate::api::browse::Refs {
             branches: crate::api::model::Capped::new(vec!["main".into(), "next".into()], 300),
             tags: vec!["v1.0".into()].into(),

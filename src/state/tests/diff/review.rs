@@ -1,6 +1,4 @@
 use super::*;
-use crate::api::model::{PatchFile, ReviewEvent};
-use crate::review::{ComposeTarget, EditPurpose, SubmitOutcome};
 
 fn to_line(s: &mut State, text: &str) {
     press(s, "/");

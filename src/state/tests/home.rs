@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn home_selects_the_first_row_and_opens_it() {
-    let mut state = with_home(3);
+    let mut state = with_prs(3);
     assert_eq!(route(&state), Route::Home);
     assert!(
         selected_text(&state).contains("PR 1"),
@@ -30,22 +30,11 @@ fn home_selects_the_first_row_and_opens_it() {
         &mut state,
         Msg::Pr(pr.clone(), Box::new(Err(ApiError::Network("down".into())))),
     );
-    let text: Vec<String> = page(&state)
-        .page()
-        .lines
-        .iter()
-        .map(crate::ui::page::PageLine::text)
-        .collect();
-    assert!(
-        text.iter().any(|l| l.contains("network error: down")),
-        "{text:?}"
-    );
+    let text = page_text(&state);
+    assert!(text.contains("network error: down"), "{text}");
     assert_eq!(
         press(&mut state, "r"),
-        vec![
-            Cmd::Api(Api::FetchViewer),
-            Cmd::Api(Api::FetchPr(pr.clone()))
-        ],
+        vec![Cmd::Api(Api::FetchPr(pr.clone()))],
         "the activity is still loading"
     );
 
@@ -79,17 +68,8 @@ fn a_section_opens_the_rest_of_its_list() {
     state.home[1].search.as_mut().unwrap().rows = 5;
     state.data_gen += 1;
     state.sync_page();
-    let text = page(&state)
-        .page()
-        .lines
-        .iter()
-        .map(crate::ui::page::PageLine::text)
-        .collect::<Vec<_>>();
-    assert!(
-        text.iter()
-            .any(|l| l.contains("Your pull requests  5 of 31")),
-        "{text:?}"
-    );
+    let text = page_text(&state);
+    assert!(text.contains("Your pull requests  5 of 31"), "{text:?}");
     press(&mut state, "G");
     assert_eq!(selected_text(&state).trim(), "… 26 more");
     let key = mine_key(&state);
@@ -113,7 +93,7 @@ fn a_section_opens_the_rest_of_its_list() {
 #[test]
 fn home_sections_are_changed_in_the_config() {
     use crate::home::Edit;
-    let mut state = with_home(2);
+    let mut state = with_prs(2);
     press(&mut state, "j");
     assert!(matches!(state.section_here(), Some((1, _))));
     let cmds = press(&mut state, "<A-Up>");
@@ -261,7 +241,7 @@ fn going_back_home_fetches_cached_sections() {
     let (value, fetched_at) = (Data::Search(Box::new(mine(1, 1))), 0);
     let cached = Remote::cached(Some(crate::store::Cached { value, fetched_at }));
     state.data.insert(key.clone(), cached);
-    let _ = state.start_at(Target::Page(Route::Repo(repo())).into());
+    let _ = state.start_at(Target::Page(Route::Repo(ghtui())).into());
     let cmds = state.back();
     let asked = |c: &Cmd| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if *k == key);
     assert!(cmds.iter().any(asked), "{cmds:?}");

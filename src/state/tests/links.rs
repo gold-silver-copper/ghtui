@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn browser_and_copy_use_the_selection_or_the_page() {
-    let mut state = with_home(1);
+    let mut state = with_prs(1);
     assert_eq!(
         press(&mut state, "o"),
         vec![Cmd::OpenUrl("https://github.com/o/r/pull/1".into())]
@@ -47,11 +47,11 @@ fn comment_links_scroll_to_the_comment() {
     s.size = (100, 12);
     let url = format!(
         "https://github.com/{}/issues/14#issuecomment-1000001",
-        repo()
+        ghtui()
     );
     let _ = s.follow(&crate::ui::page::Link::Url(url));
     let issue = Data::Issue(Some(Box::new(crate::fixtures::issue())));
-    fetched(&mut s, DataKey::Issue(repo(), 14), issue);
+    fetched(&mut s, DataKey::Issue(ghtui(), 14), issue);
     let Screen::Page(p) = s.screen() else {
         panic!()
     };
@@ -69,10 +69,10 @@ fn a_comment_link_follows_its_comment_when_the_issue_refreshes() {
         s.size = (100, 12);
         let url = format!(
             "https://github.com/{}/issues/14#issuecomment-1000001",
-            repo()
+            ghtui()
         );
         let _ = s.follow(&crate::ui::page::Link::Url(url));
-        let key = DataKey::Issue(repo(), 14);
+        let key = DataKey::Issue(ghtui(), 14);
         let cached = Data::Issue(Some(Box::new(crate::fixtures::issue())));
         let _ = update(
             &mut s,
@@ -239,12 +239,125 @@ fn the_header_counts_the_unread_and_opens_the_inbox() {
 
     // None unread, or a poll that failed: no count.
     update(&mut state, polled(0, false, 60));
-    assert!(header(&state).is_empty(), "{:?}", header(&state));
+    assert_eq!(header(&state), ["@octocat"]);
     update(&mut state, polled(2, false, 60));
     let failed = Msg::Unread(Err(ApiError::Network("down".into())));
     assert_eq!(
         update(&mut state, failed),
         vec![Cmd::Timer(Timer::Unread(5), 60_000)]
     );
-    assert!(header(&state).is_empty());
+    assert_eq!(header(&state), ["@octocat"]);
+}
+
+/// A link's shape: on github.com its first four path segments, with
+/// the owner and repository, numbers and commit IDs as wildcards; on
+/// GitHub's other hosts (raw files, gists, avatars) the host.
+fn shape(url: &str) -> Vec<String> {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return vec![url.to_owned()];
+    };
+    let mut shape = vec![parsed.host_str().unwrap_or_default().to_owned()];
+    if parsed.host_str() != Some("github.com") {
+        return shape;
+    }
+    let segments = parsed.path_segments().into_iter().flatten();
+    for (i, s) in segments.take(4).enumerate() {
+        let wild = i < 2 || s.bytes().any(|b| b.is_ascii_digit());
+        shape.push(if wild { "*".into() } else { s.to_owned() });
+    }
+    shape
+}
+
+/// Whether the corpus says links shaped like `url` open the browser
+/// (or will open a page once it's built).
+fn external_in_corpus(url: &str) -> bool {
+    let wanted = shape(url);
+    crate::route::tests::corpus()
+        .iter()
+        .any(|(entry, expect, _)| matches!(*expect, "external" | "todo") && shape(entry) == wanted)
+}
+
+/// ghtui's own pages lead to the new ones as GitHub's do: an issue's
+/// and a pull request's sidebar to their milestone, a repository's
+/// toolbar to its branches and tags.
+#[test]
+fn pages_link_to_milestones_branches_and_tags() {
+    use crate::route::Route;
+    let routes = |s: &State| -> Vec<Route> {
+        let Screen::Page(p) = s.screen() else {
+            return Vec::new();
+        };
+        p.page()
+            .links
+            .iter()
+            .filter_map(|l| l.url())
+            .filter_map(|u| match Dest::from_url(u).target {
+                Target::Page(r) => Some(r),
+                _ => None,
+            })
+            .collect()
+    };
+    let milestone = |repo: &str| Route::Milestone {
+        repo: crate::api::model::RepoId::parse(repo).unwrap(),
+        number: 3,
+    };
+    let issue = super::sized(with_issue(), 160, 40);
+    assert!(routes(&issue).contains(&milestone("gold-silver-copper/ghtui")));
+    let pr = super::sized(with_pr(), 160, 40);
+    let Screen::Page(p) = pr.screen() else {
+        panic!("not a page");
+    };
+    let Route::Pr { pr: pr_ref, .. } = &p.route else {
+        panic!("not a pull request");
+    };
+    assert!(routes(&pr).contains(&milestone(&pr_ref.repo.to_string())));
+    let repo = with_repo();
+    let repo_routes = routes(&repo);
+    let id = super::ghtui();
+    assert!(repo_routes.contains(&Route::Branches(id.clone())));
+    assert!(repo_routes.contains(&Route::Tags(id)));
+}
+
+/// Every github.com link on ghtui's pages (and their tabs) opens a
+/// ghtui page, unless the corpus (`tests/github_urls.txt`) says links of
+/// its shape open the browser, and why.
+#[test]
+fn github_links_stay_in_ghtui() {
+    let mut leaving = Vec::new();
+    for (name, s) in pages() {
+        let Screen::Page(p) = s.screen() else {
+            panic!("{name} isn't a page");
+        };
+        let tabs = s.chrome().tabs.into_iter().map(|(_, t)| t);
+        let links = p.page().links.iter().filter_map(|l| l.url());
+        let targets = links.map(|u| Dest::from_url(u).target).chain(tabs);
+        for target in targets {
+            // A page of a kind the corpus has an example of.
+            let kind = match &target {
+                Target::Page(route) => Some(crate::route::tests::variant(route)),
+                Target::Files(_) => Some("files".to_owned()),
+                Target::External(_) => None,
+            };
+            if let Some(kind) = kind
+                && !crate::route::tests::corpus()
+                    .iter()
+                    .any(|(_, e, _)| *e == kind)
+            {
+                leaving.push(format!("{name}: no {kind} in the corpus"));
+            }
+            if let Target::External(url) = target
+                && url.contains("github")
+                && !external_in_corpus(&url)
+            {
+                leaving.push(format!("{name}: {url}"));
+            }
+        }
+    }
+    leaving.sort();
+    leaving.dedup();
+    assert!(
+        leaving.is_empty(),
+        "links that leave ghtui:\n{}",
+        leaving.join("\n")
+    );
 }

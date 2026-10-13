@@ -1148,9 +1148,12 @@ The tests come at GitHub's data from several sides:
 - every query is checked against the schema;
 - recorded GitHub responses are replayed offline;
 - git is the oracle for diffs, on real repositories over `file://`;
-- full screens are snapshotted in light, dark and 256 colors
-  (`INSTA_UPDATE=always cargo test` to accept changes, then review
-  them);
+- behaviour is tested through `update` (`src/state/tests`): keys
+  pressed and replies delivered, then the commands sent and what the
+  page or status line says;
+- every screen the fixtures reach is drawn in light and dark at a few
+  sizes, tiny ones among them, to check nothing panics and every color
+  pair drawn is declared;
 - property tests throw random keys, resizes and replies at the app.
 
 A contract suite checks ghtui's assumptions against live GitHub, read-only

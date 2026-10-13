@@ -48,8 +48,6 @@ mod security;
 mod sequence_tests;
 mod settings;
 mod site;
-#[cfg(test)]
-mod snapshot_tests;
 mod source;
 mod state;
 mod tabs;

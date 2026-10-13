@@ -9,10 +9,10 @@ fn an_empty_repository_shows_its_about() {
     for width in [100, 140] {
         let mut s = state();
         s.size = (width, 30);
-        let _ = s.push(Route::Repo(repo()));
+        let _ = s.push(Route::Repo(ghtui()));
         let mut o = crate::fixtures::overview();
         (o.entries, o.default_branch) = (Vec::new(), None);
-        fetched(&mut s, DataKey::Repo(repo()), Data::Repo(Box::new(o)));
+        fetched(&mut s, DataKey::Repo(ghtui()), Data::Repo(Box::new(o)));
         let page = page(&s).page();
         let aside = page.aside.iter().flat_map(|a| &a.lines);
         let lines = page.lines.iter().chain(aside);
@@ -33,43 +33,43 @@ fn a_repositorys_pages_are_under_their_tabs() {
     let pages = [
         (
             Route::Milestone {
-                repo: repo(),
+                repo: ghtui(),
                 number: 3,
             },
             "Issues",
         ),
         (
             Route::Discussions {
-                of: crate::api::browse::DiscussionsOf::Repo(repo()),
+                of: crate::api::browse::DiscussionsOf::Repo(ghtui()),
                 category: None,
             },
             "Discussions",
         ),
-        (Route::Advisories(Some(repo())), "Security"),
+        (Route::Advisories(Some(ghtui())), "Security"),
         (
             Route::Site(crate::site::Page::Insights {
-                repo: repo(),
+                repo: ghtui(),
                 tab: crate::site::InsightsTab::Traffic,
             }),
             "Insights",
         ),
         (
             Route::Site(crate::site::Page::Packages(
-                crate::api::packages::PackagesOf::Repo(repo()),
+                crate::api::packages::PackagesOf::Repo(ghtui()),
             )),
             "Code",
         ),
         (
             Route::Wiki {
-                repo: repo(),
+                repo: ghtui(),
                 page: None,
             },
             "Wiki",
         ),
-        (Route::Branches(repo()), "Code"),
+        (Route::Branches(ghtui()), "Code"),
         (
             Route::Job {
-                repo: repo(),
+                repo: ghtui(),
                 run: Some(1),
                 job: 2,
                 step: None,
@@ -83,11 +83,11 @@ fn a_repositorys_pages_are_under_their_tabs() {
         assert_eq!(active(&state).as_deref(), Some(tab), "{route:?}");
     }
     // Every tab has a number key: `5` is Actions, `8` Security.
-    let _ = state.push(Route::Repo(repo()));
+    let _ = state.push(Route::Repo(ghtui()));
     press(&mut state, "5gt");
-    assert_eq!(route(&state), Route::actions(repo()));
+    assert_eq!(route(&state), Route::actions(ghtui()));
     press(&mut state, "8gt");
-    assert_eq!(route(&state), Route::Advisories(Some(repo())));
+    assert_eq!(route(&state), Route::Advisories(Some(ghtui())));
 }
 
 #[test]
@@ -126,7 +126,7 @@ fn repo_tabs_filters_state_sort_and_star() {
     // r refreshes the list's counts too, which the header holds.
     let cmds = fetches(press(&mut state, "r"));
     let header = Cmd::Api(Api::Fetch {
-        key: DataKey::Repo(repo()),
+        key: DataKey::Repo(ghtui()),
         cached: false,
     });
     assert!(cmds.contains(&header), "{cmds:?}");
@@ -152,20 +152,20 @@ fn repo_tabs_filters_state_sort_and_star() {
         "→: the next tab"
     );
     press(&mut state, "1gt");
-    assert_eq!(route(&state), Route::Repo(repo()));
+    assert_eq!(route(&state), Route::Repo(ghtui()));
 
     let cmds = press(&mut state, ",*");
     let star = Change::Star {
-        repo: repo(),
+        repo: ghtui(),
         id: NodeId::new("R_ghtui"),
         starred: true,
     };
     assert_eq!(cmds, vec![Cmd::Api(Api::Change(star, act::By::Star))]);
-    assert!(state.overview(&repo()).unwrap().starred);
-    assert_eq!(state.overview(&repo()).unwrap().summary.stars, 1235);
+    assert!(state.overview(&ghtui()).unwrap().starred);
+    assert_eq!(state.overview(&ghtui()).unwrap().summary.stars, 1235);
     answer(&mut state, &cmds, Err(ApiError::Network("down".into())));
-    assert!(!state.overview(&repo()).unwrap().starred, "rolled back");
-    assert_eq!(state.overview(&repo()).unwrap().summary.stars, 1234);
+    assert!(!state.overview(&ghtui()).unwrap().starred, "rolled back");
+    assert_eq!(state.overview(&ghtui()).unwrap().summary.stars, 1234);
 }
 
 #[test]
@@ -175,12 +175,16 @@ fn directories_and_files_open_from_the_repo() {
         press(&mut state, "j");
     }
     let cmds = fetches(press(&mut state, "<Enter>"));
-    let tree = DataKey::Tree(repo(), "main".into(), "crates".into());
+    let tree = DataKey::Tree(ghtui(), "main".into(), "crates".into());
     assert_eq!(
         cmds,
         vec![
             fetch(tree.clone()),
-            fetch(DataKey::LastCommits(repo(), "main".into(), "crates".into()))
+            fetch(DataKey::LastCommits(
+                ghtui(),
+                "main".into(),
+                "crates".into()
+            ))
         ],
         "the listing, and each entry's latest commit"
     );

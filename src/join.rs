@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn a_prs_diff_is_checked_against_github() {
-        let mut pr = crate::snapshot_tests::pr_detail();
+        let mut pr = crate::fixtures::pr_detail();
         pr.head_oid = "a".repeat(40);
         pr.changed_files = 12;
         let check = |head: &str, files| check_pr_diff(&pr, head, files, "r");

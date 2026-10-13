@@ -189,7 +189,7 @@ fn commit_picker_loads_a_range_and_blocks_comments() {
     s.prs.insert(
         pr.clone(),
         Remote::cached(Some(crate::store::Cached {
-            value: crate::snapshot_tests::pr_detail(),
+            value: crate::fixtures::pr_detail(),
             fetched_at: 0,
         })),
     );

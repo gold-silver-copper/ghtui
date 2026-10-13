@@ -416,12 +416,6 @@ impl Screens {
     pub fn len(&self) -> usize {
         self.rest.len() + 1
     }
-
-    /// Keeps the first `n` screens (at least one).
-    #[cfg(test)]
-    pub fn truncate(&mut self, n: usize) {
-        self.rest.truncate(n.saturating_sub(1));
-    }
 }
 
 pub enum Overlay {

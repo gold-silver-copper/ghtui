@@ -36,16 +36,16 @@ const WORKFLOW: &str = "name: CI\non:\n  workflow_dispatch:\n    inputs:\n      
 fn on_workflow() -> State {
     let mut s = with_repo();
     let _ = s.push(Route::Workflow {
-        repo: repo(),
+        repo: ghtui(),
         file: "ci.yml".into(),
     });
     let (workflow, runs) = crate::fixtures::workflow_runs();
     fetched(
         &mut s,
-        DataKey::Workflow(repo(), "ci.yml".into()),
+        DataKey::Workflow(ghtui(), "ci.yml".into()),
         Data::Workflow(Box::new(workflow)),
     );
-    let key = DataKey::Runs(repo(), "workflow:ci.yml".into());
+    let key = DataKey::Runs(ghtui(), "workflow:ci.yml".into());
     fetched(&mut s, key, Data::Runs(Box::new(runs)));
     s
 }
@@ -58,7 +58,7 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
     let mut s = on_workflow();
     press(&mut s, ",E");
     let dispatch = Route::Dispatch {
-        repo: repo(),
+        repo: ghtui(),
         file: "ci.yml".into(),
     };
     assert_eq!(route(&s), dispatch);
@@ -68,7 +68,7 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
         size: WORKFLOW.len() as u64,
         truncated: false,
     };
-    let key = DataKey::Blob(repo(), "HEAD".into(), ".github/workflows/ci.yml".into());
+    let key = DataKey::Blob(ghtui(), "HEAD".into(), ".github/workflows/ci.yml".into());
     fetched(&mut s, key, Data::Blob(Box::new(blob)));
     select_link(
         &mut s,
@@ -80,7 +80,7 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
     assert_eq!(
         work(&cmds),
         Work::Dispatch {
-            repo: repo(),
+            repo: ghtui(),
             file: "ci.yml".into(),
             git_ref: "main".into(),
             inputs: vec![
@@ -90,13 +90,13 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
         }
     );
     let done = Done::Dispatched {
-        repo: repo(),
+        repo: ghtui(),
         file: "ci.yml".into(),
         result: Ok(Some(55)),
     };
     update(&mut s, Msg::Actions(done));
     let run = Route::WorkflowRun {
-        repo: repo(),
+        repo: ghtui(),
         run: 55,
         attempt: None,
     };
@@ -116,7 +116,7 @@ fn a_workflow_that_cant_run_by_hand_says_so() {
         size: 9,
         truncated: false,
     };
-    let key = DataKey::Blob(repo(), "HEAD".into(), ".github/workflows/ci.yml".into());
+    let key = DataKey::Blob(ghtui(), "HEAD".into(), ".github/workflows/ci.yml".into());
     fetched(&mut s, key, Data::Blob(Box::new(blob)));
     assert!(fetches(press(&mut s, ",E")).is_empty());
     says(&s, "can't be run by hand");
@@ -128,14 +128,14 @@ fn a_workflow_that_cant_run_by_hand_says_so() {
 fn an_artifact_is_saved_where_you_say() {
     let mut s = with_repo();
     let _ = s.push(Route::WorkflowRun {
-        repo: repo(),
+        repo: ghtui(),
         run: 7,
         attempt: None,
     });
     let run = crate::fixtures::workflow_run();
     fetched(
         &mut s,
-        DataKey::Run(repo(), 7, None),
+        DataKey::Run(ghtui(), 7, None),
         Data::Run(Box::new(run)),
     );
     let artifact = Link::Artifact {
@@ -146,7 +146,7 @@ fn an_artifact_is_saved_where_you_say() {
     press(&mut s, "<Enter>");
     let cmds = press(&mut s, "<Enter>");
     let saved = Work::Save {
-        repo: repo(),
+        repo: ghtui(),
         id: 31,
         name: "coverage-report".into(),
         path: std::path::Path::new(".").join("coverage-report.zip"),

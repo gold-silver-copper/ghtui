@@ -1,6 +1,5 @@
 use super::*;
 use crate::api::mention::Mentionable;
-use crate::review::Compose;
 
 fn composer(s: &State) -> &Compose {
     overlay!(s, Compose)

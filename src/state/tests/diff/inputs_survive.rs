@@ -1,9 +1,5 @@
 use super::*;
-use crate::api::model::PatchFile;
-use crate::diff_job::{DiffFiles, JobMsg};
-use crate::diff_screen::DiffState;
-use crate::review::ComposeTarget;
-use std::sync::Arc;
+use crate::diff_job::DiffFiles;
 
 const PATH: &str = "lines.txt";
 
@@ -75,7 +71,7 @@ fn loading() -> (State, PrRef, crate::diff_job::JobId) {
     s.prs.insert(
         pr.clone(),
         Remote::cached(Some(crate::store::Cached {
-            value: crate::snapshot_tests::pr_detail(),
+            value: crate::fixtures::pr_detail(),
             fetched_at: 0,
         })),
     );

@@ -9,6 +9,9 @@ fn duplicate_fetches_are_suppressed() {
         .map(|s| fetch(s.search.clone().unwrap().key()))
         .collect();
     assert_eq!(state.load_visible(false), sections);
+    assert_eq!(state.load_visible(true), []);
+    // Who you are is asked again until it's known.
+    state.viewer = None;
     assert_eq!(state.load_visible(true), vec![Cmd::Api(Api::FetchViewer)]);
 }
 
@@ -31,7 +34,7 @@ fn cached_data_shows_while_fetching() {
 
 #[test]
 fn failed_refresh_keeps_cached_data() {
-    let mut state = with_home(2);
+    let mut state = with_prs(2);
     let _ = state.load_visible(true);
     mine_failed(&mut state, ApiError::RateLimited(30));
     assert!(selected_text(&state).contains("PR 1"));
@@ -45,7 +48,7 @@ fn failed_refresh_keeps_cached_data() {
 /// One outage that fails each of the page's needs is said once.
 #[test]
 fn a_refresh_error_shared_by_needs_is_said_once() {
-    let mut state = with_home(2);
+    let mut state = with_prs(2);
     let repos = state.home[2].search.clone().unwrap().key();
     let fetched = |result| Msg::Fetched {
         key: repos.clone(),
@@ -66,7 +69,7 @@ fn a_refresh_error_shared_by_needs_is_said_once() {
 #[test]
 fn only_a_review_that_went_through_counts_as_a_write() {
     let mut state = with_repo();
-    let key = DataKey::Issue(repo(), 14);
+    let key = DataKey::Issue(ghtui(), 14);
     let _ = state.push(issue(14));
     let issue = Data::Issue(Some(Box::new(crate::fixtures::issue())));
     fetched(&mut state, key.clone(), issue);
@@ -88,7 +91,7 @@ fn only_a_review_that_went_through_counts_as_a_write() {
 fn issue_comments_post_and_refresh() {
     let mut state = state();
     let _ = state.push(issue(14));
-    let key = DataKey::Issue(repo(), 14);
+    let key = DataKey::Issue(ghtui(), 14);
     press(&mut state, "c");
     assert!(state.overlay.is_none(), "nothing to comment on yet");
     fetched(
@@ -170,10 +173,10 @@ fn an_edited_comment_stays_selected() {
     let mut s = with_repo();
     s.size = (100, 12);
     let _ = s.push(Route::Issue {
-        repo: repo(),
+        repo: ghtui(),
         number: 14,
     });
-    let key = DataKey::Issue(repo(), 14);
+    let key = DataKey::Issue(ghtui(), 14);
     let mut issue = crate::fixtures::issue();
     update(
         &mut s,
@@ -202,7 +205,7 @@ fn an_edited_comment_stays_selected() {
 /// moving what you scrolled to.
 #[test]
 fn a_failed_refresh_keeps_the_view() {
-    let mut state = with_home(40);
+    let mut state = with_prs(40);
     for _ in 0..25 {
         press(&mut state, "<Down>");
     }

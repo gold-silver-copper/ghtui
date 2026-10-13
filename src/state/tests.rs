@@ -1,14 +1,19 @@
+//! Behaviour through `update`: keys pressed, data delivered, and the
+//! commands, pages and status line that follow. No I/O and no runtime.
+
 use super::*;
-use crate::api::browse::SearchResults;
-use crate::api::browse::{IssueState, PrState, Status};
-use crate::api::model::RepoId;
-use crate::fixtures::{answer, diff_msg, fetched, press, says, thread, warns};
+use crate::api::browse::{IssueKind, IssueState, PrState, SearchKind, SearchResults, Status};
+use crate::api::model::{ChecksState, RepoId, ReviewDecision};
+use crate::api::rate_limit::{Bucket, RateLimits};
+use crate::browse::{Need, needs};
+use crate::fixtures;
+use crate::fixtures::{answer, diff_msg, fetched, pr_detail, press, says, thread, warns};
 use crate::picker::{Choice, fuzzy_score};
 use crate::route::{Dest, OPEN};
-use crate::theme::{ColorDepth, DEFAULT_SEED, Mode};
+use crate::theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
 use crate::ui::annotations::{AnnotationKey, Place};
 use crate::ui::overlays::PALETTE_ROWS;
-use crate::ui::pages::PrTab;
+use crate::ui::pages::{PrTab, ProfileTab};
 
 /// The overlay showing, which must be a `$kind`.
 macro_rules! overlay {
@@ -18,18 +23,6 @@ macro_rules! overlay {
             _ => panic!("no {} overlay", stringify!($kind)),
         }
     };
-}
-
-pub(crate) fn state() -> State {
-    let mut state = State::new(
-        Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor),
-        Icons::default(),
-        Keymap::default(),
-        (100, 30),
-    );
-    // Never written: changes to Home's sections are commands.
-    state.config_path = Some("config.toml".into());
-    state
 }
 
 /// Your `n` pull requests of `total`, as Home's second section finds them.
@@ -56,7 +49,8 @@ fn mine_failed(state: &mut State, err: ApiError) {
     );
 }
 
-fn with_home(n: u64) -> State {
+/// Home with `n` of your pull requests and nothing else.
+fn with_prs(n: u64) -> State {
     let mut state = state();
     crate::fixtures::section(&mut state, 1, mine(n, n));
     state
@@ -101,35 +95,18 @@ fn fetches(cmds: Vec<Cmd>) -> Vec<Cmd> {
         .collect()
 }
 
-fn repo() -> RepoId {
-    RepoId::new("gold-silver-copper", "ghtui")
-}
-
 fn issues(query: &str) -> Route {
-    let (repo, query) = (repo(), query.to_owned());
+    let (repo, query) = (ghtui(), query.to_owned());
     Route::Issues { repo, query }
 }
 
 fn issue(number: u64) -> Route {
-    let repo = repo();
+    let repo = ghtui();
     Route::Issue { repo, number }
 }
 
 fn blob(rev: &str, path: &str) -> Route {
-    Route::blob(repo(), rev.to_owned(), path.to_owned())
-}
-
-fn with_repo() -> State {
-    let mut state = state();
-    let _ = state.push(Route::Repo(repo()));
-    fetched(
-        &mut state,
-        DataKey::Repo(repo()),
-        Data::Repo(Box::new(crate::fixtures::overview())),
-    );
-    let readme = Some(Box::new(crate::fixtures::readme()));
-    fetched(&mut state, DataKey::Readme(repo()), Data::Readme(readme));
-    state
+    Route::blob(ghtui(), rev.to_owned(), path.to_owned())
 }
 
 #[must_use]
@@ -159,6 +136,73 @@ fn find(state: &State, text: &str) -> (u16, u16) {
     }
     panic!("{text} isn't on screen")
 }
+
+/// 2026-10-03T12:00:00Z
+pub(crate) const NOW: u64 = 1_791_028_800;
+
+/// The whole page's text, a line each, on screen or not.
+pub(crate) fn page_text(state: &State) -> String {
+    let lines = page(state).page().lines.iter();
+    let lines = lines.map(crate::ui::page::PageLine::text);
+    lines.collect::<Vec<_>>().join("\n")
+}
+
+/// The screen as drawn at the state's size.
+pub(crate) fn draw(state: &State) -> ratatui::buffer::Buffer {
+    let (w, h) = state.size;
+    let backend = ratatui::backend::TestBackend::new(w, h);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| crate::view::view(state, frame, NOW))
+        .unwrap();
+    terminal.backend().buffer().clone()
+}
+
+/// What's on screen, as plain text: a line per row, wide characters
+/// once.
+pub(crate) fn screen_text(state: &State) -> String {
+    let buf = draw(state);
+    let area = buf.area;
+    let row = |y| {
+        let mut skip = 0;
+        let mut text = String::new();
+        for x in area.left()..area.right() {
+            let symbol = buf[(x, y)].symbol();
+            if skip == 0 {
+                text.push_str(symbol);
+                skip = crate::ui::text::width(symbol).saturating_sub(1);
+            } else {
+                skip -= 1;
+            }
+        }
+        text
+    };
+    let rows = (area.top()..area.bottom()).map(row);
+    rows.collect::<Vec<_>>().join("\n")
+}
+
+mod screens;
+use diff::{commit_of, fixture_diff, screen_state};
+pub(crate) use screens::*;
+
+mod changes;
+mod code_nav;
+mod create;
+mod discussions;
+mod edits;
+mod failures;
+mod housekeeping;
+mod manage;
+mod merging;
+mod pages;
+mod projects;
+mod releases;
+mod reviews;
+mod security;
+mod settings;
+mod site;
+mod smoke;
+mod writes;
 
 mod tabs;
 
