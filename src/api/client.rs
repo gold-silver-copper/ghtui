@@ -961,8 +961,7 @@ impl GitHub {
             poll_interval,
         };
         if !entry.etag.is_empty() || entry.last_modified.is_some() {
-            let (store, key, kept) = (self.store.clone(), path.to_owned(), entry.clone());
-            spawn_store(move || store.http_put(&key, &kept)).await;
+            self.store.http_put(path, &entry);
         }
         Ok(entry)
     }
@@ -1192,17 +1191,28 @@ impl GitHub {
         self.cached(&pr_key(pr))
     }
 
+    /// The pull request, how far behind its base it is included, kept.
     pub async fn pull_request(&self, pr: &PrRef) -> Result<PrDetail, ApiError> {
+        let detail = self.pull_request_alone(pr).await?;
+        Ok(self.with_behind(pr, detail).await)
+    }
+
+    /// The pull request, without how far behind its base it is: that's
+    /// a second request ([`Self::with_behind`]).
+    pub async fn pull_request_alone(&self, pr: &PrRef) -> Result<PrDetail, ApiError> {
         let op = queries::PullRequestQuery::build(number_vars(pr)?);
-        let mut detail = self
-            .find(op, pr, |q| PrDetail::from_wire(q.repository?))
-            .await?;
+        self.find(op, pr, |q| PrDetail::from_wire(q.repository?))
+            .await
+    }
+
+    /// `detail` with how far behind its base it is, if it's open, kept.
+    pub async fn with_behind(&self, pr: &PrRef, mut detail: PrDetail) -> PrDetail {
         // GitHub says a branch is behind only when the repository requires
         // it up to date; it may be behind anyway.
         if detail.state.is_open() {
             detail.behind_by = self.behind_by(pr, &detail).await;
         }
-        Ok(self.kept(&pr_key(pr), detail).await)
+        self.kept(&pr_key(pr), detail)
     }
 
     /// How many commits on its base `detail`'s branch doesn't have, if
@@ -1443,7 +1453,7 @@ impl GitHub {
         let overview = self
             .find(op, repo, |q| q.repository?.into_overview())
             .await?;
-        Ok(self.kept(&browse::keys::repo(repo), overview).await)
+        Ok(self.kept(&browse::keys::repo(repo), overview))
     }
 
     /// The README GitHub shows for the repository root, if it has one.
@@ -1463,7 +1473,7 @@ impl GitHub {
         {
             Ok(wire) => wire,
             Err(ApiError::NotFound(_)) => {
-                return Ok(self.kept(&browse::keys::readme(repo), None).await);
+                return Ok(self.kept(&browse::keys::readme(repo), None));
             }
             Err(err) => return Err(err),
         };
@@ -1475,7 +1485,7 @@ impl GitHub {
             path: wire.path,
             text: String::from_utf8_lossy(&bytes).into_owned(),
         };
-        Ok(self.kept(&browse::keys::readme(repo), Some(readme)).await)
+        Ok(self.kept(&browse::keys::readme(repo), Some(readme)))
     }
 
     /// A directory at `rev:path`.
@@ -1488,7 +1498,7 @@ impl GitHub {
         match self.object(repo, rev, path).await? {
             browse::GitObject::Tree(t) => {
                 let key = browse::keys::tree(repo, rev, path);
-                Ok(self.kept(&key, browse::entries(t)).await)
+                Ok(self.kept(&key, browse::entries(t)))
             }
             _ => Err(ApiError::NotFound(format!("{repo}/{path}"))),
         }
@@ -1550,7 +1560,7 @@ impl GitHub {
             open: count(found.open.issue_count),
             closed: count(found.closed.issue_count),
         };
-        Ok(self.kept(&browse::keys::state_counts(query), counts).await)
+        Ok(self.kept(&browse::keys::state_counts(query), counts))
     }
 
     /// One page of search results (30 per page). GitHub gives a request
@@ -1580,9 +1590,7 @@ impl GitHub {
             Kind::Users => (SearchType::User, ""),
             Kind::Discussions | Kind::Commits | Kind::Code => {
                 let results = self.search_other(kind, query, after).await?;
-                return Ok(self
-                    .kept_if(first_page, &browse::keys::search(kind, query), results)
-                    .await);
+                return Ok(self.kept_if(first_page, &browse::keys::search(kind, query), results));
             }
         };
         let api_query = if query.contains("is:issue") || query.contains("is:pr") {
@@ -1618,9 +1626,7 @@ impl GitHub {
                 }
             }
         }
-        Ok(self
-            .kept_if(first_page, &browse::keys::search(kind, query), results)
-            .await)
+        Ok(self.kept_if(first_page, &browse::keys::search(kind, query), results))
     }
 
     /// The checks of these pull requests, by ID. Checks are a decoration:
@@ -1800,9 +1806,7 @@ impl GitHub {
         let Some(issue) = self.find(op, format!("{repo}#{number}"), pick).await? else {
             return Ok(None);
         };
-        Ok(Some(
-            self.kept(&browse::keys::issue(repo, number), issue).await,
-        ))
+        Ok(Some(self.kept(&browse::keys::issue(repo, number), issue)))
     }
 
     /// A pull request's timeline (comments, reviews, events), commits and
@@ -1817,7 +1821,7 @@ impl GitHub {
             threads,
             ..activity
         };
-        Ok(self.kept(&browse::keys::pr_activity(pr), activity).await)
+        Ok(self.kept(&browse::keys::pr_activity(pr), activity))
     }
 
     /// All of a pull request's reviews, oldest first.
@@ -1833,7 +1837,7 @@ impl GitHub {
         };
         let what = format!("{pr}'s reviews");
         let reviews = self.more_pages(what, page(None).await?, FILE_PAGES, page);
-        Ok(self.kept(&browse::keys::reviews(pr), reviews.await?).await)
+        Ok(self.kept(&browse::keys::reviews(pr), reviews.await?))
     }
 
     /// A user's or organization's profile.
@@ -1844,7 +1848,7 @@ impl GitHub {
         let profile = self
             .find(op, login, browse::ProfileQuery::into_profile)
             .await?;
-        Ok(self.kept(&browse::keys::profile(login), profile).await)
+        Ok(self.kept(&browse::keys::profile(login), profile))
     }
 
     /// Every file path at `rev` (GitHub's "Go to file"), and whether GitHub
@@ -1902,9 +1906,7 @@ impl GitHub {
             self.last_commits_of(repo, rev, dir, names, &mut out)
                 .await?;
         }
-        Ok(self
-            .kept(&browse::keys::last_commits(repo, rev, dir), out)
-            .await)
+        Ok(self.kept(&browse::keys::last_commits(repo, rev, dir), out))
     }
 
     async fn last_commits_of(
@@ -1957,7 +1959,7 @@ impl GitHub {
             browse::CommitObject::Other => None,
         };
         let commit = self.find(op, format!("{repo}@{rev}"), pick).await?;
-        Ok(self.kept(&browse::keys::commit(repo, rev), commit).await)
+        Ok(self.kept(&browse::keys::commit(repo, rev), commit))
     }
 
     /// A revision's commits, newest first, touching `path` if it isn't
@@ -1982,9 +1984,7 @@ impl GitHub {
             browse::HistoryObject::Other => None,
         };
         let history = self.find(op, format!("{repo}@{rev}"), pick).await?;
-        Ok(self
-            .kept_page(first, &browse::keys::history(repo, rev, path), history)
-            .await)
+        Ok(self.kept_page(first, &browse::keys::history(repo, rev, path), history))
     }
 
     /// The checks on a pull request's head commit.
@@ -2003,7 +2003,7 @@ impl GitHub {
                 text_short(&want)
             ));
         }
-        Ok(self.kept(&browse::keys::pr_checks(pr), checks).await)
+        Ok(self.kept(&browse::keys::pr_checks(pr), checks))
     }
 
     /// A commit's checks with every page of them (up to [`PAGES`]): a
@@ -2083,9 +2083,7 @@ impl GitHub {
         let people = field.trim_end_matches("WithRole");
         self.check_connection(&wire, 30, format!("{who}'s {people}"));
         let results = wire.into_results(browse::wire::Person::into_summary);
-        Ok(self
-            .kept_page(first, &browse::keys::users(list), results)
-            .await)
+        Ok(self.kept_page(first, &browse::keys::users(list), results))
     }
 
     /// A user's or organization's own repositories in `sort` order, 30 at a
@@ -2107,9 +2105,7 @@ impl GitHub {
             .await?
             .repositories
             .into_results();
-        Ok(self
-            .kept_page(first, &browse::keys::owner_repos(login, sort), repos)
-            .await)
+        Ok(self.kept_page(first, &browse::keys::owner_repos(login, sort), repos))
     }
 
     /// What a user starred, most recently first, 30 at a time from
@@ -2129,9 +2125,7 @@ impl GitHub {
             .await?
             .starred_repositories
             .into_results();
-        Ok(self
-            .kept_page(first, &browse::keys::starred(login), stars)
-            .await)
+        Ok(self.kept_page(first, &browse::keys::starred(login), stars))
     }
 
     /// A repository's forks, most starred first, 30 at a time from
@@ -2148,9 +2142,7 @@ impl GitHub {
             .await?
             .forks
             .into_results();
-        Ok(self
-            .kept_page(first, &browse::keys::forks(repo), forks)
-            .await)
+        Ok(self.kept_page(first, &browse::keys::forks(repo), forks))
     }
 
     /// A repository's releases, newest first, 20 at a time from `after`;
@@ -2167,9 +2159,7 @@ impl GitHub {
             .await?
             .releases
             .into_results();
-        Ok(self
-            .kept_page(first, &browse::keys::releases(repo), releases)
-            .await)
+        Ok(self.kept_page(first, &browse::keys::releases(repo), releases))
     }
 
     /// A release by its tag, with its notes and assets.
@@ -2185,7 +2175,7 @@ impl GitHub {
             })
             .await?
             .into_release();
-        Ok(self.kept(&browse::keys::release(repo, tag), release).await)
+        Ok(self.kept(&browse::keys::release(repo, tag), release))
     }
 
     /// A repository's tags, 30 at a time from `after`; the first page is
@@ -2201,7 +2191,7 @@ impl GitHub {
             .find(op, repo, |q| q.repository?.refs)
             .await?
             .into_results();
-        Ok(self.kept_page(first, &browse::keys::tags(repo), tags).await)
+        Ok(self.kept_page(first, &browse::keys::tags(repo), tags))
     }
 
     /// Branches by name, 30 at a time from `after`, each with its latest
@@ -2226,9 +2216,7 @@ impl GitHub {
         self.check_connection(&wire.refs, 30, format!("{repo}'s branches"));
         let default = wire.default_branch_ref.map(|r| r.name);
         let branches = (wire.refs).into_results(|b| b.into_info(repo, default.as_deref()));
-        Ok(self
-            .kept_page(first, &browse::keys::branches(repo), branches)
-            .await)
+        Ok(self.kept_page(first, &browse::keys::branches(repo), branches))
     }
 
     /// Open or closed milestones, soonest due first, 25 at a time from
@@ -2256,9 +2244,7 @@ impl GitHub {
             closed: wire.closed.total_count,
             results: (wire.milestones).into_results(browse::wire_milestones::Milestone::into_info),
         };
-        Ok(self
-            .kept_page(first, &browse::keys::milestones(repo, closed), list)
-            .await)
+        Ok(self.kept_page(first, &browse::keys::milestones(repo, closed), list))
     }
 
     /// A milestone, and 30 of its issues and pull requests from `after`,
@@ -2300,9 +2286,7 @@ impl GitHub {
             items,
             unsearchable,
         };
-        Ok(self
-            .kept_page(first, &browse::keys::milestone(repo, number), detail)
-            .await)
+        Ok(self.kept_page(first, &browse::keys::milestone(repo, number), detail))
     }
     /// Deployments, newest first, 25 at a time from `after`, to one
     /// environment if given; with the environments.
@@ -2330,9 +2314,7 @@ impl GitHub {
             results: (wire.deployments)
                 .into_results(browse::wire_deployments::Deployment::into_info),
         };
-        Ok(self
-            .kept_page(first, &browse::keys::deployments(repo, environment), list)
-            .await)
+        Ok(self.kept_page(first, &browse::keys::deployments(repo, environment), list))
     }
     /// Compares two revisions, as a compare URL names them (`a...b`,
     /// `a..b`, `owner:branch`, `owner:repo:branch`): the newest 250 commits
@@ -2380,9 +2362,7 @@ impl GitHub {
                 "comparing {spec}, {listed} commits are listed of {total}, not {expected}"
             ));
         }
-        Ok(self
-            .kept(&browse::keys::compare(repo, spec), comparison)
-            .await)
+        Ok(self.kept(&browse::keys::compare(repo, spec), comparison))
     }
     /// Which commit last changed each line of a file at a revision.
     pub async fn blame(
@@ -2397,9 +2377,7 @@ impl GitHub {
         let wire: browse::wire_blame::Blame =
             (self.graphql_json(raw::BLAME, vars, subject, "/repository/object/blame")).await?;
         let blame = wire.into_blame();
-        Ok(self
-            .kept(&browse::keys::blame(repo, rev, path), blame)
-            .await)
+        Ok(self.kept(&browse::keys::blame(repo, rev, path), blame))
     }
     /// A gist and its files. REST, since GraphQL finds gists only through
     /// their owners, and a gist's URL may not name its owner.
@@ -2408,7 +2386,7 @@ impl GitHub {
             .rest_json(&format!("/gists/{}", encode_path(id)), format!("gist {id}"))
             .await?;
         let gist = wire.into_gist();
-        Ok(self.kept(&browse::keys::gist(id), gist).await)
+        Ok(self.kept(&browse::keys::gist(id), gist))
     }
 
     /// Someone's public gists, most recently updated first, 30 at a time
@@ -2425,9 +2403,7 @@ impl GitHub {
                 .await?;
         self.check_connection(&wire, 30, format!("{login}'s gists"));
         let gists = wire.into_results(browse::wire_gists::Gist::into_summary);
-        Ok(self
-            .kept_page(first, &browse::keys::gists(login), gists)
-            .await)
+        Ok(self.kept_page(first, &browse::keys::gists(login), gists))
     }
     /// The teams in an organization you can see (its members see them),
     /// by name, 30 at a time from `after`.
@@ -2442,9 +2418,7 @@ impl GitHub {
             (self.graphql_json(&raw::teams(), vars, org, "/organization/teams")).await?;
         self.check_connection(&wire, 30, format!("{org}'s teams"));
         let teams = wire.into_results(browse::wire_teams::Team::into_summary);
-        Ok(self
-            .kept_page(first, &browse::keys::teams(org), teams)
-            .await)
+        Ok(self.kept_page(first, &browse::keys::teams(org), teams))
     }
 
     /// A team: its members, repositories and child teams.
@@ -2458,7 +2432,7 @@ impl GitHub {
         ))
         .await?;
         let team = wire.into_detail();
-        Ok(self.kept(&browse::keys::team(org, slug), team).await)
+        Ok(self.kept(&browse::keys::team(org, slug), team))
     }
     /// A repository's published security advisories, or GitHub's newest
     /// reviewed ones, up to 100. REST: repositories' advisories aren't in
@@ -2491,9 +2465,7 @@ impl GitHub {
             items,
             next,
         };
-        Ok(self
-            .kept_page(first, &browse::keys::advisories(repo), list)
-            .await)
+        Ok(self.kept_page(first, &browse::keys::advisories(repo), list))
     }
 
     /// A security advisory: a repository's, or from GitHub's database.
@@ -2509,9 +2481,7 @@ impl GitHub {
         };
         let wire: browse::rest_advisories::Advisory = self.rest_json(&path, ghsa).await?;
         let advisory = wire.into_advisory();
-        Ok(self
-            .kept(&browse::keys::advisory(repo, ghsa), advisory)
-            .await)
+        Ok(self.kept(&browse::keys::advisory(repo, ghsa), advisory))
     }
     /// A workflow run (one attempt of it, or the latest) and its jobs.
     pub async fn workflow_run(
@@ -2567,9 +2537,7 @@ impl GitHub {
             Err(ApiError::NotFound(_)) if starting => Capped::default(),
             artifacts => artifacts?,
         };
-        Ok(self
-            .kept(&browse::keys::run(repo, run.id, attempt), run)
-            .await)
+        Ok(self.kept(&browse::keys::run(repo, run.id, attempt), run))
     }
 
     /// A job, its steps, and its run as it is now.
@@ -2601,7 +2569,7 @@ impl GitHub {
         if job.outcome != browse::CheckOutcome::Pending {
             job.annotations = self.job_annotations(repo, job.id).await?;
         }
-        Ok(self.kept(&browse::keys::job(repo, job.id), job).await)
+        Ok(self.kept(&browse::keys::job(repo, job.id), job))
     }
 
     async fn job_wire(
@@ -2664,9 +2632,7 @@ impl GitHub {
                 .filter(|s| s != "active")
                 .map(|s| s.replace('_', " ")),
         };
-        Ok(self
-            .kept(&browse::keys::workflow(repo, file), workflow)
-            .await)
+        Ok(self.kept(&browse::keys::workflow(repo, file), workflow))
     }
 
     /// A repository's workflow runs that match `query` (see
@@ -2691,9 +2657,7 @@ impl GitHub {
                 .collect(),
             next: next_page(page, REST_PAGE, wire.total_count),
         };
-        Ok(self
-            .kept_page(page == 1, &browse::keys::runs(repo, query), runs)
-            .await)
+        Ok(self.kept_page(page == 1, &browse::keys::runs(repo, query), runs))
     }
 
     /// Where page `page` of the runs `query` filters is (see
@@ -2796,7 +2760,7 @@ impl GitHub {
             }
         }
         if forgot {
-            self.remember(notifications::Done::KEY, done).await;
+            self.remember(notifications::Done::KEY, &done);
         }
         let cut = more && filter.after_fetching() && (items.len() as u64) < REST_PAGE;
         let inbox = notifications::Inbox {
@@ -2808,9 +2772,7 @@ impl GitHub {
             searched,
             cut,
         };
-        Ok(self
-            .kept_page(first == 1, &browse::keys::notifications(query), inbox)
-            .await)
+        Ok(self.kept_page(first == 1, &browse::keys::notifications(query), inbox))
     }
 
     /// The threads this account marked done (see
@@ -2830,7 +2792,7 @@ impl GitHub {
         }
         let mut done = self.done_threads().await;
         done.mark(threads);
-        self.remember(notifications::Done::KEY, done).await;
+        self.remember(notifications::Done::KEY, &done);
     }
 
     /// How many of your notifications are unread, up to a page of them.
@@ -2899,9 +2861,7 @@ impl GitHub {
                 text_short(&checks.oid)
             ));
         }
-        Ok(self
-            .kept(&browse::keys::commit_checks(repo, rev), checks)
-            .await)
+        Ok(self.kept(&browse::keys::commit_checks(repo, rev), checks))
     }
 
     /// The repository a discussion list or discussion is in: an
@@ -2979,9 +2939,7 @@ impl GitHub {
             }),
             results: page.into_results(w::Summary::into_summary),
         };
-        Ok(self
-            .kept_page(first, &browse::keys::discussions(of, category), list)
-            .await)
+        Ok(self.kept_page(first, &browse::keys::discussions(of, category), list))
     }
 
     /// A discussion, its comments and their replies.
@@ -2997,9 +2955,7 @@ impl GitHub {
             (self.graphql_json(&raw::discussion(), vars, subject, "/repository/discussion"))
                 .await?;
         let detail = wire.into_detail(repo);
-        Ok(self
-            .kept(&browse::keys::discussion(of, number), detail)
-            .await)
+        Ok(self.kept(&browse::keys::discussion(of, number), detail))
     }
 
     /// Branches by name, up to [`PAGES`] pages of 100, and the newest 100
@@ -3033,7 +2989,7 @@ impl GitHub {
             .more_pages(what, heads(first.heads), PAGES, more)
             .await?;
         let refs = browse::Refs { branches, tags };
-        Ok(self.kept(&browse::keys::refs(repo), refs).await)
+        Ok(self.kept(&browse::keys::refs(repo), refs))
     }
 
     /// The ref a plain GitHub URL's `spot` (`feature/x/src/lib.rs`)
@@ -3078,40 +3034,29 @@ impl GitHub {
     }
 
     /// Saves a small value in the cache (e.g. recently visited pages).
-    pub async fn remember<T: Serialize + Send + 'static>(&self, key: &str, value: T) {
-        let store = self.store.clone();
-        let key = key.to_owned();
-        spawn_store(move || store.query_put(&key, &value)).await;
+    pub fn remember<T: Serialize>(&self, key: &str, value: &T) {
+        self.store.query_put(key, value);
     }
 
     /// [`Self::kept`] for a list's first page; later pages aren't cached.
     /// A list's page, checked it adds up, then kept if it's the first.
-    pub(crate) async fn kept_page<T: Serialize + Clone + Send + browse::Page + 'static>(
+    pub(crate) fn kept_page<T: Serialize + browse::Page>(
         &self,
         first: bool,
         key: &str,
         value: T,
     ) -> T {
         self.check_page(&value, key);
-        self.kept_if(first, key, value).await
+        self.kept_if(first, key, value)
     }
 
-    async fn kept_if<T: Serialize + Clone + Send + 'static>(
-        &self,
-        first: bool,
-        key: &str,
-        value: T,
-    ) -> T {
-        if first {
-            self.kept(key, value).await
-        } else {
-            value
-        }
+    fn kept_if<T: Serialize>(&self, first: bool, key: &str, value: T) -> T {
+        if first { self.kept(key, value) } else { value }
     }
 
     /// [`Self::remember`]s `value` and hands it back.
-    async fn kept<T: Serialize + Clone + Send + 'static>(&self, key: &str, value: T) -> T {
-        self.remember(key, value.clone()).await;
+    fn kept<T: Serialize>(&self, key: &str, value: T) -> T {
+        self.remember(key, &value);
         value
     }
 }
@@ -3403,13 +3348,6 @@ fn page_vars(pr: &PrRef, after: Option<String>) -> Result<queries::PageVariables
 
 fn pr_key(pr: &PrRef) -> String {
     format!("pr:{pr}")
-}
-
-/// redb writes fsync; keep them off the async worker threads.
-async fn spawn_store(f: impl FnOnce() + Send + 'static) {
-    if let Err(err) = tokio::task::spawn_blocking(f).await {
-        tracing::warn!(%err, "cache write task failed");
-    }
 }
 
 /// A failed response's error. A 404 names `what` was asked for: GitHub's

@@ -188,7 +188,7 @@ impl GitHub {
         };
         let days = self.commit_days(repo).await;
         let activity = from_stats(contributors, days, crate::store::now());
-        self.remember(&keys::activity(repo), activity.clone()).await;
+        self.remember(&keys::activity(repo), &activity);
         Ok(activity)
     }
 
@@ -250,7 +250,7 @@ impl GitHub {
                 })
                 .collect(),
         };
-        self.remember(&keys::traffic(repo), traffic.clone()).await;
+        self.remember(&keys::traffic(repo), &traffic);
         Ok(traffic)
     }
 
@@ -306,7 +306,7 @@ impl GitHub {
         let deps = Dependencies {
             manifests: Capped::new(manifests, found.total_count),
         };
-        self.remember(&keys::dependencies(repo), deps.clone()).await;
+        self.remember(&keys::dependencies(repo), &deps);
         Ok(deps)
     }
 }

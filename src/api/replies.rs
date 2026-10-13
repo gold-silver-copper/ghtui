@@ -57,7 +57,7 @@ impl GitHub {
             found.nodes.into_iter().flatten().collect(),
             found.total_count,
         );
-        self.remember(keys::REPLIES, replies.clone()).await;
+        self.remember(keys::REPLIES, &replies);
         Ok(replies)
     }
 }

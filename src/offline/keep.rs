@@ -150,7 +150,7 @@ pub fn start(
                 Err(_) => keeper.take(Op::Now),
             }
             wait = EVERY;
-            gh.remember(KEY, keeper.kept.clone()).await;
+            gh.remember(KEY, &keeper.kept);
             tell(&keeper.kept);
             while gh.offline_since().is_none()
                 && let Some(one) = keeper.next()
@@ -163,7 +163,7 @@ pub fn start(
                 while let Ok(op) = rx.try_recv() {
                     keeper.take(op);
                 }
-                gh.remember(KEY, keeper.kept.clone()).await;
+                gh.remember(KEY, &keeper.kept);
                 tell(&keeper.kept);
             }
         }

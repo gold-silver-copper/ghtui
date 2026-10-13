@@ -263,7 +263,7 @@ impl GitHub {
             description: l.description.unwrap_or_default(),
             open: l.issues.total_count + l.pull_requests.total_count,
         });
-        Ok(self.kept_page(first, &labels_key(repo), labels).await)
+        Ok(self.kept_page(first, &labels_key(repo), labels))
     }
 
     pub async fn create_label(&self, repo: &RepoId, label: &LabelChange) -> Result<(), ApiError> {

@@ -324,7 +324,7 @@ impl GitHub {
         }
         items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         let list = PackageList { items, cut };
-        self.remember(&keys::packages(of), list.clone()).await;
+        self.remember(&keys::packages(of), &list);
         Ok(list)
     }
 
@@ -358,7 +358,7 @@ impl GitHub {
             },
             package,
         };
-        Ok(self.kept_page(first, &keys::package(p), detail).await)
+        Ok(self.kept_page(first, &keys::package(p), detail))
     }
 
     /// Deletes a package's version.

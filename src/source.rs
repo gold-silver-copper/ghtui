@@ -557,8 +557,7 @@ impl Local {
             Ok(listed) => {
                 refs.listed = Some((Instant::now(), listed.clone()));
                 refs.old = None;
-                gh.remember(&kept_key("refs", repo), Kept::of(&listed))
-                    .await;
+                gh.remember(&kept_key("refs", repo), &Kept::of(&listed));
                 Ok(listed)
             }
             Err(err) => {
@@ -673,7 +672,7 @@ impl Local {
                             refs.head = Some((Instant::now(), oid.clone()));
                             refs.old = None;
                             let kept = Kept::of_head(&name, &oid);
-                            gh.remember(&kept_key("head", repo), kept).await;
+                            gh.remember(&kept_key("head", repo), &kept);
                             Some(oid)
                         }
                         Err(err) => {

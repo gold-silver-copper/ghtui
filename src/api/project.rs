@@ -772,7 +772,7 @@ impl GitHub {
             .map_err(scoped)?;
         self.check_connection(&wire, 30, &what);
         let list = wire.into_results(WireSummary::into_summary);
-        Ok(self.kept_page(first, &keys::projects(of), list).await)
+        Ok(self.kept_page(first, &keys::projects(of), list))
     }
 
     /// A project at view `view` (its first without one): the project, its
@@ -844,7 +844,7 @@ impl GitHub {
             items,
             archived,
         };
-        Ok(self.kept_page(first, &key, found).await)
+        Ok(self.kept_page(first, &key, found))
     }
 
     /// The projects issue or pull request `number` is in (the first 10),

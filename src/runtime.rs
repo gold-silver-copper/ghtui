@@ -75,7 +75,10 @@ pub async fn run(
         reviews,
     };
     let result = drive(terminal, state, &mut effects, rx, initial, started).await;
-    // Drafts saved just before quitting still reach the disk.
+    // Answers cached just before quitting still reach the disk, and so do
+    // drafts.
+    let store = effects.gh.store().clone();
+    blocking(move || store.sync()).await;
     drop(effects.save_review);
     #[expect(clippy::disallowed_methods, reason = "a file write: no progress")]
     if tokio::time::timeout(Duration::from_secs(2), effects.writer)
@@ -131,7 +134,7 @@ async fn drive(
             Some(msg) = rx.recv() => msg,
             signal = stop.recv() => {
                 tracing::info!(signal, "stopping");
-                save_tabs(&effects.gh, &state).await;
+                save_tabs(&effects.gh, &state);
                 return Ok(());
             }
         };
@@ -152,7 +155,7 @@ async fn drive(
             }
         }
         if state.quit {
-            save_tabs(&effects.gh, &state).await;
+            save_tabs(&effects.gh, &state);
             return Ok(());
         }
         draw(terminal, &state, dump.as_deref())?;
@@ -492,16 +495,25 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
         let msg = match api {
             Api::FetchViewer => Msg::Viewer(gh.viewer_login().await),
             Api::FetchUnread => Msg::Unread(gh.unread().await),
-            Api::FetchPr(pr) => {
-                let result = gh.pull_request(&pr).await;
-                // GitHub can't be reached: the cache's copy, if there's one.
-                if let Err(ApiError::Offline(_)) = &result
-                    && let Some(cached) = gh.cached_pull_request(&pr)
-                {
-                    let _ = tx.send(Msg::PrCached(pr.clone(), Box::new(cached)));
+            Api::FetchPr(pr) => match gh.pull_request_alone(&pr).await {
+                Ok(detail) => {
+                    // Shown before how far behind its base it is arrives.
+                    if detail.state.is_open() {
+                        let _ = tx.send(Msg::Pr(pr.clone(), Box::new(Ok(detail.clone()))));
+                    }
+                    let detail = gh.with_behind(&pr, detail).await;
+                    Msg::Pr(pr, Box::new(Ok(detail)))
                 }
-                Msg::Pr(pr, Box::new(result))
-            }
+                Err(err) => {
+                    // GitHub can't be reached: the cache's copy, if there's one.
+                    if let ApiError::Offline(_) = &err
+                        && let Some(cached) = gh.cached_pull_request(&pr)
+                    {
+                        let _ = tx.send(Msg::PrCached(pr.clone(), Box::new(cached)));
+                    }
+                    Msg::Pr(pr, Box::new(Err(err)))
+                }
+            },
             Api::Fetch { key, cached } => {
                 if cached {
                     let (gh, lookup) = (gh.clone(), key.clone());
@@ -543,7 +555,7 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 Msg::Suggested(q, result)
             }
             Api::SaveVisits(visits) => {
-                gh.remember(crate::api::browse::keys::VISITS, visits).await;
+                gh.remember(crate::api::browse::keys::VISITS, &visits);
                 return;
             }
             Api::FetchViewed(pr) => {
@@ -943,13 +955,13 @@ impl StopSignals {
 
 /// Remembers the open tabs for next time. One tab isn't remembered:
 /// ghtui starts at home, as it always has.
-async fn save_tabs(gh: &GitHub, state: &State) {
+fn save_tabs(gh: &GitHub, state: &State) {
     let urls = if state.tab_count() > 1 {
         state.tab_urls()
     } else {
         Vec::new()
     };
-    gh.remember(crate::api::browse::keys::TABS, urls).await;
+    gh.remember(crate::api::browse::keys::TABS, &urls);
 }
 
 /// What the cache has for a page, and when it was fetched.

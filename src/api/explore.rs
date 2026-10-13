@@ -151,7 +151,7 @@ impl GitHub {
             topics,
             total: found.total_count,
         };
-        self.remember(keys::FEATURED, topics.clone()).await;
+        self.remember(keys::FEATURED, &topics);
         Ok(topics)
     }
 
@@ -193,7 +193,7 @@ impl GitHub {
             }
             Err(err) => tracing::debug!(%err, "no stars or related topics for the topic"),
         }
-        self.remember(&keys::topic(name), topic.clone()).await;
+        self.remember(&keys::topic(name), &topic);
         Ok(topic)
     }
 }

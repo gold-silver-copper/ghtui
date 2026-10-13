@@ -601,7 +601,7 @@ impl GitHub {
             }
         };
         let key = keys::alerts(repo, kind, query);
-        Ok(self.kept_page(first, &key, list).await)
+        Ok(self.kept_page(first, &key, list))
     }
 
     /// One alert, with what only its page shows: a Dependabot alert's
@@ -634,7 +634,7 @@ impl GitHub {
             }
             Detail::Code(_) => {}
         }
-        self.remember(&keys::alert(a), alert.clone()).await;
+        self.remember(&keys::alert(a), &alert);
         Ok(alert)
     }
 

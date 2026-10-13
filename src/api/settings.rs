@@ -543,8 +543,7 @@ impl GitHub {
                 Settings::Keys(self.listed(repo, "keys?", "deploy keys", wire::key).await?)
             }
         };
-        self.remember(&keys::page(repo, page), settings.clone())
-            .await;
+        self.remember(&keys::page(repo, page), &settings);
         Ok(settings)
     }
 

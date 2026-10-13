@@ -7,12 +7,18 @@
 //! migrations. If the database can't be opened (another ghtui process holds
 //! the lock, the disk is read-only, ...) the store runs disabled: reads miss
 //! and writes are dropped, so the app keeps working without a cache.
+//!
+//! Cached answers (REST responses and queries) can be fetched again, so
+//! they're written behind the reply: kept in memory, where reads see them,
+//! and committed together in the background without waiting on the disk
+//! ([`Db::flush`]). The rest is committed, durably, before returning.
 
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use redb::{Database, ReadableDatabase, TableDefinition};
+use redb::{Database, Durability, ReadableDatabase, TableDefinition, TableHandle};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bump whenever the meaning or encoding of any table changes.
@@ -20,9 +26,11 @@ pub const SCHEMA_VERSION: u64 = 15;
 
 const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 /// REST responses keyed by request path, stored with their ETag.
-const HTTP: TableDefinition<&str, &[u8]> = TableDefinition::new("http");
+const HTTP: TableDefinition<&str, &[u8]> = TableDefinition::new(HTTP_NAME);
+const HTTP_NAME: &str = "http";
 /// Decoded GraphQL results keyed by a caller-chosen key.
-const QUERIES: TableDefinition<&str, &[u8]> = TableDefinition::new("queries");
+const QUERIES: TableDefinition<&str, &[u8]> = TableDefinition::new(QUERIES_NAME);
+const QUERIES_NAME: &str = "queries";
 /// Logins keyed by `<host>/<token fingerprint>`.
 const ACCOUNTS: TableDefinition<&str, &[u8]> = TableDefinition::new("accounts");
 pub mod account;
@@ -141,7 +149,7 @@ impl ReviewState {
 /// Cheap to clone; all clones share one database.
 #[derive(Clone)]
 pub struct Store {
-    db: Option<Arc<Database>>,
+    db: Option<Arc<Db>>,
     /// Where the database is, to say how big it is.
     path: Option<Arc<std::path::PathBuf>>,
     /// Whose entries this store reads and writes.
@@ -161,8 +169,11 @@ impl Store {
     /// logged and yield a disabled store.
     pub fn open(path: &Path) -> Self {
         match open_versioned(path) {
-            Ok(db) => Self {
-                db: Some(Arc::new(db)),
+            Ok(database) => Self {
+                db: Some(Arc::new(Db {
+                    database,
+                    later: Mutex::default(),
+                })),
                 path: Some(Arc::new(path.to_owned())),
                 account: Account::default(),
             },
@@ -231,7 +242,7 @@ impl Store {
     }
 
     pub fn http_put(&self, key: &str, entry: &HttpEntry) {
-        self.write_json(HTTP, &self.scoped(key), entry);
+        self.write_later(HTTP_NAME, &self.scoped(key), entry);
     }
 
     pub fn query_get<T: DeserializeOwned>(&self, key: &str) -> Option<Cached<T>> {
@@ -256,14 +267,19 @@ impl Store {
                 return;
             }
         };
-        self.write_json(
-            QUERIES,
-            &self.scoped(key),
-            &QueryEntry {
-                fetched_at: now(),
-                value,
-            },
-        );
+        let entry = QueryEntry {
+            fetched_at: now(),
+            value,
+        };
+        self.write_later(QUERIES_NAME, &self.scoped(key), &entry);
+    }
+
+    /// Commits what's written behind, durably, and waits for it: before
+    /// exiting.
+    pub fn sync(&self) {
+        if let Some(db) = &self.db {
+            db.sync();
+        }
     }
 
     fn read_json<T: DeserializeOwned>(
@@ -273,7 +289,10 @@ impl Store {
     ) -> Option<T> {
         let db = self.db.as_ref()?;
         let result = (|| -> Result<Option<T>, StoreError> {
-            let txn = db.begin_read()?;
+            if let Some(bytes) = db.later().rows.get(&(table.name(), key.to_owned())) {
+                return Ok(Some(serde_json::from_slice(bytes)?));
+            }
+            let txn = db.database.begin_read()?;
             let table = match txn.open_table(table) {
                 Ok(table) => table,
                 Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
@@ -299,7 +318,7 @@ impl Store {
         let Some(db) = self.db.as_ref() else { return };
         let result = (|| -> Result<(), StoreError> {
             let bytes = serde_json::to_vec(value)?;
-            let txn = db.begin_write()?;
+            let txn = db.database.begin_write()?;
             {
                 let mut table = txn.open_table(table)?;
                 table.insert(key, bytes.as_slice())?;
@@ -310,6 +329,129 @@ impl Store {
         if let Err(err) = result {
             tracing::warn!(key, %err, "cache write failed");
         }
+    }
+
+    /// Writes `value` behind ([`Db::flush`]): reads see it at once.
+    fn write_later<T: Serialize + ?Sized>(&self, table: &'static str, key: &str, value: &T) {
+        let Some(db) = &self.db else { return };
+        let bytes = match serde_json::to_vec(value) {
+            Ok(bytes) => bytes,
+            Err(err) => return tracing::warn!(key, %err, "cannot encode for the cache"),
+        };
+        let start = {
+            let mut later = db.later();
+            later.rows.insert((table, key.to_owned()), bytes.into());
+            !std::mem::replace(&mut later.flushing, true)
+        };
+        if start {
+            let db = db.clone();
+            match tokio::runtime::Handle::try_current() {
+                Ok(runtime) => drop(runtime.spawn_blocking(move || db.flush())),
+                Err(_) => db.flush(),
+            }
+        }
+    }
+}
+
+/// A row: its table's name and its key.
+type Row = (&'static str, String);
+
+/// The database, and the rows written behind.
+struct Db {
+    database: Database,
+    later: Mutex<Later>,
+}
+
+#[derive(Default)]
+struct Later {
+    /// Rows not yet committed, by table name and key: the newest value.
+    rows: HashMap<Row, Arc<[u8]>>,
+    /// Whether a [`Db::flush`] is running.
+    flushing: bool,
+    /// When a commit last reached the disk.
+    durable: Option<Instant>,
+}
+
+/// How long rows written behind may go without reaching the disk: commits
+/// in between aren't synced, and a crash loses them.
+const SYNC_EVERY: Duration = Duration::from_secs(30);
+
+impl Db {
+    fn later(&self) -> MutexGuard<'_, Later> {
+        self.later.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Commits the rows written behind, together, until none are left:
+    /// those written meanwhile go in the next commit. Synced only every
+    /// [`SYNC_EVERY`].
+    fn flush(&self) {
+        loop {
+            let (rows, due) = {
+                let mut later = self.later();
+                if later.rows.is_empty() {
+                    later.flushing = false;
+                    return;
+                }
+                let rows: Vec<_> = later
+                    .rows
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                let due = later.durable.is_none_or(|at| at.elapsed() >= SYNC_EVERY);
+                (rows, due)
+            };
+            self.commit(
+                &rows,
+                if due {
+                    Durability::Immediate
+                } else {
+                    Durability::None
+                },
+            );
+            let mut later = self.later();
+            if due {
+                later.durable = Some(Instant::now());
+            }
+            // Committed (or failed, and said so): unless written again since.
+            for (row, bytes) in rows {
+                if later
+                    .rows
+                    .get(&row)
+                    .is_some_and(|now| Arc::ptr_eq(now, &bytes))
+                {
+                    later.rows.remove(&row);
+                }
+            }
+        }
+    }
+
+    /// Commits whatever is written behind, durably.
+    fn sync(&self) {
+        let rows: Vec<_> = self.later().rows.drain().collect();
+        self.commit(&rows, Durability::Immediate);
+    }
+
+    fn commit(&self, rows: &[(Row, Arc<[u8]>)], durability: Durability) {
+        let result = (|| -> Result<(), StoreError> {
+            let mut txn = self.database.begin_write()?;
+            txn.set_durability(durability)
+                .map_err(|err| StoreError::Db(err.into()))?;
+            for ((table, key), bytes) in rows {
+                let mut table = txn.open_table(TableDefinition::<&str, &[u8]>::new(table))?;
+                table.insert(key.as_str(), &**bytes)?;
+            }
+            txn.commit()?;
+            Ok(())
+        })();
+        if let Err(err) = result {
+            tracing::warn!(rows = rows.len(), %err, "cache write failed");
+        }
+    }
+}
+
+impl Drop for Db {
+    fn drop(&mut self) {
+        self.sync();
     }
 }
 
@@ -391,6 +533,18 @@ mod tests {
         assert_eq!(store.query_get::<i32>("k").unwrap().value, 7);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn written_behind_is_read_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("cache.redb"));
+        for i in 0..100 {
+            store.query_put("k", &i);
+            assert_eq!(store.query_get::<i32>("k").unwrap().value, i);
+        }
+        store.sync();
+        assert_eq!(store.query_get::<i32>("k").unwrap().value, 99);
+    }
+
     #[test]
     fn discards_cache_on_version_mismatch() {
         let dir = tempfile::tempdir().unwrap();
@@ -398,7 +552,7 @@ mod tests {
         {
             let store = Store::open(&path);
             store.query_put("k", &1);
-            let db = store.db.as_ref().unwrap();
+            let db = &store.db.as_ref().unwrap().database;
             let txn = db.begin_write().unwrap();
             txn.open_table(META)
                 .unwrap()

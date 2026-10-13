@@ -26,7 +26,7 @@ impl Store {
         let key = self.queue_key(id);
         let result = (|| -> Result<(), StoreError> {
             let bytes = serde_json::to_vec(value)?;
-            let txn = db.begin_write()?;
+            let txn = db.database.begin_write()?;
             {
                 let mut table = txn.open_table(QUEUE)?;
                 table.insert(key.as_str(), bytes.as_slice())?;
@@ -46,7 +46,7 @@ impl Store {
         };
         let key = self.queue_key(id);
         let result = (|| -> Result<(), StoreError> {
-            let txn = db.begin_write()?;
+            let txn = db.database.begin_write()?;
             {
                 let mut table = txn.open_table(QUEUE)?;
                 table.remove(key.as_str())?;
@@ -67,7 +67,7 @@ impl Store {
         };
         let prefix = self.scoped("queue/");
         let result = (|| -> Result<Vec<(u64, T)>, StoreError> {
-            let txn = db.begin_read()?;
+            let txn = db.database.begin_read()?;
             let table = match txn.open_table(QUEUE) {
                 Ok(table) => table,
                 Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),

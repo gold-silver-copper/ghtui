@@ -91,7 +91,7 @@ impl GitHub {
         let mut lists: Vec<StarList> = found.nodes.into_iter().flatten().map(Into::into).collect();
         lists.sort_by(|a, b| b.last_added.cmp(&a.last_added));
         let lists = Capped::new(lists, total);
-        self.remember(&keys::lists(login), lists.clone()).await;
+        self.remember(&keys::lists(login), &lists);
         Ok(lists)
     }
 
@@ -136,7 +136,7 @@ impl GitHub {
             next,
         };
         let page = ListPage { list, repos };
-        Ok(self.kept_page(first, &keys::list(login, slug), page).await)
+        Ok(self.kept_page(first, &keys::list(login, slug), page))
     }
 
     /// Your lists, and which of them have `repo`.
@@ -165,7 +165,7 @@ impl GitHub {
             viewer: found.viewer.login,
             lists: Capped::new(lists, found.viewer.lists.total_count),
         };
-        self.remember(&keys::mine(repo), mine.clone()).await;
+        self.remember(&keys::mine(repo), &mine);
         Ok(mine)
     }
 
