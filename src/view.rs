@@ -201,8 +201,15 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 crate::review::ComposeTarget::Write(text) => text.title(state),
                 _ => compose.title(),
             };
-            let completions: Option<Vec<String>> = crate::typing::completions(state)
-                .map(|choices| choices.into_iter().map(|c| c.label).collect());
+            // Saved replies, while they're listed; else what an `@` or
+            // `#` can be.
+            let saved = crate::site::replies::shown(state);
+            let completions: Option<Vec<String>> = match &saved {
+                Some((rows, _)) => Some(rows.clone()),
+                None => crate::typing::completions(state)
+                    .map(|choices| choices.into_iter().map(|c| c.label).collect()),
+            };
+            let selected = saved.map_or(compose.completing.selected, |(_, at)| at);
             let rows = compose.rows();
             // Where the comment will go, or (without room there) a strip
             // above the status bar.
@@ -243,12 +250,8 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                     crate::review::ComposeTarget::NewDiscussion(_) => "start discussion",
                     _ => "add to review",
                 },
-                completions: (completions.as_deref()).map(|c| {
-                    (
-                        c,
-                        compose.completing.selected.min(c.len().saturating_sub(1)),
-                    )
-                }),
+                completions: (completions.as_deref())
+                    .map(|c| (c, selected.min(c.len().saturating_sub(1)))),
             }
             .render(sheet, buf);
         }

@@ -238,6 +238,9 @@ pub enum Route {
         repo: RepoId,
         page: Option<String>,
     },
+    /// Insights, Explore and topics, starred lists, packages
+    /// ([`crate::site`]).
+    Site(crate::site::Page),
 }
 
 /// The pages at a revision.
@@ -547,6 +550,7 @@ impl Route {
                 ),
                 None => format!("{}/wiki/_new", links::repo(repo)),
             },
+            Route::Site(page) => page.url(),
             Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
             Route::Commit {
                 repo,
@@ -660,6 +664,7 @@ impl Route {
                 repo,
                 page: Some(page),
             } => format!("{repo} · Editing {page}"),
+            Route::Site(page) => page.title(),
             Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
             Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
             Route::Commit { repo, oid, .. } => format!("{repo}@{}", short_sha(oid)),
@@ -730,6 +735,7 @@ impl Route {
             | Route::Projects(ProjectsOf::Repo(repo))
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
+            Route::Site(page) => page.repo(),
             Route::Projects(ProjectsOf::Owner(_))
             | Route::Project { .. }
             | Route::ProjectItem { .. }
@@ -908,6 +914,9 @@ fn parse(parsed: &url::Url) -> Option<Target> {
         .map(|s| s.filter(|p| !p.is_empty()).map(decode).collect())
         .unwrap_or_default();
     let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
+    if let Some(page) = crate::site::parse(&segments, param) {
+        return Some(Target::Page(Route::Site(page)));
+    }
     let route = match segments.as_slice() {
         [] | ["dashboard"] => Route::Home,
         ["search"] => Route::Search {
@@ -937,10 +946,6 @@ fn parse(parsed: &url::Url) -> Option<Target> {
                 Some(_) => return None,
             },
             query: query.unwrap_or_default(),
-        },
-        ["topics", topic] => Route::Search {
-            kind: SearchKind::Repos,
-            query: format!("topic:{topic}"),
         },
         // The dashboards of your pull requests and issues: searches.
         [list @ ("pulls" | "issues"), rest @ ..] => {
@@ -1609,7 +1614,13 @@ pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
     None
 }
 
-fn valid_login(s: &str) -> bool {
+/// Whether `s` is one of GitHub's own first path segments (settings,
+/// the marketplace…), never an owner.
+pub(crate) fn is_reserved(s: &str) -> bool {
+    RESERVED.contains(&s)
+}
+
+pub(crate) fn valid_login(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
@@ -2128,7 +2139,10 @@ pub(crate) mod tests {
     pub(crate) fn variant(route: &Route) -> String {
         // An unsplit page opens its view's page.
         let route = route.split(None).unwrap_or_else(|| route.clone());
-        format!("{route:?}")
+        // One of `crate::site`'s pages by its own name.
+        let named = format!("{route:?}");
+        let named = named.strip_prefix("Site(").unwrap_or(&named);
+        named
             .split(|c: char| !c.is_alphanumeric())
             .next()
             .unwrap_or_default()
@@ -2603,6 +2617,34 @@ pub(crate) mod tests {
                 })
         }
 
+        fn site() -> impl Strategy<Value = crate::site::Page> {
+            use crate::api::explore::Since;
+            use crate::api::packages::{Kind, PackageRef, PackagesOf};
+            use crate::site::{InsightsTab, Page};
+            let package = (
+                login(),
+                prop::sample::select(Kind::ALL.to_vec()),
+                "[a-z0-9][a-z0-9._-]{0,11}",
+            )
+                .prop_map(|(owner, kind, name)| PackageRef { owner, kind, name });
+            prop_oneof![
+                (repo(), prop::sample::select(InsightsTab::ALL.to_vec()))
+                    .prop_map(|(repo, tab)| Page::Insights { repo, tab }),
+                (
+                    prop::option::of("[a-z0-9+#]{1,10}"),
+                    prop::sample::select(Since::ALL.to_vec())
+                )
+                    .prop_map(|(language, since)| Page::Explore { language, since }),
+                "[a-z0-9][a-z0-9-]{0,15}".prop_map(Page::Topic),
+                (login(), "[a-z0-9][a-z0-9-]{0,15}")
+                    .prop_map(|(login, slug)| Page::StarList { login, slug }),
+                login().prop_map(|l| Page::Packages(PackagesOf::Owner(l))),
+                repo().prop_map(|r| Page::Packages(PackagesOf::Repo(r))),
+                (package, prop::option::of(1..u64::MAX))
+                    .prop_map(|(at, version)| Page::Package { at, version }),
+            ]
+        }
+
         fn discussions_of() -> impl Strategy<Value = DiscussionsOf> {
             prop_oneof![
                 repo().prop_map(DiscussionsOf::Repo),
@@ -2677,6 +2719,7 @@ pub(crate) mod tests {
                     })
                     .prop_map(|(repo, page)| Route::Wiki { repo, page }),
                 prop::option::of(repo()).prop_map(Route::Advisories),
+                site().prop_map(Route::Site),
                 (
                     repo(),
                     prop::sample::select(AlertKind::ALL.to_vec()),

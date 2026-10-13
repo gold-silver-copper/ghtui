@@ -203,6 +203,7 @@ impl State {
         out.push(close);
         out.push(go(Action::GoHome, "Home", ""));
         out.push(go(Action::Notifications, "Notifications", ""));
+        out.push(go(Action::Explore, "Explore: new repositories and topics", ""));
         out.push(go(Action::Refresh, "Refresh", ""));
         out.push(go(Action::CommandPalette, "Command palette", ""));
         let mut messages = go(Action::Messages, "Recent messages and errors", "");

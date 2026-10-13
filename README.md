@@ -570,7 +570,7 @@ says where it works.
 | `,x`                 | Close (as a duplicate too) or reopen (an alert: dismiss it); on a running run, cancel it |
 | `,R`                 | Re-run the workflow run or job |
 | `,e`                 | Edit the comment or description (a wiki page, your gist) |
-| `,D`                 | Delete the comment (your gist) |
+| `,D`                 | Delete the comment (your gist, a package's version, your list) |
 | `,+`                 | React to the comment, issue or pull request |
 | `,c`                 | Check out the pull request in your clone (an issue: a new branch for it) |
 | `,w`                 | Subscribe to or ignore the thread; watch the repository |
@@ -604,6 +604,7 @@ says where it works.
 | `,G`    | New gist |
 | `,W`    | New wiki page |
 | `,E`    | Run the workflow by hand |
+| `,L`    | Add the repository to your starred lists, or take it out |
 | `B`     | Switch branches or tags |
 | `,b`    | Delete the pull request's branch, or restore it |
 | `,L`    | Lock the conversation, or unlock it |

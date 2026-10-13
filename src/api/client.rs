@@ -177,6 +177,9 @@ enum Request<'a> {
         body: &'a serde_json::Value,
         /// Safe to send twice: a query, not a mutation.
         idempotent: bool,
+        /// A preview's media type, for fields GitHub serves only under
+        /// one (the dependency graph's).
+        accept: Option<&'static str>,
     },
     /// A REST change (a re-run, marking a thread read), with a JSON body
     /// if it takes one.
@@ -419,8 +422,12 @@ impl GitHub {
                     }
                     get.send().await
                 }
-                Request::Post { body, .. } => {
-                    client.post(&self.http.graphql).json(body).send().await
+                Request::Post { body, accept, .. } => {
+                    let post = client.post(&self.http.graphql).json(body);
+                    match accept {
+                        Some(accept) => post.header(header::ACCEPT, *accept).send().await,
+                        None => post.send().await,
+                    }
                 }
                 Request::Write { method, path, body } => {
                     let url = format!("{}{path}", self.http.rest);
@@ -567,18 +574,60 @@ impl GitHub {
         reply.at(subject, at, |errors| self.leave_out(errors))
     }
 
+    /// A query (or, not `idempotent`, a mutation) given as text, for its
+    /// data whole: for a query of several roots, or what a mutation made.
+    /// Any error fails it, with GitHub's messages.
+    pub(crate) async fn graphql_data<T: DeserializeOwned>(
+        &self,
+        query: &str,
+        variables: Value,
+        idempotent: bool,
+    ) -> Result<T, ApiError> {
+        let body = serde_json::json!({ "query": query, "variables": variables });
+        self.ask(&body, idempotent).await?.mutation()
+    }
+
+    /// [`Self::graphql_json`], under a preview's media type `accept`.
+    pub(crate) async fn graphql_preview<T: DeserializeOwned>(
+        &self,
+        query: &str,
+        variables: Value,
+        subject: impl std::fmt::Display,
+        at: &str,
+        accept: &'static str,
+    ) -> Result<T, ApiError> {
+        let body = serde_json::json!({ "query": query, "variables": variables });
+        let reply = self.ask_as(&body, true, Some(accept)).await?;
+        reply.at(subject, at, |errors| self.leave_out(errors))
+    }
+
     /// Posts a GraphQL request: the one place that reads GitHub's errors.
     /// A query's NOT_FOUND that explains a null in the data is dropped (the
     /// null says it); a mutation (not `idempotent`) keeps every error. A
     /// response without data is an error.
     async fn ask(&self, body: &Value, idempotent: bool) -> Result<Reply, ApiError> {
+        self.ask_as(body, idempotent, None).await
+    }
+
+    /// [`Self::ask`], under a preview's media type.
+    async fn ask_as(
+        &self,
+        body: &Value,
+        idempotent: bool,
+        accept: Option<&'static str>,
+    ) -> Result<Reply, ApiError> {
         #[derive(serde::Deserialize)]
         struct Wire {
             #[serde(default)]
             data: Value,
             errors: Option<Vec<GqlError>>,
         }
-        let response = self.send(&Request::Post { body, idempotent }).await?;
+        let request = Request::Post {
+            body,
+            idempotent,
+            accept,
+        };
+        let response = self.send(&request).await?;
         check_status(&response, "GitHub's GraphQL API")?;
         let wire: Wire = serde_json::from_str(&response.body)?;
         let errors = wire.errors.unwrap_or_default();

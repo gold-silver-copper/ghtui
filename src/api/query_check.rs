@@ -34,6 +34,10 @@ const ALLOWED: &[(&str, &str)] = &[
         "GitHub keeps at most 4 social accounts",
     ),
     (
+        "TOPIC: topic.relatedTopics",
+        "A topic's related topics: GitHub relates at most 10",
+    ),
+    (
         "BRANCHES: repository.refs.nodes.associatedPullRequests",
         "Only the newest from this branch in this repository is shown; 10 newer ones from forks' branches of the same name is not worth paging for",
     ),

@@ -330,5 +330,6 @@ fn sample(key: &DataKey) -> Data {
         K::Alerts(_, kind, _) => Data::Alerts(Box::new(crate::security::fixtures::alerts(*kind))),
         K::Alert(a) => Data::Alert(Box::new(crate::security::fixtures::alert(a.kind, a.number))),
         K::Subscription(_) => Data::Subscription(Box::new(fixtures::subscription())),
+        K::Site(key) => crate::site::fixtures::sample(key),
     }
 }

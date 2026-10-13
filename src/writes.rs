@@ -23,11 +23,12 @@ use crate::route::Route;
 use crate::state::{Cmd, Overlay, State};
 
 /// The actions these writes add.
-pub const ACTIONS: [Action; 4] = [
+pub const ACTIONS: [Action; 5] = [
     Action::Watch,
     Action::NewRelease,
     Action::NewGist,
     Action::NewWikiPage,
+    Action::Lists,
 ];
 
 /// The forms being written, and the change GitHub accepted that the page
@@ -54,6 +55,8 @@ pub enum Work {
     /// A revert, a transfer, a new discussion, a branch checked out, and
     /// what their pickers list ([`crate::manage`]).
     Manage(crate::manage::Work),
+    /// Starred lists and packages ([`crate::site`]).
+    Site(crate::site::Work),
 }
 
 /// Work's answer.
@@ -65,6 +68,7 @@ pub enum Done {
     Wiki(Route, Result<String, String>),
     Watch(crate::watch::Done),
     Manage(crate::manage::Done),
+    Site(crate::site::Done),
 }
 
 impl Done {
@@ -76,6 +80,7 @@ impl Done {
             Done::Wiki(_, result) => result.is_ok(),
             Done::Watch(d) => d.wrote(),
             Done::Manage(d) => d.wrote(),
+            Done::Site(d) => d.wrote(),
         }
     }
 }
@@ -90,6 +95,7 @@ impl Work {
             Work::Wiki(route, _) => Done::Wiki(route.clone(), Err(bug)),
             Work::Watch(w) => Done::Watch(w.failed(bug)),
             Work::Manage(w) => Done::Manage(w.failed(bug)),
+            Work::Site(w) => Done::Site(w.failed(bug)),
         }
     }
 
@@ -100,6 +106,7 @@ impl Work {
             Work::Wiki(route, save) => Done::Wiki(route, crate::wiki::save(git, &save).await),
             Work::Watch(w) => Done::Watch(w.run(gh).await),
             Work::Manage(w) => Done::Manage(w.run(gh, &git.cwd).await),
+            Work::Site(w) => Done::Site(w.run(gh).await),
         }
     }
 }
@@ -113,6 +120,7 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
         Done::Wiki(route, result) => crate::wiki::form::on_saved(state, &route, result),
         Done::Watch(d) => crate::watch::on_done(state, d),
         Done::Manage(d) => crate::manage::on_done(state, d),
+        Done::Site(d) => crate::site::on_done(state, d),
     }
 }
 
@@ -145,7 +153,9 @@ pub fn claims(state: &State, action: Action) -> bool {
             Action::EditComment => {
                 matches!(route, Some(Route::Wiki { .. } | Route::Gist { .. }))
             }
-            Action::DeleteComment => matches!(route, Some(Route::Gist { .. })),
+            Action::DeleteComment => {
+                matches!(route, Some(Route::Gist { .. })) || crate::site::deletes_here(route)
+            }
             Action::Create => route.is_some_and(is_form),
             _ => false,
         }
@@ -163,6 +173,8 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         (Action::EditComment, Some(Route::Wiki { .. })) => crate::wiki::form::open_edit(state),
         (Action::EditComment, Some(Route::Gist { .. })) => crate::gist::open_edit(state),
         (Action::DeleteComment, Some(Route::Gist { .. })) => crate::gist::ask_delete(state),
+        (Action::Lists, _) => crate::site::lists::open(state),
+        (Action::DeleteComment, Some(Route::Site(_))) => crate::site::ask_delete(state),
         (Action::Create, Some(Route::NewRelease(_))) => crate::release::submit(state),
         (Action::Create, Some(Route::NewGist | Route::EditGist { .. })) => {
             crate::gist::submit(state)
@@ -177,7 +189,9 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
 
 /// The menu's rows for what changes GitHub, wherever you are.
 pub fn change_doables(state: &State) -> Vec<Doable> {
-    Vec::from_iter(crate::watch::doable(state))
+    (crate::watch::doable(state).into_iter())
+        .chain(crate::site::lists::doable(state))
+        .collect()
 }
 
 /// The menu's rows for the page on screen.
@@ -185,6 +199,7 @@ pub fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
     crate::release::doables(state, route, out);
     crate::gist::doables(state, route, out);
     crate::wiki::form::doables(state, route, out);
+    crate::site::doables(state, route, out);
 }
 
 /// A menu row.
@@ -392,6 +407,8 @@ pub enum Pick {
     Description(Route),
     /// A file's name (`None`: a new file's).
     FileName(Route, Option<usize>),
+    /// Starred lists' ([`crate::site`]).
+    Site(crate::site::Pick),
 }
 
 impl Pick {
@@ -404,6 +421,7 @@ impl Pick {
             Pick::Description(_) => "Gist description",
             Pick::FileName(_, None) => "Add a file",
             Pick::FileName(..) => "Rename the file",
+            Pick::Site(pick) => pick.title(),
         }
     }
 
@@ -414,6 +432,7 @@ impl Pick {
             Pick::Target(_) => "Find a branch, or type a commit's SHA",
             Pick::Description(_) => "Type the description",
             Pick::FileName(..) => "Type the file's name, with its extension",
+            Pick::Site(pick) => pick.placeholder(),
         }
     }
 
@@ -424,6 +443,7 @@ impl Pick {
             Pick::Tag(repo) => Some(DataKey::Tags(repo.clone())),
             Pick::Target(repo) => Some(DataKey::Branches(repo.clone())),
             Pick::Description(_) | Pick::FileName(..) => None,
+            Pick::Site(pick) => pick.need(),
         }
     }
 
@@ -445,6 +465,7 @@ pub enum Chosen {
     Target(RepoId, String),
     Description(Route, String),
     FileName(Route, Option<usize>, String),
+    Site(crate::site::Chosen),
 }
 
 /// Opens one of these pickers, its field holding what's set now.
@@ -466,6 +487,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
         Pick::Target(repo) => crate::release::target_rows(state, repo, q),
         Pick::Description(route) => crate::gist::description_rows(route, q),
         Pick::FileName(route, file) => crate::gist::name_rows(state, route, *file, q),
+        Pick::Site(pick) => crate::site::rows(state, pick, q),
     }
 }
 
@@ -490,6 +512,7 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
         Chosen::Target(repo, target) => crate::release::choose_target(state, &repo, target),
         Chosen::Description(route, text) => crate::gist::set_description(state, &route, text),
         Chosen::FileName(route, file, name) => crate::gist::set_name(state, &route, file, name),
+        Chosen::Site(chosen) => crate::site::choose(state, chosen),
     }
 }
 
@@ -501,6 +524,7 @@ pub enum Answer {
     Release { draft: bool },
     Gist { public: bool },
     DeleteGist,
+    Site(crate::site::Answer),
 }
 
 impl Answer {
@@ -511,6 +535,7 @@ impl Answer {
             Answer::Release { .. } => "Publishing the release…",
             Answer::Gist { .. } => "Creating the gist…",
             Answer::DeleteGist => "Deleting the gist…",
+            Answer::Site(a) => a.busy(),
         }
     }
 }
@@ -522,6 +547,7 @@ pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
         Answer::Release { draft } => crate::release::create(state, route, draft),
         Answer::Gist { public } => crate::gist::create(state, route, public),
         Answer::DeleteGist => crate::gist::delete(state, route),
+        Answer::Site(a) => crate::site::answer(state, route, a),
     }
 }
 
@@ -580,6 +606,8 @@ pub enum Expected {
     Subscription(Watched, SubscriptionState),
     /// A wiki page with this text, as its page's data is keyed.
     Wiki(DataKey, String),
+    /// Starred lists' and packages' ([`crate::site`]).
+    Site(crate::site::Expected),
 }
 
 impl Expected {
@@ -587,6 +615,7 @@ impl Expected {
     fn needs(&self, route: &Route) -> Vec<Need> {
         match self {
             Expected::Subscription(w, _) => vec![Need::Data(DataKey::Subscription(w.clone()))],
+            Expected::Site(e) => e.needs(),
             _ => crate::browse::needs(route),
         }
     }
@@ -599,6 +628,7 @@ impl Expected {
             Expected::GistGone(..) => "Waiting for GitHub to show the gist gone",
             Expected::Subscription(..) => "Waiting for GitHub to show the subscription",
             Expected::Wiki(..) => "Waiting for GitHub to show the page",
+            Expected::Site(e) => e.waiting(),
         }
     }
 
@@ -638,6 +668,7 @@ impl Expected {
             Expected::Wiki(key, text) => state
                 .picked::<WikiPage>(key)
                 .is_some_and(|w| w.text.as_deref().map(str::trim_end) == Some(text.trim_end())),
+            Expected::Site(e) => e.shown(state),
         }
     }
 }

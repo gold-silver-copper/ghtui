@@ -66,10 +66,11 @@ pub(super) fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_la
     if !o.topics.is_empty() {
         let mut topics = Vec::new();
         for t in &o.topics {
+            let target = crate::route::Route::Site(crate::site::Page::Topic(t.to_lowercase()));
             let topic = link_seg(
                 page,
                 format!(" {t} "),
-                url::search(SearchKind::Repos, &format!("topic:{t}")),
+                target.url(),
                 Role::Chip(Bg::PrimaryContainer),
             );
             topics.push(topic);
@@ -100,6 +101,8 @@ pub(super) fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_la
     if let Some(language) = &o.summary.language {
         facts.push(Seg::new(format!("● {language}"), Role::Meta));
     }
+    let packages = format!("{}/packages", url::repo(repo));
+    facts.push(link_seg(page, "⬢ Packages", packages, Role::Meta));
     page.blank();
     if compact_layout {
         let mut segs = Vec::new();

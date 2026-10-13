@@ -326,6 +326,7 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             project: project.clone(),
             view: *view,
         },
+        Route::Site(page) => page.up(),
     })
 }
 

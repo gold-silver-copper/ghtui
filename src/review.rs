@@ -90,6 +90,8 @@ pub struct Compose {
     pub discard_armed: Option<&'static str>,
     /// The list of who or what an `@` or `#` being typed can be.
     pub completing: crate::typing::Completing,
+    /// Your saved replies, listed to insert one (`ctrl-g`).
+    pub saved: Option<crate::site::replies::Choosing>,
 }
 
 impl Compose {
@@ -102,6 +104,7 @@ impl Compose {
             error: None,
             discard_armed: None,
             completing: crate::typing::Completing::default(),
+            saved: None,
         }
     }
 
@@ -963,6 +966,9 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     };
     if compose.sending {
         return Vec::new();
+    }
+    if let Some(cmds) = crate::site::replies::on_key(state, key) {
+        return cmds;
     }
     if let Some(cmds) = crate::typing::on_compose_key(state, key) {
         return cmds;

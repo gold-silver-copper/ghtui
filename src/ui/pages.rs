@@ -46,6 +46,13 @@ mod security;
 mod timeline;
 mod writes;
 
+// Insights, Explore, starred lists and packages (`crate::site`).
+mod charts;
+mod explore;
+mod insights;
+mod packages;
+mod starred;
+
 pub use commits::*;
 pub use conversation::*;
 pub use create::*;
@@ -63,6 +70,11 @@ pub use runs::*;
 pub use security::*;
 pub use timeline::{FOLD_AFTER, LinesAt, Marks, commit_comments, pinned_issues};
 pub use writes::*;
+
+pub use explore::*;
+pub use insights::*;
+pub use packages::*;
+pub use starred::*;
 
 // ---- URLs ----------------------------------------------------------------------
 

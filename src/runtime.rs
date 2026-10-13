@@ -1020,6 +1020,7 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Alert(a) => at(gh.cached(&crate::api::security::keys::alert(a))?, |v| {
             Data::Alert(Box::new(v))
         }),
+        DataKey::Site(key) => return crate::site::cached(gh, key),
         DataKey::History(repo, rev, path) => at(gh.cached(&keys::history(repo, rev, path))?, |v| {
             Data::History(Box::new(v))
         }),
@@ -1162,6 +1163,7 @@ pub(crate) async fn fetch(
             Data::Alerts(Box::new(gh.alerts(repo, *kind, query, after).await?))
         }
         DataKey::Alert(a) => Data::Alert(Box::new(gh.alert(a).await?)),
+        DataKey::Site(key) => crate::site::fetch(gh, key, after).await?,
         DataKey::History(repo, rev, path) => {
             Data::History(Box::new(gh.history(repo, rev, path, after).await?))
         }

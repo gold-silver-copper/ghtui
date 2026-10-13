@@ -99,6 +99,7 @@ pub fn by_git(key: &DataKey, after: Option<&str>) -> bool {
         | DataKey::Tags(..)
         | DataKey::RefIn(..) => true,
         DataKey::Search(SearchKind::Code, query) => code_search(query).is_some(),
+        DataKey::Site(key) => key.by_git(),
         _ => false,
     }
 }
@@ -119,6 +120,14 @@ pub fn shown(route: &Route) -> Option<DataKey> {
         Route::Commit { repo, oid, .. } => DataKey::Commit(repo.clone(), oid.clone()),
         Route::Compare { repo, spec } => DataKey::Compare(repo.clone(), spec.clone()),
         Route::Tags(repo) => DataKey::Tags(repo.clone()),
+        Route::Site(crate::site::Page::Insights { repo, tab })
+            if matches!(
+                tab,
+                crate::site::InsightsTab::Contributors | crate::site::InsightsTab::Commits
+            ) =>
+        {
+            DataKey::Site(crate::site::Key::Activity(repo.clone()))
+        }
         Route::Search {
             kind: SearchKind::Code,
             query,
@@ -143,6 +152,7 @@ fn repo_of(key: &DataKey) -> Option<RepoId> {
         | DataKey::Tags(repo)
         | DataKey::RefIn(repo, _) => Some(repo.clone()),
         DataKey::Search(SearchKind::Code, query) => code_search(query).map(|s| s.repo),
+        DataKey::Site(key) => key.git_repo().cloned(),
         _ => None,
     }
 }
@@ -629,6 +639,13 @@ impl Local {
                 let found = SearchResults::Code(results);
                 Answer::Data(Data::Search(Box::new(found)), Some(oid))
             }
+            DataKey::Site(crate::site::Key::Activity(_)) => {
+                let oid = at("HEAD".into()).await?;
+                let now = crate::store::now();
+                let activity = crate::site::insights::activity(clone, &oid, now).await?;
+                let value = crate::site::Value::Activity(activity);
+                Answer::Data(Data::Site(Box::new(value)), Some(oid))
+            }
             _ => return Err(ReadError::Limit("git doesn't know it".into())),
         })
     }
@@ -639,6 +656,7 @@ fn wait(key: &DataKey) -> Duration {
     Duration::from_secs(match key {
         DataKey::Blame(..) | DataKey::Compare(..) | DataKey::Search(..) => 20,
         DataKey::LastCommits(..) => 12,
+        DataKey::Site(key) => key.git_wait(),
         _ => 6,
     })
 }

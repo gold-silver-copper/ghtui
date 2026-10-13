@@ -123,6 +123,9 @@ pub enum DataKey {
     Alert(AlertRef),
     /// Your subscription to a thread or a repository.
     Subscription(crate::api::watch::Watched),
+    /// Insights, Explore, starred lists, packages, saved replies
+    /// ([`crate::site`]).
+    Site(crate::site::Key),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,6 +189,7 @@ pub enum Data {
     Alerts(Box<AlertList>),
     Alert(Box<Alert>),
     Subscription(Box<crate::api::watch::Subscription>),
+    Site(Box<crate::site::Value>),
 }
 
 impl Data {
@@ -227,6 +231,7 @@ impl Data {
             Data::Projects(r) => r.next.as_deref(),
             Data::Project(p) => p.items.next.as_deref(),
             Data::Alerts(a) => a.results.next.as_deref(),
+            Data::Site(v) => v.next_cursor(),
             _ => None,
         }
     }
@@ -267,6 +272,7 @@ impl Data {
             (Data::Projects(a), Data::Projects(b)) => extend(a, *b, |p| p.number),
             (Data::Project(a), Data::Project(b)) => extend(&mut a.items, b.items, |i| i.id.clone()),
             (Data::Alerts(a), Data::Alerts(b)) => extend(&mut a.results, b.results, |a| a.number),
+            (Data::Site(a), Data::Site(b)) => a.append(*b),
             _ => {}
         }
     }
@@ -319,6 +325,7 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Alerts { repo, kind, query } => {
             Some(DataKey::Alerts(repo.clone(), *kind, query.clone()))
         }
+        Route::Site(page) => page.paged(),
         _ => route
             .search()
             .map(|(kind, query)| DataKey::Search(kind, query)),
@@ -538,9 +545,18 @@ pub fn needs(route: &Route) -> Vec<Need> {
             header(repo),
             Need::Data(K::History(repo.clone(), rev.clone(), path.clone())),
         ],
-        Route::User { login, .. } => std::iter::once(Need::Data(K::Profile(login.to_lowercase())))
-            .chain(paged(route).map(Need::Data))
-            .collect(),
+        Route::User { login, tab } => {
+            // A user's lists show above what they starred.
+            let lists = (*tab == ProfileTab::Stars).then(|| {
+                let key = crate::site::Key::StarLists(login.to_lowercase());
+                Need::Data(K::Site(key))
+            });
+            std::iter::once(Need::Data(K::Profile(login.to_lowercase())))
+                .chain(lists)
+                .chain(paged(route).map(Need::Data))
+                .collect()
+        }
+        Route::Site(page) => page.needs(),
     }
 }
 
@@ -1180,12 +1196,18 @@ impl State {
                 if let Some(p) = f.get(&key).show(&mut page, &format!("@{login}")) {
                     let list = match paged(route) {
                         Some(key @ DataKey::Users(_)) => ProfileList::People(f.get(&key)),
+                        Some(key) if *tab == ProfileTab::Stars => {
+                            let lists = crate::site::Key::StarLists(login.to_lowercase());
+                            let lists = f.get(&DataKey::Site(lists));
+                            ProfileList::Starred(lists, f.get(&key))
+                        }
                         Some(key) => ProfileList::Repos(f.get(&key)),
                         None => ProfileList::None,
                     };
                     pages::profile(&mut page, p, *tab, list, now);
                 }
             }
+            Route::Site(p) => crate::site::build(self, &mut page, p, &retry, cx),
         }
         // The sidebar starts beside the page, below the banner.
         if let Some(a) = page.aside.as_mut().filter(|a| !a.lines.is_empty()) {
@@ -1197,7 +1219,11 @@ impl State {
 
 /// Appends a page to a list, leaving out what's already there (by `id`):
 /// a list that moved between pages repeats items at their edge.
-fn extend<T, K: Eq + std::hash::Hash>(a: &mut Results<T>, b: Results<T>, id: impl Fn(&T) -> K) {
+pub(crate) fn extend<T, K: Eq + std::hash::Hash>(
+    a: &mut Results<T>,
+    b: Results<T>,
+    id: impl Fn(&T) -> K,
+) {
     let mut seen: std::collections::HashSet<K> = a.items.iter().map(&id).collect();
     a.items
         .extend(b.items.into_iter().filter(|item| seen.insert(id(item))));

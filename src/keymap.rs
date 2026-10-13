@@ -191,6 +191,7 @@ actions! {
     GoHome            "go_home"           ["gh"]                   Global "Go home";
     Notifications     "notifications"     ["gn"]                   Global "Your notifications";
     ReviewGlance      "review_glance"     ["gr"]                   Global "The pull request's review at a glance";
+    Explore           "explore"           []                       Global "Explore: new repositories and topics";
     Search            "search"            ["/"]                    Global "Search what's on screen (on a list, filter it)";
     SearchBack        "search_back"       ["?"]                    Global "Search what's on screen, backwards";
     SearchNext        "search_next"       ["n"]                    Global "Next search match";
@@ -214,7 +215,7 @@ actions! {
     Close             "close"             [",x"]                   Global "Close (as a duplicate too) or reopen (an alert: dismiss it); on a running run, cancel it";
     Rerun             "rerun"             [",R"]                   Global "Re-run the workflow run or job";
     EditComment       "edit"              [",e"]                   Global "Edit the comment or description (a wiki page, your gist)";
-    DeleteComment     "delete_comment"    [",D"]                   Global "Delete the comment (your gist)";
+    DeleteComment     "delete_comment"    [",D"]                   Global "Delete the comment (your gist, a package's version, your list)";
     React             "react"             [",+"]                   Global "React to the comment, issue or pull request";
     Checkout          "checkout"          [",c"]                   Global "Check out the pull request in your clone (an issue: a new branch for it)";
     Watch             "watch"             [",w"]                   Global "Subscribe to or ignore the thread; watch the repository";
@@ -244,6 +245,7 @@ actions! {
     NewGist           "new_gist"          [",G"]                   Page   "New gist";
     NewWikiPage       "new_wiki_page"     [",W"]                   Page   "New wiki page";
     RunWorkflow       "run_workflow"      [",E"]                   Page   "Run the workflow by hand";
+    Lists             "lists"             [",L"]                   Page   "Add the repository to your starred lists, or take it out";
     Branch            "branch"            ["B"]                    Page   "Switch branches or tags";
     DeleteBranch      "delete_branch"     [",b"]                   Page   "Delete the pull request's branch, or restore it";
     ChangeBase        "change_base"       []                       Page   "Change the pull request's base branch";

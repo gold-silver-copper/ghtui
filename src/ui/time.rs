@@ -3,7 +3,7 @@
 /// Parses `YYYY-MM-DDTHH:MM:SS`, with optional fractional seconds, then
 /// `Z` or an offset (`+05:30`, `-0700`), to Unix seconds. GraphQL returns
 /// UTC, but REST doesn't always: commit search gives the committer's zone.
-fn parse_iso8601(s: &str) -> Option<u64> {
+pub(crate) fn parse_iso8601(s: &str) -> Option<u64> {
     let shape = matches!(
         s.as_bytes(),
         [

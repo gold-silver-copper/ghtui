@@ -127,6 +127,7 @@ impl Widget for ComposeSheet<'_> {
             &[
                 ("ctrl-s", self.save),
                 ("ctrl-e", "open in $EDITOR"),
+                ("ctrl-g", "saved replies"),
                 ("esc", "cancel"),
             ],
         );

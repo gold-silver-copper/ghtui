@@ -469,6 +469,13 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             }
         }
         Action::ReviewGlance => return nav::review_glance(state),
+        Action::Explore => {
+            let explore = Route::Site(crate::site::Page::Explore {
+                language: None,
+                since: crate::api::explore::Since::default(),
+            });
+            return state.push(explore);
+        }
         Action::SearchGithub => return state.open_search(true),
         Action::FindFile if diff.is_some() => return state.open_picker(picker::Kind::DiffFiles),
         Action::FindFile => return state.open_finder(false),

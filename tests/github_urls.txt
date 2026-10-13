@@ -88,7 +88,7 @@ https://github.com/rust-lang/rust/releases/tag/1.99.0                       Rele
 https://github.com/rust-lang/rust/releases/download/1.99.0/rust.tar.gz      external download
 # Label, RepositoryTopic, License
 https://github.com/rust-lang/rust/labels/A-attributes                       Issues
-https://github.com/topics/rust                                              Search
+https://github.com/topics/rust                                              Topic
 https://github.com/licenses/mit                                             external not-github
 # CodeOfConduct, ContributingGuidelines (files in the repository)
 https://github.com/rust-lang/rust/blob/main/CODE_OF_CONDUCT.md              Blob
@@ -134,8 +134,11 @@ https://github.com/octocat/Hello-World/projects                             Proj
 https://github.com/octocat/Hello-World/projects/1                           external no-api
 # Package, PackageFile
 https://github.com/octocat/octo-name-repo/packages/40201                    external scope
-https://github.com/orgs/github/packages/container/package/hello_docker      external scope
-https://github.com/users/octocat/packages/container/package/hello_docker    external scope
+https://github.com/orgs/github/packages/container/package/hello_docker      Package
+https://github.com/users/octocat/packages/container/package/hello_docker    Package
+https://github.com/users/octocat/packages/container/hello_docker/12345      Package
+https://github.com/octocat/hello-world/pkgs/container/hello_docker          Package
+https://github.com/octocat/hello-world/packages                             Packages
 # MigrationSource
 https://import.github.com/octocat/socm/import                               external session
 # Contributions (CreatedCommitContribution etc.) link to these:
@@ -207,14 +210,15 @@ https://github.com/torvalds?tab=repositories&sort=stargazers                User
 https://github.com/torvalds?tab=stars                                       User
 https://github.com/torvalds?tab=followers                                   User
 https://github.com/torvalds?tab=following                                   User
-https://github.com/torvalds?tab=packages                                    external scope
+https://github.com/torvalds?tab=packages                                    Packages
 https://github.com/torvalds?tab=projects                                    Projects
 https://github.com/users/torvalds/projects                                  Projects
 https://github.com/stars/torvalds                                           User
+https://github.com/stars/torvalds/lists/rust-tools                          StarList
 https://github.com/orgs/rust-lang/repositories                              User
 https://github.com/orgs/rust-lang/people                                    User
 https://github.com/orgs/rust-lang/projects                                  Projects
-https://github.com/orgs/rust-lang/packages                                  external scope
+https://github.com/orgs/rust-lang/packages                                  Packages
 https://github.com/orgs/rust-lang/discussions                               Discussions
 # A repository's tabs and lists
 https://github.com/rust-lang/rust/issues                                    Issues
@@ -238,11 +242,13 @@ https://github.com/rust-lang/rust/security                                  Advi
 https://github.com/rust-lang/rust/security/advisories                       Advisories
 https://github.com/rust-lang/rust/security/advisories/new                   external session
 https://github.com/rust-lang/rust/pulse                                     external rare
-https://github.com/rust-lang/rust/graphs/contributors                       external rare
-https://github.com/rust-lang/rust/graphs/commit-activity                    external rare
+https://github.com/rust-lang/rust/graphs/contributors                       Insights
+https://github.com/rust-lang/rust/graphs/commit-activity                    Insights
 https://github.com/rust-lang/rust/graphs/code-frequency                     external rare
 https://github.com/rust-lang/rust/network                                   external rare
-https://github.com/rust-lang/rust/network/dependencies                      external rare
+https://github.com/rust-lang/rust/network/dependencies                      Insights
+https://github.com/rust-lang/rust/graphs/traffic                            Insights
+https://github.com/rust-lang/rust/network/dependents                        external no-api
 https://github.com/rust-lang/rust/network/members                           Forks
 https://github.com/rust-lang/rust/community                                 external rare
 https://github.com/rust-lang/rust/activity                                  external rare
@@ -323,11 +329,11 @@ https://github.com/pricing                                                  exte
 https://github.com/enterprise                                               external not-github
 https://github.com/about                                                    external not-github
 https://github.com/security                                                 external not-github
-https://github.com/trending                                                 external no-api
-https://github.com/trending/rust?since=weekly                               external no-api
-https://github.com/explore                                                  external no-api
+https://github.com/trending                                                 Explore
+https://github.com/trending/rust?since=weekly                               Explore
+https://github.com/explore                                                  Explore
 https://github.com/collections                                              external no-api
-https://github.com/topics                                                   external no-api
+https://github.com/topics                                                   Explore
 https://docs.github.com/en/actions                                          external not-github
 https://github.blog/                                                        external not-github
 https://objects.githubusercontent.com/github-production-release-asset/123   external download

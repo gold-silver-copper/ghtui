@@ -259,6 +259,47 @@ pub(crate) const OPEN_ISSUES: &str = "query($owner: String!, $name: String!) { r
 /// A repository's discussion categories, and their forms' files.
 pub(crate) const DISCUSSION_FORMS: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id discussionCategories(first: 50) { totalCount nodes { id name slug description isAnswerable } } templates: object(expression: \"HEAD:.github/DISCUSSION_TEMPLATE\") { ... on Tree { entries { name object { ... on Blob { text } } } } } } }";
 
+// ---- Insights, Explore, starred lists, saved replies -------------------------
+
+/// A repository's dependency graph: 20 manifests, the first 100
+/// dependencies of each (under the hawkgirl preview).
+pub(crate) const DEPENDENCY_GRAPH: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { dependencyGraphManifests(first: 20) { totalCount nodes { filename blobPath parseable exceedsMaxSize dependencies(first: 100) { totalCount nodes { packageName packageManager requirements repository { nameWithOwner } } } } } } }";
+
+/// A topic's stars and the topics GitHub relates to it.
+pub(crate) const TOPIC: &str = "query($name: String!) { topic(name: $name) { name stargazerCount relatedTopics(first: 10) { name } } }";
+
+/// What a starred list's repository row shows.
+const LIST_REPO: &str = "nameWithOwner description stargazerCount forkCount primaryLanguage { name color } pushedAt isPrivate isFork isArchived";
+
+/// Someone's starred lists (yours include the private ones).
+pub(crate) const STAR_LISTS: &str = "query($login: String!) { user(login: $login) { lists(first: 100) { totalCount nodes { id name slug description isPrivate lastAddedAt items { totalCount } } } } }";
+
+/// A starred list's repositories, 30 at a time, newest added first.
+pub(crate) fn star_list_items() -> String {
+    format!(
+        "query($id: ID!, $after: String) {{ node(id: $id) {{ ... on UserList {{ items(first: 30, after: $after) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ ... on Repository {{ {LIST_REPO} }} }} }} }} }} }}"
+    )
+}
+
+/// Your lists, with what's in them, and a repository's ID: what adding
+/// it to a list or taking it out starts from.
+pub(crate) const MY_LISTS: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id viewerHasStarred } viewer { login lists(first: 100) { totalCount nodes { id name slug isPrivate items(first: 100) { totalCount pageInfo { hasNextPage endCursor } nodes { ... on Repository { id } } } } } } }";
+
+/// More of one of your lists' repositories, after the first 100.
+pub(crate) const LIST_MEMBERS: &str = "query($id: ID!, $after: String) { node(id: $id) { ... on UserList { items(first: 100, after: $after) { totalCount pageInfo { hasNextPage endCursor } nodes { ... on Repository { id } } } } } }";
+
+/// Makes a starred list.
+pub(crate) const CREATE_LIST: &str = "mutation($name: String!) { createUserList(input: {name: $name}) { list { id } } }";
+
+/// Sets the lists a repository is in.
+pub(crate) const SET_LISTS: &str = "mutation($item: ID!, $lists: [ID!]!) { updateUserListsForItem(input: {itemId: $item, listIds: $lists}) { lists { id } } }";
+
+/// Deletes one of your starred lists.
+pub(crate) const DELETE_LIST: &str = "mutation($list: ID!) { deleteUserList(input: {listId: $list}) { clientMutationId } }";
+
+/// Your saved replies, most recently changed first.
+pub(crate) const SAVED_REPLIES: &str = "query { viewer { savedReplies(first: 100) { totalCount nodes { id title body } } } }";
+
 /// Every query here, by name, built with sample input.
 #[cfg(test)]
 pub(crate) fn all() -> Vec<(&'static str, String)> {
@@ -310,6 +351,16 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ("ARCHIVE_PROJECT_ITEM", ARCHIVE_PROJECT_ITEM.to_owned()),
         ("UNARCHIVE_PROJECT_ITEM", UNARCHIVE_PROJECT_ITEM.to_owned()),
         ("UPDATE_PROJECT_DRAFT", UPDATE_PROJECT_DRAFT.to_owned()),
+        ("DEPENDENCY_GRAPH", DEPENDENCY_GRAPH.to_owned()),
+        ("TOPIC", TOPIC.to_owned()),
+        ("STAR_LISTS", STAR_LISTS.to_owned()),
+        ("star_list_items", star_list_items()),
+        ("MY_LISTS", MY_LISTS.to_owned()),
+        ("LIST_MEMBERS", LIST_MEMBERS.to_owned()),
+        ("CREATE_LIST", CREATE_LIST.to_owned()),
+        ("SET_LISTS", SET_LISTS.to_owned()),
+        ("DELETE_LIST", DELETE_LIST.to_owned()),
+        ("SAVED_REPLIES", SAVED_REPLIES.to_owned()),
     ];
     // Managing an issue, a pull request or a discussion.
     all.extend([
