@@ -257,6 +257,10 @@ pub enum Route {
     /// One of housekeeping's forms: a label, a milestone, a fork, a new
     /// repository, a file.
     Housekeeping(crate::housekeeping::FormOf),
+    // ---- offline ([`crate::offline`]) ----
+    /// The writes queued for GitHub and the repositories kept offline:
+    /// ghtui's own page, with none on GitHub.
+    Offline,
 }
 
 /// The pages at a revision.
@@ -405,7 +409,8 @@ impl Route {
 
     pub fn url(&self) -> String {
         match self {
-            Route::Home => format!("{}/", links::base()),
+            // The Offline page has none on GitHub: its link is Home's.
+            Route::Home | Route::Offline => format!("{}/", links::base()),
             Route::Repo(repo) => links::repo(repo),
             Route::Tree { repo, rev, path } => links::tree(repo, rev, path),
             Route::Blob {
@@ -715,6 +720,7 @@ impl Route {
             ),
             Route::Labels(repo) => format!("{repo} · Labels"),
             Route::Housekeeping(of) => of.title(),
+            Route::Offline => "Offline".to_owned(),
         }
     }
 
@@ -778,6 +784,7 @@ impl Route {
             | Route::Project { .. }
             | Route::ProjectItem { .. }
             | Route::Home
+            | Route::Offline
             | Route::User { .. }
             | Route::Search { .. }
             | Route::Notifications { .. }

@@ -370,7 +370,7 @@ pub fn needs(route: &Route) -> Vec<Need> {
         .search()
         .map(|(kind, query)| Need::Data(K::Search(kind, query)));
     match route {
-        Route::Home | Route::NewGist => Vec::new(),
+        Route::Home | Route::NewGist | Route::Offline => Vec::new(),
         Route::Repo(repo) => vec![
             header(repo),
             Need::Data(K::Readme(repo.clone())),
@@ -793,6 +793,7 @@ impl State {
             | Route::EditGist { .. }
             | Route::WikiEdit { .. }
             | Route::Housekeeping(_)
+            | Route::Offline
             | Route::Dispatch { .. }
             | Route::ProjectItem { .. }
             | Route::Pr {
@@ -821,15 +822,19 @@ impl State {
             let when = self
                 .page_cached_at(route)
                 .map_or_else(|| "before".to_owned(), |at| crate::ui::time::ago(at, now));
-            let why = format!("Couldn't refresh: {err}. Showing what was loaded {when}.");
+            let why = crate::offline::banner(self, &when).unwrap_or_else(|| {
+                format!("Couldn't refresh: {err}. Showing what was loaded {when}.")
+            });
             pages::flash(&mut page, &why);
             page.blank();
         }
         // Where the page was read: a clone at a commit, or GitHub's API.
         if let Some(from) = crate::source::shown(route).and_then(|k| self.sources.get(&k)) {
-            let note = vec![Seg::new(from.note(), Role::Meta)];
+            let note = vec![Seg::new(from.note(now), Role::Meta)];
             page.wrapped(note, 0, crate::ui::page::Frame::None);
         }
+        // Writes made here, waiting for GitHub.
+        crate::offline::queued_here(self, route, &mut page, now);
         let banner = page.lines.len();
         let retry = self.first_key(Action::Refresh);
         let f = Needs {
@@ -1246,6 +1251,7 @@ impl State {
             Route::Labels(_) | Route::Housekeeping(_) => {
                 crate::housekeeping::build(self, &mut page, route, now);
             }
+            Route::Offline => crate::offline::build(self, &mut page, now),
         }
         // The sidebar starts beside the page, below the banner.
         if let Some(a) = page.aside.as_mut().filter(|a| !a.lines.is_empty()) {

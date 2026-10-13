@@ -75,7 +75,11 @@ impl Seen {
 /// Serves `replies` in order (one per request, across connections) and
 /// records every request.
 async fn serve(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<Seen>>>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    serve_on(TcpListener::bind("127.0.0.1:0").await.unwrap(), replies)
+}
+
+/// [`serve`], on `listener`.
+fn serve_on(listener: TcpListener, replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<Seen>>>) {
     let addr = listener.local_addr().unwrap();
     let seen = Arc::new(Mutex::new(Vec::new()));
     let queue = Arc::new(Mutex::new(replies));
@@ -2076,10 +2080,46 @@ async fn refused_connections_are_retried_even_for_mutations() {
     let started = std::time::Instant::now();
     assert!(matches!(
         gh.change(&reply()).await,
-        Err(ApiError::Network(_))
+        Err(ApiError::Offline(_))
     ));
     // Three attempts means two backoffs (500ms + 1s).
     assert!(started.elapsed() >= std::time::Duration::from_millis(1400));
+}
+
+/// GitHub that can't be reached: a request fails as offline, having
+/// sent nothing; the next ones aren't sent at all; a probe finds GitHub
+/// back, and then a write goes, once.
+#[tokio::test]
+async fn unreachable_github_is_left_alone_until_a_probe_finds_it() {
+    // Bound, but not listening yet: connections are refused.
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = socket.local_addr().unwrap();
+    let gh = client(&format!("http://{addr}"), Store::disabled());
+    assert!(matches!(
+        gh.change(&reply()).await,
+        Err(ApiError::Offline(_))
+    ));
+    assert!(gh.offline_since().is_some());
+
+    let replied = r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"C_1"}}}}"#;
+    let (_, seen) = serve_on(
+        socket.listen(16).unwrap(),
+        vec![Reply::new(200, "{}"), Reply::new(200, replied)],
+    );
+    // Still taken as away: nothing's sent until a probe finds GitHub.
+    assert!(matches!(
+        gh.change(&reply()).await,
+        Err(ApiError::Offline(_))
+    ));
+    assert!(seen.lock().unwrap().is_empty());
+    assert!(gh.probe().await);
+    assert_eq!(gh.offline_since(), None);
+    gh.change(&reply()).await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    assert!(seen[0].request_line.starts_with("GET /rate_limit "));
+    assert!(seen[1].query().contains("addPullRequestReviewThreadReply"));
 }
 
 /// Every request carries the token, GitHub's media type and API version,

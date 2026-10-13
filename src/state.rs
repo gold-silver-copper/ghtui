@@ -125,6 +125,9 @@ pub enum Msg {
     Write(crate::writes::Done),
     /// An artifact saved, a workflow run by hand.
     Actions(crate::actions::Done),
+    /// Whether GitHub can be reached, the queued writes, the kept
+    /// repositories ([`crate::offline`]).
+    Offline(crate::offline::Msg),
 }
 
 /// Why background work failed. Shows as its message with its causes
@@ -212,6 +215,9 @@ pub enum Cmd {
     /// A release, a gist, a wiki page or a subscription; answered by
     /// [`Msg::Write`].
     Write(crate::writes::Work),
+    /// Asking whether GitHub is back, the queue, the kept repositories;
+    /// answered by [`Msg::Offline`].
+    Offline(crate::offline::Cmd),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -347,6 +353,8 @@ pub enum Timer {
     Unread(u64),
     /// Ask whether the pull request watched (by its watch's id) changed.
     Watch(u64),
+    /// Ask whether GitHub can be reached again.
+    Probe,
 }
 
 /// Braille spinner frames.
@@ -520,6 +528,9 @@ pub struct State {
     pub dispatching: crate::actions::Dispatching,
     /// Conversations: long reviews unfolded, and the like.
     pub talk: crate::talk::Talk,
+    /// Whether GitHub can be reached, the writes waiting for it, and the
+    /// repositories kept offline.
+    pub offline: crate::offline::Offline,
     pub quit: bool,
 }
 
@@ -573,6 +584,7 @@ impl State {
             settings: crate::settings::Kept::default(),
             dispatching: crate::actions::Dispatching::default(),
             talk: crate::talk::Talk::default(),
+            offline: crate::offline::Offline::default(),
             quit: false,
         };
         state.sync_page();

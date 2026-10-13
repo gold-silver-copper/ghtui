@@ -62,6 +62,10 @@ pub enum ApiError {
     GraphQl(Vec<String>),
     #[error("network error: {0}")]
     Network(String),
+    /// GitHub couldn't be reached, and nothing was sent
+    /// ([`crate::api::reach`]).
+    #[error("GitHub can't be reached ({0})")]
+    Offline(String),
     #[error("unexpected response from GitHub: {0}")]
     Decode(String),
     #[error("could not start HTTP client: {0}")]
@@ -109,6 +113,8 @@ pub struct GitHub {
     /// What an Enterprise Server is known to lack: its version's (asked
     /// once), what it said it lacks, and what of it was said.
     enterprise: Arc<Enterprise>,
+    /// Whether GitHub can be reached ([`crate::api::reach`]).
+    reach: crate::api::reach::Reach,
 }
 
 /// An Enterprise Server's version, and what it's known to lack.
@@ -246,6 +252,31 @@ impl GitHub {
             doubts: Arc::default(),
             recorder: None,
             enterprise: Arc::default(),
+            reach: crate::api::reach::Reach::default(),
+        }
+    }
+
+    /// Whether GitHub can be reached, to follow.
+    pub fn reach(&self) -> &crate::api::reach::Reach {
+        &self.reach
+    }
+
+    /// One GET of the rate limit (which costs nothing), whatever the
+    /// reach: any answer means GitHub is there.
+    pub(crate) async fn probe_once(&self) -> Result<(), ApiError> {
+        let client = self.client().await?;
+        let url = format!("{}/rate_limit", self.http.rest);
+        match client.get(url).send().await {
+            Ok(_) => {
+                self.reach.found();
+                Ok(())
+            }
+            Err(err) => {
+                if err.is_connect() {
+                    self.reach.lost();
+                }
+                Err(crate::api::reach::offline(&err))
+            }
         }
     }
 
@@ -559,6 +590,10 @@ impl GitHub {
 
     /// [`Self::send`], whatever the server lacks.
     async fn send_as_is(&self, request: &Request<'_>) -> Result<Response, ApiError> {
+        // Unreachable: the cache answers, and only a probe asks.
+        if self.reach.offline_since().is_some() {
+            return Err(ApiError::Offline("not sent while offline".into()));
+        }
         let client = self.client().await?;
         let mut attempt = 0;
         loop {
@@ -610,8 +645,14 @@ impl GitHub {
                     backoff(attempt).await;
                     continue;
                 }
+                // It never left: GitHub can't be reached.
+                Err(err) if err.is_connect() => {
+                    self.reach.lost();
+                    return Err(crate::api::reach::offline(&err));
+                }
                 Err(err) => return Err(ApiError::Network(err.to_string())),
             };
+            self.reach.found();
             let status = response.status();
             self.rejected
                 .0
@@ -3023,6 +3064,11 @@ impl GitHub {
             .rev()
             .find(|(i, _)| found.get(&format!("r{i}")).is_some_and(Option::is_some))
             .map(|(_, name)| name.clone()))
+    }
+
+    /// The cache this client keeps its answers in.
+    pub fn store(&self) -> &Store {
+        &self.store
     }
 
     /// Saves a small value in the cache (e.g. recently visited pages).

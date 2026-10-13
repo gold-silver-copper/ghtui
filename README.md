@@ -738,7 +738,7 @@ says where it works.
 | `g/`                 | Search GitHub or go to a page |
 | `f`                  | Go to file |
 | `c`                  | Comment (on a thread, reply) |
-| `y`                  | Copy the link |
+| `y`                  | Copy the link (a queued write: its text) |
 | `o`                  | Open on GitHub |
 | `gx`                 | Open the link under the cursor in the browser |
 | `r` `ctrl-l`         | Refresh |
@@ -749,13 +749,13 @@ says where it works.
 | `,r`                 | Mark the draft ready for review, or convert it to a draft |
 | `,u`                 | Update the branch from its base |
 | `,x`                 | Close (as a duplicate too) or reopen (an alert: dismiss it); on a running run, cancel it |
-| `,R`                 | Re-run the workflow run or job |
+| `,R`                 | Re-run the workflow run or job (a refused write: send it again) |
 | `,e`                 | Edit the comment or description (a wiki page, your gist, a release, a label, a milestone, a file) |
 | `,D`                 | Delete the comment (your gist, a release or its asset, a package's version, your list, a label, a milestone, a branch, a tag, a file) |
 | `,+`                 | React to the comment, issue or pull request |
 | `,c`                 | Check out the pull request in your clone (an issue: a new branch for it) |
 | `,w`                 | Subscribe to or ignore the thread; watch the repository |
-| `del`                | Delete the selection (a draft comment, a Home section) |
+| `del`                | Delete the selection (a draft comment, a Home section, a write waiting for GitHub) |
 | `ctrl-z`             | Bring back what was just deleted |
 | `ZZ` `ctrl-c`        | Quit |
 

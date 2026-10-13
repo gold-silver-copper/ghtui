@@ -198,6 +198,7 @@ actions! {
     Notifications     "notifications"     ["gn"]                   Global "Your notifications";
     ReviewGlance      "review_glance"     ["gr"]                   Global "The pull request's review at a glance";
     Explore           "explore"           []                       Global "Explore: new repositories and topics";
+    Offline           "offline"           []                       Global "Offline: the writes queued for GitHub, and the repositories kept offline";
     Search            "search"            ["/"]                    Global "Search what's on screen (on a list, filter it)";
     SearchBack        "search_back"       ["?"]                    Global "Search what's on screen, backwards";
     SearchNext        "search_next"       ["n"]                    Global "Next search match";
@@ -207,7 +208,7 @@ actions! {
     SearchGithub      "search_github"     ["g/"]                   Global "Search GitHub or go to a page";
     FindFile          "find_file"         ["f"]                    Global "Go to file";
     Comment           "comment"           ["c"]                    Global "Comment (on a thread, reply)";
-    Copy              "copy_link"         ["y"]                    Global "Copy the link";
+    Copy              "copy_link"         ["y"]                    Global "Copy the link (a queued write: its text)";
     OpenInBrowser     "open_in_browser"   ["o"]                    Global "Open on GitHub";
     OpenLink          "open_link"         ["gx"]                   Global "Open the link under the cursor in the browser";
     Refresh           "refresh"           ["r", "<C-l>"]           Global "Refresh";
@@ -219,13 +220,13 @@ actions! {
     ReadyForReview    "ready_for_review"  [",r"]                   Global "Mark the draft ready for review, or convert it to a draft";
     UpdateBranch      "update_branch"     [",u"]                   Global "Update the branch from its base";
     Close             "close"             [",x"]                   Global "Close (as a duplicate too) or reopen (an alert: dismiss it); on a running run, cancel it";
-    Rerun             "rerun"             [",R"]                   Global "Re-run the workflow run or job";
+    Rerun             "rerun"             [",R"]                   Global "Re-run the workflow run or job (a refused write: send it again)";
     EditComment       "edit"              [",e"]                   Global "Edit the comment or description (a wiki page, your gist, a release, a label, a milestone, a file)";
     DeleteComment     "delete_comment"    [",D"]                   Global "Delete the comment (your gist, a release or its asset, a package's version, your list, a label, a milestone, a branch, a tag, a file)";
     React             "react"             [",+"]                   Global "React to the comment, issue or pull request";
     Checkout          "checkout"          [",c"]                   Global "Check out the pull request in your clone (an issue: a new branch for it)";
     Watch             "watch"             [",w"]                   Global "Subscribe to or ignore the thread; watch the repository";
-    Delete            "delete"            ["<Delete>"]             Global "Delete the selection (a draft comment, a Home section)";
+    Delete            "delete"            ["<Delete>"]             Global "Delete the selection (a draft comment, a Home section, a write waiting for GitHub)";
     UndoDelete        "undo_delete"       ["<C-z>"]                Global "Bring back what was just deleted";
     Quit              "quit"              ["ZZ", "<C-c>"]          Global "Quit";
 
@@ -267,6 +268,7 @@ actions! {
     SubIssues         "sub_issues"        [",S"]                   Page   "Add or remove sub-issues";
     BlockedBy         "blocked_by"        [",K"]                   Page   "Mark the issue blocked by another, or no longer";
     NewDiscussion     "new_discussion"    []                       Page   "New discussion";
+    KeepOffline       "keep_offline"      []                       Page   "Keep the repository to read offline, or stop";
     Hints             "hints"             ["i", "diff:i"]          Page   "Follow a link by its letters";
     HintsBrowser      "hints_browser"     ["I", "diff:I"]          Page   "Follow a link, in the browser";
     ToggleState       "toggle_state"      ["t"]                    List   "Open / closed / all (in the inbox, unread / read)";

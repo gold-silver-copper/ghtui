@@ -36,6 +36,7 @@ mod live;
 mod manage;
 mod nav;
 mod notice;
+mod offline;
 mod picker;
 mod projects;
 mod release;
@@ -191,6 +192,9 @@ async fn run(started: Instant) -> Result<()> {
     let size = crossterm::terminal::size().unwrap_or((80, 24));
     let mut state = State::new(theme, icons, keymap, size);
     state.density = config.ui.density;
+    state.offline.limits = config.offline;
+    // Whose pages these are is known before GitHub answers (if it can).
+    state.viewer = gh.store().account().login();
     if let Err(err) = &reviews {
         state.problems.insert(
             state::Problem::Drafts,

@@ -296,6 +296,9 @@ pub struct SubmitOutcome {
     pub error: Option<String>,
     /// The comments your pending review on GitHub held after, if known.
     pub on_github: Option<u64>,
+    /// GitHub couldn't be reached, and nothing was sent: the review, to
+    /// queue ([`crate::offline`]).
+    pub unsent: Option<Box<crate::offline::queue::Review>>,
 }
 
 pub fn suggestion_body(suggested: &str) -> String {
@@ -510,6 +513,20 @@ pub fn outdated_to_map(threads: &[ReviewThread]) -> Vec<OutdatedThread> {
 /// local queue, rejected ones keep their text and GitHub's reason.
 #[must_use]
 pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcome) -> Vec<Cmd> {
+    // GitHub couldn't be reached: the review and its drafts move to the
+    // queue, to be sent when it's back.
+    if let Some(review) = &outcome.unsent {
+        let moved = SubmitOutcome {
+            accepted: review.drafts.iter().map(|d| d.id).collect(),
+            ..SubmitOutcome::default()
+        };
+        let mut cmds = on_submitted(state, pr, &moved);
+        if matches!(state.overlay, Some(Overlay::Submit(_))) {
+            state.overlay = None;
+        }
+        cmds.push(crate::offline::queue_review(state, review));
+        return cmds;
+    }
     let apply = |review: &mut ReviewState, head: Option<String>| {
         review.pending.retain(|d| !outcome.accepted.contains(&d.id));
         for draft in &mut review.pending {

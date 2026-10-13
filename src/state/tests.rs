@@ -171,6 +171,7 @@ mod jobs;
 mod keys;
 mod links;
 mod lists;
+mod offline;
 mod pr_diff;
 mod repo;
 mod search;

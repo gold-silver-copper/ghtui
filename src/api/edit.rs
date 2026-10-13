@@ -112,7 +112,7 @@ pub struct Named {
 }
 
 /// What a comment or a description is, which decides how it's edited.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Written {
     /// An issue's description.
     Issue,
@@ -126,7 +126,7 @@ pub enum Written {
 }
 
 /// An edit to something already on GitHub.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Edit {
     /// New text for a comment or a description.
     Body {

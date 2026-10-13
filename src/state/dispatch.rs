@@ -34,6 +34,8 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Changed(_, _, r) => r.is_ok(),
         Msg::Create(crate::create::Done::Created(_, r)) => r.is_ok(),
         Msg::Write(done) => done.wrote(),
+        // A queued write reached GitHub.
+        Msg::Offline(crate::offline::Msg::Queue(crate::offline::queue::Told::Taken(_))) => true,
         // Drafts GitHub accepted wait in a pending review there.
         Msg::Diff(_, DiffMsg::ReviewSubmitted(o)) => o.error.is_none() || !o.accepted.is_empty(),
         _ => false,
@@ -258,6 +260,11 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Code(ask, result) => return crate::code_nav::answered(state, &ask, result),
         Msg::Edited(purpose, result) => return on_edited(state, purpose, result),
         Msg::HomeEdited { edit, result, what } => return state.home_edited(&edit, result, what),
+        Msg::Offline(msg) => {
+            state.data_gen += 1;
+            return crate::offline::on_msg(state, msg);
+        }
+        Msg::Timer(Timer::Probe) => return crate::offline::on_timer(state),
     }
     Vec::new()
 }
@@ -485,6 +492,9 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             let kept = state.notices.log().iter().cloned().collect();
             return state.open_picker(picker::Kind::Messages(kept));
         }
+        // Queued writes, keeping repositories offline, and refreshing
+        // while GitHub can't be reached.
+        _ if crate::offline::claims(state, action) => return crate::offline::act(state, action),
         Action::Refresh => return state.load_visible(true),
         Action::Copy => return nav::copy_link(state),
         Action::OpenInBrowser => return state.go(Target::External(state.here_url()).into()),

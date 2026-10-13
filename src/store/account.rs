@@ -38,6 +38,13 @@ impl Account {
         }
     }
 
+    /// Whose token it is, as last seen: known before GitHub answers, from
+    /// the last time it did.
+    pub fn login(&self) -> Option<String> {
+        let who = self.0.read().unwrap_or_else(PoisonError::into_inner);
+        who.login.clone()
+    }
+
     /// Where the login for this token is remembered.
     pub(crate) fn token_key(&self) -> Option<String> {
         let who = self.0.read().unwrap_or_else(PoisonError::into_inner);

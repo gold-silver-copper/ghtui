@@ -38,6 +38,10 @@ struct Effects {
     local: Arc<crate::source::Local>,
     /// Repositories' code indexes.
     index: Arc<crate::code_index::Indexer>,
+    /// Writes waiting for GitHub, and the repositories kept offline
+    /// ([`crate::offline`]).
+    queue: mpsc::UnboundedSender<crate::offline::queue::Op>,
+    keep: mpsc::UnboundedSender<crate::offline::keep::Op>,
 }
 
 pub async fn run(
@@ -52,10 +56,17 @@ pub async fn run(
     let (tx, rx) = mpsc::unbounded_channel::<Msg>();
     let (save_review, writer) = review_writer(reviews.clone(), &tx);
     let index = Arc::new(crate::code_index::Indexer::new(git.clone()));
+    let local = crate::source::Local::new(git.clone());
+    follow_reach(&gh, &tx);
+    let queue = crate::offline::queue::start(gh.clone(), tx.clone());
+    let limits = state.offline.limits;
+    let keep = crate::offline::keep::start(gh.clone(), local.clone(), limits, tx.clone());
     let mut effects = Effects {
         index,
         gh,
-        local: crate::source::Local::new(git.clone()),
+        local,
+        queue,
+        keep,
         git,
         tx,
         jobs: HashMap::new(),
@@ -230,6 +241,7 @@ impl Effects {
                     let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
                 });
             }
+            Cmd::Offline(cmd) => self.offline(cmd, replies),
             Cmd::LoadReview(pr) => self.load_review(pr, replies),
             Cmd::SaveReview(pr, review) => {
                 let _ = self.save_review.send((pr, review));
@@ -369,6 +381,28 @@ impl Effects {
                     let msg = DiffMsg::Job(job, JobMsg::Mapped(mapped));
                     let _ = tx.send(Msg::Diff(pr.into(), msg));
                 });
+            }
+        }
+    }
+
+    fn offline(&self, cmd: crate::offline::Cmd, replies: Vec<Msg>) {
+        use crate::offline::{Cmd, Msg as Off};
+        match cmd {
+            Cmd::Probe => {
+                let gh = self.gh.clone();
+                spawn_guarded(&self.tx, replies, |tx| async move {
+                    let back = gh.probe().await;
+                    let _ = tx.send(Msg::Offline(Off::Probed(back)));
+                });
+            }
+            Cmd::Queue(op) => {
+                if self.queue.send(op).is_err() {
+                    let text = "Writes can't be queued (internal error; see the log)";
+                    let _ = self.tx.send(Msg::Notice(Notice::Error(text.into())));
+                }
+            }
+            Cmd::Keep(op) => {
+                let _ = self.keep.send(op);
             }
         }
     }
@@ -627,6 +661,22 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
     });
 }
 
+/// Tells the page each time GitHub becomes unreachable, or reachable
+/// again, whichever request found out.
+fn follow_reach(gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
+    let mut reach = gh.reach().watch();
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        while reach.changed().await.is_ok() {
+            let since = *reach.borrow_and_update();
+            let msg = crate::offline::Msg::Reach(since);
+            if tx.send(Msg::Offline(msg)).is_err() {
+                return;
+            }
+        }
+    });
+}
+
 /// Spawns the task `start` makes from a sender of its own. If it panics,
 /// the panic is logged and reported, and `replies` (what it would have
 /// answered, as errors) go out instead, so no screen waits forever.
@@ -757,6 +807,9 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Cmd::Api(Api::Poll { pr, .. }) => Msg::Polled(pr.clone(), Vec::new()),
         Cmd::Api(Api::Watch { what, .. }) => Msg::Watched(what.clone(), Vec::new()),
         Cmd::Api(Api::Actions(work)) => Msg::Actions(work.failed()),
+        Cmd::Offline(crate::offline::Cmd::Probe) => {
+            Msg::Offline(crate::offline::Msg::Probed(false))
+        }
         Cmd::Git(Git::LoadDiff { of, job, .. }) => Msg::Diff(
             of.clone(),
             DiffMsg::Job(*job, JobMsg::Failed(Failure::msg("ghtui hit a bug"))),
@@ -781,6 +834,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         | Cmd::Api(Api::SaveVisits(_))
         | Cmd::Git(Git::Prioritize(..))
         | Cmd::SaveReview(..)
+        | Cmd::Offline(crate::offline::Cmd::Queue(_) | crate::offline::Cmd::Keep(_))
         | Cmd::Edit { .. } => return Vec::new(),
     };
     vec![msg]
@@ -1287,6 +1341,17 @@ struct Review<'a> {
 /// shown isn't submitted: they'd be published unseen.
 async fn submit_review(gh: &GitHub, pr: &PrRef, head: &str, review: Review<'_>) -> SubmitOutcome {
     let mut outcome = SubmitOutcome::default();
+    // GitHub can't be reached, and nothing was sent: to queue.
+    let unsent = |review: &Review<'_>| {
+        Some(Box::new(crate::offline::queue::Review {
+            pr: pr.clone(),
+            head: head.to_owned(),
+            drafts: review.drafts.clone(),
+            event: review.event,
+            body: review.body.to_owned(),
+            seen: review.seen,
+        }))
+    };
     let (review_id, held) = match gh.pending_review(pr).await {
         Ok((_, Some(pending))) if pending.comments > review.seen => {
             outcome.on_github = Some(pending.comments);
@@ -1305,11 +1370,17 @@ async fn submit_review(gh: &GitHub, pr: &PrRef, head: &str, review: Review<'_>) 
         Ok((pr_id, None)) => match gh.start_review(&pr_id, head).await {
             Ok(id) => (id, 0),
             Err(err) => {
+                if let ApiError::Offline(_) = err {
+                    outcome.unsent = unsent(&review);
+                }
                 outcome.error = Some(format!("Couldn't start the review: {}", api_message(&err)));
                 return outcome;
             }
         },
         Err(err) => {
+            if let ApiError::Offline(_) = err {
+                outcome.unsent = unsent(&review);
+            }
             outcome.error = Some(format!("Couldn't reach the PR: {}", api_message(&err)));
             return outcome;
         }
@@ -1336,6 +1407,46 @@ async fn submit_review(gh: &GitHub, pr: &PrRef, head: &str, review: Review<'_>) 
         Err(err) => outcome.error = Some(format!("Couldn't submit: {}", api_message(&err))),
     }
     outcome
+}
+
+/// Submits a queued review ([`crate::offline::queue`]). What GitHub
+/// refuses stays queued as refused, without the comments it took (they
+/// wait in your pending review there, counted as seen).
+pub(crate) async fn send_review(
+    gh: &GitHub,
+    queued: crate::offline::queue::Review,
+) -> crate::offline::queue::Sent {
+    use crate::offline::queue::Sent;
+    let review = Review {
+        drafts: queued.drafts.clone(),
+        event: queued.event,
+        body: &queued.body,
+        seen: queued.seen,
+    };
+    let outcome = submit_review(gh, &queued.pr, &queued.head, review).await;
+    if outcome.unsent.is_some() {
+        return Sent::Unsent;
+    }
+    if outcome.submitted {
+        return Sent::Taken;
+    }
+    let why = match (&outcome.error, outcome.rejected.as_slice()) {
+        (Some(err), _) => err.clone(),
+        (None, rejected) => {
+            let reasons: Vec<&str> = rejected.iter().map(|(_, r)| r.as_str()).collect();
+            format!("GitHub refused comments: {}", reasons.join("; "))
+        }
+    };
+    let seen = outcome.on_github.unwrap_or(queued.seen);
+    let mut rest = queued;
+    rest.drafts.retain(|d| !outcome.accepted.contains(&d.id));
+    for draft in &mut rest.drafts {
+        draft.error = (outcome.rejected.iter())
+            .find(|(id, _)| *id == draft.id)
+            .map(|(_, reason)| reason.clone());
+    }
+    rest.seen = seen;
+    Sent::Partly(rest, why)
 }
 
 /// Whether the drafts can join your pending review: it must be on `head`.

@@ -56,7 +56,11 @@ fn new_tab(icon: &'static str, label: &str, count: Option<u64>) -> PageTab {
 impl State {
     pub fn chrome(&self) -> Chrome {
         let mut c = self.screen_chrome();
-        // Right: review requests, your unread notifications and you.
+        // Right: offline (and what waits for GitHub), review requests,
+        // your unread notifications and you.
+        if let Some(offline) = crate::offline::header(self) {
+            c.right.push((offline, Target::Page(Route::Offline)));
+        }
         // Review requests, once their search (Home's first section, unless
         // you changed it) is in.
         let requests = DataKey::Search(SearchKind::Pulls, crate::home::REVIEW_REQUESTS.into());
@@ -139,6 +143,7 @@ impl State {
         match route {
             Route::Home => c.crumb("Home", None),
             Route::Notifications { .. } => c.crumb("Notifications", None),
+            Route::Offline => c.crumb("Offline", None),
             Route::Pr { pr, tab } => {
                 repo_crumbs(&pr.repo, c);
                 self.pr_tabs(pr, c);

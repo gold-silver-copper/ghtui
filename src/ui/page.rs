@@ -66,6 +66,9 @@ pub enum Link {
     Review(ReviewLink),
     /// A row of a repository's Settings tab ([`crate::settings`]).
     Setting(crate::ui::pages::SettingLink),
+    /// A write queued for GitHub, by its place in the queue
+    /// ([`crate::offline`]).
+    Queued(u64),
 }
 
 /// What a row of a release's, a gist's or a wiki page's form does

@@ -31,6 +31,7 @@ pub mod queries;
 mod query_check;
 pub mod rate_limit;
 mod raw;
+pub mod reach;
 pub mod release;
 pub mod replies;
 pub mod security;

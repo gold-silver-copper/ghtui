@@ -869,6 +869,10 @@ pub fn on_changed(
         }
         Err(err) => {
             tracing::warn!(?change, %err, "a change to GitHub failed");
+            // GitHub couldn't be reached: it waits in the queue, if it can.
+            if let Some(cmds) = crate::offline::queue_change(state, change, &by, &err, sender) {
+                return cmds;
+            }
             if let Change::Star { repo, starred, .. } = change {
                 nav::set_starred(state, repo, !starred);
             }
