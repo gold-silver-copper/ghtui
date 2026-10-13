@@ -1467,73 +1467,87 @@ impl Doc {
         file.block_of(self.row(pos)?.entries().next()?)
     }
 
-    /// Searchable text of a row.
+    /// Searchable text of a row: a split row's halves, a line apart.
+    #[cfg(test)]
     pub fn row_text(&self, pos: Pos) -> String {
+        let mut parts = Vec::new();
+        self.row_has(pos, |part| {
+            parts.push(part.to_owned());
+            false
+        });
+        parts.join("\n")
+    }
+
+    /// Whether `test` passes any part of a row's searchable text (a split
+    /// row's halves are two).
+    fn row_has(&self, pos: Pos, mut test: impl FnMut(&str) -> bool) -> bool {
         let Some(file) = self.files.get(pos.file) else {
-            return String::new();
+            return false;
         };
         let text = |p: LinePos| file.text().map_or("", |t| t.line(p));
         match self.row(pos) {
-            Some(Row::Header) => file.meta.path().to_owned(),
-            Some(row @ Row::Line(_)) => file.line_of(row, Side::Right).map_or("", text).to_owned(),
-            Some(row @ Row::Split { .. }) => {
-                let halves: Vec<&str> = file.shows(row).map(text).collect();
-                halves.join("\n")
-            }
-            Some(Row::Thread(t)) => file
-                .thread_row(t)
-                .map(|r| r.line.text())
-                .unwrap_or_default(),
-            _ => String::new(),
-        }
-    }
-
-    /// Whether a row's text contains `query`, as [`Doc::search`] matches.
-    fn matcher(&self, query: &str) -> impl Fn(Pos) -> bool {
-        let smart_case = query.chars().any(char::is_uppercase);
-        let needle = if smart_case {
-            query.to_owned()
-        } else {
-            query.to_lowercase()
-        };
-        move |pos| {
-            let text = self.row_text(pos);
-            if smart_case {
-                crate::ui::text::has(&text, &needle)
-            } else {
-                crate::ui::text::has(&text.to_lowercase(), &needle)
-            }
+            Some(Row::Header) => test(file.meta.path()),
+            Some(row @ Row::Line(_)) => test(file.line_of(row, Side::Right).map_or("", text)),
+            Some(row @ Row::Split { .. }) => file.shows(row).map(text).any(test),
+            Some(Row::Thread(t)) => file.thread_row(t).is_some_and(|r| test(&r.line.text())),
+            _ => false,
         }
     }
 
     /// The next row (after `from`, wrapping) whose text contains `query`.
     /// Case-insensitive unless the query has uppercase letters.
     pub fn search(&self, query: &str, from: Pos, forward: bool) -> Option<Pos> {
-        if query.is_empty() || self.total == 0 {
-            return None;
-        }
-        let matches = self.matcher(query);
-        let start = self.to_global(from);
-        let n = self.total;
-        (1..=n)
-            .map(|k| {
-                if forward {
-                    (start + k) % n
-                } else {
-                    (start + n - k % n) % n
-                }
-            })
-            .map(|g| self.to_pos(g))
-            .find(|p| matches(*p))
+        self.scan(query, from, forward, false).0
     }
 
-    /// How many rows match `query`.
-    pub fn count_matches(&self, query: &str) -> usize {
-        if query.is_empty() {
-            return 0;
+    /// [`Self::search`], and how many rows match, in one pass.
+    pub fn search_counted(&self, query: &str, from: Pos, forward: bool) -> (Option<Pos>, usize) {
+        self.scan(query, from, forward, true)
+    }
+
+    fn scan(&self, query: &str, from: Pos, forward: bool, all: bool) -> (Option<Pos>, usize) {
+        if query.is_empty() || self.total == 0 {
+            return (None, 0);
         }
-        let matches = self.matcher(query);
-        (0..self.total).filter(|g| matches(self.to_pos(*g))).count()
+        let smart_case = query.chars().any(char::is_uppercase);
+        let needle = if smart_case {
+            query.to_owned()
+        } else {
+            query.to_lowercase()
+        };
+        // Lowercased into one buffer, not a string per row.
+        let mut lower = String::new();
+        let mut has = |text: &str| {
+            if smart_case {
+                return crate::ui::text::has(text, &needle);
+            }
+            lower.clear();
+            if text.is_ascii() {
+                lower.push_str(text);
+                lower.make_ascii_lowercase();
+            } else {
+                lower.push_str(&text.to_lowercase());
+            }
+            crate::ui::text::has(&lower, &needle)
+        };
+        let (start, n) = (self.to_global(from), self.total);
+        let (mut found, mut count) = (None, 0);
+        for k in 1..=n {
+            let g = if forward {
+                (start + k) % n
+            } else {
+                (start + n - k % n) % n
+            };
+            let pos = self.to_pos(g);
+            if self.row_has(pos, &mut has) {
+                found = found.or(Some(pos));
+                count += 1;
+                if !all {
+                    break;
+                }
+            }
+        }
+        (found, count)
     }
 }
 
@@ -1833,7 +1847,7 @@ pub(crate) mod tests {
         assert_eq!(doc.search("five", second, true), Some(first), "wraps");
         assert_eq!(doc.search("five", first, false), Some(second), "backwards");
         assert_eq!(doc.search("FIVE", Pos::default(), true), None);
-        assert_eq!(doc.count_matches("five"), 2);
+        assert_eq!(doc.search_counted("five", second, true), (Some(first), 2));
     }
 
     #[test]

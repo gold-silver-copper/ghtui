@@ -1015,16 +1015,15 @@ fn jump(screen: &mut DiffScreen, pos: Pos) {
 
 /// Starts a search from the cursor, down or (`?`) up.
 pub fn search(screen: &mut DiffScreen, state: &DiffState, query: String, forward: bool) -> Notice {
-    let notice = match state.doc.search(&query, screen.cursor, forward) {
-        Some(pos) => {
+    let notice = match state.doc.search_counted(&query, screen.cursor, forward) {
+        (Some(pos), n) => {
             go_to_match(screen, &state.doc, pos, &query);
-            let n = state.doc.count_matches(&query);
             Notice::Info(format!(
                 "{n} line{} match “{query}”",
                 if n == 1 { "" } else { "s" }
             ))
         }
-        None => Notice::Error(format!("No match for “{query}”")),
+        (None, _) => Notice::Error(format!("No match for “{query}”")),
     };
     screen.search = Some(query);
     notice
