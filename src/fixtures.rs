@@ -315,6 +315,7 @@ pub fn overview() -> RepoOverview {
         parent: None,
         starred: false,
         can_write: true,
+        can_admin: false,
         id: NodeId::new("R_ghtui"),
         has_issues: true,
         has_discussions: true,
@@ -822,6 +823,11 @@ pub fn issue() -> IssueDetail {
                 body: "Agreed. 120 columns, centered?".into(),
                 created_at: "2026-10-02T12:00:00Z".into(),
                 editable: Some(editable("IC_1")),
+                hiding: crate::api::manage::Hiding {
+                    reason: None,
+                    can_hide: true,
+                    can_unhide: true,
+                },
             }),
             event(
                 "monalisa",
@@ -839,10 +845,15 @@ pub fn issue() -> IssueDetail {
         parent: None,
         sub_issues: Capped::default(),
         progress: None,
+        blocked_by: Capped::default(),
+        blocking: Capped::default(),
         issue_type: Some("Bug".into()),
         id: NodeId::new("I_14"),
         can_close: true,
         can_reopen: true,
+        locked: None,
+        pinned: false,
+        can_write: true,
         editable: editable("I_14"),
         sidebar: crate::api::edit::SidebarPermits {
             labels: true,
@@ -894,11 +905,53 @@ pub(crate) fn review(id: u64, author: &str, state: ReviewState, body: &str, at: 
 }
 
 /// The projects the fixture issue is in.
-pub fn in_projects() -> Capped<crate::api::timeline::InProject> {
-    vec![crate::api::timeline::InProject {
+pub fn in_projects() -> Capped<crate::api::project::InProject> {
+    use crate::api::model::NodeId;
+    use crate::api::project::{FieldKind, FieldValue, ProjectField, SelectOption};
+    let option = |id: &str, name: &str| SelectOption {
+        id: id.into(),
+        name: name.into(),
+        color: "GREEN".into(),
+        description: String::new(),
+    };
+    let fields = vec![
+        ProjectField {
+            id: NodeId::new("F_status"),
+            name: "Status".into(),
+            kind: FieldKind::SingleSelect(vec![
+                option("todo", "Todo"),
+                option("doing", "In progress"),
+                option("done", "Done"),
+            ]),
+        },
+        ProjectField {
+            id: NodeId::new("F_estimate"),
+            name: "Estimate".into(),
+            kind: FieldKind::Number,
+        },
+        ProjectField {
+            id: NodeId::new("F_title"),
+            name: "Title".into(),
+            kind: FieldKind::Title,
+        },
+    ];
+    vec![crate::api::project::InProject {
         title: "Roadmap".into(),
         url: "https://github.com/users/octocat/projects/1".into(),
-        status: Some("In progress".into()),
+        id: NodeId::new("PVT_1"),
+        item: NodeId::new("PVTI_14"),
+        can_update: true,
+        fields: fields.into(),
+        values: vec![
+            (
+                NodeId::new("F_status"),
+                FieldValue::Option {
+                    id: "doing".into(),
+                    name: "In progress".into(),
+                },
+            ),
+            (NodeId::new("F_estimate"), FieldValue::Number("3".into())),
+        ],
     }]
     .into()
 }
@@ -980,6 +1033,7 @@ pub fn activity() -> PrActivity {
                 body: "Does this cover the 256-color fallback?".into(),
                 created_at: "2026-10-01T09:00:00Z".into(),
                 editable: Some(editable("IC_2")),
+                hiding: crate::api::manage::Hiding::default(),
             })])
             .chain([Item::Review(commented)])
             .chain(second)
@@ -1250,6 +1304,7 @@ pub fn release(full: bool) -> Release {
         url: format!("https://github.com/gold-silver-copper/ghtui/releases/download/v0.2.0/{name}"),
     };
     Release {
+        id: Some(272_100_001),
         name: "ghtui 0.2.0".into(),
         tag: "v0.2.0".into(),
         published_at: Some("2026-09-30T12:00:00Z".into()),
@@ -1673,6 +1728,7 @@ pub fn discussion() -> DiscussionDetail {
             can_react: true,
             reactions: Vec::new(),
         }),
+        hiding: crate::api::manage::Hiding::default(),
     };
     let mut answer = DiscussionComment {
         comment: comment(
@@ -1709,7 +1765,11 @@ pub fn discussion() -> DiscussionDetail {
         category: "Q&A".into(),
         answerable: true,
         answered: true,
-        locked: false,
+        locked: None,
+        closed: None,
+        can_close: true,
+        can_reopen: true,
+        can_lock: true,
         upvotes: 12,
         editable: Editable {
             id: NodeId::new("D_14603"),

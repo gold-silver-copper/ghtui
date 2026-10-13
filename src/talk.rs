@@ -119,7 +119,10 @@ pub async fn read_lines(
 /// What following a review's row does, for the menu.
 pub fn describe(link: &ReviewLink) -> &'static str {
     match link {
-        ReviewLink::Fold(_) => "Fold or unfold the review's threads",
+        ReviewLink::Fold(anchor) if anchor.starts_with("pullrequestreview-") => {
+            "Fold or unfold the review's threads"
+        }
+        ReviewLink::Fold(_) => "Show or fold the hidden comment",
         ReviewLink::Open { .. } => "Open the review",
         ReviewLink::AsReviewed { .. } => "The changes as the review saw them",
         ReviewLink::Since { .. } => "What changed since the review",
@@ -169,7 +172,10 @@ pub fn fold_key(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
     // The review whose box holds the selection: the nearest anchor at or
     // above it, if a fold row of that review follows.
     let (anchor, _) = (page.anchors.iter())
-        .filter(|(name, line)| name.starts_with("pullrequestreview-") && **line <= at)
+        .filter(|(name, line)| {
+            let foldable = ["pullrequestreview-", "issuecomment-", "discussioncomment-"];
+            foldable.iter().any(|p| name.starts_with(p)) && **line <= at
+        })
         .max_by_key(|(_, line)| **line)?;
     let folds = page
         .links

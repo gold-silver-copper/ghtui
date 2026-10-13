@@ -47,6 +47,19 @@ fn a_repositorys_pages_are_under_their_tabs() {
         ),
         (Route::Advisories(Some(repo())), "Security"),
         (
+            Route::Site(crate::site::Page::Insights {
+                repo: repo(),
+                tab: crate::site::InsightsTab::Traffic,
+            }),
+            "Insights",
+        ),
+        (
+            Route::Site(crate::site::Page::Packages(
+                crate::api::packages::PackagesOf::Repo(repo()),
+            )),
+            "Code",
+        ),
+        (
             Route::Wiki {
                 repo: repo(),
                 page: None,
@@ -96,7 +109,8 @@ fn repo_tabs_filters_state_sort_and_star() {
             "Actions",
             "Projects",
             "Wiki",
-            "Security"
+            "Security",
+            "Insights"
         ]
     );
     let cmds = fetches(press(&mut state, "2gt"));

@@ -75,7 +75,11 @@ impl Seen {
 /// Serves `replies` in order (one per request, across connections) and
 /// records every request.
 async fn serve(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<Seen>>>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    serve_on(TcpListener::bind("127.0.0.1:0").await.unwrap(), replies)
+}
+
+/// [`serve`], on `listener`.
+fn serve_on(listener: TcpListener, replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<Seen>>>) {
     let addr = listener.local_addr().unwrap();
     let seen = Arc::new(Mutex::new(Vec::new()));
     let queue = Arc::new(Mutex::new(replies));
@@ -290,11 +294,66 @@ const PR_RESPONSE: &str = r#"{"data":{"repository":{
   "labels": {"totalCount": 3, "nodes": [{"name": "bug", "color": "d73a4a"}]},
   "milestone": {"number": 3, "title": "v1"},
   "viewerCanReact": true, "viewerCanLabel": false, "viewerCanAssign": true,
+  "headRef": null, "viewerCanDeleteHeadRef": false, "locked": true, "activeLockReason": "TOO_HEATED",
   "reactionGroups": [{"content": "THUMBS_UP", "viewerHasReacted": false, "reactors": {"totalCount": 5}}],
   "assignees": {"totalCount": 1, "nodes": [{"login": "bob"}]},
   "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]},
   "comments": {"totalCount": 4}
 }}, "rateLimit": {"cost": 1, "limit": 5000, "remaining": 4999, "resetAt": "2026-01-01T01:00:00Z"}}}"#;
+
+/// An Enterprise Server is asked its version once. A query leaves out
+/// what that version lacks (another field stands in for one); what the
+/// server says it lacks besides is learned, and the query asked again
+/// without it, its answer reading null there. Each is said once. A REST
+/// endpoint the server lacks isn't asked at all.
+#[tokio::test]
+async fn an_older_enterprise_server_is_asked_only_what_it_has() {
+    let meta = r#"{"installed_version":"3.19.1"}"#;
+    let refused =
+        r#"{"errors":[{"message":"Field 'mergeQueueEntry' doesn't exist on type 'PullRequest'"}]}"#;
+    let mut answer: serde_json::Value = serde_json::from_str(PR_RESPONSE).unwrap();
+    answer["data"]["repository"]["pullRequest"]
+        .as_object_mut()
+        .unwrap()
+        .remove("mergeQueueEntry");
+    let behind = r#"{"data":{"repository":{"ref":{"compare":{"behindBy":0}}}}}"#;
+    let (base, seen) = serve(vec![
+        Reply::new(200, meta),
+        Reply::new(200, refused),
+        Reply::new(200, answer.to_string()),
+        Reply::new(200, behind),
+    ])
+    .await;
+    let host = ghtui::host::Host::parse("ghe.example.com").unwrap();
+    let gh = GitHub::enterprise_at(Token::new("t"), Store::disabled(), host, &base);
+    let pr = PrRef::parse("o/r#7").unwrap();
+    let detail = gh.pull_request(&pr).await.unwrap();
+    assert_eq!(detail.title, "Add thing");
+    assert_eq!(detail.queued, None);
+    let missing = gh.take_missing();
+    assert!(
+        missing[0].starts_with("GitHub Enterprise Server 3.19 doesn't have who may assign"),
+        "{missing:?}"
+    );
+    assert!(missing[1].contains("`mergeQueueEntry`"), "{missing:?}");
+    assert!(gh.take_missing().is_empty(), "said once");
+    let advisories = gh.advisories(Some(&RepoId::new("o", "r")), None).await;
+    assert!(
+        matches!(&advisories, Err(ApiError::Unsupported(why)) if why.contains("security advisories")),
+        "{advisories:?}"
+    );
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].request_line.starts_with("GET /meta "));
+    let query = |i: usize| seen[i].json()["query"].as_str().unwrap().to_owned();
+    assert!(query(1).contains("viewerCanAssign: viewerCanUpdate"));
+    assert!(query(1).contains("mergeQueueEntry"));
+    assert!(!query(2).contains("mergeQueueEntry"));
+    assert_eq!(
+        seen.len(),
+        4,
+        "the version is asked once, and no advisories"
+    );
+}
 
 #[tokio::test]
 async fn fetches_and_caches_pull_request() {
@@ -349,6 +408,10 @@ async fn fetches_and_caches_pull_request() {
     assert_eq!(detail.editable.reactions[0].count, 5);
     let may = detail.sidebar;
     assert!(may.assignees && !may.labels && !may.milestone && !may.reviewers);
+    // Its branch is gone, and its conversation locked, as GitHub says why.
+    assert!(detail.head_gone && !detail.may.delete_head);
+    let locked = detail.locked.and_then(|l| l.reason);
+    assert_eq!(locked, Some(ghtui::api::manage::LockReason::TooHeated));
 
     let cached = gh.cached_pull_request(&pr).unwrap();
     assert_eq!(cached.value, detail);
@@ -761,6 +824,203 @@ async fn edits_send_their_mutations() {
     field(11, "milestoneId: $milestone");
     assert_eq!(var(11, "milestone"), serde_json::Value::Null);
     assert_eq!(sent.len(), 12);
+}
+
+/// Managing an issue, a pull request or a discussion sends GitHub's own
+/// mutations (and REST for a branch); an issue named by its number is
+/// looked up first, and what makes something new says what it made.
+#[tokio::test]
+async fn manage_changes_send_their_mutations() {
+    use ghtui::api::change::Change;
+    use ghtui::api::manage::{DiscussionReason, HideReason, IssueAt, LockReason, Manage};
+    let ok = |field: &str| {
+        Reply::new(
+            200,
+            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
+        )
+    };
+    let id_of = |id: &str| {
+        Reply::new(
+            200,
+            format!(r#"{{"data":{{"repository":{{"issueOrPullRequest":{{"id":"{id}"}}}}}}}}"#),
+        )
+    };
+    let (gh, seen) = github(vec![
+        Reply::new(204, ""),
+        Reply::new(201, "{}"),
+        ok("convertPullRequestToDraft"),
+        ok("updatePullRequest"),
+        ok("lockLockable"),
+        ok("unlockLockable"),
+        ok("pinIssue"),
+        ok("minimizeComment"),
+        id_of("I_3"),
+        ok("closeIssue"),
+        id_of("I_5"),
+        ok("addSubIssue"),
+        id_of("I_5"),
+        id_of("I_6"),
+        ok("reprioritizeSubIssue"),
+        id_of("I_4"),
+        ok("removeBlockedBy"),
+        Reply::new(
+            200,
+            r#"{"data":{"repository":{"defaultBranchRef":{"target":{"oid":"abc"}}}}}"#,
+        ),
+        ok("createLinkedBranch"),
+        ok("closeDiscussion"),
+        Reply::new(
+            200,
+            r#"{"data":{"revertPullRequest":{"revertPullRequest":{"number":20}}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"transferIssue":{"issue":{"number":1,"repository":{"nameWithOwner":"o/elsewhere"}}}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"createDiscussion":{"discussion":{"number":7}}}}"#,
+        ),
+    ])
+    .await;
+    let id = |s: &str| NodeId::new(s);
+    let repo = RepoId::new("o", "r");
+    let at = |n| IssueAt {
+        repo: repo.clone(),
+        number: n,
+    };
+    let changes = [
+        Manage::DeleteBranch {
+            repo: repo.clone(),
+            branch: "fix".into(),
+        },
+        Manage::RestoreBranch {
+            repo: repo.clone(),
+            branch: "fix".into(),
+            oid: "abc".into(),
+        },
+        Manage::ConvertToDraft { pr: id("PR_7") },
+        Manage::ChangeBase {
+            pr: id("PR_7"),
+            base: "next".into(),
+        },
+        Manage::Lock {
+            subject: id("I_1"),
+            reason: Some(LockReason::OffTopic),
+        },
+        Manage::Unlock { subject: id("I_1") },
+        Manage::Pin {
+            issue: id("I_1"),
+            on: true,
+        },
+        Manage::Hide {
+            comment: id("IC_1"),
+            reason: HideReason::Outdated,
+        },
+        Manage::CloseAsDuplicate {
+            issue: id("I_1"),
+            of: Some(at(3)),
+        },
+        Manage::SubIssue {
+            parent: id("I_1"),
+            child: at(5),
+            add: true,
+        },
+        Manage::MoveSubIssue {
+            parent: id("I_1"),
+            child: at(5),
+            sibling: at(6),
+            before: true,
+        },
+        Manage::BlockedBy {
+            issue: id("I_1"),
+            by: at(4),
+            add: false,
+        },
+        Manage::LinkBranch {
+            issue: id("I_1"),
+            repo: repo.clone(),
+            name: "1-fix".into(),
+        },
+        Manage::CloseDiscussion {
+            discussion: id("D_1"),
+            reason: DiscussionReason::Outdated,
+        },
+    ];
+    for change in changes {
+        gh.change(&Change::Manage(change)).await.unwrap();
+    }
+    assert_eq!(gh.revert(&id("PR_7")).await.unwrap(), 20);
+    let moved = gh.transfer(&id("I_1"), &id("R_2")).await.unwrap();
+    assert_eq!(moved.to_string(), "o/elsewhere#1");
+    let (repo_id, category) = (id("R_1"), id("DIC_1"));
+    let started = gh.start_discussion(&repo_id, &category, "Hi", "There");
+    assert_eq!(started.await.unwrap(), 7);
+
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("DELETE /repos/o/r/git/refs/heads/fix "),
+        "{}",
+        seen[0].request_line
+    );
+    assert!(
+        seen[1]
+            .request_line
+            .starts_with("POST /repos/o/r/git/refs "),
+        "{}",
+        seen[1].request_line
+    );
+    assert_eq!(
+        seen[1].json(),
+        serde_json::json!({"ref": "refs/heads/fix", "sha": "abc"})
+    );
+    let sent: Vec<(String, serde_json::Value)> = (seen.iter().skip(2))
+        .map(|s| (s.query(), s.json()["variables"].clone()))
+        .collect();
+    let field = |i: usize, name: &str| {
+        let (query, _) = &sent[i];
+        assert!(query.contains(name), "{i}: {query}");
+    };
+    let var = |i: usize, name: &str| sent[i].1[name].clone();
+    field(0, "convertPullRequestToDraft(input: {pullRequestId: $id})");
+    field(1, "baseRefName: $base");
+    assert_eq!(var(1, "base"), "next");
+    field(2, "lockLockable");
+    assert_eq!(var(2, "reason"), "OFF_TOPIC");
+    field(3, "unlockLockable");
+    field(4, "pinIssue");
+    field(5, "minimizeComment");
+    assert_eq!(var(5, "reason"), "OUTDATED");
+    // #3's ID, then the close.
+    field(6, "issueOrPullRequest(number: $number)");
+    assert_eq!(var(6, "number"), 3);
+    field(7, "stateReason: DUPLICATE, duplicateIssueId: $of");
+    assert_eq!((var(7, "id"), var(7, "of")), ("I_1".into(), "I_3".into()));
+    field(9, "addSubIssue");
+    assert_eq!(var(9, "child"), "I_5");
+    field(12, "reprioritizeSubIssue");
+    assert_eq!(
+        (var(12, "before"), var(12, "after")),
+        ("I_6".into(), serde_json::Value::Null)
+    );
+    field(14, "removeBlockedBy");
+    assert_eq!(var(14, "by"), "I_4");
+    field(15, "defaultBranchRef");
+    field(16, "createLinkedBranch");
+    assert_eq!(
+        (var(16, "oid"), var(16, "name")),
+        ("abc".into(), "1-fix".into())
+    );
+    field(17, "closeDiscussion");
+    assert_eq!(var(17, "reason"), "OUTDATED");
+    field(18, "revertPullRequest");
+    field(19, "transferIssue");
+    assert_eq!(var(19, "repo"), "R_2");
+    field(20, "createDiscussion");
+    assert_eq!(var(20, "title"), "Hi");
+    assert_eq!(sent.len(), 21);
 }
 
 /// A pull request's sidebar comes with the node IDs edits need, and what
@@ -1820,10 +2080,46 @@ async fn refused_connections_are_retried_even_for_mutations() {
     let started = std::time::Instant::now();
     assert!(matches!(
         gh.change(&reply()).await,
-        Err(ApiError::Network(_))
+        Err(ApiError::Offline(_))
     ));
     // Three attempts means two backoffs (500ms + 1s).
     assert!(started.elapsed() >= std::time::Duration::from_millis(1400));
+}
+
+/// GitHub that can't be reached: a request fails as offline, having
+/// sent nothing; the next ones aren't sent at all; a probe finds GitHub
+/// back, and then a write goes, once.
+#[tokio::test]
+async fn unreachable_github_is_left_alone_until_a_probe_finds_it() {
+    // Bound, but not listening yet: connections are refused.
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = socket.local_addr().unwrap();
+    let gh = client(&format!("http://{addr}"), Store::disabled());
+    assert!(matches!(
+        gh.change(&reply()).await,
+        Err(ApiError::Offline(_))
+    ));
+    assert!(gh.offline_since().is_some());
+
+    let replied = r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"C_1"}}}}"#;
+    let (_, seen) = serve_on(
+        socket.listen(16).unwrap(),
+        vec![Reply::new(200, "{}"), Reply::new(200, replied)],
+    );
+    // Still taken as away: nothing's sent until a probe finds GitHub.
+    assert!(matches!(
+        gh.change(&reply()).await,
+        Err(ApiError::Offline(_))
+    ));
+    assert!(seen.lock().unwrap().is_empty());
+    assert!(gh.probe().await);
+    assert_eq!(gh.offline_since(), None);
+    gh.change(&reply()).await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    assert!(seen[0].request_line.starts_with("GET /rate_limit "));
+    assert!(seen[1].query().contains("addPullRequestReviewThreadReply"));
 }
 
 /// Every request carries the token, GitHub's media type and API version,
@@ -2911,6 +3207,31 @@ async fn setting_a_project_field_sends_its_value() {
     assert!(vars(2).get("value").is_none());
 }
 
+/// The projects an issue is in come with their fields and its values,
+/// which its sidebar shows and sets: its status is its Status's.
+#[tokio::test]
+async fn an_issues_projects_come_with_their_fields_and_its_values() {
+    let answer = r#"{"data":{"repository":{"issueOrPullRequest":{"projectItems":{"totalCount":1,"nodes":[
+        {"id":"PVTI_14","project":{"id":"PVT_1","title":"Roadmap","url":"https://github.com/users/o/projects/1","viewerCanUpdate":true,
+          "fields":{"totalCount":2,"nodes":[
+            {"id":"F_status","name":"Status","dataType":"SINGLE_SELECT","options":[{"id":"todo","name":"Todo","color":"GRAY","description":""}]},
+            {"id":"F_due","name":"Due","dataType":"DATE"}]}},
+         "fieldValues":{"totalCount":2,"nodes":[
+            {"__typename":"ProjectV2ItemFieldSingleSelectValue","optionId":"todo","name":"Todo","field":{"id":"F_status"}},
+            {"__typename":"ProjectV2ItemFieldDateValue","date":"2026-11-01","field":{"id":"F_due"}}]}}]}}}}}"#;
+    let (gh, seen) = github(vec![Reply::new(200, answer)]).await;
+    let projects = gh.projects_of(&RepoId::new("o", "r"), 14).await.unwrap();
+    let p = &projects.items[0];
+    assert_eq!((p.id.as_str(), p.item.as_str()), ("PVT_1", "PVTI_14"));
+    assert!(p.can_update);
+    assert_eq!(p.status(), Some("Todo"));
+    let others: Vec<(&str, &str)> = p.others().map(|(n, v)| (n, v.text())).collect();
+    assert_eq!(others, [("Due", "2026-11-01")]);
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("projectItems(first: 10"));
+    assert_eq!(seen[0].json()["variables"]["number"], 14);
+}
+
 /// An owner's projects are asked of the owner, whichever kind it is; a
 /// token without read:project says how to get it.
 #[tokio::test]
@@ -3147,6 +3468,131 @@ async fn a_release_is_made_as_written() {
             .starts_with("POST /repos/o/r/releases/generate-notes ")
     );
     assert_eq!(seen[1].json(), serde_json::json!({ "tag_name": "v1.2" }));
+}
+
+/// An edit sends the whole release to its ID (a draft never told it's
+/// the latest); deleting a release leaves its tag, which is deleted
+/// apart, by its ref.
+#[tokio::test]
+async fn a_release_is_edited_and_deleted_with_its_tag_apart() {
+    use ghtui::api::release::NewRelease;
+    let made = r#"{"tag_name":"v1.3","draft":true,"html_url":""}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, made),
+        Reply::new(204, ""),
+        Reply::new(204, ""),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let edit = NewRelease {
+        repo: repo.clone(),
+        tag: "v1.3".into(),
+        target: None,
+        name: "Version 1.3".into(),
+        notes: "Fixes".into(),
+        draft: true,
+        prerelease: false,
+        latest: true,
+    };
+    assert!(gh.update_release(7, &edit).await.unwrap().draft);
+    gh.delete_release(&repo, 7).await.unwrap();
+    gh.delete_tag(&repo, "v1.3").await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("PATCH /repos/o/r/releases/7 ")
+    );
+    let body = seen[0].json();
+    assert_eq!(body["tag_name"], "v1.3");
+    assert_eq!(body["name"], "Version 1.3");
+    assert_eq!(body["draft"], true);
+    assert_eq!(body.get("make_latest"), None);
+    assert!(
+        seen[1]
+            .request_line
+            .starts_with("DELETE /repos/o/r/releases/7 ")
+    );
+    assert!(
+        seen[2]
+            .request_line
+            .starts_with("DELETE /repos/o/r/git/refs/tags/v1.3 ")
+    );
+}
+
+/// An asset is found by its name among the release's (REST's IDs), and
+/// its bytes asked for as such; a file there already is kept unless it's
+/// to be replaced. An upload goes to the release's upload URL (another
+/// host), named and typed; deleting goes by its ID.
+#[tokio::test]
+async fn release_assets_are_saved_uploaded_and_deleted() {
+    let (uploads, uploaded) = serve(vec![Reply::new(201, "{}")]).await;
+    let assets = r#"[{"id":41,"name":"a.txt"},{"id":42,"name":"b.tar.gz"}]"#;
+    let release = format!(
+        r#"{{"id":7,"upload_url":"{uploads}/repos/o/r/releases/7/assets{{?name,label}}"}}"#
+    );
+    let (gh, seen) = github(vec![
+        Reply::new(200, assets),
+        Reply::new(200, "the bytes"),
+        Reply::new(200, assets),
+        Reply::new(200, "the bytes again"),
+        Reply::new(200, release),
+        Reply::new(200, assets),
+        Reply::new(204, ""),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("b.tar.gz");
+    let size = (gh.download_asset(&repo, 7, "b.tar.gz", &dest, false))
+        .await
+        .unwrap();
+    assert_eq!(size, 9);
+    assert_eq!(std::fs::read_to_string(&dest).unwrap(), "the bytes");
+    // Not over it without being told to.
+    std::fs::write(&dest, "mine").unwrap();
+    let kept = gh.download_asset(&repo, 7, "b.tar.gz", &dest, false).await;
+    kept.unwrap_err();
+    assert_eq!(std::fs::read_to_string(&dest).unwrap(), "mine");
+    let file = dir.path().join("notes v2.txt");
+    std::fs::write(&file, "new notes").unwrap();
+    (gh.upload_asset(&repo, 7, &file, "notes v2.txt"))
+        .await
+        .unwrap();
+    gh.delete_asset(&repo, 7, "a.txt").await.unwrap();
+
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("GET /repos/o/r/releases/7/assets?per_page=100&page=1 ")
+    );
+    assert!(
+        seen[1]
+            .request_line
+            .starts_with("GET /repos/o/r/releases/assets/42 ")
+    );
+    assert_eq!(seen[1].header("accept"), Some("application/octet-stream"));
+    assert!(
+        seen[4]
+            .request_line
+            .starts_with("GET /repos/o/r/releases/7 ")
+    );
+    assert!(
+        seen[6]
+            .request_line
+            .starts_with("DELETE /repos/o/r/releases/assets/41 ")
+    );
+    let uploaded = uploaded.lock().unwrap();
+    assert!(
+        uploaded[0]
+            .request_line
+            .starts_with("POST /repos/o/r/releases/7/assets?name=notes+v2.txt "),
+        "{}",
+        uploaded[0].request_line
+    );
+    assert_eq!(uploaded[0].header("content-type"), Some("text/plain"));
+    assert_eq!(uploaded[0].body, "new notes");
 }
 
 /// A gist is made with its files and visibility; an edit sends only what
@@ -3431,4 +3877,602 @@ async fn reviews_and_commit_comments_send_their_requests() {
             .request_line
             .starts_with("GET /repos/o/r/commits/abc/comments")
     );
+}
+
+// ---- Insights, starred lists and packages -------------------------------------------
+
+/// Traffic is four reads, made together; a 403 says only people who can
+/// push see it. GitHub's statistics say when they're still being
+/// counted, and the dependency graph is asked under its preview.
+#[tokio::test]
+async fn insights_read_traffic_statistics_and_the_dependency_graph() {
+    let counted = r#"{"count":5,"uniques":2,"views":[{"timestamp":"2026-10-10T00:00:00Z","count":5,"uniques":2}],"clones":[]}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, counted).on("/traffic/views"),
+        Reply::new(200, r#"{"count":1,"uniques":1,"clones":[]}"#).on("/traffic/clones"),
+        Reply::new(200, r#"[{"referrer":"github.com","count":3,"uniques":1}]"#)
+            .on("/popular/referrers"),
+        Reply::new(200, r#"[{"path":"/o/r","title":"o/r","count":4,"uniques":2}]"#)
+            .on("/popular/paths"),
+        Reply::new(202, "{}").on("/stats/contributors"),
+        Reply::new(
+            200,
+            r#"{"data":{"repository":{"dependencyGraphManifests":{"totalCount":1,"nodes":[{"filename":"Cargo.lock","blobPath":"/o/r/blob/main/Cargo.lock","parseable":true,"exceedsMaxSize":false,"dependenciesCount":470,"dependencies":{"totalCount":1,"nodes":[{"packageName":"rand","packageManager":"RUST","requirements":"= 0.9.2","repository":{"nameWithOwner":"rust-random/rand"}}]}}]}}}}"#,
+        )
+        .on("/graphql"),
+        Reply::new(403, r#"{"message":"Must have push access to repository"}"#),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let t = gh.traffic(&repo).await.unwrap();
+    assert_eq!(
+        (t.views.count, t.views.days.len(), t.clones.count),
+        (5, 1, 1)
+    );
+    assert_eq!(t.referrers[0].name, "github.com");
+    assert_eq!(t.paths[0].title.as_deref(), Some("o/r"));
+    let counting = gh.activity(&repo).await.unwrap_err();
+    assert!(
+        counting.to_string().contains("still counting"),
+        "{counting}"
+    );
+    let deps = gh.dependencies(&repo).await.unwrap();
+    assert_eq!(deps.manifests[0].path, "Cargo.lock");
+    assert_eq!(deps.manifests[0].dependencies.total(), 470);
+    assert_eq!(
+        deps.manifests[0].dependencies[0].repo,
+        Some(RepoId::new("rust-random", "rand"))
+    );
+    let refused = gh.traffic(&repo).await.unwrap_err();
+    assert!(
+        refused.to_string().contains("only to people who can push"),
+        "{refused}"
+    );
+    let seen = seen.lock().unwrap();
+    let graph = seen
+        .iter()
+        .find(|s| s.request_line.starts_with("POST /graphql"))
+        .unwrap();
+    assert_eq!(
+        graph.header("accept"),
+        Some("application/vnd.github.hawkgirl-preview+json")
+    );
+    assert!(
+        graph
+            .query()
+            .contains("dependencyGraphManifests(first: 20)")
+    );
+}
+
+/// Which of your lists have a repository is read past a list's first
+/// 100; putting it in lists sends every list it's to be in, and making
+/// a list answers its ID.
+#[tokio::test]
+async fn starred_lists_are_read_and_set() {
+    let page = |ids: &[&str], next: bool| {
+        let nodes: Vec<String> = ids.iter().map(|id| format!(r#"{{"id":"{id}"}}"#)).collect();
+        format!(
+            r#"{{"totalCount":101,"pageInfo":{{"hasNextPage":{next},"endCursor":"c1"}},"nodes":[{}]}}"#,
+            nodes.join(",")
+        )
+    };
+    let mine = format!(
+        r#"{{"data":{{"repository":{{"id":"R_1","viewerHasStarred":true}},"viewer":{{"login":"octocat","lists":{{"totalCount":1,"nodes":[{{"id":"UL_1","name":"Tools","slug":"tools","isPrivate":false,"items":{}}}]}}}}}}}}"#,
+        page(&["R_2"], true)
+    );
+    let more = format!(
+        r#"{{"data":{{"node":{{"items":{}}}}}}}"#,
+        page(&["R_1"], false)
+    );
+    let (gh, seen) = github(vec![
+        Reply::new(200, mine),
+        Reply::new(200, more),
+        Reply::new(200, r#"{"data":{"updateUserListsForItem":{"lists":[]}}}"#),
+        Reply::new(200, r#"{"data":{"createUserList":{"list":{"id":"UL_9"}}}}"#),
+        Reply::new(
+            200,
+            r#"{"data":{"deleteUserList":{"clientMutationId":null}}}"#,
+        ),
+    ])
+    .await;
+    let lists = gh.my_lists(&RepoId::new("o", "r")).await.unwrap();
+    assert_eq!(lists.repo, NodeId::new("R_1"));
+    assert_eq!(lists.lists[0].has, Some(true));
+    assert_eq!(lists.lists[0].count, 101);
+    let set = [NodeId::new("UL_1")];
+    gh.set_lists(&NodeId::new("R_1"), &set).await.unwrap();
+    assert_eq!(gh.create_list("Rust").await.unwrap(), NodeId::new("UL_9"));
+    gh.delete_list(&NodeId::new("UL_9")).await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[1].json()["variables"]["after"], "c1");
+    assert!(seen[2].query().contains("updateUserListsForItem"));
+    assert_eq!(
+        seen[2].json()["variables"],
+        serde_json::json!({"item": "R_1", "lists": ["UL_1"]})
+    );
+    assert_eq!(
+        seen[3].json()["variables"],
+        serde_json::json!({"name": "Rust"})
+    );
+    assert_eq!(
+        seen[4].json()["variables"],
+        serde_json::json!({"list": "UL_9"})
+    );
+}
+
+/// Packages are read kind by kind, under `/orgs/` for an organization;
+/// without the scope, ghtui names it. A version is deleted by its ID.
+#[tokio::test]
+async fn packages_are_listed_and_a_version_deleted() {
+    use ghtui::api::packages::{Kind, PackageRef, PackagesOf};
+    let mut replies = vec![Reply::new(200, r#"{"login":"acme","type":"Organization"}"#)];
+    for kind in Kind::ALL {
+        let body = if kind == Kind::Container {
+            r#"[{"name":"app","visibility":"public","version_count":2,"updated_at":"2026-10-01T00:00:00Z","repository":{"full_name":"acme/app"}}]"#
+        } else {
+            "[]"
+        };
+        let kind: &'static str =
+            Box::leak(format!("package_type={}", kind.slug()).into_boxed_str());
+        replies.push(Reply::new(200, body).on(kind));
+    }
+    replies.push(Reply::new(200, r#"{"login":"acme","type":"Organization"}"#));
+    replies.push(Reply::new(204, ""));
+    replies.push(Reply::new(200, r#"{"login":"me","type":"User"}"#));
+    for _ in Kind::ALL {
+        replies.push(
+            Reply::new(
+                403,
+                r#"{"message":"You need at least read:packages scope to list packages."}"#,
+            )
+            .header("x-oauth-scopes", "repo, gist")
+            .on("/users/me/packages"),
+        );
+    }
+    let (gh, seen) = github(replies).await;
+    let list = gh
+        .packages(&PackagesOf::Owner("acme".into()))
+        .await
+        .unwrap();
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].repo, Some(RepoId::new("acme", "app")));
+    let app = PackageRef {
+        owner: "acme".into(),
+        kind: Kind::Container,
+        name: "app".into(),
+    };
+    gh.delete_version(&app, 7).await.unwrap();
+    let denied = gh
+        .packages(&PackagesOf::Owner("me".into()))
+        .await
+        .unwrap_err();
+    assert!(
+        denied
+            .to_string()
+            .contains("gh auth refresh -s read:packages"),
+        "{denied}"
+    );
+    let seen = seen.lock().unwrap();
+    assert!(seen.iter().any(|s| {
+        s.request_line
+            .starts_with("GET /orgs/acme/packages?package_type=container&per_page=100 ")
+    }));
+    assert!(seen.iter().any(|s| {
+        s.request_line
+            .starts_with("DELETE /orgs/acme/packages/container/app/versions/7 ")
+    }));
+}
+
+// ---- housekeeping: labels, milestones, branches, forks, files ----------------------------
+
+/// A label is made, changed (renamed by its old name, escaped) and
+/// deleted; the labels list counts each one's open issues and pull
+/// requests.
+#[tokio::test]
+async fn labels_are_listed_made_changed_and_deleted() {
+    use ghtui::api::housekeeping::LabelChange;
+    let list = r#"{"data":{"repository":{"labels":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
+        {"name":"good first issue","color":"7057ff","description":null,"issues":{"totalCount":3},"pullRequests":{"totalCount":1}}]}}}}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, list),
+        Reply::new(201, "{}"),
+        Reply::new(200, "{}"),
+        Reply::new(204, ""),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let labels = gh.labels(&repo, None).await.unwrap();
+    assert_eq!(labels.items[0].name, "good first issue");
+    assert_eq!(
+        (labels.items[0].open, labels.items[0].description.as_str()),
+        (4, "")
+    );
+    let label = LabelChange {
+        name: "triage".into(),
+        color: "abcdef".into(),
+        description: "To look at".into(),
+    };
+    gh.create_label(&repo, &label).await.unwrap();
+    gh.update_label(&repo, "good first issue", &label)
+        .await
+        .unwrap();
+    gh.delete_label(&repo, "triage").await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("labels(first: 100"));
+    assert!(seen[1].request_line.starts_with("POST /repos/o/r/labels "));
+    assert_eq!(
+        seen[1].json(),
+        serde_json::json!({"name": "triage", "color": "abcdef", "description": "To look at"})
+    );
+    assert!(
+        seen[2]
+            .request_line
+            .starts_with("PATCH /repos/o/r/labels/good%20first%20issue ")
+    );
+    assert_eq!(seen[2].json()["new_name"], "triage");
+    assert!(
+        seen[3]
+            .request_line
+            .starts_with("DELETE /repos/o/r/labels/triage ")
+    );
+}
+
+/// A milestone is made with its due date (sent at noon UTC, that day
+/// everywhere), closed, and deleted.
+#[tokio::test]
+async fn milestones_are_made_closed_and_deleted() {
+    use ghtui::api::housekeeping::MilestoneChange;
+    let (gh, seen) = github(vec![
+        Reply::new(201, r#"{"number":7}"#),
+        Reply::new(200, "{}"),
+        Reply::new(200, "{}"),
+        Reply::new(204, ""),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let m = MilestoneChange {
+        title: "1.0".into(),
+        description: "The first".into(),
+        due_on: Some("2027-01-31".into()),
+    };
+    assert_eq!(gh.create_milestone(&repo, &m).await.unwrap().number, 7);
+    let undated = MilestoneChange { due_on: None, ..m };
+    gh.update_milestone(&repo, 7, &undated).await.unwrap();
+    gh.set_milestone_closed(&repo, 7, true).await.unwrap();
+    gh.delete_milestone(&repo, 7).await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("POST /repos/o/r/milestones ")
+    );
+    assert_eq!(seen[0].json()["due_on"], "2027-01-31T12:00:00Z");
+    assert!(
+        seen[1]
+            .request_line
+            .starts_with("PATCH /repos/o/r/milestones/7 ")
+    );
+    assert_eq!(seen[1].json()["due_on"], serde_json::Value::Null);
+    assert_eq!(seen[2].json(), serde_json::json!({"state": "closed"}));
+    assert!(
+        seen[3]
+            .request_line
+            .starts_with("DELETE /repos/o/r/milestones/7 ")
+    );
+}
+
+/// A branch is made at the commit its start names, and a tag deleted, by
+/// their refs; a branch's rules say whether it may be deleted.
+#[tokio::test]
+async fn refs_are_made_deleted_and_their_rules_read() {
+    use ghtui::api::housekeeping::RefKind;
+    let sha = "8d1a76430406c877b35d0b627e7f796dcf0dfeca";
+    let (gh, seen) = github(vec![
+        Reply::new(200, format!(r#"{{"sha":"{sha}"}}"#)),
+        Reply::new(201, "{}"),
+        Reply::new(204, ""),
+        Reply::new(200, r#"{"name":"release/1","protected":false}"#),
+        Reply::new(200, r#"[{"type":"deletion","ruleset_id":2}]"#),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    assert_eq!(gh.commit_of(&repo, "feature/x").await.unwrap(), sha);
+    gh.create_ref(&repo, RefKind::Branch, "topic", sha)
+        .await
+        .unwrap();
+    gh.delete_ref(&repo, RefKind::Tag, "v1.0 rc").await.unwrap();
+    let rules = gh.branch_rules(&repo, "release/1").await.unwrap();
+    assert!(!rules.protected && rules.undeletable);
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("GET /repos/o/r/commits/feature/x ")
+    );
+    assert_eq!(
+        seen[1].json(),
+        serde_json::json!({"ref": "refs/heads/topic", "sha": sha})
+    );
+    assert!(
+        seen[2]
+            .request_line
+            .starts_with("DELETE /repos/o/r/git/refs/tags/v1.0%20rc ")
+    );
+    assert!(
+        seen[3]
+            .request_line
+            .starts_with("GET /repos/o/r/branches/release/1 ")
+    );
+    assert!(
+        seen[4]
+            .request_line
+            .starts_with("GET /repos/o/r/rules/branches/release/1 ")
+    );
+}
+
+/// A fork goes to an organization with the default branch only; a new
+/// repository to an organization, with its templates, or to you.
+#[tokio::test]
+async fn forks_and_repositories_are_made() {
+    use ghtui::api::housekeeping::{NewFork, NewRepo};
+    let made = r#"{"full_name":"org/tools","clone_url":"https://github.com/org/tools.git"}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(202, made),
+        Reply::new(201, made),
+        Reply::new(201, made),
+    ])
+    .await;
+    let fork = NewFork {
+        repo: RepoId::new("o", "r"),
+        org: Some("org".into()),
+        name: "tools".into(),
+        default_branch_only: true,
+    };
+    let made = gh.fork(&fork).await.unwrap();
+    assert_eq!(made.repo(), Some(RepoId::new("org", "tools")));
+    let mut new = NewRepo {
+        org: Some("org".into()),
+        name: "tools".into(),
+        description: "Tools".into(),
+        private: true,
+        readme: true,
+        gitignore: Some("Rust".into()),
+        license: Some("mit".into()),
+    };
+    gh.create_repo(&new).await.unwrap();
+    new.org = None;
+    new.gitignore = None;
+    gh.create_repo(&new).await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].request_line.starts_with("POST /repos/o/r/forks "));
+    assert_eq!(
+        seen[0].json(),
+        serde_json::json!({"organization": "org", "name": "tools", "default_branch_only": true})
+    );
+    assert!(seen[1].request_line.starts_with("POST /orgs/org/repos "));
+    let body = seen[1].json();
+    assert_eq!(body["auto_init"], true);
+    assert_eq!(body["private"], true);
+    assert_eq!(body["gitignore_template"], "Rust");
+    assert_eq!(body["license_template"], "mit");
+    assert!(seen[2].request_line.starts_with("POST /user/repos "));
+    assert_eq!(seen[2].json().get("gitignore_template"), None);
+}
+
+/// A file is read where its form starts (a branch's tip, the file's
+/// blob; a tag's commit), and committed on the branch only while it's at
+/// that tip, its text in base64; GitHub's refusal of a workflow's file
+/// names the scope.
+#[tokio::test]
+async fn files_are_read_and_committed_on_a_branch() {
+    use ghtui::api::housekeeping::FileCommit;
+    let look = r#"{"data":{"repository":{"id":"R_1","ref":{"target":{"oid":"aaa"}},"commit":{"oid":"aaa"},"file":{"oid":"b10b","text":"one\n","isBinary":false,"isTruncated":false}}}}"#;
+    let tag = r#"{"data":{"repository":{"id":"R_1","ref":null,"commit":{"target":{"oid":"ccc"}},"file":{}}}}"#;
+    let made = r#"{"data":{"createCommitOnBranch":{"commit":{"oid":"ddd"}}}}"#;
+    let refused = r#"{"data":{"createCommitOnBranch":null},"errors":[{"message":"refusing to allow an OAuth App to create or update workflow `.github/workflows/ci.yml` without `workflow` scope"}]}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, look),
+        Reply::new(200, tag),
+        Reply::new(200, made),
+        Reply::new(200, refused),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let at = gh.file_look(&repo, "main", "a.txt").await.unwrap();
+    assert_eq!(at.branch_head.as_deref(), Some("aaa"));
+    let file = at.file.unwrap();
+    assert_eq!(
+        (file.oid.as_str(), file.text.as_deref()),
+        ("b10b", Some("one\n"))
+    );
+    let at = gh.file_look(&repo, "v1.0", "docs").await.unwrap();
+    assert_eq!(
+        (at.branch_head, at.commit.as_str(), at.file),
+        (None, "ccc", None)
+    );
+    let mut commit = FileCommit {
+        repo: repo.clone(),
+        branch: "main".into(),
+        head: "aaa".into(),
+        headline: "Update a.txt".into(),
+        body: String::new(),
+        additions: vec![("a.txt".into(), "two\n".into())],
+        deletions: vec!["old.txt".into()],
+    };
+    gh.commit_files(&commit).await.unwrap();
+    commit.additions = vec![(".github/workflows/ci.yml".into(), "on: push\n".into())];
+    match gh.commit_files(&commit).await {
+        Err(ApiError::Denied(why)) => {
+            assert!(why.contains("gh auth refresh -s workflow"), "{why}");
+        }
+        other => panic!("{other:?}"),
+    }
+    let seen = seen.lock().unwrap();
+    let vars = &seen[0].json()["variables"];
+    assert_eq!(vars["qualified"], "refs/heads/main");
+    assert_eq!(vars["spec"], "main:a.txt");
+    let input = &seen[2].json()["variables"]["input"];
+    assert_eq!(input["expectedHeadOid"], "aaa");
+    assert_eq!(input["branch"]["repositoryNameWithOwner"], "o/r");
+    assert_eq!(
+        input["message"],
+        serde_json::json!({"headline": "Update a.txt"})
+    );
+    assert_eq!(
+        input["fileChanges"],
+        serde_json::json!({
+            "additions": [{"path": "a.txt", "contents": "dHdvCg=="}],
+            "deletions": [{"path": "old.txt"}],
+        })
+    );
+}
+
+/// A repository's settings: each change sends GitHub's own request, with
+/// only what changed; its pages read GitHub's answers, and say what a
+/// refusal lacks.
+#[tokio::test]
+async fn settings_send_their_requests_and_read_their_pages() {
+    use ghtui::api::change::Change;
+    use ghtui::api::settings::{
+        Enforcement, HookForm, Permission, RuleForm, Settings, SettingsChange as C, SettingsPage,
+    };
+    let ok = |field: &str| {
+        Reply::new(
+            200,
+            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
+        )
+    };
+    let (gh, seen) = github(vec![
+        ok("createBranchProtectionRule"),
+        ok("updateBranchProtectionRule"),
+        Reply::new(200, "{}"),
+        Reply::new(201, "{}"),
+        Reply::new(204, ""),
+        Reply::new(200, "{}"),
+        Reply::new(204, ""),
+        Reply::new(202, "{}"),
+        Reply::new(201, "{}"),
+        Reply::new(200, "{}"),
+        Reply::new(
+            200,
+            r#"[{"id":11,"config":{"url":"https://example.com/h","content_type":"json","insecure_ssl":"0","secret":"********"},"events":["push"],"active":true,"updated_at":"2026-10-01T10:00:00Z","last_response":{"code":200,"status":"active","message":"OK"}}]"#,
+        )
+        .header("link", r#"<https://api.github.com/repositories/1/hooks?per_page=100&page=2>; rel="next""#),
+        Reply::new(404, r#"{"message":"Not Found"}"#).header("x-oauth-scopes", "gist, read:org"),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let id = |s: &str| NodeId::new(s);
+    let main = RuleForm {
+        pattern: "main".into(),
+        admins: true,
+        ..RuleForm::default()
+    };
+    let changes = [
+        C::CreateRule {
+            repo_id: id("R_1"),
+            form: main.clone(),
+        },
+        C::UpdateRule {
+            id: id("BPR_1"),
+            from: Box::new(main.clone()),
+            to: Box::new(RuleForm {
+                linear: true,
+                ..main.clone()
+            }),
+            apps: Vec::new(),
+        },
+        C::SetRuleset {
+            repo: repo.clone(),
+            id: 7,
+            name: "Tags".into(),
+            enforcement: Enforcement::Disabled,
+        },
+        C::SetCollaborator {
+            repo: repo.clone(),
+            login: "hubot".into(),
+            permission: Permission::Write,
+            invite: true,
+        },
+        C::CancelInvitation {
+            repo: repo.clone(),
+            id: 31,
+            login: "hubot".into(),
+        },
+        C::UpdateHook {
+            repo: repo.clone(),
+            id: 11,
+            from: Box::new(HookForm::default()),
+            to: Box::new(HookForm {
+                active: false,
+                ..HookForm::default()
+            }),
+        },
+        C::DeleteHook {
+            repo: repo.clone(),
+            id: 11,
+            url: "https://example.com/h".into(),
+        },
+        C::Redeliver {
+            repo: repo.clone(),
+            hook: 11,
+            delivery: 902,
+            guid: "g".into(),
+        },
+        C::AddKey {
+            repo: repo.clone(),
+            title: "ci".into(),
+            key: "ssh-ed25519 AAAA".into(),
+            write: false,
+        },
+        C::Archive {
+            repo: repo.clone(),
+            archived: true,
+        },
+    ];
+    for change in changes {
+        gh.change(&Change::Settings(change)).await.unwrap();
+    }
+    let Settings::Hooks(hooks) = gh.settings(&repo, SettingsPage::Hooks).await.unwrap() else {
+        panic!("not the webhooks");
+    };
+    assert!(hooks.more, "GitHub has another page");
+    assert_eq!(hooks.items[0].form.url, "https://example.com/h");
+    assert!(hooks.items[0].secret);
+    let refused = gh.settings(&repo, SettingsPage::Keys).await.unwrap_err();
+    assert!(
+        refused.to_string().contains("gh auth refresh -s repo"),
+        "{refused}"
+    );
+
+    let seen = seen.lock().unwrap();
+    let input = |n: usize| seen[n].json()["variables"]["input"].clone();
+    assert!(seen[0].query().contains("createBranchProtectionRule("));
+    assert_eq!(input(0)["repositoryId"], "R_1");
+    assert_eq!(input(0)["isAdminEnforced"], true);
+    assert_eq!(
+        input(1),
+        serde_json::json!({"branchProtectionRuleId": "BPR_1", "requiresLinearHistory": true})
+    );
+    let line = |n: usize| seen[n].request_line.clone();
+    assert!(line(2).starts_with("PUT /repos/o/r/rulesets/7 "));
+    assert_eq!(
+        seen[2].json(),
+        serde_json::json!({"enforcement": "disabled"})
+    );
+    assert!(line(3).starts_with("PUT /repos/o/r/collaborators/hubot "));
+    assert_eq!(seen[3].json(), serde_json::json!({"permission": "push"}));
+    assert!(line(4).starts_with("DELETE /repos/o/r/invitations/31 "));
+    assert!(line(5).starts_with("PATCH /repos/o/r/hooks/11 "));
+    assert_eq!(seen[5].json(), serde_json::json!({"active": false}));
+    assert!(line(6).starts_with("DELETE /repos/o/r/hooks/11 "));
+    assert!(line(7).starts_with("POST /repos/o/r/hooks/11/deliveries/902/attempts "));
+    assert!(line(8).starts_with("POST /repos/o/r/keys "));
+    assert_eq!(
+        seen[8].json(),
+        serde_json::json!({"title": "ci", "key": "ssh-ed25519 AAAA", "read_only": true})
+    );
+    assert!(line(9).starts_with("PATCH /repos/o/r "));
+    assert_eq!(seen[9].json(), serde_json::json!({"archived": true}));
+    assert!(line(10).starts_with("GET /repos/o/r/hooks?per_page=100 "));
 }

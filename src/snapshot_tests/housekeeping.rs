@@ -1,0 +1,662 @@
+//! Repository housekeeping: labels, milestones, branches and tags, forks,
+//! new repositories and files. Each asks where GitHub would, sends one
+//! change (to GitHub, or to git in your clone), and the page follows
+//! GitHub until it shows it.
+
+use std::path::PathBuf;
+
+use crate::api::housekeeping::{
+    BranchRules, FileAt, FileLook, LabelChange, MadeRepo, MilestoneChange, NewFork, NewRepo,
+    RefKind,
+};
+use crate::api::model::NodeId;
+use crate::housekeeping::{
+    Done as HDone, FileChange, FormOf, Key, MilestoneWrite, RefWrite, Work as HWork,
+};
+use crate::theme::Mode;
+
+use super::{
+    failures::page_text, ghtui, open, with_branches, with_file, with_milestones, with_repo,
+};
+use crate::browse::{Data, DataKey};
+use crate::fixtures::{self, fetched, press, says};
+use crate::route::Route;
+use crate::state::{Cmd, Msg, Overlay, State, update};
+use crate::writes::{Done, Work};
+
+/// The one housekeeping work `cmds` hold.
+fn sent(cmds: &[Cmd]) -> HWork {
+    let found: Vec<&HWork> = cmds
+        .iter()
+        .filter_map(|c| match c {
+            Cmd::Write(Work::Housekeeping(w)) => Some(w),
+            _ => None,
+        })
+        .collect();
+    let [one] = found.as_slice() else {
+        panic!("{cmds:?}");
+    };
+    (*one).clone()
+}
+
+fn done(s: &mut State, done: HDone) -> Vec<Cmd> {
+    update(s, Msg::Write(Done::Housekeeping(Box::new(done))))
+}
+
+fn asked(s: &State) -> &crate::create::Ask {
+    match &s.overlay {
+        Some(Overlay::Ask(a)) => a,
+        _ => panic!("nothing asked"),
+    }
+}
+
+fn picker(s: &State) -> bool {
+    matches!(&s.overlay, Some(Overlay::Picker(_)))
+}
+
+/// Selects the row whose line has `text`.
+fn select(s: &mut State, text: &str) {
+    press(s, "gg");
+    for _ in 0..40 {
+        let crate::state::Screen::Page(p) = s.screen() else {
+            panic!("not a page");
+        };
+        let on = p
+            .selected
+            .and_then(|i| p.page().items.get(i))
+            .is_some_and(|item| {
+                let line = p
+                    .page()
+                    .lines
+                    .get(item.start)
+                    .map(crate::ui::page::PageLine::text);
+                line.is_some_and(|l| l.contains(text))
+            });
+        if on {
+            return;
+        }
+        press(s, "}");
+    }
+    panic!("no row has {text}");
+}
+
+/// The labels page, with GitHub's labels.
+fn with_labels() -> State {
+    let mut s = with_repo(Mode::Dark, crate::theme::ColorDepth::TrueColor);
+    let labels = crate::housekeeping::fixtures::labels();
+    open(
+        &mut s,
+        Route::Labels(ghtui()),
+        Data::Housekeeping(Box::new(crate::housekeeping::Data::Labels(labels))),
+    );
+    s
+}
+
+fn labels_key() -> DataKey {
+    DataKey::Housekeeping(Key::Labels(ghtui()))
+}
+
+/// The labels page lists each label with its open issues; `,o` writes a
+/// new one in its form (its name first), `,s` makes it, and the page
+/// follows GitHub until it lists it.
+#[test]
+fn a_label_is_made_and_the_page_follows() {
+    let mut s = with_labels();
+    let screen = super::render(&s);
+    assert!(
+        screen.contains("good first issue") && screen.contains("12 open"),
+        "{screen}"
+    );
+    press(&mut s, ",o");
+    let form = Route::Housekeeping(FormOf::Label {
+        repo: ghtui(),
+        name: None,
+    });
+    assert_eq!(s.route(), Some(&form));
+    assert!(picker(&s), "its name first");
+    press(&mut s, "triage<Enter>");
+    // A colour: GitHub's, or one typed.
+    select(&mut s, "Colour");
+    press(&mut s, "<Enter><C-u>#ABCDEF<Enter>");
+    let cmds = press(&mut s, ",s");
+    let HWork::Label { was, change, .. } = sent(&cmds) else {
+        panic!("{cmds:?}");
+    };
+    let made = LabelChange {
+        name: "triage".into(),
+        color: "abcdef".into(),
+        description: String::new(),
+    };
+    assert_eq!((was, change.clone()), (None, Some(made)));
+    let work = HWork::Label {
+        repo: ghtui(),
+        was: None,
+        change,
+    };
+    done(&mut s, HDone::Label(work, Ok(())));
+    assert_eq!(
+        s.route(),
+        Some(&Route::Labels(ghtui())),
+        "back on the labels"
+    );
+    says(&s, "Created the label triage");
+    assert!(s.busy().is_some_and(|b| b.contains("Waiting for GitHub")));
+    let mut labels = crate::housekeeping::fixtures::labels();
+    labels.items.push(crate::api::housekeeping::LabelInfo {
+        name: "triage".into(),
+        color: "ABCDEF".into(),
+        description: String::new(),
+        open: 0,
+    });
+    let data = Data::Housekeeping(Box::new(crate::housekeeping::Data::Labels(labels)));
+    fetched(&mut s, labels_key(), data);
+    assert_eq!(s.writing.expect, None, "GitHub lists it");
+}
+
+/// `,e` edits the selected label in its form; `,D` deletes it after
+/// asking, saying how many issues it comes off.
+#[test]
+fn a_label_is_edited_and_deleted() {
+    let mut s = with_labels();
+    select(&mut s, "good first issue");
+    press(&mut s, ",e");
+    let cmds = press(&mut s, ",s");
+    let HWork::Label { was, change, .. } = sent(&cmds) else {
+        panic!("{cmds:?}");
+    };
+    assert_eq!(was.as_deref(), Some("good first issue"));
+    let change = change.unwrap();
+    assert_eq!(change.color, "7057ff");
+    assert_eq!(change.description, "Good for newcomers");
+    done(&mut s, HDone::Label(sent(&cmds), Ok(())));
+    assert_eq!(s.route(), Some(&Route::Labels(ghtui())));
+
+    select(&mut s, "bug");
+    press(&mut s, ",D");
+    let ask = asked(&s);
+    assert_eq!(ask.title, "Delete the label bug?");
+    assert!(
+        ask.facts
+            .iter()
+            .any(|(f, _)| f.contains("its 4 open issues and pull requests")),
+        "{:?}",
+        ask.facts
+    );
+    let cmds = press(&mut s, "<Enter>");
+    assert_eq!(
+        sent(&cmds),
+        HWork::Label {
+            repo: ghtui(),
+            was: Some("bug".into()),
+            change: None,
+        }
+    );
+}
+
+/// Milestones: `,x` closes the selected one (GitHub doesn't ask), `,e`
+/// edits its title, due date and description, and `,D` deletes it after
+/// asking; the list follows each.
+#[test]
+fn milestones_are_closed_edited_and_deleted() {
+    let mut s = with_milestones(Mode::Light);
+    select(&mut s, "Pages");
+    let cmds = press(&mut s, ",x");
+    let close = HWork::Milestone {
+        repo: ghtui(),
+        number: Some(5),
+        write: MilestoneWrite::Close(true),
+    };
+    assert_eq!(sent(&cmds), close);
+    done(&mut s, HDone::Milestone(close, Ok(Some(5))));
+    says(&s, "Closed the milestone");
+    let mut list = fixtures::milestones();
+    list.results.items.retain(|m| m.number != 5);
+    let key = DataKey::Milestones(ghtui(), false);
+    fetched(&mut s, key, Data::Milestones(Box::new(list)));
+    assert_eq!(s.writing.expect, None, "gone from the open ones");
+
+    select(&mut s, "Links");
+    press(&mut s, ",e");
+    let form = Route::Housekeeping(FormOf::Milestone {
+        repo: ghtui(),
+        number: Some(3),
+    });
+    assert_eq!(s.route(), Some(&form));
+    fetched(
+        &mut s,
+        DataKey::Milestone(ghtui(), 3),
+        Data::Milestone(Box::new(fixtures::milestone())),
+    );
+    assert!(page_text(&s).contains("2026-11-05"), "{}", page_text(&s));
+    select(&mut s, "Due date");
+    press(&mut s, "<Enter>2026-13-01");
+    assert!(page_text(&s).contains("Due date"));
+    press(&mut s, "<C-u>2027-01-31<Enter>");
+    let cmds = press(&mut s, ",s");
+    let HWork::Milestone { write, .. } = sent(&cmds) else {
+        panic!("{cmds:?}");
+    };
+    let saved = MilestoneChange {
+        title: "Links".into(),
+        description: fixtures::milestone().info.description,
+        due_on: Some("2027-01-31".into()),
+    };
+    assert_eq!(write, MilestoneWrite::Save(saved));
+    done(&mut s, HDone::Milestone(sent(&cmds), Ok(Some(3))));
+    assert_eq!(
+        s.route(),
+        Some(&Route::Milestones {
+            repo: ghtui(),
+            closed: false
+        })
+    );
+
+    select(&mut s, "Links");
+    press(&mut s, ",D");
+    assert_eq!(asked(&s).title, "Delete the milestone Links?");
+    let cmds = press(&mut s, "<Enter>");
+    let delete = HWork::Milestone {
+        repo: ghtui(),
+        number: Some(3),
+        write: MilestoneWrite::Delete,
+    };
+    assert_eq!(sent(&cmds), delete);
+}
+
+/// A branch is made from the branches list at the branch selected, by
+/// GitHub's API without a clone; the default branch and a protected one
+/// are never deleted, and say why.
+#[test]
+fn branches_are_made_and_protected_ones_kept() {
+    let mut s = with_branches(Mode::Dark);
+    let repo = ghtui();
+    let cmds = update(
+        &mut s,
+        Msg::Create(crate::create::Done::Clone(repo.clone(), Ok(None))),
+    );
+    assert!(cmds.is_empty(), "{cmds:?}");
+    select(&mut s, "tabs");
+    press(&mut s, ",o");
+    assert!(picker(&s), "its name first");
+    press(&mut s, "topic<Enter>");
+    // Where it starts: the branch selected first.
+    let cmds = press(&mut s, "<Enter>");
+    assert_eq!(
+        sent(&cmds),
+        HWork::Ref {
+            repo: repo.clone(),
+            kind: RefKind::Branch,
+            name: "topic".into(),
+            write: RefWrite::Create("tabs".into()),
+            clone: None,
+        }
+    );
+
+    select(&mut s, "main");
+    press(&mut s, ",D");
+    says(&s, "main is the default branch");
+
+    select(&mut s, "links");
+    let cmds = press(&mut s, ",D");
+    assert_eq!(sent(&cmds), HWork::Rules(repo.clone(), "links".into()));
+    let rules = BranchRules {
+        protected: false,
+        undeletable: true,
+    };
+    done(&mut s, HDone::Rules(repo, "links".into(), Ok(rules)));
+    says(
+        &s,
+        "a ruleset of the repository's keeps it from being deleted",
+    );
+    assert!(s.overlay.is_none());
+}
+
+/// In your clone, a tag is made with git and pushed, after asking; and a
+/// branch deleted the same way, its pull request's closing said.
+#[test]
+fn in_a_clone_git_pushes_after_asking() {
+    let mut s = with_branches(Mode::Dark);
+    let repo = ghtui();
+    let clone = crate::git::local::Clone {
+        top: PathBuf::from("/work/ghtui"),
+        remote: "origin".into(),
+        branch: Some("main".into()),
+    };
+    let found = Ok(Some(clone.clone()));
+    update(
+        &mut s,
+        Msg::Create(crate::create::Done::Clone(repo.clone(), found)),
+    );
+    select(&mut s, "tabs");
+    let cmds = press(&mut s, ",D");
+    let rules = BranchRules {
+        protected: false,
+        undeletable: false,
+    };
+    done(&mut s, HDone::Rules(repo.clone(), "tabs".into(), Ok(rules)));
+    assert_eq!(sent(&cmds), HWork::Rules(repo.clone(), "tabs".into()));
+    let ask = asked(&s);
+    assert_eq!(ask.title, "Delete the branch tabs?");
+    assert!(
+        ask.facts
+            .iter()
+            .any(|(f, _)| f.contains("Your clone's own branch tabs stays")),
+        "{:?}",
+        ask.facts
+    );
+    let cmds = press(&mut s, "<Enter>");
+    let delete = HWork::Ref {
+        repo: repo.clone(),
+        kind: RefKind::Branch,
+        name: "tabs".into(),
+        write: RefWrite::Delete,
+        clone: Some(clone),
+    };
+    assert_eq!(sent(&cmds), delete);
+    done(&mut s, HDone::Ref(delete, Ok(())));
+    says(&s, "Deleted the branch tabs");
+    let mut branches = fixtures::branches();
+    branches.items.retain(|b| b.name != "tabs");
+    fetched(
+        &mut s,
+        DataKey::Branches(repo),
+        Data::Branches(Box::new(branches)),
+    );
+    assert_eq!(s.writing.expect, None);
+}
+
+/// `,F` forks into your account, the default branch only unless asked;
+/// the fork's page then follows GitHub until it's there.
+#[test]
+fn a_repository_is_forked_and_opened() {
+    let mut s = with_repo(Mode::Light, crate::theme::ColorDepth::TrueColor);
+    press(&mut s, ",F");
+    let form = Route::Housekeeping(FormOf::Fork(ghtui()));
+    assert_eq!(s.route(), Some(&form));
+    let owners = crate::housekeeping::Data::Owners(crate::housekeeping::fixtures::owners());
+    fetched(
+        &mut s,
+        DataKey::Housekeeping(Key::Owners),
+        Data::Housekeeping(Box::new(owners)),
+    );
+    assert!(page_text(&s).contains("It will be octocat/ghtui"));
+    let cmds = press(&mut s, ",s");
+    let new = NewFork {
+        repo: ghtui(),
+        org: None,
+        name: "ghtui".into(),
+        default_branch_only: true,
+    };
+    assert_eq!(sent(&cmds), HWork::Fork(form.clone(), new));
+    let made = MadeRepo {
+        full_name: "octocat/ghtui".into(),
+        clone_url: "https://github.com/octocat/ghtui.git".into(),
+    };
+    done(&mut s, HDone::Forked(form, Ok(made)));
+    let fork = crate::api::model::RepoId::new("octocat", "ghtui");
+    assert_eq!(s.route(), Some(&Route::Repo(fork)));
+    assert!(s.busy().is_some_and(|b| b.contains("make the repository")));
+}
+
+/// `,C` makes a repository: its owner (an organization you may make
+/// repositories in), name, visibility and templates; then it opens, and
+/// cloning it is offered.
+#[test]
+fn a_new_repository_is_made_and_cloning_offered() {
+    let mut s = with_repo(Mode::Dark, crate::theme::ColorDepth::TrueColor);
+    press(&mut s, ",C");
+    let form = Route::Housekeeping(FormOf::NewRepo);
+    assert_eq!(s.route(), Some(&form));
+    let owners = crate::housekeeping::Data::Owners(crate::housekeeping::fixtures::owners());
+    fetched(
+        &mut s,
+        DataKey::Housekeeping(Key::Owners),
+        Data::Housekeeping(Box::new(owners)),
+    );
+    let templates =
+        crate::housekeeping::Data::Templates(crate::housekeeping::fixtures::templates());
+    fetched(
+        &mut s,
+        DataKey::Housekeeping(Key::Templates),
+        Data::Housekeeping(Box::new(templates)),
+    );
+    assert!(picker(&s), "its name first");
+    press(&mut s, "tools<Enter>");
+    select(&mut s, "Owner");
+    press(&mut s, "<Enter>readers");
+    let readers = crate::writes::rows(&s, &picked(&s), "readers");
+    assert!(
+        readers.iter().all(|(_, chosen)| chosen.is_none()),
+        "not yours to make in"
+    );
+    press(&mut s, "<C-u>ghtui-org<Enter>");
+    select(&mut s, "Visibility");
+    press(&mut s, "<Enter>");
+    select(&mut s, "Licence");
+    press(&mut s, "<Enter>MIT<Enter>");
+    let cmds = press(&mut s, ",s");
+    let new = NewRepo {
+        org: Some("ghtui-org".into()),
+        name: "tools".into(),
+        description: String::new(),
+        private: true,
+        readme: false,
+        gitignore: None,
+        license: Some("mit".into()),
+    };
+    assert_eq!(sent(&cmds), HWork::Repo(form.clone(), new));
+    let made = MadeRepo {
+        full_name: "ghtui-org/tools".into(),
+        clone_url: "https://github.com/ghtui-org/tools.git".into(),
+    };
+    done(&mut s, HDone::Made(form, Ok(made)));
+    let repo = crate::api::model::RepoId::new("ghtui-org", "tools");
+    assert_eq!(s.route(), Some(&Route::Repo(repo)));
+    assert_eq!(asked(&s).title, "Clone ghtui-org/tools?");
+    let cmds = press(&mut s, "<Enter>");
+    assert_eq!(
+        sent(&cmds),
+        HWork::Clone {
+            url: "https://github.com/ghtui-org/tools.git".into(),
+            dir: PathBuf::from("tools"),
+        }
+    );
+}
+
+/// The picker open now.
+fn picked(s: &State) -> crate::writes::Pick {
+    match &s.overlay {
+        Some(Overlay::Picker(p)) => match &p.kind {
+            crate::picker::Kind::Write(pick) => pick.clone(),
+            _ => panic!("not a write picker"),
+        },
+        _ => panic!("no picker"),
+    }
+}
+
+/// What GitHub has of `src/main.rs` on main.
+fn look() -> FileLook {
+    FileLook {
+        repo_id: NodeId::new("R_1"),
+        branch_head: Some("8d1a76430406c877b35d0b627e7f796dcf0dfeca".into()),
+        commit: "8d1a76430406c877b35d0b627e7f796dcf0dfeca".into(),
+        file: Some(FileAt {
+            oid: "b10b".into(),
+            text: fixtures::blob().text,
+        }),
+    }
+}
+
+/// `,e` on a file reads it from GitHub and opens the composer on it; a
+/// new branch is chosen, ctrl-s asks before committing, and the commit
+/// names the file as it was read. The file then opens on the new branch,
+/// and a pull request is offered.
+#[test]
+fn a_file_is_edited_and_committed_on_a_new_branch() {
+    let mut s = with_file(Mode::Dark);
+    update(
+        &mut s,
+        Msg::Create(crate::create::Done::Clone(ghtui(), Ok(None))),
+    );
+    let cmds = press(&mut s, ",e");
+    let form = Route::Housekeeping(FormOf::File {
+        repo: ghtui(),
+        rev: "main".into(),
+        path: "src/main.rs".into(),
+        change: FileChange::Edit,
+    });
+    assert_eq!(s.route(), Some(&form));
+    assert!(matches!(sent(&cmds), HWork::FileLook { .. }), "{cmds:?}");
+    done(&mut s, HDone::Looked(form.clone(), Ok(look())));
+    let Some(Overlay::Compose(c)) = &mut s.overlay else {
+        panic!("no composer");
+    };
+    assert!(c.text().contains("Says hello."));
+    c.input.insert_str("// Edited.\n");
+    press(&mut s, "<Esc>");
+    select(&mut s, "Commit to");
+    press(&mut s, "<Enter>octocat-patch-1<Enter>");
+    press(&mut s, ",s");
+    let ask = asked(&s);
+    assert_eq!(ask.title, "Commit changes?");
+    assert!(
+        ask.facts
+            .iter()
+            .any(|(f, _)| f.contains("a new branch, octocat-patch-1"))
+    );
+    assert!(ask.facts.iter().any(|(f, _)| f == "On GitHub, by you"));
+    let cmds = press(&mut s, "<Enter>");
+    let HWork::Commit(route, write) = sent(&cmds) else {
+        panic!("{cmds:?}");
+    };
+    assert_eq!(route, form);
+    assert_eq!(write.commit.branch, "octocat-patch-1");
+    assert_eq!(write.commit.from.as_deref(), Some(look().commit.as_str()));
+    assert_eq!(
+        write.commit.seen,
+        [("src/main.rs".into(), Some("b10b".into()))]
+    );
+    assert_eq!(write.commit.message, "Update main.rs");
+    let text = &write.commit.additions[0].1;
+    assert!(text.starts_with("// Edited.\nuse std::io;"), "{text}");
+    done(&mut s, HDone::Committed(form, write, Ok(())));
+    let page = Route::blob(ghtui(), "octocat-patch-1".into(), "src/main.rs".into());
+    assert_eq!(s.route(), Some(&page));
+    assert_eq!(asked(&s).title, "Open a pull request for octocat-patch-1?");
+    press(&mut s, "<Enter>");
+    assert_eq!(s.route(), Some(&Route::NewPr(ghtui())));
+    let pr = &s.creating.forms[&Route::NewPr(ghtui())];
+    assert_eq!(pr.head.as_deref(), Some("octocat-patch-1"));
+}
+
+/// A file changed on GitHub since it was opened isn't overwritten: the
+/// commit says so, and the text stays in the form.
+#[test]
+fn a_file_changed_meanwhile_keeps_your_text() {
+    let mut s = with_file(Mode::Light);
+    update(
+        &mut s,
+        Msg::Create(crate::create::Done::Clone(ghtui(), Ok(None))),
+    );
+    press(&mut s, ",e");
+    let form = Route::Housekeeping(FormOf::File {
+        repo: ghtui(),
+        rev: "main".into(),
+        path: "src/main.rs".into(),
+        change: FileChange::Edit,
+    });
+    done(&mut s, HDone::Looked(form.clone(), Ok(look())));
+    let Some(Overlay::Compose(c)) = &mut s.overlay else {
+        panic!("no composer");
+    };
+    c.input.insert_str("Mine. ");
+    press(&mut s, "<C-s>");
+    let cmds = press(&mut s, "<Enter>");
+    let HWork::Commit(_, write) = sent(&cmds) else {
+        panic!("{cmds:?}");
+    };
+    assert_eq!(write.commit.branch, "main");
+    assert_eq!(write.commit.from, None);
+    let why = "src/main.rs changed on GitHub since you opened it: committing would overwrite that";
+    done(
+        &mut s,
+        HDone::Committed(form.clone(), write, Err(why.into())),
+    );
+    assert_eq!(s.route(), Some(&form));
+    assert!(page_text(&s).contains("changed on GitHub since you opened it"));
+    let kept = &s.writing.housekeeping.forms[&form].text;
+    assert!(kept.starts_with("Mine. "), "{kept}");
+}
+
+/// Deleting a file is its own form: `,D` on it, then the commit, asked.
+#[test]
+fn a_file_is_deleted_with_a_commit() {
+    let mut s = with_file(Mode::Dark);
+    update(
+        &mut s,
+        Msg::Create(crate::create::Done::Clone(ghtui(), Ok(None))),
+    );
+    press(&mut s, ",D");
+    let form = Route::Housekeeping(FormOf::File {
+        repo: ghtui(),
+        rev: "main".into(),
+        path: "src/main.rs".into(),
+        change: FileChange::Delete,
+    });
+    assert_eq!(s.route(), Some(&form));
+    done(&mut s, HDone::Looked(form.clone(), Ok(look())));
+    press(&mut s, ",s");
+    assert_eq!(asked(&s).title, "Delete src/main.rs?");
+    let cmds = press(&mut s, "<Enter>");
+    let HWork::Commit(_, write) = sent(&cmds) else {
+        panic!("{cmds:?}");
+    };
+    assert_eq!(write.commit.deletions, ["src/main.rs"]);
+    assert!(write.commit.additions.is_empty());
+    assert_eq!(write.commit.message, "Delete main.rs");
+    done(&mut s, HDone::Committed(form, write, Ok(())));
+    let folder = Route::Tree {
+        repo: ghtui(),
+        rev: "main".into(),
+        path: "src".into(),
+    };
+    assert_eq!(s.route(), Some(&folder));
+}
+
+/// Without write access, each says why, and how GitHub would have you
+/// change the files.
+#[test]
+fn without_write_access_each_says_why() {
+    let mut s = with_file(Mode::Dark);
+    let mut overview = fixtures::overview();
+    overview.can_write = false;
+    fetched(
+        &mut s,
+        DataKey::Repo(ghtui()),
+        Data::Repo(Box::new(overview)),
+    );
+    press(&mut s, ",e");
+    says(
+        &s,
+        "Changing its files takes write access to gold-silver-copper/ghtui: fork it (,F)",
+    );
+    let route = Route::Labels(ghtui());
+    let _ = s.push(route);
+    press(&mut s, ",o");
+    says(&s, "Changing labels takes write access");
+}
+
+/// A file's form opened from within ghtui (by `g/`, with nothing new to
+/// fetch) still reads the file from GitHub.
+#[test]
+fn a_file_form_opened_from_a_page_reads_the_file() {
+    let mut s = with_repo(Mode::Dark, crate::theme::ColorDepth::TrueColor);
+    let cmds = press(
+        &mut s,
+        "g/gold-silver-copper/ghtui/edit/main/README.md<Enter>",
+    );
+    let looks = cmds
+        .iter()
+        .any(|c| matches!(c, Cmd::Write(Work::Housekeeping(HWork::FileLook { .. }))));
+    assert!(looks, "{cmds:?}");
+}

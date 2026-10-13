@@ -137,6 +137,8 @@ impl State {
             Link::Write(link) => crate::writes::follow_link(self, link),
             Link::Artifact { .. } | Link::Dispatch(_) => crate::actions::follow_link(self, link),
             Link::Review(link) => crate::talk::follow(self, link),
+            Link::Setting(link) => crate::settings::follow_link(self, link),
+            Link::Queued(id) => crate::offline::follow(self, *id),
             Link::State(state) => set_list_state(self, state),
             // Enter on a comment doesn't start writing: `>` does.
             Link::Quote { .. } => {
@@ -205,7 +207,15 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
         Route::Blame {
             repo, rev, path, ..
         } => Route::blob(repo.clone(), rev.clone(), path.clone()),
+        Route::Settings {
+            repo,
+            page: crate::api::settings::SettingsPage::Hook(_),
+        } => Route::Settings {
+            repo: repo.clone(),
+            page: crate::api::settings::SettingsPage::Hooks,
+        },
         Route::Issues { repo, .. }
+        | Route::Settings { repo, .. }
         | Route::Discussions {
             of: DiscussionsOf::Repo(repo),
             ..
@@ -234,11 +244,15 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             ..
         } => Route::user(org),
         Route::Release { repo, .. } | Route::NewRelease(repo) => Route::Releases(repo.clone()),
+        Route::EditRelease { repo, tag } => Route::Release {
+            repo: repo.clone(),
+            tag: tag.clone(),
+        },
         Route::Dispatch { repo, file } => Route::Workflow {
             repo: repo.clone(),
             file: file.clone(),
         },
-        Route::NewIssue(repo) => Route::Issues {
+        Route::NewIssue(repo) | Route::Labels(repo) => Route::Issues {
             repo: repo.clone(),
             query: crate::route::OPEN.to_owned(),
         },
@@ -250,6 +264,7 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             repo: repo.clone(),
             closed: false,
         },
+        Route::Housekeeping(of) => of.up()?,
         Route::WorkflowRun { repo, .. }
         | Route::Workflow { repo, .. }
         | Route::Job {
@@ -292,7 +307,10 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             repo: pr.repo.clone(),
             query: crate::route::OPEN.into(),
         },
-        Route::User { .. } | Route::Search { .. } | Route::Notifications { .. } => Route::Home,
+        Route::User { .. }
+        | Route::Search { .. }
+        | Route::Notifications { .. }
+        | Route::Offline => Route::Home,
         Route::Gist { owner, .. } => Route::Gists(owner.clone()?),
         Route::NewGist => Route::Gists(state.viewer.clone()?),
         Route::EditGist { owner, id } => Route::Gist {
@@ -326,6 +344,7 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             project: project.clone(),
             view: *view,
         },
+        Route::Site(page) => page.up(),
     })
 }
 

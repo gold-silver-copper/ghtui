@@ -225,9 +225,9 @@ impl Work {
                     let c = local::clone_of(cwd, &pr.repo.owner, &pr.repo.name)
                         .await?
                         .ok_or_else(|| not_a_clone(&pr.repo))?;
-                    let done =
-                        local::checkout(&c.top, &c.remote, pr.number, &name, track.as_deref())
-                            .await?;
+                    let source = format!("refs/pull/{}/head", pr.number);
+                    let done = local::checkout(&c.top, &c.remote, &source, &name, track.as_deref())
+                        .await?;
                     Ok(done)
                 }
                 .await;
@@ -242,7 +242,7 @@ fn not_a_clone(repo: &RepoId) -> Failure {
 }
 
 /// What the confirmation for a pull request offers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
     Push,
     Create {
@@ -761,7 +761,7 @@ pub fn on_ask_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             ask.selected = (ask.selected + n - 1) % n;
         }
         KeyCode::Enter => {
-            let Some(&(_, answer)) = ask.choices.get(ask.selected) else {
+            let Some((_, answer)) = ask.choices.get(ask.selected).cloned() else {
                 return Vec::new();
             };
             let route = ask.route.clone();

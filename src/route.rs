@@ -137,6 +137,11 @@ pub enum Route {
         kind: AlertKind,
         number: u64,
     },
+    /// A page of a repository's Settings tab ([`crate::settings`]).
+    Settings {
+        repo: RepoId,
+        page: crate::api::settings::SettingsPage,
+    },
     /// An organization's teams.
     Teams(String),
     Team {
@@ -226,6 +231,11 @@ pub enum Route {
     },
     /// A new release's form.
     NewRelease(RepoId),
+    /// The form editing a release, by its tag.
+    EditRelease {
+        repo: RepoId,
+        tag: String,
+    },
     /// A new gist's form.
     NewGist,
     /// The form changing one of your gists.
@@ -238,6 +248,19 @@ pub enum Route {
         repo: RepoId,
         page: Option<String>,
     },
+    /// Insights, Explore and topics, starred lists, packages
+    /// ([`crate::site`]).
+    Site(crate::site::Page),
+    // ---- housekeeping ([`crate::housekeeping`]) ----
+    /// A repository's labels.
+    Labels(RepoId),
+    /// One of housekeeping's forms: a label, a milestone, a fork, a new
+    /// repository, a file.
+    Housekeeping(crate::housekeeping::FormOf),
+    // ---- offline ([`crate::offline`]) ----
+    /// The writes queued for GitHub and the repositories kept offline:
+    /// ghtui's own page, with none on GitHub.
+    Offline,
 }
 
 /// The pages at a revision.
@@ -386,7 +409,8 @@ impl Route {
 
     pub fn url(&self) -> String {
         match self {
-            Route::Home => format!("{}/", links::base()),
+            // The Offline page has none on GitHub: its link is Home's.
+            Route::Home | Route::Offline => format!("{}/", links::base()),
             Route::Repo(repo) => links::repo(repo),
             Route::Tree { repo, rev, path } => links::tree(repo, rev, path),
             Route::Blob {
@@ -508,6 +532,9 @@ impl Route {
             Route::Alert { repo, kind, number } => {
                 format!("{}/security/{}/{number}", links::repo(repo), kind.slug())
             }
+            Route::Settings { repo, page } => {
+                format!("{}/settings{}", links::repo(repo), page.slug())
+            }
             Route::Teams(org) => format!("{}/orgs/{org}/teams", links::base()),
             Route::Team { org, slug } => format!("{}/orgs/{org}/teams/{slug}", links::base()),
             Route::Gist { owner, id } => match owner {
@@ -537,6 +564,11 @@ impl Route {
             Route::NewIssue(repo) => format!("{}/issues/new", links::repo(repo)),
             Route::NewPr(repo) => format!("{}/compare", links::repo(repo)),
             Route::NewRelease(repo) => format!("{}/releases/new", links::repo(repo)),
+            Route::EditRelease { repo, tag } => format!(
+                "{}/releases/edit/{}",
+                links::repo(repo),
+                links::encode_path(tag)
+            ),
             Route::NewGist => format!("{}/", links::gists()),
             Route::EditGist { owner, id } => format!("{}/{owner}/{id}/edit", links::gists()),
             Route::WikiEdit { repo, page } => match page {
@@ -547,6 +579,7 @@ impl Route {
                 ),
                 None => format!("{}/wiki/_new", links::repo(repo)),
             },
+            Route::Site(page) => page.url(),
             Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
             Route::Commit {
                 repo,
@@ -594,6 +627,8 @@ impl Route {
                 view,
                 item,
             } => format!("{}?pane=issue&itemId={item}", view_url(project, *view)),
+            Route::Labels(repo) => format!("{}/labels", links::repo(repo)),
+            Route::Housekeeping(of) => of.url(),
         }
     }
 
@@ -642,6 +677,11 @@ impl Route {
             Route::Alert { repo, kind, number } => {
                 format!("{repo} · {} alert {number}", kind.name())
             }
+            Route::Settings {
+                repo,
+                page: crate::api::settings::SettingsPage::Hook(id),
+            } => format!("{repo} · Webhook {id}"),
+            Route::Settings { repo, page } => format!("{repo} · Settings · {}", page.name()),
             Route::Teams(org) => format!("@{org} · Teams"),
             Route::Team { org, slug } => format!("@{org}/{slug}"),
             Route::Gist { id, .. } => format!("Gist {}", id.get(..7).unwrap_or(id)),
@@ -653,6 +693,7 @@ impl Route {
             Route::NewIssue(repo) => format!("{repo} · New issue"),
             Route::NewPr(repo) => format!("{repo} · New pull request"),
             Route::NewRelease(repo) => format!("{repo} · New release"),
+            Route::EditRelease { repo, tag } => format!("{repo} · Editing {tag}"),
             Route::NewGist => "New gist".to_owned(),
             Route::EditGist { id, .. } => format!("Editing gist {}", id.get(..7).unwrap_or(id)),
             Route::WikiEdit { repo, page: None } => format!("{repo} · New wiki page"),
@@ -660,6 +701,7 @@ impl Route {
                 repo,
                 page: Some(page),
             } => format!("{repo} · Editing {page}"),
+            Route::Site(page) => page.title(),
             Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
             Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
             Route::Commit { repo, oid, .. } => format!("{repo}@{}", short_sha(oid)),
@@ -676,6 +718,9 @@ impl Route {
                 project.owner.login(),
                 project.number
             ),
+            Route::Labels(repo) => format!("{repo} · Labels"),
+            Route::Housekeeping(of) => of.title(),
+            Route::Offline => "Offline".to_owned(),
         }
     }
 
@@ -716,6 +761,7 @@ impl Route {
             }
             | Route::Alerts { repo, .. }
             | Route::Alert { repo, .. }
+            | Route::Settings { repo, .. }
             | Route::Blame { repo, .. }
             | Route::Unsplit { repo, .. }
             | Route::Compare { repo, .. }
@@ -725,15 +771,20 @@ impl Route {
             | Route::NewIssue(repo)
             | Route::NewPr(repo)
             | Route::NewRelease(repo)
+            | Route::EditRelease { repo, .. }
             | Route::WikiEdit { repo, .. }
             | Route::Dispatch { repo, .. }
             | Route::Projects(ProjectsOf::Repo(repo))
+            | Route::Labels(repo)
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
+            Route::Site(page) => page.repo(),
+            Route::Housekeeping(of) => of.repo(),
             Route::Projects(ProjectsOf::Owner(_))
             | Route::Project { .. }
             | Route::ProjectItem { .. }
             | Route::Home
+            | Route::Offline
             | Route::User { .. }
             | Route::Search { .. }
             | Route::Notifications { .. }
@@ -908,6 +959,9 @@ fn parse(parsed: &url::Url) -> Option<Target> {
         .map(|s| s.filter(|p| !p.is_empty()).map(decode).collect())
         .unwrap_or_default();
     let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
+    if let Some(page) = crate::site::parse(&segments, param) {
+        return Some(Target::Page(Route::Site(page)));
+    }
     let route = match segments.as_slice() {
         [] | ["dashboard"] => Route::Home,
         ["search"] => Route::Search {
@@ -937,10 +991,6 @@ fn parse(parsed: &url::Url) -> Option<Target> {
                 Some(_) => return None,
             },
             query: query.unwrap_or_default(),
-        },
-        ["topics", topic] => Route::Search {
-            kind: SearchKind::Repos,
-            query: format!("topic:{topic}"),
         },
         // The dashboards of your pull requests and issues: searches.
         [list @ ("pulls" | "issues"), rest @ ..] => {
@@ -1025,6 +1075,7 @@ fn parse(parsed: &url::Url) -> Option<Target> {
                 Some(_) => return None,
             },
         },
+        ["new"] => Route::Housekeeping(crate::housekeeping::FormOf::NewRepo),
         // GitHub's own pages: settings, apps, the marketplace…
         [first, ..] if RESERVED.contains(first) => return None,
         [o, r, rest @ ..] => return repo_page(RepoId::parse(&format!("{o}/{r}"))?, rest, parsed),
@@ -1100,6 +1151,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
                 Route::Pulls { repo, query }
             }
         }
+        ["labels"] => Route::Labels(repo),
         // A label's issues. Its name goes into a search, which control
         // characters don't survive.
         ["labels", label] if label.contains(char::is_control) => return None,
@@ -1132,6 +1184,14 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             tag: tag.join("/"),
         },
         ["releases", "new"] => Route::NewRelease(repo),
+        ["releases", "edit", tag @ ..] if !tag.is_empty() => Route::EditRelease {
+            repo,
+            tag: tag.join("/"),
+        },
+        // Housekeeping's forms: a fork, a milestone, a file.
+        rest if crate::housekeeping::FormOf::parse(&repo, rest).is_some() => {
+            Route::Housekeeping(crate::housekeeping::FormOf::parse(&repo, rest)?)
+        }
         ["wiki", "_new"] => Route::WikiEdit { repo, page: None },
         ["wiki", page, "_edit"] if !page.contains(char::is_control) => Route::WikiEdit {
             repo,
@@ -1194,6 +1254,20 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
                 .filter(|q| !q.is_empty())
                 .unwrap_or_else(|| OPEN.to_owned());
             Route::Alerts { repo, kind, query }
+        }
+        // The Settings tab's pages ghtui has; the rest are on GitHub.
+        ["settings", rest @ ..] => {
+            use crate::api::settings::SettingsPage as P;
+            let page = match rest {
+                [] => P::General,
+                ["branches" | "branch_protection_rules" | "rules", ..] => P::Branches,
+                ["access" | "collaboration"] => P::Access,
+                ["hooks"] | ["hooks", "new"] => P::Hooks,
+                ["hooks", id] => P::Hook(id.parse().ok().filter(|&n| n > 0)?),
+                ["keys", ..] => P::Keys,
+                _ => return None,
+            };
+            Route::Settings { repo, page }
         }
         ["security", slug, n] if AlertKind::from_slug(slug).is_some() => Route::Alert {
             repo,
@@ -1609,7 +1683,13 @@ pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
     None
 }
 
-fn valid_login(s: &str) -> bool {
+/// Whether `s` is one of GitHub's own first path segments (settings,
+/// the marketplace…), never an owner.
+pub(crate) fn is_reserved(s: &str) -> bool {
+    RESERVED.contains(&s)
+}
+
+pub(crate) fn valid_login(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
@@ -2128,7 +2208,10 @@ pub(crate) mod tests {
     pub(crate) fn variant(route: &Route) -> String {
         // An unsplit page opens its view's page.
         let route = route.split(None).unwrap_or_else(|| route.clone());
-        format!("{route:?}")
+        // One of `crate::site`'s pages by its own name.
+        let named = format!("{route:?}");
+        let named = named.strip_prefix("Site(").unwrap_or(&named);
+        named
             .split(|c: char| !c.is_alphanumeric())
             .next()
             .unwrap_or_default()
@@ -2603,6 +2686,34 @@ pub(crate) mod tests {
                 })
         }
 
+        fn site() -> impl Strategy<Value = crate::site::Page> {
+            use crate::api::explore::Since;
+            use crate::api::packages::{Kind, PackageRef, PackagesOf};
+            use crate::site::{InsightsTab, Page};
+            let package = (
+                login(),
+                prop::sample::select(Kind::ALL.to_vec()),
+                "[a-z0-9][a-z0-9._-]{0,11}",
+            )
+                .prop_map(|(owner, kind, name)| PackageRef { owner, kind, name });
+            prop_oneof![
+                (repo(), prop::sample::select(InsightsTab::ALL.to_vec()))
+                    .prop_map(|(repo, tab)| Page::Insights { repo, tab }),
+                (
+                    prop::option::of("[a-z0-9+#]{1,10}"),
+                    prop::sample::select(Since::ALL.to_vec())
+                )
+                    .prop_map(|(language, since)| Page::Explore { language, since }),
+                "[a-z0-9][a-z0-9-]{0,15}".prop_map(Page::Topic),
+                (login(), "[a-z0-9][a-z0-9-]{0,15}")
+                    .prop_map(|(login, slug)| Page::StarList { login, slug }),
+                login().prop_map(|l| Page::Packages(PackagesOf::Owner(l))),
+                repo().prop_map(|r| Page::Packages(PackagesOf::Repo(r))),
+                (package, prop::option::of(1..u64::MAX))
+                    .prop_map(|(at, version)| Page::Package { at, version }),
+            ]
+        }
+
         fn discussions_of() -> impl Strategy<Value = DiscussionsOf> {
             prop_oneof![
                 repo().prop_map(DiscussionsOf::Repo),
@@ -2677,6 +2788,7 @@ pub(crate) mod tests {
                     })
                     .prop_map(|(repo, page)| Route::Wiki { repo, page }),
                 prop::option::of(repo()).prop_map(Route::Advisories),
+                site().prop_map(Route::Site),
                 (
                     repo(),
                     prop::sample::select(AlertKind::ALL.to_vec()),
@@ -2697,6 +2809,18 @@ pub(crate) mod tests {
                         kind,
                         number
                     }),
+                (
+                    repo(),
+                    prop_oneof![
+                        Just(crate::api::settings::SettingsPage::General),
+                        Just(crate::api::settings::SettingsPage::Branches),
+                        Just(crate::api::settings::SettingsPage::Access),
+                        Just(crate::api::settings::SettingsPage::Hooks),
+                        Just(crate::api::settings::SettingsPage::Keys),
+                        (1..u64::MAX).prop_map(crate::api::settings::SettingsPage::Hook),
+                    ]
+                )
+                    .prop_map(|(repo, page)| Route::Settings { repo, page }),
                 (prop::option::of(repo()), "GHSA(-[2-9a-z]{4}){3}")
                     .prop_map(|(repo, ghsa)| Route::Advisory { repo, ghsa }),
                 login().prop_map(Route::Teams),
@@ -2745,6 +2869,9 @@ pub(crate) mod tests {
                 (repo(), "[A-Za-z0-9._-]{1,12}")
                     .prop_filter("not . or ..", |(_, t)| t != "." && t != "..")
                     .prop_map(|(repo, tag)| Route::Release { repo, tag }),
+                (repo(), "[A-Za-z0-9._-]{1,12}")
+                    .prop_filter("not . or ..", |(_, t)| t != "." && t != "..")
+                    .prop_map(|(repo, tag)| Route::EditRelease { repo, tag }),
                 repo().prop_map(Route::Repo),
                 (repo(), rev.clone(), path()).prop_map(|(repo, rev, path)| Route::Tree {
                     repo,

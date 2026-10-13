@@ -207,6 +207,8 @@ pub enum Subject {
     Alert(crate::api::security::AlertRef),
     /// A discussion and its comments.
     Discussion(crate::api::browse::DiscussionsOf, u64),
+    /// A page of a repository's Settings tab ([`crate::settings`]).
+    Settings(RepoId, crate::api::settings::SettingsPage),
 }
 
 impl Subject {
@@ -222,6 +224,7 @@ impl Subject {
                 kind: *kind,
                 number: *number,
             }),
+            Route::Discussion { of, number } => Subject::Discussion(of.clone(), *number),
             _ => return None,
         })
     }
@@ -262,6 +265,10 @@ impl Subject {
                 of: of.clone(),
                 number: *number,
             },
+            Subject::Settings(repo, page) => Route::Settings {
+                repo: repo.clone(),
+                page: *page,
+            },
         }
     }
 
@@ -280,6 +287,7 @@ impl Subject {
             Subject::Project(project, view) => Need::Data(DataKey::Project(project.clone(), *view)),
             Subject::Alert(a) => Need::Data(DataKey::Alert(a.clone())),
             Subject::Discussion(of, number) => Need::Data(DataKey::Discussion(of.clone(), *number)),
+            Subject::Settings(repo, page) => Need::Data(DataKey::Settings(repo.clone(), *page)),
         }
     }
 
@@ -291,13 +299,14 @@ impl Subject {
                 action,
                 A::Merge | A::Approve | A::ReadyForReview | A::UpdateBranch | A::Close
             ),
-            Subject::Issue(..) | Subject::Alert(_) => action == A::Close,
+            Subject::Issue(..) | Subject::Alert(_) | Subject::Discussion(..) => action == A::Close,
             Subject::Run(..) | Subject::Job(..) => matches!(action, A::Rerun | A::Close),
             Subject::Thread { .. } => matches!(action, A::MarkRead | A::MarkDone),
             Subject::Inbox { .. } => matches!(action, A::MarkAllRead | A::MarkAllDone),
             // Moving and setting go through `crate::projects`, writing in
-            // a discussion through `crate::discuss`.
-            Subject::Project(..) | Subject::Discussion(..) => false,
+            // a discussion through `crate::discuss`, settings through
+            // `crate::settings`.
+            Subject::Project(..) | Subject::Settings(..) => false,
         }
     }
 
@@ -312,6 +321,7 @@ impl Subject {
             Subject::Project(..) => "the project".to_owned(),
             Subject::Alert(_) => "the alert".to_owned(),
             Subject::Discussion(..) => "the discussion".to_owned(),
+            Subject::Settings(repo, _) => format!("{repo}'s settings"),
         }
     }
 }
@@ -368,7 +378,7 @@ fn elsewhere(action: Action) -> &'static str {
         Action::MarkRead | Action::MarkDone => "That works on a notification in your inbox",
         Action::MarkAllRead | Action::MarkAllDone => "That works in your inbox",
         Action::Close => {
-            "Closing works on an issue, a pull request, a security alert or a running workflow run (or its row)"
+            "Closing works on an issue, a pull request, a discussion, a security alert or a running workflow run (or its row)"
         }
         Action::Rerun => "Re-running works on a workflow run or a job",
         _ => "That works on a pull request (or its row in a list)",
@@ -445,9 +455,17 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
                         (
                             "Close as not planned".into(),
                             Change::CloseIssue {
-                                issue: issue_id,
+                                issue: issue_id.clone(),
                                 reason: CloseReason::NotPlanned,
                             },
+                        ),
+                        // Which one it duplicates is chosen next.
+                        (
+                            "Duplicate…".into(),
+                            Change::Manage(crate::api::manage::Manage::CloseAsDuplicate {
+                                issue: issue_id,
+                                of: None,
+                            }),
                         ),
                     ],
                 ),
@@ -526,7 +544,13 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
             crate::security::Plan::Ask(title, facts, choices) => Plan::Ask(title, facts, choices),
             crate::security::Plan::Dismiss(d) => Plan::Dismiss(d),
         }),
-        Subject::Project(..) | Subject::Discussion(..) => Err(elsewhere(action).to_owned()),
+        Subject::Discussion(of, number) => {
+            match crate::manage::discussion_close(state, of, *number)? {
+                Some((title, facts, choices)) => Ok(Plan::Ask(title, facts, choices)),
+                None => Ok(Plan::Load(subject.need())),
+            }
+        }
+        Subject::Project(..) | Subject::Settings(..) => Err(elsewhere(action).to_owned()),
     }
 }
 
@@ -586,7 +610,23 @@ fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Pl
         Action::ReadyForReview if d.state == PrState::Draft => {
             Ok(Plan::Do(Change::ReadyForReview { pr: d.id.clone() }))
         }
-        Action::ReadyForReview if open => Err("It isn't a draft".into()),
+        Action::ReadyForReview if open && !d.may.edit => {
+            Err("Converting it to a draft takes its author or write access".into())
+        }
+        Action::ReadyForReview if open => Ok(Plan::Ask(
+            format!("Convert {pr} to a draft?"),
+            vec![(
+                format!(
+                    "It can't be merged until it's marked ready again ({})",
+                    key(Action::ReadyForReview)
+                ),
+                false,
+            )],
+            vec![(
+                "Convert to draft".into(),
+                Change::Manage(crate::api::manage::Manage::ConvertToDraft { pr: d.id.clone() }),
+            )],
+        )),
         Action::ReadyForReview => Err(not_open()),
         Action::UpdateBranch if !d.may.push_head => Err(format!(
             "Updating it pushes to its branch, {}, which you can't push to",
@@ -759,11 +799,17 @@ pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         }
         KeyCode::Enter => {
             if let Some((_, change)) = confirm.choices.get(confirm.selected) {
-                let by = By::Confirm(confirm.about.clone());
-                let cmd = Cmd::Api(Api::Change(change.clone(), by));
-                confirm.sending = true;
-                confirm.error = None;
-                return vec![cmd];
+                let (change, about) = (change.clone(), confirm.about.clone());
+                // A revert or a transfer answers with what it made; a
+                // duplicate is chosen first.
+                if let Some(cmds) = crate::manage::confirmed(state, &change, &about) {
+                    return cmds;
+                }
+                if let Some(Overlay::Confirm(confirm)) = &mut state.overlay {
+                    confirm.sending = true;
+                    confirm.error = None;
+                }
+                return vec![Cmd::Api(Api::Change(change, By::Confirm(about)))];
             }
         }
         _ => {}
@@ -803,6 +849,8 @@ pub fn on_changed(
             if let Change::Edit(_) = change {
                 cmds.extend(crate::edit::after(state));
             }
+            cmds.extend(crate::manage::after(state, change));
+            cmds.extend(crate::settings::after(state, change));
             match by {
                 By::Confirm(about) | By::Act(about) | By::Edit(about) => {
                     state.awaiting = state.route().map(|route| Awaiting {
@@ -821,10 +869,18 @@ pub fn on_changed(
         }
         Err(err) => {
             tracing::warn!(?change, %err, "a change to GitHub failed");
+            // GitHub couldn't be reached: it waits in the queue, if it can.
+            if let Some(cmds) = crate::offline::queue_change(state, change, &by, &err, sender) {
+                return cmds;
+            }
             if let Change::Star { repo, starred, .. } = change {
                 nav::set_starred(state, repo, !starred);
             }
             let text = failure(change, &err);
+            // A form's text comes back to edit.
+            if sender && crate::settings::refused(state, change, &text) {
+                return Vec::new();
+            }
             match &mut state.overlay {
                 Some(Overlay::Confirm(confirm)) if sender => {
                     confirm.sending = false;
@@ -864,11 +920,10 @@ pub fn waiting(state: &State) -> Option<String> {
 /// see: what the page is about. Past [`POLLS`], it stops waiting.
 pub fn poll(state: &mut State) -> Vec<Need> {
     let Some((need, edit)) = awaiting_here(state).map(|w| {
-        let edit = matches!(w.change, Change::Edit(_));
-        (
-            w.about.need(),
-            edit.then(|| crate::edit::polls(&w.about)).flatten(),
-        )
+        let edit = matches!(w.change, Change::Edit(_)) || crate::manage::polls_activity(&w.change);
+        let more = edit.then(|| crate::edit::polls(&w.about)).flatten();
+        let fields = crate::projects::sidebar::polls(&w.change, &w.about);
+        (w.about.need(), more.or(fields))
     }) else {
         return Vec::new();
     };
@@ -898,10 +953,17 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
     let yes = |b: bool| if b { Shown::Yes } else { Shown::No };
     let pr = |pr: &PrRef| state.prs.get(pr).and_then(|r| r.data.as_ref());
     match (change, about) {
+        (Change::Manage(m), about) => yes(crate::manage::shows(state, m, about)),
+        (Change::Settings(c), Subject::Settings(repo, page)) => {
+            yes(crate::settings::shows(state, c, repo, *page))
+        }
         (_, Subject::Discussion(of, number)) => {
             yes(crate::discuss::shows(state, change, of, *number))
         }
         (Change::Edit(edit), about) => yes(crate::edit::shown(state, edit, about)),
+        (Change::SetProjectField { .. }, Subject::Issue(..) | Subject::Pr(_)) => {
+            yes(crate::projects::sidebar::shows(state, change, about))
+        }
         (_, Subject::Pr(r)) => {
             let Some(d) = pr(r) else {
                 return Shown::No;
@@ -1092,6 +1154,8 @@ fn doing(change: &Change) -> &'static str {
         Change::SetProjectField { .. } => "Setting the field",
         Change::Alert(c) => crate::security::doing(c),
         Change::Project(c) => crate::projects::doing(c),
+        Change::Manage(m) => crate::manage::doing(m),
+        Change::Settings(c) => crate::settings::doing(c),
     }
 }
 
@@ -1144,6 +1208,8 @@ fn done(change: &Change) -> String {
         Change::SetProjectField { said, .. } => format!("Set {said}"),
         Change::Alert(c) => crate::security::done(c),
         Change::Project(c) => crate::projects::done(c).into(),
+        Change::Manage(m) => crate::manage::done(m),
+        Change::Settings(c) => crate::settings::done(c),
     }
 }
 
@@ -1173,6 +1239,8 @@ pub fn needs(change: &Change) -> &'static str {
         Change::SetProjectField { .. } | Change::Project(_) => "Projects: write",
         Change::Alert(c) => crate::security::needs(c),
         Change::Discussion(_) => "Discussions: write",
+        Change::Manage(m) => crate::manage::needs(m),
+        Change::Settings(c) => crate::settings::needs(c),
     }
 }
 
@@ -1204,6 +1272,8 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::SetProjectField { .. } => "setting the field",
         Change::Alert(c) => crate::security::what(c),
         Change::Project(c) => crate::projects::what(c),
+        Change::Manage(m) => crate::manage::what(m),
+        Change::Settings(c) => crate::settings::what(c),
     };
     let reason = match err {
         ApiError::GraphQl(messages) => messages.join("; "),
@@ -1249,6 +1319,15 @@ pub fn doables(state: &State) -> Vec<(Action, String, Option<String>)> {
             let label = match (action, &subject) {
                 (Action::Close, Subject::Run(..) | Subject::Job(..)) => "Cancel the run",
                 (Action::Close, Subject::Alert(_)) => "Dismiss or reopen the alert",
+                (Action::Close, Subject::Discussion(..)) => "Close or reopen the discussion",
+                (Action::ReadyForReview, Subject::Pr(pr)) => {
+                    match state.prs.get(pr).and_then(|r| r.data.as_ref()) {
+                        Some(d) if d.state.is_open() && d.state != PrState::Draft => {
+                            "Convert to draft"
+                        }
+                        _ => "Mark the draft ready for review",
+                    }
+                }
                 (Action::Close, _) => "Close or reopen",
                 (Action::Merge, Subject::Pr(pr)) => (state.prs.get(pr))
                     .and_then(|r| r.data.as_ref())

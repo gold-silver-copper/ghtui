@@ -224,6 +224,11 @@ pub enum ProfileTab {
 #[derive(Debug, Clone, Copy)]
 pub enum ProfileList<'a> {
     Repos(Fetched<'a, Results<RepoSummary>>),
+    /// What a user starred, and their lists.
+    Starred(
+        Fetched<'a, Capped<crate::api::lists::StarList>>,
+        Fetched<'a, Results<RepoSummary>>,
+    ),
     People(Fetched<'a, Results<UserSummary>>),
     /// The overview's are in the profile.
     None,
@@ -315,6 +320,13 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
         page.box_bottom();
     }
     page.blank();
+    let list = match list {
+        ProfileList::Starred(lists, repos) => {
+            super::star_lists(page, &p.login, lists);
+            ProfileList::Repos(repos)
+        }
+        list => list,
+    };
     match (tab, list) {
         (ProfileTab::Overview, _) => {}
         (tab, ProfileList::Repos(repos)) => {
@@ -348,7 +360,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
             people_list(page, title, people, "Nobody here yet.");
             return;
         }
-        (_, ProfileList::None) => return,
+        (_, ProfileList::None | ProfileList::Starred(..)) => return,
     }
     // The overview: pinned (or popular) repositories, then the rest.
     let (title, repos, show_owner) = if p.pinned.is_empty() {

@@ -30,7 +30,7 @@ pub const ITEMS: Check = Check::new(
 
 /// A throwaway project linked to the test repository, deleted when the
 /// check ends: its title, id and URL. Skipped without the project scope.
-fn make_project(cx: &mut Cx, what: &str) -> Result<(String, String, String)> {
+pub(super) fn make_project(cx: &mut Cx, what: &str) -> Result<(String, String, String)> {
     if !cx.env.scopes.iter().any(|s| s == "project") {
         return Err(Cx::skip(
             "the token lacks the project scope (gh auth refresh -s project)",
@@ -251,7 +251,7 @@ fn archived(item: &str) -> Result<Option<bool>> {
 }
 
 /// The item's Status, or "" without one.
-fn status(item: &str) -> Result<String> {
+pub(super) fn status(item: &str) -> Result<String> {
     let data = gh::graphql(
         "query($id: ID!) { node(id: $id) { ... on ProjectV2Item {
             fieldValueByName(name: \"Status\") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } }",

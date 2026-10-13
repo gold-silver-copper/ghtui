@@ -66,10 +66,11 @@ pub(super) fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_la
     if !o.topics.is_empty() {
         let mut topics = Vec::new();
         for t in &o.topics {
+            let target = crate::route::Route::Site(crate::site::Page::Topic(t.to_lowercase()));
             let topic = link_seg(
                 page,
                 format!(" {t} "),
-                url::search(SearchKind::Repos, &format!("topic:{t}")),
+                target.url(),
                 Role::Chip(Bg::PrimaryContainer),
             );
             topics.push(topic);
@@ -100,6 +101,8 @@ pub(super) fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_la
     if let Some(language) = &o.summary.language {
         facts.push(Seg::new(format!("● {language}"), Role::Meta));
     }
+    let packages = format!("{}/packages", url::repo(repo));
+    facts.push(link_seg(page, "⬢ Packages", packages, Role::Meta));
     page.blank();
     if compact_layout {
         let mut segs = Vec::new();
@@ -416,7 +419,8 @@ pub fn releases(page: &mut Page, repo: &RepoId, list: Fetched<'_, Results<Releas
     });
 }
 
-/// A release: its notes and its assets (downloads stay on GitHub).
+/// A release: its notes and its assets, each with its size and how
+/// often it was downloaded (`↵` on one saves it).
 pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
     let mut title = vec![Seg::new(r.name.clone(), Role::Title)];
     release_chips(&mut title, r);
@@ -447,30 +451,29 @@ pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
         format!("Assets  {}", count_of(&r.assets)),
         Role::Strong,
     )];
-    list_box(
-        page,
-        title,
-        Vec::new(),
-        &r.assets,
-        "No assets.",
-        |page, a| {
-            item(page, a.url.clone(), |page, link| {
-                let right = vec![Seg::new(
-                    format!(
-                        "{} · {}",
-                        crate::ui::text::size(a.size),
-                        plural(a.downloads, "download")
-                    ),
-                    Role::Meta,
-                )];
-                page.box_line(
-                    vec![Seg::linked(a.name.clone(), Role::Link, link)],
-                    right,
-                    0,
-                );
-            });
-        },
-    );
+    let hint = if r.assets.is_empty() {
+        Vec::new()
+    } else {
+        vec![Seg::new("↵ saves one", Role::Meta)]
+    };
+    list_box(page, title, hint, &r.assets, "No assets.", |page, a| {
+        let target = Link::Write(crate::ui::page::WriteLink::Asset(a.name.clone()));
+        item(page, target, |page, link| {
+            let right = vec![Seg::new(
+                format!(
+                    "{} · {}",
+                    crate::ui::text::size(a.size),
+                    plural(a.downloads, "download")
+                ),
+                Role::Meta,
+            )];
+            page.box_line(
+                vec![Seg::linked(a.name.clone(), Role::Link, link)],
+                right,
+                0,
+            );
+        });
+    });
 }
 
 /// A repository's tags, each linked to its code.
@@ -667,6 +670,7 @@ mod tests {
             parent: None,
             starred: false,
             can_write: false,
+            can_admin: false,
             id: crate::api::model::NodeId::new("R_1"),
             has_issues: true,
             has_discussions: false,

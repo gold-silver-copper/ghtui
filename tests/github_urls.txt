@@ -88,7 +88,7 @@ https://github.com/rust-lang/rust/releases/tag/1.99.0                       Rele
 https://github.com/rust-lang/rust/releases/download/1.99.0/rust.tar.gz      external download
 # Label, RepositoryTopic, License
 https://github.com/rust-lang/rust/labels/A-attributes                       Issues
-https://github.com/topics/rust                                              Search
+https://github.com/topics/rust                                              Topic
 https://github.com/licenses/mit                                             external not-github
 # CodeOfConduct, ContributingGuidelines (files in the repository)
 https://github.com/rust-lang/rust/blob/main/CODE_OF_CONDUCT.md              Blob
@@ -134,8 +134,11 @@ https://github.com/octocat/Hello-World/projects                             Proj
 https://github.com/octocat/Hello-World/projects/1                           external no-api
 # Package, PackageFile
 https://github.com/octocat/octo-name-repo/packages/40201                    external scope
-https://github.com/orgs/github/packages/container/package/hello_docker      external scope
-https://github.com/users/octocat/packages/container/package/hello_docker    external scope
+https://github.com/orgs/github/packages/container/package/hello_docker      Package
+https://github.com/users/octocat/packages/container/package/hello_docker    Package
+https://github.com/users/octocat/packages/container/hello_docker/12345      Package
+https://github.com/octocat/hello-world/pkgs/container/hello_docker          Package
+https://github.com/octocat/hello-world/packages                             Packages
 # MigrationSource
 https://import.github.com/octocat/socm/import                               external session
 # Contributions (CreatedCommitContribution etc.) link to these:
@@ -207,14 +210,15 @@ https://github.com/torvalds?tab=repositories&sort=stargazers                User
 https://github.com/torvalds?tab=stars                                       User
 https://github.com/torvalds?tab=followers                                   User
 https://github.com/torvalds?tab=following                                   User
-https://github.com/torvalds?tab=packages                                    external scope
+https://github.com/torvalds?tab=packages                                    Packages
 https://github.com/torvalds?tab=projects                                    Projects
 https://github.com/users/torvalds/projects                                  Projects
 https://github.com/stars/torvalds                                           User
+https://github.com/stars/torvalds/lists/rust-tools                          StarList
 https://github.com/orgs/rust-lang/repositories                              User
 https://github.com/orgs/rust-lang/people                                    User
 https://github.com/orgs/rust-lang/projects                                  Projects
-https://github.com/orgs/rust-lang/packages                                  external scope
+https://github.com/orgs/rust-lang/packages                                  Packages
 https://github.com/orgs/rust-lang/discussions                               Discussions
 # A repository's tabs and lists
 https://github.com/rust-lang/rust/issues                                    Issues
@@ -238,17 +242,29 @@ https://github.com/rust-lang/rust/security                                  Advi
 https://github.com/rust-lang/rust/security/advisories                       Advisories
 https://github.com/rust-lang/rust/security/advisories/new                   external session
 https://github.com/rust-lang/rust/pulse                                     external rare
-https://github.com/rust-lang/rust/graphs/contributors                       external rare
-https://github.com/rust-lang/rust/graphs/commit-activity                    external rare
+https://github.com/rust-lang/rust/graphs/contributors                       Insights
+https://github.com/rust-lang/rust/graphs/commit-activity                    Insights
 https://github.com/rust-lang/rust/graphs/code-frequency                     external rare
 https://github.com/rust-lang/rust/network                                   external rare
-https://github.com/rust-lang/rust/network/dependencies                      external rare
+https://github.com/rust-lang/rust/network/dependencies                      Insights
+https://github.com/rust-lang/rust/graphs/traffic                            Insights
+https://github.com/rust-lang/rust/network/dependents                        external no-api
 https://github.com/rust-lang/rust/network/members                           Forks
 https://github.com/rust-lang/rust/community                                 external rare
 https://github.com/rust-lang/rust/activity                                  external rare
 https://github.com/rust-lang/rust/custom-properties                         external session
 https://github.com/rust-lang/rust/attestations                              external rare
-https://github.com/rust-lang/rust/settings                                  external session
+https://github.com/rust-lang/rust/settings                                  Settings
+https://github.com/rust-lang/rust/settings/branches                         Settings
+https://github.com/rust-lang/rust/settings/branch_protection_rules/1234     Settings
+https://github.com/rust-lang/rust/settings/rules                            Settings
+https://github.com/rust-lang/rust/settings/access                           Settings
+https://github.com/rust-lang/rust/settings/hooks                            Settings
+https://github.com/rust-lang/rust/settings/hooks/1234                       Settings
+https://github.com/rust-lang/rust/settings/keys                             Settings
+https://github.com/rust-lang/rust/settings/actions                          external session
+https://github.com/rust-lang/rust/settings/secrets/actions                  external session
+https://github.com/rust-lang/rust/settings/pages                            external session
 https://github.com/rust-lang/rust/branches                                  Branches
 https://github.com/rust-lang/rust/tags                                      Tags
 https://github.com/rust-lang/rust/releases                                  Releases
@@ -258,6 +274,9 @@ https://github.com/rust-lang/rust/stargazers                                Star
 https://github.com/rust-lang/rust/watchers                                  Watchers
 https://github.com/rust-lang/rust/forks                                     Forks
 https://github.com/rust-lang/rust/milestones                                Milestones
+https://github.com/rust-lang/rust/milestones/new                            Housekeeping
+https://github.com/rust-lang/rust/milestones/3/edit                         Housekeeping
+https://github.com/rust-lang/rust/labels                                    Labels
 # Code
 https://github.com/rust-lang/rust/tree/main                                 Tree
 https://github.com/rust-lang/rust/tree/main/compiler                        Tree
@@ -294,9 +313,11 @@ https://github.com/rust-lang/rust/compare/8d1a76430406c877b35d0b627e7f796dcf0dfe
 https://github.com/rust-lang/rust/compare/8d1a76430406c877b35d0b627e7f796dcf0dfeca..b940084d7eb6a299eb4bfeb8e34901bc051e7ac4#diff-b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5L7-R9 files
 https://github.com/rust-lang/rust/compare                                   NewPr
 https://github.com/rust-lang/rust/find/main                                 external rare
-https://github.com/rust-lang/rust/edit/main/README.md                       external session
-https://github.com/rust-lang/rust/new/main                                  external session
-https://github.com/rust-lang/rust/fork                                      external session
+https://github.com/rust-lang/rust/edit/main/README.md                       Housekeeping
+https://github.com/rust-lang/rust/new/main                                  Housekeeping
+https://github.com/rust-lang/rust/new/main/src                              Housekeeping
+https://github.com/rust-lang/rust/delete/main/README.md                     Housekeeping
+https://github.com/rust-lang/rust/fork                                      Housekeeping
 # A pull request's views
 https://github.com/rust-lang/rust/pull/163831/files                         files
 https://github.com/rust-lang/rust/pull/163831/files#diff-b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5R12 files
@@ -315,7 +336,8 @@ https://github.com/login                                                    exte
 https://github.com/signup                                                   external session
 https://github.com/settings/profile                                         external session
 https://github.com/settings/tokens                                          external session
-https://github.com/new                                                      external session
+https://github.com/new                                                      Housekeeping
+https://github.com/new/import                                               external session
 https://github.com/codespaces                                               external session
 https://github.com/marketplace                                              external not-github
 https://github.com/features/actions                                         external not-github
@@ -323,11 +345,11 @@ https://github.com/pricing                                                  exte
 https://github.com/enterprise                                               external not-github
 https://github.com/about                                                    external not-github
 https://github.com/security                                                 external not-github
-https://github.com/trending                                                 external no-api
-https://github.com/trending/rust?since=weekly                               external no-api
-https://github.com/explore                                                  external no-api
+https://github.com/trending                                                 Explore
+https://github.com/trending/rust?since=weekly                               Explore
+https://github.com/explore                                                  Explore
 https://github.com/collections                                              external no-api
-https://github.com/topics                                                   external no-api
+https://github.com/topics                                                   Explore
 https://docs.github.com/en/actions                                          external not-github
 https://github.blog/                                                        external not-github
 https://objects.githubusercontent.com/github-production-release-asset/123   external download

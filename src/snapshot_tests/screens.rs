@@ -86,7 +86,10 @@ pub(crate) fn pr_detail() -> PrDetail {
             push_head: true,
             enable_auto_merge: false,
             disable_auto_merge: false,
+            delete_head: false,
         },
+        head_gone: false,
+        locked: None,
         merge_methods: vec![
             crate::api::change::MergeMethod::Squash,
             crate::api::change::MergeMethod::Merge,

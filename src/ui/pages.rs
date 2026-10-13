@@ -33,6 +33,7 @@ mod conversation;
 mod create;
 mod files;
 mod home;
+mod housekeeping;
 mod inbox;
 mod lists;
 mod profile;
@@ -43,14 +44,23 @@ mod repository;
 mod review;
 mod runs;
 mod security;
+mod settings;
 mod timeline;
 mod writes;
+
+// Insights, Explore, starred lists and packages (`crate::site`).
+mod charts;
+mod explore;
+mod insights;
+mod packages;
+mod starred;
 
 pub use commits::*;
 pub use conversation::*;
 pub use create::*;
 pub use files::*;
 pub use home::*;
+pub use housekeeping::*;
 pub use inbox::*;
 pub use lists::*;
 pub use profile::*;
@@ -61,8 +71,14 @@ pub use repository::*;
 pub use review::*;
 pub use runs::*;
 pub use security::*;
+pub use settings::*;
 pub use timeline::{FOLD_AFTER, LinesAt, Marks, commit_comments, pinned_issues};
 pub use writes::*;
+
+pub use explore::*;
+pub use insights::*;
+pub use packages::*;
+pub use starred::*;
 
 // ---- URLs ----------------------------------------------------------------------
 
@@ -677,6 +693,7 @@ mod tests {
             parent: None,
             starred: false,
             can_write: false,
+            can_admin: false,
             id: crate::api::model::NodeId::new("R_1"),
             has_issues: true,
             has_discussions: false,

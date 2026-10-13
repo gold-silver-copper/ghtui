@@ -35,7 +35,7 @@ pub(crate) const DISCUSSIONS: &str = "query($owner: String!, $name: String!, $af
 
 /// What a discussion's comments and replies show, and what you may do
 /// to them.
-const DISCUSSION_REPLY: &str = "id databaseId author { login } body createdAt viewerCanUpdate viewerCanDelete viewerCanReact reactionGroups { content viewerHasReacted reactors { totalCount } }";
+const DISCUSSION_REPLY: &str = "id databaseId author { login } body createdAt viewerCanUpdate viewerCanDelete viewerCanReact reactionGroups { content viewerHasReacted reactors { totalCount } } isMinimized minimizedReason viewerCanMinimize viewerCanUnminimize";
 
 /// A discussion, its answer and its comments, with what you may do.
 pub(crate) fn discussion() -> String {
@@ -43,7 +43,7 @@ pub(crate) fn discussion() -> String {
         "{DISCUSSION_REPLY} isAnswer upvoteCount viewerCanMarkAsAnswer viewerCanUnmarkAsAnswer"
     );
     format!(
-        "query($owner: String!, $name: String!, $number: Int!) {{ repository(owner: $owner, name: $name) {{ discussion(number: $number) {{ id number title body author {{ login }} createdAt category {{ name isAnswerable }} isAnswered locked upvoteCount viewerCanUpdate viewerCanReact reactionGroups {{ content viewerHasReacted reactors {{ totalCount }} }} answerChosenBy {{ login }} answer {{ {comment} }} comments(first: 50) {{ totalCount nodes {{ {comment} replies(first: 30) {{ totalCount nodes {{ {DISCUSSION_REPLY} }} }} }} }} }} }} }}"
+        "query($owner: String!, $name: String!, $number: Int!) {{ repository(owner: $owner, name: $name) {{ discussion(number: $number) {{ id number title body author {{ login }} createdAt category {{ name isAnswerable }} isAnswered locked activeLockReason closed stateReason viewerCanClose viewerCanReopen viewerCanLabel upvoteCount viewerCanUpdate viewerCanReact reactionGroups {{ content viewerHasReacted reactors {{ totalCount }} }} answerChosenBy {{ login }} answer {{ {comment} }} comments(first: 50) {{ totalCount nodes {{ {comment} replies(first: 30) {{ totalCount nodes {{ {DISCUSSION_REPLY} }} }} }} }} }} }} }}"
     )
 }
 
@@ -165,7 +165,35 @@ pub(crate) const REPO_PROJECTS: &str = "query($owner: String!, $name: String!, $
 const FIELD_ID: &str = "... on ProjectV2FieldCommon { id }";
 
 /// A project, its fields and its views.
-pub(crate) const PROJECT: &str = "query($login: String!, $number: Int!) { repositoryOwner(login: $login) { ... on ProjectV2Owner { projectV2(number: $number) { id title shortDescription url closed public viewerCanUpdate fields(first: 50) { totalCount nodes { ... on ProjectV2FieldCommon { id name dataType } ... on ProjectV2SingleSelectField { options { id name color description } } ... on ProjectV2IterationField { configuration { iterations { id title startDate duration } completedIterations { id title startDate duration } } } } } views(first: 20) { totalCount nodes { number name layout filter fields(first: 50) { totalCount nodes { ... on ProjectV2FieldCommon { id } } } verticalGroupByFields(first: 1) { nodes { ... on ProjectV2FieldCommon { id } } } groupByFields(first: 1) { nodes { ... on ProjectV2FieldCommon { id } } } sortByFields(first: 5) { totalCount nodes { direction field { ... on ProjectV2FieldCommon { id } } } } } } } } } }";
+/// A project's fields, with a single select's options and an
+/// iteration field's iterations.
+const FIELDS: &str = "fields(first: 50) { totalCount nodes { ... on ProjectV2FieldCommon { id name dataType } ... on ProjectV2SingleSelectField { options { id name color description } } ... on ProjectV2IterationField { configuration { iterations { id title startDate duration } completedIterations { id title startDate duration } } } } }";
+
+/// An item's values of its project's fields.
+fn values() -> String {
+    format!(
+        "fieldValues(first: 50) {{ totalCount nodes {{ __typename ... on ProjectV2ItemFieldTextValue {{ text field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldNumberValue {{ number field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldDateValue {{ date field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldSingleSelectValue {{ optionId name field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldIterationValue {{ iterationId title field {{ {FIELD_ID} }} }} }} }}"
+    )
+}
+
+/// A project, its fields and its views.
+pub(crate) fn project() -> String {
+    format!(
+        "query($login: String!, $number: Int!) {{ repositoryOwner(login: $login) {{ ... on ProjectV2Owner {{ projectV2(number: $number) {{ id title shortDescription url closed public viewerCanUpdate {FIELDS} views(first: 20) {{ totalCount nodes {{ number name layout filter fields(first: 50) {{ totalCount nodes {{ {FIELD_ID} }} }} verticalGroupByFields(first: 1) {{ nodes {{ {FIELD_ID} }} }} groupByFields(first: 1) {{ nodes {{ {FIELD_ID} }} }} sortByFields(first: 5) {{ totalCount nodes {{ direction field {{ {FIELD_ID} }} }} }} }} }} }} }} }} }}"
+    )
+}
+
+/// The projects an issue or pull request is in: each one's fields, and
+/// the item's values of them.
+pub(crate) fn projects_of() -> String {
+    let items = format!(
+        "projectItems(first: 10, includeArchived: false) {{ totalCount nodes {{ id project {{ id title url viewerCanUpdate {FIELDS} }} {} }} }}",
+        values()
+    );
+    format!(
+        "query($owner: String!, $name: String!, $number: Int!) {{ repository(owner: $owner, name: $name) {{ issueOrPullRequest(number: $number) {{ ... on Issue {{ {items} }} ... on PullRequest {{ {items} }} }} }} }}"
+    )
+}
 
 /// What an issue or pull request in a project shows.
 const LINKED: &str = "number title url state repository { nameWithOwner } assignees(first: 5) { totalCount nodes { login } } labels(first: 5) { totalCount nodes { name color } } milestone { title }";
@@ -174,7 +202,8 @@ const LINKED: &str = "number title url state repository { nameWithOwner } assign
 /// their values.
 pub(crate) fn project_items() -> String {
     format!(
-        "query($login: String!, $number: Int!, $after: String, $query: String, $archived: [ProjectV2ItemArchivedState!]) {{ repositoryOwner(login: $login) {{ ... on ProjectV2Owner {{ projectV2(number: $number) {{ items(first: 50, after: $after, query: $query, archivedStates: $archived) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ id fullDatabaseId isArchived content {{ __typename ... on DraftIssue {{ id title body assignees(first: 5) {{ totalCount nodes {{ login }} }} }} ... on Issue {{ {LINKED} stateReason }} ... on PullRequest {{ {LINKED} isDraft }} }} fieldValues(first: 50) {{ totalCount nodes {{ __typename ... on ProjectV2ItemFieldTextValue {{ text field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldNumberValue {{ number field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldDateValue {{ date field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldSingleSelectValue {{ optionId name field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldIterationValue {{ iterationId title field {{ {FIELD_ID} }} }} }} }} }} }} }} }} }} }}"
+        "query($login: String!, $number: Int!, $after: String, $query: String, $archived: [ProjectV2ItemArchivedState!]) {{ repositoryOwner(login: $login) {{ ... on ProjectV2Owner {{ projectV2(number: $number) {{ items(first: 50, after: $after, query: $query, archivedStates: $archived) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ id fullDatabaseId isArchived content {{ __typename ... on DraftIssue {{ id title body assignees(first: 5) {{ totalCount nodes {{ login }} }} }} ... on Issue {{ {LINKED} stateReason }} ... on PullRequest {{ {LINKED} isDraft }} }} {} }} }} }} }} }} }}",
+        values()
     )
 }
 
@@ -199,6 +228,120 @@ pub(crate) const UNARCHIVE_PROJECT_ITEM: &str = "mutation($project: ID!, $item: 
 
 /// A draft issue's new title and body.
 pub(crate) const UPDATE_PROJECT_DRAFT: &str = "mutation($draft: ID!, $title: String!, $body: String!) { updateProjectV2DraftIssue(input: {draftIssueId: $draft, title: $title, body: $body}) { draftIssue { id } } }";
+
+// ---- managing an issue, a pull request or a discussion ([`crate::api::manage`]) ----
+
+pub(crate) const CONVERT_TO_DRAFT: &str = "mutation($id: ID!) { convertPullRequestToDraft(input: {pullRequestId: $id}) { pullRequest { id } } }";
+
+pub(crate) const CHANGE_BASE: &str = "mutation($id: ID!, $base: String!) { updatePullRequest(input: {pullRequestId: $id, baseRefName: $base}) { pullRequest { id } } }";
+
+pub(crate) const LOCK: &str = "mutation($id: ID!, $reason: LockReason) { lockLockable(input: {lockableId: $id, lockReason: $reason}) { lockedRecord { locked } } }";
+
+pub(crate) const UNLOCK: &str =
+    "mutation($id: ID!) { unlockLockable(input: {lockableId: $id}) { unlockedRecord { locked } } }";
+
+pub(crate) const PIN_ISSUE: &str =
+    "mutation($id: ID!) { pinIssue(input: {issueId: $id}) { issue { id } } }";
+
+pub(crate) const UNPIN_ISSUE: &str =
+    "mutation($id: ID!) { unpinIssue(input: {issueId: $id}) { issue { id } } }";
+
+pub(crate) const HIDE_COMMENT: &str = "mutation($id: ID!, $reason: ReportedContentClassifiers!) { minimizeComment(input: {subjectId: $id, classifier: $reason}) { minimizedComment { isMinimized } } }";
+
+pub(crate) const UNHIDE_COMMENT: &str = "mutation($id: ID!) { unminimizeComment(input: {subjectId: $id}) { unminimizedComment { isMinimized } } }";
+
+pub(crate) const CLOSE_AS_DUPLICATE: &str = "mutation($id: ID!, $of: ID!) { closeIssue(input: {issueId: $id, stateReason: DUPLICATE, duplicateIssueId: $of}) { issue { id } } }";
+
+pub(crate) const ADD_SUB_ISSUE: &str = "mutation($id: ID!, $child: ID!) { addSubIssue(input: {issueId: $id, subIssueId: $child}) { issue { id } } }";
+
+pub(crate) const REMOVE_SUB_ISSUE: &str = "mutation($id: ID!, $child: ID!) { removeSubIssue(input: {issueId: $id, subIssueId: $child}) { issue { id } } }";
+
+pub(crate) const MOVE_SUB_ISSUE: &str = "mutation($id: ID!, $child: ID!, $before: ID, $after: ID) { reprioritizeSubIssue(input: {issueId: $id, subIssueId: $child, beforeId: $before, afterId: $after}) { issue { id } } }";
+
+pub(crate) const ADD_BLOCKED_BY: &str = "mutation($id: ID!, $by: ID!) { addBlockedBy(input: {issueId: $id, blockingIssueId: $by}) { issue { id } } }";
+
+pub(crate) const REMOVE_BLOCKED_BY: &str = "mutation($id: ID!, $by: ID!) { removeBlockedBy(input: {issueId: $id, blockingIssueId: $by}) { issue { id } } }";
+
+/// The commit a repository's default branch is at.
+pub(crate) const DEFAULT_BRANCH_OID: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { defaultBranchRef { target { oid } } } }";
+
+pub(crate) const LINK_BRANCH: &str = "mutation($id: ID!, $oid: GitObjectID!, $name: String!) { createLinkedBranch(input: {issueId: $id, oid: $oid, name: $name}) { linkedBranch { id } } }";
+
+pub(crate) const CLOSE_DISCUSSION: &str = "mutation($id: ID!, $reason: DiscussionCloseReason) { closeDiscussion(input: {discussionId: $id, reason: $reason}) { discussion { id } } }";
+
+pub(crate) const REOPEN_DISCUSSION: &str =
+    "mutation($id: ID!) { reopenDiscussion(input: {discussionId: $id}) { discussion { id } } }";
+
+pub(crate) const REVERT_PR: &str = "mutation($id: ID!) { revertPullRequest(input: {pullRequestId: $id}) { revertPullRequest { number } } }";
+
+pub(crate) const TRANSFER_ISSUE: &str = "mutation($id: ID!, $repo: ID!) { transferIssue(input: {issueId: $id, repositoryId: $repo}) { issue { number repository { nameWithOwner } } } }";
+
+pub(crate) const START_DISCUSSION: &str = "mutation($repo: ID!, $category: ID!, $title: String!, $body: String!) { createDiscussion(input: {repositoryId: $repo, categoryId: $category, title: $title, body: $body}) { discussion { number } } }";
+
+/// An owner's own repositories, most recently pushed first, with what you
+/// may do in each: where an issue can move.
+pub(crate) const TRANSFER_TARGETS: &str = "query($login: String!) { repositoryOwner(login: $login) { repositories(first: 100, ownerAffiliations: [OWNER], orderBy: {field: PUSHED_AT, direction: DESC}) { totalCount nodes { id nameWithOwner hasIssuesEnabled isArchived viewerPermission } } } }";
+
+/// A repository's open issues, most recently updated first.
+pub(crate) const OPEN_ISSUES: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { issues(first: 50, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) { totalCount nodes { number title } } } }";
+
+/// A repository's discussion categories, and their forms' files.
+pub(crate) const DISCUSSION_FORMS: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id discussionCategories(first: 50) { totalCount nodes { id name slug description isAnswerable } } templates: object(expression: \"HEAD:.github/DISCUSSION_TEMPLATE\") { ... on Tree { entries { name object { ... on Blob { text } } } } } } }";
+
+// ---- Insights, Explore, starred lists, saved replies -------------------------
+
+/// A repository's dependency graph: 20 manifests, the first 100
+/// dependencies of each (under the hawkgirl preview).
+pub(crate) const DEPENDENCY_GRAPH: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { dependencyGraphManifests(first: 20) { totalCount nodes { filename blobPath parseable exceedsMaxSize dependenciesCount dependencies(first: 100) { totalCount nodes { packageName packageManager requirements repository { nameWithOwner } } } } } } }";
+
+/// A topic's stars and the topics GitHub relates to it.
+pub(crate) const TOPIC: &str = "query($name: String!) { topic(name: $name) { name stargazerCount relatedTopics(first: 10) { name } } }";
+
+/// What a starred list's repository row shows.
+const LIST_REPO: &str = "nameWithOwner description stargazerCount forkCount primaryLanguage { name color } pushedAt isPrivate isFork isArchived";
+
+/// Someone's starred lists (yours include the private ones).
+pub(crate) const STAR_LISTS: &str = "query($login: String!) { user(login: $login) { lists(first: 100) { totalCount nodes { id name slug description isPrivate lastAddedAt items { totalCount } } } } }";
+
+/// A starred list's repositories, 30 at a time, newest added first.
+pub(crate) fn star_list_items() -> String {
+    format!(
+        "query($id: ID!, $after: String) {{ node(id: $id) {{ ... on UserList {{ items(first: 30, after: $after) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ ... on Repository {{ {LIST_REPO} }} }} }} }} }} }}"
+    )
+}
+
+/// Your lists, with what's in them, and a repository's ID: what adding
+/// it to a list or taking it out starts from.
+pub(crate) const MY_LISTS: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id viewerHasStarred } viewer { login lists(first: 100) { totalCount nodes { id name slug isPrivate items(first: 100) { totalCount pageInfo { hasNextPage endCursor } nodes { ... on Repository { id } } } } } } }";
+
+/// More of one of your lists' repositories, after the first 100.
+pub(crate) const LIST_MEMBERS: &str = "query($id: ID!, $after: String) { node(id: $id) { ... on UserList { items(first: 100, after: $after) { totalCount pageInfo { hasNextPage endCursor } nodes { ... on Repository { id } } } } } }";
+
+/// Makes a starred list.
+pub(crate) const CREATE_LIST: &str =
+    "mutation($name: String!) { createUserList(input: {name: $name}) { list { id } } }";
+
+/// Sets the lists a repository is in.
+pub(crate) const SET_LISTS: &str = "mutation($item: ID!, $lists: [ID!]!) { updateUserListsForItem(input: {itemId: $item, listIds: $lists}) { lists { id } } }";
+
+/// Deletes one of your starred lists.
+pub(crate) const DELETE_LIST: &str =
+    "mutation($list: ID!) { deleteUserList(input: {listId: $list}) { clientMutationId } }";
+
+/// Your saved replies, most recently changed first.
+pub(crate) const SAVED_REPLIES: &str =
+    "query { viewer { savedReplies(first: 100) { totalCount nodes { id title body } } } }";
+
+// ---- a repository's settings ([`crate::api::settings`]) ----
+
+/// A repository's branch protection rules, with what each asks.
+pub(crate) const PROTECTION_RULES: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id branchProtectionRules(first: 100) { totalCount nodes { id pattern requiresApprovingReviews requiredApprovingReviewCount dismissesStaleReviews requiresCodeOwnerReviews requireLastPushApproval requiresStatusChecks requiresStrictStatusChecks requiredStatusChecks { context app { id } } requiresConversationResolution requiresCommitSignatures requiresLinearHistory lockBranch isAdminEnforced allowsForcePushes allowsDeletions matchingRefs(first: 10) { totalCount nodes { name } } } } } }";
+
+pub(crate) const CREATE_PROTECTION_RULE: &str = "mutation($input: CreateBranchProtectionRuleInput!) { createBranchProtectionRule(input: $input) { branchProtectionRule { id } } }";
+
+pub(crate) const UPDATE_PROTECTION_RULE: &str = "mutation($input: UpdateBranchProtectionRuleInput!) { updateBranchProtectionRule(input: $input) { branchProtectionRule { id } } }";
+
+pub(crate) const DELETE_PROTECTION_RULE: &str = "mutation($id: ID!) { deleteBranchProtectionRule(input: {branchProtectionRuleId: $id}) { clientMutationId } }";
 
 /// Every query here, by name, built with sample input.
 #[cfg(test)]
@@ -240,7 +383,8 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ("team", team()),
         ("OWNER_PROJECTS", OWNER_PROJECTS.to_owned()),
         ("REPO_PROJECTS", REPO_PROJECTS.to_owned()),
-        ("PROJECT", PROJECT.to_owned()),
+        ("project", project()),
+        ("projects_of", projects_of()),
         ("project_items", project_items()),
         ("SET_PROJECT_FIELD", SET_PROJECT_FIELD.to_owned()),
         ("CLEAR_PROJECT_FIELD", CLEAR_PROJECT_FIELD.to_owned()),
@@ -251,7 +395,51 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ("ARCHIVE_PROJECT_ITEM", ARCHIVE_PROJECT_ITEM.to_owned()),
         ("UNARCHIVE_PROJECT_ITEM", UNARCHIVE_PROJECT_ITEM.to_owned()),
         ("UPDATE_PROJECT_DRAFT", UPDATE_PROJECT_DRAFT.to_owned()),
+        ("DEPENDENCY_GRAPH", DEPENDENCY_GRAPH.to_owned()),
+        ("TOPIC", TOPIC.to_owned()),
+        ("STAR_LISTS", STAR_LISTS.to_owned()),
+        ("star_list_items", star_list_items()),
+        ("MY_LISTS", MY_LISTS.to_owned()),
+        ("LIST_MEMBERS", LIST_MEMBERS.to_owned()),
+        ("CREATE_LIST", CREATE_LIST.to_owned()),
+        ("SET_LISTS", SET_LISTS.to_owned()),
+        ("DELETE_LIST", DELETE_LIST.to_owned()),
+        ("SAVED_REPLIES", SAVED_REPLIES.to_owned()),
     ];
+    // Managing an issue, a pull request or a discussion.
+    all.extend([
+        ("CONVERT_TO_DRAFT", CONVERT_TO_DRAFT.to_owned()),
+        ("CHANGE_BASE", CHANGE_BASE.to_owned()),
+        ("LOCK", LOCK.to_owned()),
+        ("UNLOCK", UNLOCK.to_owned()),
+        ("PIN_ISSUE", PIN_ISSUE.to_owned()),
+        ("UNPIN_ISSUE", UNPIN_ISSUE.to_owned()),
+        ("HIDE_COMMENT", HIDE_COMMENT.to_owned()),
+        ("UNHIDE_COMMENT", UNHIDE_COMMENT.to_owned()),
+        ("CLOSE_AS_DUPLICATE", CLOSE_AS_DUPLICATE.to_owned()),
+        ("ADD_SUB_ISSUE", ADD_SUB_ISSUE.to_owned()),
+        ("REMOVE_SUB_ISSUE", REMOVE_SUB_ISSUE.to_owned()),
+        ("MOVE_SUB_ISSUE", MOVE_SUB_ISSUE.to_owned()),
+        ("ADD_BLOCKED_BY", ADD_BLOCKED_BY.to_owned()),
+        ("REMOVE_BLOCKED_BY", REMOVE_BLOCKED_BY.to_owned()),
+        ("DEFAULT_BRANCH_OID", DEFAULT_BRANCH_OID.to_owned()),
+        ("LINK_BRANCH", LINK_BRANCH.to_owned()),
+        ("CLOSE_DISCUSSION", CLOSE_DISCUSSION.to_owned()),
+        ("REOPEN_DISCUSSION", REOPEN_DISCUSSION.to_owned()),
+        ("REVERT_PR", REVERT_PR.to_owned()),
+        ("TRANSFER_ISSUE", TRANSFER_ISSUE.to_owned()),
+        ("START_DISCUSSION", START_DISCUSSION.to_owned()),
+        ("TRANSFER_TARGETS", TRANSFER_TARGETS.to_owned()),
+        ("OPEN_ISSUES", OPEN_ISSUES.to_owned()),
+        ("DISCUSSION_FORMS", DISCUSSION_FORMS.to_owned()),
+    ]);
+    // A repository's settings.
+    all.extend([
+        ("PROTECTION_RULES", PROTECTION_RULES.to_owned()),
+        ("CREATE_PROTECTION_RULE", CREATE_PROTECTION_RULE.to_owned()),
+        ("UPDATE_PROTECTION_RULE", UPDATE_PROTECTION_RULE.to_owned()),
+        ("DELETE_PROTECTION_RULE", DELETE_PROTECTION_RULE.to_owned()),
+    ]);
     for field in ["stargazers", "watchers"] {
         all.push((
             "users(repository)",

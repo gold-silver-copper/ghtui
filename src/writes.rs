@@ -23,23 +23,29 @@ use crate::route::Route;
 use crate::state::{Cmd, Overlay, State};
 
 /// The actions these writes add.
-pub const ACTIONS: [Action; 4] = [
+pub const ACTIONS: [Action; 6] = [
     Action::Watch,
     Action::NewRelease,
+    Action::UploadAsset,
     Action::NewGist,
     Action::NewWikiPage,
+    Action::Lists,
 ];
 
 /// The forms being written, and the change GitHub accepted that the page
 /// on screen doesn't show yet.
 #[derive(Debug, Default)]
 pub struct Writing {
-    /// New releases, by repository: leaving the form keeps it.
-    pub releases: HashMap<RepoId, crate::release::Form>,
+    /// New and edited releases, by their form's page: leaving the form
+    /// keeps it.
+    pub releases: HashMap<Route, crate::release::Form>,
     /// New and edited gists, by their form's page.
     pub gists: HashMap<Route, crate::gist::Form>,
     /// New and edited wiki pages, by their form's page.
     pub wikis: HashMap<Route, crate::wiki::form::Form>,
+    /// Labels, milestones, branches and tags, forks, new repositories
+    /// and files.
+    pub housekeeping: crate::housekeeping::Housekeeping,
     pub expect: Option<Expect>,
 }
 
@@ -51,6 +57,12 @@ pub enum Work {
     /// Commit and push a wiki page; the form's page asked.
     Wiki(Route, crate::wiki::Save),
     Watch(crate::watch::Work),
+    /// A revert, a transfer, a new discussion, a branch checked out, and
+    /// what their pickers list ([`crate::manage`]).
+    Manage(crate::manage::Work),
+    /// Starred lists and packages ([`crate::site`]).
+    Site(crate::site::Work),
+    Housekeeping(crate::housekeeping::Work),
 }
 
 /// Work's answer.
@@ -61,6 +73,9 @@ pub enum Done {
     /// The page's title as its URL names it, or why it wasn't saved.
     Wiki(Route, Result<String, String>),
     Watch(crate::watch::Done),
+    Manage(crate::manage::Done),
+    Site(crate::site::Done),
+    Housekeeping(Box<crate::housekeeping::Done>),
 }
 
 impl Done {
@@ -71,6 +86,9 @@ impl Done {
             Done::Gist(d) => d.wrote(),
             Done::Wiki(_, result) => result.is_ok(),
             Done::Watch(d) => d.wrote(),
+            Done::Manage(d) => d.wrote(),
+            Done::Site(d) => d.wrote(),
+            Done::Housekeeping(d) => d.wrote(),
         }
     }
 }
@@ -84,6 +102,9 @@ impl Work {
             Work::Gist(w) => Done::Gist(w.failed(bug)),
             Work::Wiki(route, _) => Done::Wiki(route.clone(), Err(bug)),
             Work::Watch(w) => Done::Watch(w.failed(bug)),
+            Work::Manage(w) => Done::Manage(w.failed(bug)),
+            Work::Site(w) => Done::Site(w.failed(bug)),
+            Work::Housekeeping(w) => Done::Housekeeping(Box::new(w.failed(bug))),
         }
     }
 
@@ -93,6 +114,9 @@ impl Work {
             Work::Gist(w) => Done::Gist(w.run(gh).await),
             Work::Wiki(route, save) => Done::Wiki(route, crate::wiki::save(git, &save).await),
             Work::Watch(w) => Done::Watch(w.run(gh).await),
+            Work::Manage(w) => Done::Manage(w.run(gh, &git.cwd).await),
+            Work::Site(w) => Done::Site(w.run(gh).await),
+            Work::Housekeeping(w) => Done::Housekeeping(Box::new(w.run(gh).await)),
         }
     }
 }
@@ -105,6 +129,9 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
         Done::Gist(d) => crate::gist::on_done(state, d),
         Done::Wiki(route, result) => crate::wiki::form::on_saved(state, &route, result),
         Done::Watch(d) => crate::watch::on_done(state, d),
+        Done::Manage(d) => crate::manage::on_done(state, d),
+        Done::Site(d) => crate::site::on_done(state, d),
+        Done::Housekeeping(d) => crate::housekeeping::on_done(state, *d),
     }
 }
 
@@ -124,7 +151,12 @@ pub fn reason(err: &crate::api::ApiError) -> String {
 pub fn is_form(route: &Route) -> bool {
     matches!(
         route,
-        Route::NewRelease(_) | Route::NewGist | Route::EditGist { .. } | Route::WikiEdit { .. }
+        Route::NewRelease(_)
+            | Route::EditRelease { .. }
+            | Route::NewGist
+            | Route::EditGist { .. }
+            | Route::WikiEdit { .. }
+            | Route::Housekeeping(_)
     )
 }
 
@@ -134,10 +166,14 @@ pub fn claims(state: &State, action: Action) -> bool {
     let route = state.route();
     ACTIONS.contains(&action)
         || match action {
-            Action::EditComment => {
-                matches!(route, Some(Route::Wiki { .. } | Route::Gist { .. }))
+            Action::EditComment => matches!(
+                route,
+                Some(Route::Wiki { .. } | Route::Gist { .. } | Route::Release { .. })
+            ),
+            Action::DeleteComment => {
+                matches!(route, Some(Route::Gist { .. } | Route::Release { .. }))
+                    || crate::site::deletes_here(route)
             }
-            Action::DeleteComment => matches!(route, Some(Route::Gist { .. })),
             Action::Create => route.is_some_and(is_form),
             _ => false,
         }
@@ -150,16 +186,24 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     match (action, &route) {
         (Action::Watch, _) => crate::watch::open(state),
         (Action::NewRelease, _) => crate::release::open(state),
+        (Action::UploadAsset, _) => crate::release::assets::open_upload(state),
+        (Action::EditComment, Some(Route::Release { .. })) => crate::release::open_edit(state),
+        (Action::DeleteComment, Some(Route::Release { .. })) => crate::release::ask_delete(state),
         (Action::NewGist, _) => crate::gist::open_new(state),
         (Action::NewWikiPage, _) => crate::wiki::form::open_new(state),
         (Action::EditComment, Some(Route::Wiki { .. })) => crate::wiki::form::open_edit(state),
         (Action::EditComment, Some(Route::Gist { .. })) => crate::gist::open_edit(state),
         (Action::DeleteComment, Some(Route::Gist { .. })) => crate::gist::ask_delete(state),
-        (Action::Create, Some(Route::NewRelease(_))) => crate::release::submit(state),
+        (Action::Lists, _) => crate::site::lists::open(state),
+        (Action::DeleteComment, Some(Route::Site(_))) => crate::site::ask_delete(state),
+        (Action::Create, Some(Route::NewRelease(_) | Route::EditRelease { .. })) => {
+            crate::release::submit(state)
+        }
         (Action::Create, Some(Route::NewGist | Route::EditGist { .. })) => {
             crate::gist::submit(state)
         }
         (Action::Create, Some(Route::WikiEdit { .. })) => crate::wiki::form::submit(state),
+        (Action::Create, Some(Route::Housekeeping(_))) => crate::housekeeping::act(state, action),
         _ => {
             state.info(action.not_here());
             Vec::new()
@@ -169,7 +213,10 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
 
 /// The menu's rows for what changes GitHub, wherever you are.
 pub fn change_doables(state: &State) -> Vec<Doable> {
-    Vec::from_iter(crate::watch::doable(state))
+    let mut out = Vec::from_iter(crate::watch::doable(state));
+    out.extend(crate::site::lists::doable(state));
+    out.extend(crate::housekeeping::change_doables(state));
+    out
 }
 
 /// The menu's rows for the page on screen.
@@ -177,6 +224,8 @@ pub fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
     crate::release::doables(state, route, out);
     crate::gist::doables(state, route, out);
     crate::wiki::form::doables(state, route, out);
+    crate::site::doables(state, route, out);
+    crate::housekeeping::doables(state, route, out);
 }
 
 /// A menu row.
@@ -201,33 +250,41 @@ pub(crate) fn row(
 /// What the composer writes on one of these forms.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Text {
-    /// A new release's title and notes.
-    Release(RepoId),
+    /// A release's title and notes, on its form's page.
+    Release(Route),
     /// One of a gist's files, by its place in the form.
     GistFile(Route, usize),
     /// A wiki page's text (a new page's title first).
     Wiki(Route),
+    /// A milestone's description, a file's text.
+    Housekeeping(Route),
 }
 
 impl Text {
     /// The composer's title.
     pub fn title(&self, state: &State) -> String {
         match self {
+            Text::Release(Route::EditRelease { tag, .. }) => {
+                format!("Editing {tag}: its title on the first line, then its notes")
+            }
             Text::Release(_) => {
                 "New release: its title on the first line, then its notes".to_owned()
             }
             Text::GistFile(route, i) => crate::gist::file_title(state, route, *i),
             Text::Wiki(route) => crate::wiki::form::title(state, route),
+            Text::Housekeeping(route) => crate::housekeeping::compose_title(route),
         }
     }
 
     /// What ctrl-s does, for the composer's hint.
     pub fn save(&self) -> &'static str {
         match self {
+            Text::Release(Route::EditRelease { .. }) => "save…",
             Text::Release(_) => "publish…",
             Text::GistFile(Route::NewGist, _) => "create gist…",
             Text::GistFile(..) => "save gist",
             Text::Wiki(_) => "save page",
+            Text::Housekeeping(route) => crate::housekeeping::compose_save(route),
         }
     }
 
@@ -235,14 +292,16 @@ impl Text {
     pub fn anchor(&self) -> Link {
         match self {
             Text::GistFile(_, i) => Link::Write(WriteLink::File(*i)),
-            Text::Release(_) | Text::Wiki(_) => Link::Comment,
+            Text::Release(_) | Text::Wiki(_) | Text::Housekeeping(_) => Link::Comment,
         }
     }
 
     fn route(&self) -> Route {
         match self {
-            Text::Release(repo) => Route::NewRelease(repo.clone()),
-            Text::GistFile(route, _) | Text::Wiki(route) => route.clone(),
+            Text::Release(route)
+            | Text::GistFile(route, _)
+            | Text::Wiki(route)
+            | Text::Housekeeping(route) => route.clone(),
         }
     }
 }
@@ -251,7 +310,7 @@ impl Text {
 #[must_use]
 pub fn compose(state: &mut State) -> Vec<Cmd> {
     match state.route() {
-        Some(Route::NewRelease(_)) => crate::release::compose(state),
+        Some(Route::NewRelease(_) | Route::EditRelease { .. }) => crate::release::compose(state),
         Some(Route::NewGist | Route::EditGist { .. }) => {
             let selected = match state.screen() {
                 crate::state::Screen::Page(p) => p.selected_link().cloned(),
@@ -264,6 +323,7 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
             crate::gist::compose(state, file)
         }
         Some(Route::WikiEdit { .. }) => crate::wiki::form::compose(state),
+        Some(Route::Housekeeping(_)) => crate::housekeeping::compose(state),
         _ => Vec::new(),
     }
 }
@@ -271,9 +331,10 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
 /// The composer's text, kept with its form (esc, or before saving).
 pub fn keep_text(state: &mut State, text: &Text, written: String) {
     match text {
-        Text::Release(repo) => crate::release::keep_text(state, repo, written),
+        Text::Release(route) => crate::release::keep_text(state, route, written),
         Text::GistFile(route, i) => crate::gist::keep_text(state, route, *i, written),
         Text::Wiki(route) => crate::wiki::form::keep_text(state, route, written),
+        Text::Housekeeping(route) => crate::housekeeping::keep_text(state, route, written),
     }
     state.data_gen += 1;
 }
@@ -296,10 +357,20 @@ pub fn save(state: &mut State) -> Vec<Cmd> {
 /// Enter on one of a form's rows.
 #[must_use]
 pub fn follow_link(state: &mut State, link: &WriteLink) -> Vec<Cmd> {
+    if let WriteLink::Housekeeping(row) = link {
+        return crate::housekeeping::follow_link(state, *row);
+    }
     match state.route() {
-        Some(Route::NewRelease(_)) => crate::release::follow_link(state, link),
+        Some(Route::NewRelease(_) | Route::EditRelease { .. }) => {
+            crate::release::follow_link(state, link)
+        }
+        Some(Route::Release { .. }) => match link {
+            WriteLink::Asset(name) => crate::release::assets::open(state, name),
+            _ => Vec::new(),
+        },
         Some(Route::NewGist | Route::EditGist { .. }) => crate::gist::follow_link(state, link),
         Some(Route::WikiEdit { .. }) => crate::wiki::form::submit(state),
+        Some(Route::Housekeeping(_)) => crate::housekeeping::act(state, Action::Create),
         _ => Vec::new(),
     }
 }
@@ -318,6 +389,8 @@ pub fn describe(link: &WriteLink) -> &'static str {
         WriteLink::Remove(_) => "Remove the file",
         WriteLink::AddFile => "Add a file",
         WriteLink::Save => "Save it",
+        WriteLink::Asset(_) => "Save the asset",
+        WriteLink::Housekeeping(row) => crate::housekeeping::describe(*row),
     }
 }
 
@@ -376,14 +449,21 @@ pub(crate) fn close_sender(state: &mut State, route: &Route) {
 pub enum Pick {
     /// How you're notified of it.
     Watch(Watched),
-    /// A new release's tag.
-    Tag(RepoId),
+    /// A release's tag, on its form's page.
+    Tag(Route),
     /// What a new tag is made at.
-    Target(RepoId),
+    Target(Route),
+    /// Where to save a release's asset.
+    SaveAsset(crate::release::assets::Of),
+    /// A file to upload to a release.
+    Upload(crate::release::assets::Of),
     /// The gist's description.
     Description(Route),
     /// A file's name (`None`: a new file's).
     FileName(Route, Option<usize>),
+    /// Starred lists' ([`crate::site`]).
+    Site(crate::site::Pick),
+    Housekeeping(crate::housekeeping::Pick),
 }
 
 impl Pick {
@@ -396,6 +476,10 @@ impl Pick {
             Pick::Description(_) => "Gist description",
             Pick::FileName(_, None) => "Add a file",
             Pick::FileName(..) => "Rename the file",
+            Pick::Site(pick) => pick.title(),
+            Pick::SaveAsset(_) => "Save the asset",
+            Pick::Upload(_) => "Upload an asset",
+            Pick::Housekeeping(pick) => pick.title(),
         }
     }
 
@@ -406,6 +490,10 @@ impl Pick {
             Pick::Target(_) => "Find a branch, or type a commit's SHA",
             Pick::Description(_) => "Type the description",
             Pick::FileName(..) => "Type the file's name, with its extension",
+            Pick::Site(pick) => pick.placeholder(),
+            Pick::SaveAsset(_) => "A file or folder (↵ saves in the current folder)",
+            Pick::Upload(_) => "A file's path (a folder lists its files)",
+            Pick::Housekeeping(pick) => pick.placeholder(),
         }
     }
 
@@ -413,9 +501,13 @@ impl Pick {
     pub fn need(&self) -> Option<DataKey> {
         match self {
             Pick::Watch(w) => Some(DataKey::Subscription(w.clone())),
-            Pick::Tag(repo) => Some(DataKey::Tags(repo.clone())),
-            Pick::Target(repo) => Some(DataKey::Branches(repo.clone())),
-            Pick::Description(_) | Pick::FileName(..) => None,
+            Pick::Tag(route) => route.repo().map(|r| DataKey::Tags(r.clone())),
+            Pick::Target(route) => route.repo().map(|r| DataKey::Branches(r.clone())),
+            Pick::Description(_) | Pick::FileName(..) | Pick::SaveAsset(_) | Pick::Upload(_) => {
+                None
+            }
+            Pick::Site(pick) => pick.need(),
+            Pick::Housekeeping(pick) => pick.need(),
         }
     }
 
@@ -424,6 +516,7 @@ impl Pick {
         match self {
             Pick::Description(route) => crate::gist::description(state, route),
             Pick::FileName(route, Some(i)) => crate::gist::file_name(state, route, *i),
+            Pick::Housekeeping(pick) => pick.start(state),
             _ => None,
         }
     }
@@ -433,10 +526,21 @@ impl Pick {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Chosen {
     Subscribe(crate::watch::Work),
-    Tag(RepoId, String),
-    Target(RepoId, String),
+    Tag(Route, String),
+    Target(Route, String),
+    SaveAsset {
+        of: crate::release::assets::Of,
+        path: std::path::PathBuf,
+        replace: bool,
+    },
+    Upload {
+        of: crate::release::assets::Of,
+        path: std::path::PathBuf,
+    },
     Description(Route, String),
     FileName(Route, Option<usize>, String),
+    Site(crate::site::Chosen),
+    Housekeeping(crate::housekeeping::Chosen),
 }
 
 /// Opens one of these pickers, its field holding what's set now.
@@ -454,10 +558,14 @@ pub fn open_picker(state: &mut State, pick: Pick) -> Vec<Cmd> {
 pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
     match pick {
         Pick::Watch(w) => crate::watch::rows(state, w, q),
-        Pick::Tag(repo) => crate::release::tag_rows(state, repo, q),
-        Pick::Target(repo) => crate::release::target_rows(state, repo, q),
+        Pick::Tag(route) => crate::release::tag_rows(state, route, q),
+        Pick::Target(route) => crate::release::target_rows(state, route, q),
+        Pick::SaveAsset(of) => crate::release::assets::save_rows(of, q),
+        Pick::Upload(of) => crate::release::assets::upload_rows(state, of, q),
         Pick::Description(route) => crate::gist::description_rows(route, q),
         Pick::FileName(route, file) => crate::gist::name_rows(state, route, *file, q),
+        Pick::Site(pick) => crate::site::rows(state, pick, q),
+        Pick::Housekeeping(pick) => crate::housekeeping::rows(state, pick, q),
     }
 }
 
@@ -478,31 +586,54 @@ pub(crate) fn item(
 pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
     match chosen {
         Chosen::Subscribe(work) => crate::watch::choose(state, work),
-        Chosen::Tag(repo, tag) => crate::release::choose_tag(state, &repo, tag),
-        Chosen::Target(repo, target) => crate::release::choose_target(state, &repo, target),
+        Chosen::Tag(route, tag) => crate::release::choose_tag(state, &route, tag),
+        Chosen::Target(route, target) => crate::release::choose_target(state, &route, target),
+        chosen @ (Chosen::SaveAsset { .. } | Chosen::Upload { .. }) => {
+            crate::release::assets::choose(state, chosen)
+        }
         Chosen::Description(route, text) => crate::gist::set_description(state, &route, text),
         Chosen::FileName(route, file, name) => crate::gist::set_name(state, &route, file, name),
+        Chosen::Site(chosen) => crate::site::choose(state, chosen),
+        Chosen::Housekeeping(chosen) => crate::housekeeping::choose(state, chosen),
     }
 }
 
 // ---- questions -------------------------------------------------------------------
 
 /// The answers to these writes' questions, asked in [`crate::create::Ask`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
-    Release { draft: bool },
-    Gist { public: bool },
+    Release {
+        draft: bool,
+    },
+    DeleteRelease,
+    /// The deleted release's tag too.
+    DeleteTag,
+    KeepTag,
+    /// The release's asset of this name.
+    DeleteAsset(String),
+    Gist {
+        public: bool,
+    },
     DeleteGist,
+    Site(crate::site::Answer),
+    Housekeeping(crate::housekeeping::Answer),
 }
 
 impl Answer {
     /// What's happening while GitHub answers.
-    pub fn busy(self) -> &'static str {
+    pub fn busy(&self) -> &'static str {
         match self {
             Answer::Release { draft: true } => "Saving the draft…",
-            Answer::Release { .. } => "Publishing the release…",
+            Answer::Release { .. } => "Saving the release…",
+            Answer::DeleteRelease => "Deleting the release…",
+            Answer::DeleteTag => "Deleting the tag…",
+            Answer::KeepTag => "",
+            Answer::DeleteAsset(_) => "Deleting the asset…",
             Answer::Gist { .. } => "Creating the gist…",
             Answer::DeleteGist => "Deleting the gist…",
+            Answer::Site(a) => a.busy(),
+            Answer::Housekeeping(a) => a.busy(),
         }
     }
 }
@@ -512,8 +643,20 @@ impl Answer {
 pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
     match answer {
         Answer::Release { draft } => crate::release::create(state, route, draft),
+        Answer::DeleteRelease => crate::release::delete(state, route),
+        Answer::DeleteTag => crate::release::delete_tag(state, route),
+        Answer::KeepTag => {
+            close_sender(state, route);
+            if let Route::Release { tag, .. } = route {
+                state.info(format!("Kept the tag {tag}"));
+            }
+            Vec::new()
+        }
+        Answer::DeleteAsset(name) => crate::release::assets::delete(state, &name),
         Answer::Gist { public } => crate::gist::create(state, route, public),
         Answer::DeleteGist => crate::gist::delete(state, route),
+        Answer::Site(a) => crate::site::answer(state, route, a),
+        Answer::Housekeeping(a) => crate::housekeeping::answer(state, route, a),
     }
 }
 
@@ -559,6 +702,23 @@ pub struct Expect {
 pub enum Expected {
     /// A published release's page.
     Release(RepoId, String),
+    /// A release's page, as it was edited.
+    Edited {
+        repo: RepoId,
+        tag: String,
+        name: String,
+        notes: String,
+        prerelease: bool,
+    },
+    /// A release no longer among the releases.
+    ReleaseGone(RepoId, String),
+    /// A release's page with its asset `name` (or without it).
+    Asset {
+        repo: RepoId,
+        tag: String,
+        name: String,
+        there: bool,
+    },
     /// A draft among the releases.
     Draft(RepoId, String),
     /// A gist with this description and these files' names and text.
@@ -572,6 +732,9 @@ pub enum Expected {
     Subscription(Watched, SubscriptionState),
     /// A wiki page with this text, as its page's data is keyed.
     Wiki(DataKey, String),
+    /// Starred lists' and packages' ([`crate::site`]).
+    Site(crate::site::Expected),
+    Housekeeping(crate::housekeeping::Expected),
 }
 
 impl Expected {
@@ -579,6 +742,7 @@ impl Expected {
     fn needs(&self, route: &Route) -> Vec<Need> {
         match self {
             Expected::Subscription(w, _) => vec![Need::Data(DataKey::Subscription(w.clone()))],
+            Expected::Site(e) => e.needs(),
             _ => crate::browse::needs(route),
         }
     }
@@ -586,11 +750,18 @@ impl Expected {
     /// What the status bar says meanwhile.
     fn waiting(&self) -> &'static str {
         match self {
-            Expected::Release(..) | Expected::Draft(..) => "Waiting for GitHub to show the release",
+            Expected::Release(..) | Expected::Draft(..) | Expected::Edited { .. } => {
+                "Waiting for GitHub to show the release"
+            }
+            Expected::ReleaseGone(..) => "Waiting for GitHub to show the release gone",
+            Expected::Asset { there: true, .. } => "Waiting for GitHub to show the asset",
+            Expected::Asset { .. } => "Waiting for GitHub to show the asset gone",
             Expected::Gist { .. } => "Waiting for GitHub to show the gist",
             Expected::GistGone(..) => "Waiting for GitHub to show the gist gone",
             Expected::Subscription(..) => "Waiting for GitHub to show the subscription",
             Expected::Wiki(..) => "Waiting for GitHub to show the page",
+            Expected::Site(e) => e.waiting(),
+            Expected::Housekeeping(e) => e.waiting(),
         }
     }
 
@@ -600,6 +771,27 @@ impl Expected {
             Expected::Release(repo, tag) => {
                 (state.picked::<Release>(&DataKey::Release(repo.clone(), tag.clone()))).is_some()
             }
+            Expected::Edited {
+                repo,
+                tag,
+                name,
+                notes,
+                prerelease,
+            } => (state.picked::<Release>(&DataKey::Release(repo.clone(), tag.clone())))
+                .is_some_and(|r| {
+                    r.name == *name
+                        && r.prerelease == *prerelease
+                        && r.notes.as_deref().unwrap_or_default().trim() == notes.trim()
+                }),
+            Expected::ReleaseGone(repo, tag) => (state
+                .picked::<Results<Release>>(&DataKey::Releases(repo.clone())))
+            .is_some_and(|r| r.items.iter().all(|r| r.tag != *tag)),
+            Expected::Asset {
+                repo,
+                tag,
+                name,
+                there,
+            } => crate::release::assets::shows(state, repo, tag, name, *there),
             Expected::Draft(repo, tag) => (state
                 .picked::<Results<Release>>(&DataKey::Releases(repo.clone())))
             .is_some_and(|r| r.items.iter().any(|r| r.tag == *tag && r.draft)),
@@ -630,6 +822,8 @@ impl Expected {
             Expected::Wiki(key, text) => state
                 .picked::<WikiPage>(key)
                 .is_some_and(|w| w.text.as_deref().map(str::trim_end) == Some(text.trim_end())),
+            Expected::Site(e) => e.shown(state),
+            Expected::Housekeeping(e) => e.shown(state),
         }
     }
 }
@@ -690,5 +884,6 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     let mut cmds = crate::release::follow(state);
     cmds.extend(crate::gist::follow(state));
     cmds.extend(crate::wiki::form::follow(state));
+    cmds.extend(crate::housekeeping::follow(state));
     cmds
 }

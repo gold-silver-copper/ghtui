@@ -34,6 +34,10 @@ const ALLOWED: &[(&str, &str)] = &[
         "GitHub keeps at most 4 social accounts",
     ),
     (
+        "TOPIC: topic.relatedTopics",
+        "A topic's related topics: GitHub relates at most 10",
+    ),
+    (
         "BRANCHES: repository.refs.nodes.associatedPullRequests",
         "Only the newest from this branch in this repository is shown; 10 newer ones from forks' branches of the same name is not worth paging for",
     ),
@@ -375,7 +379,6 @@ fn typed() -> Vec<(&'static str, String)> {
         Mutation e::UpdateReview, e::BodyVariables;
         Mutation e::DeleteReview, e::EditIdVariables;
         Query t::ReviewsQuery, q::PageVariables;
-        Query t::ProjectsOfQuery, q::NumberVariables;
         Mutation e::UpdateIssueTitle, e::TitleVariables;
         Mutation e::UpdatePrTitle, e::TitleVariables;
         Mutation e::AddReaction, e::ReactVariables;
@@ -404,7 +407,10 @@ fn every_query_is_valid_and_says_what_it_leaves_out() {
     let schema = Schema::new(&doc, text);
     let mut errors = Vec::new();
     let mut allowed = HashSet::new();
-    for (name, query) in typed().into_iter().chain(crate::api::raw::all()) {
+    let raw = crate::api::raw::all()
+        .into_iter()
+        .chain(crate::api::housekeeping::queries());
+    for (name, query) in typed().into_iter().chain(raw) {
         let report = check(&schema, name, &query);
         errors.extend(report.errors);
         allowed.extend(report.allowed);
@@ -418,6 +424,81 @@ fn every_query_is_valid_and_says_what_it_leaves_out() {
         }
     }
     assert!(errors.is_empty(), "{}", errors.join("\n"));
+}
+
+/// Every query, without what the oldest Enterprise Server lacks, is
+/// still a valid query: what's left out leaves no empty selection or
+/// variable behind, and what stands in is a field GitHub has.
+#[test]
+fn every_query_without_what_an_old_server_lacks_is_valid() {
+    use crate::api::enterprise::{Server, Version, lacks, rewrite};
+    let text = include_str!(env!("GITHUB_SDL"));
+    let doc = cynic_parser::parse_type_system_document(text).unwrap();
+    let schema = Schema::new(&doc, text);
+    let old = lacks(Server {
+        version: Some(Version(3, 9)),
+    });
+    let mut errors = Vec::new();
+    let mut rewritten = 0;
+    for (name, query) in typed().into_iter().chain(crate::api::raw::all()) {
+        let Some(done) = rewrite(&query, &old) else {
+            continue;
+        };
+        rewritten += 1;
+        errors.extend(check(&schema, name, &done.query).errors);
+        let doc = cynic_parser::parse_executable_document(&done.query).unwrap();
+        for op in doc.operations() {
+            for var in op.variable_definitions() {
+                let used = done.query.matches(&format!("${}", var.name())).count() > 1;
+                if !used {
+                    errors.push(format!("{name}: ${} is declared but not used", var.name()));
+                }
+            }
+        }
+    }
+    assert!(rewritten > 5, "only {rewritten} queries lack anything");
+    assert!(errors.is_empty(), "{}", errors.join("\n"));
+}
+
+/// What an Enterprise Server's schema lacks of what ghtui asks: run with
+/// `GHTUI_GHES_SDL` naming one of the schemas GitHub publishes (in
+/// github/docs, `src/graphql/data/ghes-3.N/schema.docs-enterprise.graphql`),
+/// it lists them, to keep [`crate::api::enterprise`]'s table up to date.
+#[test]
+#[ignore = "reads an Enterprise Server's schema named by GHTUI_GHES_SDL"]
+#[expect(clippy::print_stdout, reason = "its report is its output")]
+fn what_an_enterprise_schema_lacks() {
+    let path = std::env::var("GHTUI_GHES_SDL").unwrap();
+    let text = std::fs::read_to_string(path).unwrap();
+    let doc = cynic_parser::parse_type_system_document(&text).unwrap();
+    let schema = Schema::new(&doc, &text);
+    // With its version in GHTUI_GHES_VERSION, what ghtui leaves out for
+    // it is left out first: then nothing should be listed.
+    let version = std::env::var("GHTUI_GHES_VERSION").ok();
+    let server = crate::api::enterprise::Server {
+        version: version.and_then(|v| crate::api::enterprise::Version::parse(&v)),
+    };
+    let left_out = crate::api::enterprise::lacks(server);
+    let mut lacks = std::collections::BTreeSet::new();
+    for (name, query) in typed().into_iter().chain(crate::api::raw::all()) {
+        let query = match server.version {
+            Some(_) => {
+                crate::api::enterprise::rewrite(&query, &left_out).map_or(query, |r| r.query)
+            }
+            None => query,
+        };
+        for error in check(&schema, name, &query).errors {
+            // Only what's missing: the rest is checked against github.com.
+            if let Some((_, what)) = error.split_once(": no ").or(error.split_once(": takes no")) {
+                lacks.insert(format!("{what}    ({error})"));
+            } else if error.contains("takes no") {
+                lacks.insert(error);
+            }
+        }
+    }
+    for line in lacks {
+        println!("{line}");
+    }
 }
 
 /// The checks above catch what they're meant to.

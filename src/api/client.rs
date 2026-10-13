@@ -62,6 +62,10 @@ pub enum ApiError {
     GraphQl(Vec<String>),
     #[error("network error: {0}")]
     Network(String),
+    /// GitHub couldn't be reached, and nothing was sent
+    /// ([`crate::api::reach`]).
+    #[error("GitHub can't be reached ({0})")]
+    Offline(String),
     #[error("unexpected response from GitHub: {0}")]
     Decode(String),
     #[error("could not start HTTP client: {0}")]
@@ -69,6 +73,9 @@ pub enum ApiError {
     /// A bug in ghtui, not a problem with GitHub.
     #[error("internal error: {0}")]
     Internal(String),
+    /// The Enterprise Server doesn't have it, said as what and which.
+    #[error("{0}")]
+    Unsupported(String),
 }
 
 impl From<serde_json::Error> for ApiError {
@@ -103,6 +110,21 @@ pub struct GitHub {
     doubts: Arc<Mutex<Vec<String>>>,
     /// Where responses are recorded, for the corpus (never by the app).
     recorder: Option<Arc<crate::api::corpus::Recorder>>,
+    /// What an Enterprise Server is known to lack: its version's (asked
+    /// once), what it said it lacks, and what of it was said.
+    enterprise: Arc<Enterprise>,
+    /// Whether GitHub can be reached ([`crate::api::reach`]).
+    reach: crate::api::reach::Reach,
+}
+
+/// An Enterprise Server's version, and what it's known to lack.
+#[derive(Default)]
+struct Enterprise {
+    server: tokio::sync::OnceCell<crate::api::enterprise::Server>,
+    learned: Mutex<Vec<crate::api::enterprise::Lack>>,
+    /// What pages go without, said once each: what was, and what's yet
+    /// to be.
+    said: Mutex<(Vec<String>, Vec<String>)>,
 }
 
 struct Http {
@@ -177,6 +199,9 @@ enum Request<'a> {
         body: &'a serde_json::Value,
         /// Safe to send twice: a query, not a mutation.
         idempotent: bool,
+        /// A preview's media type, for fields GitHub serves only under
+        /// one (the dependency graph's).
+        accept: Option<&'static str>,
     },
     /// A REST change (a re-run, marking a thread read), with a JSON body
     /// if it takes one.
@@ -226,7 +251,162 @@ impl GitHub {
             left_out: Arc::default(),
             doubts: Arc::default(),
             recorder: None,
+            enterprise: Arc::default(),
+            reach: crate::api::reach::Reach::default(),
         }
+    }
+
+    /// Whether GitHub can be reached, to follow.
+    pub fn reach(&self) -> &crate::api::reach::Reach {
+        &self.reach
+    }
+
+    /// One GET of the rate limit (which costs nothing), whatever the
+    /// reach: any answer means GitHub is there.
+    pub(crate) async fn probe_once(&self) -> Result<(), ApiError> {
+        let client = self.client().await?;
+        let url = format!("{}/rate_limit", self.http.rest);
+        match client.get(url).send().await {
+            Ok(_) => {
+                self.reach.found();
+                Ok(())
+            }
+            Err(err) => {
+                if err.is_connect() {
+                    self.reach.lost();
+                }
+                Err(crate::api::reach::offline(&err))
+            }
+        }
+    }
+
+    /// For tests: an Enterprise Server `host`, served by a local server
+    /// at `base_uri` (its REST there, its GraphQL at `/graphql`).
+    pub fn enterprise_at(token: Token, store: Store, host: Host, base_uri: &str) -> Self {
+        let rest = base_uri.trim_end_matches('/');
+        let graphql = format!("{rest}/graphql");
+        Self::with_bases(token, store, host, rest.to_owned(), graphql)
+    }
+
+    /// The Enterprise Server this is, with its version, asked once; on
+    /// github.com, `None`.
+    async fn server(&self) -> Option<crate::api::enterprise::Server> {
+        use crate::api::enterprise::{Server, Version};
+        if !self.http.host.is_enterprise() {
+            return None;
+        }
+        let server = self.enterprise.server.get_or_init(|| async {
+            #[derive(serde::Deserialize)]
+            struct Meta {
+                installed_version: Option<String>,
+            }
+            let request = Request::Get {
+                path: META,
+                cached: None,
+            };
+            let meta = (self.send_as_is(&request).await)
+                .ok()
+                .filter(|r| r.status.is_success());
+            let version = meta
+                .and_then(|r| serde_json::from_str::<Meta>(&r.body).ok())
+                .and_then(|m| Version::parse(&m.installed_version?));
+            tracing::info!(?version, "the Enterprise Server's version");
+            Server { version }
+        });
+        Some(*server.await)
+    }
+
+    /// Says, once each, what pages go without on `server`.
+    fn missing(&self, server: crate::api::enterprise::Server, about: &[String]) {
+        let mut said = self
+            .enterprise
+            .said
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (all, new) = &mut *said;
+        let fresh: Vec<String> = (about.iter())
+            .filter(|a| !all.contains(a))
+            .cloned()
+            .collect();
+        if fresh.is_empty() {
+            return;
+        }
+        all.extend(fresh.iter().cloned());
+        new.push(format!(
+            "{} doesn't have {}: ghtui goes without",
+            server.name(),
+            fresh.join(", ")
+        ));
+    }
+
+    /// What an Enterprise Server lacks that pages go without, not yet
+    /// said.
+    pub fn take_missing(&self) -> Vec<String> {
+        let mut said = self
+            .enterprise
+            .said
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::mem::take(&mut said.1)
+    }
+
+    /// A GraphQL request `body` as `server` can take it: without what it
+    /// lacks, and what its answer reads in place of each field left out.
+    fn for_server(
+        &self,
+        server: crate::api::enterprise::Server,
+        body: &Value,
+    ) -> (Value, Vec<(Vec<String>, Value)>) {
+        use crate::api::enterprise::{lacks, rewrite};
+        let mut lacks = lacks(server);
+        lacks.extend(
+            self.enterprise
+                .learned
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .cloned(),
+        );
+        let query = body
+            .get("query")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let Some(done) = rewrite(query, &lacks) else {
+            return (body.clone(), Vec::new());
+        };
+        self.missing(server, &done.about);
+        let mut sent = body.clone();
+        if let Some(map) = sent.as_object_mut() {
+            map.insert("query".into(), Value::String(done.query));
+            if let Some(Value::Object(vars)) = map.get_mut("variables") {
+                for name in &done.unused {
+                    vars.remove(name);
+                }
+            }
+        }
+        (sent, done.fills)
+    }
+
+    /// Learns what a server's refusal says it lacks; whether it learned
+    /// anything new.
+    fn learn(&self, messages: &[String]) -> bool {
+        let mut learned = self
+            .enterprise
+            .learned
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut new = false;
+        for lack in messages
+            .iter()
+            .filter_map(|m| crate::api::enterprise::learn(m))
+        {
+            if !learned.iter().any(|l| l.missing == lack.missing) {
+                tracing::info!(?lack, "the Enterprise Server lacks it");
+                learned.push(lack);
+                new = true;
+            }
+        }
+        new
     }
 
     /// Records every response into `dir`, for the corpus. The token isn't
@@ -393,6 +573,27 @@ impl GitHub {
     }
 
     async fn send(&self, request: &Request<'_>) -> Result<Response, ApiError> {
+        // A REST endpoint an Enterprise Server lacks isn't asked.
+        if let Request::Get { path, .. } | Request::Write { path, .. } = request
+            && *path != META
+            && let Some(server) = self.server().await
+            && let Some(about) = crate::api::enterprise::rest_lack(server, path)
+        {
+            self.missing(server, &[about.to_owned()]);
+            return Err(ApiError::Unsupported(format!(
+                "{} doesn't have {about}",
+                server.name()
+            )));
+        }
+        self.send_as_is(request).await
+    }
+
+    /// [`Self::send`], whatever the server lacks.
+    async fn send_as_is(&self, request: &Request<'_>) -> Result<Response, ApiError> {
+        // Unreachable: the cache answers, and only a probe asks.
+        if self.reach.offline_since().is_some() {
+            return Err(ApiError::Offline("not sent while offline".into()));
+        }
         let client = self.client().await?;
         let mut attempt = 0;
         loop {
@@ -419,8 +620,12 @@ impl GitHub {
                     }
                     get.send().await
                 }
-                Request::Post { body, .. } => {
-                    client.post(&self.http.graphql).json(body).send().await
+                Request::Post { body, accept, .. } => {
+                    let post = client.post(&self.http.graphql).json(body);
+                    match accept {
+                        Some(accept) => post.header(header::ACCEPT, *accept).send().await,
+                        None => post.send().await,
+                    }
                 }
                 Request::Write { method, path, body } => {
                     let url = format!("{}{path}", self.http.rest);
@@ -440,8 +645,14 @@ impl GitHub {
                     backoff(attempt).await;
                     continue;
                 }
+                // It never left: GitHub can't be reached.
+                Err(err) if err.is_connect() => {
+                    self.reach.lost();
+                    return Err(crate::api::reach::offline(&err));
+                }
                 Err(err) => return Err(ApiError::Network(err.to_string())),
             };
+            self.reach.found();
             let status = response.status();
             self.rejected
                 .0
@@ -540,6 +751,17 @@ impl GitHub {
         self.ask(&body, false).await?.mutation::<Value>().map(drop)
     }
 
+    /// [`Self::mutate_json`], for a mutation whose answer says what it
+    /// made.
+    pub(crate) async fn mutate_json_for<T: DeserializeOwned>(
+        &self,
+        query: &str,
+        variables: Value,
+    ) -> Result<T, ApiError> {
+        let body = serde_json::json!({ "query": query, "variables": variables });
+        self.ask(&body, false).await?.mutation()
+    }
+
     /// Runs a query given as text (built at run time, or read as JSON) for
     /// the value at `at`, a JSON pointer into its data; a null there is
     /// missing, which [`Reply::found`] explains. Point at the deepest value
@@ -556,21 +778,84 @@ impl GitHub {
         reply.at(subject, at, |errors| self.leave_out(errors))
     }
 
+    /// A query (or, not `idempotent`, a mutation) given as text, for its
+    /// data whole: for a query of several roots, or what a mutation made.
+    /// Any error fails it, with GitHub's messages.
+    pub(crate) async fn graphql_data<T: DeserializeOwned>(
+        &self,
+        query: &str,
+        variables: Value,
+        idempotent: bool,
+    ) -> Result<T, ApiError> {
+        let body = serde_json::json!({ "query": query, "variables": variables });
+        self.ask(&body, idempotent).await?.mutation()
+    }
+
+    /// [`Self::graphql_json`], under a preview's media type `accept`.
+    pub(crate) async fn graphql_preview<T: DeserializeOwned>(
+        &self,
+        query: &str,
+        variables: Value,
+        subject: impl std::fmt::Display,
+        at: &str,
+        accept: &'static str,
+    ) -> Result<T, ApiError> {
+        let body = serde_json::json!({ "query": query, "variables": variables });
+        let reply = self.ask_as(&body, true, Some(accept)).await?;
+        reply.at(subject, at, |errors| self.leave_out(errors))
+    }
+
     /// Posts a GraphQL request: the one place that reads GitHub's errors.
     /// A query's NOT_FOUND that explains a null in the data is dropped (the
     /// null says it); a mutation (not `idempotent`) keeps every error. A
     /// response without data is an error.
     async fn ask(&self, body: &Value, idempotent: bool) -> Result<Reply, ApiError> {
+        self.ask_as(body, idempotent, None).await
+    }
+
+    /// [`Self::ask`], under a preview's media type.
+    async fn ask_as(
+        &self,
+        body: &Value,
+        idempotent: bool,
+        accept: Option<&'static str>,
+    ) -> Result<Reply, ApiError> {
         #[derive(serde::Deserialize)]
         struct Wire {
             #[serde(default)]
             data: Value,
             errors: Option<Vec<GqlError>>,
         }
-        let response = self.send(&Request::Post { body, idempotent }).await?;
-        check_status(&response, "GitHub's GraphQL API")?;
-        let wire: Wire = serde_json::from_str(&response.body)?;
-        let errors = wire.errors.unwrap_or_default();
+        let server = self.server().await;
+        let mut tries = 0;
+        let (mut wire, fills) = loop {
+            let (sent, fills) = match server {
+                Some(server) => self.for_server(server, body),
+                None => (body.clone(), Vec::new()),
+            };
+            let request = Request::Post {
+                body: &sent,
+                idempotent,
+                accept,
+            };
+            let response = self.send(&request).await?;
+            check_status(&response, "GitHub's GraphQL API")?;
+            let wire: Wire = serde_json::from_str(&response.body)?;
+            // An Enterprise Server refusing a query for what it lacks
+            // has run none of it: asked again without that, it may answer.
+            tries += 1;
+            if server.is_some() && wire.data.is_null() && tries < 4 {
+                let said = (wire.errors.iter().flatten())
+                    .filter_map(|e| e.message.clone())
+                    .collect::<Vec<_>>();
+                if self.learn(&said) {
+                    continue;
+                }
+            }
+            break (wire, fills);
+        };
+        crate::api::enterprise::patch(&mut wire.data, &fills);
+        let errors = wire.errors.take().unwrap_or_default();
         let missing_root = errors
             .iter()
             .any(|e| e.is_root() && e.explains_null(&wire.data));
@@ -762,11 +1047,25 @@ impl GitHub {
         dest: &std::path::Path,
         replace: bool,
     ) -> Result<u64, ApiError> {
+        self.download_as(path, "application/vnd.github+json", dest, replace)
+            .await
+    }
+
+    /// [`Self::download`], asking for the answer as `accept` (a release
+    /// asset's bytes are `application/octet-stream`).
+    pub(crate) async fn download_as(
+        &self,
+        path: &str,
+        accept: &str,
+        dest: &std::path::Path,
+        replace: bool,
+    ) -> Result<u64, ApiError> {
         let failed =
             |e: &dyn std::fmt::Display| ApiError::Network(format!("{}: {e}", dest.display()));
         let client = self.client().await?;
         let mut response = client
             .get(format!("{}{path}", self.http.rest))
+            .header(header::ACCEPT, accept)
             .send()
             .await
             .map_err(|e| ApiError::Network(e.to_string()))?;
@@ -810,6 +1109,40 @@ impl GitHub {
         };
         kept.map_err(|e| failed(&e.error))?;
         Ok(size)
+    }
+
+    /// Sends the file at `file` to `url` (a release's upload URL, on
+    /// GitHub's uploads host), as it's read, as `content_type`: GitHub's
+    /// answer. Never sent twice.
+    pub(crate) async fn upload(
+        &self,
+        url: &str,
+        content_type: &str,
+        file: &std::path::Path,
+    ) -> Result<String, ApiError> {
+        let failed =
+            |e: &dyn std::fmt::Display| ApiError::Network(format!("{}: {e}", file.display()));
+        let client = self.client().await?;
+        let opened = tokio::fs::File::open(file).await.map_err(|e| failed(&e))?;
+        let size = opened.metadata().await.map_err(|e| failed(&e))?.len();
+        let response = client
+            .post(url)
+            .header(header::CONTENT_TYPE, content_type)
+            .header(header::CONTENT_LENGTH, size)
+            .body(reqwest::Body::from(opened))
+            .send()
+            .await
+            .map_err(|e| ApiError::Network(e.to_string()))?;
+        let answer = Response {
+            status: response.status(),
+            headers: response.headers().clone(),
+            body: response
+                .text()
+                .await
+                .map_err(|e| ApiError::Network(e.to_string()))?,
+        };
+        check_status(&answer, "the release's assets")?;
+        Ok(answer.body)
     }
 
     /// GETs a REST path and decodes its JSON.
@@ -2733,6 +3066,11 @@ impl GitHub {
             .map(|(_, name)| name.clone()))
     }
 
+    /// The cache this client keeps its answers in.
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
     /// Saves a small value in the cache (e.g. recently visited pages).
     pub async fn remember<T: Serialize + Send + 'static>(&self, key: &str, value: T) {
         let store = self.store.clone();
@@ -2909,6 +3247,9 @@ fn messages(errors: impl IntoIterator<Item = GqlError>) -> Vec<String> {
     };
     errors.into_iter().map(said).collect()
 }
+
+/// Where an Enterprise Server says its version.
+const META: &str = "/meta";
 
 /// How many items a REST list page holds here.
 const REST_PAGE: u64 = 30;

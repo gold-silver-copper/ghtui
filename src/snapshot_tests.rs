@@ -699,11 +699,26 @@ mod projects;
 /// Discussions: writing an answer, replying in a thread, reacting and
 /// marking the answer, each followed until GitHub shows it.
 mod discussions;
+/// Labels, milestones, branches and tags, forks, new repositories and
+/// files.
+mod housekeeping;
+/// Managing an issue, a pull request or a discussion: its branch, draft
+/// and base, a revert, locking, pinning, moving, hiding a comment,
+/// sub-issues and what blocks it, a branch for it, new discussions.
+mod manage;
+/// Changing a release and its assets.
+mod releases;
 /// Reviews and timelines: what a review said and where, the reviewers,
 /// every review, and the events between comments.
 mod reviews;
 /// The Security tab's alerts: their lists and pages, and dismissing and
 /// reopening them.
 mod security;
+/// A repository's Settings tab: protection rules and rulesets, collaborators,
+/// webhooks, deploy keys and archiving, each asked about and followed.
+mod settings;
+/// Insights, Explore and topics, starred lists, packages and their
+/// writes.
+mod site;
 /// Releases, gists, wiki pages and subscriptions.
 mod writes;

@@ -380,6 +380,10 @@ pub struct PrDetail {
     /// Its description, as edits name it.
     pub editable: Editable,
     pub sidebar: SidebarPermits,
+    /// Its head branch is gone (deleted, or its fork is).
+    pub head_gone: bool,
+    /// Its conversation is locked: only collaborators comment.
+    pub locked: Option<crate::api::manage::Locked>,
 }
 
 /// Your pending review on a pull request: what you started and haven't
@@ -408,6 +412,8 @@ pub struct PrPermits {
     pub push_head: bool,
     pub enable_auto_merge: bool,
     pub disable_auto_merge: bool,
+    /// Delete its head branch.
+    pub delete_head: bool,
 }
 
 /// Auto-merge, turned on: by whom, and how it will merge.
@@ -581,7 +587,7 @@ pub struct PatchFile {
     pub patch: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReviewEvent {
     Comment,
     Approve,
@@ -725,7 +731,12 @@ impl PrDetail {
                 },
                 enable_auto_merge: pr.viewer_can_enable_auto_merge,
                 disable_auto_merge: pr.viewer_can_disable_auto_merge,
+                delete_head: pr.viewer_can_delete_head_ref,
             },
+            head_gone: pr.head_ref.is_none(),
+            locked: (pr.locked).then_some(crate::api::manage::Locked {
+                reason: pr.active_lock_reason,
+            }),
         })
     }
 }

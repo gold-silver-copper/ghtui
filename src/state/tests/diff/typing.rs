@@ -97,3 +97,82 @@ fn the_comment_box_wraps() {
         .join(" ");
     assert!(shown.contains(words), "{shown}");
 }
+
+/// GitHub's answer for your saved replies.
+fn saved_replies(s: &mut State, result: Result<Vec<(&str, &str)>, ApiError>) {
+    use crate::api::replies::SavedReply;
+    let result = result.map(|replies| {
+        let replies = (replies.into_iter())
+            .map(|(title, body)| SavedReply {
+                title: title.into(),
+                body: body.into(),
+            })
+            .collect::<Vec<_>>();
+        let value = crate::site::Value::SavedReplies(replies.into());
+        Data::Site(Box::new(value))
+    });
+    let key = crate::site::site(crate::site::Key::SavedReplies);
+    update(
+        s,
+        Msg::Fetched {
+            key,
+            result,
+            cached_at: None,
+        },
+    );
+}
+
+/// ctrl-g lists your saved replies (asking GitHub for them), typing
+/// narrows them, and ↵ puts the one chosen where the cursor is.
+#[test]
+fn a_saved_reply_goes_in_at_the_cursor() {
+    let (mut s, ..) = composing();
+    press(&mut s, "Hi. ");
+    let cmds = press(&mut s, "<C-g>");
+    let key = crate::site::site(crate::site::Key::SavedReplies);
+    assert!(
+        cmds.iter()
+            .any(|c| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if *k == key)),
+        "{cmds:?}"
+    );
+    saved_replies(
+        &mut s,
+        Ok(vec![
+            ("Thanks", "Thanks for the report!"),
+            ("Duplicate", "Closing as a duplicate of #1."),
+        ]),
+    );
+    let (rows, _) = crate::site::replies::shown(&s).unwrap();
+    assert!(rows.contains(&"Thanks".to_owned()), "{rows:?}");
+    press(&mut s, "dup");
+    let (rows, selected) = crate::site::replies::shown(&s).unwrap();
+    assert_eq!(rows.get(selected).map(String::as_str), Some("Duplicate"));
+    press(&mut s, "<Enter>");
+    assert!(crate::site::replies::shown(&s).is_none());
+    assert_eq!(composer(&s).text(), "Hi. Closing as a duplicate of #1.");
+}
+
+/// Without the token's scope, the list says which, and where saved
+/// replies are made (GitHub's API can't make them).
+#[test]
+fn saved_replies_say_what_the_token_lacks() {
+    let (mut s, ..) = composing();
+    press(&mut s, "<C-g>");
+    let why = "Saved replies take your token's read:user scope, which it lacks: `gh auth refresh -s read:user` adds it";
+    saved_replies(&mut s, Err(ApiError::Denied(why.into())));
+    let (rows, _) = crate::site::replies::shown(&s).unwrap();
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("gh auth refresh -s read:user")),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("github.com/settings/replies")),
+        "{rows:?}"
+    );
+    // esc closes the list, not the composer.
+    press(&mut s, "<Esc>");
+    assert!(crate::site::replies::shown(&s).is_none());
+    assert_eq!(composer(&s).text(), "");
+}

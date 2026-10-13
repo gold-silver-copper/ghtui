@@ -134,9 +134,12 @@ impl State {
             out.push(change);
         }
         out.extend(crate::edit::doables(self));
+        crate::manage::doables(self, &mut out);
+        crate::settings::doables(self, &mut out);
         out.extend(crate::create::checkout_doable(self));
         out.extend(crate::writes::change_doables(self));
         crate::actions::doables(self, &mut out);
+        crate::offline::doables(self, &mut out);
         let go = |action, label: &str, short| doable("Go", action, label, short);
         out.push(go(
             Action::SearchGithub,
@@ -202,6 +205,11 @@ impl State {
         out.push(close);
         out.push(go(Action::GoHome, "Home", ""));
         out.push(go(Action::Notifications, "Notifications", ""));
+        out.push(go(
+            Action::Explore,
+            "Explore: new repositories and topics",
+            "",
+        ));
         out.push(go(Action::Refresh, "Refresh", ""));
         out.push(go(Action::CommandPalette, "Command palette", ""));
         let mut messages = go(Action::Messages, "Recent messages and errors", "");
@@ -261,7 +269,16 @@ impl State {
                 Some(Link::Comment) if crate::writes::is_form(route) => {
                     open.label = "Write it in the composer".into();
                 }
-                Some(link) => open.label = describe(link),
+                Some(link) => {
+                    open.label = describe(link);
+                    // An artifact or an asset is saved, not opened.
+                    if matches!(
+                        link,
+                        Link::Artifact { .. } | Link::Write(crate::ui::page::WriteLink::Asset(_))
+                    ) {
+                        open.short = "save";
+                    }
+                }
                 None => open.unavailable = Some("nothing is selected".into()),
             }
             out.push(open);
@@ -546,7 +563,9 @@ impl State {
                     | Kind::Project(_)
                     | Kind::Alert(_)
                     | Kind::Write(_)
-                    | Kind::Actions(_) => "choose",
+                    | Kind::Actions(_)
+                    | Kind::Manage(_)
+                    | Kind::Settings(_) => "choose",
                     Kind::Code { .. } => "go there",
                     Kind::Messages(_) => "copy",
                     Kind::Commands
@@ -691,5 +710,7 @@ pub(super) fn describe(link: &Link) -> String {
         Link::Write(link) => crate::writes::describe(link).into(),
         Link::Artifact { .. } | Link::Dispatch(_) => crate::actions::describe(link).into(),
         Link::Review(link) => crate::talk::describe(link).into(),
+        Link::Setting(link) => crate::settings::describe(link).into(),
+        Link::Queued(_) => "Open the page it was written on".into(),
     }
 }

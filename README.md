@@ -17,9 +17,12 @@ ghtui is pre-release, but it's usable every day.
   comparisons), issues, pull requests, Actions runs and job logs,
   discussions, wikis, milestones, deployments, security advisories and
   alerts (Dependabot, code scanning, secret scanning), gists,
-  teams, profiles, projects and search, on github.com or a GitHub Enterprise
-  Server. Every GitHub link opens in ghtui unless it can only work in a
-  browser (a download, settings), and then it says why.
+  teams, profiles, projects and search, a repository's Insights
+  (contributors, commit activity, traffic, the dependency graph),
+  Explore and topics, starred lists and packages, on github.com or a
+  GitHub Enterprise Server. Every GitHub link opens in ghtui unless it can only work in a
+  browser (a download, most of a repository's settings), and then it
+  says why.
 - **Reviewing** is where ghtui goes furthest. Diffs are computed locally
   with git, highlighted with tree-sitter, and shown unified or split. You
   can reply, resolve, comment on lines or ranges, suggest changes, and
@@ -32,26 +35,55 @@ ghtui is pre-release, but it's usable every day.
   and star, mark notifications read or done, one at a time or
   all at once, answer and reply in discussions and mark their answer,
   add, move, archive and restore a project's cards, set their fields
-  and edit its drafts, and dismiss or reopen a security alert.
+  (on the board, or from an issue's or pull request's own page) and edit
+  its drafts, dismiss or reopen a security alert, put a repository in
+  your starred lists or take it out, and delete a package's version.
+- **Managing** an issue, a pull request or a discussion, as GitHub's
+  sidebar and menus do: delete a merged pull request's branch and
+  restore it, convert one back to a draft, change its base, revert it;
+  lock a conversation with GitHub's reasons, pin an issue, transfer it,
+  close it as a duplicate, give it sub-issues (in order) and mark what
+  blocks it, make a branch for it and check that out; hide a comment
+  (hidden ones show folded, saying why); start a discussion from its
+  category's form, and close one with GitHub's reasons.
 - **Editing** what's there: your comments and descriptions (or anyone's,
   where GitHub lets you), titles, reactions, and an issue's or pull
   request's labels, assignees, reviewers and milestone.
 - **Creating**: open issues (from the repository's templates) and pull
-  requests, and check a pull request out in your clone; make releases,
-  write gists and wiki pages.
+  requests, and check a pull request out in your clone; make, edit and
+  delete releases, and upload, save and delete their assets; write gists
+  and wiki pages; insert your saved replies in a comment; fork a
+  repository or make a new one.
+- **Housekeeping**: a repository's labels (a page of their own) and
+  milestones, made, edited and deleted; branches and tags made at any
+  commit and deleted; files edited, made, renamed and deleted, and
+  committed, as the website's pencil does. In your clone, git does what
+  git can (pushing a branch, a tag or a commit), after asking.
 - **Notifications you choose**: subscribe to a thread or ignore it, and
   set how you watch a repository.
-- **Git first**: files, folders, history, blame, comparisons, tags and
-  code search come from your clone (or ghtui's own partial one), at
+- **Settings**, for a repository's admins: branch protection rules
+  (made, edited and deleted) and rulesets (turned on or off),
+  collaborators and invitations with their roles, webhooks and their
+  deliveries (redelivered), deploy keys, and archiving. Each change asks
+  first and names what it changes; deleting a repository is left to
+  github.com.
+- **Git first**: files, folders, history, blame, comparisons, tags,
+  code search, and a repository's contributors and commit activity come
+  from your clone (or ghtui's own partial one), at
   GitHub's revision, and code navigation (`gd`, `gS`, `gR`) from an
   index of the repository's definitions built there.
 - **Live**: a pull request, an issue, a discussion, the Actions tab, a
   run and a running job update while they're on screen, and what came
   in since you looked is marked New.
+- **Offline**: when GitHub can't be reached, the pages you've read
+  still open, from the cache, marked offline with their age, and code,
+  history and blame come from the clones. Comments, reviews, reactions,
+  labels, closing and the like wait in a queue, shown on their pages,
+  and go to GitHub in order (once) when it's back. Repositories you
+  choose are fetched ahead and kept fresh, to read offline.
 
 Not there yet: code navigation with a language server's precision,
-structural diffs, release assets and editing a release, and a project
-board's swimlanes and roadmaps.
+structural diffs, and a pull request's Files changed offline.
 
 ## Goals
 
@@ -96,7 +128,10 @@ classic token, the `repo` scope covers it all, but projects: reading them
 takes `read:project` and changing them `project`, which `gh auth refresh
 -s project` adds; gists take `gist`, which gh asks for; subscribing to a
 thread takes `notifications`, which `gh auth refresh -s notifications`
-adds). The Security tab's alerts take `security_events` (or
+adds; packages take `read:packages`, and deleting a version
+`delete:packages`; saved replies take `read:user`; changing your
+starred lists takes `user`; a repository's
+traffic is shown only to people who can push to it). The Security tab's alerts take `security_events` (or
 `repo`) with a classic token, and a fine-grained token's Dependabot, Code
 scanning or Secret scanning alerts permission; GitHub shows them only to
 people with write access (secrets: admins) and security managers. Where
@@ -171,17 +206,28 @@ A project opens at its first view, and its views are the page's tabs. A
 board shows each column (each value of its Status, or the field it's
 grouped by) as a box of cards, side by side as many as fit (the rest
 below), or one above another on a narrow screen; `h` and `l` go between
-columns. A table shows the view's fields in columns, as many as fit. A
-view's filter applies, and its sort and grouping (a board's columns
-too) cover all its items, not only a page of them. A card opens what it
-is: an issue, a pull request, or a draft's own page with its body and
-fields. Where GitHub lets you change the project, `,c` moves the card to
-another column and `,f` sets one of its fields (a single select, an
-iteration, a text, a number or a date); `,i` adds an issue or pull
-request (`owner/repo#123` or its link) or a new draft, written in the
-comment editor; `,e` edits a draft's title and text; `,X` archives an
-item, asking first, and on one under Archived (below the view), restores
-it. The board follows GitHub until it shows the change.
+columns. A board grouped by a field has swimlanes: each of the field's
+values, with the board's columns of its own cards under it, and `h` and
+`l` keep to the lane. A table shows the view's fields in columns, as many
+as fit. A roadmap puts each item on a timeline from its start to its
+target date (or across its iteration): a bar in its Status's color with
+its dates, a diamond for a single day, today marked and the months
+named; the page says how many days a column is. A view's filter applies,
+and its sort and grouping (a board's columns too) cover all its items,
+not only a page of them. A card opens what it is: an issue, a pull
+request, or a draft's own page with its body and fields. Where GitHub
+lets you change the project, `,c` moves the card to another column and
+`,f` sets one of its fields (a single select, an iteration, a text, a
+number or a date); `,i` adds an issue or pull request (`owner/repo#123`
+or its link) or a new draft, written in the comment editor; `,e` edits a
+draft's title and text; `,X` archives an item, asking first, and on one
+under Archived (below the view), restores it. The board follows GitHub
+until it shows the change.
+
+An issue's or pull request's sidebar shows each project it's in with its
+Status and its other fields' values, and `,f` on its page sets one there,
+with the board's pickers (first choosing the project, when it's in
+several you may change), without opening the board.
 
 **The Security tab** has GitHub's own menu: published advisories, then
 Dependabot alerts (the vulnerable dependency, its manifest, the affected
@@ -203,6 +249,47 @@ a category without answers, a comment); on a comment or one of its
 replies, it replies in that comment's thread, and `>` replies quoting
 it. `,!` marks the selected comment as the answer, or unmarks it, `,+`
 reacts, and `,e` and `,D` edit and delete, where GitHub lets you.
+
+**Offline**, ghtui is the same ghtui. A page always shows what the cache
+has first and GitHub refreshes it; when GitHub can't be reached (no
+network, the server down), the header says `⚠ Offline`, once, and the
+page stays as the cache had it, under a banner saying how old it is
+("Offline: showing what was loaded 3h ago"). Nothing waits on GitHub
+meanwhile: requests fail at once, and ghtui asks GitHub every few
+seconds (then less often) whether it's back; `r` asks now. Files,
+folders, history, blame and comparisons come from the clones, which
+need no network: at the commit each branch or tag was at when GitHub
+last listed them, which the page's first line says.
+
+A comment, a reply, a review (with its comments), a reaction, labels,
+assignees, a milestone, a title, an edit, closing or reopening, written
+while GitHub can't be reached, is queued: the composer closes, and the
+page it was written on shows it in a "Queued for GitHub" box, as does
+the header (`⚠ Offline` and `2 queued`). When GitHub is back the queue is
+sent in order, each write once, and the page follows GitHub until it
+shows it. Merging and the like aren't queued: what they do depends on
+GitHub's state when they're sent. A write GitHub refuses then (the issue
+was locked or deleted meanwhile) stays, marked refused with GitHub's
+reason and its text, and the header says `⚠ 1 not sent`: on its row,
+`,R` sends it again, `y` copies its text and `del` throws it away
+(`ctrl-z` brings it back). The queue is kept on disk for each host and
+account, so a restart keeps it. A write that may have reached GitHub
+when the connection dropped (or ghtui stopped while sending it) is
+never sent again on its own, unless sending it twice changes nothing (a
+label, a reaction, closing): it's marked "Not known if sent", to check
+and send again or throw away.
+
+`:keep offline` on any of a repository's pages keeps it to read offline:
+ghtui fetches ahead, into its cache, the repository's page, its Issues,
+Pull requests and Discussions tabs, and its issues, pull requests and
+discussions updated most recently (each as its page shows it), and
+makes its clone (with the default branch's files). It's kept fresh every
+half hour while GitHub can be reached, fetching again only what changed.
+How much is plain, and set under `[offline]` in the config: by default
+up to 100 of each kind, updated in the last 90 days, and nothing more
+past 2 GiB of cache and clones. The Offline page (`:offline`, or the
+header's link) lists the queue and the kept repositories: what each
+keeps, its clone's size, when it was refreshed and what stopped it.
 
 **Tabs** work like a browser's: `T` opens the selection in a new tab, `]b`
 and `[b` switch between them, and they come back next time you start.
@@ -358,6 +445,18 @@ toggle. `,s` asks whether to publish it or save a draft, then the
 release's page (a draft's: the releases) opens and follows GitHub until
 it shows it.
 
+**A release's page** lists its assets with their sizes and how often
+they were downloaded. `↵` on one asks where to save it (by its name in
+the current folder unless you type a file or folder), and a file already
+there is replaced only when you choose the row that says so. `,U` uploads
+a file from a path (a folder's path lists its files) and `,D` on an asset
+deletes it, after asking. `,e` opens the release in the same form, to
+change its title, notes, tag, pre-release or latest, and saving asks
+whether to update it or make it a draft again (a draft's: publish it or
+keep it a draft). `,D` elsewhere on the page deletes the release, after
+asking; then, asked apart, its tag too, or not. The page follows GitHub
+until it shows each change.
+
 **Gists**: `,G` writes a new one, file by file in the composer, with a
 description; `,s` asks whether it's secret or public, as GitHub's two
 buttons do. On your own gist, `,e` opens it as the same form (rename,
@@ -377,11 +476,164 @@ or ignores it; anywhere else in a repository it sets how you watch the
 repository (participating and @mentions, all activity, or ignore). The
 current choice is marked.
 
+**Insights** is a repository's last tab, as on GitHub, with GitHub's
+menu: Contributors, Commit activity, Traffic and Dependency graph.
+Contributors and commit activity are counted with git, in your clone or
+the cache's (the page's first line says which, and at what commit): the
+default branch's commits, merges left out, week by week since the
+first, then each author's (by their git name, joined by the
+repository's `.mailmap`; linked to their account when a GitHub no-reply
+address names it), each with a sparkline of the same weeks. Commit
+activity is the last 52 weeks, each day of the week, and the weeks
+with commits, newest first. Until the clone is made, GitHub's own
+statistics answer, and say so. Traffic is the last 14 days' views and
+clones, day by day, the referring sites and the popular pages, for
+those who can push to the repository. The dependency graph lists each
+manifest GitHub read with what it depends on and the versions it
+takes, each linked to its repository where GitHub knows it. Every
+chart is bars or a sparkline beside the numbers they stand for, scaled
+to the largest, and says what a bar counts.
+
+**Explore** (`:explore`, or the Space menu's Go) is the nearest GitHub's
+API comes to Trending: repositories made today, this week or this
+month, most starred, in any language or the one picked, and GitHub's
+featured topics. It says plainly that it isn't Trending, which ranks by
+recent stars that the API doesn't give. A topic's page (`topics/rust`,
+or a topic on a repository's page) has GitHub's description, its
+stars, related topics, and its repositories, most starred first.
+
+**Starred lists**: someone's Stars tab starts with their lists, and a
+list's page has its repositories. `,B` on a repository's pages lists
+your lists, the ones it's in checked: `↵` puts it in a list or takes it
+out, and a name no list has makes the list with it in. `,D` on one of
+your lists deletes it, after asking. Your lists are read again until
+GitHub shows the change. Changing them takes a classic token's `user`
+scope (`gh auth refresh -s user`), which ghtui names when it's
+missing.
+
+**Packages** are a profile's tab, and a link on a repository's page: an
+owner's packages of every kind, or those a repository published. A
+package's page says how to pull or install its newest version (or the
+one picked from its versions), and `,D` on a version deletes it, after
+asking what goes with it; the page follows GitHub until it's gone.
+Without your token's `read:packages` scope, the page says so and how to
+add it.
+
+**Saved replies**: in the comment editor, `ctrl-g` lists yours; typing
+narrows them, and `↵` puts the one chosen where the cursor is.
+
+**Settings** is a repository's last tab, shown, as on GitHub, only to
+its admins. Its own menu goes between General, Collaborators, Branches,
+Webhooks and Deploy keys. These change the repository for everyone, so
+every change asks first and lists what it changes, line by line:
+- **Branches** lists the branch protection rules (each with what it
+  asks and how many branches it applies to) and the rulesets. `,n`
+  writes a new rule and `,e` edits the selected one in the composer (or
+  `$EDITOR`), as GitHub's form's settings, one a line: `Require linear
+  history: yes`, `Required approvals: 2`, `Status checks: ci, lint`.
+  `ctrl-s` asks, naming each setting that changes (`Required approvals:
+  1 → 2`), and only those are sent, so what the form doesn't show stays
+  as it is. If GitHub refuses, the form opens again with your text and
+  GitHub's words. `,D` deletes a rule; `,x` turns a ruleset on or off
+  (an organization's is the organization's to change).
+- **Collaborators** lists who has access, with their role, and the
+  invitations waiting. `,n` invites someone: their login, then a role
+  (Read, Triage, Write, Maintain or Admin, each saying what it allows);
+  `,e` changes a collaborator's or an invitation's role, and `,D` removes
+  them or cancels it. The owner's access can't change.
+- **Webhooks** lists each with its events and what its last delivery
+  got back; `↵` opens one with its recent deliveries. `,n` adds one and
+  `,e` edits it as a form (`Payload URL`, `Content type`, `Secret`,
+  `SSL verification`, `Events`, `Active`; its secret is never shown, and
+  left empty keeps it), `,x` turns it off or on, `,D` deletes it, and on
+  its page `,R` redelivers the selected delivery.
+- **Deploy keys**: `,n` adds one (its title, the public key, and whether
+  it may push, which the question warns about), `,D` deletes one.
+- **General** says how the repository is set and archives it (`,x`),
+  asking twice as GitHub does: for its name, typed, then once more.
+  Unarchiving asks the same way. Deleting a repository is done on
+  github.com: ghtui never deletes one.
+
 **Checking out** a pull request (`,c` on it or its row), inside a clone
 of its repository, fetches its head and switches to a branch for it: its
 own branch's name (tracking it), or `owner/branch` for a fork's. It
 refuses while you have changes that aren't committed, and says which
 branch you're on.
+
+**Managing** works as GitHub's sidebar and menus do, where GitHub lets
+you (and says why where it doesn't):
+- on a pull request, `,b` deletes its branch once it's merged or closed,
+  and restores it after; `,r` converts it back to a draft (after asking);
+  the menu changes its base (pick a branch, then confirm) and reverts a
+  merged one: GitHub makes the revert's branch and pull request, which
+  opens;
+- `,L` locks an issue's, a pull request's or a discussion's conversation,
+  with one of GitHub's reasons or none, and unlocks it after asking;
+- on an issue, the menu pins or unpins it and transfers it to another
+  of its owner's repositories you can write to; `,x` closes it as
+  completed, not planned, or a duplicate of an issue you choose next
+  (typed as `#12`, `owner/repo#12` or a link, or picked from its open
+  issues);
+- `,S` lists an issue's sub-issues: `↵` on one removes it, `#12` (or a
+  link) adds one, and `alt-↑` `alt-↓` move the one chosen; `,K` does the
+  same for the issues blocking it, which the sidebar lists under Blocked
+  by (and Blocking);
+- `,c` on an issue makes a branch for it on GitHub, named as GitHub
+  names it (its number and title, which you can change), from the
+  default branch and linked to it, then offers to check it out in your
+  clone, as `,c` does a pull request;
+- `,H` hides the selected comment as spam, abuse, off-topic, outdated, a
+  duplicate or resolved, and unhides a hidden one. A hidden comment shows
+  folded, with GitHub's reason; `↵` or `za` shows it;
+- in a repository's discussions, the menu starts a new one: pick its
+  category, then write its title and text in the composer, which starts
+  from the category's form where it has one. `,x` closes a discussion as
+  resolved, outdated or a duplicate, or reopens it.
+
+**Labels and milestones** are reached from the Issues and Pull requests
+tabs (`Labels · Milestones` above the list). The labels page lists each
+label with its description and how many open issues and pull requests
+have it; `↵` opens them. `,o` makes a new label (its name, colour and
+description are rows of a form, each set in a picker; GitHub's colours
+are offered, or type `#rrggbb`), `,e` edits the selected one (renaming
+it too) and `,D` deletes it, asking first and saying how many it comes
+off. On the milestones (and a milestone's page) `,o` makes one, `,e`
+edits its title, due date and description (in the composer), `,x`
+closes or reopens it, and `,D` deletes it after asking. Each page follows
+GitHub until it shows the change.
+
+**Branches and tags**: on the branches or tags list, `,o` makes one: its
+name, then where it starts (the branch selected, another branch, a tag,
+or a commit's SHA typed). `,D` deletes the selected one, asking first;
+never the default branch, nor one GitHub's branch protection or a
+ruleset keeps, and it says which. Inside a clone of the repository, git
+does it, after asking: `git push` of the commit to the new branch or
+tag, or `git push --delete`; your clone's own branches and tags aren't
+touched. Elsewhere GitHub's API does it.
+
+**Forks and new repositories**: `,F` on any of a repository's pages
+forks it, to your account or an organization that lets you make
+repositories there, under the name you choose, with its default branch
+only unless you say all. `,C` makes a new repository: its owner, name,
+description, public or private, a README, and a `.gitignore` and licence
+from GitHub's templates. Then its page opens and follows GitHub until
+it's there (a fork can take GitHub a moment); for a new repository,
+cloning it here (`git clone` into `./name`) is offered.
+
+**Editing a file** (`,e` on a file, as the website's pencil) reads it as
+GitHub has it on the branch, and opens the composer on its text
+(`ctrl-e` continues in `$EDITOR`). The form's rows name its path
+(changing it renames the file), the branch the commit goes to (the one
+you're on, or a new one, offered as a pull request after; a tag or a
+commit is never a branch, so it's always a new one there) and the
+commit's message (GitHub's own until you write one). `,o` in a folder
+makes a new file there, and `,D` on a file deletes it, each the same
+way. `,s` asks before committing. Inside a clone of the repository, git
+makes the commit on GitHub's tip of the branch, from objects alone, and
+pushes it, so your branches, index and working tree stay as they are;
+elsewhere GitHub's API commits it (GitHub signs it). If the file changed
+on GitHub since you opened it, nothing is overwritten: committing says
+so, and keeps your text.
 
 ## Keys
 
@@ -435,12 +687,30 @@ says where it works.
   for reviews and `,M` sets its milestone.
 - New things wait behind `,` as well: `,i` writes a new issue and `,p` a
   new pull request, which `,s` creates (and `,P` pushes its branch
-  first); `,c` checks a pull request out in your clone; `,E` runs a
-  workflow by hand. `,V` makes a
+  first); `,c` checks a pull request out in your clone (on an issue, it
+  makes a branch for it first); `,E` runs a workflow by hand. `,V` makes a
   release, `,G` a gist and `,W` a wiki page; `,s` makes or saves each,
-  and `,e` and `,D` edit a wiki page or your gist and delete your gist.
+  and `,e` and `,D` edit a wiki page, your gist or a release and delete
+  your gist, a release or its asset; `,U` uploads an asset to a release.
+- `,B` puts the repository in your starred lists or takes it out; `,D`
+  deletes one of your lists on its page, or a package's version.
+- Housekeeping is behind `,` too: `,o` makes something new where you are
+  (vim's `o` opens a new line): a label, a milestone, a branch, a tag, or
+  a file in the folder. `,e` edits the selected label or milestone, or
+  the file; `,D` deletes it (or the selected branch or tag); `,x` closes
+  or reopens a milestone. `,F` forks the repository and `,C` makes a new
+  one.
 - `,w` subscribes to a thread or ignores it, or sets how you watch the
   repository.
+- In a repository's settings, `,n` adds (a rule, a collaborator, a
+  webhook, a deploy key), `,e` edits the selected one, `,D` deletes or
+  removes it, `,x` turns a ruleset or a webhook on or off (on General,
+  archives the repository), and `,R` redelivers a webhook's delivery.
+- Managing waits behind `,` too: `,b` deletes or restores a merged pull
+  request's branch, `,L` locks or unlocks the conversation, `,H` hides
+  or unhides the selected comment, `,S` edits an issue's sub-issues and
+  `,K` what blocks it. Changing a base, reverting, pinning, transferring
+  and starting a discussion are in the menu (`Space`).
 - `q` closes the view: back a page, or the tab when there's nothing to go
   back to. `ZZ`, `:q` in the palette, or `ctrl-c` quits; `ctrl-c` also
   works in the comment editor, asking before it throws away your text.
@@ -456,8 +726,9 @@ says where it works.
   conversation, `zc` `zo` `za` fold a long review.
   In the file tree, `<` and `>` narrow and widen it.
 - On a project's board `h` and `l` go between columns; `,c` moves the
-  selected card to another column and `,f` sets one of its fields; `,i`
-  adds an item, `,X` archives or restores one, and `,e` edits a draft.
+  selected card to another column and `,f` sets one of its fields (on an
+  issue's or pull request's page, in its project); `,i` adds an item,
+  `,X` archives or restores one, and `,e` edits a draft.
 - `gn` opens your notifications (`,n` marks one read, `,d` done, `,N`
   and `,D` everything shown) and `gr` a pull request's Review tab.
 - In files, logs and the diff, `w` and `b` move a word cursor along the
@@ -514,7 +785,7 @@ says where it works.
 | `g/`                 | Search GitHub or go to a page |
 | `f`                  | Go to file |
 | `c`                  | Comment (on a thread, reply) |
-| `y`                  | Copy the link |
+| `y`                  | Copy the link (a queued write: its text) |
 | `o`                  | Open on GitHub |
 | `gx`                 | Open the link under the cursor in the browser |
 | `r` `ctrl-l`         | Refresh |
@@ -522,16 +793,16 @@ says where it works.
 | `:` `ctrl-k`         | Command palette |
 | `,m`                 | Merge the pull request |
 | `,a`                 | Approve the pull request |
-| `,r`                 | Mark the draft ready for review |
+| `,r`                 | Mark the draft ready for review, or convert it to a draft |
 | `,u`                 | Update the branch from its base |
-| `,x`                 | Close or reopen (an alert: dismiss it); on a running run, cancel it |
-| `,R`                 | Re-run the workflow run or job |
-| `,e`                 | Edit the comment or description (a wiki page, your gist) |
-| `,D`                 | Delete the comment (your gist) |
+| `,x`                 | Close (as a duplicate too) or reopen (an alert: dismiss it); on a running run, cancel it |
+| `,R`                 | Re-run the workflow run or job (a refused write: send it again) |
+| `,e`                 | Edit the comment or description (a wiki page, your gist, a release, a label, a milestone, a file) |
+| `,D`                 | Delete the comment (your gist, a release or its asset, a package's version, your list, a label, a milestone, a branch, a tag, a file) |
 | `,+`                 | React to the comment, issue or pull request |
-| `,c`                 | Check out the pull request in your clone |
+| `,c`                 | Check out the pull request in your clone (an issue: a new branch for it) |
 | `,w`                 | Subscribe to or ignore the thread; watch the repository |
-| `del`                | Delete the selection (a draft comment, a Home section) |
+| `del`                | Delete the selection (a draft comment, a Home section, a write waiting for GitHub) |
 | `ctrl-z`             | Bring back what was just deleted |
 | `ZZ` `ctrl-c`        | Quit |
 
@@ -554,18 +825,29 @@ says where it works.
 | `,M`    | Set the milestone |
 | `,i`    | New issue |
 | `,p`    | New pull request |
-| `,s`    | Create or save the form: an issue, a pull request, a release, a gist, a wiki page |
+| `,s`    | Create or save the form on screen (an issue, a release, a label, a file…) |
 | `,P`    | Push the branch to GitHub |
 | `,!`    | Mark the comment as the discussion's answer, or unmark it |
 | `,V`    | New release |
+| `,U`    | Upload an asset to the release |
 | `,G`    | New gist |
 | `,W`    | New wiki page |
 | `,E`    | Run the workflow by hand |
+| `,B`    | Add the repository to your starred lists, or take it out |
+| `,o`    | New here: a label, a milestone, a branch, a tag, a file |
+| `,F`    | Fork the repository |
+| `,C`    | New repository |
 | `B`     | Switch branches or tags |
+| `,b`    | Delete the pull request's branch, or restore it |
+| `,L`    | Lock the conversation, or unlock it |
+| `,H`    | Hide the comment, or unhide it |
+| `,S`    | Add or remove sub-issues |
+| `,K`    | Mark the issue blocked by another, or no longer |
 | `i`     | Follow a link by its letters |
 | `I`     | Follow a link, in the browser |
 | `alt-↑` | Move the Home section up |
 | `alt-↓` | Move the Home section down |
+| `,f`    | Set a field of the item in its project |
 | `zc`    | Fold the file, thread or review |
 | `zo`    | Unfold the file, thread or review |
 | `za`    | Fold or unfold the file, thread or review |
@@ -612,9 +894,18 @@ says where it works.
 | `h`  | Previous column of the board |
 | `l`  | Next column of the board |
 | `,c` | Move the item to another column |
-| `,f` | Set a field of the item |
 | `,i` | Add an issue, a pull request or a draft |
 | `,X` | Archive the item, or restore it |
+
+**In a repository's settings** (`settings:`)
+
+| Keys | Action |
+| ---- | ------ |
+| `,n` | Add a branch rule, a collaborator, a webhook or a deploy key |
+| `,e` | Edit the rule or webhook, or change the collaborator's role |
+| `,D` | Delete the rule, webhook or deploy key; remove the collaborator or invitation |
+| `,x` | Turn the ruleset or webhook on or off; archive or unarchive the repository |
+| `,R` | Redeliver the webhook delivery |
 
 **In Files changed** (`diff:`)
 
@@ -672,7 +963,8 @@ says where it works.
 The comment editor opens where the comment will go: under the lines, the
 thread or the file header in Files changed, and in place of the comment
 box on a conversation (or of the comment it edits). In it, `ctrl-s` adds the comment, `ctrl-e`
-continues in `$EDITOR`, and `esc` cancels (keeping the lines selected).
+continues in `$EDITOR`, `ctrl-g` lists your saved replies to insert
+one, and `esc` cancels (keeping the lines selected).
 Long lines wrap, and a paste arrives as text, newlines and all (in a
 one-line box, as one line). Typing `@` offers the people taking part and
 the repository's assignable users, `#` its recent issues and pull
@@ -697,6 +989,11 @@ color_depth = "auto"  # auto | truecolor | 256
 nerd_font = false
 density = "auto"      # auto | compact | comfortable
 
+[offline]             # what a repository kept offline keeps
+items = 100           # of its issues, pull requests and discussions each
+days = 90             # only those updated in this many days
+disk = 2048           # MiB: nothing more is fetched past this (cache and clones)
+
 [keys]                # each action listed replaces its default keys
 down = ["j", "<Down>"]  # without ctrl-n
 sort = ["list:O"]     # a context first binds it there only
@@ -712,7 +1009,14 @@ The host can also come from `GHTUI_HOST`, which wins over the config file,
 or from gh's `GH_HOST`, which doesn't. On an Enterprise Server, ghtui asks
 its API at `https://HOST/api/v3` and `https://HOST/api/graphql`, its links
 and its clones' remotes open in ghtui, and links to github.com open in the
-browser (and the other way round). The cache, the tabs and the review
+browser (and the other way round). ghtui asks the server its version once,
+and leaves out of each query what that version doesn't have (from the
+schemas GitHub publishes for 3.10 and later; what a server refuses
+besides, it learns and asks again without), so its pages load with what
+it has; the status bar says once what they go without ("GitHub
+Enterprise Server 3.19 doesn't have project events in the timeline").
+An API endpoint the server doesn't have (a repository's security
+advisories) isn't asked, and its page says so. The cache, the tabs and the review
 drafts are kept per host and per account, so switching accounts or hosts
 never shows another's pages.
 
@@ -764,7 +1068,12 @@ a commit's author is when their email doesn't say). One module,
 `src/source.rs`, decides which answers each page, and says so on the
 page. Your clone is only read: ghtui fetches commits into its object
 store, as `git fetch` would, from its own GitHub remote, and never
-touches its branches, index, working tree or config. The cache's clone
+touches its branches, index, working tree or config. Housekeeping writes
+from it only what you ask for, after asking, with your own git: a
+branch or tag pushed by its commit's ID, a deleted one pushed away, and
+a file's commit made from objects alone (through an index of its own,
+on GitHub's tip of the branch, fetched first) and pushed; so even then
+your branches, index and working tree stay as they are. The cache's clone
 is partial: a file's contents are fetched when a page reads it, all a
 page needs in one batch. Limits keep a huge repository from turning a
 page into a download, and the API answers past them, saying which:
@@ -775,8 +1084,10 @@ page into a download, and the API answers past them, saying which:
   of a file;
 - code search in ghtui's clone reads at most 25,000 files (in yours,
   any number);
-- git gets 6 seconds for a page (20 for blame, comparisons and search,
-  and 1 for the walk that finds each entry's latest commit, the rest of
+- Insights counts the newest 200,000 commits of the default branch
+  (their dates and authors only, which a blobless clone has);
+- git gets 6 seconds for a page (20 for blame, comparisons, search and
+  Insights, and 1 for the walk that finds each entry's latest commit, the rest of
   which GitHub finds), then the API answers while git carries on.
 
 **Wikis are git repositories**, and ghtui reads and writes them as such:
@@ -799,7 +1110,13 @@ seconds, using about 130 MB.
 **Fast from the cache.** The first paint comes from a local cache (redb),
 then everything is refreshed in the background. REST requests revalidate
 with ETags (and `Last-Modified`), so unchanged data costs nothing against
-the rate limit.
+the rate limit. Offline is that same path with GitHub missing: one place
+(`api::reach`) knows whether GitHub can be reached (a request that can't
+connect says it can't; any answer says it can), so a request fails at
+once while it can't, the page keeps the cache's copy, and the header
+says so. A failed connect never left, so only a write that failed that
+way is queued (`offline::queue`): each is written down as being sent
+before it goes, and its answer settles it, so none is sent twice.
 
 **Colors from one seed.** Light and dark schemes are generated with
 Material 3's tonal palettes. Every foreground and background pair the UI
@@ -855,7 +1172,22 @@ issue inbox` runs only those.
   that need more are skipped without it, and say so: `project` for the
   Projects checks (`gh auth refresh -s project`), `notifications` for
   subscribing to a thread (without it, the check sees ghtui name the
-  scope). It also needs git; openssl; and a fux that speaks fuxth (`fux help-agents`) (on `PATH`, or `~/code/fux`'s release build,
+  scope), `delete_repo` for transferring an issue (`manage-transfer`
+  makes a `ghtui-live-` repository to move it to, and deletes it), for
+  the fork and new-repository checks, which delete what they make,
+  and for archiving (`settings-archive` archives and unarchives a scratch
+  `ghtui-live-` repository it deletes; without it, it only asks twice on
+  the test repository and cancels); `admin:repo_hook` for webhooks
+  where `repo` doesn't reach them. `settings-access` sends an invitation
+  only to the account `GHTUI_LIVE_INVITEE` names (one that agreed to be
+  invited); otherwise it asks and cancels. `read:user` for saved replies,
+  and `read:packages`,
+  `write:packages` and `delete:packages` for the packages check, which
+  pushes a tiny `ghtui-live-` image to ghcr.io (with curl) and deletes a
+  version of it with `,D`; without them, the check sees ghtui name the
+  scope it lacks. The starred lists check, with `user`, makes a
+  `ghtui-live-` list of the owner's and deletes it; without it, it sees
+  ghtui name the scope. It also needs git; openssl; and a fux that speaks fuxth (`fux help-agents`) (on `PATH`, or `~/code/fux`'s release build,
   or `--fux PATH`). It builds `target/release/ghtui` unless given
   `--ghtui PATH`.
 - **Where it runs:** ghtui runs in a private fux server, one pane at a
@@ -864,7 +1196,9 @@ issue inbox` runs only those.
   `~/.cache/claude-tmp/ghtui-live` (`GHTUI_LIVE_DIR`), which a run empties
   when it starts. A failing check leaves its last screen in `failures/`.
 - **What it touches:** it writes only to the test repository (and a
-  secret gist of the owner's, deleted at once). The checks rely on the
+  secret gist of the owner's, deleted at once; and, with `delete_repo`,
+  a fork of `octocat/Spoon-Knife` and a private repository under the
+  owner's account, named `ghtui-live-…`, deleted at once). The checks rely on the
   repository's workflows, run by hand: `mention.yml` (the Actions bot
   mentions the owner on an issue), `botreview.yml` (it leaves a review
   comment on PR #11, or, given `review`, submits a review with a summary
@@ -877,22 +1211,40 @@ issue inbox` runs only those.
   stand-in `xdg-open`, first on the server's `PATH`, writes down the
   URLs ghtui opens instead of opening a browser.
 - **Cleaning up:** each check undoes what it made, pass or fail (issues,
-  comments, pull requests, branches, releases and their tags, workflow
-  runs, gists, discussions, projects, repository and watch settings, a
-  dismissed alert), and the fux server and the stand-in server are
+  comments, pull requests, branches, releases with their assets and
+  tags, workflow runs, gists, discussions, projects, repository and
+  watch settings, a dismissed alert, labels, milestones, forks and
+  repositories, protection rules, rulesets, invitations, webhooks and
+  deploy keys), and the fux server and the stand-in server are
   stopped. A submitted review can't be deleted, so the reviews check's
   stay on its pull request, closed. ctrl-c stops the run after cleaning
   up. A run that was killed is swept up by the next one: issues, pull
-  requests, discussions, gists and projects titled `[ghtui live]`,
-  `ghtui-live-` branches, tags and releases, and settings put back.
+  requests, discussions, gists, projects and milestones titled
+  `[ghtui live]`, `ghtui-live-` branches, tags, releases, labels and (with
+  `delete_repo`) the owner's repositories, protection rules, webhooks
+  and deploy keys, `[ghtui live]` rulesets, and settings put back. The
+  settings checks never touch `main`'s protection, and check it ends as
+  it began.
 - **Enterprise Server:** `cargo xtask ghes` serves a stand-in on
   `https://localhost:8443` that relays an Enterprise Server's paths to
   github.com (`/api/v3`, `/api/graphql`, `/raw`, git) and rewrites
   github.com's URLs in its answers to its own host. Its certificate
   authority is trusted only by the programs given `SSL_CERT_FILE` and
-  `GIT_SSL_CAINFO`; it prints how to run ghtui against it. `--strip
-  FIELD` drops a field from its GraphQL answers, as an older server
-  would lack it.
+  `GIT_SSL_CAINFO`; it prints how to run ghtui against it. To stand in
+  for an older server, `--version 3.N` is the version its `/meta` says,
+  and `--strip FIELD` (or `Type.field`) refuses a query naming that
+  field, as an older server does. To see what a published version's
+  schema lacks of ghtui's queries, run `GHTUI_GHES_SDL=schema.graphql
+  cargo test what_an_enterprise_schema_lacks -- --ignored --nocapture`
+  (with `GHTUI_GHES_VERSION=3.N`, after ghtui leaves out what it knows
+  that version lacks: nothing should be left).
+- **Offline:** the `offline` check runs ghtui against the stand-in (on
+  port 8451), keeps the repository offline (`:keep offline`) and stops
+  keeping it, and stops the stand-in to make GitHub go away, without touching the
+  machine's network: it writes a comment and a reaction while it's
+  gone, restarts ghtui, starts the stand-in again, and asks GitHub that
+  each arrived exactly once; a comment on an issue it deletes meanwhile
+  must come back refused.
 - **GitHub's own delays:** a notification can take GitHub many minutes
   to deliver, so the inbox check runs last, and is skipped (not failed)
   when no unread thread has arrived; the mention it asked for serves the
@@ -921,6 +1273,33 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 
 ## Known limitations
 
+- Explore isn't GitHub's Trending: GitHub's API doesn't say which
+  repositories got stars lately, so Explore lists new repositories, most
+  starred, and says so. A repository's dependents (who depends on it)
+  aren't in GitHub's API either; the dependency graph links to them on
+  github.com.
+- Contributors and commit activity are counted with git, by git name:
+  two names for one person are one only where the repository's
+  `.mailmap` says so, and lines added and removed aren't counted (that
+  would need every file's contents). ghtui counts the newest 200,000
+  commits, and says when there were more. GitHub's statistics, used
+  until the clone is made, list only its top 100 contributors.
+- The dependency graph shows 20 manifests and the first 100
+  dependencies of each, and says how many more GitHub has.
+- Saved replies can be inserted, but not made, changed or deleted here:
+  GitHub's API has no way to, so that's on github.com/settings/replies,
+  which the list names. They take the `read:user` scope.
+- Packages are listed 100 of each kind, and said when there are more.
+  GitHub doesn't say beforehand who may delete a package's version (its
+  admins), so `,D` is offered on every version and GitHub's refusal is
+  said. On an Enterprise Server, the install commands name its
+  registries as `containers.HOST`, `npm.HOST` and so on (with subdomain
+  isolation). A package's link opens under `/users/` (GitHub sends an
+  organization's on).
+- `,B` reads up to 1,000 of a list's repositories to say whether one is
+  in it, and says when a list is longer. A new list is public; its
+  name, description and privacy are changed on github.com.
+
 - A running job's log shows once the job ends: GitHub's API has no log
   until then (its website streams it over a connection only a signed-in
   browser can open). Its steps follow it meanwhile.
@@ -934,9 +1313,29 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 - On an Enterprise Server that doesn't say which run a workflow run by
   hand started, the workflow's runs open instead of the run.
 - One GitHub at a time: the host is chosen at start.
-- On an Enterprise Server, gists are taken to be at `HOST/gist`, and
-  ghtui's queries are checked against github.com's schema: a server too
-  old for a field ghtui asks for answers with an error instead.
+- Offline, a page opens only if it was read before (or its repository
+  is kept offline), as it was then; a list shows its first page. A
+  file's contents come from a clone only where it has them: the cache's
+  partial clone fetches a file the first time it's read, so a file never
+  opened isn't there, except in a repository kept offline (its default
+  branch's files, within the disk limit). A pull request's Files changed
+  fetches its commits from GitHub, so it doesn't open offline. Searching
+  GitHub, the inbox's marks and merging aren't queued.
+- Keeping a repository offline keeps its issues', pull requests' and
+  discussions' pages (a pull request's conversation, not its Files
+  changed, checks or commits), and the default branch's files; the disk
+  limit is checked between pages, so a page or a clone may take it a
+  little past. Stopping keeping one leaves what's cached until it's
+  replaced.
+- The queue, like the cache, is kept under the account GitHub last said
+  the token is; a token never used before keeps it under its
+  fingerprint until GitHub first answers.
+- On an Enterprise Server, gists are taken to be at `HOST/gist`. A page
+  goes without what the server's version doesn't have: who may assign,
+  label or set a milestone isn't said by any Enterprise Server yet, so
+  those are offered to whoever may edit (GitHub refuses the rest); before
+  3.22, a project's archived items are told apart by each item, and
+  before 3.20 a view's filter doesn't apply (all its items are shown).
 - Long code lines are cut at the edge: `h` and `l` scroll them sideways,
   but they don't wrap.
 - Markdown in the terminal: images show their alt text, and HTML is reduced
@@ -963,9 +1362,8 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   old side, it shows GitHub's diff hunk.
 - A commit's comments are its first 100, and only a comment on the
   whole commit is written here (GitHub's REST API takes a line comment
-  only by its place in the diff). The projects an item is in show its
-  Status; its other fields are set on the project's board (`,f`), which
-  its row opens.
+  only by its place in the diff). An issue's or pull request's sidebar
+  lists its first 10 projects.
 - `gd` and `gS` go by name: the index knows functions, types, traits,
   classes and modules, not imports, re-exports, names macros make, or
   what type a value has, so a name defined in several places offers
@@ -990,6 +1388,18 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   `createPullRequest` doesn't take them), and a fork's branch is proposed
   only from a clone that's on it. Of several pull request templates, the
   first is used.
+- A branch for an issue is made from its repository's default branch, in
+  that repository (GitHub's dialog also lets you pick another source
+  branch or a fork). A revert's pull request has GitHub's own title and
+  description, and isn't a draft.
+- An issue moves only to one of its owner's repositories (as GitHub
+  allows); the first 100 of them, most recently pushed, are offered. The
+  pickers for a duplicate, a sub-issue or a blocking issue list the
+  repository's 50 open issues updated last; any other is typed
+  (`#12`, `owner/repo#12` or its link).
+- Hidden comments fold in conversations and discussions; a hidden review
+  comment in Files changed shows as it is, and is hidden or unhidden on
+  github.com.
 - A wiki without pages has no git repository yet: GitHub makes it with
   the first page, which has to be made on github.com. A wiki page can't
   be renamed or deleted here, and its commit message is GitHub's own
@@ -997,12 +1407,37 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 - GitHub's API can't change whether a gist is public: a secret gist is
   made public on github.com. A gist file over GitHub's size limit for
   its API can't be changed here.
+- The labels page lists 100 labels at a time (the rest one row away),
+  and the labels' issue counts are open issues and pull requests. A
+  branch can't be renamed here, nor a repository deleted (that's the
+  website's).
+- A file is edited one at a time, as text: a binary file, or one over
+  GitHub's API's size limit, can't be. A commit made with git in your
+  clone isn't signed unless your git signs commits by default; one
+  GitHub's API makes is signed by GitHub. Changing a workflow's file
+  takes the token's `workflow` scope (`gh auth refresh -s workflow`).
+  A branch protected so that it takes pull requests refuses a commit
+  straight to it: commit to a new branch, and propose it.
+- A new repository is cloned with your own git into the folder ghtui
+  started in; a tag's protection by a ruleset is GitHub's to say, when
+  deleting it.
 - A repository's custom watch settings (only releases, issues…) and a
   thread's custom events can only be set on github.com; `,w` offers
-  participating, all activity and ignore. A release's assets aren't
-  uploaded, and a release can't be edited or deleted here. A new tag is
-  made by GitHub when the release is published; a tag only in your clone
-  has to be pushed first.
+  participating, all activity and ignore. A new tag is made by GitHub
+  when the release is published; a tag only in your clone has to be
+  pushed first. A release's tag is deleted on GitHub, not in your clone.
+  An asset is uploaded under its file's name, without a label.
+- A repository's settings cover protection rules, rulesets, collaborators,
+  webhooks, deploy keys and archiving; the rest of its settings (features,
+  merge buttons, Actions, Pages, secrets, environments) are on
+  github.com. A protection rule's form has GitHub's checkboxes; who may
+  push, bypass or dismiss reviews, and required deployments, are set on
+  github.com (and kept when a rule is edited here). A ruleset is turned
+  on or off here, and written on github.com. A collaborator is invited
+  by login (there's no search of people), and an organization's teams'
+  access isn't listed. Each list shows its first 100, and says when
+  GitHub has more; a webhook's deliveries are its latest 100. A
+  webhook's secret can be changed, not removed.
 - An issue form's dropdowns become a comment listing their options, to
   answer in your own words; its validations aren't checked.
 - Security alerts are listed newest first, 30 at a time, without counts
@@ -1010,9 +1445,12 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   comment is one line, and a code scanning alert shows its latest instance,
   not every branch it's on.
 - A view that sorts or groups its items (a board does) loads them all
-  up to 1,000, and says so when there are more; a roadmap shows as a
-  table, and a board's swimlanes aren't drawn. Archived items are listed
-  50 at a time, newest first, whatever the view's filter.
+  up to 1,000, and says so when there are more. GitHub's API doesn't say
+  which date fields a roadmap uses, or its zoom: ghtui takes a date field
+  named for a start and one for a target (or end, or due), else the
+  first two date fields, else the first iteration field, and says which;
+  the timeline spans the items' dates and today. Archived items are
+  listed 50 at a time, newest first, whatever the view's filter.
 - A page read with git knows commits' authors by their git names: by
   their GitHub accounts only where the email is GitHub's no-reply
   address for one. A commit read with git doesn't say whether GitHub

@@ -15,10 +15,14 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
 #[must_use]
 pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     // Pages are built from GitHub's data; only these change it.
+    // A page opened from cached data alone brings no data: its forms
+    // still need filling in.
+    let opened = state.route().cloned();
     let data = matches!(
         msg,
         Msg::Viewer(_)
             | Msg::Pr(..)
+            | Msg::PrCached(..)
             | Msg::Fetched { .. }
             | Msg::FetchedMore(..)
             | Msg::Source(..)
@@ -34,6 +38,8 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Changed(_, _, r) => r.is_ok(),
         Msg::Create(crate::create::Done::Created(_, r)) => r.is_ok(),
         Msg::Write(done) => done.wrote(),
+        // A queued write reached GitHub.
+        Msg::Offline(crate::offline::Msg::Queue(crate::offline::queue::Told::Taken(_))) => true,
         // Drafts GitHub accepted wait in a pending review there.
         Msg::Diff(_, DiffMsg::ReviewSubmitted(o)) => o.error.is_none() || !o.accepted.is_empty(),
         _ => false,
@@ -84,6 +90,8 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         cmds.extend(act::follow(state));
         cmds.extend(crate::create::follow(state));
         cmds.extend(crate::writes::follow(state));
+    } else if state.route() != opened.as_ref() {
+        cmds.extend(crate::writes::follow(state));
     }
     cmds
 }
@@ -132,6 +140,13 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 tracing::warn!(%pr, %err, "PR fetch failed");
             }
             state.prs.entry(pr).or_default().finish(*result);
+        }
+        Msg::PrCached(pr, cached) => {
+            let remote = state.prs.entry(pr).or_default();
+            if remote.data.is_none() {
+                remote.data = Some(cached.value);
+                remote.cached_at = Some(cached.fetched_at);
+            }
         }
         Msg::Fetched {
             key,
@@ -258,6 +273,11 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Code(ask, result) => return crate::code_nav::answered(state, &ask, result),
         Msg::Edited(purpose, result) => return on_edited(state, purpose, result),
         Msg::HomeEdited { edit, result, what } => return state.home_edited(&edit, result, what),
+        Msg::Offline(msg) => {
+            state.data_gen += 1;
+            return crate::offline::on_msg(state, msg);
+        }
+        Msg::Timer(Timer::Probe) => return crate::offline::on_timer(state),
     }
     Vec::new()
 }
@@ -469,6 +489,13 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             }
         }
         Action::ReviewGlance => return nav::review_glance(state),
+        Action::Explore => {
+            let explore = Route::Site(crate::site::Page::Explore {
+                language: None,
+                since: crate::api::explore::Since::default(),
+            });
+            return state.push(explore);
+        }
         Action::SearchGithub => return state.open_search(true),
         Action::FindFile if diff.is_some() => return state.open_picker(picker::Kind::DiffFiles),
         Action::FindFile => return state.open_finder(false),
@@ -478,9 +505,19 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             let kept = state.notices.log().iter().cloned().collect();
             return state.open_picker(picker::Kind::Messages(kept));
         }
+        // Queued writes, keeping repositories offline, and refreshing
+        // while GitHub can't be reached.
+        _ if crate::offline::claims(state, action) => return crate::offline::act(state, action),
         Action::Refresh => return state.load_visible(true),
         Action::Copy => return nav::copy_link(state),
         Action::OpenInBrowser => return state.go(Target::External(state.here_url()).into()),
+        _ if crate::settings::claims(action) => return crate::settings::act(state, action),
+        _ if crate::manage::claims(state, action) => return crate::manage::act(state, action),
+        // Labels, milestones, branches and tags, forks, new repositories
+        // and files: before closing (a milestone's), editing and deleting.
+        _ if crate::housekeeping::claims(state, action) => {
+            return crate::housekeeping::act(state, action);
+        }
         _ if act::ACTIONS.contains(&action) => return act::act(state, action),
         // The diff's links are in its threads' comments.
         Action::Hints | Action::HintsBrowser if diff.is_some() => {

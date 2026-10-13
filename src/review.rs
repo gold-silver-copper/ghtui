@@ -65,6 +65,12 @@ pub enum ComposeTarget {
     /// A release's, a gist's or a wiki page's text, on its form's page
     /// ([`crate::writes`]).
     Write(crate::writes::Text),
+    /// A new discussion: its title on the first line, then its text
+    /// ([`crate::manage`]).
+    NewDiscussion(crate::manage::Starting),
+    /// A repository's rule, webhook or deploy key, as `Name: value`
+    /// lines ([`crate::settings`]).
+    Setting(crate::settings::Form),
 }
 
 /// A suggested change and what it replaces.
@@ -87,6 +93,8 @@ pub struct Compose {
     pub discard_armed: Option<&'static str>,
     /// The list of who or what an `@` or `#` being typed can be.
     pub completing: crate::typing::Completing,
+    /// Your saved replies, listed to insert one (`ctrl-g`).
+    pub saved: Option<crate::site::replies::Choosing>,
 }
 
 impl Compose {
@@ -99,6 +107,7 @@ impl Compose {
             error: None,
             discard_armed: None,
             completing: crate::typing::Completing::default(),
+            saved: None,
         }
     }
 
@@ -145,6 +154,8 @@ impl Compose {
             ComposeTarget::Edit(e) => format!("Edit {}", e.name),
             ComposeTarget::Discussion(w) => w.title.clone(),
             ComposeTarget::ProjectDraft(d) => d.title.clone(),
+            ComposeTarget::NewDiscussion(s) => s.title(),
+            ComposeTarget::Setting(f) => f.title(),
             ComposeTarget::Commit { oid, .. } => format!("Comment on commit {}", short_sha(oid)),
             ComposeTarget::Form(crate::route::Route::NewPr(_)) => {
                 "New pull request: its title on the first line, then its description".to_owned()
@@ -177,6 +188,8 @@ pub fn compose_anchor(doc: &Doc, screen: &DiffScreen, target: &ComposeTarget) ->
         | ComposeTarget::Conversation { .. }
         | ComposeTarget::Discussion(_)
         | ComposeTarget::ProjectDraft(_)
+        | ComposeTarget::NewDiscussion(_)
+        | ComposeTarget::Setting(_)
         | ComposeTarget::Form(_)
         | ComposeTarget::Write(_)
         | ComposeTarget::Commit { .. } => screen
@@ -283,6 +296,9 @@ pub struct SubmitOutcome {
     pub error: Option<String>,
     /// The comments your pending review on GitHub held after, if known.
     pub on_github: Option<u64>,
+    /// GitHub couldn't be reached, and nothing was sent: the review, to
+    /// queue ([`crate::offline`]).
+    pub unsent: Option<Box<crate::offline::queue::Review>>,
 }
 
 pub fn suggestion_body(suggested: &str) -> String {
@@ -369,6 +385,8 @@ pub fn draft(target: &ComposeTarget, body: &str, id: u64, commit: &str) -> Optio
         | ComposeTarget::Edit(_)
         | ComposeTarget::Discussion(_)
         | ComposeTarget::ProjectDraft(_)
+        | ComposeTarget::NewDiscussion(_)
+        | ComposeTarget::Setting(_)
         | ComposeTarget::Form(_)
         | ComposeTarget::Write(_)
         | ComposeTarget::Commit { .. } => None,
@@ -495,6 +513,20 @@ pub fn outdated_to_map(threads: &[ReviewThread]) -> Vec<OutdatedThread> {
 /// local queue, rejected ones keep their text and GitHub's reason.
 #[must_use]
 pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcome) -> Vec<Cmd> {
+    // GitHub couldn't be reached: the review and its drafts move to the
+    // queue, to be sent when it's back.
+    if let Some(review) = &outcome.unsent {
+        let moved = SubmitOutcome {
+            accepted: review.drafts.iter().map(|d| d.id).collect(),
+            ..SubmitOutcome::default()
+        };
+        let mut cmds = on_submitted(state, pr, &moved);
+        if matches!(state.overlay, Some(Overlay::Submit(_))) {
+            state.overlay = None;
+        }
+        cmds.push(crate::offline::queue_review(state, review));
+        return cmds;
+    }
     let apply = |review: &mut ReviewState, head: Option<String>| {
         review.pending.retain(|d| !outcome.accepted.contains(&d.id));
         for draft in &mut review.pending {
@@ -958,6 +990,9 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     if compose.sending {
         return Vec::new();
     }
+    if let Some(cmds) = crate::site::replies::on_key(state, key) {
+        return cmds;
+    }
     if let Some(cmds) = crate::typing::on_compose_key(state, key) {
         return cmds;
     }
@@ -1057,6 +1092,12 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
         compose.sending = true;
         return crate::discuss::send(&w, body);
     }
+    if let ComposeTarget::NewDiscussion(s) = &target {
+        return crate::manage::start(state, s, &body);
+    }
+    if let ComposeTarget::Setting(f) = &target {
+        return crate::settings::submit(state, f, &body);
+    }
     if let ComposeTarget::ProjectDraft(d) = target {
         return match d.send(&body) {
             Ok(cmds) => {
@@ -1113,6 +1154,8 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
         | ComposeTarget::Edit(_)
         | ComposeTarget::Discussion(_)
         | ComposeTarget::ProjectDraft(_)
+        | ComposeTarget::NewDiscussion(_)
+        | ComposeTarget::Setting(_)
         | ComposeTarget::Form(_)
         | ComposeTarget::Write(_)
         | ComposeTarget::Commit { .. } => Vec::new(),

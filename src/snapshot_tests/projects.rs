@@ -136,6 +136,76 @@ fn h_and_l_go_between_columns() {
     says(&s, "Columns are a board's: this view is a table");
 }
 
+/// The board, in swimlanes by its assignees: each lane its columns of
+/// that person's cards, and `h` and `l` keep to the lane.
+fn with_lanes() -> State {
+    let mut s = sized(state(Mode::Dark, ColorDepth::TrueColor), 100, 60);
+    let mut p = fixtures::project();
+    p.views.items[0].group = Some(NodeId::new("F_assignees"));
+    let route = Route::Project {
+        project: roadmap(),
+        view: None,
+    };
+    open(&mut s, route, Data::Project(Box::new(p)));
+    s
+}
+
+#[test]
+fn a_board_with_swimlanes_has_its_columns_in_each_lane() {
+    let mut s = with_lanes();
+    assert_snapshot!(render(&s));
+    let text = page_text(&s);
+    assert!(text.contains("swimlanes by Assignees"), "{text}");
+    let lanes = ["No Assignees", " alice ", " bob "].map(|l| text.find(l));
+    assert!(lanes.iter().all(Option::is_some), "{text}");
+    assert!(lanes.is_sorted(), "{lanes:?}");
+    // In alice's lane, nothing is to the right of her Todo card.
+    for _ in 0..20 {
+        if selected(&s) == ISSUE {
+            break;
+        }
+        press(&mut s, "j");
+    }
+    assert_eq!(selected(&s), ISSUE);
+    press(&mut s, "l");
+    says(&s, "No column to the right has cards");
+    assert_eq!(selected(&s), ISSUE);
+}
+
+/// A roadmap places each item on a timeline from its start to its
+/// target date (one date: a diamond), says which fields and how many
+/// days a column is, and lists what has no dates.
+#[test]
+fn a_roadmap_puts_items_on_a_timeline() {
+    use crate::api::project::{FieldKind, Layout, ProjectField};
+    let mut s = sized(state(Mode::Light, ColorDepth::TrueColor), 100, 30);
+    let mut p = fixtures::project();
+    p.view = 2;
+    p.views.items[1].layout = Layout::Roadmap;
+    p.fields.items.push(ProjectField {
+        id: NodeId::new("F_start"),
+        name: "Start date".into(),
+        kind: FieldKind::Date,
+    });
+    let date = |d: &str| (NodeId::new("F_start"), FieldValue::Date(d.into()));
+    p.items.items[0].values.push(date("2026-10-05"));
+    p.items.items[1].values.push(date("2026-10-12"));
+    let route = Route::Project {
+        project: roadmap(),
+        view: Some(2),
+    };
+    open(&mut s, route, Data::Project(Box::new(p)));
+    assert_snapshot!(render(&s));
+    let text = page_text(&s);
+    assert!(text.contains("On a timeline by Start date → Due"), "{text}");
+    assert!(text.contains("Oct 2026"), "{text}");
+    assert!(text.contains("no dates"), "{text}");
+    assert!(
+        text.contains("Oct 5 → 31") && text.contains("◆ Oct 12"),
+        "{text}"
+    );
+}
+
 /// A draft opens in the view's side pane, as on GitHub: its fields and
 /// its body.
 #[test]
@@ -386,4 +456,55 @@ fn a_drafts_title_and_text_are_edited() {
     s.overlay = None;
     press(&mut s, "k,e");
     says(&s, "Only a draft's text is edited here");
+}
+
+/// `,f` on an issue sets its field in the project it's in, from its
+/// sidebar, with the board's pickers; the page follows GitHub until
+/// the sidebar shows the value.
+#[test]
+fn an_issues_field_is_set_from_its_sidebar() {
+    let mut s = super::with_issue(Mode::Dark);
+    let said = "Roadmap (In progress · Estimate: 3)";
+    assert!(page_text(&s).contains(said), "{}", page_text(&s));
+    press(&mut s, ",f");
+    let Some(Overlay::Picker(picker)) = &s.overlay else {
+        panic!("no picker");
+    };
+    let fields: Vec<(String, String)> = (s.picker_rows(picker).into_iter())
+        .map(|(r, _)| (r.label, r.hint))
+        .collect();
+    let want =
+        [("Status", "In progress"), ("Estimate", "3")].map(|(f, v)| (f.to_owned(), v.to_owned()));
+    assert_eq!(fields, want);
+    press(&mut s, "Status<Enter>");
+    let sent = press(&mut s, "Done<Enter>");
+    let done = FieldValue::Option {
+        id: "done".into(),
+        name: "Done".into(),
+    };
+    let change = Change::SetProjectField {
+        project: NodeId::new("PVT_1"),
+        item: NodeId::new("PVTI_14"),
+        field: NodeId::new("F_status"),
+        value: Some(done.clone()),
+        said: "Status to Done".into(),
+    };
+    let about = Subject::Issue(super::ghtui(), 14);
+    assert_eq!(sent, vec![Cmd::Api(Api::Change(change, By::Act(about)))]);
+    answer(&mut s, &sent, Ok(()));
+    let key = DataKey::InProjects(super::ghtui(), 14);
+    let polled = crate::act::poll(&mut s);
+    assert!(
+        polled.contains(&crate::browse::Need::Data(key.clone())),
+        "{polled:?}"
+    );
+    let mut projects = fixtures::in_projects();
+    let unchanged = Data::InProjects(Box::new(projects.clone()));
+    fetched(&mut s, key.clone(), unchanged);
+    assert!(s.awaiting.is_some());
+    projects.items[0].values[0].1 = done;
+    fetched(&mut s, key, Data::InProjects(Box::new(projects)));
+    assert!(s.awaiting.is_none());
+    let said = "Roadmap (Done · Estimate: 3)";
+    assert!(page_text(&s).contains(said), "{}", page_text(&s));
 }

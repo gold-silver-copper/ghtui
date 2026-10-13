@@ -56,6 +56,10 @@ pub enum Kind {
     Write(crate::writes::Pick),
     /// Where to save an artifact; a workflow's branch or input.
     Actions(crate::actions::Pick),
+    /// Locking, hiding, a base, sub-issues and the like ([`crate::manage`]).
+    Manage(crate::manage::Pick),
+    /// Someone to invite, a role, a repository's name ([`crate::settings`]).
+    Settings(crate::settings::Pick),
 }
 
 /// What a section's title is for.
@@ -90,6 +94,8 @@ impl Picker {
             Kind::Alert(ref d) => d.title(),
             Kind::Write(ref pick) => pick.title(),
             Kind::Actions(ref pick) => pick.title(),
+            Kind::Manage(ref pick) => pick.title(),
+            Kind::Settings(ref pick) => pick.title(),
         }
     }
 }
@@ -127,6 +133,8 @@ pub enum Choice {
     Alert(crate::api::change::Change),
     Write(crate::writes::Chosen),
     Actions(crate::actions::Chosen),
+    Manage(crate::manage::Chosen),
+    Settings(crate::settings::Chosen),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -188,6 +196,8 @@ impl State {
             Kind::Alert(ref d) => d.placeholder(),
             Kind::Write(ref pick) => pick.placeholder(),
             Kind::Actions(ref pick) => pick.placeholder(),
+            Kind::Manage(ref pick) => pick.placeholder(),
+            Kind::Settings(ref pick) => pick.placeholder(),
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
@@ -284,6 +294,12 @@ impl State {
                 .collect(),
             Kind::Write(pick) => (crate::writes::rows(self, pick, q).into_iter())
                 .map(|(row, chosen)| (row, chosen.map(Choice::Write)))
+                .collect(),
+            Kind::Manage(pick) => (crate::manage::rows(self, pick, q).into_iter())
+                .map(|(row, chosen)| (row, chosen.map(Choice::Manage)))
+                .collect(),
+            Kind::Settings(pick) => (crate::settings::rows(pick, q).into_iter())
+                .map(|(row, chosen)| (row, chosen.map(Choice::Settings)))
                 .collect(),
         }
     }
@@ -561,6 +577,10 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         return Vec::new();
     };
     let mut rows = state.picker_rows(p);
+    // Moving a sub-issue (alt-↑↓) before moving in the list.
+    if let Some(cmds) = crate::manage::picker_key(state, key, &mut rows) {
+        return cmds;
+    }
     let Some(Overlay::Picker(p)) = &mut state.overlay else {
         return Vec::new();
     };
@@ -640,6 +660,8 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
         Choice::Alert(change) => crate::security::choose(state, change),
         Choice::Write(chosen) => crate::writes::choose(state, chosen),
         Choice::Actions(chosen) => crate::actions::choose(state, chosen),
+        Choice::Manage(chosen) => crate::manage::choose(state, chosen),
+        Choice::Settings(chosen) => crate::settings::choose(state, chosen),
     }
 }
 

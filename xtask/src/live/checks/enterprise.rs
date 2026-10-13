@@ -23,7 +23,13 @@ const GITHUB: Duration = Duration::from_secs(30);
 const ISSUE: u64 = 8;
 
 fn run(cx: &mut Cx) -> Result<()> {
-    let standin = Arc::new(StandIn::start(&cx.env.work.join("ghes"), PORT, &[])?);
+    // A current server: it says its version, as one does.
+    let standin = Arc::new(StandIn::start(
+        &cx.env.work.join("ghes"),
+        PORT,
+        &[],
+        Some("3.22.0"),
+    )?);
     let stop = Arc::clone(&standin);
     cx.defer("stop the stand-in server", move || {
         drop(stop);
@@ -118,23 +124,53 @@ fn run(cx: &mut Cx) -> Result<()> {
 
 pub const OLDER: Check = Check::new(
     "enterprise-old",
-    "an older Enterprise Server (a field stripped from GraphQL answers): ghtui says what's missing",
+    "an older Enterprise Server (3.19, refusing a field it lacks): its version is asked once, its pages load without what it lacks, and ghtui says what that is",
     older,
 );
 
-/// A field github.com has and an older server's schema may lack.
+/// The version the stand-in says it is.
+const VERSION: &str = "3.19.0";
+
+/// A field 3.19 has, which the stand-in refuses as if it didn't: ghtui
+/// has to learn it from the refusal.
 const MISSING: &str = "mergeQueueEntry";
 
-/// ghtui doesn't work around a field an older server lacks (README, Known
-/// limitations): it says which, and offers to try again.
+/// ghtui asks an older server its version, leaves out what that version
+/// lacks, learns what else it lacks from its refusals, and says what the
+/// pages go without; the pages load.
 fn older(cx: &mut Cx) -> Result<()> {
-    let standin = StandIn::start(&cx.env.work.join("ghes"), PORT + 1, &[MISSING.to_owned()])?;
+    let strip = [format!("PullRequest.{MISSING}")];
+    let standin = StandIn::start(&cx.env.work.join("ghes"), PORT + 1, &strip, Some(VERSION))?;
     cx.step(&format!(
-        "a pull request's page, from answers without {MISSING}"
+        "a pull request's page loads from a server refusing {MISSING}, which ghtui names"
     ))?;
     let ghtui = cx.launch(Launch::new(&[&format!("{}#5", gh::REPO)]).env(standin.env()))?;
-    ghtui.wait_for(&format!("`{MISSING}`"))?;
-    ghtui.wait_for("missing field")?;
-    ghtui.wait_for("r tries again")?;
+    ghtui.wait_for("Failing checks")?;
+    ghtui.wait_for(&format!("`{MISSING}`: ghtui goes without"))?;
+    let served = standin.requests();
+    ensure!(
+        served.iter().any(|r| r.starts_with("refused /api/graphql")),
+        "the stand-in refused no query: {served:?}"
+    );
+    cx.step("an issue's page loads too, and the version was asked once")?;
+    ghtui.keys(":")?;
+    ghtui.type_text(&format!("{}#{ISSUE}", gh::REPO))?;
+    ghtui.keys("Enter")?;
+    ghtui.wait_for("Issue to close completed")?;
+    let served = standin.requests();
+    let asked = served
+        .iter()
+        .filter(|r| r.starts_with("GET /api/v3/meta "))
+        .count();
+    ensure!(
+        asked == 1,
+        "the version was asked {asked} times: {served:?}"
+    );
+    // Once learned, the field isn't asked again.
+    let refused = served.iter().filter(|r| r.starts_with("refused ")).count();
+    ensure!(
+        refused <= 3,
+        "{refused} queries were refused: the field was asked after it was learned"
+    );
     Ok(())
 }

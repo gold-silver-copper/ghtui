@@ -87,7 +87,7 @@ fn release(cx: &mut Cx) -> Result<()> {
     Ok(())
 }
 
-fn delete_release(tag: &str) -> Result<()> {
+pub(super) fn delete_release(tag: &str) -> Result<()> {
     if let Ok(release) = gh::get(&format!("repos/{}/releases/tags/{tag}", gh::REPO))
         && let Some(id) = release["id"].as_u64()
     {

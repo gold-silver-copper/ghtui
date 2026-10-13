@@ -9,7 +9,7 @@ use crate::api::model::NodeId;
 use crate::api::raw;
 
 /// A change to a discussion.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Discuss {
     /// A comment on `discussion`, or a reply in the thread of `reply_to`
     /// (a top-level comment).

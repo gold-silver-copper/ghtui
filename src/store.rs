@@ -16,7 +16,7 @@ use redb::{Database, ReadableDatabase, TableDefinition};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bump whenever the meaning or encoding of any table changes.
-pub const SCHEMA_VERSION: u64 = 14;
+pub const SCHEMA_VERSION: u64 = 15;
 
 const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 /// REST responses keyed by request path, stored with their ETag.
@@ -26,6 +26,7 @@ const QUERIES: TableDefinition<&str, &[u8]> = TableDefinition::new("queries");
 /// Logins keyed by `<host>/<token fingerprint>`.
 const ACCOUNTS: TableDefinition<&str, &[u8]> = TableDefinition::new("accounts");
 pub mod account;
+pub mod queue;
 pub mod reviews;
 
 pub use account::Account;
@@ -141,6 +142,8 @@ impl ReviewState {
 #[derive(Clone)]
 pub struct Store {
     db: Option<Arc<Database>>,
+    /// Where the database is, to say how big it is.
+    path: Option<Arc<std::path::PathBuf>>,
     /// Whose entries this store reads and writes.
     account: Account,
 }
@@ -160,6 +163,7 @@ impl Store {
         match open_versioned(path) {
             Ok(db) => Self {
                 db: Some(Arc::new(db)),
+                path: Some(Arc::new(path.to_owned())),
                 account: Account::default(),
             },
             Err(err) => {
@@ -173,6 +177,7 @@ impl Store {
     pub fn disabled() -> Self {
         Self {
             db: None,
+            path: None,
             account: Account::default(),
         }
     }
@@ -213,6 +218,12 @@ impl Store {
 
     pub fn is_enabled(&self) -> bool {
         self.db.is_some()
+    }
+
+    /// How big the database is on disk, in bytes.
+    pub fn size(&self) -> Option<u64> {
+        let path = self.path.as_ref()?;
+        std::fs::metadata(path.as_path()).ok().map(|m| m.len())
     }
 
     pub fn http_get(&self, key: &str) -> Option<HttpEntry> {

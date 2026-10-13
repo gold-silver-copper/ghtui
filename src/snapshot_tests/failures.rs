@@ -169,10 +169,22 @@ fn every_route_says_why_when_its_needs_fail() {
         "https://github.com/o/r/branches",
         "https://github.com/o/r/milestones",
         "https://github.com/o/r/milestone/1",
+        "https://github.com/o/r/labels",
+        "https://github.com/o/r/fork",
+        "https://github.com/new",
+        "https://github.com/o/r/milestones/new",
+        "https://github.com/o/r/milestones/1/edit",
+        "https://github.com/o/r/edit/main/README.md",
         "https://github.com/o/r/compare/a...b",
         "https://github.com/o/r/wiki",
         "https://github.com/o/r/security/advisories",
         "https://github.com/o/r/security/advisories/GHSA-2222-3333-4444",
+        "https://github.com/o/r/settings",
+        "https://github.com/o/r/settings/branches",
+        "https://github.com/o/r/settings/access",
+        "https://github.com/o/r/settings/hooks",
+        "https://github.com/o/r/settings/hooks/11",
+        "https://github.com/o/r/settings/keys",
         "https://github.com/orgs/o/teams",
         "https://github.com/orgs/o/teams/t",
         "https://gist.github.com/o/0123456789abcdef0123",
@@ -330,5 +342,10 @@ fn sample(key: &DataKey) -> Data {
         K::Alerts(_, kind, _) => Data::Alerts(Box::new(crate::security::fixtures::alerts(*kind))),
         K::Alert(a) => Data::Alert(Box::new(crate::security::fixtures::alert(a.kind, a.number))),
         K::Subscription(_) => Data::Subscription(Box::new(fixtures::subscription())),
+        K::Site(key) => crate::site::fixtures::sample(key),
+        K::Housekeeping(k) => {
+            Data::Housekeeping(Box::new(crate::housekeeping::fixtures::sample(k)))
+        }
+        K::Settings(_, page) => Data::Settings(Box::new(crate::settings::fixtures::page(*page))),
     }
 }

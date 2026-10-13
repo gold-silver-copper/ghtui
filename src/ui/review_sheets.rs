@@ -128,6 +128,7 @@ impl Widget for ComposeSheet<'_> {
                 ("ctrl-s", self.save),
                 ("ctrl-e", "open in $EDITOR"),
                 ("esc", "cancel"),
+                ("ctrl-g", "saved replies"),
             ],
         );
         if let Some(((choices, selected), at)) = completions {

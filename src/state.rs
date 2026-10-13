@@ -53,6 +53,9 @@ pub enum Msg {
     /// How many notifications are unread.
     Unread(Result<crate::api::notifications::Unread, ApiError>),
     Pr(PrRef, Box<Result<PrDetail, ApiError>>),
+    /// The cache's copy of a pull request, shown while GitHub can't be
+    /// reached (sent before its failed fetch).
+    PrCached(PrRef, Box<crate::store::Cached<PrDetail>>),
     /// Page data; with `cached_at` (when it was fetched), the cached copy
     /// shown while fetching.
     Fetched {
@@ -125,6 +128,9 @@ pub enum Msg {
     Write(crate::writes::Done),
     /// An artifact saved, a workflow run by hand.
     Actions(crate::actions::Done),
+    /// Whether GitHub can be reached, the queued writes, the kept
+    /// repositories ([`crate::offline`]).
+    Offline(crate::offline::Msg),
 }
 
 /// Why background work failed. Shows as its message with its causes
@@ -212,6 +218,9 @@ pub enum Cmd {
     /// A release, a gist, a wiki page or a subscription; answered by
     /// [`Msg::Write`].
     Write(crate::writes::Work),
+    /// Asking whether GitHub is back, the queue, the kept repositories;
+    /// answered by [`Msg::Offline`].
+    Offline(crate::offline::Cmd),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -347,6 +356,8 @@ pub enum Timer {
     Unread(u64),
     /// Ask whether the pull request watched (by its watch's id) changed.
     Watch(u64),
+    /// Ask whether GitHub can be reached again.
+    Probe,
 }
 
 /// Braille spinner frames.
@@ -512,10 +523,17 @@ pub struct State {
     /// Releases, gists and wiki pages being written, and the change one
     /// waits to see.
     pub writing: crate::writes::Writing,
+    /// What the pickers that manage an issue or pull request list.
+    pub managing: crate::manage::Managing,
+    /// A settings form sent and not yet taken.
+    pub settings: crate::settings::Kept,
     /// Workflows being run by hand: their forms.
     pub dispatching: crate::actions::Dispatching,
     /// Conversations: long reviews unfolded, and the like.
     pub talk: crate::talk::Talk,
+    /// Whether GitHub can be reached, the writes waiting for it, and the
+    /// repositories kept offline.
+    pub offline: crate::offline::Offline,
     pub quit: bool,
 }
 
@@ -565,8 +583,11 @@ impl State {
             mentionable: HashMap::new(),
             creating: crate::create::Creating::default(),
             writing: crate::writes::Writing::default(),
+            managing: crate::manage::Managing::default(),
+            settings: crate::settings::Kept::default(),
             dispatching: crate::actions::Dispatching::default(),
             talk: crate::talk::Talk::default(),
+            offline: crate::offline::Offline::default(),
             quit: false,
         };
         state.sync_page();
@@ -608,6 +629,7 @@ impl State {
                 Route::Job { .. } => Context::Log,
                 Route::Blob { .. } | Route::Blame { .. } => Context::File,
                 Route::Project { .. } | Route::ProjectItem { .. } => Context::Project,
+                Route::Settings { .. } => Context::Settings,
                 route if route.list_query().is_some() => Context::List,
                 _ => Context::Page,
             },

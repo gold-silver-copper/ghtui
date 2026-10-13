@@ -19,6 +19,8 @@ pub struct Config {
     pub keys: HashMap<String, Vec<String>>,
     /// Home's sections, in order (`[[home]]` tables); none, the defaults.
     pub home: Option<Vec<crate::home::SectionConfig>>,
+    /// How much of a repository kept offline is kept.
+    pub offline: crate::offline::keep::Limits,
 }
 
 #[derive(Debug, Default, Deserialize)]

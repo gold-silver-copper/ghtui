@@ -1,5 +1,5 @@
 ---
-source: src/snapshot_tests.rs
+source: src/snapshot_tests/diff.rs
 expression: render(&s)
 ---
 Buffer {
@@ -36,7 +36,7 @@ Buffer {
         "                                 14 -     pub fn origin() -> Self {                                           ",
         "                                 14 +     pub fn zero() -> Self {                                             ",
         "                                                                                                              ",
-        "                               ctrl-s add to review · ctrl-e open in $EDITOR · esc cancel                     ",
+        "                               ctrl-s add to review · ctrl-e open in $EDITOR · esc cancel · ctrl-g saved re…  ",
         "                                                                                                              ",
         "  ⠋ Diffing 7/8 files   1 line match “origin”                                                  API 4987/5000  ",
     ],
@@ -321,7 +321,9 @@ Buffer {
         x: 60, y: 31, fg: Rgb(196, 198, 207), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,
         x: 79, y: 31, fg: Rgb(169, 199, 255), bg: Rgb(40, 42, 47), underline: Reset, modifier: BOLD,
         x: 82, y: 31, fg: Rgb(196, 198, 207), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,
-        x: 89, y: 31, fg: Rgb(226, 226, 233), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,
+        x: 92, y: 31, fg: Rgb(169, 199, 255), bg: Rgb(40, 42, 47), underline: Reset, modifier: BOLD,
+        x: 98, y: 31, fg: Rgb(196, 198, 207), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,
+        x: 108, y: 31, fg: Rgb(226, 226, 233), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,
         x: 0, y: 32, fg: Rgb(226, 226, 233), bg: Rgb(25, 28, 32), underline: Reset, modifier: NONE,
         x: 29, y: 32, fg: Rgb(226, 226, 233), bg: Rgb(40, 42, 47), underline: Reset, modifier: NONE,
         x: 0, y: 33, fg: Rgb(226, 226, 233), bg: Rgb(29, 32, 36), underline: Reset, modifier: NONE,

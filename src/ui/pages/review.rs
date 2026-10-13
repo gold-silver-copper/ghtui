@@ -211,6 +211,7 @@ pub fn pr_reviewed(
         base: LinkBase::new(&pr.repo, &d.head_oid, ""),
         op: &d.author,
         now: cx.now,
+        unfolded: marks.unfolded,
     };
     let place = timeline::Place {
         repo: &pr.repo,

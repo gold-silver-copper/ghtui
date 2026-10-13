@@ -16,6 +16,16 @@ impl Menu {
     /// The rows the filter lets through, in order.
     pub fn shown(&self) -> Vec<&Doable> {
         let query = self.filter.as_deref().unwrap_or_default();
+        // What's typed, as typed, before a scattered match: "revert"
+        // mustn't run "Open the selected row".
+        let lower = query.to_lowercase();
+        let has = |d: &&Doable| {
+            d.label.to_lowercase().contains(&lower)
+                || d.action.description().to_lowercase().contains(&lower)
+        };
+        if self.rows.iter().any(|d| has(&d)) {
+            return self.rows.iter().filter(has).collect();
+        }
         self.rows
             .iter()
             .filter(|d| {

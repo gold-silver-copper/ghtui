@@ -33,6 +33,10 @@ const REFS_FRESH: Duration = Duration::from_secs(30);
 pub const CLONE_MAX: u64 = 512 * 1024 * 1024;
 /// How long a clone found too big is left alone.
 const TOO_BIG_FOR: Duration = Duration::from_secs(7 * 24 * 3600);
+/// How long keeping a repository offline waits for its clone.
+const KEEP_CLONE_WAIT: Duration = Duration::from_secs(600);
+/// How many files a kept repository's clone fetches at once.
+const KEEP_BATCH: usize = 1000;
 /// How long the history walk for a directory's latest commits goes on;
 /// GitHub is asked for the entries it didn't reach.
 const WALK: Duration = Duration::from_secs(1);
@@ -50,7 +54,13 @@ pub enum Clone {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum From {
     /// A clone, at a commit (none for what isn't at one: branches, tags).
-    Git { clone: Clone, at: Option<Oid> },
+    Git {
+        clone: Clone,
+        at: Option<Oid>,
+        /// GitHub couldn't be reached: its branches and tags are as it
+        /// listed them then (Unix seconds).
+        listed: Option<u64>,
+    },
     /// GitHub's API, and why git didn't answer.
     Api(String),
 }
@@ -58,9 +68,22 @@ pub enum From {
 impl From {
     /// One line saying where the page was read: the commit, and the clone;
     /// or that GitHub answered, and why.
-    pub fn note(&self) -> String {
+    pub fn note(&self, now: u64) -> String {
+        let note = self.read();
         match self {
-            From::Git { clone, at } => {
+            From::Git {
+                listed: Some(at), ..
+            } => format!(
+                "{note} · offline: branches and tags as GitHub had them {}",
+                crate::ui::time::ago(*at, now)
+            ),
+            _ => note,
+        }
+    }
+
+    fn read(&self) -> String {
+        match self {
+            From::Git { clone, at, .. } => {
                 let whose = match clone {
                     Clone::Yours(top) => match top.file_name() {
                         Some(name) => format!("your clone, {}", name.to_string_lossy()),
@@ -99,6 +122,7 @@ pub fn by_git(key: &DataKey, after: Option<&str>) -> bool {
         | DataKey::Tags(..)
         | DataKey::RefIn(..) => true,
         DataKey::Search(SearchKind::Code, query) => code_search(query).is_some(),
+        DataKey::Site(key) => key.by_git(),
         _ => false,
     }
 }
@@ -119,6 +143,10 @@ pub fn shown(route: &Route) -> Option<DataKey> {
         Route::Commit { repo, oid, .. } => DataKey::Commit(repo.clone(), oid.clone()),
         Route::Compare { repo, spec } => DataKey::Compare(repo.clone(), spec.clone()),
         Route::Tags(repo) => DataKey::Tags(repo.clone()),
+        Route::Site(crate::site::Page::Insights {
+            repo,
+            tab: crate::site::InsightsTab::Contributors | crate::site::InsightsTab::Commits,
+        }) => DataKey::Site(crate::site::Key::Activity(repo.clone())),
         Route::Search {
             kind: SearchKind::Code,
             query,
@@ -143,6 +171,7 @@ fn repo_of(key: &DataKey) -> Option<RepoId> {
         | DataKey::Tags(repo)
         | DataKey::RefIn(repo, _) => Some(repo.clone()),
         DataKey::Search(SearchKind::Code, query) => code_search(query).map(|s| s.repo),
+        DataKey::Site(key) => key.git_repo().cloned(),
         _ => None,
     }
 }
@@ -231,6 +260,69 @@ type LastCommits = Arc<HashMap<String, crate::api::browse::CommitInfo>>;
 struct Known {
     listed: Option<(Instant, RemoteRefs)>,
     head: Option<(Instant, Oid)>,
+    /// GitHub couldn't be reached last time: when it listed what was
+    /// used instead.
+    old: Option<u64>,
+}
+
+/// What GitHub last listed of a repository's branches and tags, or its
+/// default branch, kept in the cache to read by while it can't be
+/// reached.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct Kept {
+    branches: Vec<(String, String)>,
+    tags: Vec<(String, String)>,
+}
+
+impl Kept {
+    fn of(refs: &RemoteRefs) -> Self {
+        let names = |list: &[(String, Oid)]| {
+            (list.iter())
+                .map(|(name, oid)| (name.clone(), oid.to_string()))
+                .collect()
+        };
+        Self {
+            branches: names(&refs.branches),
+            tags: names(&refs.tags),
+        }
+    }
+
+    /// The default branch, as the one branch.
+    fn of_head(name: &str, oid: &Oid) -> Self {
+        Self {
+            branches: vec![(name.to_owned(), oid.to_string())],
+            tags: Vec::new(),
+        }
+    }
+
+    fn refs(&self) -> RemoteRefs {
+        let oids = |list: &[(String, String)]| {
+            (list.iter())
+                .filter_map(|(name, oid)| Some((name.clone(), Oid::parse(oid).ok()?)))
+                .collect()
+        };
+        RemoteRefs {
+            branches: oids(&self.branches),
+            tags: oids(&self.tags),
+        }
+    }
+
+    fn head(&self) -> Option<Oid> {
+        self.refs().branches.into_iter().next().map(|(_, oid)| oid)
+    }
+}
+
+/// Where what GitHub listed of `repo` (`what`: its refs or its head) is
+/// kept.
+fn kept_key(what: &str, repo: &RepoId) -> String {
+    format!("git-{what}:{}", slug(repo))
+}
+
+/// Why GitHub wasn't asked.
+fn offline(repo: &RepoId) -> ReadError {
+    ReadError::Limit(format!(
+        "GitHub can't be reached, and ghtui hasn't seen {repo}'s branches before"
+    ))
 }
 
 /// A repository's key in the maps: names are case-insensitive.
@@ -276,14 +368,14 @@ impl Local {
             let result = crate::runtime::fetch(gh, key, after, None).await;
             return (result, From::Api("git doesn't know it".into()));
         };
-        let why = match self.clone_of(&repo).await {
+        let why = match self.clone_of(gh, &repo).await {
             Err(why) => why,
             Ok((clone, whose)) => {
                 let (local, key2, after2) = (self.clone(), key.clone(), after.clone());
-                let gh2 = gh.clone();
+                let (gh2, repo2) = (gh.clone(), repo.clone());
                 let task =
                     tokio::spawn(
-                        async move { local.read(&gh2, &clone, &repo, &key2, after2).await },
+                        async move { local.read(&gh2, &clone, &repo2, &key2, after2).await },
                     );
                 #[expect(
                     clippy::disallowed_methods,
@@ -292,12 +384,21 @@ impl Local {
                 let done = tokio::time::timeout(wait(key), task).await;
                 match done {
                     Ok(Ok(Ok(Answer::Data(data, at)))) => {
-                        return (Ok(data), From::Git { clone: whose, at });
+                        let listed = self.listed(&repo).await;
+                        return (
+                            Ok(data),
+                            From::Git {
+                                clone: whose,
+                                at,
+                                listed,
+                            },
+                        );
                     }
                     Ok(Ok(Ok(Answer::Absent(what)))) => {
                         let from = From::Git {
                             clone: whose,
                             at: None,
+                            listed: self.listed(&repo).await,
                         };
                         return (Err(ApiError::NotFound(what)), from);
                     }
@@ -321,8 +422,12 @@ impl Local {
 
     /// The clone to read `repo` from: yours, or the cache's. Without
     /// either, the cache's is made in the background, and the API answers
-    /// meanwhile.
-    async fn clone_of(self: &Arc<Self>, repo: &RepoId) -> Result<(Arc<Repo>, Clone), String> {
+    /// meanwhile. While GitHub can't be reached, none is made.
+    async fn clone_of(
+        self: &Arc<Self>,
+        gh: &GitHub,
+        repo: &RepoId,
+    ) -> Result<(Arc<Repo>, Clone), String> {
         let slug = slug(repo);
         match self.clones().get(&slug) {
             Some(Slot::Ready(clone, whose)) => return Ok((clone.clone(), whose.clone())),
@@ -366,6 +471,12 @@ impl Local {
         }
         if matches!(clones.get(&slug), Some(Slot::Cloning)) {
             return Err(format!("ghtui is still cloning {repo} for git"));
+        }
+        // Not marked failed: it's made once GitHub is back.
+        if gh.offline_since().is_some() {
+            return Err(format!(
+                "GitHub can't be reached, and there's no clone of {repo} to read"
+            ));
         }
         clones.insert(slug.clone(), Slot::Cloning);
         drop(clones);
@@ -423,7 +534,14 @@ impl Local {
 
     /// GitHub's branches and tags for `repo`, asked again once they're
     /// [`REFS_FRESH`] old.
-    async fn remote_refs(&self, repo: &RepoId, clone: &Repo) -> Result<RemoteRefs, ReadError> {
+    /// While GitHub can't be reached (or git can't reach it), they're as
+    /// GitHub last listed them, kept in the cache, and that's noted.
+    async fn remote_refs(
+        &self,
+        gh: &GitHub,
+        repo: &RepoId,
+        clone: &Repo,
+    ) -> Result<RemoteRefs, ReadError> {
         let entry = self.refs_of(repo);
         let mut refs = entry.lock().await;
         if let Some((at, listed)) = &refs.listed
@@ -431,9 +549,89 @@ impl Local {
         {
             return Ok(listed.clone());
         }
-        let listed = read::remote_refs(clone).await?;
-        refs.listed = Some((Instant::now(), listed.clone()));
-        Ok(listed)
+        let asked = match gh.offline_since() {
+            None => read::remote_refs(clone).await,
+            Some(_) => Err(offline(repo)),
+        };
+        match asked {
+            Ok(listed) => {
+                refs.listed = Some((Instant::now(), listed.clone()));
+                refs.old = None;
+                gh.remember(&kept_key("refs", repo), Kept::of(&listed))
+                    .await;
+                Ok(listed)
+            }
+            Err(err) => {
+                let kept = gh.cached::<Kept>(&kept_key("refs", repo)).ok_or(err)?;
+                tracing::info!(%repo, "branches and tags as GitHub last listed them");
+                refs.old = Some(kept.fetched_at);
+                Ok(kept.value.refs())
+            }
+        }
+    }
+
+    /// When GitHub listed the branches and tags `repo`'s last read went
+    /// by, if that was before it went away.
+    async fn listed(&self, repo: &RepoId) -> Option<u64> {
+        self.refs_of(repo).lock().await.old
+    }
+
+    /// Makes `repo` readable offline ([`crate::offline::keep`]): its clone
+    /// (the cache's is made, and waited for, where there's none), at
+    /// GitHub's default branch, with that commit's files fetched (into
+    /// the cache's partial clone, all at once) while they fit in
+    /// `budget` bytes, and its branches and tags listed (and kept). The
+    /// clone's size on disk.
+    pub async fn keep(
+        self: &Arc<Self>,
+        gh: &GitHub,
+        repo: &RepoId,
+        budget: u64,
+    ) -> Result<u64, String> {
+        let started = Instant::now();
+        let (clone, _) = loop {
+            match self.clone_of(gh, repo).await {
+                Ok(found) => break found,
+                Err(_) if matches!(self.clones().get(&slug(repo)), Some(Slot::Cloning)) => {
+                    if started.elapsed() > KEEP_CLONE_WAIT {
+                        return Err(format!("{repo} is still being cloned"));
+                    }
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+                Err(why) => return Err(why),
+            }
+        };
+        let fail = |err: ReadError| err.to_string();
+        self.remote_refs(gh, repo, &clone).await.map_err(fail)?;
+        let head = self.at(gh, repo, &clone, "HEAD").await.map_err(fail)?;
+        if let Some(head) = head.filter(|_| clone.partial) {
+            let out = (clone
+                .run(&["ls-tree", "-r", "-l", "-z", head.as_ref()])
+                .await)
+                .map_err(|e| e.to_string())?;
+            let mut room = budget;
+            let blobs: Vec<String> = (out.split('\0'))
+                .filter_map(|line| {
+                    let (meta, _) = line.split_once('\t')?;
+                    let mut meta = meta.split_whitespace();
+                    let (_, kind, oid, size) =
+                        (meta.next()?, meta.next()?, meta.next()?, meta.next()?);
+                    let size: u64 = size.parse().ok()?;
+                    (kind == "blob" && size <= room).then(|| {
+                        room -= size;
+                        oid.to_owned()
+                    })
+                })
+                .collect();
+            for batch in blobs.chunks(KEEP_BATCH) {
+                clone.prefetch(batch).await.map_err(|e| e.to_string())?;
+            }
+        }
+        let path = clone.path.clone();
+        let size = tokio::task::spawn_blocking(move || crate::offline::keep::disk_size(&path))
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(size)
     }
 
     fn refs_of(&self, repo: &RepoId) -> Arc<tokio::sync::Mutex<Known>> {
@@ -445,7 +643,13 @@ impl Local {
     /// branch for `HEAD`, a commit ID), here: fetched when the clone
     /// doesn't have it. `None` when GitHub has nothing by that name and
     /// the clone no commit.
-    async fn at(&self, repo: &RepoId, clone: &Repo, rev: &str) -> Result<Option<Oid>, ReadError> {
+    async fn at(
+        &self,
+        gh: &GitHub,
+        repo: &RepoId,
+        clone: &Repo,
+        rev: &str,
+    ) -> Result<Option<Oid>, ReadError> {
         let quiet = |_: String| {};
         if let Ok(oid) = Oid::parse(rev) {
             return match clone.ensure(&oid, &quiet).await {
@@ -460,13 +664,29 @@ impl Local {
             match &refs.head {
                 Some((at, oid)) if at.elapsed() < REFS_FRESH => Some(oid.clone()),
                 _ => {
-                    let (_, oid) = read::remote_head(clone).await?;
-                    refs.head = Some((Instant::now(), oid.clone()));
-                    Some(oid)
+                    let asked = match gh.offline_since() {
+                        None => read::remote_head(clone).await,
+                        Some(_) => Err(offline(repo)),
+                    };
+                    match asked {
+                        Ok((name, oid)) => {
+                            refs.head = Some((Instant::now(), oid.clone()));
+                            refs.old = None;
+                            let kept = Kept::of_head(&name, &oid);
+                            gh.remember(&kept_key("head", repo), kept).await;
+                            Some(oid)
+                        }
+                        Err(err) => {
+                            let key = kept_key("head", repo);
+                            let kept = gh.cached::<Kept>(&key).ok_or(err)?;
+                            refs.old = Some(kept.fetched_at);
+                            kept.value.head()
+                        }
+                    }
                 }
             }
         } else {
-            self.remote_refs(repo, clone).await?.find(rev).cloned()
+            self.remote_refs(gh, repo, clone).await?.find(rev).cloned()
         };
         match named {
             Some(oid) => {
@@ -489,7 +709,7 @@ impl Local {
     ) -> Result<Answer, ReadError> {
         let absent = |what: String| Ok(Answer::Absent(what));
         let at = |rev: String| async move {
-            let oid = self.at(repo, clone, &rev).await?;
+            let oid = self.at(gh, repo, clone, &rev).await?;
             oid.ok_or_else(|| {
                 ReadError::Limit(format!("git has no branch, tag or commit {rev} of {repo}"))
             })
@@ -521,7 +741,7 @@ impl Local {
                 Answer::Data(Data::History(Box::new(page)), Some(oid))
             }
             DataKey::Commit(_, rev) => {
-                let Some(oid) = self.at(repo, clone, rev).await? else {
+                let Some(oid) = self.at(gh, repo, clone, rev).await? else {
                     return Err(ReadError::Limit(format!("git doesn't have commit {rev}")));
                 };
                 match read::commit(clone, &oid).await? {
@@ -588,7 +808,7 @@ impl Local {
                 Answer::Data(Data::LastCommits(found), Some(oid))
             }
             DataKey::Refs(_) => {
-                let listed = self.remote_refs(repo, clone).await?;
+                let listed = self.remote_refs(gh, repo, clone).await?;
                 let names = |list: Vec<(String, Oid)>| {
                     Capped::from(list.into_iter().map(|(n, _)| n).collect::<Vec<_>>())
                 };
@@ -602,7 +822,7 @@ impl Local {
                 Answer::Data(Data::Refs(Box::new(refs)), None)
             }
             DataKey::Tags(_) => {
-                let listed = self.remote_refs(repo, clone).await?;
+                let listed = self.remote_refs(gh, repo, clone).await?;
                 let tags = read::tags(clone, &listed.tags).await?;
                 let tags = Results {
                     total: tags.len() as u64,
@@ -612,7 +832,7 @@ impl Local {
                 Answer::Data(Data::Tags(Box::new(tags)), None)
             }
             DataKey::RefIn(_, spot) => {
-                let listed = self.remote_refs(repo, clone).await?;
+                let listed = self.remote_refs(gh, repo, clone).await?;
                 Answer::Data(Data::RefIn(listed.ref_in(spot)), None)
             }
             DataKey::Search(SearchKind::Code, query) => {
@@ -629,6 +849,13 @@ impl Local {
                 let found = SearchResults::Code(results);
                 Answer::Data(Data::Search(Box::new(found)), Some(oid))
             }
+            DataKey::Site(crate::site::Key::Activity(_)) => {
+                let oid = at("HEAD".into()).await?;
+                let now = crate::store::now();
+                let activity = crate::site::insights::activity(clone, &oid, now).await?;
+                let value = crate::site::Value::Activity(activity);
+                Answer::Data(Data::Site(Box::new(value)), Some(oid))
+            }
             _ => return Err(ReadError::Limit("git doesn't know it".into())),
         })
     }
@@ -639,6 +866,7 @@ fn wait(key: &DataKey) -> Duration {
     Duration::from_secs(match key {
         DataKey::Blame(..) | DataKey::Compare(..) | DataKey::Search(..) => 20,
         DataKey::LastCommits(..) => 12,
+        DataKey::Site(key) => key.git_wait(),
         _ => 6,
     })
 }
@@ -786,10 +1014,11 @@ mod tests {
         let at_head = From::Git {
             clone: Clone::Cache,
             at: Some(head.clone()),
+            listed: None,
         };
         assert_eq!(from, at_head);
         assert!(
-            from.note()
+            from.note(0)
                 .starts_with(&format!("At {}", crate::ui::text::short_sha(&head)))
         );
 
@@ -834,6 +1063,78 @@ mod tests {
             ]
         );
         assert!(tags.items.iter().all(|t| t.date.is_some()));
+    }
+
+    /// Without GitHub, the clone still answers, at the commit GitHub's
+    /// branch was at when it was last listed, and says so; a repository
+    /// without a clone isn't cloned (nor given up on).
+    #[tokio::test]
+    async fn offline_the_clone_reads_at_the_branch_github_last_listed() {
+        let github = tempfile::tempdir().unwrap();
+        let g = github.path().join("r.git");
+        std::fs::create_dir(&g).unwrap();
+        git(&g, &["init", "-q", "-b", "main"]).await;
+        git(&g, &["config", "uploadpack.allowFilter", "true"]).await;
+        std::fs::write(g.join("a.txt"), "one\n").unwrap();
+        git(&g, &["add", "a.txt"]).await;
+        let who = ["-c", "user.name=Ann", "-c", "user.email=ann@example.com"];
+        git(&g, &[&who[..], &["commit", "-q", "-m", "First"]].concat()).await;
+        let cache = tempfile::tempdir().unwrap();
+        let url = format!("file://{}", g.display());
+        let credentials = crate::git::credentials::Credentials::Ambient;
+        Repo::open_cache(cache.path(), "o", "r", &url, credentials.clone(), &|_| {})
+            .await
+            .unwrap();
+        let context = GitContext {
+            cache_root: cache.path().to_owned(),
+            credentials,
+            cwd: cache.path().to_owned(),
+        };
+        let store = crate::store::Store::open(&cache.path().join("cache.redb"));
+        let gh = GitHub::new(
+            crate::api::auth::Token::new("t"),
+            store,
+            crate::host::Host::GITHUB_COM,
+        );
+        let repo = RepoId::new("o", "r");
+        let blob = DataKey::Blob(repo.clone(), "main".into(), "a.txt".into());
+        let (data, from) = Local::new(context.clone()).fetch(&gh, &blob, None).await;
+        assert!(data.is_ok(), "{data:?}");
+        assert!(matches!(from, From::Git { listed: None, .. }), "{from:?}");
+
+        // GitHub goes away.
+        std::fs::rename(&g, github.path().join("gone")).unwrap();
+        gh.reach().lost();
+        let local = Local::new(context);
+        let (data, from) = local.fetch(&gh, &blob, None).await;
+        let Ok(Data::Blob(b)) = data else {
+            panic!("{data:?}")
+        };
+        assert_eq!(b.text.as_deref(), Some("one\n"));
+        assert!(
+            matches!(
+                from,
+                From::Git {
+                    listed: Some(_),
+                    ..
+                }
+            ),
+            "{from:?}"
+        );
+        assert!(
+            from.note(crate::store::now()).contains("offline"),
+            "{}",
+            from.note(0)
+        );
+        let other = RepoId::new("o", "elsewhere");
+        let tree = DataKey::Tree(other.clone(), "main".into(), String::new());
+        let (data, from) = local.fetch(&gh, &tree, None).await;
+        assert!(matches!(data, Err(ApiError::Offline(_))), "{data:?}");
+        assert!(
+            matches!(&from, From::Api(why) if why.contains("no clone")),
+            "{from:?}"
+        );
+        assert!(local.clones().get(&slug(&other)).is_none());
     }
 
     #[test]

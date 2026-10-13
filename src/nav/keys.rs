@@ -315,7 +315,7 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::FoldClose | Action::FoldOpen | Action::FoldToggle => {
             match crate::talk::fold_key(state, action) {
                 Some(cmds) => return cmds,
-                None => state.info("Select a long review to fold or unfold it"),
+                None => state.info("Select a long review or a hidden comment to fold or unfold it"),
             }
         }
         _ => state.info(action.not_here()),

@@ -1,11 +1,12 @@
 //! GitHub Projects: an owner's or a repository's projects, a project's
-//! view (a board's columns of cards, or a table's rows of fields), and an
-//! item as a view's side pane shows it.
+//! view (a board's columns of cards, in swimlanes if it has them; a
+//! table's rows of fields; a roadmap's items on a timeline), and an item
+//! as a view's side pane shows it.
 
 use super::*;
 use crate::api::project::{
-    FieldKind, Group, ItemContent, Layout, Project, ProjectField, ProjectItem, ProjectRef,
-    ProjectSummary, ProjectView, ProjectsOf, grouped,
+    Dates, FieldKind, FieldValue, Group, ItemContent, Layout, Project, ProjectField, ProjectItem,
+    ProjectRef, ProjectSummary, ProjectView, ProjectsOf, grouped,
 };
 use crate::ui::text::{truncate, width};
 
@@ -81,11 +82,14 @@ pub fn project_view(
             page.wrapped(vec![Seg::new(note, Role::Meta)], 0, Frame::None);
             table(page, &at, shown, cx);
         }
-        (Layout::Roadmap, _) => {
-            let note = "A roadmap shows here as a table.";
-            page.wrapped(vec![Seg::new(note, Role::Meta)], 0, Frame::None);
-            table(page, &at, shown, cx);
-        }
+        (Layout::Roadmap, _) => match p.roadmap_dates() {
+            Some(dates) => roadmap(page, &at, shown, dates, cx),
+            None => {
+                let note = "This roadmap has no date or iteration field to place its items by: it shows as a table.";
+                page.wrapped(vec![Seg::new(note, Role::Meta)], 0, Frame::None);
+                table(page, &at, shown, cx);
+            }
+        },
         (Layout::Table, _) => table(page, &at, shown, cx),
     }
     more(page, &p.items);
@@ -133,7 +137,11 @@ fn about(p: &Project, view: &ProjectView, column: Option<&ProjectField>) -> Vec<
         said.push(format!("columns by {}", field.name));
     }
     if let Some(group) = view.group.as_ref().and_then(name) {
-        said.push(format!("grouped by {group}"));
+        if p.lanes().is_some() {
+            said.push(format!("swimlanes by {group}"));
+        } else {
+            said.push(format!("grouped by {group}"));
+        }
     }
     let sorts: Vec<String> = (view.sort.iter())
         .filter_map(|(id, descending)| {
@@ -172,16 +180,42 @@ const COLUMN_MIN: u16 = 30;
 const COLUMN_GAP: u16 = 1;
 
 /// A board: a box for each column (each value of `field`), its cards in
-/// the view's order. The columns stand side by side, as many as fit
-/// (then the next ones below), or one above another when two don't fit.
+/// the view's order; with swimlanes, the columns again for each lane (each
+/// value of the view's grouping), under its name.
 fn board(page: &mut Page, at: &Spot<'_>, field: &ProjectField, cx: PageCtx<'_>) {
-    let items = at.p.sorted();
-    let shown = card_fields(at.p, Some(&field.id));
-    let columns = grouped(field, &items);
+    let Some((lane_field, lanes)) = at.p.lanes() else {
+        let shown = card_fields(at.p, &[&field.id]);
+        return columns(page, at, field, &at.p.sorted(), &shown, cx);
+    };
+    let shown = card_fields(at.p, &[&field.id, &lane_field.id]);
+    for lane in &lanes {
+        page.blank();
+        let count = plural(lane.items.len() as u64, "item");
+        let title = vec![
+            Seg::new("▾ ", Role::Meta),
+            group_chip(lane),
+            Seg::new(format!("  {count}"), Role::Meta),
+        ];
+        page.wrapped(title, 0, Frame::None);
+        columns(page, at, field, &lane.items, &shown, cx);
+    }
+}
+
+/// A board's columns of `items`: side by side, as many as fit (then
+/// the next ones below), or one above another when two don't fit.
+fn columns(
+    page: &mut Page,
+    at: &Spot<'_>,
+    field: &ProjectField,
+    items: &[&ProjectItem],
+    shown: &[&ProjectField],
+    cx: PageCtx<'_>,
+) {
+    let columns = grouped(field, items);
     let fit = usize::from(page.width.saturating_add(COLUMN_GAP) / (COLUMN_MIN + COLUMN_GAP));
     if fit < 2 || columns.len() < 2 {
         for c in &columns {
-            column(page, at, field, c, &shown, cx);
+            column(page, at, field, c, shown, cx);
         }
         return;
     }
@@ -192,7 +226,7 @@ fn board(page: &mut Page, at: &Spot<'_>, field: &ProjectField, cx: PageCtx<'_>) 
         page.blank();
         page.side_by_side(&vec![width; band.len()], COLUMN_GAP, |i, page| {
             if let Some(c) = band.get(i) {
-                column(page, at, field, c, &shown, cx);
+                column(page, at, field, c, shown, cx);
             }
         });
     }
@@ -279,14 +313,12 @@ fn archived(page: &mut Page, at: &Spot<'_>, cx: PageCtx<'_>) {
     page.box_bottom();
 }
 
-/// The fields a card shows: the view's, but its title and its columns'.
-fn card_fields<'a>(
-    p: &'a Project,
-    column: Option<&crate::api::model::NodeId>,
-) -> Vec<&'a ProjectField> {
+/// The fields a card shows: the view's, but its title and those its
+/// place on the page says (its column's, its lane's).
+fn card_fields<'a>(p: &'a Project, said: &[&crate::api::model::NodeId]) -> Vec<&'a ProjectField> {
     let view = p.shown();
     (view.iter().flat_map(|v| v.fields.iter()))
-        .filter(|id| Some(*id) != column)
+        .filter(|id| !said.contains(id))
         .filter_map(|id| p.field(id))
         .filter(|f| !matches!(f.kind, FieldKind::Title | FieldKind::Other))
         .collect()
@@ -464,7 +496,7 @@ const CELL_MAX: usize = 20;
 /// title and the view's fields in columns, as many as fit.
 fn table(page: &mut Page, at: &Spot<'_>, view: &ProjectView, cx: PageCtx<'_>) {
     let items = at.p.sorted();
-    let fields = card_fields(at.p, None);
+    let fields = card_fields(at.p, &[]);
     let room = usize::from(page.room(Frame::Body, 0));
     // Each field as wide as its widest value or name, while the title
     // keeps its room.
@@ -535,6 +567,271 @@ fn table(page: &mut Page, at: &Spot<'_>, view: &ProjectView, cx: PageCtx<'_>) {
             row(page, at, it, &columns, title_width, cx);
         }
         page.box_bottom();
+    }
+}
+
+/// Columns a roadmap's titles get at most, and at least.
+const ROADMAP_TITLE: (usize, usize) = (36, 16);
+
+/// A roadmap: each item a row, its title, then a bar on a timeline from
+/// its start to its end (one day: a diamond), in its Status's color;
+/// grouped as the view groups them. The timeline spans the items' dates
+/// and today, one column for as many days as fit, which the box says.
+fn roadmap(page: &mut Page, at: &Spot<'_>, view: &ProjectView, dates: Dates<'_>, cx: PageCtx<'_>) {
+    let mut items = at.p.sorted();
+    let span = |it: &ProjectItem| Project::span(dates, it);
+    if view.sort.is_empty() {
+        // Without a sort of its own, by when each starts, the undated last.
+        items.sort_by_key(|it| span(it).map_or(i64::MAX, |(start, _)| start));
+    }
+    let today = i64::try_from(cx.now / 86_400).unwrap_or_default();
+    let spans: Vec<(i64, i64)> = items.iter().filter_map(|it| span(it)).collect();
+    let first = spans
+        .iter()
+        .map(|s| s.0)
+        .chain([today])
+        .min()
+        .unwrap_or(today)
+        - 3;
+    let last = spans
+        .iter()
+        .map(|s| s.1)
+        .chain([today])
+        .max()
+        .unwrap_or(today)
+        + 3;
+    let room = usize::from(page.room(Frame::Body, 0));
+    let title_width = (room / 3).clamp(ROADMAP_TITLE.1, ROADMAP_TITLE.0).min(room);
+    let bar_width = room.saturating_sub(title_width + 2).max(1);
+    let days = usize::try_from(last - first + 1).unwrap_or(1);
+    let per = days.div_ceil(bar_width).max(1);
+    let line = Timeline {
+        first,
+        per: i64::try_from(per).unwrap_or(1),
+        width: bar_width,
+        today,
+    };
+    let by = match dates {
+        Dates::Fields {
+            start,
+            end: Some(end),
+        } => format!("{} → {}", start.name, end.name),
+        Dates::Fields { start, end: None } => start.name.clone(),
+        Dates::Iteration(field) => field.name.clone(),
+    };
+    let scale = if per == 1 {
+        "a column a day".to_owned()
+    } else {
+        format!("a column for {per} days")
+    };
+    let note = format!(
+        "On a timeline by {by} ({scale}); GitHub's API doesn't say which fields the view uses, so these are its first date fields."
+    );
+    page.wrapped(vec![Seg::new(note, Role::Meta)], 0, Frame::None);
+    let groups = match view.group.as_ref().and_then(|id| at.p.field(id)) {
+        Some(field) => grouped(field, &items),
+        None => vec![Group {
+            value: None,
+            name: String::new(),
+            color: None,
+            items,
+        }],
+    };
+    let status = at.p.fields.iter().find(|f| f.name == "Status");
+    for group in &groups {
+        let title = if view.group.is_none() {
+            vec![Seg::new(
+                format!("Items  {}", group.items.len()),
+                Role::Strong,
+            )]
+        } else {
+            vec![
+                group_chip(group),
+                Seg::new(format!("  {}", group.items.len()), Role::Meta),
+            ]
+        };
+        page.box_top(title, Vec::new());
+        let mut header = vec![Seg::new(" ".repeat(title_width + 2), Role::Meta)];
+        header.push(Seg::new(line.months(), Role::Meta));
+        page.box_line(header, Vec::new(), 0);
+        page.box_rule();
+        if group.items.is_empty() {
+            empty_row(page, "No items");
+        }
+        for it in &group.items {
+            let color = status.and_then(|f| option_color(f, it));
+            let bar = line.bar(span(it), color);
+            roadmap_row(page, at, it, title_width, &bar, cx);
+        }
+        page.box_bottom();
+    }
+}
+
+/// A roadmap's timeline: which day its first column is, how many days a
+/// column is, how many columns, and today.
+struct Timeline {
+    first: i64,
+    per: i64,
+    width: usize,
+    today: i64,
+}
+
+impl Timeline {
+    /// The column `day` falls in, if it's on the timeline.
+    fn column(&self, day: i64) -> Option<usize> {
+        let c = usize::try_from((day - self.first).div_euclid(self.per)).ok()?;
+        (c < self.width).then_some(c)
+    }
+
+    /// The months' names where each starts (the year with the first and
+    /// with January), as far as each has room, and today's column.
+    fn months(&self) -> String {
+        // Where each month starts: the first column's, then each change.
+        let mut starts: Vec<(usize, i64, i64)> = Vec::new();
+        for c in 0..self.width {
+            let day = self.first + i64::try_from(c).unwrap_or(0) * self.per;
+            let (year, m, _) = crate::ui::time::civil(day);
+            if starts.last().is_none_or(|(_, _, last)| *last != m) {
+                starts.push((c, year, m));
+            }
+        }
+        let mut out = vec![' '; self.width];
+        if let Some(c) = self.column(self.today)
+            && let Some(slot) = out.get_mut(c)
+        {
+            *slot = '┊';
+        }
+        let mut free = 0;
+        let mut named = false;
+        for (i, (c, year, m)) in starts.iter().enumerate() {
+            let name = MONTHS
+                .get(usize::try_from(m - 1).unwrap_or(0))
+                .copied()
+                .unwrap_or("");
+            let label = if !named || *m == 1 {
+                format!("{name} {year}")
+            } else {
+                name.to_owned()
+            };
+            let len = label.chars().count();
+            // A month begun before the timeline gives way to the next.
+            let next = starts.get(i + 1).map_or(self.width, |n| n.0);
+            if *c < free || c + len > self.width || (i == 0 && c + len >= next) {
+                continue;
+            }
+            for (k, ch) in label.chars().enumerate() {
+                if let Some(slot) = out.get_mut(c + k) {
+                    *slot = ch;
+                }
+            }
+            free = c + len + 1;
+            named = true;
+        }
+        out.into_iter().collect()
+    }
+
+    /// An item's bar from its first to its last day, its dates in it
+    /// (or after it) where they fit, or a diamond for one day; today's
+    /// column marked where it's free.
+    fn bar(&self, span: Option<(i64, i64)>, color: Option<&str>) -> Vec<Seg> {
+        let Some((start, end)) = span else {
+            return vec![Seg::new("no dates", Role::Meta)];
+        };
+        let (Some(a), Some(b)) = (self.column(start), self.column(end)) else {
+            return Vec::new();
+        };
+        let today = self.column(self.today);
+        let gap = |from: usize, to: usize| {
+            let text: String = (from..to)
+                .map(|c| if Some(c) == today { '┊' } else { ' ' })
+                .collect();
+            Seg::new(text, Role::Meta)
+        };
+        let mut segs = vec![gap(0, a)];
+        let said = dates(start, end);
+        let len = width(&said);
+        let mut end_col = b + 1;
+        if a == b && start == end {
+            segs.push(Seg::new("◆", Role::Strong));
+        } else if len + 2 <= b - a + 1 {
+            let text = format!(" {}", pad(&said, b - a));
+            segs.push(Seg::new(text, Role::Label(hex(color).to_owned())));
+            return segs.into_iter().chain([gap(b + 1, self.width)]).collect();
+        } else {
+            segs.push(Seg::new(
+                " ".repeat(b - a + 1),
+                Role::Label(hex(color).to_owned()),
+            ));
+        }
+        // The dates after the bar, where they fit.
+        if b + 2 + len <= self.width {
+            segs.push(gap(b + 1, b + 2));
+            segs.push(Seg::new(said, Role::Meta));
+            end_col = b + 2 + len;
+        }
+        segs.push(gap(end_col, self.width));
+        segs
+    }
+}
+
+/// `Oct 5 → 31`, `Oct 28 → Nov 3`, or one day's `Oct 5`.
+fn dates(start: i64, end: i64) -> String {
+    let name = |m: i64| {
+        MONTHS
+            .get(usize::try_from(m - 1).unwrap_or(0))
+            .copied()
+            .unwrap_or("")
+    };
+    let (_, m1, d1) = crate::ui::time::civil(start);
+    let (_, m2, d2) = crate::ui::time::civil(end);
+    match (start == end, m1 == m2) {
+        (true, _) => format!("{} {d1}", name(m1)),
+        (false, true) => format!("{} {d1} → {d2}", name(m1)),
+        (false, false) => format!("{} {d1} → {} {d2}", name(m1), name(m2)),
+    }
+}
+
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// An item's color by `field`'s option: GitHub's name for it.
+fn option_color<'a>(field: &'a ProjectField, it: &ProjectItem) -> Option<&'a str> {
+    let FieldKind::SingleSelect(options) = &field.kind else {
+        return None;
+    };
+    let Some(FieldValue::Option { id, .. }) = it.value(&field.id) else {
+        return None;
+    };
+    options
+        .iter()
+        .find(|o| o.id == *id)
+        .map(|o| o.color.as_str())
+}
+
+/// A roadmap's row: the item's icon and title, then its bar.
+fn roadmap_row(
+    page: &mut Page,
+    at: &Spot<'_>,
+    it: &ProjectItem,
+    title_width: usize,
+    bar: &[Seg],
+    cx: PageCtx<'_>,
+) {
+    let (icon, role) = item_icon(it, cx.icons);
+    let title = truncate(it.title(), title_width.saturating_sub(2));
+    let rest = title_width.saturating_sub(width(&title) + 2) + 2;
+    let line = |page: &mut Page, title: Seg| {
+        let mut segs = vec![Seg::new(format!("{icon} "), role.clone()), title];
+        segs.push(Seg::new(" ".repeat(rest), Role::Body));
+        segs.extend(bar.iter().cloned());
+        page.box_line(segs, Vec::new(), 0);
+    };
+    match item_link(at.project, at.view, it) {
+        Some(target) => item(page, target, |page, link| {
+            line(page, Seg::linked(title.clone(), Role::Strong, link));
+        }),
+        None => line(page, Seg::new(title.clone(), Role::Meta)),
     }
 }
 

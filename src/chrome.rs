@@ -56,7 +56,11 @@ fn new_tab(icon: &'static str, label: &str, count: Option<u64>) -> PageTab {
 impl State {
     pub fn chrome(&self) -> Chrome {
         let mut c = self.screen_chrome();
-        // Right: review requests, your unread notifications and you.
+        // Right: offline (and what waits for GitHub), review requests,
+        // your unread notifications and you.
+        for offline in crate::offline::header(self) {
+            c.right.push((offline, Target::Page(Route::Offline)));
+        }
         // Review requests, once their search (Home's first section, unless
         // you changed it) is in.
         let requests = DataKey::Search(SearchKind::Pulls, crate::home::REVIEW_REQUESTS.into());
@@ -139,6 +143,7 @@ impl State {
         match route {
             Route::Home => c.crumb("Home", None),
             Route::Notifications { .. } => c.crumb("Notifications", None),
+            Route::Offline => c.crumb("Offline", None),
             Route::Pr { pr, tab } => {
                 repo_crumbs(&pr.repo, c);
                 self.pr_tabs(pr, c);
@@ -218,6 +223,7 @@ impl State {
             Route::Project { project, view } | Route::ProjectItem { project, view, .. } => {
                 self.project_chrome(project, *view, c);
             }
+            Route::Site(page) if page.repo().is_none() => self.site_chrome(route, page, c),
             Route::Search { kind, query } => {
                 c.crumb("Search", None);
                 let results = paged(route).and_then(|key| self.picked::<SearchResults>(&key));
@@ -370,6 +376,9 @@ impl State {
         if let Some(projects) = &projects {
             tabs.push(("▥", "Projects", None, projects.clone()));
         }
+        let packages =
+            crate::site::Page::Packages(crate::api::packages::PackagesOf::Owner(login.to_owned()));
+        tabs.push(("⬢", "Packages", None, Target::Page(Route::Site(packages))));
         if org == Some(true) {
             tabs.push((
                 "⚇",
@@ -403,6 +412,54 @@ impl State {
         c.active = tabs.iter().position(|(.., t)| Some(t) == active.as_ref());
         for (icon, label, count, target) in tabs {
             c.tabs.push((new_tab(icon, label, count), target));
+        }
+    }
+
+    /// Explore's, a topic's, a starred list's, and an owner's packages'
+    /// chrome.
+    fn site_chrome(&self, route: &Route, page: &crate::site::Page, c: &mut Chrome) {
+        use crate::site::Page as Site;
+        let explore = || {
+            Target::Page(Route::Site(Site::Explore {
+                language: None,
+                since: crate::api::explore::Since::default(),
+            }))
+        };
+        let user = |login: &str| Some(Target::Page(Route::user(login)));
+        match page {
+            Site::Explore { .. } => c.crumb("Explore", None),
+            Site::Topic(name) => {
+                c.crumb("Explore", Some(explore()));
+                c.crumb(&format!("#{name}"), None);
+            }
+            Site::StarList { login, .. } => {
+                c.crumb(login, user(login));
+                let stars = Route::User {
+                    login: login.clone(),
+                    tab: ProfileTab::Stars,
+                };
+                c.crumb("Stars", Some(Target::Page(stars)));
+                let list = paged(route)
+                    .and_then(|k| self.picked::<crate::api::lists::ListPage>(&k))
+                    .map_or_else(|| "List".to_owned(), |l| l.list.name.clone());
+                c.crumb(&list, None);
+            }
+            Site::Packages(of) => {
+                let login = of.owner();
+                c.crumb(login, None);
+                self.profile_tabs(login, None, None, c);
+                let here = Target::Page(route.clone());
+                c.active = c.tabs.iter().position(|(_, t)| *t == here);
+            }
+            Site::Package { at, .. } => {
+                c.crumb(&at.owner, user(&at.owner));
+                let list = Route::Site(Site::Packages(crate::api::packages::PackagesOf::Owner(
+                    at.owner.clone(),
+                )));
+                c.crumb("Packages", Some(Target::Page(list)));
+                c.crumb(&at.name, None);
+            }
+            Site::Insights { .. } => {}
         }
     }
 
@@ -531,6 +588,23 @@ impl State {
             new_tab("⛨", "Security", None),
             Target::Page(Route::Advisories(Some(repo.clone()))),
         ));
+        c.tabs.push((
+            new_tab("⌁", "Insights", None),
+            Target::Page(Route::Site(crate::site::Page::Insights {
+                repo: repo.clone(),
+                tab: crate::site::InsightsTab::Contributors,
+            })),
+        ));
+        // GitHub shows the Settings tab only to admins.
+        if o.is_some_and(|o| o.can_admin) {
+            c.tabs.push((
+                new_tab("⚙", "Settings", None),
+                Target::Page(Route::Settings {
+                    repo: repo.clone(),
+                    page: crate::api::settings::SettingsPage::General,
+                }),
+            ));
+        }
     }
 
     fn pr_tabs(&self, pr: &PrRef, c: &mut Chrome) {
@@ -615,6 +689,8 @@ enum Section {
     Projects,
     Wiki,
     Security,
+    Insights,
+    Settings,
 }
 
 fn section(route: &Route) -> Section {
@@ -623,6 +699,11 @@ fn section(route: &Route) -> Section {
         | Route::Issue { .. }
         | Route::Milestones { .. }
         | Route::Milestone { .. }
+        | Route::Labels(_)
+        | Route::Housekeeping(
+            crate::housekeeping::FormOf::Label { .. }
+            | crate::housekeeping::FormOf::Milestone { .. },
+        )
         | Route::NewIssue(_) => Section::Issues,
         Route::Pulls { .. } | Route::Pr { .. } | Route::NewPr(_) => Section::Pulls,
         Route::Discussions { .. } | Route::Discussion { .. } => Section::Discussions,
@@ -637,6 +718,8 @@ fn section(route: &Route) -> Section {
         | Route::Advisory { .. }
         | Route::Alerts { .. }
         | Route::Alert { .. } => Section::Security,
+        Route::Site(crate::site::Page::Insights { .. }) => Section::Insights,
+        Route::Settings { .. } => Section::Settings,
         _ => Section::Code,
     }
 }

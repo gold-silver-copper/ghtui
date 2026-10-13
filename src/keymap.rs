@@ -26,6 +26,8 @@ pub enum Context {
     Tree,
     /// A project: its board or table, or an item.
     Project,
+    /// A repository's Settings tab.
+    Settings,
 }
 
 /// The stacks of contexts that can be active at once, innermost first.
@@ -36,6 +38,7 @@ const STACKS: &[&[Context]] = {
         &[File, Page, Global],
         &[Log, Page, Global],
         &[Project, Page, Global],
+        &[Settings, Page, Global],
         &[Page, Global],
         &[Tree, Diff, Global],
         &[Diff, Global],
@@ -43,13 +46,14 @@ const STACKS: &[&[Context]] = {
 };
 
 impl Context {
-    const ALL: [Context; 8] = [
+    const ALL: [Context; 9] = [
         Context::Global,
         Context::Page,
         Context::List,
         Context::File,
         Context::Log,
         Context::Project,
+        Context::Settings,
         Context::Diff,
         Context::Tree,
     ];
@@ -65,6 +69,7 @@ impl Context {
             Context::Diff => "diff",
             Context::Tree => "tree",
             Context::Project => "project",
+            Context::Settings => "settings",
         }
     }
 
@@ -79,6 +84,7 @@ impl Context {
             Context::Diff => "in Files changed",
             Context::Tree => "in Files changed's file tree",
             Context::Project => "in projects",
+            Context::Settings => "in a repository's settings",
         }
     }
 
@@ -191,6 +197,8 @@ actions! {
     GoHome            "go_home"           ["gh"]                   Global "Go home";
     Notifications     "notifications"     ["gn"]                   Global "Your notifications";
     ReviewGlance      "review_glance"     ["gr"]                   Global "The pull request's review at a glance";
+    Explore           "explore"           []                       Global "Explore: new repositories and topics";
+    Offline           "offline"           []                       Global "Offline: the writes queued for GitHub, and the repositories kept offline";
     Search            "search"            ["/"]                    Global "Search what's on screen (on a list, filter it)";
     SearchBack        "search_back"       ["?"]                    Global "Search what's on screen, backwards";
     SearchNext        "search_next"       ["n"]                    Global "Next search match";
@@ -200,7 +208,7 @@ actions! {
     SearchGithub      "search_github"     ["g/"]                   Global "Search GitHub or go to a page";
     FindFile          "find_file"         ["f"]                    Global "Go to file";
     Comment           "comment"           ["c"]                    Global "Comment (on a thread, reply)";
-    Copy              "copy_link"         ["y"]                    Global "Copy the link";
+    Copy              "copy_link"         ["y"]                    Global "Copy the link (a queued write: its text)";
     OpenInBrowser     "open_in_browser"   ["o"]                    Global "Open on GitHub";
     OpenLink          "open_link"         ["gx"]                   Global "Open the link under the cursor in the browser";
     Refresh           "refresh"           ["r", "<C-l>"]           Global "Refresh";
@@ -209,16 +217,16 @@ actions! {
     Messages          "messages"          []                       Global "Recent messages and errors";
     Merge             "merge"             [",m"]                   Global "Merge the pull request";
     Approve           "approve"           [",a"]                   Global "Approve the pull request";
-    ReadyForReview    "ready_for_review"  [",r"]                   Global "Mark the draft ready for review";
+    ReadyForReview    "ready_for_review"  [",r"]                   Global "Mark the draft ready for review, or convert it to a draft";
     UpdateBranch      "update_branch"     [",u"]                   Global "Update the branch from its base";
-    Close             "close"             [",x"]                   Global "Close or reopen (an alert: dismiss it); on a running run, cancel it";
-    Rerun             "rerun"             [",R"]                   Global "Re-run the workflow run or job";
-    EditComment       "edit"              [",e"]                   Global "Edit the comment or description (a wiki page, your gist)";
-    DeleteComment     "delete_comment"    [",D"]                   Global "Delete the comment (your gist)";
+    Close             "close"             [",x"]                   Global "Close (as a duplicate too) or reopen (an alert: dismiss it); on a running run, cancel it";
+    Rerun             "rerun"             [",R"]                   Global "Re-run the workflow run or job (a refused write: send it again)";
+    EditComment       "edit"              [",e"]                   Global "Edit the comment or description (a wiki page, your gist, a release, a label, a milestone, a file)";
+    DeleteComment     "delete_comment"    [",D"]                   Global "Delete the comment (your gist, a release or its asset, a package's version, your list, a label, a milestone, a branch, a tag, a file)";
     React             "react"             [",+"]                   Global "React to the comment, issue or pull request";
-    Checkout          "checkout"          [",c"]                   Global "Check out the pull request in your clone";
+    Checkout          "checkout"          [",c"]                   Global "Check out the pull request in your clone (an issue: a new branch for it)";
     Watch             "watch"             [",w"]                   Global "Subscribe to or ignore the thread; watch the repository";
-    Delete            "delete"            ["<Delete>"]             Global "Delete the selection (a draft comment, a Home section)";
+    Delete            "delete"            ["<Delete>"]             Global "Delete the selection (a draft comment, a Home section, a write waiting for GitHub)";
     UndoDelete        "undo_delete"       ["<C-z>"]                Global "Bring back what was just deleted";
     Quit              "quit"              ["ZZ", "<C-c>"]          Global "Quit";
 
@@ -237,14 +245,30 @@ actions! {
     EditMilestone     "edit_milestone"    [",M"]                   Page   "Set the milestone";
     NewIssue          "new_issue"         [",i"]                   Page   "New issue";
     NewPr             "new_pull_request"  [",p"]                   Page   "New pull request";
-    Create            "create"            [",s"]                   Page   "Create or save the form: an issue, a pull request, a release, a gist, a wiki page";
+    Create            "create"            [",s"]                   Page   "Create or save the form on screen (an issue, a release, a label, a file…)";
     PushBranch        "push_branch"       [",P"]                   Page   "Push the branch to GitHub";
     MarkAnswer        "mark_answer"       [",!"]                   Page   "Mark the comment as the discussion's answer, or unmark it";
     NewRelease        "new_release"       [",V"]                   Page   "New release";
+    UploadAsset       "upload_asset"      [",U"]                   Page   "Upload an asset to the release";
     NewGist           "new_gist"          [",G"]                   Page   "New gist";
     NewWikiPage       "new_wiki_page"     [",W"]                   Page   "New wiki page";
     RunWorkflow       "run_workflow"      [",E"]                   Page   "Run the workflow by hand";
+    Lists             "lists"             [",B"]                   Page   "Add the repository to your starred lists, or take it out";
+    NewHere           "new_here"          [",o"]                   Page   "New here: a label, a milestone, a branch, a tag, a file";
+    Fork              "fork"              [",F"]                   Page   "Fork the repository";
+    NewRepo           "new_repository"    [",C"]                   Page   "New repository";
     Branch            "branch"            ["B"]                    Page   "Switch branches or tags";
+    DeleteBranch      "delete_branch"     [",b"]                   Page   "Delete the pull request's branch, or restore it";
+    ChangeBase        "change_base"       []                       Page   "Change the pull request's base branch";
+    Revert            "revert"            []                       Page   "Revert the merged pull request";
+    Lock              "lock"              [",L"]                   Page   "Lock the conversation, or unlock it";
+    Pin               "pin"               []                       Page   "Pin the issue, or unpin it";
+    Transfer          "transfer"          []                       Page   "Transfer the issue to another repository";
+    HideComment       "hide_comment"      [",H"]                   Page   "Hide the comment, or unhide it";
+    SubIssues         "sub_issues"        [",S"]                   Page   "Add or remove sub-issues";
+    BlockedBy         "blocked_by"        [",K"]                   Page   "Mark the issue blocked by another, or no longer";
+    NewDiscussion     "new_discussion"    []                       Page   "New discussion";
+    KeepOffline       "keep_offline"      []                       Page   "Keep the repository to read offline, or stop";
     Hints             "hints"             ["i", "diff:i"]          Page   "Follow a link by its letters";
     HintsBrowser      "hints_browser"     ["I", "diff:I"]          Page   "Follow a link, in the browser";
     ToggleState       "toggle_state"      ["t"]                    List   "Open / closed / all (in the inbox, unread / read)";
@@ -269,9 +293,14 @@ actions! {
     PrevColumn        "prev_column"       ["h"]                    Project "Previous column of the board";
     NextColumn        "next_column"       ["l"]                    Project "Next column of the board";
     MoveItem          "move_item"         [",c"]                   Project "Move the item to another column";
-    SetField          "set_field"         [",f"]                   Project "Set a field of the item";
+    SetField          "set_field"         [",f"]                   Page   "Set a field of the item in its project";
     AddItem           "add_item"          [",i"]                   Project "Add an issue, a pull request or a draft";
     ArchiveItem       "archive_item"      [",X"]                   Project "Archive the item, or restore it";
+    AddSetting        "add_setting"       [",n"]                   Settings "Add a branch rule, a collaborator, a webhook or a deploy key";
+    EditSetting       "edit_setting"      [",e"]                   Settings "Edit the rule or webhook, or change the collaborator's role";
+    DeleteSetting     "delete_setting"    [",D"]                   Settings "Delete the rule, webhook or deploy key; remove the collaborator or invitation";
+    ToggleSetting     "toggle_setting"    [",x"]                   Settings "Turn the ruleset or webhook on or off; archive or unarchive the repository";
+    Redeliver         "redeliver"         [",R"]                   Settings "Redeliver the webhook delivery";
 
     NextHunk          "next_change"       ["]c", "}"]              Diff   "Next change";
     PrevHunk          "prev_change"       ["[c", "{"]              Diff   "Previous change";

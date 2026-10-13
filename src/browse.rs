@@ -16,9 +16,10 @@ use crate::api::browse::{
 use crate::api::commit_comments::CommitComment;
 use crate::api::model::{Capped, PrRef, RepoId};
 use crate::api::notifications::Inbox;
+use crate::api::project::InProject;
 use crate::api::project::{Project, ProjectRef, ProjectSummary, ProjectsOf};
 use crate::api::security::{Alert, AlertKind, AlertList, AlertRef};
-use crate::api::timeline::{InProject, Review};
+use crate::api::timeline::Review;
 use crate::ui::Fetched;
 use crate::ui::page::{Page, PageLine, Role, Seg};
 use crate::ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
@@ -123,6 +124,13 @@ pub enum DataKey {
     Alert(AlertRef),
     /// Your subscription to a thread or a repository.
     Subscription(crate::api::watch::Watched),
+    /// Insights, Explore, starred lists, packages, saved replies
+    /// ([`crate::site`]).
+    Site(crate::site::Key),
+    /// Labels, and who can own a new repository ([`crate::housekeeping`]).
+    Housekeeping(crate::housekeeping::Key),
+    /// A page of a repository's Settings tab.
+    Settings(RepoId, crate::api::settings::SettingsPage),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,6 +194,9 @@ pub enum Data {
     Alerts(Box<AlertList>),
     Alert(Box<Alert>),
     Subscription(Box<crate::api::watch::Subscription>),
+    Site(Box<crate::site::Value>),
+    Housekeeping(Box<crate::housekeeping::Data>),
+    Settings(Box<crate::api::settings::Settings>),
 }
 
 impl Data {
@@ -227,6 +238,8 @@ impl Data {
             Data::Projects(r) => r.next.as_deref(),
             Data::Project(p) => p.items.next.as_deref(),
             Data::Alerts(a) => a.results.next.as_deref(),
+            Data::Site(v) => v.next_cursor(),
+            Data::Housekeeping(d) => d.next_cursor(),
             _ => None,
         }
     }
@@ -267,6 +280,8 @@ impl Data {
             (Data::Projects(a), Data::Projects(b)) => extend(a, *b, |p| p.number),
             (Data::Project(a), Data::Project(b)) => extend(&mut a.items, b.items, |i| i.id.clone()),
             (Data::Alerts(a), Data::Alerts(b)) => extend(&mut a.results, b.results, |a| a.number),
+            (Data::Site(a), Data::Site(b)) => a.append(*b),
+            (Data::Housekeeping(a), Data::Housekeeping(b)) => a.append(*b),
             _ => {}
         }
     }
@@ -319,6 +334,8 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Alerts { repo, kind, query } => {
             Some(DataKey::Alerts(repo.clone(), *kind, query.clone()))
         }
+        Route::Site(page) => page.paged(),
+        Route::Labels(_) => crate::housekeeping::paged(route),
         _ => route
             .search()
             .map(|(kind, query)| DataKey::Search(kind, query)),
@@ -353,7 +370,7 @@ pub fn needs(route: &Route) -> Vec<Need> {
         .search()
         .map(|(kind, query)| Need::Data(K::Search(kind, query)));
     match route {
-        Route::Home | Route::NewGist => Vec::new(),
+        Route::Home | Route::NewGist | Route::Offline => Vec::new(),
         Route::Repo(repo) => vec![
             header(repo),
             Need::Data(K::Readme(repo.clone())),
@@ -424,6 +441,12 @@ pub fn needs(route: &Route) -> Vec<Need> {
         }
         Route::NewRelease(repo) => vec![
             header(repo),
+            Need::Data(K::Tags(repo.clone())),
+            Need::Data(K::Branches(repo.clone())),
+        ],
+        Route::EditRelease { repo, tag } => vec![
+            header(repo),
+            Need::Data(K::Release(repo.clone(), tag.clone())),
             Need::Data(K::Tags(repo.clone())),
             Need::Data(K::Branches(repo.clone())),
         ],
@@ -518,6 +541,9 @@ pub fn needs(route: &Route) -> Vec<Need> {
             };
             vec![header(repo), Need::Data(K::Alert(a))]
         }
+        Route::Settings { repo, page } => {
+            vec![header(repo), Need::Data(K::Settings(repo.clone(), *page))]
+        }
         Route::Commit { repo, oid, pr } => {
             let mut needs = vec![
                 header(repo),
@@ -538,9 +564,19 @@ pub fn needs(route: &Route) -> Vec<Need> {
             header(repo),
             Need::Data(K::History(repo.clone(), rev.clone(), path.clone())),
         ],
-        Route::User { login, .. } => std::iter::once(Need::Data(K::Profile(login.to_lowercase())))
-            .chain(paged(route).map(Need::Data))
-            .collect(),
+        Route::User { login, tab } => {
+            // A user's lists show above what they starred.
+            let lists = (*tab == ProfileTab::Stars).then(|| {
+                let key = crate::site::Key::StarLists(login.to_lowercase());
+                Need::Data(K::Site(key))
+            });
+            std::iter::once(Need::Data(K::Profile(login.to_lowercase())))
+                .chain(lists)
+                .chain(paged(route).map(Need::Data))
+                .collect()
+        }
+        Route::Site(page) => page.needs(),
+        Route::Labels(_) | Route::Housekeeping(_) => crate::housekeeping::needs(route),
     }
 }
 
@@ -590,6 +626,7 @@ picked!(
     Projects => Results<ProjectSummary>, Project => Project,
     Alerts => AlertList, Alert => Alert,
     Subscription => crate::api::watch::Subscription,
+    Settings => crate::api::settings::Settings,
 );
 
 /// A page's needs as the page shows them, failing with the key that
@@ -751,9 +788,12 @@ impl State {
             | Route::NewIssue(_)
             | Route::NewPr(_)
             | Route::NewRelease(_)
+            | Route::EditRelease { .. }
             | Route::NewGist
             | Route::EditGist { .. }
             | Route::WikiEdit { .. }
+            | Route::Housekeeping(_)
+            | Route::Offline
             | Route::Dispatch { .. }
             | Route::ProjectItem { .. }
             | Route::Pr {
@@ -782,15 +822,19 @@ impl State {
             let when = self
                 .page_cached_at(route)
                 .map_or_else(|| "before".to_owned(), |at| crate::ui::time::ago(at, now));
-            let why = format!("Couldn't refresh: {err}. Showing what was loaded {when}.");
+            let why = crate::offline::banner(self, &when).unwrap_or_else(|| {
+                format!("Couldn't refresh: {err}. Showing what was loaded {when}.")
+            });
             pages::flash(&mut page, &why);
             page.blank();
         }
         // Where the page was read: a clone at a commit, or GitHub's API.
         if let Some(from) = crate::source::shown(route).and_then(|k| self.sources.get(&k)) {
-            let note = vec![Seg::new(from.note(), Role::Meta)];
+            let note = vec![Seg::new(from.note(now), Role::Meta)];
             page.wrapped(note, 0, crate::ui::page::Frame::None);
         }
+        // Writes made here, waiting for GitHub.
+        crate::offline::queued_here(self, route, &mut page, now);
         let banner = page.lines.len();
         let retry = self.first_key(Action::Refresh);
         let f = Needs {
@@ -909,6 +953,8 @@ impl State {
                 if let Some(o) = overview.filter(|_| !is_pr) {
                     pages::pinned_issues(&mut page, repo, &o.pinned_issues, icons);
                 }
+                // Labels and milestones, beside the list as on GitHub.
+                pages::labels_and_milestones(&mut page, repo);
                 pages::issue_list(&mut page, query, counts, is_pr, results, cx);
             }
             Route::Search { kind, query } => {
@@ -979,7 +1025,13 @@ impl State {
             Route::NewRelease(repo) => {
                 let header = f.get::<RepoOverview>(&DataKey::Repo(repo.clone()));
                 if header.show(&mut page, &title).is_some() {
-                    crate::release::build(self, &mut page, repo);
+                    crate::release::build(self, &mut page, route, repo);
+                }
+            }
+            Route::EditRelease { repo, tag } => {
+                let key = DataKey::Release(repo.clone(), tag.clone());
+                if f.get::<Release>(&key).show(&mut page, &title).is_some() {
+                    crate::release::build(self, &mut page, route, repo);
                 }
             }
             Route::NewGist => crate::gist::build(self, &mut page, route),
@@ -1055,6 +1107,10 @@ impl State {
                     pages::alert(&mut page, repo, a, cx);
                 }
             }
+            Route::Settings { repo, page: at } => {
+                let key = DataKey::Settings(repo.clone(), *at);
+                crate::settings::build(self, &mut page, repo, *at, f.get(&key), now);
+            }
             Route::Advisory { repo, ghsa } => {
                 let key = DataKey::Advisory(repo.clone(), ghsa.clone());
                 if let Some(a) = f.get(&key).show(&mut page, ghsa) {
@@ -1091,7 +1147,7 @@ impl State {
                 let none = HashSet::new();
                 let fresh = crate::live::page::fresh(self, route).unwrap_or(&none);
                 if let Some(d) = f.get(&key).show(&mut page, &title) {
-                    pages::discussion(&mut page, d, fresh, cx);
+                    pages::discussion(&mut page, d, fresh, &self.talk.unfolded, cx);
                 }
             }
             Route::WorkflowRun { repo, run, attempt } => {
@@ -1180,12 +1236,22 @@ impl State {
                 if let Some(p) = f.get(&key).show(&mut page, &format!("@{login}")) {
                     let list = match paged(route) {
                         Some(key @ DataKey::Users(_)) => ProfileList::People(f.get(&key)),
+                        Some(key) if *tab == ProfileTab::Stars => {
+                            let lists = crate::site::Key::StarLists(login.to_lowercase());
+                            let lists = f.get(&DataKey::Site(lists));
+                            ProfileList::Starred(lists, f.get(&key))
+                        }
                         Some(key) => ProfileList::Repos(f.get(&key)),
                         None => ProfileList::None,
                     };
                     pages::profile(&mut page, p, *tab, list, now);
                 }
             }
+            Route::Site(p) => crate::site::build(self, &mut page, p, &retry, cx),
+            Route::Labels(_) | Route::Housekeeping(_) => {
+                crate::housekeeping::build(self, &mut page, route, now);
+            }
+            Route::Offline => crate::offline::build(self, &mut page, now),
         }
         // The sidebar starts beside the page, below the banner.
         if let Some(a) = page.aside.as_mut().filter(|a| !a.lines.is_empty()) {
@@ -1197,7 +1263,11 @@ impl State {
 
 /// Appends a page to a list, leaving out what's already there (by `id`):
 /// a list that moved between pages repeats items at their edge.
-fn extend<T, K: Eq + std::hash::Hash>(a: &mut Results<T>, b: Results<T>, id: impl Fn(&T) -> K) {
+pub(crate) fn extend<T, K: Eq + std::hash::Hash>(
+    a: &mut Results<T>,
+    b: Results<T>,
+    id: impl Fn(&T) -> K,
+) {
     let mut seen: std::collections::HashSet<K> = a.items.iter().map(&id).collect();
     a.items
         .extend(b.items.into_iter().filter(|item| seen.insert(id(item))));
