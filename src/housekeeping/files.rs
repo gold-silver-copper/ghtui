@@ -653,13 +653,13 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
     match state.creating.clones.get(repo) {
         Some(Look::Found(Some(c))) => status.push((
             format!(
-                "Committed with git in your clone ({}) and pushed",
+                "Will be committed with git in your clone ({}) and pushed",
                 c.top.display()
             ),
             Mark::Fine,
         )),
         Some(Look::Asking) => status.push(("Looking for your clone…".into(), Mark::Waiting)),
-        _ => status.push(("Committed on GitHub, by you".into(), Mark::Fine)),
+        _ => status.push(("Will be committed on GitHub, as you".into(), Mark::Fine)),
     }
     let composing = matches!(
         &state.overlay,
