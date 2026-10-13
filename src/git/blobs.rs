@@ -44,9 +44,19 @@ impl Batch {
         })
     }
 
-    async fn read(&mut self, name: &str) -> Result<Option<Vec<u8>>, GitError> {
-        self.stdin.write_all(format!("{name}\n").as_bytes()).await?;
+    /// Asks for every one of `names` at once, then reads the replies.
+    async fn read(&mut self, names: &[&str]) -> Result<Vec<Option<Vec<u8>>>, GitError> {
+        let asked: String = names.iter().map(|name| format!("{name}\n")).collect();
+        self.stdin.write_all(asked.as_bytes()).await?;
         self.stdin.flush().await?;
+        let mut replies = Vec::with_capacity(names.len());
+        for _ in names {
+            replies.push(self.reply().await?);
+        }
+        Ok(replies)
+    }
+
+    async fn reply(&mut self) -> Result<Option<Vec<u8>>, GitError> {
         let mut header = String::new();
         if self.stdout.read_line(&mut header).await? == 0 {
             return Err(GitError::Parse("cat-file exited".into()));
@@ -85,7 +95,13 @@ impl BlobReader {
     /// The contents of `name` (an object ID or `<rev>:<path>`), or `None`
     /// if it doesn't exist.
     pub async fn read(&self, name: &str) -> Result<Option<Vec<u8>>, GitError> {
-        if name.contains(['\n', '\r']) {
+        Ok(self.read_each(&[name]).await?.into_iter().next().flatten())
+    }
+
+    /// [`Self::read`] for each of a few `names`, asked together: one wait
+    /// on git, not one each.
+    pub async fn read_each(&self, names: &[&str]) -> Result<Vec<Option<Vec<u8>>>, GitError> {
+        if let Some(name) = names.iter().find(|name| name.contains(['\n', '\r'])) {
             return Err(GitError::Parse(format!("bad object name {name:?}")));
         }
         let mut slot = self.batch.lock().await;
@@ -93,7 +109,7 @@ impl BlobReader {
             Some(batch) => batch,
             None => Batch::spawn(&self.make)?,
         };
-        let result = batch.read(name).await;
+        let result = batch.read(names).await;
         if result.is_ok() {
             *slot = Some(batch);
         }

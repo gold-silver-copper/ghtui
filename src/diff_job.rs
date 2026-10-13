@@ -18,6 +18,7 @@ use crate::git::credentials::Credentials;
 use crate::git::files::{ChangedFile, ZERO_OID, is_lockfile};
 use crate::git::repo::{PrRefs, Repo};
 use crate::git::{GitError, Oid};
+use futures::{StreamExt, TryStreamExt};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
@@ -276,8 +277,7 @@ async fn run_inner(
     }
 
     let reader = reader?;
-    let workers = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(2, 4));
-    for _ in 0..workers {
+    for _ in 0..workers() {
         let control = control.clone();
         let files = files.clone();
         let reader = reader.clone();
@@ -311,31 +311,46 @@ async fn run_inner(
     Ok(())
 }
 
+/// How many files are diffed at once.
+fn workers() -> usize {
+    std::thread::available_parallelism().map_or(2, |n| n.get().clamp(2, 4))
+}
+
+/// `file`'s old and new contents, read together: `None` for a side it
+/// doesn't have, or git doesn't.
+async fn sides(
+    reader: &BlobReader,
+    file: &ChangedFile,
+) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), GitError> {
+    let names: Vec<&str> = file.blob_oids().collect();
+    let mut read = reader.read_each(&names).await?.into_iter();
+    let mut side = |oid: &Oid| {
+        if oid.is_zero() {
+            None
+        } else {
+            read.next().flatten()
+        }
+    };
+    Ok((side(&file.old_oid), side(&file.new_oid)))
+}
+
 async fn diff_file(reader: &BlobReader, file: &ChangedFile) -> FileDiff {
     if file.is_submodule() {
         let side = |oid: &str| (oid != ZERO_OID).then(|| oid.to_owned());
         return FileDiff::submodule(side(&file.old_oid), side(&file.new_oid));
     }
-    let read = |oid: Oid| async move {
-        if oid.is_zero() {
-            return Ok(None);
-        }
-        match reader.read(&oid).await {
-            Ok(Some(bytes)) => Ok(Some(bytes)),
-            Ok(None) => Err(format!(
-                "object {} is missing",
-                crate::ui::text::short_sha(&oid)
-            )),
-            Err(err) => Err(err.to_string()),
-        }
+    let (old, new) = match sides(reader, file).await {
+        Ok(sides) => sides,
+        Err(err) => return FileDiff::error(err.to_string()),
     };
-    let (old, new) = match (
-        read(file.old_oid.clone()).await,
-        read(file.new_oid.clone()).await,
-    ) {
-        (Ok(old), Ok(new)) => (old, new),
-        (Err(err), _) | (_, Err(err)) => return FileDiff::error(err),
-    };
+    let sides = [(&file.old_oid, &old), (&file.new_oid, &new)];
+    if let Some((oid, _)) = sides
+        .iter()
+        .find(|(oid, read)| !oid.is_zero() && read.is_none())
+    {
+        let short = crate::ui::text::short_sha(oid);
+        return FileDiff::error(format!("object {short} is missing"));
+    }
     let path = file.path().to_owned();
     tokio::task::spawn_blocking(move || FileDiff::compute(&path, old.as_deref(), new.as_deref()))
         .await
@@ -363,23 +378,21 @@ pub async fn since_review_hashes(
     if let Err(err) = repo.prefetch(&oids).await {
         tracing::warn!(%err, "prefetch for the earlier diff failed");
     }
+    // Diffed a few at once, as the job does.
+    let files: Vec<ChangedFile> = files.into_iter().filter(|f| !f.is_submodule()).collect();
+    let diffs = futures::stream::iter(files)
+        .map(|file| async move {
+            let (old, new) = sides(reader, &file).await?;
+            let path = file.path().to_owned();
+            let plain = move || FileDiff::compute_plain(&path, old.as_deref(), new.as_deref());
+            let diff = tokio::task::spawn_blocking(plain).await;
+            Ok::<_, GitError>(diff.ok().map(|d| d.content))
+        })
+        .buffer_unordered(workers());
+    let mut diffs = std::pin::pin!(diffs);
     let mut hashes = HashSet::new();
-    for file in files.iter().filter(|f| !f.is_submodule()) {
-        let read = |oid: &str| {
-            let oid = oid.to_owned();
-            async move {
-                if oid == ZERO_OID {
-                    Ok(None)
-                } else {
-                    reader.read(&oid).await
-                }
-            }
-        };
-        let (old, new) = (read(&file.old_oid).await?, read(&file.new_oid).await?);
-        let path = file.path().to_owned();
-        let plain = move || FileDiff::compute_plain(&path, old.as_deref(), new.as_deref());
-        let diff = tokio::task::spawn_blocking(plain).await.map(|d| d.content);
-        if let Ok(crate::diff::Content::Text(text)) = diff {
+    while let Some(content) = diffs.try_next().await? {
+        if let Some(crate::diff::Content::Text(text)) = content {
             let exact = text.alignment(crate::diff::Whitespace::Exact);
             hashes.extend(exact.blocks.iter().map(|b| b.hash.clone()));
         }
