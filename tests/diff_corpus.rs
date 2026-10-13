@@ -12,40 +12,14 @@
     reason = "tests: failing loudly is the point"
 )]
 
-use std::path::Path;
-use std::process::Command;
+mod common;
 
+use std::path::Path;
+
+use common::{git, git_bytes};
 use ghtui::diff::anchor::{Commentable, parse_patch_headers};
 use ghtui::diff::{Content, FileDiff, Text};
 use ghtui::git::files::{FileStatus, MODE_SUBMODULE, MODE_SYMLINK, parse_raw};
-
-fn git_bytes(dir: &Path, args: &[&str]) -> Vec<u8> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    out.stdout
-}
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    String::from_utf8(git_bytes(dir, args))
-        .unwrap()
-        .trim()
-        .to_owned()
-}
 
 fn write(dir: &Path, path: &str, bytes: &[u8]) {
     let path = dir.join(path);

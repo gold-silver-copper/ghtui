@@ -416,6 +416,29 @@ pub async fn map_outdated(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    /// Runs git for fixture setup, isolated from the user's configuration.
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "T")
+            .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
+            .env("GIT_COMMITTER_NAME", "T")
+            .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
 
     #[test]
     fn prioritize_moves_files_to_front_in_order() {
@@ -432,30 +455,6 @@ mod tests {
     /// is the PR's, from the base it had, not empty from `main` after.
     #[tokio::test]
     async fn a_merged_prs_job_lists_its_files() {
-        use std::path::Path;
-        use std::process::Command;
-
-        fn git(dir: &Path, args: &[&str]) -> String {
-            let out = Command::new("git")
-                .arg("-C")
-                .arg(dir)
-                .args(args)
-                .env("GIT_CONFIG_GLOBAL", "/dev/null")
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .env("GIT_AUTHOR_NAME", "T")
-                .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
-                .env("GIT_COMMITTER_NAME", "T")
-                .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
-                .output()
-                .unwrap();
-            assert!(
-                out.status.success(),
-                "{args:?}: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-            String::from_utf8_lossy(&out.stdout).trim().to_owned()
-        }
-
         let tmp = tempfile::tempdir().unwrap();
         let origin = tmp.path().join("origin");
         std::fs::create_dir_all(&origin).unwrap();
@@ -529,29 +528,6 @@ mod tests {
     /// the head. A line that changed stays outdated.
     #[tokio::test]
     async fn outdated_lines_map_to_where_they_moved() {
-        use std::path::Path;
-        use std::process::Command;
-
-        fn git(dir: &Path, args: &[&str]) -> String {
-            let out = Command::new("git")
-                .arg("-C")
-                .arg(dir)
-                .args(args)
-                .env("GIT_CONFIG_GLOBAL", "/dev/null")
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .env("GIT_AUTHOR_NAME", "T")
-                .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
-                .env("GIT_COMMITTER_NAME", "T")
-                .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
-                .output()
-                .unwrap();
-            assert!(
-                out.status.success(),
-                "{args:?}: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-            String::from_utf8_lossy(&out.stdout).trim().to_owned()
-        }
         let lines = |n: u32| (1..=n).map(|i| format!("line {i}\n")).collect::<String>();
 
         let tmp = tempfile::tempdir().unwrap();
@@ -614,29 +590,6 @@ mod tests {
     /// Only that change is new; the rebase and the old change aren't.
     #[tokio::test]
     async fn since_review_survives_force_push_and_rebase() {
-        use std::path::Path;
-        use std::process::Command;
-
-        fn git(dir: &Path, args: &[&str]) -> String {
-            let out = Command::new("git")
-                .arg("-C")
-                .arg(dir)
-                .args(args)
-                .env("GIT_CONFIG_GLOBAL", "/dev/null")
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .env("GIT_AUTHOR_NAME", "T")
-                .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
-                .env("GIT_COMMITTER_NAME", "T")
-                .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
-                .output()
-                .unwrap();
-            assert!(
-                out.status.success(),
-                "{args:?}: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-            String::from_utf8_lossy(&out.stdout).trim().to_owned()
-        }
         let numbered = |n: u32| (1..=n).map(|i| format!("line {i}\n")).collect::<String>();
 
         let tmp = tempfile::tempdir().unwrap();

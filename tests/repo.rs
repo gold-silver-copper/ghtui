@@ -9,35 +9,16 @@
     reason = "fixture helpers aren't #[test] functions, but a panic in them is still a test failure"
 )]
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use common::git;
 use ghtui::git::Oid;
 use ghtui::git::credentials::Credentials;
 use ghtui::git::files::{ChangedFile, FileStatus, MODE_EXECUTABLE, MODE_SUBMODULE, MODE_SYMLINK};
 use ghtui::git::repo::{PrRefs, Repo};
-
-/// Runs git for fixture setup, isolated from the user's configuration.
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).trim().to_owned()
-}
 
 fn write(dir: &Path, path: &str, contents: &[u8]) {
     let path = dir.join(path);
@@ -317,14 +298,10 @@ async fn pins_seen_heads() {
 async fn users_clone_only_gains_ghtui_refs() {
     let f = fixture();
     let local = f.root.join("local");
-    let out = Command::new("git")
-        .args(["clone", "-q", "-o", "upstream"])
-        .arg(url(&f))
-        .arg(&local)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .output()
-        .unwrap();
-    assert!(out.status.success());
+    git(
+        &f.root,
+        &["clone", "-q", "-o", "upstream", &url(&f), "local"],
+    );
     write(&local, "uncommitted.txt", b"work in progress\n");
 
     let refs_before = git(
