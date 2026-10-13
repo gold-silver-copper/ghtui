@@ -46,8 +46,8 @@ mod runtime;
 mod security;
 #[cfg(test)]
 mod sequence_tests;
-mod site;
 mod settings;
+mod site;
 #[cfg(test)]
 mod snapshot_tests;
 mod source;

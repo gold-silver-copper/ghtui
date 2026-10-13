@@ -714,11 +714,11 @@ mod reviews;
 /// The Security tab's alerts: their lists and pages, and dismissing and
 /// reopening them.
 mod security;
-/// Insights, Explore and topics, starred lists, packages and their
-/// writes.
-mod site;
 /// A repository's Settings tab: protection rules and rulesets, collaborators,
 /// webhooks, deploy keys and archiving, each asked about and followed.
 mod settings;
+/// Insights, Explore and topics, starred lists, packages and their
+/// writes.
+mod site;
 /// Releases, gists, wiki pages and subscriptions.
 mod writes;
