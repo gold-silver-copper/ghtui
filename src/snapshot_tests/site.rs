@@ -174,14 +174,14 @@ fn topics_and_starred_lists_read_as_on_github() {
     assert!(text.contains("To read  0 repositories  Private"), "{text}");
 }
 
-/// `,L` lists your lists, the repository's checked; choosing one puts
+/// `,B` lists your lists, the repository's checked; choosing one puts
 /// it in (as GitHub's one mutation sets every list it's in), and your
 /// lists are read until GitHub shows it. A name no list has makes one.
 #[test]
 fn a_repository_is_put_in_a_list_and_followed() {
     let mut s = with_repo(Mode::Dark, ColorDepth::TrueColor);
     let key = site(Key::MyLists(ghtui()));
-    let cmds = press(&mut s, ",L");
+    let cmds = press(&mut s, ",B");
     assert!(asks_for(&cmds, &key), "{cmds:?}");
     fetched(
         &mut s,
@@ -217,7 +217,7 @@ fn a_repository_is_put_in_a_list_and_followed() {
     assert_eq!(s.writing.expect, None);
 
     // A new name makes the list, and puts the repository in it too.
-    press(&mut s, ",L");
+    press(&mut s, ",B");
     let sent = press(&mut s, "Rust<Enter>");
     let [Cmd::Write(Work::Site(crate::site::Work::Lists(w)))] = sent.as_slice() else {
         panic!("{sent:?}");

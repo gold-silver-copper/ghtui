@@ -1,5 +1,6 @@
 ---
 source: src/snapshot_tests.rs
+assertion_line: 645
 expression: small(menu)
 ---
 Buffer {
@@ -19,7 +20,7 @@ Buffer {
         "  ⚖ MIT license        ,V   New release                                        ▐",
         "  Packages         Change                                                      ▐",
         "                       ,w   Watch the repository, or ignore it                  ",
-        "   ⎇ main ▾   ⎇ 1      ,L   Add the repository to your lists, or take it out    ",
+        "   ⎇ main ▾   ⎇ 1      ,B   Add the repository to your lists, or take it out    ",
         "                   Go                                                           ",
         "  ╭─ octocat  Bro      g/   Search GitHub or go to a page                       ",
         "  │▌▸ .github          gt   Next tab                                            ",

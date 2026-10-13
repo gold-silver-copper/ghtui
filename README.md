@@ -420,7 +420,7 @@ or a topic on a repository's page) has GitHub's description, its
 stars, related topics, and its repositories, most starred first.
 
 **Starred lists**: someone's Stars tab starts with their lists, and a
-list's page has its repositories. `,L` on a repository's pages lists
+list's page has its repositories. `,B` on a repository's pages lists
 your lists, the ones it's in checked: `↵` puts it in a list or takes it
 out, and a name no list has makes the list with it in. `,D` on one of
 your lists deletes it, after asking. Your lists are read again until
@@ -531,7 +531,7 @@ says where it works.
   makes a branch for it first); `,E` runs a workflow by hand. `,V` makes a
   release, `,G` a gist and `,W` a wiki page; `,s` makes or saves each,
   and `,e` and `,D` edit a wiki page or your gist and delete your gist.
-- `,L` puts the repository in your starred lists or takes it out; `,D`
+- `,B` puts the repository in your starred lists or takes it out; `,D`
   deletes one of your lists on its page, or a package's version.
 - `,w` subscribes to a thread or ignores it, or sets how you watch the
   repository.
@@ -660,7 +660,7 @@ says where it works.
 | `,G`    | New gist |
 | `,W`    | New wiki page |
 | `,E`    | Run the workflow by hand |
-| `,L`    | Add the repository to your starred lists, or take it out |
+| `,B`    | Add the repository to your starred lists, or take it out |
 | `B`     | Switch branches or tags |
 | `,b`    | Delete the pull request's branch, or restore it |
 | `,L`    | Lock the conversation, or unlock it |
@@ -1060,7 +1060,7 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   registries as `containers.HOST`, `npm.HOST` and so on (with subdomain
   isolation). A package's link opens under `/users/` (GitHub sends an
   organization's on).
-- `,L` reads up to 1,000 of a list's repositories to say whether one is
+- `,B` reads up to 1,000 of a list's repositories to say whether one is
   in it, and says when a list is longer. A new list is public; its
   name, description and privacy are changed on github.com.
 

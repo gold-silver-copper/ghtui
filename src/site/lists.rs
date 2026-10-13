@@ -1,4 +1,4 @@
-//! Putting a repository in your starred lists or taking it out (`,L`,
+//! Putting a repository in your starred lists or taking it out (`,B`,
 //! GitHub's star button's list menu), making a list on the way, and
 //! deleting one of your lists (`,D` on its page). Each goes to GitHub in
 //! the background ([`crate::writes`]), and the page follows GitHub until
@@ -122,12 +122,12 @@ impl Expected {
     }
 }
 
-/// The repository `,L` is about: the one on screen.
+/// The repository `,B` is about: the one on screen.
 fn subject(state: &State) -> Option<RepoId> {
     state.route()?.repo().cloned()
 }
 
-/// `,L`: your lists, the ones with the repository checked. What GitHub
+/// `,B`: your lists, the ones with the repository checked. What GitHub
 /// has now, not what was read before.
 #[must_use]
 pub fn open(state: &mut State) -> Vec<Cmd> {
@@ -389,7 +389,7 @@ pub fn on_deleted(state: &mut State, d: Delete, result: Result<(), String>) -> V
     }
 }
 
-/// The menu's row for `,L`, on a repository's pages.
+/// The menu's row for `,B`, on a repository's pages.
 pub fn doable(state: &State) -> Option<Doable> {
     subject(state)?;
     Some(row(

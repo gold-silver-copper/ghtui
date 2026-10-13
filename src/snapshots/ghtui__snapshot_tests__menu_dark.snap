@@ -1,5 +1,6 @@
 ---
 source: src/snapshot_tests.rs
+assertion_line: 542
 expression: render(&state)
 ---
 Buffer {
@@ -19,7 +20,7 @@ Buffer {
         "  ⚖ MIT license   ☆ 1.2k stars   ◉ 18      ,V   New release                                        ▐",
         "                                       Change                                                      ▐",
         "   ⎇ main ▾   ⎇ 14 branches  ◇ 9 tags      ,w   Watch the repository, or ignore it                 ▐",
-        "                                           ,L   Add the repository to your lists, or take it out   ▐",
+        "                                           ,B   Add the repository to your lists, or take it out   ▐",
         "  ╭─ octocat  Browse GitHub like the   Go                                                          ▐",
         "  │▌▸ .github     Run CI on macOS too      g/   Search GitHub or go to a page                      ▐",
         "  │ ▸ crates      Browse GitHub like       gt   Next tab                                           ▐",

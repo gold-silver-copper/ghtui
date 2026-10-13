@@ -245,7 +245,7 @@ actions! {
     NewGist           "new_gist"          [",G"]                   Page   "New gist";
     NewWikiPage       "new_wiki_page"     [",W"]                   Page   "New wiki page";
     RunWorkflow       "run_workflow"      [",E"]                   Page   "Run the workflow by hand";
-    Lists             "lists"             [",L"]                   Page   "Add the repository to your starred lists, or take it out";
+    Lists             "lists"             [",B"]                   Page   "Add the repository to your starred lists, or take it out";
     Branch            "branch"            ["B"]                    Page   "Switch branches or tags";
     DeleteBranch      "delete_branch"     [",b"]                   Page   "Delete the pull request's branch, or restore it";
     ChangeBase        "change_base"       []                       Page   "Change the pull request's base branch";

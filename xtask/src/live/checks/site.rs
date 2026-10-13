@@ -1,6 +1,6 @@
 //! The pages GitHub's website has beyond code and conversations:
 //! Insights (contributors and commit activity counted by git, traffic,
-//! the dependency graph), Explore, starred lists (`,L` and `,D`),
+//! the dependency graph), Explore, starred lists (`,B` and `,D`),
 //! packages (`,D` on a version, or the scope it takes), and saved
 //! replies in the composer (`ctrl-g`, or the scope it takes).
 
@@ -28,7 +28,7 @@ pub const EXPLORE: Check = Check::new(
 
 pub const LISTS: Check = Check::new(
     "lists",
-    ",L makes a ghtui-live- list with the test repository in it and takes it out; ,D on the list's page deletes it",
+    ",B makes a ghtui-live- list with the test repository in it and takes it out; ,D on the list's page deletes it",
     lists,
 )
 .sweep(sweep_lists);
@@ -228,8 +228,8 @@ fn lists(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for("Pull requests")?;
     ghtui.wait_followed()?;
 
-    cx.step(",L makes the list, typed, with the repository in it")?;
-    ghtui.keys(", L")?;
+    cx.step(",B makes the list, typed, with the repository in it")?;
+    ghtui.keys(", B")?;
     ghtui.wait_for("Your lists")?;
     ghtui.type_text(&name)?;
     ghtui.wait_for(&format!("Make the list “{name}” and add it"))?;
@@ -249,8 +249,8 @@ fn lists(cx: &mut Cx) -> Result<()> {
     })?;
     ghtui.wait_followed()?;
 
-    cx.step(",L again shows it checked; ↵ takes the repository out")?;
-    ghtui.keys(", L")?;
+    cx.step(",B again shows it checked; ↵ takes the repository out")?;
+    ghtui.keys(", B")?;
     ghtui.type_text(&name)?;
     ghtui.wait_for(&format!("✓ {name}"))?;
     ghtui.keys("Enter")?;
