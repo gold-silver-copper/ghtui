@@ -904,11 +904,53 @@ pub(crate) fn review(id: u64, author: &str, state: ReviewState, body: &str, at: 
 }
 
 /// The projects the fixture issue is in.
-pub fn in_projects() -> Capped<crate::api::timeline::InProject> {
-    vec![crate::api::timeline::InProject {
+pub fn in_projects() -> Capped<crate::api::project::InProject> {
+    use crate::api::model::NodeId;
+    use crate::api::project::{FieldKind, FieldValue, ProjectField, SelectOption};
+    let option = |id: &str, name: &str| SelectOption {
+        id: id.into(),
+        name: name.into(),
+        color: "GREEN".into(),
+        description: String::new(),
+    };
+    let fields = vec![
+        ProjectField {
+            id: NodeId::new("F_status"),
+            name: "Status".into(),
+            kind: FieldKind::SingleSelect(vec![
+                option("todo", "Todo"),
+                option("doing", "In progress"),
+                option("done", "Done"),
+            ]),
+        },
+        ProjectField {
+            id: NodeId::new("F_estimate"),
+            name: "Estimate".into(),
+            kind: FieldKind::Number,
+        },
+        ProjectField {
+            id: NodeId::new("F_title"),
+            name: "Title".into(),
+            kind: FieldKind::Title,
+        },
+    ];
+    vec![crate::api::project::InProject {
         title: "Roadmap".into(),
         url: "https://github.com/users/octocat/projects/1".into(),
-        status: Some("In progress".into()),
+        id: NodeId::new("PVT_1"),
+        item: NodeId::new("PVTI_14"),
+        can_update: true,
+        fields: fields.into(),
+        values: vec![
+            (
+                NodeId::new("F_status"),
+                FieldValue::Option {
+                    id: "doing".into(),
+                    name: "In progress".into(),
+                },
+            ),
+            (NodeId::new("F_estimate"), FieldValue::Number("3".into())),
+        ],
     }]
     .into()
 }

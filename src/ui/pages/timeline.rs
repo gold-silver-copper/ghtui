@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use super::*;
 use crate::api::commit_comments::CommitComment;
 use crate::api::model::NodeId;
-use crate::api::timeline::InProject;
+use crate::api::project::InProject;
 use crate::api::timeline::{Closer, Event, Item, Latest, Linked, Requested, Review, What};
 use crate::ui::page::ReviewLink;
 
@@ -1197,9 +1197,9 @@ pub fn pinned_issues(page: &mut Page, repo: &RepoId, pinned: &Capped<Linked>, ic
     page.blank();
 }
 
-/// The projects an issue or pull request is in, with its status in each
-/// (each opens the project, where `,f` sets its fields); or why they
-/// can't be read (a token without read:project).
+/// The projects an issue or pull request is in, with its status and its
+/// other fields' values in each (`,f` sets one here; each opens the
+/// project); or why they can't be read (a token without read:project).
 pub(super) fn projects_aside(page: &mut Page, projects: Fetched<'_, Capped<InProject>>) {
     aside_heading(page, "Projects");
     #[expect(clippy::disallowed_methods, reason = "said in the sidebar's row")]
@@ -1209,11 +1209,17 @@ pub(super) fn projects_aside(page: &mut Page, projects: Fetched<'_, Capped<InPro
             for p in list {
                 let title = link_seg(page, p.title.clone(), p.url.clone(), Role::Link);
                 let mut segs = vec![meta("▦ "), title];
-                if let Some(status) = &p.status {
+                if let Some(status) = p.status() {
                     segs.push(meta(" · "));
-                    segs.push(Seg::new(status.clone(), Role::Strong));
+                    segs.push(Seg::new(status.to_owned(), Role::Strong));
                 }
                 page.wrapped(segs, 2, Frame::None);
+                let others: Vec<String> = (p.others())
+                    .map(|(name, v)| format!("{name}: {}", v.text()))
+                    .collect();
+                if !others.is_empty() {
+                    page.wrapped(vec![meta(others.join(" · "))], 2, Frame::None);
+                }
             }
             if list.left_out() > 0 {
                 let more = left_out_text(list.left_out(), "more", "more");
@@ -1239,8 +1245,11 @@ pub(super) fn projects_inline(page: &mut Page, projects: Fetched<'_, Capped<InPr
             segs.push(meta(", "));
         }
         segs.push(link_seg(page, p.title.clone(), p.url.clone(), Role::Link));
-        if let Some(status) = &p.status {
-            segs.push(meta(format!(" ({status})")));
+        let said: Vec<String> = (p.status().map(str::to_owned).into_iter())
+            .chain(p.others().map(|(name, v)| format!("{name}: {}", v.text())))
+            .collect();
+        if !said.is_empty() {
+            segs.push(meta(format!(" ({})", said.join(" · "))));
         }
     }
     inline(page, "Projects", segs);

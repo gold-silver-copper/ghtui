@@ -903,10 +903,9 @@ pub fn waiting(state: &State) -> Option<String> {
 pub fn poll(state: &mut State) -> Vec<Need> {
     let Some((need, edit)) = awaiting_here(state).map(|w| {
         let edit = matches!(w.change, Change::Edit(_)) || crate::manage::polls_activity(&w.change);
-        (
-            w.about.need(),
-            edit.then(|| crate::edit::polls(&w.about)).flatten(),
-        )
+        let more = edit.then(|| crate::edit::polls(&w.about)).flatten();
+        let fields = crate::projects::sidebar::polls(&w.change, &w.about);
+        (w.about.need(), more.or(fields))
     }) else {
         return Vec::new();
     };
@@ -941,6 +940,9 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             yes(crate::discuss::shows(state, change, of, *number))
         }
         (Change::Edit(edit), about) => yes(crate::edit::shown(state, edit, about)),
+        (Change::SetProjectField { .. }, Subject::Issue(..) | Subject::Pr(_)) => {
+            yes(crate::projects::sidebar::shows(state, change, about))
+        }
         (_, Subject::Pr(r)) => {
             let Some(d) = pr(r) else {
                 return Shown::No;

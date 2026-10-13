@@ -16,9 +16,10 @@ use crate::api::browse::{
 use crate::api::commit_comments::CommitComment;
 use crate::api::model::{Capped, PrRef, RepoId};
 use crate::api::notifications::Inbox;
+use crate::api::project::InProject;
 use crate::api::project::{Project, ProjectRef, ProjectSummary, ProjectsOf};
 use crate::api::security::{Alert, AlertKind, AlertList, AlertRef};
-use crate::api::timeline::{InProject, Review};
+use crate::api::timeline::Review;
 use crate::ui::Fetched;
 use crate::ui::page::{Page, PageLine, Role, Seg};
 use crate::ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};

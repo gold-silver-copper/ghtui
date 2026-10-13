@@ -216,7 +216,7 @@ pub fn pr_conversation(
     pr: &PrRef,
     d: &PrDetail,
     activity: Fetched<'_, PrActivity>,
-    projects: Fetched<'_, Capped<crate::api::timeline::InProject>>,
+    projects: Fetched<'_, Capped<crate::api::project::InProject>>,
     marks: Marks<'_>,
     cx: PageCtx<'_>,
 ) {

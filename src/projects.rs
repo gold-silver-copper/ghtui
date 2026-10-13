@@ -4,7 +4,11 @@
 //! one, and editing a draft's title and body. A picker or the composer
 //! takes what's chosen; it goes to GitHub as a [`Change`], and the page
 //! follows GitHub until it shows it ([`crate::act::follow`], which asks
-//! [`shows`]).
+//! [`shows`]). An issue's or pull request's fields in its projects are
+//! set from its own page's sidebar too ([`sidebar`]), with the same
+//! pickers.
+
+pub mod sidebar;
 
 use crate::api::change::Change;
 use crate::api::model::NodeId;
@@ -38,9 +42,11 @@ pub const ACTIONS: [Action; 8] = [
 ];
 
 /// Whether `action` is the project's on screen to do: its own, and
-/// editing (a draft's text).
+/// editing (a draft's text); on an issue or pull request, setting its
+/// fields in its projects.
 pub fn takes(state: &State, action: Action) -> bool {
-    ACTIONS.contains(&action) && here(state).is_some()
+    (ACTIONS.contains(&action) && here(state).is_some())
+        || (action == Action::SetField && sidebar::here(state).is_some())
 }
 
 /// A draft being written in the composer: a new one, or new text for
@@ -85,12 +91,76 @@ impl Drafting {
     }
 }
 
-/// An item of a project at a view: what a change is about.
+/// An item of a project, where it's changed from: what a change is
+/// about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct At {
-    pub project: ProjectRef,
-    pub view: Option<u64>,
+    pub on: On,
     pub item: NodeId,
+}
+
+/// Where an item's fields are set from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum On {
+    /// A view of its project.
+    View(ProjectRef, Option<u64>),
+    /// The page of the issue or pull request it is, and the project (by
+    /// its node ID).
+    Sidebar(Subject, NodeId),
+}
+
+impl At {
+    /// What following the change watches.
+    fn about(&self) -> Subject {
+        match &self.on {
+            On::View(project, view) => Subject::Project(project.clone(), *view),
+            On::Sidebar(subject, _) => subject.clone(),
+        }
+    }
+}
+
+/// What setting an item's fields reads: its project's ID and fields, its
+/// values, and (on a board) the field its columns are.
+struct Target<'a> {
+    project: &'a NodeId,
+    fields: &'a [ProjectField],
+    values: &'a [(NodeId, FieldValue)],
+    column: Option<&'a ProjectField>,
+}
+
+impl Target<'_> {
+    fn value(&self, field: &NodeId) -> Option<&FieldValue> {
+        self.values.iter().find(|(f, _)| f == field).map(|(_, v)| v)
+    }
+
+    fn field(&self, id: &NodeId) -> Option<&ProjectField> {
+        self.fields.iter().find(|f| f.id == *id)
+    }
+}
+
+/// The item `at` names, as loaded.
+fn target<'a>(state: &'a State, at: &At) -> Option<Target<'a>> {
+    match &at.on {
+        On::View(project, view) => {
+            let p = state.picked::<Project>(&DataKey::Project(project.clone(), *view))?;
+            let it = p.loaded().find(|it| it.id == at.item)?;
+            Some(Target {
+                project: &p.id,
+                fields: &p.fields.items,
+                values: &it.values,
+                column: p.column_field(),
+            })
+        }
+        On::Sidebar(subject, project) => {
+            let p = sidebar::project(state, subject, project)?;
+            (p.item == at.item).then_some(Target {
+                project: &p.id,
+                fields: &p.fields.items,
+                values: &p.values,
+                column: None,
+            })
+        }
+    }
 }
 
 /// What a project's picker lists.
@@ -104,6 +174,8 @@ pub enum Pick {
     Value(At, NodeId),
     /// What to add to the project at a view.
     Add(ProjectRef, Option<u64>),
+    /// Which of an issue's or pull request's projects to set a field in.
+    Project(Subject),
 }
 
 impl Pick {
@@ -113,6 +185,7 @@ impl Pick {
             Pick::Field(_) => "Set a field",
             Pick::Value(..) => "Set the field",
             Pick::Add(..) => "Add an item",
+            Pick::Project(_) => "Set a field in a project",
         }
     }
 
@@ -122,6 +195,7 @@ impl Pick {
             Pick::Field(_) => "Find a field",
             Pick::Value(..) => "Find a value, or type one",
             Pick::Add(..) => "owner/repo#123, a link, or a new draft's title",
+            Pick::Project(_) => "Find a project",
         }
     }
 }
@@ -131,6 +205,8 @@ impl Pick {
 pub enum Chosen {
     /// List this field's values.
     Field(At, NodeId),
+    /// List this project's fields.
+    Project(At),
     Set(At, Change),
     /// Add an issue or pull request to the project at a view.
     Add(ProjectRef, Option<u64>, Change),
@@ -269,6 +345,7 @@ fn why_not(state: &State, h: &Here<'_>, action: Action) -> Option<String> {
 /// The menu's rows for a project's pages.
 pub fn doables(state: &State, out: &mut Vec<Doable>) {
     let Some(h) = here(state) else {
+        out.extend(sidebar::doable(state));
         return;
     };
     let rows = [
@@ -330,6 +407,9 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     let Some(h) = here(state) else {
+        if action == Action::SetField && sidebar::here(state).is_some() {
+            return sidebar::act(state);
+        }
         state.info(action.not_here());
         return Vec::new();
     };
@@ -402,16 +482,14 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         (Action::MoveItem, Some(item)) => {
             let at = At {
-                project,
-                view,
+                on: On::View(project, view),
                 item,
             };
             state.open_picker(Kind::Project(Pick::Column(at)))
         }
         (_, Some(item)) => {
             let at = At {
-                project,
-                view,
+                on: On::View(project, view),
                 item,
             };
             state.open_picker(Kind::Project(Pick::Field(at)))
@@ -491,14 +569,14 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
     let at = match pick {
         Pick::Column(at) | Pick::Field(at) | Pick::Value(at, _) => at,
         Pick::Add(project, view) => return adding(state, project, *view, q),
+        Pick::Project(subject) => return sidebar::project_rows(state, subject, q),
     };
-    let key = DataKey::Project(at.project.clone(), at.view);
-    let found = state.picked::<Project>(&key).and_then(|p| {
-        let item = p.loaded().find(|it| it.id == at.item)?;
-        Some((p, item))
-    });
-    let Some((p, it)) = found else {
-        return vec![row("The item is no longer in the view".into(), "", None)];
+    let Some(p) = target(state, at) else {
+        let gone = match at.on {
+            On::View(..) => "The item is no longer in the view",
+            On::Sidebar(..) => "It's no longer in the project",
+        };
+        return vec![row(gone.into(), "", None)];
     };
     let set = |field: &ProjectField, value: Option<FieldValue>| {
         let said = match &value {
@@ -506,8 +584,8 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
             None => field.name.clone(),
         };
         let change = Change::SetProjectField {
-            project: p.id.clone(),
-            item: it.id.clone(),
+            project: p.project.clone(),
+            item: at.item.clone(),
             field: field.id.clone(),
             value,
             said,
@@ -515,14 +593,14 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
         Some(Chosen::Set(at.clone(), change))
     };
     let field = match pick {
-        Pick::Column(_) => p.column_field(),
+        Pick::Column(_) => p.column,
         Pick::Value(_, id) => p.field(id),
-        Pick::Add(..) => None,
+        Pick::Add(..) | Pick::Project(_) => None,
         Pick::Field(_) => {
             return (p.fields.iter())
                 .filter(|f| f.kind.settable() && fuzzy_score(q, &f.name).is_some())
                 .map(|f| {
-                    let hint = it.value(&f.id).map_or("", FieldValue::text);
+                    let hint = p.value(&f.id).map_or("", FieldValue::text);
                     let chosen = Chosen::Field(at.clone(), f.id.clone());
                     row(f.name.clone(), hint, Some(chosen))
                 })
@@ -536,7 +614,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
             None,
         )];
     };
-    let current = it.value(&field.id);
+    let current = p.value(&field.id);
     let is_current = |v: &FieldValue| current.is_some_and(|c| c.same(v));
     let mut rows = Vec::new();
     let mut choice = |value: FieldValue, hint: &str| {
@@ -703,6 +781,7 @@ fn is_date(s: &str) -> bool {
 pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
     match chosen {
         Chosen::Field(at, field) => state.open_picker(Kind::Project(Pick::Value(at, field))),
+        Chosen::Project(at) => state.open_picker(Kind::Project(Pick::Field(at))),
         Chosen::Add(project, view, change) => {
             if let Change::Project(c) = &change {
                 state.info(format!("{}…", doing(c)));
@@ -731,8 +810,7 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
                 };
                 state.info(format!("{doing} {said}…"));
             }
-            let about = Subject::Project(at.project, at.view);
-            vec![Cmd::Api(Api::Change(change, By::Act(about)))]
+            vec![Cmd::Api(Api::Change(change, By::Act(at.about())))]
         }
     }
 }

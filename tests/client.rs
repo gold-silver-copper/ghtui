@@ -3113,6 +3113,31 @@ async fn setting_a_project_field_sends_its_value() {
     assert!(vars(2).get("value").is_none());
 }
 
+/// The projects an issue is in come with their fields and its values,
+/// which its sidebar shows and sets: its status is its Status's.
+#[tokio::test]
+async fn an_issues_projects_come_with_their_fields_and_its_values() {
+    let answer = r#"{"data":{"repository":{"issueOrPullRequest":{"projectItems":{"totalCount":1,"nodes":[
+        {"id":"PVTI_14","project":{"id":"PVT_1","title":"Roadmap","url":"https://github.com/users/o/projects/1","viewerCanUpdate":true,
+          "fields":{"totalCount":2,"nodes":[
+            {"id":"F_status","name":"Status","dataType":"SINGLE_SELECT","options":[{"id":"todo","name":"Todo","color":"GRAY","description":""}]},
+            {"id":"F_due","name":"Due","dataType":"DATE"}]}},
+         "fieldValues":{"totalCount":2,"nodes":[
+            {"__typename":"ProjectV2ItemFieldSingleSelectValue","optionId":"todo","name":"Todo","field":{"id":"F_status"}},
+            {"__typename":"ProjectV2ItemFieldDateValue","date":"2026-11-01","field":{"id":"F_due"}}]}}]}}}}}"#;
+    let (gh, seen) = github(vec![Reply::new(200, answer)]).await;
+    let projects = gh.projects_of(&RepoId::new("o", "r"), 14).await.unwrap();
+    let p = &projects.items[0];
+    assert_eq!((p.id.as_str(), p.item.as_str()), ("PVT_1", "PVTI_14"));
+    assert!(p.can_update);
+    assert_eq!(p.status(), Some("Todo"));
+    let others: Vec<(&str, &str)> = p.others().map(|(n, v)| (n, v.text())).collect();
+    assert_eq!(others, [("Due", "2026-11-01")]);
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("projectItems(first: 10"));
+    assert_eq!(seen[0].json()["variables"]["number"], 14);
+}
+
 /// An owner's projects are asked of the owner, whichever kind it is; a
 /// token without read:project says how to get it.
 #[tokio::test]

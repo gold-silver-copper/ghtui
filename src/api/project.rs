@@ -368,6 +368,49 @@ impl Project {
     }
 }
 
+/// A project an issue or pull request is in: its fields and the item's
+/// values of them, which its sidebar shows and sets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InProject {
+    pub title: String,
+    pub url: String,
+    /// The project's node ID, which setting a field names it by.
+    pub id: NodeId,
+    /// The item's.
+    pub item: NodeId,
+    /// GitHub lets you change it.
+    pub can_update: bool,
+    pub fields: Capped<ProjectField>,
+    pub values: Vec<(NodeId, FieldValue)>,
+}
+
+impl InProject {
+    pub fn value(&self, field: &NodeId) -> Option<&FieldValue> {
+        self.values.iter().find(|(f, _)| f == field).map(|(_, v)| v)
+    }
+
+    pub fn field(&self, id: &NodeId) -> Option<&ProjectField> {
+        self.fields.iter().find(|f| f.id == *id)
+    }
+
+    /// Its value of the project's Status field, if it has one.
+    pub fn status(&self) -> Option<&str> {
+        let status = self
+            .fields
+            .iter()
+            .find(|f| f.name == "Status" && matches!(f.kind, FieldKind::SingleSelect(_)))?;
+        self.value(&status.id).map(FieldValue::text)
+    }
+
+    /// Its values of the project's other fields that can be set, by
+    /// their names, in the project's order.
+    pub fn others(&self) -> impl Iterator<Item = (&str, &FieldValue)> {
+        (self.fields.iter())
+            .filter(|f| f.kind.settable() && f.name != "Status")
+            .filter_map(|f| Some((f.name.as_str(), self.value(&f.id)?)))
+    }
+}
+
 /// Items grouped by `field`'s values, in its order: those without one first
 /// ("No Status"), then each option or iteration, empty ones too.
 pub fn grouped<'a>(field: &'a ProjectField, items: &[&'a ProjectItem]) -> Vec<Group<'a>> {
@@ -575,7 +618,7 @@ impl GitHub {
         let login = project.owner.login();
         let vars = serde_json::json!({ "login": login, "number": project.number });
         let wire: WireProject =
-            (self.graphql_json(raw::PROJECT, vars, project, "/repositoryOwner/projectV2"))
+            (self.graphql_json(&raw::project(), vars, project, "/repositoryOwner/projectV2"))
                 .await
                 .map_err(scoped)?;
         let fields = wire.fields.into_capped(WireField::into_field);
@@ -632,6 +675,27 @@ impl GitHub {
             archived,
         };
         Ok(self.kept_page(first, &key, found).await)
+    }
+
+    /// The projects issue or pull request `number` is in (the first 10),
+    /// with its values of their fields: reading them takes the
+    /// read:project scope.
+    pub async fn projects_of(
+        &self,
+        repo: &RepoId,
+        number: u64,
+    ) -> Result<Capped<InProject>, ApiError> {
+        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
+        let what = format!("{repo}#{number}'s projects");
+        let items: wire::Counted<WireInProject> = (self.graphql_json(
+            &raw::projects_of(),
+            vars,
+            what,
+            "/repository/issueOrPullRequest/projectItems",
+        ))
+        .await
+        .map_err(scoped)?;
+        Ok(items.into_capped(WireInProject::into_in_project))
     }
 
     /// A page of a project's items that `filter` finds, from `after`: those
@@ -803,6 +867,40 @@ struct WireProject {
     viewer_can_update: bool,
     fields: wire::Counted<WireField>,
     views: wire::Counted<WireView>,
+}
+
+/// An item of a project an issue or pull request is in.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireInProject {
+    id: NodeId,
+    project: WireOfProject,
+    field_values: wire::Counted<WireValue>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireOfProject {
+    id: NodeId,
+    title: String,
+    url: String,
+    viewer_can_update: bool,
+    fields: wire::Counted<WireField>,
+}
+
+impl WireInProject {
+    fn into_in_project(self) -> Option<InProject> {
+        let values = self.field_values.nodes.into_iter().flatten();
+        Some(InProject {
+            title: self.project.title,
+            url: self.project.url,
+            id: self.project.id,
+            item: self.id,
+            can_update: self.project.viewer_can_update,
+            fields: self.project.fields.into_capped(WireField::into_field),
+            values: values.filter_map(WireValue::into_value).collect(),
+        })
+    }
 }
 
 /// A field, or what names one (a view's, a value's).

@@ -251,7 +251,7 @@ pub(super) fn label_list(page: &mut Page, l: &Capped<Label>) {
 pub fn issue(
     page: &mut Page,
     d: &IssueDetail,
-    projects: Fetched<'_, Capped<crate::api::timeline::InProject>>,
+    projects: Fetched<'_, Capped<crate::api::project::InProject>>,
     marks: Marks<'_>,
     cx: PageCtx<'_>,
 ) {

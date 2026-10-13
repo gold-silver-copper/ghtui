@@ -282,7 +282,7 @@ actions! {
     PrevColumn        "prev_column"       ["h"]                    Project "Previous column of the board";
     NextColumn        "next_column"       ["l"]                    Project "Next column of the board";
     MoveItem          "move_item"         [",c"]                   Project "Move the item to another column";
-    SetField          "set_field"         [",f"]                   Project "Set a field of the item";
+    SetField          "set_field"         [",f"]                   Page   "Set a field of the item in its project";
     AddItem           "add_item"          [",i"]                   Project "Add an issue, a pull request or a draft";
     ArchiveItem       "archive_item"      [",X"]                   Project "Archive the item, or restore it";
 

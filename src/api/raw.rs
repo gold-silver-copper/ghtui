@@ -165,7 +165,35 @@ pub(crate) const REPO_PROJECTS: &str = "query($owner: String!, $name: String!, $
 const FIELD_ID: &str = "... on ProjectV2FieldCommon { id }";
 
 /// A project, its fields and its views.
-pub(crate) const PROJECT: &str = "query($login: String!, $number: Int!) { repositoryOwner(login: $login) { ... on ProjectV2Owner { projectV2(number: $number) { id title shortDescription url closed public viewerCanUpdate fields(first: 50) { totalCount nodes { ... on ProjectV2FieldCommon { id name dataType } ... on ProjectV2SingleSelectField { options { id name color description } } ... on ProjectV2IterationField { configuration { iterations { id title startDate duration } completedIterations { id title startDate duration } } } } } views(first: 20) { totalCount nodes { number name layout filter fields(first: 50) { totalCount nodes { ... on ProjectV2FieldCommon { id } } } verticalGroupByFields(first: 1) { nodes { ... on ProjectV2FieldCommon { id } } } groupByFields(first: 1) { nodes { ... on ProjectV2FieldCommon { id } } } sortByFields(first: 5) { totalCount nodes { direction field { ... on ProjectV2FieldCommon { id } } } } } } } } } }";
+/// A project's fields, with a single select's options and an
+/// iteration field's iterations.
+const FIELDS: &str = "fields(first: 50) { totalCount nodes { ... on ProjectV2FieldCommon { id name dataType } ... on ProjectV2SingleSelectField { options { id name color description } } ... on ProjectV2IterationField { configuration { iterations { id title startDate duration } completedIterations { id title startDate duration } } } } }";
+
+/// An item's values of its project's fields.
+fn values() -> String {
+    format!(
+        "fieldValues(first: 50) {{ totalCount nodes {{ __typename ... on ProjectV2ItemFieldTextValue {{ text field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldNumberValue {{ number field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldDateValue {{ date field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldSingleSelectValue {{ optionId name field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldIterationValue {{ iterationId title field {{ {FIELD_ID} }} }} }} }}"
+    )
+}
+
+/// A project, its fields and its views.
+pub(crate) fn project() -> String {
+    format!(
+        "query($login: String!, $number: Int!) {{ repositoryOwner(login: $login) {{ ... on ProjectV2Owner {{ projectV2(number: $number) {{ id title shortDescription url closed public viewerCanUpdate {FIELDS} views(first: 20) {{ totalCount nodes {{ number name layout filter fields(first: 50) {{ totalCount nodes {{ {FIELD_ID} }} }} verticalGroupByFields(first: 1) {{ nodes {{ {FIELD_ID} }} }} groupByFields(first: 1) {{ nodes {{ {FIELD_ID} }} }} sortByFields(first: 5) {{ totalCount nodes {{ direction field {{ {FIELD_ID} }} }} }} }} }} }} }} }} }}"
+    )
+}
+
+/// The projects an issue or pull request is in: each one's fields, and
+/// the item's values of them.
+pub(crate) fn projects_of() -> String {
+    let items = format!(
+        "projectItems(first: 10, includeArchived: false) {{ totalCount nodes {{ id project {{ id title url viewerCanUpdate {FIELDS} }} {} }} }}",
+        values()
+    );
+    format!(
+        "query($owner: String!, $name: String!, $number: Int!) {{ repository(owner: $owner, name: $name) {{ issueOrPullRequest(number: $number) {{ ... on Issue {{ {items} }} ... on PullRequest {{ {items} }} }} }} }}"
+    )
+}
 
 /// What an issue or pull request in a project shows.
 const LINKED: &str = "number title url state repository { nameWithOwner } assignees(first: 5) { totalCount nodes { login } } labels(first: 5) { totalCount nodes { name color } } milestone { title }";
@@ -174,7 +202,8 @@ const LINKED: &str = "number title url state repository { nameWithOwner } assign
 /// their values.
 pub(crate) fn project_items() -> String {
     format!(
-        "query($login: String!, $number: Int!, $after: String, $query: String, $archived: [ProjectV2ItemArchivedState!]) {{ repositoryOwner(login: $login) {{ ... on ProjectV2Owner {{ projectV2(number: $number) {{ items(first: 50, after: $after, query: $query, archivedStates: $archived) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ id fullDatabaseId isArchived content {{ __typename ... on DraftIssue {{ id title body assignees(first: 5) {{ totalCount nodes {{ login }} }} }} ... on Issue {{ {LINKED} stateReason }} ... on PullRequest {{ {LINKED} isDraft }} }} fieldValues(first: 50) {{ totalCount nodes {{ __typename ... on ProjectV2ItemFieldTextValue {{ text field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldNumberValue {{ number field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldDateValue {{ date field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldSingleSelectValue {{ optionId name field {{ {FIELD_ID} }} }} ... on ProjectV2ItemFieldIterationValue {{ iterationId title field {{ {FIELD_ID} }} }} }} }} }} }} }} }} }} }}"
+        "query($login: String!, $number: Int!, $after: String, $query: String, $archived: [ProjectV2ItemArchivedState!]) {{ repositoryOwner(login: $login) {{ ... on ProjectV2Owner {{ projectV2(number: $number) {{ items(first: 50, after: $after, query: $query, archivedStates: $archived) {{ totalCount pageInfo {{ hasNextPage endCursor }} nodes {{ id fullDatabaseId isArchived content {{ __typename ... on DraftIssue {{ id title body assignees(first: 5) {{ totalCount nodes {{ login }} }} }} ... on Issue {{ {LINKED} stateReason }} ... on PullRequest {{ {LINKED} isDraft }} }} {} }} }} }} }} }} }}",
+        values()
     )
 }
 
@@ -343,7 +372,8 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ("team", team()),
         ("OWNER_PROJECTS", OWNER_PROJECTS.to_owned()),
         ("REPO_PROJECTS", REPO_PROJECTS.to_owned()),
-        ("PROJECT", PROJECT.to_owned()),
+        ("project", project()),
+        ("projects_of", projects_of()),
         ("project_items", project_items()),
         ("SET_PROJECT_FIELD", SET_PROJECT_FIELD.to_owned()),
         ("CLEAR_PROJECT_FIELD", CLEAR_PROJECT_FIELD.to_owned()),
