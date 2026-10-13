@@ -33,6 +33,8 @@ pub struct PageScreen {
     pub range: Option<usize>,
     /// Columns code is scrolled left by.
     pub shift: usize,
+    /// How far code can scroll left ([`Page::wide`]), found once a build.
+    pub(super) wide: usize,
     /// The word cursor, by its column in the code of the selected line:
     /// `None` until `w` or `b` picks one.
     pub word: Option<usize>,
@@ -72,6 +74,7 @@ impl PageScreen {
             find: None,
             range: None,
             shift: 0,
+            wide: 0,
             word: None,
             land: None,
         }
@@ -88,6 +91,7 @@ impl PageScreen {
         if let Some(query) = &self.find {
             page.mark(query);
         }
+        self.wide = page.wide();
         let old = mem::replace(&mut self.page, Arc::new(page));
         self.built = Some(built);
         let before = (self.scroll, self.selected);

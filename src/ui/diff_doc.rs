@@ -193,6 +193,9 @@ pub struct DocFile {
     by_line: HashMap<LinePos, Vec<u32>>,
     /// Commentable ranges reconstructed locally.
     local_commentable: Option<Commentable>,
+    /// `(move index, entries, is the removed side)` in this file, as
+    /// last built.
+    moves: Vec<(u32, Range<u32>, bool)>,
 }
 
 impl DocFile {
@@ -822,6 +825,7 @@ impl Doc {
                     thread_rows: Vec::new(),
                     by_line: HashMap::new(),
                     local_commentable: None,
+                    moves: Vec::new(),
                 }
             })
             .collect();
@@ -921,6 +925,7 @@ impl Doc {
             moves: &file_moves,
         };
         file.rebuild(*opts, &extras);
+        file.moves = file_moves;
     }
 
     pub fn set_moves(&mut self, moves: Vec<Move>) {
@@ -930,18 +935,9 @@ impl Doc {
 
     /// The move covering alignment entry `e` of `file`: `(index, removed side)`.
     pub fn move_at_entry(&self, file: usize, e: u32) -> Option<(u32, bool)> {
-        if self.opts.whitespace != Whitespace::Exact {
-            return None;
-        }
-        self.moves.iter().enumerate().find_map(|(i, m)| {
-            if m.from.0 == file && m.from.1.contains(&e) {
-                Some((idx(i), true))
-            } else if m.to.0 == file && m.to.1.contains(&e) {
-                Some((idx(i), false))
-            } else {
-                None
-            }
-        })
+        let moves = &self.files.get(file)?.moves;
+        let (mv, _, from) = moves.iter().find(|(_, entries, _)| entries.contains(&e))?;
+        Some((*mv, *from))
     }
 
     /// The move under the cursor (on `half` of a split row): on a "moved"

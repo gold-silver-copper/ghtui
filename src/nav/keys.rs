@@ -198,9 +198,7 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             if (p.scroll, p.shift) == before {
                 let why = match action {
                     Action::ScrollLeft => "Already at the left edge",
-                    Action::ScrollRight if p.page.wide() == 0 => {
-                        "Nothing here is wider than the screen"
-                    }
+                    Action::ScrollRight if p.wide == 0 => "Nothing here is wider than the screen",
                     Action::ScrollRight => "Already at the right edge",
                     _ if p.page.height() <= height => "It all fits on the screen",
                     _ => "Already there",
@@ -342,7 +340,7 @@ pub(super) fn scroll_view(p: &mut PageScreen, action: Action, height: usize) {
         }
         Action::ScrollCenter => p.scroll = at.saturating_sub(height / 2).min(max_scroll(p, height)),
         Action::ScrollLeft => p.shift = p.shift.saturating_sub(SHIFT),
-        _ => p.shift = p.shift.saturating_add(SHIFT).min(p.page.wide()),
+        _ => p.shift = p.shift.saturating_add(SHIFT).min(p.wide),
     }
 }
 

@@ -723,7 +723,8 @@ impl Page {
     /// Columns code can scroll left by before its longest line ends.
     pub fn wide(&self) -> usize {
         let code = self.lines.iter().filter(|l| l.tone != Tone::Plain);
-        let longest = code.map(|l| text::width(&l.text())).max().unwrap_or(0);
+        let width = |l: &PageLine| l.segs.iter().map(|s| text::width(&s.text)).sum::<usize>();
+        let longest = code.map(width).max().unwrap_or(0);
         longest.saturating_sub(usize::from(self.width) / 2)
     }
 
