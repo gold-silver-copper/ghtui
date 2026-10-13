@@ -19,6 +19,7 @@ pub mod gist;
 pub mod manage;
 pub mod insights;
 pub mod lists;
+pub mod housekeeping;
 pub mod mention;
 pub mod model;
 pub mod notifications;

@@ -489,6 +489,11 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Copy => return nav::copy_link(state),
         Action::OpenInBrowser => return state.go(Target::External(state.here_url()).into()),
         _ if crate::manage::claims(state, action) => return crate::manage::act(state, action),
+        // Labels, milestones, branches and tags, forks, new repositories
+        // and files: before closing (a milestone's), editing and deleting.
+        _ if crate::housekeeping::claims(state, action) => {
+            return crate::housekeeping::act(state, action);
+        }
         _ if act::ACTIONS.contains(&action) => return act::act(state, action),
         // The diff's links are in its threads' comments.
         Action::Hints | Action::HintsBrowser if diff.is_some() => {

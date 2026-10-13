@@ -51,7 +51,13 @@ ghtui is pre-release, but it's usable every day.
 - **Creating**: open issues (from the repository's templates) and pull
   requests, and check a pull request out in your clone; make, edit and
   delete releases, and upload, save and delete their assets; write gists
-  and wiki pages; insert your saved replies in a comment.
+  and wiki pages; insert your saved replies in a comment; fork a
+  repository or make a new one.
+- **Housekeeping**: a repository's labels (a page of their own) and
+  milestones, made, edited and deleted; branches and tags made at any
+  commit and deleted; files edited, made, renamed and deleted, and
+  committed, as the website's pencil does. In your clone, git does what
+  git can (pushing a branch, a tag or a commit), after asking.
 - **Notifications you choose**: subscribe to a thread or ignore it, and
   set how you watch a repository.
 - **Git first**: files, folders, history, blame, comparisons, tags,
@@ -498,6 +504,51 @@ you (and says why where it doesn't):
   from the category's form where it has one. `,x` closes a discussion as
   resolved, outdated or a duplicate, or reopens it.
 
+**Labels and milestones** are reached from the Issues and Pull requests
+tabs (`Labels · Milestones` above the list). The labels page lists each
+label with its description and how many open issues and pull requests
+have it; `↵` opens them. `,o` makes a new label (its name, colour and
+description are rows of a form, each set in a picker; GitHub's colours
+are offered, or type `#rrggbb`), `,e` edits the selected one (renaming
+it too) and `,D` deletes it, asking first and saying how many it comes
+off. On the milestones (and a milestone's page) `,o` makes one, `,e`
+edits its title, due date and description (in the composer), `,x`
+closes or reopens it, and `,D` deletes it after asking. Each page follows
+GitHub until it shows the change.
+
+**Branches and tags**: on the branches or tags list, `,o` makes one: its
+name, then where it starts (the branch selected, another branch, a tag,
+or a commit's SHA typed). `,D` deletes the selected one, asking first;
+never the default branch, nor one GitHub's branch protection or a
+ruleset keeps, and it says which. Inside a clone of the repository, git
+does it, after asking: `git push` of the commit to the new branch or
+tag, or `git push --delete`; your clone's own branches and tags aren't
+touched. Elsewhere GitHub's API does it.
+
+**Forks and new repositories**: `,F` on any of a repository's pages
+forks it, to your account or an organization that lets you make
+repositories there, under the name you choose, with its default branch
+only unless you say all. `,C` makes a new repository: its owner, name,
+description, public or private, a README, and a `.gitignore` and licence
+from GitHub's templates. Then its page opens and follows GitHub until
+it's there (a fork can take GitHub a moment); for a new repository,
+cloning it here (`git clone` into `./name`) is offered.
+
+**Editing a file** (`,e` on a file, as the website's pencil) reads it as
+GitHub has it on the branch, and opens the composer on its text
+(`ctrl-e` continues in `$EDITOR`). The form's rows name its path
+(changing it renames the file), the branch the commit goes to (the one
+you're on, or a new one, offered as a pull request after; a tag or a
+commit is never a branch, so it's always a new one there) and the
+commit's message (GitHub's own until you write one). `,o` in a folder
+makes a new file there, and `,D` on a file deletes it, each the same
+way. `,s` asks before committing. Inside a clone of the repository, git
+makes the commit on GitHub's tip of the branch, from objects alone, and
+pushes it, so your branches, index and working tree stay as they are;
+elsewhere GitHub's API commits it (GitHub signs it). If the file changed
+on GitHub since you opened it, nothing is overwritten: committing says
+so, and keeps your text.
+
 ## Keys
 
 The keys are vim's where vim has one. A binding is a key sequence (`gg`,
@@ -557,6 +608,12 @@ says where it works.
   your gist, a release or its asset; `,U` uploads an asset to a release.
 - `,B` puts the repository in your starred lists or takes it out; `,D`
   deletes one of your lists on its page, or a package's version.
+- Housekeeping is behind `,` too: `,o` makes something new where you are
+  (vim's `o` opens a new line): a label, a milestone, a branch, a tag, or
+  a file in the folder. `,e` edits the selected label or milestone, or
+  the file; `,D` deletes it (or the selected branch or tag); `,x` closes
+  or reopens a milestone. `,F` forks the repository and `,C` makes a new
+  one.
 - `,w` subscribes to a thread or ignores it, or sets how you watch the
   repository.
 - Managing waits behind `,` too: `,b` deletes or restores a merged pull
@@ -650,8 +707,8 @@ says where it works.
 | `,u`                 | Update the branch from its base |
 | `,x`                 | Close (as a duplicate too) or reopen (an alert: dismiss it); on a running run, cancel it |
 | `,R`                 | Re-run the workflow run or job |
-| `,e`                 | Edit the comment or description (a wiki page, your gist, a release) |
-| `,D`                 | Delete the comment (your gist, a release or its asset, a package's version, your list) |
+| `,e`                 | Edit the comment or description (a wiki page, your gist, a release, a label, a milestone, a file) |
+| `,D`                 | Delete the comment (your gist, a release or its asset, a package's version, your list, a label, a milestone, a branch, a tag, a file) |
 | `,+`                 | React to the comment, issue or pull request |
 | `,c`                 | Check out the pull request in your clone (an issue: a new branch for it) |
 | `,w`                 | Subscribe to or ignore the thread; watch the repository |
@@ -678,7 +735,7 @@ says where it works.
 | `,M`    | Set the milestone |
 | `,i`    | New issue |
 | `,p`    | New pull request |
-| `,s`    | Create or save the form: an issue, a pull request, a release, a gist, a wiki page |
+| `,s`    | Create or save the form on screen (an issue, a release, a label, a file…) |
 | `,P`    | Push the branch to GitHub |
 | `,!`    | Mark the comment as the discussion's answer, or unmark it |
 | `,V`    | New release |
@@ -687,6 +744,9 @@ says where it works.
 | `,W`    | New wiki page |
 | `,E`    | Run the workflow by hand |
 | `,B`    | Add the repository to your starred lists, or take it out |
+| `,o`    | New here: a label, a milestone, a branch, a tag, a file |
+| `,F`    | Fork the repository |
+| `,C`    | New repository |
 | `B`     | Switch branches or tags |
 | `,b`    | Delete the pull request's branch, or restore it |
 | `,L`    | Lock the conversation, or unlock it |
@@ -903,7 +963,12 @@ a commit's author is when their email doesn't say). One module,
 `src/source.rs`, decides which answers each page, and says so on the
 page. Your clone is only read: ghtui fetches commits into its object
 store, as `git fetch` would, from its own GitHub remote, and never
-touches its branches, index, working tree or config. The cache's clone
+touches its branches, index, working tree or config. Housekeeping writes
+from it only what you ask for, after asking, with your own git: a
+branch or tag pushed by its commit's ID, a deleted one pushed away, and
+a file's commit made from objects alone (through an index of its own,
+on GitHub's tip of the branch, fetched first) and pushed; so even then
+your branches, index and working tree stay as they are. The cache's clone
 is partial: a file's contents are fetched when a page reads it, all a
 page needs in one batch. Limits keep a huge repository from turning a
 page into a download, and the API answers past them, saying which:
@@ -1192,6 +1257,20 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 - GitHub's API can't change whether a gist is public: a secret gist is
   made public on github.com. A gist file over GitHub's size limit for
   its API can't be changed here.
+- The labels page lists 100 labels at a time (the rest one row away),
+  and the labels' issue counts are open issues and pull requests. A
+  branch can't be renamed here, nor a repository deleted (that's the
+  website's).
+- A file is edited one at a time, as text: a binary file, or one over
+  GitHub's API's size limit, can't be. A commit made with git in your
+  clone isn't signed unless your git signs commits by default; one
+  GitHub's API makes is signed by GitHub. Changing a workflow's file
+  takes the token's `workflow` scope (`gh auth refresh -s workflow`).
+  A branch protected so that it takes pull requests refuses a commit
+  straight to it: commit to a new branch, and propose it.
+- A new repository is cloned with your own git into the folder ghtui
+  started in; a tag's protection by a ruleset is GitHub's to say, when
+  deleting it.
 - A repository's custom watch settings (only releases, issues…) and a
   thread's custom events can only be set on github.com; `,w` offers
   participating, all activity and ignore. A new tag is made by GitHub

@@ -88,6 +88,8 @@ pub enum WriteLink {
     Save,
     /// A release's asset, by its name: opening it saves it.
     Asset(String),
+    /// One of housekeeping's rows ([`crate::housekeeping`]).
+    Housekeeping(crate::housekeeping::Row),
 }
 
 /// What a row of the form that runs a workflow by hand does.

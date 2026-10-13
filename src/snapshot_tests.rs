@@ -705,6 +705,9 @@ mod discussions;
 mod manage;
 /// Changing a release and its assets.
 mod releases;
+/// Labels, milestones, branches and tags, forks, new repositories and
+/// files.
+mod housekeeping;
 /// Reviews and timelines: what a review said and where, the reviewers,
 /// every review, and the events between comments.
 mod reviews;

@@ -43,6 +43,9 @@ pub struct Writing {
     pub gists: HashMap<Route, crate::gist::Form>,
     /// New and edited wiki pages, by their form's page.
     pub wikis: HashMap<Route, crate::wiki::form::Form>,
+    /// Labels, milestones, branches and tags, forks, new repositories
+    /// and files.
+    pub housekeeping: crate::housekeeping::Housekeeping,
     pub expect: Option<Expect>,
 }
 
@@ -59,6 +62,7 @@ pub enum Work {
     Manage(crate::manage::Work),
     /// Starred lists and packages ([`crate::site`]).
     Site(crate::site::Work),
+    Housekeeping(crate::housekeeping::Work),
 }
 
 /// Work's answer.
@@ -71,6 +75,7 @@ pub enum Done {
     Watch(crate::watch::Done),
     Manage(crate::manage::Done),
     Site(crate::site::Done),
+    Housekeeping(Box<crate::housekeeping::Done>),
 }
 
 impl Done {
@@ -83,6 +88,7 @@ impl Done {
             Done::Watch(d) => d.wrote(),
             Done::Manage(d) => d.wrote(),
             Done::Site(d) => d.wrote(),
+            Done::Housekeeping(d) => d.wrote(),
         }
     }
 }
@@ -98,6 +104,7 @@ impl Work {
             Work::Watch(w) => Done::Watch(w.failed(bug)),
             Work::Manage(w) => Done::Manage(w.failed(bug)),
             Work::Site(w) => Done::Site(w.failed(bug)),
+            Work::Housekeeping(w) => Done::Housekeeping(Box::new(w.failed(bug))),
         }
     }
 
@@ -109,6 +116,7 @@ impl Work {
             Work::Watch(w) => Done::Watch(w.run(gh).await),
             Work::Manage(w) => Done::Manage(w.run(gh, &git.cwd).await),
             Work::Site(w) => Done::Site(w.run(gh).await),
+            Work::Housekeeping(w) => Done::Housekeeping(Box::new(w.run(gh).await)),
         }
     }
 }
@@ -123,6 +131,7 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
         Done::Watch(d) => crate::watch::on_done(state, d),
         Done::Manage(d) => crate::manage::on_done(state, d),
         Done::Site(d) => crate::site::on_done(state, d),
+        Done::Housekeeping(d) => crate::housekeeping::on_done(state, *d),
     }
 }
 
@@ -147,6 +156,7 @@ pub fn is_form(route: &Route) -> bool {
             | Route::NewGist
             | Route::EditGist { .. }
             | Route::WikiEdit { .. }
+            | Route::Housekeeping(_)
     )
 }
 
@@ -193,6 +203,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             crate::gist::submit(state)
         }
         (Action::Create, Some(Route::WikiEdit { .. })) => crate::wiki::form::submit(state),
+        (Action::Create, Some(Route::Housekeeping(_))) => crate::housekeeping::act(state, action),
         _ => {
             state.info(action.not_here());
             Vec::new()
@@ -202,9 +213,10 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
 
 /// The menu's rows for what changes GitHub, wherever you are.
 pub fn change_doables(state: &State) -> Vec<Doable> {
-    (crate::watch::doable(state).into_iter())
-        .chain(crate::site::lists::doable(state))
-        .collect()
+    let mut out = Vec::from_iter(crate::watch::doable(state));
+    out.extend(crate::site::lists::doable(state));
+    out.extend(crate::housekeeping::change_doables(state));
+    out
 }
 
 /// The menu's rows for the page on screen.
@@ -213,6 +225,7 @@ pub fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
     crate::gist::doables(state, route, out);
     crate::wiki::form::doables(state, route, out);
     crate::site::doables(state, route, out);
+    crate::housekeeping::doables(state, route, out);
 }
 
 /// A menu row.
@@ -243,6 +256,8 @@ pub enum Text {
     GistFile(Route, usize),
     /// A wiki page's text (a new page's title first).
     Wiki(Route),
+    /// A milestone's description, a file's text.
+    Housekeeping(Route),
 }
 
 impl Text {
@@ -257,6 +272,7 @@ impl Text {
             }
             Text::GistFile(route, i) => crate::gist::file_title(state, route, *i),
             Text::Wiki(route) => crate::wiki::form::title(state, route),
+            Text::Housekeeping(route) => crate::housekeeping::compose_title(route),
         }
     }
 
@@ -268,6 +284,7 @@ impl Text {
             Text::GistFile(Route::NewGist, _) => "create gist…",
             Text::GistFile(..) => "save gist",
             Text::Wiki(_) => "save page",
+            Text::Housekeeping(route) => crate::housekeeping::compose_save(route),
         }
     }
 
@@ -275,13 +292,15 @@ impl Text {
     pub fn anchor(&self) -> Link {
         match self {
             Text::GistFile(_, i) => Link::Write(WriteLink::File(*i)),
-            Text::Release(_) | Text::Wiki(_) => Link::Comment,
+            Text::Release(_) | Text::Wiki(_) | Text::Housekeeping(_) => Link::Comment,
         }
     }
 
     fn route(&self) -> Route {
         match self {
-            Text::Release(route) | Text::GistFile(route, _) | Text::Wiki(route) => route.clone(),
+            Text::Release(route) | Text::GistFile(route, _) | Text::Wiki(route) | Text::Housekeeping(route) => {
+                route.clone()
+            }
         }
     }
 }
@@ -303,6 +322,7 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
             crate::gist::compose(state, file)
         }
         Some(Route::WikiEdit { .. }) => crate::wiki::form::compose(state),
+        Some(Route::Housekeeping(_)) => crate::housekeeping::compose(state),
         _ => Vec::new(),
     }
 }
@@ -313,6 +333,7 @@ pub fn keep_text(state: &mut State, text: &Text, written: String) {
         Text::Release(route) => crate::release::keep_text(state, route, written),
         Text::GistFile(route, i) => crate::gist::keep_text(state, route, *i, written),
         Text::Wiki(route) => crate::wiki::form::keep_text(state, route, written),
+        Text::Housekeeping(route) => crate::housekeeping::keep_text(state, route, written),
     }
     state.data_gen += 1;
 }
@@ -335,6 +356,9 @@ pub fn save(state: &mut State) -> Vec<Cmd> {
 /// Enter on one of a form's rows.
 #[must_use]
 pub fn follow_link(state: &mut State, link: &WriteLink) -> Vec<Cmd> {
+    if let WriteLink::Housekeeping(row) = link {
+        return crate::housekeeping::follow_link(state, *row);
+    }
     match state.route() {
         Some(Route::NewRelease(_) | Route::EditRelease { .. }) => {
             crate::release::follow_link(state, link)
@@ -345,6 +369,7 @@ pub fn follow_link(state: &mut State, link: &WriteLink) -> Vec<Cmd> {
         },
         Some(Route::NewGist | Route::EditGist { .. }) => crate::gist::follow_link(state, link),
         Some(Route::WikiEdit { .. }) => crate::wiki::form::submit(state),
+        Some(Route::Housekeeping(_)) => crate::housekeeping::act(state, Action::Create),
         _ => Vec::new(),
     }
 }
@@ -364,6 +389,7 @@ pub fn describe(link: &WriteLink) -> &'static str {
         WriteLink::AddFile => "Add a file",
         WriteLink::Save => "Save it",
         WriteLink::Asset(_) => "Save the asset",
+        WriteLink::Housekeeping(row) => crate::housekeeping::describe(*row),
     }
 }
 
@@ -436,6 +462,7 @@ pub enum Pick {
     FileName(Route, Option<usize>),
     /// Starred lists' ([`crate::site`]).
     Site(crate::site::Pick),
+    Housekeeping(crate::housekeeping::Pick),
 }
 
 impl Pick {
@@ -451,6 +478,7 @@ impl Pick {
             Pick::Site(pick) => pick.title(),
             Pick::SaveAsset(_) => "Save the asset",
             Pick::Upload(_) => "Upload an asset",
+            Pick::Housekeeping(pick) => pick.title(),
         }
     }
 
@@ -464,6 +492,7 @@ impl Pick {
             Pick::Site(pick) => pick.placeholder(),
             Pick::SaveAsset(_) => "A file or folder (↵ saves in the current folder)",
             Pick::Upload(_) => "A file's path (a folder lists its files)",
+            Pick::Housekeeping(pick) => pick.placeholder(),
         }
     }
 
@@ -477,6 +506,7 @@ impl Pick {
                 None
             }
             Pick::Site(pick) => pick.need(),
+            Pick::Housekeeping(pick) => pick.need(),
         }
     }
 
@@ -485,6 +515,7 @@ impl Pick {
         match self {
             Pick::Description(route) => crate::gist::description(state, route),
             Pick::FileName(route, Some(i)) => crate::gist::file_name(state, route, *i),
+            Pick::Housekeeping(pick) => pick.start(state),
             _ => None,
         }
     }
@@ -508,6 +539,7 @@ pub enum Chosen {
     Description(Route, String),
     FileName(Route, Option<usize>, String),
     Site(crate::site::Chosen),
+    Housekeeping(crate::housekeeping::Chosen),
 }
 
 /// Opens one of these pickers, its field holding what's set now.
@@ -532,6 +564,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
         Pick::Description(route) => crate::gist::description_rows(route, q),
         Pick::FileName(route, file) => crate::gist::name_rows(state, route, *file, q),
         Pick::Site(pick) => crate::site::rows(state, pick, q),
+        Pick::Housekeeping(pick) => crate::housekeeping::rows(state, pick, q),
     }
 }
 
@@ -560,6 +593,7 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
         Chosen::Description(route, text) => crate::gist::set_description(state, &route, text),
         Chosen::FileName(route, file, name) => crate::gist::set_name(state, &route, file, name),
         Chosen::Site(chosen) => crate::site::choose(state, chosen),
+        Chosen::Housekeeping(chosen) => crate::housekeeping::choose(state, chosen),
     }
 }
 
@@ -582,6 +616,7 @@ pub enum Answer {
     },
     DeleteGist,
     Site(crate::site::Answer),
+    Housekeeping(crate::housekeeping::Answer),
 }
 
 impl Answer {
@@ -597,6 +632,7 @@ impl Answer {
             Answer::Gist { .. } => "Creating the gist…",
             Answer::DeleteGist => "Deleting the gist…",
             Answer::Site(a) => a.busy(),
+            Answer::Housekeeping(a) => a.busy(),
         }
     }
 }
@@ -619,6 +655,7 @@ pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
         Answer::Gist { public } => crate::gist::create(state, route, public),
         Answer::DeleteGist => crate::gist::delete(state, route),
         Answer::Site(a) => crate::site::answer(state, route, a),
+        Answer::Housekeeping(a) => crate::housekeeping::answer(state, route, a),
     }
 }
 
@@ -696,6 +733,7 @@ pub enum Expected {
     Wiki(DataKey, String),
     /// Starred lists' and packages' ([`crate::site`]).
     Site(crate::site::Expected),
+    Housekeeping(crate::housekeeping::Expected),
 }
 
 impl Expected {
@@ -722,6 +760,7 @@ impl Expected {
             Expected::Subscription(..) => "Waiting for GitHub to show the subscription",
             Expected::Wiki(..) => "Waiting for GitHub to show the page",
             Expected::Site(e) => e.waiting(),
+            Expected::Housekeeping(e) => e.waiting(),
         }
     }
 
@@ -783,6 +822,7 @@ impl Expected {
                 .picked::<WikiPage>(key)
                 .is_some_and(|w| w.text.as_deref().map(str::trim_end) == Some(text.trim_end())),
             Expected::Site(e) => e.shown(state),
+            Expected::Housekeeping(e) => e.shown(state),
         }
     }
 }
@@ -843,5 +883,6 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     let mut cmds = crate::release::follow(state);
     cmds.extend(crate::gist::follow(state));
     cmds.extend(crate::wiki::form::follow(state));
+    cmds.extend(crate::housekeeping::follow(state));
     cmds
 }

@@ -127,6 +127,8 @@ pub enum DataKey {
     /// Insights, Explore, starred lists, packages, saved replies
     /// ([`crate::site`]).
     Site(crate::site::Key),
+    /// Labels, and who can own a new repository ([`crate::housekeeping`]).
+    Housekeeping(crate::housekeeping::Key),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,6 +193,7 @@ pub enum Data {
     Alert(Box<Alert>),
     Subscription(Box<crate::api::watch::Subscription>),
     Site(Box<crate::site::Value>),
+    Housekeeping(Box<crate::housekeeping::Data>),
 }
 
 impl Data {
@@ -233,6 +236,7 @@ impl Data {
             Data::Project(p) => p.items.next.as_deref(),
             Data::Alerts(a) => a.results.next.as_deref(),
             Data::Site(v) => v.next_cursor(),
+            Data::Housekeeping(d) => d.next_cursor(),
             _ => None,
         }
     }
@@ -274,6 +278,7 @@ impl Data {
             (Data::Project(a), Data::Project(b)) => extend(&mut a.items, b.items, |i| i.id.clone()),
             (Data::Alerts(a), Data::Alerts(b)) => extend(&mut a.results, b.results, |a| a.number),
             (Data::Site(a), Data::Site(b)) => a.append(*b),
+            (Data::Housekeeping(a), Data::Housekeeping(b)) => a.append(*b),
             _ => {}
         }
     }
@@ -327,6 +332,7 @@ pub fn paged(route: &Route) -> Option<DataKey> {
             Some(DataKey::Alerts(repo.clone(), *kind, query.clone()))
         }
         Route::Site(page) => page.paged(),
+        Route::Labels(_) => crate::housekeeping::paged(route),
         _ => route
             .search()
             .map(|(kind, query)| DataKey::Search(kind, query)),
@@ -564,6 +570,7 @@ pub fn needs(route: &Route) -> Vec<Need> {
                 .collect()
         }
         Route::Site(page) => page.needs(),
+        Route::Labels(_) | Route::Housekeeping(_) => crate::housekeeping::needs(route),
     }
 }
 
@@ -778,6 +785,7 @@ impl State {
             | Route::NewGist
             | Route::EditGist { .. }
             | Route::WikiEdit { .. }
+            | Route::Housekeeping(_)
             | Route::Dispatch { .. }
             | Route::ProjectItem { .. }
             | Route::Pr {
@@ -933,6 +941,8 @@ impl State {
                 if let Some(o) = overview.filter(|_| !is_pr) {
                     pages::pinned_issues(&mut page, repo, &o.pinned_issues, icons);
                 }
+                // Labels and milestones, beside the list as on GitHub.
+                pages::labels_and_milestones(&mut page, repo);
                 pages::issue_list(&mut page, query, counts, is_pr, results, cx);
             }
             Route::Search { kind, query } => {
@@ -1222,6 +1232,9 @@ impl State {
                 }
             }
             Route::Site(p) => crate::site::build(self, &mut page, p, &retry, cx),
+            Route::Labels(_) | Route::Housekeeping(_) => {
+                crate::housekeeping::build(self, &mut page, route, now);
+            }
         }
         // The sidebar starts beside the page, below the banner.
         if let Some(a) = page.aside.as_mut().filter(|a| !a.lines.is_empty()) {

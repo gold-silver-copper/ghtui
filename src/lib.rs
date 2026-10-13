@@ -29,6 +29,7 @@ mod edit;
 mod fixtures;
 mod gist;
 mod home;
+mod housekeeping;
 mod join;
 mod keymap;
 mod live;

@@ -242,7 +242,7 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             repo: repo.clone(),
             file: file.clone(),
         },
-        Route::NewIssue(repo) => Route::Issues {
+        Route::NewIssue(repo) | Route::Labels(repo) => Route::Issues {
             repo: repo.clone(),
             query: crate::route::OPEN.to_owned(),
         },
@@ -254,6 +254,7 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             repo: repo.clone(),
             closed: false,
         },
+        Route::Housekeeping(of) => of.up()?,
         Route::WorkflowRun { repo, .. }
         | Route::Workflow { repo, .. }
         | Route::Job {

@@ -4022,3 +4022,267 @@ async fn packages_are_listed_and_a_version_deleted() {
             .starts_with("DELETE /orgs/acme/packages/container/app/versions/7 ")
     }));
 }
+
+// ---- housekeeping: labels, milestones, branches, forks, files ----------------------------
+
+/// A label is made, changed (renamed by its old name, escaped) and
+/// deleted; the labels list counts each one's open issues and pull
+/// requests.
+#[tokio::test]
+async fn labels_are_listed_made_changed_and_deleted() {
+    use ghtui::api::housekeeping::LabelChange;
+    let list = r#"{"data":{"repository":{"labels":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
+        {"name":"good first issue","color":"7057ff","description":null,"issues":{"totalCount":3},"pullRequests":{"totalCount":1}}]}}}}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, list),
+        Reply::new(201, "{}"),
+        Reply::new(200, "{}"),
+        Reply::new(204, ""),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let labels = gh.labels(&repo, None).await.unwrap();
+    assert_eq!(labels.items[0].name, "good first issue");
+    assert_eq!(
+        (labels.items[0].open, labels.items[0].description.as_str()),
+        (4, "")
+    );
+    let label = LabelChange {
+        name: "triage".into(),
+        color: "abcdef".into(),
+        description: "To look at".into(),
+    };
+    gh.create_label(&repo, &label).await.unwrap();
+    gh.update_label(&repo, "good first issue", &label)
+        .await
+        .unwrap();
+    gh.delete_label(&repo, "triage").await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("labels(first: 100"));
+    assert!(seen[1].request_line.starts_with("POST /repos/o/r/labels "));
+    assert_eq!(
+        seen[1].json(),
+        serde_json::json!({"name": "triage", "color": "abcdef", "description": "To look at"})
+    );
+    assert!(
+        seen[2]
+            .request_line
+            .starts_with("PATCH /repos/o/r/labels/good%20first%20issue ")
+    );
+    assert_eq!(seen[2].json()["new_name"], "triage");
+    assert!(
+        seen[3]
+            .request_line
+            .starts_with("DELETE /repos/o/r/labels/triage ")
+    );
+}
+
+/// A milestone is made with its due date (sent at noon UTC, that day
+/// everywhere), closed, and deleted.
+#[tokio::test]
+async fn milestones_are_made_closed_and_deleted() {
+    use ghtui::api::housekeeping::MilestoneChange;
+    let (gh, seen) = github(vec![
+        Reply::new(201, r#"{"number":7}"#),
+        Reply::new(200, "{}"),
+        Reply::new(200, "{}"),
+        Reply::new(204, ""),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let m = MilestoneChange {
+        title: "1.0".into(),
+        description: "The first".into(),
+        due_on: Some("2027-01-31".into()),
+    };
+    assert_eq!(gh.create_milestone(&repo, &m).await.unwrap().number, 7);
+    let undated = MilestoneChange { due_on: None, ..m };
+    gh.update_milestone(&repo, 7, &undated).await.unwrap();
+    gh.set_milestone_closed(&repo, 7, true).await.unwrap();
+    gh.delete_milestone(&repo, 7).await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("POST /repos/o/r/milestones ")
+    );
+    assert_eq!(seen[0].json()["due_on"], "2027-01-31T12:00:00Z");
+    assert!(
+        seen[1]
+            .request_line
+            .starts_with("PATCH /repos/o/r/milestones/7 ")
+    );
+    assert_eq!(seen[1].json()["due_on"], serde_json::Value::Null);
+    assert_eq!(seen[2].json(), serde_json::json!({"state": "closed"}));
+    assert!(
+        seen[3]
+            .request_line
+            .starts_with("DELETE /repos/o/r/milestones/7 ")
+    );
+}
+
+/// A branch is made at the commit its start names, and a tag deleted, by
+/// their refs; a branch's rules say whether it may be deleted.
+#[tokio::test]
+async fn refs_are_made_deleted_and_their_rules_read() {
+    use ghtui::api::housekeeping::RefKind;
+    let sha = "8d1a76430406c877b35d0b627e7f796dcf0dfeca";
+    let (gh, seen) = github(vec![
+        Reply::new(200, format!(r#"{{"sha":"{sha}"}}"#)),
+        Reply::new(201, "{}"),
+        Reply::new(204, ""),
+        Reply::new(200, r#"{"name":"release/1","protected":false}"#),
+        Reply::new(200, r#"[{"type":"deletion","ruleset_id":2}]"#),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    assert_eq!(gh.commit_of(&repo, "feature/x").await.unwrap(), sha);
+    gh.create_ref(&repo, RefKind::Branch, "topic", sha)
+        .await
+        .unwrap();
+    gh.delete_ref(&repo, RefKind::Tag, "v1.0 rc").await.unwrap();
+    let rules = gh.branch_rules(&repo, "release/1").await.unwrap();
+    assert!(!rules.protected && rules.undeletable);
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("GET /repos/o/r/commits/feature/x ")
+    );
+    assert_eq!(
+        seen[1].json(),
+        serde_json::json!({"ref": "refs/heads/topic", "sha": sha})
+    );
+    assert!(
+        seen[2]
+            .request_line
+            .starts_with("DELETE /repos/o/r/git/refs/tags/v1.0%20rc ")
+    );
+    assert!(
+        seen[3]
+            .request_line
+            .starts_with("GET /repos/o/r/branches/release/1 ")
+    );
+    assert!(
+        seen[4]
+            .request_line
+            .starts_with("GET /repos/o/r/rules/branches/release/1 ")
+    );
+}
+
+/// A fork goes to an organization with the default branch only; a new
+/// repository to an organization, with its templates, or to you.
+#[tokio::test]
+async fn forks_and_repositories_are_made() {
+    use ghtui::api::housekeeping::{NewFork, NewRepo};
+    let made = r#"{"full_name":"org/tools","clone_url":"https://github.com/org/tools.git"}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(202, made),
+        Reply::new(201, made),
+        Reply::new(201, made),
+    ])
+    .await;
+    let fork = NewFork {
+        repo: RepoId::new("o", "r"),
+        org: Some("org".into()),
+        name: "tools".into(),
+        default_branch_only: true,
+    };
+    let made = gh.fork(&fork).await.unwrap();
+    assert_eq!(made.repo(), Some(RepoId::new("org", "tools")));
+    let mut new = NewRepo {
+        org: Some("org".into()),
+        name: "tools".into(),
+        description: "Tools".into(),
+        private: true,
+        readme: true,
+        gitignore: Some("Rust".into()),
+        license: Some("mit".into()),
+    };
+    gh.create_repo(&new).await.unwrap();
+    new.org = None;
+    new.gitignore = None;
+    gh.create_repo(&new).await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].request_line.starts_with("POST /repos/o/r/forks "));
+    assert_eq!(
+        seen[0].json(),
+        serde_json::json!({"organization": "org", "name": "tools", "default_branch_only": true})
+    );
+    assert!(seen[1].request_line.starts_with("POST /orgs/org/repos "));
+    let body = seen[1].json();
+    assert_eq!(body["auto_init"], true);
+    assert_eq!(body["private"], true);
+    assert_eq!(body["gitignore_template"], "Rust");
+    assert_eq!(body["license_template"], "mit");
+    assert!(seen[2].request_line.starts_with("POST /user/repos "));
+    assert_eq!(seen[2].json().get("gitignore_template"), None);
+}
+
+/// A file is read where its form starts (a branch's tip, the file's
+/// blob; a tag's commit), and committed on the branch only while it's at
+/// that tip, its text in base64; GitHub's refusal of a workflow's file
+/// names the scope.
+#[tokio::test]
+async fn files_are_read_and_committed_on_a_branch() {
+    use ghtui::api::housekeeping::FileCommit;
+    let look = r#"{"data":{"repository":{"id":"R_1","ref":{"target":{"oid":"aaa"}},"commit":{"oid":"aaa"},"file":{"oid":"b10b","text":"one\n","isBinary":false,"isTruncated":false}}}}"#;
+    let tag = r#"{"data":{"repository":{"id":"R_1","ref":null,"commit":{"target":{"oid":"ccc"}},"file":{}}}}"#;
+    let made = r#"{"data":{"createCommitOnBranch":{"commit":{"oid":"ddd"}}}}"#;
+    let refused = r#"{"data":{"createCommitOnBranch":null},"errors":[{"message":"refusing to allow an OAuth App to create or update workflow `.github/workflows/ci.yml` without `workflow` scope"}]}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, look),
+        Reply::new(200, tag),
+        Reply::new(200, made),
+        Reply::new(200, refused),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let at = gh.file_look(&repo, "main", "a.txt").await.unwrap();
+    assert_eq!(at.branch_head.as_deref(), Some("aaa"));
+    let file = at.file.unwrap();
+    assert_eq!(
+        (file.oid.as_str(), file.text.as_deref()),
+        ("b10b", Some("one\n"))
+    );
+    let at = gh.file_look(&repo, "v1.0", "docs").await.unwrap();
+    assert_eq!(
+        (at.branch_head, at.commit.as_str(), at.file),
+        (None, "ccc", None)
+    );
+    let mut commit = FileCommit {
+        repo: repo.clone(),
+        branch: "main".into(),
+        head: "aaa".into(),
+        headline: "Update a.txt".into(),
+        body: String::new(),
+        additions: vec![("a.txt".into(), "two\n".into())],
+        deletions: vec!["old.txt".into()],
+    };
+    gh.commit_files(&commit).await.unwrap();
+    commit.additions = vec![(".github/workflows/ci.yml".into(), "on: push\n".into())];
+    match gh.commit_files(&commit).await {
+        Err(ApiError::Denied(why)) => {
+            assert!(why.contains("gh auth refresh -s workflow"), "{why}");
+        }
+        other => panic!("{other:?}"),
+    }
+    let seen = seen.lock().unwrap();
+    let vars = &seen[0].json()["variables"];
+    assert_eq!(vars["qualified"], "refs/heads/main");
+    assert_eq!(vars["spec"], "main:a.txt");
+    let input = &seen[2].json()["variables"]["input"];
+    assert_eq!(input["expectedHeadOid"], "aaa");
+    assert_eq!(input["branch"]["repositoryNameWithOwner"], "o/r");
+    assert_eq!(
+        input["message"],
+        serde_json::json!({"headline": "Update a.txt"})
+    );
+    assert_eq!(
+        input["fileChanges"],
+        serde_json::json!({
+            "additions": [{"path": "a.txt", "contents": "dHdvCg=="}],
+            "deletions": [{"path": "old.txt"}],
+        })
+    );
+}

@@ -264,6 +264,9 @@ https://github.com/rust-lang/rust/stargazers                                Star
 https://github.com/rust-lang/rust/watchers                                  Watchers
 https://github.com/rust-lang/rust/forks                                     Forks
 https://github.com/rust-lang/rust/milestones                                Milestones
+https://github.com/rust-lang/rust/milestones/new                            Housekeeping
+https://github.com/rust-lang/rust/milestones/3/edit                         Housekeeping
+https://github.com/rust-lang/rust/labels                                    Labels
 # Code
 https://github.com/rust-lang/rust/tree/main                                 Tree
 https://github.com/rust-lang/rust/tree/main/compiler                        Tree
@@ -300,9 +303,11 @@ https://github.com/rust-lang/rust/compare/8d1a76430406c877b35d0b627e7f796dcf0dfe
 https://github.com/rust-lang/rust/compare/8d1a76430406c877b35d0b627e7f796dcf0dfeca..b940084d7eb6a299eb4bfeb8e34901bc051e7ac4#diff-b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5L7-R9 files
 https://github.com/rust-lang/rust/compare                                   NewPr
 https://github.com/rust-lang/rust/find/main                                 external rare
-https://github.com/rust-lang/rust/edit/main/README.md                       external session
-https://github.com/rust-lang/rust/new/main                                  external session
-https://github.com/rust-lang/rust/fork                                      external session
+https://github.com/rust-lang/rust/edit/main/README.md                       Housekeeping
+https://github.com/rust-lang/rust/new/main                                  Housekeeping
+https://github.com/rust-lang/rust/new/main/src                              Housekeeping
+https://github.com/rust-lang/rust/delete/main/README.md                     Housekeeping
+https://github.com/rust-lang/rust/fork                                      Housekeeping
 # A pull request's views
 https://github.com/rust-lang/rust/pull/163831/files                         files
 https://github.com/rust-lang/rust/pull/163831/files#diff-b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5R12 files
@@ -321,7 +326,8 @@ https://github.com/login                                                    exte
 https://github.com/signup                                                   external session
 https://github.com/settings/profile                                         external session
 https://github.com/settings/tokens                                          external session
-https://github.com/new                                                      external session
+https://github.com/new                                                      Housekeeping
+https://github.com/new/import                                               external session
 https://github.com/codespaces                                               external session
 https://github.com/marketplace                                              external not-github
 https://github.com/features/actions                                         external not-github

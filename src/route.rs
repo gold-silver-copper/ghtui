@@ -246,6 +246,12 @@ pub enum Route {
     /// Insights, Explore and topics, starred lists, packages
     /// ([`crate::site`]).
     Site(crate::site::Page),
+    // ---- housekeeping ([`crate::housekeeping`]) ----
+    /// A repository's labels.
+    Labels(RepoId),
+    /// One of housekeeping's forms: a label, a milestone, a fork, a new
+    /// repository, a file.
+    Housekeeping(crate::housekeeping::FormOf),
 }
 
 /// The pages at a revision.
@@ -608,6 +614,8 @@ impl Route {
                 view,
                 item,
             } => format!("{}?pane=issue&itemId={item}", view_url(project, *view)),
+            Route::Labels(repo) => format!("{}/labels", links::repo(repo)),
+            Route::Housekeeping(of) => of.url(),
         }
     }
 
@@ -692,6 +700,8 @@ impl Route {
                 project.owner.login(),
                 project.number
             ),
+            Route::Labels(repo) => format!("{repo} · Labels"),
+            Route::Housekeeping(of) => of.title(),
         }
     }
 
@@ -745,9 +755,11 @@ impl Route {
             | Route::WikiEdit { repo, .. }
             | Route::Dispatch { repo, .. }
             | Route::Projects(ProjectsOf::Repo(repo))
+            | Route::Labels(repo)
             | Route::Commit { repo, .. } => Some(repo),
             Route::Pr { pr, .. } => Some(&pr.repo),
             Route::Site(page) => page.repo(),
+            Route::Housekeeping(of) => of.repo(),
             Route::Projects(ProjectsOf::Owner(_))
             | Route::Project { .. }
             | Route::ProjectItem { .. }
@@ -1042,6 +1054,7 @@ fn parse(parsed: &url::Url) -> Option<Target> {
                 Some(_) => return None,
             },
         },
+        ["new"] => Route::Housekeeping(crate::housekeeping::FormOf::NewRepo),
         // GitHub's own pages: settings, apps, the marketplace…
         [first, ..] if RESERVED.contains(first) => return None,
         [o, r, rest @ ..] => return repo_page(RepoId::parse(&format!("{o}/{r}"))?, rest, parsed),
@@ -1117,6 +1130,7 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
                 Route::Pulls { repo, query }
             }
         }
+        ["labels"] => Route::Labels(repo),
         // A label's issues. Its name goes into a search, which control
         // characters don't survive.
         ["labels", label] if label.contains(char::is_control) => return None,
@@ -1153,6 +1167,10 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             repo,
             tag: tag.join("/"),
         },
+        // Housekeeping's forms: a fork, a milestone, a file.
+        rest if crate::housekeeping::FormOf::parse(&repo, rest).is_some() => {
+            Route::Housekeeping(crate::housekeeping::FormOf::parse(&repo, rest)?)
+        }
         ["wiki", "_new"] => Route::WikiEdit { repo, page: None },
         ["wiki", page, "_edit"] if !page.contains(char::is_control) => Route::WikiEdit {
             repo,

@@ -1001,6 +1001,10 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Workflow(repo, file) => at(gh.cached(&keys::workflow(repo, file))?, |v| {
             Data::Workflow(Box::new(v))
         }),
+        DataKey::Housekeeping(key) => {
+            let (data, at) = crate::housekeeping::cached(gh, key)?;
+            (Data::Housekeeping(Box::new(data)), at)
+        }
         DataKey::Runs(repo, query) => at(gh.cached(&keys::runs(repo, query))?, |v| {
             Data::Runs(Box::new(v))
         }),
@@ -1167,6 +1171,9 @@ pub(crate) async fn fetch(
         }
         DataKey::Alert(a) => Data::Alert(Box::new(gh.alert(a).await?)),
         DataKey::Site(key) => crate::site::fetch(gh, key, after).await?,
+        DataKey::Housekeeping(key) => {
+            Data::Housekeeping(Box::new(crate::housekeeping::fetch(gh, key, after).await?))
+        }
         DataKey::History(repo, rev, path) => {
             Data::History(Box::new(gh.history(repo, rev, path, after).await?))
         }

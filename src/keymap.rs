@@ -214,8 +214,8 @@ actions! {
     UpdateBranch      "update_branch"     [",u"]                   Global "Update the branch from its base";
     Close             "close"             [",x"]                   Global "Close (as a duplicate too) or reopen (an alert: dismiss it); on a running run, cancel it";
     Rerun             "rerun"             [",R"]                   Global "Re-run the workflow run or job";
-    EditComment       "edit"              [",e"]                   Global "Edit the comment or description (a wiki page, your gist, a release)";
-    DeleteComment     "delete_comment"    [",D"]                   Global "Delete the comment (your gist, a release or its asset, a package's version, your list)";
+    EditComment       "edit"              [",e"]                   Global "Edit the comment or description (a wiki page, your gist, a release, a label, a milestone, a file)";
+    DeleteComment     "delete_comment"    [",D"]                   Global "Delete the comment (your gist, a release or its asset, a package's version, your list, a label, a milestone, a branch, a tag, a file)";
     React             "react"             [",+"]                   Global "React to the comment, issue or pull request";
     Checkout          "checkout"          [",c"]                   Global "Check out the pull request in your clone (an issue: a new branch for it)";
     Watch             "watch"             [",w"]                   Global "Subscribe to or ignore the thread; watch the repository";
@@ -238,7 +238,7 @@ actions! {
     EditMilestone     "edit_milestone"    [",M"]                   Page   "Set the milestone";
     NewIssue          "new_issue"         [",i"]                   Page   "New issue";
     NewPr             "new_pull_request"  [",p"]                   Page   "New pull request";
-    Create            "create"            [",s"]                   Page   "Create or save the form: an issue, a pull request, a release, a gist, a wiki page";
+    Create            "create"            [",s"]                   Page   "Create or save the form on screen (an issue, a release, a label, a file…)";
     PushBranch        "push_branch"       [",P"]                   Page   "Push the branch to GitHub";
     MarkAnswer        "mark_answer"       [",!"]                   Page   "Mark the comment as the discussion's answer, or unmark it";
     NewRelease        "new_release"       [",V"]                   Page   "New release";
@@ -247,6 +247,9 @@ actions! {
     NewWikiPage       "new_wiki_page"     [",W"]                   Page   "New wiki page";
     RunWorkflow       "run_workflow"      [",E"]                   Page   "Run the workflow by hand";
     Lists             "lists"             [",B"]                   Page   "Add the repository to your starred lists, or take it out";
+    NewHere           "new_here"          [",o"]                   Page   "New here: a label, a milestone, a branch, a tag, a file";
+    Fork              "fork"              [",F"]                   Page   "Fork the repository";
+    NewRepo           "new_repository"    [",C"]                   Page   "New repository";
     Branch            "branch"            ["B"]                    Page   "Switch branches or tags";
     DeleteBranch      "delete_branch"     [",b"]                   Page   "Delete the pull request's branch, or restore it";
     ChangeBase        "change_base"       []                       Page   "Change the pull request's base branch";

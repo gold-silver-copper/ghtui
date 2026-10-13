@@ -169,6 +169,12 @@ fn every_route_says_why_when_its_needs_fail() {
         "https://github.com/o/r/branches",
         "https://github.com/o/r/milestones",
         "https://github.com/o/r/milestone/1",
+        "https://github.com/o/r/labels",
+        "https://github.com/o/r/fork",
+        "https://github.com/new",
+        "https://github.com/o/r/milestones/new",
+        "https://github.com/o/r/milestones/1/edit",
+        "https://github.com/o/r/edit/main/README.md",
         "https://github.com/o/r/compare/a...b",
         "https://github.com/o/r/wiki",
         "https://github.com/o/r/security/advisories",
@@ -331,5 +337,8 @@ fn sample(key: &DataKey) -> Data {
         K::Alert(a) => Data::Alert(Box::new(crate::security::fixtures::alert(a.kind, a.number))),
         K::Subscription(_) => Data::Subscription(Box::new(fixtures::subscription())),
         K::Site(key) => crate::site::fixtures::sample(key),
+        K::Housekeeping(k) => {
+            Data::Housekeeping(Box::new(crate::housekeeping::fixtures::sample(k)))
+        }
     }
 }

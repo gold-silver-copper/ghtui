@@ -407,7 +407,10 @@ fn every_query_is_valid_and_says_what_it_leaves_out() {
     let schema = Schema::new(&doc, text);
     let mut errors = Vec::new();
     let mut allowed = HashSet::new();
-    for (name, query) in typed().into_iter().chain(crate::api::raw::all()) {
+    let raw = crate::api::raw::all()
+        .into_iter()
+        .chain(crate::api::housekeeping::queries());
+    for (name, query) in typed().into_iter().chain(raw) {
         let report = check(&schema, name, &query);
         errors.extend(report.errors);
         allowed.extend(report.allowed);
