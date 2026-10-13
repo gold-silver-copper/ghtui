@@ -13,6 +13,7 @@ mod enterprise;
 mod inbox;
 mod issue;
 mod local_reads;
+mod manage;
 mod merge;
 mod narrow;
 mod projects;
@@ -41,6 +42,11 @@ pub const ALL: &[Check] = &[
     projects::CHECK,
     projects::ITEMS,
     discussion::CHECK,
+    // Managing an issue, a pull request and a discussion.
+    manage::ISSUE,
+    manage::PULL,
+    manage::DISCUSSION,
+    manage::TRANSFER,
     local_reads::CHECK,
     wiki::CHECK,
     enterprise::CHECK,

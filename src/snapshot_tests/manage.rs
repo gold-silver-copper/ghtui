@@ -244,10 +244,7 @@ fn a_new_base_is_picked_from_the_branches() {
     };
     fetched(&mut s, DataKey::Refs(ghtui()), Data::Refs(Box::new(refs)));
     press(&mut s, "next<Enter>");
-    assert_eq!(
-        confirm(&s).title,
-        format!("Change {}'s base to next?", pr())
-    );
+    assert_eq!(confirm(&s).title, "Change #12's base to next?");
     let cmds = press(&mut s, "<Enter>");
     let base = Change::Manage(Manage::ChangeBase {
         pr: NodeId::new("PR_12"),
@@ -261,7 +258,7 @@ fn a_new_base_is_picked_from_the_branches() {
 fn a_revert_opens_the_pull_request_github_makes() {
     let mut s = pr_with(|d| d.state = PrState::Merged);
     from_menu(&mut s, "revert");
-    assert_eq!(confirm(&s).title, format!("Revert {}?", pr()));
+    assert_eq!(confirm(&s).title, "Revert #12?");
     let cmds = press(&mut s, "<Enter>");
     assert_eq!(
         work(&cmds),

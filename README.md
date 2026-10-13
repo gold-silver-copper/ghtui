@@ -33,6 +33,14 @@ ghtui is pre-release, but it's usable every day.
   all at once, answer and reply in discussions and mark their answer,
   add, move, archive and restore a project's cards, set their fields
   and edit its drafts, and dismiss or reopen a security alert.
+- **Managing** an issue, a pull request or a discussion, as GitHub's
+  sidebar and menus do: delete a merged pull request's branch and
+  restore it, convert one back to a draft, change its base, revert it;
+  lock a conversation with GitHub's reasons, pin an issue, transfer it,
+  close it as a duplicate, give it sub-issues (in order) and mark what
+  blocks it, make a branch for it and check that out; hide a comment
+  (hidden ones show folded, saying why); start a discussion from its
+  category's form, and close one with GitHub's reasons.
 - **Editing** what's there: your comments and descriptions (or anyone's,
   where GitHub lets you), titles, reactions, and an issue's or pull
   request's labels, assignees, reviewers and milestone.
@@ -383,6 +391,36 @@ own branch's name (tracking it), or `owner/branch` for a fork's. It
 refuses while you have changes that aren't committed, and says which
 branch you're on.
 
+**Managing** works as GitHub's sidebar and menus do, where GitHub lets
+you (and says why where it doesn't):
+- on a pull request, `,b` deletes its branch once it's merged or closed,
+  and restores it after; `,r` converts it back to a draft (after asking);
+  the menu changes its base (pick a branch, then confirm) and reverts a
+  merged one: GitHub makes the revert's branch and pull request, which
+  opens;
+- `,L` locks an issue's, a pull request's or a discussion's conversation,
+  with one of GitHub's reasons or none, and unlocks it after asking;
+- on an issue, the menu pins or unpins it and transfers it to another
+  of its owner's repositories you can write to; `,x` closes it as
+  completed, not planned, or a duplicate of an issue you choose next
+  (typed as `#12`, `owner/repo#12` or a link, or picked from its open
+  issues);
+- `,S` lists an issue's sub-issues: `↵` on one removes it, `#12` (or a
+  link) adds one, and `alt-↑` `alt-↓` move the one chosen; `,K` does the
+  same for the issues blocking it, which the sidebar lists under Blocked
+  by (and Blocking);
+- `,c` on an issue makes a branch for it on GitHub, named as GitHub
+  names it (its number and title, which you can change), from the
+  default branch and linked to it, then offers to check it out in your
+  clone, as `,c` does a pull request;
+- `,H` hides the selected comment as spam, abuse, off-topic, outdated, a
+  duplicate or resolved, and unhides a hidden one. A hidden comment shows
+  folded, with GitHub's reason; `↵` or `za` shows it;
+- in a repository's discussions, the menu starts a new one: pick its
+  category, then write its title and text in the composer, which starts
+  from the category's form where it has one. `,x` closes a discussion as
+  resolved, outdated or a duplicate, or reopens it.
+
 ## Keys
 
 The keys are vim's where vim has one. A binding is a key sequence (`gg`,
@@ -435,12 +473,17 @@ says where it works.
   for reviews and `,M` sets its milestone.
 - New things wait behind `,` as well: `,i` writes a new issue and `,p` a
   new pull request, which `,s` creates (and `,P` pushes its branch
-  first); `,c` checks a pull request out in your clone; `,E` runs a
-  workflow by hand. `,V` makes a
+  first); `,c` checks a pull request out in your clone (on an issue, it
+  makes a branch for it first); `,E` runs a workflow by hand. `,V` makes a
   release, `,G` a gist and `,W` a wiki page; `,s` makes or saves each,
   and `,e` and `,D` edit a wiki page or your gist and delete your gist.
 - `,w` subscribes to a thread or ignores it, or sets how you watch the
   repository.
+- Managing waits behind `,` too: `,b` deletes or restores a merged pull
+  request's branch, `,L` locks or unlocks the conversation, `,H` hides
+  or unhides the selected comment, `,S` edits an issue's sub-issues and
+  `,K` what blocks it. Changing a base, reverting, pinning, transferring
+  and starting a discussion are in the menu (`Space`).
 - `q` closes the view: back a page, or the tab when there's nothing to go
   back to. `ZZ`, `:q` in the palette, or `ctrl-c` quits; `ctrl-c` also
   works in the comment editor, asking before it throws away your text.
@@ -860,7 +903,8 @@ issue inbox` runs only those.
   that need more are skipped without it, and say so: `project` for the
   Projects checks (`gh auth refresh -s project`), `notifications` for
   subscribing to a thread (without it, the check sees ghtui name the
-  scope). It also needs git; openssl; and a fux that speaks fuxth (`fux help-agents`) (on `PATH`, or `~/code/fux`'s release build,
+  scope), `delete_repo` for transferring an issue (`manage-transfer`
+  makes a `ghtui-live-` repository to move it to, and deletes it). It also needs git; openssl; and a fux that speaks fuxth (`fux help-agents`) (on `PATH`, or `~/code/fux`'s release build,
   or `--fux PATH`). It builds `target/release/ghtui` unless given
   `--ghtui PATH`.
 - **Where it runs:** ghtui runs in a private fux server, one pane at a
@@ -995,6 +1039,18 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   `createPullRequest` doesn't take them), and a fork's branch is proposed
   only from a clone that's on it. Of several pull request templates, the
   first is used.
+- A branch for an issue is made from its repository's default branch, in
+  that repository (GitHub's dialog also lets you pick another source
+  branch or a fork). A revert's pull request has GitHub's own title and
+  description, and isn't a draft.
+- An issue moves only to one of its owner's repositories (as GitHub
+  allows); the first 100 of them, most recently pushed, are offered. The
+  pickers for a duplicate, a sub-issue or a blocking issue list the
+  repository's 50 open issues updated last; any other is typed
+  (`#12`, `owner/repo#12` or its link).
+- Hidden comments fold in conversations and discussions; a hidden review
+  comment in Files changed shows as it is, and is hidden or unhidden on
+  github.com.
 - A wiki without pages has no git repository yet: GitHub makes it with
   the first page, which has to be made on github.com. A wiki page can't
   be renamed or deleted here, and its commit message is GitHub's own

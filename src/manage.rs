@@ -353,7 +353,7 @@ fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<P
             let mut confirm = ask(
                 action,
                 about,
-                format!("Revert {r}?"),
+                format!("Revert #{}?", r.number),
                 vec![
                     (
                         format!(
@@ -597,11 +597,9 @@ impl Pick {
             Pick::Hide { .. } | Pick::Checkout { .. } => "Choose, then ↵",
             Pick::Base { .. } => "Find a branch",
             Pick::Transfer { .. } => "Find a repository",
-            Pick::Duplicate { .. } => "#123, owner/repo#123, a link, or find an issue",
-            Pick::SubIssues { .. } => {
-                "#123 or a link adds one · ↵ on one removes it · alt-↑↓ moves it"
-            }
-            Pick::BlockedBy { .. } => "#123 or a link adds one · ↵ on one removes it",
+            Pick::Duplicate { .. } => "#12, owner/repo#12, a link, or find one",
+            Pick::SubIssues { .. } => "#12 adds · ↵ on ✓ removes · alt-↑↓ moves",
+            Pick::BlockedBy { .. } => "#12 adds · ↵ on ✓ removes",
             Pick::Branch { .. } => "The branch's name",
             Pick::Category { .. } => "Find a category",
         }
@@ -849,7 +847,7 @@ fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: 
             let mut confirm = ask(
                 Action::ChangeBase,
                 about.clone(),
-                format!("Change {pr}'s base to {base}?"),
+                format!("Change #{}'s base to {base}?", pr.number),
                 vec![
                     (format!("From {from} to {base}"), false),
                     (
@@ -1094,7 +1092,7 @@ fn form_text(c: &Category) -> String {
 pub fn picker_key(
     state: &mut State,
     key: KeyEvent,
-    rows: &mut Vec<(PaletteItem, Option<crate::picker::Choice>)>,
+    rows: &mut [(PaletteItem, Option<crate::picker::Choice>)],
 ) -> Option<Vec<Cmd>> {
     let Some(Overlay::Picker(p)) = &mut state.overlay else {
         return None;
@@ -1107,14 +1105,15 @@ pub fn picker_key(
         (KeyCode::Up | KeyCode::Down, Pick::SubIssues { issue, id }) if alt => {
             let up = key.code == KeyCode::Up;
             let child = match rows.get(p.selected) {
-                Some((_, Some(crate::picker::Choice::Manage(Chosen::Send(change, _))))) => {
-                    match change {
+                Some((
+                    _,
+                    Some(crate::picker::Choice::Manage(Chosen::Send(
                         Change::Manage(Manage::SubIssue {
                             child, add: false, ..
-                        }) => Some(child.clone()),
-                        _ => None,
-                    }
-                }
+                        }),
+                        _,
+                    ))),
+                )) => Some(child.clone()),
                 _ => None,
             };
             let (issue, id) = (issue.clone(), id.clone());
@@ -1365,9 +1364,8 @@ impl Done {
     /// Whether GitHub changed.
     pub fn wrote(&self) -> bool {
         match self {
-            Done::Reverted(_, r) => r.is_ok(),
-            Done::Transferred(_, r) => r.is_ok(),
-            Done::Started(_, r) => r.is_ok(),
+            Done::Reverted(_, made) | Done::Started(_, made) => made.is_ok(),
+            Done::Transferred(_, moved) => moved.is_ok(),
             _ => false,
         }
     }
