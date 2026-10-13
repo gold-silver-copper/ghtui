@@ -19,6 +19,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         msg,
         Msg::Viewer(_)
             | Msg::Pr(..)
+            | Msg::PrCached(..)
             | Msg::Fetched { .. }
             | Msg::FetchedMore(..)
             | Msg::Source(..)
@@ -134,6 +135,13 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 tracing::warn!(%pr, %err, "PR fetch failed");
             }
             state.prs.entry(pr).or_default().finish(*result);
+        }
+        Msg::PrCached(pr, cached) => {
+            let remote = state.prs.entry(pr).or_default();
+            if remote.data.is_none() {
+                remote.data = Some(cached.value);
+                remote.cached_at = Some(cached.fetched_at);
+            }
         }
         Msg::Fetched {
             key,

@@ -55,12 +55,8 @@ impl Limits {
     /// As people say it.
     pub fn said(self) -> String {
         format!(
-            "up to {} issues, {} pull requests and {} discussions each, updated in the last {} days, while the cache and clones take under {}",
-            self.items,
-            self.items,
-            self.items,
-            self.days,
-            crate::ui::text::size(self.bytes())
+            "up to {} issues, {} pull requests and {} discussions each, updated in the last {} days, while the cache and clones take under {} MiB",
+            self.items, self.items, self.items, self.days, self.disk
         )
     }
 }
@@ -236,6 +232,7 @@ async fn refresh(
         limits.bytes().saturating_sub(used)
     };
     // The clone first: code reads from it.
+    tracing::info!(%repo, "keeping offline: its clone");
     match local.keep(gh, &repo, room()).await {
         Ok(size) => kept.clone = Some(size),
         Err(why) => kept.problem = Some(format!("The clone: {why}")),
@@ -256,6 +253,7 @@ async fn refresh(
         },
     ];
     let pages = tabs.iter().flat_map(crate::browse::needs);
+    tracing::info!(%repo, "keeping offline: its tabs");
     if let Err(err) = fetch_all(gh, pages.collect()).await {
         kept.problem = Some(err.to_string());
         return kept;
@@ -263,12 +261,10 @@ async fn refresh(
     let mut current = std::collections::BTreeSet::new();
     for kind in [Kind::Issue, Kind::Pull, Kind::Discussion] {
         if room() == 0 {
-            kept.problem = Some(format!(
-                "Stopped at the disk limit ({})",
-                crate::ui::text::size(limits.bytes())
-            ));
+            kept.problem = Some(format!("Stopped at the disk limit ({} MiB)", limits.disk));
             return kept;
         }
+        tracing::info!(%repo, ?kind, "keeping offline: its items");
         let items = match recent(gh, &repo, kind, limits.items, cutoff).await {
             Ok(items) => items,
             Err(err) => {

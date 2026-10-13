@@ -221,16 +221,22 @@ fn here(state: &State) -> Option<Route> {
 
 /// What the header says: GitHub can't be reached, and what waits for it;
 /// or what it didn't take.
-pub fn header(state: &State) -> Option<String> {
+/// Short, most important first: on a narrow header, what doesn't fit is
+/// left out from the last.
+pub fn header(state: &State) -> Vec<String> {
     let off = &state.offline;
     let waiting = off.waiting();
-    match (off.since, waiting, off.unsent()) {
-        (Some(_), 0, _) => Some("⚠ Offline".into()),
-        (Some(_), n, _) => Some(format!("⚠ Offline · {n} queued")),
-        (None, 0, 0) => None,
-        (None, 0, n) => Some(format!("⚠ {n} not sent")),
-        (None, n, _) => Some(format!("Sending {n}")),
+    let mut said = Vec::new();
+    if off.since.is_some() {
+        said.push("⚠ Offline".to_owned());
     }
+    match (off.since, waiting, off.unsent()) {
+        (Some(_), 0, _) | (None, 0, 0) => {}
+        (Some(_), n, _) => said.push(format!("{n} queued")),
+        (None, 0, n) => said.push(format!("⚠ {n} not sent")),
+        (None, n, _) => said.push(format!("Sending {n}")),
+    }
+    said
 }
 
 /// The banner over a page showing the cache's copy because GitHub can't
@@ -410,11 +416,14 @@ pub fn doables(state: &State, out: &mut Vec<crate::nav::Doable>) {
         };
         out.push(row(Action::KeepOffline, label));
     }
-    // While there's something to see (the palette has it always).
-    if header(state).is_some() && state.route() != Some(&Route::Offline) {
-        out.push(row(
-            Action::Offline,
-            "Offline: what's queued for GitHub, and what's kept".into(),
-        ));
+    // First of the menu's Go rows, which follow.
+    if state.route() != Some(&Route::Offline) {
+        out.push(Doable {
+            section: "Go",
+            ..row(
+                Action::Offline,
+                "Offline: what's queued for GitHub, and what's kept".into(),
+            )
+        });
     }
 }

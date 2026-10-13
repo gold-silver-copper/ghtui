@@ -265,7 +265,7 @@ A comment, a reply, a review (with its comments), a reaction, labels,
 assignees, a milestone, a title, an edit, closing or reopening, written
 while GitHub can't be reached, is queued: the composer closes, and the
 page it was written on shows it in a "Queued for GitHub" box, as does
-the header (`⚠ Offline · 2 queued`). When GitHub is back the queue is
+the header (`⚠ Offline` and `2 queued`). When GitHub is back the queue is
 sent in order, each write once, and the page follows GitHub until it
 shows it. Merging and the like aren't queued: what they do depends on
 GitHub's state when they're sent. A write GitHub refuses then (the issue
@@ -1239,7 +1239,8 @@ issue inbox` runs only those.
   (with `GHTUI_GHES_VERSION=3.N`, after ghtui leaves out what it knows
   that version lacks: nothing should be left).
 - **Offline:** the `offline` check runs ghtui against the stand-in (on
-  port 8451) and stops it to make GitHub go away, without touching the
+  port 8451), keeps the repository offline (`:keep offline`) and stops
+  keeping it, and stops the stand-in to make GitHub go away, without touching the
   machine's network: it writes a comment and a reaction while it's
   gone, restarts ghtui, starts the stand-in again, and asks GitHub that
   each arrived exactly once; a comment on an issue it deletes meanwhile

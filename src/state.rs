@@ -53,6 +53,9 @@ pub enum Msg {
     /// How many notifications are unread.
     Unread(Result<crate::api::notifications::Unread, ApiError>),
     Pr(PrRef, Box<Result<PrDetail, ApiError>>),
+    /// The cache's copy of a pull request, shown while GitHub can't be
+    /// reached (sent before its failed fetch).
+    PrCached(PrRef, Box<crate::store::Cached<PrDetail>>),
     /// Page data; with `cached_at` (when it was fetched), the cached copy
     /// shown while fetching.
     Fetched {

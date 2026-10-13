@@ -72,7 +72,12 @@ impl GitHub {
     }
 }
 
-/// What a request that never left says.
-pub(crate) fn offline(err: &dyn std::fmt::Display) -> ApiError {
-    ApiError::Offline(err.to_string())
+/// What a request that never left says: why, at its root ("Connection
+/// refused"), not the request it was.
+pub(crate) fn offline(err: &(dyn std::error::Error + 'static)) -> ApiError {
+    let mut root = err;
+    while let Some(source) = root.source() {
+        root = source;
+    }
+    ApiError::Offline(root.to_string())
 }

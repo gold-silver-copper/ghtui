@@ -34,7 +34,7 @@ fn a_comment_github_can_t_be_reached_for_waits_on_its_page_and_goes_when_it_s_ba
     let mut state = on_issue();
     let cmds = offline(&mut state, OffMsg::Reach(Some(100)));
     assert_eq!(cmds, [Cmd::Timer(Timer::Probe, 2_000)]);
-    assert_eq!(crate::offline::header(&state).as_deref(), Some("⚠ Offline"));
+    assert_eq!(crate::offline::header(&state), ["⚠ Offline"]);
 
     press(&mut state, "c");
     press(&mut state, "Thanks!");
@@ -62,10 +62,7 @@ fn a_comment_github_can_t_be_reached_for_waits_on_its_page_and_goes_when_it_s_ba
     let shown = text(&state);
     assert!(shown.contains("Queued for GitHub  1"), "{shown}");
     assert!(shown.contains("Thanks!"), "{shown}");
-    assert_eq!(
-        crate::offline::header(&state).as_deref(),
-        Some("⚠ Offline · 1 queued")
-    );
+    assert_eq!(crate::offline::header(&state), ["⚠ Offline", "1 queued"]);
 
     // Still away: asked again, later.
     let cmds = update(&mut state, Msg::Timer(Timer::Probe));
@@ -88,7 +85,7 @@ fn a_comment_github_can_t_be_reached_for_waits_on_its_page_and_goes_when_it_s_ba
         cached: false,
     });
     assert!(cmds.contains(&refetch), "{cmds:?}");
-    assert_eq!(crate::offline::header(&state), None);
+    assert!(crate::offline::header(&state).is_empty());
 }
 
 #[test]
@@ -124,10 +121,7 @@ fn a_refused_write_is_sent_again_copied_or_thrown_away_from_its_row() {
         status: Status::Refused("the conversation is locked".into()),
     };
     offline(&mut state, OffMsg::Queue(Told::All(vec![refused.clone()])));
-    assert_eq!(
-        crate::offline::header(&state).as_deref(),
-        Some("⚠ 1 not sent")
-    );
+    assert_eq!(crate::offline::header(&state), ["⚠ 1 not sent"]);
     assert!(text(&state).contains("GitHub said: the conversation is locked"));
     let _ = act(&mut state, Action::Offline);
     assert_eq!(route(&state), Route::Offline);

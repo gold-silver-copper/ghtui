@@ -494,6 +494,12 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
             Api::FetchUnread => Msg::Unread(gh.unread().await),
             Api::FetchPr(pr) => {
                 let result = gh.pull_request(&pr).await;
+                // GitHub can't be reached: the cache's copy, if there's one.
+                if let Err(ApiError::Offline(_)) = &result
+                    && let Some(cached) = gh.cached_pull_request(&pr)
+                {
+                    let _ = tx.send(Msg::PrCached(pr.clone(), Box::new(cached)));
+                }
                 Msg::Pr(pr, Box::new(result))
             }
             Api::Fetch { key, cached } => {
@@ -965,9 +971,17 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::StateCounts(query) => {
             at(gh.cached(&keys::state_counts(query))?, Data::StateCounts)
         }
-        DataKey::Issue(repo, number) => at(gh.cached(&keys::issue(repo, *number))?, |v| {
-            Data::Issue(Some(Box::new(v)))
-        }),
+        DataKey::Issue(repo, number) => match gh.cached(&keys::issue(repo, *number)) {
+            Some(issue) => at(issue, |v| Data::Issue(Some(Box::new(v)))),
+            // A pull request it is, as kept (offline, its page opens).
+            None => {
+                let pr = PrRef {
+                    repo: repo.clone(),
+                    number: *number,
+                };
+                (Data::Issue(None), gh.cached_pull_request(&pr)?.fetched_at)
+            }
+        },
         DataKey::Reviews(pr) => at(gh.cached(&keys::reviews(pr))?, |v| {
             Data::Reviews(Box::new(v))
         }),

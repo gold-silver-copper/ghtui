@@ -1,12 +1,11 @@
 ---
 source: src/snapshot_tests.rs
-assertion_line: 617
 expression: render(&state)
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 100, height: 30 },
     content: [
-        "  ◆ ghtui   Home        Here you can                                                         1/50   ",
+        "  ◆ ghtui   Home        Here you can                                                         1/51   ",
         "                                                                                                    ",
         "   Notifications        This page                                                                  ▐",
         "                      ▌      ↵   Files changed in ratatui/ratatui#1820                             ▐",
@@ -30,10 +29,10 @@ Buffer {
         "                        New                                                                        ▐",
         "  ╭─ Your repositories      ,C   New repository                                                    ▐",
         "  │ gold-silver-copper  Go                                                                         ▐",
-        "  │ A keyboard-driven       g/   Search GitHub or go to a page                                     ▐",
-        "  │ ● Rust   ⑂ 61   Up       o   Open the selection on GitHub                                      ▐",
-        "  ├───────────────────       y   Copy the selection's link                                         ▐",
-        "  │ gold-silver-copper      gx   Open the link under the cursor in the browser                      ",
+        "  │ A keyboard-driven            Offline: what's queued for GitHub, and what's kept                ▐",
+        "  │ ● Rust   ⑂ 61   Up      g/   Search GitHub or go to a page                                     ▐",
+        "  ├───────────────────       o   Open the selection on GitHub                                      ▐",
+        "  │ gold-silver-copper       y   Copy the selection's link                                          ",
         "  │ A keyboard-driven                                                                               ",
         "  ↵ run   j/k choose   key run it   / filter   esc close                             API 4987/5000  ",
     ],

@@ -356,14 +356,16 @@ impl Queue {
 
     /// The next write to send, marked as being sent first, durably. None
     /// when nothing's queued, or when that couldn't be written down (then
-    /// it isn't sent: it might be sent twice).
+    /// it isn't sent: after a restart it might be sent again). Without a
+    /// store at all (another ghtui has it), the queue lives and dies with
+    /// this ghtui, and is sent all the same.
     pub fn take_next(&mut self) -> Option<Entry> {
         let entry = self
             .entries
             .iter_mut()
             .find(|e| e.status == Status::Queued)?;
         entry.status = Status::Sending;
-        if !self.store.queue_put(entry.id, entry) {
+        if !self.store.queue_put(entry.id, entry) && self.store.is_enabled() {
             entry.status = Status::Queued;
             return None;
         }

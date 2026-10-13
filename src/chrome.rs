@@ -58,7 +58,7 @@ impl State {
         let mut c = self.screen_chrome();
         // Right: offline (and what waits for GitHub), review requests,
         // your unread notifications and you.
-        if let Some(offline) = crate::offline::header(self) {
+        for offline in crate::offline::header(self) {
             c.right.push((offline, Target::Page(Route::Offline)));
         }
         // Review requests, once their search (Home's first section, unless

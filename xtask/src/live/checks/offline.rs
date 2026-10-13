@@ -72,6 +72,22 @@ fn run(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for(&kept)?;
     ghtui.wait_followed()?;
 
+    cx.step(":keep offline keeps the repository, listed on the Offline page; again stops")?;
+    let palette = |what: &str| -> Result<()> {
+        ghtui.keys(":")?;
+        ghtui.type_text(what)?;
+        ghtui.keys("Enter")
+    };
+    palette("keep offline")?;
+    ghtui.wait_for("to read offline: fetching it ahead")?;
+    palette("offline")?;
+    ghtui.wait_for("Kept to read offline  1")?;
+    ghtui.wait_for(&format!("{}  ", gh::REPO))?;
+    ghtui.keys("q")?;
+    ghtui.wait_for(&kept)?;
+    palette("keep offline")?;
+    ghtui.wait_for("No longer keeping")?;
+
     cx.step("GitHub goes away: the page stays, marked offline, and the header says so")?;
     if let Ok(mut s) = standin.lock() {
         s.take();
@@ -95,7 +111,7 @@ fn run(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for("gives or takes back your reaction")?;
     ghtui.keys("Enter")?;
     ghtui.wait_for("Queued for GitHub  2")?;
-    ghtui.wait_for("⚠ Offline · 2 queued")?;
+    ghtui.wait_for("⚠ Offline   2 queued")?;
 
     cx.step("a comment on the other issue, which is deleted meanwhile")?;
     let refused = format!("Refused when back {}", cx.env.run_id);
@@ -105,12 +121,12 @@ fn run(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for("open in $EDITOR")?;
     ghtui.type_text(&refused)?;
     ghtui.keys("C-s")?;
-    ghtui.wait_for("⚠ Offline · 3 queued")?;
+    ghtui.wait_for("⚠ Offline   3 queued")?;
     gh::delete_issue(doomed)?;
 
     cx.step("ghtui restarts, still offline: the queue is as it was")?;
     let ghtui = cx.launch(Launch::new(&[&format!("{}#{issue}", gh::REPO)]).env(env.clone()))?;
-    ghtui.wait_for("⚠ Offline · 3 queued")?;
+    ghtui.wait_for("⚠ Offline   3 queued")?;
     ghtui.wait_for(&kept)?;
     ghtui.wait_for(&comment)?;
     ensure!(
@@ -124,7 +140,9 @@ fn run(cx: &mut Cx) -> Result<()> {
     }
     let login = cx.env.login.clone();
     until("the comment and the reaction on GitHub", GITHUB, || {
-        let commented = comments(issue)?.iter().any(|c| c["body"] == comment.as_str());
+        let commented = comments(issue)?
+            .iter()
+            .any(|c| c["body"] == comment.as_str());
         Ok((commented && thumbs(issue, &login)? > 0).then_some(()))
     })?;
     ghtui.wait_gone("Queued for GitHub")?;
