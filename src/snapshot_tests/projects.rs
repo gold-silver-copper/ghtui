@@ -136,6 +136,76 @@ fn h_and_l_go_between_columns() {
     says(&s, "Columns are a board's: this view is a table");
 }
 
+/// The board, in swimlanes by its assignees: each lane its columns of
+/// that person's cards, and `h` and `l` keep to the lane.
+fn with_lanes() -> State {
+    let mut s = sized(state(Mode::Dark, ColorDepth::TrueColor), 100, 60);
+    let mut p = fixtures::project();
+    p.views.items[0].group = Some(NodeId::new("F_assignees"));
+    let route = Route::Project {
+        project: roadmap(),
+        view: None,
+    };
+    open(&mut s, route, Data::Project(Box::new(p)));
+    s
+}
+
+#[test]
+fn a_board_with_swimlanes_has_its_columns_in_each_lane() {
+    let mut s = with_lanes();
+    assert_snapshot!(render(&s));
+    let text = page_text(&s);
+    assert!(text.contains("swimlanes by Assignees"), "{text}");
+    let lanes = ["No Assignees", " alice ", " bob "].map(|l| text.find(l));
+    assert!(lanes.iter().all(Option::is_some), "{text}");
+    assert!(lanes.is_sorted(), "{lanes:?}");
+    // In alice's lane, nothing is to the right of her Todo card.
+    for _ in 0..20 {
+        if selected(&s) == ISSUE {
+            break;
+        }
+        press(&mut s, "j");
+    }
+    assert_eq!(selected(&s), ISSUE);
+    press(&mut s, "l");
+    says(&s, "No column to the right has cards");
+    assert_eq!(selected(&s), ISSUE);
+}
+
+/// A roadmap places each item on a timeline from its start to its
+/// target date (one date: a diamond), says which fields and how many
+/// days a column is, and lists what has no dates.
+#[test]
+fn a_roadmap_puts_items_on_a_timeline() {
+    use crate::api::project::{FieldKind, Layout, ProjectField};
+    let mut s = sized(state(Mode::Light, ColorDepth::TrueColor), 100, 30);
+    let mut p = fixtures::project();
+    p.view = 2;
+    p.views.items[1].layout = Layout::Roadmap;
+    p.fields.items.push(ProjectField {
+        id: NodeId::new("F_start"),
+        name: "Start date".into(),
+        kind: FieldKind::Date,
+    });
+    let date = |d: &str| (NodeId::new("F_start"), FieldValue::Date(d.into()));
+    p.items.items[0].values.push(date("2026-10-05"));
+    p.items.items[1].values.push(date("2026-10-12"));
+    let route = Route::Project {
+        project: roadmap(),
+        view: Some(2),
+    };
+    open(&mut s, route, Data::Project(Box::new(p)));
+    assert_snapshot!(render(&s));
+    let text = page_text(&s);
+    assert!(text.contains("On a timeline by Start date → Due"), "{text}");
+    assert!(text.contains("Oct 2026"), "{text}");
+    assert!(text.contains("no dates"), "{text}");
+    assert!(
+        text.contains("Oct 5 → 31") && text.contains("◆ Oct 12"),
+        "{text}"
+    );
+}
+
 /// A draft opens in the view's side pane, as on GitHub: its fields and
 /// its body.
 #[test]

@@ -508,25 +508,30 @@ fn column_step(state: &mut State, next: bool) {
     let Ok((p, field)) = board(&h) else {
         return;
     };
-    let items = p.sorted();
-    let columns: Vec<Vec<String>> = grouped(field, &items)
-        .iter()
-        .map(|c| {
-            (c.items.iter())
-                .filter_map(|it| item_link(h.project, h.view, it))
-                .collect()
+    // With swimlanes, the columns are the lane's.
+    let lanes: Vec<Vec<&ProjectItem>> = match p.lanes() {
+        Some((_, lanes)) => lanes.into_iter().map(|l| l.items).collect(),
+        None => vec![p.sorted()],
+    };
+    let link = |it: &ProjectItem| item_link(h.project, h.view, it);
+    let selected = h.item.and_then(link);
+    let lane = (lanes.iter())
+        .find(|l| {
+            l.iter()
+                .any(|it| link(it) == selected && selected.is_some())
         })
+        .or_else(|| lanes.iter().find(|l| !l.is_empty()));
+    let columns: Vec<Vec<String>> = grouped(field, lane.map_or(&[][..], Vec::as_slice))
+        .iter()
+        .map(|c| c.items.iter().filter_map(|it| link(it)).collect())
         .filter(|c: &Vec<String>| !c.is_empty())
         .collect();
-    let at = h
-        .item
-        .and_then(|it| item_link(h.project, h.view, it))
-        .and_then(|url| {
-            columns
-                .iter()
-                .enumerate()
-                .find_map(|(c, cards)| Some((c, cards.iter().position(|u| *u == url)?)))
-        });
+    let at = selected.and_then(|url| {
+        columns
+            .iter()
+            .enumerate()
+            .find_map(|(c, cards)| Some((c, cards.iter().position(|u| *u == url)?)))
+    });
     let to = match at {
         Some((c, row)) => {
             let c = if next {

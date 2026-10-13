@@ -412,8 +412,16 @@ impl InProject {
 }
 
 /// Items grouped by `field`'s values, in its order: those without one first
-/// ("No Status"), then each option or iteration, empty ones too.
+/// ("No Status"), then each option or iteration, empty ones too. By any
+/// other field, its values as they come, in order (an item with two
+/// assignees or labels is in each one's group).
 pub fn grouped<'a>(field: &'a ProjectField, items: &[&'a ProjectItem]) -> Vec<Group<'a>> {
+    if !matches!(
+        field.kind,
+        FieldKind::SingleSelect(_) | FieldKind::Iteration(_)
+    ) {
+        return grouped_by_text(field, items);
+    }
     let values: Vec<(String, String, Option<&str>)> = match &field.kind {
         FieldKind::SingleSelect(options) => options
             .iter()
@@ -463,6 +471,168 @@ pub fn grouped<'a>(field: &'a ProjectField, items: &[&'a ProjectItem]) -> Vec<Gr
     // "No Status" only when something has none, as on GitHub.
     groups.retain(|g| g.value.is_some() || !g.items.is_empty());
     groups
+}
+
+/// Items grouped by what they show of `field`: by each value, in order
+/// (numbers by their value), those without one first.
+fn grouped_by_text<'a>(field: &'a ProjectField, items: &[&'a ProjectItem]) -> Vec<Group<'a>> {
+    let mut groups = vec![Group {
+        value: None,
+        name: format!("No {}", field.name),
+        color: None,
+        items: Vec::new(),
+    }];
+    for item in items {
+        let keys = group_keys(field, item);
+        if keys.is_empty() {
+            if let Some(none) = groups.first_mut() {
+                none.items.push(item);
+            }
+        }
+        for key in keys {
+            match groups.iter_mut().find(|g| g.value.as_ref() == Some(&key)) {
+                Some(group) => group.items.push(item),
+                None => groups.push(Group {
+                    name: key.clone(),
+                    value: Some(key),
+                    color: None,
+                    items: vec![item],
+                }),
+            }
+        }
+    }
+    groups.retain(|g| g.value.is_some() || !g.items.is_empty());
+    let number = |g: &Group<'_>| g.value.as_deref().and_then(|v| v.parse::<f64>().ok());
+    groups.sort_by(|a, b| match (a.value.is_some(), b.value.is_some()) {
+        (false, true) => std::cmp::Ordering::Less,
+        (true, false) => std::cmp::Ordering::Greater,
+        _ => match (number(a), number(b)) {
+            (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        },
+    });
+    groups
+}
+
+/// The values an item is grouped under for `field`: its assignees or
+/// labels, each; its milestone or repository; its own value.
+fn group_keys(field: &ProjectField, item: &ProjectItem) -> Vec<String> {
+    let linked = match &item.content {
+        ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => Some(l),
+        _ => None,
+    };
+    match &field.kind {
+        FieldKind::Assignees => match &item.content {
+            ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => l.assignees.items.clone(),
+            ItemContent::Draft(d) => d.assignees.items.clone(),
+            ItemContent::Redacted => Vec::new(),
+        },
+        FieldKind::Labels => (linked.iter())
+            .flat_map(|l| l.labels.iter().map(|l| l.name.clone()))
+            .collect(),
+        FieldKind::Milestone => linked
+            .and_then(|l| l.milestone.clone())
+            .into_iter()
+            .collect(),
+        FieldKind::Repository => linked.map(|l| l.repo.to_string()).into_iter().collect(),
+        _ => (item.value(&field.id).map(|v| v.text().to_owned()))
+            .into_iter()
+            .collect(),
+    }
+}
+
+/// What a roadmap places items by: a start and an end date field (or
+/// the start alone), or an iteration field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dates<'a> {
+    Fields {
+        start: &'a ProjectField,
+        end: Option<&'a ProjectField>,
+    },
+    Iteration(&'a ProjectField),
+}
+
+/// `2026-10-31` as days since 1970-01-01.
+pub fn day(date: &str) -> Option<i64> {
+    crate::ui::time::day_of(date)
+}
+
+impl Project {
+    /// A board's swimlanes: its items grouped by the view's grouping
+    /// field (not its columns'), each lane drawn with the columns.
+    pub fn lanes(&self) -> Option<(&ProjectField, Vec<Group<'_>>)> {
+        let view = self.shown()?;
+        if view.layout != Layout::Board {
+            return None;
+        }
+        let field = self.field(view.group.as_ref()?)?;
+        if self.column_field().is_some_and(|c| c.id == field.id) {
+            return None;
+        }
+        Some((field, grouped(field, &self.sorted())))
+    }
+
+    /// The fields a roadmap places items by. GitHub's API doesn't say
+    /// which the view uses, so as GitHub starts one: a date field named
+    /// for a start and one for a target (or end, or due), else the first
+    /// two date fields; without dates, the first iteration field.
+    pub fn roadmap_dates(&self) -> Option<Dates<'_>> {
+        let dates: Vec<&ProjectField> = (self.fields.iter())
+            .filter(|f| f.kind == FieldKind::Date)
+            .collect();
+        let named = |words: &[&str]| {
+            dates.iter().copied().find(|f| {
+                let name = f.name.to_lowercase();
+                words.iter().any(|w| name.contains(w))
+            })
+        };
+        let start = named(&["start", "begin"]);
+        let end = named(&["target", "end", "due", "finish"]).filter(|e| Some(*e) != start);
+        match (start, end) {
+            (Some(start), end) => Some(Dates::Fields { start, end }),
+            (None, Some(end)) => Some(Dates::Fields {
+                start: end,
+                end: None,
+            }),
+            (None, None) if !dates.is_empty() => Some(Dates::Fields {
+                start: dates.first().copied()?,
+                end: dates.get(1).copied(),
+            }),
+            (None, None) => (self.fields.iter())
+                .find(|f| matches!(f.kind, FieldKind::Iteration(_)))
+                .map(Dates::Iteration),
+        }
+    }
+
+    /// Where `it` is on a roadmap: its first and last day (days since
+    /// 1970-01-01), if it has a date.
+    pub fn span(dates: Dates<'_>, it: &ProjectItem) -> Option<(i64, i64)> {
+        match dates {
+            Dates::Fields { start, end } => {
+                let at = |f: &ProjectField| it.value(&f.id).and_then(|v| day(v.text()));
+                let from = at(start);
+                let to = end.and_then(at);
+                let (a, b) = match (from, to) {
+                    (Some(a), Some(b)) => (a.min(b), a.max(b)),
+                    (Some(a), None) | (None, Some(a)) => (a, a),
+                    (None, None) => return None,
+                };
+                Some((a, b))
+            }
+            Dates::Iteration(field) => {
+                let FieldKind::Iteration(iterations) = &field.kind else {
+                    return None;
+                };
+                let Some(FieldValue::Iteration { id, .. }) = it.value(&field.id) else {
+                    return None;
+                };
+                let i = iterations.iter().find(|i| i.id == *id)?;
+                let start = day(&i.start)?;
+                let days = i64::try_from(i.days).ok()?;
+                Some((start, start + days.max(1) - 1))
+            }
+        }
+    }
 }
 
 /// Items with one value of a field: a board's column, a table's group.
