@@ -303,10 +303,7 @@ fn branches_are_made_and_protected_ones_kept() {
         protected: false,
         undeletable: true,
     };
-    done(
-        &mut s,
-        HDone::Rules(repo, "links".into(), Ok(rules)),
-    );
+    done(&mut s, HDone::Rules(repo, "links".into(), Ok(rules)));
     says(
         &s,
         "a ruleset of the repository's keeps it from being deleted",
@@ -343,7 +340,7 @@ fn in_a_clone_git_pushes_after_asking() {
     assert!(
         ask.facts
             .iter()
-            .any(|(f, _)| f.contains("your clone's own branch tabs stays")),
+            .any(|(f, _)| f.contains("Your clone's own branch tabs stays")),
         "{:?}",
         ask.facts
     );

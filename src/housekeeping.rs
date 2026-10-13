@@ -325,8 +325,9 @@ pub enum Subject {
         url: String,
         dir: PathBuf,
     },
-    /// A new branch a file was committed on, to propose.
-    Propose(RepoId, String),
+    /// A new branch a file was committed on, to propose into the branch
+    /// it was made from (none: the default branch).
+    Propose(RepoId, String, Option<String>),
 }
 
 fn blank() -> &'static Form {
@@ -671,7 +672,7 @@ fn problem(state: &State, route: &Route, of: &FormOf) -> Option<String> {
         FormOf::Milestone { repo, .. } => {
             refused(state, repo, "Changing milestones").or_else(|| milestones::change(f).err())
         }
-        FormOf::Fork(_) => repos::fork_problem(f),
+        FormOf::Fork(repo) => repos::fork_problem(state, repo, f),
         FormOf::NewRepo => repos::repo_problem(f),
         FormOf::File { .. } => files::problem(state, route, of),
     }
@@ -1121,7 +1122,7 @@ impl Pick {
             Pick::Field(_, field) => field.name(),
             Pick::RefName(_, RefKind::Branch) => "New branch: its name",
             Pick::RefName(_, RefKind::Tag) => "New tag: its name",
-            Pick::RefFrom(..) => "Where it starts: a branch, a tag or a commit",
+            Pick::RefFrom(..) => "Where it starts",
         }
     }
 
@@ -1262,7 +1263,19 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
             let f = form_mut(state, &route);
             f.set(field, value);
             f.error = None;
+            let blank = f.text.is_empty();
             state.data_gen += 1;
+            // A new file, once named, is written, as on GitHub.
+            let new_file = matches!(
+                &route,
+                Route::Housekeeping(FormOf::File {
+                    change: FileChange::New,
+                    ..
+                })
+            );
+            if field == Field::Path && new_file && blank && state.route() == Some(&route) {
+                return compose(state);
+            }
             Vec::new()
         }
         Chosen::RefName(repo, kind, name) => refs::named(state, repo, kind, name),
@@ -1372,9 +1385,9 @@ pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
             crate::writes::sending(state);
             vec![Cmd::Write(Writes::Housekeeping(Work::Clone { url, dir }))]
         }
-        (Answer::Propose, Some(Subject::Propose(repo, branch))) => {
+        (Answer::Propose, Some(Subject::Propose(repo, branch, base))) => {
             state.overlay = None;
-            files::propose(state, repo, branch)
+            files::propose(state, repo, branch, base)
         }
         _ => {
             state.overlay = None;
@@ -1406,6 +1419,9 @@ pub enum RefWrite {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileWrite {
     pub repo: RepoId,
+    /// The branch the form was opened on, if it was one: a new branch's
+    /// pull request goes into it.
+    pub base: Option<String>,
     pub commit: git::Commit,
     /// The tip GitHub's API makes it on (a new branch's start).
     pub head: String,
@@ -1449,7 +1465,7 @@ pub enum Work {
         rev: String,
         path: String,
     },
-    Commit(Route, FileWrite),
+    Commit(Route, Box<FileWrite>),
 }
 
 /// Work's answer.
@@ -1464,7 +1480,7 @@ pub enum Done {
     Made(Route, Result<MadeRepo, String>),
     Cloned(PathBuf, Result<(), String>),
     Looked(Route, Result<FileLook, String>),
-    Committed(Route, FileWrite, Result<(), String>),
+    Committed(Route, Box<FileWrite>, Result<(), String>),
 }
 
 impl Done {
@@ -1596,7 +1612,9 @@ fn failed(state: &mut State, route: &Route, why: String) {
 
 /// The form's rows for the page, each set in a picker.
 fn form_row(f: &Form, field: Field, unset: &str) -> crate::ui::pages::FormRow {
-    let value = f.get(field);
+    let colour = (field == Field::Colour && !f.get(field).is_empty())
+        .then(|| format!("#{}", f.get(field).trim_start_matches('#')));
+    let value = colour.as_deref().unwrap_or(f.get(field));
     let (value, unset) = if field.toggles() {
         (toggle_text(field, f.on(field)).to_owned(), false)
     } else if value.is_empty() {

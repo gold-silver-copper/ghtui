@@ -273,6 +273,7 @@ pub(super) fn on_done(
         repo: repo.clone(),
         number,
     });
+    let made = number.is_none();
     let number = match result {
         Ok(Some(n)) => n,
         Ok(None) => return Vec::new(),
@@ -297,7 +298,8 @@ pub(super) fn on_done(
     }
     let (closed, title) = match &write {
         MilestoneWrite::Save(m) => {
-            state.info(format!("Saved the milestone {}", m.title));
+            let verb = if made { "Created" } else { "Saved" };
+            state.info(format!("{verb} the milestone {}", m.title));
             (Some(false), Some(m.title.clone()))
         }
         MilestoneWrite::Close(closed) => {

@@ -683,6 +683,11 @@ fn section(route: &Route) -> Section {
         | Route::Issue { .. }
         | Route::Milestones { .. }
         | Route::Milestone { .. }
+        | Route::Labels(_)
+        | Route::Housekeeping(
+            crate::housekeeping::FormOf::Label { .. }
+            | crate::housekeeping::FormOf::Milestone { .. },
+        )
         | Route::NewIssue(_) => Section::Issues,
         Route::Pulls { .. } | Route::Pr { .. } | Route::NewPr(_) => Section::Pulls,
         Route::Discussions { .. } | Route::Discussion { .. } => Section::Discussions,

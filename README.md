@@ -1062,7 +1062,8 @@ issue inbox` runs only those.
   Projects checks (`gh auth refresh -s project`), `notifications` for
   subscribing to a thread (without it, the check sees ghtui name the
   scope), `delete_repo` for transferring an issue (`manage-transfer`
-  makes a `ghtui-live-` repository to move it to, and deletes it),
+  makes a `ghtui-live-` repository to move it to, and deletes it) and for
+  the fork and new-repository checks, which delete what they make,
   `read:user` for saved replies, and `read:packages`,
   `write:packages` and `delete:packages` for the packages check, which
   pushes a tiny `ghtui-live-` image to ghcr.io (with curl) and deletes a
@@ -1078,7 +1079,9 @@ issue inbox` runs only those.
   `~/.cache/claude-tmp/ghtui-live` (`GHTUI_LIVE_DIR`), which a run empties
   when it starts. A failing check leaves its last screen in `failures/`.
 - **What it touches:** it writes only to the test repository (and a
-  secret gist of the owner's, deleted at once). The checks rely on the
+  secret gist of the owner's, deleted at once; and, with `delete_repo`,
+  a fork of `octocat/Spoon-Knife` and a private repository under the
+  owner's account, named `ghtui-live-…`, deleted at once). The checks rely on the
   repository's workflows, run by hand: `mention.yml` (the Actions bot
   mentions the owner on an issue), `botreview.yml` (it leaves a review
   comment on PR #11, or, given `review`, submits a review with a summary
@@ -1093,12 +1096,14 @@ issue inbox` runs only those.
 - **Cleaning up:** each check undoes what it made, pass or fail (issues,
   comments, pull requests, branches, releases with their assets and
   tags, workflow runs, gists, discussions, projects, repository and
-  watch settings, a dismissed alert), and the fux server and the
-  stand-in server are stopped. A submitted review can't be deleted, so the reviews check's
+  watch settings, a dismissed alert, labels, milestones, forks and
+  repositories), and the fux server and the stand-in server are
+  stopped. A submitted review can't be deleted, so the reviews check's
   stay on its pull request, closed. ctrl-c stops the run after cleaning
   up. A run that was killed is swept up by the next one: issues, pull
-  requests, discussions, gists and projects titled `[ghtui live]`,
-  `ghtui-live-` branches, tags and releases, and settings put back.
+  requests, discussions, gists, projects and milestones titled
+  `[ghtui live]`, `ghtui-live-` branches, tags, releases, labels and (with
+  `delete_repo`) the owner's repositories, and settings put back.
 - **Enterprise Server:** `cargo xtask ghes` serves a stand-in on
   `https://localhost:8443` that relays an Enterprise Server's paths to
   github.com (`/api/v3`, `/api/graphql`, `/raw`, git) and rewrites

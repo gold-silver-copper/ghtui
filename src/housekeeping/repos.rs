@@ -94,15 +94,27 @@ fn org(state: &State, f: &Form) -> Option<String> {
     (Some(owner) != viewer && !owner.is_empty()).then(|| owner.to_owned())
 }
 
-pub(super) fn fork_problem(f: &Form) -> Option<String> {
+/// Why the form can't be sent yet: who you are unknown, a bad name.
+pub(super) fn repo_problem(f: &Form) -> Option<String> {
     if f.get(Field::Owner).is_empty() {
         return Some("Still asking GitHub who you are".into());
     }
     name_problem(f.get(Field::Name).trim())
 }
 
-pub(super) fn repo_problem(f: &Form) -> Option<String> {
-    fork_problem(f)
+/// [`repo_problem`], and a fork to where the repository is already.
+pub(super) fn fork_problem(state: &State, repo: &RepoId, f: &Form) -> Option<String> {
+    let owner = f.get(Field::Owner);
+    if owner.eq_ignore_ascii_case(&repo.owner) {
+        let parent = state.overview(repo).and_then(|o| o.parent.clone());
+        return Some(match parent {
+            Some(parent) => {
+                format!("{repo} is {owner}'s fork of {parent} already: choose another owner")
+            }
+            None => format!("{owner} owns {repo}: fork it to another owner"),
+        });
+    }
+    repo_problem(f)
 }
 
 /// The owner picker's rows: you, then your organizations.
@@ -183,7 +195,7 @@ pub(super) fn template_rows(
 #[must_use]
 pub(super) fn fork(state: &mut State, route: &Route, repo: &RepoId) -> Vec<Cmd> {
     let f = form(state, route);
-    if let Some(why) = fork_problem(f) {
+    if let Some(why) = fork_problem(state, repo, f) {
         crate::writes::say(state, why);
         return Vec::new();
     }

@@ -206,12 +206,12 @@ pub(super) fn from_chosen(
 }
 
 /// What a fact says of git doing it in your clone.
-fn in_clone(c: &Clone) -> String {
-    format!(
-        "With git in your clone ({}), pushed to {}",
-        c.top.display(),
-        c.remote
-    )
+pub(super) fn in_clone(c: &Clone) -> String {
+    let name = c.top.file_name().map_or_else(
+        || c.top.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    format!("With git in your clone ({name}), pushed to {}", c.remote)
 }
 
 /// `,D` on the branches or tags: refused for the default branch and one
@@ -226,9 +226,8 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec
         state.info(format!("Select a {} first", kind.noun()));
         return Vec::new();
     };
-    let open_pr = branch
-        .and_then(|b| b.pr)
-        .filter(|(_, s)| *s == crate::api::browse::PrState::Open);
+    let pr = branch.and_then(|b| b.pr);
+    let open_pr = pr.filter(|(_, s)| *s == crate::api::browse::PrState::Open);
     if branch.is_some_and(|b| b.default) {
         state.info(format!(
             "{name} is the default branch: GitHub doesn't delete it (another must be the default first, in the repository's settings)"
@@ -287,21 +286,22 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec
         ));
     }
     match &clone {
-        Some(c) => facts.push((
-            format!(
-                "{}; your clone's own {} {name} stays",
-                in_clone(c),
-                kind.noun()
-            ),
-            false,
-        )),
-        None if kind == RefKind::Tag => {
-            facts.push(("A release of it becomes a draft".into(), false));
+        Some(c) => {
+            facts.push((in_clone(c), false));
+            let noun = kind.noun();
+            facts.push((format!("Your clone's own {noun} {name} stays"), false));
         }
-        None => facts.push((
-            "GitHub can restore it from a pull request that used it".into(),
-            false,
-        )),
+        None if kind == RefKind::Tag => {
+            facts.push((
+                "A release of it, if it has one, becomes a draft".into(),
+                false,
+            ));
+        }
+        None => {
+            if let Some((n, _)) = pr {
+                facts.push((format!("GitHub can restore it from #{n}"), false));
+            }
+        }
     }
     ask(
         state,

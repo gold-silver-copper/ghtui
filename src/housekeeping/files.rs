@@ -87,7 +87,13 @@ pub(super) fn follow(state: &mut State, route: &Route, of: &FormOf) -> Vec<Cmd> 
     };
     let f = form(state, route);
     if f.look.is_none() {
-        form_mut(state, route).look = Some(Look::Asking);
+        let f = form_mut(state, route);
+        f.look = Some(Look::Asking);
+        match change {
+            FileChange::New if path.is_empty() => f.set(Field::Path, ""),
+            FileChange::New => f.set(Field::Path, format!("{path}/")),
+            FileChange::Edit | FileChange::Delete => f.set(Field::Path, path),
+        }
         return vec![Cmd::Write(Writes::Housekeeping(Work::FileLook {
             route: route.clone(),
             repo: repo.clone(),
@@ -105,11 +111,6 @@ pub(super) fn follow(state: &mut State, route: &Route, of: &FormOf) -> Vec<Cmd> 
     let Some(look) = look else {
         return Vec::new();
     };
-    match change {
-        FileChange::New if path.is_empty() => f.set(Field::Path, ""),
-        FileChange::New => f.set(Field::Path, format!("{path}/")),
-        FileChange::Edit | FileChange::Delete => f.set(Field::Path, path),
-    }
     if change == FileChange::Edit {
         f.text = look.file.and_then(|file| file.text).unwrap_or_default();
     }
@@ -305,16 +306,15 @@ pub(super) fn ask_commit(state: &mut State, route: &Route) -> Vec<Cmd> {
         if branch.is_empty() {
             format!("Commits to {rev}")
         } else {
-            format!("Commits to a new branch, {branch}, from {rev}; then offers a pull request")
+            format!("Commits to a new branch, {branch} (from {rev})")
         },
         false,
     ));
     facts.push((
         match &clone {
             Some(c) => format!(
-                "With git in your clone ({}), pushed to {}; your clone's own branches and files stay as they are",
-                c.top.display(),
-                c.remote
+                "{}; your clone's branches and files stay as they are",
+                super::refs::in_clone(c)
             ),
             None => "On GitHub, by you".to_owned(),
         },
@@ -396,8 +396,10 @@ pub(super) fn commit(state: &mut State, route: &Route) -> Vec<Cmd> {
         Some(Look::Found(clone)) => clone.clone(),
         _ => None,
     };
+    let base = look.branch_head.is_some().then(|| rev.to_owned());
     let write = FileWrite {
         repo: repo.clone(),
+        base,
         commit: super::git::Commit {
             branch,
             from,
@@ -414,7 +416,7 @@ pub(super) fn commit(state: &mut State, route: &Route) -> Vec<Cmd> {
     crate::writes::sending(state);
     vec![Cmd::Write(Writes::Housekeeping(Work::Commit(
         route.clone(),
-        write,
+        Box::new(write),
     )))]
 }
 
@@ -497,7 +499,7 @@ pub(super) async fn run(gh: &GitHub, w: &FileWrite) -> Result<(), String> {
 pub(super) fn on_committed(
     state: &mut State,
     route: &Route,
-    write: FileWrite,
+    write: Box<FileWrite>,
     result: Result<(), String>,
 ) -> Vec<Cmd> {
     let Route::Housekeeping(of) = route else {
@@ -513,7 +515,9 @@ pub(super) fn on_committed(
     }
     state.writing.housekeeping.forms.remove(route);
     crate::writes::close_sender(state, route);
-    let c = write.commit;
+    let FileWrite {
+        commit: c, base, ..
+    } = *write;
     state.info(format!("Committed to {}", c.branch));
     if state.route() != Some(route) {
         return Vec::new();
@@ -548,7 +552,7 @@ pub(super) fn on_committed(
     if c.from.is_some() {
         ask(
             state,
-            Some(Subject::Propose(repo, c.branch.clone())),
+            Some(Subject::Propose(repo, c.branch.clone(), base)),
             format!("Open a pull request for {}?", c.branch),
             vec![(
                 "Its title and description are written on the next page".into(),
@@ -563,10 +567,20 @@ pub(super) fn on_committed(
 
 /// A new pull request from `branch`, into the default branch.
 #[must_use]
-pub(super) fn propose(state: &mut State, repo: RepoId, branch: String) -> Vec<Cmd> {
+pub(super) fn propose(
+    state: &mut State,
+    repo: RepoId,
+    branch: String,
+    base: Option<String>,
+) -> Vec<Cmd> {
     let route = Route::NewPr(repo);
     let form = state.creating.forms.entry(route.clone()).or_default();
     form.head = Some(branch);
+    // Into the branch it was made from; the default branch is the form's
+    // own start.
+    if base.is_some() {
+        form.base = base;
+    }
     form.branch = None;
     let mut cmds = state.push(route);
     cmds.extend(crate::create::follow(state));
@@ -670,6 +684,11 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
     };
     let write = state.first_key(Action::Comment);
     let save_key = state.first_key(Action::Create);
+    // A deleted file's path is what it is.
+    let mut path_row = form_row(f, Field::Path, "Name your file…");
+    if change == FileChange::Delete {
+        path_row.link = None;
+    }
     let mut message_row = form_row(f, Field::Message, "");
     if f.get(Field::Message).trim().is_empty() {
         message_row.value = message(f, of);
@@ -688,11 +707,7 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
     let view = WriteFormView {
         heading,
         base: Some(crate::ui::markdown::LinkBase::new(repo, rev, "")),
-        rows: vec![
-            form_row(f, Field::Path, "Name your file…"),
-            branch_row,
-            message_row,
-        ],
+        rows: vec![path_row, branch_row, message_row],
         status,
         boxes,
         after: Vec::new(),

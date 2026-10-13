@@ -10,6 +10,7 @@ use super::Check;
 mod actions;
 mod discussion;
 mod enterprise;
+mod housekeeping;
 mod inbox;
 mod issue;
 mod local_reads;
@@ -54,6 +55,15 @@ pub const ALL: &[Check] = &[
     manage::TRANSFER,
     local_reads::CHECK,
     wiki::CHECK,
+    // Repository housekeeping.
+    housekeeping::LABELS,
+    housekeeping::MILESTONES,
+    housekeeping::REFS,
+    housekeeping::REFS_GIT,
+    housekeeping::FILES,
+    housekeeping::FILES_GIT,
+    housekeeping::FORK,
+    housekeeping::NEW_REPO,
     enterprise::CHECK,
     enterprise::OLDER,
     // Insights, Explore, starred lists, packages, saved replies.
