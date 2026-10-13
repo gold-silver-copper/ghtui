@@ -19,13 +19,13 @@ fn detail(f: impl FnOnce(&mut PrDetail)) -> PrDetail {
 
 fn pr_with(f: impl FnOnce(&mut PrDetail)) -> State {
     let mut s = with_pr();
-    update(&mut s, Msg::Pr(pr(), Box::new(Ok(detail(f)))));
+    crate::fixtures::pr_fetched(&mut s, &pr(), Ok(detail(f)));
     s
 }
 
 /// GitHub says it's `d` now.
 fn github_shows(s: &mut State, f: impl FnOnce(&mut PrDetail)) {
-    update(s, Msg::Pr(pr(), Box::new(Ok(detail(f)))));
+    crate::fixtures::pr_fetched(s, &pr(), Ok(detail(f)));
 }
 
 fn choices(s: &State) -> Vec<(&str, &Change)> {

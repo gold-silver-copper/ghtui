@@ -112,8 +112,7 @@ fn a_failed_home_section_says_why_and_the_others_show() {
 fn a_failed_refresh_keeps_what_was_loaded() {
     let mut state = with_pr();
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    let err = Box::new(Err(ApiError::RateLimited(42)));
-    update(&mut state, Msg::Pr(pr, err));
+    crate::fixtures::pr_fetched(&mut state, &pr, Err(ApiError::RateLimited(42)));
     let page = page_text(&state);
     let why = "Couldn't refresh: rate limited by GitHub; retry in 42s.";
     assert!(page.contains(why), "{page}");

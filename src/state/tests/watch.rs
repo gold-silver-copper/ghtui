@@ -35,16 +35,6 @@ fn changed(etag: &str, body: &str) -> Result<Polled, ApiError> {
     })
 }
 
-/// The data keys `cmds` fetch.
-fn fetched_keys(cmds: &[Cmd]) -> Vec<DataKey> {
-    (cmds.iter())
-        .filter_map(|c| match c {
-            Cmd::Api(Api::Fetch { key, .. }) => Some(key.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
 /// The fixture's issue as REST has it, with `comments` comments.
 fn rest_issue(comments: u64) -> String {
     let issue = crate::fixtures::issue();
@@ -96,7 +86,10 @@ fn an_issue_is_watched_and_another_authors_comment_is_new() {
         (Probe::Issue(ghtui(), 14), changed("\"i1\"", &rest_issue(1))),
         (comments.clone(), changed("\"c1\"", "[]")),
     ];
-    assert_eq!(fetched_keys(&answer_with(&mut s, first)), Vec::new());
+    assert_eq!(
+        crate::fixtures::asked(&answer_with(&mut s, first)),
+        Vec::new()
+    );
 
     let (asks, wait) = next_ask(&mut s);
     assert!(wait > crate::live::FIRST_MS);
@@ -106,7 +99,7 @@ fn an_issue_is_watched_and_another_authors_comment_is_new() {
         (comments, Ok(Polled::Same)),
     ];
     assert_eq!(
-        fetched_keys(&answer_with(&mut s, came)),
+        crate::fixtures::asked(&answer_with(&mut s, came)),
         std::slice::from_ref(&key)
     );
 
@@ -152,7 +145,7 @@ fn a_first_answer_newer_than_the_issue_is_fetched() {
         (Probe::Issue(ghtui(), 14), changed("\"i1\"", &rest_issue(2))),
         (comments, changed("\"c1\"", "[]")),
     ];
-    assert_eq!(fetched_keys(&answer_with(&mut s, first)), [key]);
+    assert_eq!(crate::fixtures::asked(&answer_with(&mut s, first)), [key]);
 }
 
 /// A running job's page follows the job: it asks after the job, stays on
@@ -209,7 +202,7 @@ fn a_running_job_is_followed_to_its_end() {
         &mut s,
         vec![(asks[0].probe.clone(), changed("\"j\"", &body.to_string()))],
     );
-    let keys = fetched_keys(&cmds);
+    let keys = crate::fixtures::asked(&cmds);
     assert!(keys.contains(&DataKey::Job(ghtui(), 2)), "{keys:?}");
     assert!(keys.contains(&DataKey::JobLog(ghtui(), 2)), "{keys:?}");
 
@@ -253,7 +246,7 @@ fn new_runs_on_the_actions_tab_are_said() {
         &mut s,
         vec![(asks[0].probe.clone(), changed("\"r\"", &wire.to_string()))],
     );
-    assert_eq!(fetched_keys(&cmds), std::slice::from_ref(&key));
+    assert_eq!(crate::fixtures::asked(&cmds), std::slice::from_ref(&key));
     let mut more = runs;
     let mut new = more.items[0].clone();
     (new.id, new.actor) = (999, Some("monalisa".into()));

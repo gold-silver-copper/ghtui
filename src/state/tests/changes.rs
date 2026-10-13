@@ -26,7 +26,7 @@ fn pr_in(state: PrState) -> State {
 /// The pull request, changed by `f`.
 fn pr_with(f: impl FnOnce(&mut crate::api::model::PrDetail)) -> State {
     let mut s = with_pr();
-    update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(f)))));
+    crate::fixtures::pr_fetched(&mut s, &pr(), Ok(mergeable(f)));
     s
 }
 
@@ -89,14 +89,14 @@ fn merging_asks_first_and_ends_up_as_github_has_it() {
     assert!(s.overlay.is_none());
     says(&s, "Merged");
     assert!(
-        cmds.contains(&Cmd::Api(Api::FetchPr(pr()))),
+        crate::fixtures::asks_pr(&cmds, &pr()),
         "the pull request is fetched again: {cmds:?}"
     );
     // Until GitHub shows it merged, nothing else is offered.
     press(&mut s, ",x");
     says(&s, "hasn't shown the last change");
     let merged = mergeable(|d| d.state = PrState::Merged);
-    update(&mut s, Msg::Pr(pr(), Box::new(Ok(merged))));
+    crate::fixtures::pr_fetched(&mut s, &pr(), Ok(merged));
     assert!(s.awaiting.is_none());
 }
 
@@ -110,9 +110,9 @@ fn acting_on_a_homes_row_is_about_that_row() {
     s.prs.clear();
     press(&mut s, "jj");
     let cmds = press(&mut s, ",m");
-    assert_eq!(cmds, vec![Cmd::Api(Api::FetchPr(pr()))]);
+    assert_eq!(cmds, vec![crate::fixtures::fetch_pr(&pr())]);
     says(&s, "Loading gold-silver-copper/ghtui#12");
-    update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
+    crate::fixtures::pr_fetched(&mut s, &pr(), Ok(mergeable(|_| {})));
     assert_eq!(confirm(&s).about, Subject::Pr(pr()));
     assert!(
         confirm(&s)
@@ -138,11 +138,10 @@ fn acting_on_a_homes_row_is_about_that_row() {
         crate::fixtures::section(&mut s, i, none);
     }
     let merged = mergeable(|d| d.state = PrState::Merged);
-    let cmds = update(&mut s, Msg::Pr(pr(), Box::new(Ok(merged))));
+    let cmds = crate::fixtures::pr_fetched(&mut s, &pr(), Ok(merged));
     assert!(s.awaiting.is_none());
     let home = s.home[1].search.clone().unwrap().key();
-    let refetched = |c: &Cmd| matches!(c, Cmd::Api(Api::Fetch { key, .. }) if *key == home);
-    assert!(cmds.iter().any(refetched), "{cmds:?}");
+    assert!(crate::fixtures::asks(&cmds, &home), "{cmds:?}");
     // An issue row offers closing, not merging.
     crate::fixtures::section(
         &mut s,
@@ -181,18 +180,18 @@ fn after_updating_the_branch_merging_waits_for_the_new_head() {
     let sent = press(&mut s, "<Enter>");
     answer(&mut s, &sent, Ok(()));
     // GitHub still shows the old head.
-    update(&mut s, Msg::Pr(pr(), Box::new(Ok(mergeable(|_| {})))));
+    crate::fixtures::pr_fetched(&mut s, &pr(), Ok(mergeable(|_| {})));
     press(&mut s, ",m");
     says(&s, "hasn't shown the last change");
     let cmds = timers(&mut s);
     assert!(cmds.contains(&Cmd::Timer(Timer::Live, 5_000)), "{cmds:?}");
     let cmds = update(&mut s, Msg::Timer(Timer::Live));
-    assert!(cmds.contains(&Cmd::Api(Api::FetchPr(pr()))), "{cmds:?}");
+    assert!(crate::fixtures::asks_pr(&cmds, &pr()), "{cmds:?}");
     let moved = mergeable(|d| {
         d.head_oid = "1".repeat(40);
         d.behind_by = Some(0);
     });
-    update(&mut s, Msg::Pr(pr(), Box::new(Ok(moved))));
+    crate::fixtures::pr_fetched(&mut s, &pr(), Ok(moved));
     press(&mut s, ",m");
     let head = match &confirm(&s).choices[0].1 {
         Change::Merge { head, .. } => head.clone(),

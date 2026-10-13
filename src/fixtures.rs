@@ -13,7 +13,7 @@ use crate::api::browse::{
     UserSummary, Week, WikiPage, Workflow, WorkflowRun,
 };
 use crate::api::model::{
-    Capped, Label, NodeId, PrRef, RepoId, ReviewComment, ReviewState, ReviewThread, Side,
+    Capped, Label, NodeId, PrDetail, PrRef, RepoId, ReviewComment, ReviewState, ReviewThread, Side,
 };
 use crate::api::notifications::{Inbox, Notification};
 use crate::api::timeline::{Event, Item, Latest, Linked, LinkedState, Requested, Review, What};
@@ -76,6 +76,49 @@ pub(crate) fn fetched(state: &mut State, key: DataKey, data: Data) -> Vec<Cmd> {
             cached_at,
         },
     )
+}
+
+/// What `cmds` fetch, by key.
+pub(crate) fn asked(cmds: &[Cmd]) -> Vec<DataKey> {
+    (cmds.iter())
+        .filter_map(|c| match c {
+            Cmd::Api(Api::Fetch { key, .. }) => Some(key.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether `cmds` fetch `key`.
+pub(crate) fn asks(cmds: &[Cmd], key: &DataKey) -> bool {
+    asked(cmds).contains(key)
+}
+
+/// Whether `cmds` fetch pull request `pr`.
+pub(crate) fn asks_pr(cmds: &[Cmd], pr: &PrRef) -> bool {
+    cmds.contains(&Cmd::Api(Api::FetchPr(pr.clone())))
+}
+
+/// Fetching pull request `pr` for the first time.
+pub(crate) fn fetch_pr(pr: &PrRef) -> Cmd {
+    Cmd::Api(Api::FetchPr(pr.clone()))
+}
+
+/// Delivers GitHub's answer for pull request `pr`.
+pub(crate) fn pr_fetched(
+    state: &mut State,
+    pr: &PrRef,
+    result: Result<PrDetail, ApiError>,
+) -> Vec<Cmd> {
+    update(state, Msg::Pr(pr.clone(), Box::new(result)))
+}
+
+/// Puts pull request `pr` in the state as the disk cache had it.
+pub(crate) fn pr_cached(state: &mut State, pr: &PrRef, detail: PrDetail) {
+    let cached = crate::store::Cached {
+        value: detail,
+        fetched_at: 0,
+    };
+    (state.prs).insert(pr.clone(), crate::state::Remote::cached(Some(cached)));
 }
 
 /// Fills Home's section `i` with a search's results.

@@ -272,11 +272,7 @@ fn the_labels_picker_lists_whats_set_first() {
     let mut s = issue_with(|_| {});
     let cmds = press(&mut s, ",l");
     let key = DataKey::Sidebar(ghtui(), 14);
-    assert!(
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if *k == key)),
-        "{cmds:?}"
-    );
+    assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     fetched(&mut s, key, Data::Sidebar(Box::new(fixtures::sidebar())));
     press(&mut s, "<Down><Down><Enter><Up><Enter>");
     let screen = screen_text(&s);

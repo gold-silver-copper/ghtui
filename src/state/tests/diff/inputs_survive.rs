@@ -68,13 +68,7 @@ fn loading() -> (State, PrRef, crate::diff_job::JobId) {
         of,
         DiffPrefs::fit(120),
     ))));
-    s.prs.insert(
-        pr.clone(),
-        Remote::cached(Some(crate::store::Cached {
-            value: crate::fixtures::pr_detail(),
-            fetched_at: 0,
-        })),
-    );
+    crate::fixtures::pr_cached(&mut s, &pr, crate::fixtures::pr_detail());
     diff_msg(
         &mut s,
         &pr,

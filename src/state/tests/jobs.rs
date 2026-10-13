@@ -160,16 +160,8 @@ fn a_running_jobs_log_is_checked_again() {
         Data::Log(Arc::new(running)),
     );
     let _ = s.push(Route::Repo(ghtui()));
-    let fetched_keys = |cmds: Vec<Cmd>| -> Vec<DataKey> {
-        fetches(cmds)
-            .into_iter()
-            .filter_map(|c| match c {
-                Cmd::Api(Api::Fetch { key, .. }) => Some(key),
-                _ => None,
-            })
-            .collect()
-    };
-    let keys = fetched_keys(s.back());
+    let cmds = s.back();
+    let keys = crate::fixtures::asked(&cmds);
     assert!(keys.contains(&DataKey::JobLog(ghtui(), 2)), "{keys:?}");
     assert!(keys.contains(&DataKey::Job(ghtui(), 2)), "{keys:?}");
     // A finished one isn't.
@@ -181,5 +173,5 @@ fn a_running_jobs_log_is_checked_again() {
         Data::Log(Arc::new(log)),
     );
     let _ = s.push(Route::Repo(ghtui()));
-    assert_eq!(fetched_keys(s.back()), Vec::new());
+    assert_eq!(crate::fixtures::asked(&s.back()), Vec::new());
 }

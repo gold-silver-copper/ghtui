@@ -95,8 +95,7 @@ fn the_review_tab_lists_drafts_and_threads_and_opens_them() {
         pr: pr.clone(),
         tab: PrTab::Review,
     });
-    let detail = Box::new(Ok(crate::fixtures::pr_detail()));
-    let cmds = update(&mut s, Msg::Pr(pr.clone(), detail));
+    let cmds = crate::fixtures::pr_fetched(&mut s, &pr, Ok(crate::fixtures::pr_detail()));
     assert!(cmds.contains(&Cmd::LoadReview(pr.clone())), "{cmds:?}");
     assert!(cmds.contains(&Cmd::Api(Api::FetchThreads(pr.clone()))));
     // The diff job lists the files.

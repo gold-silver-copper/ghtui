@@ -129,11 +129,7 @@ fn a_saved_reply_goes_in_at_the_cursor() {
     press(&mut s, "Hi. ");
     let cmds = press(&mut s, "<C-g>");
     let key = crate::site::site(crate::site::Key::SavedReplies);
-    assert!(
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if *k == key)),
-        "{cmds:?}"
-    );
+    assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     saved_replies(
         &mut s,
         Ok(vec![

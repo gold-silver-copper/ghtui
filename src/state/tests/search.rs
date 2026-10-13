@@ -23,7 +23,7 @@ fn palette_goes_places_and_runs_actions() {
     let cmds = fetched(&mut state, key, Data::Issue(None));
     let pr = PrRef::parse("a/b#9").unwrap();
     assert_eq!(route(&state), Route::pr(pr.clone()));
-    assert_eq!(cmds[0], Cmd::Api(Api::FetchPr(pr)));
+    assert_eq!(cmds[0], crate::fixtures::fetch_pr(&pr));
     assert_eq!(state.screens.len(), 2, "replaced, not pushed");
 
     // A bare number resolves against the repo on screen.
@@ -323,10 +323,7 @@ fn search_box_jumps_searches_and_loads_more() {
     press(&mut state, "G<Enter>");
     assert_eq!(state.busy().as_deref(), Some("Loading more"));
     let cmds = press(&mut state, "r");
-    assert!(
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Api(Api::Fetch { .. })))
-    );
+    assert!(!crate::fixtures::asked(&cmds).is_empty(), "{cmds:?}");
     fetched(
         &mut state,
         key.clone(),

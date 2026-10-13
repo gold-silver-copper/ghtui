@@ -51,10 +51,8 @@ fn bug_report() -> State {
 fn a_new_issue_starts_from_its_template_and_opens_once_made() {
     let (mut s, cmds) = form(",i");
     assert_eq!(s.route(), Some(&Route::NewIssue(ghtui())));
-    let asked_form = cmds.iter().any(
-        |c| matches!(c, Cmd::Api(Api::Fetch { key: DataKey::NewForm(r), .. }) if *r == ghtui()),
-    );
-    assert!(asked_form, "{cmds:?}");
+    let form = DataKey::NewForm(ghtui());
+    assert!(crate::fixtures::asks(&cmds, &form), "{cmds:?}");
     let text = page_text(&s);
     for starter in ["Bug report", "Feature request", "Blank issue"] {
         assert!(text.contains(starter), "{text}");
@@ -87,10 +85,8 @@ fn a_new_issue_starts_from_its_template_and_opens_once_made() {
     assert_eq!(s.route(), Some(&issue));
     assert!(s.overlay.is_none());
     says(&s, "Opened issue #42");
-    let fetches_it = cmds.iter().any(
-        |c| matches!(c, Cmd::Api(Api::Fetch { key: DataKey::Issue(r, 42), .. }) if *r == ghtui()),
-    );
-    assert!(fetches_it, "{cmds:?}");
+    let issue = DataKey::Issue(ghtui(), 42);
+    assert!(crate::fixtures::asks(&cmds, &issue), "{cmds:?}");
     assert!(!s.creating.forms.contains_key(&route), "the form is done");
 }
 
@@ -256,7 +252,7 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
     };
     assert_eq!(s.route(), Some(&Route::pr(pr.clone())));
     assert!(s.overlay.is_none());
-    assert!(cmds.contains(&Cmd::Api(Api::FetchPr(pr))), "{cmds:?}");
+    assert!(crate::fixtures::asks_pr(&cmds, &pr), "{cmds:?}");
 }
 
 /// `,c` checks the pull request out on a branch of its own: a fork's is

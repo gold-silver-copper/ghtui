@@ -381,11 +381,7 @@ fn joined_diff_work_is_the_same_in_every_arrival_order() {
     ];
     for order in orders {
         let mut state = crate::state::tests::state();
-        let cached = crate::store::Cached {
-            value: detail.clone(),
-            fetched_at: 0,
-        };
-        state.prs.insert(pr.clone(), Remote::cached(Some(cached)));
+        crate::fixtures::pr_cached(&mut state, &pr, detail.clone());
         let mut cmds = state.open_diff(of.clone(), None);
         let job = cmds
             .iter()

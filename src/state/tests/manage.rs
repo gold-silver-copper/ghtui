@@ -53,7 +53,7 @@ fn pr_with(f: impl FnOnce(&mut PrDetail)) -> State {
 fn deliver_pr(s: &mut State, f: impl FnOnce(&mut PrDetail)) -> Vec<Cmd> {
     let mut d = pr_detail();
     f(&mut d);
-    update(s, Msg::Pr(pr(), Box::new(Ok(d))))
+    crate::fixtures::pr_fetched(s, &pr(), Ok(d))
 }
 
 fn linked(number: u64, title: &str) -> Linked {

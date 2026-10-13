@@ -33,11 +33,6 @@ fn asked(s: &State) -> &crate::create::Ask {
     }
 }
 
-fn asks_for(cmds: &[Cmd], key: &DataKey) -> bool {
-    cmds.iter()
-        .any(|c| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if k == key))
-}
-
 /// `,V` opens a repository's new release on its tag; a new tag is looked
 /// for on GitHub, then the composer takes the title and notes. Making it
 /// asks whether to publish or save a draft; once made, its page opens
@@ -48,7 +43,10 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
     let cmds = press(&mut s, ",V");
     let repo = ghtui();
     assert_eq!(s.route(), Some(&Route::NewRelease(repo.clone())));
-    assert!(asks_for(&cmds, &DataKey::Tags(repo.clone())), "{cmds:?}");
+    assert!(
+        crate::fixtures::asks(&cmds, &DataKey::Tags(repo.clone())),
+        "{cmds:?}"
+    );
     let tags = Data::Tags(Box::new(fixtures::tags()));
     fetched(&mut s, DataKey::Tags(repo.clone()), tags);
     assert!(
@@ -140,7 +138,7 @@ fn a_thread_is_unsubscribed_and_followed() {
     let of = Watched::Thread(ghtui(), 14);
     let cmds = press(&mut s, ",w");
     assert!(
-        asks_for(&cmds, &DataKey::Subscription(of.clone())),
+        crate::fixtures::asks(&cmds, &DataKey::Subscription(of.clone())),
         "{cmds:?}"
     );
     let now = Data::Subscription(Box::new(fixtures::subscription()));
@@ -163,7 +161,7 @@ fn a_thread_is_unsubscribed_and_followed() {
     );
     says(&s, "Unsubscribed from gold-silver-copper/ghtui#14");
     assert!(
-        asks_for(&cmds, &DataKey::Subscription(of.clone())),
+        crate::fixtures::asks(&cmds, &DataKey::Subscription(of.clone())),
         "{cmds:?}"
     );
     let shown = Subscription {
@@ -302,7 +300,7 @@ fn a_wiki_page_is_edited_never_over_a_newer_one() {
     };
     assert_eq!(s.route(), Some(&route));
     let key = DataKey::Wiki(ghtui(), Some("Home".into()));
-    assert!(asks_for(&cmds, &key), "{cmds:?}");
+    assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     fetched(&mut s, key, Data::Wiki(Box::new(fixtures::wiki())));
     assert!(composer(&mut s).text().starts_with("Welcome to the wiki."));
     write(&mut s, "Welcome, all.");

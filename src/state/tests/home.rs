@@ -18,7 +18,7 @@ fn home_selects_the_first_row_and_opens_it() {
     assert_eq!(
         cmds,
         vec![
-            Cmd::Api(Api::FetchPr(pr.clone())),
+            crate::fixtures::fetch_pr(&pr),
             fetch(DataKey::InProjects(pr.repo.clone(), pr.number)),
             fetch(DataKey::PrActivity(pr.clone()))
         ]
@@ -26,15 +26,12 @@ fn home_selects_the_first_row_and_opens_it() {
     assert_eq!(route(&state), Route::pr(pr.clone()));
     assert_eq!(state.busy().as_deref(), Some("Loading"));
 
-    update(
-        &mut state,
-        Msg::Pr(pr.clone(), Box::new(Err(ApiError::Network("down".into())))),
-    );
+    crate::fixtures::pr_fetched(&mut state, &pr, Err(ApiError::Network("down".into())));
     let text = page_text(&state);
     assert!(text.contains("network error: down"), "{text}");
     assert_eq!(
         press(&mut state, "r"),
-        vec![Cmd::Api(Api::FetchPr(pr.clone()))],
+        vec![crate::fixtures::fetch_pr(&pr)],
         "the activity is still loading"
     );
 
@@ -211,13 +208,9 @@ fn home_stays_fresh_only_on_screen() {
         1000 + 2 * crate::home::FRESH_SECS,
         std::sync::atomic::Ordering::Relaxed,
     );
-    let asked = |cmds: &[Cmd], key: &DataKey| {
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if k == key))
-    };
     let cmds = update(&mut state, Msg::Timer(Timer::Home));
     assert_eq!(cmds.len(), 1, "{cmds:?}");
-    assert!(asked(&cmds, &mine_key(&state)), "{cmds:?}");
+    assert!(crate::fixtures::asks(&cmds, &mine_key(&state)), "{cmds:?}");
     // Away from Home, its timer does nothing and isn't set again.
     let _ = state.push(Route::user("octocat"));
     crate::fixtures::section(&mut state, 1, mine(1, 1));
@@ -229,7 +222,7 @@ fn home_stays_fresh_only_on_screen() {
     assert!(!timers(&mut state).contains(&home));
     // Back home, what's old is fetched again.
     let cmds = state.back();
-    assert!(asked(&cmds, &mine_key(&state)), "{cmds:?}");
+    assert!(crate::fixtures::asks(&cmds, &mine_key(&state)), "{cmds:?}");
 }
 
 /// Home's sections from the disk cache are from an earlier session:
@@ -243,6 +236,5 @@ fn going_back_home_fetches_cached_sections() {
     state.data.insert(key.clone(), cached);
     let _ = state.start_at(Target::Page(Route::Repo(ghtui())).into());
     let cmds = state.back();
-    let asked = |c: &Cmd| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if *k == key);
-    assert!(cmds.iter().any(asked), "{cmds:?}");
+    assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
 }

@@ -166,11 +166,7 @@ fn a_rows_alert_loads_then_is_dismissed() {
     let mut s = with_alerts(AlertKind::Dependabot);
     let cmds = press(&mut s, ",x");
     let key = DataKey::Alert(alert_ref(AlertKind::Dependabot, 2));
-    assert!(
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if *k == key)),
-        "{cmds:?}"
-    );
+    assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     let alert = fixtures::alert(AlertKind::Dependabot, 2);
     fetched(&mut s, key, Data::Alert(Box::new(alert)));
     assert!(matches!(s.overlay, Some(Overlay::Picker(_))));

@@ -101,7 +101,7 @@ pub(crate) fn with_pr() -> State {
     let mut state = with_home();
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
     let _ = state.push(Route::pr(pr.clone()));
-    update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(pr_detail()))));
+    crate::fixtures::pr_fetched(&mut state, &pr, Ok(pr_detail()));
     fetched(
         &mut state,
         DataKey::InProjects(pr.repo.clone(), pr.number),
@@ -300,7 +300,7 @@ pub(crate) fn with_pr_checks() -> State {
         tab: PrTab::Checks,
     });
     // The switch refreshes the pull request; it comes back unchanged.
-    update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(pr_detail()))));
+    crate::fixtures::pr_fetched(&mut state, &pr, Ok(pr_detail()));
     let activity = Data::PrActivity(Box::new(fixtures::activity()));
     fetched(&mut state, DataKey::PrActivity(pr.clone()), activity);
     let checks = Data::Checks(Box::new(fixtures::checks()));

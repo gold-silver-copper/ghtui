@@ -51,11 +51,6 @@ pub(super) fn package() -> State {
     s
 }
 
-fn asks_for(cmds: &[Cmd], key: &DataKey) -> bool {
-    cmds.iter()
-        .any(|c| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if k == key))
-}
-
 /// Each Insights tab says its numbers beside its bars: the year's
 /// commits and their days, the traffic's views and clones, and each
 /// manifest's dependencies (dependents link to github.com, which alone
@@ -161,7 +156,7 @@ fn a_repository_is_put_in_a_list_and_followed() {
     let mut s = with_repo();
     let key = site(Key::MyLists(ghtui()));
     let cmds = press(&mut s, ",B");
-    assert!(asks_for(&cmds, &key), "{cmds:?}");
+    assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     fetched(
         &mut s,
         key.clone(),
@@ -186,7 +181,7 @@ fn a_repository_is_put_in_a_list_and_followed() {
     let done = crate::site::Done::Lists(work, Ok(()));
     let cmds = update(&mut s, Msg::Write(Done::Site(done)));
     says(&s, "Added gold-silver-copper/ghtui to “To read”");
-    assert!(asks_for(&cmds, &key), "{cmds:?}");
+    assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     assert!(s.writing.expect.is_some());
     let mut mine = fixtures::my_lists();
     for l in &mut mine.lists.iter_mut() {

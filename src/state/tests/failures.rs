@@ -62,7 +62,7 @@ fn failed_pr_checks_say_why_instead_of_loading() {
         pr: pr.clone(),
         tab: PrTab::Checks,
     });
-    update(&mut state, Msg::Pr(pr.clone(), Box::new(Ok(pr_detail()))));
+    crate::fixtures::pr_fetched(&mut state, &pr, Ok(pr_detail()));
     let activity = Data::PrActivity(Box::new(fixtures::activity()));
     fetched(&mut state, DataKey::PrActivity(pr.clone()), activity);
     failed(&mut state, DataKey::PrChecks(pr));
@@ -79,7 +79,7 @@ fn a_loading_conversation_stays_on_the_timeline() {
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
     let route = Route::pr(pr.clone());
     let _ = state.push(route.clone());
-    update(&mut state, Msg::Pr(pr, Box::new(Ok(pr_detail()))));
+    crate::fixtures::pr_fetched(&mut state, &pr, Ok(pr_detail()));
     let lines: Vec<String> = (state.build_page(&route, 100, NOW).lines.iter())
         .map(crate::ui::page::PageLine::text)
         .collect();

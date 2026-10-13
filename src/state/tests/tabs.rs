@@ -146,10 +146,7 @@ fn the_page_asked_for_loads_after_reopened_tabs() {
     s.restore_tabs(&[issue(1).url(), releases.url()]);
     let cmds = s.start_at(Target::Page(releases).into());
     assert_eq!(s.tab_count(), 3);
-    let fetches = |key: &DataKey| {
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if k == key))
-    };
+    let fetches = |key: &DataKey| crate::fixtures::asks(&cmds, key);
     assert!(
         fetches(&DataKey::Releases(RepoId::new("o", "r"))),
         "{cmds:?}"
