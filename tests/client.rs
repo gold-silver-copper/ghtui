@@ -4286,3 +4286,153 @@ async fn files_are_read_and_committed_on_a_branch() {
         })
     );
 }
+
+/// A repository's settings: each change sends GitHub's own request, with
+/// only what changed; its pages read GitHub's answers, and say what a
+/// refusal lacks.
+#[tokio::test]
+async fn settings_send_their_requests_and_read_their_pages() {
+    use ghtui::api::change::Change;
+    use ghtui::api::settings::{
+        Enforcement, HookForm, Permission, RuleForm, Settings, SettingsChange as C, SettingsPage,
+    };
+    let ok = |field: &str| {
+        Reply::new(
+            200,
+            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
+        )
+    };
+    let (gh, seen) = github(vec![
+        ok("createBranchProtectionRule"),
+        ok("updateBranchProtectionRule"),
+        Reply::new(200, "{}"),
+        Reply::new(201, "{}"),
+        Reply::new(204, ""),
+        Reply::new(200, "{}"),
+        Reply::new(204, ""),
+        Reply::new(202, "{}"),
+        Reply::new(201, "{}"),
+        Reply::new(200, "{}"),
+        Reply::new(
+            200,
+            r#"[{"id":11,"config":{"url":"https://example.com/h","content_type":"json","insecure_ssl":"0","secret":"********"},"events":["push"],"active":true,"updated_at":"2026-10-01T10:00:00Z","last_response":{"code":200,"status":"active","message":"OK"}}]"#,
+        )
+        .header("link", r#"<https://api.github.com/repositories/1/hooks?per_page=100&page=2>; rel="next""#),
+        Reply::new(404, r#"{"message":"Not Found"}"#).header("x-oauth-scopes", "gist, read:org"),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let id = |s: &str| NodeId::new(s);
+    let main = RuleForm {
+        pattern: "main".into(),
+        admins: true,
+        ..RuleForm::default()
+    };
+    let changes = [
+        C::CreateRule {
+            repo_id: id("R_1"),
+            form: main.clone(),
+        },
+        C::UpdateRule {
+            id: id("BPR_1"),
+            from: Box::new(main.clone()),
+            to: Box::new(RuleForm {
+                linear: true,
+                ..main.clone()
+            }),
+            apps: Vec::new(),
+        },
+        C::SetRuleset {
+            repo: repo.clone(),
+            id: 7,
+            name: "Tags".into(),
+            enforcement: Enforcement::Disabled,
+        },
+        C::SetCollaborator {
+            repo: repo.clone(),
+            login: "hubot".into(),
+            permission: Permission::Write,
+            invite: true,
+        },
+        C::CancelInvitation {
+            repo: repo.clone(),
+            id: 31,
+            login: "hubot".into(),
+        },
+        C::UpdateHook {
+            repo: repo.clone(),
+            id: 11,
+            from: Box::new(HookForm::default()),
+            to: Box::new(HookForm {
+                active: false,
+                ..HookForm::default()
+            }),
+        },
+        C::DeleteHook {
+            repo: repo.clone(),
+            id: 11,
+            url: "https://example.com/h".into(),
+        },
+        C::Redeliver {
+            repo: repo.clone(),
+            hook: 11,
+            delivery: 902,
+            guid: "g".into(),
+        },
+        C::AddKey {
+            repo: repo.clone(),
+            title: "ci".into(),
+            key: "ssh-ed25519 AAAA".into(),
+            write: false,
+        },
+        C::Archive {
+            repo: repo.clone(),
+            archived: true,
+        },
+    ];
+    for change in changes {
+        gh.change(&Change::Settings(change)).await.unwrap();
+    }
+    let Settings::Hooks(hooks) = gh.settings(&repo, SettingsPage::Hooks).await.unwrap() else {
+        panic!("not the webhooks");
+    };
+    assert!(hooks.more, "GitHub has another page");
+    assert_eq!(hooks.items[0].form.url, "https://example.com/h");
+    assert!(hooks.items[0].secret);
+    let refused = gh.settings(&repo, SettingsPage::Keys).await.unwrap_err();
+    assert!(
+        refused.to_string().contains("gh auth refresh -s repo"),
+        "{refused}"
+    );
+
+    let seen = seen.lock().unwrap();
+    let input = |n: usize| seen[n].json()["variables"]["input"].clone();
+    assert!(seen[0].query().contains("createBranchProtectionRule("));
+    assert_eq!(input(0)["repositoryId"], "R_1");
+    assert_eq!(input(0)["isAdminEnforced"], true);
+    assert_eq!(
+        input(1),
+        serde_json::json!({"branchProtectionRuleId": "BPR_1", "requiresLinearHistory": true})
+    );
+    let line = |n: usize| seen[n].request_line.clone();
+    assert!(line(2).starts_with("PUT /repos/o/r/rulesets/7 "));
+    assert_eq!(
+        seen[2].json(),
+        serde_json::json!({"enforcement": "disabled"})
+    );
+    assert!(line(3).starts_with("PUT /repos/o/r/collaborators/hubot "));
+    assert_eq!(seen[3].json(), serde_json::json!({"permission": "push"}));
+    assert!(line(4).starts_with("DELETE /repos/o/r/invitations/31 "));
+    assert!(line(5).starts_with("PATCH /repos/o/r/hooks/11 "));
+    assert_eq!(seen[5].json(), serde_json::json!({"active": false}));
+    assert!(line(6).starts_with("DELETE /repos/o/r/hooks/11 "));
+    assert!(line(7).starts_with("POST /repos/o/r/hooks/11/deliveries/902/attempts "));
+    assert!(line(8).starts_with("POST /repos/o/r/keys "));
+    assert_eq!(
+        seen[8].json(),
+        serde_json::json!({"title": "ci", "key": "ssh-ed25519 AAAA", "read_only": true})
+    );
+    assert!(line(9).starts_with("PATCH /repos/o/r "));
+    assert_eq!(seen[9].json(), serde_json::json!({"archived": true}));
+    assert!(line(10).starts_with("GET /repos/o/r/hooks?per_page=100 "));
+}

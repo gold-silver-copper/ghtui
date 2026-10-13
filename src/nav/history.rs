@@ -206,7 +206,15 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
         Route::Blame {
             repo, rev, path, ..
         } => Route::blob(repo.clone(), rev.clone(), path.clone()),
+        Route::Settings {
+            repo,
+            page: crate::api::settings::SettingsPage::Hook(_),
+        } => Route::Settings {
+            repo: repo.clone(),
+            page: crate::api::settings::SettingsPage::Hooks,
+        },
         Route::Issues { repo, .. }
+        | Route::Settings { repo, .. }
         | Route::Discussions {
             of: DiscussionsOf::Repo(repo),
             ..
@@ -325,14 +333,6 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             query: crate::route::OPEN.into(),
         },
         Route::Alerts { repo, .. } => Route::Advisories(Some(repo.clone())),
-        Route::Settings {
-            repo,
-            page: crate::api::settings::SettingsPage::Hook(_),
-        } => Route::Settings {
-            repo: repo.clone(),
-            page: crate::api::settings::SettingsPage::Hooks,
-        },
-        Route::Settings { repo, .. } => Route::Repo(repo.clone()),
         Route::Advisories(repo) => repo.clone().map_or(Route::Home, Route::Repo),
         Route::Projects(ProjectsOf::Owner(owner)) => Route::user(owner.login()),
         Route::Project { project, .. } => Route::Projects(ProjectsOf::Owner(project.owner.clone())),

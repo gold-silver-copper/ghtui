@@ -21,7 +21,8 @@ ghtui is pre-release, but it's usable every day.
   (contributors, commit activity, traffic, the dependency graph),
   Explore and topics, starred lists and packages, on github.com or a
   GitHub Enterprise Server. Every GitHub link opens in ghtui unless it can only work in a
-  browser (a download, settings), and then it says why.
+  browser (a download, most of a repository's settings), and then it
+  says why.
 - **Reviewing** is where ghtui goes furthest. Diffs are computed locally
   with git, highlighted with tree-sitter, and shown unified or split. You
   can reply, resolve, comment on lines or ranges, suggest changes, and
@@ -60,6 +61,12 @@ ghtui is pre-release, but it's usable every day.
   git can (pushing a branch, a tag or a commit), after asking.
 - **Notifications you choose**: subscribe to a thread or ignore it, and
   set how you watch a repository.
+- **Settings**, for a repository's admins: branch protection rules
+  (made, edited and deleted) and rulesets (turned on or off),
+  collaborators and invitations with their roles, webhooks and their
+  deliveries (redelivered), deploy keys, and archiving. Each change asks
+  first and names what it changes; deleting a repository is left to
+  github.com.
 - **Git first**: files, folders, history, blame, comparisons, tags,
   code search, and a repository's contributors and commit activity come
   from your clone (or ghtui's own partial one), at
@@ -468,6 +475,38 @@ add it.
 **Saved replies**: in the comment editor, `ctrl-g` lists yours; typing
 narrows them, and `↵` puts the one chosen where the cursor is.
 
+**Settings** is a repository's last tab, shown, as on GitHub, only to
+its admins. Its own menu goes between General, Collaborators, Branches,
+Webhooks and Deploy keys. These change the repository for everyone, so
+every change asks first and lists what it changes, line by line:
+- **Branches** lists the branch protection rules (each with what it
+  asks and how many branches it applies to) and the rulesets. `,n`
+  writes a new rule and `,e` edits the selected one in the composer (or
+  `$EDITOR`), as GitHub's form's settings, one a line: `Require linear
+  history: yes`, `Required approvals: 2`, `Status checks: ci, lint`.
+  `ctrl-s` asks, naming each setting that changes (`Required approvals:
+  1 → 2`), and only those are sent, so what the form doesn't show stays
+  as it is. If GitHub refuses, the form opens again with your text and
+  GitHub's words. `,D` deletes a rule; `,x` turns a ruleset on or off
+  (an organization's is the organization's to change).
+- **Collaborators** lists who has access, with their role, and the
+  invitations waiting. `,n` invites someone: their login, then a role
+  (Read, Triage, Write, Maintain or Admin, each saying what it allows);
+  `,e` changes a collaborator's or an invitation's role, and `,D` removes
+  them or cancels it. The owner's access can't change.
+- **Webhooks** lists each with its events and what its last delivery
+  got back; `↵` opens one with its recent deliveries. `,n` adds one and
+  `,e` edits it as a form (`Payload URL`, `Content type`, `Secret`,
+  `SSL verification`, `Events`, `Active`; its secret is never shown, and
+  left empty keeps it), `,x` turns it off or on, `,D` deletes it, and on
+  its page `,R` redelivers the selected delivery.
+- **Deploy keys**: `,n` adds one (its title, the public key, and whether
+  it may push, which the question warns about), `,D` deletes one.
+- **General** says how the repository is set and archives it (`,x`),
+  asking twice as GitHub does: for its name, typed, then once more.
+  Unarchiving asks the same way. Deleting a repository is done on
+  github.com: ghtui never deletes one.
+
 **Checking out** a pull request (`,c` on it or its row), inside a clone
 of its repository, fetches its head and switches to a branch for it: its
 own branch's name (tracking it), or `owner/branch` for a fork's. It
@@ -616,6 +655,10 @@ says where it works.
   one.
 - `,w` subscribes to a thread or ignores it, or sets how you watch the
   repository.
+- In a repository's settings, `,n` adds (a rule, a collaborator, a
+  webhook, a deploy key), `,e` edits the selected one, `,D` deletes or
+  removes it, `,x` turns a ruleset or a webhook on or off (on General,
+  archives the repository), and `,R` redelivers a webhook's delivery.
 - Managing waits behind `,` too: `,b` deletes or restores a merged pull
   request's branch, `,L` locks or unlocks the conversation, `,H` hides
   or unhides the selected comment, `,S` edits an issue's sub-issues and
@@ -1072,9 +1115,15 @@ issue inbox` runs only those.
   Projects checks (`gh auth refresh -s project`), `notifications` for
   subscribing to a thread (without it, the check sees ghtui name the
   scope), `delete_repo` for transferring an issue (`manage-transfer`
-  makes a `ghtui-live-` repository to move it to, and deletes it) and for
+  makes a `ghtui-live-` repository to move it to, and deletes it), for
   the fork and new-repository checks, which delete what they make,
-  `read:user` for saved replies, and `read:packages`,
+  and for archiving (`settings-archive` archives and unarchives a scratch
+  `ghtui-live-` repository it deletes; without it, it only asks twice on
+  the test repository and cancels); `admin:repo_hook` for webhooks
+  where `repo` doesn't reach them. `settings-access` sends an invitation
+  only to the account `GHTUI_LIVE_INVITEE` names (one that agreed to be
+  invited); otherwise it asks and cancels. `read:user` for saved replies,
+  and `read:packages`,
   `write:packages` and `delete:packages` for the packages check, which
   pushes a tiny `ghtui-live-` image to ghcr.io (with curl) and deletes a
   version of it with `,D`; without them, the check sees ghtui name the
@@ -1107,13 +1156,17 @@ issue inbox` runs only those.
   comments, pull requests, branches, releases with their assets and
   tags, workflow runs, gists, discussions, projects, repository and
   watch settings, a dismissed alert, labels, milestones, forks and
-  repositories), and the fux server and the stand-in server are
+  repositories, protection rules, rulesets, invitations, webhooks and
+  deploy keys), and the fux server and the stand-in server are
   stopped. A submitted review can't be deleted, so the reviews check's
   stay on its pull request, closed. ctrl-c stops the run after cleaning
   up. A run that was killed is swept up by the next one: issues, pull
   requests, discussions, gists, projects and milestones titled
   `[ghtui live]`, `ghtui-live-` branches, tags, releases, labels and (with
-  `delete_repo`) the owner's repositories, and settings put back.
+  `delete_repo`) the owner's repositories, protection rules, webhooks
+  and deploy keys, `[ghtui live]` rulesets, and settings put back. The
+  settings checks never touch `main`'s protection, and check it ends as
+  it began.
 - **Enterprise Server:** `cargo xtask ghes` serves a stand-in on
   `https://localhost:8443` that relays an Enterprise Server's paths to
   github.com (`/api/v3`, `/api/graphql`, `/raw`, git) and rewrites
@@ -1292,6 +1345,17 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   when the release is published; a tag only in your clone has to be
   pushed first. A release's tag is deleted on GitHub, not in your clone.
   An asset is uploaded under its file's name, without a label.
+- A repository's settings cover protection rules, rulesets, collaborators,
+  webhooks, deploy keys and archiving; the rest of its settings (features,
+  merge buttons, Actions, Pages, secrets, environments) are on
+  github.com. A protection rule's form has GitHub's checkboxes; who may
+  push, bypass or dismiss reviews, and required deployments, are set on
+  github.com (and kept when a rule is edited here). A ruleset is turned
+  on or off here, and written on github.com. A collaborator is invited
+  by login (there's no search of people), and an organization's teams'
+  access isn't listed. Each list shows its first 100, and says when
+  GitHub has more; a webhook's deliveries are its latest 100. A
+  webhook's secret can be changed, not removed.
 - An issue form's dropdowns become a comment listing their options, to
   answer in your own words; its validations aren't checked.
 - Security alerts are listed newest first, 30 at a time, without counts

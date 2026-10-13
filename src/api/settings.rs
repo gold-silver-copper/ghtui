@@ -526,7 +526,8 @@ impl GitHub {
             }
             SettingsPage::Hook(id) => {
                 let path = format!("/repos/{repo}/hooks/{id}");
-                let hook = wire::hook(self.admin_json(&path, "webhooks").await?)
+                let answer = self.admin_answer(&path, "webhooks").await?;
+                let hook = wire::hook(serde_json::from_str(answer.body())?)
                     .ok_or_else(|| ApiError::Decode(format!("{repo}'s webhook {id}")))?;
                 let deliveries = self
                     .listed(
@@ -573,23 +574,18 @@ impl GitHub {
         )))
     }
 
-    async fn admin_json(&self, path: &str, what: &str) -> Result<Value, ApiError> {
-        let answer = self.admin_answer(path, what).await?;
-        Ok(serde_json::from_str(answer.body())?)
-    }
-
     /// The first page of a list of the repository's (`list` is its path
     /// and query, ending in `?` or `&`), each item read by `read`.
-    async fn listed<T>(
+    async fn listed<W: serde::de::DeserializeOwned, T>(
         &self,
         repo: &RepoId,
         list: &str,
         what: &str,
-        read: fn(Value) -> Option<T>,
+        read: fn(W) -> Option<T>,
     ) -> Result<Listed<T>, ApiError> {
         let path = format!("/repos/{repo}/{list}per_page={PER_PAGE}");
         let answer = self.admin_answer(&path, what).await?;
-        let wire: Vec<Value> = serde_json::from_str(answer.body())?;
+        let wire: Vec<W> = serde_json::from_str(answer.body())?;
         Ok(Listed {
             more: answer.next_page().is_some(),
             items: wire.into_iter().filter_map(read).collect(),
@@ -628,14 +624,13 @@ impl GitHub {
 
     async fn protection_rules(&self, repo: &RepoId) -> Result<Branches, ApiError> {
         let vars = json!({ "owner": repo.owner, "name": repo.name });
-        let found: Value = self
+        let found: wire::Rules = self
             .graphql_json(raw::PROTECTION_RULES, vars, repo, "/repository")
             .await?;
-        let repo_id = NodeId::new(found["id"].as_str().unwrap_or_default());
-        let rules = &found["branchProtectionRules"];
-        let nodes = rules["nodes"].as_array().cloned().unwrap_or_default();
-        let total = rules["totalCount"].as_u64().unwrap_or_default();
-        let rules = Capped::new(nodes.into_iter().filter_map(wire::rule).collect(), total);
+        let repo_id = NodeId::new(found.id);
+        let rules = found.branch_protection_rules;
+        let nodes = rules.nodes.into_iter().flatten().map(wire::rule).collect();
+        let rules = Capped::new(nodes, rules.total_count);
         let rulesets = match self
             .admin_answer(
                 &format!("/repos/{repo}/rulesets?per_page={PER_PAGE}"),
@@ -644,11 +639,8 @@ impl GitHub {
             .await
         {
             Ok(answer) => {
-                let wire: Vec<Value> = serde_json::from_str(answer.body())?;
-                Ok(wire
-                    .into_iter()
-                    .filter_map(|r| wire::ruleset(r, repo))
-                    .collect())
+                let wire: Vec<wire::RulesetWire> = serde_json::from_str(answer.body())?;
+                Ok(wire.into_iter().map(|r| wire::ruleset(r, repo)).collect())
             }
             // An older Enterprise Server has none.
             Err(ApiError::NotFound(_)) => Err("GitHub doesn't have rulesets here".into()),
@@ -771,6 +763,9 @@ impl GitHub {
 /// A rule's input for GitHub's mutations: every field of `to` (`all`), or
 /// those that differ from `from`. Status checks named as before keep the
 /// app they're bound to.
+/// One of a rule's yes-or-no settings, read from its form.
+type Flag = fn(&RuleForm) -> bool;
+
 fn rule_input(
     from: &RuleForm,
     to: &RuleForm,
@@ -841,7 +836,7 @@ fn rule_input(
             .collect()
     };
     put("requiredStatusChecks", checks(&old), checks(&new));
-    let flags: [(&str, fn(&RuleForm) -> bool); 7] = [
+    let flags: [(&str, Flag); 7] = [
         ("requiresConversationResolution", |f| f.conversations),
         ("requiresCommitSignatures", |f| f.signed),
         ("requiresLinearHistory", |f| f.linear),
@@ -904,147 +899,282 @@ fn hook_body(from: Option<&HookForm>, to: &HookForm) -> Value {
 
 /// GitHub's settings as its APIs send them.
 mod wire {
-    use serde_json::Value;
+    use serde::Deserialize;
 
     use super::*;
 
-    fn text(v: &Value) -> String {
-        v.as_str().unwrap_or_default().to_owned()
+    /// A branch protection rule, as GraphQL sends it.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub(super) struct Rules {
+        pub id: String,
+        pub branch_protection_rules: Connection<RuleNode>,
     }
 
-    pub(super) fn rule(n: Value) -> Option<Rule> {
-        let flag = |name: &str| n[name].as_bool().unwrap_or_default();
-        let checks = n["requiredStatusChecks"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub(super) struct Connection<T> {
+        pub total_count: u64,
+        #[serde(default)]
+        pub nodes: Vec<Option<T>>,
+    }
+
+    #[derive(Deserialize, Default)]
+    #[serde(rename_all = "camelCase", default)]
+    pub(super) struct RuleNode {
+        id: String,
+        pattern: String,
+        requires_approving_reviews: bool,
+        required_approving_review_count: Option<u64>,
+        dismisses_stale_reviews: bool,
+        requires_code_owner_reviews: bool,
+        require_last_push_approval: bool,
+        requires_status_checks: bool,
+        requires_strict_status_checks: bool,
+        required_status_checks: Option<Vec<Check>>,
+        requires_conversation_resolution: bool,
+        requires_commit_signatures: bool,
+        requires_linear_history: bool,
+        lock_branch: bool,
+        is_admin_enforced: bool,
+        allows_force_pushes: bool,
+        allows_deletions: bool,
+        matching_refs: Option<Connection<Named>>,
+    }
+
+    #[derive(Deserialize, Default)]
+    struct Check {
+        context: String,
+        app: Option<App>,
+    }
+
+    #[derive(Deserialize, Default)]
+    struct App {
+        id: String,
+    }
+
+    #[derive(Deserialize, Default)]
+    struct Named {
+        name: String,
+    }
+
+    pub(super) fn rule(n: RuleNode) -> Rule {
+        let checks = n.required_status_checks.unwrap_or_default();
         let apps = (checks.iter())
-            .filter_map(|c| Some((text(&c["context"]), NodeId::new(c["app"]["id"].as_str()?))))
+            .filter_map(|c| Some((c.context.clone(), NodeId::new(&c.app.as_ref()?.id))))
             .collect();
-        let contexts = checks.iter().map(|c| text(&c["context"])).collect();
-        let matching = &n["matchingRefs"];
-        let names = (matching["nodes"].as_array().into_iter().flatten())
-            .map(|r| text(&r["name"]))
-            .collect();
-        Some(Rule {
-            id: NodeId::new(n["id"].as_str()?),
+        let contexts = checks.into_iter().map(|c| c.context).collect();
+        let (names, total) = n.matching_refs.map_or((Vec::new(), 0), |m| {
+            let names = m.nodes.into_iter().flatten().map(|r| r.name).collect();
+            (names, m.total_count)
+        });
+        Rule {
+            id: NodeId::new(n.id),
             form: RuleForm {
-                pattern: text(&n["pattern"]),
-                reviews: flag("requiresApprovingReviews").then(|| Reviews {
-                    count: u8::try_from(
-                        n["requiredApprovingReviewCount"]
-                            .as_u64()
-                            .unwrap_or_default(),
-                    )
-                    .unwrap_or(u8::MAX),
-                    dismiss_stale: flag("dismissesStaleReviews"),
-                    code_owners: flag("requiresCodeOwnerReviews"),
-                    last_push: flag("requireLastPushApproval"),
+                pattern: n.pattern,
+                reviews: n.requires_approving_reviews.then(|| Reviews {
+                    count: u8::try_from(n.required_approving_review_count.unwrap_or_default())
+                        .unwrap_or(u8::MAX),
+                    dismiss_stale: n.dismisses_stale_reviews,
+                    code_owners: n.requires_code_owner_reviews,
+                    last_push: n.require_last_push_approval,
                 }),
-                checks: flag("requiresStatusChecks").then(|| Checks {
-                    strict: flag("requiresStrictStatusChecks"),
+                checks: n.requires_status_checks.then_some(Checks {
+                    strict: n.requires_strict_status_checks,
                     contexts,
                 }),
-                conversations: flag("requiresConversationResolution"),
-                signed: flag("requiresCommitSignatures"),
-                linear: flag("requiresLinearHistory"),
-                lock: flag("lockBranch"),
-                admins: flag("isAdminEnforced"),
-                force_pushes: flag("allowsForcePushes"),
-                deletions: flag("allowsDeletions"),
+                conversations: n.requires_conversation_resolution,
+                signed: n.requires_commit_signatures,
+                linear: n.requires_linear_history,
+                lock: n.lock_branch,
+                admins: n.is_admin_enforced,
+                force_pushes: n.allows_force_pushes,
+                deletions: n.allows_deletions,
             },
             apps,
-            matching: Capped::new(names, matching["totalCount"].as_u64().unwrap_or_default()),
-        })
+            matching: Capped::new(names, total),
+        }
     }
 
-    pub(super) fn ruleset(r: Value, repo: &RepoId) -> Option<Ruleset> {
-        let source = text(&r["source"]);
-        let org = (r["source_type"] == "Organization"
-            || !source.eq_ignore_ascii_case(&repo.to_string()))
-        .then_some(source)
-        .filter(|s| !s.is_empty());
-        Some(Ruleset {
-            id: r["id"].as_u64()?,
-            name: text(&r["name"]),
-            target: r["target"].as_str().unwrap_or("branch").to_owned(),
-            enforcement: Enforcement::parse(r["enforcement"].as_str().unwrap_or_default()),
-            org,
-        })
+    #[derive(Deserialize)]
+    pub(super) struct RulesetWire {
+        id: u64,
+        #[serde(default)]
+        name: String,
+        target: Option<String>,
+        #[serde(default)]
+        enforcement: String,
+        #[serde(default)]
+        source: String,
+        #[serde(default)]
+        source_type: String,
     }
 
-    pub(super) fn person(p: Value) -> Option<Collaborator> {
-        let role = text(&p["role_name"]);
+    pub(super) fn ruleset(r: RulesetWire, repo: &RepoId) -> Ruleset {
+        let theirs =
+            r.source_type == "Organization" || !r.source.eq_ignore_ascii_case(&repo.to_string());
+        Ruleset {
+            id: r.id,
+            name: r.name,
+            target: r.target.unwrap_or_else(|| "branch".into()),
+            enforcement: Enforcement::parse(&r.enforcement),
+            org: Some(r.source).filter(|s| theirs && !s.is_empty()),
+        }
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct Person {
+        login: String,
+        #[serde(default)]
+        role_name: String,
+    }
+
+    #[expect(clippy::unnecessary_wraps, reason = "read as every list's items are")]
+    pub(super) fn person(p: Person) -> Option<Collaborator> {
         Some(Collaborator {
-            login: p["login"].as_str()?.to_owned(),
-            role: Permission::parse(&role).map_or(Role::Custom(role), Role::Is),
+            login: p.login,
+            role: Permission::parse(&p.role_name).map_or(Role::Custom(p.role_name), Role::Is),
         })
     }
 
-    pub(super) fn invitation(i: Value) -> Option<Invitation> {
+    #[derive(Deserialize)]
+    pub(super) struct InvitationWire {
+        id: u64,
+        invitee: Option<Named2>,
+        #[serde(default)]
+        permissions: String,
+        #[serde(default)]
+        created_at: String,
+        #[serde(default)]
+        expired: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct Named2 {
+        login: String,
+    }
+
+    pub(super) fn invitation(i: InvitationWire) -> Option<Invitation> {
         Some(Invitation {
-            id: i["id"].as_u64()?,
-            login: i["invitee"]["login"].as_str()?.to_owned(),
-            permission: Permission::parse(i["permissions"].as_str()?)?,
-            created_at: text(&i["created_at"]),
-            expired: i["expired"].as_bool().unwrap_or_default(),
+            id: i.id,
+            login: i.invitee?.login,
+            permission: Permission::parse(&i.permissions)?,
+            created_at: i.created_at,
+            expired: i.expired,
         })
     }
 
-    pub(super) fn hook(h: Value) -> Option<Hook> {
-        let config = &h["config"];
-        let last = &h["last_response"];
-        let status = text(&last["status"]);
+    #[derive(Deserialize)]
+    pub(super) struct HookWire {
+        id: u64,
+        #[serde(default)]
+        config: Config,
+        #[serde(default)]
+        events: Vec<String>,
+        active: Option<bool>,
+        last_response: Option<Last>,
+        #[serde(default)]
+        updated_at: String,
+    }
+
+    #[derive(Deserialize, Default)]
+    #[serde(default)]
+    struct Config {
+        url: String,
+        content_type: Option<String>,
+        insecure_ssl: Option<String>,
+        secret: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct Last {
+        code: Option<u16>,
+        #[serde(default)]
+        status: String,
+        message: Option<String>,
+    }
+
+    #[expect(clippy::unnecessary_wraps, reason = "read as every list's items are")]
+    pub(super) fn hook(h: HookWire) -> Option<Hook> {
+        let c = h.config;
         Some(Hook {
-            id: h["id"].as_u64()?,
+            id: h.id,
             form: HookForm {
-                url: text(&config["url"]),
-                content_type: config["content_type"].as_str().unwrap_or("form").to_owned(),
+                url: c.url,
+                content_type: c.content_type.unwrap_or_else(|| "form".into()),
                 secret: None,
-                verify_ssl: config["insecure_ssl"].as_str().unwrap_or("0") == "0",
-                events: (h["events"].as_array().into_iter().flatten())
-                    .map(text)
-                    .collect(),
-                active: h["active"].as_bool().unwrap_or(true),
+                verify_ssl: c.insecure_ssl.as_deref().unwrap_or("0") == "0",
+                events: h.events,
+                active: h.active.unwrap_or(true),
             },
-            secret: config["secret"].as_str().is_some_and(|s| !s.is_empty()),
-            last: (!status.is_empty() && status != "unused").then(|| LastResponse {
-                code: last["code"].as_u64().and_then(|c| u16::try_from(c).ok()),
-                status,
-                message: last["message"]
-                    .as_str()
-                    .filter(|m| !m.is_empty())
-                    .map(str::to_owned),
-            }),
-            updated_at: text(&h["updated_at"]),
+            secret: c.secret.is_some_and(|s| !s.is_empty()),
+            last: (h.last_response)
+                .filter(|l| !l.status.is_empty() && l.status != "unused")
+                .map(|l| LastResponse {
+                    code: l.code,
+                    status: l.status,
+                    message: l.message.filter(|m| !m.is_empty()),
+                }),
+            updated_at: h.updated_at,
         })
     }
 
-    pub(super) fn delivery(d: Value) -> Option<Delivery> {
+    #[derive(Deserialize)]
+    pub(super) struct DeliveryWire {
+        id: u64,
+        #[serde(default)]
+        guid: String,
+        #[serde(default)]
+        delivered_at: String,
+        #[serde(default)]
+        redelivery: bool,
+        #[serde(default)]
+        status: String,
+        #[serde(default)]
+        status_code: u16,
+        #[serde(default)]
+        event: String,
+        action: Option<String>,
+    }
+
+    #[expect(clippy::unnecessary_wraps, reason = "read as every list's items are")]
+    pub(super) fn delivery(d: DeliveryWire) -> Option<Delivery> {
         Some(Delivery {
-            id: d["id"].as_u64()?,
-            guid: text(&d["guid"]),
-            delivered_at: text(&d["delivered_at"]),
-            redelivery: d["redelivery"].as_bool().unwrap_or_default(),
-            status: text(&d["status"]),
-            code: d["status_code"]
-                .as_u64()
-                .and_then(|c| u16::try_from(c).ok())
-                .unwrap_or_default(),
-            event: text(&d["event"]),
-            action: d["action"].as_str().map(str::to_owned),
+            id: d.id,
+            guid: d.guid,
+            delivered_at: d.delivered_at,
+            redelivery: d.redelivery,
+            status: d.status,
+            code: d.status_code,
+            event: d.event,
+            action: d.action,
         })
     }
 
-    pub(super) fn key(k: Value) -> Option<DeployKey> {
+    #[derive(Deserialize)]
+    pub(super) struct KeyWire {
+        id: u64,
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        key: String,
+        read_only: Option<bool>,
+        #[serde(default)]
+        created_at: String,
+        last_used: Option<String>,
+        added_by: Option<String>,
+    }
+
+    #[expect(clippy::unnecessary_wraps, reason = "read as every list's items are")]
+    pub(super) fn key(k: KeyWire) -> Option<DeployKey> {
         Some(DeployKey {
-            id: k["id"].as_u64()?,
-            title: text(&k["title"]),
-            key: text(&k["key"]),
-            read_only: k["read_only"].as_bool().unwrap_or(true),
-            created_at: text(&k["created_at"]),
-            last_used: k["last_used"].as_str().map(str::to_owned),
-            added_by: k["added_by"].as_str().map(str::to_owned),
+            id: k.id,
+            title: k.title,
+            key: k.key,
+            read_only: k.read_only.unwrap_or(true),
+            created_at: k.created_at,
+            last_used: k.last_used,
+            added_by: k.added_by,
         })
     }
 }
@@ -1085,6 +1215,29 @@ mod tests {
                 "requiredStatusChecks": [{"context": "check", "appId": "A_1"}, {"context": "lint"}],
             })
         );
+    }
+
+    /// Every field a rule's input names is one GitHub's mutations take
+    /// (the input is JSON, which the query checks don't see).
+    #[test]
+    fn a_rules_input_is_githubs() {
+        let sdl = include_str!(env!("GITHUB_SDL"));
+        let input = rule_input(&RuleForm::default(), &RuleForm::default(), &[], true);
+        for kind in [
+            "CreateBranchProtectionRuleInput",
+            "UpdateBranchProtectionRuleInput",
+        ] {
+            let (_, after) = sdl
+                .split_once(&format!("input {kind} "))
+                .unwrap_or_default();
+            let (fields, _) = after.split_once("\n}").unwrap_or_default();
+            for name in input.keys() {
+                assert!(
+                    fields.contains(&format!("  {name}:")),
+                    "{kind} has no {name}"
+                );
+            }
+        }
     }
 
     /// A webhook's edit sends what changed, its whole config when any of

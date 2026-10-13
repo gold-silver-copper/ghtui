@@ -25,6 +25,7 @@ mod review;
 mod reviews;
 mod security;
 mod site;
+mod settings;
 mod timeline;
 mod wiki;
 mod writes;
@@ -53,6 +54,12 @@ pub const ALL: &[Check] = &[
     manage::PULL,
     manage::DISCUSSION,
     manage::TRANSFER,
+    // A repository's settings.
+    settings::BRANCHES,
+    settings::ACCESS,
+    settings::HOOKS,
+    settings::KEYS,
+    settings::ARCHIVE,
     local_reads::CHECK,
     wiki::CHECK,
     // Repository housekeeping.

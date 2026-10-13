@@ -183,9 +183,7 @@ fn a_new_rule_refused_comes_back_to_edit() {
     let text = composed(&s).replace("Branch name pattern: ", "Branch name pattern: release/*");
     write(&mut s, &text);
     press(&mut s, "<C-s>");
-    assert!(
-        asked(&s).starts_with("Protect branches matching release/* in gold-silver-copper/ghtui?")
-    );
+    assert!(asked(&s).starts_with("Protect branches matching release/*?"));
     let cmds = press(&mut s, "<Enter>");
     assert!(matches!(sent(&cmds).0, SettingsChange::CreateRule { .. }));
     let refused = crate::api::ApiError::GraphQl(vec!["Name already protected: release/*".into()]);
@@ -277,15 +275,15 @@ fn webhooks_are_added_disabled_redelivered_and_deleted() {
     let text = composed(&s).replace("Payload URL: ", "Payload URL: https://example.com/new");
     write(&mut s, &text);
     press(&mut s, "<C-s>");
-    assert!(
-        asked(&s).starts_with("Send gold-silver-copper/ghtui's events to https://example.com/new?")
-    );
+    assert!(asked(&s).starts_with(
+        "Add a webhook to gold-silver-copper/ghtui?\nPayload URL: https://example.com/new"
+    ));
     let cmds = press(&mut s, "<Enter>");
     assert!(matches!(sent(&cmds).0, SettingsChange::CreateHook { .. }));
 
     let mut s = on(SettingsPage::Hook(11), Mode::Dark);
     press(&mut s, ",x");
-    assert!(asked(&s).starts_with("Disable the webhook to https://example.com/hook/11?"));
+    assert!(asked(&s).starts_with("Disable this webhook?\nhttps://example.com/hook/11"));
     let cmds = press(&mut s, "<Enter>");
     let SettingsChange::UpdateHook { to, .. } = sent(&cmds).0 else {
         panic!()
@@ -357,7 +355,7 @@ fn archiving_asks_twice() {
     );
     press(&mut s, "<Esc>,x");
     press(&mut s, "gold-silver-copper/ghtui<Enter>");
-    assert!(asked(&s).starts_with("Archive gold-silver-copper/ghtui? This is the last ask"));
+    assert!(asked(&s).starts_with("Archive gold-silver-copper/ghtui?\nThe last ask"));
     let cmds = press(&mut s, "<Enter>");
     assert_eq!(
         sent(&cmds).0,

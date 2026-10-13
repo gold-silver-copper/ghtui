@@ -12,8 +12,8 @@
 use crate::api::change::Change;
 use crate::api::model::{NodeId, RepoId};
 use crate::api::settings::{
-    Checks, HookForm, Permission, Reviews, Role as Given, RuleForm, Settings, SettingsChange,
-    SettingsPage,
+    Checks, Enforcement, HookForm, Permission, Reviews, Role as Given, RuleForm, Settings,
+    SettingsChange, SettingsPage,
 };
 use crate::ui::overlays::PaletteItem;
 use crate::ui::pages::{SettingKeys, SettingLink};
@@ -220,24 +220,28 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                             "A ruleset's rules are edited on github.com; {toggle} turns it on or off"
                         ));
                     }
-                    use crate::api::settings::Enforcement as E;
+                    let targets = match r.target.as_str() {
+                        "tag" => "tags",
+                        "push" => "pushes",
+                        _ => "branches",
+                    };
                     let (to, verb, fact) = match r.enforcement {
-                        E::Active | E::Evaluate => (
-                            E::Disabled,
+                        Enforcement::Active | Enforcement::Evaluate => (
+                            Enforcement::Disabled,
                             "Disable",
-                            format!("Its rules stop applying to the {}es it targets", r.target),
+                            format!("Its rules stop applying to the {targets} it targets"),
                         ),
-                        E::Disabled => (
-                            E::Active,
+                        Enforcement::Disabled => (
+                            Enforcement::Active,
                             "Enable",
-                            format!("Its rules apply to the {}es it targets again", r.target),
+                            format!("Its rules apply to the {targets} it targets again"),
                         ),
                     };
                     Ok(ask(
                         action,
                         at,
                         format!("{verb} ruleset “{}”?", r.name),
-                        vec![(fact, to == E::Disabled)],
+                        vec![(fact, to == Enforcement::Disabled)],
                         (
                             verb,
                             SettingsChange::SetRuleset {
@@ -334,17 +338,20 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                     action,
                     // From its own page, the list follows it.
                     (&repo, SettingsPage::Hooks),
-                    format!("Delete the webhook to {url}?"),
-                    vec![(
-                        "GitHub stops sending it events, and its deliveries go with it".into(),
-                        true,
-                    )],
+                    "Delete this webhook?".into(),
+                    vec![
+                        (url.clone(), false),
+                        (
+                            "GitHub stops sending it events, and its deliveries go with it".into(),
+                            true,
+                        ),
+                    ],
                     (
                         "Delete webhook",
                         SettingsChange::DeleteHook {
                             repo: repo.clone(),
                             id: hook.id,
-                            url: url.clone(),
+                            url,
                         },
                     ),
                 )),
@@ -363,8 +370,8 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                     Ok(ask(
                         action,
                         at,
-                        format!("{verb} the webhook to {url}?"),
-                        vec![(fact.into(), !active)],
+                        format!("{verb} this webhook?"),
+                        vec![(url, false), (fact.into(), !active)],
                         (
                             verb,
                             SettingsChange::UpdateHook {
@@ -627,7 +634,7 @@ pub enum Form {
         repo: RepoId,
         repo_id: NodeId,
         /// The rule edited: its ID, what it asks, its checks' apps.
-        rule: Option<Box<(NodeId, RuleForm, Vec<(String, NodeId)>)>>,
+        rule: Option<Box<Editing>>,
     },
     Hook {
         repo: RepoId,
@@ -637,6 +644,9 @@ pub enum Form {
         repo: RepoId,
     },
 }
+
+/// A rule being edited: its ID, what it asks, its checks' apps.
+pub type Editing = (NodeId, RuleForm, Vec<(String, NodeId)>);
 
 impl Form {
     pub fn title(&self) -> String {
@@ -952,7 +962,7 @@ fn confirm(form: &Form, text: &str) -> Result<Confirm, String> {
                     .collect();
                 (
                     Action::AddSetting,
-                    format!("Protect branches matching {} in {repo}?", to.pattern),
+                    format!("Protect branches matching {}?", to.pattern),
                     facts,
                     "Create rule",
                     SettingsChange::CreateRule {
@@ -994,6 +1004,7 @@ fn confirm(form: &Form, text: &str) -> Result<Confirm, String> {
             };
             let mut facts = match hook {
                 None => vec![
+                    (format!("{URL}: {}", to.url), false),
                     (format!("{EVENTS}: {}", to.events.join(", ")), false),
                     (format!("{CONTENT}: {}", to.content_type), false),
                 ],
@@ -1011,7 +1022,7 @@ fn confirm(form: &Form, text: &str) -> Result<Confirm, String> {
             match hook {
                 None => (
                     Action::AddSetting,
-                    format!("Send {repo}'s events to {}?", to.url),
+                    format!("Add a webhook to {repo}?"),
                     facts,
                     "Add webhook",
                     SettingsChange::CreateHook {
@@ -1025,13 +1036,13 @@ fn confirm(form: &Form, text: &str) -> Result<Confirm, String> {
                     }
                     (
                         Action::EditSetting,
-                        format!("Change the webhook to {}?", base.url),
+                        "Change this webhook?".into(),
                         facts,
                         "Save webhook",
                         SettingsChange::UpdateHook {
                             repo: repo.clone(),
                             id: h.0,
-                            from: Box::new(base.clone()),
+                            from: Box::new(base),
                             to: Box::new(to),
                         },
                     )
@@ -1314,8 +1325,9 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
                 (
                     "Archive",
                     vec![
+                        ("The last ask: it's done on ↵".to_owned(), false),
                         (
-                            "It becomes read-only: no pushes, issues, pull requests, comments or settings changes"
+                            "It becomes read-only: no pushes, issues, pull requests or comments"
                                 .to_owned(),
                             true,
                         ),
@@ -1325,7 +1337,10 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
             } else {
                 (
                     "Unarchive",
-                    vec![("It becomes writable again".to_owned(), false)],
+                    vec![
+                        ("The last ask: it's done on ↵".to_owned(), false),
+                        ("It becomes writable again".to_owned(), false),
+                    ],
                 )
             };
             let change = SettingsChange::Archive {
@@ -1335,7 +1350,7 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
             let confirm = asking(
                 Action::ToggleSetting,
                 at,
-                format!("{verb} {name}? This is the last ask"),
+                format!("{verb} {name}?"),
                 facts,
                 (&format!("{verb} repository"), change),
             );
@@ -1370,9 +1385,10 @@ pub fn shows(state: &State, c: &SettingsChange, repo: &RepoId, at: SettingsPage)
         (C::CreateRule { form, .. }, Settings::Branches(b)) => {
             b.rules.iter().any(|r| r.form.pattern == form.pattern)
         }
-        (C::UpdateRule { id, to, .. }, Settings::Branches(b)) => {
-            b.rules.iter().any(|r| r.id == *id && r.form == **to)
-        }
+        (C::UpdateRule { id, to, .. }, Settings::Branches(b)) => b
+            .rules
+            .iter()
+            .any(|r| r.id == *id && same_rule(&r.form, to)),
         (C::DeleteRule { id, .. }, Settings::Branches(b)) => b.rules.iter().all(|r| r.id != *id),
         (
             C::SetRuleset {
@@ -1433,11 +1449,29 @@ pub fn shows(state: &State, c: &SettingsChange, repo: &RepoId, at: SettingsPage)
 /// A webhook as GitHub shows it matches the form (its secret is never
 /// shown).
 fn same_hook(shown: &HookForm, form: &HookForm) -> bool {
-    let without = |h: &HookForm| HookForm {
-        secret: None,
-        ..h.clone()
+    let without = |h: &HookForm| {
+        let mut events = h.events.clone();
+        events.sort_unstable();
+        HookForm {
+            secret: None,
+            events,
+            ..h.clone()
+        }
     };
     without(shown) == without(form)
+}
+
+/// A rule as GitHub shows it matches the form, whatever order it lists
+/// the checks in.
+fn same_rule(shown: &RuleForm, form: &RuleForm) -> bool {
+    let sorted = |f: &RuleForm| {
+        let mut f = f.clone();
+        if let Some(c) = &mut f.checks {
+            c.contexts.sort_unstable();
+        }
+        f
+    };
+    sorted(shown) == sorted(form)
 }
 
 // ---- what changes say ------------------------------------------------------------
@@ -1743,9 +1777,9 @@ mod tests {
                 Some("s3".into())
             ))
         );
-        assert!(parse_hook("Payload URL: example.com", &HookForm::default()).is_err());
+        parse_hook("Payload URL: example.com", &HookForm::default()).unwrap_err();
         let key = parse_key("Title: ci\nAllow write access: yes\nKey: ssh-ed25519 AAAA me@x");
         assert_eq!(key, Ok(("ci".into(), "ssh-ed25519 AAAA me@x".into(), true)));
-        assert!(parse_key("Title: ci\nKey: hello").is_err());
+        parse_key("Title: ci\nKey: hello").unwrap_err();
     }
 }
