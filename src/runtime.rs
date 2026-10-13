@@ -11,7 +11,7 @@ use crate::store::{DraftComment, ReviewState, Reviews};
 use crate::ui::bars::Notice;
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind, MouseEventKind};
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 
@@ -118,16 +118,10 @@ async fn drive(
     loop {
         let msg = tokio::select! {
             event = events.next() => match event {
-                Some(Ok(Event::Key(key))) if key.kind != KeyEventKind::Release => Msg::Key(key),
-                Some(Ok(Event::Resize(w, h))) => Msg::Resize(w, h),
-                Some(Ok(Event::Paste(text))) => Msg::Paste(text),
-                Some(Ok(Event::FocusGained)) => Msg::Focus(true),
-                Some(Ok(Event::FocusLost)) => Msg::Focus(false),
-                Some(Ok(Event::Mouse(m))) if matches!(
-                    m.kind,
-                    MouseEventKind::Down(_) | MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
-                ) => Msg::Mouse(m),
-                Some(Ok(_)) => continue,
+                Some(Ok(event)) => match event_msg(event) {
+                    Some(msg) => msg,
+                    None => continue,
+                },
                 Some(Err(err)) => return Err(err.into()),
                 None => return Ok(()),
             },
@@ -139,6 +133,24 @@ async fn drive(
             }
         };
         let mut cmds = apply_msg(&mut state, msg);
+        // Every key, scroll or resize that's ready is drawn once; each is
+        // settled first, as the next may act on the page it opened. They
+        // wait while the editor is to open, or ghtui to quit.
+        let editing = |cmds: &[Cmd]| cmds.iter().any(|c| matches!(c, Cmd::Edit { .. }));
+        while !state.quit
+            && !editing(&cmds)
+            && let Some(event) = events.next().now_or_never()
+        {
+            // Ended: the loop sees it next.
+            let Some(event) = event.transpose()? else {
+                break;
+            };
+            let Some(msg) = event_msg(event) else {
+                continue;
+            };
+            cmds.extend(state.settle());
+            cmds.extend(apply_msg(&mut state, msg));
+        }
         // Drain whatever else is ready so a burst of results is settled
         // and drawn once.
         while let Ok(msg) = rx.try_recv() {
@@ -160,6 +172,26 @@ async fn drive(
         }
         draw(terminal, &state, dump.as_deref())?;
     }
+}
+
+/// What a terminal event means to ghtui, if anything.
+fn event_msg(event: Event) -> Option<Msg> {
+    Some(match event {
+        Event::Key(key) if key.kind != KeyEventKind::Release => Msg::Key(key),
+        Event::Resize(w, h) => Msg::Resize(w, h),
+        Event::Paste(text) => Msg::Paste(text),
+        Event::FocusGained => Msg::Focus(true),
+        Event::FocusLost => Msg::Focus(false),
+        Event::Mouse(m)
+            if matches!(
+                m.kind,
+                MouseEventKind::Down(_) | MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
+            ) =>
+        {
+            Msg::Mouse(m)
+        }
+        _ => return None,
+    })
 }
 
 /// Draws `state`, and with a `dump` path writes the frame's text there.
