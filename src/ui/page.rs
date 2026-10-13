@@ -86,6 +86,8 @@ pub enum WriteLink {
     Remove(usize),
     AddFile,
     Save,
+    /// A release's asset, by its name: opening it saves it.
+    Asset(String),
 }
 
 /// What a row of the form that runs a workflow by hand does.

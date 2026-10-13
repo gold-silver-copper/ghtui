@@ -226,6 +226,11 @@ pub enum Route {
     },
     /// A new release's form.
     NewRelease(RepoId),
+    /// The form editing a release, by its tag.
+    EditRelease {
+        repo: RepoId,
+        tag: String,
+    },
     /// A new gist's form.
     NewGist,
     /// The form changing one of your gists.
@@ -540,6 +545,11 @@ impl Route {
             Route::NewIssue(repo) => format!("{}/issues/new", links::repo(repo)),
             Route::NewPr(repo) => format!("{}/compare", links::repo(repo)),
             Route::NewRelease(repo) => format!("{}/releases/new", links::repo(repo)),
+            Route::EditRelease { repo, tag } => format!(
+                "{}/releases/edit/{}",
+                links::repo(repo),
+                links::encode_path(tag)
+            ),
             Route::NewGist => format!("{}/", links::gists()),
             Route::EditGist { owner, id } => format!("{}/{owner}/{id}/edit", links::gists()),
             Route::WikiEdit { repo, page } => match page {
@@ -657,6 +667,7 @@ impl Route {
             Route::NewIssue(repo) => format!("{repo} · New issue"),
             Route::NewPr(repo) => format!("{repo} · New pull request"),
             Route::NewRelease(repo) => format!("{repo} · New release"),
+            Route::EditRelease { repo, tag } => format!("{repo} · Editing {tag}"),
             Route::NewGist => "New gist".to_owned(),
             Route::EditGist { id, .. } => format!("Editing gist {}", id.get(..7).unwrap_or(id)),
             Route::WikiEdit { repo, page: None } => format!("{repo} · New wiki page"),
@@ -730,6 +741,7 @@ impl Route {
             | Route::NewIssue(repo)
             | Route::NewPr(repo)
             | Route::NewRelease(repo)
+            | Route::EditRelease { repo, .. }
             | Route::WikiEdit { repo, .. }
             | Route::Dispatch { repo, .. }
             | Route::Projects(ProjectsOf::Repo(repo))
@@ -1137,6 +1149,10 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             tag: tag.join("/"),
         },
         ["releases", "new"] => Route::NewRelease(repo),
+        ["releases", "edit", tag @ ..] if !tag.is_empty() => Route::EditRelease {
+            repo,
+            tag: tag.join("/"),
+        },
         ["wiki", "_new"] => Route::WikiEdit { repo, page: None },
         ["wiki", page, "_edit"] if !page.contains(char::is_control) => Route::WikiEdit {
             repo,
@@ -2788,6 +2804,9 @@ pub(crate) mod tests {
                 (repo(), "[A-Za-z0-9._-]{1,12}")
                     .prop_filter("not . or ..", |(_, t)| t != "." && t != "..")
                     .prop_map(|(repo, tag)| Route::Release { repo, tag }),
+                (repo(), "[A-Za-z0-9._-]{1,12}")
+                    .prop_filter("not . or ..", |(_, t)| t != "." && t != "..")
+                    .prop_map(|(repo, tag)| Route::EditRelease { repo, tag }),
                 repo().prop_map(Route::Repo),
                 (repo(), rev.clone(), path()).prop_map(|(repo, rev, path)| Route::Tree {
                     repo,

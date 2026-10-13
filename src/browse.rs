@@ -434,6 +434,12 @@ pub fn needs(route: &Route) -> Vec<Need> {
             Need::Data(K::Tags(repo.clone())),
             Need::Data(K::Branches(repo.clone())),
         ],
+        Route::EditRelease { repo, tag } => vec![
+            header(repo),
+            Need::Data(K::Release(repo.clone(), tag.clone())),
+            Need::Data(K::Tags(repo.clone())),
+            Need::Data(K::Branches(repo.clone())),
+        ],
         Route::WikiEdit { repo, page } => vec![
             header(repo),
             Need::Data(crate::wiki::form::key(repo, page.as_ref())),
@@ -767,6 +773,7 @@ impl State {
             | Route::NewIssue(_)
             | Route::NewPr(_)
             | Route::NewRelease(_)
+            | Route::EditRelease { .. }
             | Route::NewGist
             | Route::EditGist { .. }
             | Route::WikiEdit { .. }
@@ -995,7 +1002,13 @@ impl State {
             Route::NewRelease(repo) => {
                 let header = f.get::<RepoOverview>(&DataKey::Repo(repo.clone()));
                 if header.show(&mut page, &title).is_some() {
-                    crate::release::build(self, &mut page, repo);
+                    crate::release::build(self, &mut page, route, repo);
+                }
+            }
+            Route::EditRelease { repo, tag } => {
+                let key = DataKey::Release(repo.clone(), tag.clone());
+                if f.get::<Release>(&key).show(&mut page, &title).is_some() {
+                    crate::release::build(self, &mut page, route, repo);
                 }
             }
             Route::NewGist => crate::gist::build(self, &mut page, route),

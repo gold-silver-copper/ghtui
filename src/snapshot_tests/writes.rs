@@ -89,7 +89,12 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
         prerelease: false,
         latest: true,
     };
-    let create = Cmd::Write(Work::Release(crate::release::Work::Create(new)));
+    let route = Route::NewRelease(repo.clone());
+    let create = Cmd::Write(Work::Release(crate::release::Work::Save {
+        route: route.clone(),
+        id: None,
+        new,
+    }));
     assert_eq!(sent, [create]);
 
     let made = Made {
@@ -97,7 +102,7 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
         draft: false,
         html_url: String::new(),
     };
-    let done = crate::release::Done::Created(repo.clone(), Ok(made));
+    let done = crate::release::Done::Saved(route, Ok(made));
     update(&mut s, Msg::Write(Done::Release(done)));
     let page = Route::Release {
         repo: repo.clone(),

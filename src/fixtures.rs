@@ -1261,6 +1261,7 @@ pub fn release(full: bool) -> Release {
         url: format!("https://github.com/gold-silver-copper/ghtui/releases/download/v0.2.0/{name}"),
     };
     Release {
+        id: Some(272_100_001),
         name: "ghtui 0.2.0".into(),
         tag: "v0.2.0".into(),
         published_at: Some("2026-09-30T12:00:00Z".into()),

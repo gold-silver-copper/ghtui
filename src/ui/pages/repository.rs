@@ -419,7 +419,8 @@ pub fn releases(page: &mut Page, repo: &RepoId, list: Fetched<'_, Results<Releas
     });
 }
 
-/// A release: its notes and its assets (downloads stay on GitHub).
+/// A release: its notes and its assets, each with its size and how
+/// often it was downloaded (`↵` on one saves it).
 pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
     let mut title = vec![Seg::new(r.name.clone(), Role::Title)];
     release_chips(&mut title, r);
@@ -450,30 +451,29 @@ pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
         format!("Assets  {}", count_of(&r.assets)),
         Role::Strong,
     )];
-    list_box(
-        page,
-        title,
-        Vec::new(),
-        &r.assets,
-        "No assets.",
-        |page, a| {
-            item(page, a.url.clone(), |page, link| {
-                let right = vec![Seg::new(
-                    format!(
-                        "{} · {}",
-                        crate::ui::text::size(a.size),
-                        plural(a.downloads, "download")
-                    ),
-                    Role::Meta,
-                )];
-                page.box_line(
-                    vec![Seg::linked(a.name.clone(), Role::Link, link)],
-                    right,
-                    0,
-                );
-            });
-        },
-    );
+    let hint = if r.assets.is_empty() {
+        Vec::new()
+    } else {
+        vec![Seg::new("↵ saves one", Role::Meta)]
+    };
+    list_box(page, title, hint, &r.assets, "No assets.", |page, a| {
+        let target = Link::Write(crate::ui::page::WriteLink::Asset(a.name.clone()));
+        item(page, target, |page, link| {
+            let right = vec![Seg::new(
+                format!(
+                    "{} · {}",
+                    crate::ui::text::size(a.size),
+                    plural(a.downloads, "download")
+                ),
+                Role::Meta,
+            )];
+            page.box_line(
+                vec![Seg::linked(a.name.clone(), Role::Link, link)],
+                right,
+                0,
+            );
+        });
+    });
 }
 
 /// A repository's tags, each linked to its code.

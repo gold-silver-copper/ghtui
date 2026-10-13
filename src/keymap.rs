@@ -214,8 +214,8 @@ actions! {
     UpdateBranch      "update_branch"     [",u"]                   Global "Update the branch from its base";
     Close             "close"             [",x"]                   Global "Close (as a duplicate too) or reopen (an alert: dismiss it); on a running run, cancel it";
     Rerun             "rerun"             [",R"]                   Global "Re-run the workflow run or job";
-    EditComment       "edit"              [",e"]                   Global "Edit the comment or description (a wiki page, your gist)";
-    DeleteComment     "delete_comment"    [",D"]                   Global "Delete the comment (your gist, a package's version, your list)";
+    EditComment       "edit"              [",e"]                   Global "Edit the comment or description (a wiki page, your gist, a release)";
+    DeleteComment     "delete_comment"    [",D"]                   Global "Delete the comment (your gist, a release or its asset, a package's version, your list)";
     React             "react"             [",+"]                   Global "React to the comment, issue or pull request";
     Checkout          "checkout"          [",c"]                   Global "Check out the pull request in your clone (an issue: a new branch for it)";
     Watch             "watch"             [",w"]                   Global "Subscribe to or ignore the thread; watch the repository";
@@ -242,6 +242,7 @@ actions! {
     PushBranch        "push_branch"       [",P"]                   Page   "Push the branch to GitHub";
     MarkAnswer        "mark_answer"       [",!"]                   Page   "Mark the comment as the discussion's answer, or unmark it";
     NewRelease        "new_release"       [",V"]                   Page   "New release";
+    UploadAsset       "upload_asset"      [",U"]                   Page   "Upload an asset to the release";
     NewGist           "new_gist"          [",G"]                   Page   "New gist";
     NewWikiPage       "new_wiki_page"     [",W"]                   Page   "New wiki page";
     RunWorkflow       "run_workflow"      [",E"]                   Page   "Run the workflow by hand";

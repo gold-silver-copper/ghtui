@@ -703,6 +703,8 @@ mod discussions;
 /// and base, a revert, locking, pinning, moving, hiding a comment,
 /// sub-issues and what blocks it, a branch for it, new discussions.
 mod manage;
+/// Changing a release and its assets.
+mod releases;
 /// Reviews and timelines: what a review said and where, the reviewers,
 /// every review, and the events between comments.
 mod reviews;

@@ -3351,6 +3351,131 @@ async fn a_release_is_made_as_written() {
     assert_eq!(seen[1].json(), serde_json::json!({ "tag_name": "v1.2" }));
 }
 
+/// An edit sends the whole release to its ID (a draft never told it's
+/// the latest); deleting a release leaves its tag, which is deleted
+/// apart, by its ref.
+#[tokio::test]
+async fn a_release_is_edited_and_deleted_with_its_tag_apart() {
+    use ghtui::api::release::NewRelease;
+    let made = r#"{"tag_name":"v1.3","draft":true,"html_url":""}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(200, made),
+        Reply::new(204, ""),
+        Reply::new(204, ""),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let edit = NewRelease {
+        repo: repo.clone(),
+        tag: "v1.3".into(),
+        target: None,
+        name: "Version 1.3".into(),
+        notes: "Fixes".into(),
+        draft: true,
+        prerelease: false,
+        latest: true,
+    };
+    assert!(gh.update_release(7, &edit).await.unwrap().draft);
+    gh.delete_release(&repo, 7).await.unwrap();
+    gh.delete_tag(&repo, "v1.3").await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("PATCH /repos/o/r/releases/7 ")
+    );
+    let body = seen[0].json();
+    assert_eq!(body["tag_name"], "v1.3");
+    assert_eq!(body["name"], "Version 1.3");
+    assert_eq!(body["draft"], true);
+    assert_eq!(body.get("make_latest"), None);
+    assert!(
+        seen[1]
+            .request_line
+            .starts_with("DELETE /repos/o/r/releases/7 ")
+    );
+    assert!(
+        seen[2]
+            .request_line
+            .starts_with("DELETE /repos/o/r/git/refs/tags/v1.3 ")
+    );
+}
+
+/// An asset is found by its name among the release's (REST's IDs), and
+/// its bytes asked for as such; a file there already is kept unless it's
+/// to be replaced. An upload goes to the release's upload URL (another
+/// host), named and typed; deleting goes by its ID.
+#[tokio::test]
+async fn release_assets_are_saved_uploaded_and_deleted() {
+    let (uploads, uploaded) = serve(vec![Reply::new(201, "{}")]).await;
+    let assets = r#"[{"id":41,"name":"a.txt"},{"id":42,"name":"b.tar.gz"}]"#;
+    let release = format!(
+        r#"{{"id":7,"upload_url":"{uploads}/repos/o/r/releases/7/assets{{?name,label}}"}}"#
+    );
+    let (gh, seen) = github(vec![
+        Reply::new(200, assets),
+        Reply::new(200, "the bytes"),
+        Reply::new(200, assets),
+        Reply::new(200, "the bytes again"),
+        Reply::new(200, release),
+        Reply::new(200, assets),
+        Reply::new(204, ""),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("b.tar.gz");
+    let size = (gh.download_asset(&repo, 7, "b.tar.gz", &dest, false))
+        .await
+        .unwrap();
+    assert_eq!(size, 9);
+    assert_eq!(std::fs::read_to_string(&dest).unwrap(), "the bytes");
+    // Not over it without being told to.
+    std::fs::write(&dest, "mine").unwrap();
+    let kept = gh.download_asset(&repo, 7, "b.tar.gz", &dest, false).await;
+    assert!(kept.is_err());
+    assert_eq!(std::fs::read_to_string(&dest).unwrap(), "mine");
+    let file = dir.path().join("notes v2.txt");
+    std::fs::write(&file, "new notes").unwrap();
+    (gh.upload_asset(&repo, 7, &file, "notes v2.txt"))
+        .await
+        .unwrap();
+    gh.delete_asset(&repo, 7, "a.txt").await.unwrap();
+
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("GET /repos/o/r/releases/7/assets?per_page=100&page=1 ")
+    );
+    assert!(
+        seen[1]
+            .request_line
+            .starts_with("GET /repos/o/r/releases/assets/42 ")
+    );
+    assert_eq!(seen[1].header("accept"), Some("application/octet-stream"));
+    assert!(
+        seen[4]
+            .request_line
+            .starts_with("GET /repos/o/r/releases/7 ")
+    );
+    assert!(
+        seen[6]
+            .request_line
+            .starts_with("DELETE /repos/o/r/releases/assets/41 ")
+    );
+    let uploaded = uploaded.lock().unwrap();
+    assert!(
+        uploaded[0]
+            .request_line
+            .starts_with("POST /repos/o/r/releases/7/assets?name=notes+v2.txt "),
+        "{}",
+        uploaded[0].request_line
+    );
+    assert_eq!(uploaded[0].header("content-type"), Some("text/plain"));
+    assert_eq!(uploaded[0].body, "new notes");
+}
+
 /// A gist is made with its files and visibility; an edit sends only what
 /// changed (a removed file as null); deleting deletes it.
 #[tokio::test]

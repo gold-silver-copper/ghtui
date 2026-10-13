@@ -221,6 +221,9 @@ pub struct UserSummary {
 /// A release, as listed (no notes or assets) or on its page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Release {
+    /// What REST names it by (to edit or delete it, and its assets).
+    #[serde(default)]
+    pub id: Option<u64>,
     pub name: String,
     pub tag: String,
     /// ISO 8601; drafts aren't published.
@@ -4679,6 +4682,7 @@ pub struct ReleaseList {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Release", schema_module = "schema")]
 pub struct WireRelease {
+    pub database_id: Option<i32>,
     pub name: Option<String>,
     pub tag_name: String,
     pub published_at: Option<DateTime>,
@@ -4817,6 +4821,7 @@ pub enum TaggedObject {
 impl WireRelease {
     fn into_release(self) -> Release {
         Release {
+            id: self.database_id.and_then(|id| u64::try_from(id).ok()),
             name: self
                 .name
                 .filter(|n| !n.trim().is_empty())

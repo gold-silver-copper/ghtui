@@ -234,6 +234,10 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             ..
         } => Route::user(org),
         Route::Release { repo, .. } | Route::NewRelease(repo) => Route::Releases(repo.clone()),
+        Route::EditRelease { repo, tag } => Route::Release {
+            repo: repo.clone(),
+            tag: tag.clone(),
+        },
         Route::Dispatch { repo, file } => Route::Workflow {
             repo: repo.clone(),
             file: file.clone(),

@@ -822,11 +822,25 @@ impl GitHub {
         dest: &std::path::Path,
         replace: bool,
     ) -> Result<u64, ApiError> {
+        self.download_as(path, "application/vnd.github+json", dest, replace)
+            .await
+    }
+
+    /// [`Self::download`], asking for the answer as `accept` (a release
+    /// asset's bytes are `application/octet-stream`).
+    pub(crate) async fn download_as(
+        &self,
+        path: &str,
+        accept: &str,
+        dest: &std::path::Path,
+        replace: bool,
+    ) -> Result<u64, ApiError> {
         let failed =
             |e: &dyn std::fmt::Display| ApiError::Network(format!("{}: {e}", dest.display()));
         let client = self.client().await?;
         let mut response = client
             .get(format!("{}{path}", self.http.rest))
+            .header(header::ACCEPT, accept)
             .send()
             .await
             .map_err(|e| ApiError::Network(e.to_string()))?;
@@ -870,6 +884,40 @@ impl GitHub {
         };
         kept.map_err(|e| failed(&e.error))?;
         Ok(size)
+    }
+
+    /// Sends the file at `file` to `url` (a release's upload URL, on
+    /// GitHub's uploads host), as it's read, as `content_type`: GitHub's
+    /// answer. Never sent twice.
+    pub(crate) async fn upload(
+        &self,
+        url: &str,
+        content_type: &str,
+        file: &std::path::Path,
+    ) -> Result<String, ApiError> {
+        let failed =
+            |e: &dyn std::fmt::Display| ApiError::Network(format!("{}: {e}", file.display()));
+        let client = self.client().await?;
+        let opened = tokio::fs::File::open(file).await.map_err(|e| failed(&e))?;
+        let size = opened.metadata().await.map_err(|e| failed(&e))?.len();
+        let response = client
+            .post(url)
+            .header(header::CONTENT_TYPE, content_type)
+            .header(header::CONTENT_LENGTH, size)
+            .body(reqwest::Body::from(opened))
+            .send()
+            .await
+            .map_err(|e| ApiError::Network(e.to_string()))?;
+        let answer = Response {
+            status: response.status(),
+            headers: response.headers().clone(),
+            body: response
+                .text()
+                .await
+                .map_err(|e| ApiError::Network(e.to_string()))?,
+        };
+        check_status(&answer, "the release's assets")?;
+        Ok(answer.body)
     }
 
     /// GETs a REST path and decodes its JSON.

@@ -1,4 +1,6 @@
-//! Making a release, and the notes GitHub writes for one.
+//! Making, editing and deleting a release, the notes GitHub writes for
+//! one, and its assets: listed by REST's IDs, downloaded, uploaded and
+//! deleted.
 
 use serde::Deserialize;
 
@@ -60,6 +62,114 @@ impl GitHub {
             .await
     }
 
+    /// Changes release `id` to what `new` says (all of it: its tag,
+    /// title, notes, and whether it's a draft, a pre-release or the
+    /// latest).
+    pub async fn update_release(&self, id: u64, new: &NewRelease) -> Result<Made, ApiError> {
+        let mut body = serde_json::json!({
+            "tag_name": new.tag,
+            "name": new.name,
+            "body": new.notes,
+            "draft": new.draft,
+            "prerelease": new.prerelease,
+        });
+        if let Some(map) = body.as_object_mut() {
+            // A draft is never the latest; GitHub refuses to be told so.
+            if !new.draft {
+                let latest = new.latest && !new.prerelease;
+                map.insert("make_latest".into(), latest.to_string().into());
+            }
+            if let Some(target) = &new.target {
+                map.insert("target_commitish".into(), target.clone().into());
+            }
+        }
+        let path = format!("/repos/{}/releases/{id}", new.repo);
+        self.rest_write_json(http::Method::PATCH, &path, Some(&body))
+            .await
+    }
+
+    /// Deletes release `id` (its tag stays).
+    pub async fn delete_release(&self, repo: &RepoId, id: u64) -> Result<(), ApiError> {
+        let path = format!("/repos/{repo}/releases/{id}");
+        self.rest_write(http::Method::DELETE, &path, None).await
+    }
+
+    /// Deletes tag `tag` on GitHub.
+    pub async fn delete_tag(&self, repo: &RepoId, tag: &str) -> Result<(), ApiError> {
+        let tag = crate::ui::pages::url::encode_path(tag);
+        let path = format!("/repos/{repo}/git/refs/tags/{tag}");
+        self.rest_write(http::Method::DELETE, &path, None).await
+    }
+
+    /// Release `id`'s asset named `name`, by REST's ID (GraphQL doesn't
+    /// say it).
+    async fn asset_id(&self, repo: &RepoId, id: u64, name: &str) -> Result<u64, ApiError> {
+        #[derive(Deserialize)]
+        struct Listed {
+            id: u64,
+            name: String,
+        }
+        // GitHub keeps at most 1,000 assets on a release.
+        for page in 1..=10 {
+            let path = format!("/repos/{repo}/releases/{id}/assets?per_page=100&page={page}");
+            let listed = self.rest_get(&path, format!("{repo}'s release assets"));
+            let listed: Vec<Listed> = serde_json::from_str(&listed.await?)?;
+            if let Some(found) = listed.iter().find(|a| a.name == name) {
+                return Ok(found.id);
+            }
+            if listed.len() < 100 {
+                break;
+            }
+        }
+        Err(ApiError::NotFound(format!("{name} on the release")))
+    }
+
+    /// Saves release `id`'s asset `name` to `dest`; an existing `dest` is
+    /// replaced only if `replace`. Its size.
+    pub async fn download_asset(
+        &self,
+        repo: &RepoId,
+        id: u64,
+        name: &str,
+        dest: &std::path::Path,
+        replace: bool,
+    ) -> Result<u64, ApiError> {
+        let asset = self.asset_id(repo, id, name).await?;
+        let path = format!("/repos/{repo}/releases/assets/{asset}");
+        self.download_as(&path, "application/octet-stream", dest, replace)
+            .await
+    }
+
+    /// Deletes release `id`'s asset `name`.
+    pub async fn delete_asset(&self, repo: &RepoId, id: u64, name: &str) -> Result<(), ApiError> {
+        let asset = self.asset_id(repo, id, name).await?;
+        let path = format!("/repos/{repo}/releases/assets/{asset}");
+        self.rest_write(http::Method::DELETE, &path, None).await
+    }
+
+    /// Uploads the file at `file` to release `id` as asset `name`, to the
+    /// upload URL GitHub gives the release (on its uploads host).
+    pub async fn upload_asset(
+        &self,
+        repo: &RepoId,
+        id: u64,
+        file: &std::path::Path,
+        name: &str,
+    ) -> Result<(), ApiError> {
+        #[derive(Deserialize)]
+        struct Uploads {
+            upload_url: String,
+        }
+        let path = format!("/repos/{repo}/releases/{id}");
+        let at = self.rest_get(&path, format!("{repo}'s release"));
+        let at: Uploads = serde_json::from_str(&at.await?)?;
+        // `https://uploads.github.com/repos/o/r/releases/1/assets{?name,label}`
+        let base = at.upload_url.split('{').next().unwrap_or_default();
+        let encoded: String = url::form_urlencoded::byte_serialize(name.as_bytes()).collect();
+        let url = format!("{base}?name={encoded}");
+        self.upload(&url, content_type(name), file).await.map(drop)
+    }
+
     /// The notes GitHub would write for a release of `tag` (made at
     /// `target`, if it's new), since the release before it.
     pub async fn release_notes(
@@ -94,6 +204,28 @@ impl GitHub {
             })
         })
         .await
+    }
+}
+
+/// What an asset named `name` is sent as, by its extension, as GitHub's
+/// website would send it.
+pub fn content_type(name: &str) -> &'static str {
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("gz" | "tgz") => "application/gzip",
+        Some("zip") => "application/zip",
+        Some("xz") => "application/x-xz",
+        Some("zst") => "application/zstd",
+        Some("bz2") => "application/x-bzip2",
+        Some("tar") => "application/x-tar",
+        Some("json") => "application/json",
+        Some("txt" | "sha256" | "sha512" | "asc" | "sig") => "text/plain",
+        Some("pdf") => "application/pdf",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("deb") => "application/vnd.debian.binary-package",
+        Some("rpm") => "application/x-rpm",
+        _ => "application/octet-stream",
     }
 }
 
