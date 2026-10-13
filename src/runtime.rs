@@ -1365,6 +1365,19 @@ fn draft_file(text: &str) -> std::io::Result<tempfile::NamedTempFile> {
     Ok(file)
 }
 
+/// Clears the screen and has the next frame drawn whole. Not
+/// [`ratatui::Terminal::clear`]: it asks the terminal where its cursor is
+/// first, which right after an editor (input not yet read again) can time
+/// out, leaving the screen blank but for what changes.
+fn redraw_whole(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+    use ratatui::backend::Backend;
+    terminal.backend_mut().clear()?;
+    // Each swap blanks the buffer it leaves behind: twice, both are.
+    terminal.swap_buffers();
+    terminal.swap_buffers();
+    Ok(())
+}
+
 /// Suspends the TUI and edits `text` in `$VISUAL`/`$EDITOR` (default `vi`).
 /// Terminal input is released for the editor and taken back after.
 async fn edit_externally(
@@ -1396,7 +1409,7 @@ async fn edit_externally(
                     .execute(crossterm::terminal::EnterAlternateScreen)
                     .map(drop)
             })
-            .and_then(|()| terminal.clear());
+            .and_then(|()| redraw_whole(terminal));
         crate::capture_input(true);
         if let Err(err) = restored {
             tracing::error!(%err, "couldn't restore the terminal after the editor");
