@@ -298,9 +298,10 @@ impl Text {
 
     fn route(&self) -> Route {
         match self {
-            Text::Release(route) | Text::GistFile(route, _) | Text::Wiki(route) | Text::Housekeeping(route) => {
-                route.clone()
-            }
+            Text::Release(route)
+            | Text::GistFile(route, _)
+            | Text::Wiki(route)
+            | Text::Housekeeping(route) => route.clone(),
         }
     }
 }

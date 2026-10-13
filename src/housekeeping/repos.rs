@@ -159,6 +159,22 @@ pub(super) fn owner_rows(
 }
 
 /// The `.gitignore` or licence picker's rows: none, then GitHub's.
+/// The licence row, by the licence's name (`MIT License`), not the key
+/// GitHub's API takes (`mit`).
+fn licence_row(state: &State, f: &Form) -> crate::ui::pages::FormRow {
+    let mut row = form_row(f, Field::License, "None");
+    let templates = state.picked::<Templates>(&DataKey::Housekeeping(Key::Templates));
+    let named = templates.and_then(|t| {
+        (t.licenses.iter())
+            .find(|(key, _)| *key == row.value)
+            .map(|(_, name)| name.clone())
+    });
+    if let Some(name) = named {
+        row.value = name;
+    }
+    row
+}
+
 pub(super) fn template_rows(
     state: &State,
     route: &Route,
@@ -356,7 +372,7 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
                 form_row(f, Field::Private, ""),
                 form_row(f, Field::Readme, ""),
                 form_row(f, Field::Gitignore, "None"),
-                form_row(f, Field::License, "None"),
+                licence_row(state, f),
             ],
             Vec::new(),
         ),

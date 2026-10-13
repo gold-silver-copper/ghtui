@@ -548,7 +548,11 @@ fn transfer(cx: &mut Cx) -> Result<()> {
         Ok(issues.into_iter().next())
     })?;
     let moved = moved["number"].as_u64().context("no number")?;
-    ghtui.wait_for(&format!("Moved {}#{number} to {to}#{moved}", gh::REPO))?;
+    // The page goes with it: the other repository's issue, under its
+    // number there (the "Moved …" notice may have gone by now).
+    let (owner, repo) = to.split_once('/').context("an owner/name")?;
+    ghtui.wait_for(&format!("{owner} / {repo}"))?;
+    ghtui.wait_for(&format!("#{moved}"))?;
     Ok(())
 }
 

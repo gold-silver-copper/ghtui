@@ -270,7 +270,10 @@ fn lists(cx: &mut Cx) -> Result<()> {
     until("the list gone from GitHub", GITHUB, || {
         Ok(list_named(&name)?.is_none().then_some(()))
     })?;
-    ghtui.wait_for(&format!("Deleted the list “{name}”"))?;
+    // The page goes back to your stars, without it (the "Deleted …"
+    // notice may have gone by now).
+    ghtui.wait_for("Starred")?;
+    ghtui.wait_gone(&name)?;
     Ok(())
 }
 

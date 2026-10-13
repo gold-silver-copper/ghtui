@@ -11,15 +11,15 @@ pub mod corpus;
 pub mod create;
 pub mod discussion;
 pub mod edit;
-pub mod explore;
 pub mod enterprise;
+pub mod explore;
 #[doc(hidden)]
 pub mod fuzz;
 pub mod gist;
-pub mod manage;
+pub mod housekeeping;
 pub mod insights;
 pub mod lists;
-pub mod housekeeping;
+pub mod manage;
 pub mod mention;
 pub mod model;
 pub mod notifications;

@@ -70,7 +70,7 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     let mut facts = vec![(
-        "It can't be brought back, and whoever pulls it by name or digest gets an error".to_owned(),
+        "It can't be brought back: pulling it by name or digest fails".to_owned(),
         true,
     )];
     if !v.tags.is_empty() {
@@ -85,7 +85,11 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
     let Some(route) = state.route().cloned() else {
         return Vec::new();
     };
-    let name = v.name.clone();
+    // A digest by its first twelve characters, as GitHub shows it.
+    let name = match v.name.strip_prefix("sha256:") {
+        Some(hex) => format!("sha256:{}", hex.get(..12).unwrap_or(hex)),
+        None => v.name.clone(),
+    };
     crate::writes::ask(
         state,
         route,

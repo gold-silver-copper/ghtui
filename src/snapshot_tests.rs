@@ -699,15 +699,15 @@ mod projects;
 /// Discussions: writing an answer, replying in a thread, reacting and
 /// marking the answer, each followed until GitHub shows it.
 mod discussions;
+/// Labels, milestones, branches and tags, forks, new repositories and
+/// files.
+mod housekeeping;
 /// Managing an issue, a pull request or a discussion: its branch, draft
 /// and base, a revert, locking, pinning, moving, hiding a comment,
 /// sub-issues and what blocks it, a branch for it, new discussions.
 mod manage;
 /// Changing a release and its assets.
 mod releases;
-/// Labels, milestones, branches and tags, forks, new repositories and
-/// files.
-mod housekeeping;
 /// Reviews and timelines: what a review said and where, the reviewers,
 /// every review, and the events between comments.
 mod reviews;
