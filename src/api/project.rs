@@ -899,7 +899,11 @@ impl GitHub {
         .await
         .map_err(scoped)?;
         self.check_connection(&items, ITEMS, &what);
-        Ok(items.filter_results(WireItem::into_item))
+        let mut items = items.filter_results(WireItem::into_item);
+        // An Enterprise Server older than 3.22 can't be asked for the
+        // archived apart: each item says whether it is.
+        items.items.retain(|it| it.archived == archived);
+        Ok(items)
     }
 
     /// Makes a change to a project's items.

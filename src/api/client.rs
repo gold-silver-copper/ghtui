@@ -69,6 +69,9 @@ pub enum ApiError {
     /// A bug in ghtui, not a problem with GitHub.
     #[error("internal error: {0}")]
     Internal(String),
+    /// The Enterprise Server doesn't have it, said as what and which.
+    #[error("{0}")]
+    Unsupported(String),
 }
 
 impl From<serde_json::Error> for ApiError {
@@ -103,6 +106,19 @@ pub struct GitHub {
     doubts: Arc<Mutex<Vec<String>>>,
     /// Where responses are recorded, for the corpus (never by the app).
     recorder: Option<Arc<crate::api::corpus::Recorder>>,
+    /// What an Enterprise Server is known to lack: its version's (asked
+    /// once), what it said it lacks, and what of it was said.
+    enterprise: Arc<Enterprise>,
+}
+
+/// An Enterprise Server's version, and what it's known to lack.
+#[derive(Default)]
+struct Enterprise {
+    server: tokio::sync::OnceCell<crate::api::enterprise::Server>,
+    learned: Mutex<Vec<crate::api::enterprise::Lack>>,
+    /// What pages go without, said once each: what was, and what's yet
+    /// to be.
+    said: Mutex<(Vec<String>, Vec<String>)>,
 }
 
 struct Http {
@@ -229,7 +245,137 @@ impl GitHub {
             left_out: Arc::default(),
             doubts: Arc::default(),
             recorder: None,
+            enterprise: Arc::default(),
         }
+    }
+
+    /// For tests: an Enterprise Server `host`, served by a local server
+    /// at `base_uri` (its REST there, its GraphQL at `/graphql`).
+    pub fn enterprise_at(token: Token, store: Store, host: Host, base_uri: &str) -> Self {
+        let rest = base_uri.trim_end_matches('/');
+        let graphql = format!("{rest}/graphql");
+        Self::with_bases(token, store, host, rest.to_owned(), graphql)
+    }
+
+    /// The Enterprise Server this is, with its version, asked once; on
+    /// github.com, `None`.
+    async fn server(&self) -> Option<crate::api::enterprise::Server> {
+        use crate::api::enterprise::{Server, Version};
+        if !self.http.host.is_enterprise() {
+            return None;
+        }
+        let server = self.enterprise.server.get_or_init(|| async {
+            #[derive(serde::Deserialize)]
+            struct Meta {
+                installed_version: Option<String>,
+            }
+            let request = Request::Get {
+                path: META,
+                cached: None,
+            };
+            let meta = (self.send_as_is(&request).await)
+                .ok()
+                .filter(|r| r.status.is_success());
+            let version = meta
+                .and_then(|r| serde_json::from_str::<Meta>(&r.body).ok())
+                .and_then(|m| Version::parse(&m.installed_version?));
+            tracing::info!(?version, "the Enterprise Server's version");
+            Server { version }
+        });
+        Some(*server.await)
+    }
+
+    /// Says, once each, what pages go without on `server`.
+    fn missing(&self, server: crate::api::enterprise::Server, about: &[String]) {
+        let mut said = self
+            .enterprise
+            .said
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (all, new) = &mut *said;
+        let fresh: Vec<String> = (about.iter())
+            .filter(|a| !all.contains(a))
+            .cloned()
+            .collect();
+        if fresh.is_empty() {
+            return;
+        }
+        all.extend(fresh.iter().cloned());
+        new.push(format!(
+            "{} doesn't have {}: ghtui goes without",
+            server.name(),
+            fresh.join(", ")
+        ));
+    }
+
+    /// What an Enterprise Server lacks that pages go without, not yet
+    /// said.
+    pub fn take_missing(&self) -> Vec<String> {
+        let mut said = self
+            .enterprise
+            .said
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::mem::take(&mut said.1)
+    }
+
+    /// A GraphQL request `body` as `server` can take it: without what it
+    /// lacks, and what its answer reads in place of each field left out.
+    fn for_server(
+        &self,
+        server: crate::api::enterprise::Server,
+        body: &Value,
+    ) -> (Value, Vec<(Vec<String>, Value)>) {
+        use crate::api::enterprise::{lacks, rewrite};
+        let mut lacks = lacks(server);
+        lacks.extend(
+            self.enterprise
+                .learned
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .cloned(),
+        );
+        let query = body
+            .get("query")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let Some(done) = rewrite(query, &lacks) else {
+            return (body.clone(), Vec::new());
+        };
+        self.missing(server, &done.about);
+        let mut sent = body.clone();
+        if let Some(map) = sent.as_object_mut() {
+            map.insert("query".into(), Value::String(done.query));
+            if let Some(Value::Object(vars)) = map.get_mut("variables") {
+                for name in &done.unused {
+                    vars.remove(name);
+                }
+            }
+        }
+        (sent, done.fills)
+    }
+
+    /// Learns what a server's refusal says it lacks; whether it learned
+    /// anything new.
+    fn learn(&self, messages: &[String]) -> bool {
+        let mut learned = self
+            .enterprise
+            .learned
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut new = false;
+        for lack in messages
+            .iter()
+            .filter_map(|m| crate::api::enterprise::learn(m))
+        {
+            if !learned.iter().any(|l| l.missing == lack.missing) {
+                tracing::info!(?lack, "the Enterprise Server lacks it");
+                learned.push(lack);
+                new = true;
+            }
+        }
+        new
     }
 
     /// Records every response into `dir`, for the corpus. The token isn't
@@ -396,6 +542,23 @@ impl GitHub {
     }
 
     async fn send(&self, request: &Request<'_>) -> Result<Response, ApiError> {
+        // A REST endpoint an Enterprise Server lacks isn't asked.
+        if let Request::Get { path, .. } | Request::Write { path, .. } = request
+            && *path != META
+            && let Some(server) = self.server().await
+            && let Some(about) = crate::api::enterprise::rest_lack(server, path)
+        {
+            self.missing(server, &[about.to_owned()]);
+            return Err(ApiError::Unsupported(format!(
+                "{} doesn't have {about}",
+                server.name()
+            )));
+        }
+        self.send_as_is(request).await
+    }
+
+    /// [`Self::send`], whatever the server lacks.
+    async fn send_as_is(&self, request: &Request<'_>) -> Result<Response, ApiError> {
         let client = self.client().await?;
         let mut attempt = 0;
         loop {
@@ -622,15 +785,36 @@ impl GitHub {
             data: Value,
             errors: Option<Vec<GqlError>>,
         }
-        let request = Request::Post {
-            body,
-            idempotent,
-            accept,
+        let server = self.server().await;
+        let mut tries = 0;
+        let (mut wire, fills) = loop {
+            let (sent, fills) = match server {
+                Some(server) => self.for_server(server, body),
+                None => (body.clone(), Vec::new()),
+            };
+            let request = Request::Post {
+                body: &sent,
+                idempotent,
+                accept,
+            };
+            let response = self.send(&request).await?;
+            check_status(&response, "GitHub's GraphQL API")?;
+            let wire: Wire = serde_json::from_str(&response.body)?;
+            // An Enterprise Server refusing a query for what it lacks
+            // has run none of it: asked again without that, it may answer.
+            tries += 1;
+            if server.is_some() && wire.data.is_null() && tries < 4 {
+                let said = (wire.errors.iter().flatten())
+                    .filter_map(|e| e.message.clone())
+                    .collect::<Vec<_>>();
+                if self.learn(&said) {
+                    continue;
+                }
+            }
+            break (wire, fills);
         };
-        let response = self.send(&request).await?;
-        check_status(&response, "GitHub's GraphQL API")?;
-        let wire: Wire = serde_json::from_str(&response.body)?;
-        let errors = wire.errors.unwrap_or_default();
+        crate::api::enterprise::patch(&mut wire.data, &fills);
+        let errors = wire.errors.take().unwrap_or_default();
         let missing_root = errors
             .iter()
             .any(|e| e.is_root() && e.explains_null(&wire.data));
@@ -3017,6 +3201,9 @@ fn messages(errors: impl IntoIterator<Item = GqlError>) -> Vec<String> {
     };
     errors.into_iter().map(said).collect()
 }
+
+/// Where an Enterprise Server says its version.
+const META: &str = "/meta";
 
 /// How many items a REST list page holds here.
 const REST_PAGE: u64 = 30;

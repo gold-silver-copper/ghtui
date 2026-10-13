@@ -297,6 +297,60 @@ const PR_RESPONSE: &str = r#"{"data":{"repository":{
   "comments": {"totalCount": 4}
 }}, "rateLimit": {"cost": 1, "limit": 5000, "remaining": 4999, "resetAt": "2026-01-01T01:00:00Z"}}}"#;
 
+/// An Enterprise Server is asked its version once. A query leaves out
+/// what that version lacks (another field stands in for one); what the
+/// server says it lacks besides is learned, and the query asked again
+/// without it, its answer reading null there. Each is said once. A REST
+/// endpoint the server lacks isn't asked at all.
+#[tokio::test]
+async fn an_older_enterprise_server_is_asked_only_what_it_has() {
+    let meta = r#"{"installed_version":"3.19.1"}"#;
+    let refused =
+        r#"{"errors":[{"message":"Field 'mergeQueueEntry' doesn't exist on type 'PullRequest'"}]}"#;
+    let mut answer: serde_json::Value = serde_json::from_str(PR_RESPONSE).unwrap();
+    answer["data"]["repository"]["pullRequest"]
+        .as_object_mut()
+        .unwrap()
+        .remove("mergeQueueEntry");
+    let behind = r#"{"data":{"repository":{"ref":{"compare":{"behindBy":0}}}}}"#;
+    let (base, seen) = serve(vec![
+        Reply::new(200, meta),
+        Reply::new(200, refused),
+        Reply::new(200, answer.to_string()),
+        Reply::new(200, behind),
+    ])
+    .await;
+    let host = ghtui::host::Host::parse("ghe.example.com").unwrap();
+    let gh = GitHub::enterprise_at(Token::new("t"), Store::disabled(), host, &base);
+    let pr = PrRef::parse("o/r#7").unwrap();
+    let detail = gh.pull_request(&pr).await.unwrap();
+    assert_eq!(detail.title, "Add thing");
+    assert_eq!(detail.queued, None);
+    let missing = gh.take_missing();
+    assert!(
+        missing[0].starts_with("GitHub Enterprise Server 3.19 doesn't have who may assign"),
+        "{missing:?}"
+    );
+    assert!(missing[1].contains("`mergeQueueEntry`"), "{missing:?}");
+    assert!(gh.take_missing().is_empty(), "said once");
+    let advisories = gh.advisories(Some(&RepoId::new("o", "r")), None).await;
+    assert!(
+        matches!(&advisories, Err(ApiError::Unsupported(why)) if why.contains("security advisories")),
+        "{advisories:?}"
+    );
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].request_line.starts_with("GET /meta "));
+    let query = |i: usize| seen[i].json()["query"].as_str().unwrap().to_owned();
+    assert!(query(1).contains("viewerCanAssign: viewerCanUpdate"));
+    assert!(query(1).contains("mergeQueueEntry"));
+    assert!(!query(2).contains("mergeQueueEntry"));
+    assert_eq!(
+        seen.len(),
+        4,
+        "the version is asked once, and no advisories"
+    );
+}
+
 #[tokio::test]
 async fn fetches_and_caches_pull_request() {
     use ghtui::api::browse::PrState;

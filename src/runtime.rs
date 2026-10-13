@@ -611,6 +611,9 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
             let text = format!("GitHub left some data out: {}", left_out.join("; "));
             let _ = tx.send(Msg::Notice(Notice::Error(text)));
         }
+        for missing in gh.take_missing() {
+            let _ = tx.send(Msg::Notice(Notice::Info(missing)));
+        }
         let doubts = gh.take_doubts();
         if !doubts.is_empty() {
             let text = format!("GitHub's answer doesn't add up: {}", doubts.join("; "));

@@ -10,8 +10,10 @@
 //!
 //! API answers name the stand-in, not github.com: URLs in their bodies and
 //! in `Link` and `Location` headers are rewritten to its host, as a real
-//! server's answers would read. `--strip FIELD` removes a field from every
-//! GraphQL answer, to stand in for an older server that lacks it.
+//! server's answers would read. To stand in for an older server,
+//! `--version 3.N` is the version its `/api/v3/meta` says, and `--strip
+//! FIELD` (or `Type.field`) a field it lacks: a query naming it is refused
+//! as an older server refuses it ("Field 'x' doesn't exist on type 'Y'").
 //!
 //! Its certificate authority is made here with `openssl`, and trusted only
 //! by the programs given [`StandIn::env`] (`SSL_CERT_FILE`,
@@ -40,10 +42,13 @@ pub struct Args {
     /// The port on localhost.
     #[arg(long, default_value_t = 8443)]
     port: u16,
-    /// Remove this field from GraphQL answers, as an older server would
-    /// lack it (again for more).
+    /// Refuse GraphQL queries naming this field (`field` or
+    /// `Type.field`), as an older server lacking it does (again for more).
     #[arg(long = "strip", value_name = "FIELD")]
     strip: Vec<String>,
+    /// The version `/api/v3/meta` says it is (`3.19.0`).
+    #[arg(long, value_name = "VERSION")]
+    version: Option<String>,
     /// Where its certificate authority is kept.
     #[arg(long, value_name = "DIR")]
     dir: Option<PathBuf>,
@@ -59,7 +64,7 @@ pub fn main(args: &Args) -> ExitCode {
         .dir
         .clone()
         .unwrap_or_else(|| crate::live::default_work_dir().join("ghes"));
-    let standin = match StandIn::start(&dir, args.port, &args.strip) {
+    let standin = match StandIn::start(&dir, args.port, &args.strip, args.version.as_deref()) {
         Ok(standin) => standin,
         Err(err) => {
             eprintln!("ghes: {err:#}");
@@ -108,8 +113,14 @@ pub struct StandIn {
 }
 
 impl StandIn {
-    /// Makes a certificate authority in `dir` (once) and starts serving.
-    pub fn start(dir: &Path, port: u16, strip: &[String]) -> Result<StandIn> {
+    /// Makes a certificate authority in `dir` (once) and starts serving,
+    /// as an older server lacking the fields in `strip`, of `version`.
+    pub fn start(
+        dir: &Path,
+        port: u16,
+        strip: &[String],
+        version: Option<&str>,
+    ) -> Result<StandIn> {
         let (ca, cert, key) = certificates(dir)?;
         let _ = rustls::crypto::ring::default_provider().install_default();
         let tls = tls_config(&cert, &key)?;
@@ -123,6 +134,7 @@ impl StandIn {
             host: host.clone(),
             client,
             strip: strip.iter().cloned().collect(),
+            version: version.map(str::to_owned),
             log: Arc::clone(&log),
         });
         let (stop, stopped) = oneshot::channel();
@@ -189,6 +201,7 @@ struct Shared {
     host: String,
     client: reqwest::Client,
     strip: HashSet<String>,
+    version: Option<String>,
     log: Arc<Mutex<Vec<String>>>,
 }
 
@@ -405,22 +418,31 @@ fn rewrite(text: &str, host: &str) -> String {
         .replace("https://github.com", &format!("https://{host}"))
 }
 
-/// Removes every field named in `strip` from a GraphQL answer's data.
-fn strip_fields(value: &mut Value, strip: &HashSet<String>) {
-    match value {
-        Value::Object(map) => {
-            map.retain(|k, _| !strip.contains(k));
-            for v in map.values_mut() {
-                strip_fields(v, strip);
-            }
-        }
-        Value::Array(items) => {
-            for v in items {
-                strip_fields(v, strip);
-            }
-        }
-        _ => {}
+/// An older server's refusal of a GraphQL query naming a field it lacks
+/// (`strip`'s `field` or `Type.field`), as GitHub's servers word it.
+fn refusal(query: &str, strip: &HashSet<String>) -> Option<String> {
+    let named = |word: &str| {
+        query
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .any(|w| w == word)
+    };
+    let (ty, field) = strip
+        .iter()
+        .map(|s| s.rsplit_once('.').unwrap_or(("Object", s)))
+        .find(|(_, field)| named(field))?;
+    let message = format!("Field '{field}' doesn't exist on type '{ty}'");
+    Some(serde_json::json!({ "errors": [{ "message": message }] }).to_string())
+}
+
+/// `/meta`'s answer with the version an Enterprise Server says there.
+fn with_version(text: &str, version: &str) -> String {
+    let Ok(mut meta) = serde_json::from_str::<Value>(text) else {
+        return text.to_owned();
+    };
+    if let Some(map) = meta.as_object_mut() {
+        map.insert("installed_version".into(), version.into());
     }
+    meta.to_string()
 }
 
 async fn forward(req: Request<Incoming>, shared: &Shared) -> Result<Response<Full<Bytes>>> {
@@ -432,6 +454,20 @@ async fn forward(req: Request<Incoming>, shared: &Shared) -> Result<Response<Ful
     let method = req.method().clone();
     let headers = req.headers().clone();
     let body = req.into_body().collect().await?.to_bytes();
+    if kind == Kind::Graphql
+        && let Ok(json) = serde_json::from_slice::<Value>(&body)
+        && let Some(refused) = refusal(json["query"].as_str().unwrap_or_default(), &shared.strip)
+    {
+        if let Ok(mut log) = shared.log.lock() {
+            log.push(format!("refused {path}: {refused}"));
+        }
+        let mut response = Response::new(Full::new(Bytes::from(refused)));
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        return Ok(response);
+    }
     let mut up = shared.client.request(method, &url);
     for (name, value) in &headers {
         // Answers come back plain, so they can be rewritten.
@@ -451,14 +487,10 @@ async fn forward(req: Request<Incoming>, shared: &Shared) -> Result<Response<Ful
     let mut bytes = answer.bytes().await?;
     if kind != Kind::Other {
         let mut text = rewrite(&String::from_utf8_lossy(&bytes), &shared.host);
-        if kind == Kind::Graphql
-            && !shared.strip.is_empty()
-            && let Ok(mut json) = serde_json::from_str::<Value>(&text)
+        if path.trim_end_matches('/') == "/api/v3/meta"
+            && let Some(version) = &shared.version
         {
-            if let Some(data) = json.get_mut("data") {
-                strip_fields(data, &shared.strip);
-            }
-            text = json.to_string();
+            text = with_version(&text, version);
         }
         bytes = Bytes::from(text);
     }
@@ -513,9 +545,23 @@ mod tests {
     }
 
     #[test]
-    fn strips_fields_at_any_depth() {
-        let mut v = serde_json::json!({"a": {"mergeQueue": 1, "b": [{"mergeQueue": 2, "c": 3}]}});
-        strip_fields(&mut v, &HashSet::from(["mergeQueue".to_owned()]));
-        assert_eq!(v, serde_json::json!({"a": {"b": [{"c": 3}]}}));
+    fn refuses_a_query_naming_a_field_it_lacks() {
+        let strip = HashSet::from(["PullRequest.mergeQueueEntry".to_owned()]);
+        let refused = refusal(
+            "query { pullRequest { mergeQueueEntry { position } } }",
+            &strip,
+        );
+        assert_eq!(
+            refused.as_deref(),
+            Some(
+                r#"{"errors":[{"message":"Field 'mergeQueueEntry' doesn't exist on type 'PullRequest'"}]}"#
+            )
+        );
+        assert_eq!(
+            refusal("query { pullRequest { mergeQueue } }", &strip),
+            None
+        );
+        let meta = with_version(r#"{"verifiable_password_authentication":true}"#, "3.19.0");
+        assert!(meta.contains(r#""installed_version":"3.19.0""#));
     }
 }

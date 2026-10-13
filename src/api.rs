@@ -12,6 +12,7 @@ pub mod create;
 pub mod discussion;
 pub mod edit;
 pub mod explore;
+pub mod enterprise;
 #[doc(hidden)]
 pub mod fuzz;
 pub mod gist;
