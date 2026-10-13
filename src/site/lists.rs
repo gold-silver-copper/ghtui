@@ -262,9 +262,25 @@ pub fn on_done(state: &mut State, work: Work, result: Result<(), String>) -> Vec
             cmds
         }
         Err(why) => {
-            state.error(format!("GitHub didn't change your lists: {why}"));
+            state.error(refused("change your lists", &why));
             Vec::new()
         }
+    }
+}
+
+/// What GitHub's refusal to `what` means: changing lists takes a
+/// classic token's `user` scope, which gh doesn't ask for.
+fn refused(what: &str, why: &str) -> String {
+    if why.contains("['user']") {
+        let flag = match crate::host::current() {
+            h if h.is_enterprise() => format!("--hostname {} ", h.name()),
+            _ => String::new(),
+        };
+        format!(
+            "Changing your lists takes your token's user scope, which it lacks: `gh auth refresh {flag}-s user` adds it"
+        )
+    } else {
+        format!("GitHub didn't {what}: {why}")
     }
 }
 
@@ -367,7 +383,7 @@ pub fn on_deleted(state: &mut State, d: Delete, result: Result<(), String>) -> V
             state.replace(stars, true, None)
         }
         Err(why) => {
-            crate::writes::say(state, format!("GitHub didn't delete the list: {why}"));
+            crate::writes::say(state, refused("delete the list", &why));
             Vec::new()
         }
     }

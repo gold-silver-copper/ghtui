@@ -72,12 +72,16 @@ pub struct Author {
 }
 
 impl Activity {
-    /// The last [`YEAR_WEEKS`] weeks, oldest first, and the Sunday the
-    /// first of them starts on.
-    pub fn last_year(&self) -> (u64, &[u32]) {
+    /// The last [`YEAR_WEEKS`] weeks, oldest first (none before the
+    /// first commit), and the Sunday the first of them starts on.
+    pub fn last_year(&self) -> (u64, Vec<u32>) {
         let skip = self.weeks.len().saturating_sub(YEAR_WEEKS);
-        let start = self.start + skip as u64 * WEEK;
-        (start, self.weeks.get(skip..).unwrap_or_default())
+        let had = self.weeks.get(skip..).unwrap_or_default();
+        let before = YEAR_WEEKS.saturating_sub(had.len());
+        let mut weeks = vec![0; before];
+        weeks.extend_from_slice(had);
+        let first = self.start + skip as u64 * WEEK;
+        (first.saturating_sub(before as u64 * WEEK), weeks)
     }
 }
 
@@ -293,7 +297,7 @@ impl GitHub {
                             repo: d.repository.and_then(|r| RepoId::parse(&r.name_with_owner)),
                         })
                         .collect(),
-                    m.dependencies.total_count,
+                    (m.dependencies.total_count).max(m.dependencies_count.unwrap_or(0)),
                 ),
                 unparseable: !m.parseable,
                 too_big: m.exceeds_max_size,
@@ -466,6 +470,8 @@ mod wire {
         pub blob_path: Option<String>,
         pub parseable: bool,
         pub exceeds_max_size: bool,
+        /// All of them: the connection's own count is only its page's.
+        pub dependencies_count: Option<u64>,
         pub dependencies: Dependencies,
     }
 

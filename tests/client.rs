@@ -3653,7 +3653,7 @@ async fn insights_read_traffic_statistics_and_the_dependency_graph() {
         Reply::new(202, "{}").on("/stats/contributors"),
         Reply::new(
             200,
-            r#"{"data":{"repository":{"dependencyGraphManifests":{"totalCount":1,"nodes":[{"filename":"Cargo.lock","blobPath":"/o/r/blob/main/Cargo.lock","parseable":true,"exceedsMaxSize":false,"dependencies":{"totalCount":1,"nodes":[{"packageName":"rand","packageManager":"RUST","requirements":"= 0.9.2","repository":{"nameWithOwner":"rust-random/rand"}}]}}]}}}}"#,
+            r#"{"data":{"repository":{"dependencyGraphManifests":{"totalCount":1,"nodes":[{"filename":"Cargo.lock","blobPath":"/o/r/blob/main/Cargo.lock","parseable":true,"exceedsMaxSize":false,"dependenciesCount":470,"dependencies":{"totalCount":1,"nodes":[{"packageName":"rand","packageManager":"RUST","requirements":"= 0.9.2","repository":{"nameWithOwner":"rust-random/rand"}}]}}]}}}}"#,
         )
         .on("/graphql"),
         Reply::new(403, r#"{"message":"Must have push access to repository"}"#),
@@ -3674,6 +3674,7 @@ async fn insights_read_traffic_statistics_and_the_dependency_graph() {
     );
     let deps = gh.dependencies(&repo).await.unwrap();
     assert_eq!(deps.manifests[0].path, "Cargo.lock");
+    assert_eq!(deps.manifests[0].dependencies.total(), 470);
     assert_eq!(
         deps.manifests[0].dependencies[0].repo,
         Some(RepoId::new("rust-random", "rand"))

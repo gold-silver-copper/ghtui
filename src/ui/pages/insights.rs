@@ -9,7 +9,7 @@ use crate::api::insights::{
 use crate::site::{InsightsTab, Page as Site};
 
 /// The columns a chart of weeks takes at most.
-const CHART: usize = 104;
+const CHART: usize = 160;
 /// A chart's height, in rows.
 const HEIGHT: usize = 6;
 
@@ -40,11 +40,38 @@ fn counted_by(a: &Activity) -> &'static str {
     }
 }
 
-/// How many columns a chart of `weeks` gets on this page, and how many
-/// weeks each column counts.
-fn chart_columns(page: &Page, weeks: usize) -> usize {
+/// A chart of `weeks` (from the Sunday `start`), as wide as the page
+/// lets it be: a week a column, several columns a week when there's
+/// room, or several weeks a column when there isn't; then the dates at
+/// its ends, and what it counts.
+fn week_chart(
+    page: &mut Page,
+    weeks: &[u32],
+    start: u64,
+    height: usize,
+    when: fn(u64) -> String,
+    note: &str,
+) {
     let room = usize::from(page.room(Frame::Body, 0)).saturating_sub(10);
-    room.min(CHART).min(weeks).max(1)
+    let n = room.min(CHART).min(weeks.len()).max(1);
+    let (size, sums) = buckets(weeks, n);
+    let width = (room.min(CHART) / sums.len().max(1)).clamp(1, 4);
+    columns(page, &sums, width, height);
+    let last = start + (weeks.len() as u64).saturating_sub(1) * WEEK;
+    column_dates(page, sums.len() * width, &when(start), &when(last));
+    let each = match size {
+        1 => "Each bar is a week, from Sunday".to_owned(),
+        n => format!("Each bar is {n} weeks"),
+    };
+    let text = format!("{each}. {note}.");
+    page.wrapped(vec![Seg::new(text, Role::Meta)], 0, Frame::Body);
+}
+
+/// Room for a bar after `used` cells of a box's line.
+fn bar_room(page: &Page, used: usize) -> usize {
+    usize::from(page.room(Frame::Body, 0))
+        .saturating_sub(used)
+        .min(60)
 }
 
 /// Contributors: commits over time, then each author's, most first.
@@ -60,21 +87,19 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
         page.box_bottom();
         return;
     }
-    let n = chart_columns(page, a.weeks.len());
-    let (size, sums) = buckets(&a.weeks, n);
-    columns(page, &sums, HEIGHT);
-    let last = a.start + (a.weeks.len() as u64).saturating_sub(1) * WEEK;
-    column_dates(page, sums.len(), &month(a.start), &month(last));
-    let each = match size {
-        1 => "Each column is a week".to_owned(),
-        n => format!("Each column is {n} weeks"),
+    // Months say a long history's ends; days a short one's.
+    let when = if a.weeks.len() > YEAR_WEEKS {
+        month
+    } else {
+        date
     };
-    body(
-        page,
-        vec![Seg::new(format!("{each}. {}.", counted_by(a)), Role::Meta)],
-    );
+    week_chart(page, &a.weeks, a.start, HEIGHT, when, counted_by(a));
     if let Some(cut) = &a.cut {
-        body(page, vec![Seg::new(format!("{cut}."), Role::Meta)]);
+        page.wrapped(
+            vec![Seg::new(format!("{cut}."), Role::Meta)],
+            0,
+            Frame::Body,
+        );
     }
     page.box_bottom();
     page.blank();
@@ -87,8 +112,13 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
     let title = vec![Seg::new(format!("Contributors  {count}"), Role::Strong)];
     let right = vec![Seg::new("commits · each week, as above", Role::Meta)];
     page.box_top(title, right);
-    let width = a.authors.iter().map(|x| x.commits).max().unwrap_or(0);
-    let digits = compact(width).len();
+    let n = usize::from(page.room(Frame::Body, 0))
+        .saturating_sub(10)
+        .min(CHART)
+        .min(a.weeks.len())
+        .max(1);
+    let most = a.authors.iter().map(|x| x.commits).max().unwrap_or(0);
+    let digits = compact(most).len();
     let names = (a.authors.iter())
         .map(|x| crate::ui::text::width(&x.name))
         .max()
@@ -144,32 +174,16 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
 pub fn commit_activity(page: &mut Page, a: &Activity) {
     let (start, weeks) = a.last_year();
     let total: u64 = weeks.iter().map(|&n| u64::from(n)).sum();
-    let title = format!(
-        "Commits in the last {} weeks  {}",
-        weeks.len(),
-        compact(total)
-    );
+    let title = format!("Commits in the last {YEAR_WEEKS} weeks  {}", compact(total));
     page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
-    let n = chart_columns(page, weeks.len());
-    let (size, sums) = buckets(weeks, n);
-    columns(page, &sums, HEIGHT + 2);
-    let last = start + (weeks.len() as u64).saturating_sub(1) * WEEK;
-    column_dates(page, sums.len(), &date(start), &date(last));
-    let each = match size {
-        1 => "Each column is a week, from Sunday".to_owned(),
-        n => format!("Each column is {n} weeks"),
-    };
-    body(
-        page,
-        vec![Seg::new(format!("{each}. {}.", counted_by(a)), Role::Meta)],
-    );
+    week_chart(page, &weeks, start, HEIGHT + 2, date, counted_by(a));
     page.box_bottom();
     page.blank();
 
     let title = format!("By day of the week, in the last {YEAR_WEEKS} weeks");
     page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
     let max = a.weekdays.iter().copied().max().map_or(0, u64::from);
-    let room = usize::from(page.room(Frame::Body, 0)).saturating_sub(16);
+    let room = bar_room(page, 13);
     for (day, n) in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
         .iter()
         .zip(a.weekdays)
@@ -179,26 +193,32 @@ pub fn commit_activity(page: &mut Page, a: &Activity) {
             page,
             vec![
                 Seg::new(format!("{day}  {:>6}  ", compact(n)), Role::Body),
-                Seg::new(bar(n, max, room.min(60)), Role::Accent),
+                Seg::new(bar(n, max, room), Role::Accent),
             ],
         );
     }
     page.box_bottom();
-    // The weeks, newest first, as numbers.
+    // The weeks with commits, newest first, as numbers.
     page.blank();
     let title = vec![Seg::new("Week by week", Role::Strong)];
     page.box_top(title, vec![Seg::new("newest first", Role::Meta)]);
     let max = weeks.iter().copied().max().map_or(0, u64::from);
-    for (i, &n) in weeks.iter().enumerate().rev() {
+    let room = bar_room(page, 22);
+    let mut any = false;
+    for (i, &n) in weeks.iter().enumerate().rev().filter(|(_, n)| **n > 0) {
+        any = true;
         let at = start + i as u64 * WEEK;
         let n = u64::from(n);
         body(
             page,
             vec![
                 Seg::new(format!("{:<13} {:>6}  ", date(at), compact(n)), Role::Body),
-                Seg::new(bar(n, max, room.min(60)), Role::Accent),
+                Seg::new(bar(n, max, room), Role::Accent),
             ],
         );
+    }
+    if !any {
+        empty_row(page, "No commits in the last year.");
     }
     page.box_bottom();
 }
@@ -218,7 +238,7 @@ fn counted(page: &mut Page, what: &str, people: &str, c: &Counted) {
         empty_row(page, "None.");
     }
     let max = c.days.iter().map(|d| d.1).max().unwrap_or(0);
-    let room = usize::from(page.room(Frame::Body, 0)).saturating_sub(34);
+    let room = bar_room(page, 35);
     for (day, count, uniques) in &c.days {
         body(
             page,
@@ -232,7 +252,7 @@ fn counted(page: &mut Page, what: &str, people: &str, c: &Counted) {
                     ),
                     Role::Body,
                 ),
-                Seg::new(bar(*count, max, room.min(50)), Role::Accent),
+                Seg::new(bar(*count, max, room), Role::Accent),
             ],
         );
     }
@@ -248,11 +268,13 @@ fn popular(page: &mut Page, title: &str, list: &[Popular], paths: bool) {
         empty_row(page, "None in the last 14 days.");
     }
     for p in list {
-        let counts = Seg::new(
-            format!("  {} · {}", compact(p.count), compact(p.uniques)),
+        let counts = vec![Seg::new(
+            format!("{} · {}", compact(p.count), compact(p.uniques)),
             Role::Meta,
-        );
-        let named = p.title.as_deref().filter(|t| *t != p.name);
+        )];
+        // GitHub's title for a path is often the path again.
+        let named = (p.title.as_deref())
+            .filter(|t| !p.name.ends_with(t.trim_start_matches('/')) && *t != p.name);
         if paths {
             // A path on the website, which ghtui may open.
             let target = format!("{}{}", url::base(), p.name);
@@ -261,11 +283,10 @@ fn popular(page: &mut Page, title: &str, list: &[Popular], paths: bool) {
                 if let Some(t) = named {
                     segs.push(Seg::new(format!("  {t}"), Role::Meta));
                 }
-                segs.push(counts);
-                body(page, segs);
+                page.box_line(segs, counts, 0);
             });
         } else {
-            body(page, vec![Seg::new(p.name.clone(), Role::Body), counts]);
+            page.box_line(vec![Seg::new(p.name.clone(), Role::Body)], counts, 0);
         }
     }
     page.box_bottom();
@@ -328,13 +349,20 @@ pub fn dependencies(page: &mut Page, d: &Dependencies) {
             .max()
             .unwrap_or(0)
             .min(40);
+        let wants = (m.dependencies.iter())
+            .map(|d| crate::ui::text::width(&d.requirements))
+            .max()
+            .unwrap_or(0)
+            .min(30);
         for dep in &m.dependencies {
             let name = crate::ui::text::truncate(&dep.package, names);
             let pad = " ".repeat(names.saturating_sub(crate::ui::text::width(&name)) + 2);
+            let want = crate::ui::text::truncate(&dep.requirements, wants);
+            let gap = " ".repeat(wants.saturating_sub(crate::ui::text::width(&want)) + 2);
             let rest = vec![
                 Seg::new(pad, Role::Body),
-                Seg::new(dep.requirements.clone(), Role::Body),
-                Seg::new(format!("  {}", dep.manager.to_lowercase()), Role::Meta),
+                Seg::new(want, Role::Body),
+                Seg::new(format!("{gap}{}", dep.manager.to_lowercase()), Role::Meta),
             ];
             match &dep.repo {
                 Some(r) => item(page, url::repo(r), |page, link| {

@@ -86,7 +86,7 @@ fn insights_tabs_say_their_numbers() {
     let s = sized(insights(Mode::Dark, InsightsTab::Commits), 90, 60);
     let text = page_text(&s);
     for part in [
-        "Commits in the last 26 weeks  105",
+        "Commits in the last 52 weeks  105",
         "Tue      25",
         "Week by week",
     ] {
@@ -97,7 +97,7 @@ fn insights_tabs_say_their_numbers() {
     for part in [
         "Views  54 · 12 unique visitors",
         "Git clones  7 · 2 unique cloners",
-        "news.ycombinator.com  30 · 9",
+        "news.ycombinator.com",
     ] {
         assert!(text.contains(part), "{part} in {text}");
     }

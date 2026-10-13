@@ -21,6 +21,7 @@ mod pull;
 mod review;
 mod reviews;
 mod security;
+mod site;
 mod timeline;
 mod wiki;
 mod writes;
@@ -51,6 +52,12 @@ pub const ALL: &[Check] = &[
     wiki::CHECK,
     enterprise::CHECK,
     enterprise::OLDER,
+    // Insights, Explore, starred lists, packages, saved replies.
+    site::INSIGHTS,
+    site::EXPLORE,
+    site::LISTS,
+    site::PACKAGES,
+    site::REPLIES,
     narrow::CHECK,
     // Last: the notification it asks for when the run starts can take
     // GitHub minutes.

@@ -263,7 +263,7 @@ pub(crate) const DISCUSSION_FORMS: &str = "query($owner: String!, $name: String!
 
 /// A repository's dependency graph: 20 manifests, the first 100
 /// dependencies of each (under the hawkgirl preview).
-pub(crate) const DEPENDENCY_GRAPH: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { dependencyGraphManifests(first: 20) { totalCount nodes { filename blobPath parseable exceedsMaxSize dependencies(first: 100) { totalCount nodes { packageName packageManager requirements repository { nameWithOwner } } } } } } }";
+pub(crate) const DEPENDENCY_GRAPH: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { dependencyGraphManifests(first: 20) { totalCount nodes { filename blobPath parseable exceedsMaxSize dependenciesCount dependencies(first: 100) { totalCount nodes { packageName packageManager requirements repository { nameWithOwner } } } } } } }";
 
 /// A topic's stars and the topics GitHub relates to it.
 pub(crate) const TOPIC: &str = "query($name: String!) { topic(name: $name) { name stargazerCount relatedTopics(first: 10) { name } } }";

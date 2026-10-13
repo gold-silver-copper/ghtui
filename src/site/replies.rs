@@ -39,6 +39,11 @@ fn rows(state: &State, query: &str) -> Vec<Row> {
         insert: None,
     };
     let mut rows = match fetched {
+        // Said short: the list is narrow.
+        Err(why) if why.contains("read:user") => vec![
+            note("Your token lacks the read:user scope:".to_owned()),
+            note("gh auth refresh -s read:user adds it".to_owned()),
+        ],
         Err(why) => vec![note(why)],
         Ok(replies) if replies.is_empty() => vec![note("You have no saved replies".to_owned())],
         Ok(replies) => {
@@ -63,7 +68,7 @@ fn rows(state: &State, query: &str) -> Vec<Row> {
     };
     let url = crate::api::replies::settings_url();
     let url = url.trim_start_matches("https://");
-    rows.push(note(format!("Made, changed and deleted at {url}")));
+    rows.push(note(format!("Make or change them at {url}")));
     rows
 }
 

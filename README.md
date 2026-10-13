@@ -17,8 +17,10 @@ ghtui is pre-release, but it's usable every day.
   comparisons), issues, pull requests, Actions runs and job logs,
   discussions, wikis, milestones, deployments, security advisories and
   alerts (Dependabot, code scanning, secret scanning), gists,
-  teams, profiles, projects and search, on github.com or a GitHub Enterprise
-  Server. Every GitHub link opens in ghtui unless it can only work in a
+  teams, profiles, projects and search, a repository's Insights
+  (contributors, commit activity, traffic, the dependency graph),
+  Explore and topics, starred lists and packages, on github.com or a
+  GitHub Enterprise Server. Every GitHub link opens in ghtui unless it can only work in a
   browser (a download, settings), and then it says why.
 - **Reviewing** is where ghtui goes furthest. Diffs are computed locally
   with git, highlighted with tree-sitter, and shown unified or split. You
@@ -32,7 +34,9 @@ ghtui is pre-release, but it's usable every day.
   and star, mark notifications read or done, one at a time or
   all at once, answer and reply in discussions and mark their answer,
   add, move, archive and restore a project's cards, set their fields
-  and edit its drafts, and dismiss or reopen a security alert.
+  and edit its drafts, dismiss or reopen a security alert, put a
+  repository in your starred lists or take it out, and delete a
+  package's version.
 - **Managing** an issue, a pull request or a discussion, as GitHub's
   sidebar and menus do: delete a merged pull request's branch and
   restore it, convert one back to a draft, change its base, revert it;
@@ -46,11 +50,12 @@ ghtui is pre-release, but it's usable every day.
   request's labels, assignees, reviewers and milestone.
 - **Creating**: open issues (from the repository's templates) and pull
   requests, and check a pull request out in your clone; make releases,
-  write gists and wiki pages.
+  write gists and wiki pages; insert your saved replies in a comment.
 - **Notifications you choose**: subscribe to a thread or ignore it, and
   set how you watch a repository.
-- **Git first**: files, folders, history, blame, comparisons, tags and
-  code search come from your clone (or ghtui's own partial one), at
+- **Git first**: files, folders, history, blame, comparisons, tags,
+  code search, and a repository's contributors and commit activity come
+  from your clone (or ghtui's own partial one), at
   GitHub's revision, and code navigation (`gd`, `gS`, `gR`) from an
   index of the repository's definitions built there.
 - **Live**: a pull request, an issue, a discussion, the Actions tab, a
@@ -104,7 +109,10 @@ classic token, the `repo` scope covers it all, but projects: reading them
 takes `read:project` and changing them `project`, which `gh auth refresh
 -s project` adds; gists take `gist`, which gh asks for; subscribing to a
 thread takes `notifications`, which `gh auth refresh -s notifications`
-adds). The Security tab's alerts take `security_events` (or
+adds; packages take `read:packages`, and deleting a version
+`delete:packages`; saved replies take `read:user`; changing your
+starred lists takes `user`; a repository's
+traffic is shown only to people who can push to it). The Security tab's alerts take `security_events` (or
 `repo`) with a classic token, and a fine-grained token's Dependabot, Code
 scanning or Secret scanning alerts permission; GitHub shows them only to
 people with write access (secrets: admins) and security managers. Where
@@ -385,6 +393,52 @@ or ignores it; anywhere else in a repository it sets how you watch the
 repository (participating and @mentions, all activity, or ignore). The
 current choice is marked.
 
+**Insights** is a repository's last tab, as on GitHub, with GitHub's
+menu: Contributors, Commit activity, Traffic and Dependency graph.
+Contributors and commit activity are counted with git, in your clone or
+the cache's (the page's first line says which, and at what commit): the
+default branch's commits, merges left out, week by week since the
+first, then each author's (by their git name, joined by the
+repository's `.mailmap`; linked to their account when a GitHub no-reply
+address names it), each with a sparkline of the same weeks. Commit
+activity is the last 52 weeks, each day of the week, and the weeks
+with commits, newest first. Until the clone is made, GitHub's own
+statistics answer, and say so. Traffic is the last 14 days' views and
+clones, day by day, the referring sites and the popular pages, for
+those who can push to the repository. The dependency graph lists each
+manifest GitHub read with what it depends on and the versions it
+takes, each linked to its repository where GitHub knows it. Every
+chart is bars or a sparkline beside the numbers they stand for, scaled
+to the largest, and says what a bar counts.
+
+**Explore** (`:explore`, or the Space menu's Go) is the nearest GitHub's
+API comes to Trending: repositories made today, this week or this
+month, most starred, in any language or the one picked, and GitHub's
+featured topics. It says plainly that it isn't Trending, which ranks by
+recent stars that the API doesn't give. A topic's page (`topics/rust`,
+or a topic on a repository's page) has GitHub's description, its
+stars, related topics, and its repositories, most starred first.
+
+**Starred lists**: someone's Stars tab starts with their lists, and a
+list's page has its repositories. `,L` on a repository's pages lists
+your lists, the ones it's in checked: `↵` puts it in a list or takes it
+out, and a name no list has makes the list with it in. `,D` on one of
+your lists deletes it, after asking. Your lists are read again until
+GitHub shows the change. Changing them takes a classic token's `user`
+scope (`gh auth refresh -s user`), which ghtui names when it's
+missing.
+
+**Packages** are a profile's tab, and a link on a repository's page: an
+owner's packages of every kind, or those a repository published. A
+package's page says how to pull or install its newest version (or the
+one picked from its versions), and `,D` on a version deletes it, after
+asking what goes with it; the page follows GitHub until it's gone.
+Without your token's `read:packages` scope, the page says so and how to
+add it.
+
+**Saved replies**: in the comment editor, `ctrl-g` lists yours; typing
+narrows them, and `↵` puts the one chosen where the cursor is.
+
 **Checking out** a pull request (`,c` on it or its row), inside a clone
 of its repository, fetches its head and switches to a branch for it: its
 own branch's name (tracking it), or `owner/branch` for a fork's. It
@@ -477,6 +531,8 @@ says where it works.
   makes a branch for it first); `,E` runs a workflow by hand. `,V` makes a
   release, `,G` a gist and `,W` a wiki page; `,s` makes or saves each,
   and `,e` and `,D` edit a wiki page or your gist and delete your gist.
+- `,L` puts the repository in your starred lists or takes it out; `,D`
+  deletes one of your lists on its page, or a package's version.
 - `,w` subscribes to a thread or ignores it, or sets how you watch the
   repository.
 - Managing waits behind `,` too: `,b` deletes or restores a merged pull
@@ -721,7 +777,8 @@ says where it works.
 The comment editor opens where the comment will go: under the lines, the
 thread or the file header in Files changed, and in place of the comment
 box on a conversation (or of the comment it edits). In it, `ctrl-s` adds the comment, `ctrl-e`
-continues in `$EDITOR`, and `esc` cancels (keeping the lines selected).
+continues in `$EDITOR`, `ctrl-g` lists your saved replies to insert
+one, and `esc` cancels (keeping the lines selected).
 Long lines wrap, and a paste arrives as text, newlines and all (in a
 one-line box, as one line). Typing `@` offers the people taking part and
 the repository's assignable users, `#` its recent issues and pull
@@ -824,8 +881,10 @@ page into a download, and the API answers past them, saying which:
   of a file;
 - code search in ghtui's clone reads at most 25,000 files (in yours,
   any number);
-- git gets 6 seconds for a page (20 for blame, comparisons and search,
-  and 1 for the walk that finds each entry's latest commit, the rest of
+- Insights counts the newest 200,000 commits of the default branch
+  (their dates and authors only, which a blobless clone has);
+- git gets 6 seconds for a page (20 for blame, comparisons, search and
+  Insights, and 1 for the walk that finds each entry's latest commit, the rest of
   which GitHub finds), then the API answers while git carries on.
 
 **Wikis are git repositories**, and ghtui reads and writes them as such:
@@ -905,7 +964,14 @@ issue inbox` runs only those.
   Projects checks (`gh auth refresh -s project`), `notifications` for
   subscribing to a thread (without it, the check sees ghtui name the
   scope), `delete_repo` for transferring an issue (`manage-transfer`
-  makes a `ghtui-live-` repository to move it to, and deletes it). It also needs git; openssl; and a fux that speaks fuxth (`fux help-agents`) (on `PATH`, or `~/code/fux`'s release build,
+  makes a `ghtui-live-` repository to move it to, and deletes it),
+  `read:user` for saved replies, and `read:packages`,
+  `write:packages` and `delete:packages` for the packages check, which
+  pushes a tiny `ghtui-live-` image to ghcr.io (with curl) and deletes a
+  version of it with `,D`; without them, the check sees ghtui name the
+  scope it lacks. The starred lists check, with `user`, makes a
+  `ghtui-live-` list of the owner's and deletes it; without it, it sees
+  ghtui name the scope. It also needs git; openssl; and a fux that speaks fuxth (`fux help-agents`) (on `PATH`, or `~/code/fux`'s release build,
   or `--fux PATH`). It builds `target/release/ghtui` unless given
   `--ghtui PATH`.
 - **Where it runs:** ghtui runs in a private fux server, one pane at a
@@ -970,6 +1036,33 @@ hold scrolling a 500-file pull request to under 8ms a frame (about 0.5ms
 today), and diffing a 50,000-line file to under 100ms (about 32ms).
 
 ## Known limitations
+
+- Explore isn't GitHub's Trending: GitHub's API doesn't say which
+  repositories got stars lately, so Explore lists new repositories, most
+  starred, and says so. A repository's dependents (who depends on it)
+  aren't in GitHub's API either; the dependency graph links to them on
+  github.com.
+- Contributors and commit activity are counted with git, by git name:
+  two names for one person are one only where the repository's
+  `.mailmap` says so, and lines added and removed aren't counted (that
+  would need every file's contents). ghtui counts the newest 200,000
+  commits, and says when there were more. GitHub's statistics, used
+  until the clone is made, list only its top 100 contributors.
+- The dependency graph shows 20 manifests and the first 100
+  dependencies of each, and says how many more GitHub has.
+- Saved replies can be inserted, but not made, changed or deleted here:
+  GitHub's API has no way to, so that's on github.com/settings/replies,
+  which the list names. They take the `read:user` scope.
+- Packages are listed 100 of each kind, and said when there are more.
+  GitHub doesn't say beforehand who may delete a package's version (its
+  admins), so `,D` is offered on every version and GitHub's refusal is
+  said. On an Enterprise Server, the install commands name its
+  registries as `containers.HOST`, `npm.HOST` and so on (with subdomain
+  isolation). A package's link opens under `/users/` (GitHub sends an
+  organization's on).
+- `,L` reads up to 1,000 of a list's repositories to say whether one is
+  in it, and says when a list is longer. A new list is public; its
+  name, description and privacy are changed on github.com.
 
 - A running job's log shows once the job ends: GitHub's API has no log
   until then (its website streams it over a connection only a signed-in

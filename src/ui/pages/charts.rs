@@ -56,9 +56,10 @@ pub fn buckets(values: &[u32], n: usize) -> (usize, Vec<u64>) {
     (size, sums)
 }
 
-/// Columns of bars `height` rows tall, one per value, with the largest
-/// value written at the top of the axis and zero at its foot.
-pub fn columns(page: &mut Page, values: &[u64], height: usize) {
+/// Columns of bars `height` rows tall, one per value, each `width`
+/// cells wide, with the largest value written at the top of the axis
+/// and zero at its foot.
+pub fn columns(page: &mut Page, values: &[u64], width: usize, height: usize) {
     let max = values.iter().copied().max().unwrap_or(0);
     let label = |n: u64| format!("{:>6} ", compact(n));
     for row in (0..height).rev() {
@@ -66,11 +67,12 @@ pub fn columns(page: &mut Page, values: &[u64], height: usize) {
         for &v in values {
             let filled = eighths(v, max, height);
             let below = row * 8;
-            line.push(match filled.saturating_sub(below) {
+            let cell = match filled.saturating_sub(below) {
                 0 => ' ',
                 n if n >= 8 => '█',
                 n => EIGHTHS.get(n - 1).copied().unwrap_or('█'),
-            });
+            };
+            line.extend(std::iter::repeat_n(cell, width.max(1)));
         }
         let axis = if row + 1 == height {
             label(max)
@@ -88,7 +90,7 @@ pub fn columns(page: &mut Page, values: &[u64], height: usize) {
     body(
         page,
         vec![Seg::new(
-            format!("{}└{}", label(0), "─".repeat(values.len())),
+            format!("{}└{}", label(0), "─".repeat(values.len() * width.max(1))),
             Role::Meta,
         )],
     );
