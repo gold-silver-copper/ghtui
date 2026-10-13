@@ -75,9 +75,15 @@ ghtui is pre-release, but it's usable every day.
 - **Live**: a pull request, an issue, a discussion, the Actions tab, a
   run and a running job update while they're on screen, and what came
   in since you looked is marked New.
+- **Offline**: when GitHub can't be reached, the pages you've read
+  still open, from the cache, marked offline with their age, and code,
+  history and blame come from the clones. Comments, reviews, reactions,
+  labels, closing and the like wait in a queue, shown on their pages,
+  and go to GitHub in order (once) when it's back. Repositories you
+  choose are fetched ahead and kept fresh, to read offline.
 
-Not there yet: code navigation with a language server's precision, and
-structural diffs.
+Not there yet: code navigation with a language server's precision,
+structural diffs, and a pull request's Files changed offline.
 
 ## Goals
 
@@ -243,6 +249,47 @@ a category without answers, a comment); on a comment or one of its
 replies, it replies in that comment's thread, and `>` replies quoting
 it. `,!` marks the selected comment as the answer, or unmarks it, `,+`
 reacts, and `,e` and `,D` edit and delete, where GitHub lets you.
+
+**Offline**, ghtui is the same ghtui. A page always shows what the cache
+has first and GitHub refreshes it; when GitHub can't be reached (no
+network, the server down), the header says `⚠ Offline`, once, and the
+page stays as the cache had it, under a banner saying how old it is
+("Offline: showing what was loaded 3h ago"). Nothing waits on GitHub
+meanwhile: requests fail at once, and ghtui asks GitHub every few
+seconds (then less often) whether it's back; `r` asks now. Files,
+folders, history, blame and comparisons come from the clones, which
+need no network: at the commit each branch or tag was at when GitHub
+last listed them, which the page's first line says.
+
+A comment, a reply, a review (with its comments), a reaction, labels,
+assignees, a milestone, a title, an edit, closing or reopening, written
+while GitHub can't be reached, is queued: the composer closes, and the
+page it was written on shows it in a "Queued for GitHub" box, as does
+the header (`⚠ Offline · 2 queued`). When GitHub is back the queue is
+sent in order, each write once, and the page follows GitHub until it
+shows it. Merging and the like aren't queued: what they do depends on
+GitHub's state when they're sent. A write GitHub refuses then (the issue
+was locked or deleted meanwhile) stays, marked refused with GitHub's
+reason and its text, and the header says `⚠ 1 not sent`: on its row,
+`,R` sends it again, `y` copies its text and `del` throws it away
+(`ctrl-z` brings it back). The queue is kept on disk for each host and
+account, so a restart keeps it. A write that may have reached GitHub
+when the connection dropped (or ghtui stopped while sending it) is
+never sent again on its own, unless sending it twice changes nothing (a
+label, a reaction, closing): it's marked "Not known if sent", to check
+and send again or throw away.
+
+`:keep offline` on any of a repository's pages keeps it to read offline:
+ghtui fetches ahead, into its cache, the repository's page, its Issues,
+Pull requests and Discussions tabs, and its issues, pull requests and
+discussions updated most recently (each as its page shows it), and
+makes its clone (with the default branch's files). It's kept fresh every
+half hour while GitHub can be reached, fetching again only what changed.
+How much is plain, and set under `[offline]` in the config: by default
+up to 100 of each kind, updated in the last 90 days, and nothing more
+past 2 GiB of cache and clones. The Offline page (`:offline`, or the
+header's link) lists the queue and the kept repositories: what each
+keeps, its clone's size, when it was refreshed and what stopped it.
 
 **Tabs** work like a browser's: `T` opens the selection in a new tab, `]b`
 and `[b` switch between them, and they come back next time you start.
@@ -942,6 +989,11 @@ color_depth = "auto"  # auto | truecolor | 256
 nerd_font = false
 density = "auto"      # auto | compact | comfortable
 
+[offline]             # what a repository kept offline keeps
+items = 100           # of its issues, pull requests and discussions each
+days = 90             # only those updated in this many days
+disk = 2048           # MiB: nothing more is fetched past this (cache and clones)
+
 [keys]                # each action listed replaces its default keys
 down = ["j", "<Down>"]  # without ctrl-n
 sort = ["list:O"]     # a context first binds it there only
@@ -1058,7 +1110,13 @@ seconds, using about 130 MB.
 **Fast from the cache.** The first paint comes from a local cache (redb),
 then everything is refreshed in the background. REST requests revalidate
 with ETags (and `Last-Modified`), so unchanged data costs nothing against
-the rate limit.
+the rate limit. Offline is that same path with GitHub missing: one place
+(`api::reach`) knows whether GitHub can be reached (a request that can't
+connect says it can't; any answer says it can), so a request fails at
+once while it can't, the page keeps the cache's copy, and the header
+says so. A failed connect never left, so only a write that failed that
+way is queued (`offline::queue`): each is written down as being sent
+before it goes, and its answer settles it, so none is sent twice.
 
 **Colors from one seed.** Light and dark schemes are generated with
 Material 3's tonal palettes. Every foreground and background pair the UI
@@ -1180,6 +1238,12 @@ issue inbox` runs only those.
   cargo test what_an_enterprise_schema_lacks -- --ignored --nocapture`
   (with `GHTUI_GHES_VERSION=3.N`, after ghtui leaves out what it knows
   that version lacks: nothing should be left).
+- **Offline:** the `offline` check runs ghtui against the stand-in (on
+  port 8451) and stops it to make GitHub go away, without touching the
+  machine's network: it writes a comment and a reaction while it's
+  gone, restarts ghtui, starts the stand-in again, and asks GitHub that
+  each arrived exactly once; a comment on an issue it deletes meanwhile
+  must come back refused.
 - **GitHub's own delays:** a notification can take GitHub many minutes
   to deliver, so the inbox check runs last, and is skipped (not failed)
   when no unread thread has arrived; the mention it asked for serves the
@@ -1248,6 +1312,23 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 - On an Enterprise Server that doesn't say which run a workflow run by
   hand started, the workflow's runs open instead of the run.
 - One GitHub at a time: the host is chosen at start.
+- Offline, a page opens only if it was read before (or its repository
+  is kept offline), as it was then; a list shows its first page. A
+  file's contents come from a clone only where it has them: the cache's
+  partial clone fetches a file the first time it's read, so a file never
+  opened isn't there, except in a repository kept offline (its default
+  branch's files, within the disk limit). A pull request's Files changed
+  fetches its commits from GitHub, so it doesn't open offline. Searching
+  GitHub, the inbox's marks and merging aren't queued.
+- Keeping a repository offline keeps its issues', pull requests' and
+  discussions' pages (a pull request's conversation, not its Files
+  changed, checks or commits), and the default branch's files; the disk
+  limit is checked between pages, so a page or a clone may take it a
+  little past. Stopping keeping one leaves what's cached until it's
+  replaced.
+- The queue, like the cache, is kept under the account GitHub last said
+  the token is; a token never used before keeps it under its
+  fingerprint until GitHub first answers.
 - On an Enterprise Server, gists are taken to be at `HOST/gist`. A page
   goes without what the server's version doesn't have: who may assign,
   label or set a milestone isn't said by any Enterprise Server yet, so

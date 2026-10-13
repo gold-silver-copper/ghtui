@@ -17,6 +17,7 @@ mod local_reads;
 mod manage;
 mod merge;
 mod narrow;
+mod offline;
 mod project_views;
 mod projects;
 mod pull;
@@ -73,6 +74,8 @@ pub const ALL: &[Check] = &[
     housekeeping::NEW_REPO,
     enterprise::CHECK,
     enterprise::OLDER,
+    // Reading offline: GitHub goes away and comes back.
+    offline::CHECK,
     // Insights, Explore, starred lists, packages, saved replies.
     site::INSIGHTS,
     site::EXPLORE,
