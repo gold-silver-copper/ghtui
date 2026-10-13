@@ -16,8 +16,10 @@ mod local_reads;
 mod manage;
 mod merge;
 mod narrow;
+mod project_views;
 mod projects;
 mod pull;
+mod releases;
 mod review;
 mod reviews;
 mod security;
@@ -37,11 +39,13 @@ pub const ALL: &[Check] = &[
     actions::CHECK,
     security::CHECK,
     writes::RELEASE,
+    releases::CHECK,
     writes::GIST,
     writes::WATCH,
     writes::SUBSCRIBE,
     projects::CHECK,
     projects::ITEMS,
+    project_views::CHECK,
     discussion::CHECK,
     // Managing an issue, a pull request and a discussion.
     manage::ISSUE,

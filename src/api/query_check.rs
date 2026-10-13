@@ -487,7 +487,7 @@ fn what_an_enterprise_schema_lacks() {
         for error in check(&schema, name, &query).errors {
             // Only what's missing: the rest is checked against github.com.
             if let Some((_, what)) = error.split_once(": no ").or(error.split_once(": takes no")) {
-                lacks.insert(format!("{what}    ({})", error));
+                lacks.insert(format!("{what}    ({error})"));
             } else if error.contains("takes no") {
                 lacks.insert(error);
             }

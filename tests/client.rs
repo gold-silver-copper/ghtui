@@ -3512,7 +3512,7 @@ async fn release_assets_are_saved_uploaded_and_deleted() {
     // Not over it without being told to.
     std::fs::write(&dest, "mine").unwrap();
     let kept = gh.download_asset(&repo, 7, "b.tar.gz", &dest, false).await;
-    assert!(kept.is_err());
+    kept.unwrap_err();
     assert_eq!(std::fs::read_to_string(&dest).unwrap(), "mine");
     let file = dir.path().join("notes v2.txt");
     std::fs::write(&file, "new notes").unwrap();

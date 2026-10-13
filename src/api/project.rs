@@ -484,10 +484,10 @@ fn grouped_by_text<'a>(field: &'a ProjectField, items: &[&'a ProjectItem]) -> Ve
     }];
     for item in items {
         let keys = group_keys(field, item);
-        if keys.is_empty() {
-            if let Some(none) = groups.first_mut() {
-                none.items.push(item);
-            }
+        if keys.is_empty()
+            && let Some(none) = groups.first_mut()
+        {
+            none.items.push(item);
         }
         for key in keys {
             match groups.iter_mut().find(|g| g.value.as_ref() == Some(&key)) {

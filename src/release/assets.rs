@@ -218,7 +218,7 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> Vec<(PaletteItem, Option<
         return vec![row(&path)];
     }
     let (dir, start) = if typed.is_empty() || typed.ends_with('/') || path.is_dir() {
-        (path.clone(), String::new())
+        (path, String::new())
     } else {
         let dir = path
             .parent()

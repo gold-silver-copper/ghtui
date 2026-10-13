@@ -267,7 +267,16 @@ impl State {
                 Some(Link::Comment) if crate::writes::is_form(route) => {
                     open.label = "Write it in the composer".into();
                 }
-                Some(link) => open.label = describe(link),
+                Some(link) => {
+                    open.label = describe(link);
+                    // An artifact or an asset is saved, not opened.
+                    if matches!(
+                        link,
+                        Link::Artifact { .. } | Link::Write(crate::ui::page::WriteLink::Asset(_))
+                    ) {
+                        open.short = "save";
+                    }
+                }
                 None => open.unavailable = Some("nothing is selected".into()),
             }
             out.push(open);

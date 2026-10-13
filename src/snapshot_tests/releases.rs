@@ -144,7 +144,7 @@ fn a_release_is_deleted_then_its_tag_asked_about() {
     assert_eq!(sent, want);
     done(
         &mut s,
-        ReleaseDone::Deleted(ghtui(), "v0.2.0".into(), Ok(())),
+        ReleaseDone::Deleted(ghtui(), "v0.2.0".into(), Ok(true)),
     );
     assert_eq!(s.route(), Some(&Route::Releases(ghtui())));
     assert_eq!(asked(&s).title, "Delete the tag v0.2.0 as well?");
@@ -191,7 +191,7 @@ fn an_asset_is_saved_where_you_say() {
         name: name.into(),
     };
     let save = assets::Work::Save {
-        of: of.clone(),
+        of,
         path: std::path::Path::new(".").join(name),
         replace: false,
     };

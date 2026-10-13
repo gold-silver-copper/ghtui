@@ -661,7 +661,7 @@ fn roadmap(page: &mut Page, at: &Spot<'_>, view: &ProjectView, dates: Dates<'_>,
         for it in &group.items {
             let color = status.and_then(|f| option_color(f, it));
             let bar = line.bar(span(it), color);
-            roadmap_row(page, at, it, title_width, bar, cx);
+            roadmap_row(page, at, it, title_width, &bar, cx);
         }
         page.box_bottom();
     }
@@ -815,7 +815,7 @@ fn roadmap_row(
     at: &Spot<'_>,
     it: &ProjectItem,
     title_width: usize,
-    bar: Vec<Seg>,
+    bar: &[Seg],
     cx: PageCtx<'_>,
 ) {
     let (icon, role) = item_icon(it, cx.icons);

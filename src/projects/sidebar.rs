@@ -63,10 +63,7 @@ fn changeable(state: &State) -> Result<(Subject, Vec<&InProject>), String> {
         return Err(failed.unwrap_or_else(|| "Its projects haven't loaded yet".into()));
     };
     if list.is_empty() {
-        let add = state.first_key(Action::AddItem);
-        return Err(format!(
-            "It's in no project: {add} on a project's board adds it"
-        ));
+        return Err("It's in no project yet: a project's board adds it (Add an item)".into());
     }
     let mine: Vec<&InProject> = (list.iter())
         .filter(|p| p.can_update && p.fields.iter().any(|f| f.kind.settable()))

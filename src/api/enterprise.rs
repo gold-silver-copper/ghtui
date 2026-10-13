@@ -379,11 +379,9 @@ pub fn learn(message: &str) -> Option<Lack> {
             field: names.first()?.clone(),
             name: names.get(1)?.clone(),
         }
-    } else if let Some(rest) = message.strip_prefix("No such type ") {
-        let ty = rest.split([',', ' ']).next()?;
-        Missing::Type(ty.to_owned())
     } else {
-        return None;
+        let rest = message.strip_prefix("No such type ")?;
+        Missing::Type(rest.split([',', ' ']).next()?.to_owned())
     };
     let about = match &missing {
         Missing::Field { name, .. } | Missing::Type(name) => format!("`{name}`"),

@@ -163,7 +163,9 @@ pub enum Done {
     Looked(RepoId, String, Result<TagLook, String>),
     Notes(RepoId, String, Result<Notes, String>),
     Saved(Route, Result<Made, String>),
-    Deleted(RepoId, String, Result<(), String>),
+    /// The release deleted, and whether its tag is on GitHub (a draft's
+    /// new tag never was).
+    Deleted(RepoId, String, Result<bool, String>),
     TagDeleted(RepoId, String, Result<(), String>),
     Asset(assets::Done),
 }
@@ -173,7 +175,8 @@ impl Done {
         match self {
             Done::Looked(..) | Done::Notes(..) => false,
             Done::Saved(_, r) => r.is_ok(),
-            Done::Deleted(.., r) | Done::TagDeleted(.., r) => r.is_ok(),
+            Done::Deleted(.., r) => r.is_ok(),
+            Done::TagDeleted(.., r) => r.is_ok(),
             Done::Asset(d) => d.wrote(),
         }
     }
@@ -210,7 +213,11 @@ impl Work {
                 Done::Saved(route, made.map_err(why))
             }
             Work::Delete { repo, tag, id } => {
-                let done = gh.delete_release(&repo, id).await.map_err(why);
+                let done = match gh.delete_release(&repo, id).await {
+                    // Whether there's a tag to ask about.
+                    Ok(()) => Ok(gh.tag_look(&repo, &tag).await.is_ok_and(|l| l.exists)),
+                    Err(err) => Err(why(err)),
+                };
                 Done::Deleted(repo, tag, done)
             }
             Work::DeleteTag(repo, tag) => {
@@ -227,9 +234,8 @@ impl Work {
 fn here(state: &State) -> Option<(Route, RepoId, &Form)> {
     static BLANK: std::sync::LazyLock<Form> = std::sync::LazyLock::new(Form::default);
     let route = state.route()?;
-    let repo = match route {
-        Route::NewRelease(repo) | Route::EditRelease { repo, .. } => repo,
-        _ => return None,
+    let (Route::NewRelease(repo) | Route::EditRelease { repo, .. }) = route else {
+        return None;
     };
     let form = state.writing.releases.get(route).unwrap_or(&BLANK);
     Some((route.clone(), repo.clone(), form))
@@ -656,14 +662,14 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
             ],
         ),
         Some(e) if e.draft => (
-            format!("Save the draft of {tag} in {repo}?"),
+            format!("Save the draft of {tag}?"),
             vec![
                 ("Publish release".into(), Answer::Release { draft: false }),
                 ("Save draft".into(), Answer::Release { draft: true }),
             ],
         ),
         Some(_) => (
-            format!("Update {tag} in {repo}?"),
+            format!("Update {tag}?"),
             vec![
                 ("Update release".into(), Answer::Release { draft: false }),
                 (
@@ -826,7 +832,7 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
             Vec::new()
         }
         Done::Saved(route, result) => saved(state, &route, result),
-        Done::Deleted(repo, tag, result) => deleted(state, repo, tag, result),
+        Done::Deleted(repo, tag, result) => deleted(state, &repo, &tag, result),
         Done::TagDeleted(repo, tag, result) => {
             let route = Route::Release {
                 repo: repo.clone(),
@@ -863,10 +869,11 @@ fn saved(state: &mut State, route: &Route, result: Result<Made, String>) -> Vec<
             let tag = made.tag_name;
             let editing = form.editing.is_some();
             let (page, what, said) = if made.draft {
+                let said = format!("Saved a draft release of {tag}");
                 (
                     Route::Releases(repo.clone()),
-                    Expected::Draft(repo.clone(), tag.clone()),
-                    format!("Saved a draft release of {tag}"),
+                    Expected::Draft(repo, tag),
+                    said,
                 )
             } else {
                 let (name, notes) = templates::split(&form.text);
@@ -886,14 +893,7 @@ fn saved(state: &mut State, route: &Route, result: Result<Made, String>) -> Vec<
                 } else {
                     format!("Published {tag}")
                 };
-                (
-                    Route::Release {
-                        repo: repo.clone(),
-                        tag: tag.clone(),
-                    },
-                    what,
-                    said,
-                )
+                (Route::Release { repo, tag }, what, said)
             };
             state.info(said);
             if state.route() != Some(route) {
@@ -915,23 +915,29 @@ fn saved(state: &mut State, route: &Route, result: Result<Made, String>) -> Vec<
 /// GitHub deleted the release: the releases follow until it's gone, and
 /// deleting its tag too is asked, apart.
 #[must_use]
-fn deleted(state: &mut State, repo: RepoId, tag: String, result: Result<(), String>) -> Vec<Cmd> {
+fn deleted(state: &mut State, repo: &RepoId, tag: &str, result: Result<bool, String>) -> Vec<Cmd> {
     let route = Route::Release {
         repo: repo.clone(),
-        tag: tag.clone(),
+        tag: tag.to_owned(),
     };
-    if let Err(why) = result {
-        crate::writes::say(state, format!("GitHub didn't delete the release: {why}"));
-        return Vec::new();
-    }
+    let tagged = match result {
+        Ok(tagged) => tagged,
+        Err(why) => {
+            crate::writes::say(state, format!("GitHub didn't delete the release: {why}"));
+            return Vec::new();
+        }
+    };
     crate::writes::close_sender(state, &route);
     state.info(format!("Deleted the release of {tag}"));
     let mut cmds = Vec::new();
     if state.route() == Some(&route) {
         let list = Route::Releases(repo.clone());
-        let gone = Expected::ReleaseGone(repo.clone(), tag.clone());
+        let gone = Expected::ReleaseGone(repo.clone(), tag.to_owned());
         crate::writes::expect(state, list.clone(), gone);
         cmds = state.replace(list, true, None);
+    }
+    if !tagged {
+        return cmds;
     }
     crate::writes::ask(
         state,
