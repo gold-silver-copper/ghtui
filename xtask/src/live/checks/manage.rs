@@ -321,6 +321,11 @@ fn pull(cx: &mut Cx) -> Result<()> {
     ghtui.keys("Enter")?;
     ghtui.wait_for("Find a branch")?;
     ghtui.type_text(&base)?;
+    // The branch was just made: wait for the list to have it as a row,
+    // not only as what's typed.
+    ghtui.wait_until("the base branch listed", GITHUB, |screen| {
+        (screen.matches(base.as_str()).count() >= 2).then_some(())
+    })?;
     ghtui.keys("Enter")?;
     ghtui.wait_for(&format!("#{number}'s base to"))?;
     ghtui.keys("Enter")?;

@@ -645,3 +645,18 @@ fn without_write_access_each_says_why() {
     press(&mut s, ",o");
     says(&s, "Changing labels takes write access");
 }
+
+/// A file's form opened from within ghtui (by `g/`, with nothing new to
+/// fetch) still reads the file from GitHub.
+#[test]
+fn a_file_form_opened_from_a_page_reads_the_file() {
+    let mut s = with_repo(Mode::Dark, crate::theme::ColorDepth::TrueColor);
+    let cmds = press(
+        &mut s,
+        "g/gold-silver-copper/ghtui/edit/main/README.md<Enter>",
+    );
+    let looks = cmds
+        .iter()
+        .any(|c| matches!(c, Cmd::Write(Work::Housekeeping(HWork::FileLook { .. }))));
+    assert!(looks, "{cmds:?}");
+}

@@ -137,7 +137,7 @@ fn general(page: &mut Page, repo: &RepoId, g: &General, keys: SettingKeys<'_>) {
         body(
             page,
             vec![
-                Seg::new(format!("{name}  "), Role::Meta),
+                Seg::new(format!("{name:<14}  "), Role::Meta),
                 Seg::new(value, Role::Body),
             ],
         );

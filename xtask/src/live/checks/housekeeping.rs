@@ -605,12 +605,18 @@ fn can_delete(cx: &Cx) -> Result<()> {
     ))
 }
 
+/// Deletes a repository the check made. GitHub refuses while a fork is
+/// still being made on disk, so it's asked again for a while.
 fn delete_repo(full: String) -> impl FnOnce() -> Result<()> {
     move || {
-        if gh::get(&format!("repos/{full}")).is_ok() {
-            gh::send("DELETE", &format!("repos/{full}"), None)?;
+        if gh::get(&format!("repos/{full}")).is_err() {
+            return Ok(());
         }
-        Ok(())
+        until(&format!("{full} deleted"), GITHUB, || {
+            Ok(gh::send("DELETE", &format!("repos/{full}"), None)
+                .is_ok()
+                .then_some(()))
+        })
     }
 }
 
@@ -694,11 +700,11 @@ fn new_repo(cx: &mut Cx) -> Result<()> {
         Ok(gh::get(&format!("repos/{full}")).ok())
     })?;
     ensure!(made["private"] == true, "it's public");
-    ensure!(
-        made["license"]["spdx_id"] == "MIT",
-        "its licence is {}",
-        made["license"]["spdx_id"]
-    );
+    // GitHub works out a new repository's licence a moment after making it.
+    until("its licence detected as MIT", GITHUB, || {
+        let repo = gh::get(&format!("repos/{full}"))?;
+        Ok((repo["license"]["spdx_id"] == "MIT").then_some(()))
+    })?;
 
     cx.step("it opens, and cloning it is offered and done here")?;
     ghtui.wait_for(&format!("Clone {full}?"))?;

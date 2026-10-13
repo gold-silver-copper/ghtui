@@ -112,11 +112,6 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
     let title = vec![Seg::new(format!("Contributors  {count}"), Role::Strong)];
     let right = vec![Seg::new("commits · each week, as above", Role::Meta)];
     page.box_top(title, right);
-    let n = usize::from(page.room(Frame::Body, 0))
-        .saturating_sub(10)
-        .min(CHART)
-        .min(a.weeks.len())
-        .max(1);
     let most = a.authors.iter().map(|x| x.commits).max().unwrap_or(0);
     let digits = compact(most).len();
     let names = (a.authors.iter())
@@ -124,6 +119,13 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
         .max()
         .unwrap_or(0)
         .min(24);
+    // What's left of the row after its rank, name and count: the weeks
+    // are summed to fit it, never cut, so the newest always show.
+    let n = usize::from(page.room(Frame::Body, 0))
+        .saturating_sub(5 + names + 3 + digits)
+        .min(CHART)
+        .min(a.weeks.len())
+        .max(1);
     for (i, author) in a.authors.iter().enumerate() {
         if i > 0 && !page.compact {
             page.box_rule();

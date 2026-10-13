@@ -15,6 +15,9 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
 #[must_use]
 pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     // Pages are built from GitHub's data; only these change it.
+    // A page opened from cached data alone brings no data: its forms
+    // still need filling in.
+    let opened = state.route().cloned();
     let data = matches!(
         msg,
         Msg::Viewer(_)
@@ -86,6 +89,8 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     if data {
         cmds.extend(act::follow(state));
         cmds.extend(crate::create::follow(state));
+        cmds.extend(crate::writes::follow(state));
+    } else if state.route() != opened.as_ref() {
         cmds.extend(crate::writes::follow(state));
     }
     cmds
