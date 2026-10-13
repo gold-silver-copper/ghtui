@@ -26,6 +26,8 @@ pub enum Context {
     Tree,
     /// A project: its board or table, or an item.
     Project,
+    /// A repository's Settings tab.
+    Settings,
 }
 
 /// The stacks of contexts that can be active at once, innermost first.
@@ -36,6 +38,7 @@ const STACKS: &[&[Context]] = {
         &[File, Page, Global],
         &[Log, Page, Global],
         &[Project, Page, Global],
+        &[Settings, Page, Global],
         &[Page, Global],
         &[Tree, Diff, Global],
         &[Diff, Global],
@@ -43,13 +46,14 @@ const STACKS: &[&[Context]] = {
 };
 
 impl Context {
-    const ALL: [Context; 8] = [
+    const ALL: [Context; 9] = [
         Context::Global,
         Context::Page,
         Context::List,
         Context::File,
         Context::Log,
         Context::Project,
+        Context::Settings,
         Context::Diff,
         Context::Tree,
     ];
@@ -65,6 +69,7 @@ impl Context {
             Context::Diff => "diff",
             Context::Tree => "tree",
             Context::Project => "project",
+            Context::Settings => "settings",
         }
     }
 
@@ -79,6 +84,7 @@ impl Context {
             Context::Diff => "in Files changed",
             Context::Tree => "in Files changed's file tree",
             Context::Project => "in projects",
+            Context::Settings => "in a repository's settings",
         }
     }
 
@@ -288,6 +294,11 @@ actions! {
     SetField          "set_field"         [",f"]                   Page   "Set a field of the item in its project";
     AddItem           "add_item"          [",i"]                   Project "Add an issue, a pull request or a draft";
     ArchiveItem       "archive_item"      [",X"]                   Project "Archive the item, or restore it";
+    AddSetting        "add_setting"       [",n"]                   Settings "Add a branch rule, a collaborator, a webhook or a deploy key";
+    EditSetting       "edit_setting"      [",e"]                   Settings "Edit the rule or webhook, or change the collaborator's role";
+    DeleteSetting     "delete_setting"    [",D"]                   Settings "Delete the rule, webhook or deploy key; remove the collaborator or invitation";
+    ToggleSetting     "toggle_setting"    [",x"]                   Settings "Turn the ruleset or webhook on or off; archive or unarchive the repository";
+    Redeliver         "redeliver"         [",R"]                   Settings "Redeliver the webhook delivery";
 
     NextHunk          "next_change"       ["]c", "}"]              Diff   "Next change";
     PrevHunk          "prev_change"       ["[c", "{"]              Diff   "Previous change";

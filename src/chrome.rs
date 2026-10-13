@@ -590,6 +590,16 @@ impl State {
                 tab: crate::site::InsightsTab::Contributors,
             })),
         ));
+        // GitHub shows the Settings tab only to admins.
+        if o.is_some_and(|o| o.can_admin) {
+            c.tabs.push((
+                new_tab("⚙", "Settings", None),
+                Target::Page(Route::Settings {
+                    repo: repo.clone(),
+                    page: crate::api::settings::SettingsPage::General,
+                }),
+            ));
+        }
     }
 
     fn pr_tabs(&self, pr: &PrRef, c: &mut Chrome) {
@@ -675,6 +685,7 @@ enum Section {
     Wiki,
     Security,
     Insights,
+    Settings,
 }
 
 fn section(route: &Route) -> Section {
@@ -703,6 +714,7 @@ fn section(route: &Route) -> Section {
         | Route::Alerts { .. }
         | Route::Alert { .. } => Section::Security,
         Route::Site(crate::site::Page::Insights { .. }) => Section::Insights,
+        Route::Settings { .. } => Section::Settings,
         _ => Section::Code,
     }
 }

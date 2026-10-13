@@ -807,6 +807,16 @@ says where it works.
 | `,i` | Add an issue, a pull request or a draft |
 | `,X` | Archive the item, or restore it |
 
+**In a repository's settings** (`settings:`)
+
+| Keys | Action |
+| ---- | ------ |
+| `,n` | Add a branch rule, a collaborator, a webhook or a deploy key |
+| `,e` | Edit the rule or webhook, or change the collaborator's role |
+| `,D` | Delete the rule, webhook or deploy key; remove the collaborator or invitation |
+| `,x` | Turn the ruleset or webhook on or off; archive or unarchive the repository |
+| `,R` | Redeliver the webhook delivery |
+
 **In Files changed** (`diff:`)
 
 | Keys           | Action |

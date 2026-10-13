@@ -135,6 +135,7 @@ impl State {
         }
         out.extend(crate::edit::doables(self));
         crate::manage::doables(self, &mut out);
+        crate::settings::doables(self, &mut out);
         out.extend(crate::create::checkout_doable(self));
         out.extend(crate::writes::change_doables(self));
         crate::actions::doables(self, &mut out);
@@ -562,7 +563,8 @@ impl State {
                     | Kind::Alert(_)
                     | Kind::Write(_)
                     | Kind::Actions(_)
-                    | Kind::Manage(_) => "choose",
+                    | Kind::Manage(_)
+                    | Kind::Settings(_) => "choose",
                     Kind::Code { .. } => "go there",
                     Kind::Messages(_) => "copy",
                     Kind::Commands
@@ -707,5 +709,6 @@ pub(super) fn describe(link: &Link) -> String {
         Link::Write(link) => crate::writes::describe(link).into(),
         Link::Artifact { .. } | Link::Dispatch(_) => crate::actions::describe(link).into(),
         Link::Review(link) => crate::talk::describe(link).into(),
+        Link::Setting(link) => crate::settings::describe(link).into(),
     }
 }

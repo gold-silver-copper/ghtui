@@ -142,6 +142,9 @@ pub struct RepoOverview {
     pub starred: bool,
     /// You may push to it, and re-run and cancel its workflows.
     pub can_write: bool,
+    /// You administer it: its Settings tab is yours.
+    #[serde(default)]
+    pub can_admin: bool,
     /// Node ID, for starring.
     pub id: NodeId,
     pub has_issues: bool,
@@ -5161,6 +5164,8 @@ impl RepoFull {
             parent: self.parent.map(|p| p.name_with_owner),
             starred: self.viewer_has_starred,
             can_write: crate::api::queries::RepositoryPermission::writes(self.viewer_permission),
+            can_admin: self.viewer_permission
+                == Some(crate::api::queries::RepositoryPermission::Admin),
             id: self.id.into(),
             has_issues: self.has_issues_enabled,
             has_discussions: self.has_discussions_enabled,

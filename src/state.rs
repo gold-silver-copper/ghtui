@@ -514,6 +514,8 @@ pub struct State {
     pub writing: crate::writes::Writing,
     /// What the pickers that manage an issue or pull request list.
     pub managing: crate::manage::Managing,
+    /// A settings form sent and not yet taken.
+    pub settings: crate::settings::Kept,
     /// Workflows being run by hand: their forms.
     pub dispatching: crate::actions::Dispatching,
     /// Conversations: long reviews unfolded, and the like.
@@ -568,6 +570,7 @@ impl State {
             creating: crate::create::Creating::default(),
             writing: crate::writes::Writing::default(),
             managing: crate::manage::Managing::default(),
+            settings: crate::settings::Kept::default(),
             dispatching: crate::actions::Dispatching::default(),
             talk: crate::talk::Talk::default(),
             quit: false,
@@ -611,6 +614,7 @@ impl State {
                 Route::Job { .. } => Context::Log,
                 Route::Blob { .. } | Route::Blame { .. } => Context::File,
                 Route::Project { .. } | Route::ProjectItem { .. } => Context::Project,
+                Route::Settings { .. } => Context::Settings,
                 route if route.list_query().is_some() => Context::List,
                 _ => Context::Page,
             },

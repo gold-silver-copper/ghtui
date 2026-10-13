@@ -315,6 +315,7 @@ pub fn overview() -> RepoOverview {
         parent: None,
         starred: false,
         can_write: true,
+        can_admin: false,
         id: NodeId::new("R_ghtui"),
         has_issues: true,
         has_discussions: true,

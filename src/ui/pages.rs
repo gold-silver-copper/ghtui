@@ -44,6 +44,7 @@ mod repository;
 mod review;
 mod runs;
 mod security;
+mod settings;
 mod timeline;
 mod writes;
 
@@ -70,6 +71,7 @@ pub use repository::*;
 pub use review::*;
 pub use runs::*;
 pub use security::*;
+pub use settings::*;
 pub use timeline::{FOLD_AFTER, LinesAt, Marks, commit_comments, pinned_issues};
 pub use writes::*;
 
@@ -691,6 +693,7 @@ mod tests {
             parent: None,
             starred: false,
             can_write: false,
+            can_admin: false,
             id: crate::api::model::NodeId::new("R_1"),
             has_issues: true,
             has_discussions: false,

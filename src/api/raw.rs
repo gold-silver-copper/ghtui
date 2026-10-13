@@ -332,6 +332,17 @@ pub(crate) const DELETE_LIST: &str =
 pub(crate) const SAVED_REPLIES: &str =
     "query { viewer { savedReplies(first: 100) { totalCount nodes { id title body } } } }";
 
+// ---- a repository's settings ([`crate::api::settings`]) ----
+
+/// A repository's branch protection rules, with what each asks.
+pub(crate) const PROTECTION_RULES: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id branchProtectionRules(first: 100) { totalCount nodes { id pattern requiresApprovingReviews requiredApprovingReviewCount dismissesStaleReviews requiresCodeOwnerReviews requireLastPushApproval requiresStatusChecks requiresStrictStatusChecks requiredStatusChecks { context app { id } } requiresConversationResolution requiresCommitSignatures requiresLinearHistory lockBranch isAdminEnforced allowsForcePushes allowsDeletions matchingRefs(first: 10) { totalCount nodes { name } } } } } }";
+
+pub(crate) const CREATE_PROTECTION_RULE: &str = "mutation($input: CreateBranchProtectionRuleInput!) { createBranchProtectionRule(input: $input) { branchProtectionRule { id } } }";
+
+pub(crate) const UPDATE_PROTECTION_RULE: &str = "mutation($input: UpdateBranchProtectionRuleInput!) { updateBranchProtectionRule(input: $input) { branchProtectionRule { id } } }";
+
+pub(crate) const DELETE_PROTECTION_RULE: &str = "mutation($id: ID!) { deleteBranchProtectionRule(input: {branchProtectionRuleId: $id}) { clientMutationId } }";
+
 /// Every query here, by name, built with sample input.
 #[cfg(test)]
 pub(crate) fn all() -> Vec<(&'static str, String)> {
@@ -421,6 +432,13 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ("TRANSFER_TARGETS", TRANSFER_TARGETS.to_owned()),
         ("OPEN_ISSUES", OPEN_ISSUES.to_owned()),
         ("DISCUSSION_FORMS", DISCUSSION_FORMS.to_owned()),
+    ]);
+    // A repository's settings.
+    all.extend([
+        ("PROTECTION_RULES", PROTECTION_RULES.to_owned()),
+        ("CREATE_PROTECTION_RULE", CREATE_PROTECTION_RULE.to_owned()),
+        ("UPDATE_PROTECTION_RULE", UPDATE_PROTECTION_RULE.to_owned()),
+        ("DELETE_PROTECTION_RULE", DELETE_PROTECTION_RULE.to_owned()),
     ]);
     for field in ["stargazers", "watchers"] {
         all.push((

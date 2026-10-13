@@ -670,6 +670,7 @@ mod tests {
             parent: None,
             starred: false,
             can_write: false,
+            can_admin: false,
             id: crate::api::model::NodeId::new("R_1"),
             has_issues: true,
             has_discussions: false,

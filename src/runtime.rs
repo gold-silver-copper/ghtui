@@ -1028,6 +1028,10 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
             Data::Alert(Box::new(v))
         }),
         DataKey::Site(key) => return crate::site::cached(gh, key),
+        DataKey::Settings(repo, page) => {
+            let key = crate::api::settings::keys::page(repo, *page);
+            at(gh.cached(&key)?, |v| Data::Settings(Box::new(v)))
+        }
         DataKey::History(repo, rev, path) => at(gh.cached(&keys::history(repo, rev, path))?, |v| {
             Data::History(Box::new(v))
         }),
@@ -1161,6 +1165,7 @@ pub(crate) async fn fetch(
         DataKey::Sidebar(repo, number) => Data::Sidebar(Box::new(gh.sidebar(repo, *number).await?)),
         DataKey::NewForm(repo) => Data::NewForm(Box::new(gh.new_form(repo).await?)),
         DataKey::Subscription(of) => Data::Subscription(Box::new(gh.subscription(of).await?)),
+        DataKey::Settings(repo, page) => Data::Settings(Box::new(gh.settings(repo, *page).await?)),
         DataKey::CommitChecks(repo, oid) => {
             Data::Checks(Box::new(gh.commit_checks(repo, oid).await?))
         }

@@ -137,6 +137,11 @@ pub enum Route {
         kind: AlertKind,
         number: u64,
     },
+    /// A page of a repository's Settings tab ([`crate::settings`]).
+    Settings {
+        repo: RepoId,
+        page: crate::api::settings::SettingsPage,
+    },
     /// An organization's teams.
     Teams(String),
     Team {
@@ -522,6 +527,9 @@ impl Route {
             Route::Alert { repo, kind, number } => {
                 format!("{}/security/{}/{number}", links::repo(repo), kind.slug())
             }
+            Route::Settings { repo, page } => {
+                format!("{}/settings{}", links::repo(repo), page.slug())
+            }
             Route::Teams(org) => format!("{}/orgs/{org}/teams", links::base()),
             Route::Team { org, slug } => format!("{}/orgs/{org}/teams/{slug}", links::base()),
             Route::Gist { owner, id } => match owner {
@@ -664,6 +672,11 @@ impl Route {
             Route::Alert { repo, kind, number } => {
                 format!("{repo} · {} alert {number}", kind.name())
             }
+            Route::Settings {
+                repo,
+                page: crate::api::settings::SettingsPage::Hook(id),
+            } => format!("{repo} · Webhook {id}"),
+            Route::Settings { repo, page } => format!("{repo} · Settings · {}", page.name()),
             Route::Teams(org) => format!("@{org} · Teams"),
             Route::Team { org, slug } => format!("@{org}/{slug}"),
             Route::Gist { id, .. } => format!("Gist {}", id.get(..7).unwrap_or(id)),
@@ -742,6 +755,7 @@ impl Route {
             }
             | Route::Alerts { repo, .. }
             | Route::Alert { repo, .. }
+            | Route::Settings { repo, .. }
             | Route::Blame { repo, .. }
             | Route::Unsplit { repo, .. }
             | Route::Compare { repo, .. }
@@ -1233,6 +1247,20 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
                 .filter(|q| !q.is_empty())
                 .unwrap_or_else(|| OPEN.to_owned());
             Route::Alerts { repo, kind, query }
+        }
+        // The Settings tab's pages ghtui has; the rest are on GitHub.
+        ["settings", rest @ ..] => {
+            use crate::api::settings::SettingsPage as P;
+            let page = match rest {
+                [] => P::General,
+                ["branches" | "branch_protection_rules" | "rules", ..] => P::Branches,
+                ["access" | "collaboration"] => P::Access,
+                ["hooks"] | ["hooks", "new"] => P::Hooks,
+                ["hooks", id] => P::Hook(id.parse().ok().filter(|&n| n > 0)?),
+                ["keys", ..] => P::Keys,
+                _ => return None,
+            };
+            Route::Settings { repo, page }
         }
         ["security", slug, n] if AlertKind::from_slug(slug).is_some() => Route::Alert {
             repo,
@@ -2774,6 +2802,18 @@ pub(crate) mod tests {
                         kind,
                         number
                     }),
+                (
+                    repo(),
+                    prop_oneof![
+                        Just(crate::api::settings::SettingsPage::General),
+                        Just(crate::api::settings::SettingsPage::Branches),
+                        Just(crate::api::settings::SettingsPage::Access),
+                        Just(crate::api::settings::SettingsPage::Hooks),
+                        Just(crate::api::settings::SettingsPage::Keys),
+                        (1..u64::MAX).prop_map(crate::api::settings::SettingsPage::Hook),
+                    ]
+                )
+                    .prop_map(|(repo, page)| Route::Settings { repo, page }),
                 (prop::option::of(repo()), "GHSA(-[2-9a-z]{4}){3}")
                     .prop_map(|(repo, ghsa)| Route::Advisory { repo, ghsa }),
                 login().prop_map(Route::Teams),

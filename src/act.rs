@@ -207,6 +207,8 @@ pub enum Subject {
     Alert(crate::api::security::AlertRef),
     /// A discussion and its comments.
     Discussion(crate::api::browse::DiscussionsOf, u64),
+    /// A page of a repository's Settings tab ([`crate::settings`]).
+    Settings(RepoId, crate::api::settings::SettingsPage),
 }
 
 impl Subject {
@@ -263,6 +265,10 @@ impl Subject {
                 of: of.clone(),
                 number: *number,
             },
+            Subject::Settings(repo, page) => Route::Settings {
+                repo: repo.clone(),
+                page: *page,
+            },
         }
     }
 
@@ -281,6 +287,7 @@ impl Subject {
             Subject::Project(project, view) => Need::Data(DataKey::Project(project.clone(), *view)),
             Subject::Alert(a) => Need::Data(DataKey::Alert(a.clone())),
             Subject::Discussion(of, number) => Need::Data(DataKey::Discussion(of.clone(), *number)),
+            Subject::Settings(repo, page) => Need::Data(DataKey::Settings(repo.clone(), *page)),
         }
     }
 
@@ -297,8 +304,9 @@ impl Subject {
             Subject::Thread { .. } => matches!(action, A::MarkRead | A::MarkDone),
             Subject::Inbox { .. } => matches!(action, A::MarkAllRead | A::MarkAllDone),
             // Moving and setting go through `crate::projects`, writing in
-            // a discussion through `crate::discuss`.
-            Subject::Project(..) => false,
+            // a discussion through `crate::discuss`, settings through
+            // `crate::settings`.
+            Subject::Project(..) | Subject::Settings(..) => false,
         }
     }
 
@@ -313,6 +321,7 @@ impl Subject {
             Subject::Project(..) => "the project".to_owned(),
             Subject::Alert(_) => "the alert".to_owned(),
             Subject::Discussion(..) => "the discussion".to_owned(),
+            Subject::Settings(repo, _) => format!("{repo}'s settings"),
         }
     }
 }
@@ -541,7 +550,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
                 None => Ok(Plan::Load(subject.need())),
             }
         }
-        Subject::Project(..) => Err(elsewhere(action).to_owned()),
+        Subject::Project(..) | Subject::Settings(..) => Err(elsewhere(action).to_owned()),
     }
 }
 
@@ -841,6 +850,7 @@ pub fn on_changed(
                 cmds.extend(crate::edit::after(state));
             }
             cmds.extend(crate::manage::after(state, change));
+            cmds.extend(crate::settings::after(state, change));
             match by {
                 By::Confirm(about) | By::Act(about) | By::Edit(about) => {
                     state.awaiting = state.route().map(|route| Awaiting {
@@ -863,6 +873,10 @@ pub fn on_changed(
                 nav::set_starred(state, repo, !starred);
             }
             let text = failure(change, &err);
+            // A form's text comes back to edit.
+            if sender && crate::settings::refused(state, change, &text) {
+                return Vec::new();
+            }
             match &mut state.overlay {
                 Some(Overlay::Confirm(confirm)) if sender => {
                     confirm.sending = false;
@@ -936,6 +950,9 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
     let pr = |pr: &PrRef| state.prs.get(pr).and_then(|r| r.data.as_ref());
     match (change, about) {
         (Change::Manage(m), about) => yes(crate::manage::shows(state, m, about)),
+        (Change::Settings(c), Subject::Settings(repo, page)) => {
+            yes(crate::settings::shows(state, c, repo, *page))
+        }
         (_, Subject::Discussion(of, number)) => {
             yes(crate::discuss::shows(state, change, of, *number))
         }
@@ -1134,6 +1151,7 @@ fn doing(change: &Change) -> &'static str {
         Change::Alert(c) => crate::security::doing(c),
         Change::Project(c) => crate::projects::doing(c),
         Change::Manage(m) => crate::manage::doing(m),
+        Change::Settings(c) => crate::settings::doing(c),
     }
 }
 
@@ -1187,6 +1205,7 @@ fn done(change: &Change) -> String {
         Change::Alert(c) => crate::security::done(c),
         Change::Project(c) => crate::projects::done(c).into(),
         Change::Manage(m) => crate::manage::done(m),
+        Change::Settings(c) => crate::settings::done(c),
     }
 }
 
@@ -1217,6 +1236,7 @@ pub fn needs(change: &Change) -> &'static str {
         Change::Alert(c) => crate::security::needs(c),
         Change::Discussion(_) => "Discussions: write",
         Change::Manage(m) => crate::manage::needs(m),
+        Change::Settings(c) => crate::settings::needs(c),
     }
 }
 
@@ -1249,6 +1269,7 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::Alert(c) => crate::security::what(c),
         Change::Project(c) => crate::projects::what(c),
         Change::Manage(m) => crate::manage::what(m),
+        Change::Settings(c) => crate::settings::what(c),
     };
     let reason = match err {
         ApiError::GraphQl(messages) => messages.join("; "),

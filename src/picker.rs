@@ -58,6 +58,8 @@ pub enum Kind {
     Actions(crate::actions::Pick),
     /// Locking, hiding, a base, sub-issues and the like ([`crate::manage`]).
     Manage(crate::manage::Pick),
+    /// Someone to invite, a role, a repository's name ([`crate::settings`]).
+    Settings(crate::settings::Pick),
 }
 
 /// What a section's title is for.
@@ -93,6 +95,7 @@ impl Picker {
             Kind::Write(ref pick) => pick.title(),
             Kind::Actions(ref pick) => pick.title(),
             Kind::Manage(ref pick) => pick.title(),
+            Kind::Settings(ref pick) => pick.title(),
         }
     }
 }
@@ -131,6 +134,7 @@ pub enum Choice {
     Write(crate::writes::Chosen),
     Actions(crate::actions::Chosen),
     Manage(crate::manage::Chosen),
+    Settings(crate::settings::Chosen),
 }
 
 type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -193,6 +197,7 @@ impl State {
             Kind::Write(ref pick) => pick.placeholder(),
             Kind::Actions(ref pick) => pick.placeholder(),
             Kind::Manage(ref pick) => pick.placeholder(),
+            Kind::Settings(ref pick) => pick.placeholder(),
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
@@ -292,6 +297,9 @@ impl State {
                 .collect(),
             Kind::Manage(pick) => (crate::manage::rows(self, pick, q).into_iter())
                 .map(|(row, chosen)| (row, chosen.map(Choice::Manage)))
+                .collect(),
+            Kind::Settings(pick) => (crate::settings::rows(pick, q).into_iter())
+                .map(|(row, chosen)| (row, chosen.map(Choice::Settings)))
                 .collect(),
         }
     }
@@ -653,6 +661,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
         Choice::Write(chosen) => crate::writes::choose(state, chosen),
         Choice::Actions(chosen) => crate::actions::choose(state, chosen),
         Choice::Manage(chosen) => crate::manage::choose(state, chosen),
+        Choice::Settings(chosen) => crate::settings::choose(state, chosen),
     }
 }
 

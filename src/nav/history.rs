@@ -137,6 +137,7 @@ impl State {
             Link::Write(link) => crate::writes::follow_link(self, link),
             Link::Artifact { .. } | Link::Dispatch(_) => crate::actions::follow_link(self, link),
             Link::Review(link) => crate::talk::follow(self, link),
+            Link::Setting(link) => crate::settings::follow_link(self, link),
             Link::State(state) => set_list_state(self, state),
             // Enter on a comment doesn't start writing: `>` does.
             Link::Quote { .. } => {
@@ -324,6 +325,14 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             query: crate::route::OPEN.into(),
         },
         Route::Alerts { repo, .. } => Route::Advisories(Some(repo.clone())),
+        Route::Settings {
+            repo,
+            page: crate::api::settings::SettingsPage::Hook(_),
+        } => Route::Settings {
+            repo: repo.clone(),
+            page: crate::api::settings::SettingsPage::Hooks,
+        },
+        Route::Settings { repo, .. } => Route::Repo(repo.clone()),
         Route::Advisories(repo) => repo.clone().map_or(Route::Home, Route::Repo),
         Route::Projects(ProjectsOf::Owner(owner)) => Route::user(owner.login()),
         Route::Project { project, .. } => Route::Projects(ProjectsOf::Owner(project.owner.clone())),

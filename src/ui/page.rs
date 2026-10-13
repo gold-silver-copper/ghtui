@@ -64,6 +64,8 @@ pub enum Link {
     Dispatch(DispatchLink),
     /// Something a pull request's review leads to.
     Review(ReviewLink),
+    /// A row of a repository's Settings tab ([`crate::settings`]).
+    Setting(crate::ui::pages::SettingLink),
 }
 
 /// What a row of a release's, a gist's or a wiki page's form does

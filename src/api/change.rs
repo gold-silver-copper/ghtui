@@ -137,6 +137,8 @@ pub enum Change {
     /// Lock, pin, hide, a branch, sub-issues and the like
     /// ([`crate::api::manage`]).
     Manage(crate::api::manage::Manage),
+    /// A repository's settings ([`crate::api::settings`]).
+    Settings(crate::api::settings::SettingsChange),
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -359,6 +361,7 @@ impl GitHub {
             }
             Change::Alert(change) => self.set_alert(change).await,
             Change::Manage(change) => self.manage(change).await,
+            Change::Settings(change) => self.change_setting(change).await,
         }
     }
 }

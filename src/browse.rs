@@ -129,6 +129,8 @@ pub enum DataKey {
     Site(crate::site::Key),
     /// Labels, and who can own a new repository ([`crate::housekeeping`]).
     Housekeeping(crate::housekeeping::Key),
+    /// A page of a repository's Settings tab.
+    Settings(RepoId, crate::api::settings::SettingsPage),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,6 +196,7 @@ pub enum Data {
     Subscription(Box<crate::api::watch::Subscription>),
     Site(Box<crate::site::Value>),
     Housekeeping(Box<crate::housekeeping::Data>),
+    Settings(Box<crate::api::settings::Settings>),
 }
 
 impl Data {
@@ -538,6 +541,9 @@ pub fn needs(route: &Route) -> Vec<Need> {
             };
             vec![header(repo), Need::Data(K::Alert(a))]
         }
+        Route::Settings { repo, page } => {
+            vec![header(repo), Need::Data(K::Settings(repo.clone(), *page))]
+        }
         Route::Commit { repo, oid, pr } => {
             let mut needs = vec![
                 header(repo),
@@ -620,6 +626,7 @@ picked!(
     Projects => Results<ProjectSummary>, Project => Project,
     Alerts => AlertList, Alert => Alert,
     Subscription => crate::api::watch::Subscription,
+    Settings => crate::api::settings::Settings,
 );
 
 /// A page's needs as the page shows them, failing with the key that
@@ -1094,6 +1101,10 @@ impl State {
                 if let Some(a) = f.get(&key).show(&mut page, &title) {
                     pages::alert(&mut page, repo, a, cx);
                 }
+            }
+            Route::Settings { repo, page: at } => {
+                let key = DataKey::Settings(repo.clone(), *at);
+                crate::settings::build(self, &mut page, repo, *at, f.get(&key), now);
             }
             Route::Advisory { repo, ghsa } => {
                 let key = DataKey::Advisory(repo.clone(), ghsa.clone());

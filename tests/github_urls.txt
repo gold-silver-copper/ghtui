@@ -254,7 +254,17 @@ https://github.com/rust-lang/rust/community                                 exte
 https://github.com/rust-lang/rust/activity                                  external rare
 https://github.com/rust-lang/rust/custom-properties                         external session
 https://github.com/rust-lang/rust/attestations                              external rare
-https://github.com/rust-lang/rust/settings                                  external session
+https://github.com/rust-lang/rust/settings                                  Settings
+https://github.com/rust-lang/rust/settings/branches                         Settings
+https://github.com/rust-lang/rust/settings/branch_protection_rules/1234     Settings
+https://github.com/rust-lang/rust/settings/rules                            Settings
+https://github.com/rust-lang/rust/settings/access                           Settings
+https://github.com/rust-lang/rust/settings/hooks                            Settings
+https://github.com/rust-lang/rust/settings/hooks/1234                       Settings
+https://github.com/rust-lang/rust/settings/keys                             Settings
+https://github.com/rust-lang/rust/settings/actions                          external session
+https://github.com/rust-lang/rust/settings/secrets/actions                  external session
+https://github.com/rust-lang/rust/settings/pages                            external session
 https://github.com/rust-lang/rust/branches                                  Branches
 https://github.com/rust-lang/rust/tags                                      Tags
 https://github.com/rust-lang/rust/releases                                  Releases

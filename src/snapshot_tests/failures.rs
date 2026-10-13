@@ -179,6 +179,12 @@ fn every_route_says_why_when_its_needs_fail() {
         "https://github.com/o/r/wiki",
         "https://github.com/o/r/security/advisories",
         "https://github.com/o/r/security/advisories/GHSA-2222-3333-4444",
+        "https://github.com/o/r/settings",
+        "https://github.com/o/r/settings/branches",
+        "https://github.com/o/r/settings/access",
+        "https://github.com/o/r/settings/hooks",
+        "https://github.com/o/r/settings/hooks/11",
+        "https://github.com/o/r/settings/keys",
         "https://github.com/orgs/o/teams",
         "https://github.com/orgs/o/teams/t",
         "https://gist.github.com/o/0123456789abcdef0123",
@@ -340,5 +346,6 @@ fn sample(key: &DataKey) -> Data {
         K::Housekeeping(k) => {
             Data::Housekeeping(Box::new(crate::housekeeping::fixtures::sample(k)))
         }
+        K::Settings(_, page) => Data::Settings(Box::new(crate::settings::fixtures::page(*page))),
     }
 }
