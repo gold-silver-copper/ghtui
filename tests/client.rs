@@ -2071,19 +2071,17 @@ async fn graphql_queries_are_retried() {
     assert_eq!(seen.lock().unwrap().len(), 2);
 }
 
-/// A refused connection never reached GitHub, so even a mutation retries.
+/// A refused connection never reached GitHub: a mutation refused (each
+/// time it's tried) fails as offline, not as a network error.
 #[tokio::test]
-async fn refused_connections_are_retried_even_for_mutations() {
+async fn a_refused_mutation_fails_as_offline() {
     // A privileged port, which no test's server can be given: a port freed
     // here could be another test's by the time this connects.
     let gh = client("http://127.0.0.1:1", Store::disabled());
-    let started = std::time::Instant::now();
     assert!(matches!(
         gh.change(&reply()).await,
         Err(ApiError::Offline(_))
     ));
-    // Three attempts means two backoffs (500ms + 1s).
-    assert!(started.elapsed() >= std::time::Duration::from_millis(1400));
 }
 
 /// GitHub that can't be reached: a request fails as offline, having

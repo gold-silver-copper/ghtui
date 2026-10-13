@@ -115,6 +115,8 @@ pub struct GitHub {
     enterprise: Arc<Enterprise>,
     /// Whether GitHub can be reached ([`crate::api::reach`]).
     reach: crate::api::reach::Reach,
+    /// Doubled before each retry: the first waits twice this.
+    backoff: Duration,
 }
 
 /// An Enterprise Server's version, and what it's known to lack.
@@ -229,11 +231,14 @@ impl GitHub {
     }
 
     /// For tests: point the client at a local server, its GraphQL at
-    /// `/graphql`.
+    /// `/graphql`, retrying at once.
     pub fn with_base_uri(token: Token, store: Store, base_uri: &str) -> Self {
         let rest = base_uri.trim_end_matches('/');
         let graphql = format!("{rest}/graphql");
-        Self::with_bases(token, store, Host::GITHUB_COM, rest.to_owned(), graphql)
+        Self {
+            backoff: Duration::ZERO,
+            ..Self::with_bases(token, store, Host::GITHUB_COM, rest.to_owned(), graphql)
+        }
     }
 
     fn with_bases(token: Token, store: Store, host: Host, rest: String, graphql: String) -> Self {
@@ -253,6 +258,7 @@ impl GitHub {
             recorder: None,
             enterprise: Arc::default(),
             reach: crate::api::reach::Reach::default(),
+            backoff: Duration::from_millis(250),
         }
     }
 
@@ -642,7 +648,7 @@ impl GitHub {
                 Ok(response) => response,
                 Err(err) if !last && (request.idempotent() || err.is_connect()) => {
                     tracing::debug!(%err, attempt, "request failed; retrying");
-                    backoff(attempt).await;
+                    tokio::time::sleep(self.backoff * (1 << attempt)).await;
                     continue;
                 }
                 // It never left: GitHub can't be reached.
@@ -676,7 +682,7 @@ impl GitHub {
             let timed_out = sent.elapsed() >= GITHUB_TIMEOUT;
             if status.is_server_error() && !last && request.idempotent() && !timed_out {
                 tracing::debug!(%status, attempt, "server error; retrying");
-                backoff(attempt).await;
+                tokio::time::sleep(self.backoff * (1 << attempt)).await;
                 continue;
             }
             let body = response
@@ -3404,10 +3410,6 @@ async fn spawn_store(f: impl FnOnce() + Send + 'static) {
     if let Err(err) = tokio::task::spawn_blocking(f).await {
         tracing::warn!(%err, "cache write task failed");
     }
-}
-
-async fn backoff(attempt: u32) {
-    tokio::time::sleep(Duration::from_millis(250 << attempt)).await;
 }
 
 /// A failed response's error. A 404 names `what` was asked for: GitHub's
