@@ -21,7 +21,9 @@ use crate::api::browse::{DiscussionsOf, IssueKind, SearchKind, SearchResults};
 use crate::api::model::{PrRef, RepoId};
 use crate::api::{ApiError, GitHub};
 use crate::browse::Need;
+#[cfg(test)]
 use crate::data::DataKey;
+use crate::diff_job::GitContext;
 use crate::route::Route;
 use crate::ui::pages::PrTab;
 
@@ -255,7 +257,7 @@ async fn refresh(
     ];
     let pages = tabs.iter().flat_map(crate::browse::needs);
     tracing::info!(%repo, "keeping offline: its tabs");
-    if let Err(err) = fetch_all(gh, pages.collect()).await {
+    if let Err(err) = fetch_all(gh, local.git(), pages.collect()).await {
         kept.problem = Some(err.to_string());
         return kept;
     }
@@ -283,7 +285,7 @@ async fn refresh(
             .iter()
             .flat_map(|(_, _, r)| crate::browse::needs(r))
             .collect();
-        if let Err(err) = fetch_all(gh, needs).await {
+        if let Err(err) = fetch_all(gh, local.git(), needs).await {
             kept.problem = Some(err.to_string());
             return kept;
         }
@@ -401,14 +403,16 @@ async fn recent(
 /// Fetches what the pages need into the cache, a few at a time; stops at
 /// the first sign GitHub's gone. Other failures (an item since deleted)
 /// are left for the page to say.
-async fn fetch_all(gh: &GitHub, needs: Vec<Need>) -> Result<(), ApiError> {
+async fn fetch_all(gh: &GitHub, git: &GitContext, needs: Vec<Need>) -> Result<(), ApiError> {
     let mut needs = needs;
     needs.dedup();
     let mut asks = futures::stream::iter(needs.into_iter().filter(worth_keeping))
         .map(|need| async move {
             match need {
                 Need::Pr(pr) => gh.pull_request(&pr).await.map(drop),
-                Need::Data(key) => crate::runtime::fetch(gh, &key, None, None).await.map(drop),
+                Need::Data(key) => {
+                    (crate::data::load::fetch(gh, git, &key, None, None).await).map(drop)
+                }
             }
         })
         .buffer_unordered(AT_ONCE);
@@ -427,22 +431,11 @@ async fn fetch_all(gh: &GitHub, needs: Vec<Need>) -> Result<(), ApiError> {
 }
 
 /// Whether a page's need is kept in the cache. What git answers comes
-/// from the clone; some data isn't cached at all.
+/// from the clone.
 fn worth_keeping(need: &Need) -> bool {
     match need {
         Need::Pr(_) => true,
-        Need::Data(key) if crate::source::by_git(key, None) => false,
-        Need::Data(key) => !matches!(
-            key,
-            DataKey::InProjects(..)
-                | DataKey::Sidebar(..)
-                | DataKey::NewForm(..)
-                | DataKey::Subscription(..)
-                | DataKey::CommitComments(..)
-                | DataKey::JobLog(..)
-                | DataKey::Lines(..)
-                | DataKey::Wiki(..)
-        ),
+        Need::Data(key) => key.kept() && !crate::source::by_git(key, None),
     }
 }
 

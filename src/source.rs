@@ -347,6 +347,11 @@ impl Local {
         })
     }
 
+    /// Where clones and git's credentials are.
+    pub fn git(&self) -> &GitContext {
+        &self.git
+    }
+
     fn clones(&self) -> std::sync::MutexGuard<'_, HashMap<String, Slot>> {
         self.clones.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -365,7 +370,7 @@ impl Local {
         after: Option<String>,
     ) -> (Result<Data, ApiError>, From) {
         let Some(repo) = repo_of(key) else {
-            let result = crate::runtime::fetch(gh, key, after, None).await;
+            let result = crate::data::load::fetch(gh, &self.git, key, after, None).await;
             return (result, From::Api("git doesn't know it".into()));
         };
         let why = match self.clone_of(gh, &repo).await {
@@ -416,7 +421,7 @@ impl Local {
             }
         };
         tracing::info!(?key, %why, "read through the API");
-        let result = crate::runtime::fetch(gh, key, after, None).await;
+        let result = crate::data::load::fetch(gh, &self.git, key, after, None).await;
         (result, From::Api(why))
     }
 

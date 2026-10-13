@@ -8,7 +8,7 @@ use crate::api::queries::{NumberVariables, NumberVariablesFields};
 use crate::schema::schema;
 
 /// What a subscription is to.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Watched {
     /// A repository's notifications: its watch settings.
     Repo(RepoId),

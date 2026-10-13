@@ -57,13 +57,8 @@ impl GitHub {
             found.nodes.into_iter().flatten().collect(),
             found.total_count,
         );
-        self.remember(keys::REPLIES, &replies);
         Ok(replies)
     }
-}
-
-pub mod keys {
-    pub const REPLIES: &str = "saved-replies";
 }
 
 #[cfg(test)]

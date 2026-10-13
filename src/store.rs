@@ -22,7 +22,12 @@ use redb::{Database, Durability, ReadableDatabase, TableDefinition, TableHandle}
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bump whenever the meaning or encoding of any table changes.
-pub const SCHEMA_VERSION: u64 = 15;
+pub const SCHEMA_VERSION: u64 = 16;
+
+/// Where the pages visited lately are kept.
+pub const VISITS: &str = "visits";
+/// Where the tabs open when ghtui last quit are kept.
+pub const TABS: &str = "tabs";
 
 const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 /// REST responses keyed by request path, stored with their ETag.

@@ -1559,13 +1559,6 @@ async fn a_list_page_is_checked_against_itself() {
             .any(|d| d.contains("me's gists: a page of 2, of 1 in all")),
         "{doubts:?}"
     );
-    // The list as kept is checked too (named by its cache key).
-    assert!(
-        doubts
-            .iter()
-            .any(|d| d.contains("gists:me: a page of 2, of 1 in all")),
-        "{doubts:?}"
-    );
 }
 
 /// "Go to file" lists files only, and says when GitHub cut the tree short.
@@ -1994,8 +1987,8 @@ async fn requests_carry_the_token_and_github_headers() {
     assert!(seen[0].header("user-agent").unwrap().starts_with("ghtui/"));
 }
 
-/// A README that couldn't be fetched isn't reported (or kept) as none,
-/// and the overview doesn't wait on it.
+/// A README that couldn't be fetched isn't reported as none, and the
+/// overview doesn't wait on it.
 #[tokio::test]
 async fn a_failed_readme_isnt_taken_for_no_readme() {
     let recorded: serde_json::Value = serde_json::from_str(
@@ -2016,8 +2009,7 @@ async fn a_failed_readme_isnt_taken_for_no_readme() {
         Reply::new(404, r#"{"message":"Not Found"}"#).on("/readme"),
     ])
     .await;
-    let dir = tempfile::tempdir().unwrap();
-    let gh = client(&base, Store::open(&dir.path().join("cache.redb")));
+    let gh = client(&base, Store::disabled());
     let repo = RepoId::new("atom", "atom");
     gh.repo(&repo).await.unwrap();
     let readme = gh.readme(&repo).await;
@@ -2025,12 +2017,7 @@ async fn a_failed_readme_isnt_taken_for_no_readme() {
         readme.is_err(),
         "the README failed with a 502, but it reads as {readme:?}"
     );
-    let key = ghtui::api::browse::keys::readme(&repo);
-    let kept: Option<ghtui::store::Cached<Option<ghtui::api::browse::Readme>>> = gh.cached(&key);
-    assert!(kept.is_none(), "a failed README was kept: {kept:?}");
     assert_eq!(gh.readme(&repo).await.unwrap(), None, "a 404 is no README");
-    let kept: Option<ghtui::store::Cached<Option<ghtui::api::browse::Readme>>> = gh.cached(&key);
-    assert_eq!(kept.map(|k| k.value), Some(None), "no README is kept");
 }
 
 /// An organization's discussions are found however many pages of search

@@ -63,22 +63,6 @@ pub struct MyLists {
 /// it.
 pub const MEMBERS_MAX: usize = 1_000;
 
-pub mod keys {
-    use crate::api::model::RepoId;
-
-    pub fn lists(login: &str) -> String {
-        format!("lists:{}", login.to_lowercase())
-    }
-
-    pub fn list(login: &str, slug: &str) -> String {
-        format!("lists:{}:{slug}", login.to_lowercase())
-    }
-
-    pub fn mine(repo: &RepoId) -> String {
-        format!("lists:mine:{repo}")
-    }
-}
-
 impl GitHub {
     /// Someone's starred lists, most recently added to first; GitHub
     /// shows you your private ones too.
@@ -91,7 +75,6 @@ impl GitHub {
         let mut lists: Vec<StarList> = found.nodes.into_iter().flatten().map(Into::into).collect();
         lists.sort_by(|a, b| b.last_added.cmp(&a.last_added));
         let lists = Capped::new(lists, total);
-        self.remember(&keys::lists(login), &lists);
         Ok(lists)
     }
 
@@ -111,7 +94,6 @@ impl GitHub {
             .as_deref()
             .and_then(|a| a.split_once(' '))
             .map(|(_, c)| c);
-        let first = cursor.is_none();
         let vars = serde_json::json!({ "id": list.id.as_str(), "after": cursor });
         let items: wire::Items = self
             .graphql_json(
@@ -136,7 +118,7 @@ impl GitHub {
             next,
         };
         let page = ListPage { list, repos };
-        Ok(self.kept_page(first, &keys::list(login, slug), page))
+        Ok(self.checked(page, format!("@{login}'s list {slug}")))
     }
 
     /// Your lists, and which of them have `repo`.
@@ -165,7 +147,6 @@ impl GitHub {
             viewer: found.viewer.login,
             lists: Capped::new(lists, found.viewer.lists.total_count),
         };
-        self.remember(&keys::mine(repo), &mine);
         Ok(mine)
     }
 

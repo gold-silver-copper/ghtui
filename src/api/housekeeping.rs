@@ -58,11 +58,6 @@ pub(crate) fn queries() -> Vec<(&'static str, String)> {
     ]
 }
 
-/// Where the labels list is kept in the cache.
-pub fn labels_key(repo: &RepoId) -> String {
-    format!("labels:{repo}")
-}
-
 // ---- milestones --------------------------------------------------------------------
 
 /// A milestone as it's to be.
@@ -251,7 +246,6 @@ impl GitHub {
             issues: wire::Count,
             pull_requests: wire::Count,
         }
-        let first = after.is_none();
         let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after });
         let page: wire::Connection<Wire> = self
             .graphql_json(LABELS, vars, repo, "/repository/labels")
@@ -263,7 +257,7 @@ impl GitHub {
             description: l.description.unwrap_or_default(),
             open: l.issues.total_count + l.pull_requests.total_count,
         });
-        Ok(self.kept_page(first, &labels_key(repo), labels))
+        Ok(labels)
     }
 
     pub async fn create_label(&self, repo: &RepoId, label: &LabelChange) -> Result<(), ApiError> {

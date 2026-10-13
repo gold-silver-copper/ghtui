@@ -150,22 +150,6 @@ pub struct Dependencies {
 /// preview (without it, every manifest counts none).
 const HAWKGIRL: &str = "application/vnd.github.hawkgirl-preview+json";
 
-pub mod keys {
-    use crate::api::model::RepoId;
-
-    pub fn activity(repo: &RepoId) -> String {
-        format!("insights:activity:{repo}")
-    }
-
-    pub fn traffic(repo: &RepoId) -> String {
-        format!("insights:traffic:{repo}")
-    }
-
-    pub fn dependencies(repo: &RepoId) -> String {
-        format!("insights:dependencies:{repo}")
-    }
-}
-
 impl GitHub {
     /// A repository's commit activity and contributors, as GitHub's
     /// statistics count them: asked where git can't count them. GitHub
@@ -188,7 +172,6 @@ impl GitHub {
         };
         let days = self.commit_days(repo).await;
         let activity = from_stats(contributors, days, crate::store::now());
-        self.remember(&keys::activity(repo), &activity);
         Ok(activity)
     }
 
@@ -250,7 +233,6 @@ impl GitHub {
                 })
                 .collect(),
         };
-        self.remember(&keys::traffic(repo), &traffic);
         Ok(traffic)
     }
 
@@ -306,7 +288,6 @@ impl GitHub {
         let deps = Dependencies {
             manifests: Capped::new(manifests, found.total_count),
         };
-        self.remember(&keys::dependencies(repo), &deps);
         Ok(deps)
     }
 }

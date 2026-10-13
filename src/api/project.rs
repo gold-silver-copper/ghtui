@@ -675,19 +675,6 @@ impl Page for Project {
     }
 }
 
-/// Cache keys.
-pub mod keys {
-    use super::{ProjectRef, ProjectsOf};
-
-    pub fn projects(of: &ProjectsOf) -> String {
-        format!("projects:{of:?}")
-    }
-
-    pub fn project(project: &ProjectRef, view: Option<u64>) -> String {
-        format!("project:{project}:{view:?}")
-    }
-}
-
 /// How many items a page of a project has.
 const ITEMS: usize = 50;
 
@@ -752,7 +739,6 @@ impl GitHub {
         of: &ProjectsOf,
         after: Option<String>,
     ) -> Result<Results<ProjectSummary>, ApiError> {
-        let first = after.is_none();
         let (query, vars, at, what) = match of {
             ProjectsOf::Owner(owner) => (
                 raw::OWNER_PROJECTS,
@@ -772,7 +758,7 @@ impl GitHub {
             .map_err(scoped)?;
         self.check_connection(&wire, 30, &what);
         let list = wire.into_results(WireSummary::into_summary);
-        Ok(self.kept_page(first, &keys::projects(of), list))
+        Ok(list)
     }
 
     /// A project at view `view` (its first without one): the project, its
@@ -829,7 +815,6 @@ impl GitHub {
                 next: None,
             }
         };
-        let key = keys::project(project, view);
         let found = Project {
             id: wire.id,
             title: wire.title,
@@ -844,7 +829,7 @@ impl GitHub {
             items,
             archived,
         };
-        Ok(self.kept_page(first, &key, found))
+        Ok(self.checked(found, format!("project {project}")))
     }
 
     /// The projects issue or pull request `number` is in (the first 10),

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::api::model::{PendingReview, PrRef, RepoId, ReviewEvent};
+use crate::api::model::{PendingReview, PrRef, ReviewEvent};
 use crate::api::{ApiError, GitHub};
 use crate::store::{DraftComment, ReviewState, Reviews};
 use crate::ui::bars::Notice;
@@ -15,7 +15,7 @@ use futures::{FutureExt, StreamExt};
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 
-use crate::data::{Data, DataKey};
+use crate::data;
 use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx, RepoGit};
 use crate::diff_screen::DiffOf;
 use crate::review::EditPurpose;
@@ -220,23 +220,7 @@ impl Effects {
     fn run(&mut self, cmd: Cmd) -> Option<(EditPurpose, String)> {
         let replies = panic_replies(&cmd);
         match cmd {
-            Cmd::Api(Api::Fetch {
-                key: DataKey::Wiki(repo, page),
-                ..
-            }) => self.wiki(repo, page, replies),
-            Cmd::Api(Api::Fetch {
-                key: DataKey::Lines(repo, commit, path),
-                ..
-            }) => self.lines(repo, commit, path, replies),
-            Cmd::Api(Api::Fetch { key, cached }) if crate::source::by_git(&key, None) => {
-                self.local(key, None, cached, replies);
-            }
-            Cmd::Api(Api::FetchMore { key, after })
-                if crate::source::by_git(&key, Some(&after)) =>
-            {
-                self.local(key, Some(after), false, replies);
-            }
-            Cmd::Api(api) => spawn(api, replies, &self.gh, &self.tx),
+            Cmd::Api(api) => spawn(api, replies, &self.gh, &self.local, &self.tx),
             Cmd::Git(git) => self.git(git, replies),
             Cmd::OpenUrl(url) => {
                 spawn_guarded(&self.tx, replies, |tx| async move {
@@ -458,62 +442,6 @@ impl Effects {
         });
     }
 
-    /// Reads a file's lines at a commit through git, for a review thread.
-    fn lines(&self, repo: RepoId, commit: String, path: String, replies: Vec<Msg>) {
-        let git = self.git.clone();
-        spawn_guarded(&self.tx, replies, |tx| async move {
-            let result = crate::talk::read_lines(&git, &repo, &commit, &path).await;
-            let _ = tx.send(Msg::Fetched {
-                key: DataKey::Lines(repo, commit, path),
-                result: result.map(|l| Data::Lines(Arc::new(l))),
-                cached_at: None,
-            });
-        });
-    }
-
-    /// Reads a wiki page through git.
-    fn wiki(&self, repo: RepoId, page: Option<String>, replies: Vec<Msg>) {
-        let git = self.git.clone();
-        spawn_guarded(&self.tx, replies, |tx| async move {
-            let result = crate::wiki::page(&git, &repo, page.as_deref()).await;
-            let _ = tx.send(Msg::Fetched {
-                key: DataKey::Wiki(repo, page),
-                result: result.map(|w| Data::Wiki(Box::new(w))),
-                cached_at: None,
-            });
-        });
-    }
-
-    /// Reads `key` (its page after `after`) through git where it can
-    /// (`crate::source`), saying where it came from; with `cached`, the
-    /// cache's copy shows first.
-    fn local(&self, key: DataKey, after: Option<String>, cached: bool, replies: Vec<Msg>) {
-        let (gh, local) = (self.gh.clone(), self.local.clone());
-        spawn_guarded(&self.tx, replies, |tx| async move {
-            if cached {
-                let (gh, lookup) = (gh.clone(), key.clone());
-                if let Some((data, at)) = blocking(move || cached_data(&gh, &lookup)).await {
-                    let _ = tx.send(Msg::Fetched {
-                        key: key.clone(),
-                        result: Ok(data),
-                        cached_at: Some(at),
-                    });
-                }
-            }
-            let (result, from) = local.fetch(&gh, &key, after.clone()).await;
-            let _ = tx.send(Msg::Source(key.clone(), from));
-            let _ = tx.send(match after {
-                Some(after) => Msg::FetchedMore(key, after, result),
-                None => Msg::Fetched {
-                    key,
-                    result,
-                    cached_at: None,
-                },
-            });
-            let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
-        });
-    }
-
     fn job_git(&self, of: &DiffOf) -> Option<RepoGit> {
         self.jobs.get(of).and_then(|(control, _)| control.git())
     }
@@ -521,8 +449,14 @@ impl Effects {
 
 /// Runs a GitHub request and sends its answer, then the rate limits (and
 /// the token's state, when it changed).
-fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
-    let gh = gh.clone();
+fn spawn(
+    api: Api,
+    replies: Vec<Msg>,
+    gh: &GitHub,
+    local: &Arc<crate::source::Local>,
+    tx: &mpsc::UnboundedSender<Msg>,
+) {
+    let (gh, local) = (gh.clone(), local.clone());
     spawn_guarded(tx, replies, |tx| async move {
         let msg = match api {
             Api::FetchViewer => Msg::Viewer(gh.viewer_login().await),
@@ -549,17 +483,18 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
             Api::Fetch { key, cached } => {
                 if cached {
                     let (gh, lookup) = (gh.clone(), key.clone());
-                    if let Some((data, at)) = blocking(move || cached_data(&gh, &lookup)).await {
+                    if let Some(c) = blocking(move || data::load::cached(&gh, &lookup)).await {
                         let _ = tx.send(Msg::Fetched {
                             key: key.clone(),
-                            result: Ok(data),
-                            cached_at: Some(at),
+                            result: Ok(c.value),
+                            cached_at: Some(c.fetched_at),
                         });
                     }
                 }
-                // Nothing on screen yet: a search shows before its checks.
-                let early = cached.then_some(&tx);
-                let result = fetch(&gh, &key, None, early).await;
+                let (result, from) = data::load::load(&gh, &local, &key, None, Some(&tx)).await;
+                if let Some(from) = from {
+                    let _ = tx.send(Msg::Source(key.clone(), from));
+                }
                 Msg::Fetched {
                     key,
                     result,
@@ -567,7 +502,11 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 }
             }
             Api::FetchMore { key, after } => {
-                let result = fetch(&gh, &key, Some(after.clone()), None).await;
+                let more = Some(after.clone());
+                let (result, from) = data::load::load(&gh, &local, &key, more, None).await;
+                if let Some(from) = from {
+                    let _ = tx.send(Msg::Source(key.clone(), from));
+                }
                 Msg::FetchedMore(key, after, result)
             }
             Api::Change(change, by) => {
@@ -587,7 +526,7 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 Msg::Suggested(q, result)
             }
             Api::SaveVisits(visits) => {
-                gh.remember(crate::api::browse::keys::VISITS, &visits);
+                gh.remember(crate::store::VISITS, &visits);
                 return;
             }
             Api::FetchViewed(pr) => {
@@ -993,363 +932,7 @@ fn save_tabs(gh: &GitHub, state: &State) {
     } else {
         Vec::new()
     };
-    gh.remember(crate::api::browse::keys::TABS, &urls);
-}
-
-/// What the cache has for a page, and when it was fetched.
-pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
-    use crate::api::browse::keys;
-    use crate::api::{explore, insights, lists, packages, project, replies};
-    fn at<T>(c: crate::store::Cached<T>, wrap: impl FnOnce(T) -> Data) -> (Data, u64) {
-        (wrap(c.value), c.fetched_at)
-    }
-    Some(match key {
-        DataKey::Repo(repo) => at(gh.cached(&keys::repo(repo))?, |v| Data::Repo(Box::new(v))),
-        DataKey::Readme(repo) => at(gh.cached(&keys::readme(repo))?, |v: Option<_>| {
-            Data::Readme(v.map(Box::new))
-        }),
-        DataKey::Tree(repo, rev, path) => at(gh.cached(&keys::tree(repo, rev, path))?, Data::Tree),
-        DataKey::Search(kind, query) => at(gh.cached(&keys::search(*kind, query))?, |v| {
-            Data::Search(Box::new(v))
-        }),
-        DataKey::StateCounts(query) => {
-            at(gh.cached(&keys::state_counts(query))?, Data::StateCounts)
-        }
-        DataKey::Issue(repo, number) => match gh.cached(&keys::issue(repo, *number)) {
-            Some(issue) => at(issue, |v| Data::Issue(Some(Box::new(v)))),
-            // A pull request it is, as kept (offline, its page opens).
-            None => {
-                let pr = PrRef {
-                    repo: repo.clone(),
-                    number: *number,
-                };
-                (Data::Issue(None), gh.cached_pull_request(&pr)?.fetched_at)
-            }
-        },
-        DataKey::Reviews(pr) => at(gh.cached(&keys::reviews(pr))?, |v| {
-            Data::Reviews(Box::new(v))
-        }),
-        DataKey::PrActivity(pr) => at(gh.cached(&keys::pr_activity(pr))?, |v| {
-            Data::PrActivity(Box::new(v))
-        }),
-        DataKey::Profile(login) => at(gh.cached(&keys::profile(login))?, |v| {
-            Data::Profile(Box::new(v))
-        }),
-        DataKey::Refs(repo) => at(gh.cached(&keys::refs(repo))?, |v| Data::Refs(Box::new(v))),
-        DataKey::Commit(repo, oid) => at(gh.cached(&keys::commit(repo, oid))?, |v| {
-            Data::Commit(Box::new(v))
-        }),
-        DataKey::PrChecks(pr) => at(gh.cached(&keys::pr_checks(pr))?, |v| {
-            Data::Checks(Box::new(v))
-        }),
-        DataKey::Users(list) => at(gh.cached(&keys::users(list))?, |v| Data::Users(Box::new(v))),
-        DataKey::Forks(repo) => at(gh.cached(&keys::forks(repo))?, |v| {
-            Data::RepoPage(Box::new(v))
-        }),
-        DataKey::OwnerRepos(login, sort) => at(gh.cached(&keys::owner_repos(login, *sort))?, |v| {
-            Data::RepoPage(Box::new(v))
-        }),
-        DataKey::Stars(login) => at(gh.cached(&keys::starred(login))?, |v| {
-            Data::RepoPage(Box::new(v))
-        }),
-        DataKey::Releases(repo) => at(gh.cached(&keys::releases(repo))?, |v| {
-            Data::Releases(Box::new(v))
-        }),
-        DataKey::Release(repo, tag) => at(gh.cached(&keys::release(repo, tag))?, |v| {
-            Data::Release(Box::new(v))
-        }),
-        DataKey::Tags(repo) => at(gh.cached(&keys::tags(repo))?, |v| Data::Tags(Box::new(v))),
-        DataKey::Milestones(repo, closed) => {
-            at(gh.cached(&keys::milestones(repo, *closed))?, |v| {
-                Data::Milestones(Box::new(v))
-            })
-        }
-        DataKey::Milestone(repo, n) => at(gh.cached(&keys::milestone(repo, *n))?, |v| {
-            Data::Milestone(Box::new(v))
-        }),
-        DataKey::Deployments(repo, env) => {
-            at(gh.cached(&keys::deployments(repo, env.as_deref()))?, |v| {
-                Data::Deployments(Box::new(v))
-            })
-        }
-        DataKey::Compare(repo, spec) => at(gh.cached(&keys::compare(repo, spec))?, |v| {
-            Data::Compare(Box::new(v))
-        }),
-        DataKey::Blame(repo, rev, path) => at(gh.cached(&keys::blame(repo, rev, path))?, |v| {
-            Data::Blame(Box::new(v))
-        }),
-        DataKey::Gist(id) => at(gh.cached(&keys::gist(id))?, |v| Data::Gist(Box::new(v))),
-        DataKey::Gists(login) => at(gh.cached(&keys::gists(login))?, |v| {
-            Data::Gists(Box::new(v))
-        }),
-        DataKey::Teams(org) => at(gh.cached(&keys::teams(org))?, |v| Data::Teams(Box::new(v))),
-        DataKey::Team(org, slug) => at(gh.cached(&keys::team(org, slug))?, |v| {
-            Data::Team(Box::new(v))
-        }),
-        DataKey::Advisories(repo) => at(gh.cached(&keys::advisories(repo.as_ref()))?, |v| {
-            Data::Advisories(Box::new(v))
-        }),
-        DataKey::Advisory(repo, ghsa) => {
-            at(gh.cached(&keys::advisory(repo.as_ref(), ghsa))?, |v| {
-                Data::Advisory(Box::new(v))
-            })
-        }
-        DataKey::Branches(repo) => at(gh.cached(&keys::branches(repo))?, |v| {
-            Data::Branches(Box::new(v))
-        }),
-        DataKey::Run(repo, run, attempt) => at(gh.cached(&keys::run(repo, *run, *attempt))?, |v| {
-            Data::Run(Box::new(v))
-        }),
-        DataKey::Discussions(of, category) => at(
-            gh.cached(&keys::discussions(of, category.as_deref()))?,
-            |v| Data::Discussions(Box::new(v)),
-        ),
-        DataKey::Discussion(of, n) => at(gh.cached(&keys::discussion(of, *n))?, |v| {
-            Data::Discussion(Box::new(v))
-        }),
-        DataKey::Job(repo, job) => at(gh.cached(&keys::job(repo, *job))?, |v| {
-            Data::Job(Box::new(v))
-        }),
-        DataKey::Workflow(repo, file) => at(gh.cached(&keys::workflow(repo, file))?, |v| {
-            Data::Workflow(Box::new(v))
-        }),
-        DataKey::Labels(repo) => at(
-            gh.cached(&crate::api::housekeeping::labels_key(repo))?,
-            |v| Data::Labels(Box::new(v)),
-        ),
-        DataKey::Runs(repo, query) => at(gh.cached(&keys::runs(repo, query))?, |v| {
-            Data::Runs(Box::new(v))
-        }),
-        DataKey::Notifications(query) => at(gh.cached(&keys::notifications(query))?, |v| {
-            Data::Notifications(Box::new(v))
-        }),
-        DataKey::CommitChecks(repo, oid) => at(gh.cached(&keys::commit_checks(repo, oid))?, |v| {
-            Data::Checks(Box::new(v))
-        }),
-        DataKey::Projects(of) => at(gh.cached(&project::keys::projects(of))?, |v| {
-            Data::Projects(Box::new(v))
-        }),
-        DataKey::Project(p, view) => at(gh.cached(&project::keys::project(p, *view))?, |v| {
-            Data::Project(Box::new(v))
-        }),
-        DataKey::Alerts(repo, kind, query) => {
-            let key = crate::api::security::keys::alerts(repo, *kind, query);
-            at(gh.cached(&key)?, |v| Data::Alerts(Box::new(v)))
-        }
-        DataKey::Alert(a) => at(gh.cached(&crate::api::security::keys::alert(a))?, |v| {
-            Data::Alert(Box::new(v))
-        }),
-        DataKey::Activity(repo) => at(gh.cached(&insights::keys::activity(repo))?, |v| {
-            Data::Activity(Box::new(v))
-        }),
-        DataKey::Traffic(repo) => at(gh.cached(&insights::keys::traffic(repo))?, |v| {
-            Data::Traffic(Box::new(v))
-        }),
-        DataKey::Dependencies(repo) => at(gh.cached(&insights::keys::dependencies(repo))?, |v| {
-            Data::Dependencies(Box::new(v))
-        }),
-        DataKey::Featured => at(gh.cached(explore::keys::FEATURED)?, |v| {
-            Data::Topics(Box::new(v))
-        }),
-        DataKey::Topic(name) => at(gh.cached(&explore::keys::topic(name))?, |v| {
-            Data::Topic(Box::new(v))
-        }),
-        DataKey::StarLists(login) => at(gh.cached(&lists::keys::lists(login))?, |v| {
-            Data::StarLists(Box::new(v))
-        }),
-        DataKey::StarList(login, slug) => at(gh.cached(&lists::keys::list(login, slug))?, |v| {
-            Data::StarList(Box::new(v))
-        }),
-        DataKey::Packages(of) => at(gh.cached(&packages::keys::packages(of))?, |v| {
-            Data::Packages(Box::new(v))
-        }),
-        DataKey::Package(p) => at(gh.cached(&packages::keys::package(p))?, |v| {
-            Data::Package(Box::new(v))
-        }),
-        DataKey::SavedReplies => at(gh.cached(replies::keys::REPLIES)?, |v| {
-            Data::SavedReplies(Box::new(v))
-        }),
-        DataKey::Settings(repo, page) => {
-            let key = crate::api::settings::keys::page(repo, *page);
-            at(gh.cached(&key)?, |v| Data::Settings(Box::new(v)))
-        }
-        DataKey::History(repo, rev, path) => at(gh.cached(&keys::history(repo, rev, path))?, |v| {
-            Data::History(Box::new(v))
-        }),
-        DataKey::LastCommits(repo, rev, path) => {
-            at(gh.cached(&keys::last_commits(repo, rev, path))?, |v| {
-                Data::LastCommits(std::sync::Arc::new(v))
-            })
-        }
-        // Files aren't cached; they can be large.
-        // A wiki's clone is its cache.
-        // Where a ref ends is asked anew each session.
-        // What a new issue can have is what it has now.
-        // A commit's comments revalidate with their ETag.
-        DataKey::Blob(..)
-        | DataKey::CommitComments(..)
-        | DataKey::Lines(..)
-        | DataKey::InProjects(..)
-        | DataKey::Files(..)
-        | DataKey::JobLog(..)
-        | DataKey::Wiki(..)
-        | DataKey::RefIn(..)
-        | DataKey::Sidebar(..)
-        | DataKey::NewForm(..)
-        | DataKey::Subscription(..)
-        | DataKey::MyLists(..)
-        | DataKey::Owners
-        | DataKey::Templates => {
-            return None;
-        }
-    })
-}
-
-/// A page's data; for a list, the page after `after` (the first without).
-/// With `early`, a search's page is sent there as soon as it's found, as
-/// a first look while its pull requests' checks are read.
-pub(crate) async fn fetch(
-    gh: &GitHub,
-    key: &DataKey,
-    after: Option<String>,
-    early: Option<&mpsc::UnboundedSender<Msg>>,
-) -> Result<Data, ApiError> {
-    Ok(match key {
-        DataKey::Repo(repo) => Data::Repo(Box::new(gh.repo(repo).await?)),
-        DataKey::Readme(repo) => Data::Readme(gh.readme(repo).await?.map(Box::new)),
-        DataKey::Tree(repo, rev, path) => Data::Tree(gh.tree(repo, rev, path).await?),
-        DataKey::Blob(repo, rev, path) => Data::Blob(Box::new(gh.blob(repo, rev, path).await?)),
-        DataKey::Search(kind, query) => {
-            let found = |r: &crate::api::browse::SearchResults| {
-                if let Some(tx) = early {
-                    let _ = tx.send(Msg::Fetched {
-                        key: key.clone(),
-                        result: Ok(Data::Search(Box::new(r.clone()))),
-                        cached_at: Some(crate::store::now()),
-                    });
-                }
-            };
-            let results = gh.search_showing(*kind, query, after, found).await?;
-            Data::Search(Box::new(results))
-        }
-        DataKey::StateCounts(query) => Data::StateCounts(gh.state_counts(query).await?),
-        DataKey::Issue(repo, number) => Data::Issue(gh.issue(repo, *number).await?.map(Box::new)),
-        DataKey::PrActivity(pr) => Data::PrActivity(Box::new(gh.pr_activity(pr).await?)),
-        DataKey::Reviews(pr) => Data::Reviews(Box::new(gh.reviews(pr).await?)),
-        DataKey::InProjects(repo, n) => Data::InProjects(Box::new(gh.projects_of(repo, *n).await?)),
-        DataKey::CommitComments(repo, oid) => {
-            Data::CommitComments(Box::new(gh.commit_comments(repo, oid).await?))
-        }
-        DataKey::Profile(login) => Data::Profile(Box::new(gh.profile(login).await?)),
-        DataKey::Files(repo, rev) => {
-            let (files, truncated) = gh.file_list(repo, rev).await?;
-            Data::Files(std::sync::Arc::new(files), truncated)
-        }
-        DataKey::Refs(repo) => Data::Refs(Box::new(gh.refs(repo).await?)),
-        DataKey::RefIn(repo, spot) => Data::RefIn(gh.ref_in(repo, spot).await?),
-        DataKey::Commit(repo, oid) => Data::Commit(Box::new(gh.commit(repo, oid).await?)),
-        DataKey::PrChecks(pr) => Data::Checks(Box::new(gh.pr_checks(pr).await?)),
-        DataKey::Users(list) => Data::Users(Box::new(gh.users(list, after).await?)),
-        DataKey::Forks(repo) => Data::RepoPage(Box::new(gh.forks(repo, after).await?)),
-        DataKey::OwnerRepos(login, sort) => {
-            Data::RepoPage(Box::new(gh.owner_repos(login, *sort, after).await?))
-        }
-        DataKey::Stars(login) => Data::RepoPage(Box::new(gh.starred(login, after).await?)),
-        DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, after).await?)),
-        DataKey::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
-        DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, after).await?)),
-        DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, after).await?)),
-        // A thread's lines come through git (see `Effects::lines`).
-        DataKey::Lines(repo, ..) => {
-            return Err(ApiError::NotFound(format!(
-                "{repo}'s lines, which git reads"
-            )));
-        }
-        // Wikis come through git (see `Effects::wiki`).
-        DataKey::Wiki(repo, _) => {
-            return Err(ApiError::NotFound(format!(
-                "{repo}'s wiki, which git reads"
-            )));
-        }
-        DataKey::Advisories(repo) => {
-            Data::Advisories(Box::new(gh.advisories(repo.as_ref(), after).await?))
-        }
-        DataKey::Advisory(repo, ghsa) => {
-            Data::Advisory(Box::new(gh.advisory(repo.as_ref(), ghsa).await?))
-        }
-        DataKey::Teams(org) => Data::Teams(Box::new(gh.teams(org, after).await?)),
-        DataKey::Team(org, slug) => Data::Team(Box::new(gh.team(org, slug).await?)),
-        DataKey::Gist(id) => Data::Gist(Box::new(gh.gist(id).await?)),
-        DataKey::Gists(login) => Data::Gists(Box::new(gh.gists(login, after).await?)),
-        DataKey::Blame(repo, rev, path) => Data::Blame(Box::new(gh.blame(repo, rev, path).await?)),
-        DataKey::Compare(repo, spec) => Data::Compare(Box::new(gh.compare(repo, spec).await?)),
-        DataKey::Deployments(repo, env) => {
-            Data::Deployments(Box::new(gh.deployments(repo, env.as_deref(), after).await?))
-        }
-        DataKey::Milestones(repo, closed) => {
-            Data::Milestones(Box::new(gh.milestones(repo, *closed, after).await?))
-        }
-        DataKey::Milestone(repo, n) => {
-            Data::Milestone(Box::new(gh.milestone(repo, *n, after).await?))
-        }
-        DataKey::Run(repo, run, attempt) => {
-            Data::Run(Box::new(gh.workflow_run(repo, *run, *attempt).await?))
-        }
-        DataKey::Discussions(of, category) => Data::Discussions(Box::new(
-            gh.discussions(of, category.as_deref(), after).await?,
-        )),
-        DataKey::Discussion(of, n) => Data::Discussion(Box::new(gh.discussion(of, *n).await?)),
-        DataKey::Job(repo, job) => Data::Job(Box::new(gh.job(repo, *job).await?)),
-        DataKey::JobLog(repo, job) => Data::Log(Arc::new(gh.job_log(repo, *job).await?)),
-        DataKey::Workflow(repo, file) => Data::Workflow(Box::new(gh.workflow(repo, file).await?)),
-        DataKey::Runs(repo, query) => Data::Runs(Box::new(gh.runs(repo, query, after).await?)),
-        DataKey::Notifications(query) => {
-            Data::Notifications(Box::new(gh.notifications(query, after).await?))
-        }
-        DataKey::Sidebar(repo, number) => Data::Sidebar(Box::new(gh.sidebar(repo, *number).await?)),
-        DataKey::NewForm(repo) => Data::NewForm(Box::new(gh.new_form(repo).await?)),
-        DataKey::Subscription(of) => Data::Subscription(Box::new(gh.subscription(of).await?)),
-        DataKey::Settings(repo, page) => Data::Settings(Box::new(gh.settings(repo, *page).await?)),
-        DataKey::CommitChecks(repo, oid) => {
-            Data::Checks(Box::new(gh.commit_checks(repo, oid).await?))
-        }
-        DataKey::Projects(of) => Data::Projects(Box::new(gh.projects(of, after).await?)),
-        DataKey::Project(p, view) => Data::Project(Box::new(gh.project(p, *view, after).await?)),
-        DataKey::Alerts(repo, kind, query) => {
-            Data::Alerts(Box::new(gh.alerts(repo, *kind, query, after).await?))
-        }
-        DataKey::Alert(a) => Data::Alert(Box::new(gh.alert(a).await?)),
-        DataKey::Activity(repo) => Data::Activity(Box::new(gh.activity(repo).await?)),
-        DataKey::Traffic(repo) => Data::Traffic(Box::new(gh.traffic(repo).await?)),
-        DataKey::Dependencies(repo) => Data::Dependencies(Box::new(gh.dependencies(repo).await?)),
-        DataKey::Featured => Data::Topics(Box::new(gh.featured_topics().await?)),
-        DataKey::Topic(name) => Data::Topic(Box::new(gh.topic(name).await?)),
-        DataKey::StarLists(login) => Data::StarLists(Box::new(gh.star_lists(login).await?)),
-        DataKey::StarList(login, slug) => {
-            Data::StarList(Box::new(gh.star_list(login, slug, after).await?))
-        }
-        DataKey::MyLists(repo) => Data::MyLists(Box::new(gh.my_lists(repo).await?)),
-        DataKey::Packages(of) => Data::Packages(Box::new(gh.packages(of).await?)),
-        DataKey::Package(p) => Data::Package(Box::new(gh.package(p, after).await?)),
-        DataKey::SavedReplies => Data::SavedReplies(Box::new(gh.saved_replies().await?)),
-        DataKey::Labels(repo) => Data::Labels(Box::new(gh.labels(repo, after).await?)),
-        DataKey::Owners => Data::Owners(Box::new(gh.owners().await?)),
-        DataKey::Templates => Data::Templates(Box::new(gh.templates().await?)),
-        DataKey::History(repo, rev, path) => {
-            Data::History(Box::new(gh.history(repo, rev, path, after).await?))
-        }
-        DataKey::LastCommits(repo, rev, path) => {
-            let names: Vec<String> = gh
-                .tree(repo, rev, path)
-                .await?
-                .into_iter()
-                .map(|e| e.name)
-                .collect();
-            Data::LastCommits(std::sync::Arc::new(
-                gh.last_commits(repo, rev, path, &names).await?,
-            ))
-        }
-    })
+    gh.remember(crate::store::TABS, &urls);
 }
 
 /// Puts `text` on the clipboard with OSC 52 (through tmux too, when its

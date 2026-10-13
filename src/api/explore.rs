@@ -123,14 +123,6 @@ pub fn topic_repos(topic: &str) -> String {
     format!("topic:{topic} sort:stars")
 }
 
-pub mod keys {
-    pub const FEATURED: &str = "explore:featured";
-
-    pub fn topic(name: &str) -> String {
-        format!("explore:topic:{name}")
-    }
-}
-
 impl GitHub {
     /// GitHub's featured topics.
     pub async fn featured_topics(&self) -> Result<Topics, ApiError> {
@@ -151,7 +143,6 @@ impl GitHub {
             topics,
             total: found.total_count,
         };
-        self.remember(keys::FEATURED, &topics);
         Ok(topics)
     }
 
@@ -193,7 +184,6 @@ impl GitHub {
             }
             Err(err) => tracing::debug!(%err, "no stars or related topics for the topic"),
         }
-        self.remember(&keys::topic(name), &topic);
         Ok(topic)
     }
 }

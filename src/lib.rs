@@ -205,13 +205,12 @@ async fn run(started: Instant) -> Result<()> {
     state.config_path = config_path.clone();
     for need in state.home_needs() {
         if let browse::Need::Data(key) = need {
-            let cached = runtime::cached_data(&gh, &key)
-                .map(|(value, fetched_at)| crate::store::Cached { value, fetched_at });
+            let cached = data::load::cached(&gh, &key);
             state.data.insert(key, Remote::cached(cached));
         }
     }
     let tabs = gh
-        .cached::<Vec<String>>(crate::api::browse::keys::TABS)
+        .cached::<Vec<String>>(crate::store::TABS)
         .map(|c| c.value)
         .unwrap_or_default();
     state.restore_tabs(&tabs);
@@ -232,7 +231,7 @@ async fn run(started: Instant) -> Result<()> {
         None => state.load_visible(true),
     };
     state.visits = gh
-        .cached::<Vec<nav::Visit>>(crate::api::browse::keys::VISITS)
+        .cached::<Vec<nav::Visit>>(crate::store::VISITS)
         .map(|c| c.value)
         .unwrap_or_default();
     cmds.push(state::Cmd::Timer(state::Timer::Minute, 60_000));

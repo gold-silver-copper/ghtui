@@ -160,7 +160,7 @@ impl AlertKind {
 }
 
 /// One alert of a repository.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AlertRef {
     pub repo: RepoId,
     pub kind: AlertKind,
@@ -427,20 +427,6 @@ pub fn filter(kind: AlertKind, query: &str) -> Filter {
     f
 }
 
-/// Cache keys.
-pub mod keys {
-    use super::{AlertKind, AlertRef};
-    use crate::api::model::RepoId;
-
-    pub fn alerts(repo: &RepoId, kind: AlertKind, query: &str) -> String {
-        format!("alerts:{repo}:{}:{query}", kind.slug())
-    }
-
-    pub fn alert(a: &AlertRef) -> String {
-        format!("alert:{}:{}:{}", a.repo, a.kind.slug(), a.number)
-    }
-}
-
 /// How many alerts a page of a list has.
 const PAGE: usize = 30;
 
@@ -568,7 +554,6 @@ impl GitHub {
         query: &str,
         after: Option<String>,
     ) -> Result<AlertList, ApiError> {
-        let first = after.is_none();
         let mut path = format!("/repos/{repo}/{}/alerts?per_page={PAGE}", kind.slug());
         for (name, value) in filter(kind, query).params {
             path.push_str(&format!(
@@ -600,8 +585,7 @@ impl GitHub {
                 }
             }
         };
-        let key = keys::alerts(repo, kind, query);
-        Ok(self.kept_page(first, &key, list))
+        Ok(self.checked(list, format!("{repo}'s alerts")))
     }
 
     /// One alert, with what only its page shows: a Dependabot alert's
@@ -634,7 +618,6 @@ impl GitHub {
             }
             Detail::Code(_) => {}
         }
-        self.remember(&keys::alert(a), &alert);
         Ok(alert)
     }
 

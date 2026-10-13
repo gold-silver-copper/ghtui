@@ -231,26 +231,6 @@ fn refusal(status: u16, message: &str, scopes: Option<&str>, deleting: bool) -> 
     }
 }
 
-pub mod keys {
-    use super::{PackageRef, PackagesOf};
-
-    pub fn packages(of: &PackagesOf) -> String {
-        match of {
-            PackagesOf::Owner(login) => format!("packages:{}", login.to_lowercase()),
-            PackagesOf::Repo(repo) => format!("packages:{repo}"),
-        }
-    }
-
-    pub fn package(p: &PackageRef) -> String {
-        format!(
-            "package:{}:{}:{}",
-            p.owner.to_lowercase(),
-            p.kind.slug(),
-            p.name
-        )
-    }
-}
-
 /// Versions on a page.
 const VERSIONS: usize = 30;
 
@@ -324,7 +304,6 @@ impl GitHub {
         }
         items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         let list = PackageList { items, cut };
-        self.remember(&keys::packages(of), &list);
         Ok(list)
     }
 
@@ -335,7 +314,6 @@ impl GitHub {
         p: &PackageRef,
         after: Option<String>,
     ) -> Result<PackageDetail, ApiError> {
-        let first = after.is_none();
         let what = format!("the package {}", p.name);
         let base = p.path(self.is_org(&p.owner).await?);
         let answer = self.packages_answer(&base, &what).await?;
@@ -358,7 +336,7 @@ impl GitHub {
             },
             package,
         };
-        Ok(self.kept_page(first, &keys::package(p), detail))
+        Ok(self.checked(detail, format!("package {}", p.name)))
     }
 
     /// Deletes a package's version.

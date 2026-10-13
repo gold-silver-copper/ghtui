@@ -4,6 +4,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
+pub mod load;
+
 use crate::api::browse::{
     Advisory, Blame, Blob, BranchInfo, CheckOutcome, Checks, CommitDetail, CommitInfo, Comparison,
     DeploymentList, DiscussionDetail, DiscussionList, DiscussionsOf, Gist, GistSummary,
@@ -30,7 +34,7 @@ use crate::api::timeline::Review;
 use crate::api::watch::{Subscription, Watched};
 
 /// One piece of GitHub data a page shows.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DataKey {
     Repo(RepoId),
     /// The README at the root, apart from the overview every repository
@@ -144,6 +148,42 @@ pub enum DataKey {
     Templates,
 }
 
+impl DataKey {
+    /// Whether its data is kept in the cache, to show while it's asked
+    /// for again and while GitHub can't be reached.
+    pub fn kept(&self) -> bool {
+        !matches!(
+            self,
+            // Files can be large; so can a job's log.
+            DataKey::Blob(..)
+                | DataKey::JobLog(..)
+                | DataKey::Files(..)
+                // A thread's lines and a wiki come from git: the clone is
+                // their cache.
+                | DataKey::Lines(..)
+                | DataKey::Wiki(..)
+                // A commit's comments revalidate with their ETag.
+                | DataKey::CommitComments(..)
+                // Where a ref ends is asked anew each session.
+                | DataKey::RefIn(..)
+                // What these offer to choose from is what they have now.
+                | DataKey::InProjects(..)
+                | DataKey::Sidebar(..)
+                | DataKey::NewForm(..)
+                | DataKey::Subscription(..)
+                | DataKey::MyLists(..)
+                | DataKey::Owners
+                | DataKey::Templates
+        )
+    }
+
+    /// Where its data is kept in the cache, if it is.
+    fn cache_id(&self) -> Option<String> {
+        let key = serde_json::to_string(self).ok().filter(|_| self.kept())?;
+        Some(format!("data:{key}"))
+    }
+}
+
 /// A kind of data a page shows, as kept in [`Data`].
 pub trait Picked {
     fn pick(data: &Data) -> Option<&Self>;
@@ -152,7 +192,7 @@ pub trait Picked {
 /// The [`Data`] enum, and how each kind is [`Picked`] from it.
 macro_rules! data {
     ($($(#[$meta:meta])* $variant:ident($($field:ty),+) $(=> $picked:ty)?,)*) => {
-        #[derive(Debug, Clone, PartialEq, Eq)]
+        #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
         pub enum Data {
             $($(#[$meta])* $variant($($field),+),)*
         }
@@ -204,6 +244,7 @@ data! {
     Discussion(Box<DiscussionDetail>) => DiscussionDetail,
     Run(Box<WorkflowRun>) => WorkflowRun,
     Job(Box<Job>) => Job,
+    #[serde(skip)]
     Log(Arc<JobLog>) => JobLog,
     Workflow(Box<Workflow>) => Workflow,
     Runs(Box<Results<RunSummary>>) => Results<RunSummary>,
@@ -223,12 +264,15 @@ data! {
     Milestones(Box<MilestoneList>) => MilestoneList,
     Milestone(Box<MilestoneDetail>) => MilestoneDetail,
     Notifications(Box<Inbox>) => Inbox,
+    #[serde(skip)]
     Sidebar(Box<Sidebar>) => Sidebar,
+    #[serde(skip)]
     NewForm(Box<NewForm>) => NewForm,
     Projects(Box<Results<ProjectSummary>>) => Results<ProjectSummary>,
     Project(Box<Project>) => Project,
     Alerts(Box<AlertList>) => AlertList,
     Alert(Box<Alert>) => Alert,
+    #[serde(skip)]
     Subscription(Box<Subscription>) => Subscription,
     Settings(Box<Settings>) => Settings,
     Activity(Box<Activity>) => Activity,

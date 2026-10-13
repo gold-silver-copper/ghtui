@@ -470,16 +470,6 @@ pub enum SettingsChange {
     },
 }
 
-/// The cache's keys.
-pub mod keys {
-    use super::SettingsPage;
-    use crate::api::model::RepoId;
-
-    pub fn page(repo: &RepoId, page: SettingsPage) -> String {
-        format!("settings:{repo}{}", page.slug())
-    }
-}
-
 /// How many a REST list asks for.
 const PER_PAGE: usize = 100;
 
@@ -543,7 +533,6 @@ impl GitHub {
                 Settings::Keys(self.listed(repo, "keys?", "deploy keys", wire::key).await?)
             }
         };
-        self.remember(&keys::page(repo, page), &settings);
         Ok(settings)
     }
 
