@@ -22,7 +22,8 @@ use crate::api::{ApiError, GitHub};
 use crate::git::local::{self, Branch, Checkout, Clone, CommitMessage};
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::browse::{Data, DataKey, Need};
+use crate::browse::Need;
+use crate::data::{Data, DataKey};
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::Choice;

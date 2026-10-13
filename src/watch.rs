@@ -9,7 +9,7 @@ use crate::api::model::NodeId;
 use crate::api::watch::{Subscription, SubscriptionState, Watched};
 use crate::ui::overlays::PaletteItem;
 
-use crate::browse::DataKey;
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
@@ -141,7 +141,7 @@ pub fn rows(state: &State, of: &Watched, q: &str) -> Vec<(PaletteItem, Option<Ch
     let key = DataKey::Subscription(of.clone());
     #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
     let fetched = Remote::fetched(state.data.get(&key), "")
-        .pick(<Subscription as crate::browse::Picked>::pick)
+        .pick(<Subscription as crate::data::Picked>::pick)
         .text("your subscription");
     let s = match fetched {
         Ok(s) => s,

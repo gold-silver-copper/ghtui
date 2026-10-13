@@ -15,7 +15,8 @@ use crate::api::model::{Capped, NodeId, PrRef, RepoId};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::act::{By, Confirm, Subject};
-use crate::browse::{Data, DataKey, Need};
+use crate::browse::Need;
+use crate::data::{Data, DataKey};
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{self, Choice};
@@ -614,7 +615,7 @@ fn sidebar<'a>(state: &'a State, c: &Choosing) -> Result<&'a Sidebar, Rows> {
     };
     #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
     let listed = Remote::fetched(state.data.get(&key), "")
-        .pick(<Sidebar as crate::browse::Picked>::pick)
+        .pick(<Sidebar as crate::data::Picked>::pick)
         .text("the sidebar");
     listed.map_err(|why| vec![row(why, "", None)])
 }

@@ -21,7 +21,8 @@ use ratatui_textarea::TextArea;
 
 use crate::act;
 use crate::api::model::{PatchFile, ReviewEvent, ReviewThread};
-use crate::browse::{self, Data, DataKey, Need};
+use crate::browse::{self, Need};
+use crate::data::{Data, DataKey};
 use crate::diff_job::{JobId, JobMsg};
 use crate::diff_screen::{self, DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
 use crate::join;

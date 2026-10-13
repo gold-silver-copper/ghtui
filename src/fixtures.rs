@@ -8,7 +8,7 @@ use crate::api::browse::{
     DiscussionDetail, DiscussionHit, DiscussionList, DiscussionSummary, EntryKind, Gist, GistFile,
     GistSummary, IssueDetail, IssueKind, IssueState, IssueSummary, Job, JobSummary, Login,
     MilestoneDetail, MilestoneInfo, MilestoneList, MonthActivity, Person, PrActivity, PrState,
-    Profile, Readme, Release, RepoOverview, RepoSummary, Results, Reviewer, RunSummary,
+    Profile, Readme, Release, RepoOverview, RepoSummary, Results, Reviewer, RunSummary, SearchKind,
     SearchResults, Status, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary, TreeEntry,
     UserSummary, Week, WikiPage, Workflow, WorkflowRun,
 };
@@ -18,11 +18,12 @@ use crate::api::model::{
 use crate::api::notifications::{Inbox, Notification};
 use crate::api::timeline::{Event, Item, Latest, Linked, LinkedState, Requested, Review, What};
 use crossterm::event::KeyEvent;
+use std::sync::Arc;
 
 use crate::store::{DraftComment, DraftSide};
 use crate::ui::bars::Notice;
 
-use crate::browse::{Data, DataKey};
+use crate::data::{Data, DataKey};
 use crate::diff_screen::DiffOf;
 use crate::state::{Api, Cmd, DiffMsg, Msg, State, update};
 
@@ -2187,4 +2188,95 @@ pub fn subscription() -> crate::api::watch::Subscription {
 pub(crate) fn page<T>(total: u64, items: Vec<T>, next: Option<&str>) -> Results<T> {
     let next = next.map(str::to_owned);
     Results { total, items, next }
+}
+
+/// What GitHub might answer for `key`.
+pub(crate) fn sample(key: &DataKey) -> Data {
+    use crate::housekeeping::fixtures as housekeeping;
+    use crate::site::fixtures as site;
+    use DataKey as K;
+    let search = |kind: &SearchKind| match kind {
+        SearchKind::Repos => repo_results(),
+        SearchKind::Issues | SearchKind::Pulls => issue_results(None),
+        SearchKind::Users => user_results(),
+        SearchKind::Discussions => discussion_results(),
+        SearchKind::Commits => commit_results(),
+        SearchKind::Code => code_results(),
+    };
+    match key {
+        K::Repo(_) => Data::Repo(Box::new(overview())),
+        K::Readme(_) => Data::Readme(Some(Box::new(readme()))),
+        K::Tree(..) => Data::Tree(tree()),
+        K::Blob(..) => Data::Blob(Box::new(blob())),
+        K::Search(kind, _) => Data::Search(Box::new(search(kind))),
+        K::StateCounts(_) => {
+            Data::StateCounts(crate::api::browse::StateCounts { open: 2, closed: 5 })
+        }
+        K::Issue(..) => Data::Issue(Some(Box::new(issue()))),
+        K::PrActivity(_) => Data::PrActivity(Box::new(activity())),
+        K::Reviews(_) => Data::Reviews(Box::new(reviews())),
+        K::CommitComments(..) => Data::CommitComments(Box::default()),
+        K::Lines(..) => Data::Lines(Arc::default()),
+        K::InProjects(..) => Data::InProjects(Box::default()),
+        K::Profile(_) => Data::Profile(Box::new(profile())),
+        K::Files(..) => Data::Files(Arc::new(vec!["README.md".into()]), false),
+        K::Refs(_) => Data::Refs(Box::default()),
+        K::NewForm(_) => Data::NewForm(Box::new(new_form())),
+        K::RefIn(..) => Data::RefIn(None),
+        K::LastCommits(..) => Data::LastCommits(Arc::new(last_commits())),
+        K::Commit(..) => Data::Commit(Box::new(commit())),
+        K::History(..) => Data::History(Box::new(history(None))),
+        K::PrChecks(_) | K::CommitChecks(..) => Data::Checks(Box::new(checks())),
+        K::Users(_) => Data::Users(Box::new(people())),
+        K::Forks(_) | K::OwnerRepos(..) | K::Stars(_) => Data::RepoPage(Box::new(profile_repos())),
+        K::Releases(_) => Data::Releases(Box::new(releases())),
+        K::Release(..) => Data::Release(Box::new(release(true))),
+        K::Tags(_) => Data::Tags(Box::new(tags())),
+        K::Branches(_) => Data::Branches(Box::new(branches())),
+        K::Wiki(..) => Data::Wiki(Box::new(wiki())),
+        K::Advisories(_) => {
+            let items = advisories();
+            let total = items.len() as u64;
+            Data::Advisories(Box::new(page(total, items, None)))
+        }
+        K::Advisory(..) => Data::Advisory(Box::new(advisory())),
+        K::Sidebar(..) => Data::Sidebar(Box::new(sidebar())),
+        K::Teams(_) => Data::Teams(Box::new(teams())),
+        K::Team(..) => Data::Team(Box::new(team())),
+        K::Gist(_) => Data::Gist(Box::new(gist())),
+        K::Gists(_) => Data::Gists(Box::new(gists())),
+        K::Blame(..) => Data::Blame(Box::new(blame())),
+        K::Compare(..) => Data::Compare(Box::new(comparison())),
+        K::Deployments(..) => Data::Deployments(Box::new(deployments())),
+        K::Milestones(..) => Data::Milestones(Box::new(milestones())),
+        K::Milestone(..) => Data::Milestone(Box::new(milestone())),
+        K::Discussions(..) => Data::Discussions(Box::new(discussions())),
+        K::Discussion(..) => Data::Discussion(Box::new(discussion())),
+        K::Run(..) => Data::Run(Box::new(workflow_run())),
+        K::Job(..) => Data::Job(Box::new(job().0)),
+        K::JobLog(..) => Data::Log(Arc::new(job().1)),
+        K::Workflow(..) => Data::Workflow(Box::new(workflow_runs().0)),
+        K::Runs(..) => Data::Runs(Box::new(workflow_runs().1)),
+        K::Notifications(_) => Data::Notifications(Box::new(notifications())),
+        K::Projects(_) => Data::Projects(Box::new(projects())),
+        K::Project(..) => Data::Project(Box::new(project())),
+        K::Alerts(_, kind, _) => Data::Alerts(Box::new(crate::security::fixtures::alerts(*kind))),
+        K::Alert(a) => Data::Alert(Box::new(crate::security::fixtures::alert(a.kind, a.number))),
+        K::Subscription(_) => Data::Subscription(Box::new(subscription())),
+        K::Activity(_) => Data::Activity(Box::new(site::activity())),
+        K::Traffic(_) => Data::Traffic(Box::new(site::traffic())),
+        K::Dependencies(_) => Data::Dependencies(Box::new(site::dependencies())),
+        K::Featured => Data::Topics(Box::new(site::featured())),
+        K::Topic(_) => Data::Topic(Box::new(site::rust())),
+        K::StarLists(_) => Data::StarLists(Box::new(site::star_lists())),
+        K::StarList(..) => Data::StarList(Box::new(site::list_page())),
+        K::MyLists(_) => Data::MyLists(Box::new(site::my_lists())),
+        K::Packages(_) => Data::Packages(Box::new(site::packages())),
+        K::Package(_) => Data::Package(Box::new(site::package_detail())),
+        K::SavedReplies => Data::SavedReplies(Box::new(site::saved_replies())),
+        K::Labels(_) => Data::Labels(Box::new(housekeeping::labels())),
+        K::Owners => Data::Owners(Box::new(housekeeping::owners())),
+        K::Templates => Data::Templates(Box::new(housekeeping::templates())),
+        K::Settings(_, page) => Data::Settings(Box::new(crate::settings::fixtures::page(*page))),
+    }
 }

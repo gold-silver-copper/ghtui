@@ -14,7 +14,8 @@ use crate::api::browse::SearchKind;
 use serde::Deserialize;
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
-use crate::browse::{DataKey, Need};
+use crate::browse::Need;
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::picker::{self, Titling};
 use crate::route::Route;

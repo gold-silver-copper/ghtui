@@ -15,7 +15,7 @@ use futures::{FutureExt, StreamExt};
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 
-use crate::browse::{Data, DataKey};
+use crate::data::{Data, DataKey};
 use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx, RepoGit};
 use crate::diff_screen::DiffOf;
 use crate::review::EditPurpose;
@@ -999,7 +999,7 @@ fn save_tabs(gh: &GitHub, state: &State) {
 /// What the cache has for a page, and when it was fetched.
 pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
     use crate::api::browse::keys;
-    use crate::api::project;
+    use crate::api::{explore, insights, lists, packages, project, replies};
     fn at<T>(c: crate::store::Cached<T>, wrap: impl FnOnce(T) -> Data) -> (Data, u64) {
         (wrap(c.value), c.fetched_at)
     }
@@ -1113,10 +1113,10 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Workflow(repo, file) => at(gh.cached(&keys::workflow(repo, file))?, |v| {
             Data::Workflow(Box::new(v))
         }),
-        DataKey::Housekeeping(key) => {
-            let (data, at) = crate::housekeeping::cached(gh, key)?;
-            (Data::Housekeeping(Box::new(data)), at)
-        }
+        DataKey::Labels(repo) => at(
+            gh.cached(&crate::api::housekeeping::labels_key(repo))?,
+            |v| Data::Labels(Box::new(v)),
+        ),
         DataKey::Runs(repo, query) => at(gh.cached(&keys::runs(repo, query))?, |v| {
             Data::Runs(Box::new(v))
         }),
@@ -1139,7 +1139,36 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         DataKey::Alert(a) => at(gh.cached(&crate::api::security::keys::alert(a))?, |v| {
             Data::Alert(Box::new(v))
         }),
-        DataKey::Site(key) => return crate::site::cached(gh, key),
+        DataKey::Activity(repo) => at(gh.cached(&insights::keys::activity(repo))?, |v| {
+            Data::Activity(Box::new(v))
+        }),
+        DataKey::Traffic(repo) => at(gh.cached(&insights::keys::traffic(repo))?, |v| {
+            Data::Traffic(Box::new(v))
+        }),
+        DataKey::Dependencies(repo) => at(gh.cached(&insights::keys::dependencies(repo))?, |v| {
+            Data::Dependencies(Box::new(v))
+        }),
+        DataKey::Featured => at(gh.cached(explore::keys::FEATURED)?, |v| {
+            Data::Topics(Box::new(v))
+        }),
+        DataKey::Topic(name) => at(gh.cached(&explore::keys::topic(name))?, |v| {
+            Data::Topic(Box::new(v))
+        }),
+        DataKey::StarLists(login) => at(gh.cached(&lists::keys::lists(login))?, |v| {
+            Data::StarLists(Box::new(v))
+        }),
+        DataKey::StarList(login, slug) => at(gh.cached(&lists::keys::list(login, slug))?, |v| {
+            Data::StarList(Box::new(v))
+        }),
+        DataKey::Packages(of) => at(gh.cached(&packages::keys::packages(of))?, |v| {
+            Data::Packages(Box::new(v))
+        }),
+        DataKey::Package(p) => at(gh.cached(&packages::keys::package(p))?, |v| {
+            Data::Package(Box::new(v))
+        }),
+        DataKey::SavedReplies => at(gh.cached(replies::keys::REPLIES)?, |v| {
+            Data::SavedReplies(Box::new(v))
+        }),
         DataKey::Settings(repo, page) => {
             let key = crate::api::settings::keys::page(repo, *page);
             at(gh.cached(&key)?, |v| Data::Settings(Box::new(v)))
@@ -1167,7 +1196,10 @@ pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
         | DataKey::RefIn(..)
         | DataKey::Sidebar(..)
         | DataKey::NewForm(..)
-        | DataKey::Subscription(..) => {
+        | DataKey::Subscription(..)
+        | DataKey::MyLists(..)
+        | DataKey::Owners
+        | DataKey::Templates => {
             return None;
         }
     })
@@ -1287,10 +1319,22 @@ pub(crate) async fn fetch(
             Data::Alerts(Box::new(gh.alerts(repo, *kind, query, after).await?))
         }
         DataKey::Alert(a) => Data::Alert(Box::new(gh.alert(a).await?)),
-        DataKey::Site(key) => crate::site::fetch(gh, key, after).await?,
-        DataKey::Housekeeping(key) => {
-            Data::Housekeeping(Box::new(crate::housekeeping::fetch(gh, key, after).await?))
+        DataKey::Activity(repo) => Data::Activity(Box::new(gh.activity(repo).await?)),
+        DataKey::Traffic(repo) => Data::Traffic(Box::new(gh.traffic(repo).await?)),
+        DataKey::Dependencies(repo) => Data::Dependencies(Box::new(gh.dependencies(repo).await?)),
+        DataKey::Featured => Data::Topics(Box::new(gh.featured_topics().await?)),
+        DataKey::Topic(name) => Data::Topic(Box::new(gh.topic(name).await?)),
+        DataKey::StarLists(login) => Data::StarLists(Box::new(gh.star_lists(login).await?)),
+        DataKey::StarList(login, slug) => {
+            Data::StarList(Box::new(gh.star_list(login, slug, after).await?))
         }
+        DataKey::MyLists(repo) => Data::MyLists(Box::new(gh.my_lists(repo).await?)),
+        DataKey::Packages(of) => Data::Packages(Box::new(gh.packages(of).await?)),
+        DataKey::Package(p) => Data::Package(Box::new(gh.package(p, after).await?)),
+        DataKey::SavedReplies => Data::SavedReplies(Box::new(gh.saved_replies().await?)),
+        DataKey::Labels(repo) => Data::Labels(Box::new(gh.labels(repo, after).await?)),
+        DataKey::Owners => Data::Owners(Box::new(gh.owners().await?)),
+        DataKey::Templates => Data::Templates(Box::new(gh.templates().await?)),
         DataKey::History(repo, rev, path) => {
             Data::History(Box::new(gh.history(repo, rev, path, after).await?))
         }

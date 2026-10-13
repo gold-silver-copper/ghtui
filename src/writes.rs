@@ -15,7 +15,8 @@ use crate::api::watch::{SubscriptionState, Watched};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, WriteLink};
 
-use crate::browse::{DataKey, Need};
+use crate::browse::Need;
+use crate::data::DataKey;
 use crate::diff_job::GitContext;
 use crate::keymap::Action;
 use crate::nav::Doable;

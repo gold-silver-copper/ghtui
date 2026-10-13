@@ -13,7 +13,8 @@ use crate::ui::chrome::{Crumb, PageTab};
 use crate::ui::pages::{PrTab, ProfileTab};
 use ratatui::layout::Rect;
 
-use crate::browse::{Data, DataKey, paged};
+use crate::browse::paged;
+use crate::data::{Data, DataKey};
 use crate::diff_screen::DiffOf;
 use crate::route::{OPEN, Route, Target};
 use crate::state::{Screen, State};

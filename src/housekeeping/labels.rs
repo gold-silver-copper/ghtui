@@ -8,10 +8,10 @@ use crate::ui::page::Page;
 use crate::ui::pages::{Mark, WriteFormView};
 
 use super::{
-    Chosen, Expected, Field, Form, FormOf, Key, Subject, Work, ask, expect, failed, form, form_mut,
+    Chosen, Expected, Field, Form, FormOf, Subject, Work, ask, expect, failed, form, form_mut,
     form_row, item, refused, selected,
 };
-use crate::browse::DataKey;
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::route::Route;
 use crate::state::{Cmd, State};
@@ -39,7 +39,7 @@ const COLOURS: &[(&str, &str)] = &[
 
 /// The repository's labels, as loaded.
 pub(super) fn list<'a>(state: &'a State, repo: &RepoId) -> Option<&'a Results<LabelInfo>> {
-    state.picked(&DataKey::Housekeeping(Key::Labels(repo.clone())))
+    state.picked(&DataKey::Labels(repo.clone()))
 }
 
 /// The label selected on the labels page.

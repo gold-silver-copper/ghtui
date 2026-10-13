@@ -10,7 +10,7 @@ use crate::api::housekeeping::{
     RefKind,
 };
 use crate::housekeeping::{
-    Done as HDone, FileChange, FormOf, Key, MilestoneWrite, RefWrite, Work as HWork,
+    Done as HDone, FileChange, FormOf, MilestoneWrite, RefWrite, Work as HWork,
 };
 
 use super::*;
@@ -80,13 +80,13 @@ fn with_labels() -> State {
     open(
         &mut s,
         Route::Labels(ghtui()),
-        Data::Housekeeping(Box::new(crate::housekeeping::Data::Labels(labels))),
+        Data::Labels(Box::new(labels)),
     );
     s
 }
 
 fn labels_key() -> DataKey {
-    DataKey::Housekeeping(Key::Labels(ghtui()))
+    DataKey::Labels(ghtui())
 }
 
 /// The labels page lists each label with its open issues; `,o` writes a
@@ -141,7 +141,7 @@ fn a_label_is_made_and_the_page_follows() {
         description: String::new(),
         open: 0,
     });
-    let data = Data::Housekeeping(Box::new(crate::housekeeping::Data::Labels(labels)));
+    let data = Data::Labels(Box::new(labels));
     fetched(&mut s, labels_key(), data);
     assert_eq!(s.writing.expect, None, "GitHub lists it");
 }
@@ -366,12 +366,8 @@ fn a_repository_is_forked_and_opened() {
     press(&mut s, ",F");
     let form = Route::Housekeeping(FormOf::Fork(ghtui()));
     assert_eq!(s.route(), Some(&form));
-    let owners = crate::housekeeping::Data::Owners(crate::housekeeping::fixtures::owners());
-    fetched(
-        &mut s,
-        DataKey::Housekeeping(Key::Owners),
-        Data::Housekeeping(Box::new(owners)),
-    );
+    let owners = Data::Owners(Box::new(crate::housekeeping::fixtures::owners()));
+    fetched(&mut s, DataKey::Owners, owners);
     assert!(page_text(&s).contains("It will be octocat/ghtui"));
     let cmds = press(&mut s, ",s");
     let new = NewFork {
@@ -400,19 +396,10 @@ fn a_new_repository_is_made_and_cloning_offered() {
     press(&mut s, ",C");
     let form = Route::Housekeeping(FormOf::NewRepo);
     assert_eq!(s.route(), Some(&form));
-    let owners = crate::housekeeping::Data::Owners(crate::housekeeping::fixtures::owners());
-    fetched(
-        &mut s,
-        DataKey::Housekeeping(Key::Owners),
-        Data::Housekeeping(Box::new(owners)),
-    );
-    let templates =
-        crate::housekeeping::Data::Templates(crate::housekeeping::fixtures::templates());
-    fetched(
-        &mut s,
-        DataKey::Housekeeping(Key::Templates),
-        Data::Housekeeping(Box::new(templates)),
-    );
+    let owners = Data::Owners(Box::new(crate::housekeeping::fixtures::owners()));
+    fetched(&mut s, DataKey::Owners, owners);
+    let templates = Data::Templates(Box::new(crate::housekeeping::fixtures::templates()));
+    fetched(&mut s, DataKey::Templates, templates);
     assert!(picker(&s), "its name first");
     press(&mut s, "tools<Enter>");
     select(&mut s, "Owner");

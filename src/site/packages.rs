@@ -13,7 +13,8 @@ use crate::route::{Dest, Route, Target};
 use crate::state::{Cmd, Screen, State};
 use crate::writes::row;
 
-use super::{Key, Page, site};
+use super::Page;
+use crate::data::DataKey;
 
 /// Deleting one version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,7 +52,7 @@ fn chosen(state: &State) -> Option<(PackageRef, u64)> {
 }
 
 fn detail<'a>(state: &'a State, at: &PackageRef) -> Option<&'a PackageDetail> {
-    state.picked::<PackageDetail>(&site(Key::Package(at.clone())))
+    state.picked::<PackageDetail>(&DataKey::Package(at.clone()))
 }
 
 /// `,D`: asks before deleting the version.
@@ -159,7 +160,7 @@ pub fn gone(state: &State, at: &PackageRef, id: u64) -> bool {
 
 /// What's fetched again to see it.
 pub fn needs(at: &PackageRef) -> Vec<Need> {
-    vec![Need::Data(site(Key::Package(at.clone())))]
+    vec![Need::Data(DataKey::Package(at.clone()))]
 }
 
 /// The menu's rows on a package's page.

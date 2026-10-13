@@ -1,29 +1,21 @@
 //! Browsing: the data behind each page, and building pages from it.
 
 use std::collections::HashSet;
-use std::sync::Arc;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 
 use crate::api::browse::{
-    Advisory, Blame, Blob, BranchInfo, CheckOutcome, Checks, CommitDetail, CommitInfo, Comparison,
-    DeploymentList, DiscussionDetail, DiscussionList, DiscussionsOf, Gist, GistSummary,
-    IssueDetail, Job, MilestoneDetail, MilestoneList, PrActivity, Profile, Readme, Refs, Release,
-    RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults,
-    StateCounts, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage,
-    Workflow, WorkflowRun,
+    CommitDetail, CommitInfo, DiscussionsOf, Gist, IssueDetail, PrActivity, Release, RepoOverview,
+    SearchResults, StateCounts, UserList, WikiPage,
 };
-use crate::api::commit_comments::CommitComment;
-use crate::api::model::{Capped, PrRef, RepoId};
-use crate::api::notifications::Inbox;
-use crate::api::project::InProject;
-use crate::api::project::{Project, ProjectRef, ProjectSummary, ProjectsOf};
-use crate::api::security::{Alert, AlertKind, AlertList, AlertRef};
-use crate::api::timeline::Review;
+use crate::api::model::{PrRef, RepoId};
+use crate::api::project::{Project, ProjectsOf};
+use crate::api::security::AlertRef;
 use crate::ui::Fetched;
 use crate::ui::page::{Page, PageLine, Role, Seg};
 use crate::ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
 
+use crate::data::{Data, DataKey, Picked};
 use crate::diff_screen::{DiffOf, DiffState};
 use crate::keymap::Action;
 use crate::route::Route;
@@ -35,257 +27,6 @@ const READING: u16 = 160;
 /// Widest a page of lists gets: room for their columns, without a row's
 /// two ends drifting apart.
 const LISTS: u16 = 200;
-
-/// One piece of GitHub data a page shows.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum DataKey {
-    Repo(RepoId),
-    /// The README at the root, apart from the overview every repository
-    /// page has for its header.
-    Readme(RepoId),
-    Tree(RepoId, String, String),
-    Blob(RepoId, String, String),
-    Search(SearchKind, String),
-    /// A filtered list's open and closed counts ([`Route::state_counts`]).
-    StateCounts(String),
-    Issue(RepoId, u64),
-    PrActivity(PrRef),
-    /// The projects an issue or pull request is in.
-    InProjects(RepoId, u64),
-    /// A file's lines at a commit, from git: where a review thread is.
-    Lines(RepoId, String, String),
-    /// A commit's comments, by the revision linked.
-    CommitComments(RepoId, String),
-    /// All of a pull request's reviews.
-    Reviews(PrRef),
-    Profile(String),
-    /// Every file path at a revision ("Go to file").
-    Files(RepoId, String),
-    /// Branches and tags.
-    Refs(RepoId),
-    /// The ref a plain URL's ref-and-path starts with (see
-    /// [`Route::Unsplit`]).
-    RefIn(RepoId, String),
-    /// The latest commit of each entry in a directory.
-    LastCommits(RepoId, String, String),
-    /// A commit, by the revision linked.
-    Commit(RepoId, String),
-    /// A revision's commits (of a path, if it isn't empty).
-    History(RepoId, String, String),
-    /// The checks on a pull request's head.
-    PrChecks(PrRef),
-    Users(UserList),
-    Forks(RepoId),
-    Releases(RepoId),
-    Release(RepoId, String),
-    Tags(RepoId),
-    Branches(RepoId),
-    /// From git, not GitHub's API.
-    Wiki(RepoId, Option<String>),
-    Advisories(Option<RepoId>),
-    Advisory(Option<RepoId>, String),
-    Teams(String),
-    Team(String, String),
-    Gist(String),
-    Gists(String),
-    Blame(RepoId, String, String),
-    Compare(RepoId, String),
-    Deployments(RepoId, Option<String>),
-    Milestones(RepoId, bool),
-    Milestone(RepoId, u64),
-    Discussions(DiscussionsOf, Option<String>),
-    Discussion(DiscussionsOf, u64),
-    /// A workflow run (an attempt of it, or the latest).
-    Run(RepoId, u64, Option<u64>),
-    Job(RepoId, u64),
-    /// A job's log (not cached: it's big).
-    JobLog(RepoId, u64),
-    Workflow(RepoId, String),
-    /// Workflow runs, filtered as the Actions tab filters them
-    /// ([`RunFilter`](crate::api::browse::RunFilter)).
-    Runs(RepoId, String),
-    CommitChecks(RepoId, String),
-    /// Someone's own repositories, in an order.
-    OwnerRepos(String, RepoSort),
-    /// What someone starred.
-    Stars(String),
-    /// Your notifications, filtered as the inbox filters them
-    /// ([`InboxFilter`](crate::api::notifications::InboxFilter)).
-    Notifications(String),
-    /// An issue's or pull request's sidebar, with what can go there.
-    Sidebar(RepoId, u64),
-    /// What a new issue or pull request in a repository can have.
-    NewForm(RepoId),
-    Projects(ProjectsOf),
-    /// A project at a view (its first, if none is named).
-    Project(ProjectRef, Option<u64>),
-    /// A repository's security alerts of a kind, filtered.
-    Alerts(RepoId, AlertKind, String),
-    Alert(AlertRef),
-    /// Your subscription to a thread or a repository.
-    Subscription(crate::api::watch::Watched),
-    /// Insights, Explore, starred lists, packages, saved replies
-    /// ([`crate::site`]).
-    Site(crate::site::Key),
-    /// Labels, and who can own a new repository ([`crate::housekeeping`]).
-    Housekeeping(crate::housekeeping::Key),
-    /// A page of a repository's Settings tab.
-    Settings(RepoId, crate::api::settings::SettingsPage),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Data {
-    Repo(Box<RepoOverview>),
-    /// `None`: the repository has no README.
-    Readme(Option<Box<Readme>>),
-    Tree(Vec<TreeEntry>),
-    Blob(Box<Blob>),
-    Search(Box<SearchResults>),
-    StateCounts(StateCounts),
-    /// `None`: the number is a pull request.
-    Issue(Option<Box<IssueDetail>>),
-    PrActivity(Box<PrActivity>),
-    Reviews(Box<Capped<Review>>),
-    CommitComments(Box<Capped<CommitComment>>),
-    Lines(Arc<Vec<String>>),
-    InProjects(Box<Capped<InProject>>),
-    Profile(Box<Profile>),
-    /// Paths, and whether GitHub cut the list short.
-    Files(Arc<Vec<String>>, bool),
-    Refs(Box<Refs>),
-    /// The ref a ref-and-path starts with, when longer than its first
-    /// segment.
-    RefIn(Option<String>),
-    LastCommits(Arc<HashMap<String, CommitInfo>>),
-    Commit(Box<CommitDetail>),
-    History(Box<Results<CommitInfo>>),
-    Checks(Box<Checks>),
-    Users(Box<Results<UserSummary>>),
-    /// A page of a list of repositories.
-    RepoPage(Box<Results<RepoSummary>>),
-    Releases(Box<Results<Release>>),
-    Discussions(Box<DiscussionList>),
-    Discussion(Box<DiscussionDetail>),
-    Run(Box<WorkflowRun>),
-    Job(Box<Job>),
-    Log(Arc<crate::api::browse::JobLog>),
-    Workflow(Box<Workflow>),
-    Runs(Box<Results<RunSummary>>),
-    Release(Box<Release>),
-    Tags(Box<Results<TagInfo>>),
-    Branches(Box<Results<BranchInfo>>),
-    Wiki(Box<WikiPage>),
-    Advisories(Box<Results<Advisory>>),
-    Advisory(Box<Advisory>),
-    Teams(Box<Results<TeamSummary>>),
-    Team(Box<TeamDetail>),
-    Gist(Box<Gist>),
-    Gists(Box<Results<GistSummary>>),
-    Blame(Box<Blame>),
-    Compare(Box<Comparison>),
-    Deployments(Box<DeploymentList>),
-    Milestones(Box<MilestoneList>),
-    Milestone(Box<MilestoneDetail>),
-    Notifications(Box<Inbox>),
-    Sidebar(Box<crate::api::edit::Sidebar>),
-    NewForm(Box<crate::api::create::NewForm>),
-    Projects(Box<Results<ProjectSummary>>),
-    Project(Box<Project>),
-    Alerts(Box<AlertList>),
-    Alert(Box<Alert>),
-    Subscription(Box<crate::api::watch::Subscription>),
-    Site(Box<crate::site::Value>),
-    Housekeeping(Box<crate::housekeeping::Data>),
-    Settings(Box<crate::api::settings::Settings>),
-}
-
-impl Data {
-    /// What was still running when fetched: a job (or its run), a run, a
-    /// job's log, checks.
-    pub fn running(&self) -> bool {
-        match self {
-            Data::Log(log) => log.running,
-            // Its run going on can still change what it offers.
-            Data::Job(job) => {
-                job.outcome == CheckOutcome::Pending || job.run.outcome == CheckOutcome::Pending
-            }
-            Data::Run(run) => run.outcome == CheckOutcome::Pending,
-            Data::Checks(c) => c.items.iter().any(|i| i.outcome == CheckOutcome::Pending),
-            Data::Runs(r) => r.items.iter().any(|r| r.outcome == CheckOutcome::Pending),
-            _ => false,
-        }
-    }
-
-    /// Where a list's next page starts, if there's more.
-    pub fn next_cursor(&self) -> Option<&str> {
-        match self {
-            Data::Search(r) => next_cursor(r),
-            Data::History(r) => r.next.as_deref(),
-            Data::Users(r) => r.next.as_deref(),
-            Data::RepoPage(r) => r.next.as_deref(),
-            Data::Releases(r) => r.next.as_deref(),
-            Data::Runs(r) => r.next.as_deref(),
-            Data::Discussions(d) => d.results.next.as_deref(),
-            Data::Tags(r) => r.next.as_deref(),
-            Data::Branches(r) => r.next.as_deref(),
-            Data::Teams(r) => r.next.as_deref(),
-            Data::Gists(r) => r.next.as_deref(),
-            Data::Deployments(d) => d.results.next.as_deref(),
-            Data::Milestones(m) => m.results.next.as_deref(),
-            Data::Milestone(m) => m.items.next.as_deref(),
-            Data::Advisories(r) => r.next.as_deref(),
-            Data::Notifications(i) => i.list.next.as_deref(),
-            Data::Projects(r) => r.next.as_deref(),
-            Data::Project(p) => p.items.next.as_deref(),
-            Data::Alerts(a) => a.results.next.as_deref(),
-            Data::Site(v) => v.next_cursor(),
-            Data::Housekeeping(d) => d.next_cursor(),
-            _ => None,
-        }
-    }
-
-    /// Appends a list's next page.
-    pub fn append(&mut self, more: Data) {
-        match (self, more) {
-            (Data::Search(a), Data::Search(b)) => append(a, *b),
-            (Data::History(a), Data::History(b)) => extend(a, *b, |c| c.oid.clone()),
-            (Data::Users(a), Data::Users(b)) => extend(a, *b, |u| u.login.clone()),
-            (Data::RepoPage(a), Data::RepoPage(b)) => extend(a, *b, |r| r.repo.clone()),
-            (Data::Releases(a), Data::Releases(b)) => extend(a, *b, |r| r.tag.clone()),
-            (Data::Runs(a), Data::Runs(b)) => extend(a, *b, |r| r.id),
-            (Data::Discussions(a), Data::Discussions(b)) => {
-                extend(&mut a.results, b.results, |d| d.number);
-            }
-            (Data::Tags(a), Data::Tags(b)) => extend(a, *b, |t| t.name.clone()),
-            (Data::Branches(a), Data::Branches(b)) => extend(a, *b, |b| b.name.clone()),
-            (Data::Teams(a), Data::Teams(b)) => extend(a, *b, |t| t.slug.clone()),
-            (Data::Gists(a), Data::Gists(b)) => extend(a, *b, |g| g.id.clone()),
-            (Data::Deployments(a), Data::Deployments(b)) => {
-                extend(&mut a.results, b.results, |d| {
-                    (d.created_at.clone(), d.environment.clone(), d.oid.clone())
-                });
-            }
-            (Data::Milestones(a), Data::Milestones(b)) => {
-                extend(&mut a.results, b.results, |m| m.number);
-            }
-            (Data::Milestone(a), Data::Milestone(b)) => {
-                extend(&mut a.items, b.items, |i| (i.repo.clone(), i.number));
-            }
-            (Data::Advisories(a), Data::Advisories(b)) => extend(a, *b, |a| a.ghsa.clone()),
-            (Data::Notifications(a), Data::Notifications(b)) => {
-                extend(&mut a.list, b.list, |n| n.id.clone());
-                a.searched += b.searched;
-                a.cut = b.cut;
-            }
-            (Data::Projects(a), Data::Projects(b)) => extend(a, *b, |p| p.number),
-            (Data::Project(a), Data::Project(b)) => extend(&mut a.items, b.items, |i| i.id.clone()),
-            (Data::Alerts(a), Data::Alerts(b)) => extend(&mut a.results, b.results, |a| a.number),
-            (Data::Site(a), Data::Site(b)) => a.append(*b),
-            (Data::Housekeeping(a), Data::Housekeeping(b)) => a.append(*b),
-            _ => {}
-        }
-    }
-}
 
 /// The list a page loads more of.
 pub fn paged(route: &Route) -> Option<DataKey> {
@@ -566,10 +307,8 @@ pub fn needs(route: &Route) -> Vec<Need> {
         ],
         Route::User { login, tab } => {
             // A user's lists show above what they starred.
-            let lists = (*tab == ProfileTab::Stars).then(|| {
-                let key = crate::site::Key::StarLists(login.to_lowercase());
-                Need::Data(K::Site(key))
-            });
+            let lists =
+                (*tab == ProfileTab::Stars).then(|| Need::Data(K::StarLists(login.to_lowercase())));
             std::iter::once(Need::Data(K::Profile(login.to_lowercase())))
                 .chain(lists)
                 .chain(paged(route).map(Need::Data))
@@ -585,49 +324,6 @@ pub fn needs(route: &Route) -> Vec<Need> {
 pub fn is_header(route: &Route, need: &Need) -> bool {
     matches!(need, Need::Data(DataKey::Repo(_))) && !matches!(route, Route::Repo(_))
 }
-
-/// A kind of data a page shows, as kept in [`Data`].
-pub trait Picked {
-    fn pick(data: &Data) -> Option<&Self>;
-}
-
-macro_rules! picked {
-    ($($variant:ident => $t:ty),* $(,)?) => {$(
-        impl Picked for $t {
-            fn pick(data: &Data) -> Option<&Self> {
-                match data {
-                    Data::$variant(x) => Some(std::borrow::Borrow::borrow(x)),
-                    _ => None,
-                }
-            }
-        }
-    )*};
-}
-
-picked!(
-    Repo => RepoOverview, Readme => Option<Box<Readme>>, Tree => [TreeEntry], Blob => Blob,
-    Search => SearchResults, StateCounts => StateCounts, Issue => Option<Box<IssueDetail>>,
-    PrActivity => PrActivity, Reviews => Capped<Review>,
-    CommitComments => Capped<CommitComment>, Lines => Vec<String>,
-    InProjects => Capped<InProject>,
-    Profile => Profile, Refs => Refs, RefIn => Option<String>,
-    LastCommits => HashMap<String, CommitInfo>, Commit => CommitDetail,
-    History => Results<CommitInfo>, Checks => Checks, Users => Results<UserSummary>,
-    RepoPage => Results<RepoSummary>, Releases => Results<Release>,
-    Discussions => DiscussionList, Discussion => DiscussionDetail, Run => WorkflowRun, Job => Job,
-    Log => crate::api::browse::JobLog, Workflow => Workflow, Runs => Results<RunSummary>,
-    Release => Release, Tags => Results<TagInfo>, Branches => Results<BranchInfo>,
-    Wiki => WikiPage, Advisories => Results<Advisory>, Advisory => Advisory,
-    Teams => Results<TeamSummary>, Team => TeamDetail, Gist => Gist,
-    Gists => Results<GistSummary>, Blame => Blame, Compare => Comparison,
-    Deployments => DeploymentList, Milestones => MilestoneList, Milestone => MilestoneDetail,
-    Notifications => Inbox, Sidebar => crate::api::edit::Sidebar,
-    NewForm => crate::api::create::NewForm,
-    Projects => Results<ProjectSummary>, Project => Project,
-    Alerts => AlertList, Alert => Alert,
-    Subscription => crate::api::watch::Subscription,
-    Settings => crate::api::settings::Settings,
-);
 
 /// A page's needs as the page shows them, failing with the key that
 /// tries again.
@@ -1237,8 +933,8 @@ impl State {
                     let list = match paged(route) {
                         Some(key @ DataKey::Users(_)) => ProfileList::People(f.get(&key)),
                         Some(key) if *tab == ProfileTab::Stars => {
-                            let lists = crate::site::Key::StarLists(login.to_lowercase());
-                            let lists = f.get(&DataKey::Site(lists));
+                            let lists = DataKey::StarLists(login.to_lowercase());
+                            let lists = f.get(&lists);
                             ProfileList::Starred(lists, f.get(&key))
                         }
                         Some(key) => ProfileList::Repos(f.get(&key)),
@@ -1258,71 +954,5 @@ impl State {
             a.lines.splice(0..0, vec![PageLine::default(); banner]);
         }
         page
-    }
-}
-
-/// Appends a page to a list, leaving out what's already there (by `id`):
-/// a list that moved between pages repeats items at their edge.
-pub(crate) fn extend<T, K: Eq + std::hash::Hash>(
-    a: &mut Results<T>,
-    b: Results<T>,
-    id: impl Fn(&T) -> K,
-) {
-    let mut seen: std::collections::HashSet<K> = a.items.iter().map(&id).collect();
-    a.items
-        .extend(b.items.into_iter().filter(|item| seen.insert(id(item))));
-    a.next = b.next;
-    // A list GitHub doesn't count says how many each page has.
-    a.total = b.total.max(a.items.len() as u64);
-}
-
-/// Appends a page of results to what's shown.
-pub fn append(results: &mut SearchResults, more: SearchResults) {
-    match (results, more) {
-        (SearchResults::Repos(a), SearchResults::Repos(b)) => extend(a, b, |r| r.repo.clone()),
-        (SearchResults::Issues(a), SearchResults::Issues(b)) => {
-            extend(a, b, |i| (i.repo.clone(), i.number));
-        }
-        (SearchResults::Users(a), SearchResults::Users(b)) => extend(a, b, |u| u.login.clone()),
-        (SearchResults::Discussions(a), SearchResults::Discussions(b)) => {
-            extend(a, b, |d| (d.repo.clone(), d.summary.number));
-        }
-        (SearchResults::Commits(a), SearchResults::Commits(b)) => {
-            extend(a, b, |c| (c.repo.clone(), c.commit.oid.clone()));
-        }
-        (SearchResults::Code(a), SearchResults::Code(b)) => {
-            extend(a, b, |c| (c.repo.clone(), c.path.clone()));
-        }
-        _ => {}
-    }
-}
-
-pub fn next_cursor(results: &SearchResults) -> Option<&str> {
-    results.next()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A next page that overlaps the last (the list moved between them)
-    /// doesn't show its overlap twice.
-    #[test]
-    fn a_next_page_leaves_out_what_is_shown() {
-        let branch = |n: u32| BranchInfo {
-            name: format!("b{n}"),
-            ..crate::fixtures::branches().items[0].clone()
-        };
-        let page = |names: std::ops::Range<u32>, next: bool| Results {
-            total: 5,
-            items: names.map(branch).collect(),
-            next: next.then(|| "c".to_owned()),
-        };
-        let mut shown = Data::Branches(Box::new(page(0..3, true)));
-        shown.append(Data::Branches(Box::new(page(2..5, false))));
-        let Data::Branches(r) = shown else { panic!() };
-        let names: Vec<&str> = r.items.iter().map(|b| b.name.as_str()).collect();
-        assert_eq!(names, ["b0", "b1", "b2", "b3", "b4"]);
-        assert_eq!(r.next, None);
     }
 }

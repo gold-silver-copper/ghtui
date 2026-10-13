@@ -19,7 +19,8 @@ use crate::api::browse::{
 };
 use crate::api::model::RepoId;
 use crate::api::{ApiError, Polled};
-use crate::browse::{DataKey, Need};
+use crate::browse::Need;
+use crate::data::DataKey;
 use crate::route::Route;
 use crate::state::{Api, Cmd, Screen, State};
 use crate::ui::text::noun;
@@ -401,7 +402,7 @@ pub fn on_watched(
     });
     let k = key(what);
     let busy = state.data.get(&k).and_then(|r| r.data.as_ref());
-    let running = busy.is_some_and(crate::browse::Data::running);
+    let running = busy.is_some_and(crate::data::Data::running);
     let extended = state
         .data
         .get(&k)

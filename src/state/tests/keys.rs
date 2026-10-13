@@ -543,7 +543,7 @@ fn gx_opens_the_address_under_the_cursor() {
         size: 32,
         truncated: false,
     };
-    super::open(&mut s, route, crate::browse::Data::Blob(Box::new(blob)));
+    super::open(&mut s, route, crate::data::Data::Blob(Box::new(blob)));
     let opened = |s: &mut State, keys: &str| match press(s, keys).as_slice() {
         [crate::state::Cmd::OpenUrl(url)] => url.clone(),
         cmds => panic!("{cmds:?}"),
@@ -604,13 +604,13 @@ fn log_lines_are_rows() {
     let ghtui = super::ghtui();
     super::fetched(
         &mut s,
-        crate::browse::DataKey::Job(ghtui.clone(), 2),
-        crate::browse::Data::Job(Box::new(job)),
+        crate::data::DataKey::Job(ghtui.clone(), 2),
+        crate::data::Data::Job(Box::new(job)),
     );
     super::fetched(
         &mut s,
-        crate::browse::DataKey::JobLog(ghtui, 2),
-        crate::browse::Data::Log(std::sync::Arc::new(log)),
+        crate::data::DataKey::JobLog(ghtui, 2),
+        crate::data::Data::Log(std::sync::Arc::new(log)),
     );
     assert_eq!(copied(&mut s), url);
 }

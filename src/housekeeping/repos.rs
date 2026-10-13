@@ -11,17 +11,17 @@ use crate::ui::page::Page;
 use crate::ui::pages::{Mark, WriteFormView};
 
 use super::{
-    Chosen, Expected, Field, Form, FormOf, Key, Subject, Work, ask, expect, failed, form, form_mut,
+    Chosen, Expected, Field, Form, FormOf, Subject, Work, ask, expect, failed, form, form_mut,
     form_row, item,
 };
-use crate::browse::DataKey;
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::route::Route;
 use crate::state::{Cmd, State};
 use crate::writes::Work as Writes;
 
 fn owners(state: &State) -> Option<&Owners> {
-    state.picked(&DataKey::Housekeeping(Key::Owners))
+    state.picked(&DataKey::Owners)
 }
 
 /// `,F`: the repository's fork form.
@@ -163,7 +163,7 @@ pub(super) fn owner_rows(
 /// GitHub's API takes (`mit`).
 fn licence_row(state: &State, f: &Form) -> crate::ui::pages::FormRow {
     let mut row = form_row(f, Field::License, "None");
-    let templates = state.picked::<Templates>(&DataKey::Housekeeping(Key::Templates));
+    let templates = state.picked::<Templates>(&DataKey::Templates);
     let named = templates.and_then(|t| {
         (t.licenses.iter())
             .find(|(key, _)| *key == row.value)
@@ -185,7 +185,7 @@ pub(super) fn template_rows(
     Option<crate::writes::Chosen>,
 )> {
     let set = |value: &str| Some(Chosen::Field(route.clone(), field, value.to_owned()));
-    let Some(t) = state.picked::<Templates>(&DataKey::Housekeeping(Key::Templates)) else {
+    let Some(t) = state.picked::<Templates>(&DataKey::Templates) else {
         return vec![item("Loading GitHub's templates…", "", None)];
     };
     let mut rows = Vec::new();

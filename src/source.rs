@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use crate::api::browse::{Refs, Results, SearchKind, SearchResults};
 use crate::api::model::{Capped, RepoId};
 use crate::api::{ApiError, GitHub};
-use crate::browse::{Data, DataKey};
+use crate::data::{Data, DataKey};
 use crate::diff_job::GitContext;
 use crate::git::read::{self, Grep, ReadError, RemoteRefs};
 use crate::git::repo::Repo;
@@ -120,9 +120,9 @@ pub fn by_git(key: &DataKey, after: Option<&str>) -> bool {
         | DataKey::LastCommits(..)
         | DataKey::Refs(..)
         | DataKey::Tags(..)
-        | DataKey::RefIn(..) => true,
+        | DataKey::RefIn(..)
+        | DataKey::Activity(_) => true,
         DataKey::Search(SearchKind::Code, query) => code_search(query).is_some(),
-        DataKey::Site(key) => key.by_git(),
         _ => false,
     }
 }
@@ -146,7 +146,7 @@ pub fn shown(route: &Route) -> Option<DataKey> {
         Route::Site(crate::site::Page::Insights {
             repo,
             tab: crate::site::InsightsTab::Contributors | crate::site::InsightsTab::Commits,
-        }) => DataKey::Site(crate::site::Key::Activity(repo.clone())),
+        }) => DataKey::Activity(repo.clone()),
         Route::Search {
             kind: SearchKind::Code,
             query,
@@ -169,9 +169,9 @@ fn repo_of(key: &DataKey) -> Option<RepoId> {
         | DataKey::History(repo, ..)
         | DataKey::Refs(repo)
         | DataKey::Tags(repo)
-        | DataKey::RefIn(repo, _) => Some(repo.clone()),
+        | DataKey::RefIn(repo, _)
+        | DataKey::Activity(repo) => Some(repo.clone()),
         DataKey::Search(SearchKind::Code, query) => code_search(query).map(|s| s.repo),
-        DataKey::Site(key) => key.git_repo().cloned(),
         _ => None,
     }
 }
@@ -848,12 +848,11 @@ impl Local {
                 let found = SearchResults::Code(results);
                 Answer::Data(Data::Search(Box::new(found)), Some(oid))
             }
-            DataKey::Site(crate::site::Key::Activity(_)) => {
+            DataKey::Activity(_) => {
                 let oid = at("HEAD".into()).await?;
                 let now = crate::store::now();
                 let activity = crate::site::insights::activity(clone, &oid, now).await?;
-                let value = crate::site::Value::Activity(activity);
-                Answer::Data(Data::Site(Box::new(value)), Some(oid))
+                Answer::Data(Data::Activity(Box::new(activity)), Some(oid))
             }
             _ => return Err(ReadError::Limit("git doesn't know it".into())),
         })
@@ -863,9 +862,10 @@ impl Local {
 /// How long git gets for `key` before the API answers.
 fn wait(key: &DataKey) -> Duration {
     Duration::from_secs(match key {
-        DataKey::Blame(..) | DataKey::Compare(..) | DataKey::Search(..) => 20,
+        DataKey::Blame(..) | DataKey::Compare(..) | DataKey::Search(..) | DataKey::Activity(_) => {
+            20
+        }
         DataKey::LastCommits(..) => 12,
-        DataKey::Site(key) => key.git_wait(),
         _ => 6,
     })
 }

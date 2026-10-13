@@ -2,18 +2,18 @@ use crate::api::explore::Since;
 use crate::api::packages::PackagesOf;
 
 use super::*;
-use crate::site::{InsightsTab, Key, Page, Value, fixtures, site};
+use crate::site::{InsightsTab, Page, fixtures};
 use crate::writes::{Done, Work};
 
 pub(super) fn insights(tab: InsightsTab) -> State {
     let mut s = with_repo();
     let route = Route::Site(Page::Insights { repo: ghtui(), tab });
     let key = match tab {
-        InsightsTab::Contributors | InsightsTab::Commits => Key::Activity(ghtui()),
-        InsightsTab::Traffic => Key::Traffic(ghtui()),
-        InsightsTab::Dependencies => Key::Dependencies(ghtui()),
+        InsightsTab::Contributors | InsightsTab::Commits => DataKey::Activity(ghtui()),
+        InsightsTab::Traffic => DataKey::Traffic(ghtui()),
+        InsightsTab::Dependencies => DataKey::Dependencies(ghtui()),
     };
-    open(&mut s, route, fixtures::sample(&key));
+    open(&mut s, route, crate::fixtures::sample(&key));
     s
 }
 
@@ -31,8 +31,8 @@ pub(super) fn explore() -> State {
     fetched(&mut s, key, repos);
     fetched(
         &mut s,
-        site(Key::Featured),
-        fixtures::sample(&Key::Featured),
+        DataKey::Featured,
+        crate::fixtures::sample(&DataKey::Featured),
     );
     s
 }
@@ -46,7 +46,7 @@ pub(super) fn package() -> State {
     open(
         &mut s,
         route,
-        fixtures::sample(&Key::Package(fixtures::package_ref())),
+        crate::fixtures::sample(&DataKey::Package(fixtures::package_ref())),
     );
     s
 }
@@ -104,8 +104,8 @@ fn topics_and_starred_lists_read_as_on_github() {
     let _ = s.push(Route::Site(page.clone()));
     fetched(
         &mut s,
-        site(Key::Topic("rust".into())),
-        fixtures::sample(&Key::Topic("rust".into())),
+        DataKey::Topic("rust".into()),
+        crate::fixtures::sample(&DataKey::Topic("rust".into())),
     );
     let Some(key) = page.paged() else {
         panic!("a topic lists repositories");
@@ -128,8 +128,8 @@ fn topics_and_starred_lists_read_as_on_github() {
         login: "octocat".into(),
         slug: "terminal-tools".into(),
     });
-    let key = Key::StarList("octocat".into(), "terminal-tools".into());
-    open(&mut s, route, fixtures::sample(&key));
+    let key = DataKey::StarList("octocat".into(), "terminal-tools".into());
+    open(&mut s, route, crate::fixtures::sample(&key));
     let text = page_text(&s);
     assert!(text.contains("Terminal tools  2 repositories"), "{text}");
     assert!(text.contains("Repositories  2"), "{text}");
@@ -141,8 +141,8 @@ fn topics_and_starred_lists_read_as_on_github() {
     });
     let profile = Data::Profile(Box::new(crate::fixtures::profile()));
     fetched(&mut s, DataKey::Profile("octocat".into()), profile);
-    let lists = Key::StarLists("octocat".into());
-    fetched(&mut s, site(lists.clone()), fixtures::sample(&lists));
+    let lists = DataKey::StarLists("octocat".into());
+    fetched(&mut s, lists.clone(), crate::fixtures::sample(&lists));
     let text = page_text(&s);
     assert!(text.contains("Lists  2"), "{text}");
     assert!(text.contains("To read  0 repositories  Private"), "{text}");
@@ -154,13 +154,13 @@ fn topics_and_starred_lists_read_as_on_github() {
 #[test]
 fn a_repository_is_put_in_a_list_and_followed() {
     let mut s = with_repo();
-    let key = site(Key::MyLists(ghtui()));
+    let key = DataKey::MyLists(ghtui());
     let cmds = press(&mut s, ",B");
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     fetched(
         &mut s,
         key.clone(),
-        fixtures::sample(&Key::MyLists(ghtui())),
+        crate::fixtures::sample(&DataKey::MyLists(ghtui())),
     );
     let Some(Overlay::Picker(p)) = &s.overlay else {
         panic!("no picker");
@@ -187,7 +187,7 @@ fn a_repository_is_put_in_a_list_and_followed() {
     for l in &mut mine.lists.iter_mut() {
         l.has = Some(true);
     }
-    fetched(&mut s, key, Data::Site(Box::new(Value::MyLists(mine))));
+    fetched(&mut s, key, Data::MyLists(Box::new(mine)));
     assert_eq!(s.writing.expect, None);
 
     // A new name makes the list, and puts the repository in it too.
@@ -224,8 +224,8 @@ fn a_packages_version_is_deleted_after_asking() {
     assert!(s.writing.expect.is_some());
     let mut detail = fixtures::package_detail();
     detail.versions.items.retain(|v| v.id != 101);
-    let key = site(Key::Package(fixtures::package_ref()));
-    fetched(&mut s, key, Data::Site(Box::new(Value::Package(detail))));
+    let key = DataKey::Package(fixtures::package_ref());
+    fetched(&mut s, key, Data::Package(Box::new(detail)));
     assert_eq!(s.writing.expect, None);
 }
 
@@ -240,7 +240,7 @@ fn packages_say_what_the_token_lacks() {
     update(
         &mut s,
         Msg::Fetched {
-            key: site(Key::Packages(of)),
+            key: DataKey::Packages(of),
             result: Err(crate::api::ApiError::Denied(why.into())),
             cached_at: None,
         },

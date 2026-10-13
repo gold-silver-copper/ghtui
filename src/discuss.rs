@@ -13,7 +13,7 @@ use crate::api::edit::{Edit, Editable};
 use crate::api::model::NodeId;
 
 use crate::act::{By, Confirm, Subject};
-use crate::browse::DataKey;
+use crate::data::DataKey;
 use crate::edit::Choosing;
 use crate::keymap::Action;
 use crate::nav::Doable;

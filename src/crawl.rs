@@ -25,7 +25,8 @@ use crate::store::Store;
 use crate::theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
 use crate::ui::Icons;
 
-use crate::browse::{DataKey, Need, needs};
+use crate::browse::{Need, needs};
+use crate::data::DataKey;
 use crate::diff_job::GitContext;
 use crate::keymap::Keymap;
 use crate::route::{Dest, Route, Target};
@@ -128,11 +129,11 @@ async fn fetch(
     gh: &GitHub,
     git: &GitContext,
     key: &DataKey,
-) -> Result<crate::browse::Data, crate::api::ApiError> {
+) -> Result<crate::data::Data, crate::api::ApiError> {
     match key {
         DataKey::Wiki(repo, page) => crate::wiki::page(git, repo, page.as_deref())
             .await
-            .map(|w| crate::browse::Data::Wiki(Box::new(w))),
+            .map(|w| crate::data::Data::Wiki(Box::new(w))),
         key => crate::runtime::fetch(gh, key, None, None).await,
     }
 }

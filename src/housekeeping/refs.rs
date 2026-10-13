@@ -15,7 +15,7 @@ use super::{
     Chosen, Expected, Pick, RefWrite, Subject, Work, ask, clone_here, expect, item, refused,
     selected,
 };
-use crate::browse::DataKey;
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::route::Route;

@@ -30,7 +30,7 @@ fn a_commit_diff_has_no_review() {
             [
                 Cmd::Git(Git::LoadDiff { of: o, base, .. }),
                 Cmd::Api(Api::Fetch {
-                    key: crate::browse::DataKey::CommitComments(..),
+                    key: crate::data::DataKey::CommitComments(..),
                     ..
                 }),
             ] if *o == of && *base == crate::diff_job::PrBase::default()

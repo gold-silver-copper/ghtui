@@ -8,7 +8,7 @@ use crate::api::ApiError;
 use crate::api::browse::{IssueDetail, PrActivity};
 use crate::api::mention::Mentionable;
 use crate::api::model::{PrRef, RepoId};
-use crate::browse::DataKey;
+use crate::data::DataKey;
 use crate::diff_screen::DiffOf;
 use crate::picker;
 use crate::route::Route;

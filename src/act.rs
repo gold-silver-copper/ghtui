@@ -17,7 +17,8 @@ use crate::api::notifications::Inbox;
 use crate::api::project::ProjectRef;
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::browse::{DataKey, Need};
+use crate::browse::Need;
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav;
 use crate::route::Route;
@@ -430,7 +431,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
                 return Ok(Plan::Load(subject.need()));
             };
             // A number that's a pull request is one.
-            let crate::browse::Data::Issue(Some(issue)) = data else {
+            let crate::data::Data::Issue(Some(issue)) = data else {
                 return Err(elsewhere(action).to_owned());
             };
             let issue_id = issue.id.clone();
@@ -533,7 +534,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
             let Some(data) = loaded(state.data.get(&key), &name)? else {
                 return Ok(Plan::Load(subject.need()));
             };
-            let crate::browse::Data::Notifications(list) = data else {
+            let crate::data::Data::Notifications(list) = data else {
                 return Err("GitHub sent something else for your notifications".into());
             };
             let fetched = (state.data.get(&key)).and_then(|r| r.cached_at.or(r.asked_at));

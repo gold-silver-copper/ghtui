@@ -22,7 +22,7 @@ use crate::ui::page::Link;
 use crate::ui::pages::item_link;
 
 use crate::act::{By, Subject, awaiting_here};
-use crate::browse::DataKey;
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{Kind, fuzzy_score};

@@ -5,7 +5,8 @@
 use std::collections::HashSet;
 
 use crate::api::model::PrRef;
-use crate::browse::{DataKey, Need};
+use crate::browse::Need;
+use crate::data::DataKey;
 use crate::diff_screen::{DiffOf, RangeView};
 use crate::keymap::Action;
 use crate::route::Route;
@@ -43,7 +44,7 @@ pub fn lines_at<'a>(state: &'a State, pr: &PrRef) -> LinesAt<'a> {
     for (key, remote) in &state.data {
         if let DataKey::Lines(repo, commit, path) = key
             && *repo == pr.repo
-            && let Some(crate::browse::Data::Lines(lines)) = &remote.data
+            && let Some(crate::data::Data::Lines(lines)) = &remote.data
         {
             at.insert((commit.clone(), path.clone()), lines.as_slice());
         }

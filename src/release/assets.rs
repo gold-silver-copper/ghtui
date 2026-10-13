@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::api::GitHub;
 use crate::api::browse::{Asset, Release};
 use crate::api::model::RepoId;
-use crate::browse::DataKey;
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::route::Route;
 use crate::state::{Cmd, Screen, State};

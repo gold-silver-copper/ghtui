@@ -19,7 +19,7 @@ use crate::api::GitHub;
 use crate::api::browse::Results;
 use crate::api::housekeeping::{
     BranchRules, FileLook, LabelChange, LabelInfo, MadeRepo, MilestoneChange, NewFork, NewRepo,
-    Owners, RefKind, Templates,
+    RefKind,
 };
 use crate::api::model::RepoId;
 use crate::create::Look;
@@ -27,7 +27,8 @@ use crate::git::local::Clone;
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, Page, WriteLink};
 
-use crate::browse::{DataKey, Need};
+use crate::browse::Need;
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::route::Route;
@@ -862,89 +863,10 @@ fn expect(state: &mut State, route: Route, what: Expected) {
 
 // ---- data -----------------------------------------------------------------------------------
 
-/// The data housekeeping's pages and pickers read.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Key {
-    Labels(RepoId),
-    /// You, and the organizations you may make repositories for.
-    Owners,
-    /// GitHub's `.gitignore` and licence templates.
-    Templates,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Data {
-    Labels(Results<LabelInfo>),
-    Owners(Owners),
-    Templates(Templates),
-}
-
-impl Data {
-    pub fn next_cursor(&self) -> Option<&str> {
-        match self {
-            Data::Labels(l) => l.next.as_deref(),
-            Data::Owners(_) | Data::Templates(_) => None,
-        }
-    }
-
-    pub fn append(&mut self, more: Data) {
-        if let (Data::Labels(a), Data::Labels(b)) = (self, more) {
-            let mut seen: std::collections::HashSet<String> =
-                a.items.iter().map(|l| l.name.clone()).collect();
-            a.items
-                .extend(b.items.into_iter().filter(|l| seen.insert(l.name.clone())));
-            a.next = b.next;
-            a.total = b.total.max(a.items.len() as u64);
-        }
-    }
-}
-
-macro_rules! picked {
-    ($($variant:ident => $t:ty),*) => {$(
-        impl crate::browse::Picked for $t {
-            fn pick(data: &crate::browse::Data) -> Option<&Self> {
-                match data {
-                    crate::browse::Data::Housekeeping(d) => match &**d {
-                        Data::$variant(x) => Some(x),
-                        _ => None,
-                    },
-                    _ => None,
-                }
-            }
-        }
-    )*};
-}
-
-picked!(Labels => Results<LabelInfo>, Owners => Owners, Templates => Templates);
-
-/// Fetches `key` (for a list, its page after `after`).
-pub async fn fetch(
-    gh: &GitHub,
-    key: &Key,
-    after: Option<String>,
-) -> Result<Data, crate::api::ApiError> {
-    Ok(match key {
-        Key::Labels(repo) => Data::Labels(gh.labels(repo, after).await?),
-        Key::Owners => Data::Owners(gh.owners().await?),
-        Key::Templates => Data::Templates(gh.templates().await?),
-    })
-}
-
-/// What the cache has of `key`, and when it was fetched.
-pub fn cached(gh: &GitHub, key: &Key) -> Option<(Data, u64)> {
-    match key {
-        Key::Labels(repo) => {
-            let c = gh.cached(&crate::api::housekeeping::labels_key(repo))?;
-            Some((Data::Labels(c.value), c.fetched_at))
-        }
-        Key::Owners | Key::Templates => None,
-    }
-}
-
 /// The list a page of housekeeping's loads more of.
 pub fn paged(route: &Route) -> Option<DataKey> {
     match route {
-        Route::Labels(repo) => Some(DataKey::Housekeeping(Key::Labels(repo.clone()))),
+        Route::Labels(repo) => Some(DataKey::Labels(repo.clone())),
         _ => None,
     }
 }
@@ -953,24 +875,21 @@ pub fn paged(route: &Route) -> Option<DataKey> {
 pub fn needs(route: &Route) -> Vec<Need> {
     let header = |repo: &RepoId| Need::Data(DataKey::Repo(repo.clone()));
     match route {
-        Route::Labels(repo) => vec![
-            header(repo),
-            Need::Data(DataKey::Housekeeping(Key::Labels(repo.clone()))),
-        ],
+        Route::Labels(repo) => vec![header(repo), Need::Data(DataKey::Labels(repo.clone()))],
         Route::Housekeeping(of) => {
             let mut needs: Vec<Need> = of.repo().map(header).into_iter().collect();
             match of {
                 FormOf::Label { repo, .. } => {
-                    needs.push(Need::Data(DataKey::Housekeeping(Key::Labels(repo.clone()))));
+                    needs.push(Need::Data(DataKey::Labels(repo.clone())));
                 }
                 FormOf::Milestone {
                     repo,
                     number: Some(n),
                 } => needs.push(Need::Data(DataKey::Milestone(repo.clone(), *n))),
-                FormOf::Fork(_) => needs.push(Need::Data(DataKey::Housekeeping(Key::Owners))),
+                FormOf::Fork(_) => needs.push(Need::Data(DataKey::Owners)),
                 FormOf::NewRepo => {
-                    needs.push(Need::Data(DataKey::Housekeeping(Key::Owners)));
-                    needs.push(Need::Data(DataKey::Housekeeping(Key::Templates)));
+                    needs.push(Need::Data(DataKey::Owners));
+                    needs.push(Need::Data(DataKey::Templates));
                 }
                 FormOf::Milestone { number: None, .. } | FormOf::File { .. } => {}
             }
@@ -985,9 +904,9 @@ pub fn build(state: &State, page: &mut Page, route: &Route, now: u64) {
     match route {
         Route::Labels(repo) => {
             let retry = state.first_key(Action::Refresh);
-            let key = DataKey::Housekeeping(Key::Labels(repo.clone()));
+            let key = DataKey::Labels(repo.clone());
             let list = crate::state::Remote::fetched(state.data.get(&key), &retry)
-                .pick(<Results<LabelInfo> as crate::browse::Picked>::pick);
+                .pick(<Results<LabelInfo> as crate::data::Picked>::pick);
             let keys = crate::ui::pages::LabelKeys {
                 new: state.first_key(Action::NewHere),
                 edit: state.first_key(Action::EditComment),
@@ -1016,9 +935,9 @@ fn loaded(state: &State, page: &mut Page, route: &Route) -> bool {
             continue;
         };
         let what = match &key {
-            DataKey::Housekeeping(Key::Labels(_)) => "the labels",
-            DataKey::Housekeeping(Key::Owners) => "your account",
-            DataKey::Housekeeping(Key::Templates) => "GitHub's templates",
+            DataKey::Labels(_) => "the labels",
+            DataKey::Owners => "your account",
+            DataKey::Templates => "GitHub's templates",
             DataKey::Milestone(..) => "the milestone",
             _ => continue,
         };
@@ -1140,10 +1059,8 @@ impl Pick {
 
     pub fn need(&self) -> Option<DataKey> {
         match self {
-            Pick::Field(_, Field::Owner) => Some(DataKey::Housekeeping(Key::Owners)),
-            Pick::Field(_, Field::Gitignore | Field::License) => {
-                Some(DataKey::Housekeeping(Key::Templates))
-            }
+            Pick::Field(_, Field::Owner) => Some(DataKey::Owners),
+            Pick::Field(_, Field::Gitignore | Field::License) => Some(DataKey::Templates),
             Pick::RefFrom(repo, ..) => Some(DataKey::Branches(repo.clone())),
             Pick::Field(..) | Pick::RefName(..) => None,
         }
@@ -1646,6 +1563,7 @@ fn toggle_text(field: Field, on: bool) -> &'static str {
 #[cfg(test)]
 pub(crate) mod fixtures {
     use super::*;
+    use crate::api::housekeeping::{Owners, Templates};
 
     pub fn labels() -> Results<LabelInfo> {
         let label = |name: &str, color: &str, description: &str, open| LabelInfo {
@@ -1680,14 +1598,6 @@ pub(crate) mod fixtures {
                 ("mit".into(), "MIT License".into()),
                 ("apache-2.0".into(), "Apache License 2.0".into()),
             ],
-        }
-    }
-
-    pub fn sample(key: &Key) -> Data {
-        match key {
-            Key::Labels(_) => Data::Labels(labels()),
-            Key::Owners => Data::Owners(owners()),
-            Key::Templates => Data::Templates(templates()),
         }
     }
 }

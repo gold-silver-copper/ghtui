@@ -23,7 +23,8 @@ use crate::ui::overlays::PaletteItem;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::act::{By, Confirm, Subject};
-use crate::browse::{DataKey, Need};
+use crate::browse::Need;
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;

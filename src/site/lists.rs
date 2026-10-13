@@ -7,7 +7,8 @@
 use crate::api::GitHub;
 use crate::api::lists::{ListPage, MyLists, StarList};
 use crate::api::model::{Capped, NodeId, RepoId};
-use crate::browse::{Need, Picked};
+use crate::browse::Need;
+use crate::data::Picked;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
@@ -15,7 +16,8 @@ use crate::route::Route;
 use crate::state::{Cmd, Remote, State};
 use crate::writes::{Chosen, Pick, item, row};
 
-use super::{Key, Page, site};
+use super::Page;
+use crate::data::DataKey;
 
 /// What's sent: the lists a repository is to be in, after making a new
 /// one if asked.
@@ -90,10 +92,10 @@ impl Expected {
     pub fn needs(&self) -> Vec<Need> {
         match self {
             Expected::Membership { repo, .. } => {
-                vec![Need::Data(site(Key::MyLists(repo.clone())))]
+                vec![Need::Data(DataKey::MyLists(repo.clone()))]
             }
             Expected::Gone { login, .. } => {
-                vec![Need::Data(site(Key::StarLists(login.to_lowercase())))]
+                vec![Need::Data(DataKey::StarLists(login.to_lowercase()))]
             }
         }
     }
@@ -108,7 +110,7 @@ impl Expected {
     pub fn shown(&self, state: &State) -> bool {
         match self {
             Expected::Membership { repo, list, add } => state
-                .picked::<MyLists>(&site(Key::MyLists(repo.clone())))
+                .picked::<MyLists>(&DataKey::MyLists(repo.clone()))
                 .is_some_and(|m| {
                     m.lists
                         .iter()
@@ -116,7 +118,7 @@ impl Expected {
                         || (!add && m.lists.iter().all(|l| l.name != *list))
                 }),
             Expected::Gone { login, slug } => state
-                .picked::<Capped<StarList>>(&site(Key::StarLists(login.to_lowercase())))
+                .picked::<Capped<StarList>>(&DataKey::StarLists(login.to_lowercase()))
                 .is_some_and(|lists| lists.iter().all(|l| l.slug != *slug)),
         }
     }
@@ -135,7 +137,7 @@ pub fn open(state: &mut State) -> Vec<Cmd> {
         state.info(Action::Lists.not_here());
         return Vec::new();
     };
-    let mut cmds = state.ensure(Need::Data(site(Key::MyLists(repo.clone()))), true);
+    let mut cmds = state.ensure(Need::Data(DataKey::MyLists(repo.clone())), true);
     cmds.extend(crate::writes::open_picker(
         state,
         Pick::Site(super::Pick::Lists(repo)),
@@ -150,7 +152,7 @@ pub fn rows(
     repo: &RepoId,
     q: &str,
 ) -> Vec<(crate::ui::overlays::PaletteItem, Option<Chosen>)> {
-    let key = site(Key::MyLists(repo.clone()));
+    let key = DataKey::MyLists(repo.clone());
     #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
     let fetched = Remote::fetched(state.data.get(&key), "")
         .pick(<MyLists as Picked>::pick)
@@ -257,7 +259,7 @@ pub fn on_done(state: &mut State, work: Work, result: Result<(), String>) -> Vec
                     crate::writes::Expected::Site(super::Expected::Lists(what)),
                 );
             }
-            let mut cmds = state.ensure(Need::Data(site(Key::MyLists(work.repo))), true);
+            let mut cmds = state.ensure(Need::Data(DataKey::MyLists(work.repo)), true);
             cmds.extend(state.load_visible(false));
             cmds
         }

@@ -18,7 +18,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::api::browse::PrActivity;
 use crate::api::model::{NodeId, PrRef, ReviewThread};
 use crate::api::{ApiError, Polled};
-use crate::browse::{DataKey, Need};
+use crate::browse::Need;
+use crate::data::DataKey;
 use crate::diff_screen::{DiffOf, LastReview};
 use crate::keymap::Action;
 use crate::route::Route;
@@ -535,7 +536,7 @@ pub fn activity_loaded(state: &mut State, pr: &PrRef) {
     } = state;
     let activity = (data.get(&DataKey::PrActivity(pr.clone())))
         .and_then(|r| r.data.as_ref())
-        .and_then(<PrActivity as crate::browse::Picked>::pick);
+        .and_then(<PrActivity as crate::data::Picked>::pick);
     let Some(activity) = activity else {
         return;
     };

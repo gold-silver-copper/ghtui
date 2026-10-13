@@ -7,10 +7,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::api::model::Capped;
 use crate::api::replies::SavedReply;
-use crate::browse::{Need, Picked};
+use crate::browse::Need;
+use crate::data::Picked;
 use crate::state::{Cmd, Overlay, Remote, State};
 
-use super::{Key, site};
+use crate::data::DataKey;
 
 /// The list of saved replies, open in the composer.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -29,7 +30,7 @@ struct Row {
 /// The list's rows, for what's typed: the replies whose title or text
 /// has it, else why there are none; then where they're made.
 fn rows(state: &State, query: &str) -> Vec<Row> {
-    let key = site(Key::SavedReplies);
+    let key = DataKey::SavedReplies;
     #[expect(clippy::disallowed_methods, reason = "said as the list's row")]
     let fetched = Remote::fetched(state.data.get(&key), "")
         .pick(<Capped<SavedReply> as Picked>::pick)
@@ -101,7 +102,7 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
         return Some(if open {
             Vec::new()
         } else {
-            state.ensure(Need::Data(site(Key::SavedReplies)), true)
+            state.ensure(Need::Data(DataKey::SavedReplies), true)
         });
     }
     if !open {

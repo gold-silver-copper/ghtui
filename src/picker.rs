@@ -12,7 +12,8 @@ use crate::ui::text::short_sha;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui_textarea::TextArea;
 
-use crate::browse::{Data, DataKey, Need};
+use crate::browse::Need;
+use crate::data::{Data, DataKey};
 use crate::keymap::Action;
 use crate::nav::new_input;
 use crate::review::apply_commit_choice;

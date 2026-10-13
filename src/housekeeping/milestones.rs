@@ -11,7 +11,7 @@ use super::{
     Chosen, Expected, Field, Form, FormOf, MilestoneWrite, Subject, Work, ask, expect, failed,
     form, form_mut, form_row, item, refused, selected,
 };
-use crate::browse::DataKey;
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::route::Route;

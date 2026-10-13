@@ -20,7 +20,8 @@ use tokio::sync::mpsc;
 use crate::api::browse::{DiscussionsOf, IssueKind, SearchKind, SearchResults};
 use crate::api::model::{PrRef, RepoId};
 use crate::api::{ApiError, GitHub};
-use crate::browse::{DataKey, Need};
+use crate::browse::Need;
+use crate::data::DataKey;
 use crate::route::Route;
 use crate::ui::pages::PrTab;
 

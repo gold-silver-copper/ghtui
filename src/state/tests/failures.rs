@@ -211,7 +211,11 @@ fn every_route_says_why_when_its_needs_fail() {
                         Msg::Pr(pr, Box::new(if fail { err() } else { Ok(pr_detail()) }))
                     }
                     Need::Data(key) => Msg::Fetched {
-                        result: if fail { err() } else { Ok(sample(&key)) },
+                        result: if fail {
+                            err()
+                        } else {
+                            Ok(crate::fixtures::sample(&key))
+                        },
                         key,
                         cached_at: None,
                     },
@@ -248,85 +252,4 @@ fn decoration(route: &Route, need: &Need) -> bool {
                     Need::Data(K::PrActivity(_))
                 )
         )
-}
-
-/// What GitHub might answer for `key`, for the needs that don't fail.
-fn sample(key: &DataKey) -> Data {
-    use DataKey as K;
-    let search = |kind: &SearchKind| match kind {
-        SearchKind::Repos => fixtures::repo_results(),
-        SearchKind::Issues | SearchKind::Pulls => fixtures::issue_results(None),
-        SearchKind::Users => fixtures::user_results(),
-        SearchKind::Discussions => fixtures::discussion_results(),
-        SearchKind::Commits => fixtures::commit_results(),
-        SearchKind::Code => fixtures::code_results(),
-    };
-    match key {
-        K::Repo(_) => Data::Repo(Box::new(fixtures::overview())),
-        K::Readme(_) => Data::Readme(Some(Box::new(fixtures::readme()))),
-        K::Tree(..) => Data::Tree(fixtures::tree()),
-        K::Blob(..) => Data::Blob(Box::new(fixtures::blob())),
-        K::Search(kind, _) => Data::Search(Box::new(search(kind))),
-        K::StateCounts(_) => {
-            Data::StateCounts(crate::api::browse::StateCounts { open: 2, closed: 5 })
-        }
-        K::Issue(..) => Data::Issue(Some(Box::new(fixtures::issue()))),
-        K::PrActivity(_) => Data::PrActivity(Box::new(fixtures::activity())),
-        K::Reviews(_) => Data::Reviews(Box::new(fixtures::reviews())),
-        K::CommitComments(..) => Data::CommitComments(Box::default()),
-        K::Lines(..) => Data::Lines(Arc::default()),
-        K::InProjects(..) => Data::InProjects(Box::default()),
-        K::Profile(_) => Data::Profile(Box::new(fixtures::profile())),
-        K::Files(..) => Data::Files(Arc::new(vec!["README.md".into()]), false),
-        K::Refs(_) => Data::Refs(Box::default()),
-        K::NewForm(_) => Data::NewForm(Box::new(fixtures::new_form())),
-        K::RefIn(..) => Data::RefIn(None),
-        K::LastCommits(..) => Data::LastCommits(Arc::new(fixtures::last_commits())),
-        K::Commit(..) => Data::Commit(Box::new(fixtures::commit())),
-        K::History(..) => Data::History(Box::new(fixtures::history(None))),
-        K::PrChecks(_) | K::CommitChecks(..) => Data::Checks(Box::new(fixtures::checks())),
-        K::Users(_) => Data::Users(Box::new(fixtures::people())),
-        K::Forks(_) | K::OwnerRepos(..) | K::Stars(_) => {
-            Data::RepoPage(Box::new(fixtures::profile_repos()))
-        }
-        K::Releases(_) => Data::Releases(Box::new(fixtures::releases())),
-        K::Release(..) => Data::Release(Box::new(fixtures::release(true))),
-        K::Tags(_) => Data::Tags(Box::new(fixtures::tags())),
-        K::Branches(_) => Data::Branches(Box::new(fixtures::branches())),
-        K::Wiki(..) => Data::Wiki(Box::new(fixtures::wiki())),
-        K::Advisories(_) => {
-            let items = fixtures::advisories();
-            let total = items.len() as u64;
-            Data::Advisories(Box::new(fixtures::page(total, items, None)))
-        }
-        K::Advisory(..) => Data::Advisory(Box::new(fixtures::advisory())),
-        K::Sidebar(..) => Data::Sidebar(Box::new(fixtures::sidebar())),
-        K::Teams(_) => Data::Teams(Box::new(fixtures::teams())),
-        K::Team(..) => Data::Team(Box::new(fixtures::team())),
-        K::Gist(_) => Data::Gist(Box::new(fixtures::gist())),
-        K::Gists(_) => Data::Gists(Box::new(fixtures::gists())),
-        K::Blame(..) => Data::Blame(Box::new(fixtures::blame())),
-        K::Compare(..) => Data::Compare(Box::new(fixtures::comparison())),
-        K::Deployments(..) => Data::Deployments(Box::new(fixtures::deployments())),
-        K::Milestones(..) => Data::Milestones(Box::new(fixtures::milestones())),
-        K::Milestone(..) => Data::Milestone(Box::new(fixtures::milestone())),
-        K::Discussions(..) => Data::Discussions(Box::new(fixtures::discussions())),
-        K::Discussion(..) => Data::Discussion(Box::new(fixtures::discussion())),
-        K::Run(..) => Data::Run(Box::new(fixtures::workflow_run())),
-        K::Job(..) => Data::Job(Box::new(fixtures::job().0)),
-        K::JobLog(..) => Data::Log(Arc::new(fixtures::job().1)),
-        K::Workflow(..) => Data::Workflow(Box::new(fixtures::workflow_runs().0)),
-        K::Runs(..) => Data::Runs(Box::new(fixtures::workflow_runs().1)),
-        K::Notifications(_) => Data::Notifications(Box::new(fixtures::notifications())),
-        K::Projects(_) => Data::Projects(Box::new(fixtures::projects())),
-        K::Project(..) => Data::Project(Box::new(fixtures::project())),
-        K::Alerts(_, kind, _) => Data::Alerts(Box::new(crate::security::fixtures::alerts(*kind))),
-        K::Alert(a) => Data::Alert(Box::new(crate::security::fixtures::alert(a.kind, a.number))),
-        K::Subscription(_) => Data::Subscription(Box::new(fixtures::subscription())),
-        K::Site(key) => crate::site::fixtures::sample(key),
-        K::Housekeeping(k) => {
-            Data::Housekeeping(Box::new(crate::housekeeping::fixtures::sample(k)))
-        }
-        K::Settings(_, page) => Data::Settings(Box::new(crate::settings::fixtures::page(*page))),
-    }
 }

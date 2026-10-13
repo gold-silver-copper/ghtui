@@ -3,10 +3,9 @@
 //! the dependency graph), Explore and topics, starred lists, packages;
 //! and saved replies for the comment composer.
 //!
-//! They're one [`Route::Site`](crate::route::Route::Site) and one
-//! [`DataKey::Site`](crate::browse::DataKey::Site): this module says what
-//! each is (its URL, title, needs and data), and its submodules how it's
-//! changed.
+//! They're one [`Route::Site`](crate::route::Route::Site): this module
+//! says what each is (its URL, title, needs and how it's built), and its
+//! submodules how it's changed.
 
 #[cfg(test)]
 pub(crate) mod fixtures;
@@ -15,17 +14,17 @@ pub mod lists;
 pub mod packages;
 pub mod replies;
 
+use crate::api::GitHub;
 use crate::api::browse::SearchKind;
 use crate::api::explore::{Since, Topic, Topics};
 use crate::api::insights::{Activity, Dependencies, Traffic};
-use crate::api::lists::{ListPage, MyLists, StarList};
-use crate::api::model::{Capped, RepoId};
+use crate::api::lists::ListPage;
+use crate::api::model::RepoId;
 use crate::api::packages::{Kind, PackageDetail, PackageList, PackageRef, PackagesOf};
-use crate::api::replies::SavedReply;
-use crate::api::{ApiError, GitHub};
 use crate::ui::pages::url as links;
 
-use crate::browse::{Data, DataKey, Need, Picked};
+use crate::browse::Need;
+use crate::data::{DataKey, Picked};
 
 /// One of these pages.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -195,30 +194,30 @@ impl Page {
             Page::Topic(name) => {
                 DataKey::Search(SearchKind::Repos, crate::api::explore::topic_repos(name))
             }
-            Page::StarList { login, slug } => {
-                site(Key::StarList(login.to_lowercase(), slug.clone()))
-            }
-            Page::Package { at, .. } => site(Key::Package(at.clone())),
+            Page::StarList { login, slug } => DataKey::StarList(login.to_lowercase(), slug.clone()),
+            Page::Package { at, .. } => DataKey::Package(at.clone()),
             _ => return None,
         })
     }
 
     /// What it needs fetched.
     pub fn needs(&self) -> Vec<Need> {
-        let data = |key| Need::Data(site(key));
+        let data = |key| Need::Data(key);
         let header = |repo: &RepoId| Need::Data(DataKey::Repo(repo.clone()));
         let paged = self.paged().map(Need::Data);
         match self {
             Page::Insights { repo, tab } => {
                 let own = match tab {
-                    InsightsTab::Contributors | InsightsTab::Commits => Key::Activity(repo.clone()),
-                    InsightsTab::Traffic => Key::Traffic(repo.clone()),
-                    InsightsTab::Dependencies => Key::Dependencies(repo.clone()),
+                    InsightsTab::Contributors | InsightsTab::Commits => {
+                        DataKey::Activity(repo.clone())
+                    }
+                    InsightsTab::Traffic => DataKey::Traffic(repo.clone()),
+                    InsightsTab::Dependencies => DataKey::Dependencies(repo.clone()),
                 };
                 vec![header(repo), data(own)]
             }
-            Page::Explore { .. } => paged.into_iter().chain([data(Key::Featured)]).collect(),
-            Page::Topic(name) => std::iter::once(data(Key::Topic(name.to_lowercase())))
+            Page::Explore { .. } => paged.into_iter().chain([data(DataKey::Featured)]).collect(),
+            Page::Topic(name) => std::iter::once(data(DataKey::Topic(name.to_lowercase())))
                 .chain(paged)
                 .collect(),
             Page::StarList { login, .. } => {
@@ -226,7 +225,7 @@ impl Page {
                 std::iter::once(profile).chain(paged).collect()
             }
             Page::Packages(of) => {
-                let own = data(Key::Packages(of.clone()));
+                let own = data(DataKey::Packages(of.clone()));
                 match of {
                     PackagesOf::Repo(repo) => vec![header(repo), own],
                     PackagesOf::Owner(login) => {
@@ -339,169 +338,6 @@ fn valid_topic(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '+' || c == '#')
-}
-
-// ---- data -----------------------------------------------------------------------------
-
-/// What these pages read.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Key {
-    /// Commits by week and author: counted by git where it can.
-    Activity(RepoId),
-    Traffic(RepoId),
-    Dependencies(RepoId),
-    /// GitHub's featured topics.
-    Featured,
-    /// A topic, by its (lowercase) name.
-    Topic(String),
-    /// Someone's lists, by their lowercase login.
-    StarLists(String),
-    /// A list, by its owner's lowercase login and its slug.
-    StarList(String, String),
-    /// Your lists, as they stand for a repository.
-    MyLists(RepoId),
-    Packages(PackagesOf),
-    Package(PackageRef),
-    SavedReplies,
-}
-
-/// What they read.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Value {
-    Activity(Activity),
-    Traffic(Traffic),
-    Dependencies(Dependencies),
-    Topics(Topics),
-    Topic(Topic),
-    StarLists(Capped<StarList>),
-    StarList(ListPage),
-    MyLists(MyLists),
-    Packages(PackageList),
-    Package(PackageDetail),
-    SavedReplies(Capped<SavedReply>),
-}
-
-/// `key` as a page's data key.
-pub fn site(key: Key) -> DataKey {
-    DataKey::Site(key)
-}
-
-macro_rules! picked {
-    ($($variant:ident => $t:ty),* $(,)?) => {$(
-        impl Picked for $t {
-            fn pick(data: &Data) -> Option<&Self> {
-                match data {
-                    Data::Site(v) => match &**v {
-                        Value::$variant(x) => Some(x),
-                        _ => None,
-                    },
-                    _ => None,
-                }
-            }
-        }
-    )*};
-}
-
-picked!(
-    Activity => Activity, Traffic => Traffic, Dependencies => Dependencies,
-    Topics => Topics, Topic => Topic, StarLists => Capped<StarList>, StarList => ListPage,
-    MyLists => MyLists, Packages => PackageList, Package => PackageDetail,
-    SavedReplies => Capped<SavedReply>,
-);
-
-impl Key {
-    /// Whether git answers it ([`crate::source`]).
-    pub fn by_git(&self) -> bool {
-        matches!(self, Key::Activity(_))
-    }
-
-    /// The repository git reads for it.
-    pub fn git_repo(&self) -> Option<&RepoId> {
-        match self {
-            Key::Activity(repo) => Some(repo),
-            _ => None,
-        }
-    }
-
-    /// How long git gets before the API answers.
-    pub fn git_wait(&self) -> u64 {
-        20
-    }
-}
-
-impl Value {
-    /// Where a list's next page starts.
-    pub fn next_cursor(&self) -> Option<&str> {
-        match self {
-            Value::StarList(l) => l.repos.next.as_deref(),
-            Value::Package(p) => p.versions.next.as_deref(),
-            _ => None,
-        }
-    }
-
-    /// Appends a list's next page.
-    pub fn append(&mut self, more: Value) {
-        match (self, more) {
-            (Value::StarList(a), Value::StarList(b)) => {
-                crate::browse::extend(&mut a.repos, b.repos, |r| r.repo.clone());
-            }
-            (Value::Package(a), Value::Package(b)) => {
-                crate::browse::extend(&mut a.versions, b.versions, |v| v.id);
-            }
-            _ => {}
-        }
-    }
-}
-
-fn value(v: Value) -> Data {
-    Data::Site(Box::new(v))
-}
-
-/// `key`'s data from GitHub's API; for a list, the page after `after`.
-pub async fn fetch(gh: &GitHub, key: &Key, after: Option<String>) -> Result<Data, ApiError> {
-    Ok(value(match key {
-        Key::Activity(repo) => Value::Activity(gh.activity(repo).await?),
-        Key::Traffic(repo) => Value::Traffic(gh.traffic(repo).await?),
-        Key::Dependencies(repo) => Value::Dependencies(gh.dependencies(repo).await?),
-        Key::Featured => Value::Topics(gh.featured_topics().await?),
-        Key::Topic(name) => Value::Topic(gh.topic(name).await?),
-        Key::StarLists(login) => Value::StarLists(gh.star_lists(login).await?),
-        Key::StarList(login, slug) => Value::StarList(gh.star_list(login, slug, after).await?),
-        Key::MyLists(repo) => Value::MyLists(gh.my_lists(repo).await?),
-        Key::Packages(of) => Value::Packages(gh.packages(of).await?),
-        Key::Package(p) => Value::Package(gh.package(p, after).await?),
-        Key::SavedReplies => Value::SavedReplies(gh.saved_replies().await?),
-    }))
-}
-
-/// What the cache has for `key`, and when it was fetched.
-pub fn cached(gh: &GitHub, key: &Key) -> Option<(Data, u64)> {
-    use crate::api::{explore, insights, lists, packages, replies};
-    fn at<T>(
-        c: Option<crate::store::Cached<T>>,
-        wrap: impl FnOnce(T) -> Value,
-    ) -> Option<(Data, u64)> {
-        c.map(|c| (value(wrap(c.value)), c.fetched_at))
-    }
-    match key {
-        Key::Activity(repo) => at(gh.cached(&insights::keys::activity(repo)), Value::Activity),
-        Key::Traffic(repo) => at(gh.cached(&insights::keys::traffic(repo)), Value::Traffic),
-        Key::Dependencies(repo) => at(
-            gh.cached(&insights::keys::dependencies(repo)),
-            Value::Dependencies,
-        ),
-        Key::Featured => at(gh.cached(explore::keys::FEATURED), Value::Topics),
-        Key::Topic(name) => at(gh.cached(&explore::keys::topic(name)), Value::Topic),
-        Key::StarLists(login) => at(gh.cached(&lists::keys::lists(login)), Value::StarLists),
-        Key::StarList(login, slug) => {
-            at(gh.cached(&lists::keys::list(login, slug)), Value::StarList)
-        }
-        // Your lists are asked anew: what you choose starts from them.
-        Key::MyLists(_) => None,
-        Key::Packages(of) => at(gh.cached(&packages::keys::packages(of)), Value::Packages),
-        Key::Package(p) => at(gh.cached(&packages::keys::package(p)), Value::Package),
-        Key::SavedReplies => at(gh.cached(replies::keys::REPLIES), Value::SavedReplies),
-    }
 }
 
 // ---- writes ---------------------------------------------------------------------------
@@ -649,7 +485,7 @@ impl Pick {
 
     pub fn need(&self) -> Option<DataKey> {
         match self {
-            Pick::Lists(repo) => Some(site(Key::MyLists(repo.clone()))),
+            Pick::Lists(repo) => Some(DataKey::MyLists(repo.clone())),
         }
     }
 }
@@ -730,7 +566,7 @@ pub fn build(
             pages::insights_nav(page, repo, *tab);
             match tab {
                 InsightsTab::Contributors | InsightsTab::Commits => {
-                    let key = site(Key::Activity(repo.clone()));
+                    let key = DataKey::Activity(repo.clone());
                     let f = get(&key).pick(<Activity as Picked>::pick);
                     if let Some(a) = f.show(page, "the commits") {
                         if *tab == InsightsTab::Contributors {
@@ -741,7 +577,7 @@ pub fn build(
                     }
                 }
                 InsightsTab::Traffic => {
-                    let key = site(Key::Traffic(repo.clone()));
+                    let key = DataKey::Traffic(repo.clone());
                     let f = get(&key).pick(<Traffic as Picked>::pick);
                     if let Some(t) = f.show(page, "the traffic") {
                         pages::traffic(page, t);
@@ -749,7 +585,7 @@ pub fn build(
                 }
                 InsightsTab::Dependencies => {
                     pages::dependents_note(page, repo);
-                    let key = site(Key::Dependencies(repo.clone()));
+                    let key = DataKey::Dependencies(repo.clone());
                     let f = get(&key).pick(<Dependencies as Picked>::pick);
                     if let Some(d) = f.show(page, "the dependency graph") {
                         pages::dependencies(page, d);
@@ -758,14 +594,14 @@ pub fn build(
             }
         }
         Page::Explore { language, since } => {
-            let topics = get(&site(Key::Featured)).pick(<Topics as Picked>::pick);
+            let topics = get(&DataKey::Featured).pick(<Topics as Picked>::pick);
             if let Some(key) = p.paged() {
                 let repos = get(&key).pick(<SearchResults as Picked>::pick);
                 pages::explore(page, language.as_deref(), *since, repos, topics, cx);
             }
         }
         Page::Topic(name) => {
-            let topic = get(&site(Key::Topic(name.to_lowercase())));
+            let topic = get(&DataKey::Topic(name.to_lowercase()));
             let topic = topic.pick(<Topic as Picked>::pick);
             if let (Some(t), Some(key)) = (topic.show(page, "the topic"), p.paged()) {
                 let repos = get(&key).pick(<SearchResults as Picked>::pick);
@@ -784,7 +620,7 @@ pub fn build(
             }
         }
         Page::Packages(of) => {
-            let f = get(&site(Key::Packages(of.clone())));
+            let f = get(&DataKey::Packages(of.clone()));
             if let Some(list) = f
                 .pick(<PackageList as Picked>::pick)
                 .show(page, "the packages")
@@ -793,7 +629,7 @@ pub fn build(
             }
         }
         Page::Package { at, version } => {
-            let f = get(&site(Key::Package(at.clone())));
+            let f = get(&DataKey::Package(at.clone()));
             if let Some(d) = f
                 .pick(<PackageDetail as Picked>::pick)
                 .show(page, "the package")

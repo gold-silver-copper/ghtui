@@ -11,7 +11,7 @@ use crate::create::templates;
 use crate::ui::page::{Link, Page, WriteLink};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
-use crate::browse::DataKey;
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::review::ComposeTarget;

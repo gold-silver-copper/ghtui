@@ -20,7 +20,7 @@ use crate::api::browse::{
 };
 use crate::api::model::RepoId;
 
-use crate::browse::{Data, DataKey};
+use crate::data::{Data, DataKey};
 use crate::fixtures::{self, press};
 use crate::route::Route;
 use crate::state::{Msg, Remote, Screen, State, update};

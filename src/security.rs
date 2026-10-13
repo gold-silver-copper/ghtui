@@ -9,7 +9,8 @@ use crate::api::security::{Alert, AlertChange, AlertKind, AlertRef};
 use crate::ui::overlays::PaletteItem;
 
 use crate::act::{By, Subject};
-use crate::browse::{DataKey, Need};
+use crate::browse::Need;
+use crate::data::DataKey;
 use crate::picker::Kind;
 use crate::state::{Api, Cmd, State};
 

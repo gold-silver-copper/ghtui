@@ -21,6 +21,7 @@ mod config;
 #[cfg(test)]
 mod crawl;
 mod create;
+mod data;
 mod diff_job;
 mod diff_screen;
 mod discuss;

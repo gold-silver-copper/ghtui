@@ -22,7 +22,8 @@ use ratatui::layout::Rect;
 use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
-use crate::browse::{self, Data, DataKey};
+use crate::browse;
+use crate::data::{Data, DataKey};
 use crate::diff_screen::{self, Pane};
 use crate::keymap::Action;
 use crate::picker::{fuzzy_score, move_in_list};

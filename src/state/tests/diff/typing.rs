@@ -107,10 +107,9 @@ fn saved_replies(s: &mut State, result: Result<Vec<(&str, &str)>, ApiError>) {
                 body: body.into(),
             })
             .collect::<Vec<_>>();
-        let value = crate::site::Value::SavedReplies(replies.into());
-        Data::Site(Box::new(value))
+        Data::SavedReplies(Box::new(replies.into()))
     });
-    let key = crate::site::site(crate::site::Key::SavedReplies);
+    let key = DataKey::SavedReplies;
     update(
         s,
         Msg::Fetched {
@@ -128,7 +127,7 @@ fn a_saved_reply_goes_in_at_the_cursor() {
     let (mut s, ..) = composing();
     press(&mut s, "Hi. ");
     let cmds = press(&mut s, "<C-g>");
-    let key = crate::site::site(crate::site::Key::SavedReplies);
+    let key = DataKey::SavedReplies;
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     saved_replies(
         &mut s,

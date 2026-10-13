@@ -19,7 +19,7 @@ use crate::ui::overlays::PaletteItem;
 use crate::ui::pages::{SettingKeys, SettingLink};
 
 use crate::act::{Confirm, Subject};
-use crate::browse::DataKey;
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::route::Route;

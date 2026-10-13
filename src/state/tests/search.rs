@@ -306,7 +306,7 @@ fn search_box_jumps_searches_and_loads_more() {
     let Some(Data::Search(results)) = state.get(&key) else {
         panic!()
     };
-    assert_eq!(browse::next_cursor(results), None);
+    assert_eq!(results.next(), None);
     let SearchResults::Issues(r) = &**results else {
         panic!()
     };

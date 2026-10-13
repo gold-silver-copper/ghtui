@@ -54,9 +54,9 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
     for (of, diff) in &mut state.diffs {
         // A commit's comments on its lines show as threads of its diff.
         if let DiffOf::Commit(repo, oid) = of {
-            let key = crate::browse::DataKey::CommitComments(repo.clone(), oid.to_string());
+            let key = crate::data::DataKey::CommitComments(repo.clone(), oid.to_string());
             let comments = state.data.get(&key).and_then(|r| r.data.as_ref());
-            if let Some(crate::browse::Data::CommitComments(c)) = comments {
+            if let Some(crate::data::Data::CommitComments(c)) = comments {
                 let threads: Vec<_> = c
                     .iter()
                     .filter_map(super::api::commit_comments::CommitComment::as_thread)
