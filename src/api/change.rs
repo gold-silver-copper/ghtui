@@ -134,6 +134,9 @@ pub enum Change {
     },
     /// Dismiss (for a secret, resolve) a security alert, or reopen it.
     Alert(crate::api::security::AlertChange),
+    /// Lock, pin, hide, a branch, sub-issues and the like
+    /// ([`crate::api::manage`]).
+    Manage(crate::api::manage::Manage),
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -355,6 +358,7 @@ impl GitHub {
                     .await
             }
             Change::Alert(change) => self.set_alert(change).await,
+            Change::Manage(change) => self.manage(change).await,
         }
     }
 }

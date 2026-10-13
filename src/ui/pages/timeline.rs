@@ -1091,6 +1091,12 @@ pub(super) fn relations_aside(page: &mut Page, icons: Icons, d: &IssueDetail) {
         };
         linked_aside(page, icons, &d.repo, &heading, &d.sub_issues, "None");
     }
+    if !d.blocked_by.is_empty() {
+        linked_aside(page, icons, &d.repo, "Blocked by", &d.blocked_by, "None");
+    }
+    if !d.blocking.is_empty() {
+        linked_aside(page, icons, &d.repo, "Blocking", &d.blocking, "None");
+    }
 }
 
 /// A commit's comments, under its page: each on the commit as a whole,
@@ -1114,6 +1120,7 @@ pub fn commit_comments(
         base: LinkBase::new(repo, &d.oid, ""),
         op: "",
         now: cx.now,
+        unfolded: Marks::none().unfolded,
     };
     let diff = crate::git::Oid::parse(&d.oid)
         .ok()
@@ -1310,6 +1317,22 @@ pub(super) fn relations_inline(page: &mut Page, icons: Icons, d: &IssueDetail) {
             segs.extend(linked_segs(page, icons, &d.repo, l));
         }
         inline(page, "Sub-issues", segs);
+    }
+    for (name, list) in [("Blocked by", &d.blocked_by), ("Blocking", &d.blocking)] {
+        if list.is_empty() {
+            continue;
+        }
+        let mut segs = Vec::new();
+        for l in list {
+            if !segs.is_empty() {
+                segs.push(meta(", "));
+            }
+            segs.extend(linked_segs(page, icons, &d.repo, l));
+        }
+        if list.left_out() > 0 {
+            segs.push(meta(format!(" and {} more", list.left_out())));
+        }
+        inline(page, name, segs);
     }
     let mut dev = Vec::new();
     for l in &d.closed_by {

@@ -32,6 +32,7 @@ mod home;
 mod join;
 mod keymap;
 mod live;
+mod manage;
 mod nav;
 mod notice;
 mod picker;

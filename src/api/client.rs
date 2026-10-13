@@ -540,6 +540,17 @@ impl GitHub {
         self.ask(&body, false).await?.mutation::<Value>().map(drop)
     }
 
+    /// [`Self::mutate_json`], for a mutation whose answer says what it
+    /// made.
+    pub(crate) async fn mutate_json_for<T: DeserializeOwned>(
+        &self,
+        query: &str,
+        variables: Value,
+    ) -> Result<T, ApiError> {
+        let body = serde_json::json!({ "query": query, "variables": variables });
+        self.ask(&body, false).await?.mutation()
+    }
+
     /// Runs a query given as text (built at run time, or read as JSON) for
     /// the value at `at`, a JSON pointer into its data; a null there is
     /// missing, which [`Reply::found`] explains. Point at the deepest value

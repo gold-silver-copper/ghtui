@@ -240,6 +240,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                     crate::review::ComposeTarget::Discussion(w) => w.save(),
                     crate::review::ComposeTarget::ProjectDraft(d) if d.draft.is_some() => "save",
                     crate::review::ComposeTarget::ProjectDraft(_) => "add draft",
+                    crate::review::ComposeTarget::NewDiscussion(_) => "start discussion",
                     _ => "add to review",
                 },
                 completions: (completions.as_deref()).map(|c| {

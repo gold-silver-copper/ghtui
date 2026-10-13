@@ -288,10 +288,10 @@ fn what_cant_be_done_says_why() {
     assert_eq!(merge.unavailable.as_deref(), Some("It's merged"));
     press(&mut s, ",x");
     says(&s, "can't be reopened");
+    press(&mut s, ",r");
+    says(&s, "It's merged");
 
     let mut s = with_pr(Mode::Dark);
-    press(&mut s, ",r");
-    says(&s, "It isn't a draft");
     s.viewer = Some(pr_detail().author);
     press(&mut s, ",a");
     says(&s, "You can't approve your own pull request");

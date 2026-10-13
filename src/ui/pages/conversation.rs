@@ -3,6 +3,7 @@
 use super::*;
 use crate::api::browse::DiscussionComment;
 use crate::api::edit::Reaction;
+use crate::ui::page::ReviewLink;
 use std::collections::HashSet;
 
 /// What the comment boxes of a conversation share.
@@ -11,6 +12,8 @@ pub(super) struct Conversation<'a> {
     /// Who opened it.
     pub(super) op: &'a str,
     pub(super) now: u64,
+    /// Hidden comments (and long reviews) you unfolded, by their anchors.
+    pub(super) unfolded: &'a HashSet<String>,
 }
 
 impl Conversation<'_> {
@@ -90,17 +93,67 @@ impl Conversation<'_> {
         } else {
             (c.author == self.op).then(|| chip("Author", Bg::SecondaryContainer))
         };
-        let reactions = c.editable.as_ref().map_or(&[][..], |e| &e.reactions);
-        self.said_at(
-            page,
-            anchor,
-            &c.author,
-            "commented",
-            &c.created_at,
-            &c.body,
-            badge,
-            reactions,
-        );
+        self.said_comment(page, anchor, c, "commented", badge);
+    }
+
+    /// A comment's box; a hidden one folded, as GitHub shows it, saying
+    /// why, until it's unfolded (its anchor names it), and then saying
+    /// it's hidden under it.
+    pub(super) fn said_comment(
+        &self,
+        page: &mut Page,
+        anchor: Option<String>,
+        c: &Comment,
+        verb: &str,
+        badge: Option<Seg>,
+    ) {
+        let hidden = c.hiding.reason.as_deref().map(|r| match r.trim() {
+            "" => "Hidden".to_owned(),
+            r => format!("Hidden as {}", r.replace('_', "-").to_lowercase()),
+        });
+        let (Some(hidden), Some(anchor)) = (hidden, anchor.clone()) else {
+            let reactions = c.editable.as_ref().map_or(&[][..], |e| &e.reactions);
+            let (author, at, body) = (&c.author, &c.created_at, &c.body);
+            self.said_at(page, anchor, author, verb, at, body, badge, reactions);
+            return;
+        };
+        let fold = Link::Review(ReviewLink::Fold(anchor.clone()));
+        if self.unfolded.contains(&anchor) {
+            let reactions = c.editable.as_ref().map_or(&[][..], |e| &e.reactions);
+            let (author, at, body) = (&c.author, &c.created_at, &c.body);
+            self.said_at(page, Some(anchor), author, verb, at, body, badge, reactions);
+            item(page, fold, |page, link| {
+                let segs = vec![
+                    Seg::linked(format!("▾ {hidden}"), Role::Link, link),
+                    Seg::new(" · ↵ or za folds it", Role::Meta),
+                ];
+                page.add(Frame::None, 2, segs, Vec::new());
+            });
+            return;
+        }
+        page.anchor(anchor);
+        item(page, fold, |page, link| {
+            let who = login_seg(page, &c.author, Role::Strong);
+            let ago = time::ago_iso(&c.created_at, self.now);
+            page.box_top(
+                vec![who, Seg::new(format!(" {verb} {ago}"), Role::Meta)],
+                Vec::new(),
+            );
+            let segs = vec![
+                Seg::linked(format!("▸ {hidden}"), Role::Link, link),
+                Seg::new(" · ↵ or za shows it", Role::Meta),
+            ];
+            body(page, segs);
+            page.box_bottom();
+        });
+    }
+}
+
+/// "Locked as off-topic".
+pub(super) fn locked_said(locked: crate::api::manage::Locked) -> String {
+    match locked.reason {
+        Some(reason) => format!("Locked as {}", crate::api::manage::lock_said(reason)),
+        None => "Locked".to_owned(),
     }
 }
 
@@ -242,6 +295,14 @@ pub fn issue(
             Role::Meta,
         ),
     ];
+    if d.pinned {
+        segs.push(Seg::new("  ", Role::Body));
+        segs.push(chip("Pinned", Bg::SecondaryContainer));
+    }
+    if let Some(locked) = d.locked {
+        segs.push(Seg::new("  ", Role::Body));
+        segs.push(chip(locked_said(locked), Bg::TertiaryContainer));
+    }
     if !aside {
         labels(&mut segs, &d.labels);
         if let Some(m) = &d.milestone {
@@ -273,6 +334,7 @@ pub fn issue(
         base: LinkBase::new(&d.repo, "HEAD", ""),
         op: &d.author,
         now,
+        unfolded: marks.unfolded,
     };
     let reactions = &d.editable.reactions;
     talk.said(
@@ -368,7 +430,13 @@ pub fn discussions(
 /// its comments (the answer marked) with their replies, each named for
 /// links to it (`#discussioncomment-…`), and the box to write in. Those
 /// in `fresh` (by GitHub's number) came in since you started looking.
-pub fn discussion(page: &mut Page, d: &DiscussionDetail, fresh: &HashSet<u64>, cx: PageCtx<'_>) {
+pub fn discussion(
+    page: &mut Page,
+    d: &DiscussionDetail,
+    fresh: &HashSet<u64>,
+    unfolded: &HashSet<String>,
+    cx: PageCtx<'_>,
+) {
     page.wrapped(
         vec![
             Seg::new(d.title.clone(), Role::Title),
@@ -382,9 +450,21 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, fresh: &HashSet<u64>, c
         segs.push(space());
         segs.push(chip("✓ Answered", Bg::SuccessContainer));
     }
-    if d.locked {
+    match d.closed {
+        Some(Some(reason)) => {
+            segs.push(space());
+            let said = format!("Closed as {}", reason.said());
+            segs.push(chip(said, Bg::ContainerHigh));
+        }
+        Some(None) => {
+            segs.push(space());
+            segs.push(chip("Closed", Bg::ContainerHigh));
+        }
+        None => {}
+    }
+    if let Some(locked) = d.locked {
         segs.push(space());
-        segs.push(chip("Locked", Bg::TertiaryContainer));
+        segs.push(chip(locked_said(locked), Bg::TertiaryContainer));
     }
     segs.push(Seg::new(
         format!(
@@ -400,6 +480,7 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, fresh: &HashSet<u64>, c
         base: LinkBase::new(&d.repo, "HEAD", ""),
         op: &d.author,
         now: cx.now,
+        unfolded,
     };
     talk.said(
         page,
@@ -412,11 +493,6 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, fresh: &HashSet<u64>, c
     );
     let anchor = |c: &Comment| c.id.map(|id| format!("discussioncomment-{id}"));
     let new = |c: &Comment| c.id.is_some_and(|id| fresh.contains(&id));
-    let reactions = |c: &Comment| {
-        c.editable
-            .as_ref()
-            .map_or(Vec::new(), |e| e.reactions.clone())
-    };
     let comment = |page: &mut Page, c: &DiscussionComment, anchored: bool| {
         let badge = if new(&c.comment) && anchored {
             Some(chip("New", Bg::TertiaryContainer))
@@ -431,16 +507,9 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, fresh: &HashSet<u64>, c
             "commented"
         };
         let said = &c.comment;
-        talk.said_at(
-            page,
-            anchored.then(|| anchor(said)).flatten(),
-            &said.author,
-            &format!("{verb} · ▲ {}", c.upvotes),
-            &said.created_at,
-            &said.body,
-            badge,
-            &reactions(said),
-        );
+        let verb = format!("{verb} · ▲ {}", c.upvotes);
+        let anchor = anchored.then(|| anchor(said)).flatten();
+        talk.said_comment(page, anchor, said, &verb, badge);
     };
     // The answer, at the top; it's in its place below too.
     if let Some(answer) = &d.answer {
@@ -465,16 +534,7 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, fresh: &HashSet<u64>, c
             } else {
                 (r.author == d.author).then(|| chip("Author", Bg::SecondaryContainer))
             };
-            talk.said_at(
-                page,
-                anchor(r),
-                &r.author,
-                "replied",
-                &r.created_at,
-                &r.body,
-                badge,
-                &reactions(r),
-            );
+            talk.said_comment(page, anchor(r), r, "replied", badge);
         }
         more_here(page, &c.replies, "reply", "replies");
     }
@@ -493,7 +553,7 @@ pub fn discussion(page: &mut Page, d: &DiscussionDetail, fresh: &HashSet<u64>, c
             "Press {} to write {what}, or on a comment to reply in its thread",
             keys.comment
         );
-        if d.locked {
+        if d.locked.is_some() {
             press.push_str(" (it's locked: only those with write access can)");
         }
         body(page, vec![Seg::linked(press, Role::Meta, link)]);

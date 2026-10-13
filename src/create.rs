@@ -225,9 +225,9 @@ impl Work {
                     let c = local::clone_of(cwd, &pr.repo.owner, &pr.repo.name)
                         .await?
                         .ok_or_else(|| not_a_clone(&pr.repo))?;
-                    let done =
-                        local::checkout(&c.top, &c.remote, pr.number, &name, track.as_deref())
-                            .await?;
+                    let source = format!("refs/pull/{}/head", pr.number);
+                    let done = local::checkout(&c.top, &c.remote, &source, &name, track.as_deref())
+                        .await?;
                     Ok(done)
                 }
                 .await;

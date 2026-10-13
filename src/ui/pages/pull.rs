@@ -32,13 +32,16 @@ pub(super) fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
         PrState::Closed => " wanted to merge into ",
         PrState::Open | PrState::Draft => " wants to merge into ",
     };
-    let segs = vec![
+    let mut segs = vec![
         author,
         Seg::new(wants, Role::Meta),
         chip(&d.base_ref, Bg::PrimaryContainer),
         Seg::new(" from ", Role::Meta),
         chip(head, Bg::PrimaryContainer),
     ];
+    if d.head_gone {
+        segs.push(Seg::new(" · branch deleted", Role::Meta));
+    }
     page.wrapped(segs, 0, Frame::None);
     let mut meta = Vec::from(changes(d.additions, d.deletions));
     meta.push(Seg::new(
@@ -49,6 +52,13 @@ pub(super) fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
         ),
         Role::Meta,
     ));
+    if let Some(locked) = d.locked {
+        meta.push(Seg::new("  ", Role::Meta));
+        meta.push(chip(
+            super::conversation::locked_said(locked),
+            Bg::TertiaryContainer,
+        ));
+    }
     labels(&mut meta, &d.labels);
     page.wrapped(meta, 0, Frame::None);
     page.rule(0, Frame::None);
@@ -267,6 +277,7 @@ pub fn pr_conversation(
         base: LinkBase::new(&pr.repo, &d.head_oid, ""),
         op,
         now,
+        unfolded: marks.unfolded,
     };
     talk.said(
         page,

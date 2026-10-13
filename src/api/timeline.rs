@@ -401,7 +401,7 @@ pub enum WireAssignee {
     Other,
 }
 
-#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cynic(graphql_type = "LockReason", schema_module = "schema")]
 pub enum LockReason {
     OffTopic,
@@ -973,15 +973,6 @@ pub(crate) fn reviewer(r: Option<RequestedReviewer>) -> Option<Reviewer> {
     }
 }
 
-fn lock_reason(r: LockReason) -> &'static str {
-    match r {
-        LockReason::OffTopic => "off-topic",
-        LockReason::Resolved => "resolved",
-        LockReason::Spam => "spam",
-        LockReason::TooHeated => "too heated",
-    }
-}
-
 impl WireReview {
     pub(crate) fn into_review(self) -> Review {
         Review {
@@ -1071,7 +1062,7 @@ macro_rules! shared_events {
                 Some(event(e.actor, e.created_at, what))
             }
             $ty::LockedEvent(e) => {
-                let reason = e.lock_reason.map(|r| lock_reason(r).to_owned());
+                let reason = e.lock_reason.map(|r| crate::api::manage::lock_said(r).to_owned());
                 Some(event(e.actor, e.created_at, What::Locked { reason }))
             }
             $ty::UnlockedEvent(e) => Some(event(e.actor, e.created_at, What::Unlocked)),

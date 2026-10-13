@@ -440,6 +440,8 @@ pub struct Comment {
     /// What edits name it by, what GitHub lets you do to it, and its
     /// reactions; `None` where ghtui doesn't edit it.
     pub editable: Option<Editable>,
+    /// Whether it's hidden and why, and whether you may hide or unhide it.
+    pub hiding: crate::api::manage::Hiding,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -466,11 +468,20 @@ pub struct IssueDetail {
     pub parent: Option<timeline::Linked>,
     pub sub_issues: Capped<timeline::Linked>,
     pub progress: Option<timeline::Progress>,
+    /// The issues that block it, and those it blocks.
+    pub blocked_by: Capped<timeline::Linked>,
+    pub blocking: Capped<timeline::Linked>,
     pub issue_type: Option<String>,
     /// Node ID, for commenting.
     pub id: NodeId,
     pub can_close: bool,
     pub can_reopen: bool,
+    /// Its conversation is locked: only collaborators comment.
+    pub locked: Option<crate::api::manage::Locked>,
+    /// Pinned to its repository's Issues tab.
+    pub pinned: bool,
+    /// You can write to its repository: pin it, move it.
+    pub can_write: bool,
     /// Its description, as edits name it.
     pub editable: Editable,
     pub sidebar: SidebarPermits,
@@ -1088,8 +1099,15 @@ pub struct IssueFull {
     #[arguments(first: 50)]
     pub sub_issues: timeline::SubIssues,
     pub sub_issues_summary: timeline::WireProgress,
+    #[arguments(first: 20)]
+    pub blocked_by: timeline::SubIssues,
+    #[arguments(first: 20)]
+    pub blocking: timeline::SubIssues,
     pub issue_type: Option<timeline::TypeName>,
-    pub repository: RepositoryName,
+    pub repository: RepoAccess,
+    pub locked: bool,
+    pub active_lock_reason: Option<timeline::LockReason>,
+    pub is_pinned: Option<bool>,
     pub viewer_can_close: bool,
     pub viewer_can_reopen: bool,
     pub viewer_can_update: bool,
@@ -1098,6 +1116,14 @@ pub struct IssueFull {
     pub viewer_can_assign: bool,
     pub viewer_can_set_milestone: bool,
     pub reaction_groups: Option<Vec<WireReactionGroup>>,
+}
+
+/// A repository's name, and what you may do in it.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Repository", schema_module = "schema")]
+pub struct RepoAccess {
+    pub name_with_owner: String,
+    pub viewer_permission: Option<crate::api::queries::RepositoryPermission>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -1113,6 +1139,10 @@ pub struct WireComment {
     pub viewer_can_delete: bool,
     pub viewer_can_react: bool,
     pub reaction_groups: Option<Vec<WireReactionGroup>>,
+    pub is_minimized: bool,
+    pub minimized_reason: Option<String>,
+    pub viewer_can_minimize: bool,
+    pub viewer_can_unminimize: bool,
 }
 
 // ---- PR activity -----------------------------------------------------------------
@@ -3737,7 +3767,13 @@ pub struct DiscussionDetail {
     pub answerable: bool,
     pub answered: bool,
     /// Only those with write access can comment.
-    pub locked: bool,
+    pub locked: Option<crate::api::manage::Locked>,
+    /// Closed, and why (`None` inside: GitHub didn't say).
+    pub closed: Option<Option<crate::api::manage::DiscussionReason>>,
+    pub can_close: bool,
+    pub can_reopen: bool,
+    /// Lock or unlock it: triage access.
+    pub can_lock: bool,
     pub upvotes: u64,
     /// The post: what GitHub lets you do to it, and its reactions.
     pub editable: Editable,
@@ -3803,6 +3839,10 @@ pub(crate) mod wire_discussions {
         pub viewer_can_delete: bool,
         pub viewer_can_react: bool,
         pub reaction_groups: Option<Vec<crate::api::edit::WireReactionGroup>>,
+        pub is_minimized: bool,
+        pub minimized_reason: Option<String>,
+        pub viewer_can_minimize: bool,
+        pub viewer_can_unminimize: bool,
     }
 
     #[derive(Deserialize)]
@@ -3836,6 +3876,12 @@ pub(crate) mod wire_discussions {
         pub category: InCategory,
         pub is_answered: Option<bool>,
         pub locked: bool,
+        pub active_lock_reason: Option<crate::api::timeline::LockReason>,
+        pub closed: bool,
+        pub state_reason: Option<String>,
+        pub viewer_can_close: bool,
+        pub viewer_can_reopen: bool,
+        pub viewer_can_label: bool,
         pub upvote_count: u64,
         pub viewer_can_update: bool,
         pub viewer_can_react: bool,
@@ -3900,6 +3946,13 @@ impl wire_discussions::Detail {
                 can_react: r.viewer_can_react,
                 reactions: reactions(r.reaction_groups),
             }),
+            hiding: crate::api::manage::Hiding {
+                reason: r
+                    .is_minimized
+                    .then(|| r.minimized_reason.unwrap_or_default()),
+                can_hide: r.viewer_can_minimize,
+                can_unhide: r.viewer_can_unminimize,
+            },
         };
         let comment = |c: wire_discussions::WireComment| DiscussionComment {
             upvotes: c.upvote_count,
@@ -3927,7 +3980,15 @@ impl wire_discussions::Detail {
             category: self.category.name,
             answerable: self.category.is_answerable,
             answered: self.is_answered.unwrap_or(false),
-            locked: self.locked,
+            locked: (self.locked).then_some(crate::api::manage::Locked {
+                reason: self.active_lock_reason,
+            }),
+            closed: (self.closed).then(|| {
+                crate::api::manage::DiscussionReason::from_wire(self.state_reason.as_deref())
+            }),
+            can_close: self.viewer_can_close,
+            can_reopen: self.viewer_can_reopen,
+            can_lock: self.viewer_can_label,
             upvotes: self.upvote_count,
             answer: self.answer.map(|a| Box::new(comment(a))),
             answer_by: self.answer_chosen_by.map(|a| a.login),
@@ -5185,6 +5246,15 @@ impl IssueFull {
             parent: self.parent.and_then(timeline::LinkedIssue::into_linked),
             sub_issues: timeline::sub_issues(self.sub_issues),
             progress: timeline::progress(&self.sub_issues_summary),
+            blocked_by: timeline::sub_issues(self.blocked_by),
+            blocking: timeline::sub_issues(self.blocking),
+            locked: (self.locked).then_some(crate::api::manage::Locked {
+                reason: self.active_lock_reason,
+            }),
+            pinned: self.is_pinned.unwrap_or(false),
+            can_write: crate::api::queries::RepositoryPermission::writes(
+                self.repository.viewer_permission,
+            ),
             issue_type: self.issue_type.map(|t| t.name),
             editable: Editable {
                 id: self.id.clone().into(),
@@ -5219,6 +5289,13 @@ pub(crate) fn comment(c: WireComment) -> Comment {
             can_react: c.viewer_can_react,
             reactions: reactions(c.reaction_groups),
         }),
+        hiding: crate::api::manage::Hiding {
+            reason: c
+                .is_minimized
+                .then(|| c.minimized_reason.unwrap_or_default()),
+            can_hide: c.viewer_can_minimize,
+            can_unhide: c.viewer_can_unminimize,
+        },
     }
 }
 

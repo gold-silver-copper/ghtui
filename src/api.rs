@@ -14,6 +14,7 @@ pub mod edit;
 #[doc(hidden)]
 pub mod fuzz;
 pub mod gist;
+pub mod manage;
 pub mod mention;
 pub mod model;
 pub mod notifications;

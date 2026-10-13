@@ -290,6 +290,7 @@ const PR_RESPONSE: &str = r#"{"data":{"repository":{
   "labels": {"totalCount": 3, "nodes": [{"name": "bug", "color": "d73a4a"}]},
   "milestone": {"number": 3, "title": "v1"},
   "viewerCanReact": true, "viewerCanLabel": false, "viewerCanAssign": true,
+  "headRef": null, "viewerCanDeleteHeadRef": false, "locked": true, "activeLockReason": "TOO_HEATED",
   "reactionGroups": [{"content": "THUMBS_UP", "viewerHasReacted": false, "reactors": {"totalCount": 5}}],
   "assignees": {"totalCount": 1, "nodes": [{"login": "bob"}]},
   "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]},
@@ -349,6 +350,10 @@ async fn fetches_and_caches_pull_request() {
     assert_eq!(detail.editable.reactions[0].count, 5);
     let may = detail.sidebar;
     assert!(may.assignees && !may.labels && !may.milestone && !may.reviewers);
+    // Its branch is gone, and its conversation locked, as GitHub says why.
+    assert!(detail.head_gone && !detail.may.delete_head);
+    let locked = detail.locked.and_then(|l| l.reason);
+    assert_eq!(locked, Some(ghtui::api::manage::LockReason::TooHeated));
 
     let cached = gh.cached_pull_request(&pr).unwrap();
     assert_eq!(cached.value, detail);

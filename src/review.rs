@@ -65,6 +65,9 @@ pub enum ComposeTarget {
     /// A release's, a gist's or a wiki page's text, on its form's page
     /// ([`crate::writes`]).
     Write(crate::writes::Text),
+    /// A new discussion: its title on the first line, then its text
+    /// ([`crate::manage`]).
+    NewDiscussion(crate::manage::Starting),
 }
 
 /// A suggested change and what it replaces.
@@ -145,6 +148,7 @@ impl Compose {
             ComposeTarget::Edit(e) => format!("Edit {}", e.name),
             ComposeTarget::Discussion(w) => w.title.clone(),
             ComposeTarget::ProjectDraft(d) => d.title.clone(),
+            ComposeTarget::NewDiscussion(s) => s.title(),
             ComposeTarget::Commit { oid, .. } => format!("Comment on commit {}", short_sha(oid)),
             ComposeTarget::Form(crate::route::Route::NewPr(_)) => {
                 "New pull request: its title on the first line, then its description".to_owned()
@@ -177,6 +181,7 @@ pub fn compose_anchor(doc: &Doc, screen: &DiffScreen, target: &ComposeTarget) ->
         | ComposeTarget::Conversation { .. }
         | ComposeTarget::Discussion(_)
         | ComposeTarget::ProjectDraft(_)
+        | ComposeTarget::NewDiscussion(_)
         | ComposeTarget::Form(_)
         | ComposeTarget::Write(_)
         | ComposeTarget::Commit { .. } => screen
@@ -369,6 +374,7 @@ pub fn draft(target: &ComposeTarget, body: &str, id: u64, commit: &str) -> Optio
         | ComposeTarget::Edit(_)
         | ComposeTarget::Discussion(_)
         | ComposeTarget::ProjectDraft(_)
+        | ComposeTarget::NewDiscussion(_)
         | ComposeTarget::Form(_)
         | ComposeTarget::Write(_)
         | ComposeTarget::Commit { .. } => None,
@@ -1057,6 +1063,9 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
         compose.sending = true;
         return crate::discuss::send(&w, body);
     }
+    if let ComposeTarget::NewDiscussion(s) = &target {
+        return crate::manage::start(state, s, &body);
+    }
     if let ComposeTarget::ProjectDraft(d) = target {
         return match d.send(&body) {
             Ok(cmds) => {
@@ -1113,6 +1122,7 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
         | ComposeTarget::Edit(_)
         | ComposeTarget::Discussion(_)
         | ComposeTarget::ProjectDraft(_)
+        | ComposeTarget::NewDiscussion(_)
         | ComposeTarget::Form(_)
         | ComposeTarget::Write(_)
         | ComposeTarget::Commit { .. } => Vec::new(),

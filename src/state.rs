@@ -512,6 +512,8 @@ pub struct State {
     /// Releases, gists and wiki pages being written, and the change one
     /// waits to see.
     pub writing: crate::writes::Writing,
+    /// What the pickers that manage an issue or pull request list.
+    pub managing: crate::manage::Managing,
     /// Workflows being run by hand: their forms.
     pub dispatching: crate::actions::Dispatching,
     /// Conversations: long reviews unfolded, and the like.
@@ -565,6 +567,7 @@ impl State {
             mentionable: HashMap::new(),
             creating: crate::create::Creating::default(),
             writing: crate::writes::Writing::default(),
+            managing: crate::manage::Managing::default(),
             dispatching: crate::actions::Dispatching::default(),
             talk: crate::talk::Talk::default(),
             quit: false,

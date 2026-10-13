@@ -1091,7 +1091,7 @@ impl State {
                 let none = HashSet::new();
                 let fresh = crate::live::page::fresh(self, route).unwrap_or(&none);
                 if let Some(d) = f.get(&key).show(&mut page, &title) {
-                    pages::discussion(&mut page, d, fresh, cx);
+                    pages::discussion(&mut page, d, fresh, &self.talk.unfolded, cx);
                 }
             }
             Route::WorkflowRun { repo, run, attempt } => {

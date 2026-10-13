@@ -352,6 +352,17 @@ pub struct PrDetail {
     pub reaction_groups: Option<Vec<crate::api::edit::WireReactionGroup>>,
     #[arguments(first: 10)]
     pub assignees: crate::api::browse::Assignees,
+    pub head_ref: Option<RefId>,
+    pub viewer_can_delete_head_ref: bool,
+    pub locked: bool,
+    pub active_lock_reason: Option<crate::api::timeline::LockReason>,
+}
+
+/// A branch or tag, by its node ID.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Ref", schema_module = "schema")]
+pub struct RefId {
+    pub id: cynic::Id,
 }
 
 #[derive(cynic::QueryFragment, Debug)]

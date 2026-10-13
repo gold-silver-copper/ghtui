@@ -522,14 +522,14 @@ says where it works.
 | `:` `ctrl-k`         | Command palette |
 | `,m`                 | Merge the pull request |
 | `,a`                 | Approve the pull request |
-| `,r`                 | Mark the draft ready for review |
+| `,r`                 | Mark the draft ready for review, or convert it to a draft |
 | `,u`                 | Update the branch from its base |
-| `,x`                 | Close or reopen (an alert: dismiss it); on a running run, cancel it |
+| `,x`                 | Close (as a duplicate too) or reopen (an alert: dismiss it); on a running run, cancel it |
 | `,R`                 | Re-run the workflow run or job |
 | `,e`                 | Edit the comment or description (a wiki page, your gist) |
 | `,D`                 | Delete the comment (your gist) |
 | `,+`                 | React to the comment, issue or pull request |
-| `,c`                 | Check out the pull request in your clone |
+| `,c`                 | Check out the pull request in your clone (an issue: a new branch for it) |
 | `,w`                 | Subscribe to or ignore the thread; watch the repository |
 | `del`                | Delete the selection (a draft comment, a Home section) |
 | `ctrl-z`             | Bring back what was just deleted |
@@ -562,6 +562,11 @@ says where it works.
 | `,W`    | New wiki page |
 | `,E`    | Run the workflow by hand |
 | `B`     | Switch branches or tags |
+| `,b`    | Delete the pull request's branch, or restore it |
+| `,L`    | Lock the conversation, or unlock it |
+| `,H`    | Hide the comment, or unhide it |
+| `,S`    | Add or remove sub-issues |
+| `,K`    | Mark the issue blocked by another, or no longer |
 | `i`     | Follow a link by its letters |
 | `I`     | Follow a link, in the browser |
 | `alt-↑` | Move the Home section up |

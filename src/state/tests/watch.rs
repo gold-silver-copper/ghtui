@@ -117,6 +117,7 @@ fn an_issue_is_watched_and_another_authors_comment_is_new() {
         body: format!("from {author}"),
         created_at: "2026-10-03T12:00:00Z".into(),
         editable: None,
+        hiding: crate::api::manage::Hiding::default(),
     };
     let first = issue.comments().next().cloned().expect("a comment");
     issue.timeline = vec![

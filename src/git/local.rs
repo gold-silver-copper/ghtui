@@ -224,14 +224,14 @@ pub enum Checkout {
     Diverged(String),
 }
 
-/// Checks out pull request `number` from `remote` on branch `name`: the
-/// pull request's head (`refs/pull/N/head`), with the branch of the same
-/// repository it comes from as its upstream (`track`), when it's from
-/// there. Refuses while the working tree has changes.
+/// Checks out `source`, a ref of `remote` (a pull request's head,
+/// `refs/pull/N/head`, or a branch, `refs/heads/…`), on branch `name`,
+/// with `remote`'s branch `track` as its upstream when there is one.
+/// Refuses while the working tree has changes.
 pub async fn checkout(
     top: &Path,
     remote: &str,
-    number: u64,
+    source: &str,
     name: &str,
     track: Option<&str>,
 ) -> Result<Checkout, GitError> {
@@ -239,8 +239,11 @@ pub async fn checkout(
     if !changed.is_empty() {
         return Ok(Checkout::Uncommitted(changed));
     }
-    let head_ref = format!("refs/ghtui/pr/{number}/head");
-    let mut specs = vec![format!("+refs/pull/{number}/head:{head_ref}")];
+    let head_ref = format!(
+        "refs/ghtui/checkout/{}",
+        source.strip_prefix("refs/").unwrap_or(source)
+    );
+    let mut specs = vec![format!("+{source}:{head_ref}")];
     if let Some(branch) = track {
         specs.push(format!(
             "+refs/heads/{branch}:refs/remotes/{remote}/{branch}"
@@ -322,16 +325,28 @@ mod tests {
         let (_github, clone) = github_and_clone().await;
         let top = clone.path();
         std::fs::write(top.join("a.txt"), "changed\n").unwrap();
-        let refused = checkout(top, "origin", 7, "feature", Some("feature"))
-            .await
-            .unwrap();
+        let refused = checkout(
+            top,
+            "origin",
+            "refs/pull/7/head",
+            "feature",
+            Some("feature"),
+        )
+        .await
+        .unwrap();
         assert_eq!(refused, Checkout::Uncommitted(vec!["a.txt".into()]));
         assert_eq!(git(top, &["branch", "--show-current"]).await.trim(), "main");
 
         git(top, &["commit", "-q", "-am", "Mine"]).await;
-        let done = checkout(top, "origin", 7, "feature", Some("feature"))
-            .await
-            .unwrap();
+        let done = checkout(
+            top,
+            "origin",
+            "refs/pull/7/head",
+            "feature",
+            Some("feature"),
+        )
+        .await
+        .unwrap();
         assert_eq!(done, Checkout::Created("feature".into()));
         assert_eq!(
             git(top, &["branch", "--show-current"]).await.trim(),
@@ -341,8 +356,31 @@ mod tests {
         let upstream = git(top, &["rev-parse", "--abbrev-ref", "feature@{upstream}"]).await;
         assert_eq!(upstream.trim(), "origin/feature");
         // Again: already there.
-        let again = checkout(top, "origin", 7, "feature", None).await.unwrap();
+        let again = checkout(top, "origin", "refs/pull/7/head", "feature", None)
+            .await
+            .unwrap();
         assert_eq!(again, Checkout::Switched("feature".into()));
+    }
+
+    /// A branch made on GitHub (an issue's) is checked out as itself,
+    /// tracking GitHub's.
+    #[tokio::test]
+    async fn a_branch_made_on_github_is_checked_out_tracking_it() {
+        let (_github, clone) = github_and_clone().await;
+        let top = clone.path();
+        let done = checkout(
+            top,
+            "origin",
+            "refs/heads/feature",
+            "feature",
+            Some("feature"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(done, Checkout::Created("feature".into()));
+        assert!(top.join("b.txt").exists());
+        let upstream = git(top, &["rev-parse", "--abbrev-ref", "feature@{upstream}"]).await;
+        assert_eq!(upstream.trim(), "origin/feature");
     }
 
     /// A branch GitHub doesn't have says so, and its commits (against the

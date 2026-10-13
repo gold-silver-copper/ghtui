@@ -134,6 +134,7 @@ impl State {
             out.push(change);
         }
         out.extend(crate::edit::doables(self));
+        crate::manage::doables(self, &mut out);
         out.extend(crate::create::checkout_doable(self));
         out.extend(crate::writes::change_doables(self));
         crate::actions::doables(self, &mut out);
@@ -546,7 +547,8 @@ impl State {
                     | Kind::Project(_)
                     | Kind::Alert(_)
                     | Kind::Write(_)
-                    | Kind::Actions(_) => "choose",
+                    | Kind::Actions(_)
+                    | Kind::Manage(_) => "choose",
                     Kind::Code { .. } => "go there",
                     Kind::Messages(_) => "copy",
                     Kind::Commands

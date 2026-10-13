@@ -35,7 +35,7 @@ pub(crate) const DISCUSSIONS: &str = "query($owner: String!, $name: String!, $af
 
 /// What a discussion's comments and replies show, and what you may do
 /// to them.
-const DISCUSSION_REPLY: &str = "id databaseId author { login } body createdAt viewerCanUpdate viewerCanDelete viewerCanReact reactionGroups { content viewerHasReacted reactors { totalCount } }";
+const DISCUSSION_REPLY: &str = "id databaseId author { login } body createdAt viewerCanUpdate viewerCanDelete viewerCanReact reactionGroups { content viewerHasReacted reactors { totalCount } } isMinimized minimizedReason viewerCanMinimize viewerCanUnminimize";
 
 /// A discussion, its answer and its comments, with what you may do.
 pub(crate) fn discussion() -> String {
@@ -43,7 +43,7 @@ pub(crate) fn discussion() -> String {
         "{DISCUSSION_REPLY} isAnswer upvoteCount viewerCanMarkAsAnswer viewerCanUnmarkAsAnswer"
     );
     format!(
-        "query($owner: String!, $name: String!, $number: Int!) {{ repository(owner: $owner, name: $name) {{ discussion(number: $number) {{ id number title body author {{ login }} createdAt category {{ name isAnswerable }} isAnswered locked upvoteCount viewerCanUpdate viewerCanReact reactionGroups {{ content viewerHasReacted reactors {{ totalCount }} }} answerChosenBy {{ login }} answer {{ {comment} }} comments(first: 50) {{ totalCount nodes {{ {comment} replies(first: 30) {{ totalCount nodes {{ {DISCUSSION_REPLY} }} }} }} }} }} }} }}"
+        "query($owner: String!, $name: String!, $number: Int!) {{ repository(owner: $owner, name: $name) {{ discussion(number: $number) {{ id number title body author {{ login }} createdAt category {{ name isAnswerable }} isAnswered locked activeLockReason closed stateReason viewerCanClose viewerCanReopen viewerCanLabel upvoteCount viewerCanUpdate viewerCanReact reactionGroups {{ content viewerHasReacted reactors {{ totalCount }} }} answerChosenBy {{ login }} answer {{ {comment} }} comments(first: 50) {{ totalCount nodes {{ {comment} replies(first: 30) {{ totalCount nodes {{ {DISCUSSION_REPLY} }} }} }} }} }} }} }}"
     )
 }
 
@@ -200,6 +200,65 @@ pub(crate) const UNARCHIVE_PROJECT_ITEM: &str = "mutation($project: ID!, $item: 
 /// A draft issue's new title and body.
 pub(crate) const UPDATE_PROJECT_DRAFT: &str = "mutation($draft: ID!, $title: String!, $body: String!) { updateProjectV2DraftIssue(input: {draftIssueId: $draft, title: $title, body: $body}) { draftIssue { id } } }";
 
+// ---- managing an issue, a pull request or a discussion ([`crate::api::manage`]) ----
+
+pub(crate) const CONVERT_TO_DRAFT: &str = "mutation($id: ID!) { convertPullRequestToDraft(input: {pullRequestId: $id}) { pullRequest { id } } }";
+
+pub(crate) const CHANGE_BASE: &str = "mutation($id: ID!, $base: String!) { updatePullRequest(input: {pullRequestId: $id, baseRefName: $base}) { pullRequest { id } } }";
+
+pub(crate) const LOCK: &str = "mutation($id: ID!, $reason: LockReason) { lockLockable(input: {lockableId: $id, lockReason: $reason}) { lockedRecord { locked } } }";
+
+pub(crate) const UNLOCK: &str =
+    "mutation($id: ID!) { unlockLockable(input: {lockableId: $id}) { unlockedRecord { locked } } }";
+
+pub(crate) const PIN_ISSUE: &str =
+    "mutation($id: ID!) { pinIssue(input: {issueId: $id}) { issue { id } } }";
+
+pub(crate) const UNPIN_ISSUE: &str =
+    "mutation($id: ID!) { unpinIssue(input: {issueId: $id}) { issue { id } } }";
+
+pub(crate) const HIDE_COMMENT: &str = "mutation($id: ID!, $reason: ReportedContentClassifiers!) { minimizeComment(input: {subjectId: $id, classifier: $reason}) { minimizedComment { isMinimized } } }";
+
+pub(crate) const UNHIDE_COMMENT: &str = "mutation($id: ID!) { unminimizeComment(input: {subjectId: $id}) { unminimizedComment { isMinimized } } }";
+
+pub(crate) const CLOSE_AS_DUPLICATE: &str = "mutation($id: ID!, $of: ID!) { closeIssue(input: {issueId: $id, stateReason: DUPLICATE, duplicateIssueId: $of}) { issue { id } } }";
+
+pub(crate) const ADD_SUB_ISSUE: &str = "mutation($id: ID!, $child: ID!) { addSubIssue(input: {issueId: $id, subIssueId: $child}) { issue { id } } }";
+
+pub(crate) const REMOVE_SUB_ISSUE: &str = "mutation($id: ID!, $child: ID!) { removeSubIssue(input: {issueId: $id, subIssueId: $child}) { issue { id } } }";
+
+pub(crate) const MOVE_SUB_ISSUE: &str = "mutation($id: ID!, $child: ID!, $before: ID, $after: ID) { reprioritizeSubIssue(input: {issueId: $id, subIssueId: $child, beforeId: $before, afterId: $after}) { issue { id } } }";
+
+pub(crate) const ADD_BLOCKED_BY: &str = "mutation($id: ID!, $by: ID!) { addBlockedBy(input: {issueId: $id, blockingIssueId: $by}) { issue { id } } }";
+
+pub(crate) const REMOVE_BLOCKED_BY: &str = "mutation($id: ID!, $by: ID!) { removeBlockedBy(input: {issueId: $id, blockingIssueId: $by}) { issue { id } } }";
+
+/// The commit a repository's default branch is at.
+pub(crate) const DEFAULT_BRANCH_OID: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { defaultBranchRef { target { oid } } } }";
+
+pub(crate) const LINK_BRANCH: &str = "mutation($id: ID!, $oid: GitObjectID!, $name: String!) { createLinkedBranch(input: {issueId: $id, oid: $oid, name: $name}) { linkedBranch { id } } }";
+
+pub(crate) const CLOSE_DISCUSSION: &str = "mutation($id: ID!, $reason: DiscussionCloseReason) { closeDiscussion(input: {discussionId: $id, reason: $reason}) { discussion { id } } }";
+
+pub(crate) const REOPEN_DISCUSSION: &str =
+    "mutation($id: ID!) { reopenDiscussion(input: {discussionId: $id}) { discussion { id } } }";
+
+pub(crate) const REVERT_PR: &str = "mutation($id: ID!) { revertPullRequest(input: {pullRequestId: $id}) { revertPullRequest { number } } }";
+
+pub(crate) const TRANSFER_ISSUE: &str = "mutation($id: ID!, $repo: ID!) { transferIssue(input: {issueId: $id, repositoryId: $repo}) { issue { number repository { nameWithOwner } } } }";
+
+pub(crate) const START_DISCUSSION: &str = "mutation($repo: ID!, $category: ID!, $title: String!, $body: String!) { createDiscussion(input: {repositoryId: $repo, categoryId: $category, title: $title, body: $body}) { discussion { number } } }";
+
+/// An owner's own repositories, most recently pushed first, with what you
+/// may do in each: where an issue can move.
+pub(crate) const TRANSFER_TARGETS: &str = "query($login: String!) { repositoryOwner(login: $login) { repositories(first: 100, ownerAffiliations: [OWNER], orderBy: {field: PUSHED_AT, direction: DESC}) { totalCount nodes { id nameWithOwner hasIssuesEnabled isArchived viewerPermission } } } }";
+
+/// A repository's open issues, most recently updated first.
+pub(crate) const OPEN_ISSUES: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { issues(first: 50, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) { totalCount nodes { number title } } } }";
+
+/// A repository's discussion categories, and their forms' files.
+pub(crate) const DISCUSSION_FORMS: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id discussionCategories(first: 50) { totalCount nodes { id name slug description isAnswerable } } templates: object(expression: \"HEAD:.github/DISCUSSION_TEMPLATE\") { ... on Tree { entries { name object { ... on Blob { text } } } } } } }";
+
 /// Every query here, by name, built with sample input.
 #[cfg(test)]
 pub(crate) fn all() -> Vec<(&'static str, String)> {
@@ -252,6 +311,33 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ("UNARCHIVE_PROJECT_ITEM", UNARCHIVE_PROJECT_ITEM.to_owned()),
         ("UPDATE_PROJECT_DRAFT", UPDATE_PROJECT_DRAFT.to_owned()),
     ];
+    // Managing an issue, a pull request or a discussion.
+    all.extend([
+        ("CONVERT_TO_DRAFT", CONVERT_TO_DRAFT.to_owned()),
+        ("CHANGE_BASE", CHANGE_BASE.to_owned()),
+        ("LOCK", LOCK.to_owned()),
+        ("UNLOCK", UNLOCK.to_owned()),
+        ("PIN_ISSUE", PIN_ISSUE.to_owned()),
+        ("UNPIN_ISSUE", UNPIN_ISSUE.to_owned()),
+        ("HIDE_COMMENT", HIDE_COMMENT.to_owned()),
+        ("UNHIDE_COMMENT", UNHIDE_COMMENT.to_owned()),
+        ("CLOSE_AS_DUPLICATE", CLOSE_AS_DUPLICATE.to_owned()),
+        ("ADD_SUB_ISSUE", ADD_SUB_ISSUE.to_owned()),
+        ("REMOVE_SUB_ISSUE", REMOVE_SUB_ISSUE.to_owned()),
+        ("MOVE_SUB_ISSUE", MOVE_SUB_ISSUE.to_owned()),
+        ("ADD_BLOCKED_BY", ADD_BLOCKED_BY.to_owned()),
+        ("REMOVE_BLOCKED_BY", REMOVE_BLOCKED_BY.to_owned()),
+        ("DEFAULT_BRANCH_OID", DEFAULT_BRANCH_OID.to_owned()),
+        ("LINK_BRANCH", LINK_BRANCH.to_owned()),
+        ("CLOSE_DISCUSSION", CLOSE_DISCUSSION.to_owned()),
+        ("REOPEN_DISCUSSION", REOPEN_DISCUSSION.to_owned()),
+        ("REVERT_PR", REVERT_PR.to_owned()),
+        ("TRANSFER_ISSUE", TRANSFER_ISSUE.to_owned()),
+        ("START_DISCUSSION", START_DISCUSSION.to_owned()),
+        ("TRANSFER_TARGETS", TRANSFER_TARGETS.to_owned()),
+        ("OPEN_ISSUES", OPEN_ISSUES.to_owned()),
+        ("DISCUSSION_FORMS", DISCUSSION_FORMS.to_owned()),
+    ]);
     for field in ["stargazers", "watchers"] {
         all.push((
             "users(repository)",

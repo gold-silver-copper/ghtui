@@ -51,6 +51,9 @@ pub enum Work {
     /// Commit and push a wiki page; the form's page asked.
     Wiki(Route, crate::wiki::Save),
     Watch(crate::watch::Work),
+    /// A revert, a transfer, a new discussion, a branch checked out, and
+    /// what their pickers list ([`crate::manage`]).
+    Manage(crate::manage::Work),
 }
 
 /// Work's answer.
@@ -61,6 +64,7 @@ pub enum Done {
     /// The page's title as its URL names it, or why it wasn't saved.
     Wiki(Route, Result<String, String>),
     Watch(crate::watch::Done),
+    Manage(crate::manage::Done),
 }
 
 impl Done {
@@ -71,6 +75,7 @@ impl Done {
             Done::Gist(d) => d.wrote(),
             Done::Wiki(_, result) => result.is_ok(),
             Done::Watch(d) => d.wrote(),
+            Done::Manage(d) => d.wrote(),
         }
     }
 }
@@ -84,6 +89,7 @@ impl Work {
             Work::Gist(w) => Done::Gist(w.failed(bug)),
             Work::Wiki(route, _) => Done::Wiki(route.clone(), Err(bug)),
             Work::Watch(w) => Done::Watch(w.failed(bug)),
+            Work::Manage(w) => Done::Manage(w.failed(bug)),
         }
     }
 
@@ -93,6 +99,7 @@ impl Work {
             Work::Gist(w) => Done::Gist(w.run(gh).await),
             Work::Wiki(route, save) => Done::Wiki(route, crate::wiki::save(git, &save).await),
             Work::Watch(w) => Done::Watch(w.run(gh).await),
+            Work::Manage(w) => Done::Manage(w.run(gh, &git.cwd).await),
         }
     }
 }
@@ -105,6 +112,7 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
         Done::Gist(d) => crate::gist::on_done(state, d),
         Done::Wiki(route, result) => crate::wiki::form::on_saved(state, &route, result),
         Done::Watch(d) => crate::watch::on_done(state, d),
+        Done::Manage(d) => crate::manage::on_done(state, d),
     }
 }
 
