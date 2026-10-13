@@ -569,6 +569,10 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         return Vec::new();
     };
     let mut rows = state.picker_rows(p);
+    // Moving a sub-issue (alt-↑↓) before moving in the list.
+    if let Some(cmds) = crate::manage::picker_key(state, key, &mut rows) {
+        return cmds;
+    }
     let Some(Overlay::Picker(p)) = &mut state.overlay else {
         return Vec::new();
     };
@@ -578,12 +582,6 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     if let Kind::Edit(_) = p.kind {
         return crate::edit::on_picker_key(state, key, rows);
     }
-    if let Some(cmds) = crate::manage::picker_key(state, key, &mut rows) {
-        return cmds;
-    }
-    let Some(Overlay::Picker(p)) = &mut state.overlay else {
-        return Vec::new();
-    };
     match (key.code, &mut p.kind) {
         (KeyCode::Esc, _) => state.overlay = None,
         (KeyCode::Enter, kind) => {

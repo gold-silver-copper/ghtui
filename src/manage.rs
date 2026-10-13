@@ -730,11 +730,14 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
                     about.clone(),
                 )
             };
-            let mut rows = vec![item(
-                "Lock without a reason",
-                "only collaborators can comment",
-                Some(lock(None)),
-            )];
+            let mut rows = Vec::new();
+            if fuzzy_score(q, "Lock without a reason").is_some() {
+                rows.push(item(
+                    "Lock without a reason",
+                    "only collaborators can comment",
+                    Some(lock(None)),
+                ));
+            }
             for reason in [
                 LockReason::OffTopic,
                 LockReason::TooHeated,
@@ -932,7 +935,7 @@ fn issue_rows(
     row: impl Fn(IssueAt, &str) -> (PaletteItem, Option<Chosen>),
 ) -> Rows {
     let mut rows = Vec::new();
-    let typed = IssueAt::parse(q, &issue.repo).filter(|t| t != issue);
+    let typed = IssueAt::parse(q, &issue.repo).filter(|t| t != issue && !skip.contains(t));
     if let Some(t) = &typed {
         rows.push(row(t.clone(), ""));
     }
@@ -990,7 +993,11 @@ fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -
     let mut rows = Vec::new();
     for (l, other) in now.iter().zip(&there) {
         let label = format!("{} {}", other.named(&at.repo), l.title);
-        if typed.is_none() && fuzzy_score(q, &label).is_none() {
+        let matches = match &typed {
+            Some(t) => t == other,
+            None => fuzzy_score(q, &label).is_some(),
+        };
+        if !matches {
             continue;
         }
         let verb = if sub {
@@ -1019,7 +1026,12 @@ fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -
             Some(Chosen::Send(change(other, true), about.clone())),
         )
     });
-    rows.extend(adds);
+    // What's typed first: it's what ↵ takes.
+    if typed.is_some() {
+        rows.splice(0..0, adds);
+    } else {
+        rows.extend(adds);
+    }
     rows
 }
 
@@ -1094,8 +1106,19 @@ pub fn picker_key(
     match (key.code, pick) {
         (KeyCode::Up | KeyCode::Down, Pick::SubIssues { issue, id }) if alt => {
             let up = key.code == KeyCode::Up;
-            let (issue, id, selected) = (issue.clone(), id.clone(), p.selected);
-            Some(move_sub_issue(state, &issue, &id, selected, up))
+            let child = match rows.get(p.selected) {
+                Some((_, Some(crate::picker::Choice::Manage(Chosen::Send(change, _))))) => {
+                    match change {
+                        Change::Manage(Manage::SubIssue {
+                            child, add: false, ..
+                        }) => Some(child.clone()),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let (issue, id) = (issue.clone(), id.clone());
+            Some(move_sub_issue(state, &issue, &id, child, up))
         }
         (KeyCode::Enter, pick) if pick.stays() => {
             let chosen = rows.get_mut(p.selected).and_then(|(_, c)| c.take());
@@ -1115,7 +1138,7 @@ fn move_sub_issue(
     state: &mut State,
     at: &IssueAt,
     id: &NodeId,
-    selected: usize,
+    child: Option<IssueAt>,
     up: bool,
 ) -> Vec<Cmd> {
     let Some(d) = issue(state, &at.repo, at.number) else {
@@ -1127,8 +1150,9 @@ fn move_sub_issue(
             number: l.number,
         })
         .collect();
-    let Some(child) = subs.get(selected).cloned() else {
-        state.info("Choose a sub-issue to move: they're listed first");
+    let Some((selected, child)) = child.and_then(|c| Some((subs.iter().position(|s| *s == c)?, c)))
+    else {
+        state.info("Choose one of its sub-issues (✓) to move");
         return Vec::new();
     };
     let sibling = if up {
@@ -1145,7 +1169,11 @@ fn move_sub_issue(
         return Vec::new();
     };
     if let Some(Overlay::Picker(p)) = &mut state.overlay {
-        p.selected = if up { selected - 1 } else { selected + 1 };
+        p.selected = if up {
+            p.selected.saturating_sub(1)
+        } else {
+            p.selected + 1
+        };
     }
     let change = Change::Manage(Manage::MoveSubIssue {
         parent: id.clone(),

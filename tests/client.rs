@@ -768,6 +768,203 @@ async fn edits_send_their_mutations() {
     assert_eq!(sent.len(), 12);
 }
 
+/// Managing an issue, a pull request or a discussion sends GitHub's own
+/// mutations (and REST for a branch); an issue named by its number is
+/// looked up first, and what makes something new says what it made.
+#[tokio::test]
+async fn manage_changes_send_their_mutations() {
+    use ghtui::api::change::Change;
+    use ghtui::api::manage::{DiscussionReason, HideReason, IssueAt, LockReason, Manage};
+    let ok = |field: &str| {
+        Reply::new(
+            200,
+            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
+        )
+    };
+    let id_of = |id: &str| {
+        Reply::new(
+            200,
+            format!(r#"{{"data":{{"repository":{{"issueOrPullRequest":{{"id":"{id}"}}}}}}}}"#),
+        )
+    };
+    let (gh, seen) = github(vec![
+        Reply::new(204, ""),
+        Reply::new(201, "{}"),
+        ok("convertPullRequestToDraft"),
+        ok("updatePullRequest"),
+        ok("lockLockable"),
+        ok("unlockLockable"),
+        ok("pinIssue"),
+        ok("minimizeComment"),
+        id_of("I_3"),
+        ok("closeIssue"),
+        id_of("I_5"),
+        ok("addSubIssue"),
+        id_of("I_5"),
+        id_of("I_6"),
+        ok("reprioritizeSubIssue"),
+        id_of("I_4"),
+        ok("removeBlockedBy"),
+        Reply::new(
+            200,
+            r#"{"data":{"repository":{"defaultBranchRef":{"target":{"oid":"abc"}}}}}"#,
+        ),
+        ok("createLinkedBranch"),
+        ok("closeDiscussion"),
+        Reply::new(
+            200,
+            r#"{"data":{"revertPullRequest":{"revertPullRequest":{"number":20}}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"transferIssue":{"issue":{"number":1,"repository":{"nameWithOwner":"o/elsewhere"}}}}}"#,
+        ),
+        Reply::new(
+            200,
+            r#"{"data":{"createDiscussion":{"discussion":{"number":7}}}}"#,
+        ),
+    ])
+    .await;
+    let id = |s: &str| NodeId::new(s);
+    let repo = RepoId::new("o", "r");
+    let at = |n| IssueAt {
+        repo: repo.clone(),
+        number: n,
+    };
+    let changes = [
+        Manage::DeleteBranch {
+            repo: repo.clone(),
+            branch: "fix".into(),
+        },
+        Manage::RestoreBranch {
+            repo: repo.clone(),
+            branch: "fix".into(),
+            oid: "abc".into(),
+        },
+        Manage::ConvertToDraft { pr: id("PR_7") },
+        Manage::ChangeBase {
+            pr: id("PR_7"),
+            base: "next".into(),
+        },
+        Manage::Lock {
+            subject: id("I_1"),
+            reason: Some(LockReason::OffTopic),
+        },
+        Manage::Unlock { subject: id("I_1") },
+        Manage::Pin {
+            issue: id("I_1"),
+            on: true,
+        },
+        Manage::Hide {
+            comment: id("IC_1"),
+            reason: HideReason::Outdated,
+        },
+        Manage::CloseAsDuplicate {
+            issue: id("I_1"),
+            of: Some(at(3)),
+        },
+        Manage::SubIssue {
+            parent: id("I_1"),
+            child: at(5),
+            add: true,
+        },
+        Manage::MoveSubIssue {
+            parent: id("I_1"),
+            child: at(5),
+            sibling: at(6),
+            before: true,
+        },
+        Manage::BlockedBy {
+            issue: id("I_1"),
+            by: at(4),
+            add: false,
+        },
+        Manage::LinkBranch {
+            issue: id("I_1"),
+            repo: repo.clone(),
+            name: "1-fix".into(),
+        },
+        Manage::CloseDiscussion {
+            discussion: id("D_1"),
+            reason: DiscussionReason::Outdated,
+        },
+    ];
+    for change in changes {
+        gh.change(&Change::Manage(change)).await.unwrap();
+    }
+    assert_eq!(gh.revert(&id("PR_7")).await.unwrap(), 20);
+    let moved = gh.transfer(&id("I_1"), &id("R_2")).await.unwrap();
+    assert_eq!(moved.to_string(), "o/elsewhere#1");
+    let (repo_id, category) = (id("R_1"), id("DIC_1"));
+    let started = gh.start_discussion(&repo_id, &category, "Hi", "There");
+    assert_eq!(started.await.unwrap(), 7);
+
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0]
+            .request_line
+            .starts_with("DELETE /repos/o/r/git/refs/heads/fix "),
+        "{}",
+        seen[0].request_line
+    );
+    assert!(
+        seen[1]
+            .request_line
+            .starts_with("POST /repos/o/r/git/refs "),
+        "{}",
+        seen[1].request_line
+    );
+    assert_eq!(
+        seen[1].json(),
+        serde_json::json!({"ref": "refs/heads/fix", "sha": "abc"})
+    );
+    let sent: Vec<(String, serde_json::Value)> = (seen.iter().skip(2))
+        .map(|s| (s.query(), s.json()["variables"].clone()))
+        .collect();
+    let field = |i: usize, name: &str| {
+        let (query, _) = &sent[i];
+        assert!(query.contains(name), "{i}: {query}");
+    };
+    let var = |i: usize, name: &str| sent[i].1[name].clone();
+    field(0, "convertPullRequestToDraft(input: {pullRequestId: $id})");
+    field(1, "baseRefName: $base");
+    assert_eq!(var(1, "base"), "next");
+    field(2, "lockLockable");
+    assert_eq!(var(2, "reason"), "OFF_TOPIC");
+    field(3, "unlockLockable");
+    field(4, "pinIssue");
+    field(5, "minimizeComment");
+    assert_eq!(var(5, "reason"), "OUTDATED");
+    // #3's ID, then the close.
+    field(6, "issueOrPullRequest(number: $number)");
+    assert_eq!(var(6, "number"), 3);
+    field(7, "stateReason: DUPLICATE, duplicateIssueId: $of");
+    assert_eq!((var(7, "id"), var(7, "of")), ("I_1".into(), "I_3".into()));
+    field(9, "addSubIssue");
+    assert_eq!(var(9, "child"), "I_5");
+    field(12, "reprioritizeSubIssue");
+    assert_eq!(
+        (var(12, "before"), var(12, "after")),
+        ("I_6".into(), serde_json::Value::Null)
+    );
+    field(14, "removeBlockedBy");
+    assert_eq!(var(14, "by"), "I_4");
+    field(15, "defaultBranchRef");
+    field(16, "createLinkedBranch");
+    assert_eq!(
+        (var(16, "oid"), var(16, "name")),
+        ("abc".into(), "1-fix".into())
+    );
+    field(17, "closeDiscussion");
+    assert_eq!(var(17, "reason"), "OUTDATED");
+    field(18, "revertPullRequest");
+    field(19, "transferIssue");
+    assert_eq!(var(19, "repo"), "R_2");
+    field(20, "createDiscussion");
+    assert_eq!(var(20, "title"), "Hi");
+    assert_eq!(sent.len(), 21);
+}
+
 /// A pull request's sidebar comes with the node IDs edits need, and what
 /// its repository offers; its organization's teams are asked apart, so a
 /// token that can't read them loses only them, and says why.
