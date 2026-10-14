@@ -5,7 +5,6 @@
 use std::collections::HashSet;
 
 use crate::api::model::PrRef;
-use crate::browse::Need;
 use crate::data::DataKey;
 use crate::diff_screen::{DiffOf, RangeView};
 use crate::keymap::Action;
@@ -76,7 +75,7 @@ pub fn want_lines(state: &mut State, pr: &PrRef) -> Vec<Cmd> {
     }
     keys.truncate(MOST_LINES);
     keys.into_iter()
-        .flat_map(|key| state.ensure(Need::Data(key), false))
+        .flat_map(|key| state.ensure(key, false))
         .collect()
 }
 

@@ -117,7 +117,7 @@ pub(crate) fn with_pr() -> State {
 
 /// Pushes `route` and delivers `data` for its page's own fetch (its last).
 pub(crate) fn open(state: &mut State, route: Route, data: Data) {
-    let Some(Need::Data(key)) = needs(&route).pop() else {
+    let Some(key) = needs(&route).pop() else {
         panic!("{route:?} doesn't end in a data fetch");
     };
     let _ = state.push(route);
@@ -171,7 +171,7 @@ pub(crate) fn with_blame() -> State {
     };
     let _ = state.push(route.clone());
     fetched(&mut state, blob, Data::Blob(Box::new(fixtures::blob())));
-    let Some(Need::Data(key)) = needs(&route).pop() else {
+    let Some(key) = needs(&route).pop() else {
         panic!("a blame fetches its blame");
     };
     fetched(&mut state, key, Data::Blame(Box::new(fixtures::blame())));

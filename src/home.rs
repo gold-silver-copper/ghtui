@@ -14,7 +14,6 @@ use crate::api::browse::SearchKind;
 use serde::Deserialize;
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
-use crate::browse::Need;
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::picker::{self, Titling};
@@ -380,7 +379,7 @@ pub fn edit_file(
 
 impl State {
     /// What Home fetches: each section's search, once.
-    pub fn home_needs(&self) -> Vec<Need> {
+    pub fn home_needs(&self) -> Vec<DataKey> {
         let mut keys: Vec<DataKey> = Vec::new();
         for s in self.home.iter().filter_map(|s| s.search.as_ref().ok()) {
             let key = s.key();
@@ -388,7 +387,7 @@ impl State {
                 keys.push(key);
             }
         }
-        keys.into_iter().map(Need::Data).collect()
+        keys.into_iter().collect()
     }
 
     /// The repositories Home's sections list, for the search box.
@@ -405,10 +404,7 @@ impl State {
 
     /// Whether a section's search was asked for long enough ago that Home
     /// on screen asks again.
-    pub(crate) fn aged(&self, need: &Need) -> bool {
-        let Need::Data(key) = need else {
-            return false;
-        };
+    pub(crate) fn aged(&self, key: &DataKey) -> bool {
         let now = (self.clock)();
         (self.data.get(key))
             .and_then(|r| r.asked_at)

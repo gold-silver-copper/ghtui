@@ -3,9 +3,9 @@
 
 use super::*;
 use crate::api::browse::{IssueKind, IssueState, PrState, SearchKind, SearchResults, Status};
-use crate::api::model::{ChecksState, RepoId, ReviewDecision};
+use crate::api::model::{ChecksState, PrDetail, RepoId, ReviewDecision};
 use crate::api::rate_limit::{Bucket, RateLimits};
-use crate::browse::{Need, needs};
+use crate::browse::needs;
 use crate::fixtures;
 use crate::fixtures::{answer, diff_msg, fetched, pr_detail, press, says, thread, warns};
 use crate::picker::{Choice, fuzzy_score};

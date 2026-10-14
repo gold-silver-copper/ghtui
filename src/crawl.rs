@@ -26,7 +26,8 @@ use crate::store::Store;
 use crate::theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
 use crate::ui::Icons;
 
-use crate::browse::{Need, needs};
+use crate::browse::needs;
+use crate::data::DataKey;
 use crate::diff_job::GitContext;
 use crate::keymap::Keymap;
 use crate::route::{Dest, Route, Target};
@@ -101,25 +102,18 @@ fn is_github(url: &str) -> bool {
 /// Fetches what `route` needs into `state`, from git where it can, as
 /// the app does; false if the page couldn't load.
 async fn load(gh: &GitHub, local: &Arc<Local>, state: &mut State, route: &Route) -> bool {
-    for need in needs(route) {
-        match need {
-            Need::Pr(pr) => match gh.pull_request(&pr).await {
-                Ok(detail) => {
-                    let remote = state.prs.entry(pr).or_default();
-                    remote.finish(Ok(detail));
-                }
-                Err(err) => {
-                    eprintln!("  {route:?}: {err}");
-                    return false;
-                }
-            },
-            Need::Data(key) => match crate::data::load::load(gh, local, &key, None, None).await.0 {
-                Ok(data) => {
-                    let remote: &mut Remote<_> = state.data.entry(key).or_default();
-                    remote.finish(Ok(data));
-                }
-                Err(err) => eprintln!("  {key:?}: {err}"),
-            },
+    for key in needs(route) {
+        match crate::data::load::load(gh, local, &key, None, None).await.0 {
+            Ok(data) => {
+                let remote: &mut Remote<_> = state.data.entry(key).or_default();
+                remote.finish(Ok(data));
+            }
+            // Without its pull request, a pull request's page doesn't load.
+            Err(err) if matches!(key, DataKey::Pr(_)) => {
+                eprintln!("  {route:?}: {err}");
+                return false;
+            }
+            Err(err) => eprintln!("  {key:?}: {err}"),
         }
     }
     state.data_gen += 1;

@@ -23,7 +23,6 @@ use crate::ui::overlays::PaletteItem;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::act::{By, Confirm, Subject};
-use crate::browse::Need;
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
@@ -81,7 +80,7 @@ fn issue<'a>(state: &'a State, repo: &RepoId, number: u64) -> Option<&'a IssueDe
 }
 
 fn pr<'a>(state: &'a State, pr: &PrRef) -> Option<&'a PrDetail> {
-    state.prs.get(pr).and_then(|r| r.data.as_ref())
+    state.pr(pr)
 }
 
 fn discussion<'a>(state: &'a State, of: &DiscussionsOf, n: u64) -> Option<&'a DiscussionDetail> {
@@ -686,7 +685,7 @@ fn open(state: &mut State, pick: Pick) -> Vec<Cmd> {
         p.input.insert_str(start);
     }
     if let Some(key) = need {
-        cmds.extend(state.ensure(Need::Data(key), false));
+        cmds.extend(state.ensure(key, false));
     }
     cmds.extend(load.map(|w| Cmd::Write(crate::writes::Work::Manage(w))));
     cmds

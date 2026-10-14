@@ -17,8 +17,7 @@ use crate::api::notifications::Inbox;
 use crate::api::project::ProjectRef;
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::browse::Need;
-use crate::data::DataKey;
+use crate::data::{DataKey, Picked};
 use crate::keymap::Action;
 use crate::nav;
 use crate::route::Route;
@@ -119,7 +118,7 @@ enum Plan {
     Do(Change),
     Approve(PrRef),
     /// It's about something that has to load first.
-    Load(Need),
+    Load(DataKey),
     /// Choose why to dismiss a security alert.
     Dismiss(crate::security::Dismissing),
 }
@@ -274,21 +273,19 @@ impl Subject {
     }
 
     /// What planning for it reads.
-    fn need(&self) -> Need {
+    fn need(&self) -> DataKey {
         match self {
-            Subject::Pr(pr) => Need::Pr(pr.clone()),
-            Subject::Issue(repo, number) => Need::Data(DataKey::Issue(repo.clone(), *number)),
-            Subject::Run(repo, run, attempt) => {
-                Need::Data(DataKey::Run(repo.clone(), *run, *attempt))
-            }
-            Subject::Job(repo, _, job) => Need::Data(DataKey::Job(repo.clone(), *job)),
+            Subject::Pr(pr) => DataKey::Pr(pr.clone()),
+            Subject::Issue(repo, number) => DataKey::Issue(repo.clone(), *number),
+            Subject::Run(repo, run, attempt) => DataKey::Run(repo.clone(), *run, *attempt),
+            Subject::Job(repo, _, job) => DataKey::Job(repo.clone(), *job),
             Subject::Thread { query, .. } | Subject::Inbox { query } => {
-                Need::Data(DataKey::Notifications(query.clone()))
+                DataKey::Notifications(query.clone())
             }
-            Subject::Project(project, view) => Need::Data(DataKey::Project(project.clone(), *view)),
-            Subject::Alert(a) => Need::Data(DataKey::Alert(a.clone())),
-            Subject::Discussion(of, number) => Need::Data(DataKey::Discussion(of.clone(), *number)),
-            Subject::Settings(repo, page) => Need::Data(DataKey::Settings(repo.clone(), *page)),
+            Subject::Project(project, view) => DataKey::Project(project.clone(), *view),
+            Subject::Alert(a) => DataKey::Alert(a.clone()),
+            Subject::Discussion(of, number) => DataKey::Discussion(of.clone(), *number),
+            Subject::Settings(repo, page) => DataKey::Settings(repo.clone(), *page),
         }
     }
 
@@ -420,7 +417,8 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
     let name = subject.name();
     match subject {
         Subject::Pr(pr) => {
-            let Some(detail) = loaded(state.prs.get(pr), &name)? else {
+            let loaded = loaded(state.pr_remote(pr), &name)?;
+            let Some(detail) = loaded.and_then(PrDetail::pick) else {
                 return Ok(Plan::Load(subject.need()));
             };
             pr_plan(state, pr, detail, action)
@@ -919,7 +917,7 @@ pub fn waiting(state: &State) -> Option<String> {
 
 /// What the live refresh fetches again for the change the page waits to
 /// see: what the page is about. Past [`POLLS`], it stops waiting.
-pub fn poll(state: &mut State) -> Vec<Need> {
+pub fn poll(state: &mut State) -> Vec<DataKey> {
     let Some((need, edit)) = awaiting_here(state).map(|w| {
         let edit = matches!(w.change, Change::Edit(_)) || crate::manage::polls_activity(&w.change);
         let more = edit.then(|| crate::edit::polls(&w.about)).flatten();
@@ -952,7 +950,7 @@ enum Shown {
 
 fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
     let yes = |b: bool| if b { Shown::Yes } else { Shown::No };
-    let pr = |pr: &PrRef| state.prs.get(pr).and_then(|r| r.data.as_ref());
+    let pr = |pr: &PrRef| state.pr(pr);
     match (change, about) {
         (Change::Manage(m), about) => yes(crate::manage::shows(state, m, about)),
         (Change::Settings(c), Subject::Settings(repo, page)) => {
@@ -1321,18 +1319,14 @@ pub fn doables(state: &State) -> Vec<(Action, String, Option<String>)> {
                 (Action::Close, Subject::Run(..) | Subject::Job(..)) => "Cancel the run",
                 (Action::Close, Subject::Alert(_)) => "Dismiss or reopen the alert",
                 (Action::Close, Subject::Discussion(..)) => "Close or reopen the discussion",
-                (Action::ReadyForReview, Subject::Pr(pr)) => {
-                    match state.prs.get(pr).and_then(|r| r.data.as_ref()) {
-                        Some(d) if d.state.is_open() && d.state != PrState::Draft => {
-                            "Convert to draft"
-                        }
-                        _ => "Mark the draft ready for review",
-                    }
-                }
+                (Action::ReadyForReview, Subject::Pr(pr)) => match state.pr(pr) {
+                    Some(d) if d.state.is_open() && d.state != PrState::Draft => "Convert to draft",
+                    _ => "Mark the draft ready for review",
+                },
                 (Action::Close, _) => "Close or reopen",
-                (Action::Merge, Subject::Pr(pr)) => (state.prs.get(pr))
-                    .and_then(|r| r.data.as_ref())
-                    .map_or(action.description(), merge::label),
+                (Action::Merge, Subject::Pr(pr)) => {
+                    state.pr(pr).map_or(action.description(), merge::label)
+                }
                 (action, _) => action.description(),
             };
             let why = plan_for(state, &subject, action).err();

@@ -474,10 +474,7 @@ fn an_issues_field_is_set_from_its_sidebar() {
     answer(&mut s, &sent, Ok(()));
     let key = DataKey::InProjects(super::ghtui(), 14);
     let polled = crate::act::poll(&mut s);
-    assert!(
-        polled.contains(&crate::browse::Need::Data(key.clone())),
-        "{polled:?}"
-    );
+    assert!(polled.contains(&key), "{polled:?}");
     let mut projects = fixtures::in_projects();
     let unchanged = Data::InProjects(Box::new(projects.clone()));
     fetched(&mut s, key.clone(), unchanged);

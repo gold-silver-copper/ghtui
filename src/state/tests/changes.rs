@@ -107,7 +107,7 @@ fn merging_asks_first_and_ends_up_as_github_has_it() {
 #[test]
 fn acting_on_a_homes_row_is_about_that_row() {
     let mut s = super::with_home();
-    s.prs.clear();
+    s.data.retain(|key, _| !matches!(key, DataKey::Pr(_)));
     press(&mut s, "jj");
     let cmds = press(&mut s, ",m");
     assert_eq!(cmds, vec![crate::fixtures::fetch_pr(&pr())]);
@@ -328,7 +328,7 @@ fn a_star_leaves_the_wait_for_another_change_alone() {
     answer(&mut s, &star, Ok(()));
     answer(&mut s, &rerun, Ok(()));
     // The page follows the run, not the list.
-    let run = vec![crate::browse::Need::Data(DataKey::Run(ghtui(), 7, None))];
+    let run = vec![DataKey::Run(ghtui(), 7, None)];
     assert_eq!(crate::act::poll(&mut s), run);
     answer(&mut s, &star, Ok(()));
     assert_eq!(crate::act::poll(&mut s), run);

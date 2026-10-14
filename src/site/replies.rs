@@ -7,7 +7,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::api::model::Capped;
 use crate::api::replies::SavedReply;
-use crate::browse::Need;
 use crate::data::Picked;
 use crate::state::{Cmd, Overlay, Remote, State};
 
@@ -102,7 +101,7 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
         return Some(if open {
             Vec::new()
         } else {
-            state.ensure(Need::Data(DataKey::SavedReplies), true)
+            state.ensure(DataKey::SavedReplies, true)
         });
     }
     if !open {

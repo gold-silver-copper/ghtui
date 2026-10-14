@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::api::ApiError;
 use crate::api::change::Change;
-use crate::api::model::{NodeId, PrDetail, PrRef, ViewedFiles};
+use crate::api::model::{NodeId, PrRef, ViewedFiles};
 use crate::api::rate_limit::RateLimits;
 use crate::diff::FileDiff;
 use crate::git::Oid;
@@ -21,7 +21,7 @@ use ratatui_textarea::TextArea;
 
 use crate::act;
 use crate::api::model::{PatchFile, ReviewEvent, ReviewThread};
-use crate::browse::{self, Need};
+use crate::browse;
 use crate::data::{Data, DataKey};
 use crate::diff_job::{JobId, JobMsg};
 use crate::diff_screen::{self, DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
@@ -53,10 +53,6 @@ pub enum Msg {
     Viewer(Result<String, ApiError>),
     /// How many notifications are unread.
     Unread(Result<crate::api::notifications::Unread, ApiError>),
-    Pr(PrRef, Box<Result<PrDetail, ApiError>>),
-    /// The cache's copy of a pull request, shown while GitHub can't be
-    /// reached (sent before its failed fetch).
-    PrCached(PrRef, Box<crate::store::Cached<PrDetail>>),
     /// Page data; with `cached_at` (when it was fetched), the cached copy
     /// shown while fetching.
     Fetched {
@@ -229,7 +225,6 @@ pub enum Api {
     FetchViewer,
     /// How many notifications are unread, answered by [`Msg::Unread`].
     FetchUnread,
-    FetchPr(PrRef),
     /// Fetch page data; with `cached`, first send what the cache has.
     Fetch {
         key: DataKey,
@@ -460,7 +455,6 @@ pub struct State {
     pub home_editing: bool,
     /// [`Timer::Home`] is scheduled.
     pub home_timer: bool,
-    pub prs: HashMap<PrRef, Remote<PrDetail>>,
     /// Everything else pages show.
     pub data: HashMap<DataKey, Remote<Data>>,
     /// Bumped whenever data changes, so pages know to rebuild.
@@ -545,7 +539,6 @@ impl State {
             removed: None,
             home_editing: false,
             home_timer: false,
-            prs: HashMap::new(),
             data: HashMap::new(),
             data_gen: 0,
             sources: HashMap::new(),

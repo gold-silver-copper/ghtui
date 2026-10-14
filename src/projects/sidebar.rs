@@ -8,7 +8,6 @@ use crate::act::{Subject, awaiting_here};
 use crate::api::change::Change;
 use crate::api::model::{Capped, NodeId};
 use crate::api::project::InProject;
-use crate::browse::Need;
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
@@ -154,9 +153,9 @@ pub fn project_rows(
 
 /// What following a change to `about`'s fields fetches again: its
 /// projects, which its sidebar shows.
-pub fn polls(change: &Change, about: &Subject) -> Option<Need> {
+pub fn polls(change: &Change, about: &Subject) -> Option<DataKey> {
     matches!(change, Change::SetProjectField { .. })
-        .then(|| key(about).map(Need::Data))
+        .then(|| key(about))
         .flatten()
 }
 

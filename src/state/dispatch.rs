@@ -21,8 +21,6 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     let data = matches!(
         msg,
         Msg::Viewer(_)
-            | Msg::Pr(..)
-            | Msg::PrCached(..)
             | Msg::Fetched { .. }
             | Msg::FetchedMore(..)
             | Msg::Source(..)
@@ -45,7 +43,6 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         _ => false,
     };
     if wrote {
-        state.prs.values_mut().for_each(|r| r.stale = true);
         state.data.values_mut().for_each(|r| r.stale = true);
     }
     // The conversation's comments, fresh from GitHub.
@@ -135,19 +132,6 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Viewer(Err(err)) => tracing::warn!(%err, "could not fetch viewer"),
         Msg::Unread(result) => return state.unread_polled(result),
         Msg::Timer(Timer::Unread(poll)) => return state.unread_due(poll),
-        Msg::Pr(pr, result) => {
-            if let Err(err) = result.as_ref() {
-                tracing::warn!(%pr, %err, "PR fetch failed");
-            }
-            state.prs.entry(pr).or_default().finish(*result);
-        }
-        Msg::PrCached(pr, cached) => {
-            let remote = state.prs.entry(pr).or_default();
-            if remote.data.is_none() {
-                remote.data = Some(cached.value);
-                remote.cached_at = Some(cached.fetched_at);
-            }
-        }
         Msg::Fetched {
             key,
             result,
@@ -172,7 +156,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             }
             // A write landed while this was on its way, so it may miss it.
             if remote.stale && !is_pr {
-                return state.ensure(Need::Data(key), false);
+                return state.ensure(key, false);
             }
             // Load more, asked while it reloaded.
             if !remote.loading

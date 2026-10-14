@@ -23,7 +23,6 @@ use crate::api::model::RepoId;
 use crate::api::packages::{Kind, PackageDetail, PackageList, PackageRef, PackagesOf};
 use crate::ui::pages::url as links;
 
-use crate::browse::Need;
 use crate::data::{DataKey, Picked};
 
 /// One of these pages.
@@ -201,10 +200,10 @@ impl Page {
     }
 
     /// What it needs fetched.
-    pub fn needs(&self) -> Vec<Need> {
-        let data = |key| Need::Data(key);
-        let header = |repo: &RepoId| Need::Data(DataKey::Repo(repo.clone()));
-        let paged = self.paged().map(Need::Data);
+    pub fn needs(&self) -> Vec<DataKey> {
+        let data = |key| key;
+        let header = |repo: &RepoId| DataKey::Repo(repo.clone());
+        let paged = self.paged();
         match self {
             Page::Insights { repo, tab } => {
                 let own = match tab {
@@ -221,7 +220,7 @@ impl Page {
                 .chain(paged)
                 .collect(),
             Page::StarList { login, .. } => {
-                let profile = Need::Data(DataKey::Profile(login.to_lowercase()));
+                let profile = DataKey::Profile(login.to_lowercase());
                 std::iter::once(profile).chain(paged).collect()
             }
             Page::Packages(of) => {
@@ -229,7 +228,7 @@ impl Page {
                 match of {
                     PackagesOf::Repo(repo) => vec![header(repo), own],
                     PackagesOf::Owner(login) => {
-                        vec![Need::Data(DataKey::Profile(login.to_lowercase())), own]
+                        vec![DataKey::Profile(login.to_lowercase()), own]
                     }
                 }
             }
@@ -411,7 +410,7 @@ pub enum Expected {
 }
 
 impl Expected {
-    pub fn needs(&self) -> Vec<Need> {
+    pub fn needs(&self) -> Vec<DataKey> {
         match self {
             Expected::Lists(e) => e.needs(),
             Expected::VersionGone(at, _) => packages::needs(at),

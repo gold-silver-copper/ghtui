@@ -71,6 +71,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
 use crate::config::{Config, DepthSetting, ModeSetting};
+use crate::data::DataKey;
 use crate::diff_job::GitContext;
 use crate::diff_screen::DiffOf;
 use crate::keymap::Keymap;
@@ -203,11 +204,9 @@ async fn run(started: Instant) -> Result<()> {
     // Home's sections, shown from the cache at once.
     state.home = home::sections(config.home.as_deref());
     state.config_path = config_path.clone();
-    for need in state.home_needs() {
-        if let browse::Need::Data(key) = need {
-            let cached = data::load::cached(&gh, &key);
-            state.data.insert(key, Remote::cached(cached));
-        }
+    for key in state.home_needs().into_iter().filter(DataKey::cache_first) {
+        let cached = data::load::cached(&gh, &key);
+        state.data.insert(key, Remote::cached(cached));
     }
     let tabs = gh
         .cached::<Vec<String>>(crate::store::TABS)
@@ -217,9 +216,9 @@ async fn run(started: Instant) -> Result<()> {
     let mut cmds = match target {
         Some(at) => {
             if let Target::Page(Route::Pr { pr, .. }) | Target::Files(DiffOf::Pr(pr)) = &at.target {
-                state
-                    .prs
-                    .insert(pr.clone(), Remote::cached(gh.cached_pull_request(pr)));
+                let key = DataKey::Pr(pr.clone());
+                let cached = data::load::cached(&gh, &key);
+                state.data.insert(key, Remote::cached(cached));
             }
             // The home page stays underneath (Esc goes there) and loads
             // when you get there. With tabs reopened, it's a new tab after

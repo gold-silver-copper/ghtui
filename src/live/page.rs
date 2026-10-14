@@ -19,7 +19,6 @@ use crate::api::browse::{
 };
 use crate::api::model::RepoId;
 use crate::api::{ApiError, Polled};
-use crate::browse::Need;
 use crate::data::DataKey;
 use crate::route::Route;
 use crate::state::{Api, Cmd, Screen, State};
@@ -421,9 +420,9 @@ pub fn on_watched(
         state.info(format!("New on the list: {refresh} shows it"));
         return Vec::new();
     }
-    let mut cmds = state.ensure(Need::Data(k), true);
+    let mut cmds = state.ensure(k, true);
     if ended && let Watched::Job { repo, job } = what {
-        cmds.extend(state.ensure(Need::Data(DataKey::JobLog(repo.clone(), *job)), true));
+        cmds.extend(state.ensure(DataKey::JobLog(repo.clone(), *job), true));
     }
     cmds
 }

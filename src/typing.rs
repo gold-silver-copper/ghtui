@@ -151,7 +151,7 @@ fn participants(state: &State) -> Vec<String> {
 
 fn pr_participants(state: &State, pr: &PrRef) -> Vec<String> {
     let mut out = Vec::new();
-    if let Some(d) = state.prs.get(pr).and_then(|r| r.data.as_ref()) {
+    if let Some(d) = state.pr(pr) {
         out.push(d.author.clone());
     }
     if let Some(a) = state.picked::<PrActivity>(&DataKey::PrActivity(pr.clone())) {

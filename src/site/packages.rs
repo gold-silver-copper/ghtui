@@ -6,7 +6,6 @@
 
 use crate::api::GitHub;
 use crate::api::packages::{PackageDetail, PackageRef};
-use crate::browse::Need;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::route::{Dest, Route, Target};
@@ -159,8 +158,8 @@ pub fn gone(state: &State, at: &PackageRef, id: u64) -> bool {
 }
 
 /// What's fetched again to see it.
-pub fn needs(at: &PackageRef) -> Vec<Need> {
-    vec![Need::Data(DataKey::Package(at.clone()))]
+pub fn needs(at: &PackageRef) -> Vec<DataKey> {
+    vec![DataKey::Package(at.clone())]
 }
 
 /// The menu's rows on a package's page.

@@ -20,8 +20,6 @@ use tokio::sync::mpsc;
 use crate::api::browse::{DiscussionsOf, IssueKind, SearchKind, SearchResults};
 use crate::api::model::{PrRef, RepoId};
 use crate::api::{ApiError, GitHub};
-use crate::browse::Need;
-#[cfg(test)]
 use crate::data::DataKey;
 use crate::diff_job::GitContext;
 use crate::route::Route;
@@ -281,7 +279,7 @@ async fn refresh(
             .into_iter()
             .filter(|(key, updated, _)| kept.seen.get(key) != Some(updated))
             .collect();
-        let needs: Vec<Need> = changed
+        let needs: Vec<DataKey> = changed
             .iter()
             .flat_map(|(_, _, r)| crate::browse::needs(r))
             .collect();
@@ -403,19 +401,15 @@ async fn recent(
 /// Fetches what the pages need into the cache, a few at a time; stops at
 /// the first sign GitHub's gone. Other failures (an item since deleted)
 /// are left for the page to say.
-async fn fetch_all(gh: &GitHub, git: &GitContext, needs: Vec<Need>) -> Result<(), ApiError> {
+async fn fetch_all(gh: &GitHub, git: &GitContext, needs: Vec<DataKey>) -> Result<(), ApiError> {
     let mut needs = needs;
     needs.dedup();
-    let mut asks = futures::stream::iter(needs.into_iter().filter(worth_keeping))
-        .map(|need| async move {
-            match need {
-                Need::Pr(pr) => gh.pull_request(&pr).await.map(drop),
-                Need::Data(key) => {
-                    (crate::data::load::fetch(gh, git, &key, None, None).await).map(drop)
-                }
-            }
-        })
-        .buffer_unordered(AT_ONCE);
+    let mut asks =
+        futures::stream::iter(needs.into_iter().filter(worth_keeping))
+            .map(|key| async move {
+                (crate::data::load::fetch(gh, git, &key, None, None).await).map(drop)
+            })
+            .buffer_unordered(AT_ONCE);
     while let Some(result) = asks.next().await {
         match result {
             Err(
@@ -432,11 +426,8 @@ async fn fetch_all(gh: &GitHub, git: &GitContext, needs: Vec<Need>) -> Result<()
 
 /// Whether a page's need is kept in the cache. What git answers comes
 /// from the clone.
-fn worth_keeping(need: &Need) -> bool {
-    match need {
-        Need::Pr(_) => true,
-        Need::Data(key) => key.kept() && !crate::source::by_git(key, None),
-    }
+fn worth_keeping(key: &DataKey) -> bool {
+    key.kept() && !crate::source::by_git(key, None)
 }
 
 /// How many bytes the files under `path` take.
@@ -471,16 +462,16 @@ mod tests {
             repo: repo.clone(),
             number: 1,
         });
-        let kept: Vec<&Need> = issue.iter().filter(|n| worth_keeping(n)).collect();
+        let kept: Vec<&DataKey> = issue.iter().filter(|n| worth_keeping(n)).collect();
         assert_eq!(
             kept,
             [
-                &Need::Data(DataKey::Repo(repo.clone())),
-                &Need::Data(DataKey::Issue(repo.clone(), 1))
+                &DataKey::Repo(repo.clone()),
+                &DataKey::Issue(repo.clone(), 1)
             ]
         );
         // The code comes from the clone.
-        let tree = Need::Data(DataKey::Tree(repo, "main".into(), String::new()));
+        let tree = DataKey::Tree(repo, "main".into(), String::new());
         assert!(!worth_keeping(&tree));
     }
 

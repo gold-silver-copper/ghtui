@@ -9,7 +9,6 @@ use crate::api::security::{Alert, AlertChange, AlertKind, AlertRef};
 use crate::ui::overlays::PaletteItem;
 
 use crate::act::{By, Subject};
-use crate::browse::Need;
 use crate::data::DataKey;
 use crate::picker::Kind;
 use crate::state::{Api, Cmd, State};
@@ -34,7 +33,7 @@ impl Dismissing {
 /// What `,x` does on an alert.
 pub enum Plan {
     /// It has to load first.
-    Load(Need),
+    Load(DataKey),
     /// Ask first: what, what's worth knowing, and the ways to make it.
     Ask(String, Vec<(String, bool)>, Vec<(String, Change)>),
     /// Choose why to dismiss it.
@@ -49,12 +48,12 @@ pub fn plan(state: &State, a: &AlertRef) -> Result<Plan, String> {
         .get(&key)
         .filter(|r| r.data.is_some() || !r.loading)
     else {
-        return Ok(Plan::Load(Need::Data(key)));
+        return Ok(Plan::Load(key));
     };
     let Some(alert) = state.picked::<Alert>(&key) else {
         return match &remote.error {
             Some(err) => Err(format!("Couldn't load the alert: {err}")),
-            None => Ok(Plan::Load(Need::Data(key))),
+            None => Ok(Plan::Load(key)),
         };
     };
     if state.overview(&a.repo).is_some_and(|o| !o.can_write) {

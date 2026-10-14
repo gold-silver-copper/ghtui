@@ -22,7 +22,6 @@ use crate::api::{ApiError, GitHub};
 use crate::git::local::{self, Branch, Checkout, Clone, CommitMessage};
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::browse::Need;
 use crate::data::{Data, DataKey};
 use crate::keymap::Action;
 use crate::nav::Doable;
@@ -995,12 +994,12 @@ fn checkout(state: &mut State) -> Vec<Cmd> {
         state.info(format!("ghtui isn't running in a clone of {}", pr.repo));
         return Vec::new();
     }
-    match state.prs.get(&pr).and_then(|r| r.data.as_ref()) {
+    match state.pr(&pr) {
         Some(d) => start_checkout(state, pr.clone(), &d.clone()),
         None => {
             state.info(format!("Loading {pr}…"));
             state.creating.checkout = Some(pr.clone());
-            state.ensure(Need::Pr(pr), false)
+            state.ensure(DataKey::Pr(pr), false)
         }
     }
 }
@@ -1011,10 +1010,10 @@ fn waiting_checkout(state: &mut State) -> Vec<Cmd> {
     let Some(pr) = state.creating.checkout.clone() else {
         return Vec::new();
     };
-    let Some(remote) = state.prs.get(&pr) else {
+    let Some(remote) = state.pr_remote(&pr) else {
         return Vec::new();
     };
-    match (&remote.data, &remote.error) {
+    match (state.pr(&pr), &remote.error) {
         (Some(d), _) => {
             let d = d.clone();
             state.creating.checkout = None;

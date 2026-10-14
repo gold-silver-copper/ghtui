@@ -98,10 +98,7 @@ pub fn open(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     // What GitHub has now, not what was read before.
-    let mut cmds = state.ensure(
-        crate::browse::Need::Data(DataKey::Subscription(of.clone())),
-        true,
-    );
+    let mut cmds = state.ensure(DataKey::Subscription(of.clone()), true);
     cmds.extend(crate::writes::open_picker(state, Pick::Watch(of)));
     cmds
 }
@@ -208,7 +205,7 @@ pub fn on_done(state: &mut State, Done(work, result): Done) -> Vec<Cmd> {
                 crate::writes::expect(state, route, what);
             }
             let key = DataKey::Subscription(work.of);
-            let mut cmds = state.ensure(crate::browse::Need::Data(key), true);
+            let mut cmds = state.ensure(key, true);
             // What the page shows of it (a repository's watchers) follows.
             cmds.extend(state.load_visible(false));
             cmds

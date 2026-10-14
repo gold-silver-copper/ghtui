@@ -12,7 +12,6 @@ use crate::ui::text::short_sha;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui_textarea::TextArea;
 
-use crate::browse::Need;
 use crate::data::{Data, DataKey};
 use crate::keymap::Action;
 use crate::nav::new_input;
@@ -219,7 +218,7 @@ impl State {
             input,
             selected: 0,
         })));
-        need.map_or_else(Vec::new, |key| self.ensure(Need::Data(key), false))
+        need.map_or_else(Vec::new, |key| self.ensure(key, false))
     }
 
     /// Go to file, or switch branches, for the code on screen.

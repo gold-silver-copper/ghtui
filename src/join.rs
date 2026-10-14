@@ -3,6 +3,7 @@
 
 use crate::api::model::{NodeId, PrDetail};
 
+use crate::data::{DataKey, Picked};
 use crate::diff_job::JobId;
 use crate::diff_screen::{DiffOf, LastReview};
 use crate::keymap::Action;
@@ -98,8 +99,8 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
     let Some(head) = diff.head() else { return cmds };
     // The whole PR's diff, checked against what GitHub says of it (once
     // that's fresh: a cached copy may be from before a push).
-    if let Some(remote) = state.prs.get(pr)
-        && let Some(detail) = remote.data.as_ref()
+    if let Some(remote) = state.data.get(&DataKey::Pr(pr.clone()))
+        && let Some(detail) = remote.data.as_ref().and_then(PrDetail::pick)
         && !remote.loading
         && remote.cached_at.is_none()
         && claim(&mut diff.joins.checked, (diff.job, detail.head_oid.clone()))

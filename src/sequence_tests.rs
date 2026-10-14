@@ -412,7 +412,11 @@ fn joined_diff_work_is_the_same_in_every_arrival_order() {
                     let threads = vec![fixtures::thread("old", None, false, true)];
                     Msg::Diff(of.clone(), DiffMsg::ThreadsLoaded(Ok(threads)))
                 }
-                _ => Msg::Pr(pr.clone(), Box::new(Ok(detail.clone()))),
+                _ => Msg::Fetched {
+                    key: DataKey::Pr(pr.clone()),
+                    result: Ok(Data::Pr(Box::new(detail.clone()))),
+                    cached_at: None,
+                },
             };
             cmds.extend(update(&mut state, msg));
         }

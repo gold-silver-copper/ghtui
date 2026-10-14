@@ -27,7 +27,6 @@ use crate::git::local::Clone;
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, Page, WriteLink};
 
-use crate::browse::Need;
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
@@ -872,24 +871,24 @@ pub fn paged(route: &Route) -> Option<DataKey> {
 }
 
 /// What housekeeping's pages need fetched.
-pub fn needs(route: &Route) -> Vec<Need> {
-    let header = |repo: &RepoId| Need::Data(DataKey::Repo(repo.clone()));
+pub fn needs(route: &Route) -> Vec<DataKey> {
+    let header = |repo: &RepoId| DataKey::Repo(repo.clone());
     match route {
-        Route::Labels(repo) => vec![header(repo), Need::Data(DataKey::Labels(repo.clone()))],
+        Route::Labels(repo) => vec![header(repo), DataKey::Labels(repo.clone())],
         Route::Housekeeping(of) => {
-            let mut needs: Vec<Need> = of.repo().map(header).into_iter().collect();
+            let mut needs: Vec<DataKey> = of.repo().map(header).into_iter().collect();
             match of {
                 FormOf::Label { repo, .. } => {
-                    needs.push(Need::Data(DataKey::Labels(repo.clone())));
+                    needs.push(DataKey::Labels(repo.clone()));
                 }
                 FormOf::Milestone {
                     repo,
                     number: Some(n),
-                } => needs.push(Need::Data(DataKey::Milestone(repo.clone(), *n))),
-                FormOf::Fork(_) => needs.push(Need::Data(DataKey::Owners)),
+                } => needs.push(DataKey::Milestone(repo.clone(), *n)),
+                FormOf::Fork(_) => needs.push(DataKey::Owners),
                 FormOf::NewRepo => {
-                    needs.push(Need::Data(DataKey::Owners));
-                    needs.push(Need::Data(DataKey::Templates));
+                    needs.push(DataKey::Owners);
+                    needs.push(DataKey::Templates);
                 }
                 FormOf::Milestone { number: None, .. } | FormOf::File { .. } => {}
             }
@@ -930,10 +929,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, now: u64) {
 /// page says it's loading, or why it couldn't.
 fn loaded(state: &State, page: &mut Page, route: &Route) -> bool {
     let retry = state.first_key(Action::Refresh);
-    for need in needs(route) {
-        let Need::Data(key) = need else {
-            continue;
-        };
+    for key in needs(route) {
         let what = match &key {
             DataKey::Labels(_) => "the labels",
             DataKey::Owners => "your account",

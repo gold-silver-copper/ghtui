@@ -610,7 +610,7 @@ impl State {
 
     fn pr_tabs(&self, pr: &PrRef, c: &mut Chrome) {
         let activity = self.activity(pr);
-        let detail = self.prs.get(pr).and_then(|r| r.data.as_ref());
+        let detail = self.pr(pr);
         c.tabs.push((
             new_tab("◌", "Conversation", activity.map(|a| a.comment_count)),
             Target::Page(Route::pr(pr.clone())),

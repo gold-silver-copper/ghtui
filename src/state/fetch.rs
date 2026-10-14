@@ -128,7 +128,7 @@ impl Remote<Data> {
 
 impl State {
     /// What a page needs fetched: Home's are its sections'.
-    pub fn needs(&self, route: &Route) -> Vec<Need> {
+    pub fn needs(&self, route: &Route) -> Vec<DataKey> {
         match route {
             Route::Home => self.home_needs(),
             _ => browse::needs(route),
@@ -141,37 +141,28 @@ impl State {
     #[must_use]
     pub fn ensure_route(&mut self, route: &Route, force: bool) -> Vec<Cmd> {
         let mut cmds = Vec::new();
-        for need in self.needs(route) {
-            let header = browse::is_header(route, &need);
-            let aged = *route == Route::Home && self.aged(&need);
-            cmds.extend(self.ensure(need, (force || aged) && !header));
+        for key in self.needs(route) {
+            let header = browse::is_header(route, &key);
+            let aged = *route == Route::Home && self.aged(&key);
+            cmds.extend(self.ensure(key, (force || aged) && !header));
         }
         cmds
     }
 
     #[must_use]
-    pub fn ensure(&mut self, need: Need, force: bool) -> Vec<Cmd> {
+    pub fn ensure(&mut self, key: DataKey, force: bool) -> Vec<Cmd> {
         let now = (self.clock)();
-        let (started, api) = match need {
-            Need::Pr(pr) => (
-                self.prs.entry(pr.clone()).or_default().begin(force),
-                Api::FetchPr(pr),
-            ),
-            Need::Data(key) => {
-                let remote = self.data.entry(key.clone()).or_default();
-                // What was still running is checked again whenever it's
-                // wanted (going back to it, switching to its tab).
-                let running = remote.data.as_ref().is_some_and(Data::running);
-                let cached = remote.data.is_none();
-                let force = force || (running && !remote.extended);
-                let started = remote.begin(force);
-                if started {
-                    remote.asked_at = Some(now);
-                }
-                (started, Api::Fetch { cached, key })
-            }
-        };
-        started.then_some(Cmd::Api(api)).into_iter().collect()
+        let remote = self.data.entry(key.clone()).or_default();
+        // What was still running is checked again whenever it's wanted
+        // (going back to it, switching to its tab).
+        let running = remote.data.as_ref().is_some_and(Data::running);
+        let cached = remote.data.is_none();
+        let force = force || (running && !remote.extended);
+        if !remote.begin(force) {
+            return Vec::new();
+        }
+        remote.asked_at = Some(now);
+        vec![Cmd::Api(Api::Fetch { cached, key })]
     }
 
     /// Fetches needed for the visible screen. `force` refreshes data we
@@ -193,14 +184,14 @@ impl State {
                 // An issue or pull request list's open and closed counts
                 // are the header's, so refreshing the list refreshes them.
                 if force && let Route::Issues { repo, .. } | Route::Pulls { repo, .. } = &route {
-                    let header = Need::Data(DataKey::Repo(repo.clone()));
+                    let header = DataKey::Repo(repo.clone());
                     cmds.extend(self.ensure(header, true));
                 }
             }
             Screen::Diff(d) => {
                 let of = d.of.clone();
                 if let DiffOf::Pr(pr) = &of {
-                    cmds.extend(self.ensure(Need::Pr(pr.clone()), force));
+                    cmds.extend(self.ensure(DataKey::Pr(pr.clone()), force));
                 }
                 // Settling starts it (again); a PR's waits for the PR, which may have merged.
                 if force {
@@ -217,22 +208,22 @@ impl State {
     /// checks, a pull request GitHub is still checking), to fetch again
     /// until it's done. A list extended with Load more isn't: fetching it
     /// again would cut it back to its first page.
-    pub fn running_here(&self) -> Vec<Need> {
+    pub fn running_here(&self) -> Vec<DataKey> {
         let Screen::Page(p) = self.screen() else {
             return Vec::new();
         };
         self.needs(&p.route)
             .into_iter()
-            .filter(|need| match need {
-                // A watcher fetches these when GitHub says they changed.
-                Need::Data(key) if crate::live::page::watches(key) => false,
-                Need::Data(key) => self
-                    .data
-                    .get(key)
-                    .is_some_and(|r| !r.extended && r.data.as_ref().is_some_and(Data::running)),
-                Need::Pr(pr) => (self.prs.get(pr))
+            // A watcher fetches what it watches when GitHub says it changed.
+            .filter(|key| !crate::live::page::watches(key))
+            .filter(|key| {
+                let remote = self.data.get(key).filter(|r| !r.extended);
+                remote
                     .and_then(|r| r.data.as_ref())
-                    .is_some_and(PrDetail::settling),
+                    .is_some_and(|d| match d {
+                        Data::Pr(pr) => pr.settling(),
+                        d => d.running(),
+                    })
             })
             .collect()
     }

@@ -8,7 +8,7 @@ use crate::api::browse::{
     CommitDetail, CommitInfo, DiscussionsOf, Gist, IssueDetail, PrActivity, Release, RepoOverview,
     SearchResults, StateCounts, UserList, WikiPage,
 };
-use crate::api::model::{PrRef, RepoId};
+use crate::api::model::{PrDetail, PrRef, RepoId};
 use crate::api::project::{Project, ProjectsOf};
 use crate::api::security::AlertRef;
 use crate::ui::Fetched;
@@ -83,13 +83,6 @@ pub fn paged(route: &Route) -> Option<DataKey> {
     }
 }
 
-/// What a page needs fetched.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Need {
-    Pr(PrRef),
-    Data(DataKey),
-}
-
 /// The pull request whose review a page shows at a glance: its Review
 /// tab's. Its diff's threads and drafts load with it.
 pub(crate) fn glanced(route: &Route) -> Option<&PrRef> {
@@ -104,123 +97,114 @@ pub(crate) fn glanced(route: &Route) -> Option<&PrRef> {
 
 /// What a page needs fetched, but Home's (its sections are the state's:
 /// [`State::needs`]).
-pub fn needs(route: &Route) -> Vec<Need> {
+pub fn needs(route: &Route) -> Vec<DataKey> {
     use DataKey as K;
-    let header = |repo: &RepoId| Need::Data(K::Repo(repo.clone()));
-    let list = route
-        .search()
-        .map(|(kind, query)| Need::Data(K::Search(kind, query)));
+    let header = |repo: &RepoId| K::Repo(repo.clone());
+    let list = route.search().map(|(kind, query)| K::Search(kind, query));
     match route {
         Route::Home | Route::NewGist | Route::Offline => Vec::new(),
         Route::Repo(repo) => vec![
             header(repo),
-            Need::Data(K::Readme(repo.clone())),
-            Need::Data(K::LastCommits(repo.clone(), "HEAD".into(), String::new())),
+            K::Readme(repo.clone()),
+            K::LastCommits(repo.clone(), "HEAD".into(), String::new()),
         ],
         Route::Tree { repo, rev, path } => vec![
             header(repo),
-            Need::Data(K::Tree(repo.clone(), rev.clone(), path.clone())),
-            Need::Data(K::LastCommits(repo.clone(), rev.clone(), path.clone())),
+            K::Tree(repo.clone(), rev.clone(), path.clone()),
+            K::LastCommits(repo.clone(), rev.clone(), path.clone()),
         ],
         Route::Blob {
             repo, rev, path, ..
         } => vec![
             header(repo),
-            Need::Data(K::Blob(repo.clone(), rev.clone(), path.clone())),
+            K::Blob(repo.clone(), rev.clone(), path.clone()),
         ],
         Route::Blame {
             repo, rev, path, ..
         } => vec![
             header(repo),
-            Need::Data(K::Blob(repo.clone(), rev.clone(), path.clone())),
-            Need::Data(K::Blame(repo.clone(), rev.clone(), path.clone())),
+            K::Blob(repo.clone(), rev.clone(), path.clone()),
+            K::Blame(repo.clone(), rev.clone(), path.clone()),
         ],
-        Route::Unsplit { repo, spot, .. } => vec![
-            header(repo),
-            Need::Data(K::RefIn(repo.clone(), spot.clone())),
-        ],
+        Route::Unsplit { repo, spot, .. } => {
+            vec![header(repo), K::RefIn(repo.clone(), spot.clone())]
+        }
         Route::Issues { repo, .. } | Route::Pulls { repo, .. } => {
-            let counts = route.state_counts().map(|q| Need::Data(K::StateCounts(q)));
+            let counts = route.state_counts().map(K::StateCounts);
             std::iter::once(header(repo))
                 .chain(list)
                 .chain(counts)
                 .collect()
         }
         Route::Search { .. } => list.into_iter().collect(),
-        Route::Wiki { repo, page } => vec![
-            header(repo),
-            Need::Data(K::Wiki(repo.clone(), page.clone())),
-        ],
+        Route::Wiki { repo, page } => vec![header(repo), K::Wiki(repo.clone(), page.clone())],
         Route::Advisories(repo) | Route::Advisory { repo, .. } => {
             let own = match route {
                 Route::Advisory { ghsa, .. } => K::Advisory(repo.clone(), ghsa.clone()),
                 _ => K::Advisories(repo.clone()),
             };
-            repo.iter().map(header).chain([Need::Data(own)]).collect()
+            repo.iter().map(header).chain([own]).collect()
         }
         Route::Gists(_)
         | Route::Teams(_)
         | Route::Notifications { .. }
         | Route::Project { .. }
         | Route::ProjectItem { .. }
-        | Route::Projects(ProjectsOf::Owner(_)) => {
-            paged(route).map(Need::Data).into_iter().collect()
-        }
-        Route::Team { org, slug } => vec![Need::Data(K::Team(org.to_lowercase(), slug.clone()))],
+        | Route::Projects(ProjectsOf::Owner(_)) => paged(route).into_iter().collect(),
+        Route::Team { org, slug } => vec![K::Team(org.to_lowercase(), slug.clone())],
         Route::Gist { id, .. } | Route::EditGist { id, .. } => {
-            vec![Need::Data(K::Gist(id.clone()))]
+            vec![K::Gist(id.clone())]
         }
         Route::Issue { repo, number } => {
             vec![
                 header(repo),
-                Need::Data(K::InProjects(repo.clone(), *number)),
-                Need::Data(K::Issue(repo.clone(), *number)),
+                K::InProjects(repo.clone(), *number),
+                K::Issue(repo.clone(), *number),
             ]
         }
         Route::NewIssue(repo) | Route::NewPr(repo) => {
-            vec![header(repo), Need::Data(K::NewForm(repo.clone()))]
+            vec![header(repo), K::NewForm(repo.clone())]
         }
         Route::NewRelease(repo) => vec![
             header(repo),
-            Need::Data(K::Tags(repo.clone())),
-            Need::Data(K::Branches(repo.clone())),
+            K::Tags(repo.clone()),
+            K::Branches(repo.clone()),
         ],
         Route::EditRelease { repo, tag } => vec![
             header(repo),
-            Need::Data(K::Release(repo.clone(), tag.clone())),
-            Need::Data(K::Tags(repo.clone())),
-            Need::Data(K::Branches(repo.clone())),
+            K::Release(repo.clone(), tag.clone()),
+            K::Tags(repo.clone()),
+            K::Branches(repo.clone()),
         ],
-        Route::WikiEdit { repo, page } => vec![
-            header(repo),
-            Need::Data(crate::wiki::form::key(repo, page.as_ref())),
-        ],
+        Route::WikiEdit { repo, page } => {
+            vec![header(repo), crate::wiki::form::key(repo, page.as_ref())]
+        }
         Route::Pr {
             pr,
             tab: PrTab::Checks,
         } => vec![
-            Need::Pr(pr.clone()),
-            Need::Data(K::PrActivity(pr.clone())),
-            Need::Data(K::PrChecks(pr.clone())),
+            DataKey::Pr(pr.clone()),
+            K::PrActivity(pr.clone()),
+            K::PrChecks(pr.clone()),
         ],
         // The Review tab and a review list every review.
         Route::Pr {
             pr,
             tab: PrTab::Review | PrTab::Reviewed(_),
         } => vec![
-            Need::Pr(pr.clone()),
-            Need::Data(K::PrActivity(pr.clone())),
-            Need::Data(K::Reviews(pr.clone())),
+            DataKey::Pr(pr.clone()),
+            K::PrActivity(pr.clone()),
+            K::Reviews(pr.clone()),
         ],
         Route::Pr {
             pr,
             tab: PrTab::Conversation,
         } => vec![
-            Need::Pr(pr.clone()),
-            Need::Data(K::InProjects(pr.repo.clone(), pr.number)),
-            Need::Data(K::PrActivity(pr.clone())),
+            DataKey::Pr(pr.clone()),
+            K::InProjects(pr.repo.clone(), pr.number),
+            K::PrActivity(pr.clone()),
         ],
-        Route::Pr { pr, .. } => vec![Need::Pr(pr.clone()), Need::Data(K::PrActivity(pr.clone()))],
+        Route::Pr { pr, .. } => vec![DataKey::Pr(pr.clone()), K::PrActivity(pr.clone())],
         Route::Discussions { of, .. } | Route::Discussion { of, .. } => {
             let header = match of {
                 DiscussionsOf::Repo(repo) => Some(header(repo)),
@@ -230,34 +214,28 @@ pub fn needs(route: &Route) -> Vec<Need> {
                 Route::Discussion { number, .. } => Some(K::Discussion(of.clone(), *number)),
                 _ => paged(route),
             };
-            header.into_iter().chain(own.map(Need::Data)).collect()
+            header.into_iter().chain(own).collect()
         }
         Route::WorkflowRun { repo, run, attempt } => {
-            vec![
-                header(repo),
-                Need::Data(K::Run(repo.clone(), *run, *attempt)),
-            ]
+            vec![header(repo), K::Run(repo.clone(), *run, *attempt)]
         }
         Route::Job { repo, job, .. } => vec![
             header(repo),
-            Need::Data(K::Job(repo.clone(), *job)),
-            Need::Data(K::JobLog(repo.clone(), *job)),
+            K::Job(repo.clone(), *job),
+            K::JobLog(repo.clone(), *job),
         ],
         Route::Workflow { repo, file } => std::iter::once(header(repo))
-            .chain([Need::Data(K::Workflow(repo.clone(), file.clone()))])
-            .chain(paged(route).map(Need::Data))
+            .chain([K::Workflow(repo.clone(), file.clone())])
+            .chain(paged(route))
             .collect(),
         Route::Dispatch { repo, file } => crate::actions::needs(repo, file),
         Route::CommitChecks { repo, oid } => vec![
             header(repo),
-            Need::Data(K::Commit(repo.clone(), oid.clone())),
-            Need::Data(K::CommitChecks(repo.clone(), oid.clone())),
+            K::Commit(repo.clone(), oid.clone()),
+            K::CommitChecks(repo.clone(), oid.clone()),
         ],
         Route::Release { repo, tag } => {
-            vec![
-                header(repo),
-                Need::Data(K::Release(repo.clone(), tag.clone())),
-            ]
+            vec![header(repo), K::Release(repo.clone(), tag.clone())]
         }
         Route::Actions { repo, .. }
         | Route::Stargazers(repo)
@@ -271,25 +249,25 @@ pub fn needs(route: &Route) -> Vec<Need> {
         | Route::Milestones { repo, .. }
         | Route::Milestone { repo, .. }
         | Route::Alerts { repo, .. }
-        | Route::Projects(ProjectsOf::Repo(repo)) => std::iter::once(header(repo))
-            .chain(paged(route).map(Need::Data))
-            .collect(),
+        | Route::Projects(ProjectsOf::Repo(repo)) => {
+            std::iter::once(header(repo)).chain(paged(route)).collect()
+        }
         Route::Alert { repo, kind, number } => {
             let a = AlertRef {
                 repo: repo.clone(),
                 kind: *kind,
                 number: *number,
             };
-            vec![header(repo), Need::Data(K::Alert(a))]
+            vec![header(repo), K::Alert(a)]
         }
         Route::Settings { repo, page } => {
-            vec![header(repo), Need::Data(K::Settings(repo.clone(), *page))]
+            vec![header(repo), K::Settings(repo.clone(), *page)]
         }
         Route::Commit { repo, oid, pr } => {
             let mut needs = vec![
                 header(repo),
-                Need::Data(K::CommitComments(repo.clone(), oid.clone())),
-                Need::Data(K::Commit(repo.clone(), oid.clone())),
+                K::CommitComments(repo.clone(), oid.clone()),
+                K::Commit(repo.clone(), oid.clone()),
             ];
             // Its place among the pull request's commits.
             if let Some(number) = pr {
@@ -297,21 +275,20 @@ pub fn needs(route: &Route) -> Vec<Need> {
                     repo: repo.clone(),
                     number: *number,
                 };
-                needs.push(Need::Data(K::PrActivity(pr)));
+                needs.push(K::PrActivity(pr));
             }
             needs
         }
         Route::Commits { repo, rev, path } => vec![
             header(repo),
-            Need::Data(K::History(repo.clone(), rev.clone(), path.clone())),
+            K::History(repo.clone(), rev.clone(), path.clone()),
         ],
         Route::User { login, tab } => {
             // A user's lists show above what they starred.
-            let lists =
-                (*tab == ProfileTab::Stars).then(|| Need::Data(K::StarLists(login.to_lowercase())));
-            std::iter::once(Need::Data(K::Profile(login.to_lowercase())))
+            let lists = (*tab == ProfileTab::Stars).then(|| K::StarLists(login.to_lowercase()));
+            std::iter::once(K::Profile(login.to_lowercase()))
                 .chain(lists)
-                .chain(paged(route).map(Need::Data))
+                .chain(paged(route))
                 .collect()
         }
         Route::Site(page) => page.needs(),
@@ -321,8 +298,8 @@ pub fn needs(route: &Route) -> Vec<Need> {
 
 /// Whether `need` is a repository's header on one of its other pages
 /// (fetched only when missing).
-pub fn is_header(route: &Route, need: &Need) -> bool {
-    matches!(need, Need::Data(DataKey::Repo(_))) && !matches!(route, Route::Repo(_))
+pub fn is_header(route: &Route, key: &DataKey) -> bool {
+    matches!(key, DataKey::Repo(_)) && !matches!(route, Route::Repo(_))
 }
 
 /// A page's needs as the page shows them, failing with the key that
@@ -397,6 +374,15 @@ impl State {
         self.picked(&DataKey::Repo(repo.clone()))
     }
 
+    pub fn pr(&self, pr: &PrRef) -> Option<&PrDetail> {
+        self.picked(&DataKey::Pr(pr.clone()))
+    }
+
+    /// How fetching pull request `pr` is going.
+    pub fn pr_remote(&self, pr: &PrRef) -> Option<&Remote<Data>> {
+        self.data.get(&DataKey::Pr(pr.clone()))
+    }
+
     pub fn activity(&self, pr: &PrRef) -> Option<&PrActivity> {
         self.picked(&DataKey::PrActivity(pr.clone()))
     }
@@ -410,10 +396,7 @@ impl State {
 
     /// How a page's fetches are going (the ones that have started).
     pub(crate) fn fetches(&self, route: &Route) -> impl Iterator<Item = Remote<()>> {
-        self.needs(route).into_iter().filter_map(|need| match need {
-            Need::Pr(pr) => self.prs.get(&pr).map(Remote::status),
-            Need::Data(key) => self.data.get(&key).map(Remote::status),
-        })
+        (self.needs(route).into_iter()).filter_map(|key| self.data.get(&key).map(Remote::status))
     }
 
     /// Why the page's needs that show a copy couldn't refresh it, each
@@ -680,7 +663,8 @@ impl State {
                 let reviews = f.get(&DataKey::Reviews(pr.clone()));
                 let lines = crate::talk::lines_at(self, pr);
                 let marks = crate::talk::marks(self, Some(pr), &lines);
-                if let Some(d) = f.of(self.prs.get(pr)).show(&mut page, &pr.to_string()) {
+                let detail = f.get::<PrDetail>(&DataKey::Pr(pr.clone()));
+                if let Some(d) = detail.show(&mut page, &pr.to_string()) {
                     match tab {
                         PrTab::Conversation => {
                             let projects = DataKey::InProjects(pr.repo.clone(), pr.number);

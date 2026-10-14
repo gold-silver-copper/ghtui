@@ -15,7 +15,7 @@ use futures::{FutureExt, StreamExt};
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 
-use crate::data;
+use crate::data::{self, DataKey};
 use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx, RepoGit};
 use crate::diff_screen::DiffOf;
 use crate::review::EditPurpose;
@@ -461,37 +461,26 @@ fn spawn(
         let msg = match api {
             Api::FetchViewer => Msg::Viewer(gh.viewer_login().await),
             Api::FetchUnread => Msg::Unread(gh.unread().await),
-            Api::FetchPr(pr) => match gh.pull_request_alone(&pr).await {
-                Ok(detail) => {
-                    // Shown before how far behind its base it is arrives.
-                    if detail.state.is_open() {
-                        let _ = tx.send(Msg::Pr(pr.clone(), Box::new(Ok(detail.clone()))));
-                    }
-                    let detail = gh.with_behind(&pr, detail).await;
-                    Msg::Pr(pr, Box::new(Ok(detail)))
-                }
-                Err(err) => {
-                    // GitHub can't be reached: the cache's copy, if there's one.
-                    if let ApiError::Offline(_) = &err
-                        && let Some(cached) = gh.cached_pull_request(&pr)
-                    {
-                        let _ = tx.send(Msg::PrCached(pr.clone(), Box::new(cached)));
-                    }
-                    Msg::Pr(pr, Box::new(Err(err)))
-                }
-            },
             Api::Fetch { key, cached } => {
-                if cached {
-                    let (gh, lookup) = (gh.clone(), key.clone());
+                // Nothing on screen yet: the cache's copy, first or (for
+                // what shows it only then) while GitHub can't be reached.
+                let send_cached = |gh: GitHub, key: DataKey| async {
+                    let lookup = key.clone();
                     if let Some(c) = blocking(move || data::load::cached(&gh, &lookup)).await {
                         let _ = tx.send(Msg::Fetched {
-                            key: key.clone(),
+                            key,
                             result: Ok(c.value),
                             cached_at: Some(c.fetched_at),
                         });
                     }
+                };
+                if cached && key.cache_first() {
+                    send_cached(gh.clone(), key.clone()).await;
                 }
                 let (result, from) = data::load::load(&gh, &local, &key, None, Some(&tx)).await;
+                if cached && !key.cache_first() && matches!(result, Err(ApiError::Offline(_))) {
+                    send_cached(gh.clone(), key.clone()).await;
+                }
                 if let Some(from) = from {
                     let _ = tx.send(Msg::Source(key.clone(), from));
                 }
@@ -723,7 +712,6 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
     let msg = match cmd {
         Cmd::Api(Api::FetchViewer) => Msg::Viewer(api()),
         Cmd::Api(Api::FetchUnread) => Msg::Unread(api()),
-        Cmd::Api(Api::FetchPr(pr)) => Msg::Pr(pr.clone(), Box::new(api())),
         Cmd::Api(Api::Fetch { key, .. }) => Msg::Fetched {
             key: key.clone(),
             result: api(),

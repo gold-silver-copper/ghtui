@@ -15,7 +15,6 @@ use crate::api::model::{Capped, NodeId, PrRef, RepoId};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::act::{By, Confirm, Subject};
-use crate::browse::Need;
 use crate::data::{Data, DataKey};
 use crate::keymap::Action;
 use crate::nav::Doable;
@@ -208,7 +207,7 @@ fn issue<'a>(
 }
 
 fn pr_detail<'a>(state: &'a State, pr: &PrRef) -> Option<&'a crate::api::model::PrDetail> {
-    state.prs.get(pr).and_then(|r| r.data.as_ref())
+    state.pr(pr)
 }
 
 /// The description of the issue or pull request on screen, as a spot.
@@ -1100,9 +1099,9 @@ pub fn shown(state: &State, edit: &Edit, about: &Subject) -> bool {
 
 /// What else the page fetches again while it waits for an edit: a pull
 /// request's comments and reviewers are its conversation's.
-pub fn polls(about: &Subject) -> Option<Need> {
+pub fn polls(about: &Subject) -> Option<DataKey> {
     match about {
-        Subject::Pr(pr) => Some(Need::Data(DataKey::PrActivity(pr.clone()))),
+        Subject::Pr(pr) => Some(DataKey::PrActivity(pr.clone())),
         _ => None,
     }
 }

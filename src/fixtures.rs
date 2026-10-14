@@ -96,12 +96,13 @@ pub(crate) fn asks(cmds: &[Cmd], key: &DataKey) -> bool {
 
 /// Whether `cmds` fetch pull request `pr`.
 pub(crate) fn asks_pr(cmds: &[Cmd], pr: &PrRef) -> bool {
-    cmds.contains(&Cmd::Api(Api::FetchPr(pr.clone())))
+    asks(cmds, &DataKey::Pr(pr.clone()))
 }
 
 /// Fetching pull request `pr` for the first time.
 pub(crate) fn fetch_pr(pr: &PrRef) -> Cmd {
-    Cmd::Api(Api::FetchPr(pr.clone()))
+    let key = DataKey::Pr(pr.clone());
+    Cmd::Api(Api::Fetch { key, cached: true })
 }
 
 /// Delivers GitHub's answer for pull request `pr`.
@@ -110,16 +111,27 @@ pub(crate) fn pr_fetched(
     pr: &PrRef,
     result: Result<PrDetail, ApiError>,
 ) -> Vec<Cmd> {
-    update(state, Msg::Pr(pr.clone(), Box::new(result)))
+    let key = DataKey::Pr(pr.clone());
+    let result = result.map(|d| Data::Pr(Box::new(d)));
+    let cached_at = None;
+    update(
+        state,
+        Msg::Fetched {
+            key,
+            result,
+            cached_at,
+        },
+    )
 }
 
 /// Puts pull request `pr` in the state as the disk cache had it.
 pub(crate) fn pr_cached(state: &mut State, pr: &PrRef, detail: PrDetail) {
     let cached = crate::store::Cached {
-        value: detail,
+        value: Data::Pr(Box::new(detail)),
         fetched_at: 0,
     };
-    (state.prs).insert(pr.clone(), crate::state::Remote::cached(Some(cached)));
+    let key = DataKey::Pr(pr.clone());
+    (state.data).insert(key, crate::state::Remote::cached(Some(cached)));
 }
 
 /// Fills Home's section `i` with a search's results.
@@ -2213,6 +2225,7 @@ pub(crate) fn sample(key: &DataKey) -> Data {
             Data::StateCounts(crate::api::browse::StateCounts { open: 2, closed: 5 })
         }
         K::Issue(..) => Data::Issue(Some(Box::new(issue()))),
+        K::Pr(_) => Data::Pr(Box::new(pr_detail())),
         K::PrActivity(_) => Data::PrActivity(Box::new(activity())),
         K::Reviews(_) => Data::Reviews(Box::new(reviews())),
         K::CommitComments(..) => Data::CommitComments(Box::default()),

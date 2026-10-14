@@ -44,7 +44,7 @@ fn a_failed_blame_says_why_instead_of_loading() {
     };
     let _ = state.push(route.clone());
     fetched(&mut state, blob, Data::Blob(Box::new(fixtures::blob())));
-    let Some(Need::Data(key)) = needs(&route).pop() else {
+    let Some(key) = needs(&route).pop() else {
         panic!("a blame fetches its blame");
     };
     failed(&mut state, key);
@@ -204,21 +204,16 @@ fn every_route_says_why_when_its_needs_fail() {
         for failing in &all {
             let mut state = state();
             let _ = state.push(route.clone());
-            for need in all.iter().cloned() {
-                let fail = &need == failing;
-                let msg = match need {
-                    Need::Pr(pr) => {
-                        Msg::Pr(pr, Box::new(if fail { err() } else { Ok(pr_detail()) }))
-                    }
-                    Need::Data(key) => Msg::Fetched {
-                        result: if fail {
-                            err()
-                        } else {
-                            Ok(crate::fixtures::sample(&key))
-                        },
-                        key,
-                        cached_at: None,
+            for key in all.iter().cloned() {
+                let fail = &key == failing;
+                let msg = Msg::Fetched {
+                    result: if fail {
+                        err()
+                    } else {
+                        Ok(crate::fixtures::sample(&key))
                     },
+                    key,
+                    cached_at: None,
                 };
                 update(&mut state, msg);
             }
@@ -237,19 +232,19 @@ fn every_route_says_why_when_its_needs_fail() {
 /// A need whose page leaves it out until it loads, saying nothing when it
 /// fails: what the header or the chrome shows (counts, tabs, a branch, a
 /// commit's title), or the latest commit beside each file.
-fn decoration(route: &Route, need: &Need) -> bool {
+fn decoration(route: &Route, need: &DataKey) -> bool {
     use DataKey as K;
     crate::browse::is_header(route, need)
         || matches!(
             (route, need),
-            (_, Need::Data(K::LastCommits(..)))
-                | (Route::CommitChecks { .. }, Need::Data(K::Commit(..)))
+            (_, K::LastCommits(..))
+                | (Route::CommitChecks { .. }, K::Commit(..))
                 | (
                     Route::Pr {
                         tab: PrTab::Checks,
                         ..
                     },
-                    Need::Data(K::PrActivity(_))
+                    K::PrActivity(_)
                 )
         )
 }

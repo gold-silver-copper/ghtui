@@ -214,19 +214,16 @@ async fn an_older_enterprise_server_is_asked_only_what_it_has() {
 }
 
 #[tokio::test]
-async fn fetches_and_caches_pull_request() {
+async fn fetches_a_pull_request() {
     use ghtui::api::browse::PrState;
     use ghtui::api::change::MergeMethod;
     use ghtui::api::model::{ChecksState, MergeState, Mergeable, ReviewDecision};
 
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("cache.redb"));
     let behind = r#"{"data":{"repository":{"ref":{"compare":{"behindBy":3}}}}}"#;
     let (base, seen) = serve(vec![Reply::new(200, PR_RESPONSE), Reply::new(200, behind)]).await;
-    let gh = client(&base, store);
+    let gh = client(&base, Store::disabled());
     let pr = PrRef::parse("o/r#7").unwrap();
 
-    assert!(gh.cached_pull_request(&pr).is_none());
     let detail = gh.pull_request(&pr).await.unwrap();
     assert_eq!(detail.title, "Add thing");
     assert_eq!(detail.state, PrState::Open);
@@ -270,9 +267,6 @@ async fn fetches_and_caches_pull_request() {
     assert!(detail.head_gone && !detail.may.delete_head);
     let locked = detail.locked.and_then(|l| l.reason);
     assert_eq!(locked, Some(ghtui::api::manage::LockReason::TooHeated));
-
-    let cached = gh.cached_pull_request(&pr).unwrap();
-    assert_eq!(cached.value, detail);
 
     let seen = seen.lock().unwrap();
     assert!(seen[0].request_line.starts_with("POST /graphql "));

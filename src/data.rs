@@ -23,7 +23,7 @@ use crate::api::explore::{Topic, Topics};
 use crate::api::housekeeping::{LabelInfo, Owners, Templates};
 use crate::api::insights::{Activity, Dependencies, Traffic};
 use crate::api::lists::{ListPage, MyLists, StarList};
-use crate::api::model::{Capped, PrRef, RepoId};
+use crate::api::model::{Capped, PrDetail, PrRef, RepoId};
 use crate::api::notifications::Inbox;
 use crate::api::packages::{PackageDetail, PackageList, PackageRef, PackagesOf};
 use crate::api::project::{InProject, Project, ProjectRef, ProjectSummary, ProjectsOf};
@@ -47,6 +47,7 @@ pub enum DataKey {
     /// ([`Route::state_counts`](crate::route::Route::state_counts)).
     StateCounts(String),
     Issue(RepoId, u64),
+    Pr(PrRef),
     PrActivity(PrRef),
     /// The projects an issue or pull request is in.
     InProjects(RepoId, u64),
@@ -177,6 +178,13 @@ impl DataKey {
         )
     }
 
+    /// Whether the cache's copy shows while it's asked for again. A pull
+    /// request's shows only while GitHub can't be reached: the diff starts
+    /// from the base it says, which may have moved since.
+    pub fn cache_first(&self) -> bool {
+        !matches!(self, DataKey::Pr(_))
+    }
+
     /// Where its data is kept in the cache, if it is.
     fn cache_id(&self) -> Option<String> {
         let key = serde_json::to_string(self).ok().filter(|_| self.kept())?;
@@ -220,6 +228,7 @@ data! {
     StateCounts(StateCounts) => StateCounts,
     /// `None`: the number is a pull request.
     Issue(Option<Box<IssueDetail>>) => Option<Box<IssueDetail>>,
+    Pr(Box<PrDetail>) => PrDetail,
     PrActivity(Box<PrActivity>) => PrActivity,
     Reviews(Box<Capped<Review>>) => Capped<Review>,
     CommitComments(Box<Capped<CommitComment>>) => Capped<CommitComment>,

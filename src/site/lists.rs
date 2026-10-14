@@ -7,7 +7,6 @@
 use crate::api::GitHub;
 use crate::api::lists::{ListPage, MyLists, StarList};
 use crate::api::model::{Capped, NodeId, RepoId};
-use crate::browse::Need;
 use crate::data::Picked;
 use crate::keymap::Action;
 use crate::nav::Doable;
@@ -89,13 +88,13 @@ pub enum Expected {
 }
 
 impl Expected {
-    pub fn needs(&self) -> Vec<Need> {
+    pub fn needs(&self) -> Vec<DataKey> {
         match self {
             Expected::Membership { repo, .. } => {
-                vec![Need::Data(DataKey::MyLists(repo.clone()))]
+                vec![DataKey::MyLists(repo.clone())]
             }
             Expected::Gone { login, .. } => {
-                vec![Need::Data(DataKey::StarLists(login.to_lowercase()))]
+                vec![DataKey::StarLists(login.to_lowercase())]
             }
         }
     }
@@ -137,7 +136,7 @@ pub fn open(state: &mut State) -> Vec<Cmd> {
         state.info(Action::Lists.not_here());
         return Vec::new();
     };
-    let mut cmds = state.ensure(Need::Data(DataKey::MyLists(repo.clone())), true);
+    let mut cmds = state.ensure(DataKey::MyLists(repo.clone()), true);
     cmds.extend(crate::writes::open_picker(
         state,
         Pick::Site(super::Pick::Lists(repo)),
@@ -259,7 +258,7 @@ pub fn on_done(state: &mut State, work: Work, result: Result<(), String>) -> Vec
                     crate::writes::Expected::Site(super::Expected::Lists(what)),
                 );
             }
-            let mut cmds = state.ensure(Need::Data(DataKey::MyLists(work.repo)), true);
+            let mut cmds = state.ensure(DataKey::MyLists(work.repo), true);
             cmds.extend(state.load_visible(false));
             cmds
         }

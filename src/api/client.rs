@@ -1189,11 +1189,7 @@ impl GitHub {
         Ok(user.login)
     }
 
-    pub fn cached_pull_request(&self, pr: &PrRef) -> Option<Cached<PrDetail>> {
-        self.cached(&pr_key(pr))
-    }
-
-    /// The pull request, how far behind its base it is included, kept.
+    /// The pull request, how far behind its base it is included.
     pub async fn pull_request(&self, pr: &PrRef) -> Result<PrDetail, ApiError> {
         let detail = self.pull_request_alone(pr).await?;
         Ok(self.with_behind(pr, detail).await)
@@ -1207,14 +1203,13 @@ impl GitHub {
             .await
     }
 
-    /// `detail` with how far behind its base it is, if it's open, kept.
+    /// `detail` with how far behind its base it is, if it's open.
     pub async fn with_behind(&self, pr: &PrRef, mut detail: PrDetail) -> PrDetail {
         // GitHub says a branch is behind only when the repository requires
         // it up to date; it may be behind anyway.
         if detail.state.is_open() {
             detail.behind_by = self.behind_by(pr, &detail).await;
         }
-        self.remember(&pr_key(pr), &detail);
         detail
     }
 
@@ -3307,10 +3302,6 @@ fn page_vars(pr: &PrRef, after: Option<String>) -> Result<queries::PageVariables
         number: pr_number(pr)?,
         after,
     })
-}
-
-fn pr_key(pr: &PrRef) -> String {
-    format!("pr:{pr}")
 }
 
 /// A failed response's error. A 404 names `what` was asked for: GitHub's

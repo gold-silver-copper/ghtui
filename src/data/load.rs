@@ -47,7 +47,7 @@ pub fn cached(gh: &GitHub, key: &DataKey) -> Option<Cached<Data>> {
     };
     Some(Cached {
         value: Data::Issue(None),
-        fetched_at: gh.cached_pull_request(&pr)?.fetched_at,
+        fetched_at: cached(gh, &DataKey::Pr(pr))?.fetched_at,
     })
 }
 
@@ -55,7 +55,8 @@ pub fn cached(gh: &GitHub, key: &DataKey) -> Option<Cached<Data>> {
 /// wiki); for a list, its page after `after`. A first page is kept in
 /// the cache, if `key`'s data is ([`DataKey::kept`]). With `early`, a
 /// search's page is sent there as soon as it's found, as a first look
-/// while its pull requests' checks are read.
+/// while its pull requests' checks are read; and a pull request, before
+/// how far behind its base it is.
 pub async fn fetch(
     gh: &GitHub,
     git: &GitContext,
@@ -99,6 +100,18 @@ async fn answer(
         }
         K::StateCounts(query) => Data::StateCounts(gh.state_counts(query).await?),
         K::Issue(repo, number) => Data::Issue(gh.issue(repo, *number).await?.map(Box::new)),
+        K::Pr(pr) => {
+            let detail = gh.pull_request_alone(pr).await?;
+            // Shown before how far behind its base it is arrives.
+            if let Some(tx) = early.filter(|_| detail.state.is_open()) {
+                let _ = tx.send(Msg::Fetched {
+                    key: key.clone(),
+                    result: Ok(Data::Pr(Box::new(detail.clone()))),
+                    cached_at: None,
+                });
+            }
+            Data::Pr(Box::new(gh.with_behind(pr, detail).await))
+        }
         K::PrActivity(pr) => Data::PrActivity(Box::new(gh.pr_activity(pr).await?)),
         K::Reviews(pr) => Data::Reviews(Box::new(gh.reviews(pr).await?)),
         K::InProjects(repo, n) => Data::InProjects(Box::new(gh.projects_of(repo, *n).await?)),

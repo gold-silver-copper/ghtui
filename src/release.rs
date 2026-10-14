@@ -843,7 +843,7 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
                     crate::writes::close_sender(state, &route);
                     state.info(format!("Deleted the tag {tag} on GitHub"));
                     // The tags list, if it's shown, no longer has it.
-                    state.ensure(crate::browse::Need::Data(DataKey::Tags(repo)), true)
+                    state.ensure(DataKey::Tags(repo), true)
                 }
                 Err(why) => {
                     crate::writes::say(state, format!("GitHub didn't delete the tag: {why}"));

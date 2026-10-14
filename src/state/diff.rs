@@ -15,7 +15,7 @@ impl State {
     #[must_use]
     pub fn diff_screen(&mut self, of: DiffOf, anchor: Option<String>) -> (Screen, Vec<Cmd>) {
         let mut cmds = match &of {
-            DiffOf::Pr(pr) => self.ensure(Need::Pr(pr.clone()), false),
+            DiffOf::Pr(pr) => self.ensure(DataKey::Pr(pr.clone()), false),
             DiffOf::Commit(..) | DiffOf::Range(..) => Vec::new(),
         };
         if !self.diffs.get(&of).is_some_and(|d| d.error.is_none()) {
@@ -31,7 +31,7 @@ impl State {
     /// branch, and for a merged or closed PR the base it had then (with a
     /// merge commit, its head is in the branch, which would leave nothing).
     pub(crate) fn pr_base(&self, pr: &PrRef) -> Option<crate::diff_job::PrBase> {
-        let d = self.prs.get(pr)?.data.as_ref()?;
+        let d = self.pr(pr)?;
         Some(crate::diff_job::PrBase {
             branch: d.base_ref.clone(),
             oid: (!d.state.is_open())
@@ -67,13 +67,13 @@ impl State {
                 Cmd::Api(Api::FetchPatches(pr.clone())),
             ]);
             // Its checks' annotations show on their lines.
-            cmds.extend(self.ensure(Need::Data(DataKey::PrChecks(pr.clone())), false));
+            cmds.extend(self.ensure(DataKey::PrChecks(pr.clone()), false));
             crate::actions::checks_loaded(self, pr);
         }
         // A commit's comments on its lines, which join puts in its diff.
         if let DiffOf::Commit(repo, oid) = of {
             let key = DataKey::CommitComments(repo.clone(), oid.to_string());
-            cmds.extend(self.ensure(Need::Data(key), false));
+            cmds.extend(self.ensure(key, false));
         }
         cmds
     }
@@ -92,7 +92,7 @@ impl State {
         let mut cmds = match of {
             Some(of)
                 if !self.diffs.contains_key(&of)
-                    && (of.pr()).is_none_or(|pr| self.prs.get(pr).is_none_or(|r| !r.loading)) =>
+                    && (of.pr()).is_none_or(|pr| self.pr_remote(pr).is_none_or(|r| !r.loading)) =>
             {
                 self.start_diff(&of)
             }

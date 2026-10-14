@@ -15,7 +15,6 @@ use crate::api::watch::{SubscriptionState, Watched};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, WriteLink};
 
-use crate::browse::Need;
 use crate::data::DataKey;
 use crate::diff_job::GitContext;
 use crate::keymap::Action;
@@ -740,9 +739,9 @@ pub enum Expected {
 
 impl Expected {
     /// What's fetched again to see it.
-    fn needs(&self, route: &Route) -> Vec<Need> {
+    fn needs(&self, route: &Route) -> Vec<DataKey> {
         match self {
-            Expected::Subscription(w, _) => vec![Need::Data(DataKey::Subscription(w.clone()))],
+            Expected::Subscription(w, _) => vec![DataKey::Subscription(w.clone())],
             Expected::Site(e) => e.needs(),
             _ => crate::browse::needs(route),
         }
@@ -855,7 +854,7 @@ pub fn waiting(state: &State) -> Option<String> {
 
 /// What the live refresh fetches again for the change the page waits to
 /// see. Past [`POLLS`], it stops waiting.
-pub fn poll(state: &mut State) -> Vec<Need> {
+pub fn poll(state: &mut State) -> Vec<DataKey> {
     let Some(needs) = expect_here(state).map(|e| e.what.needs(&e.route)) else {
         return Vec::new();
     };

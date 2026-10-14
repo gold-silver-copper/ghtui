@@ -1108,9 +1108,11 @@ rust-lang/rust (39,000 Rust files), once cloned, that is about 5,000 files in 18
 seconds, using about 130 MB.
 
 **Fast from the cache.** The first paint comes from a local cache (redb),
-then everything is refreshed in the background. REST requests revalidate
-with ETags (and `Last-Modified`), so unchanged data costs nothing against
-the rate limit. Offline is that same path with GitHub missing: one place
+then everything is refreshed in the background. A page's data is kept
+under its own key, in one place (`data::load`), as GitHub's API answered
+it (a list's first page); what git answers isn't kept. REST requests
+revalidate with ETags (and `Last-Modified`), so unchanged data costs
+nothing against the rate limit. Offline is that same path with GitHub missing: one place
 (`api::reach`) knows whether GitHub can be reached (a request that can't
 connect says it can't; any answer says it can), so a request fails at
 once while it can't, the page keeps the cache's copy, and the header

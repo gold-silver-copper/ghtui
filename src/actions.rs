@@ -10,7 +10,6 @@ use crate::api::actions::{Input, InputKind, dispatch_inputs};
 use crate::api::browse::{Blob, Refs, Workflow, WorkflowRun};
 use crate::api::model::RepoId;
 use crate::api::{ApiError, GitHub};
-use crate::browse::Need;
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
@@ -305,7 +304,7 @@ pub fn follow_link(state: &mut State, link: &Link) -> Vec<Cmd> {
             let repo = here(state).map(|(r, _)| r);
             let mut cmds = state.open_picker(crate::picker::Kind::Actions(Pick::Ref));
             if let Some(repo) = repo {
-                cmds.extend(state.ensure(Need::Data(DataKey::Refs(repo)), false));
+                cmds.extend(state.ensure(DataKey::Refs(repo), false));
             }
             cmds
         }
@@ -391,22 +390,18 @@ fn form_ref(state: &State) -> Option<String> {
 }
 
 /// The workflow file on the form's branch.
-fn blob_need(state: &State) -> Option<Need> {
+fn blob_need(state: &State) -> Option<DataKey> {
     let (repo, file) = here(state)?;
     let chosen = state.dispatching.forms.get(&(repo.clone(), file.clone()));
     let git_ref = chosen
         .and_then(|f| f.git_ref.clone())
         .unwrap_or_else(|| "HEAD".into());
-    Some(Need::Data(DataKey::Blob(
-        repo,
-        git_ref,
-        workflow_path(&file),
-    )))
+    Some(DataKey::Blob(repo, git_ref, workflow_path(&file)))
 }
 
 /// The form's inputs, once the file is in; `Err` says why there are none.
 fn inputs_of(state: &State) -> Result<Vec<Input>, String> {
-    let Some(Need::Data(key)) = blob_need(state) else {
+    let Some(key) = blob_need(state) else {
         return Err("Loading…".into());
     };
     let Some(blob) = state.picked::<Blob>(&key) else {
@@ -427,15 +422,11 @@ fn inputs_here(state: &State) -> Option<Vec<Input>> {
 }
 
 /// What the form page needs: the workflow (its name) and its file.
-pub fn needs(repo: &RepoId, file: &str) -> Vec<Need> {
+pub fn needs(repo: &RepoId, file: &str) -> Vec<DataKey> {
     vec![
-        Need::Data(DataKey::Repo(repo.clone())),
-        Need::Data(DataKey::Workflow(repo.clone(), file.to_owned())),
-        Need::Data(DataKey::Blob(
-            repo.clone(),
-            "HEAD".into(),
-            workflow_path(file),
-        )),
+        DataKey::Repo(repo.clone()),
+        DataKey::Workflow(repo.clone(), file.to_owned()),
+        DataKey::Blob(repo.clone(), "HEAD".into(), workflow_path(file)),
     ]
 }
 

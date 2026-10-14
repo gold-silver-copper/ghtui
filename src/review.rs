@@ -4,7 +4,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::api::model::{NewThread, ReviewEvent, ReviewThread, Side as ApiSide};
-use crate::api::model::{NodeId, PrRef};
+use crate::api::model::{NodeId, PrDetail, PrRef};
+use crate::data::{DataKey, Picked};
 use crate::diff::anchor::{AnchorError, LinePos, Side};
 use crate::store::{DraftComment, DraftSide, ReviewState};
 use crate::theme::{Bg, Theme};
@@ -548,9 +549,9 @@ pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcom
         && let Some(saved) = &mut dialog.saved
     {
         // Without the diff, the dialog holds what's saved: save it back.
-        let head = (state.prs.get(pr))
-            .and_then(|r| r.data.as_ref())
-            .map(|d| d.head_oid.clone());
+        let key = DataKey::Pr(pr.clone());
+        let detail = (state.data.get(&key)).and_then(|r| r.data.as_ref().and_then(PrDetail::pick));
+        let head = detail.map(|d| d.head_oid.clone());
         apply(saved, head);
         cmds.push(Cmd::SaveReview(pr.clone(), saved.clone()));
     }
@@ -1230,9 +1231,7 @@ fn submit(state: &mut State) -> Vec<Cmd> {
     let drafts = dialog.drafts(state).map(<[DraftComment]>::to_vec);
     let head = match state.diffs.get(&DiffOf::Pr(pr.clone())) {
         Some(diff) => diff.head(),
-        None => (state.prs.get(&pr))
-            .and_then(|r| r.data.as_ref())
-            .and_then(|d| crate::git::Oid::parse(&d.head_oid).ok()),
+        None => (state.pr(&pr)).and_then(|d| crate::git::Oid::parse(&d.head_oid).ok()),
     };
     let problem = match (&drafts, &head) {
         _ if event == ReviewEvent::RequestChanges && body.trim().is_empty() => {

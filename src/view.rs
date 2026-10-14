@@ -571,7 +571,7 @@ fn separate_collapsed_tones(ctx: Ctx<'_>, content: Rect, buf: &mut Buffer) {
 fn pr_title<'a>(state: &'a State, pr: &crate::api::model::PrRef) -> Line<'a> {
     let theme = &state.theme;
     let bar = Bg::Container;
-    let Some(d) = state.prs.get(pr).and_then(|r| r.data.as_ref()) else {
+    let Some(d) = state.pr(pr) else {
         return Line::from(Span::styled(pr.to_string(), theme.title(bar)));
     };
     let (text, bg) = crate::ui::pages::state_label(crate::api::browse::Status::Pr(d.state));
