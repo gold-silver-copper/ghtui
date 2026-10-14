@@ -26,6 +26,7 @@ use crate::act::{By, Subject, awaiting_here};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
+use crate::picker::entry;
 use crate::picker::{Kind, fuzzy_score};
 use crate::state::{Cmd, Screen, State};
 
@@ -559,13 +560,6 @@ fn column_step(state: &mut State, next: bool) {
 
 /// A picker's rows: what each says, and what choosing it does.
 pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
-    let row = |label: String, hint: &str, chosen: Option<Chosen>| {
-        let item = PaletteItem {
-            label,
-            hint: hint.to_owned(),
-        };
-        (item, chosen)
-    };
     let at = match pick {
         Pick::Column(at) | Pick::Field(at) | Pick::Value(at, _) => at,
         Pick::Add(project, view) => return adding(state, project, *view, q),
@@ -576,7 +570,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
             On::View(..) => "The item is no longer in the view",
             On::Sidebar(..) => "It's no longer in the project",
         };
-        return vec![row(gone.into(), "", None)];
+        return vec![entry(gone, "", None)];
     };
     let set = |field: &ProjectField, value: Option<FieldValue>| {
         let said = match &value {
@@ -602,17 +596,13 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
                 .map(|f| {
                     let hint = p.value(&f.id).map_or("", FieldValue::text);
                     let chosen = Chosen::Field(at.clone(), f.id.clone());
-                    row(f.name.clone(), hint, Some(chosen))
+                    entry(f.name.clone(), hint, Some(chosen))
                 })
                 .collect();
         }
     };
     let Some(field) = field else {
-        return vec![row(
-            "The field is no longer in the project".into(),
-            "",
-            None,
-        )];
+        return vec![entry("The field is no longer in the project", "", None)];
     };
     let current = p.value(&field.id);
     let is_current = |v: &FieldValue| current.is_some_and(|c| c.same(v));
@@ -620,7 +610,11 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
     let mut choice = |value: FieldValue, hint: &str| {
         if fuzzy_score(q, value.text()).is_some() {
             let hint = if is_current(&value) { "current" } else { hint };
-            rows.push(row(value.text().to_owned(), hint, set(field, Some(value))));
+            rows.push(entry(
+                value.text().to_owned(),
+                hint,
+                set(field, Some(value)),
+            ));
         }
     };
     match &field.kind {
@@ -658,7 +652,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
             _ => format!("Clear {}", field.name),
         };
         if fuzzy_score(q, &label).is_some() {
-            rows.push(row(label, "", set(field, None)));
+            rows.push(entry(label, "", set(field, None)));
         }
     }
     rows
@@ -673,21 +667,14 @@ fn adding(
     view: Option<u64>,
     q: &str,
 ) -> Vec<(PaletteItem, Option<Chosen>)> {
-    let row = |label: String, hint: &str, chosen: Option<Chosen>| {
-        let item = PaletteItem {
-            label,
-            hint: hint.to_owned(),
-        };
-        (item, chosen)
-    };
     let q = q.trim();
     let key = DataKey::Project(project.clone(), view);
     let Some(p) = state.picked::<Project>(&key) else {
-        return vec![row("The project hasn't loaded yet".into(), "", None)];
+        return vec![entry("The project hasn't loaded yet", "", None)];
     };
     if q.is_empty() {
         let what = "Type owner/repo#123 or a link to add it, or a new draft's title";
-        return vec![row(what.into(), "", None)];
+        return vec![entry(what, "", None)];
     }
     let mut rows = Vec::new();
     let named = crate::route::parse_input(q, None).and_then(|dest| match dest.target {
@@ -709,9 +696,9 @@ fn adding(
         let label = format!("Add {repo}#{number}");
         match here {
             Some(it) if it.archived => {
-                rows.push(row(label, "archived: restore it", None));
+                rows.push(entry(label, "archived: restore it", None));
             }
-            Some(_) => rows.push(row(label, "already in the project", None)),
+            Some(_) => rows.push(entry(label, "already in the project", None)),
             None => {
                 let change = Change::Project(ProjectChange::Add {
                     project: p.id.clone(),
@@ -719,7 +706,7 @@ fn adding(
                     number,
                 });
                 let chosen = Chosen::Add(project.clone(), view, change);
-                rows.push(row(label, "↵", Some(chosen)));
+                rows.push(entry(label, "↵", Some(chosen)));
             }
         }
     }
@@ -730,7 +717,7 @@ fn adding(
         draft: None,
         title: "New draft: its title on the first line, then its text".into(),
     };
-    rows.push(row(
+    rows.push(entry(
         format!("New draft “{q}”"),
         "↵ writes it",
         Some(Chosen::Draft(drafting, q.to_owned())),

@@ -675,7 +675,7 @@ fn spawn_guarded<F: Future<Output = ()> + Send + 'static>(
 
 /// Runs `f` on the blocking pool. A panic in `f` resumes in the caller, so
 /// [`spawn_guarded`] reports it.
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     match tokio::task::spawn_blocking(f).await {
         Ok(value) => value,
         Err(err) => match err.try_into_panic() {

@@ -136,10 +136,7 @@ fn save_path(typed: &str, name: &str) -> PathBuf {
 
 /// The picker's rows for `pick`, with `q` typed.
 pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
-    let item = |label: String, hint: &str| PaletteItem {
-        label,
-        hint: hint.to_owned(),
-    };
+    let item = crate::picker::item;
     let note = |text: String| vec![(item(text, ""), None)];
     match pick {
         Pick::Save { repo, id, name } => {

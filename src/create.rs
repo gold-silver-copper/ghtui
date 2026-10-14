@@ -825,7 +825,7 @@ fn open_pick(state: &mut State, pick: Pick) -> Vec<Cmd> {
 
 /// The rows of a form's picker matching `q`.
 pub fn picker_rows(state: &State, pick: Pick, q: &str) -> Vec<(PaletteItem, Option<Choice>)> {
-    let item = |label: String, hint: String| PaletteItem { label, hint };
+    let item = crate::picker::item;
     let note = |text: String| vec![(item(text, String::new()), None)];
     let Some((route, form)) = here(state) else {
         return note("The form isn't on screen".into());
