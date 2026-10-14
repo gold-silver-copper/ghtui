@@ -6,11 +6,10 @@
 
 use crate::api::change::Change;
 use crate::api::security::{Alert, AlertChange, AlertKind, AlertRef};
-use crate::ui::overlays::PaletteItem;
 
-use crate::act::{By, Plan, Subject};
+use crate::act::{Plan, Step, Subject};
 use crate::data::DataKey;
-use crate::state::{Cmd, State};
+use crate::state::State;
 
 /// An alert whose dismissal is being chosen.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,7 +77,7 @@ pub(crate) fn plan(state: &State, a: &AlertRef) -> Result<Plan, String> {
 
 /// The picker's rows: GitHub's reasons, each dismissing the alert with
 /// what's typed as its comment.
-pub fn rows(d: &Dismissing, q: &str) -> Vec<(PaletteItem, Change)> {
+pub fn rows(d: &Dismissing, q: &str) -> crate::picker::Rows {
     d.0.kind
         .reasons()
         .iter()
@@ -88,20 +87,10 @@ pub fn rows(d: &Dismissing, q: &str) -> Vec<(PaletteItem, Change)> {
                 alert: d.0.clone(),
                 dismiss: Some(((*word).to_owned(), q.to_owned())),
             });
-            (item, change)
+            let send = Step::Send(change, Subject::Alert(d.0.clone()));
+            (item, Some(crate::picker::Choice::Step(send)))
         })
         .collect()
-}
-
-/// Sends a dismissal chosen in the picker.
-#[must_use]
-pub fn choose(state: &mut State, change: Change) -> Vec<Cmd> {
-    let Change::Alert(c) = &change else {
-        return Vec::new();
-    };
-    state.info(format!("{}…", doing(c)));
-    let about = Subject::Alert(c.alert.clone());
-    vec![crate::act::send(change, By::Act(about))]
 }
 
 /// Whether the alert, as loaded, shows `c`.

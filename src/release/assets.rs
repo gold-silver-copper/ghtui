@@ -8,6 +8,7 @@
 use crate::route::{Route, releases};
 use std::path::{Path, PathBuf};
 
+use crate::act::Step;
 use crate::api::browse::{Asset, Release};
 use crate::api::model::RepoId;
 use crate::data::DataKey;
@@ -170,41 +171,12 @@ pub fn open_upload(state: &mut State) -> Vec<Cmd> {
     state.open_picker(crate::picker::Kind::Upload(of))
 }
 
-/// Where an asset `name` is saved for what's typed: in the current
-/// folder by default, in a folder named, or as the file named.
-fn save_path(typed: &str, name: &str) -> PathBuf {
-    let typed = typed.trim();
-    if typed.is_empty() {
-        return Path::new(".").join(name);
-    }
-    let path = PathBuf::from(typed);
-    if typed.ends_with('/') || path.is_dir() {
-        path.join(name)
-    } else {
-        path
-    }
-}
-
-/// The saving picker's row: saving where it's typed, or (where a file
-/// is) replacing it, which choosing is the asking.
+/// The saving picker's row.
 pub fn save_rows(of: &Of, q: &str) -> crate::picker::Rows {
-    let path = save_path(q, &of.name);
-    let shown = path.display().to_string();
-    let chosen = |replace| {
-        Some(Choice::SaveAsset {
-            of: of.clone(),
-            path: path.clone(),
-            replace,
-        })
-    };
-    if path.is_dir() {
-        return vec![entry(format!("{shown} is a folder"), "", None)];
-    }
-    if path.exists() {
-        vec![entry(format!("Replace {shown}"), "it exists", chosen(true))]
-    } else {
-        vec![entry(format!("Save to {shown}"), "", chosen(false))]
-    }
+    crate::picker::save_rows(q, &of.name, "", |path, replace| {
+        let of = of.clone();
+        Save { of, path, replace }.into()
+    })
 }
 
 /// How many files the upload picker lists of a folder.
@@ -234,10 +206,14 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> crate::picker::Rows {
         entry(
             format!("Upload {shown}"),
             crate::ui::text::size(size),
-            Some(Choice::Upload {
-                of: up,
-                path: path.to_owned(),
-            }),
+            Some(Choice::Step(Step::Start(
+                format!("Uploading {shown}…"),
+                Upload {
+                    of: up,
+                    path: path.to_owned(),
+                }
+                .into(),
+            ))),
         )
     };
     let path = PathBuf::from(if typed.is_empty() { "." } else { typed });
@@ -290,21 +266,6 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> crate::picker::Rows {
 }
 
 /// Choosing a row: saving, or uploading.
-#[must_use]
-pub fn choose(state: &mut State, chosen: Choice) -> Vec<Cmd> {
-    match chosen {
-        Choice::SaveAsset { of, path, replace } => {
-            state.info(format!("Saving {} to {}…", of.name, path.display()));
-            work::start(Save { of, path, replace })
-        }
-        Choice::Upload { of, path } => {
-            state.info(format!("Uploading {}…", path.display()));
-            work::start(Upload { of, path })
-        }
-        _ => Vec::new(),
-    }
-}
-
 /// `,D` on an asset: asks first, as GitHub does.
 #[must_use]
 pub fn ask_delete(state: &mut State, name: &str) -> Vec<Cmd> {
@@ -372,19 +333,4 @@ pub fn shows(state: &State, repo: &RepoId, tag: &str, name: &str, there: bool) -
     state
         .picked::<Release>(&key)
         .is_some_and(|r| asset(r, name).is_some() == there)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// An asset is saved by its own name in the current folder, in a
-    /// folder named, or as the file named.
-    #[test]
-    fn an_asset_is_saved_where_its_typed() {
-        let name = "ghtui.tar.gz";
-        assert_eq!(save_path("", name), Path::new(".").join(name));
-        assert_eq!(save_path("out/", name), Path::new("out/").join(name));
-        assert_eq!(save_path("x.tgz", name), PathBuf::from("x.tgz"));
-    }
 }

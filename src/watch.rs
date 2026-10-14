@@ -8,6 +8,7 @@ use crate::api::model::NodeId;
 use crate::api::watch::{Subscription, SubscriptionState, Watched};
 use crate::route::{Dest, Route, Target, discussions, issues, pulls};
 
+use crate::act::Step;
 use crate::data::DataKey;
 use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
@@ -15,7 +16,7 @@ use crate::nav::{Doable, row};
 use crate::picker::fuzzy_score;
 use crate::picker::{Choice, entry};
 use crate::state::{Cmd, Remote, Screen, State};
-use crate::work::{self, Cx, Failure, Job};
+use crate::work::{Cx, Failure, Job};
 
 /// Setting a subscription.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,7 +207,12 @@ pub fn rows(state: &State, of: &Watched, q: &str) -> crate::picker::Rows {
                 id: s.id.clone(),
                 state: set,
             };
-            entry(label, hint, Some(Choice::Subscribe(work)))
+            let doing = format!("{}…", said(&work.of, work.state));
+            entry(
+                label,
+                hint,
+                Some(Choice::Step(Step::Start(doing, work.into()))),
+            )
         })
         .collect();
     if let Watched::Repo(_) = of {
@@ -234,13 +240,6 @@ fn said(of: &Watched, state: SubscriptionState) -> String {
     }
 }
 
-#[must_use]
-pub fn choose(state: &mut State, work: Subscribe) -> Vec<Cmd> {
-    state.info(format!("{}…", said(&work.of, work.state)));
-    work::start(work)
-}
-
-/// The menu's row, wherever there's something to subscribe to.
 /// What watching adds: how you're notified of what's on screen.
 pub const FEATURE: crate::features::Feature = crate::features::Feature {
     owns: &[Action::Watch],

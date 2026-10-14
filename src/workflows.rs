@@ -5,9 +5,8 @@
 
 use crate::route::{Route, runs};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use crate::act::Step;
 use crate::api::browse::{Blob, Refs, Workflow, WorkflowRun};
 use crate::api::model::RepoId;
 use crate::api::workflows::{Input, InputKind, dispatch_inputs};
@@ -15,7 +14,6 @@ use crate::data::DataKey;
 use crate::forms::filling;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::picker::Choice;
 use crate::state::{Cmd, State};
 use crate::ui::form::Row;
 use crate::ui::page::Page;
@@ -106,47 +104,24 @@ impl Pick {
     }
 }
 
-/// Where an artifact `name` is saved for what's typed: in the current
-/// folder by default, in a folder named, or as the file named.
-fn save_path(typed: &str, name: &str) -> PathBuf {
-    let file = format!("{name}.zip");
-    let typed = typed.trim();
-    if typed.is_empty() {
-        return Path::new(".").join(file);
-    }
-    let path = PathBuf::from(typed);
-    if typed.ends_with('/') || path.is_dir() {
-        path.join(file)
-    } else {
-        path
-    }
-}
-
 /// The picker's rows for `pick`, with `q` typed.
 pub fn rows(state: &State, pick: &Pick, q: &str) -> crate::picker::Rows {
     let item = crate::picker::item;
     let note = |text: String| vec![(item(text, ""), None)];
     match pick {
         Pick::Save { repo, id, name } => {
-            let path = save_path(q, name);
-            let shown = path.display().to_string();
-            let chosen = |replace| {
-                let save = SaveArtifact {
-                    repo: repo.clone(),
-                    id: *id,
-                    name: name.clone(),
-                    path: path.clone(),
+            let file = format!("{name}.zip");
+            crate::picker::save_rows(q, &file, "a zip", |path, replace| {
+                let (repo, id, name) = (repo.clone(), *id, name.clone());
+                SaveArtifact {
+                    repo,
+                    id,
+                    name,
+                    path,
                     replace,
-                };
-                let doing = format!("Saving {name} to {shown}…");
-                Some(Choice::Step(Step::Start(doing, save.into())))
-            };
-            // Never over a file without asking: this row is the asking.
-            if path.exists() {
-                vec![(item(format!("Replace {shown}"), "it exists"), chosen(true))]
-            } else {
-                vec![(item(format!("Save to {shown}"), "a zip"), chosen(false))]
-            }
+                }
+                .into()
+            })
         }
         Pick::Ref => {
             let Some((repo, file)) = here(state) else {
