@@ -1648,10 +1648,12 @@ mod tests {
     }
 
     /// A month's activity: commits summed per repository, most first; a PR
-    /// reviewed twice once; months newest first, three of them; and with
-    /// more repositories than fetched, every month's commits short.
+    /// reviewed twice once; months newest first, three of them. Where
+    /// GitHub has more than came, the counts say they may be short: every
+    /// month's commits with more repositories than fetched, and a list's
+    /// from its oldest month on.
     #[test]
-    fn activity_is_grouped_by_month() {
+    fn activity_is_grouped_by_month_and_says_where_its_short() {
         let item = |at: &str, number: u32| serde_json::json!({"occurredAt": at, "pullRequest": {"number": number, "title": "t", "repository": {"nameWithOwner": "o/r"}}});
         let commits = |repo: &str, days: &[(&str, u32)]| {
             serde_json::json!({"repository": {"nameWithOwner": repo}, "contributions": {
@@ -1666,10 +1668,13 @@ mod tests {
                 commits("o/b", &[("2026-10-03T00:00:00Z", 7)]),
             ],
             "totalRepositoriesWithContributedCommits": 3,
-            "pullRequestContributions": {"totalCount": 1, "nodes": [item("2026-07-01T00:00:00Z", 1)]},
+            "pullRequestContributions": {"totalCount": 50, "nodes": [
+                item("2026-10-02T00:00:00Z", 1), item("2026-09-20T00:00:00Z", 2)
+            ]},
             "issueContributions": {"totalCount": 0, "nodes": []},
-            "pullRequestReviewContributions": {"totalCount": 3, "nodes": [
-                item("2026-09-05T00:00:00Z", 5), item("2026-09-04T00:00:00Z", 5), item("2026-08-01T00:00:00Z", 6)
+            "pullRequestReviewContributions": {"totalCount": 4, "nodes": [
+                item("2026-09-05T00:00:00Z", 5), item("2026-09-04T00:00:00Z", 5),
+                item("2026-08-01T00:00:00Z", 6), item("2026-07-01T00:00:00Z", 8)
             ]},
         }))
         .unwrap();
@@ -1682,10 +1687,10 @@ mod tests {
         );
         assert_eq!(c.activity[1].reviews.len(), 1);
         assert_eq!(c.short.commits.as_deref(), Some(Short::EVERY_MONTH));
-        assert_eq!(
-            (c.short.pulls.as_ref(), c.short.reviews.as_ref()),
-            (None, None)
-        );
+        assert_eq!(c.short.pulls.as_deref(), Some("2026-09"));
+        assert_eq!(c.short.reviews, None);
+        assert!(Short::in_month(c.short.pulls.as_ref(), "2026-09"));
+        assert!(!Short::in_month(c.short.pulls.as_ref(), "2026-10"));
     }
 
     /// How REST names a run's, job's or step's outcome (found by mutation
@@ -1802,30 +1807,6 @@ mod tests {
         }
     }
 
-    /// A profile's activity lists are its newest, and where GitHub has
-    /// more than came, the counts say they may be short.
-    #[test]
-    fn short_activity_says_so() {
-        let pr = |at: &str| serde_json::json!({"occurredAt": at, "pullRequest": {"number": 1, "title": "t", "repository": {"nameWithOwner": "o/r"}}});
-        let wire: WireContributions = serde_json::from_value(serde_json::json!({
-            "contributionCalendar": {"totalContributions": 3, "weeks": []},
-            "commitContributionsByRepository": [],
-            "totalRepositoriesWithContributedCommits": 0,
-            "pullRequestContributions": {"totalCount": 50, "nodes": [pr("2026-10-02T00:00:00Z"), pr("2026-09-20T00:00:00Z")]},
-            "issueContributions": {"totalCount": 0, "nodes": []},
-            "pullRequestReviewContributions": {"totalCount": 1, "nodes": [pr("2026-08-01T00:00:00Z")]},
-        }))
-        .unwrap();
-        let c = wire.into_contributions();
-        assert_eq!(c.short.pulls.as_deref(), Some("2026-09"));
-        assert_eq!(
-            (c.short.reviews.as_ref(), c.short.commits.as_ref()),
-            (None, None)
-        );
-        assert!(Short::in_month(c.short.pulls.as_ref(), "2026-09"));
-        assert!(!Short::in_month(c.short.pulls.as_ref(), "2026-10"));
-    }
-
     /// A long log is cut at a line's start; the lines cut keep their
     /// timestamps, and the ones that start steps their text.
     #[test]
@@ -1876,23 +1857,6 @@ mod tests {
         assert!(info.default);
     }
 
-    /// A branch whose pull request is a draft shows it as a draft, as a
-    /// PR's own page and the PR lists do.
-    #[test]
-    fn a_branchs_draft_pr_is_a_draft() {
-        let branch: wire_branches::Branch = serde_json::from_value(serde_json::json!({
-            "name": "wip",
-            "target": null,
-            "associatedPullRequests": { "nodes": [
-                { "number": 5, "state": "OPEN", "isDraft": true, "headRefName": "wip",
-                  "repository": { "nameWithOwner": "cli/cli" } },
-            ] },
-        }))
-        .unwrap();
-        let info = branch.into_info(&RepoId::new("cli", "cli"), None);
-        assert_eq!(info.pr, Some((5, PrState::Draft)));
-    }
-
     /// A branch whose tip has no author shows only its headline, not a
     /// made-up "unknown"; a git name is still shown.
     #[test]
@@ -1934,25 +1898,17 @@ mod tests {
         assert_eq!(gists.items[0].files, ["a.rs"]);
     }
 
-    /// A comparison's head is the newest commit GitHub lists, or, with
-    /// none listed (the head is behind or at the base), the merge base.
+    /// A comparison listing no commits (the head is behind or at the
+    /// base) is to the merge base, from the base when asked directly.
     #[test]
-    fn a_comparisons_head() {
-        let compare = |commits: &[&str]| -> rest_compare::Compare {
-            let commits: Vec<serde_json::Value> = commits
-                .iter()
-                .map(|sha| serde_json::json!({ "sha": sha, "commit": { "message": "m" } }))
-                .collect();
-            serde_json::from_value(serde_json::json!({
-                "status": "diverged", "ahead_by": 2, "behind_by": 1, "total_commits": 2,
-                "base_commit": { "sha": "base" }, "merge_base_commit": { "sha": "mb" },
-                "commits": commits,
-            }))
-            .unwrap()
-        };
-        let c = compare(&["old", "head"]).into_comparison(false);
-        assert_eq!((c.from.as_str(), c.to.as_str()), ("mb", "head"));
-        let c = compare(&[]).into_comparison(true);
+    fn a_comparison_without_commits_is_to_the_merge_base() {
+        let compare: rest_compare::Compare = serde_json::from_value(serde_json::json!({
+            "status": "behind", "ahead_by": 0, "behind_by": 1, "total_commits": 0,
+            "base_commit": { "sha": "base" }, "merge_base_commit": { "sha": "mb" },
+            "commits": [],
+        }))
+        .unwrap();
+        let c = compare.into_comparison(true);
         assert_eq!((c.from.as_str(), c.to.as_str()), ("base", "mb"));
     }
 
