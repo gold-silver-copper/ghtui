@@ -1530,12 +1530,11 @@ impl CheckOutcome {
     }
 }
 
-impl ChecksCommit {
-    pub(crate) fn into_checks(self) -> Checks {
-        let first = self.status_check_rollup.map(|r| r.contexts.into_results());
-        let first = first.unwrap_or_default();
-        checks(self.oid.0, Capped::new(first.items, first.total))
-    }
+/// A page of a commit's rollup contexts; a commit with no rollup has none.
+pub(crate) fn rollup_contexts(rollup: Option<WireRollup>) -> Results<RollupContext> {
+    rollup
+        .map(|r| r.contexts.into_results())
+        .unwrap_or_default()
 }
 
 impl RollupContexts {
@@ -1771,14 +1770,13 @@ mod tests {
                 "conclusion": "SUCCESS", "startedAt": null, "completedAt": null, "title": title,
                 "detailsUrl": null, "checkSuite": null, "annotations": null})
         };
-        let commit: ChecksCommit = serde_json::from_value(serde_json::json!({
-            "oid": "abc",
-            "statusCheckRollup": {"contexts": {"totalCount": 5,
-                "pageInfo": {"hasNextPage": true, "endCursor": "c"},
-                "nodes": [run("a", "  "), run("b", "Built")]}}
+        let contexts: RollupContexts = serde_json::from_value(serde_json::json!({
+            "totalCount": 5, "pageInfo": {"hasNextPage": true, "endCursor": "c"},
+            "nodes": [run("a", "  "), run("b", "Built")]
         }))
         .unwrap();
-        let checks = commit.into_checks();
+        let fetched = contexts.into_results();
+        let checks = checks("abc".into(), Capped::new(fetched.items, fetched.total));
         assert_eq!((checks.items.len(), checks.items.total()), (2, 5));
         assert_eq!(checks.items[0].summary, None);
         assert_eq!(checks.items[1].summary.as_deref(), Some("Built"));

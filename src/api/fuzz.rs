@@ -28,7 +28,10 @@ pub fn decode(shape: u8, json: &[u8]) {
     match shape % SHAPES {
         0 => model!(q::RepositoryWithPr, model::PrDetail::from_wire),
         1 => model!(q::ReviewThread, model::ReviewThread::from_wire),
-        2 => model!(b::ChecksCommit, b::ChecksCommit::into_checks),
+        2 => model!(b::ChecksCommit, |v: b::ChecksCommit| {
+            let first = b::rollup_contexts(v.status_check_rollup);
+            b::checks(v.oid.0, model::Capped::new(first.items, first.total))
+        }),
         3 => model!(b::wire_branches::Branch, |v: b::wire_branches::Branch| v
             .into_info(&repo, Some("main"))),
         4 => model!(

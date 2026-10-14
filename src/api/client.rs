@@ -2035,10 +2035,7 @@ impl GitHub {
     ) -> Result<browse::Checks, ApiError> {
         use cynic::QueryBuilder as _;
         let oid = commit.oid.0;
-        let first = commit
-            .status_check_rollup
-            .map(|r| r.contexts.into_results())
-            .unwrap_or_default();
+        let first = browse::rollup_contexts(commit.status_check_rollup);
         let what = format!("{}'s checks", text_short(&oid));
         let expression = &oid;
         let page = move |after| async move {
