@@ -81,8 +81,7 @@ impl Job for Checkout {
                 return Vec::new();
             }
         };
-        state.info(text);
-        Vec::new()
+        state.just_say(text)
     }
 }
 

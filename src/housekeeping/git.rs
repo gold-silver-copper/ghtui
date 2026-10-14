@@ -220,9 +220,7 @@ pub async fn clone(url: &str, dir: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    async fn git(dir: &Path, args: &[&str]) -> String {
-        crate::git::run(Some(dir), args).await.unwrap()
-    }
+    use crate::git::set_up as git;
 
     /// "GitHub" (a bare repository with `a.txt` and `run.sh` on main),
     /// your clone of it, and someone else's.

@@ -644,9 +644,7 @@ mod tests {
     use super::*;
     use crate::git::credentials::Credentials;
 
-    async fn git(dir: &Path, args: &[&str]) -> String {
-        crate::git::run(Some(dir), args).await.unwrap()
-    }
+    use crate::git::set_up as git;
 
     async fn commit(dir: &Path, files: &[(&str, &str)]) -> String {
         for (path, text) in files {

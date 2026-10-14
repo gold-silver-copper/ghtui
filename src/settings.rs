@@ -546,8 +546,7 @@ pub fn follow_link(state: &mut State, link: &SettingLink) -> Vec<Cmd> {
                 _ => (Action::DeleteSetting, "deletes the key"),
             };
             let key = state.first_key(action);
-            state.info(format!("{key} {what}"));
-            Vec::new()
+            state.just_say(format!("{key} {what}"))
         }
         SettingLink::DeleteRepo => {
             let open = state.first_key(Action::OpenInBrowser);

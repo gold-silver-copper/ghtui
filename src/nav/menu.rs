@@ -170,8 +170,7 @@ pub(super) fn run_menu_keys(state: &mut State, [pressed]: [crate::keymap::Key; 1
         None => {
             menu.typed.clear();
             let shown = crate::keymap::pretty_keys(&typed);
-            state.info(format!("{shown}: no row here has those keys"));
-            Vec::new()
+            state.just_say(format!("{shown}: no row here has those keys"))
         }
     }
 }

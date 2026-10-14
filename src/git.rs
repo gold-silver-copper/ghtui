@@ -158,6 +158,12 @@ pub(crate) async fn run(dir: Option<&Path>, args: &[&str]) -> Result<String, Git
     stdout(&git(dir).args(args).output().await?, &args.join(" "))
 }
 
+/// Runs git in `dir` to set a test's repositories up.
+#[cfg(test)]
+pub(crate) async fn set_up(dir: &Path, args: &[&str]) -> String {
+    run(Some(dir), args).await.unwrap()
+}
+
 /// What `git <what>` printed, or its complaint if it failed.
 pub(crate) fn stdout(output: &std::process::Output, what: &str) -> Result<String, GitError> {
     if !output.status.success() {

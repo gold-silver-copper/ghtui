@@ -136,8 +136,7 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     match matching.as_slice() {
         [] => {
             state.overlay = None;
-            state.info("No link has those letters");
-            Vec::new()
+            state.just_say("No link has those letters")
         }
         [(hint, (link, page_tab))] if hint.label == hints.typed => {
             let (link, page_tab) = ((*link).clone(), **page_tab);

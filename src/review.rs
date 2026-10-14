@@ -558,10 +558,6 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
     let annotation = at
         .and_then(|i| diff.doc.annotations().get(i as usize))
         .cloned();
-    let info = |state: &mut State, text: &str| {
-        state.info(text);
-        Vec::new()
-    };
     let error = |state: &mut State, text: &str| {
         state.error(text);
         Vec::new()
@@ -657,7 +653,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             }) = &annotation =>
         {
             if !can_reply {
-                return info(state, "You can't reply to this one");
+                return state.just_say("You can't reply to this one");
             }
             let thread_id = thread_id.clone();
             state.compose(Target::Review(Comment::Reply { thread_id }), "")
@@ -726,14 +722,14 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::ResolveThread => {
             let Some(ann) = annotation else {
-                return info(state, "Move to a thread to resolve it");
+                return state.just_say("Move to a thread to resolve it");
             };
             let AnnotationKey::Thread(thread_id) = ann.key else {
-                return info(state, "Drafts can't be resolved");
+                return state.just_say("Drafts can't be resolved");
             };
             let resolved = !ann.resolved;
             if (resolved && !ann.can_resolve) || (!resolved && !ann.can_unresolve) {
-                return info(state, "You can't change this thread");
+                return state.just_say("You can't change this thread");
             }
             // Optimistic; rolled back if GitHub refuses.
             diff.edit(|i| i.set_resolved(&thread_id, resolved));
@@ -745,7 +741,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::Delete => {
             let Some(AnnotationKey::Draft(id)) = annotation.map(|a| a.key) else {
-                return info(state, "Move to a draft comment to delete it");
+                return state.just_say("Move to a draft comment to delete it");
             };
             let Some(at) = diff.inputs().review.pending.iter().position(|d| d.id == id) else {
                 return Vec::new();
@@ -757,7 +753,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Action::UndoDelete => {
             let Some(mut draft) = diff.edit(|i| i.deleted.take()) else {
-                return info(state, "No deleted draft to bring back");
+                return state.just_say("No deleted draft to bring back");
             };
             let save = diff.edit_review(&pr, |i| {
                 if i.review.pending.iter().any(|d| d.id == draft.id) {
@@ -804,7 +800,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             ))));
             vec![Cmd::Api(Api::FetchPendingReview(pr))]
         }
-        _ => info(state, &action.not_here()),
+        _ => state.just_say(action.not_here()),
     }
 }
 

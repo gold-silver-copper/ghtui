@@ -932,9 +932,7 @@ mod tests {
         assert!(!by_git(&history, Some("Y3Vyc29y")), "GitHub's own cursor");
     }
 
-    async fn git(dir: &Path, args: &[&str]) -> String {
-        crate::git::run(Some(dir), args).await.unwrap()
-    }
+    use crate::git::set_up as git;
 
     /// Pages read from the cache's clone at the commit GitHub's branch is
     /// at, fetching it when GitHub's moved on; what isn't there is "not

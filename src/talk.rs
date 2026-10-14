@@ -261,9 +261,7 @@ mod tests {
     use super::*;
     use crate::api::model::RepoId;
 
-    async fn git(dir: &std::path::Path, args: &[&str]) -> String {
-        crate::git::run(Some(dir), args).await.unwrap()
-    }
+    use crate::git::set_up as git;
 
     /// A thread's lines are read from your clone at the commit its first
     /// comment was on, not at the branch's tip; without a clone (and no

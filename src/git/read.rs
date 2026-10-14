@@ -739,12 +739,8 @@ pub async fn grep(repo: &Repo, of: &RepoId, at: &Oid, grep: &Grep) -> Read<Vec<C
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::run;
+    use crate::git::set_up as git;
     use std::path::Path;
-
-    async fn git(dir: &Path, args: &[&str]) -> String {
-        run(Some(dir), args).await.unwrap()
-    }
 
     async fn write(dir: &Path, files: &[(&str, &str)], message: &str, email: &str) {
         for (path, text) in files {
